@@ -249,12 +249,14 @@ collision box that its character controller then cannot pass.
 
 `node tools/navmesh-obstacle-audit.ts` (Skyrim.esm with the DLCs and CC, 2026-10-24): 65 flagged
 bases, 6,953 references. Almost all are the collision primitive marker CollisionMarker (STAT
-0x21: 4,664 references, every collision box a quest or an enable parent switches on and off;
+0x21: 4,663 references, every collision box a quest or an enable parent switches on and off;
 832 references of obstacle bases are initially disabled, 2,474 have an enable parent). The other
 flagged bases are what opens and shuts a way: portcullises and their poles (PortGatePole01 has
 511 references), retractable bridges, secret doors and shelves, Whiterun's drawbridge, falling
 rock traps, destructible spider webs and boulders, catapults, a few movable statics (RuinsPot03,
-HandCart01Wheel). TODO(M13): build it, with the original bridge back up: which shape cuts (a
+HandCart01Wheel). The cases: tests/conformance/ai/movement-paths.test.ts. TODO(M13): build it
+(the exe keeps the classes' RTTI: NavMeshObstacleManager, BSNavmeshObstacleData,
+BSNavmeshObstacleUndoData, to follow to their code in the original): which shape cuts (a
 collision box's XPRM box or sphere; an activator's collision in its current animation state),
 how a triangle partly covered is cut, when the cut is made again (enable, disable, an animated
 gate's open state, a body coming to rest).
@@ -342,6 +344,20 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   WaitingForPlayer turns 1 and follows again as it turns 0 (TODO(M13): the engine's own rule).
   The package's preferred speed (PKDT, with its flag) is its gait: jog and run run, walk and fast
   walk walk.
+- **Flag overrides** (PFO2, PFOR; xEdit's Set / Clear General Flags, Set / Clear Interrupt
+  Flags, Preferred Speed Override): while a procedure with one runs, its package runs with those
+  flags set and cleared over its own, and one that sets Preferred Speed brings its speed
+  (`packageFlags` in `src/ai/package-runtime.ts`; GetCurrentPackage's flags, Must Complete,
+  Ignore Combat, Always Sneak, Weapon Drawn and the interrupts all read them). 115 vanilla
+  branches have one: 24 Travels ignore combat, 15 must complete, 43 set a speed (36 run), 17 draw
+  the weapon, 5 clear the talk and reactions (`node tools/package-census.ts`).
+- **The gear** (`src/shell/actor-package-gear.ts`): Weapon Drawn (659 packages) draws the
+  actor's weapon while its package runs and sheathes it as the flag goes; Weapons Unequipped
+  (208: the sleep and meal packages) takes the weapons from its hands and gives them back after;
+  Wear Sleep Outfit (18) dresses it in its sleep outfit (NPC\_ SOFT) meanwhile. In combat its
+  combat has its weapons. Not yet honoured (tests/conformance/ai/package-evaluation.test.ts):
+  Offers Services (85), Maintain Speed At Goal (62), Continue If PC Near (4), Skip Fallout
+  Behavior (189), Allow Swimming (85).
 - **Procedures' parameters:** each procedure takes its inputs by slot (PKC2) in an order of its
   own, which no documentation gives: every template names the inputs it gives a procedure
   (BNAM), and over the 7,633 vanilla packages the names and types agree slot by slot
@@ -575,9 +591,31 @@ Actors use furniture as the engine's furniture handling does, as far as the data
   Sitting), beds (Allow Sleeping), furniture with the FurnitureSpecial keyword — workbenches, the
   forge, the wood chopping block (Allow Special Furniture), idle markers (Allow Idle Markers) —
   or wanders (Allow Wandering: at least its Min Wander Distance, fAIWanderDefaultMinDist
-  without one). One thing at a time, for 15 s plus 0.6 s per point of energy (its Energy,
-  without one the actor's own) below 100 (half to one and a half times that). TODO(M13): the
-  engine's choice and timing (its daily plan and fSandbox\* settings: phase 4).
+  without one), and eats sitting at a chair or standing (Allow Eating). What it does next and
+  for how long, observed in the original (`src/ai/sandbox.ts`):
+  - **The candidates**, each of a kind (sitting, sleeping, eating standing, eating sitting,
+    wandering, idle marker, special furniture): what it may use within its place, within
+    fSandboxCylinderBottom..fSandboxCylinderTop of the place's height (Skyrim.esm −100..150).
+  - **The pick** is at random by weight: each kind weighs the number of activities begun since it
+    was last done (1 as it is done, at most 255), so what it did least lately is likeliest. The
+    spot it is at is left out (but eating sitting at its chair), as is an idle marker nearer than
+    fSandBoxInterMarkerMinDist (100) to the one it stands at.
+  - **The daily plan**: sleep (starting fSandboxSleepStartMin..Max, 19:00–1:00, for 6–10 h),
+    breakfast (6–9), lunch (11.5–12.5) and dinner (18–19), each meal 0.1–0.25 h; of the four the
+    next to come is planned, its start and length at random. While it is on, its kind weighs
+    100000 (sleeping; eating sitting, and eating standing 100), every other 1, if the sandbox has
+    a bed or a seat for it.
+  - **How long**: fSandboxDurationBase × its kind's fSandboxDurationMult… × (1 +
+    fSandboxEnergyMult × its kind's fSandboxEnergyMult… × Energy) game hours, within ±
+    fSandboxDurationRangeMult (Skyrim.esm: base 0.2 h; a sit at Energy 50 lasts 0.3 h, 18 game
+    minutes; special furniture 0.6 h at Energy 0; energetic actors wander longer and sit
+    shorter). Its Energy: its own input, else the actor's. Before, it stayed 15 s plus 0.6 s per
+    point of energy below 100, in real seconds, and picked at random.
+  - TODO(M13): the counts' first values (1 here); a sleep window whose end is before its start
+    (taken as the next day's 1:00); its scan again every fMin..fMaxSandboxRescanSeconds (3–6
+    real seconds: ours scans as each activity ends); fSandBoxSearchRadius (6000) for a place the
+    engine gets no radius for (ours keeps the place's radius, at least 100);
+    fSandBoxRadiusHysteresis, fSandBoxExtraDialogueRange, fSandBoxDelayEvalSeconds.
 - **The player** (`src/shell/player-furniture.ts`) sits on chairs and benches ("Sit", sSit) and
   stands at workbenches the same way: the idle tree gives the player's own idles where it has
   them (IdleStoolEnterPlayer, IdleTableEnterPlayer: GetIsID(Player)); the engine slides and turns
@@ -978,7 +1016,14 @@ load order's value, else the engine's built-in default; the INI's [Pathfinding],
 and [General] ones through `src/world/ini-settings.ts`). What the engine does with each was read
 from the original game's behaviour only (in our words):
 
-- **Package evaluation:** fEvaluatePackageTimer ([Packages](#packages)).
+- **Package evaluation:** fEvaluatePackageTimer ([Packages](#packages)); fEvaluateProcedureTimer
+  (3 s) times the running procedure's own evaluation (observed in the original; what it checks: TODO(M13)).
+- **Sandbox:** the fSandbox\* settings ([Furniture and idle markers](#furniture-and-idle-markers)).
+- **The process lists' budget** (observed in the original, `src/ai/process-levels.ts`): a frame gives the
+  lists' update fProcessListsUpdateTimeMax ms (5) at fProcessListsUpdateHighFrameRate (30) frames
+  a second or more, fProcessListsUpdateTimeMin (0.5) below fProcessListsUpdateLowFrameRate (10),
+  (Min + Max) × rate / (Low + High) between ([General] INI settings). TODO(M13): ours does not
+  slice the actors' updates by it yet.
 - **Where an actor is at a place:** within the place's radius, at least
   fAIMarkerDestinationRadius at a marker (XMarker, XMarkerHeading; Skyrim.esm 50),
   fAIFurnitureDestinationRadius at furniture (Skyrim.esm 150), fAIDistanceRadiusMinLocation

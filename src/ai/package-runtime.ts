@@ -17,6 +17,7 @@ import type { Gait } from './locomotion.ts';
 import {
   BranchFlag,
   PackageFlag,
+  type PackageFlagOverride,
   type PackageInput,
   type PackageLocation,
   type PackageRecord,
@@ -387,10 +388,43 @@ const IDLE_PAUSE = 8;
  */
 const LOOP_LIMIT = 100_000;
 
+/** A package's flags, interrupt flags and preferred speed as its procedures' overrides leave them. */
+export interface PackageFlags {
+  readonly flags: number;
+  readonly interrupts: number;
+  /** 0 walk, 1 jog, 2 run, 3 fast walk (with PackageFlag.preferredSpeed). */
+  readonly speed: number;
+}
+
+/**
+ * The flags a package runs with while procedures with flag overrides (PFO2, PFOR) run: each
+ * sets and clears general and interrupt flags over the package's own, in the order they began;
+ * one that sets Preferred Speed brings its own speed (PFOR has none: the package's stays). xEdit
+ * names the fields (Set / Clear General Flags, Set / Clear Interrupt Flags, Preferred Speed
+ * Override); 115 vanilla branches have one, all of them procedures
+ * (tests/conformance/ai/package-evaluation.test.ts counts them). TODO(M13): the order the engine
+ * applies several in (two procedures with overrides at once in a Simultaneous branch) is inferred.
+ */
+export function packageFlags(
+  pack: PackageRecord,
+  overrides: readonly PackageFlagOverride[] = [],
+): PackageFlags {
+  let flags = pack.flags;
+  let interrupts = pack.interruptFlags;
+  let speed = pack.preferredSpeed;
+  for (const override of overrides) {
+    flags = (flags | override.setFlags) & ~override.clearFlags;
+    interrupts = (interrupts | override.setInterruptFlags) & ~override.clearInterruptFlags;
+    const setsSpeed = (override.setFlags & PackageFlag.preferredSpeed) !== 0;
+    if (setsSpeed && override.preferredSpeed !== undefined) speed = override.preferredSpeed;
+  }
+  return { flags: flags >>> 0, interrupts, speed };
+}
+
 /** PKDT preferred speed: walk, jog, run, fast walk. */
-function gaitOf(pack: PackageRecord): Gait {
-  if ((pack.flags & PackageFlag.preferredSpeed) === 0) return 'walk';
-  return pack.preferredSpeed === 1 || pack.preferredSpeed === 2 ? 'run' : 'walk';
+export function gaitOf(flags: PackageFlags): Gait {
+  if ((flags.flags & PackageFlag.preferredSpeed) === 0) return 'walk';
+  return flags.speed === 1 || flags.speed === 2 ? 'run' : 'walk';
 }
 
 /** A package that runs, with its template's tree and its data. */
@@ -423,6 +457,8 @@ interface Running {
   readonly active: ProcedureBranch[];
   /** The branches the last one that began ran under (kept once the tree has ended). */
   path: readonly ProcedureBranch[];
+  /** The flag overrides of the procedures running now, in the order they began. */
+  readonly overrides: PackageFlagOverride[];
 }
 
 /** How a travel goes. */
@@ -496,14 +532,16 @@ export class ActorPackages {
       }
     | undefined {
     const running = this.#running;
-    return (
-      running && {
-        id: running.id,
-        procedure: running.procedure,
-        flags: running.pack.flags,
-        interrupts: running.pack.interruptFlags,
-      }
-    );
+    if (!running) return undefined;
+    // As its running procedures' overrides leave them (a Travel that ignores combat, a Wait with
+    // the weapon drawn).
+    const flags = packageFlags(running.pack, running.overrides);
+    return {
+      id: running.id,
+      procedure: running.procedure,
+      flags: flags.flags,
+      interrupts: flags.interrupts,
+    };
   }
 
   /**
@@ -565,7 +603,12 @@ export class ActorPackages {
     // original): its start sets its package as the actor's at once, past Must Complete
     // (MQ101AlduinAttackScene1 takes Alduin from his must-complete approach patrol to his perch
     // as its phase changes).
-    if (current && !current.completed && (current.pack.flags & PackageFlag.mustComplete) !== 0) {
+    // (A procedure's override may make it so while it runs: 15 vanilla Travels set Must Complete.)
+    if (
+      current &&
+      !current.completed &&
+      (packageFlags(current.pack, current.overrides).flags & PackageFlag.mustComplete) !== 0
+    ) {
       const scene = this.#mind.scenePackages?.(this.actor);
       // (One a scene's action gave is left once that action ends: its end clears it.)
       if (scene === undefined ? !current.fromScene : scene.includes(current.id)) return;
@@ -701,6 +744,7 @@ export class ActorPackages {
         procedure: undefined,
         active: [],
         path: [],
+        overrides: [],
       };
     }
     return undefined;
@@ -848,13 +892,32 @@ export class ActorPackages {
       await this.#until(running);
       return 'stopped';
     }
-    const inputOf = (slot: number): number | undefined => branch.inputs[slot];
     const inputs = new ProcedureInputs(branch, running.data.inputs);
     // "Ride Horse If Possible" (Travel, Patrol, Follow, Escort, ...): the actor's horse.
     const rideSlot = PROCEDURE_PARAMETERS[name]?.findIndex(
       (parameter) => parameter.name === RIDE_HORSE,
     );
     this.#body.ride?.(rideSlot !== undefined && rideSlot >= 0 && inputs.bool(rideSlot));
+    // Its flag override holds while it runs (the package's flags, interrupts and speed).
+    const override = branch.flagOverride;
+    if (override) running.overrides.push(override);
+    try {
+      return await this.#runProcedure(running, branch, runner, inputs);
+    } finally {
+      if (override) {
+        const at = running.overrides.lastIndexOf(override);
+        if (at >= 0) running.overrides.splice(at, 1);
+      }
+    }
+  }
+
+  async #runProcedure(
+    running: Running,
+    branch: ProcedureBranch,
+    runner: ProcedureRunner,
+    inputs: ProcedureInputs,
+  ): Promise<ProcedureResult | 'complete' | 'stopped'> {
+    const inputOf = (slot: number): number | undefined => branch.inputs[slot];
     const result = await runner({
       actor: this.actor,
       body: this.#body,
@@ -862,7 +925,7 @@ export class ActorPackages {
       inputs,
       pack: running.pack,
       context: running.context,
-      gait: gaitOf(running.pack),
+      gait: gaitOf(packageFlags(running.pack, running.overrides)),
       found: (slot) => {
         const input = inputOf(slot);
         return input === undefined ? [] : (running.found.get(input) ?? []);
