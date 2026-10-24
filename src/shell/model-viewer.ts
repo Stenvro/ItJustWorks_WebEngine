@@ -350,23 +350,16 @@ export class ModelViewer {
    * References with scripts and no default (levers, shrines) are activated for the scripts.
    */
   #activatable(reference: number): Activatable | undefined {
-    const object =
-      this.#cell?.data.objects.find((candidate) => candidate.reference === reference) ??
-      this.#created?.get(reference)?.object;
-    if (!object) return undefined;
-    const fallback = this.#defaultActivation(reference);
+    // The crosshair offers what the engine's prompt rule shows (play-session.ts
+    // objectActivation: never a static, an unnamed object or a light that is not carried).
+    const target = this.#defaultActivation(reference);
+    if (target?.shown === false) return undefined;
     const runtime = this.#session?.scriptsReady;
-    if (!runtime || (!fallback && !this.#scripted.has(reference))) return fallback;
+    if (!runtime || !target) return target;
     return {
-      verb:
-        fallback?.verb ??
-        object.activateText ??
-        this.#session?.hud.uses?.text('sActivate') ??
-        'Activate',
-      name: fallback?.name ?? object.name,
-      ...(fallback?.item && { item: fallback.item }),
+      ...target,
       activate: () => {
-        if (runtime.playerActivated(reference)) fallback?.activate();
+        if (runtime.playerActivated(reference)) target.activate();
       },
     };
   }
@@ -393,8 +386,6 @@ export class ModelViewer {
 
   /** The drawn instances of the cell on screen, by reference. */
   #instances = new Map<number, ModelInstance>();
-  /** The cell's references with scripts (activating them tells the scripts). */
-  #scripted = new Set<number>();
   #detachScripts: (() => void) | undefined;
   /** What the scripts created in the cell on screen (PlaceAtMe). */
   #created: CreatedObjects | undefined;
@@ -1942,9 +1933,7 @@ export class ModelViewer {
         ...(this.#stage?.referencesIn(String(cell.data.cell.formId)) ?? []),
       ];
       const loaded = new Set(this.#loadedReferences());
-      this.#scripted = new Set(
-        await runtime.cellAttached(references, (reference) => loaded.has(reference)),
-      );
+      await runtime.cellAttached(references, (reference) => loaded.has(reference));
       for (const [reference, state] of runtime.state.references) {
         if (runtime.state.created.has(reference) && state.cell === cell.data.cell.formId) {
           await this.#showCreated(reference);
@@ -1972,7 +1961,6 @@ export class ModelViewer {
     }
     this.#stage?.clear();
     this.#stageCell = undefined;
-    this.#scripted = new Set();
     this.#created?.clear(this.#play);
     this.#flora?.clear();
     this.#destruction?.clear();

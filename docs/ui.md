@@ -353,6 +353,43 @@ whole percent) and `FlashShoutMeter()` as the player shouts before it has recove
 (docs/gameplay.md, "Casting and shouts"). The engine's own prompt, notice and loading screen stay
 out of Play.
 
+The subtitle: the movie's subtitle field is authored with "Dialogue Line 1 / Dialogue Line 2" and
+its constructor's `SetText(" ")` does not reach it; `SetSubtitlesEnabled(true)` shows the field
+when its `htmlText` is not " " (under Ruffle never: it reads back as HTML). The engine's HUD reset
+(observed in the original) sends `ShowSubtitle(" ")` before it enables subtitles, so the HUD sends it as it
+opens: the field starts blank and only spoken lines fill it. The QA check `placeholder-text`
+(docs/qa.md) watches every open menu for such authored placeholders left visible.
+
+### Activation prompts
+
+What the crosshair offers (`src/gameplay/activation-prompt.ts`; observed in the original:
+the crosshair pick's filter and each base type's GetActivateText). The pick takes a reference only
+when it has a name and its base is not a static (STAT) or static collection (SCOL); a light only
+when it can be carried. Then the base type writes the prompt (`SetCrosshairTarget`'s aName is
+"verb
+name", a third line after the HUD's diamond marker image for "Empty" or a lock's level):
+
+| base                | prompt                                                                                                                                                                                                                                                                             |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ACTI, TACT          | its RNAM, else sActivate; an ash pile sSearch (sEmpty)                                                                                                                                                                                                                             |
+| DOOR                | sOpen, sClose while open; a load door named after where it leads; locked without the key: sUnlock + the lock's level                                                                                                                                                               |
+| CONT                | sSearch; owned sStealFrom; locked sUnlock + level (its key not asked); empty + sEmpty; command mode sTakeAll; "Owner's Name" with DATA 0x4                                                                                                                                         |
+| BOOK                | sRead (owned too); a spell tome sTake / sSteal                                                                                                                                                                                                                                     |
+| FLOR                | with its ingredient: owned sSteal, else its RNAM, else sActivate; harvested: nothing                                                                                                                                                                                               |
+| TREE                | with its ingredient: sHarvest / sSteal                                                                                                                                                                                                                                             |
+| FURN                | first marker sleep: sFurnitureSleep ("(sOwned)" after the name when not the player's); sit without the Special Furniture keyword (DOBJ SPFK): sSit; else and every workbench: sUse                                                                                                 |
+| items, MSTT, others | sTake / sSteal, "Name (n)" for a stack (XCNT)                                                                                                                                                                                                                                      |
+| PROJ                | only one that can be picked up                                                                                                                                                                                                                                                     |
+| actor               | a summon: "Commander's Name" only; dead: sSearch (+ sEmpty); a horse one may ride: sRide / sSteal; sneaking: sPickpocket where the race allows it (not a teammate), else nothing; sTalk where it may talk (Actor.AllowPCDialogue, else the race's Allow PC Dialogue), else nothing |
+
+The facts the scripts' state answers (a container's emptiness, a key held, an owner's name, race
+flags, a mount) are read in the background (`src/shell/activation-facts.ts`), known from the
+frame after they are first asked. A mount is an actor with ActorTypeHorse (the horses' NPC_
+keyword, not their race's) or ActorTypeDragon. Unknown: a keyword-gated case in the actor rule
+(an actor with a keyword the engine reads from a game-wide object shows no prompt) and a "show
+the name only" mode of the HUD (TODO(M13)). `tools/activation-audit.ts` surveys every placed
+reference of the load order through the rule.
+
 The stealth meter (`src/shell/hud-stealth.ts`): `RegisterHUDComponents` hands the engine the
 clips it drives itself, among them `StealthMeterInstance` (frames `FadeIn` 1, `FadeOut` 6,
 `FadedOut` 10), its eye `SneakAnimInstance` (120 frames: 1 `invisible`, shut, to 100 `visible`,
@@ -795,8 +832,30 @@ engine reads `_root.GetSelectedIndex()` and acts as the inventory or the magic m
 menu closes itself with its fade (Tab, Esc, Q) and `FadeDone`. 1-8 (the control map's
 Hotkey1..8: the digits and the keypad's) give the highlighted entry that hotkey (`hotkey` 0..7:
 the movie's AppendHotkeyText shows "1. Iron Sword"), taken from the favorite that had it; its
-own hotkey again takes it off (`GameState.hotkeys`). In the game, Hotkey1..8 choose their
-favorite as the menu would (equipped where it goes, taken off where it is, a potion drunk).
+own hotkey again takes it off (`GameState.hotkeys`). In the game Hotkey1..8 equip their favorite
+as the engine's favorites handler does (observed in the original; `src/gameplay/hotkeys.ts`
+hotkeyUse): a spell goes to the left hand, pressed again (while in the left) to the right hand
+too, and once in both nothing more; a power or a two-handed spell where it goes; a shout unless
+it is the voice's already; an item where it goes (a potion drunk), but a one-handed weapon held in
+one hand of which the player has another goes to the other hand, and held in both nothing. A
+hotkey never takes anything off; each use plays UIFavorite. The handler ignores them in menus,
+while the player is getting into a seat and at a workbench (TODO(M13): the seat and workbench
+gates; menus and death gate them here).
+
+The controls (the original `interfacecontrolspccontrolmap.txt`, `tools/controlmap-info.ts`):
+
+| key                                   | does                                                                                                                                                                                               |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Q                                     | the favorites menu: F in the inventory or magic menu marks a favorite; in it 1-8 give the highlighted entry a hotkey, the left mouse button equips to the right hand, the right button to the left |
+| 1-8 (and the keypad's)                | Hotkey1..8: the favorite with that hotkey (a spell: left hand, again: right hand too)                                                                                                              |
+| R                                     | Ready Weapon: draws the weapons and spells in the hands, again puts them away                                                                                                                      |
+| left mouse button                     | Right Attack/Block: the right hand's attack or cast (held: a power attack, a charged or concentration spell)                                                                                       |
+| right mouse button                    | Left Attack/Block: the left hand's cast or attack, a block with a shield or a two-handed weapon                                                                                                    |
+| both buttons, one spell in both hands | a dual cast (with the school's Dual Casting perk)                                                                                                                                                  |
+| Z                                     | Shout: tapped the first word, held the others; a power in the voice                                                                                                                                |
+| E                                     | Activate (held on a loose object: take hold of it)                                                                                                                                                 |
+| Tab, I, P, J, M, /                    | the tween menu, inventory, magic, journal, map, skills                                                                                                                                             |
+| F                                     | first / third person                                                                                                                                                                               |
 
 The container menu (`containermenu.swf`, `src/shell/container-menu.ts`; a chest opened, a corpse
 searched) lists the container's items and the player's in one list:

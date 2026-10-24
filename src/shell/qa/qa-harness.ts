@@ -23,6 +23,8 @@ import type { PlaySession } from '../play-session.ts';
 import type { PlayerFurniture } from '../player-furniture.ts';
 import type { Player } from '../player.ts';
 import type { PlayerView } from '../race-menu.ts';
+import type { Menu } from '../../ui/menu-host.ts';
+import { MenuTextWatch } from './menu-texts.ts';
 import {
   AnomalyLog,
   BodyWatch,
@@ -65,6 +67,8 @@ export interface QaHost {
   readonly session: () => GameSession | undefined;
   readonly renderer: Renderer;
   readonly terminal: Terminal;
+  /** The menus open (the placeholder-text check reads their text fields). */
+  readonly menus?: () => Iterable<Menu>;
 }
 
 export interface QaStartOptions {
@@ -139,6 +143,8 @@ function headHeight(worlds: Float32Array, node: number, world: ArrayLike<number>
 
 /** Seconds between the slower checks (poses, ground, travels, scenes). */
 const SLOW_EVERY = 0.25;
+/** How often the open menus' texts are read (seconds). */
+const MENU_TEXTS_EVERY = 1;
 /** A move farther than this in one frame is a teleport (game units): no speed from it. */
 const TELEPORT = 300;
 /** Where a ground ray starts above the feet, and how far below them it looks (game units). */
@@ -227,6 +233,11 @@ export class QaHarness {
   /** Seconds the game ran (out of menus and loading) since the start. */
   #clock = 0;
   #slow = 0;
+  /** Seconds since the menus' texts were last read (placeholder-text). */
+  #menusAt = 0;
+  readonly #menuTexts = new MenuTextWatch();
+  /** The placeholders on screen now (each reported once while it stays). */
+  #placeholders = new Set<string>();
   readonly #watched = new Map<number, Watched>();
   readonly #bodies = new Map<number, { watch: BodyWatch; anomaly: QaAnomaly | undefined }>();
   #actorsWatched = 0;
@@ -293,6 +304,8 @@ export class QaHarness {
     }
     this.#clock = 0;
     this.#slow = 0;
+    this.#menusAt = 0;
+    this.#placeholders = new Set();
     this.#startedAt = performance.now();
     this.#lastFrame = undefined;
     this.#running = true;
@@ -447,6 +460,12 @@ export class QaHarness {
         context: loading,
       });
     }
+    // The open menus' texts, menus or not (a second apart).
+    this.#menusAt += ms / 1000;
+    if (session && this.#menusAt >= MENU_TEXTS_EVERY) {
+      this.#menusAt = 0;
+      this.#menusCheck(session);
+    }
     // In menus and loading screens the game stands: nothing to watch.
     if (!world || !session || loading !== undefined || session.menuMode) return;
     const dt = Math.min(0.25, ms / 1000);
@@ -472,6 +491,30 @@ export class QaHarness {
 
   #now(): number {
     return (performance.now() - this.#startedAt) / 1000;
+  }
+
+  /** placeholder-text: a field of an open menu that shows its authored placeholder. */
+  #menusCheck(session: GameSession): void {
+    const menus = this.#host.menus?.();
+    if (!menus) return;
+    const now = new Set<string>();
+    try {
+      for (const shown of this.#menuTexts.check(session.vfs, menus)) {
+        const key = `${shown.movie} ${shown.path}`;
+        now.add(key);
+        if (this.#placeholders.has(key)) continue;
+        this.#add({
+          kind: 'placeholder-text',
+          subject: { id: shown.movie, name: shown.movie, kind: 'menu' },
+          time: this.#now(),
+          detail: `${shown.path} shows its placeholder "${shown.text.split('\n').join(' / ')}"`,
+          severity: 1,
+        });
+      }
+    } catch (error: unknown) {
+      this.#logLine('qa', error instanceof Error ? error.message : String(error), 'error');
+    }
+    this.#placeholders = now;
   }
 
   // --- Actors --------------------------------------------------------------------------------

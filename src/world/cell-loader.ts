@@ -70,6 +70,14 @@ export interface CellObject {
   readonly readable?: boolean;
   /** XLOC: its lock as placed (doors, containers). */
   readonly lock?: ObjectLock;
+  /** XCNT: how many it is (a stack of items). */
+  readonly count?: number;
+  /** LIGH: Can Be Carried (the crosshair takes no other light). */
+  readonly carryable?: boolean;
+  /** BOOK: a spell tome (its prompt is Take, not Read). */
+  readonly teachesSpell?: boolean;
+  /** CONT DATA 0x4: the prompt names its owner ("Owner's Name"). */
+  readonly showsOwner?: boolean;
   /** ACTI / FLOR RNAM: the verb its activation prompt shows instead of the default. */
   readonly activateText?: string;
   /** FLOR / TREE with an ingredient (PFIG): activating it harvests it (harvest-engine.ts). */
@@ -82,6 +90,8 @@ export interface CellObject {
     readonly sleep: boolean;
     readonly sit: boolean;
     readonly workbench: number;
+    /** Its first marker's type (FNPR's first: FurnitureMarkerType), what its prompt says. */
+    readonly firstMarker?: number;
   };
 }
 
@@ -100,6 +110,7 @@ export function furnitureOf(base: Pick<GameRecord, 'fields'>): {
   readonly sleep: boolean;
   readonly sit: boolean;
   readonly workbench: number;
+  readonly firstMarker?: number;
 } {
   const types = base.fields
     .all('FNPR')
@@ -109,6 +120,7 @@ export function furnitureOf(base: Pick<GameRecord, 'fields'>): {
     sleep: types.some((type) => (type & 0x2) !== 0),
     sit: types.some((type) => (type & 0x5) !== 0),
     workbench: base.fields.first('WBDT')?.[0] ?? 0,
+    ...(types[0] !== undefined && { firstMarker: types[0] }),
   };
 }
 
@@ -455,6 +467,13 @@ function lockOf(record: GameRecord): { lock?: ObjectLock } {
   return { lock: { level: xloc[0] ?? 0, key: key === 0 ? undefined : key } };
 }
 
+/** XCNT: a stack's count (from two up), as a spreadable field. */
+function countOf(record: GameRecord): { count?: number } {
+  const xcnt = record.fields.first('XCNT');
+  const count = xcnt && xcnt.length >= 4 ? view(xcnt).getInt32(0, true) : 1;
+  return count >= 2 ? { count } : {};
+}
+
 function emittanceOf(record: GameRecord): { emittance?: number } {
   const emittance = nonZeroId(record.formIdField('XEMI'));
   return emittance === undefined ? {} : { emittance };
@@ -697,7 +716,6 @@ export async function loadCellData(
           intensityAmplitude: light.intensityAmplitude,
           movementAmplitude: light.movementAmplitude,
           ...emittanceOf(record),
-          ...lockOf(record),
         });
       }
     }
@@ -742,6 +760,15 @@ export async function loadCellData(
       ...(base.type === 'DOOR' && record.fields.has('ONAM') && { openByDefault: true }),
       ...objectSoundsOf(base),
       ...(item && { item: { weight: item.weight, value: item.value } }),
+      ...countOf(record),
+      ...lockOf(record),
+      ...(base.type === 'CONT' &&
+        ((base.fields.first('DATA')?.[0] ?? 0) & 0x4) !== 0 && { showsOwner: true }),
+      ...(base.type === 'LIGH' &&
+        (parseLight(base).flags & LightFlag.canCarry) !== 0 && { carryable: true }),
+      ...(item?.book &&
+        (item.book.flags & BookFlag.teachesSpell) !== 0 &&
+        item.book.teaches !== 0 && { teachesSpell: true }),
       ...(item?.book &&
         (item.book.flags & BookFlag.teachesSpell) === 0 &&
         (base.text('DESC') ?? '') !== '' && { readable: true }),
