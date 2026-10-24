@@ -7,6 +7,13 @@ import { AI_DEFAULTS, type AiSettings } from './ai-settings.ts';
 import { followGait, followRadii, followSpeed } from './followers.ts';
 import { IdleCollectionFlag } from './idle-records.ts';
 import { sameSpace } from './package-start.ts';
+import {
+  pickSandbox,
+  sandboxDuration,
+  SandboxKind,
+  SandboxPlan,
+  type SandboxCandidate,
+} from './sandbox.ts';
 import { TargetType } from './package-records.ts';
 import { ObjectType } from './object-types.ts';
 import { ORBIT_PROCEDURE } from './flight.ts';
@@ -57,12 +64,6 @@ const MARKER_PAUSE = 4;
  * second cart 2000 units short of the gate when its last point was blocked a moment.
  */
 const PATROL_TRIES = 4;
-/**
- * A sandboxing actor stays at what it does about this long (seconds), longer the lower its
- * energy (seconds per point below 100). TODO(M13): the engine's timing.
- */
-const SANDBOX_STAY_MIN = 15;
-const SANDBOX_STAY_PER_ENERGY = 0.6;
 /** Furniture markers' animation types (FurnitureMarkerType): sit, sleep, lean. */
 const SIT = 0x1;
 const SLEEP = 0x2;
@@ -556,13 +557,14 @@ async function waitFor(run: ProcedureRun, seconds: number): Promise<void> {
 
 /**
  * At an idle marker: to it, facing its way, its idles played (in order, or one picked each
- * time), one each time its timer runs out, for `seconds` (or once through, if it plays them
+ * time), one each time its timer runs out, for `seconds` or until `done` (or once through, if it plays them
  * once; or while the package runs). Whether it got there (the marker free).
  */
 async function atIdleMarker(
   run: ProcedureRun,
   marker: number,
   seconds = Infinity,
+  done: () => boolean = () => false,
 ): Promise<boolean> {
   const at = await run.mind.idleMarker(marker);
   if (!at || !run.body.takeIdleMarker(marker)) return false;
@@ -579,9 +581,15 @@ async function atIdleMarker(
     await run.wait(1);
     run.body.face(undefined);
     let played = 0;
-    for (let spent = 0; spent < seconds && !run.stopped(); played++) {
+    for (let spent = 0; spent < seconds && !run.stopped() && !done(); played++) {
       const idles = at.idles;
-      if (idles.length === 0) break;
+      if (idles.length === 0) {
+        // A marker without idles: it stands at it for its time all the same.
+        for (; spent < seconds && !run.stopped() && !done(); spent += IDLE_SECONDS) {
+          await run.wait(IDLE_SECONDS);
+        }
+        break;
+      }
       const once = (at.flags & IdleCollectionFlag.doOnce) !== 0;
       if (once && played >= idles.length) break;
       const sequence = (at.flags & IdleCollectionFlag.pickSequence) !== 0;
@@ -610,12 +618,13 @@ const SPOT_MARKERS: Readonly<Record<SandboxSpot['kind'], number>> = {
 /**
  * Sandbox: within its place, the actor passes the time: it sits and leans (Allow Sitting),
  * sleeps (Allow Sleeping), works at special furniture (Allow Special Furniture), stands at idle
- * markers playing their idles (Allow Idle Markers) and wanders (Allow Wandering), one thing at a
- * time, each for a while that its Energy shortens. TODO(M13): the engine's own choice and
- * timing are not documented (here: a free spot or a walk, picked at random). With Allow
- * Conversation it talks with the actors near it meanwhile (src/ai/talk.ts: the social timers
- * start them). With Allow Eating it eats now and then: food it carries (one used up), else a
- * meal made up as Eat's Create Fake Food does.
+ * markers playing their idles (Allow Idle Markers), eats sitting or standing (Allow Eating: food
+ * it carries, one used up, else a meal made up as Eat's Create Fake Food does) and wanders
+ * (Allow Wandering), one thing at a time. What it does next and for how long are the engine's
+ * (src/ai/sandbox.ts, observed in the original): picked at random by weight (what it did least lately is
+ * likeliest; sleep and meals outweigh all while its day's plan has them), each for game hours
+ * by its kind and Energy. With Allow Conversation it talks with the actors near it meanwhile
+ * (src/ai/talk.ts: the social timers start them).
  */
 const sandbox: ProcedureRunner = async (run) => {
   run.body.allowConversation?.(run.inputs.bool(3, true));
@@ -626,10 +635,31 @@ const sandbox: ProcedureRunner = async (run) => {
   }
 };
 
+/** The game's time in hours (days passed × 24 + the hour): what a sandbox's stays count in. */
+const gameHours = (run: ProcedureRun): number => run.mind.day() * 24 + run.mind.time().hour;
+
+/** Waits until `hours` of game time have passed since `from` (or the package is left). */
+async function stayFor(run: ProcedureRun, from: number, hours: number): Promise<void> {
+  while (!run.stopped() && gameHours(run) - from < hours) await run.wait(IDLE_SECONDS);
+}
+
+/** The sandbox's kind for each spot it may use there. */
+const SPOT_KINDS: Readonly<Record<SandboxSpot['kind'], SandboxKind>> = {
+  sit: SandboxKind.sitting,
+  sleep: SandboxKind.sleeping,
+  special: SandboxKind.furniture,
+  idle: SandboxKind.idleMarker,
+};
+
+interface SandboxChoice extends SandboxCandidate {
+  readonly spot?: SandboxSpot;
+}
+
 const sandboxing: ProcedureRunner = async (run) => {
   const place = await placeIn(run, 0);
   if (!place) return hold(run);
   await goTo(run, place);
+  const settings = settingsOf(run);
   const allows: Readonly<Record<SandboxSpot['kind'], boolean>> = {
     sit: run.inputs.bool(5, true),
     sleep: run.inputs.bool(2, false),
@@ -641,51 +671,129 @@ const sandboxing: ProcedureRunner = async (run) => {
   // Its Energy, without one the actor's own (observed in the original); its walks go at
   // least its Min Wander Distance (fAIWanderDefaultMinDist without one).
   const energy = Math.min(100, Math.max(0, numberIn(run, 8) ?? (await energyOf(run))));
-  const least = numberIn(run, 10) ?? settingsOf(run).wanderDefaultMinDist;
+  const least = numberIn(run, 10) ?? settings.wanderDefaultMinDist;
+  // Its place's radius, at least fAIDistanceRadiusMinLocation (a sit package's chair, radius 0).
+  // TODO(M13): observed in the original, the engine's scan takes fSandBoxSearchRadius for a place whose
+  // radius it gets as 0; which places it gets so (not a reference's radius 0) is not read yet.
   const radius = Math.max(place.radius, atPlace(run));
+  const plan = new SandboxPlan();
+  const random = (): number => run.random();
+  // Where it is now (the spot it uses) and what it does there.
+  let at: SandboxChoice | undefined;
   // Where its last walk led (its wandering goes on across the place from there).
   let lastWalk: Vec3 | undefined;
   while (!run.stopped()) {
-    // An active actor (high energy) moves on sooner.
-    const stay =
-      (SANDBOX_STAY_MIN + (100 - energy) * SANDBOX_STAY_PER_ENERGY) * (0.5 + run.random());
-    const spots = (await run.mind.around(place.position, radius, run.actor)).filter(
-      (spot) => allows[spot.kind],
+    const here = run.body.position();
+    const spots = (await run.mind.around(place.position, radius, run.actor)).filter((spot) => {
+      if (!allows[spot.kind] && !(spot.kind === 'sit' && eats)) return false;
+      // Within the place's height (fSandboxCylinderBottom..Top of it).
+      const rise = spot.position[2] - place.position[2];
+      return rise <= settings.sandboxCylinderTop && rise >= settings.sandboxCylinderBottom;
+    });
+    const candidates: SandboxChoice[] = [];
+    for (const spot of spots) {
+      if (allows[spot.kind])
+        candidates.push({ kind: SPOT_KINDS[spot.kind], reference: spot.reference, spot });
+      if (spot.kind === 'sit' && eats) {
+        candidates.push({ kind: SandboxKind.eatSitting, reference: spot.reference, spot });
+      }
+    }
+    if (eats) candidates.push({ kind: SandboxKind.eatStanding });
+    if (wanders && place.radius > 0) candidates.push({ kind: SandboxKind.wandering });
+    // Not the spot it is at (but to eat at the chair it sits on), nor an idle marker near the
+    // one it stands at.
+    const open = candidates.filter((candidate) => {
+      if (at?.reference !== undefined && candidate.reference === at.reference) {
+        return candidate.kind === SandboxKind.eatSitting && at.kind !== SandboxKind.eatSitting;
+      }
+      if (
+        at?.kind === SandboxKind.idleMarker &&
+        candidate.kind === SandboxKind.idleMarker &&
+        here &&
+        candidate.spot
+      ) {
+        return horizontal(here, candidate.spot.position) >= settings.sandboxInterMarkerMinDist;
+      }
+      return true;
+    });
+    const weights = plan.weights(
+      run.mind.day(),
+      run.mind.time().hour,
+      {
+        bed: candidates.some((candidate) => candidate.kind === SandboxKind.sleeping),
+        seat: spots.some((spot) => spot.kind === 'sit'),
+      },
+      settings,
+      random,
     );
-    const walks = wanders && place.radius > 0 ? 1 : 0;
-    const choices = spots.length + walks + (eats ? 1 : 0);
-    const pick = Math.floor(run.random() * choices);
-    const spot = spots[pick];
+    const pick = pickSandbox(open, weights, random);
     if (run.stopped()) break;
-    if (eats && pick === choices - 1) {
-      // A meal: what it carries, else one made up.
-      const carried = await run.mind.carried(run.actor, FOOD);
-      const food = carried ?? (await run.mind.fakeFood());
-      if (food !== undefined && (await run.body.useItem(food, carried !== undefined))) {
-        await waitFor(run, EAT_SECONDS);
-      } else {
-        await run.wait(IDLE_SECONDS);
+    if (!pick) {
+      // Nothing to do here: it stands a while and looks again (fMin..MaxSandboxRescanSeconds).
+      await waitFor(
+        run,
+        between(run, settings.minSandboxRescanSeconds, settings.maxSandboxRescanSeconds),
+      );
+      continue;
+    }
+    plan.began(pick.kind);
+    const hours = sandboxDuration(pick.kind, energy, settings, random);
+    // Up from what it uses first, unless it stays in it (to eat at the chair it sits on).
+    if (at?.reference !== undefined && pick.reference !== at.reference)
+      await run.body.leaveFurniture();
+    at = pick;
+    const began = gameHours(run);
+    switch (pick.kind) {
+      case SandboxKind.eatStanding:
+      case SandboxKind.eatSitting: {
+        if (pick.kind === SandboxKind.eatSitting && pick.reference !== undefined) {
+          if (!(await run.body.useFurniture(pick.reference, SIT))) {
+            at = undefined;
+            await run.wait(IDLE_SECONDS);
+            continue;
+          }
+        }
+        // A meal: what it carries, else one made up.
+        const carried = await run.mind.carried(run.actor, FOOD);
+        const food = carried ?? (await run.mind.fakeFood());
+        if (food !== undefined) await run.body.useItem(food, carried !== undefined);
+        await stayFor(run, began, hours);
+        break;
       }
-    } else if (spot?.kind === 'idle') {
-      if (!(await atIdleMarker(run, spot.reference, stay))) await run.wait(IDLE_SECONDS);
-    } else if (spot) {
-      if (await run.body.useFurniture(spot.reference, SPOT_MARKERS[spot.kind])) {
-        await waitFor(run, stay);
-        if (!run.stopped()) await run.body.leaveFurniture();
-      } else {
-        await run.wait(IDLE_SECONDS);
+      case SandboxKind.idleMarker: {
+        const marker = pick.reference;
+        const done = (): boolean => gameHours(run) - began >= hours;
+        if (marker === undefined || !(await atIdleMarker(run, marker, Infinity, done))) {
+          at = undefined;
+          await run.wait(IDLE_SECONDS);
+        }
+        break;
       }
-    } else if (choices > 0) {
-      const point = wanderPoint(run, place, least, lastWalk);
-      if (point) {
-        lastWalk = point;
-        await run.body.travel(point, 'walk', WANDER_ARRIVE);
-        await waitFor(run, stay / 4);
-      } else {
-        await run.wait(IDLE_SECONDS);
+      case SandboxKind.wandering: {
+        while (!run.stopped() && gameHours(run) - began < hours) {
+          const point = wanderPoint(run, place, least, lastWalk);
+          if (!point) {
+            await run.wait(IDLE_SECONDS);
+            continue;
+          }
+          lastWalk = point;
+          await run.body.travel(point, 'walk', WANDER_ARRIVE);
+          await waitFor(run, wanderPause(run, energy));
+        }
+        at = undefined;
+        break;
       }
-    } else {
-      await waitFor(run, stay / 4);
+      default: {
+        if (
+          pick.reference === undefined ||
+          !(await run.body.useFurniture(pick.reference, SPOT_MARKERS[pick.spot?.kind ?? 'sit']))
+        ) {
+          at = undefined;
+          await run.wait(IDLE_SECONDS);
+          break;
+        }
+        await stayFor(run, began, hours);
+      }
     }
   }
   return 'failure';

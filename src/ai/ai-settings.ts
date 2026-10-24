@@ -92,7 +92,57 @@ export interface AiSettings {
    */
   readonly stayOnScriptHeadtrack: number;
   readonly revertToScriptTracking: number;
+  /**
+   * The sandbox (src/ai/sandbox.ts): an activity lasts fSandboxDurationBase game hours times its
+   * kind's fSandboxDurationMult…, times (1 + fSandboxEnergyMult × its kind's fSandboxEnergyMult… ×
+   * Energy), within ± fSandboxDurationRangeMult of that.
+   */
+  readonly sandboxDurationBase: number;
+  readonly sandboxEnergyMult: number;
+  readonly sandboxDurationRangeMult: number;
+  /** By activity kind: sitting, sleeping, eating standing, eating sitting, wandering, idle marker, furniture. */
+  readonly sandboxDurationMults: readonly number[];
+  readonly sandboxEnergyMults: readonly number[];
+  /** The daily plan (game hours): sleep's start and length, the meals' windows and length. */
+  readonly sandboxSleepStartMin: number;
+  readonly sandboxSleepStartMax: number;
+  readonly sandboxSleepDurationMin: number;
+  readonly sandboxSleepDurationMax: number;
+  readonly sandboxBreakfastMin: number;
+  readonly sandboxBreakfastMax: number;
+  readonly sandboxLunchMin: number;
+  readonly sandboxLunchMax: number;
+  readonly sandboxDinnerMin: number;
+  readonly sandboxDinnerMax: number;
+  readonly sandboxMealDurationMin: number;
+  readonly sandboxMealDurationMax: number;
+  /** What it looks for, and how often again (real seconds), within the radius it has or this. */
+  readonly sandboxSearchRadius: number;
+  readonly sandboxCylinderTop: number;
+  readonly sandboxCylinderBottom: number;
+  readonly sandboxInterMarkerMinDist: number;
+  readonly minSandboxRescanSeconds: number;
+  readonly maxSandboxRescanSeconds: number;
+  /** The process lists' update budget (ms a frame) by frame rate ([General] INI settings). */
+  readonly processListsUpdateTimeMin: number;
+  readonly processListsUpdateTimeMax: number;
+  readonly processListsUpdateLowFrameRate: number;
+  readonly processListsUpdateHighFrameRate: number;
 }
+
+/** The sandbox's activity kinds, in the engine's order (its settings tables by kind). */
+const SANDBOX_KINDS = [
+  'Sitting',
+  'Sleeping',
+  'EatStanding',
+  'EatSitting',
+  'Wandering',
+  'IdleMarker',
+  'Furniture',
+] as const;
+/** fSandboxDurationMult… and fSandboxEnergyMult… built-in values by kind (the engine's defaults). */
+const SANDBOX_DURATION_MULTS = [2, 2, 0.75, 0.75, 0.5, 1, 2];
+const SANDBOX_ENERGY_MULTS = [-0.1, -0.1, -0.05, -0.05, 0.2, 0.05, -0.1];
 
 /** Each setting's GMST and the engine's built-in value (the load order's value first). */
 const SETTINGS: readonly (readonly [keyof AiSettings, string, number])[] = [
@@ -134,15 +184,58 @@ const SETTINGS: readonly (readonly [keyof AiSettings, string, number])[] = [
   ['holdDefaultHeadTrackTimer', 'fAIHoldDefaultHeadTrackTimer', 5],
   ['stayOnScriptHeadtrack', 'fAIStayonScriptHeadtrack', 20],
   ['revertToScriptTracking', 'fAIRevertToScriptTracking', -3],
+  ['sandboxDurationBase', 'fSandboxDurationBase', 0.02],
+  ['sandboxEnergyMult', 'fSandboxEnergyMult', 0.05],
+  ['sandboxDurationRangeMult', 'fSandboxDurationRangeMult', 0.25],
+  ['sandboxSleepStartMin', 'fSandboxSleepStartMin', 19],
+  ['sandboxSleepStartMax', 'fSandboxSleepStartMax', 1],
+  ['sandboxSleepDurationMin', 'fSandboxSleepDurationMin', 6],
+  ['sandboxSleepDurationMax', 'fSandboxSleepDurationMax', 10],
+  ['sandboxBreakfastMin', 'fSandboxBreakfastMin', 6],
+  ['sandboxBreakfastMax', 'fSandboxBreakfastMax', 9],
+  ['sandboxLunchMin', 'fSandboxLunchMin', 11.5],
+  ['sandboxLunchMax', 'fSandboxLunchMax', 12.5],
+  ['sandboxDinnerMin', 'fSandboxDinnerMin', 18],
+  ['sandboxDinnerMax', 'fSandboxDinnerMax', 19],
+  ['sandboxMealDurationMin', 'fSandboxMealDurationMin', 0.1],
+  ['sandboxMealDurationMax', 'fSandboxMealDurationMax', 0.25],
+  ['sandboxSearchRadius', 'fSandBoxSearchRadius', 6000],
+  ['sandboxCylinderTop', 'fSandboxCylinderTop', 150],
+  ['sandboxCylinderBottom', 'fSandboxCylinderBottom', -50],
+  ['sandboxInterMarkerMinDist', 'fSandBoxInterMarkerMinDist', 100],
+  ['minSandboxRescanSeconds', 'fMinSandboxRescanSeconds', 3],
+  ['maxSandboxRescanSeconds', 'fMaxSandboxRescanSeconds', 6],
+  ['processListsUpdateTimeMin', 'fProcessListsUpdateTimeMin:General', 0.5],
+  ['processListsUpdateTimeMax', 'fProcessListsUpdateTimeMax:General', 5],
+  ['processListsUpdateLowFrameRate', 'fProcessListsUpdateLowFrameRate:General', 10],
+  ['processListsUpdateHighFrameRate', 'fProcessListsUpdateHighFrameRate:General', 30],
+];
+
+/** The settings by kind (fSandboxDurationMultSitting, ...), the load order's values first. */
+const SANDBOX_TABLES: readonly (readonly [
+  'sandboxDurationMults' | 'sandboxEnergyMults',
+  string,
+  readonly number[],
+])[] = [
+  ['sandboxDurationMults', 'fSandboxDurationMult', SANDBOX_DURATION_MULTS],
+  ['sandboxEnergyMults', 'fSandboxEnergyMult', SANDBOX_ENERGY_MULTS],
 ];
 
 /** The settings by the load order's values (`number`: a GMST's value, if it has one). */
 export function readAiSettings(
   number: (editorId: string) => number | undefined = () => undefined,
 ): AiSettings {
-  return Object.fromEntries(
-    SETTINGS.map(([key, name, fallback]) => [key, number(name) ?? fallback]),
-  ) as unknown as AiSettings;
+  const entries: (readonly [string, number | readonly number[]])[] = [
+    ...SETTINGS.map(([key, name, fallback]) => [key, number(name) ?? fallback] as const),
+    ...SANDBOX_TABLES.map(
+      ([key, prefix, fallbacks]) =>
+        [
+          key,
+          SANDBOX_KINDS.map((kind, i) => number(`${prefix}${kind}`) ?? fallbacks[i] ?? 1),
+        ] as const,
+    ),
+  ];
+  return Object.fromEntries(entries) as unknown as AiSettings;
 }
 
 /** The engine's built-in values (until the load order's are read). */
