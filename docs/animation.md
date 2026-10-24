@@ -1441,7 +1441,11 @@ Tool's 30 Hz, made frame-rate independent (1 − (1 − g)^(30 dt); TODO(M13)).
   (m_worldFromModelFeedbackGain 0.35 for humans; errorUpDownBias 1: as far as the lowest foot
   needs). Each ankle then goes to its animated height over its own ground (within its min and
   max heights), the knee turned about its hinge (its interior angle within its limits), the hip
-  swinging the leg onto it, the foot keeping its animated turn, tilted to the slope where
+  swinging the leg onto it (observed in the original: the two-joint solver turns the knee
+  about the hinge by the wanted interior angle less the one it has, taken without a sign, so a
+  leg the clip holds straight or a little past straight bends forward to the people's 165°;
+  ours took the side from the angle's sign and bent such knees backwards for a frame or a few,
+  the NPCs' "knocking knees"; `tests/conformance/animation/foot-ik.test.ts`), the foot keeping its animated turn, tilted to the slope where
   planted (ankleOrientationGain, maxAnkleAngleDegrees). It eases on and off by onOffGain,
   keeping what it found while off. The engine turns humans' on (bHumanoidFootIKEnable 1; the
   graph turns it off in furniture; TODO(M13): when the engine sets it); bHumanoidFootIKDisable
