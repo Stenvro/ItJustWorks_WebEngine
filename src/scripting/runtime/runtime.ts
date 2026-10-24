@@ -637,6 +637,9 @@ export interface Placement {
   readonly scale: number;
 }
 
+/** Magic items: their keywords include their effects' (runtime.keywords). */
+const MAGIC_ITEM_TYPES: ReadonlySet<string> = new Set(['SPEL', 'SCRL', 'ENCH', 'ALCH', 'INGR']);
+
 const CELL_INTERIOR = 0x01;
 /** MESG DNAM: shown as a message box (else, without buttons, as a notification). */
 const MESSAGE_BOX_FLAG = 0x01;
@@ -1429,6 +1432,20 @@ export class ScriptRuntime implements VmHost {
       }
     }
     const own = base === undefined ? [] : await this.#formKeywords(base);
+    // A magic item (a spell, scroll, enchantment, potion, ingredient) has its effects' keywords
+    // too (CommonLibSSE: MagicItem overrides BGSKeywordForm::HasKeyword; the trap scripts ask a
+    // spell for MagicDamageFire: TrapExplosiveGas.OnHit's akWeapon). TODO(M13): that the
+    // override asks the effects is inferred, not read from its code.
+    if (!reference && base !== undefined) {
+      const record = await this.forms.record(base);
+      if (record && MAGIC_ITEM_TYPES.has(record.type)) {
+        const all = [...own];
+        for (const efid of record.fields.all('EFID')) {
+          if (efid.length >= 4) all.push(...(await this.#formKeywords(record.formIdAt(efid, 0))));
+        }
+        return all;
+      }
+    }
     const aliases = reference ? this.aliasesHolding(formId) : [];
     if (aliases.length === 0 && race === undefined) return own;
     const all = [...own];
