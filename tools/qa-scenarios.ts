@@ -392,6 +392,12 @@ var QA_PLAY = engineDev.world.#play;
     bot.door = undefined;
     bot.guide = W.actorStage?.get(best.t.reference) ? best.t.reference : undefined;
     if (bot.guide !== undefined) bot.lastGuide = bot.guide;
+    // A target that is a load door here (MQ101's "Enter the Keep": the keep's doors) is used
+    // as a player uses it: walked to and activated.
+    if (best.same && bot.guide === undefined) {
+      const record = await (await play.session.db).get(best.t.reference);
+      if (record?.fields.has('XTEL')) bot.door = best.t.reference;
+    }
     // A guide waited by for 15 s who stays where they are: a player walks on past them, into
     // the room they lead to (Ralof in Helgen's tower, the stage the player's step sets beyond
     // him), 160 units on the far side; the place holds while the guide stays.
