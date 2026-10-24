@@ -786,14 +786,13 @@ export class ActorFurniture {
     this.#event(user.reference, 'OnGetUp', use.furniture);
   }
 
+  /** The engine's furniture event (TESFurnitureEvent: the scripts' OnSit, OnGetUp). */
   #event(actor: number, event: 'OnSit' | 'OnGetUp', furniture: number): void {
-    const runtime = this.#options.session.scriptsReady;
-    if (!runtime) return;
-    void runtime
-      .sendEvent(actor, event, [runtime.referenceHandle(furniture)])
-      .catch((error: unknown) => {
-        runtime.vm.warn(`${event}: ${describe(error)}`);
-      });
+    this.#options.session.scriptsReady?.events.emit('furniture', {
+      actor,
+      furniture,
+      entered: event === 'OnSit',
+    });
   }
 
   /** The free active marker of the types nearest the actor, and its entry that faces it. */
