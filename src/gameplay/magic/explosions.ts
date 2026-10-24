@@ -15,6 +15,9 @@
 //   from the burst to the body, lifted by fExplosionForceClutterUpBias for ragdolls (biped
 //   layers), × fExplosionForceMultLinear, with a random spin of up to the impulse ×
 //   fExplosionForceMultAngular on each axis.
+// - A ward meets an explosion's or an area's hostile effects (as it meets a spell that hits it
+//   from the front) when the burst point lies within half of fWardAngleForExplosions (90°) of
+//   the way its actor faces.
 // - A chain explosion (Chain Lightning) loses fMagicChainExplosionEffectivenessDelta of its
 //   strength with each actor it reaches.
 //
@@ -44,6 +47,7 @@ const EXPLOSION_SETTING_TABLE = {
   impulseMultProp: ['fGameplayImpulseMultProp', 0.1],
   impulseMultTrap: ['fGameplayImpulseMultTrap', 0.15],
   impulseMultDebrisLarge: ['fGameplayImpulseMultDebrisLarge', 1],
+  wardAngle: ['fWardAngleForExplosions', 90],
 } as const satisfies Readonly<Record<string, readonly [string, number]>>;
 
 export type ExplosionSettings = {
@@ -161,4 +165,23 @@ export function chainEffectiveness(
   settings: Pick<ExplosionSettings, 'chainEffectivenessDelta'> = EXPLOSION_DEFAULTS,
 ): number {
   return Math.max(0, 1 - Math.max(0, reached) * settings.chainEffectivenessDelta);
+}
+
+/**
+ * Whether a ward of an actor facing `heading` (radians; 0 along +Y, turning clockwise) meets a
+ * burst at `point`: the point within half of fWardAngleForExplosions of its facing (observed in the
+ * original). A burst right at the actor is met.
+ */
+export function wardFacesBurst(
+  at: readonly [number, number, number],
+  heading: number,
+  point: readonly [number, number, number],
+  settings: Pick<ExplosionSettings, 'wardAngle'> = EXPLOSION_DEFAULTS,
+): boolean {
+  const dx = point[0] - at[0];
+  const dy = point[1] - at[1];
+  if (dx === 0 && dy === 0) return true;
+  const toward = Math.atan2(dx, dy);
+  const off = Math.abs(Math.atan2(Math.sin(toward - heading), Math.cos(toward - heading)));
+  return (off * 180) / Math.PI < settings.wardAngle / 2;
 }

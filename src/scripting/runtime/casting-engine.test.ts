@@ -83,7 +83,13 @@ function world() {
     values.set(`${String(actor)}:${String(index)}`, amount);
   };
   const loadouts = new Map<number, { left?: number; right?: number; voice?: number }>();
-  const applied: { item: number; target: number; scale: number | undefined }[] = [];
+  const applied: {
+    item: number;
+    target: number;
+    scale: number | undefined;
+    trains: boolean | undefined;
+    seconds: number | undefined;
+  }[] = [];
   const blinks: number[] = [];
   const hits: number[] = [];
   const used: number[] = [];
@@ -139,8 +145,18 @@ function world() {
       hostile: (item: MagicItemRecord) =>
         Promise.resolve(item.effects.some((entry) => entry.effect === FIRE)),
       extendHeld: () => new Set<number>(),
-      apply: (item: MagicItemRecord, target: number, options: { scale?: number }) => {
-        applied.push({ item: item.formId, target, scale: options.scale });
+      apply: (
+        item: MagicItemRecord,
+        target: number,
+        options: { scale?: number; trains?: boolean; seconds?: number },
+      ) => {
+        applied.push({
+          item: item.formId,
+          target,
+          scale: options.scale,
+          trains: options.trains,
+          seconds: options.seconds,
+        });
         return Promise.resolve(item.effects.length);
       },
     },
@@ -257,10 +273,10 @@ describe('casting a spell', () => {
     expect(fired?.item.formId).toBe(FIREBOLT);
     const cost = 40 * (1 - 0.25 ** 0.65);
     expect(w.value(PLAYER_REF, ActorValue.magicka)).toBeCloseTo(100 - cost, 6);
-    // It hits: the target's OnHit, the school used by the base cost.
+    // It hits: the target's OnHit; the magic system trains the school by what took hold.
     expect(await w.engine.deliver(need(fired), NPC)).toBe(1);
     expect(w.hits).toEqual([NPC]);
-    expect(w.used).toEqual([40]);
+    expect(w.applied.at(-1)).toMatchObject({ trains: true, seconds: undefined });
   });
 
   it('is refused without the magicka (the meter blinks), and let go before it was ready', async () => {
@@ -292,7 +308,7 @@ describe('casting a spell', () => {
     const held = w.engine.held(PLAYER_REF, CastingSource.left);
     await w.engine.deliver(need(held), NPC, { seconds: 0.25 });
     expect(w.applied.at(-1)?.scale).toBe(0.25);
-    expect(w.used.at(-1)).toBeCloseTo(2.5, 9);
+    expect(w.applied.at(-1)).toMatchObject({ trains: true, seconds: 0.25 });
     w.engine.update(2);
     await settle();
     expect(w.value(PLAYER_REF, ActorValue.magicka)).toBe(0);
