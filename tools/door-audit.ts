@@ -16,6 +16,7 @@ import { parseNif } from '../src/formats/nif/nif.ts';
 import type { PexScript, PexValue } from '../src/formats/pex/pex.ts';
 import { buildCollision } from '../src/physics/collision-data.ts';
 import { buildSequences } from '../src/render/animation.ts';
+import { buildModel } from '../src/render/model-data.ts';
 import { parseQuest } from '../src/world/quest-records.ts';
 import { RecordDatabase, type GameRecord } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
@@ -135,6 +136,11 @@ interface Swinging {
   readonly graph: string | undefined;
   readonly movingBodies: number;
   readonly fixedBodies: number;
+  /**
+   * Its root's BSXFlags have the editor-marker bit and it shows more than marker nodes: the
+   * engine left the whole model out before (docs/formats/nif.md).
+   */
+  readonly wasLeftOut: boolean;
 }
 const swingingOf = new Map<string, Promise<Swinging | undefined>>();
 function modelSwinging(model: string): Promise<Swinging | undefined> {
@@ -148,11 +154,30 @@ function modelSwinging(model: string): Promise<Swinging | undefined> {
       const graph = file.blocks.find((block) => block.kind === 'behavior-graph-extra-data');
       const sequences = buildSequences(file, graph !== undefined);
       const collision = buildCollision(file);
+      const built = buildModel(file);
+      const shows = built.parts.length > 0 || built.particles.length > 0;
       return {
         sequences: [...(sequences?.byName.keys() ?? [])],
         graph: graph?.kind === 'behavior-graph-extra-data' ? graph.graph : undefined,
         movingBodies: collision.bodies.filter((body) => body.motion === 'keyframed').length,
         fixedBodies: collision.bodies.filter((body) => body.motion === 'fixed').length,
+        wasLeftOut:
+          shows &&
+          file.roots.some((root) => {
+            const node = file.blocks[root];
+            return (
+              node !== undefined &&
+              'extraData' in node &&
+              node.extraData.some((ref) => {
+                const extra = file.blocks[ref];
+                return (
+                  extra?.kind === 'integer-extra-data' &&
+                  extra.name === 'BSX' &&
+                  (extra.value & 0x20) !== 0
+                );
+              })
+            );
+          }),
       };
     })().catch(() => undefined);
     swingingOf.set(key, pending);
@@ -198,13 +223,11 @@ async function forcedAlias(
 ): Promise<number | undefined> {
   const property = script.properties.find((p) => p.name.toLowerCase() === name.toLowerCase());
   if (property?.value.type !== 'object' || property.value.value.alias < 0) return undefined;
-  const questId =
-    property.value.value.formId === 0
-      ? record.formId
-      : db.toGlobal(record.plugin, property.value.value.formId);
+  const value = property.value.value;
+  const questId = value.formId === 0 ? record.formId : db.toGlobal(record.plugin, value.formId);
   const quest = await db.get(questId);
   if (quest?.type !== 'QUST') return undefined;
-  const alias = parseQuest(quest).aliases.find((entry) => entry.id === property.value.value.alias);
+  const alias = parseQuest(quest).aliases.find((entry) => entry.id === value.alias);
   return alias?.fill.kind === 'forced' ? alias.fill.form : undefined;
 }
 
@@ -286,6 +309,9 @@ for (const { reference, by } of swung.values()) {
   else if (swinging.sequences.length > 0) kind = door ? 'door: sequences' : 'activator: sequences';
   else kind = 'nothing to swing';
   count(`${baseRecord.type} · ${kind}`);
+  // Shown since the editor-marker bit hides no model (docs/formats/nif.md).
+  if (swinging?.wasLeftOut === true)
+    count(`editor-marker bit (were left out) · ${baseRecord.type}`);
   const usesSetOpen = [...by].some((call) => call.toLowerCase().includes('.setopen'));
   // A door's open sequence (or its graph) swings it; the collision follows on keyframed bodies.
   const opens = swinging?.sequences.includes('open') === true || swinging?.graph !== undefined;
@@ -309,7 +335,7 @@ for (const { reference, by } of swung.values()) {
     `${record.editorId ?? ''} [${hex(reference)}] ${baseRecord.type} ${baseRecord.editorId ?? ''} ` +
     `${kind}${swinging ? ` seq(${swinging.sequences.join(',')})` : ''}` +
     `${swinging?.graph ? ` graph ${swinging.graph}` : ''} bodies ${String(swinging?.movingBodies ?? 0)} moving ` +
-    `${String(swinging?.fixedBodies ?? 0)} fixed${record.fields.has('ONAM') ? ' ONAM' : ''} by ${[...by].join(', ')}`;
+    `${String(swinging?.fixedBodies ?? 0)} fixed${record.fields.has('ONAM') ? ' ONAM' : ''}${swinging?.wasLeftOut === true ? ' (was left out)' : ''} by ${[...by].join(', ')}`;
   if (listAll || (filter !== undefined && line.toLowerCase().includes(filter))) lines.push(line);
 }
 
