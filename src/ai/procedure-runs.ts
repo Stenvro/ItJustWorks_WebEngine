@@ -33,6 +33,8 @@ const atPlace = (run: ProcedureRun): number => settingsOf(run).distanceRadiusMin
 const NEAR_TARGET = 128;
 /** Standing actors look round for something to do this often (seconds). */
 const IDLE_SECONDS = 1;
+/** A Find that found nothing searches again after this (seconds; ours: TODO(M13) in find). */
+const FIND_AGAIN_SECONDS = 1;
 /** A travel whose way failed searches again after this (seconds; ours). */
 const TRAVEL_AGAIN = 1;
 /** The player's reference. */
@@ -801,15 +803,26 @@ const find: ProcedureRunner = async (run) => {
   const place = await placeIn(run, 0);
   const criteria = run.inputs.target(1);
   if (!place || !criteria) return 'failure';
-  let found: readonly number[];
-  if (criteria.type === TargetType.objectId || criteria.type === TargetType.objectType) {
-    found = await run.mind.search(criteria, place, run.actor, run.inputs.bool(4));
-  } else {
-    const one = await run.mind.target(criteria, run.actor, run.context);
-    found = one === undefined ? [] : [one];
+  // Finding nothing, it looks again while its package runs (beside it in a Simultaneous a Travel
+  // whose success completes the package may end it first). Ended at its first empty search, a
+  // Find run as the cells loaded, before the furniture it was to find was there, ended the Sit
+  // template's search, and the Sit after it had nothing to use: Gwilin stood at his wall in
+  // Ivarstead and IvarsteadSSScene never ended. TODO(M13): the engine's Find procedure's update
+  // was not read (how often it searches again, whether it ever gives up).
+  for (;;) {
+    let found: readonly number[];
+    if (criteria.type === TargetType.objectId || criteria.type === TargetType.objectType) {
+      found = await run.mind.search(criteria, place, run.actor, run.inputs.bool(4));
+    } else {
+      const one = await run.mind.target(criteria, run.actor, run.context);
+      found = one === undefined ? [] : [one];
+    }
+    run.keep(2, found);
+    if (found.length > 0) return 'success';
+    if (run.stopped()) return 'failure';
+    await run.wait(FIND_AGAIN_SECONDS);
+    if (run.stopped()) return 'failure';
   }
-  run.keep(2, found);
-  return found.length > 0 ? 'success' : 'failure';
 };
 
 /**

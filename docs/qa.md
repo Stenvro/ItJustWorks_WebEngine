@@ -126,7 +126,11 @@ replacing the mildest.
 
 What counts as moving "by design" without animation (no glide, no speed mismatch, no ground
 check): riders of a vehicle (MQ101's carts), riders on a horse, knocked down or ragdolled
-actors, fliers held by the flight. Dead and hidden actors are not watched. Teleports (over 300
+actors, fliers held by the flight. What the player's controls drive (the player on foot, the
+horse the player rides) gets no speed mismatch: pressed against a wall or a fence it runs on the
+spot as the engine's does (the player's graph is told the controls' wish, bPlayerGraphFeedback 0;
+a horse's is told the wish while the movement made disagrees with it). Dead and hidden actors are
+not watched. Teleports (over 300
 units in a frame) reset the speed meters.
 
 | kind               | system      | what it means                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | default threshold                                                    |
