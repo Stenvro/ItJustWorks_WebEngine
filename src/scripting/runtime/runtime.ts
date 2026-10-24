@@ -2046,7 +2046,8 @@ export class ScriptRuntime implements VmHost {
           this.#warn(`activating ${child.toString(16)}: ${String(error)}`);
         });
       };
-      if (delay > 0) setTimeout(go, delay * 1000);
+      // Its delay in the game's real seconds (a menu holds it).
+      if (delay > 0) void this.vm.scheduler.waitReal(delay).then(go);
       else go();
     }
     return true;
