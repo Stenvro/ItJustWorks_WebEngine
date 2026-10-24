@@ -212,7 +212,8 @@ describe('simulated bodies (the engine’s rules)', () => {
   it.todo('removes bodies that leave the Havok world’s bounds  [original: unread]');
 });
 
-describe.skipIf(!hasGamedata())(
+// Several minutes long: runs only when asked for (SKYRIM_SWEEPS=1), not in `npm run check`.
+describe.skipIf(!hasGamedata() || process.env.SKYRIM_SWEEPS !== '1')(
   'every loose object of every interior settles where placed (data)',
   () => {
     let vfs: Vfs;
