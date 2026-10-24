@@ -40,6 +40,7 @@ import type { LocalMapContent } from './local-map.ts';
 import { HudController } from './hud-controller.ts';
 import { MessageBoxes } from './message-boxes.ts';
 import { GameMenus } from './game-menus.ts';
+import { ActivationFacts } from './activation-facts.ts';
 import { DialogueMenu } from './dialogue-menu.ts';
 import { cellPlacement, exteriorCells } from './cell-placement.ts';
 import { ConsoleMenu, isConsoleKey, type ConsoleRunner } from './console-menu.ts';
@@ -539,6 +540,7 @@ export class PlayMode {
     const settings = await session.settings();
     session.hud.uses = {
       text: (setting) => settings.string(setting) ?? setting,
+      facts: new ActivationFacts(session),
       openContainer: (reference, closed) => {
         session.hud.menus?.container(reference, closed);
       },

@@ -44,6 +44,10 @@ export interface HudSource {
   readonly keyLabels?: (text: string) => string;
 }
 
+/** The image the engine writes before a prompt's third line (InterfaceStrings). */
+const DIAMOND_MARKER =
+  "<img src='DiamondMarker' width='10' height='15' align='baseline' vspace='5'>";
+
 /** The HUD's depth among the menus. */
 const HUD_DEPTH = 2;
 
@@ -124,6 +128,10 @@ export class HudController implements HudSink {
         await menu.waitFor(`${BASE}.InitExtensions`);
         menu.invoke(`${BASE}.InitExtensions`);
         menu.invoke(`${BASE}.SetPlatform`, 0, false);
+        // The engine's HUD reset (observed in the original): the subtitle is set to a blank (" ") before
+        // subtitles are enabled, so the movie's placeholder ("Dialogue Line 1 / 2", which its
+        // own constructor fails to clear) never shows; only spoken lines replace it.
+        menu.call('ShowSubtitle', ' ');
         // Everything the HUD shows anew after a reload.
         this.#shown = { heading: Number.NaN, health: -1, magicka: -1, stamina: -1 };
         this.#shoutShown = -1;
@@ -207,13 +215,16 @@ export class HudController implements HudSink {
     const menu = this.#menu;
     if (!menu) return;
     // (abActivate, aName, abShowButton, abTextOnly, abFavorMode, abShowCrosshair, aWeight,
-    // aCost, aFieldValue, aFieldText): the verb over the name, the activate button shown; an
-    // item's weight and value under them (the HUD leaves out those that are undefined). In a
-    // follower's command mode the crosshair is its Favor frame.
+    // aCost, aFieldValue, aFieldText): the verb over the name, the activate button shown; a
+    // third line (a lock's level, "Empty") after the HUD's diamond marker, as the engine writes
+    // it; an item's weight and value under them (the HUD leaves out those that are undefined).
+    // In a follower's command mode the crosshair is its Favor frame.
+    const lines = target ? [target.verb, target.name] : [];
+    if (target?.detail !== undefined) lines.push(`${DIAMOND_MARKER}${target.detail}`);
     menu.call(
       'SetCrosshairTarget',
       target !== undefined,
-      target ? `${target.verb}\n${target.name}`.trim() : '',
+      lines.join('\n').trim(),
       target !== undefined,
       false,
       favor,

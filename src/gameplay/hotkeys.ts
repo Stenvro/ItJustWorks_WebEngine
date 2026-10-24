@@ -2,6 +2,8 @@
 // is given to one favorite in the favorites menu and chooses it in the game
 // (src/shell/favorites-menu.ts). Platform-independent.
 
+import type { Equippable, Hand, Loadout } from './equipment.ts';
+
 /** The hotkey (0..7) of a key: the control map's Hotkey1..8 (Digit1..8, Numpad1..8). */
 export function hotkeyOfKey(code: string): number | undefined {
   const match = /^(?:Digit|Numpad)([1-8])$/.exec(code);
@@ -25,4 +27,35 @@ export function assignHotkey(hotkeys: Map<number, number>, formId: number, hotke
   }
   for (const [other, key] of hotkeys) if (key === hotkey) hotkeys.delete(other);
   hotkeys.set(formId, hotkey);
+}
+
+/** What a hotkey does to its favorite: equip it (to a hand, else where it goes), or nothing. */
+export type HotkeyUse = { readonly equip: true; readonly hand?: Hand } | { readonly equip: false };
+
+/**
+ * A hotkey's favorite chosen in the game, as the engine's favorites handler does it (observed in
+ * the original): a spell goes to the left hand, pressed again (held in the left) to the
+ * right hand too, and once in both nothing more; a power (the voice) or a two-handed spell where
+ * it goes. A shout is equipped unless it is already the voice's. An item is equipped where it
+ * goes (a potion drunk), but a one-handed weapon held in one hand of which the player has
+ * another goes to the other hand; held in both, nothing. A hotkey never takes anything off.
+ */
+export function hotkeyUse(
+  item: Pick<Equippable, 'type' | 'place' | 'counted'>,
+  formId: number,
+  loadout: Pick<Loadout, 'left' | 'right' | 'voice'>,
+  count: number,
+): HotkeyUse {
+  const inLeft = loadout.left === formId;
+  const inRight = loadout.right === formId;
+  if (item.type === 'SPEL') {
+    if (item.place === 'voice' || item.place === 'both') return { equip: true };
+    if (!inLeft) return { equip: true, hand: 'left' };
+    return inRight ? { equip: false } : { equip: true, hand: 'right' };
+  }
+  if (item.type === 'SHOU') return loadout.voice === formId ? { equip: false } : { equip: true };
+  if (inLeft && inRight) return { equip: false };
+  if (item.type === 'WEAP' && (inLeft || inRight) && count > 1)
+    return { equip: true, hand: inLeft ? 'right' : 'left' };
+  return { equip: true };
 }

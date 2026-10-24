@@ -4,7 +4,15 @@
 
 /** The engine's systems an anomaly points at (the report groups by them). */
 export type QaSystem =
-  'animation' | 'locomotion' | 'physics' | 'ai' | 'scenes' | 'scripts' | 'shell' | 'performance';
+  | 'animation'
+  | 'locomotion'
+  | 'physics'
+  | 'ai'
+  | 'scenes'
+  | 'scripts'
+  | 'shell'
+  | 'ui'
+  | 'performance';
 
 /** What a monitor saw. */
 export type QaKind =
@@ -53,6 +61,10 @@ export type QaKind =
   | 'console-error'
   /** A frame far longer than the frame budget. */
   | 'long-frame'
+  /** An open menu shows, visible, the placeholder text its movie was authored with. */
+  | 'placeholder-text'
+  /** A scenario's check of what the player does failed (a prompt, a hotkey, a shot). */
+  | 'interaction'
   /** The page stopped answering (the runner saw it). */
   | 'hang';
 
@@ -81,6 +93,8 @@ export const KIND_SYSTEM: Readonly<Record<QaKind, QaSystem>> = {
   'log-warning': 'scripts',
   'console-error': 'shell',
   'long-frame': 'performance',
+  'placeholder-text': 'ui',
+  interaction: 'ui',
   hang: 'shell',
 };
 
@@ -89,7 +103,8 @@ export interface QaSubject {
   /** Form id as 8 hex digits (a scene's, a quest's, a reference's). */
   readonly id: string;
   readonly name: string;
-  readonly kind: 'player' | 'npc' | 'creature' | 'horse' | 'object' | 'scene' | 'quest' | 'log';
+  readonly kind:
+    'player' | 'npc' | 'creature' | 'horse' | 'object' | 'scene' | 'quest' | 'log' | 'menu';
 }
 
 export interface QaAnomaly {
