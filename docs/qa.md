@@ -83,7 +83,9 @@ door it cannot pass) and searches round it. A target that is a place (no actor),
 reached with nothing moving on for 6 s, leads on to the same objective's next target whose
 conditions do not hold yet, as a player goes on the way the objective leads (MQ101's "Make your
 way to the Keep" shows the burning inn's marker until stage 120 of MQ101DragonAttack; then
-Hadvar). A navmesh way far longer than the straight line (twice it and 300 more) to a goal not
+Hadvar). With no target shown at all it follows the guide it followed last while that one is
+about (MQ101DragonAttack's stage 192: Hadvar ran ahead into his trigger and waits by the
+street's, which only the player sets). A navmesh way far longer than the straight line (twice it and 300 more) to a goal not
 above is left for the straight line, as a player jumps down (from the tower's broken wall onto
 the inn, while the navmesh leads down the stairs to the door the quest has shut). It counts as
 on the navmesh only where a triangle is near its feet' height (under the inn's upper floor

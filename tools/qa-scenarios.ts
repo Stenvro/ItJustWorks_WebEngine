@@ -365,6 +365,13 @@ var QA_PLAY = engineDev.world.#play;
       const m = measure(t);
       if (!best || m.d < best.d) best = m;
     }
+    // No target shown (MQ101DragonAttack's stage 192: Hadvar ran ahead into his trigger and
+    // waits by the street's, which the player sets walking in): a player follows the guide
+    // they followed last, while it is about.
+    if (!best && bot.lastGuide !== undefined && W.actorStage?.get(bot.lastGuide)) {
+      const placement = await rt.placement(bot.lastGuide);
+      if (placement) best = measure({ quest: 0, objective: -1, order: 0, holds: true, reference: bot.lastGuide, placement });
+    }
     if (!best) { bot.goal = undefined; bot.path = []; return; }
     // A place reached (no guide) where nothing moves on for a while: a player goes on the way
     // the objective leads, to its next target (MQ101's inn marker, then Hadvar in the street).
@@ -384,6 +391,7 @@ var QA_PLAY = engineDev.world.#play;
     let goal = [...best.t.placement.position];
     bot.door = undefined;
     bot.guide = W.actorStage?.get(best.t.reference) ? best.t.reference : undefined;
+    if (bot.guide !== undefined) bot.lastGuide = bot.guide;
     // A guide waited by for 15 s who stays where they are: a player walks on past them, into
     // the room they lead to (Ralof in Helgen's tower, the stage the player's step sets beyond
     // him), 160 units on the far side; the place holds while the guide stays.
