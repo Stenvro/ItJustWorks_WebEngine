@@ -3611,7 +3611,13 @@ export class ActorCombat implements CombatBridge {
       knockdowns.push(reference, direction, push.force);
       return;
     }
-    const immune = ((fighter.body?.look.raceFlags ?? 0) & RaceFlag.noKnockdowns) !== 0;
+    // One the flight holds (in the air, on a perch) staggers too: its graph's knock-down would
+    // leave it a ragdoll nothing gets up (the knock-downs take only actors on their feet), as
+    // the tower wall's KnockAreaEffect left Alduin perched on Helgen's tower. TODO(M13): the
+    // engine's rule for knocking fliers down is inferred (its perch states have staggers).
+    const flight = this.#options.flight?.();
+    const flies = flight?.isFlying(reference) === true || flight?.perched(reference) === true;
+    const immune = flies || ((fighter.body?.look.raceFlags ?? 0) & RaceFlag.noKnockdowns) !== 0;
     const event = immune ? undefined : (await this.#act(fighter, 'ActionKnockdown'))?.toLowerCase();
     if (event === 'ragdoll' || event === 'ragdollinstant') {
       await knockdowns.knockDown(reference, push);
