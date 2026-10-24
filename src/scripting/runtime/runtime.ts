@@ -7,6 +7,7 @@
 
 import { EventHub } from './event-hub.ts';
 import { relayScriptEvents } from './script-events.ts';
+import { relayStatEvents } from './stat-events.ts';
 import { TriggerVolumes } from './trigger-volumes.ts';
 import { RecordFlag } from '../../formats/esm/record.ts';
 import type { HeadTrackKind } from '../../ai/head-tracking.ts';
@@ -911,8 +912,9 @@ export class ScriptRuntime implements VmHost {
     this.sceneHost = new RuntimeSceneHost(this);
     this.scenes = new SceneDirector(this.sceneHost);
     registerNatives(this.#natives, this);
-    // The scripts hear the hub's events (script-events.ts).
+    // The scripts hear the hub's events (script-events.ts), and so do the stats (stat-events.ts).
     relayScriptEvents(this);
+    relayStatEvents(this);
   }
 
   // --- VmHost --------------------------------------------------------------------------------
@@ -1123,24 +1125,82 @@ export class ScriptRuntime implements VmHost {
   }
 
   /**
-   * The player activated a reference: its scripts get OnActivate (on their own threads, as the
-   * game sends it). Returns whether the engine does what activating it does by default (open a
-   * door, take an item): not while a script blocks its activation.
+   * The player activated a reference (the crosshair, a horse to mount): the engine's one
+   * activation (`activateRef`), with what the player's activation does by default (open a
+   * door, take an item, talk) as `action`. Returns whether the default ran: not while a script
+   * blocks its activation.
    */
-  playerActivated(reference: number): boolean {
-    // Activating ends the player's invisibility.
-    this.magic.acted(PLAYER_REF);
-    this.events.emit('activate', { target: reference, actor: PLAYER_REF });
-    return this.state.references.get(reference)?.activationBlocked !== true;
+  playerActivated(reference: number, action?: () => void): boolean {
+    return this.activateRef(reference, PLAYER_REF, { ...(action && { action }) });
   }
 
   /**
-   * An actor's AI activated a reference (furniture it goes to use): its scripts get OnActivate
-   * with the actor (MQ101's chopping block waits for its executioner, guard and prisoner).
+   * An actor's AI activated a reference (furniture it goes to use): the engine's one activation
+   * with the actor (MQ101's chopping block waits for its executioner, guard and prisoner). Using
+   * the furniture is the AI's own (the default action here is none).
    */
   actorActivated(reference: number, actor: number): void {
-    this.magic.acted(actor);
-    this.events.emit('activate', { target: reference, actor });
+    this.activateRef(reference, actor, { action: () => undefined });
+  }
+
+  /**
+   * The engine's activation of a reference, the one path every activator takes: the player,
+   * an actor's AI, a script's Activate and an activate parent (TESObjectREFR::ActivateRef in
+   * CommonLibSSE). In order:
+   *
+   * 1. TESActivateEvent: the reference's scripts get OnActivate(the activator), blocked or not
+   *    (Creation Kit, ObjectReference.BlockActivation: "the OnActivate event still fires"),
+   *    unless only the default processing is asked for (ObjectReference.Activate's
+   *    abDefaultProcessingOnly: no event, and the block is ignored).
+   * 2. Unless its activation is blocked, the default processing: what activating it does (a
+   *    door opens, an item is taken: `action`, else the world's), then its activate children
+   *    (the references whose Activate Parents name it) in turn, each after its delay, with it
+   *    as their activator. Inferred from the scripts: a blocked reference does not pass its
+   *    activation on (TrapTriggerBase, the traps' triggers, unblocks itself, activates itself
+   *    and blocks again to set off its children; masterAmbushScript's OnActivate takes an
+   *    activator that is not the player as its trigger).
+   *
+   * Its scripts' OnActivate is queued, not waited for (Papyrus events run on threads of their
+   * own): a trigger's OnTriggerEnter that activates itself (defaultActivateSelf) waited for its
+   * own OnActivate, which waited for that OnTriggerEnter to end. A chain that comes back to a
+   * reference it went through stops there. Returns whether the default processing ran.
+   */
+  activateRef(
+    reference: number,
+    activator: number | undefined,
+    options: {
+      readonly defaultOnly?: boolean;
+      readonly action?: () => void;
+      readonly chain?: ReadonlySet<number>;
+    } = {},
+  ): boolean {
+    const defaultOnly = options.defaultOnly === true;
+    // Activating ends the activator's invisibility.
+    if (activator !== undefined) this.magic.acted(activator);
+    if (!defaultOnly) this.events.emit('activate', { target: reference, actor: activator });
+    if (!defaultOnly && this.state.references.get(reference)?.activationBlocked === true) {
+      return false;
+    }
+    if (options.action) options.action();
+    else this.world.activate?.(reference, activator);
+    const through = new Set([...(options.chain ?? []), reference]);
+    void this.#activateChildrenOf(reference, through).catch((error: unknown) => {
+      this.#warn(`activating the children of ${reference.toString(16)}: ${String(error)}`);
+    });
+    return true;
+  }
+
+  /** A reference's activate children activated, by it, each after its delay. */
+  async #activateChildrenOf(reference: number, through: ReadonlySet<number>): Promise<void> {
+    for (const { child, delay } of await this.activateChildren(reference)) {
+      if (through.has(child)) continue;
+      const go = (): void => {
+        this.activateRef(child, reference, { chain: through });
+      };
+      // Its delay in the game's real seconds (a menu holds it).
+      if (delay > 0) void this.vm.scheduler.waitReal(delay).then(go);
+      else go();
+    }
   }
 
   /**
@@ -1457,6 +1517,12 @@ export class ScriptRuntime implements VmHost {
   }
 
   /** A base form's own keywords (KWDA), read once. */
+  /** An actor's race's own keywords (ActorTypeNPC, ActorTypeAnimal, ...); none if no race. */
+  async raceKeywords(actor: number): Promise<number[]> {
+    const race = await this.actors.raceOf(actor);
+    return race === undefined ? [] : this.#formKeywords(race);
+  }
+
   #formKeywords(formId: number): Promise<number[]> {
     let pending = this.#keywordCache.get(formId);
     if (!pending) {
@@ -2031,39 +2097,18 @@ export class ScriptRuntime implements VmHost {
     return this.#mapMarkers.get(reference)?.travel ?? false;
   }
 
-  /** Activate: the scripts' OnActivate (unless default only), then the engine's activation. */
-  async activate(
+  /**
+   * ObjectReference.Activate: the engine's one activation (`activateRef`) by a script, the
+   * default processing only if asked. Returns true, as the game's does for an activation it
+   * took.
+   */
+  activate(
     reference: number,
     activator: number | undefined,
     defaultOnly: boolean,
-    chain: ReadonlySet<number> = new Set(),
   ): Promise<boolean> {
-    // Its scripts' OnActivate is queued, not waited for (Papyrus events run on their own
-    // threads): a trigger's OnTriggerEnter that activates itself (defaultActivateSelf) waited
-    // here for its own object's OnActivate, which waited for that OnTriggerEnter to end.
-    if (!defaultOnly) this.events.emit('activate', { target: reference, actor: activator });
-    if (activator !== undefined) this.magic.acted(activator);
-    if (!this.state.references.get(reference)?.activationBlocked)
-      this.world.activate?.(reference, activator);
-    // Its activate children (the references whose Activate Parents name it) are activated in
-    // turn, by it, each after its delay: a trigger box set off (defaultActivateSelf) wakes the
-    // ambush it is the parent of (masterAmbushScript's OnActivate takes an activator that is
-    // not the player as its trigger: Bleak Falls Barrow's ceiling spider, the coffins'
-    // draugr). Inferred from the data and the scripts: the child is activated by its parent.
-    // A chain that comes back to a reference it went through stops there.
-    const through = new Set([...chain, reference]);
-    for (const { child, delay } of await this.activateChildren(reference)) {
-      if (through.has(child)) continue;
-      const go = (): void => {
-        void this.activate(child, reference, false, through).catch((error: unknown) => {
-          this.#warn(`activating ${child.toString(16)}: ${String(error)}`);
-        });
-      };
-      // Its delay in the game's real seconds (a menu holds it).
-      if (delay > 0) void this.vm.scheduler.waitReal(delay).then(go);
-      else go();
-    }
-    return true;
+    this.activateRef(reference, activator, { defaultOnly });
+    return Promise.resolve(true);
   }
 
   /**

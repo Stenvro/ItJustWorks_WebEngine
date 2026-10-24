@@ -354,13 +354,15 @@ export class ModelViewer {
     return {
       ...target,
       activate: () => {
-        if (runtime.playerActivated(reference)) target.activate();
+        runtime.playerActivated(reference, () => {
+          target.activate();
+        });
       },
     };
   }
 
   /** What activating a reference does by default (a load door, a door that opens). */
-  #defaultActivation(reference: number): Activatable | undefined {
+  #defaultActivation(reference: number, activator?: number): Activatable | undefined {
     const created = this.#created?.get(reference);
     const object =
       this.#cell?.data.objects.find((candidate) => candidate.reference === reference) ??
@@ -376,6 +378,7 @@ export class ModelViewer {
       (descriptor, at) => void this.#session?.playSound(descriptor, at),
       this.#session?.hud.uses,
       this.#seat,
+      activator,
     );
   }
 
@@ -464,8 +467,8 @@ export class ModelViewer {
     explosion: (explosion, at, source) => {
       void this.#stage?.projectiles.burst(explosion, at, source ?? 0);
     },
-    activate: (reference) => {
-      this.#defaultActivation(reference)?.activate();
+    activate: (reference, activator) => {
+      this.#defaultActivation(reference, activator)?.activate();
     },
     triggerCount: (reference) =>
       (this.#play?.triggerCount(reference) ?? 0) +

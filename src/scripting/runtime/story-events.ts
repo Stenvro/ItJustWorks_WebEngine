@@ -5,7 +5,8 @@
 //
 // - Relayed from the event hub (event-hub.ts): Change Location (CLOC) as the player enters
 //   another location (actorLocationChange; the engine raises it for the player only, as it puts
-//   the player in a cell of another location).
+//   the player in a cell of another location); Player Activate Actor (AFAV) as the player
+//   activates an actor (activate).
 // - Raised at their places, where the engine raises them (they are not hub kinds): Player Add
 //   Item (AIPL) and Player Remove Item (REMP), Cast Magic (CAST), Dead Body (DEAD), Arrest
 //   (ARRT), Actor Hello (AHEL), New Voice Power (NVPE). Those places call the methods here.
@@ -52,6 +53,29 @@ export class StoryEvents {
   constructor(runtime: ScriptRuntime) {
     this.#runtime = runtime;
     runtime.events.on('actorLocationChange', (event) => this.#changeLocation(event));
+    runtime.events.on('activate', (event) => this.#activateActor(event));
+  }
+
+  /**
+   * Player Activate Actor (AFAV): the player activated an actor (talked to it, searched it,
+   * rode it). Members: L1 the actor's location, R1 the actor (OnStoryActivateActor(akLocation,
+   * akActor); xEdit's story manager event types). TODO(M13): whether the engine raises it for
+   * every activation of an actor (a dead one, a blocked one) is unread; vanilla has no node for
+   * it.
+   */
+  async #activateActor(event: GameEvents['activate']): Promise<boolean> {
+    if (event.actor !== PLAYER_REF || event.target === PLAYER_REF) return false;
+    const runtime = this.#runtime;
+    if (!(await runtime.actors.isActor(event.target))) return false;
+    const location = await runtime.locationOf(event.target);
+    return this.#raise(
+      'AFAV',
+      [
+        ['L1', location],
+        ['R1', event.target],
+      ],
+      [this.#location(location), runtime.referenceHandle(event.target)],
+    );
   }
 
   /**
