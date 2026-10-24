@@ -377,7 +377,7 @@ var QA_PLAY = engineDev.world.#play;
     };
     let best;
     for (const t of targets) {
-      if (!t.holds) continue;
+      if (!t.holds || bot.skip?.has(t.reference)) continue;
       const m = measure(t);
       if (!best || m.d < best.d) best = m;
     }
@@ -457,6 +457,15 @@ var QA_PLAY = engineDev.world.#play;
     // as an actor closes a door it cannot pass.
     bot.stucks = (bot.stucks ?? []).filter((s) => now - s.time < 20000);
     const stuckHere = bot.stucks.filter((s) => Math.hypot(s.at[0] - feet[0], s.at[1] - feet[1]) < 64).length;
+    // Stuck again and again on the way to a target that is no guide (shut twice and still stuck: a quest blocker shuts the
+    // Stormcloak keep door's street to one who came with Hadvar): another shown target, as a
+    // player tries the other marker.
+    if (stuckHere >= 3 && bot.blockedFor === best.t.reference && (bot.blocked?.length ?? 0) >= 2 && bot.guide === undefined && targets.some((t) => t.holds && t.reference !== best.t.reference && !bot.skip?.has(t.reference))) {
+      (bot.skip ??= new Set()).add(best.t.reference);
+      bot.stucks = [];
+      say('the way to ' + best.t.reference.toString(16) + ' is shut: another target');
+      return;
+    }
     if (bot.blockedFor !== best.t.reference) { bot.blocked = []; bot.blockedFor = best.t.reference; }
     if (stuckHere >= 4 && onNav && bot.path?.[0]) {
       const ahead = bot.path[0];
