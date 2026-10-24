@@ -10,7 +10,7 @@
 // favorite as the menu would (GameMenus: the control map's Hotkey1..8). Notes: docs/ui.md
 // ("The item menus").
 
-import { assignHotkey, hotkeyOfKey } from '../gameplay/hotkeys.ts';
+import { assignHotkey, hotkeyOfKey, hotkeyUse } from '../gameplay/hotkeys.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import type { GameSession } from './game-session.ts';
@@ -57,18 +57,25 @@ export class FavoritesMenu {
   }
 
   /**
-   * A hotkey pressed in the game (Hotkey1..8): its favorite is chosen as in the menu (equipped
-   * where it goes, taken off where it is, a potion drunk), if the player still has it.
+   * A hotkey pressed in the game (Hotkey1..8): its favorite is equipped as the engine's
+   * favorites handler does it (gameplay/hotkeys.ts hotkeyUse: a spell to the left hand, again
+   * to the right; a second sword to the other hand; a potion drunk; nothing taken off), with
+   * the UIFavorite sound, if the player still has it.
    */
   async useHotkey(hotkey: number): Promise<void> {
     const runtime = this.#session.scriptsReady;
     if (!runtime) return;
     for (const [formId, key] of runtime.state.hotkeys) {
       if (key !== hotkey || !runtime.state.favorites.has(formId)) continue;
-      const has =
-        (await runtime.itemCount(PLAYER_REF, formId)) > 0 ||
-        (await runtime.actors.spells(PLAYER_REF)).includes(formId);
-      if (has) await this.#select(formId, undefined);
+      const count = await runtime.itemCount(PLAYER_REF, formId);
+      // Spells and shouts the player knows (actors.spells holds both).
+      const known = (await runtime.actors.spells(PLAYER_REF)).includes(formId);
+      const item = await runtime.equipment.describe(formId);
+      if (!item || (count <= 0 && !known && item.counted)) return;
+      const use = hotkeyUse(item, formId, await runtime.equipment.of(PLAYER_REF), count);
+      if (!use.equip) return;
+      await runtime.equipment.equip(PLAYER_REF, formId, use.hand ? { hand: use.hand } : {});
+      void this.#session.sounds().then((sounds) => sounds.playNamed('UIFavorite', undefined));
       return;
     }
   }
