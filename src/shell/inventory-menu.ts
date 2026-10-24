@@ -21,7 +21,12 @@ import {
   itemCategory,
   SOUL_LEVEL_SETTINGS,
 } from '../gameplay/inventory.ts';
-import { temperLevelOfHealth, temperQualityName } from '../gameplay/crafting.ts';
+import {
+  ENCHANTED_VALUE_SETTINGS,
+  enchantedItemValue,
+  temperLevelOfHealth,
+  temperQualityName,
+} from '../gameplay/crafting.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { questItemCount } from '../scripting/runtime/quest-items.ts';
 import { RemoveType } from '../scripting/runtime/story-events.ts';
@@ -321,6 +326,33 @@ export function itemEntry(row: Row): ItemEntry {
   };
 }
 
+/**
+ * An item's value in gold as the menus show it: an enchanted one's with its enchantment
+ * (crafting.ts enchantedItemValue: its cost, a weapon's charge too).
+ */
+export async function itemValue(
+  runtime: ScriptRuntime,
+  settings: GameSettings,
+  item: ItemRecord,
+): Promise<number> {
+  const enchantment =
+    item.enchantment === undefined ? undefined : await runtime.magic.item(item.enchantment);
+  if (!enchantment) return item.value;
+  const d = ENCHANTED_VALUE_SETTINGS;
+  return enchantedItemValue(
+    item.value,
+    {
+      constant: enchantment.castType === 0,
+      cost: await runtime.casting.baseCost(enchantment),
+      charge: item.charge > 0 ? item.charge : (enchantment.enchantment?.amount ?? 0),
+    },
+    {
+      pointsMult: settings.number('fEnchantmentPointsMult') ?? d.pointsMult,
+      effectPointsMult: settings.number('fEnchantmentEffectPointsMult') ?? d.effectPointsMult,
+    },
+  );
+}
+
 /** An item's card (UpdateItemCardInfo): its type's fields. */
 export async function itemCard(
   runtime: ScriptRuntime,
@@ -333,7 +365,7 @@ export async function itemCard(
     type,
     name: row.name ?? item.name,
     count: row.count,
-    value: item.value,
+    value: await itemValue(runtime, settings, item),
     weight: item.weight,
     favorite: row.favorite,
     stolen: false,

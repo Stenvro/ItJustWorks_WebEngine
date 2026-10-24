@@ -12,7 +12,7 @@
 // (resistances there), first past the target's ward (WardPower: it absorbs a hostile spell's
 // damage up to its strength, or breaks and lets the rest through) and its Spell Absorption
 // (AbsorbChance: the spell is absorbed, its cost the target's magicka), then the target hears
-// OnHit and the caster's school is used by the spell's base cost. `area` reaches the actors
+// OnHit and the caster's schools are trained by the effects that took hold. `area` reaches the actors
 // within an effect's area, `explode` those within an explosion's radius (its own enchantment,
 // damage and force). Shouts: the words an actor knows (the player's learned and unlocked,
 // TeachWord / UnlockWord, a dragon soul each), the voice's recovery (ActorState
@@ -25,7 +25,6 @@ import {
   beginCast,
   CASTING_DEFAULTS,
   CASTING_SETTING_NAMES,
-  castSkillUses,
   chargeSeconds,
   itemBaseCost,
   lesserPowerReady,
@@ -45,6 +44,7 @@ import {
   explosionShare,
   explosionSightStart,
   knockdownShareEnough,
+  wardFacesBurst,
   type ExplosionSettings,
 } from '../../gameplay/magic/explosions.ts';
 import { EntryPoint } from '../../gameplay/perk-entry-points.ts';
@@ -803,6 +803,11 @@ export class CastingEngine {
             ...(scale !== undefined && { scale }),
             ...(concentration && { hold: heldSeconds(options.seconds) }),
             ...(options.at && { at: [options.at[0], options.at[1], options.at[2]] }),
+            // A spell cast trains its effects' schools as they take hold (magic-engine.ts).
+            ...(delivered.cost.school !== undefined && {
+              trains: true,
+              seconds: options.seconds,
+            }),
           });
     // The hit is told (TESHitEvent: OnHit): an actor's by a hostile spell that took hold, an
     // object's by any spell that reached it (a brazier lit by Flames, a target struck).
@@ -817,13 +822,6 @@ export class CastingEngine {
         bashAttack: false,
         blocked: false,
       });
-    }
-    // The school is used by the spell's base cost (a concentration spell's: by the time).
-    if (applied > 0 && delivered.cost.school !== undefined) {
-      const { casting } = await this.settings();
-      const uses =
-        castSkillUses(delivered.cost.base, delivered.dual, casting) * (options.seconds ?? 1);
-      await runtime.progression.useSkill(caster, delivered.cost.school, uses);
     }
     return applied + kept.size;
   }
@@ -982,13 +980,29 @@ export class CastingEngine {
       if (effects.length === 0) continue;
       // TODO(M13): line of sight from the point (SPIT 0x80000 "Area Effect Ignores LOS").
       const applied = await this.deliver(delivered, reference, {
-        facing: false,
+        facing: await this.#facesBurst(reference, point),
         effects,
         ...(options.seconds !== undefined && { seconds: options.seconds }),
       });
       if (applied > 0) reached.push(reference);
     }
     return reached;
+  }
+
+  /**
+   * Whether an actor's ward meets a burst (an explosion's, an area's) at a point: it lies within
+   * half of fWardAngleForExplosions of the way the actor faces (explosions.ts wardFacesBurst).
+   */
+  async #facesBurst(reference: number, point: Point): Promise<boolean> {
+    const placement = this.#runtime.world.livePlacement?.(reference);
+    if (!placement) return false;
+    const settings = await this.explosionSettings();
+    return wardFacesBurst(
+      placement.position,
+      placement.rotation?.[2] ?? 0,
+      [point[0], point[1], point[2]],
+      settings,
+    );
   }
 
   /** The explosions' settings (GMSTs), read once. */
@@ -1078,7 +1092,7 @@ export class CastingEngine {
             cost: NO_COST,
           },
           reference,
-          { facing: false },
+          { facing: await this.#facesBurst(reference, point) },
         );
     }
     // Destructible objects: its damage (external), its enchantment's effects on objects (the
