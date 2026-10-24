@@ -285,9 +285,14 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
 - **Its tree** runs from the root (Creation Kit: Procedure Tree; the engine's rules are not
   documented, these are its names'): a Sequence runs its children in order, one whose conditions
   do not hold skipped; a Stacked branch the first child that may run; a Simultaneous branch all
-  of them at once, ending as its first ends (those beside it stop then: the Sleep template
-  finds a bed while it sandboxes, then sleeps; TODO(M13)); a Random branch one that may run,
-  at random. A procedure runs until it
+  those whose conditions hold at once, every update each of them (observed in the original),
+  ending as one of them ends, whichever (those beside it stop then: the Sleep template finds a bed
+  while it sandboxes, then sleeps), or, with PRCB flag 0x2 (xEdit's "Unknown 1"), as all of them
+  have (the Sit template sits and waits; 19 of the 151 vanilla Simultaneous branches have it: `node tools/package-info.ts --simultaneous`). Ended by its first child
+  alone before, the Sit template's search for a seat kept its package running after the Travel
+  beside it, whose success completes the package, had arrived: DialogueRiftenSS02Scene and
+  IvarsteadSSScene never ended. A Random branch runs one that may run, at random. A procedure
+  runs until it
   succeeds or fails; one whose success completes the package (FNAM 0x1) ends it; a branch that
   repeats when complete (PRCB 0x1) starts over. Chosen again (every evaluation, EvaluatePackage)
   while it stays the package chosen, its tree goes on, unless a branch it runs (or, ended, the
