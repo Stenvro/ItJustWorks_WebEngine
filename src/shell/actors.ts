@@ -813,6 +813,18 @@ export class ActorPlacer {
        * again in a new race: the werewolf's graph begins with its change).
        */
       readonly fresh?: boolean;
+      /**
+       * The graph of the body this one replaces (a look change: what it wears, a cut-off
+       * head). In the game what an actor wears changes its 3D while its animation goes on
+       * where it was (one dressed while seated stays seated), so the new body takes the graph
+       * over where its race, sex and behavior project are the same (a prisoner's chop at the
+       * block goes on to its kill); otherwise it gets a new one.
+       */
+      readonly graph?: {
+        readonly behavior: BehaviorRuntime;
+        readonly project: string | undefined;
+        readonly female: boolean;
+      };
     },
   ): Promise<PlacedActor | undefined> {
     const overrides: LookOverrides = {
@@ -954,7 +966,20 @@ export class ActorPlacer {
     // Its behavior graph: started, its first clips loaded, then run on by a moment of its
     // own (actors placed together do not all breathe together).
     let behavior: BehaviorRuntime | undefined;
-    if (behaviors && havok && !dead) {
+    const kept = options?.graph;
+    if (
+      kept &&
+      behaviors &&
+      havok &&
+      !dead &&
+      kept.project === look.behavior &&
+      kept.female === look.female
+    ) {
+      behavior = kept.behavior;
+      // Its cuirass may be another (BSOffsetAnimationGenerator's sheathed weapons).
+      behavior.setVariable('weapAdj', look.weaponAdjust);
+      pose.update(behavior.pose);
+    } else if (behaviors && havok && !dead) {
       const host = animation.host(behaviors, look.female);
       const random = seededRandom(actor.reference);
       // The player's graph is no NPC's (observed in the original: the player's graph is

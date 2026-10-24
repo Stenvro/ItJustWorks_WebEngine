@@ -840,7 +840,14 @@ head is recorded as gone with what the actor wears then (ExtraDismemberedLimbs; 
 saved), and the actor is queued for the cut, which [GamePlay] iActorsDismemberedPerFrame (2)
 actors get each frame. Ours: the armor goes on through the equip system; the look change it
 causes is answered in place (`dressedInPlace`), so a dying body is not made again in the middle
-of its death; anything else worn or taken off meanwhile makes it again.
+of its death; it is asked for every look change until something else is worn or taken off
+(putting the armor on may change what the actor wears in several steps, each told on its own;
+answered for the first alone, a later one made the body again). And a body made again for a look change
+(`ActorStage.lookChanged`) takes its old graph over where its race, sex and behavior project
+are the same, as the game keeps an actor's animation going while what it wears changes: before,
+a new graph started at its idle, and a prisoner made again during the chop at Helgen's block
+stood up headless, then fell. The QA monitor `corpse-rises` catches a dead body's head coming
+up again.
 
 **The cut.** Unless [General] bDisableAllGore:
 
@@ -1191,7 +1198,11 @@ them by name (a variable keeps the first file's initial value). Each frame:
    taken; clips advance by their playback speed (looping, single play, ping-pong, user
    controlled; an enforced duration plays the clip in that time) and raise their triggers
    and the animation's annotations as they pass them (unless the clip's flag 0x10 says not
-   to); a syncing blender (flag 0x1) keeps a cycle of its own and plays everything it blends
+   to), what lies at a clip's start time too on its first step after it became active (the
+   tower wall's opening clip raises Begin at its local time 0: MQ101DragonAttack's stage 103
+   waits for it; of the vanilla behavior files' 881 triggers at a clip's start, none fired before:
+   NPCKillMoveStart 232, 2_KillMoveStart 163, InitiateEnd 62, BeginWeaponDraw 32, BeginWeaponSheathe
+   26, levers', gates' and traps' sounds); a syncing blender (flag 0x1) keeps a cycle of its own and plays everything it blends
    at that phase, advanced by the time over its children's weighted cycle (a clip's at its
    playback speed, a blender's its children's weighted); a syncing blender within one plays
    at the outer one's phase ([Syncing blenders](#syncing-blenders)); modifiers run:
