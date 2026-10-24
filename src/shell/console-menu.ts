@@ -18,6 +18,12 @@ export function isConsoleKey(event: KeyboardEvent): boolean {
 /** What runs the lines typed: the game's commands, or the main menu's few. */
 export interface ConsoleRunner {
   run(line: string): Promise<string[]>;
+  /**
+   * A click on the world below the console (x, y from -1 to 1 across the frame, up positive;
+   * `aspect` its width over its height): the reference there becomes the selected one, as
+   * prid selects it. Resolves to what it prints.
+   */
+  click?(x: number, y: number, aspect: number): Promise<string[]>;
 }
 
 export class ConsoleMenu {
@@ -62,6 +68,28 @@ export class ConsoleMenu {
         if (!isConsoleKey(event) || event.repeat) return false;
         this.hide();
         return true;
+      },
+      // A click on the world below the console picks the reference there (the console's own
+      // part of the screen is its iConsoleSizeScreenPercent at the top).
+      onPointer: (opened, event) => {
+        const box = opened.element?.getBoundingClientRect();
+        const run = commands();
+        if (event.button !== 0 || !box || box.width <= 0 || box.height <= 0 || !run?.click) return;
+        const down = (event.clientY - box.top) / box.height;
+        if (down * 100 < this.#ini.number('Menu', 'iConsoleSizeScreenPercent')) return;
+        const x = ((event.clientX - box.left) / box.width) * 2 - 1;
+        run
+          .click(x, 1 - down * 2, box.width / box.height)
+          .then((lines) => {
+            print(opened, lines);
+          })
+          .catch((error: unknown) => {
+            this.#terminal.log(
+              'ui',
+              `console: ${error instanceof Error ? error.message : String(error)}`,
+              'error',
+            );
+          });
       },
       handlers: {
         ExecuteCommand: (opened, args) => {

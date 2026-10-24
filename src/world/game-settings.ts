@@ -35,6 +35,13 @@ export class GameSettings {
     return this.#strings.get(editorId.toLowerCase());
   }
 
+  /** Sets a setting (the console's setgs). */
+  set(editorId: string, value: number | string): void {
+    const key = editorId.toLowerCase();
+    if (typeof value === 'string') this.#strings.set(key, value);
+    else this.#numbers.set(key, value);
+  }
+
   get size(): number {
     return this.#numbers.size + this.#strings.size;
   }
