@@ -59,7 +59,11 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
   only moves it (Havok recovers penetrations slowly; Rapier's push sent Jorrvaskr's books
   off their shelves). TODO(M13): how far the engine's warm start goes. Settled over 10 s:
   Breezehome, Warmaiden's, Belethor's, the Bannered Mare and the Sleeping Giant keep
-  everything in place; Jorrvaskr 3 books (placed over a shelf's edge).
+  everything in place; Jorrvaskr 3 books (placed over a shelf's edge). A placement a script
+  enables (`PhysicsWorld.setEnabled`) is pushed out so too for its first half second back:
+  MQ101's dead horse, enabled with the dragon's attack against the second cart's back in
+  Helgen's square, was thrown at 14,000 units a second (a test box 15 units into a board left
+  it at 46 units a second, now at 0.1).
 - **Solver:** 8 iterations per step (Rapier's default 4 lets stacks and hinged bodies creep
   and jitter: 34 bodies of Jorrvaskr stayed awake after 10 s, 9 with 8), at the same cost as
   fewer bodies stay awake.
