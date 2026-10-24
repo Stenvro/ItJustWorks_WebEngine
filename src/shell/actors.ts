@@ -53,7 +53,8 @@ import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
 import type { GameSession } from './game-session.ts';
 import { startObjectGraph } from './object-graphs.ts';
-import type { Activatable } from './play-session.ts';
+import { promptTexts, type Activatable } from './play-session.ts';
+import { actorPrompt } from '../gameplay/activation-prompt.ts';
 import type { Terminal } from './terminal.ts';
 import type { SoundInstance } from '../audio/sound-instance.ts';
 
@@ -334,23 +335,44 @@ export function talkTargets(
     hit ??= actorOnRay(actors(), origin, direction, length, radius);
     if (!hit) return undefined;
     const placed = hit.actor;
-    const instead = session()?.hud.uses ? other?.(placed) : undefined;
-    if (instead) {
-      return { distance: hit.distance, target: { ...instead, reference: placed.actor.reference } };
-    }
     const look = placed.look;
-    const name = look.name !== '' ? look.name : look.editorId;
     const hud = session()?.hud;
     const reference = placed.actor.reference;
-    // In Play the dead are searched: their items in the container menu.
-    if (hud?.uses && session()?.scriptsReady?.state.actors.get(reference)?.dead === true) {
-      const uses = hud.uses;
+    const uses = hud?.uses;
+    const runtime = session()?.scriptsReady;
+    const dead = runtime?.state.actors.get(reference)?.dead ?? placed.actor.startsDead;
+    // In Play the engine's prompt (src/gameplay/activation-prompt.ts): the dead searched, a
+    // horse ridden, sneaking the living pickpocketed, those that may talk to the player talked
+    // to; nothing for an actor without a name, a creature, a summon (only whose it is).
+    const facts = uses?.facts?.actor(reference, look.race);
+    const instead = uses && !dead ? other?.(placed) : undefined;
+    const prompt =
+      uses &&
+      actorPrompt({
+        name: look.name,
+        dead,
+        empty: facts?.empty === true,
+        ...(facts?.commander !== undefined && { commander: facts.commander }),
+        // The string tables read are English ("Commander's Name").
+        possessive: true,
+        rideable: instead !== undefined,
+        sneaking: uses.sneaking?.() === true,
+        pickpocketable: facts?.pickpocketable === true,
+        teammate: facts?.teammate === true,
+        talks: facts?.talks ?? false,
+      });
+    if (uses && !prompt) return undefined;
+    if (prompt && instead && 'setting' in prompt.verb && prompt.verb.setting === 'sRide') {
+      return { distance: hit.distance, target: { ...instead, reference } };
+    }
+    const name = look.name !== '' ? look.name : look.editorId;
+    const texts = prompt && promptTexts(prompt, uses);
+    if (uses && texts && dead) {
       return {
         distance: hit.distance,
         corpse: true,
         target: {
-          verb: uses.text('sSearch'),
-          name,
+          ...texts,
           reference,
           activate: () => {
             uses.openContainer(reference, () => undefined);
@@ -358,27 +380,27 @@ export function talkTargets(
         },
       };
     }
-    // Sneaking, the living are pickpocketed (sPickpocket: the container menu on their pockets).
-    const uses = hud?.uses;
-    if (uses?.pickpocket && uses.sneaking?.() === true) {
-      const pickpocket = uses.pickpocket.bind(uses);
+    if (uses && texts && 'setting' in prompt.verb && prompt.verb.setting === 'sPickpocket') {
+      const pickpocket = uses.pickpocket?.bind(uses);
       return {
         distance: hit.distance,
         target: {
-          verb: uses.text('sPickpocket'),
-          name,
+          ...texts,
           reference,
           activate: () => {
-            pickpocket(reference);
+            pickpocket?.(reference);
           },
         },
       };
     }
+    if (uses && texts && 'text' in prompt.verb) {
+      return { distance: hit.distance, target: { ...texts, reference, activate: () => undefined } };
+    }
     return {
       distance: hit.distance,
       target: {
-        verb: hud?.uses?.text('sTalk') ?? 'Talk',
-        name,
+        verb: texts?.verb ?? 'Talk',
+        name: texts?.name ?? name,
         reference,
         activate: () => {
           // In Play: a conversation in the game's dialogue menu, unless a scene it plays in

@@ -631,31 +631,24 @@ export class WorldViewer {
 
   /**
    * What activating a reference does: its scripts get OnActivate; by default load doors take
-   * the player to their destination and doors open (unless a script blocks activation).
-   * References with scripts and no default are activated for the scripts.
+   * the player to their destination and doors open (unless a script blocks activation). One
+   * without a default of its own (an activator) is activated for its scripts.
    */
   #activatable(reference: number): Activatable | undefined {
-    const fallback = this.#defaultActivation(reference);
+    // The crosshair offers what the engine's prompt rule shows (a named activator, door,
+    // container, item, ...; never a static, an unnamed object or a light that is not carried).
+    const target = this.#defaultActivation(reference);
+    if (target?.shown === false) return undefined;
     const runtime = this.#session?.scriptsReady;
-    if (!runtime || (!fallback && !this.#scripted.has(reference))) return fallback;
-    const object = this.#objectOf(reference);
-    if (!object) return fallback;
+    if (!runtime || !target) return target;
     return {
-      verb:
-        fallback?.verb ??
-        object.activateText ??
-        this.#session?.hud.uses?.text('sActivate') ??
-        'Activate',
-      name: fallback?.name ?? object.name,
-      ...(fallback?.item && { item: fallback.item }),
+      ...target,
       activate: () => {
-        if (runtime.playerActivated(reference)) fallback?.activate();
+        if (runtime.playerActivated(reference)) target.activate();
       },
     };
   }
 
-  /** The loaded cells' references with scripts (activating them tells the scripts). */
-  readonly #scripted = new Set<number>();
   #detachScripts: (() => void) | undefined;
   /** What the scripts created in the loaded cells (PlaceAtMe). */
   #created: CreatedObjects | undefined;
@@ -973,17 +966,6 @@ export class WorldViewer {
     }
     // An actor from elsewhere moved into the loaded area.
     await this.#stage?.moved(reference, this.#play?.physics);
-  }
-
-  /** An enabled object of the loaded cells (or one the scripts created). */
-  #objectOf(reference: number): CellObject | undefined {
-    const created = this.#created?.get(reference);
-    if (created) return created.object;
-    for (const cell of this.#cells.values()) {
-      const object = cell.objects.get(reference);
-      if (object) return object;
-    }
-    return undefined;
   }
 
   /** What activating a reference does by default (a load door, a door that opens). */
@@ -1514,7 +1496,7 @@ export class WorldViewer {
       cell.scriptsAttached = true;
       this.#refreshCell(cell);
       const loaded = new Set(this.#cellLoadedReferences(cell));
-      const scripted = await runtime.cellAttached(
+      await runtime.cellAttached(
         [
           ...data.objects.map((object) => object.reference),
           // Triggers (activators with a primitive) hear who enters them.
@@ -1523,7 +1505,6 @@ export class WorldViewer {
         ],
         (reference) => loaded.has(reference),
       );
-      for (const reference of scripted) this.#scripted.add(reference);
       for (const [reference, state] of runtime.state.references) {
         if (!runtime.state.created.has(reference) || !state.position) continue;
         const key = cellKey(
