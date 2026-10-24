@@ -265,6 +265,29 @@ describe('procedures', () => {
     ]);
   });
 
+  it('find searches again while it finds nothing (furniture not there yet)', async () => {
+    const { run, done, found } = harness();
+    let searches = 0;
+    const search = (): Promise<number[]> => {
+      searches++;
+      done.push(`search ${String(searches)}`);
+      return Promise.resolve(searches < 3 ? [] : [0x601]);
+    };
+    expect(
+      await run('Find', [0, 1, 2, 255, 3], [NEAR_HOME, BEDS, FOUND_BED, STEAL], { search }),
+    ).toBe('success');
+    expect(done).toEqual(['search 1', 'search 2', 'search 3']);
+    expect(found.get(FOUND_BED.id)).toEqual([0x601]);
+  });
+
+  it('find gives up when its package stops', async () => {
+    const { run } = harness(new Map(), 2);
+    const search = (): Promise<number[]> => Promise.resolve([]);
+    expect(
+      await run('Find', [0, 1, 2, 255, 3], [NEAR_HOME, BEDS, FOUND_BED, STEAL], { search }),
+    ).toBe('failure');
+  });
+
   it('eat uses up food it carries, else food made for the meal', async () => {
     const { run, done } = harness();
     const food: PackageInput = {

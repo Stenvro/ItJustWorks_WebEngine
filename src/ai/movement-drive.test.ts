@@ -4,7 +4,7 @@ import { DRIVE_HANDLERS, driveOf } from './movement-drive.ts';
 describe('the movement drive', () => {
   it('follows bAnimationDriven and bAllowRotation', () => {
     expect(driveOf(0, 0)).toBe('controller');
-    expect(driveOf(0, 1)).toBe('controller');
+    expect(driveOf(0, 1)).toBe('animation-rotation');
     expect(driveOf(1, 0)).toBe('animation');
     expect(driveOf(1, 1)).toBe('animation-rotation');
   });
