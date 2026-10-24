@@ -153,9 +153,9 @@ export class Page {
       deviceScaleFactor: 1,
       mobile: false,
     });
-    // A focused, visible page: rAF at full rate, the game's keys, no background throttling.
+    // A focused page: rAF at full rate, the game's keys, no background throttling. Emulated only
+    // (no Page.bringToFront): the desktop's own focus stays with whoever uses it.
     await page.send('Emulation.setFocusEmulationEnabled', { enabled: true });
-    await page.send('Page.bringToFront');
     // A game running asks before the page goes (beforeunload): accepted.
     cdp.on('Page.javascriptDialogOpening', (_params, session) => {
       if (session === sessionId)
@@ -343,6 +343,8 @@ export async function startChrome(options: {
     findChrome(),
     [
       '--headless=new',
+      // navigator.webdriver: the page keeps its pointer lock to itself (automation-pointer-lock.ts).
+      '--enable-automation',
       '--mute-audio',
       `--remote-debugging-port=${options.port}`,
       '--enable-unsafe-webgpu',
