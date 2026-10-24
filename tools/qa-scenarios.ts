@@ -908,18 +908,29 @@ export const SCENARIOS: readonly Scenario[] = [
     seconds: 60,
     setup: async (ctx) => {
       await ctx.console('tgm');
-      await sleepMs(40000);
+      // Seated by then (the evening's patrons in their chairs, at the counter).
+      await sleepMs(30000);
+    },
+    // 10 s into the watch, with the monitors on: every actor furniture holds is killed at once
+    // (not awaited: a death's script events take their time).
+    tick: async (ctx) => {
+      ctx.state.ticks = Number(ctx.state.ticks ?? 0) + 1;
+      if (ctx.state.killed === true || Number(ctx.state.ticks) < 10) return false;
+      ctx.state.killed = true;
       const killed = await ctx.page.eval<string>(
-        `(async () => {
+        `(() => {
           const rt = engineDev.play().session.scriptsReady;
-          const stage = (engineDev.world.play ? engineDev.world : engineDev.viewer).actorStage;
+          const viewers = [engineDev.viewer, engineDev.world];
+          const stage = viewers.find((v) => v.actorStage && [...v.actorStage.all()].length > 0)?.actorStage;
+          if (!stage) return '';
           const seated = [...stage.all()].filter((s) => !s.dead && stage.furniture.holds(s.reference));
-          for (const s of seated) await rt.actors.scriptKill(s.reference, 0x14);
+          for (const s of seated) void rt.actors.scriptKill(s.reference, 0x14);
           return seated.map((s) => s.placed.look.editorId).join(', ');
         })()`,
-        60000,
+        30000,
       );
       ctx.note(`killed in furniture: ${killed || 'nobody'}`);
+      return false;
     },
   },
   {
