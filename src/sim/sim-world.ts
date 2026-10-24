@@ -34,6 +34,7 @@ import { DestructionLooks } from '../shell/destruction-looks.ts';
 import { FloraLooks } from '../shell/flora-looks.ts';
 import { GameSession } from '../shell/game-session.ts';
 import { clock as objectClock } from '../shell/object-graphs.ts';
+import { tellSwing } from '../shell/open-close.ts';
 import {
   collisionGroup,
   objectActivation,
@@ -1158,19 +1159,22 @@ export class SimWorld {
     return {
       ...target,
       activate: () => {
-        if (this.runtime.playerActivated(reference)) target.activate();
+        this.runtime.playerActivated(reference, () => {
+          target.activate();
+        });
       },
     };
   }
 
-  #defaultActivation(reference: number): Activatable | undefined {
+  #defaultActivation(reference: number, activator?: number): Activatable | undefined {
     const created = this.#created.get(reference);
     const placed = created ? undefined : this.placed(reference);
     const object = placed?.object ?? created?.object;
     if (!object) return undefined;
-    return objectActivation(
+    const instance = placed?.instance ?? created?.instance;
+    const target = objectActivation(
       object,
-      placed?.instance ?? created?.instance,
+      instance,
       {
         name: (teleport) => this.#destinations.get(teleport.door)?.name ?? '',
         go: (teleport) => {
@@ -1180,7 +1184,28 @@ export class SimWorld {
       (descriptor, at) => void this.session.playSound(descriptor, at),
       this.session.hud.uses,
       this.#seat,
+      activator,
     );
+    const playback = instance?.playback;
+    if (!target || !playback || this.session.hud.uses?.swung) return target;
+    // Without Play's object uses (the HUD's), a door's swing is told here as Play tells it
+    // (OnOpen, OnClose: who activated it).
+    return {
+      ...target,
+      activate: () => {
+        const { sequence, start } = playback;
+        target.activate();
+        if (playback.sequence !== sequence || playback.start !== start) {
+          tellSwing(
+            this.runtime,
+            object.reference,
+            playback,
+            instance.model.sequences,
+            activator ?? PLAYER_REF,
+          );
+        }
+      },
+    };
   }
 
   /** Activating an actor (talking to it, riding a horse): as the crosshair on it does. */
@@ -1297,8 +1322,8 @@ export class SimWorld {
     explosion: (explosion, at, source) => {
       this.#track(this.stage.projectiles.burst(explosion, at, source ?? 0));
     },
-    activate: (reference) => {
-      this.#defaultActivation(reference)?.activate();
+    activate: (reference, activator) => {
+      this.#defaultActivation(reference, activator)?.activate();
     },
     triggerCount: (reference) =>
       (this.#play?.triggerCount(reference) ?? 0) + this.stage.movers.triggerCount(reference),

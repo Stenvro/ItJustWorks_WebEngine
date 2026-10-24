@@ -221,10 +221,10 @@ export class ActorMounts {
       return {
         verb: uses?.text('sRide') ?? 'Ride',
         name,
+        // Its scripts hear it first, as every activation of an actor (talkTargets:
+        // DLC2TameDragonAliasScript.OnActivate ends the tamed dragon's wait), then the player
+        // gets on.
         activate: () => {
-          // Its scripts hear it (DLC2TameDragonAliasScript.OnActivate: the tamed dragon's
-          // wait ends), then the player gets on.
-          session.scriptsReady?.playerActivated(horse);
           void this.mountPlayer(horse);
         },
       };

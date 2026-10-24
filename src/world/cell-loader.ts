@@ -61,6 +61,11 @@ export interface CellObject {
   readonly teleport?: Teleport;
   /** ONAM: a door placed open ("Open by Default"); scripts may shut it since (SetOpen). */
   readonly openByDefault?: boolean;
+  /**
+   * XAPD "Parent Activate Only" (with its Activate Parents, XAPR): only its activate parents
+   * activate it; the player and actors cannot (Creation Kit, Reference > Activate Parents).
+   */
+  readonly parentActivateOnly?: boolean;
   /** Sounds of using it (SNDR): doors and containers opening and closing, activators. */
   readonly sounds?: ObjectSounds;
   /** Carryable items: what the crosshair shows of them (weight and value). */
@@ -788,6 +793,7 @@ export async function loadCellData(
       ...((record.flags & DONT_HAVOK_SETTLE) !== 0 && { dontHavokSettle: true }),
       ...(base.type === 'DOOR' && { teleport: parseTeleport(record) }),
       ...(base.type === 'DOOR' && record.fields.has('ONAM') && { openByDefault: true }),
+      ...(((record.fields.first('XAPD')?.[0] ?? 0) & 1) !== 0 && { parentActivateOnly: true }),
       ...objectSoundsOf(base),
       ...(item && { item: { weight: item.weight, value: item.value } }),
       ...countOf(record),

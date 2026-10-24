@@ -121,6 +121,7 @@ const GAME_EVENT_KINDS: Readonly<Record<GameEventKind, true>> = {
   enterBleedout: true,
   equip: true,
   fastTravelEnd: true,
+  furniture: true,
   grabRelease: true,
   hit: true,
   loadGame: true,

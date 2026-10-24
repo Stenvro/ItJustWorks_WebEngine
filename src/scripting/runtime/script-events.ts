@@ -48,6 +48,7 @@ export const SCRIPT_EVENTS = {
   enterBleedout: ['OnEnterBleedout'],
   equip: ['OnObjectEquipped', 'OnObjectUnequipped', 'OnEquipped', 'OnUnequipped'],
   fastTravelEnd: ['OnPlayerFastTravelEnd'],
+  furniture: ['OnSit', 'OnGetUp'],
   grabRelease: ['OnGrab', 'OnRelease'],
   hit: ['OnHit'],
   loadGame: ['OnPlayerLoadGame'],
@@ -139,6 +140,7 @@ export function relayScriptEvents(host: ScriptEventHost): () => void {
         await send(item, e.equipped ? 'OnEquipped' : 'OnUnequipped', [host.actorHandle(e.actor)]);
     }),
     hub.on('fastTravelEnd', (e) => send(PLAYER_REF, 'OnPlayerFastTravelEnd', [e.hours])),
+    hub.on('furniture', (e) => send(e.actor, e.entered ? 'OnSit' : 'OnGetUp', [ref(e.furniture)])),
     hub.on('grabRelease', (e) => send(e.reference, e.grabbed ? 'OnGrab' : 'OnRelease')),
     hub.on('hit', (e) =>
       send(e.target, 'OnHit', [

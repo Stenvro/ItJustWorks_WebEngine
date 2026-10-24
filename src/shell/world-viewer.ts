@@ -638,7 +638,9 @@ export class WorldViewer {
     return {
       ...target,
       activate: () => {
-        if (runtime.playerActivated(reference)) target.activate();
+        runtime.playerActivated(reference, () => {
+          target.activate();
+        });
       },
     };
   }
@@ -741,8 +743,8 @@ export class WorldViewer {
     explosion: (explosion, at, source) => {
       void this.#stage?.projectiles.burst(explosion, at, source ?? 0);
     },
-    activate: (reference) => {
-      this.#defaultActivation(reference)?.activate();
+    activate: (reference, activator) => {
+      this.#defaultActivation(reference, activator)?.activate();
     },
     triggerCount: (reference) =>
       (this.#play?.triggerCount(reference) ?? 0) +
@@ -963,20 +965,21 @@ export class WorldViewer {
   }
 
   /** What activating a reference does by default (a load door, a door that opens). */
-  #defaultActivation(reference: number): Activatable | undefined {
+  #defaultActivation(reference: number, activator?: number): Activatable | undefined {
     const created = this.#created?.get(reference);
     for (const cell of created ? [] : this.#cells.values()) {
       const object = cell.objects.get(reference);
       if (!object) continue;
       const instance = cell.placed.find((placed) => placed.object === object)?.instance;
-      return this.#objectActivation(object, instance);
+      return this.#objectActivation(object, instance, activator);
     }
-    return created && this.#objectActivation(created.object, created.instance);
+    return created && this.#objectActivation(created.object, created.instance, activator);
   }
 
   #objectActivation(
     object: CellObject,
     instance: ModelInstance | undefined,
+    activator?: number,
   ): Activatable | undefined {
     return objectActivation(
       object,
@@ -988,6 +991,7 @@ export class WorldViewer {
       (descriptor, at) => void this.#session?.playSound(descriptor, at),
       this.#session?.hud.uses,
       this.#seat,
+      activator,
     );
   }
 
