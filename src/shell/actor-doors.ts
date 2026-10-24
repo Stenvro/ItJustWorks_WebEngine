@@ -71,6 +71,11 @@ export class ActorDoors {
     const playback = entry.instance?.playback;
     // Opened by the player (no actor's timer on it): it stays open.
     if (playback?.sequence === 'open' && !this.#closing.has(door)) return 'open';
+    // One only its activate parents open (XAPD: a gate its lever works) is shut to actors.
+    if (entry.object.parentActivateOnly === true && playback?.sequence !== 'open') {
+      this.#remember(actor, door);
+      return 'shut';
+    }
     if (this.#options.session.hud.uses?.lockOf(entry.object) !== undefined) {
       const allowed = this.#allowed(actor, door);
       if (allowed === undefined) return 'opening';
@@ -190,10 +195,21 @@ export class ActorDoors {
     // A door without sequences has nothing to open.
     if (!playback) return 'open';
     if (playback.sequence !== 'open') {
-      this.#play(entry, 'open');
-      playback.sequence = 'open';
-      playback.start = clock();
-      this.#told(door, entry, actor);
+      const swing = (): void => {
+        this.#play(entry, 'open');
+        playback.sequence = 'open';
+        playback.start = clock();
+        this.#told(door, entry, actor);
+      };
+      // An actor opens a door by activating it, the engine's one activation (its scripts'
+      // OnActivate, its activate children): one whose activation a script blocks stays shut.
+      const runtime = this.#options.session.scriptsReady;
+      if (runtime && actor !== undefined) {
+        if (!runtime.activateRef(door, actor, { action: swing })) {
+          this.#remember(actor, door);
+          return 'shut';
+        }
+      } else swing();
     }
     clearTimeout(this.#closing.get(door));
     this.#closing.set(

@@ -75,7 +75,7 @@ export interface ScriptView {
   /** A named node of a shown reference's model: where it is in the world. */
   nodeWorld?(reference: number, node: string): Mat4 | undefined;
   /** What activating a reference does by default (a script's Activate). */
-  activate?(reference: number): void;
+  activate?(reference: number, activator: number | undefined): void;
   /**
    * An actor's look changed (Actor.SetRace; the player's appearance in the race menu): the
    * view makes its 3D again; resolves once it shows the new look.
@@ -395,8 +395,8 @@ export class ScriptWorld implements WorldBridge {
     return undefined;
   }
 
-  activate(reference: number): void {
-    for (const view of this.#views) view.activate?.(reference);
+  activate(reference: number, activator: number | undefined): void {
+    for (const view of this.#views) view.activate?.(reference, activator);
   }
 
   impactEffect(
