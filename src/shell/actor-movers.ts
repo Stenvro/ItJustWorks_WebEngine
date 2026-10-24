@@ -1122,9 +1122,22 @@ export class ActorMovers {
     );
     if (under) return;
     const staged = mover.staged;
-    const back = mover.stood ?? staged.placed.actor.position;
-    const on = this.#options.navmeshes?.()?.nearest?.(back, NAVMESH_REACH);
-    staged.position = on ? [on[0], on[1], on[2]] : [back[0], back[1], back[2]];
+    // Where it last stood; else (it never stood since its controller was made: made over a gap
+    // in the collision, a Markarth inn's floor) the navmesh nearest where it fell, or nearest its
+    // editor place: the first of them with a floor its position check finds.
+    const navmeshes = this.#options.navmeshes?.();
+    const editor = staged.placed.actor.position;
+    const candidates = [
+      mover.stood,
+      navmeshes?.nearest?.([x, y, z], NAVMESH_REACH),
+      navmeshes?.nearest?.(editor, NAVMESH_REACH),
+      editor,
+    ];
+    const to =
+      candidates.find(
+        (point) => point !== undefined && this.#floorUnder(point, character) !== undefined,
+      ) ?? editor;
+    staged.position = [to[0], to[1], to[2]];
     this.teleport(staged);
     this.#placeOnFloor(mover);
     // Its way from where it is now.
@@ -1139,12 +1152,11 @@ export class ActorMovers {
     );
   }
 
-  /** A moved actor's controller set on the floor its position check finds (#add's). */
-  #placeOnFloor(mover: Mover): void {
+  /** The floor's height the position check finds under a point for a controller (#add's). */
+  #floorUnder(point: Vec3, character: CharacterBody): number | undefined {
     const physics = this.#world?.physics;
-    if (!physics?.queriesCurrent) return;
-    const character = mover.character;
-    const [x, y, z] = character.feet;
+    if (!physics?.queriesCurrent) return undefined;
+    const [x, y, z] = point;
     const above = checkAbove(character.shape.height);
     const hit = physics.raycast(
       [x, y, z + above],
@@ -1153,8 +1165,16 @@ export class ActorMovers {
       Layer.charController,
       character.collider,
     );
-    if (!hit) return;
-    character.teleport([x, y, hit.point[2]]);
+    return hit?.point[2];
+  }
+
+  /** A moved actor's controller set on the floor its position check finds. */
+  #placeOnFloor(mover: Mover): void {
+    const character = mover.character;
+    const [x, y] = character.feet;
+    const floor = this.#floorUnder(character.feet, character);
+    if (floor === undefined) return;
+    character.teleport([x, y, floor]);
     character.recover();
     mover.drawn = [...character.feet];
     mover.staged.position = [...character.feet];

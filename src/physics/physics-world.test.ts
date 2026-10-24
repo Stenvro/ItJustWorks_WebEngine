@@ -975,4 +975,36 @@ describe('characters on characters', () => {
   it('are ground to the player, who stands on heads', () => {
     expect(onHead(true)).toBeGreaterThan(100);
   });
+
+  it('leave an NPC on the floor as it presses past another', () => {
+    const physics = new PhysicsWorld(actors, GRAVITY);
+    physics.addObject(collision(body(box([-400, -400, -20], [400, 400, 0]))), IDENTITY, {
+      reference: 1,
+      kind: 'object',
+    });
+    const shape = { radius: 14.42, height: 131.84 };
+    const still = new CharacterBody(physics, shape, settings(new Set()), [0, 0, 0], {
+      reference: 0x20,
+      kind: 'actor',
+    });
+    const walker = new CharacterBody(physics, shape, settings(new Set()), [-10, -80, 0], {
+      reference: 0x21,
+      kind: 'actor',
+    });
+    walker.standsOnActors = false;
+    physics.step(1 / 60);
+    let airborne = 0;
+    for (let i = 0; i < 120; i++) {
+      walker.velocity = [0, 120];
+      still.step(1 / 60);
+      walker.step(1 / 60);
+      physics.step(1 / 60);
+      if (i > 2 && !walker.grounded) airborne++;
+    }
+    expect(airborne).toBe(0);
+    expect(walker.feet[2]).toBeLessThan(5);
+    walker.free();
+    still.free();
+    physics.free();
+  });
 });
