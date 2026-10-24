@@ -76,6 +76,19 @@ export function textureBytes(dds: DdsTexture): number {
   return dds.levels.reduce((sum, level) => sum + level.size, 0);
 }
 
+/** A texture that could not be loaded (TextureCache.takeFailures). */
+export interface TextureFailure {
+  readonly path: string;
+  /** "<path>: <why>", for the log. */
+  readonly text: string;
+  /**
+   * No file holds it and the game's own content names it (a vanilla mesh naming a texture
+   * never shipped: Windhelm's whicedecal01, Alduin's eyes' normal map): the engine draws its
+   * default there too, so it is no fault of the load order (logged as info, not a warning).
+   */
+  readonly gameLacks: boolean;
+}
+
 interface TextureEntry {
   readonly texture: Promise<GPUTexture | undefined>;
   bytes: number;
@@ -93,7 +106,7 @@ export class TextureCache {
   readonly #device: GPUDevice;
   readonly #load: TextureLoader;
   readonly #cache = new Map<string, TextureEntry>();
-  readonly #failures: string[] = [];
+  readonly #failures: TextureFailure[] = [];
   #bytes = 0;
 
   constructor(device: GPUDevice, load: TextureLoader) {
@@ -108,13 +121,17 @@ export class TextureCache {
     };
   }
 
-  /** Paths that failed to load since the last call (for logging). */
-  takeFailures(): string[] {
+  /** Textures that failed to load since the last call (for logging), each once. */
+  takeFailures(): TextureFailure[] {
     return this.#failures.splice(0);
   }
 
-  /** The texture at `path`, or `undefined` if it is missing or broken. */
-  get(path: string): Promise<GPUTexture | undefined> {
+  /**
+   * The texture at `path`, or `undefined` if it is missing or broken (its user draws a
+   * default, as the engine does). `fromGameContent`: the game's own content names it (a model
+   * of its archives), so a missing file is one the game itself lacks.
+   */
+  get(path: string, fromGameContent = false): Promise<GPUTexture | undefined> {
     if (path === '') return Promise.resolve(undefined);
     let entry = this.#cache.get(path);
     if (!entry) {
@@ -126,9 +143,12 @@ export class TextureCache {
             return createGpuTexture(this.#device, dds, path);
           },
           (error: unknown) => {
-            this.#failures.push(
-              `${path}: ${error instanceof Error ? error.message : String(error)}`,
-            );
+            const missing = error instanceof Error && error.name === 'VfsNotFoundError';
+            this.#failures.push({
+              path,
+              text: `${path}: ${error instanceof Error ? error.message : String(error)}`,
+              gameLacks: missing && fromGameContent,
+            });
             return undefined;
           },
         ),

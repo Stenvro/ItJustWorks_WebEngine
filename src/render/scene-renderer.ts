@@ -1867,7 +1867,12 @@ export class SceneRenderer {
           indexBuffer,
           indexCount: part.indices.length,
           pipeline: water ? this.#waterPipeline(part) : this.#pipeline(part, blend),
-          bindGroup: await this.#materialBindGroup(part.material, part.name, textures),
+          bindGroup: await this.#materialBindGroup(
+            part.material,
+            part.name,
+            textures,
+            data.gameContent === true,
+          ),
           pass: water
             ? 'water'
             : refraction
@@ -1891,7 +1896,12 @@ export class SceneRenderer {
       data.particles.map(async (system): Promise<GpuParticleSystem> => ({
         data: system,
         pipeline: this.#particlePipeline(system),
-        bindGroup: await this.#materialBindGroup(system.material, system.name, textures),
+        bindGroup: await this.#materialBindGroup(
+          system.material,
+          system.name,
+          textures,
+          data.gameContent === true,
+        ),
       })),
     );
     const texturePaths = new Set<string>();
@@ -3227,10 +3237,12 @@ export class SceneRenderer {
     material: PartMaterial | undefined,
     label: string,
     textures: TextureCache,
+    /** The model is the game's own (a texture it names that is missing, the game lacks). */
+    fromGameContent = false,
   ): Promise<GPUBindGroup> {
     const { defaults } = textures;
     const [diffuse, normal, glow, env, envMask, slot7, slot6, detail] = await Promise.all(
-      materialTextures(material).map((path) => textures.get(path)),
+      materialTextures(material).map((path) => textures.get(path, fromGameContent)),
     );
     // The engine's directional material textures (not held by models: never evicted).
     const [projectedDiffuse, projectedNormal, projectedNoise] =

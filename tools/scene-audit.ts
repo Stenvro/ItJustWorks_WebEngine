@@ -10,6 +10,8 @@
 //   node tools/scene-audit.ts --quest MQ101                    every scene of a quest
 //   node tools/scene-audit.ts --quest MQ101 --trace run.log    and the deviations of a trace
 //   node tools/scene-audit.ts --trace run.log                  every scene the trace saw
+//   node tools/scene-audit.ts --starts Riften                  how town scenes start: their
+//       quests' start, the trigger boxes naming them, their first phases' waits ('.' for all)
 //
 // docs/ai.md ("Scenes", "Checking a scene against its data").
 
@@ -30,27 +32,32 @@ import {
 import {
   parseScene,
   SceneActorFlag,
+  SceneFlag,
   type SceneAction,
   type SceneRecord,
 } from '../src/ai/scene-records.ts';
+import { parseVmad, referencedForms } from '../src/formats/esm/vmad.ts';
 import { conditionFunctionName } from '../src/scripting/condition-functions.ts';
 import { ConditionRunOn, type Condition } from '../src/scripting/conditions.ts';
+import { triggerEnterAsksForPlayer } from '../src/scripting/runtime/trigger-gates.ts';
 import { parseReference } from '../src/world/cell-records.ts';
 import { DialogueIndex } from '../src/world/dialogue.ts';
 import {
   AliasFlag,
   parseQuest,
+  QuestFlag,
   type QuestAlias,
   type QuestRecord,
 } from '../src/world/quest-records.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
+import { parseStoryNode, type StoryNode } from '../src/world/story-manager-records.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { openGameFolder } from './gamedata-path.ts';
 
 const { values, positionals } = parseArgs({
   args: process.argv.slice(2),
   allowPositionals: true,
-  options: { quest: { type: 'string' }, trace: { type: 'string' } },
+  options: { quest: { type: 'string' }, trace: { type: 'string' }, starts: { type: 'string' } },
 });
 
 const vfs = await Vfs.mount(openGameFolder());
@@ -111,7 +118,13 @@ async function conditionText(
       : condition.form
         ? await editorId(condition.form)
         : '';
-  const param2 = condition.param2 !== 0 ? `, ${String(condition.param2)}` : '';
+  // A Papyrus variable's name (GetVMQuestVariable's CIS2) where the function takes one.
+  const param2 =
+    condition.strings.length > 0
+      ? `, ${condition.strings.join(', ')}`
+      : condition.param2 !== 0
+        ? `, ${String(condition.param2)}`
+        : '';
   return `${on}${name}(${first}${param2}) ${OPERATORS[condition.operator] ?? '?'} ${comparand}${condition.or ? ' OR' : ''}`;
 }
 
@@ -870,7 +883,153 @@ async function sceneId(name: string): Promise<number | undefined> {
   return sceneIds.get(name);
 }
 
+// --- How town scenes start ------------------------------------------------------------------
+
+/**
+ * Every quest with scenes that the Actor Dialogue event does not start (town and street
+ * scenes, intros, bards; docs/ai.md "Town scenes"): how it starts (with the game, by a story
+ * manager event, by scripts only), the trigger boxes whose scripts name it or its scenes and
+ * whether they wait for the player (src/scripting/runtime/trigger-gates.ts), and what each
+ * scene's first phase waits for. `pattern` filters the quests by editor id.
+ */
+async function printStarts(pattern: RegExp | undefined): Promise<void> {
+  const events = new Map<number, Set<string>>();
+  const nodes = new Map<number, StoryNode>();
+  for (const type of ['SMEN', 'SMBN', 'SMQN']) {
+    for (const formId of db.formIdsOfType(type)) {
+      const record = await db.get(formId);
+      if (record && !record.deleted) nodes.set(formId, parseStoryNode(record));
+    }
+  }
+  for (const node of nodes.values()) {
+    let root: StoryNode | undefined = node;
+    while (root && root.kind !== 'event') root = nodes.get(root.parent);
+    for (const { quest } of node.quests) {
+      const set = events.get(quest) ?? new Set<string>();
+      set.add(root?.event ?? '?');
+      events.set(quest, set);
+    }
+  }
+  const byQuest = new Map<number, SceneRecord[]>();
+  for (const formId of db.formIdsOfType('SCEN')) {
+    const record = await db.get(formId);
+    if (!record || record.deleted) continue;
+    const scene = parseScene(record);
+    if (scene.quest === undefined) continue;
+    byQuest.set(scene.quest, [...(byQuest.get(scene.quest) ?? []), scene]);
+  }
+  // The trigger boxes (references with a primitive) whose scripts name a quest or scene.
+  const sceneIds = new Set([...byQuest.values()].flat().map((scene) => scene.formId));
+  const triggers = new Map<number, { reference: number; scripts: string[]; cell: number }[]>();
+  const enterAsks = new Map<string, Promise<boolean>>();
+  const asksForPlayer = (name: string): Promise<boolean> => {
+    const key = name.toLowerCase();
+    let found = enterAsks.get(key);
+    if (!found) {
+      found = triggerEnterAsksForPlayer(key, (script) => db.script(script));
+      enterAsks.set(key, found);
+    }
+    return found;
+  };
+  const scripted: { reference: number; base: number; cell: number; vmad?: Uint8Array }[] = [];
+  await db.scan(
+    ['REFR'],
+    () => true,
+    (record) => {
+      if (record.deleted || !record.fields.has('XPRM')) return;
+      const location = db.locate(record.formId);
+      const group = location && db.parentGroup(location);
+      const vmad = record.fields.first('VMAD');
+      scripted.push({
+        reference: record.formId,
+        base: record.formIdField('NAME') ?? 0,
+        cell: group?.label ?? 0,
+        ...(vmad && { vmad: vmad.slice() }),
+      });
+    },
+  );
+  for (const placed of scripted) {
+    const named = new Set<number>();
+    const scripts: string[] = [];
+    const found = { player: false };
+    const read = async (formId: number, data: Uint8Array | undefined): Promise<void> => {
+      const record = await db.get(formId);
+      if (!record || !data) return;
+      for (const script of parseVmad(data, record.type).scripts) {
+        const forms = referencedForms(script).map((local) =>
+          record.formIdAt(Uint8Array.of(local, local >>> 8, local >>> 16, local >>> 24)),
+        );
+        if (!forms.some((form) => byQuest.has(form) || sceneIds.has(form))) continue;
+        for (const form of forms) named.add(form);
+        found.player ||= forms.includes(0x14) || (await asksForPlayer(script.name));
+        scripts.push(script.name);
+      }
+    };
+    await read(placed.reference, placed.vmad);
+    const base = await db.get(placed.base);
+    await read(placed.base, base?.fields.first('VMAD'));
+    for (const form of named) {
+      const quest = byQuest.has(form)
+        ? form
+        : [...byQuest].find(([, scenes]) => scenes.some((s) => s.formId === form))?.[0];
+      if (quest === undefined) continue;
+      const list = triggers.get(quest) ?? [];
+      if (!list.some((entry) => entry.reference === placed.reference)) {
+        list.push({
+          reference: placed.reference,
+          scripts: found.player ? scripts.map((name) => `${name}, for the player`) : scripts,
+          cell: placed.cell,
+        });
+      }
+      triggers.set(quest, list);
+    }
+  }
+  const counts = new Map<string, number>();
+  for (const [questId, scenes] of byQuest) {
+    const record = await db.get(questId);
+    if (!record) continue;
+    const quest = parseQuest(record);
+    const started = events.get(questId) ?? new Set<string>();
+    if (started.has('ADIA') || quest.event === 'ADIA') continue;
+    if (pattern && !pattern.test(quest.editorId)) continue;
+    const how = [
+      (quest.flags & QuestFlag.startGameEnabled) !== 0 ? 'with the game' : '',
+      started.size > 0 ? `by the story manager (${[...started].join(', ')})` : '',
+    ].filter((part) => part !== '');
+    const kind = how.length > 0 ? how.join(' and ') : 'by scripts only';
+    counts.set(kind, (counts.get(kind) ?? 0) + 1);
+    console.log(`${quest.editorId} [${hex(questId)}]: starts ${kind}`);
+    for (const trigger of triggers.get(questId) ?? []) {
+      const at = parseReference((await db.get(trigger.reference)) ?? record).position;
+      const cell = await editorId(trigger.cell);
+      console.log(
+        `  trigger ${await editorId(trigger.reference)} (${trigger.scripts.join('; ')}) in ${cell} at ${at.map(Math.round).join(',')}`,
+      );
+    }
+    for (const scene of scenes) {
+      const flags = [
+        (scene.flags & SceneFlag.beginOnQuestStart) !== 0 ? 'begins with its quest' : '',
+        (scene.flags & SceneFlag.repeatConditionsWhileTrue) !== 0 ? 'repeats' : '',
+      ].filter((part) => part !== '');
+      const first = scene.phases[0];
+      const waits = first ? await conditionsText(first.completionConditions, quest) : '';
+      const holds = await conditionsText(scene.conditions, quest);
+      console.log(
+        `  ${scene.editorId}${flags.length > 0 ? ` (${flags.join(', ')})` : ''}${holds ? `; plays while ${holds}` : ''}; its first phase waits for ${waits || 'its actions'}`,
+      );
+    }
+  }
+  console.log(
+    `\n${[...counts].map(([kind, count]) => `${String(count)} start ${kind}`).join('; ')}`,
+  );
+}
+
 // --- Main -----------------------------------------------------------------------------------
+
+if (values.starts !== undefined) {
+  await printStarts(values.starts === '' ? undefined : new RegExp(values.starts, 'i'));
+  process.exit(0);
+}
 
 const scenes: SceneRecord[] = [];
 if (values.quest) {

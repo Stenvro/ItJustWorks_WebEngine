@@ -329,6 +329,11 @@ export class SoundSystem {
    * 3D dialogue output model; `atListener`: the 2D one, spoken in the player's head: Say's
    * abSpeakInPlayersHead). Undefined if the file cannot be read.
    */
+  /** Whether a file holds the sound (any of its names: .fuz, .xwm, .wav). */
+  hasFile(path: string): boolean {
+    return this.#loader.find(path) !== undefined;
+  }
+
   async voiceLine(path: string, atListener = false): Promise<VoiceLine | undefined> {
     const sound = await this.buffer(path);
     if (!sound) return undefined;
