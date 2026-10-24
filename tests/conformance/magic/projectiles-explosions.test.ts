@@ -101,10 +101,16 @@ describe.skipIf(!hasGamedata())('a ward against a fireball’s burst (sim)', () 
     };
     runtime.actors.modifyTemporary(target.reference, WARD_POWER, 200);
     const before = await health();
+    const applied = (): number =>
+      sim.events('magicEffectApply').filter((event) => event.target === target.reference).length;
+    const told = applied();
     await runtime.casting.area(delivered, ahead);
     expect(await health()).toBe(before);
+    // The ward took it all: no effect took hold, none was told (OnMagicEffectApply).
+    expect(applied()).toBe(told);
     await runtime.casting.area(delivered, behind);
     expect(before - (await health())).toBeGreaterThanOrEqual(40);
+    expect(applied()).toBeGreaterThan(told);
     runtime.actors.modifyTemporary(target.reference, WARD_POWER, -200);
   }, 120_000);
 });
