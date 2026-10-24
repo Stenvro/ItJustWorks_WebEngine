@@ -201,6 +201,32 @@ describe('the behavior runtime', () => {
     expect(runtime.pose[0]).toBeCloseTo(0.2);
   });
 
+  it("raises a clip's trigger at its start as the clip starts, once", () => {
+    const once: BehaviorGenerator = {
+      ...(clip('open') as Extract<BehaviorGenerator, { kind: 'clip' }>),
+      mode: 0,
+      triggers: [
+        {
+          localTime: 0,
+          event: { id: 0 },
+          relativeToEndOfClip: false,
+          acyclic: false,
+          isAnnotation: false,
+        },
+      ],
+    };
+    const runtime = new BehaviorRuntime({
+      root: graph(once, ['Begin']),
+      host: host({ open: animation(0, 1) }),
+      skeleton,
+    });
+    runtime.update(0);
+    expect(names(runtime.takeRaised())).toEqual(['Begin']);
+    runtime.update(0.3);
+    runtime.update(0.3);
+    expect(names(runtime.takeRaised())).toEqual([]);
+  });
+
   it('keeps playing what a state left at once shares with another active parent', () => {
     // The bow attack's shape: a blend of the lower body (standing holds the arms' draw too,
     // moving does not) and the arms' draw; a step from standing to moving keeps the draw going.
