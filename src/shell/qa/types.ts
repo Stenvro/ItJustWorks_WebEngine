@@ -22,6 +22,10 @@ export type QaKind =
   | 'glide'
   /** The graph's root-motion speed and the actor's real speed disagree. */
   | 'speed-mismatch'
+  /** Its legs walk at another pace than it goes (a gait out of its speed band: foot sliding). */
+  | 'foot-slide'
+  /** Its drawn body pitches or rolls back and forth as it goes (a rocking horse). */
+  | 'rocking'
   /** A state machine changes state many times a second. */
   | 'state-chatter'
   /** One clip restarts many times a second before it gets anywhere ("hangs in one step"). */
@@ -81,6 +85,8 @@ export type QaKind =
 export const KIND_SYSTEM: Readonly<Record<QaKind, QaSystem>> = {
   glide: 'locomotion',
   'speed-mismatch': 'locomotion',
+  'foot-slide': 'locomotion',
+  rocking: 'locomotion',
   'state-chatter': 'animation',
   'clip-restart': 'animation',
   'move-chatter': 'locomotion',
@@ -165,6 +171,26 @@ export interface QaThresholds {
   readonly mismatchRelative: number;
   /** …for this long (seconds). */
   readonly mismatchSeconds: number;
+  /** Foot sliding: moving at least this fast (game units per second)… */
+  readonly footSlideSpeed: number;
+  /** …its speed and its graph's root-motion speed (each over a second) apart by this factor… */
+  readonly footSlideRatio: number;
+  /** …and by more than this (game units per second)… */
+  readonly footSlideAbsolute: number;
+  /** …for this long (seconds). */
+  readonly footSlideSeconds: number;
+  /** Rocking: a swing of the drawn lean is a turn back by at least this (degrees)… */
+  readonly rockAmplitude: number;
+  /** …this many swings within two seconds rock… */
+  readonly rockSwings: number;
+  /**
+   * …nearer together on its way than this on average (game units: a body cannot follow ground
+   * that rises and falls within its own length; a gallop over rough ground swings as often in
+   * time, but far apart on its way)…
+   */
+  readonly rockSpacing: number;
+  /** …for this long (seconds). */
+  readonly rockSeconds: number;
   /** State changes of one machine per second that count as chatter. */
   readonly stateChangesPerSecond: number;
   /** Restarts of one clip per second that count as hanging in one step. */
@@ -223,6 +249,14 @@ export const DEFAULT_THRESHOLDS: QaThresholds = {
   mismatchAbsolute: 80,
   mismatchRelative: 0.6,
   mismatchSeconds: 1.5,
+  footSlideSpeed: 40,
+  footSlideRatio: 1.35,
+  footSlideAbsolute: 25,
+  footSlideSeconds: 1.5,
+  rockAmplitude: 6,
+  rockSwings: 3,
+  rockSpacing: 200,
+  rockSeconds: 0.5,
   stateChangesPerSecond: 8,
   clipRestartsPerSecond: 5,
   clipRestartReach: 0.2,
