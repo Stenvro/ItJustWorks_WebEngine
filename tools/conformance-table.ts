@@ -21,6 +21,8 @@ export interface MapSystem {
 export interface CaseResult {
   readonly title: string;
   readonly status: string;
+  /** The line of the suite file the case is declared on (the reporter's task location). */
+  readonly line?: number;
 }
 
 /** A suite file's results. */
@@ -30,6 +32,11 @@ export interface SuiteResult {
   readonly cases: readonly CaseResult[];
   /** The titles of its it.fails cases (known differences), read from its source. */
   readonly knownDifferences: ReadonlySet<string>;
+  /**
+   * The lines its it.fails calls are on: a case declared there is a known difference whatever
+   * its title (a template string, or one made in a loop, which the source cannot spell out).
+   */
+  readonly knownDifferenceLines?: ReadonlySet<number>;
 }
 
 export interface SystemCounts {
@@ -103,6 +110,15 @@ export function knownDifferenceTitles(source: string): Set<string> {
   return titles;
 }
 
+/** The lines (1-based) a suite's it.fails and test.fails calls are on. */
+export function knownDifferenceLines(source: string): Set<number> {
+  const lines = new Set<number>();
+  for (const match of source.matchAll(/\b(?:it|test)\.fails\(/g)) {
+    lines.add(source.slice(0, match.index).split('\n').length);
+  }
+  return lines;
+}
+
 /** A suite file's area and system slugs (tests/conformance/<area>/<system>.test.ts). */
 export function suiteSlugs(file: string): { area: string; slug: string } | undefined {
   const match = /conformance[\\/]([^\\/]+)[\\/]([^\\/]+?)(?:\.int)?\.test\.ts$/.exec(file);
@@ -117,10 +133,13 @@ export function countSuite(suite: SuiteResult): SystemCounts {
   let fixed = 0;
   let todo = 0;
   let skipped = 0;
-  for (const { title, status } of suite.cases) {
+  for (const { title, status, line } of suite.cases) {
     if (status === 'todo') todo++;
     else if (status === 'skipped' || status === 'pending' || status === 'disabled') skipped++;
-    else if (suite.knownDifferences.has(title)) {
+    else if (
+      suite.knownDifferences.has(title) ||
+      (line !== undefined && suite.knownDifferenceLines?.has(line) === true)
+    ) {
       // it.fails: "passed" means it still fails as written; "failed" means it passes now.
       if (status === 'passed') differs++;
       else fixed++;

@@ -6,7 +6,7 @@
 // furniture's enters and exits, mounts' ends); this module registers them all in one place and
 // implements the handlers no system owns: the movement drive, death into the ragdoll, the
 // camera's shake and animated cameras, the character's pitch and bumper, dialogue idle locks,
-// summons, activation; animation objects go to their module, PickNewIdle to a hook.
+// summons, activation; animation objects and ambient idles (PickNewIdle) go to their modules.
 
 import {
   GraphEventDispatch,
@@ -94,6 +94,26 @@ const PAIRED_END_SLACK = 0.05;
 const DEATH_ACTIONS = ['ActionDeath', 'ActionDeathWait'] as const;
 /** The events a death idle sends that drop the actor as a ragdoll at once. */
 const RAGDOLL_EVENTS = new Set(['ragdoll', 'ragdollinstant']);
+/**
+ * The flight handler classes the flight system answers by their events' names (src/ai/
+ * flight.ts flyingStateOf, src/shell/actor-flight.ts): observed in the original, each of
+ * the state handlers sets the flier's flying state (take-off, cruising, hovering, landing,
+ * perching, an action, landed: none), the action's entry end and grab and release go to its
+ * flight action. FlightLandEnd, FlightActionEnd and FlightCrashLandStart are not answered yet
+ * (tests/conformance/animation/engine-handlers.test.ts).
+ */
+const HEARD_BY_FLIGHT = [
+  'FlightTakeOffHandler',
+  'FlightCruisingHandler',
+  'FlightHoveringHandler',
+  'FlightLandingHandler',
+  'FlightPerchingHandler',
+  'FlightLandHandler',
+  'FlightActionHandler',
+  'FlightActionEntryEndHandler',
+  'FlightActionGrabHandler',
+  'FlightActionReleaseHandler',
+];
 /** An NPC's activation waits this long for its graph's ActivationDone at most (seconds). */
 const ACTIVATION_WAIT = 3;
 
@@ -362,9 +382,15 @@ export class ActorGraphEvents {
     d.handle('AnimationObjectDrawHandler', (source, event) => {
       stage.animObjects.animObject(source.reference, 'draw', event.payload);
     });
+    // The classes the systems answer from their listeners above, by the events' names.
+    for (const handler of HEARD_BY_FLIGHT) d.heardBy(handler, 'flight');
+    d.heardBy('GetUpStartHandler', 'knockdowns');
+    d.heardBy('GetUpEndHandler', 'knockdowns');
+    d.heardBy('ExitCartBeginHandler', 'vehicles');
+    d.heardBy('ExitCartEndHandler', 'vehicles');
     // Ambient idles: the graph asks for a new idle.
     d.handle('PickNewIdleHandler', (source) => {
-      stage.pickNewIdle?.(source.reference);
+      if (!source.player) stage.ambientIdles.pickNewIdle(source.reference);
     });
   }
 
