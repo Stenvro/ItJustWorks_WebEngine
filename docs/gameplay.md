@@ -902,6 +902,15 @@ tools/crime-info.ts` lists the crime factions with their values, jails and chest
 - The faction a crime goes to: the victim's crime faction (`Actor.GetCrimeFaction`, NPC\_ CRIF),
   else an owner's (an NPC\_'s CRIF, an owning faction that tracks crime), else the place's (its
   location's or the nearest parent's LCTN FNAM).
+- An assault or a murder goes only to the victim's own crime faction (none for a commanded
+  actor: CommonLibSSE `GetCrimeFactionImpl`) or its owner's (the reference's XOWN), never the
+  place's (`CrimeEngine.victimCrimeFaction`): a creature nobody owns is no one's to avenge, and
+  killing it is no crime (no bounty, no Murders stat, the Kill Actor story event's crime status
+  0). From the data: no animal base has a CRIF, the farms' and inns' animals are owned (56 of the
+  102 placed chickens), none of the 69 placed wolves (TODO(M13): the owner step is inferred).
+- Observed in the original: "Crime Gold: Use Defaults" puts iCrimeGoldMurder,
+  iCrimeGoldAttack, fCrimeGoldSteal, iCrimeGoldTrespass, iCrimeGoldPickpocket and
+  iCrimeGoldEscape in place of the faction's CRVA as it loads; its werewolf value stays its own.
 - The interior jail: the prison marker (PrisonMarker, 0x4) in the evidence chest's cell, else in
   an interior the faction owns, else in the jail of a faction of its crime group sharing its
   exterior marker (the Dark Brotherhood's targets), else whose interior's location lies up the

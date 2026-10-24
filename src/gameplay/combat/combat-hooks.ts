@@ -16,11 +16,11 @@ export interface AttackKind {
 }
 
 /**
- * The chance (0..1) of a critical hit: the attacker's perks' chance in percent (Calculate My
- * Critical Hit Chance: Bladesman, Critical Shot, Critical Charge; 0 without) times the
- * weapon's critical multiplier (CRDT % Mult), times what the target's perks leave of it (Mod
- * Enemy Critical Hit Chance; 1: all). TODO(M13): whether the engine has a base chance without
- * perks (UESP: critical hits come from the perks).
+ * The chance (0..1) of a critical hit: the attacker's chance in percent, its Critical Chance
+ * actor value (CommonLibSSE ActorValue CriticalChance, 33; 0 for every race and actor) as its
+ * perks change it (Calculate My Critical Hit Chance: Bladesman, Critical Shot, Critical Charge),
+ * times the weapon's critical multiplier (CRDT % Mult), times what the target's perks leave of
+ * it (Mod Enemy Critical Hit Chance; 1: all).
  */
 export function criticalHitChance(perkPercent: number, critMult: number, enemyMult = 1): number {
   return Math.min(1, Math.max(0, (perkPercent / 100) * critMult * enemyMult));

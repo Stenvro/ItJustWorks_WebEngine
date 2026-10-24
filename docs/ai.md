@@ -1245,7 +1245,11 @@ plays one on a clock (its conditions taken to hold, lines as long as their text,
 after `--package-seconds`).
 
 - **Starting:** Scene.Start and ForceStart, and a quest's start for its scenes that begin on
-  quest start (a stage fragment or the story manager starting the quest starts them). A scene
+  quest start (a stage fragment or the story manager starting the quest starts them). Observed in
+  the original: Start only marks the scene active (IsPlaying answers true at once); it
+  begins in the scene system's next update. So a scene started from the end fragment of one its
+  actor cannot play starts one a frame, not endlessly (the bards' songs while the bard fights:
+  combat ends each at once, and its end fragment plays the next song). A scene
   starts if its quest runs, its conditions hold (run on the player) and every actor that is not
   optional is there: the reference its alias holds, alive, or dead and done with unless its
   death ends the scene (MQ101AlduinAttackScene1 casts StormcloakPrisoner01, beheaded in Scene4
@@ -1816,11 +1820,17 @@ meanwhile.
   damage blocked × fStaggerBlockMult.
 - **Staggers** (`stagger.ts`): the weapon's stagger (DNAM: swords 0.75 .. warhammers 1.25;
   bashes and fists 1) × the attack's (ATKD: plain attacks 0, power attacks 1, bashes 0.5),
-  weighed against the target's mass (RACE DATA: humans 1, trolls 3.5, giants 4) as
-  fStaggerMassOffsetBase / (fStaggerMassOffsetBase + mass − 1), the player's mass ×
-  fStaggerPlayerMassMult; the graph gets staggerMagnitude (its blend plays the smallest to the
-  largest stagger) and staggerDirection (where the blow came from, clockwise from the facing in
-  turns: 0 StaggerBack, 0.5 StaggerForward). TODO(M13): the engine's formula is not documented.
+  weighed against the target's Mass actor value (its race's base mass: humans 1, trolls 3.5,
+  giants 4; the player's × fStaggerPlayerMassMult). Observed in the original: a hit's is
+  that / (fStaggerMassMult × Mass + fStaggerMassBase) − max(0, (Mass − fStaggerMassOffsetBase) ×
+  fStaggerMassOffsetMult), plus the archer's Bow Stagger Bonus actor value for a bow's or
+  crossbow's shot; a bash's is (Block × fStaggerAttackMult + fStaggerAttackBase) / (the same
+  weight of the target's own Mass) × fStaggerRecoilingMult if it recoils × fStaggerRunningMult if
+  it runs × fStaggerBlockingMult if it blocks × the gear's (fStaggerShieldMult, fStagger2WeapMult
+  for two-handed weapons and bows, fStagger1WeapMult) × the bash's stagger, at least fStaggerMin.
+  The graph gets staggerMagnitude (its blend plays the smallest to the largest stagger) and
+  staggerDirection (where the blow came from, clockwise from the facing in turns: 0
+  StaggerBack, 0.5 StaggerForward).
   The Stagger effect (MGEF archetype 33: Unrelenting Force's 0.75, 1.25, 1.5; the Incinerate
   and Ice Spike perks' push 0.25; the giants' and atronachs' area slams) staggers by its
   magnitude weighed so against the target's mass, from its caster's side.

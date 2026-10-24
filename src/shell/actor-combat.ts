@@ -103,7 +103,12 @@ import { ARROW_TILT, tiltUp, WORLD_GRAVITY } from '../gameplay/combat/projectile
 import { anglesOf, directionOf, npcSpread } from '../gameplay/combat/aim.ts';
 import { ProjectileFlag } from '../world/projectile-data.ts';
 import type { AimTarget, ProjectileAim, ShotKind } from './projectile-aim.ts';
-import { blockStagger, recoilOf, staggerMagnitude } from '../gameplay/combat/stagger.ts';
+import {
+  bashStagger,
+  blockStagger,
+  recoilOf,
+  staggerMagnitude,
+} from '../gameplay/combat/stagger.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import { transformPoint, type Mat4, type Vec3 } from '../render/math.ts';
 import type { RenderPort } from '../render/render-port.ts';
@@ -1992,13 +1997,14 @@ export class ActorCombat implements CombatBridge {
         context,
       );
     }
-    // A critical hit: the perks' chance (and the target's against it), the weapon's critical
-    // damage (fists: × the setting) as the perks change it.
+    // A critical hit: the attacker's Critical Chance actor value (percent) as its perks change
+    // it (and the target's against it), the weapon's critical damage (fists: × the setting) as
+    // the perks change it.
     const chance = criticalHitChance(
       await perks.apply(
         EntryPoint.calculateMyCriticalHitChance,
         attackerRef,
-        0,
+        (await runtime.actors.value(attackerRef, ActorValue.criticalChance)).current,
         [weapon, targetRef],
         context,
       ),
@@ -2135,19 +2141,52 @@ export class ActorCombat implements CombatBridge {
         result.blockedDamage * (shielded ? 2 : 1),
       );
     } else {
-      const stagger = staggerMagnitude(
-        {
-          weaponStagger: hit.bash || stats?.weapon === undefined ? 1 : stats.stagger,
-          attackStagger: hit.shot ? 0 : data.stagger,
-          // The attacker's perks (Mod Target Stagger) and the target's (Mod Incoming Stagger).
-          perkMult:
-            (await perks.apply(EntryPoint.modTargetStagger, attackerRef, 1, [targetRef])) *
-            (await perks.apply(EntryPoint.modIncomingStagger, targetRef, 1, [attackerRef])),
-          targetMass: targetGear?.race?.mass ?? 1,
-          targetIsPlayer: target.player,
-        },
-        settings,
-      );
+      // The target's Mass actor value (its race's base mass, as scripts left it).
+      const targetMass = (await runtime.actors.value(targetRef, ActorValue.mass)).current;
+      // The attacker's perks (Mod Target Stagger) and the target's (Mod Incoming Stagger).
+      const perkMult =
+        (await perks.apply(EntryPoint.modTargetStagger, attackerRef, 1, [targetRef])) *
+        (await perks.apply(EntryPoint.modIncomingStagger, targetRef, 1, [attackerRef]));
+      const ranged =
+        stats?.weaponType === WeaponType.bow || stats?.weaponType === WeaponType.crossbow;
+      const bashedWith =
+        gear?.shield !== undefined && (stats?.weapon === undefined || left)
+          ? 'shield'
+          : stats?.weapon === undefined
+            ? 'none'
+            : stats.weaponType >= WeaponType.twoHandSword && stats.weaponType !== WeaponType.staff
+              ? 'twoHanded'
+              : 'oneHanded';
+      const stagger = hit.bash
+        ? bashStagger(
+            {
+              gear: bashedWith,
+              blockSkill,
+              attackStagger: data.stagger * perkMult,
+              targetMass,
+              running: this.#options.movers.motion(targetRef)?.running === true,
+              recoiling: target.state.recoiling,
+              blocking: target.state.blocking,
+            },
+            settings,
+          )
+        : staggerMagnitude(
+            {
+              weaponStagger: stats?.weapon === undefined ? 1 : stats.stagger,
+              attackStagger: hit.shot ? 0 : data.stagger,
+              perkMult,
+              targetMass,
+              targetIsPlayer: target.player,
+              // A shot of a bow or crossbow: the attacker's Bow Stagger Bonus.
+              ...(hit.shot &&
+                ranged && {
+                  bowStaggerBonus: (
+                    await runtime.actors.value(attackerRef, ActorValue.bowStaggerBonus)
+                  ).current,
+                }),
+            },
+            settings,
+          );
       if (stagger > 0) this.#stagger(target, stagger, attackerFeet);
       // An attack with a knockdown (ATKD: the beast forms' sprinting swipes, 1) knocks it down,
       // pushed as a killing blow of its damage pushes the dead (TODO(M13): the knockdown read
