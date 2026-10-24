@@ -809,8 +809,11 @@ export class QaHarness {
       const pace = watched.pace.speed;
       const rootPace = watched.rootPace.speed;
       const slower = Math.min(pace, rootPace);
+      // The player's controls (and a horse they ride) run on the spot against a wall, as the
+      // engine's do: no foot sliding, as no speed mismatch.
       const sliding =
         free &&
+        now.controls !== true &&
         watched.pace.ready &&
         watched.rootPace.ready &&
         watched.hasRoot &&
