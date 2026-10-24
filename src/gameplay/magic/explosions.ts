@@ -106,6 +106,24 @@ function layerMult(layer: number, settings: ExplosionSettings): number {
   return settings.impulseMultClutter;
 }
 
+/**
+ * The gameplay impulse of a push on a body of `layer` (observed in the original): push ×
+ * fGameplayImpulseScale × the layer's fGameplayImpulseMult*; with `mass` given, a body lighter
+ * than fGameplayImpulseMinMass takes × mass / that (explosions and cone projectiles ask so;
+ * ApplyHavokImpulse does not).
+ */
+export function gameplayImpulse(
+  push: number,
+  layer: number,
+  mass: number | undefined,
+  settings: ExplosionSettings = EXPLOSION_DEFAULTS,
+): number {
+  let mult = layerMult(layer, settings);
+  if (mass !== undefined && settings.impulseMinMass > 0 && mass < settings.impulseMinMass)
+    mult *= Math.max(0, mass) / settings.impulseMinMass;
+  return settings.impulseScale * mult * push;
+}
+
 /** How an explosion pushes one moving body (game units: impulse is mass × units a second). */
 export interface BodyPush {
   /** The impulse along the way from the burst (lifted by `upBias` on the unit way's z). */
@@ -127,10 +145,7 @@ export function explosionBodyPush(
   settings: ExplosionSettings = EXPLOSION_DEFAULTS,
 ): BodyPush {
   const sourced = source ? force * settings.sourceRefMult : force;
-  let mult = layerMult(layer, settings);
-  if (settings.impulseMinMass > 0 && mass < settings.impulseMinMass)
-    mult *= Math.max(0, mass) / settings.impulseMinMass;
-  const impulse = settings.impulseScale * mult * sourced;
+  const impulse = gameplayImpulse(sourced, layer, mass, settings);
   const capped = source ? impulse : Math.min(impulse, settings.maxImpulse);
   return {
     linear: capped * settings.forceMultLinear,

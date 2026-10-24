@@ -54,9 +54,14 @@ export const GRAVITY = 9.8;
 export const PHYSICS_STEP = 1 / 60;
 /**
  * At most this many steps per frame ([HAVOK] uMaxNumPhysicsStepsPerUpdate's built-in value; the
- * sessions set PhysicsWorld.maxSteps from the INI): a longer frame slows the simulation down.
+ * sessions set PhysicsWorld.maxSteps from the INI): a longer frame's rest is made up in later
+ * frames (PhysicsWorld.step).
  */
 export const MAX_STEPS_PER_UPDATE = 3;
+/** A frame shorter than this (seconds) steps nothing; its time is owed (observed in the original). */
+export const MIN_FRAME_SECONDS = 0.001;
+/** Rounding allowance of the step clock (seconds). */
+const STEP_EPSILON = 1e-9;
 /**
  * Which simulated bodies are swept continuously (the engine's choice of a body's quality as it
  * makes it, observed in the original): one whose shape is thicker than fDebrisMinExtent along all three axes
@@ -125,6 +130,9 @@ const DEACTIVATION_DISTANCE = 0.02;
 const DEACTIVATION_TURN = 0.05;
 const DEACTIVATION_CHECK = 0.25;
 const DEACTIVATION_SECONDS = 1;
+
+/** The layers of ragdolls' bodies: the living's (powered, hit) and the dead's. */
+const RAGDOLL_LAYERS: ReadonlySet<number> = new Set([Layer.biped, Layer.bipedNoCc, Layer.deadBip]);
 
 /** What a collider belongs to: a placed reference, the landscape, an actor. */
 export interface PhysicsOwner {
@@ -669,6 +677,19 @@ export class PhysicsWorld {
   /** Colliders that collide with nothing for now (setPassThrough). */
   readonly #passing = new Set<number>();
   /**
+   * One-sided copies of fixed triangle meshes (Havok's one-sided welding, collision-data.ts:
+   * the landscape and every vanilla compressed mesh), which only ragdolls meet; their two-sided
+   * originals (#twoSided) meet everything else. Rapier's fixed internal edges keep a ragdoll's
+   * contacts on the triangles' fronts and smooth across their edges (a limb that got behind a
+   * rock's face was pushed through it and back, and shook), but they drop the contacts of many
+   * convex hulls lying on a face (Mistwatch's bear traps fell 850 units through the tower's
+   * floor; of the 69,455 loose objects of the interiors, 3,591 ended more than their size below
+   * where they were placed as their cells settled, against 1,091 with two-sided meshes, most of
+   * those rolled off what they lay on: tools/settle-audit.ts).
+   */
+  readonly #ragdollFaces = new Set<number>();
+  readonly #twoSided = new Set<number>();
+  /**
    * Simulated bodies placed to wait (until their cell settles, or for good: "Don't Havok
    * Settle", statics). Havok leaves a deactivated body where it is until an active one touches
    * it; Rapier wakes a sleeping body at its first contact, even with the wall it hangs on
@@ -703,7 +724,10 @@ export class PhysicsWorld {
   #time = 0;
   /** Collision was placed or removed since the last step (queries do not see it yet). */
   #changed = false;
+  /** Time handed to the steps not yet stepped (negative: the last step went past it). */
   #accumulator = 0;
+  /** Frame time not yet handed to the steps (PhysicsWorld.step). */
+  #owed = 0;
   /**
    * Contacts below this speed (game units per second) make no sound and are not reported
    * (`[Audio] fMinSoundVel`); set before placing objects.
@@ -744,11 +768,21 @@ export class PhysicsWorld {
     // Havok's group filter: layers that collide, and never two bodies of one object's system.
     const ignored = this.#ignoredPairs;
     const passing = this.#passing;
+    const ragdollFaces = this.#ragdollFaces;
+    const twoSided = this.#twoSided;
+    const ragdoll = (handle: number): boolean => RAGDOLL_LAYERS.has(layers.get(handle) ?? 0);
     const collides = (a: number, b: number): boolean => {
       const system = systems.get(a);
       if (system !== undefined && system === systems.get(b)) return false;
       if (ignored.size > 0 && ignored.has(pairKey(a, b))) return false;
       if (passing.size > 0 && (passing.has(a) || passing.has(b))) return false;
+      if (twoSided.size > 0) {
+        if (ragdollFaces.has(a) || ragdollFaces.has(b)) {
+          if (!ragdoll(ragdollFaces.has(a) ? b : a)) return false;
+        } else if ((twoSided.has(a) && ragdoll(b)) || (twoSided.has(b) && ragdoll(a))) {
+          return false;
+        }
+      }
       return matrix.collides(layers.get(a) ?? 0, layers.get(b) ?? 0);
     };
     this.#hooks = {
@@ -779,7 +813,16 @@ export class PhysicsWorld {
 
   /** A filter for queries and the character controller: colliders `layer` collides with. */
   filterFor(layer: number): (collider: RAPIER.Collider) => boolean {
-    return (collider) => this.matrix.collides(layer, this.layerOf(collider));
+    // The ragdolls' one-sided copies of meshes are not surfaces of their own.
+    return (collider) =>
+      !this.#ragdollFaces.has(collider.handle) &&
+      this.matrix.collides(layer, this.layerOf(collider));
+  }
+
+  /** A two-sided mesh and its one-sided copy for ragdolls (#ragdollFaces). */
+  #pairFaces(twoSided: RAPIER.Collider, faces: RAPIER.Collider): void {
+    this.#twoSided.add(twoSided.handle);
+    this.#ragdollFaces.add(faces.handle);
   }
 
   /** Gives a collider its layer, owner and material (colliders made outside this class). */
@@ -796,6 +839,8 @@ export class PhysicsWorld {
     this.#materials.delete(collider.handle);
     this.#objectMaterials.delete(collider.handle);
     this.#passing.delete(collider.handle);
+    this.#twoSided.delete(collider.handle);
+    this.#ragdollFaces.delete(collider.handle);
   }
 
   /** The material id (MATT) of a collider's surface; 0 if unknown. */
@@ -829,14 +874,9 @@ export class PhysicsWorld {
         // Simulated bodies get the hull of the mesh (Rapier does not collide two meshes).
         if (dynamic) return hull(scaled(shape.vertices), 0);
         if (shape.indices.length < 3) return undefined;
-        // Havok's one-sided welding (collision-data.ts): Rapier's fixed internal edges keep
-        // contacts on the triangles' fronts and smooth across their edges (a limb that got
-        // behind a rock's face was pushed through it and back, and shook).
-        return RAPIER.ColliderDesc.trimesh(
-          scaled(shape.vertices),
-          shape.indices,
-          shape.oneSided === true ? RAPIER.TriMeshFlags.FIX_INTERNAL_EDGES : undefined,
-        );
+        // Two-sided, as Havok's triangles meet what touches them (#ragdollFaces: the one-sided
+        // copy that ragdolls meet).
+        return RAPIER.ColliderDesc.trimesh(scaled(shape.vertices), shape.indices);
       }
       case 'convex':
         return hull(scaled(shape.points), shape.radius * s);
@@ -965,6 +1005,22 @@ export class PhysicsWorld {
         const collider = this.world.createCollider(colliderDesc, body);
         this.register(collider, shape.layer, owner, shape.material);
         colliders.push(collider);
+        if (shape.type === 'mesh' && shape.oneSided === true && !dynamic) {
+          const s = scale / HAVOK_SCALE;
+          const faces = RAPIER.ColliderDesc.trimesh(
+            shape.vertices.map((v) => v * s),
+            shape.indices,
+            RAPIER.TriMeshFlags.FIX_INTERNAL_EDGES,
+          )
+            .setFriction(Math.sqrt(Math.max(0, data.friction)))
+            .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Multiply)
+            .setRestitution(Math.sqrt(Math.max(0, data.restitution)))
+            .setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Multiply);
+          const twin = this.world.createCollider(faces, body);
+          this.register(twin, shape.layer, owner, shape.material);
+          this.#pairFaces(collider, twin);
+          colliders.push(twin);
+        }
       }
       if (dynamic) {
         // The mass stays as authored; the shapes (and so the inertia) grow with the scale.
@@ -1309,9 +1365,9 @@ export class PhysicsWorld {
 
   /**
    * Landscape (or any fixed triangle mesh) in game units, world space. With `ground`: a landscape,
-   * its triangles facing up (counter-clockwise seen from above): solid from above only, as
-   * Havok's landscape is, so a body that went under it is not held there (its contacts from
-   * below are dropped and its joints bring it back up), and nothing catches on the edges
+   * its triangles facing up (counter-clockwise seen from above): ragdolls meet it from above only,
+   * as Havok's landscape is (#ragdollFaces), so a limb that went under it is not held there (its
+   * contacts from below are dropped and its joints bring it back up), and catches on no edge
    * between its triangles.
    */
   addMesh(
@@ -1324,19 +1380,25 @@ export class PhysicsWorld {
     const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
     const scaled = new Float32Array(vertices.length);
     for (let i = 0; i < vertices.length; i++) scaled[i] = (vertices[i] ?? 0) / HAVOK_SCALE;
-    const collider = this.world.createCollider(
-      RAPIER.ColliderDesc.trimesh(
-        scaled,
-        indices,
-        ground ? RAPIER.TriMeshFlags.FIX_INTERNAL_EDGES : undefined,
-      )
-        .setFriction(Math.sqrt(0.5))
-        .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Multiply),
-      body,
-    );
-    this.register(collider, layer, owner);
+    const made = (flags: RAPIER.TriMeshFlags | undefined): RAPIER.Collider => {
+      const collider = this.world.createCollider(
+        RAPIER.ColliderDesc.trimesh(scaled, indices, flags)
+          .setFriction(Math.sqrt(0.5))
+          .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Multiply),
+        body,
+      );
+      this.register(collider, layer, owner);
+      return collider;
+    };
+    const collider = made(undefined);
+    const colliders = [collider];
+    if (ground) {
+      const twin = made(RAPIER.TriMeshFlags.FIX_INTERNAL_EDGES);
+      this.#pairFaces(collider, twin);
+      colliders.push(twin);
+    }
     this.#changed = true;
-    return new PlacedCollision(owner, [], [collider], 1, [body]);
+    return new PlacedCollision(owner, [], colliders, 1, [body]);
   }
 
   remove(placed: PlacedCollision): void {
@@ -1358,9 +1420,20 @@ export class PhysicsWorld {
    * (characters move there); returns the steps taken.
    */
   step(seconds: number, beforeStep?: (step: number) => void): number {
-    this.#accumulator = Math.min(this.#accumulator + seconds, this.stepSeconds * this.maxSteps);
+    // The engine's rule (observed in the original): a frame hands Havok its time and the time still owed,
+    // at most uMaxNumPhysicsStepsPerUpdate steps of it (the rest stays owed: a slow frame is
+    // made up later), and nothing under a millisecond (it is owed too). Havok then steps its
+    // fixed step until its time reaches what it was handed.
+    const owed = this.#owed + seconds;
+    const handed = Math.min(owed, this.stepSeconds * this.maxSteps);
+    if (handed < MIN_FRAME_SECONDS) {
+      this.#owed = owed;
+      return 0;
+    }
+    this.#owed = owed - handed;
+    this.#accumulator += handed;
     let steps = 0;
-    while (this.#accumulator >= this.stepSeconds) {
+    while (this.#accumulator > STEP_EPSILON) {
       beforeStep?.(this.stepSeconds);
       // Before the solver's changes: the joints' impulses (#breakJoints) include its own.
       this.#recordVelocities();
@@ -1751,20 +1824,24 @@ export class PhysicsWorld {
     this.#changed = true;
   }
 
-  /** ApplyHavokImpulse: a push (direction and magnitude in Havok units) on its bodies. */
-  impulse(placed: PlacedCollision, direction: Vec3, magnitude: number): void {
+  /**
+   * A push on a placement's moving bodies: along `direction` (made unit) by `magnitude` (Havok
+   * units); with `share` (ApplyHavokImpulse, observed in the original), each body takes
+   * `direction` as given × `magnitude` × share(its layer), game units made Havok's.
+   */
+  impulse(
+    placed: PlacedCollision,
+    direction: Vec3,
+    magnitude: number,
+    share?: (layer: number) => number,
+  ): void {
     const length = Math.hypot(direction[0], direction[1], direction[2]) || 1;
     for (const { body, data } of placed.bodies) {
       if (!dynamicBody(data)) continue;
       this.release(body);
-      body.applyImpulse(
-        {
-          x: (direction[0] / length) * magnitude,
-          y: (direction[1] / length) * magnitude,
-          z: (direction[2] / length) * magnitude,
-        },
-        true,
-      );
+      const layer = body.numColliders() > 0 ? this.layerOf(body.collider(0)) : data.layer;
+      const k = share ? (magnitude * share(layer)) / HAVOK_SCALE : magnitude / length;
+      body.applyImpulse({ x: direction[0] * k, y: direction[1] * k, z: direction[2] * k }, true);
     }
   }
 
@@ -2358,9 +2435,13 @@ export class PhysicsWorld {
     return !this.#changed;
   }
 
-  /** How far into the next step the clock is (0..1), for drawing between steps. */
+  /**
+   * Where the frame's clock lies between the last two steps (0: the one before, 1: the last),
+   * for drawing between them: Havok steps until its time reaches the frame's, so its last step
+   * is at or ahead of it (as Havok draws bodies at the frame's time between their steps).
+   */
   get alpha(): number {
-    return this.#accumulator / this.stepSeconds;
+    return Math.min(1, Math.max(0, 1 + this.#accumulator / this.stepSeconds));
   }
 
   /**

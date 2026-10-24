@@ -450,9 +450,9 @@ export class ModelViewer {
         this.#play?.physics.setMotion(placed, motionType === MOTION_KEYFRAMED);
       }
     },
-    impulse: (reference, direction, magnitude) => {
+    impulse: (reference, direction, magnitude, share) => {
       for (const placed of this.#play?.placementsOf(reference) ?? []) {
-        this.#play?.physics.impulse(placed, direction, magnitude);
+        this.#play?.physics.impulse(placed, direction, magnitude, share);
       }
     },
     explosionPush: (reference, center, push) => {
