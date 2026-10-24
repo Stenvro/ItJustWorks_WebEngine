@@ -233,7 +233,7 @@ export class ActorDoors {
     if (descriptor === undefined) return;
     const world = entry.object.world;
     const at: Vec3 = [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0];
-    void this.#options.session.soundSystem?.play(descriptor, at);
+    void this.#options.session.playSound(descriptor, at);
   }
 
   /** Whether an actor may open a locked door: asked once a while (undefined meanwhile). */

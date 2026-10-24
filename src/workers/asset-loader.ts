@@ -1,5 +1,6 @@
 // Loads models and textures: the VFS reads stored bytes on the main thread (async I/O),
-// a pool of workers decompresses and parses them.
+// a pool of workers decompresses and parses them. With no workers (Node: the headless
+// simulation, src/sim/) the same work runs on the calling thread.
 
 import type { RigData } from '../animation/skeleton.ts';
 import type { MorphData } from '../render/face-morphs.ts';
@@ -9,6 +10,7 @@ import type { ModelTextureSwaps } from '../render/actor-model.ts';
 import type { CollisionData } from '../physics/collision-data.ts';
 import type { ModelData } from '../render/model-data.ts';
 import type { Vfs } from '../vfs/vfs.ts';
+import { handleAssetRequest } from './asset-work.ts';
 import type { AssetRequest, AssetResponse } from './protocol.ts';
 
 export interface LoadedModel {
@@ -31,7 +33,10 @@ export class AssetLoader {
   readonly #pending = new Map<number, Pending>();
   #nextId = 1;
 
-  /** Uses one worker per spare CPU core (at least 1, at most 8). */
+  /**
+   * Uses one worker per spare CPU core (at least 1, at most 8); `size` 0 runs the work on the
+   * calling thread (where there are no web workers).
+   */
   constructor(vfs: Vfs, size = Math.max(1, Math.min(8, navigator.hardwareConcurrency - 1))) {
     this.#vfs = vfs;
     for (let i = 0; i < size; i++) {
@@ -150,6 +155,7 @@ export class AssetLoader {
 
   /** Sends a request (its id assigned here) to the least busy worker, moving the payloads. */
   #send(request: AssetRequest, payloads: (BsaPayload | undefined)[]): Promise<AssetResponse> {
+    if (this.#workers.length === 0) return Promise.resolve(this.#inline(request));
     const worker = this.#leastBusy();
     const id = this.#nextId++;
     return new Promise<AssetResponse>((resolve, reject) => {
@@ -162,6 +168,16 @@ export class AssetLoader {
       }
       worker.postMessage({ ...request, id }, [...transfer]);
     });
+  }
+
+  /** The request's work on this thread (no workers), answered as a worker answers it. */
+  #inline(request: AssetRequest): AssetResponse {
+    try {
+      return handleAssetRequest(request)[0];
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { id: request.id, ok: false, error: `${request.path}: ${message}` };
+    }
   }
 
   #leastBusy(): Worker {

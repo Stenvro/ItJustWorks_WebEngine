@@ -39,7 +39,7 @@ import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
 import type { Vec3 } from '../render/math.ts';
-import type { Renderer } from '../render/renderer.ts';
+import type { RenderPort } from '../render/render-port.ts';
 import type { GpuScene, InstanceMotion, ModelInstance } from '../render/scene-renderer.ts';
 import type { Delivered } from '../scripting/runtime/casting-engine.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -75,7 +75,7 @@ export interface ProjectileTarget {
 
 export interface MagicProjectilesOptions {
   readonly session: GameSession;
-  readonly renderer: Renderer;
+  readonly renderer: RenderPort;
   readonly terminal: Terminal;
   /** The living actors of the loaded area (the player too). */
   readonly targets: () => Iterable<ProjectileTarget>;
@@ -364,7 +364,7 @@ export class MagicProjectiles {
     };
     this.#flying.add(flying);
     if (projectile.sound !== undefined) {
-      flying.sound = session.soundSystem?.play(projectile.sound, () => flying.flight.position);
+      flying.sound = session.playSound(projectile.sound, () => flying.flight.position);
     }
     if (stream) return;
     void this.#options.fx?.lightRecord(projectile.light).then((light) => {
@@ -469,7 +469,7 @@ export class MagicProjectiles {
     }
     // Its sound from its apex; its wave (its model and light) sweeps out to its range.
     if (projectile.sound !== undefined)
-      void this.#options.session.soundSystem?.play(projectile.sound, origin);
+      void this.#options.session.playSound(projectile.sound, origin);
     const speed = projectile.speed > 0 ? projectile.speed : range;
     this.#options.fx?.show(projectile.model, projectile.light, origin, {
       kind: 'cone',
@@ -711,8 +711,8 @@ export class MagicProjectiles {
       effect?.explosion;
     if (explosion !== undefined && reached) {
       const record = await casting.explosion(explosion);
-      if (record?.sound !== undefined) void session.soundSystem?.play(record.sound, point);
-      if (record?.sound2 !== undefined) void session.soundSystem?.play(record.sound2, point);
+      if (record?.sound !== undefined) void session.playSound(record.sound, point);
+      if (record?.sound2 !== undefined) void session.playSound(record.sound2, point);
       if (record)
         await this.#burst(
           runtime,
@@ -818,8 +818,8 @@ export class MagicProjectiles {
     const record = runtime && (await runtime.casting.explosion(explosionId));
     if (!runtime || !record) return;
     const { session, noise } = this.#options;
-    if (record.sound !== undefined) void session.soundSystem?.play(record.sound, point);
-    if (record.sound2 !== undefined) void session.soundSystem?.play(record.sound2, point);
+    if (record.sound !== undefined) void session.playSound(record.sound, point);
+    if (record.sound2 !== undefined) void session.playSound(record.sound2, point);
     await this.#burst(runtime, source, undefined, record, point, [0, 0, 1], undefined, undefined);
     noise?.(point, source, record.soundLevel);
   }

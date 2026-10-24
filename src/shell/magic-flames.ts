@@ -15,7 +15,7 @@
 
 import type { ObjectGraph } from '../animation/object-graph.ts';
 import type { Vec3 } from '../render/math.ts';
-import type { Renderer } from '../render/renderer.ts';
+import type { RenderPort } from '../render/render-port.ts';
 import type { GpuScene, InstanceMotion, ModelInstance } from '../render/scene-renderer.ts';
 import { meshPath } from '../world/actors.ts';
 import type { CellLight } from '../world/cell-loader.ts';
@@ -35,7 +35,7 @@ const MIN_KEPT = 0.2;
 
 export interface MagicFlamesOptions {
   readonly session: GameSession;
-  readonly renderer: Renderer;
+  readonly renderer: RenderPort;
   readonly terminal: Terminal;
   readonly fx?: MagicFx;
 }

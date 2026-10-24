@@ -11,7 +11,7 @@
 
 import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
-import type { Renderer } from '../render/renderer.ts';
+import type { RenderPort } from '../render/render-port.ts';
 import type { GpuModel, GpuScene, InstanceMotion } from '../render/scene-renderer.ts';
 import type { Vec3 } from '../render/math.ts';
 import {
@@ -54,7 +54,7 @@ export interface ShotTarget {
 
 export interface ProjectileOptions {
   readonly session: GameSession;
-  readonly renderer: Renderer;
+  readonly renderer: RenderPort;
   /** A shot hit an actor at a point (its hit is the combat's). */
   readonly onActorHit: (shot: {
     readonly shooter: number;

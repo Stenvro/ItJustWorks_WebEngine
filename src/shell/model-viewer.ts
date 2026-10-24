@@ -12,13 +12,11 @@ import type { LightProbe } from '../ai/light-level.ts';
 import type { Renderer } from '../render/renderer.ts';
 import type { CollisionData } from '../physics/collision-data.ts';
 import type { ActorPose } from '../animation/skeleton.ts';
-import { articulatedPose } from '../physics/articulation.ts';
 import { GRAVITY, initPhysics, PhysicsWorld } from '../physics/physics-world.ts';
 import { configurePhysics, Player } from './player.ts';
 import {
   collisionGroup,
   objectActivation,
-  openable,
   perkActivation,
   PlaySession,
   type Activatable,
@@ -92,11 +90,8 @@ import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { matches, renderResults } from './finder.ts';
 import type { Placement } from '../scripting/runtime/runtime.ts';
 import { instanceNodeWorld, MOTION_KEYFRAMED, type ScriptView } from './script-world.ts';
-import {
-  actorScriptGraph,
-  placedScriptGraph,
-  skeletonEventsToScripts,
-} from '../animation/script-graphs.ts';
+import { actorScriptGraph, placedScriptGraph } from '../animation/script-graphs.ts';
+import { placeObject } from '../sim/placed-objects.ts';
 import { CreatedObjects } from './created-objects.ts';
 import { FloraLooks } from './flora-looks.ts';
 import { DestructionLooks } from './destruction-looks.ts';
@@ -378,7 +373,7 @@ export class ModelViewer {
         name: (teleport) => this.#destinations.get(teleport.door)?.name ?? '',
         go: (teleport) => this.onTravel?.(teleport),
       },
-      (descriptor, at) => void this.#session?.soundSystem?.play(descriptor, at),
+      (descriptor, at) => void this.#session?.playSound(descriptor, at),
       this.#session?.hud.uses,
       this.#seat,
     );
@@ -1322,49 +1317,15 @@ export class ModelViewer {
       const model = cell.models.get(object.model);
       const water = object.water === undefined ? undefined : cell.waterTypes.get(object.water);
       const directional = cell.directionals.get(object.reference);
-      if (model) {
-        const graph = startObjectGraph(model, object.reference);
-        // The events its sequences raise reach its scripts (OnAnimationEvent).
-        if (graph)
-          graph.onEvent = (event) =>
-            this.#session?.scriptsReady?.animationEvent(object.reference, event);
-        const skeletal = startPlacedSkeleton(model, object.reference);
-        if (skeletal) {
-          skeletons.push({ reference: object.reference, skeleton: skeletal.skeleton });
-          skeletonEventsToScripts(skeletal.skeleton, (event) =>
-            this.#session?.scriptsReady?.animationEvent(object.reference, event),
-          );
-        }
-        // Bodies that move nodes one by one pose the model (ragdolls, hinged signs); objects
-        // simulated as one body get a matrix of their own.
-        const articulated = skeletal ? undefined : articulatedPose(model.nodes, collision);
-        const moves =
-          !articulated &&
-          collision?.bodies.some((body) => body.motion === 'dynamic' && !body.phantom) === true;
-        const posed = skeletal
-          ? { pose: skeletal.skeleton.pose, poseNodes: skeletal.poseNodes }
-          : articulated;
-        if (articulated) articulatedPoses.set(object, articulated.pose);
-        const instance: ModelInstance = {
-          model,
-          world: moves ? new Float32Array(object.world) : object.world,
-          ...(moves && { motion: { version: 0 } }),
-          visibility: shownBy(object.reference),
-          ...(graph && { graph }),
-          ...(posed && { pose: posed.pose, poseNodes: posed.poseNodes }),
-          ...(this.#play && {
-            playback: openable(
-              object,
-              model.sequences?.byName.has('open') === true,
-              this.#session?.scriptsReady?.state.references.get(object.reference)?.openState,
-            ),
-          }),
-          ...(water && { water }),
-          ...(directional && { directional }),
-          ...(object.leafAnimation && { leafAnimation: object.leafAnimation }),
-          ...(session &&
-            object.emittance !== undefined && { emittance: session.emittance(object.emittance) }),
-        };
+      if (model && session) {
+        const { instance, skeleton, articulated } = placeObject(
+          session,
+          object,
+          { model, collision, water, directional },
+          { simulated: this.#play !== undefined, visibility: shownBy(object.reference) },
+        );
+        if (skeleton) skeletons.push({ reference: object.reference, skeleton });
+        if (articulated) articulatedPoses.set(object, articulated);
         instances.push(instance);
         placed.set(object, instance);
         shown.set(object.reference, instance);
@@ -1713,7 +1674,7 @@ export class ModelViewer {
     const play = this.#play;
     const avatar = this.#avatar;
     if (!play || !avatar) return [];
-    return play.bodyShown ? [avatar.scene] : [];
+    return play.bodyShown && avatar.scene ? [avatar.scene] : [];
   }
 
   /** Number of objects shown in the cell on screen (for dev checks). */

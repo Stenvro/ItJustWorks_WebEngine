@@ -600,8 +600,8 @@ export class ActorPlacer {
     path: string,
     inPlayersHead = false,
   ): Promise<SpokenLine | undefined> {
-    const sounds = await this.#session.sounds();
-    const line = await sounds.voiceLine(path, inPlayersHead);
+    const voices = await this.#session.voices();
+    const line = await voices.voiceLine(path, inPlayersHead);
     if (!line) return undefined;
     let lip: LipFile | undefined;
     try {

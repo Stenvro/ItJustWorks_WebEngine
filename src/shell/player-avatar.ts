@@ -16,7 +16,7 @@ import type { MovementType } from '../world/movement.ts';
 import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
 import { multiply, type Vec3 } from '../render/math.ts';
 import type { RigData } from '../animation/skeleton.ts';
-import type { Renderer } from '../render/renderer.ts';
+import type { RenderPort } from '../render/render-port.ts';
 import type { GpuScene, InstanceMotion, ModelInstance } from '../render/scene-renderer.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { seededRandom } from '../world/actors.ts';
@@ -49,7 +49,8 @@ function restPosition(rig: RigData, node: number): Vec3 {
 /** A body made for the player: the placed actor and the scene that draws it. */
 interface Made {
   readonly body: PlacedActor;
-  readonly scene: GpuScene;
+  /** Its draws (none headless). */
+  readonly scene: GpuScene | undefined;
   /** The player look's build it was made from (undefined: the Player record's as it is). */
   readonly build: number | undefined;
 }
@@ -63,7 +64,7 @@ function keepHeads(session: GameSession, made: Made): void {
 
 export class PlayerAvatar {
   readonly #session: GameSession;
-  readonly #renderer: Renderer;
+  readonly #renderer: RenderPort;
   readonly #player: Player;
   readonly #soundWorld: SoundingWorld;
   #made: Made;
@@ -95,7 +96,7 @@ export class PlayerAvatar {
 
   private constructor(
     session: GameSession,
-    renderer: Renderer,
+    renderer: RenderPort,
     player: Player,
     soundWorld: SoundingWorld,
     made: Made,
@@ -146,7 +147,8 @@ export class PlayerAvatar {
     return this.#made.body;
   }
 
-  get scene(): GpuScene {
+  /** The body's draws (none headless). */
+  get scene(): GpuScene | undefined {
     return this.#made.scene;
   }
 
@@ -259,7 +261,7 @@ export class PlayerAvatar {
   /** The player's avatar, or undefined if its body cannot be made. */
   static async create(
     session: GameSession,
-    renderer: Renderer,
+    renderer: RenderPort,
     player: Player,
     soundWorld: SoundingWorld,
   ): Promise<PlayerAvatar | undefined> {
@@ -288,7 +290,7 @@ export class PlayerAvatar {
    */
   static async #make(
     session: GameSession,
-    renderer: Renderer,
+    renderer: RenderPort,
     player: Player,
     placement: { world: Float32Array; motion: InstanceMotion },
   ): Promise<Made | undefined> {
@@ -354,7 +356,7 @@ export class PlayerAvatar {
     this.#built = target;
     if (!made) return;
     if (this.#destroyed || this.#dead) {
-      made.scene.destroy();
+      made.scene?.destroy();
       return;
     }
     // The first-person graph is the sex's (IsFemale).
@@ -372,7 +374,7 @@ export class PlayerAvatar {
     this.#locomotion.reset();
     if (this.#pose !== undefined) made.body.behavior?.sendEvent(this.#pose);
     old.body.onEvents = undefined;
-    old.scene.destroy();
+    old.scene?.destroy();
     keepHeads(this.#session, made);
   }
 
@@ -389,7 +391,7 @@ export class PlayerAvatar {
         motion: this.#motion,
       })),
     );
-    made.scene.destroy();
+    made.scene?.destroy();
     this.#made = { ...made, scene };
   }
 
@@ -664,7 +666,7 @@ export class PlayerAvatar {
     this.#player.jumpTrigger = undefined;
     this.#player.cameraOffset = undefined;
     this.#player.taggedMovement = undefined;
-    this.#made.scene.destroy();
+    this.#made.scene?.destroy();
     this.#firstPerson?.destroy();
   }
 }
