@@ -1764,7 +1764,16 @@ meanwhile.
   hitting the world the arrow sticks fCombatMissileStickDepth deep, a reference of its
   ammunition to pick up (kept still), at most 15 of them. In first person only the first-person
   graph's arrowRelease looses the arrow (the body's, often raised first, is not counted).
-  TODO(M13): how much slower a partly drawn arrow flies.
+  TODO(M13): how much slower a partly drawn arrow flies. An NPC archer (observed in the
+  original: the ranged attack node) holds its drawn bow its hold time, then looses once its target
+  lies within fCombatRangedProjectileFiringArc (30°) of its aim, looking again a quarter second
+  later; held past fCombatRangedAttackMaximumHoldTime (10 s) it lets the bow down unloosed
+  (ActionRightInterrupt: CancelBowAttack). Its facing gates only a new draw: a drawn bow waiting
+  on its archer's turn was never loosed. It changes weapons only between attacks (a sword taken
+  up under a drawn bow left its graph in the bow's drawn state, whose release and cancel ask for
+  a bow). A UseWeapon practice asks for each draw again every 0.25 s while the graph refuses it
+  (just out of its draw, a release or a turn): MQ101's archers drew once each at Lokir, were
+  refused as their draw blended out, and shot nothing.
 - **Impacts** (`src/shell/combat-impacts.ts`): the weapon's impact data set (INAM; bashes and
   blocks BIDS; fists the race's NAM5; arrows the bow's) against the target's flesh (its race's
   NAM4: MaterialSkin, MaterialBoneActor, ...) gives the impact: its sound (heavy for power
