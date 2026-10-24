@@ -15,6 +15,21 @@ buffers up to 256 MB, least recently used first out (a playing sound keeps its b
 Browsers start audio only after a user gesture: the first click or key resumes the audio
 context.
 
+### Voice files that do not exist
+
+A response's voice file is `Sound\Voice\<plugin>\<voice type>\<file>.fuz` under the plugin that
+defines the info (its form id's master: a mod's override of a vanilla line keeps Skyrim.esm's
+file). Where no file holds it the line is said silently, as the engine says it (observed in the
+original): it lasts its text's length in characters times fAIDefaultSpeechMult (0.15 s in
+Skyrim.esm), with no least time, where a voiced line lasts its file and then
+fGameplayVoiceFilePadding (0.5 s); its subtitle shows meanwhile (`silentLineSeconds`, in the
+world, the dialogue menu and scenes alike). The game has no files for its creatures' dialogue
+(CreatureDialogueWolf, ...Chicken, ...Draugr: no `cr*voice` folder exists) nor for some bards'
+instrumental lines in some voices (BardSongsInstrumental in FemaleYoungEager), so those are silent
+in the game too. A missing file is logged once (`WorldLines.voiceFile`): as info where the line is
+the game's own (its plugin one the game loads by itself), as a warning where a mod's line lacks
+it.
+
 ## The graph
 
 - **Categories** (SNCT): one gain per category, connected as the categories' tree to the

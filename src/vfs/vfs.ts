@@ -16,12 +16,13 @@ import { BlockCache, DEFAULT_BLOCK_SIZE } from '../formats/block-cache.ts';
 import { MemoryByteSource, type ByteSource } from '../formats/byte-source.ts';
 import { parseIni, type Ini } from '../formats/ini/ini.ts';
 import { normalizePath } from '../formats/paths.ts';
-import { decodeWindows1252 } from '../formats/text.ts';
+import { asciiLowerCase, decodeWindows1252 } from '../formats/text.ts';
 import type { GameFolder } from './game-folder.ts';
 import {
   archiveListFromIni,
   computeArchiveOrder,
   computeLoadOrder,
+  gameContentArchives,
   type LoadOrderEntry,
 } from './load-order.ts';
 
@@ -30,6 +31,8 @@ export interface MountedArchive {
   readonly archive: BsaArchive;
   /** Higher wins on conflicts. */
   readonly priority: number;
+  /** One of the game's own archives (load-order.ts gameContentArchives), not a mod's. */
+  readonly gameContent: boolean;
 }
 
 export type VfsFile =
@@ -166,11 +169,13 @@ export class Vfs {
     }
 
     const defaultIni = iniText === undefined ? undefined : parseIni(iniText);
+    const iniArchives = archiveListFromIni(defaultIni);
     const archiveNames = computeArchiveOrder(
-      archiveListFromIni(defaultIni),
+      iniArchives,
       order.entries,
       rootFiles.filter((name) => ARCHIVE_FILE.test(name)),
     );
+    const official = gameContentArchives(iniArchives, order.entries);
     const blocks = new BlockCache(DEFAULT_BLOCK_SIZE, ARCHIVE_CACHE_BYTES);
     const opened = await Promise.allSettled(
       archiveNames.map(async (name) => {
@@ -187,7 +192,12 @@ export class Vfs {
     opened.forEach((result, i) => {
       const name = archiveNames[i] ?? '?';
       if (result.status === 'fulfilled') {
-        archives.push({ name, archive: result.value, priority: archives.length });
+        archives.push({
+          name,
+          archive: result.value,
+          priority: archives.length,
+          gameContent: official.has(asciiLowerCase(name)),
+        });
       } else {
         problems.push({ source: name, message: describe(result.reason) });
       }
@@ -238,6 +248,15 @@ export class Vfs {
 
   has(path: string): boolean {
     return this.resolve(path) !== undefined;
+  }
+
+  /**
+   * Whether a path comes from the game's own archives (its masters', its Creations', the
+   * default INI's list): what the game ships, not a mod's archive or a loose file.
+   */
+  isGameContent(path: string): boolean {
+    const file = this.resolve(path);
+    return file?.kind === 'archive' && file.archive.gameContent;
   }
 
   /** Reads a file; throws VfsNotFoundError if it does not exist. */

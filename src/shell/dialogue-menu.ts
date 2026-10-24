@@ -14,6 +14,7 @@ import {
 } from '../scripting/runtime/dialogue-engine.ts';
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import { InfoFlag } from '../world/dialogue-records.ts';
+import { silentLineSeconds } from '../world/dialogue.ts';
 import type { PlacedActor, SpokenLine } from './actors.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
@@ -268,7 +269,7 @@ export class DialogueMenu {
       const path =
         voiceType === undefined
           ? undefined
-          : await engine.voiceFile(spoken, response.number, voiceType);
+          : await this.#session.lines.voiceFile(spoken, response.number, voiceType);
       const line: SpokenLine | undefined = path ? await placer.say(speaker, path) : undefined;
       // Its face shows the response's emotion (src/animation/face.ts).
       speaker.face?.showEmotion(response.emotion, response.emotionValue);
@@ -283,7 +284,7 @@ export class DialogueMenu {
       }
       // The menu lets the player skip once the voice is ready.
       this.#menu.call('NotifyVoiceReady');
-      const seconds = line?.duration ?? Math.max(1, response.text.length * perCharacter);
+      const seconds = line?.duration ?? silentLineSeconds(response.text, perCharacter);
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, seconds * 1000);
         this.#line = {

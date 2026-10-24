@@ -304,6 +304,16 @@ constants of Nukem9's decompiled `BSLightingShader`:
    unnormalized light vector), rim lighting (`0x4000000`, (1 − n·v)^power · saturate(v·−l)),
    both times the rim / soft map (slot 2), and back lighting (`0x8000000`, saturate(−n·l)
    times the back light map, slot 7). Missing maps are black (the engine binds no texture).
+   A texture a model names that no file holds draws the slot's default, as the engine does (its
+   renderer keeps default black, white, grey and normal textures and per-slot defaults:
+   BSShader_DefNormalMap, DefHeightMap, DefCubeMap, DefFacegenDetail, DefTexEffectMap, by
+   CommonLibSSE's BSGraphics::State and the executable's strings). Vanilla meshes name a few
+   textures the game never shipped (Windhelm's whicedecal01 and its normal map, Alduin's eyes'
+   normal map): a missing texture named by a model of the game's own archives
+   (`Vfs.isGameContent`, `TextureCache` failures' `gameLacks`) is logged as info; one a mod's or
+   a loose model names, or a file that does not decode, as a warning; each once. TODO(M13): which
+   default each shader slot takes for a missing file (ours: white diffuse, flat normal, black
+   glow and cube map).
 3. Colour: (directional ambient + emit + lights) × diffuse, then × vertex colours (hair: the
    tint by the vertex green, `(g · (tint − 1) + 1)`; skin tint: the facegen RGB tint formula).
    Emit is the emissive colour with Own_Emit, or the emissive colour × the glow map (type 2

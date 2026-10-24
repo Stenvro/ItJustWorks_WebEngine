@@ -13,6 +13,7 @@ import { ActorValue } from '../src/world/actor-values.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { ObjectHandle } from '../src/scripting/values.ts';
+import { playerTrigger } from '../src/scripting/runtime/trigger-gates.ts';
 import { hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
 
 const MQ101 = 0x0003372b;
@@ -21,6 +22,10 @@ const PLAYER = 0x14;
 /** FreeformCaravansA (Amulet of the Moon) and its amulet (FreeformCaravansANecklace). */
 const CARAVANS_A = 0x000d9393;
 const AMULET = 0x000d9394;
+/** Riften's north gate: DialogueRiftenSS01, its RDS01Scene and RDS01TriggerRef. */
+const DIALOGUE_RIFTEN_SS01 = 0x000aa0b3;
+const RDS01_SCENE = 0x000aa0ba;
+const RDS01_TRIGGER = 0x000aa0b9;
 
 describe.skipIf(!hasGamedata())('the script runtime on the local game data', () => {
   let vfs: Vfs;
@@ -347,6 +352,35 @@ describe.skipIf(!hasGamedata())('the script runtime on the local game data', () 
     } finally {
       stop();
     }
+  });
+
+  it("tells the triggers that wait for the player from those that wait for another's actor", async () => {
+    // Riften's north gate: RDSTriggerScript compares who entered with Game.GetPlayer.
+    const gate = await playerTrigger(runtime, RDS01_TRIGGER);
+    expect(gate?.names.has(DIALOGUE_RIFTEN_SS01)).toBe(true);
+    // MQ101SetStage32 waits for the prisoners' cart horse (defaultSetStageTRIGSpecificActor).
+    expect(await playerTrigger(runtime, 0x000f7b4d)).toBeUndefined();
+  });
+
+  it('plays a town scene that waits for the player once they walk into its trigger', async () => {
+    // RDS01Scene begins with its quest (a start-game quest) and its first phase waits for the
+    // quest's pGo, which stage 10's fragment sets as the player walks through the gate.
+    const scene = (): number | undefined =>
+      [...runtime.scenes.playing()].find((playing) => playing.scene === RDS01_SCENE)?.phase;
+    const go = async (): Promise<unknown> =>
+      runtime.vm.getVariable(new ObjectHandle(DIALOGUE_RIFTEN_SS01, 'quest'), '::pGo_var');
+    expect(scene()).toBe(0);
+    expect(await go()).toBe(0);
+    runtime.triggered(RDS01_TRIGGER, PLAYER, true);
+    for (let t = 0; t < 3; t += 0.1) {
+      runtime.update(0.1, 0);
+      await runtime.vm.idle();
+    }
+    runtime.triggered(RDS01_TRIGGER, PLAYER, false);
+    expect(await go()).toBe(1);
+    expect(runtime.state.quests.get(DIALOGUE_RIFTEN_SS01)?.stagesDone.has(10)).toBe(true);
+    // Its first lines are said (silently here: Mjoll is not loaded), the phase moves on.
+    expect(scene() ?? 0).toBeGreaterThan(0);
   });
 
   // Last: the player dies.

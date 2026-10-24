@@ -12,6 +12,8 @@ import { ActorPose } from '../../animation/skeleton.ts';
 import { FlyCamera } from '../../render/fly-camera.ts';
 import type { Renderer } from '../../render/renderer.ts';
 import { PLAYER_REF } from '../../scripting/runtime/forms.ts';
+import type { ScriptRuntime } from '../../scripting/runtime/runtime.ts';
+import { playerTrigger } from '../../scripting/runtime/trigger-gates.ts';
 import type { ActorStage, StagedActor } from '../actor-stage.ts';
 import type { GameSession } from '../game-session.ts';
 import type { Terminal, LogTone } from '../terminal.ts';
@@ -83,6 +85,11 @@ export interface QaEvent {
   readonly text: string;
 }
 
+/**
+ * How far from a stalled scene's actors a trigger volume may lie that it waits for the player
+ * to walk into (game units: a cell; Riften's gate triggers lie 300 to 1,000 units from theirs).
+ */
+const TRIGGER_GATE_RADIUS = 4096;
 /** A screenshot's camera stands at most this far from the anomaly (game units). */
 const FRAME_DISTANCE = 260;
 /** The subject of long frames (one, so they are kept as the worst of one kind). */
@@ -257,6 +264,9 @@ export class QaHarness {
     this.#scenes = new Map();
     this.#quests = new Map();
     this.#logLines.clear();
+    this.#triggerGates.clear();
+    this.#entered.clear();
+    this.#enteredFrom = undefined;
     for (const [id, seconds] of Object.entries(options.watchQuests ?? {})) {
       this.#quests.set(Number(id), { stage: -1, since: 0, limit: seconds, reported: false });
       // Its editor id read now, for the timeline's lines.
@@ -1029,11 +1039,70 @@ export class QaHarness {
     }
   >();
 
+  /**
+   * The trigger volumes near a scene's actors (within TRIGGER_GATE_RADIUS, loaded) that wait
+   * for the player (trigger-gates.ts) and whose scripts name a quest the phase's conditions
+   * read, and that the player has not walked into: the phase waits for the player to walk in.
+   * Undefined: none; 'pending' while they are read (once per phase).
+   */
+  #triggerGate(
+    scene: number,
+    phase: number,
+    quests: readonly number[],
+    positions: ReadonlyMap<number, readonly [number, number, number]>,
+    world: QaWorld,
+    runtime: ScriptRuntime,
+  ): readonly number[] | 'pending' | undefined {
+    if (quests.length === 0) return undefined;
+    const key = `${String(scene)}:${String(phase)}`;
+    const known = this.#triggerGates.get(key);
+    if (known === undefined) {
+      const physics = world.play?.physics;
+      if (!physics) return undefined;
+      const near = new Set<number>();
+      for (const at of positions.values()) {
+        for (const trigger of physics.triggersNear([...at], TRIGGER_GATE_RADIUS)) near.add(trigger);
+      }
+      this.#triggerGates.set(key, 'pending');
+      void Promise.all([...near].map((trigger) => playerTrigger(runtime, trigger)))
+        .then((found) => {
+          const gates = found.flatMap((trigger) =>
+            trigger && quests.some((quest) => trigger.names.has(quest)) ? [trigger.reference] : [],
+          );
+          this.#triggerGates.set(key, gates);
+        })
+        .catch(() => this.#triggerGates.set(key, []));
+      return 'pending';
+    }
+    if (known === 'pending') return known;
+    const open = known.filter(
+      (trigger) =>
+        !this.#entered.has(trigger) && !runtime.triggerVolumes.inside(trigger).has(PLAYER_REF),
+    );
+    return open.length > 0 ? open : undefined;
+  }
+
+  readonly #triggerGates = new Map<string, readonly number[] | 'pending'>();
+  /** The trigger volumes the player walked into since the start (the game's event). */
+  readonly #entered = new Set<number>();
+  #enteredFrom: ScriptRuntime | undefined;
+
+  /** Follows the player walking into trigger volumes (once per game's runtime). */
+  #followTriggers(runtime: ScriptRuntime): void {
+    if (this.#enteredFrom === runtime) return;
+    this.#enteredFrom = runtime;
+    const off = runtime.events.on('triggerEnterLeave', (event) => {
+      if (event.reference === PLAYER_REF && event.entered) this.#entered.add(event.trigger);
+    });
+    this.#restore.push(off);
+  }
+
   /** Scenes whose phase stands while none of their actors moves. */
   #scenesCheck(world: QaWorld, session: GameSession): void {
     const runtime = session.scriptsReady;
     const stage = world.actorStage;
     if (!runtime || !stage) return;
+    this.#followTriggers(runtime);
     const now = this.#now();
     const playing = runtime.scenes.snapshot();
     const live = new Set<number>();
@@ -1098,15 +1167,29 @@ export class QaHarness {
       const stalled = now - seen.since;
       if (seen.reported || stalled < this.#thresholds.sceneStallSeconds || seen.moved > 64)
         continue;
-      // Nothing of its own left to do and waiting for the player to come near: the scene is
-      // where its data has it (RiverwoodIntroSceneHildeSoldierScene waits for Sven within
-      // 1000 units of the player); the timeline says so.
-      if (scene.open.length === 0 && wait.onPlayer) {
+      // Waiting for the player: the scene is where its data has it, the timeline says so. A
+      // phase with completion conditions ends by them alone (its open actions, a sandbox or a
+      // stand beside them, hold nothing: MG01MirabelleAncanoScene waits for the player within
+      // 600 units while Mirabelle's package runs); one without waits for its actions.
+      const byConditions = scene.waits.length > 0;
+      // Its conditions name the player (RiverwoodIntroSceneHildeSoldierScene waits for Sven
+      // within 1000 units of the player), or read a quest that a trigger box near it sets as
+      // the player walks in (Riften's north gate: RDS01Scene waits for DialogueRiftenSS01's
+      // pGo, set by RDS01Trigger's stage).
+      const gate = byConditions
+        ? this.#triggerGate(scene.scene, scene.phase, wait.quests, positions, world, runtime)
+        : undefined;
+      if (gate === 'pending') continue;
+      if ((wait.onPlayer && (scene.open.length === 0 || byConditions)) || gate !== undefined) {
         if (!seen.noted) {
           seen.noted = true;
+          const into =
+            gate === undefined
+              ? ''
+              : ` to walk into ${gate.map((t) => this.#formName(t)).join(', ')}`;
           this.#events.push({
             time: now,
-            text: `scene ${this.#formName(scene.scene)} phase ${scene.phase} waits for the player: ${wait.text}`,
+            text: `scene ${this.#formName(scene.scene)} phase ${scene.phase} waits for the player${into}: ${wait.text}`,
           });
         }
         continue;
