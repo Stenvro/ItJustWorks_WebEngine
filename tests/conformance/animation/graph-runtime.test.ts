@@ -81,4 +81,11 @@ describe('the graph runtime (todo)', () => {
   it.todo('the graph’s bDisableInterp: the manager’s own flag, how it is set  [original]');
   it.todo('an event no active node takes reports not handled (the death idle’s check)  [original]');
   it.todo('graph variables and states in saves  [M12]');
+  // TODO(M13): MQ101's walk to the block plays IdleWalkingCameraStart (an idle for 0_Master.hkx)
+  // on the player; the third-person graph takes it into MT WalkingCamera, an additive arm clip
+  // alone, so the body glides there in third person. Whether the engine keeps that idle from the
+  // third-person graph (or the view in first person) is not read yet.
+  it.todo(
+    'the AI-driven player’s third-person body walks to the block: its steps match the walk’s root motion  [original]',
+  );
 });
