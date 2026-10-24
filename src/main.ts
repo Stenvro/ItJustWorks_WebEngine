@@ -31,6 +31,9 @@ import { QuestPanel } from './shell/quest-panel.ts';
 import { SceneTrace } from './shell/scene-trace.ts';
 import { PlayMode, type PlayWorld } from './shell/play-mode.ts';
 import { Launcher } from './shell/launcher.ts';
+import { keepPointerLockInPage } from './shell/automation-pointer-lock.ts';
+
+keepPointerLockInPage();
 
 function byId<T extends HTMLElement>(id: string, type: new () => T): T {
   const element = document.getElementById(id);
