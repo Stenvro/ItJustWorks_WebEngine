@@ -967,7 +967,9 @@ export class ActorPlacer {
         host,
         skeleton: havok,
         random,
+        // The character's own property values (a quadruped's IsCanine...), then the actor's.
         properties: {
+          ...behaviors.character.propertyValues,
           IsFemale: look.female ? 1 : 0,
           IsMale: look.female ? 0 : 1,
           IsNPC: npc,

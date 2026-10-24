@@ -2033,6 +2033,35 @@ export function readCharacterBoneWeights(character: Packfile): Map<string, Float
   return result;
 }
 
+/**
+ * The values a character gives its properties of word type (hkbCharacterData's
+ * characterPropertyValues: bools, ints, reals; pointers are bone weights, readCharacterBoneWeights),
+ * by name. A graph reads a property its enable or member is bound to: without them every
+ * quadruped ran every creature's modifier list of the shared quadruped behavior (the binding's
+ * stored 1), and the skeever's, last, set every one's iState to 90, for which no speed table
+ * exists: a wolf's walk blend got its Speed itself, its legs at half its pace.
+ */
+export function readCharacterPropertyValues(character: Packfile): Record<string, number> {
+  const result: Record<string, number> = {};
+  const data = requireObject(character, 'hkbCharacterData');
+  const infos = character.array(data.offset + 96);
+  const values = character.object(data.offset + 128);
+  const strings = character.object(data.offset + 152);
+  if (values?.className !== 'hkbVariableValueSet' || !strings) return result;
+  const names = character.stringArray(strings.offset + 80);
+  const words = character.array(values.offset + 16);
+  for (let i = 0; i < Math.min(infos.size, words.size, names.length); i++) {
+    const type = character.i8(infos.data + i * VARIABLE_INFO_SIZE + 4);
+    const name = names[i];
+    if (name === undefined || type === VARIABLE_TYPE_POINTER || type >= VARIABLE_TYPE_VECTOR3) {
+      continue;
+    }
+    const at = words.data + i * 4;
+    result[name] = type === VARIABLE_TYPE_REAL ? character.f32(at) : character.i32(at);
+  }
+  return result;
+}
+
 /** A behavior project's character file (`path` normalized). */
 async function readProjectCharacter(
   path: string,
@@ -2155,6 +2184,12 @@ export interface CharacterInfo {
   readonly animations: readonly string[];
   /** The character properties its graphs may read (characterPropertyNames). */
   readonly properties: readonly string[];
+  /**
+   * The values the character gives its word properties (hkbCharacterData.characterPropertyValues,
+   * by name): a quadruped project's IsCanine, IsSkeever, ... that switch its shared behavior's
+   * per-creature modifier lists on and off.
+   */
+  readonly propertyValues: Readonly<Record<string, number>>;
   /** Its foot IK (hkbCharacterData.footIkDriverInfo at 136), if it has one. */
   readonly footIk?: FootIkSetup;
   /** Its mirroring (for mirrored clips), if it has one. */
@@ -2200,6 +2235,7 @@ export async function loadCharacterInfo(
       .stringArray(strings.offset + 48)
       .map((name) => projectRelative(path, name)),
     properties: character.stringArray(strings.offset + 80),
+    propertyValues: readCharacterPropertyValues(character),
     ...(footIk && { footIk }),
     ...(mirror && { mirror }),
     defaultEventMode: readDefaultEventMode(projectFile),
