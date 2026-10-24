@@ -321,6 +321,26 @@ export class CharacterBody {
     )?.collider;
   }
 
+  /** Another actor's shape its own overlaps where it is now (placed into it), if any. */
+  #overlappedActor(predicate: (collider: RAPIER.Collider) => boolean): RAPIER.Collider | undefined {
+    let found: RAPIER.Collider | undefined;
+    this.physics.world.intersectionsWithShape(
+      this.#body.translation(),
+      NO_ROTATION,
+      this.#collider.shape,
+      (other) => {
+        found = other;
+        return false;
+      },
+      RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+      undefined,
+      this.#collider,
+      undefined,
+      (collider) => predicate(collider) && this.#otherActor(collider),
+    );
+    return found;
+  }
+
   /** A shape of another actor (its controller, its bodies). */
   #otherActor(collider: RAPIER.Collider): boolean {
     const owner = this.physics.ownerOf(collider);
@@ -571,6 +591,10 @@ export class CharacterBody {
 
   /** One fixed step: gravity, the wanted movement, sliding and stepping. Before world.step. */
   step(seconds: number): void {
+    // Coming off another actor it is pressed into (placed into it: the player set at a coc
+    // marker where an NPC stands), first out of what it overlaps, as the character proxy
+    // recovers from penetration: the controller does not move a shape out of one it is in.
+    if (this.#offActor) this.recover();
     const gravity = -this.physics.world.gravity.z * HAVOK_SCALE;
     if (this.swimming) {
       this.#jumpSpeed = 0;
@@ -689,8 +713,16 @@ export class CharacterBody {
     }
     // Held up by another actor alone (nothing else just under its shape where it goes): no
     // ground; it slides off that actor, falling at the unsupported gravity.
-    if (!this.standsOnActors && this.#grounded && !this.swimming) {
-      const support = this.#support(moved, predicate) ?? onActor;
+    // In the air, its fall stopped by another actor it is in or on: as held up by it.
+    const stopped = !this.#grounded && desired.z < 0 && moved.z > desired.z * 0.5;
+    const caught =
+      !this.standsOnActors && stopped ? (onActor ?? this.#overlappedActor(predicate)) : undefined;
+    if (
+      !this.standsOnActors &&
+      (this.#grounded || (caught !== undefined && this.#support(moved, predicate) !== 'ground')) &&
+      !this.swimming
+    ) {
+      const support = this.#support(moved, predicate) ?? onActor ?? caught;
       // Coming off one, nothing under it yet (it leans on that actor's side): still off it.
       if (support === undefined && this.#offActor) this.#grounded = false;
       if (support !== 'ground' && support !== undefined) {

@@ -938,7 +938,7 @@ describe('characters on characters', () => {
   ]);
 
   /** Where an actor set on another's head stands after two seconds (its feet's height). */
-  const onHead = (standsOnActors: boolean): number => {
+  const onHead = (standsOnActors: boolean, at: [number, number, number] = [4, 0, 133]): number => {
     const physics = new PhysicsWorld(actors, GRAVITY);
     physics.addObject(collision(body(box([-400, -400, -20], [400, 400, 0]))), IDENTITY, {
       reference: 1,
@@ -951,7 +951,7 @@ describe('characters on characters', () => {
     });
     physics.step(1 / 60);
     // A little off the other's centre, as one ends up on another.
-    const over = new CharacterBody(physics, shape, settings(new Set()), [4, 0, 133], {
+    const over = new CharacterBody(physics, shape, settings(new Set()), at, {
       reference: 0x21,
       kind: 'actor',
     });
@@ -970,6 +970,11 @@ describe('characters on characters', () => {
 
   it('are no ground to an NPC: it slides off', () => {
     expect(onHead(false)).toBeLessThan(5);
+  });
+
+  it('let an NPC placed into another (the player set at a coc marker on it) out to the floor', () => {
+    // Its feet 63 units up, its middle inside the other's shape.
+    expect(onHead(false, [20, 0, 63])).toBeLessThan(5);
   });
 
   it('are ground to the player, who stands on heads', () => {
