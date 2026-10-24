@@ -372,7 +372,9 @@ the speed, direction and rotation are taken from the animation's own motion inst
 each movement update the engine reads **bAnimationDriven** and **bAllowRotation** from the graph
 and switches the movement controller between controller-driven (neither set), animation-driven
 (the clips' root motion moves the actor) and animation-driven with the controller still turning
-it (bAllowRotation). For the player the controls are the movement controller: the wanted speed
+it (bAllowRotation, set alone or with bAnimationDriven). It does so every update in which time
+passes, comparing them with the controller's mode, so a drive handler's switch (below) holds only
+while the variables agree with it. For the player the controls are the movement controller: the wanted speed
 is the input's (a drop of more than fMaxMoveRampDownDelta, 500, in one update is limited to it),
 dampened (bDampenPlayerControls) and the direction frozen on a large change (The player, below).
 
@@ -419,8 +421,13 @@ starts as the actor moves:
 Nothing is retried: an action the graph does not take is lost. When the engine stops an actor's
 idle (IdleStopInstant, else IdleStop) it performs the movement action again: ActionMoveStart while
 iSyncIdleLocomotion says it moves, else ActionTurnRight / ActionTurnLeft while iSyncTurnState
-says it turns. A horse's rider gets copy channels as it mounts: every update its graph copies the
-horse graph's iSyncIdleLocomotion and HorseSpeedSampled.
+says it turns. An actor that gets a new path (the movement message NewPath, as its pathing finds a
+way) while its graph's **bForceIdleStop** is set (the dialogue idles set it) has its idle stopped at
+once (ActionIdleStopInstant: the characters' IdleStopInstant), so an idle that must end before the
+actor goes on ends as it sets out (`ActorMovers.#newPath`; observed in the original; TODO(M13): the stop is
+skipped unless a value of the actor's high process holds its default, not identified). A horse's rider
+gets copy channels as it mounts: every update its graph copies the horse graph's
+iSyncIdleLocomotion and HorseSpeedSampled.
 
 **Ours.** The movers give `Locomotion` the steering's velocity and turn rate of the last physics
 step (`src/shell/actor-movers.ts`; beyond the high process the walkers' steering; the player its
@@ -599,7 +606,7 @@ come before the response files are read wait for them.
 
 | Handler (events)                                                  | The engine                                                                                                                                                                    | Ours                                                                                                                                                                                                                                           |
 | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| AnimationDriven, MotionDriven, AllowRotation (Start…)             | switch the actor's movement controller at once: animation-driven, controller-driven, animation-driven with the controller turning it                                          | the movers' drive (`src/ai/movement-drive.ts`); bAnimationDriven and bAllowRotation switch it too as they change; allowed to rotate, the steering turns an actor its root motion moves                                                         |
+| AnimationDriven, MotionDriven, AllowRotation (Start…)             | switch the actor's movement controller at once: animation-driven, controller-driven, animation-driven with the controller turning it                                          | the movers' drive (`src/ai/movement-drive.ts`); bAnimationDriven and bAllowRotation switch it back every update (observed in the original); allowed to rotate, the steering turns an actor its root motion moves                                          |
 | AddRagdoll (AddRagdollToWorld)                                    | adds the actor's ragdoll to the physics world, with its collision group                                                                                                       | a dying actor's ragdoll is driven by its graph ([Animation] bDriveRagdollWithGraph, 1): its bodies follow the pose while the graph keyframes or powers them (AnimateToRagdoll), and go limp as it stops (FullyRagdoll); undriven, limp at once |
 | RemoveRagdoll (RemoveRagdollFromWorld)                            | removes it                                                                                                                                                                    | a dying body follows its graph again                                                                                                                                                                                                           |
 | DeathStop (deathStop)                                             | ends the actor's dying (dead)                                                                                                                                                 | its body goes limp from where it is                                                                                                                                                                                                            |

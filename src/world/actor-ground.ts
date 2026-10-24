@@ -12,8 +12,27 @@
 import type { Mat4, Vec3 } from '../render/math.ts';
 import { RaceFlag } from './actor-records.ts';
 
-/** How far above its reference an actor's ground is looked for (sunk into it). */
-export const GROUND_ABOVE = 16;
+/**
+ * The engine's check of an actor's position (observed in the original): what it stands on is looked for
+ * from a quarter of its height above its feet, at most this far (game units), down to
+ * fCheckPositionFallDistance below them. A point a little under a floor (a navmesh lies up to
+ * 25 units under the collision it covers: Whiterun's shop porches) so finds the floor, not the
+ * ground beneath it.
+ */
+export const CHECK_ABOVE_MOST = 32;
+/** fCheckPositionFallDistance's built-in default (game units). */
+export const CHECK_FALL_DISTANCE = 72;
+
+/** How far above an actor's feet the engine's position check begins (its height, units). */
+export function checkAbove(height: number): number {
+  return Math.min(Math.max(height, 0) / 4, CHECK_ABOVE_MOST);
+}
+
+/**
+ * How far above its reference an actor's ground is looked for (sunk into it): the engine's
+ * position check from a human's height (a quarter of 128 units, the most it reaches).
+ */
+export const GROUND_ABOVE = CHECK_ABOVE_MOST;
 /** How far below its reference: it falls onto whatever is under it, however far. */
 export const GROUND_BELOW = 65536;
 
