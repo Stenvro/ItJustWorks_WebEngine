@@ -187,6 +187,11 @@ export interface ModelData {
   /** BSXFlags editor marker: only shown in the Creation Kit, never in game. */
   readonly editorMarker: boolean;
   /**
+   * Its file is the game's own (Vfs.isGameContent; set as it is loaded): a texture it names
+   * that no file holds is one the game itself lacks (TextureCache).
+   */
+  readonly gameContent?: boolean;
+  /**
    * The root is a BSLeafAnimNode (or a BSTreeNode): parts with SLSF2 Tree_Anim flutter in
    * the wind (with the TREE record's leaf amplitude and frequency).
    */

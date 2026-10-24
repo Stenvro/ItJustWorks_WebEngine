@@ -1032,7 +1032,8 @@ export class ModelViewer {
     }
     for (const problem of loaded.problems) this.#terminal.log('nif', problem, 'warn');
     for (const skipped of loaded.model.skipped) this.#terminal.log('nif', skipped, 'warn');
-    for (const failure of textures.takeFailures()) this.#terminal.log('dds', failure, 'warn');
+    for (const failure of textures.takeFailures())
+      this.#terminal.log('dds', failure.text, failure.gameLacks ? 'info' : 'warn');
     this.#releaseCell();
     this.#renderUpgrades();
     const triangles = loaded.model.parts.reduce((sum, part) => sum + part.indices.length / 3, 0);
@@ -1160,7 +1161,7 @@ export class ModelViewer {
       return;
     }
     for (const failure of this.#session?.textures.takeFailures() ?? []) {
-      this.#terminal.log('dds', failure, 'warn');
+      this.#terminal.log('dds', failure.text, failure.gameLacks ? 'info' : 'warn');
     }
     const previousDecals = this.#cell?.decals;
     this.#cell = {

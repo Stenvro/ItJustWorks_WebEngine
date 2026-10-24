@@ -1846,7 +1846,7 @@ export class WorldViewer {
           // Textures that failed are reported with the cell that asked for them (otherwise
           // they wait for the next interior and look as if it had asked).
           for (const failure of this.#session?.textures.takeFailures() ?? []) {
-            this.#terminal.log('dds', failure, 'warn');
+            this.#terminal.log('dds', failure.text, failure.gameLacks ? 'info' : 'warn');
           }
           if (generation !== this.#generation || this.#cells.get(key) !== cell) {
             this.#free(cell);

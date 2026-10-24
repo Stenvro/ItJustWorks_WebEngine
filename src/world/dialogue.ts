@@ -161,6 +161,16 @@ export function orderInfos(infos: readonly InfoRecord[]): InfoRecord[] {
 }
 
 /**
+ * How long a response without a voice file is said (observed in the original: as an
+ * actor starts a response it finds no sound for, the line lasts its text's length in
+ * characters times fAIDefaultSpeechMult, with no least time; with a file, the file's length
+ * and then fGameplayVoiceFilePadding). An empty response is over at once.
+ */
+export function silentLineSeconds(text: string, perCharacter: number): number {
+  return text.length * perCharacter;
+}
+
+/**
  * A response's voice file (SoundVoice<plugin><voice type><file>.fuz):
  * <quest>_<topic>_<info>_<n>, of the topic's quest's and the topic's editor ids, the info's form
  * id as 8 hex digits without the load order index, and the response's number. Editor ids longer

@@ -215,7 +215,8 @@ export class DialogueEngine {
 
   /**
    * The voice file of a response for a voice type (by its editor id):
-   * SoundVoice<plugin><voice type><file>.fuz.
+   * SoundVoice<plugin><voice type><file>.fuz, under the plugin that defines the info (its form
+   * id's master: a mod's override of a vanilla line keeps Skyrim.esm's file).
    */
   async voiceFile(
     spoken: SpokenInfo,
@@ -224,7 +225,7 @@ export class DialogueEngine {
   ): Promise<string | undefined> {
     const db = this.#runtime.forms.db;
     const quest = await db.get(spoken.source.quest);
-    const plugin = db.locate(spoken.source.info.formId)?.plugin.entry.name;
+    const plugin = db.origin(spoken.source.info.formId)?.plugin.entry.name;
     if (!quest?.editorId || !plugin) return undefined;
     const name = voiceFileName(
       quest.editorId,
@@ -233,6 +234,17 @@ export class DialogueEngine {
       response,
     );
     return ['sound', 'voice', plugin, voiceType, `${name}.fuz`].join('\\').toLowerCase();
+  }
+
+  /**
+   * Whether the info is the game's own: the plugin that defines it is one the game loads by
+   * itself (its masters, Skyrim.ccc's Creations), not a mod of plugins.txt. A voice file such
+   * a line lacks is the game's own silent line (creature barks, the bards' instrumental
+   * songs: vanilla ships no file for them), not a missing file.
+   */
+  isGameContent(spoken: SpokenInfo): boolean {
+    const plugin = this.#runtime.forms.db.origin(spoken.source.info.formId)?.plugin;
+    return plugin !== undefined && plugin.entry.source !== 'plugins.txt';
   }
 
   /** Runs an info's fragment ("begin" as its first response starts, "end" after its last). */

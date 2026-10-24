@@ -175,6 +175,26 @@ export function computeArchiveOrder(
   return result;
 }
 
+/**
+ * The archives of the game's own content (lower case): the default INI's list and those of
+ * the plugins the game loads by itself (its masters and Skyrim.ccc's Creations), not those of
+ * plugins.txt (mods). A file the game's content names that none of them holds is one the game
+ * itself lacks (a vanilla mesh naming a texture never shipped), no fault of the load order.
+ */
+export function gameContentArchives(
+  iniArchives: readonly string[],
+  loadOrder: readonly LoadOrderEntry[],
+): Set<string> {
+  const names = new Set(iniArchives.map((name) => asciiLowerCase(name)));
+  for (const plugin of loadOrder) {
+    if (plugin.source === 'plugins.txt') continue;
+    const base = asciiLowerCase(plugin.name.slice(0, plugin.name.lastIndexOf('.')));
+    names.add(`${base}.bsa`);
+    names.add(`${base} - textures.bsa`);
+  }
+  return names;
+}
+
 /** `FE:001` for light plugins, `05` for full ones. */
 /**
  * The Creations every Skyrim Special Edition gets (since 1.6.640: Fish, Survival Mode, Rare
