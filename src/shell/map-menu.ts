@@ -662,6 +662,7 @@ class OpenMap {
       },
       at.position,
       content.cell === undefined ? undefined : this.#runtime.state.seen.get(content.cell),
+      this.#runtime.debug.fogOfWar,
     );
     this.#local = local;
     const renderer = owner.session.renderer;

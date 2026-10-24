@@ -111,6 +111,8 @@ export class LocalMap {
     settings: LocalMapSettings,
     at: Vec3,
     seen: SeenBlocks | undefined,
+    /** The fog of war (the console's tfow turns it off: everything is seen). */
+    fogOfWar = true,
   ) {
     this.#menu = menu;
     this.#content = content;
@@ -122,9 +124,10 @@ export class LocalMap {
       content.interior,
       content.north ?? 0,
     );
-    this.#seen = content.interior
-      ? seenRaster(seen ?? new Map<string, Uint8Array>(), content.area.min, content.area.max)
-      : undefined;
+    this.#seen =
+      content.interior && fogOfWar
+        ? seenRaster(seen ?? new Map<string, Uint8Array>(), content.area.min, content.area.max)
+        : undefined;
   }
 
   /** Shows it: the movie fades it in and asks for its picture; its title and markers. */

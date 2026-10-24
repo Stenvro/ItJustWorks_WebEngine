@@ -400,6 +400,16 @@ export class ActorEngine {
     if (amount <= 0) return;
     // God mode: the player's health, magicka and stamina are not used up.
     if (reference === PLAYER_REF && this.#runtime.godMode && GOD_MODE_VALUES.has(index)) return;
+    // Immortal mode (tim): damage that would bring the player's health to zero is not taken at
+    // all; smaller damage is (observed in the original).
+    if (
+      reference === PLAYER_REF &&
+      this.#runtime.debug.immortal &&
+      index === ActorValue.health &&
+      (await this.value(reference, index)).current - amount <= 0
+    ) {
+      return;
+    }
     const own = this.#own(reference, index);
     own.damage += amount;
     if (index === ActorValue.health && (await this.value(reference, index)).current <= 0) {
@@ -882,6 +892,8 @@ export class ActorEngine {
   async kill(reference: number, killer: number | undefined, silent = false): Promise<void> {
     if (await this.isDead(reference)) return;
     if (reference === PLAYER_REF && this.#runtime.godMode) return;
+    // Immortal mode (tim): the player's Kill does nothing (observed in the original).
+    if (reference === PLAYER_REF && this.#runtime.debug.immortal) return;
     const state = this.#runtime.state.actor(reference);
     state.dead = true;
     if (killer !== undefined) state.killer = killer;

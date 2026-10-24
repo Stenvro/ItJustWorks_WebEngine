@@ -29,7 +29,7 @@ import type {
 } from '../physics/physics-world.ts';
 import { objectWorld, playSequence, type Playback } from '../render/animation.ts';
 import type { FlyCamera } from '../render/fly-camera.ts';
-import { invert } from '../render/frustum.ts';
+import { invert, project } from '../render/frustum.ts';
 import { multiply, type Mat4, type Vec3 } from '../render/math.ts';
 import type { Camera } from '../render/view-camera.ts';
 import type { InstanceMotion, ModelInstance, PointLight } from '../render/scene-renderer.ts';
@@ -81,6 +81,9 @@ interface HeldObject {
   /** Its reference (told as grabbed and released). */
   readonly reference: number | undefined;
 }
+
+/** How far the console's click reaches (game units). */
+const CONSOLE_PICK_LENGTH = 20_000;
 
 /** The reference a pick met (an object's or an actor's), if it has one (not the landscape). */
 const ownReference = (hit: PickHit): number | undefined =>
@@ -974,6 +977,30 @@ export class PlaySession {
       Layer.itemPicker,
       this.player.character.collider,
     );
+  }
+
+  /**
+   * The reference under a point of the frame (x, y from -1 to 1, up positive; `aspect` its width
+   * over its height): the console's click selects it. A ray from the view through the point, on
+   * the item picker layer. TODO(M13): the engine's own reach and layer for the console's pick
+   * (here CONSOLE_PICK_LENGTH).
+   */
+  pickAt(x: number, y: number, aspect: number): number | undefined {
+    const inverse = invert(this.view.viewProjection(aspect));
+    if (!inverse) return undefined;
+    // Reversed depth: 1 at the near plane.
+    const from = project(inverse, [x, y, 1]);
+    const to = project(inverse, [x, y, 0.5]);
+    const direction: Vec3 = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
+    const hit = this.physics.pick(
+      from,
+      direction,
+      CONSOLE_PICK_LENGTH,
+      1,
+      Layer.itemPicker,
+      this.player.character.collider,
+    );
+    return hit && ownReference(hit);
   }
 
   /** The activation pick's ray: from the camera along the view (see #pick). */

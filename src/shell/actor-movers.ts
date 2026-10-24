@@ -1362,9 +1362,14 @@ export class ActorMovers {
     );
   }
 
-  /** Whether a script disabled an actor's AI (EnableAI false). */
+  /**
+   * Whether a script disabled an actor's AI (EnableAI false), or the console all actors' (tai
+   * without an actor): the same stop for each.
+   */
   aiDisabled(reference: number): boolean {
-    return this.#options.session.scriptsReady?.state.actors.get(reference)?.aiEnabled === false;
+    const runtime = this.#options.session.scriptsReady;
+    if (runtime?.debug.ai === false && reference !== PLAYER_REF) return true;
+    return runtime?.state.actors.get(reference)?.aiEnabled === false;
   }
 
   /** One frame of an actor beyond the high process: its travel, its turning, its graph. */

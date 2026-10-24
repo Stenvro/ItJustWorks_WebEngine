@@ -90,7 +90,7 @@ const commands = new ConsoleCommands({
   runtime,
   db,
   travel: () => Promise.resolve(),
-  toggleMenus: () => undefined,
+  toggleMenus: () => true,
   forceWeather: () => undefined,
   setWeather: () => undefined,
   releaseWeatherOverride: () => undefined,
