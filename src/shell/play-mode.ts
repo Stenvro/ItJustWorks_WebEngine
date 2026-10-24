@@ -544,15 +544,15 @@ export class PlayMode {
       openContainer: (reference, closed) => {
         session.hud.menus?.container(reference, closed);
       },
-      // Its swing's end tells the scripts (OnOpen, OnClose: the player opened it).
-      swung: (object, instance) => {
+      // Its swing's end tells the scripts (OnOpen, OnClose: who activated it).
+      swung: (object, instance, activator) => {
         if (instance.playback)
           tellSwing(
             session.scriptsReady,
             object.reference,
             instance.playback,
             instance.model.sequences,
-            PLAYER_REF,
+            activator,
           );
       },
       // Not in another's bed (sNoSleepInOwnedBed).

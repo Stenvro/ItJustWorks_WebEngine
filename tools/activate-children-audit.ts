@@ -20,6 +20,8 @@ const listing = at >= 0 ? Number(args[at + 1] ?? 20) : 0;
 const vfs = await Vfs.mount(openGameFolder());
 const db = await RecordDatabase.open(vfs);
 const children: { child: number; base: number; parent: number; delay: number }[] = [];
+/** XAPD's flags: bit 0 "Parent Activate Only" (xEdit's REFR XAPD). */
+let parentActivateOnly = 0;
 await db.scan(
   ['REFR', 'ACHR', 'PGRE', 'PHZD', 'PMIS', 'PARW', 'PBAR', 'PBEA', 'PCON', 'PFLA'],
   () => true,
@@ -27,6 +29,7 @@ await db.scan(
     const xapr = record.fields.all('XAPR');
     if (xapr.length === 0) return;
     const base = record.formIdField('NAME') ?? 0;
+    if (((record.fields.first('XAPD')?.[0] ?? 0) & 1) !== 0) parentActivateOnly++;
     for (const data of xapr) {
       children.push({
         child: record.formId,
@@ -113,6 +116,7 @@ console.log(
   `  found from their parent by the runtime: ${String(found)} of ${String(children.length)} (same cell ${String(sameCell)})`,
 );
 console.log(`  with a delay: ${String(children.filter((pair) => pair.delay > 0).length)}`);
+console.log(`  activated by their parents only (XAPD): ${String(parentActivateOnly)}`);
 for (const [key, value] of [...count].sort((a, b) => b[1] - a[1]).slice(0, 40)) {
   console.log(`  ${key.padEnd(48)} ${String(value)}`);
 }

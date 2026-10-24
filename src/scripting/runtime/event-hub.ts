@@ -77,6 +77,11 @@ export interface GameEvents {
     readonly reference: number | undefined;
     readonly equipped: boolean;
   };
+  /**
+   * An actor got into furniture (in it: sitting, sleeping, leaning) or up from it
+   * (TESFurnitureEvent: enter, exit), the player too.
+   */
+  furniture: { readonly actor: number; readonly furniture: number; readonly entered: boolean };
   /** The player's fast travel ended (TESFastTravelEndEvent): game hours it took. */
   fastTravelEnd: { readonly hours: number };
   /** The player grabbed or released an object (TESGrabReleaseEvent). */
