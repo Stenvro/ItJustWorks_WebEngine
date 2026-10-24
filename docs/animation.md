@@ -720,7 +720,23 @@ is in its pair no more, whether or not it raised PairEnd (a bear killmove's lead
 it dies by its killer), 2_KillMoveEnd (KillMoveEndHandler: an actor with a killer dies by it, its
 deferred death comes, it is in its killmove no more), 2_PairEnd; some clips raise all three on
 their last frame with 2_PairEnd first (Paired_1HMKillMoveD, Paired_2HMKillMoveSlash at 0.4 s: the
-slash is the kill). The leader's KillMoveEnd ends its own killmove. A blow on an actor in a
+slash is the kill). The leader's KillMoveEnd ends its own killmove. A graph keeps its side of the
+pair while it still plays the synchronized clip (a last frame's 2_PairEnd comes as the clip
+blends out: let go at once, the victim's skeleton took its killer's tracks for those frames and
+stood in its killer's place). A victim that dies in its clip (its 2_KillActor, or killed by a
+blow while paired, also after a last frame's 2_PairEnd) plays no death of its own: its body goes
+limp from the clip's last pose as the clip ends (`ActorGraphEvents` died: paired), instead of
+standing up again in its graph's own states until the death's eight-second wait let it fall.
+
+`node tools/paired-audit.ts` lists the vanilla synchronized clips (516: 208 leader sides, 308
+partner sides; 8 apply their motion from the root, the mounts and the dragon's): their placement
+tracks ("NPC", "2_") never move during a clip and the projects' animation data give them no
+root motion, so the mark taken as a clip begins keeps the two in place for the whole of it (observed
+in the original: BGSSynchronizedAnimationInstance sets each partner's mark once, as
+every member has activated, from the lead's world placement and the two placement tracks; the
+partner's get-to-mark progress runs over fGetToMarkTime and the clip waits for none of them).
+The QA monitor `pair-misaligned` (docs/qa.md) measures a partner's drawn placement against the
+mark its leader's drawn placement and the clip give, through every paired clip of a run. A blow on an actor in a
 killmove does fCombatKillMoveDamageMult (10) times its damage; the killmove clips' own hit
 frames are NPCHitFrame, which no handler answers: the victim takes no blows from its clip.
 

@@ -41,6 +41,7 @@ import type { WeaponStats } from '../scripting/runtime/equipment-engine.ts';
 import {
   AttackSet,
   attackEventKind,
+  chooseAttackData,
   DEFAULT_ATTACK,
   POWER_ATTACK_DEFAULT,
 } from '../gameplay/combat/attacks.ts';
@@ -104,7 +105,7 @@ import { ProjectileFlag } from '../world/projectile-data.ts';
 import type { AimTarget, ProjectileAim, ShotKind } from './projectile-aim.ts';
 import { blockStagger, recoilOf, staggerMagnitude } from '../gameplay/combat/stagger.ts';
 import { Layer } from '../physics/collision-layers.ts';
-import { transformPoint, type Vec3 } from '../render/math.ts';
+import { transformPoint, type Mat4, type Vec3 } from '../render/math.ts';
 import type { Renderer } from '../render/renderer.ts';
 import type { GpuDecals } from '../render/decals.ts';
 import type { GpuScene, InstanceVisibility } from '../render/scene-renderer.ts';
@@ -191,6 +192,8 @@ const SHOT_RADIUS = 8;
  * original: "pa_KillMoveB" for the leader, "KillMoveB" for the one it is done to).
  */
 const PAIRED_PREFIX = 'pa_';
+/** A paired clip's partner is judged at its mark this long after its get-to-mark time (s). */
+const MARK_SETTLE = 0.25;
 
 /** One who fights: an actor of the stage or the player. */
 interface Fighter {
@@ -269,6 +272,55 @@ interface Fighter {
   lookedAt: number | undefined;
   /** What its left hand's graph override was told for which body (#graphVariables). */
   leftHand: { readonly body: PlacedActor | undefined; readonly kind: string } | undefined;
+  /** When each of its attack data (by event) has recovered from its last use (the clock). */
+  readonly attackReady: Map<string, number>;
+  /**
+   * Attacks its graph took (past their first answer: one refused is none), arrows it loosed
+   * and hits it dealt (the QA monitors count them).
+   */
+  attacks: number;
+  shots: number;
+  hits: number;
+}
+
+/**
+ * What the QA monitors read of a fighter (src/shell/qa: an archer that never looses, a creature
+ * that never attacks, a paired animation out of line).
+ */
+export interface QaFighter {
+  /** Its combat AI fights (it has a target to fight), or a UseWeapon package has it shoot or swing. */
+  readonly engaged: boolean;
+  readonly target: number | undefined;
+  readonly fleeing: boolean;
+  /** It fights with a bow or crossbow it has ammunition for, and how far its shots go. */
+  readonly ranged: boolean;
+  readonly range: number;
+  /** How far its strikes reach (its weapon's, or its race's unarmed reach). */
+  readonly reach: number;
+  readonly weaponState: number;
+  readonly attackState: number;
+  /** Seconds its bow has been held drawn. */
+  readonly drawnFor: number;
+  readonly attacks: number;
+  readonly shots: number;
+  readonly hits: number;
+  /** Its side of a paired animation, if it plays one. */
+  readonly paired: 'lead' | 'support' | undefined;
+  /**
+   * A paired clip's partner: how far it stands from the mark its leader's clip puts it at
+   * (game units) and how far it is turned from the mark's facing (degrees), once its clip
+   * plays and its get-to-mark time is over; and whether its graph plays the partner's side.
+   */
+  readonly mark:
+    | {
+        readonly leader: number;
+        readonly clip: string;
+        readonly time: number;
+        readonly distance: number;
+        readonly turn: number;
+        readonly partnerSide: boolean;
+      }
+    | undefined;
 }
 
 /** How a UseWeapon practice's attacks go (its procedure's parameters). */
@@ -279,6 +331,8 @@ export interface Practice {
   readonly alwaysHit: boolean;
   /** Its hits on an actor may start a fight. */
   readonly combatStartOnHit: boolean;
+  /** Aim Only: it draws and aims, never looses. */
+  readonly aimOnly?: boolean;
 }
 
 /** What a fighter's hands hold, for combat. */
@@ -786,8 +840,31 @@ export class ActorCombat implements CombatBridge {
       runtime.progression.refused(reference, 'stamina');
       action = action.replace('PowerAttack', 'Attack');
     }
+    // A creature's tree may give an idle that is no attack of its (the frostbite spider's
+    // ActionRightAttack has only combatStanceStart, which takes it from its spit stance back to
+    // its melee one): its attack is then one of its attack data (#creatureAttack). Taken as an
+    // attack, the stance event stood as an attack for good, as the graph never ends it: the
+    // spider of Bleak Falls Barrow reared up once and attacked no more.
+    const attacks = fighter.gear?.attacks;
+    // (Creatures only: a graph without an equip clip. People's trees give their casts and magic
+    // draws under the attack actions too, as they should.)
+    const creature =
+      !fighter.player && !(fighter.body?.behavior?.declares('WeapEquip_Out') ?? true);
     const event =
-      (await this.#act(fighter, action, target)) ?? this.#creatureAttack(fighter, action);
+      (await this.#act(fighter, action, target, (idle) => {
+        const lower = idle.toLowerCase();
+        return (
+          !creature ||
+          !attacks ||
+          attacks.size === 0 ||
+          attacks.of(idle) !== undefined ||
+          lower.startsWith(PAIRED_PREFIX) ||
+          lower === 'weapequip' ||
+          lower === 'blockstart' ||
+          lower.includes('attack') ||
+          lower.includes('bash')
+        );
+      })) ?? this.#creatureAttack(fighter, action);
     if (event === undefined) return false;
     const lower = event.toLowerCase();
     if (lower === 'weapequip') {
@@ -903,6 +980,75 @@ export class ActorCombat implements CombatBridge {
   /** A fighter's combat state (the player's input reads it). */
   combatState(reference: number): CombatState | undefined {
     return this.#fighters.get(reference)?.state;
+  }
+
+  /** What the QA monitors read of a fighter (QaFighter); undefined: not one of its fighters. */
+  qaFighter(reference: number): QaFighter | undefined {
+    const fighter = this.#fighters.get(reference);
+    if (!fighter) return undefined;
+    const state = fighter.state;
+    const view = this.#view(fighter);
+    return {
+      engaged:
+        !fighter.player &&
+        (this.#brain.engaged(reference) ||
+          (fighter.practice !== undefined && fighter.practice.aimOnly !== true)),
+      target: fighter.target,
+      fleeing: this.#brain.fleeing(reference),
+      ranged: view.gear?.bow === true,
+      range: view.gear?.range ?? 0,
+      reach: view.reach,
+      weaponState: state.weapon,
+      attackState: state.attack,
+      drawnFor: state.drawnFor,
+      attacks: fighter.attacks,
+      shots: fighter.shots,
+      hits: fighter.hits,
+      paired: state.paired,
+      mark: state.paired === 'support' ? this.#markError(fighter) : undefined,
+    };
+  }
+
+  /**
+   * How far a paired clip's partner is from its mark as drawn: its leader's drawn placement
+   * with the clip's partner placement (src/animation/paired-clips.ts partnerMark) against its
+   * own; from its get-to-mark time on.
+   */
+  #markError(fighter: Fighter): QaFighter['mark'] {
+    let sync: ReturnType<BehaviorRuntime['synchronizedClip']>;
+    for (const graph of this.#graphs(fighter)) sync ??= graph.synchronizedClip();
+    const binding = sync?.binding;
+    if (!sync || !binding || sync.lead || sync.ignoreMarkPlacement) return undefined;
+    if (sync.time < sync.getToMarkTime + MARK_SETTLE) return undefined;
+    const place = partnerMark(binding);
+    const leader =
+      fighter.killer === undefined
+        ? [...this.#fighters.values()].find((other) => other.state.paired === 'lead')
+        : this.#fighters.get(fighter.killer);
+    const leaderWorld = leader && this.#drawnWorld(leader);
+    const ownWorld = this.#drawnWorld(fighter);
+    if (!place || !leader || !leaderWorld || !ownWorld) return undefined;
+    const at = transformPoint(leaderWorld, place.offset);
+    const heading = (world: ArrayLike<number>): number => Math.atan2(world[4] ?? 0, world[5] ?? 1);
+    const facing = sync.reorientSupport ? heading(leaderWorld) - place.yaw : heading(ownWorld);
+    const graph = this.#graphs(fighter)[0];
+    return {
+      leader: leader.reference,
+      clip: sync.animation,
+      time: sync.time,
+      distance: Math.hypot(
+        (ownWorld[12] ?? 0) - at[0],
+        (ownWorld[13] ?? 0) - at[1],
+        (ownWorld[14] ?? 0) - at[2],
+      ),
+      turn: Math.abs((turnBetween(facing, heading(ownWorld)) * 180) / Math.PI),
+      partnerSide: graph?.pairedSide === 'second' || graph?.pairedSide === undefined,
+    };
+  }
+
+  /** A fighter's drawn placement (its body's world transform). */
+  #drawnWorld(fighter: Fighter): Mat4 | undefined {
+    return fighter.player ? this.#avatar?.placement.world : fighter.body?.instances[0]?.world;
   }
 
   /** What an actor's weapon state is (sheathed, drawing, drawn, ...). */
@@ -1329,7 +1475,11 @@ export class ActorCombat implements CombatBridge {
     else if (state.paired !== undefined && fighter.synced) {
       fighter.synced = false;
       for (const effect of graphEvent(state, 'PairEnd')) this.#effect(fighter, effect);
-    } else if (state.paired === undefined) fighter.synced = false;
+    } else if (state.paired === undefined) {
+      fighter.synced = false;
+      // Out of its pair and its paired clip: its graphs play their own side again.
+      if (!synced) for (const graph of this.#graphs(fighter)) graph.pairedSide = undefined;
+    }
     // The engine's killmove timer (observed in the original): fKillMoveMaxDuration after it began, an
     // actor is in its killmove no more (IsInKillMove). A paired animation that never says it
     // ended lets go then too.
@@ -1615,7 +1765,13 @@ export class ActorCombat implements CombatBridge {
         this.#options.decapitate?.(fighter.reference);
         break;
       case 'pair-end':
-        for (const graph of this.#graphs(fighter)) graph.pairedSide = undefined;
+        // Its graph keeps its side while it still plays the clip (a clip's last frame raises
+        // its 2_PairEnd as it blends out): let go at once, a victim's pose took its killer's
+        // tracks for the clip's last moments and stood in its killer's place (#update lets go
+        // once the graph is out of the clip).
+        if (fighter.body?.behavior?.synchronizedClip() === undefined) {
+          for (const graph of this.#graphs(fighter)) graph.pairedSide = undefined;
+        }
         if (this.#camera) this.#camera.done = true;
         break;
       default:
@@ -1763,6 +1919,7 @@ export class ActorCombat implements CombatBridge {
     const target = this.#fighters.get(targetRef);
     if (!runtime || !attacker || !target) return;
     if (target.state.life === LifeState.dead) return;
+    attacker.hits++;
     const settings = this.#settings;
     const perks = runtime.perks;
     const gear = attacker.gear;
@@ -2463,6 +2620,7 @@ export class ActorCombat implements CombatBridge {
     const runtime = this.#options.session.scriptsReady;
     const feet = this.#feet(fighter);
     if (!gear?.projectile || gear.right.ammo === undefined || !runtime || !feet) return;
+    fighter.shots++;
     // The journal's Favorite Weapon counts the player's shots (usage-stats.ts).
     runtime.usage.weaponUsed(fighter.reference, gear.right.weapon);
     const from = this.#bowFrom(fighter, feet);
@@ -2953,7 +3111,12 @@ export class ActorCombat implements CombatBridge {
   // --- Helpers ---------------------------------------------------------------------------------
 
   /** Plays an action's idle on a fighter (its target the conditions' Target); its event. */
-  async #act(fighter: Fighter, action: string, target?: number): Promise<string | undefined> {
+  async #act(
+    fighter: Fighter,
+    action: string,
+    target?: number,
+    accept?: (event: string) => boolean,
+  ): Promise<string | undefined> {
     const runtime = this.#options.session.scriptsReady;
     const body = fighter.body;
     if (!runtime || !body) return undefined;
@@ -2982,7 +3145,8 @@ export class ActorCombat implements CombatBridge {
       idle = await resolve(undefined);
     }
     const event = idle?.event;
-    if (event === undefined) return undefined;
+    // An idle its caller cannot use is not played (the caller chooses otherwise).
+    if (event === undefined || (accept && !accept(event))) return undefined;
     let taken = false;
     for (const runtimeGraph of this.#graphs(fighter))
       taken = runtimeGraph.sendEvent(event) || taken;
@@ -3015,13 +3179,17 @@ export class ActorCombat implements CombatBridge {
     const windUp =
       attack === AttackState.draw || attack === AttackState.bowDraw || attack === AttackState.bash;
     if (!current || event === undefined || !windUp) {
-      if (event !== undefined) fighter.liveAttacks.add(event);
+      if (event !== undefined) {
+        fighter.liveAttacks.add(event);
+        fighter.attacks++;
+      }
       fighter.attackSince = undefined;
       return;
     }
     const answers = this.#graphs(fighter).map((graph) => graph.answered(event));
     if (answers.includes(true)) {
       // Taken: it plays on, however long its wind-up.
+      fighter.attacks++;
       fighter.liveAttacks.add(event);
       fighter.attackSince = undefined;
       return;
@@ -3066,6 +3234,21 @@ export class ActorCombat implements CombatBridge {
     }
     const answers = this.#graphs(fighter).map((graph) => graph.answered(asked.event));
     const refused = answers.includes(false) && !answers.includes(true);
+    // A creature's graph without an equip clip (no WeapEquip_Out) that took its draw stands in
+    // its combat stance: its teeth and claws are out. Some raise weaponDraw as they get there
+    // (the wolf's), others only as their attacks end (the frostbite spider's: attackStop,
+    // weaponDraw), so the draw is not left waiting for it; waiting, the spider's draw ran out
+    // again and again and it never attacked (Bleak Falls Barrow). Inferred from the graphs.
+    if (
+      drawing &&
+      answers.includes(true) &&
+      !(fighter.body?.behavior?.declares('WeapEquip_Out') ?? true)
+    ) {
+      fighter.weaponAsked = undefined;
+      state.weapon = WeaponState.drawn;
+      this.#setVariable(fighter, 'IsEquipping', 0);
+      return;
+    }
     if (!refused && this.#clock - asked.since < WEAPON_ANSWER) return;
     fighter.weaponAsked = undefined;
     state.weapon = refused && !drawing ? WeaponState.drawn : WeaponState.sheathed;
@@ -3077,9 +3260,11 @@ export class ActorCombat implements CombatBridge {
    * An attack of an actor whose idle tree has none for the action (creatures: the wolf's graph
    * has no ActionRightAttack idles): one of its attack data (its race's ATKD / ATKE) of the
    * action's kind (power or not; bashes for a bash) whose event its graph has (the canine race's
-   * data serves wolves and dogs: attackStart_AttackRight1 is a dog's), at random by their attack
-   * chances, its event sent to the graph. Inferred from the data: the creatures' attacks are their races'
-   * attack events. TODO(M13): how the engine picks among them (the attack angle, distance).
+   * data serves wolves and dogs: attackStart_AttackRight1 is a dog's), picked as the engine
+   * picks its melee attacks (chooseAttackData: by attack chance and the style's mults, past its
+   * recovery time, the target within its strike angle about its attack angle), its event sent
+   * to the graph. TODO(M13): the engine also measures the attack's reach with the lunge of its
+   * clip (the animation set's root motion); the combat AI's reach check stands for it here.
    */
   #creatureAttack(fighter: Fighter, action: string): string | undefined {
     const attacks = fighter.gear?.attacks;
@@ -3096,17 +3281,37 @@ export class ActorCombat implements CombatBridge {
         graphs.some((graph) => graph.declares(attack.event))
       );
     });
-    let total = 0;
-    for (const attack of choices) total += Math.max(0, attack.attackChance);
-    let pick = Math.random() * total;
-    for (const attack of choices) {
-      pick -= Math.max(0, attack.attackChance);
-      if (pick > 0) continue;
-      let taken = false;
-      for (const graph of graphs) taken = graph.sendEvent(attack.event) || taken;
-      return taken ? attack.event : undefined;
-    }
-    return undefined;
+    const target = fighter.target === undefined ? undefined : this.#fighters.get(fighter.target);
+    const feet = this.#feet(fighter);
+    const there = target && this.#feet(target);
+    const style = this.#brain.styleOf(fighter.reference)?.melee;
+    const targetState = target?.state;
+    const chosen = chooseAttackData(choices, {
+      targetStaggered: targetState?.staggered === true || targetState?.recoiling === true,
+      targetBlockingFacing:
+        targetState?.blocking === true &&
+        target !== undefined &&
+        feet !== undefined &&
+        there !== undefined &&
+        blockCovers(there, this.#heading(target), feet, this.#settings.combatHitConeAngle),
+      targetDead: targetState?.life === LifeState.dead,
+      bearing: feet && there ? turnBetween(this.#heading(fighter), headingTo(feet, there)) : 0,
+      attackStaggeredMult: style?.attackStaggeredMult ?? 1,
+      powerAttackStaggeredMult: style?.powerAttackStaggeredMult ?? 1,
+      powerAttackBlockingMult: style?.powerAttackBlockingMult ?? 1,
+      strikeAngleMult: this.#settings.attackStrikeAngleMult,
+      deadConeMult: this.#settings.deadActorHitConeMult,
+      recovering: (attack) =>
+        (fighter.attackReady.get(attack.event.toLowerCase()) ?? -Infinity) > this.#clock,
+    });
+    if (!chosen) return undefined;
+    let taken = false;
+    for (const graph of graphs) taken = graph.sendEvent(chosen.event) || taken;
+    if (!taken) return undefined;
+    // Its recovery time runs from now (observed in the original: the attack is marked
+    // used as its action succeeds).
+    fighter.attackReady.set(chosen.event.toLowerCase(), this.#clock + chosen.recoveryTime);
+    return chosen.event;
   }
 
   #graphKey(project: string | undefined): Promise<string | undefined> {
@@ -3786,5 +3991,9 @@ function newFighter(reference: number, player: boolean): Fighter {
     bowAimed: false,
     lookedAt: undefined,
     leftHand: undefined,
+    attackReady: new Map(),
+    attacks: 0,
+    shots: 0,
+    hits: 0,
   };
 }
