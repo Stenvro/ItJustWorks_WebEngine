@@ -8,6 +8,8 @@
 //                                                             templates name and type its slots
 //   node tools/package-info.ts --audit 1a26f -10 15 -10 10    the actors of a worldspace's cells
 //   node tools/package-info.ts --audit interiors [prefix]     the actors of interior cells
+//   node tools/package-info.ts --simultaneous                  every Simultaneous branch: its
+//                                                             children and branch flags
 
 import { PackageData } from '../src/ai/package-data.ts';
 import { BranchFlag, parsePackage, type ProcedureBranch } from '../src/ai/package-records.ts';
@@ -154,6 +156,36 @@ async function showActor(reference: number): Promise<void> {
     for (const line of tree(template?.tree ?? pack.tree)) console.log(line);
   }
   console.log(`  starts: ${await describeStart(await startOf(actor))}`);
+}
+
+/**
+ * Every Simultaneous branch of the packages' own trees: its package, its branch flags and its
+ * children (procedure or branch type, with its conditions' count): what ends it (the first of
+ * them to end; all of them with BranchFlag.allComplete).
+ */
+async function simultaneousBranches(): Promise<void> {
+  const counts = new Map<string, number>();
+  const describe = (branch: ProcedureBranch): string =>
+    `${branch.procedure ?? branch.type}${branch.conditions.length > 0 ? `(${branch.conditions.length} cond)` : ''}`;
+  for (const formId of db.formIdsOfType('PACK')) {
+    const record = await db.get(formId);
+    if (!record || record.deleted) continue;
+    const pack = parsePackage(record);
+    const walk = (branch: ProcedureBranch | undefined): void => {
+      if (!branch) return;
+      if (branch.type.toLowerCase() === 'simultaneous') {
+        const shape = `[${branch.children.map(describe).join(', ')}] flags ${branch.branchFlags}`;
+        counts.set(shape, (counts.get(shape) ?? 0) + 1);
+        console.log(`${hex(formId)} ${record.editorId}: Simultaneous ${shape}`);
+      }
+      branch.children.forEach(walk);
+    };
+    walk(pack.tree);
+  }
+  console.log('--- by shape');
+  for (const [shape, count] of [...counts].sort((a, b) => b[1] - a[1])) {
+    console.log(`${String(count).padStart(4)} ${shape}`);
+  }
 }
 
 async function parseAll(): Promise<void> {
@@ -316,6 +348,7 @@ async function procedureParameters(db: RecordDatabase): Promise<void> {
 
 async function main(db: RecordDatabase): Promise<void> {
   if (args[0] === '--parse') return parseAll();
+  if (args[0] === '--simultaneous') return simultaneousBranches();
   if (args[0] === '--procedures') return procedureParameters(db);
   if (args[0] === '--audit') {
     const actors: CellActor[] = [];

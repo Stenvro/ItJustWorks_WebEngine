@@ -60,7 +60,14 @@ export const InterruptFlag = {
 export const PackageIdleFlag = { runInSequence: 0x1, doOnce: 0x4 } as const;
 
 /** PRCB flags of a branch. */
-export const BranchFlag = { repeatWhenComplete: 0x1 } as const;
+export const BranchFlag = {
+  repeatWhenComplete: 0x1,
+  /**
+   * xEdit's "Unknown 1": observed in the original, a Simultaneous branch with it ends as all
+   * of its children that run have ended (without it, as the first of them ends).
+   */
+  allComplete: 0x2,
+} as const;
 
 /** PTDA target types. */
 export const TargetType = {
