@@ -79,6 +79,20 @@ export interface CombatSettings {
   readonly staggerBlockAttackMult: number;
   readonly staggerBlockAttackShieldBase: number;
   readonly staggerBlockAttackShieldMult: number;
+  /** fStaggerMassMult, fStaggerMassBase, fStaggerMassOffsetMult: the target's mass (stagger.ts). */
+  readonly staggerMassMult: number;
+  readonly staggerMassBase: number;
+  readonly staggerMassOffsetMult: number;
+  /** fStaggerAttackBase, fStaggerAttackMult: a bash's stagger by the basher's Block skill. */
+  readonly staggerAttackBase: number;
+  readonly staggerAttackMult: number;
+  /** fStaggerShieldMult, fStagger1WeapMult, fStagger2WeapMult: a bash's by what it bashes with. */
+  readonly staggerShieldMult: number;
+  readonly stagger1WeapMult: number;
+  readonly stagger2WeapMult: number;
+  /** fStaggerRunningMult, fStaggerRecoilingMult: a bash on one running, or recoiling. */
+  readonly staggerRunningMult: number;
+  readonly staggerRecoilingMult: number;
   // --- Bleedout ------------------------------------------------------------------------------
   /** fBleedoutRate: health an actor bleeding out regains a second (% of its maximum ×100). */
   readonly bleedoutRate: number;
@@ -183,6 +197,16 @@ export const COMBAT_DEFAULTS: CombatSettings = {
   staggerBlockAttackMult: -0.0001,
   staggerBlockAttackShieldBase: 0.01,
   staggerBlockAttackShieldMult: 0.001,
+  staggerMassMult: 1,
+  staggerMassBase: 0,
+  staggerMassOffsetMult: 0.15,
+  staggerAttackBase: 0.5,
+  staggerAttackMult: 0.01,
+  staggerShieldMult: 1,
+  stagger1WeapMult: 0.2,
+  stagger2WeapMult: 0.5,
+  staggerRunningMult: 1.5,
+  staggerRecoilingMult: 1.5,
   bleedoutRate: 15,
   bleedoutMin: 5,
   bleedoutDefault: 0.15,
@@ -245,6 +269,16 @@ const SETTING_NAMES: Readonly<Partial<Record<keyof CombatSettings, string>>> = {
   staggerBlockAttackMult: 'fStaggerBlockAttackMult',
   staggerBlockAttackShieldBase: 'fStaggerBlockAttackShieldBase',
   staggerBlockAttackShieldMult: 'fStaggerBlockAttackShieldMult',
+  staggerMassMult: 'fStaggerMassMult',
+  staggerMassBase: 'fStaggerMassBase',
+  staggerMassOffsetMult: 'fStaggerMassOffsetMult',
+  staggerAttackBase: 'fStaggerAttackBase',
+  staggerAttackMult: 'fStaggerAttackMult',
+  staggerShieldMult: 'fStaggerShieldMult',
+  stagger1WeapMult: 'fStagger1WeapMult',
+  stagger2WeapMult: 'fStagger2WeapMult',
+  staggerRunningMult: 'fStaggerRunningMult',
+  staggerRecoilingMult: 'fStaggerRecoilingMult',
   bleedoutRate: 'fBleedoutRate',
   bleedoutMin: 'fBleedoutMin',
   bleedoutDefault: 'fBleedoutDefault',

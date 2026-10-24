@@ -624,6 +624,8 @@ describe('random scenes (the Actor Dialogue event)', () => {
     test.finish(0x720);
     await test.tick();
     await test.tick();
+    // The waiting start begins in the update after the one that retried it.
+    await test.tick();
     // The pause drawn as the first began is cleared as it ends (read from the engine).
     expect(test.director.randomScene).toBe(0x21);
   });

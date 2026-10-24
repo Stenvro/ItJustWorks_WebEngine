@@ -52,6 +52,7 @@ import { headPosition, type PlacedActor } from './actors.ts';
 import type { PlayerData } from './player.ts';
 import type { PlayerView } from './race-menu.ts';
 import type { Terminal } from './terminal.ts';
+import { lockNow } from './object-locks.ts';
 import { tellSwing } from './open-close.ts';
 
 /**
@@ -575,14 +576,7 @@ export class PlayMode {
       loadDoor: (text) => {
         session.hud.loadDoor(text);
       },
-      lockOf: (object) => {
-        const state = session.scriptsReady?.state.references.get(object.reference);
-        if (state?.locked === false) return undefined;
-        if (state?.locked === true) {
-          return { level: state.lockLevel ?? object.lock?.level ?? 1, key: object.lock?.key };
-        }
-        return object.lock;
-      },
+      lockOf: (object) => lockNow(object, session.scriptsReady?.state),
       unlock: (object, then) => {
         this.#unlock(object.reference, then).catch((error: unknown) => {
           this.#terminal.log(
