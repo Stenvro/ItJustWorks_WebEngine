@@ -63,6 +63,14 @@ describe('falling and sliding', () => {
   it.todo('checks a good position fGoodPosCheckDepth (0.1) deep before setting one down  [original]');
 });
 
+describe('jumping', () => {
+  it.todo(
+    'answers the graph’s JumpBegin with a jump of fJumpHeightMin (76 with Skyrim.esm) × the ' +
+      'actor’s jump height mult, × fJumpSwimmingMult (2) in water, for every actor (the player ' +
+      'jumps on its own key now, at fJumpHeightMin)  [settings; original] (sim)',
+  );
+});
+
 describe('what carries and pushes characters', () => {
   it.todo(
     'carries an actor standing on a moving platform (a keyframed body: a lift, a ship’s deck) ' +
