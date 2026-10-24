@@ -827,6 +827,22 @@ The cart's travel is its horse's packages (the opening's PatrolStaticPathing alo
 Helgen); `ActorVehicles.startTravel` has the horse choose its package again, as the opening's
 stage 15 and a scene's package action do.
 
+**SetMotionType** reaches a cart its horse pulls (its collision is the vehicles' once its cell
+gave it up, so the cell's placements no longer hold it): keyframed, its bodies stay where they
+are whatever its tether does, dynamic they are simulated again. MQ101's stages 42 and 43 keyframe
+the carts as they stop in Helgen's square, so they stand while their horses idle, their riders
+get out and the square's corpses are enabled round them (before, the call was lost: the carts
+rocked on their wheels for minutes as their horses' idles swayed the tethers, and the dead horse
+by the second cart, enabled with the dragon's attack, pushed it about).
+
+**A horse that jumps** (moved by a script, warped by its failing ways, or back on the stage
+elsewhere after it left it) takes its cart along: a spine that moves more than 100 units in one
+physics step (`SPINE_JUMP`; a gallop moves about 15) moves the cart's bodies as it moved, at
+rest, and the tether's body with them (`CartTether.carry`). Followed by the joint, such a jump
+threw the cart at up to 10,000 units a second and left it shaking on its wheels for minutes.
+TODO(M13): what the engine does with a tethered cart whose horse is moved (its keyframed spine
+body would pull it so).
+
 **Doors and scripts.** ObjectReference.SetOpen opens or shuts a door of the loaded area: it
 swings with its sound and stays so (no actor's timer shuts it), its collision following its
 sequence; a door comes in as the scripts left it (GetOpenState), else as placed (REFR ONAM,
@@ -1340,6 +1356,32 @@ stage 160 until the keep (its next stage is set inside). Left, and seen on the w
   not read yet (TODO(M13)). The player's bumps already move a standing actor aside.
 - The follow bot's limits: it stands where the debris east of the inn holds it in some runs,
   and does not loot or equip (the keep's "Find some equipment").
+
+The QA sweep of 2026-10-24 (main b9b337e) had the opening stand twice: MQ101Scene1's last
+phase (28, waiting for stage 30 of the cart's horse at MQ101SetStage30 in the square) for three
+minutes, and MQ101Scene3's phase 9 (waiting for stage 45: the first cart's driver's ExitCartEnd,
+which MQ101CartRiderScript counts) for good. Bisected over the wave's merges, each run with a probe
+logging the column (both carts' horses, Hadvar's and Tullius's, their packages and travels, the
+carts) every two seconds: every merge up to the deaths' ran through to stage 160; with the
+scripts' merge the runs stood. Neither scene nor script was at fault. The QA harness frames each
+first anomaly with a camera of its own, and the loaded cells followed the camera. With the
+scripts' merge the dead Khajiit caravan, four cells east of the road, raised its ragdolls' first
+velocity spikes later, as the column came into Helgen (before, while it was still on the road
+three cells from them; why the timing moved was not pinned down). Framed there, the camera
+unloaded Helgen's cell under the column (logged by hooking the stage's removals): General Tullius, his horse and the first cart's horse left the stage with it, came back
+wherever their packages had them by then, and the first cart (left behind, tethered) was dragged
+up to 4,500 units after its horse; Scene3's phase 9 stood in the runs where that happened, and
+passes with it fixed (TODO(M13): what of the driver's ride the cell's unloading lost was not
+traced; an actor that comes back onto the stage with a vehicle in its game state is not put back
+on it). Fixed in the streaming (the cells
+load round the player, as the engine's grid: [qa.md](qa.md)); the carts now also follow
+SetMotionType and are carried by a horse that jumps (Vehicles, above), and a corpse a script
+enables is pushed out of a cart it lies against without being thrown ([physics.md](physics.md)).
+Measured with the QA runner, the opening unattended (900 s): stage 35 at 240 s, 50 at 285 s and
+160 at 527 s (run1 on 7de82cc: 233, 278 and 527; on b9b337e it stood at stage 42 or 26); its
+anomalies 69 (b9b337e: 771 in 520 s, 971 in 905 s), of them on the carts 2, a bounce of a second
+as the ride starts (b9b337e 309; run1 15), and none on the dead horse by the second cart (75 when
+it was thrown).
 
 Whiterun's market by day (10:00, seven minutes): ADIA's random scenes (Nazeem and Ysolda,
 Carlotta and Ysolda, Anoriath and Ysolda) and WhiterunMarketplaceScene2/3 play through, their

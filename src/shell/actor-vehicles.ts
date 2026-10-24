@@ -74,6 +74,12 @@ const ACTOR_REACH = 1500;
 const DOOR_AHEAD = 150;
 /** The ray that finds a door in the cart's way runs at this height above its root (units). */
 const DOOR_RAY_HEIGHT = 100;
+/**
+ * The horse's spine moving farther than this in one physics step jumped (a warp, a script's move,
+ * back on the stage elsewhere): its cart is carried along (#carryOnJump). A galloping horse moves
+ * about 15 units a step.
+ */
+const SPINE_JUMP = 100;
 /** The events a prisoner's exit clip ends with (it stands bound): see riderEvents. */
 const BOUND_STANDING = new Set(['offsetboundstandingcartstart', 'offsetboundstandingstart']);
 
@@ -93,6 +99,10 @@ interface Cart {
   readonly spine: PoseEasing;
   /** The horse's up as the tether leans with it (eased). */
   lean: Vec3 | undefined;
+  /** A script made it keyframed (SetMotionType): it stays where it is, its tether pulls nothing. */
+  keyframed: boolean;
+  /** The horse's spine as the tether last followed it (world, game units). */
+  lastSpine: Mat4 | undefined;
 }
 
 /** A simulated body of a cart and the node it places. */
@@ -332,11 +342,34 @@ export class ActorVehicles {
       adopting: false,
       spine: new PoseEasing(),
       lean: undefined,
+      keyframed: false,
+      lastSpine: undefined,
     });
     this.#options.terminal.log(
       'actor',
       `${cart.toString(16)} tethered to ${horse.toString(16)} (the horse put in its shafts)`,
     );
+  }
+
+  /**
+   * SetMotionType on a cart pulled here (its collision is the vehicles', no longer its cell's):
+   * keyframed, its bodies stay where they are whatever its tether or anything else does (MQ101's
+   * stage 42 and 43 keyframe the carts as they stop in Helgen's square, so they stand while
+   * their horses idle and their riders get out); dynamic, they are simulated again. Whether the
+   * cart's collision is the vehicles' (false: its cell's placement, if any, takes the call).
+   */
+  motionTypeChanged(reference: number, keyframed: boolean): boolean {
+    const cart = this.#carts.get(reference);
+    if (!cart) return false;
+    cart.keyframed = keyframed;
+    const body = cart.body;
+    // Not tethered yet, it waits keyframed anyway; the tether makes it dynamic unless keyframed.
+    if (body?.tether && this.#physics) {
+      this.#physics.setMotion(body.collision, keyframed);
+      // Its draws rest where its bodies stop (no blend from a step before).
+      if (keyframed) for (const link of body.links) link.previous = link.current;
+    }
+    return body !== undefined;
   }
 
   /** SetVehicle: an actor rides its vehicle now (the game state's), or no longer. */
@@ -509,6 +542,7 @@ export class ActorVehicles {
       if (!spine) continue;
       if (!body.tether) this.#hitch(cart, body, horse, spine, names.spine);
       if (!body.tether) continue;
+      this.#carryOnJump(cart, body, body.tether, spine);
       body.tether.step(spine);
       this.#ignoreRiders(cart, body);
       this.#doorsInWay(cart, body);
@@ -526,6 +560,36 @@ export class ActorVehicles {
       player.character.carry(passenger.feet ?? pose.position, pose.position);
       passenger.feet = pose.position;
     }
+  }
+
+  /**
+   * A horse that jumped (moved by a script, warped, or back on the stage somewhere else after it
+   * left it) takes its cart along: the cart's bodies are moved as the spine moved, at rest, and
+   * the tether's body put there at once. Followed by the joint instead, a jump of hundreds or
+   * thousands of units in one step threw the cart at up to 10,000 units a second and left it
+   * shaking on its wheels (MQ101's carts at Helgen's gate). TODO(M13): what the engine does
+   * with a tethered cart whose horse is moved (its joint's keyframed body would pull it so).
+   */
+  #carryOnJump(cart: Cart, body: CartBody, tether: CartTether, spine: Mat4): void {
+    const last = cart.lastSpine;
+    cart.lastSpine = spine;
+    const physics = this.#physics;
+    if (!last || !physics) return;
+    const jump = Math.hypot(
+      (spine[12] ?? 0) - (last[12] ?? 0),
+      (spine[13] ?? 0) - (last[13] ?? 0),
+      (spine[14] ?? 0) - (last[14] ?? 0),
+    );
+    if (jump <= SPINE_JUMP) return;
+    tether.carry(physics, body.collision, last, spine);
+    for (const link of body.links) {
+      link.current = bodyWorld(link.body);
+      link.previous = link.current;
+    }
+    this.#options.terminal.log(
+      'actor',
+      `${cart.reference.toString(16)} carried ${jump.toFixed(0)} units with its horse`,
+    );
   }
 
   /**
@@ -553,6 +617,8 @@ export class ActorVehicles {
       this.#cart,
     );
     if (body.tether) {
+      // Keyframed by a script before it was pulled: it stays so.
+      if (cart.keyframed) physics.setMotion(body.collision, true);
       this.#options.terminal.log('actor', `${cart.reference.toString(16)} pulled by its horse`);
     }
   }
