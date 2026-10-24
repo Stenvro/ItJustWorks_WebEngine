@@ -460,7 +460,12 @@ Actors use furniture as the engine's furniture handling does, as far as the data
   instant idle (IdleChairEnterInstant, ...), sent after the enter it would have had: the graphs
   take an instant idle only within the furniture's own state, which the enters lead to
   (MT_RootBehavior goes to ChairRoot_State on IdleChairFrontEnter, whose IdleChairEnterInstant
-  goes on to ChairIdleState). Its exit is measured after the same events. Its graph is kept in
+  goes on to ChairIdleState). Its exit is measured after the same events, and asked for as an
+  exit: it enters no more (IsEnteringInteractionQuick 0; the ceiling spiders' ambush holes give
+  AmbushIdleEnter to a quick enter, AmbushIdleExit, idleSleepHoleExitStart, to none). Placed in
+  it so, it came from no floor: where the ground under its marker lies more than 128 units
+  below, it leaves to that ground (the hole's spider drops 1,000 units to the floor; left at its
+  marker's height, its controller hung on the hole's rim). Its graph is kept in
   the furniture's state: a body made again while it uses furniture (its look changed, a new
   play made the player's) is put back in it by the enter and the instant idle once the use is
   in it, and so is one a script's idle left standing (not animation-driven, as furniture states
@@ -2063,6 +2068,28 @@ So a civilian with a low offensive mult still attacks about every second while i
 and casts are decided the same way, each 0.25 s (the tree's Ranged Attack Idle and Cast
 Immediate / Concentration Spell Idles) by their own chances (Style values); a shout is tried
 each second while its voice has recovered.
+
+**Which attack** (observed in the original; `chooseAttackData` in
+`src/gameplay/combat/attacks.ts`): the melee attack node picks among the actor's attack data
+(its race's ATKD/ATKE, its own over them). Each attack of the kind asked whose recovery time
+(ATKD) since its last use has passed is weighed by its attack chance, times the style's attack
+staggered mult (power attack staggered mult for a power attack) against a staggered or
+recoiling target, times its power attack blocking mult for a power attack on a target that
+blocks facing it. One is picked by weight and taken with its weight as the chance; then the
+target must lie within its strike angle × fCombatAttackStrikeAngleMult (0.67) about the
+attacker's facing turned by its attack angle (twice as wide on the dead). One that fails is
+dropped and the pick made again among the rest; the one taken sends its event to the graph and
+its recovery time starts. The engine also measures the attack's reach with the lunge its clip
+moves (the animation set's root motion; TODO(M13): the combat AI's reach check stands for it).
+Creatures fight so: their idle trees hold no attack for ActionRightAttack, or one that is no
+attack (the frostbite spider's has only combatStanceStart, which takes it back from its spit
+stance; an idle of the tree that is neither an attack data's event nor an attack's, a draw or a
+block is not played for an attack). Taken as an attack, the spider's stance event stood as its
+attack for good (the graph never ends it), and it attacked no more: the spider of Bleak Falls
+Barrow reared up once and stood. A creature's graph without an equip clip (no WeapEquip_Out)
+that took its draw stands in its combat stance: its teeth and claws are out (the wolf's raises
+weaponDraw on the way, the spider's only as its attacks end, and its draw ran out again and
+again).
 
 ### Style values
 
