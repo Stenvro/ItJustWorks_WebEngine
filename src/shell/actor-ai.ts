@@ -268,6 +268,11 @@ export class ActorAi {
     return this.#held.has(reference);
   }
 
+  /** The actors whose AI runs now (their packages chosen). */
+  running(): IterableIterator<number> {
+    return this.#actors.keys();
+  }
+
   /** The package running for an actor now (GetCurrentPackage), if its AI runs. */
   current(
     reference: number,
