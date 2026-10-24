@@ -1139,7 +1139,9 @@ them by name (a variable keeps the first file's initial value). Each frame:
    and the animation's annotations as they pass them (unless the clip's flag 0x10 says not
    to), what lies at a clip's start time too on its first step after it became active (the
    tower wall's opening clip raises Begin at its local time 0: MQ101DragonAttack's stage 103
-   waits for it); a syncing blender (flag 0x1) keeps a cycle of its own and plays everything it blends
+   waits for it; of the vanilla behavior files' 881 triggers at a clip's start, none fired before:
+   NPCKillMoveStart 232, 2_KillMoveStart 163, InitiateEnd 62, BeginWeaponDraw 32, BeginWeaponSheathe
+   26, levers', gates' and traps' sounds); a syncing blender (flag 0x1) keeps a cycle of its own and plays everything it blends
    at that phase, advanced by the time over its children's weighted cycle (a clip's at its
    playback speed, a blender's its children's weighted); a syncing blender within one plays
    at the outer one's phase ([Syncing blenders](#syncing-blenders)); modifiers run:
