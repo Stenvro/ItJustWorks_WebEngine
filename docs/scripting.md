@@ -314,16 +314,28 @@ worldspaces on screen:
   enable (disable) an object with an enable state parent" as an error of the calling script,
   logged here as the game's own, with the stack. The engine's own disabling (an alias's
   "initially disabled") leaves it without a line.
-- **Activation**: the player's Activate goes to the reference's OnActivate first; what
-  activating does by default (doors, containers, items) follows unless a script blocks it.
-  A script's Activate does the same, so an object a script moves first is not left waiting
-  for the player. The OnActivate it sends is queued, not waited for (Papyrus events run on
+- **Activation** is one path for every activator (`ScriptRuntime.activateRef`, the engine's
+  TESObjectREFR::ActivateRef): the player's crosshair on an object or an actor (talk, search,
+  pickpocket, ride: `talkTargets` wraps them all), an actor's AI (furniture it uses, a door it
+  opens on its way: `actor-doors.ts`), a script's Activate and an activate parent. It tells
+  TESActivateEvent (OnActivate, blocked or not; not for Activate's abDefaultProcessingOnly,
+  which also ignores the block), then, unless a script blocks the activation, does the default
+  processing: what activating it does (doors, containers, items), then its activate children.
+  A blocked reference passes nothing on (inferred from the scripts: TrapTriggerBase unblocks
+  itself, activates itself and blocks again to set off its children), and a door whose
+  activation a script blocks is shut to actors. Before, the player's activation never reached
+  the children and actors opened doors without OnActivate. The OnActivate it sends is queued,
+  not waited for (Papyrus events run on
   threads of their own): a trigger's OnTriggerEnter that activates itself (defaultActivateSelf)
   waited for its own OnActivate, which waited for that OnTriggerEnter to end, and nothing it
   should set off ever was. **Activate children**: a reference activated activates in turn,
   each after its delay, the references whose Activate Parents (XAPR) name it, with itself as
   their activator (inferred from the data and the scripts: masterAmbushScript's OnActivate
-  takes an activator that is not the player as its trigger with ambushOnTrigger). The load
+  takes an activator that is not the player as its trigger with ambushOnTrigger); a door swung
+  so tells its parent as the one who opened it (OnOpen). **Parent Activate Only** (XAPD, 1,037
+  vanilla children): only its parents activate such a child; the crosshair offers it nothing and
+  it is shut to actors walking by (Blind Cliff Cave's lever gate stayed open to every bandit
+  before). TODO(M13): whether the engine refuses a script's Activate on one too. The load
   order has 6,527 such pairs (5,691 children of 2,782 parents: 1,625 ambushes, 2,000-odd traps,
   default2StateActivator's doors and gates; `node tools/activate-children-audit.ts`); the
   runtime finds a parent's children in its own cell, its worldspace's persistent cell and the
@@ -447,6 +459,7 @@ stats go to every object registered for them. What each kind becomes:
 | destructionStageChanged                | OnDestructionStageChanged (old stage, new stage)                                                                                                                |
 | enterBleedout                          | OnEnterBleedout to the actor                                                                                                                                    |
 | equip                                  | OnObjectEquipped / OnObjectUnequipped to the actor (base, reference), then OnEquipped / OnUnequipped to an item with scripts (the actor)                        |
+| furniture                              | OnSit (in it) / OnGetUp (up from it) to the actor, the player too (the furniture)                                                                               |
 | fastTravelEnd, playerBowShot, loadGame | OnPlayerFastTravelEnd (game hours), OnPlayerBowShot (bow, arrow, draw, sun gazing), OnPlayerLoadGame: to the player                                             |
 | grabRelease                            | OnGrab / OnRelease to the object                                                                                                                                |
 | hit                                    | OnHit to the target, actor or object (aggressor, source, projectile, power, sneak, bash, blocked)                                                               |
@@ -481,6 +494,13 @@ stats go to every object registered for them. What each kind becomes:
 - **Triggers** (`trigger-volumes.ts`, `ScriptRuntime.triggered`): entering and leaving are
   told at once; while something stays inside, the volume tells everyone in it as it finds
   them, then again once [Havok] fTriggerEventDelayMS (500 ms) has passed since it last told.
+- **Furniture** (`actor-furniture.ts`): TESFurnitureEvent as an actor (or the player) is in its
+  furniture and as it stands again.
+- **Kills, for the stats** (`stat-events.ts`, observed in the original: the ActorKill sink
+  of the stats): an actor the player killed counts in each combat stat its race's keywords name
+  by the default objects (NPCK People, ANML Animals, UNDK Undead, DAED Daedra, BEEP Automatons
+  Killed), Creatures Killed if none; they are tracked stats (OnTrackedStatsEvent). TODO(M13): two
+  more counts of that sink are not identified.
 - **Spell casts** (`casting-engine.ts`): told as the cast takes effect with its cost: a fire
   and forget spell, staff, scroll or power as it fires, a concentration spell as it begins to
   cast, a shout as it is let out (the word's spell). A script's Spell.Cast is not told.
@@ -552,6 +572,7 @@ their places. Observed in the original: where each is raised, for whom, with whi
 
 | Event | Raised (the engine)                                                                                                                                                                                                                             | Members                                                                      | Ours                                                                                                                                                   |
 | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| AFAV  | The player activates an actor (talks to it, searches it, rides it).                                                                                                                                                                             | L1 the actor's location, R1 the actor                                        | the hub's `activate` (TODO(M13): every one?)                                                                                                           |
 | CLOC  | The player is put in a cell of another location (the player only; NPCs' location changes are no story event).                                                                                                                                   | R1 actor, L1 old location, L2 new                                            | `actorLocationChange` of the player                                                                                                                    |
 | AIPL  | The player picks an item up (owned: a theft, type 1, its owner; else type 4), takes one from a container (5), a pocket (3) or a corpse (6), buys one (2).                                                                                       | R1 owner, R2 container, L1 the player's location, F1 item, V1 how            | play-mode take, the AI-driven player's take, the container menu, the barter menu                                                                       |
 | REMP  | The player drops an item (type 4); no other removal raises it in the code read.                                                                                                                                                                 | R1 owner (the player), R2 the item's reference, L1 location, F1 item, V1 how | the inventory's drop                                                                                                                                   |
