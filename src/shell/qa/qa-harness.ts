@@ -109,7 +109,7 @@ const CORPSE_RISE = 0.25;
  * for PLAYER_CAMERA_SECONDS is off it (the Camera1st node sits a few units from the head's).
  */
 const PLAYER_CAMERA_GAP = 30;
-const PLAYER_CAMERA_SECONDS = 3;
+const PLAYER_CAMERA_SECONDS = 5;
 /** Doors this near an actor or a cart (game units, across) are checked for it going through. */
 const DOOR_NEAR = 600;
 /** The heights above an actor's feet (a cart's root) its way is followed at (game units). */
@@ -1203,11 +1203,17 @@ export class QaHarness {
         Math.min(staged.position[2], lowest.get(reference) ?? Infinity);
       // Rising: one that died here whose head came up again by CORPSE_RISE of its standing
       // height over the lowest it had since (a death that stood the body up first, then let it
-      // fall: its look made again in a fresh graph, a death animation from a standing pose).
+      // fall: its look made again in a fresh graph, a death animation from a standing pose). Only
+      // while its graph moves it (dying, its bodies keyframed): a ragdoll flung or carried (a
+      // dragon's grab) rises by physics.
       if (!staged.placed.actor.startsDead && corpse.rest > 1) {
         corpse.low = Math.min(corpse.low, height);
         const rise = height - corpse.low;
-        if (corpse.rises.update(rise > CORPSE_RISE * corpse.rest * scale, dt, rise) === 'begin') {
+        const [awake = 0, asleep = 0, keyframed = 0] = states.get(reference) ?? [];
+        const animated =
+          stage.graphEvents.dying(reference) || (keyframed > 0 && awake + asleep === 0);
+        const rose = animated && rise > CORPSE_RISE * corpse.rest * scale;
+        if (corpse.rises.update(rose, dt, rise) === 'begin') {
           const behavior = staged.placed.behavior;
           this.#add({
             kind: 'corpse-rises',
