@@ -8,6 +8,8 @@
 //                                                             templates name and type its slots
 //   node tools/package-info.ts --audit 1a26f -10 15 -10 10    the actors of a worldspace's cells
 //   node tools/package-info.ts --audit interiors [prefix]     the actors of interior cells
+//                                  [--list] [--flag 800000]   listed; only those whose package
+//                                                             has a PKDT flag
 //   node tools/package-info.ts --simultaneous                  every Simultaneous branch: its
 //                                                             children and branch flags
 
@@ -269,6 +271,13 @@ async function audit(actors: readonly CellActor[]): Promise<void> {
     if (typeof start !== 'string' && start.kind === 'undecided') {
       const reason = start.reason.replace(/of \S+$/, 'of …');
       reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
+    }
+    // --flag <hex>: only those whose package has a general flag (PKDT: 800000 Weapon Drawn).
+    const flag = parseInt(args[args.indexOf('--flag') + 1] ?? '', 16);
+    if (args.includes('--flag')) {
+      const id = typeof start !== 'string' && 'package' in start ? start.package : undefined;
+      const pack = id === undefined ? undefined : await data.package(id);
+      if (!pack || (pack.flags & flag) === 0) continue;
     }
     if (args.includes('--list')) {
       console.log(`${hex(actor.reference)} ${actor.editorId} ${await describeStart(start)}`);
