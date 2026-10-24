@@ -90,7 +90,7 @@ These run through every area and explain most of what breaks in play.
 | Movement, paths              | partial | navmesh obstacles not cut (cases written), doors not obstacles, no path idles                                                |
 | Avoidance                    | partial | the engine's way round (who is avoided and re-planning are its)                                                              |
 | Detection                    | partial | formula, reach, lines of sight, light and events the engine's; no one in ambush; the light's sum ours                        |
-| Crime                        | partial | NPC crimes                                                                                                                   |
+| Crime                        | partial | NPC crimes, the report rule, alarm reach (actor crimes go to the victim's or its owner's crime faction: done)                |
 | Dialogue                     | partial | Invisible Continue (1,534 responses close the menu), Reset Hours (6,999), walk-away                                          |
 | Scenes                       | partial | lines do not wait for facing; repeat pause                                                                                   |
 | Actors away                  | partial | only one door away, hour steps                                                                                               |
@@ -101,7 +101,7 @@ These run through every area and explain most of what breaks in play.
 
 | System            | Status    | Main gaps                                                                                                                                                            |
 | ----------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Controller, state | different | per-behaviour timers; per-fight confidence roll                                                                                                                      |
+| Controller, state | different | per-behaviour timers; the per-fight confidence roll (read: fCombatConfidenceModifierMin .. Max, drawn as a fight begins; not applied)                                |
 | Target selection  | different | additive scores, re-selection timing, crowding, reachability (the group's target knowledge and stealth points are the engine's: ai.md Combat detection)              |
 | Flee              | different | strength ratio (damage per second × health against armour) instead of health share                                                                                   |
 | Behaviour tree    | partial   | per-slot actions (left and dual attacks, shield and weapon, spell and weapon), cover, find attack location, hide, low combat (close movement: ai.md Combat movement) |
@@ -113,7 +113,7 @@ These run through every area and explain most of what breaks in play.
 | Ranged            | partial   | line of fire (hold and release, firing arc, maximum hold: done), cover                                                                                               |
 | Combat magic      | partial   | casters by purpose, dual casting, reanimate a corpse                                                                                                                 |
 | Potions           | partial   | the casters' order in the tree; the stop-cast threshold of a held healing spell                                                                                      |
-| Damage, stagger   | partial   | sneak attacks by the player only, critical chance actor value, attack damage mult, stagger by the Mass actor value                                                   |
+| Damage, stagger   | partial   | sneak attacks by the player only, attack damage mult, the blocked hit's stagger terms (stagger by the Mass actor value and the critical chance actor value: done)    |
 | Combat dialogue   | partial   | per-subtype cooldowns and distance gates                                                                                                                             |
 | Combat music      | different | threat-ratio gate, near-combat radius, stop delay                                                                                                                    |
 | Kill moves        | partial   | the magic kill cam (rules read: docs/gameplay.md), the kill camera's radial blur between shots                                                                       |
