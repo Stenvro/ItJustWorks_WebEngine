@@ -337,7 +337,11 @@ worldspaces on screen:
   a forced alias): 7,858 references (6,761 activators and 475 furniture with graphs, 66 doors
   with graphs: trap hinges, wayshrine doors); the 80 doors scripts SetOpen all swing on open
   and close sequences, the collision of 43 following them (MQ101's two Helgen gates among
-  them) and the 37 wall shackles having no body on a moving node. The QA monitor
+  them) and the 37 wall shackles having no body on a moving node. 3,253 of the references
+  (3,144 activators, 60 furniture, 9 doors: Labyrinthian's shaft trap doors, Rannveig's Fast's
+  cage door, the Dawnguard tutorial's castle door, Bthalft's Dwemer doors) were not in the
+  world at all before the BSX editor-marker bit stopped hiding whole models
+  (docs/formats/nif.md): their scripts swung nothing. The QA monitor
   `door-passed` watches actors and carts going through shut doors.
 - **Furniture follows its user**: observed in the original, as an actor's sit or sleep
   state becomes "wants to sit" or "wants to sleep" in a furniture reference (its AI process
