@@ -1,0 +1,13 @@
+{
+  // The headless simulation's tests and tools (src/sim/, docs/conformance.md): they run in Node
+  // but reach the engine's simulation side, whose modules are typed with the browser's types
+  // (no page, GPU or audio device is used at run time).
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2024", "DOM", "DOM.Iterable", "DOM.AsyncIterable"],
+    "types": ["node", "vite/client", "@webgpu/types"]
+  },
+  "include": ["tests/helpers/sim.ts", "tests/sim-*.ts", "tests/conformance", "tools/sim-*.ts"]
+}
