@@ -26,24 +26,29 @@ import {
   DUAL_CASTING_POWER,
   EFFECT_DEFAULTS,
   EFFECT_SETTING_NAMES,
+  effectSkillUses,
   isLastingKind,
   isValueEffect,
   LEVEL_CAPPED,
   magicResistanceApplies,
+  magnitudeOver,
   MagicValue,
   PLAYER_MAX_RESISTANCE,
   resistanceMultiplier,
+  SKILL_BY_EFFECT,
   soulGemFor,
   soulSize,
   summonAtLanding,
   summonDistance,
   TARGET_VALUES,
+  taperSeconds,
   UNITS_PER_FOOT,
   valueAmount,
   valueMode,
   valueSign,
   type EffectSettings,
 } from '../../gameplay/magic/effect-rules.ts';
+import { effectItemCost } from '../../gameplay/magic/casting.ts';
 import { EntryPoint } from '../../gameplay/perk-entry-points.ts';
 import { ActorValue, SKILL_COUNT } from '../../world/actor-values.ts';
 import { DefaultObjects } from '../../world/default-objects.ts';
@@ -63,6 +68,7 @@ import {
   type MagicItemRecord,
   type SoulGemRecord,
 } from '../../world/magic-records.ts';
+import { CastType } from '../../world/spell-records.ts';
 import { ObjectHandle } from '../values.ts';
 import { PLAYER_REF } from './forms.ts';
 import type { ActiveEffectState, ActorMagicState, Vec3 } from './game-state.ts';
@@ -122,6 +128,12 @@ export interface ApplyOptions {
   readonly hold?: number;
   /** Where a Target Location spell landed: what it makes (summons, hazards) stands there. */
   readonly at?: Vec3 | undefined;
+  /**
+   * Its effects that take hold train their schools (a spell the caster cast: effectSkillUses);
+   * a concentration spell's hit by the seconds it stands for.
+   */
+  readonly trains?: boolean;
+  readonly seconds?: number | undefined;
 }
 
 /** What the AI reads of the effects on an actor (src/shell/actor-combat-ai.ts acts on them). */
@@ -181,6 +193,11 @@ const MAKERS: ReadonlySet<number> = new Set([
   EffectArchetype.spawnScriptedRef,
 ]);
 
+/** The seconds of an effect's duration before its taper (its effect item's, with perks). */
+function itemDuration(entry: ActiveEffectState): number {
+  return Math.max(0, entry.duration - (entry.taper ?? 0));
+}
+
 /** The ActiveMagicEffect handle of an effect's key ("<hex form id>:-1"). */
 function handleOf(key: string): ObjectHandle {
   const [formId = '0'] = key.split(':');
@@ -214,6 +231,8 @@ export class MagicEngine {
   #settingsRead: EffectSettings | undefined;
   /** Accumulate Magnitude effects (wards): how fast each grows, and how long it holds still. */
   readonly #accumulating = new WeakMap<ActiveEffectState, { rate: number; hold: number }>();
+  /** The share of its magnitude an effect at once did to its actor value (its skill use). */
+  readonly #did = new WeakMap<ActiveEffectState, number>();
 
   constructor(runtime: ScriptRuntime) {
     this.#runtime = runtime;
@@ -567,7 +586,7 @@ export class MagicEngine {
     for (const [, entry] of this.effectsOn(target)) {
       if (entry.item !== item || entry.caster !== caster || entry.index === undefined) continue;
       if (entry.lasting || entry.duration <= 0) continue;
-      entry.duration = Math.max(entry.duration, entry.elapsed + seconds);
+      entry.duration = Math.max(entry.duration, entry.elapsed + seconds + (entry.taper ?? 0));
       kept.add(entry.index);
     }
     return kept;
@@ -667,7 +686,14 @@ export class MagicEngine {
     if (lasting) duration = 0;
     if (options.hold !== undefined && duration === 0 && !lasting && !actsAtOnce(effect))
       duration = options.hold;
-    if (options.scale !== undefined && duration === 0) magnitude *= Math.max(0, options.scale);
+    // Its taper's seconds follow its duration (observed in the original); a concentration
+    // spell's hit tapers with the spell's whole magnitude a second.
+    const taper = lasting ? 0 : taperSeconds(effect);
+    let taperShare = 1;
+    if (options.scale !== undefined && duration === 0) {
+      taperShare = options.scale > 0 ? 1 / options.scale : 0;
+      magnitude *= Math.max(0, options.scale);
+    }
 
     // Objects: their scripts hear of it; locks open or close (Lock, Open); destructible ones
     // take its health damage.
@@ -736,7 +762,7 @@ export class MagicEngine {
       target,
       caster,
       elapsed: 0,
-      duration,
+      duration: duration + taper,
       magnitude,
       item: item.formId,
       index,
@@ -745,6 +771,7 @@ export class MagicEngine {
       ...(lasting && { lasting }),
       ...(dual && { dual }),
       ...(options.at && { at: options.at }),
+      ...(taper > 0 && { taper, taperMagnitude: magnitude * taperShare }),
     };
     runtime.state.activeEffects.set(key, entry);
     const holds = await this.#conditionsHold(key, entry);
@@ -758,9 +785,47 @@ export class MagicEngine {
     // The hub tells it (TESMagicEffectApplyEvent: OnMagicEffectApply).
     runtime.events.emit('magicEffectApply', { caster, target, effect: effect.formId });
     if (holds) await this.#activate(key, entry, effect);
-    // Effects at once end as they have acted.
-    if (duration === 0 && !lasting) await this.end(key);
+    if (holds && options.trains === true && caster !== undefined)
+      await this.#train(item, index, effect, entry, options);
+    // Effects at once end as they have acted (those that taper once their taper is over).
+    if (entry.duration === 0 && !lasting) await this.end(key);
     return true;
+  }
+
+  /**
+   * An effect item of a spell the caster cast that took hold trains its magic effect's school
+   * (observed in the original; effect-rules.ts effectSkillUses): a fire and forget effect
+   * once, as it takes hold (one of the archetypes that train by what they did, SKILL_BY_EFFECT:
+   * by the share of its magnitude its actor value took), a concentration spell's hit by its
+   * seconds (only those archetypes). Powers, lesser powers, shouts, scrolls and enchantments
+   * train nothing; the school must be a skill.
+   */
+  async #train(
+    item: MagicItemRecord,
+    index: number,
+    effect: MagicEffectRecord,
+    entry: ActiveEffectState,
+    options: ApplyOptions,
+  ): Promise<void> {
+    const runtime = this.#runtime;
+    const caster = entry.caster;
+    const itemEffect = item.effects[index];
+    if (caster === undefined || !itemEffect || item.type !== 'SPEL' || item.kind !== 'spell')
+      return;
+    const skill = effect.skill;
+    if (skill < ActorValue.firstSkill || skill >= ActorValue.firstSkill + SKILL_COUNT) return;
+    const concentration = item.castType === CastType.concentration;
+    const byEffect = SKILL_BY_EFFECT.has(effect.archetype);
+    if (concentration && !byEffect) return;
+    const { casting } = await runtime.casting.settings();
+    const uses = effectSkillUses({
+      effectCost: effectItemCost(effect.baseCost, itemEffect, concentration, casting),
+      spellCost: (item.flags & MagicSpellFlag.manualCost) !== 0 ? item.cost : undefined,
+      skillUsageMult: effect.skillUsageMult,
+      seconds: concentration ? options.seconds : undefined,
+      share: byEffect ? (this.#did.get(entry) ?? 1) : 1,
+    });
+    if (uses > 0) await runtime.progression.useSkill(caster, skill, uses);
   }
 
   /** A spell that fails on a target: the player hears of it (sMagicEffectResisted, ...). */
@@ -965,10 +1030,10 @@ export class MagicEngine {
   async #valueStart(entry: ActiveEffectState, effect: MagicEffectRecord): Promise<void> {
     const runtime = this.#runtime;
     if (effect.actorValue < 0) return;
-    const mode = valueMode(effect, entry.duration, entry.lasting ?? false);
+    const mode = valueMode(effect, itemDuration(entry), entry.lasting ?? false);
     if (mode === 'perSecond') return;
     if (mode === 'once') {
-      await this.#change(entry, effect, valueSign(effect) * entry.magnitude);
+      this.#did.set(entry, await this.#change(entry, effect, valueSign(effect) * entry.magnitude));
       return;
     }
     if (effect.archetype === EffectArchetype.peakValueModifier) {
@@ -1059,15 +1124,15 @@ export class MagicEngine {
   /**
    * Damage or a restore of an effect's actor value (and Dual Value Modifier's second; Absorb's
    * caster gains it): damage to Health from a caster names it as the killer; the invulnerable
-   * take none.
+   * take none. Returns the share of the amount its actor value took (what the effect did).
    */
   async #change(
     entry: ActiveEffectState,
     effect: MagicEffectRecord,
     amount: number,
-  ): Promise<void> {
-    if (amount === 0 || effect.actorValue < 0) return;
-    await this.#modify(entry.target, effect.actorValue, amount, entry.caster);
+  ): Promise<number> {
+    if (amount === 0 || effect.actorValue < 0) return 0;
+    const did = await this.#modify(entry.target, effect.actorValue, amount, entry.caster);
     if (
       effect.secondActorValue >= 0 &&
       (effect.archetype === EffectArchetype.dualValueModifier ||
@@ -1088,22 +1153,30 @@ export class MagicEngine {
     ) {
       await this.#modify(entry.caster, effect.actorValue, -amount, undefined);
     }
+    return did;
   }
 
+  /**
+   * Changes an actor value; returns the share of `amount` it took: damage all of it (none on
+   * the invulnerable or the dead), a restore what was missing of the value. TODO(M13): whether
+   * the engine counts damage past what the value had.
+   */
   async #modify(
     actor: number,
     value: number,
     amount: number,
     killer: number | undefined,
-  ): Promise<void> {
+  ): Promise<number> {
     const actors = this.#runtime.actors;
     if (amount < 0) {
-      if (value === ActorValue.health && (await actors.isInvulnerable(actor))) return;
-      if (await actors.isDead(actor)) return;
+      if (value === ActorValue.health && (await actors.isInvulnerable(actor))) return 0;
+      if (await actors.isDead(actor)) return 0;
       await actors.damage(actor, value, -amount, killer);
-    } else {
-      actors.restore(actor, value, amount);
+      return 1;
     }
+    const before = await actors.value(actor, value);
+    actors.restore(actor, value, amount);
+    return amount > 0 ? Math.min(1, Math.max(0, before.max - before.current) / amount) : 0;
   }
 
   // --- The other archetypes -------------------------------------------------------------------
@@ -1745,11 +1818,13 @@ export class MagicEngine {
       entry.elapsed += seconds;
       const effect = this.#effects.get(entry.effect);
       if (!entry.inactive && effect && isValueEffect(effect) && effect.actorValue >= 0) {
-        const span =
-          entry.duration > 0 ? Math.max(0, Math.min(seconds, entry.duration - before)) : seconds;
-        const mode = valueMode(effect, entry.duration, entry.lasting ?? false);
-        if (mode === 'perSecond' && span > 0) {
-          changes.push({ entry, effect, amount: valueSign(effect) * entry.magnitude * span });
+        const mode = valueMode(effect, itemDuration(entry), entry.lasting ?? false);
+        // Each second of its duration, and of its taper after it (an effect at once: only that).
+        const tail = mode === 'once' && (entry.taper ?? 0) > 0;
+        if ((mode === 'perSecond' || tail) && entry.duration > 0) {
+          const magnitude = tail ? (entry.taperMagnitude ?? entry.magnitude) : entry.magnitude;
+          const given = magnitudeOver(magnitude, entry.duration, effect, before, before + seconds);
+          if (given > 0) changes.push({ entry, effect, amount: valueSign(effect) * given });
         } else if (effect.archetype === EffectArchetype.accumulateMagnitude) {
           // A ward grows at its rate (observed in the original), holding still a while
           // after a hit lowered it (holdWards).

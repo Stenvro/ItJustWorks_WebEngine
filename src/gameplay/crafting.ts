@@ -631,6 +631,37 @@ export function weaponChargePerUse(
   );
 }
 
+/** The settings an enchanted item's value reads: fEnchantmentPointsMult, ...EffectPointsMult. */
+export interface EnchantedValueSettings {
+  readonly pointsMult: number;
+  readonly effectPointsMult: number;
+}
+
+/** Skyrim.esm's values (the engine's built-in default is 0.4 for both). */
+export const ENCHANTED_VALUE_SETTINGS: EnchantedValueSettings = {
+  pointsMult: 0.12,
+  effectPointsMult: 8,
+};
+
+/**
+ * An enchanted item's value in gold (observed in the original): its base value (one between
+ * 0 and 1 counted as 1); with a constant effect enchantment (apparel) that plus the
+ * enchantment's cost rounded; with another (weapons) base + fEnchantmentPointsMult × its charge
+ * + fEnchantmentEffectPointsMult × the enchantment's cost, unless the base is 0; whole gold.
+ */
+export function enchantedItemValue(
+  base: number,
+  enchantment: { readonly constant: boolean; readonly cost: number; readonly charge: number },
+  settings: EnchantedValueSettings = ENCHANTED_VALUE_SETTINGS,
+): number {
+  const value = base > 0 && base < 1 ? 1 : Math.trunc(base);
+  if (value <= 0) return value;
+  if (enchantment.constant) return value + Math.round(enchantment.cost);
+  return Math.trunc(
+    value + settings.pointsMult * enchantment.charge + settings.effectPointsMult * enchantment.cost,
+  );
+}
+
 /** How many hits a weapon's charge gives (rounded down; a cost of 0: unlimited). */
 export function enchantmentUses(charge: number, chargePerUse: number): number {
   return chargePerUse > 0 ? Math.floor(charge / chargePerUse + 1e-9) : Infinity;
