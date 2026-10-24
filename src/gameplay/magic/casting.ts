@@ -18,10 +18,10 @@
 //   fMagicDualCastingTimeMult, 1), released then it fires, before it is let go without effect;
 //   a concentration spell casts from its charge time on, spending its cost a second while it is
 //   held and magicka lasts.
-// - Skill use: a spell that takes effect gives its school the spell's base cost in uses (UESP
-//   "Leveling": the base magicka cost; dual cast its cost multiplied as well, TODO(M13): the
-//   engine's dual-cast share); a concentration spell a second's at a time. Scrolls and staffs
-//   train nothing (staffs: UESP "Staffs", their school only with perks).
+// - Skill use (observed in the original): each effect item that takes hold trains its magic
+//   effect's school by its own cost × the effect's skill usage multiplier, by what it did
+//   (effect-rules.ts effectSkillUses); dual casting adds nothing. Scrolls and staffs train
+//   nothing (staffs: UESP "Staffs", their school only with perks).
 // - Staffs spend their enchantment's cost from their charge, not magicka; powers are used
 //   once a day (24 game hours), lesser powers again fMagicLesserPowerCooldownTimer seconds
 //   after their last use (observed in the original: 3 s); shouts are the voice's
@@ -164,15 +164,6 @@ export function chargeSeconds(
   settings: Pick<CastingSettings, 'dualTimeMult'> = CASTING_DEFAULTS,
 ): number {
   return Math.max(0, chargeTime) * (dual ? settings.dualTimeMult : 1);
-}
-
-/** The skill uses a cast that took effect gives its school: its base cost (dual: × the cost mult). */
-export function castSkillUses(
-  baseCost: number,
-  dual: boolean,
-  settings: Pick<CastingSettings, 'dualCostMult'> = CASTING_DEFAULTS,
-): number {
-  return Math.max(0, baseCost) * (dual ? settings.dualCostMult : 1);
 }
 
 // --- A hand's cast ------------------------------------------------------------------------
