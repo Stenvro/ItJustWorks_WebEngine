@@ -420,8 +420,8 @@ var QA_PLAY = engineDev.world.#play;
         const p = best.t.placement.position;
         let nearest;
         for (const door of (await play.session.routeMap()).doorsInSpace(space)) {
-          const d = Math.hypot(door.position[0] - p[0], door.position[1] - p[1], door.position[2] - p[2]);
-          if (d < 300 && (!nearest || d < nearest.d)) nearest = { door, d };
+          const d = Math.hypot(door.position[0] - p[0], door.position[1] - p[1]);
+          if (d < 400 && (!nearest || d < nearest.d)) nearest = { door, d };
         }
         if (nearest) {
           bot.door = nearest.door.door;
