@@ -9,6 +9,7 @@ import {
   lookAt,
   lookAtState,
   ModelSpace,
+  solveLeg,
   twist,
   type DirectAtValues,
   type FootIkGainValues,
@@ -356,6 +357,40 @@ describe('foot IK', () => {
     footIk(setup, half, false, state, p, space, slope, 1 / 30, true);
     expect(state.weight).toBeCloseTo(0.5);
     expect(state.offset).toBeCloseTo(-3, 1);
+  });
+
+  it('bends a leg held straight, or a little past it, forward to the knee limit', () => {
+    // The people's legs: the knee's interior angle at most 165°. A clip's leg straight (the knee
+    // on the line) or 1° past straight (the knee a little behind it) bends forward, the hinge's
+    // way, as a bent one does: the knee ends in front of the line from hip to ankle.
+    for (const knee of [0, -0.3]) {
+      const p = pose([
+        [0, 0, 0],
+        [0, 0, 70],
+        [-10, 0, 0],
+        [0, knee, -32],
+        [0, -knee, -32],
+      ]);
+      const space = new ModelSpace(Int16Array.from([-1, 0, 1, 2, 3]));
+      space.update(p);
+      const straight = { ...leg(2), maxKneeAngleDegrees: 165 };
+      solveLeg(straight, space.position(4), p, space);
+      space.update(p);
+      const [, hipY, hipZ] = space.position(2);
+      const [, kneeY, kneeZ] = space.position(3);
+      const [, ankleY, ankleZ] = space.position(4);
+      // The line from hip to ankle at the knee's height, and the knee ahead of it.
+      const along = (kneeZ - hipZ) / (ankleZ - hipZ);
+      expect(kneeY - (hipY + along * (ankleY - hipY))).toBeGreaterThan(3);
+      const up = [0, hipY - kneeY, hipZ - kneeZ] as const;
+      const down = [0, ankleY - kneeY, ankleZ - kneeZ] as const;
+      const interior =
+        Math.acos((up[1] * down[1] + up[2] * down[2]) / (Math.hypot(...up) * Math.hypot(...down))) /
+        DEG;
+      // The straight one to the limit; the one past straight turns by the limit less its
+      // unsigned angle (178.9°), so it ends twice its 1.1° past straight short of the limit.
+      expect(interior).toBeCloseTo(knee === 0 ? 165 : 167.2, 0);
+    }
   });
 });
 

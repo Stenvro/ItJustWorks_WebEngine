@@ -930,10 +930,12 @@ export function solveLeg(
   const up = normalize(sub(hip, knee));
   const down = normalize(sub(ankle, knee));
   if (hinge && up && down) {
-    // The signed angle from the thigh (back up) to the calf about the hinge.
-    const now = Math.atan2(dot(hinge, cross(up, down)), dot(up, down));
-    const side = Math.abs(now) > 1e-4 ? Math.sign(now) : 1;
-    const turn = side * wanted - now;
+    // The knee turns about its hinge by the wanted interior angle less the one it has (observed in
+    // the original: its two-joint solver takes the angle it has without a sign and turns
+    // the hinge's own way). A leg the clip holds straight, or a little past straight, so bends
+    // forward to the limit; taking the side from the angle's sign bent such knees backwards.
+    const now = Math.atan2(length(cross(up, down)), dot(up, down));
+    const turn = wanted - now;
     if (Math.abs(turn) > 1e-6) {
       const rotation = space.rotation(leg.kneeIndex);
       space.setRotation(
