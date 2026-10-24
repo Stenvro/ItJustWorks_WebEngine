@@ -101,7 +101,7 @@ import {
   type Threat,
 } from '../ai/combat-tactics.ts';
 import { InterruptFlag, PackageFlag } from '../ai/package-records.ts';
-import { CombatStyleFlag } from '../ai/combat-style-records.ts';
+import { CombatStyleFlag, type CombatStyle } from '../ai/combat-style-records.ts';
 import { withinReach } from '../ai/flight.ts';
 import type { Gait, MoveRequest, TurnParameters } from '../ai/locomotion.ts';
 import {
@@ -477,6 +477,11 @@ export class ActorCombatAi {
       default:
         return 0;
     }
+  }
+
+  /** An actor's combat style, once its profile is read. */
+  styleOf(reference: number): CombatStyle | undefined {
+    return this.#minds.get(reference)?.profile?.style;
   }
 
   /** IsFleeing: it flees a fight (or fear has it flee). */
@@ -2296,12 +2301,25 @@ export class ActorCombatAi {
       this.#driveRun(mind, view.feet ?? there, face, 0);
     }
     const state = view.state;
-    if (Math.abs(turnBetween(view.heading, facing)) > STRIKE_ANGLE) return;
-    // Loose once drawn and held its hold time; else draw (TODO(M13): its line of fire).
+    // Observed in the original: held its hold time, the bow is loosed once its target lies
+    // within fCombatRangedProjectileFiringArc of its aim (else it looks again a quarter second
+    // later; TODO(M13): the line of fire it also asks for); held past
+    // fCombatRangedAttackMaximumHoldTime it is let down unloosed (ActionRightInterrupt:
+    // CancelBowAttack). Its facing gates only a new draw: a drawn bow waiting on its archer's
+    // turn was never loosed (Helgen's archers held theirs drawn).
+    const off = Math.abs(turnBetween(view.heading, facing));
     if (state.attack === AttackState.bowDrawn && state.drawnFor >= mind.bowHold) {
-      void host.release(reference, 'ActionRightRelease');
-      mind.nextAttack = this.#clock + ATTACK_DECISION_SECONDS;
-    } else if (!attacking(state) && this.#clock >= mind.nextAttack) {
+      if (state.drawnFor > this.#settings.rangedAttackMaximumHoldTime) {
+        void host.release(reference, 'ActionRightInterrupt');
+        mind.nextAttack = this.#clock + ATTACK_DECISION_SECONDS;
+      } else if (off <= (this.#settings.rangedProjectileFiringArc * Math.PI) / 180) {
+        void host.release(reference, 'ActionRightRelease');
+        mind.nextAttack = this.#clock + ATTACK_DECISION_SECONDS;
+      }
+      return;
+    }
+    if (off > STRIKE_ANGLE) return;
+    if (!attacking(state) && this.#clock >= mind.nextAttack) {
       mind.nextAttack = this.#clock + ATTACK_DECISION_SECONDS;
       const sinceLastAttack =
         mind.lastAttack === undefined ? undefined : this.#clock - mind.lastAttack;
@@ -2607,6 +2625,11 @@ export class ActorCombatAi {
     if (mind.armed && best.kind === 'unarmed' && current === undefined) {
       if (await this.#pickUpWeapon(mind, view, runtime)) return;
     }
+    // Not in the middle of an attack (a bow drawn, a swing): the weapon changes once it is
+    // over. Changed under a drawn bow, the archer's hands held the sword while its graph stood
+    // in the bow's drawn state, whose release and cancel idles ask for a bow: it held the bow
+    // drawn for good (the combat scenario's guards, 39 s).
+    if (!best.equipped && attacking(view.state)) return;
     mind.equipped = best;
     if (best.equipped) return;
     // Taken up, it is kept a while (fCombatInventoryMinEquipTime*).
@@ -2622,6 +2645,11 @@ export class ActorCombatAi {
         await this.#until(
           () => host.fighter(mind.reference)?.state.weapon === WeaponState.sheathed,
         );
+        // Its graph did not put it away (it attacks again, it is staggered): no change now.
+        if (host.fighter(mind.reference)?.state.weapon !== WeaponState.sheathed) {
+          mind.nextEquip = this.#clock;
+          return;
+        }
       }
       const equipment = runtime.equipment;
       if (best.kind === 'unarmed') {
