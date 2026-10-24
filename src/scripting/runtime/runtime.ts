@@ -128,7 +128,17 @@ export interface WorldBridge {
   setAnimationVariable?(reference: number, name: string, value: number): void;
   /** SetMotionType: the body becomes dynamic, keyframed, ... (and stops waiting for a touch). */
   motionTypeChanged?(reference: number, motionType: number): void;
-  impulse?(reference: number, direction: Vec3, magnitude: number): void;
+  /**
+   * A push on a reference's moving bodies: along `direction` (made unit) by `magnitude` (Havok
+   * units); with `share`, as ApplyHavokImpulse: `direction` × `magnitude` × share(the body's
+   * layer), in game units.
+   */
+  impulse?(
+    reference: number,
+    direction: Vec3,
+    magnitude: number,
+    share?: (layer: number) => number,
+  ): void;
   /**
    * An explosion pushes a reference's moving bodies away from `center`: each body's push by its
    * layer and mass (src/gameplay/magic/explosions.ts explosionBodyPush).
