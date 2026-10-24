@@ -120,6 +120,11 @@ export interface ActorFurnitureOptions {
    * side (src/shell/actor-combat.ts pairIdle).
    */
   readonly paired?: (actor: number, target: number, event: string) => void;
+  /**
+   * The height of the ground under a point (the world's physics, actors left out), if any
+   * within reach: where one placed in its furniture as its cell loaded leaves to.
+   */
+  readonly ground?: (at: readonly [number, number, number]) => number | undefined;
 }
 
 /** A placed object of the loaded area, as the view knows it. */
@@ -206,6 +211,11 @@ const SLEEP_TYPE = 2;
  * alone; this covers graphs whose exits our runtime does not play to their end.
  */
 const EXIT_GRACE = 1.5;
+/**
+ * One placed in its furniture as its cell loaded leaves to the ground under its marker when
+ * that lies more than this below it (units: a drop, not a bed's or chair's height).
+ */
+const QUICK_EXIT_DROP = 128;
 
 /** Whether a use is being left, or in its furniture (read after awaits: they may change). */
 const leaving = (use: Use): boolean => use.phase === 'leaving';
@@ -614,6 +624,17 @@ export class ActorFurniture {
     }
     use.state = 4;
     use.quickExit = quick;
+    // It enters no more (IsEnteringInteractionQuick): one placed in its furniture as its cell
+    // loaded is asked for its exit, not its instant enter again (the ceiling spiders' ambush
+    // holes: AmbushIdleEnter wants a quick enter, AmbushIdleExit none). It came from no floor:
+    // where the ground under its marker lies far below (more than a fall: the hole's spider
+    // drops 1,000 units), it leaves to that ground, not to its marker's height, where its
+    // controller would hang on the hole's rim. A bed's or a chair's own top is no such drop.
+    if (use.quickEnter) {
+      const ground = this.#options.ground?.(use.worldMarker.position);
+      if (ground !== undefined && use.floor - ground > QUICK_EXIT_DROP) use.floor = ground;
+    }
+    use.quickEnter = false;
     let event = await this.#idleEvent(user, use.furniture).catch(() => undefined);
     if (this.#uses.get(actor) !== use) return;
     if (event === undefined && !quick) {

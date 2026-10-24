@@ -66,6 +66,11 @@ interface Dying {
    * a graph whose states did not change by DEATH_TAKEN did not take it.
    */
   before: string | undefined;
+  /**
+   * It died in a paired clip (a killmove's victim): its body goes limp from the clip's last
+   * pose as the clip ends (its graph would otherwise stand it up in its own states again).
+   */
+  readonly paired: boolean;
 }
 
 /**
@@ -83,6 +88,8 @@ const DEATH_WAIT = 8;
 const DEATH_TAKEN = 0.3;
 /** A death cry waiting for its graph's DeathEmote is said after this at the latest (seconds). */
 const DEATH_EMOTE_WAIT = 2;
+/** A killmove victim's clip this near its end (seconds) is at its last pose. */
+const PAIRED_END_SLACK = 0.05;
 /** The engine's death actions (AACT), as the idle tree has them: creatures', then humans'. */
 const DEATH_ACTIONS = ['ActionDeath', 'ActionDeathWait'] as const;
 /** The events a death idle sends that drop the actor as a ragdoll at once. */
@@ -435,7 +442,10 @@ export class ActorGraphEvents {
         };
     const graph = staged.placed.behavior;
     const knocked = stage.bodies.knocked(reference);
-    const paired = stage.combat.paired(reference);
+    // A killmove's victim dies in its paired clip, also when the clip's last frame raised its
+    // 2_PairEnd before its 2_KillActor (Paired_1HMKillMoveD).
+    const paired =
+      stage.combat.paired(reference) || staged.placed.behavior?.synchronizedClip() !== undefined;
     let event: string | undefined;
     const before = graph && !paired ? statesOf(graph) : undefined;
     if (graph && !knocked && !paired) {
@@ -466,6 +476,7 @@ export class ActorGraphEvents {
       since: 0,
       cry: waitsForEmote ? cry : undefined,
       before,
+      paired,
     });
     if (!waitsForEmote) cry?.();
   }
@@ -536,6 +547,16 @@ export class ActorGraphEvents {
         cry();
       }
       const graph = staged.placed.behavior;
+      // A paired clip's victim (a killmove's) goes limp from its last pose as its clip ends,
+      // before its graph blends out of it into its own states (it would stand up again).
+      if (dying.paired) {
+        const sync = graph?.synchronizedClip();
+        const length = sync?.binding?.animation.duration;
+        if (!sync || (length !== undefined && sync.time >= length - PAIRED_END_SLACK)) {
+          this.#limp(dying);
+          continue;
+        }
+      }
       if (dying.phase === 'driven') {
         const holds =
           graph !== undefined &&

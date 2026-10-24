@@ -212,6 +212,12 @@ export interface CombatAiSettings {
   readonly rangedAttackHoldTimeAbsoluteMin: number;
   readonly rangedAttackHoldTimeMinDistance: number;
   /**
+   * fCombatRangedAttackMaximumHoldTime: a bow held drawn longer is let down unloosed;
+   * fCombatRangedProjectileFiringArc: it is loosed only at a target this near its aim (degrees).
+   */
+  readonly rangedAttackMaximumHoldTime: number;
+  readonly rangedProjectileFiringArc: number;
+  /**
    * fCombatAttackAnimationDrivenDelayTime: an actor still in its last attack chooses no new one
    * until this long after it chose it (observed in the original).
    */
@@ -327,6 +333,8 @@ const SETTINGS: readonly (readonly [keyof CombatAiSettings, string | undefined, 
   ['rangedAttackHoldTimeMax', 'fCombatRangedAttackHoldTimeMax', 1.5],
   ['rangedAttackHoldTimeAbsoluteMin', 'fCombatRangedAttackHoldTimeAbsoluteMin', 0.1],
   ['rangedAttackHoldTimeMinDistance', 'fCombatRangedAttackHoldTimeMinDistance', 256],
+  ['rangedAttackMaximumHoldTime', 'fCombatRangedAttackMaximumHoldTime', 10],
+  ['rangedProjectileFiringArc', 'fCombatRangedProjectileFiringArc', 30],
   ['attackAnimationDrivenDelayTime', 'fCombatAttackAnimationDrivenDelayTime', 1.5],
 ];
 

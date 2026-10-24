@@ -8,6 +8,7 @@ export type QaSystem =
   | 'locomotion'
   | 'physics'
   | 'ai'
+  | 'combat'
   | 'scenes'
   | 'scripts'
   | 'shell'
@@ -62,7 +63,13 @@ export type QaKind =
   /** A scenario's check of what the player does failed (a prompt, a hotkey, a shot). */
   | 'interaction'
   /** The page stopped answering (the runner saw it). */
-  | 'hang';
+  | 'hang'
+  /** An archer fighting within its range never looses an arrow (or holds its bow drawn). */
+  | 'archer-silent'
+  /** A creature fighting within its reach never attacks (or its attacks never hit). */
+  | 'creature-passive'
+  /** A paired animation's partner stands away from the mark its leader's clip puts it at. */
+  | 'pair-misaligned';
 
 /** The system each kind belongs to. */
 export const KIND_SYSTEM: Readonly<Record<QaKind, QaSystem>> = {
@@ -90,6 +97,9 @@ export const KIND_SYSTEM: Readonly<Record<QaKind, QaSystem>> = {
   'placeholder-text': 'ui',
   interaction: 'ui',
   hang: 'shell',
+  'archer-silent': 'combat',
+  'creature-passive': 'combat',
+  'pair-misaligned': 'animation',
 };
 
 /** What an anomaly happened to: an actor (the player too), a simulated body, a scene. */
@@ -184,6 +194,17 @@ export interface QaThresholds {
   readonly sceneStallSeconds: number;
   /** A frame longer than this is reported on its own (milliseconds). */
   readonly longFrameMs: number;
+  /** An archer in combat within its range that looses nothing this long (seconds)… */
+  readonly archerSilentSeconds: number;
+  /** …or holds its bow drawn this long (seconds: fCombatRangedAttackMaximumHoldTime). */
+  readonly bowHeldSeconds: number;
+  /** A creature in combat within its reach that attacks not once this long (seconds)… */
+  readonly creaturePassiveSeconds: number;
+  /** …or attacks this often within its reach without a hit. */
+  readonly creatureMisses: number;
+  /** A paired clip's partner this far from its mark (game units) or turned this far (degrees). */
+  readonly pairMarkUnits: number;
+  readonly pairMarkDegrees: number;
 }
 
 export const DEFAULT_THRESHOLDS: QaThresholds = {
@@ -211,6 +232,12 @@ export const DEFAULT_THRESHOLDS: QaThresholds = {
   velocitySpike: 1500,
   sceneStallSeconds: 45,
   longFrameMs: 100,
+  archerSilentSeconds: 15,
+  bowHeldSeconds: 10,
+  creaturePassiveSeconds: 12,
+  creatureMisses: 8,
+  pairMarkUnits: 24,
+  pairMarkDegrees: 25,
 };
 
 /** The frame times of a run (milliseconds). */

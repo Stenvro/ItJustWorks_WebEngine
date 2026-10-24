@@ -340,6 +340,83 @@ export class BodyWatch {
   }
 }
 
+/** What the combat monitors read of a fighter at a check (src/shell/actor-combat.ts QaFighter). */
+export interface CombatSample {
+  /** It fights a target (not fleeing). */
+  readonly fighting: boolean;
+  /** It fights with a bow or crossbow it has ammunition for. */
+  readonly ranged: boolean;
+  /** Its target is within its shots' range (ranged) or its strikes' reach (melee). */
+  readonly inRange: boolean;
+  readonly weaponDrawn: boolean;
+  /** Seconds its bow has been held drawn (0: not drawn). */
+  readonly bowDrawnFor: number;
+  readonly attacks: number;
+  readonly shots: number;
+  readonly hits: number;
+}
+
+/** The limits the combat monitors judge by (QaThresholds' combat part). */
+export interface CombatLimits {
+  readonly archerSilentSeconds: number;
+  readonly bowHeldSeconds: number;
+  readonly creaturePassiveSeconds: number;
+  readonly creatureMisses: number;
+}
+
+/**
+ * One fighter's combat over time: an archer that looses nothing for a while (or holds its bow
+ * drawn), a melee fighter (a creature) that attacks not once within reach (or attacks again and
+ * again without a hit). The counters' growth is the evidence; their time resets as it grows.
+ */
+export class CombatWatch {
+  #last: CombatSample | undefined;
+  /** Seconds in range without a shot (archers) or an attack (melee). */
+  #quiet = 0;
+  /** Attacks within reach since its last hit. */
+  #misses = 0;
+  readonly archer = new Episode(0, 1);
+  readonly melee = new Episode(0, 1);
+
+  /** Seconds in range without a shot or an attack. */
+  get quiet(): number {
+    return this.#quiet;
+  }
+
+  get misses(): number {
+    return this.#misses;
+  }
+
+  update(
+    sample: CombatSample,
+    dt: number,
+    limits: CombatLimits,
+  ): {
+    readonly archer: 'begin' | 'end' | undefined;
+    readonly melee: 'begin' | 'end' | undefined;
+  } {
+    const last = this.#last ?? sample;
+    this.#last = sample;
+    const shot = sample.shots > last.shots;
+    const attacked = sample.attacks > last.attacks;
+    const hit = sample.hits > last.hits;
+    const watching = sample.fighting && sample.inRange && sample.weaponDrawn;
+    if (!watching || (sample.ranged ? shot : attacked)) this.#quiet = 0;
+    else this.#quiet += dt;
+    if (hit || !sample.fighting) this.#misses = 0;
+    else if (attacked && sample.inRange) this.#misses += sample.attacks - last.attacks;
+    const archer =
+      sample.ranged &&
+      sample.fighting &&
+      (this.#quiet >= limits.archerSilentSeconds || sample.bowDrawnFor >= limits.bowHeldSeconds);
+    const melee =
+      !sample.ranged &&
+      sample.fighting &&
+      (this.#quiet >= limits.creaturePassiveSeconds || this.#misses >= limits.creatureMisses);
+    return { archer: this.archer.update(archer, dt), melee: this.melee.update(melee, dt) };
+  }
+}
+
 /** A travel's progress: nearer its destination, or a fair way moved (a detour). */
 export class TravelWatch {
   #destination: readonly [number, number, number] | undefined;
