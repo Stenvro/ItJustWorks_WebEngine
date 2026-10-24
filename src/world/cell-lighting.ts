@@ -55,6 +55,7 @@ export function pointLights(
       ],
       radius: light.radius,
       color: [color[0] * brightness, color[1] * brightness, color[2] * brightness],
+      ...(light.spot && { spot: light.spot }),
     });
   }
   return result;

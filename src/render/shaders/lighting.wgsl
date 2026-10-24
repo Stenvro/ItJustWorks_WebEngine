@@ -161,7 +161,7 @@ fn objectLighting(
     if (falloff >= 1.0) {
       continue;
     }
-    let color = light.color * (1.0 - falloff * falloff);
+    let color = light.color * (1.0 - falloff * falloff) * lightCone(light, offset);
     let toLight = offset / max(distance, 1e-4);
     let angle = dot(n, toLight);
     result.diffuse += color * saturate(angle);
