@@ -212,6 +212,19 @@ describe('Locomotion', () => {
     expect(graph.values.get('iSyncIdleLocomotion')).toBe(0);
   });
 
+  it("gives the graph its speed over the actor's scale, starting by the speed itself", () => {
+    const graph = recorder();
+    const locomotion = new Locomotion();
+    // A fox half a wolf's size at 60 units a second: its graph walks at 120 (its clips' strides
+    // scaled by a half cover 60).
+    locomotion.drive([graph], frame({ velocity: [0, 60], scale: 0.5 }));
+    expect(graph.values.get('Speed')).toBeCloseTo(120);
+    // The threshold reads the speed itself: at 4 units a second it stands (its Speed 8).
+    const small = recorder();
+    new Locomotion().drive([small], frame({ velocity: [0, 4], scale: 0.5 }));
+    expect(small.events).toEqual([]);
+  });
+
   it('tells the graph as the way it goes changes half (forward and backward, left and right)', () => {
     const graph = recorder();
     const locomotion = new Locomotion();

@@ -428,14 +428,17 @@ export class ActorVehicles {
   ): void {
     const passenger = this.#passengers.get(actor);
     if (!passenger) return;
-    // The player's CartExit goes to both their graphs (as the engine notifies the player's
-    // animation graphs: src/shell/player-avatar.ts send): their first-person graph played the
-    // exit too, and left in Cart_State its camera stayed at the seat's height on the ground (the
-    // player "still a giant" after the ride).
+    // The player's CartExit goes to both their graphs, as every event the engine sends an actor
+    // goes to each graph of its manager: sent to the body's alone, the first-person graph stayed
+    // in Cart_State on the exit clip's last frame, and the camera it carries slid along all the
+    // way to the block without a step (MQ101's "Follow the Captain") and stood 40 units over the
+    // body's head after the ride (the player "still a giant"; QA monitor player-camera).
     const avatar = actor === PLAYER_REF ? this.#options.player?.()?.avatar : undefined;
-    const send = (name: string): boolean => (avatar ? avatar.send(name) : graph.sendEvent(name));
     for (const { name: event } of events) {
-      if (BOUND_STANDING.has(event.toLowerCase())) send('CartExit');
+      if (BOUND_STANDING.has(event.toLowerCase())) {
+        if (avatar) avatar.send('CartExit');
+        else graph.sendEvent('CartExit');
+      }
       const effect = riderEvent(event);
       if (effect === 'detach' && !passenger.detached) {
         const pose = this.#poseOf(passenger.vehicle, 1) ?? passenger.still;

@@ -100,7 +100,16 @@ How actors move (`src/ai/locomotion.ts`, `src/ai/movement-types.ts`, `src/shell/
   leaves on moveStart only while not both bBlendOutSlow and bForceIdleStop are set, which such
   an idle sets: told moveStart alone, Lokir never moved, stood in the line, and the execution
   waited for the archers to kill him (measured in the browser: after IdleStop he ran his
-  patrol). The engine stops an actor's current idle (AIProcess::StopCurrentIdle, with a
+  patrol). An idle that is not animation-driven holds it as well where its graph does not leave
+  the idle on moveStart (the human graph's NonOffsetIdles: MT_Idle_Nervous and the other idles
+  a scene or package plays, which only IdleStop and IdleForceDefaultState end): its controller
+  took it on its way while its graph stood (QA: Ralof glided at 360 units a second through the
+  dragon's attack in IdleNervous). Told it moves, and its graph's clips moving it slower than 5
+  units a second for half a second while it wants to go (its walks having moved it by their root
+  motion before: no creature whose clips carry no motion), its idle is stopped the same way.
+  TODO(M13): the engine's own test for stopping an idle as a path starts was not found (the
+  engine stops it through AIProcess::StopCurrentIdle; its callers were not read); this is the
+  graph's evidence of it. The engine stops an actor's current idle (AIProcess::StopCurrentIdle, with a
   force flag the graph's bForceIdleStop names); TODO(M13): when exactly it does so for a path
   is not read from the engine yet. As the graph lets go (bAnimationDriven back to 0) while it
   still goes its way it is told again (moveStart; turnLeft / turnRight turning), as the engine
@@ -842,7 +851,12 @@ the exit's root motion moves the actor out from where the vehicle was (CartPriso
 out of the back); ExitCartEnd sets the vehicle to none. NPCDetach takes the controller off too.
 A prisoner's exit clip ends with OffsetBoundStandingCartStart (seat A's, Ulfric's, with
 OffsetBoundStandingStart): it sends CartExit, the only way out of the human graph's Cart_State,
-whose exit raises ExitCartEnd (inferred from the data). The player rides so too, carried in the
+whose exit raises ExitCartEnd (inferred from the data). The player's CartExit goes to both their
+graphs, as every event the engine sends an actor goes to each graph of its manager: the
+first-person graph has a Cart_State of its own that only CartExit leaves; sent to the body's
+graph alone, the first-person one stayed on the exit clip's last frame, and the camera it carries
+slid all the way to the chopping block without a step or a bob (MQ101's "Follow the Captain",
+measured: its graph in CartPrisonerCExit for the whole walk). The player rides so too, carried in the
 physics steps (their shape out of the world meanwhile); an actor's AI that goes somewhere lets it
 off. The player's CartExit goes to both their graphs, as every event the engine sends the player
 (their first-person graph played the exit too): sent to the body's alone, the first-person graph
