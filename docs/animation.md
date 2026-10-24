@@ -284,6 +284,42 @@ the new state is entered (Behavior runtime, below), so an actor going straight f
 StandingBarDrinking into WoodChop_State drops the tankard (the old nested state's
 `AnimObjectUnequip`) before it loads the axe, and keeps the axe.
 
+## Ambient idles
+
+The idles actors play by themselves while their packages leave them standing, sitting or
+leaning: the idle tree's ActionIdle (315 idles for 36 graphs; the people's under NPCIdleRoot:
+the hand-on-hip and arms-crossed idles, the chair idles, a counter wiped, a table drinker's mug,
+the spectators' cheers, the cannibals' and vampires' feeding). `node tools/idle-info.ts --tree
+ActionIdle 0_master` lists them.
+
+**Observed in the original** (the PickNewIdle handler and the AI process's idle update), in
+our words:
+
+- Each actor's process keeps a "wants a new idle" flag. Its graph's PickNewIdle (raised as an
+  idle ends, and from its standing and sitting states) sets it, unless a "skip one" flag is set,
+  which that event clears instead (set as a specific idle, a package's or a script's, replaces
+  one that plays: the PickNewIdle its stop raises is no request).
+- While the flag is set, each AI update tries ActionIdle: the first idle of the tree whose
+  conditions hold, on the actor, with its process's target (the furniture it is in: the bar
+  counter's keywords, the table's). One that plays clears the flag and sets the idle wait timer
+  (fAIIdleWaitTime; fAIIdleWaitTimeComplexScene while a complex scene runs, when the next try
+  waits for it); none leaves the flag set, and the next update tries again. Other systems set
+  the flag themselves before an action that should resolve to an idle (a trespass warning).
+- It is not tried for an actor farther from the player than its 3D's bound radius / 64 ×
+  fAIIdleAnimationDistance (2000; × fAIIdleAnimationLargeCreatureDistanceMult, 3, for a race
+  larger than medium), nor one on its way to furniture, entering, leaving or asleep in it, one
+  whose package has idles of its own (PACK IDLA: those play), or one at its meal (an Eat
+  package's eating step). The tries share a time budget per frame.
+
+**Ours** (src/ai/ambient-idles.ts, the flags and gates; src/shell/actor-ambient-idles.ts, the
+stage's): the same, the idle tree's search being the furniture's `actionEvent` (as the death
+actions'), the bound radius the sphere round the skeleton's posed nodes. Not yet (TODO(M13),
+listed in tests/conformance/animation/ambient-idles.test.ts): which specific idles set the skip
+flag, the complex scene's wait, the frame's budget, the meal's gate. Seen in the headless
+simulation (the Bannered Mare at 20:00, 60 s): Hulda wiped the counter (IdleBarCounterWipe),
+Lucia put a hand on her hip (IdleHDRight), Saadia and Sinmir took MotionDrivenIdle (armed:
+IdleIfEquipped).
+
 ## Actors
 
 How placed actors (ACHR) appear and move (`src/shell/actors.ts`, `src/animation/skeleton.ts`;
@@ -607,7 +643,7 @@ a cart rider's exit, a held weapon's own graph, the casting art, the animation o
 events); then each event goes, in the order raised, to its handler class's implementations, or,
 without one, to the actor's own answers (the combat state's WeapEquip_Out, blockStop, bowEnd).
 The handler classes are registered in that one module; a class asked for that nothing
-implements is listed (`dispatch.unanswered()`: in Riverwood only MTStateHandler). Events that
+implements is listed (`dispatch.unanswered()`: in Riverwood only MTStateHandler); classes a system answers from its listener by the events' names (the flight states, the get-ups, a cart's exit) are declared so (`heardBy`). Of the 93 classes the files name, 80 are answered, 11 are read but not yet answered and 2 do not exist in the executable (tests/conformance/animation/engine-handlers.test.ts). Events that
 come before the response files are read wait for them.
 
 **The handlers** (observed in the original, in our words; ours after each):
@@ -639,7 +675,7 @@ come before the response files are read wait for them.
 | PitchOverrideStart/End, ZeroPitch (player)                        | a flag on the third-person camera; the camera's pitch to level                                                                                                                | the flag is kept (TODO(M13): what reads it); the pitch set to 0                                                                                                                                                                                |
 | AnimationObjectLoad / Draw (AnimObjLoad, AnimObjDraw)             | load / show the animation object the payload names                                                                                                                            | the animation objects ([above](#animation-objects))                                                                                                                                                                                            |
 | Decapitate (Decapitate; a killmove victim's 2_Decapitate)         | the actor wears its race's decapitation armor, its head is recorded gone, the cut is queued: the head copied into a piece of its own that flies off ([below](#dismemberment)) | as the engine                                                                                                                                                                                                                                  |
-| PickNewIdle                                                       | picks the actor's next idle                                                                                                                                                   | the stage's `pickNewIdle` hook (ambient idles: a later phase)                                                                                                                                                                                  |
+| PickNewIdle                                                       | the process wants a new idle                                                                                                                                                  | as the engine ([Ambient idles](#ambient-idles))                                                                                                                                                                                                |
 | StopHorseCamera, RemoveCharacterController                        | named in the files, but the executable has no handler class of that name (only the name)                                                                                      | nothing                                                                                                                                                                                                                                        |
 
 **A death** (`ActorGraphEvents.died`): the engine plays it through the idle tree: ActionDeath

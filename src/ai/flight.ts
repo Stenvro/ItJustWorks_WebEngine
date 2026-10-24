@@ -54,6 +54,9 @@ export function flyingStateOf(event: string): FlyingStateValue | undefined {
       return FlyingState.perching;
     case 'flightaction':
       return FlyingState.action;
+    // FlightLanded (FlightLandHandler in the response files: observed in the original, it
+    // sets the flying state to none).
+    case 'flightlanded':
     case 'flightland':
     case 'landend':
       return FlyingState.none;
