@@ -60,20 +60,20 @@ These run through every area and explain most of what breaks in play.
 
 ### Scripting, events, world state, audio
 
-| System                      | Status    | Main gaps                                                                                                                                                                     |
-| --------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Form types                  | complete  | VOLI, LENS (render)                                                                                                                                                           |
-| Per-reference state         | partial   | activate parents/children (5,691 references: pressure plates and tripwires fire nothing), physics-moved and animated state lost on unload, partial souls, alias display names |
-| Cell loading                | partial   | no buffered cells, OnAttached/DetachedFromCell, grid follows the camera                                                                                                       |
-| Respawn, cell reset         | missing   | no reset or respawn, no OnReset, corpses stay, encounter zone levels frozen (vendor restock: iDaysToRespawnVendor, done)                                                      |
-| Papyrus VM                  | different | natives not frame-synced; threads cannot be saved                                                                                                                             |
-| Script events               | partial   | about 20 kinds never sent; OnHit on objects; OnLocationChange for NPCs                                                                                                        |
-| Event sources               | different | no event hub                                                                                                                                                                  |
-| Story manager               | partial   | mechanism complete; most event sources missing (see above)                                                                                                                    |
-| Save and load               | missing   | M12                                                                                                                                                                           |
-| Stats, skills, actor values | complete  | tracked-stats event                                                                                                                                                           |
-| Audio                       | partial   | pause categories by DOBJ (menu fades, ducking and highlighting done), sounds held in menus, Slow Time only for its category, combat music rules                               |
-| Load order, settings        | partial   | plugins.txt and the user's INI files (M12)                                                                                                                                    |
+| System                      | Status    | Main gaps                                                                                                                                                       |
+| --------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Form types                  | complete  | VOLI, LENS (render)                                                                                                                                             |
+| Per-reference state         | partial   | physics-moved and animated state lost on unload, partial souls, alias display names (activate children: done, 158 of 6,527 pairs lie beyond the cells searched) |
+| Cell loading                | partial   | no buffered cells, OnAttached/DetachedFromCell, grid follows the camera                                                                                         |
+| Respawn, cell reset         | missing   | no reset or respawn, no OnReset, corpses stay, encounter zone levels frozen (vendor restock: iDaysToRespawnVendor, done)                                        |
+| Papyrus VM                  | different | natives not frame-synced; threads cannot be saved                                                                                                               |
+| Script events               | partial   | about 20 kinds never sent; OnHit on objects; OnLocationChange for NPCs                                                                                          |
+| Event sources               | different | no event hub                                                                                                                                                    |
+| Story manager               | partial   | mechanism complete; most event sources missing (see above)                                                                                                      |
+| Save and load               | missing   | M12                                                                                                                                                             |
+| Stats, skills, actor values | complete  | tracked-stats event                                                                                                                                             |
+| Audio                       | partial   | pause categories by DOBJ (menu fades, ducking and highlighting done), sounds held in menus, Slow Time only for its category, combat music rules                 |
+| Load order, settings        | partial   | plugins.txt and the user's INI files (M12)                                                                                                                      |
 
 ### AI
 
@@ -106,7 +106,7 @@ These run through every area and explain most of what breaks in play.
 | Melee choice      | partial   | attacks from attack data while closing in, per-attack angle and cooldown, special attack                                                                             |
 | Block, bash       | different | sustained block, block attack, offensive bash                                                                                                                        |
 | Close movement    | partial   | the selector's range split and Fallback To Ranged's condition (inferred); the flanking and ranged movement trees                                                     |
-| Ranged            | partial   | line of fire, optimal range, cover                                                                                                                                   |
+| Ranged            | partial   | line of fire (hold and release, firing arc, maximum hold: done), cover                                                                                               |
 | Combat magic      | partial   | casters by purpose, dual casting, reanimate a corpse                                                                                                                 |
 | Potions           | partial   | the casters' order in the tree; the stop-cast threshold of a held healing spell                                                                                      |
 | Damage, stagger   | partial   | sneak attacks by the player only, critical chance actor value, attack damage mult, stagger by the Mass actor value                                                   |
@@ -130,20 +130,20 @@ These run through every area and explain most of what breaks in play.
 
 ### Animation and bodies
 
-| System               | Status    | Main gaps                                                                |
-| -------------------- | --------- | ------------------------------------------------------------------------ |
-| Graph runtime        | partial   | event payloads                                                           |
-| Clips                | complete  | mirrored additive clips by our own rule                                  |
-| Engine handlers      | partial   | about 65 of 95 unanswered                                                |
-| Weapons and aim      | partial   | the player's casting pitch (PitchOverride), a crossbow's launch node     |
-| Ambient idles        | missing   | no idle picking (PickNewIdle)                                            |
-| Animation objects    | missing   | no tankards, hammers, brooms, lutes                                      |
-| Paired animations    | different | victim placed, no get-to-mark, events not routed per side                |
-| Ragdolls, death      | partial   | no powered ragdoll motors; objects' placed ragdoll poses; the cone limit |
-| Dismemberment        | complete  | re-dressing a reloaded corpse from its recorded worn objects             |
-| Actor build          | complete  | first-person render pass, bone LOD                                       |
-| Faces                | complete  | expression change rate                                                   |
-| Graph state in saves | missing   | M12                                                                      |
+| System               | Status   | Main gaps                                                                                                                                       |
+| -------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Graph runtime        | partial  | event payloads                                                                                                                                  |
+| Clips                | complete | mirrored additive clips by our own rule                                                                                                         |
+| Engine handlers      | partial  | about 65 of 95 unanswered                                                                                                                       |
+| Weapons and aim      | partial  | the player's casting pitch (PitchOverride), a crossbow's launch node                                                                            |
+| Ambient idles        | missing  | no idle picking (PickNewIdle)                                                                                                                   |
+| Animation objects    | missing  | no tankards, hammers, brooms, lutes                                                                                                             |
+| Paired animations    | partial  | the support's mark from the clip (engine's, set once), its side kept to the clip's end, death limp at the end: done; events not routed per side |
+| Ragdolls, death      | partial  | no powered ragdoll motors; objects' placed ragdoll poses; the cone limit                                                                        |
+| Dismemberment        | complete | re-dressing a reloaded corpse from its recorded worn objects                                                                                    |
+| Actor build          | complete | first-person render pass, bone LOD                                                                                                              |
+| Faces                | complete | expression change rate                                                                                                                          |
+| Graph state in saves | missing  | M12                                                                                                                                             |
 
 ### Physics
 
