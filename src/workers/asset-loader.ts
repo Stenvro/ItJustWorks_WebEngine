@@ -67,7 +67,7 @@ export class AssetLoader {
     const response = await this.#request('model', path, switchChild, damageStage, swaps);
     if (!response.ok || response.kind !== 'model') throw new Error(describe(response));
     return {
-      model: response.model,
+      model: { ...response.model, gameContent: this.#vfs.isGameContent(path) },
       collision: response.collision,
       problems: response.problems,
       workMs: response.workMs,
@@ -93,7 +93,10 @@ export class AssetLoader {
       [payload, thinPayload],
     );
     if (!response.ok || response.kind !== 'actor-part') throw new Error(describe(response));
-    return { model: response.model, problems: response.problems };
+    return {
+      model: { ...response.model, gameContent: this.#vfs.isGameContent(path) },
+      problems: response.problems,
+    };
   }
 
   /** A skeleton model's node tree. */

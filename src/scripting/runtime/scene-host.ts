@@ -10,6 +10,7 @@ import { parsePackage } from '../../ai/package-records.ts';
 import { parseScene, type SceneRecord } from '../../ai/scene-records.ts';
 import type { SceneActorState, SceneHost, SceneLine, SceneLook } from '../../ai/scene-runtime.ts';
 import type { InfoResponse } from '../../world/dialogue-records.ts';
+import { silentLineSeconds } from '../../world/dialogue.ts';
 import type { Condition } from '../conditions.ts';
 import { ObjectHandle } from '../values.ts';
 import { AliasFlag } from '../../world/quest-records.ts';
@@ -141,7 +142,7 @@ export class RuntimeSceneHost implements SceneHost {
         continue;
       }
       const perCharacter = await this.#perCharacter();
-      await runtime.vm.scheduler.waitReal(Math.max(1, response.text.length * perCharacter));
+      await runtime.vm.scheduler.waitReal(silentLineSeconds(response.text, perCharacter));
     }
     engine.said(spoken.info);
     await engine.runFragment(spoken.info, 'end', line.speaker);

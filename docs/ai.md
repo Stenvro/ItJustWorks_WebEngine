@@ -1221,6 +1221,72 @@ in different spaces, or with one placed nowhere yet, is as large as
 ObjectReference.GetDistance's, 1e10, so they wait while the player rides to Helgen;
 `tests/papyrus-runtime.int.test.ts`) or for a script (IvarsteadSSScene).
 
+### Town scenes
+
+The towns' street and gate scenes (Riften's DialogueRiftenSS01 and SS02, DialogueRiftenMaul,
+Whiterun's DialogueWhiterun scenes, Winterhold's and Ivarstead's first visit, Markarth's Forsworn
+murder, the temples, the inns' bards) are ordinary scenes; what makes them a class is how they
+start. `node tools/scene-audit.ts --starts <quest pattern>` (`.` for all) lists every quest with
+scenes that the Actor Dialogue event does not start: how it starts, the trigger boxes whose
+scripts name it or its scenes (and whether they wait for the player), and what each scene's first
+phase waits for. Of the 382 vanilla ones, 74 start with the game (4 of them also by a story
+manager event), 128 by a story manager event alone (Change Location 63, Script 47, Level Up 5,
+...) and 180 by scripts only (another quest's stage fragment, a trigger, a dialogue fragment);
+187 have a trigger box that waits for the player (871 boxes).
+
+What the scripts do (no engine rule of its own is involved):
+
+- The quest starts with the game, or by Change Location as the player enters the town (Riften's
+  Mistveil Keep and Bee and Barb scenes, Whiterun's preacher); its scene begins with it (Begin on
+  Quest Start) and its first phase stands with the actors in their start packages.
+- The first phase waits for a quest variable or stage. Riften's north gate: RDS01Scene waits for
+  GetVMQuestVariable(DialogueRiftenSS01, ::pGo_var) == 1; RDSTriggerScript, on the gate's
+  trigger box, compares who walks in with Game.GetPlayer and sets stage 10 (and stage 200 of
+  DialogueRiftenGateGuards), whose fragment sets RDSQuestScript.pGo to 1; Mjoll and Aerin then
+  talk ("I had another run-in with the Thieves Guild."). DialogueRiftenSS02 (Sapphire and Shadr)
+  and DialogueRiftenMaul (Maul meets the player) work the same way with their own boxes, as
+  Ivarstead's IvarsteadSSScene does.
+- Others are started by the box itself: defaultStartSceneTrigScript (Whiterun's establishing
+  scene, the temple's healing scenes), StartSceneTriggerSpecificTime (Amren's and Braith's
+  scenes, only between its NoEarlierThan and NoLaterThan hours of GameHour), a stage set by
+  defaultsetStageTrigSCRIPT (Markarth's MS01IntroWorldScene).
+- Some wait for the player to come near (GetDistance to the player): MG01MirabelleAncanoScene
+  holds Mirabelle and Ancano in the College courtyard until the player is within 600 units, and
+  its later phases need MG01's stage 30; MorthalInitialScene, MS13BanditCampfireScene alike.
+
+So a player who arrives elsewhere (the console's coc into the middle of Riften) and stands still
+sees the actors stand where the scene put them, as in the game; the scene plays as they walk
+through the gate. Checked in Node (`tests/papyrus-runtime.int.test.ts`: after a new game RDS01Scene
+stands in its first phase, the player entering RDS01TriggerRef sets stage 10 and pGo, and its
+lines follow) and in the browser with the QA runner's streets scenarios (below).
+
+Which trigger boxes wait for the player is read from their scripts
+(`src/scripting/runtime/trigger-gates.ts`): one whose OnTriggerEnter (in any state, its own or its
+parent script's) asks for Game.GetPlayer (RDSTriggerScript, defaultsetStageTrigSCRIPT's
+waitingForPlayer state), or whose properties name the player (defaultOnEnter's targets,
+StartSceneTriggerSpecificTime's triggerActor). One that names only another actor
+(defaultSetStageTRIGSpecificActor: MQ101SetStage32 waits for the prisoners' cart horse) does not.
+
+Measured with the QA runner (2026-10-24, on b9b337e and after):
+
+- The 20 places, whiterun-long-day, riverwood and windhelm-snow: 26 scenes started, 12 ended
+  before and 25 and 12 after (the counts move from run to run: the Actor Dialogue scenes and how
+  long a place plays). Scene stalls 1 before (Falkreath's DA05FuneralScene, waiting for
+  DA05FuneralTriggerScript's box by the graveyard; in the lead's run2 also Riften's three gate
+  scenes and MG01MirabelleAncanoScene), 0 after: they are the timeline's "waits for the player"
+  (5 in the after run: RDS01Scene, DialogueRiftenSS02Scene, DialogueRiftenMaulStartScene,
+  MG01MirabelleAncanoScene, MS13BanditCampfireScene).
+- The streets scenarios: in Riften RDS01Scene plays through its five phases once the player is in
+  RDS01TriggerRef and Maul meets the player once in DRMSTrig01Ref; Whiterun's Braith and Lars
+  scene, Winterhold's first-visit scene and Markarth's dog scenes play to their ends; the
+  establishing and Amren scenes start as their boxes are entered (their actors were not near
+  the player, so the timeline does not list them).
+- Left (not the scenes' rules): DialogueRiftenSS02Scene and IvarsteadSSScene stand in their last
+  phase, which waits for their actors' Sit-template packages (DRSS02ShadrInScene,
+  IvarsteadSSGwilinPackage: a Find of furniture near a wall-lean marker beside a Travel that
+  completes the package) to complete; ours keeps them running (the furniture and package
+  procedures', [Furniture and idle markers](#furniture-and-idle-markers)).
+
 ### Checking a scene against its data
 
 Two halves, one in the browser and one in Node:

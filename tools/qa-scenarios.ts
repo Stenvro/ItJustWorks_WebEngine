@@ -575,6 +575,153 @@ const PLACE_CELLS = [
   'BleakFallsBarrow01',
 ];
 
+/**
+ * The streets bot (in the page): it walks the player into every trigger box near them (within
+ * STREETS_RADIUS) that waits for the player and whose scripts name a scene or a quest with
+ * scenes (src/scripting/runtime/trigger-gates.ts: Riften's north gate, Whiterun's establishing
+ * scene, Winterhold's first visit), the nearest first, along the navmesh; in each it stands 8 s
+ * (the scene it starts may come to the player), then goes on; one it cannot walk to in 25 s
+ * it is put into (at its middle).
+ * Runs as a console line (replMode): the world viewer's navmeshes and play session are private.
+ */
+const STREETS_RADIUS = 6000;
+const STREETS_BOT = `
+var QA_NAV = engineDev.world.#navmeshes;
+var QA_PLAY = engineDev.world.#play;
+(async () => {
+  if (window.__qaStreets) return 'running';
+  const paths = await import('/src/ai/pathfinding.ts');
+  const { playerTrigger } = await import('/src/scripting/runtime/trigger-gates.ts');
+  const W = engineDev.world;
+  const nav = QA_NAV;
+  const rt = engineDev.play().session.scriptsReady;
+  const feet = [...W.player.feet];
+  const goals = [];
+  for (const trigger of QA_PLAY.physics.triggersNear(feet, ${String(STREETS_RADIUS)})) {
+    const found = await playerTrigger(rt, trigger);
+    if (!found) continue;
+    const scenes = [];
+    for (const form of found.names) {
+      const record = await rt.forms.record(form);
+      if (record?.type === 'SCEN') scenes.push(record.editorId);
+      if (record?.type === 'QUST' && (await rt.sceneHost.scenesOf(form)).length > 0) scenes.push(record.editorId);
+    }
+    if (scenes.length === 0) continue;
+    const placement = await rt.placement(trigger);
+    if (!placement) continue;
+    const name = (await rt.forms.record(trigger))?.editorId || trigger.toString(16);
+    goals.push({ trigger, name, scenes, point: [...placement.position] });
+  }
+  // The nearest first, then the nearest to that one.
+  const ordered = [];
+  let from = feet;
+  while (goals.length > 0) {
+    goals.sort((a, b) => Math.hypot(a.point[0] - from[0], a.point[1] - from[1]) - Math.hypot(b.point[0] - from[0], b.point[1] - from[1]));
+    const next = goals.shift();
+    ordered.push(next);
+    from = next.point;
+  }
+  const bot = { goals: ordered, index: 0, path: [], log: [], held: new Set(), since: performance.now(), arrived: undefined, last: undefined, still: 0 };
+  window.__qaStreets = bot;
+  const say = (text) => { bot.log.push(Math.round(performance.now() / 1000) + ' ' + text); };
+  say('triggers: ' + (ordered.map((g) => g.name + ' (' + g.scenes.join('/') + ')').join(', ') || 'none'));
+  const events = (code) => W.player?.eventsOfKey(code) ?? [];
+  const hold = (code, down) => {
+    const player = W.player; if (!player) return;
+    if (down === bot.held.has(code)) return;
+    for (const name of events(code)) player.press(name, down);
+    if (down) bot.held.add(code); else bot.held.delete(code);
+  };
+  bot.release = () => { for (const code of [...bot.held]) hold(code, false); };
+  const plan = (goal) => {
+    const found = paths.findPath(nav, [...W.player.feet], goal.point, { radius: 24 });
+    bot.path = found && found.points.length > 1 ? found.points.slice(1).map((p) => [...p]) : [goal.point];
+  };
+  if (ordered[0]) plan(ordered[0]);
+  bot.timer = setInterval(() => {
+    const play = engineDev.play(); const player = W.player;
+    if (!player || play.session.menuMode || W.loading !== undefined) { bot.release(); return; }
+    const goal = bot.goals[bot.index];
+    if (!goal) { bot.release(); return; }
+    const now = performance.now();
+    const at = player.feet;
+    const inside = rt.triggerVolumes.inside(goal.trigger).has(0x14);
+    const toGoal = Math.hypot(goal.point[0] - at[0], goal.point[1] - at[1]);
+    if (bot.arrived === undefined && (inside || toGoal < 40)) { bot.arrived = now; say('in ' + goal.name + (inside ? '' : ' (at its middle, not told inside)')); }
+    // Not there after 25 s (a way the navmesh does not give, a wall in between): put inside,
+    // at its middle (the scripts hear the entering all the same).
+    if (bot.arrived === undefined && now - bot.since > 25000 && !bot.placed) {
+      bot.placed = true;
+      bot.release();
+      player.teleport([...goal.point]);
+      say('could not walk to ' + goal.name + ' (' + Math.round(toGoal) + ' units off): put inside');
+      return;
+    }
+    if (bot.arrived !== undefined || now - bot.since > 40000) {
+      bot.release();
+      if (bot.arrived === undefined) say('could not reach ' + goal.name + ' (' + Math.round(toGoal) + ' units off)');
+      else if (now - bot.arrived < 8000) return;
+      bot.index++; bot.arrived = undefined; bot.since = now; bot.placed = false;
+      const next = bot.goals[bot.index];
+      if (next) { plan(next); say('on to ' + next.name); } else say('all triggers visited');
+      return;
+    }
+    while (bot.path.length > 1 && Math.hypot(bot.path[0][0] - at[0], bot.path[0][1] - at[1]) < 56) bot.path.shift();
+    const next = bot.path[0] ?? goal.point;
+    player.yaw = Math.atan2(next[0] - at[0], next[1] - at[1]);
+    player.pitch = 0;
+    // Sidestepping (each side in turn) for a moment when stuck; no jumps (onto a town's rocks
+    // and sconces).
+    const dodging = bot.dodge && now < bot.dodge.until;
+    hold('KeyW', !dodging);
+    for (const key of ['KeyA', 'KeyD']) hold(key, dodging && bot.dodge.key === key);
+    const last = bot.last; bot.last = [...at];
+    if (last && Math.hypot(at[0] - last[0], at[1] - last[1]) < 1.5) bot.still += 0.1; else bot.still = Math.max(0, bot.still - 0.05);
+    if (bot.still > 1.2) {
+      bot.still = 0; bot.stuck = (bot.stuck ?? 0) + 1;
+      bot.dodge = { key: bot.stuck % 2 ? 'KeyA' : 'KeyD', until: now + 600 };
+      plan(goal);
+      say('stuck at ' + at.map(Math.round).join(',') + ', a step aside');
+    }
+  }, 100);
+  return 'started: ' + ordered.length + ' triggers';
+})()`;
+
+/**
+ * The towns whose street and gate scenes the streets bot walks into (main-menu coc at 10:00,
+ * watched 4 minutes): Riften's north gate (Mjoll and Aerin, Sapphire and Shadr, Maul), Whiterun's
+ * Plains District (the establishing scene, Amren's, Braith and Lars'), Winterhold's first visit,
+ * Ivarstead's scripted scene, Markarth's market (the Forsworn murder); run as "streets".
+ */
+const STREET_CELLS = [
+  'RiftenCityNorth',
+  'WhiterunPlainsDistrict03',
+  'WinterholdExterior01',
+  'IvarsteadExterior04',
+  'MarkarthExterior01',
+];
+
+export const STREETS: readonly Scenario[] = STREET_CELLS.map((cell) => ({
+  name: `streets-${cell}`,
+  description: `coc ${cell} at 10:00; the player walks into the scene triggers near (the streets bot), watched 4 minutes.`,
+  start: { kind: 'coc', cell },
+  hour: 10,
+  bootSeconds: 240,
+  seconds: 240,
+  setup: async (ctx) => {
+    ctx.note(`streets bot: ${JSON.stringify(await ctx.page.eval(STREETS_BOT, 60000, true))}`);
+  },
+  finish: async (ctx) => {
+    const log = await ctx.page
+      .eval<string[] | undefined>(
+        `(() => { const b = window.__qaStreets; if (!b) return undefined; clearInterval(b.timer); b.release(); window.__qaStreets = undefined; return b.log; })()`,
+        10000,
+      )
+      .catch(() => undefined);
+    for (const line of log ?? []) ctx.note(`streets: ${line}`);
+  },
+}));
+
 /** One scenario per place: in the world at 10:00, watched for 45 s (a run without names skips them). */
 export const PLACES: readonly Scenario[] = PLACE_CELLS.map((cell) => ({
   name: `at-${cell}`,

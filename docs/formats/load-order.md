@@ -56,6 +56,12 @@ It holds only `interfacemarketplace*.png`, the online Creations store's pictures
 is never needed offline.
 `sArchiveToLoadInMemoryList` (Animations) is only a performance hint.
 
+**The game's own content** (`gameContentArchives`, `Vfs.isGameContent`): the archives of the
+default INI's lists and of the plugins the game loads by itself (its masters and Skyrim.ccc's
+Creations), not those of plugins.txt. A file the game's own content names that none of them holds
+is one the game itself lacks (no fault of the load order: logged as info, not as a warning).
+Loose files never count as the game's.
+
 Vanilla conflicts: 44 files from `Skyrim - Animations.bsa` and 3 from
 `ccBGSSSE037-Curios.bsa` are overridden by archives loaded later
 (`node tools/vfs-info.ts`).

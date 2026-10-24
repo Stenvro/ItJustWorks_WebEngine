@@ -17,6 +17,7 @@
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { SpokenInfo } from '../scripting/runtime/dialogue-engine.ts';
 import { InfoFlag, type InfoResponse } from '../world/dialogue-records.ts';
+import { silentLineSeconds } from '../world/dialogue.ts';
 import { headPosition, type SpokenLine } from './actors.ts';
 import type { GameSession } from './game-session.ts';
 import { subtitleText } from './subtitles.ts';
@@ -72,10 +73,39 @@ export class WorldLines {
   #subtitle: object | undefined;
   /** What each actor says now (its conditions). */
   readonly #saying = new Map<number, Talking>();
+  /** Voice files found missing (each told once). */
+  readonly #missingVoices = new Set<string>();
 
   constructor(session: GameSession, terminal: Terminal) {
     this.#session = session;
     this.#terminal = terminal;
+  }
+
+  /**
+   * A response's voice file for a voice type, if a file holds it; else the line is said
+   * silently (silentLineSeconds), as the engine says it. A missing file is told once: as info
+   * where the line is the game's own (vanilla ships none for its creatures' barks and the
+   * bards' instrumental songs), as a warning where a mod's line lacks it.
+   */
+  async voiceFile(
+    spoken: SpokenInfo,
+    response: number,
+    voiceType: string,
+  ): Promise<string | undefined> {
+    const engine = this.#session.scriptsReady?.dialogue;
+    const path = await engine?.voiceFile(spoken, response, voiceType);
+    if (!engine || path === undefined) return undefined;
+    if ((await this.#session.sounds()).hasFile(path)) return path;
+    if (!this.#missingVoices.has(path)) {
+      this.#missingVoices.add(path);
+      const gameLacks = engine.isGameContent(spoken);
+      this.#terminal.log(
+        'audio',
+        `${path}: no voice file${gameLacks ? ' (the game has none either: said silently)' : ''}`,
+        gameLacks ? 'info' : 'warn',
+      );
+    }
+    return undefined;
   }
 
   /** Whether an actor says a line now. */
@@ -223,7 +253,7 @@ export class WorldLines {
     const forced =
       options.forceSubtitle === true || (spoken.info.flags & InfoFlag.forceSubtitle) !== 0;
     const path =
-      voice === undefined ? undefined : await engine.voiceFile(spoken, response.number, voice);
+      voice === undefined ? undefined : await this.voiceFile(spoken, response.number, voice);
     // Read anew after each wait (it may be ended meanwhile).
     const ended = (): boolean => control.stopped;
     if (ended()) return;
@@ -251,7 +281,7 @@ export class WorldLines {
     }
     const seconds = control.line
       ? control.line.duration + padding
-      : Math.max(1, response.text.length * perCharacter);
+      : silentLineSeconds(response.text, perCharacter);
     await new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, seconds * 1000);
       control.wake = () => {

@@ -63,6 +63,26 @@ describe('Vfs', () => {
     expect(vfs.resolve('meshes\\c.nif')?.kind).toBe('loose');
   });
 
+  it("tells the game's own files from a mod's and loose ones", async () => {
+    const vfs = await Vfs.mount(
+      new MemoryGameFolder(
+        installation({
+          'Mod.esp': pluginBytes(1),
+          'Mod.bsa': bsa({ 'textures\\mod.dds': 'mod' }),
+          'Textures/Loose.dds': 'loose',
+        }),
+        root,
+      ),
+      { pluginsTxt: '*Mod.esp\r\n' },
+    );
+    expect(vfs.isGameContent('textures\\t.dds')).toBe(true);
+    expect(vfs.isGameContent('meshes\\a.nif')).toBe(true);
+    expect(vfs.isGameContent('meshes\\c.nif')).toBe(true);
+    expect(vfs.isGameContent('textures\\mod.dds')).toBe(false);
+    expect(vfs.isGameContent('textures\\loose.dds')).toBe(false);
+    expect(vfs.isGameContent('textures\\none.dds')).toBe(false);
+  });
+
   it('reports missing files', async () => {
     const vfs = await Vfs.mount(new MemoryGameFolder(installation(), root));
     expect(vfs.has('meshes\\none.nif')).toBe(false);

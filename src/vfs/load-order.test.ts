@@ -7,6 +7,7 @@ import {
   computeLoadOrder,
   DEFAULT_ARCHIVE_LIST,
   formatModIndex,
+  gameContentArchives,
   hasAnniversaryContent,
   type LoadOrderEntry,
   type PluginCandidate,
@@ -132,6 +133,20 @@ describe('archives', () => {
       ['MOD - textures.bsa', 'Mod.bsa', 'Skyrim - Misc.bsa', 'Unrelated.bsa'],
     );
     expect(order).toEqual(['Skyrim - Misc.bsa', 'Mod.bsa', 'MOD - textures.bsa']);
+  });
+
+  it("counts the INI's and the game's own plugins' archives as its content, not mods'", () => {
+    const { entries } = computeLoadOrder({
+      plugins: [...vanilla, plugin('ccFish.esm', { master: true }), plugin('Mod.esp')],
+      ccc: 'ccFish.esm',
+      pluginsTxt: '*Mod.esp',
+    });
+    const official = gameContentArchives(['Skyrim - Misc.bsa'], entries);
+    expect(official.has('skyrim - misc.bsa')).toBe(true);
+    expect(official.has('dawnguard.bsa')).toBe(true);
+    expect(official.has('ccfish.bsa')).toBe(true);
+    expect(official.has('ccfish - textures.bsa')).toBe(true);
+    expect(official.has('mod.bsa')).toBe(false);
   });
 });
 
