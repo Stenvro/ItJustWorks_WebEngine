@@ -38,6 +38,7 @@ function body(shape: CollisionBody['shapes'][number]): CollisionBody {
     maxLinearVelocity: 0,
     maxAngularVelocity: 0,
     quality: 0,
+    solverDeactivation: 1,
     shapes: [shape],
   };
 }
@@ -687,6 +688,7 @@ describe('the engine settings of simulated bodies', () => {
     maxLinearVelocity: 104.4,
     maxAngularVelocity: 31.57,
     quality,
+    solverDeactivation: 1,
   });
 
   it('sweeps small, fast bodies (fDebrisMinExtent, fDebrisMaxVelocity), not large or slow ones', () => {

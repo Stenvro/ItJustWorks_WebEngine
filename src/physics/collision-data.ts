@@ -37,6 +37,12 @@ export type CollisionShape = ShapeBase &
         /** xyz per vertex. */
         readonly vertices: Float32Array;
         readonly indices: Uint32Array;
+        /**
+         * Met from the front of its triangles only (anticlockwise: their winding's normal), and
+         * smooth across their shared edges: Havok's one-sided welding, which every vanilla
+         * compressed mesh has (welding type 0). Else two-sided.
+         */
+        readonly oneSided?: boolean;
       }
     | {
         /** Convex hull of the points, grown by `radius` (Havok's convex shell). */
@@ -92,6 +98,11 @@ export interface CollisionBody {
   readonly maxAngularVelocity: number;
   /** hkQualityType (debris, moving, critical, bullet, ...). */
   readonly quality: number;
+  /**
+   * The file's solver deactivation class (0 invalid, 1 off, 2 low … 5 max): how Havok's solver
+   * slows the body when it is slow (src/physics/constraint-solver.ts, slowBodyFactor).
+   */
+  readonly solverDeactivation: number;
   readonly shapes: readonly CollisionShape[];
 }
 
@@ -315,6 +326,15 @@ function havokMatrix(m: Float32Array): Mat4 {
   out[14] = (m[14] ?? 0) * HAVOK_SCALE;
   out[15] = 1;
   return out;
+}
+
+/** hkpWeldingUtility's anticlockwise (one-sided) welding type of a compressed mesh. */
+const WELDING_ANTICLOCKWISE = 0;
+
+/** The determinant of a transform's 3×3 part (negative: it mirrors). */
+function determinant3(m: Mat4): number {
+  const [a = 0, b = 0, c = 0, , d = 0, e = 0, f = 0, , g = 0, h = 0, i = 0] = m;
+  return a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
 }
 
 function apply(m: Mat4, x: number, y: number, z: number): [number, number, number] {
@@ -588,14 +608,25 @@ export function buildCollision(file: NifFile, damageStage = 0): CollisionData {
           skipped.push('bhkCompressedMeshShape without data');
           return;
         }
+        // A mirroring transform turns the triangles' winding over: their fronts stay fronts.
+        const mirrored = determinant3(toBody) < 0;
         for (const piece of compressedMeshTriangles(data).values()) {
           if (piece.indices.length === 0) continue;
+          const indices = Uint32Array.from(piece.indices);
+          if (mirrored) {
+            for (let i = 0; i + 2 < indices.length; i += 3) {
+              const b = indices[i + 1] ?? 0;
+              indices[i + 1] = indices[i + 2] ?? 0;
+              indices[i + 2] = b;
+            }
+          }
           shapes.push({
             type: 'mesh',
             layer: piece.layer || layer,
             material: piece.material,
             vertices: transformPoints(toBody, Float32Array.from(piece.vertices), HAVOK_SCALE),
-            indices: Uint32Array.from(piece.indices),
+            indices,
+            oneSided: data.weldingType === WELDING_ANTICLOCKWISE,
           });
         }
         return;
@@ -709,6 +740,7 @@ export function buildCollision(file: NifFile, damageStage = 0): CollisionData {
       maxLinearVelocity: rigid?.maxLinearVelocity ?? 104.4,
       maxAngularVelocity: rigid?.maxAngularVelocity ?? 31.57,
       quality: rigid?.qualityType ?? 1,
+      solverDeactivation: rigid?.solverDeactivation ?? 1,
       shapes,
     });
   };

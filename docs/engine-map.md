@@ -139,7 +139,7 @@ These run through every area and explain most of what breaks in play.
 | Ambient idles        | missing   | no idle picking (PickNewIdle)                                            |
 | Animation objects    | missing   | no tankards, hammers, brooms, lutes                                      |
 | Paired animations    | different | victim placed, no get-to-mark, events not routed per side                |
-| Ragdolls, death      | partial   | no powered ragdoll motors; objects' placed ragdoll poses; joint friction |
+| Ragdolls, death      | partial   | no powered ragdoll motors; objects' placed ragdoll poses; the cone limit |
 | Dismemberment        | complete  | re-dressing a reloaded corpse from its recorded worn objects             |
 | Actor build          | complete  | first-person render pass, bone LOD                                       |
 | Faces                | complete  | expression change rate                                                   |

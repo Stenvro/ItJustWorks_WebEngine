@@ -936,11 +936,15 @@ export class QaHarness {
     const awake = new Map<number, number>();
     // Each actor's ragdoll bodies by state (simulated awake, asleep, keyframed), for the detail.
     const states = new Map<number, [number, number, number]>();
+    // Each actor's lowest ragdoll body (its centre's height, game units).
+    const lowest = new Map<number, number>();
     const physics = world.play?.physics;
     physics?.world.bodies.forEach((body) => {
       if (body.numColliders() === 0 || body.isFixed()) return;
       const owner = physics.ownerOf(body.collider(0));
       if (owner?.kind !== 'actor') return;
+      const z = body.translation().z * HAVOK_SCALE;
+      lowest.set(owner.reference, Math.min(lowest.get(owner.reference) ?? Infinity, z));
       const state = states.get(owner.reference) ?? [0, 0, 0];
       states.set(owner.reference, state);
       if (!body.isDynamic()) state[2]++;
@@ -1004,9 +1008,16 @@ export class QaHarness {
         });
       }
       if (corpse.head === undefined) continue;
+      // A placed dead whose ragdoll is held in its placed pose (none of its bodies let go)
+      // lies as the Creation Kit settled it (a skeever draped over roots, its head up).
+      const [simulated = 0, sleeping = 0, held = 0] = states.get(reference) ?? [];
+      if (staged.placed.actor.startsDead && held > 0 && simulated + sleeping === 0) continue;
       const scale = staged.placed.actor.scale * look.scale;
+      // Over its lowest body (a corpse placed lying on a ledge, roots or a table is not
+      // upright), or its feet without bodies.
       const height =
-        headHeight(staged.placed.pose.worlds, corpse.head, instance.world) - staged.position[2];
+        headHeight(staged.placed.pose.worlds, corpse.head, instance.world) -
+        Math.min(staged.position[2], lowest.get(reference) ?? Infinity);
       const upright = corpse.rest > 1 && height > CORPSE_UPRIGHT * corpse.rest * scale;
       if (corpse.episode.update(upright, dt, height) !== 'begin') continue;
       const span = height;
