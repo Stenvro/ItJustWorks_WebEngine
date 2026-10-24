@@ -118,7 +118,18 @@ export interface SimOptions {
    * The game folder's reads in flight: a step waits for the reads its work started, so that
    * every run loads what it loads in the same step (without, a load may land a step later).
    */
-  readonly reads?: { readonly pending: number };
+  readonly reads?: SimReads;
+}
+
+/** The game folder's reads, as a step settles them (tools/node-game-folder.ts). */
+export interface SimReads {
+  readonly pending: number;
+  /** Holds the results of the reads asked from now on (true), or lets them all through. */
+  hold(holding: boolean): void;
+  /** Lets the earliest held read's result through, once it is read; false if none is held. */
+  deliverNext(): Promise<boolean>;
+  /** Resolves once a read is held. */
+  whenHeld(): Promise<void>;
 }
 
 /** A loaded cell of the simulation. */
@@ -186,7 +197,7 @@ export class SimWorld {
   readonly #stages: { interior?: ActorStage; exterior?: ActorStage } = {};
   #stage: ActorStage;
   readonly #gridRadius: number;
-  readonly #reads: { readonly pending: number } | undefined;
+  readonly #reads: SimReads | undefined;
   /** Seconds the simulation has run (the renderer's clock in the page). */
   #time = 0;
   #place: SimPlace | undefined;
@@ -213,7 +224,7 @@ export class SimWorld {
     terminal: SimTerminal,
     clock: VirtualClock,
     gridRadius: number,
-    reads: { readonly pending: number } | undefined,
+    reads: SimReads | undefined,
   ) {
     this.#reads = reads;
     this.session = session;
@@ -491,21 +502,54 @@ export class SimWorld {
    * story manager's events, the cells and objects being placed, and the tasks they queued.
    */
   async settle(): Promise<void> {
-    for (let round = 0; round < SETTLE_ROUNDS; round++) {
-      // The timers the step's clock reached (waits that end now).
-      this.clock.runDue();
-      await nextTask();
-      await this.runtime.vm.idle();
-      // The story manager works through the events raised (quests start, their aliases fill).
-      await this.runtime.storyManager.idle();
-      await this.runtime.vm.idle();
-      if (this.#pending.size > 0) {
-        await Promise.all([...this.#pending]);
-        continue;
+    const reads = this.#reads;
+    // Reads asked while settling come back one at a time, in the order asked (SimReads).
+    reads?.hold(true);
+    try {
+      for (let round = 0; round < SETTLE_ROUNDS; round++) {
+        // The timers the step's clock reached (waits that end now).
+        this.clock.runDue();
+        await nextTask();
+        await this.#awaitReading(this.runtime.vm.idle());
+        // The story manager works through the events raised (quests start, their aliases fill).
+        await this.#awaitReading(this.runtime.storyManager.idle());
+        await this.#awaitReading(this.runtime.vm.idle());
+        if (reads && (await this.#deliver(reads))) continue;
+        if (this.#pending.size > 0) {
+          await this.#awaitReading(Promise.all([...this.#pending]));
+          continue;
+        }
+        if ((reads?.pending ?? 0) === 0 && !this.clock.due) break;
       }
-      if ((this.#reads?.pending ?? 0) === 0 && !this.clock.due) break;
+    } finally {
+      reads?.hold(false);
     }
     await nextTask();
+  }
+
+  /**
+   * Waits for work that may wait on reads, handing the held reads out while it waits: each in a
+   * task of its own, once everything else has run, so the disk's timing never decides what runs
+   * before what.
+   */
+  async #awaitReading(work: Promise<unknown>): Promise<void> {
+    const reads = this.#reads;
+    if (!reads) {
+      await work;
+      return;
+    }
+    const done = work.then(() => true);
+    for (;;) {
+      if (await Promise.race([done, reads.whenHeld().then(() => false)])) return;
+      await this.#deliver(reads);
+    }
+  }
+
+  /** Hands out the earliest held read, then lets what waited on it run; false if none is held. */
+  async #deliver(reads: SimReads): Promise<boolean> {
+    if (!(await reads.deliverNext())) return false;
+    await nextTask();
+    return true;
   }
 
   #track(work: Promise<unknown>): void {

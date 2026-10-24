@@ -3,26 +3,71 @@ import path from 'node:path';
 import { checkReadRange, type ByteSource } from '../src/formats/byte-source.ts';
 import type { GameFolder } from '../src/vfs/game-folder.ts';
 
+/** A read held back until the simulation lets its result through. */
+interface HeldRead {
+  /** Settles (never rejects) when the read itself has. */
+  readonly settled: Promise<void>;
+  readonly release: () => void;
+}
+
 /**
  * The reads of a folder's files in flight: the headless simulation (src/sim/) lets the work a
- * step started finish its reads within the step, so every run reads and steps alike.
+ * step started finish its reads within the step, so every run reads and steps alike. While it
+ * holds them, each read's result waits until the simulation hands it out (deliverNext), one at a
+ * time and in the order the reads were asked, with the world settled in between: the disk's
+ * timing then never changes the order in which the work that waited on them goes on.
  */
 export class ReadsInFlight {
   #count = 0;
+  #holding = false;
+  readonly #held: HeldRead[] = [];
+  #onHeld: (() => void) | undefined;
 
   get pending(): number {
     return this.#count;
   }
 
-  async track<T>(read: Promise<T>): Promise<T> {
+  track<T>(read: Promise<T>): Promise<T> {
     this.#count++;
-    try {
-      return await read;
-    } finally {
+    const done = (): void => {
       this.#count--;
-    }
+    };
+    if (!this.#holding) return read.finally(done);
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.#held.push({ settled: read.then(noop, noop), release });
+    this.#onHeld?.();
+    this.#onHeld = undefined;
+    return released.then(() => read).finally(done);
+  }
+
+  /** Holds the results of the reads asked from now on (true), or lets them all through. */
+  hold(holding: boolean): void {
+    this.#holding = holding;
+    if (!holding) for (const held of this.#held.splice(0)) held.release();
+  }
+
+  /** Waits for the earliest held read and lets its result through; false if none is held. */
+  async deliverNext(): Promise<boolean> {
+    const next = this.#held.shift();
+    if (!next) return false;
+    await next.settled;
+    next.release();
+    return true;
+  }
+
+  /** Resolves once a read is held (at once if one is). */
+  whenHeld(): Promise<void> {
+    if (this.#held.length > 0) return Promise.resolve();
+    return new Promise((resolve) => {
+      this.#onHeld = resolve;
+    });
   }
 }
+
+const noop = (): void => undefined;
 
 /** Reads a file at an offset, without loading it in full. */
 export class NodeFileSource implements ByteSource {
