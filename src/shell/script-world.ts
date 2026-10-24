@@ -50,7 +50,13 @@ export interface ScriptView {
   graphOf?(reference: number): ScriptGraph | undefined;
   /** SetMotionType (1 dynamic .. 4 keyframed). */
   motionTypeChanged?(reference: number, motionType: number): void;
-  impulse?(reference: number, direction: Vec3, magnitude: number): void;
+  /** A push (WorldBridge.impulse). */
+  impulse?(
+    reference: number,
+    direction: Vec3,
+    magnitude: number,
+    share?: (layer: number) => number,
+  ): void;
   /** An explosion pushes a reference's moving bodies (WorldBridge.explosionPush). */
   explosionPush?(
     reference: number,
@@ -332,8 +338,13 @@ export class ScriptWorld implements WorldBridge {
     for (const view of this.#views) view.motionTypeChanged?.(reference, motionType);
   }
 
-  impulse(reference: number, direction: Vec3, magnitude: number): void {
-    for (const view of this.#views) view.impulse?.(reference, direction, magnitude);
+  impulse(
+    reference: number,
+    direction: Vec3,
+    magnitude: number,
+    share?: (layer: number) => number,
+  ): void {
+    for (const view of this.#views) view.impulse?.(reference, direction, magnitude, share);
   }
 
   explosionPush(

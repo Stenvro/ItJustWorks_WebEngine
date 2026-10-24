@@ -9,10 +9,15 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
 - **Units:** Rapier runs in Havok units (≈ metres, 1 = 69.99125 game units); the engine's
   own code works in game units and converts at the boundary.
 - **Steps:** fixed `[HAVOK] fMaxTime` (1/60 s), at most `uMaxNumPhysicsStepsPerUpdate` (3) per
-  frame (observed in the original: the engine clamps a frame's physics time to that many steps; its
-  "complex" mode, fMaxTimeComplex with uMaxNumPhysicsStepsPerUpdateComplex 1, is not known to be
-  used: TODO(M13); fTimePerSubStep and iMinNumSubSteps are read by nothing); the player's camera
-  is interpolated between the last two steps, so 144 Hz screens see smooth motion.
+  frame. Observed in the original: a frame hands Havok its time plus the time still owed, at most that many
+  steps of it; the rest stays owed (a slow frame is made up in the frames after it, not lost), and
+  a frame under a millisecond hands nothing (its time is owed too). Havok then steps fMaxTime
+  until its clock reaches what it was handed, so its last step is at or a little ahead of the
+  frame's time; the player's camera and the actors are drawn between the last two steps at the
+  frame's time, so 144 Hz screens see smooth motion. The step and its cap scale with the world's
+  time multiplier (TODO(M13): ours stay at fMaxTime under Slow Time). The engine's "complex"
+  mode, fMaxTimeComplex with uMaxNumPhysicsStepsPerUpdateComplex 1, is not known to be used:
+  TODO(M13); fTimePerSubStep and iMinNumSubSteps are read by nothing.
 - **Top speeds:** every simulated body's velocity is clamped after each step to its file's
   maximum linear velocity (Havok units a second) and angular velocity (radians a second), as
   Havok's motions do.
@@ -27,6 +32,18 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
   game (hkpWorld::m_gravity).
 - **Collision filter:** every collider has a layer; pairs collide as the COLL records say
   (Rapier's physics hooks for simulated pairs, a filter for queries and the character).
+- **Triangle meshes** (the compressed meshes of statics, the landscape) are two-sided, as
+  Havok's triangles meet what touches them. Havok's one-sided welding (every vanilla compressed
+  mesh, and the landscape) is kept for ragdolls only, by a one-sided copy of each such mesh that
+  only bodies on the ragdolls' layers (L_BIPED, L_BIPED_NO_CC, L_DEADBIP) meet, and that queries
+  do not see: Rapier's fixed internal edges keep a limb's contacts on the triangles' fronts (a
+  limb behind a rock's face is not pushed through it and back), but they drop the contacts of
+  many convex hulls lying on a face. With one-sided meshes for all, 3,591 of the 69,455 loose
+  objects of the interiors ended more than their size below where they were placed as their
+  cells settled (Mistwatch's bear traps, 850 units through the tower's floor); two-sided, 1,091,
+  of which 340 went through what they lay on and the rest rolled off it (`tools/settle-audit.ts`).
+  TODO(M13): the 340 are mostly objects placed into what they lie on (coins in piles and urns,
+  bones, a knife stuck in a table), which the solver pushes out the far side.
 - **Friction and restitution** combine as Havok's square root of the product (each collider
   gets the square root, Rapier multiplies).
 - **What is placed:** the collision of every enabled object in the loaded cells, the

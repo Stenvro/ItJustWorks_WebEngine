@@ -306,6 +306,36 @@ sprinting pay their stamina as the player does (their movers, half a second at a
 uses the armour skills of what its target wears (Light, Heavy Armor: any piece of that armour)
 by the blow's damage before armour (UESP "Skyrim:Light Armor"), unblocked.
 
+### Breath and drowning
+
+Observed in the original (`src/gameplay/breath.ts`; the player's in `src/shell/time-flow.ts`):
+
+- An actor is under water while the water covers 0.875 of its height (the engine's constant; its
+  submersion is the water's height over its feet as a share of its height; it is marked swimming
+  from 0.7).
+- Its breath lasts `fActorSwimBreathBase` + `fActorSwimBreathMult` × 50 seconds: the engine
+  passes 50, not a level or an actor value. With Skyrim.esm's 10 and 0.2 that is 20 s (35 s with
+  the built-in 0.5). Under water it runs down by the time passed; out of the water, or with Water
+  Breathing (the actor value), it is whole again at once.
+- With its breath gone the player drowns: every second (the whole frame once it is gone) takes
+  `fActorSwimBreathDamage` of their base health (8 % with Skyrim.esm), through the difficulty's
+  `fDiffMultHPToPC`, and NPCHumanDrowning plays. No other actor drowns: an NPC low on breath
+  starts an action to come up (TODO(M13): which action is not identified).
+- An actor that comes up after more than `fActorLeaveWaterBreathTimer` (4 s) under water says its
+  Leave Water Breath line (dialogue subtype LWBS, 102). TODO(M13): the drowning sound and that
+  line are not played yet.
+
+### Physics damage
+
+Observed in the original (`src/gameplay/physics-damage.ts`): the world's collision listener
+measures each contact's separating speed in Havok units a second. From `fPhysicsDamageSpeedMin` on
+it damages each side that is an object (never an actor, and neither side when the other is an
+actor) by the other side's mass tier (below `fPhysicsDamage1Mass` nothing, then
+`fPhysicsDamage1Damage`, `2Damage` from `2Mass`, `3Damage` from `3Mass`; a fixed body counts
+as 10,000) times `fPhysicsDamageSpeedBase` + `fPhysicsDamageSpeedMult` × speed. The minimum, 500,
+is compared in Havok units (35,000 game units a second), which no vanilla impact reaches: loose
+objects and falling rocks never hurt by their impacts, and traps hurt through their scripts.
+
 ## Magic effects
 
 The magic system (`src/scripting/runtime/magic-engine.ts`, the rules in

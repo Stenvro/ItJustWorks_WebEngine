@@ -4,6 +4,7 @@
 // Angles are degrees in Papyrus and radians in the game state. Platform-independent.
 // Notes: docs/scripting.md ("Natives").
 
+import { gameplayImpulse } from '../../../gameplay/magic/explosions.ts';
 import { ActorValue } from '../../../world/actor-values.ts';
 import { ObjectHandle, type Value } from '../../values.ts';
 import type { ScriptRuntime } from '../runtime.ts';
@@ -554,13 +555,16 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
     }
     return null;
   });
-  n('objectreference.applyhavokimpulse', (call) => {
+  n('objectreference.applyhavokimpulse', async (call) => {
     const reference = self(call);
     if (reference !== undefined) {
+      // The magnitude is a gameplay impulse on each body, by its layer (explosions.ts).
+      const settings = await runtime.casting.explosionSettings();
       world.impulse?.(
         reference,
         [num(call.args[0]), num(call.args[1]), num(call.args[2])],
         num(call.args[3]),
+        (layer) => gameplayImpulse(1, layer, undefined, settings),
       );
     }
     return null;
