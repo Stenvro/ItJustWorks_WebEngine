@@ -573,6 +573,9 @@ const PLACE_CELLS = [
   'WinterholdExterior01',
   'WinterholdCollegeHallofTheElements',
   'BleakFallsBarrow01',
+  // The ambushed Khajiit caravan by the opening's road: its dead (a Khajiit, a horse) lie as
+  // ragdolls placed in their poses.
+  'POIPineForest23',
 ];
 
 /** One scenario per place: in the world at 10:00, watched for 45 s (a run without names skips them). */

@@ -346,10 +346,11 @@ spring for ragdolls (fMagicTelekinesisComplex*); fMagicTelekinesisLiftPowerMult 
 formats/nif.md, Collision): a model's constraints become Rapier impulse joints between its
 bodies, the two Havok frames as the joint's local frames (axis, perpendiculars, pivot; the
 placement's scale on the pivots), and bodies held together do not collide with each other.
-Ball and socket → spherical; hinge → revolute; limited hinge → revolute limited to its angles;
-prismatic → prismatic limited to its distances; ragdoll → spherical with three angle ranges:
-the twist, the swing towards the motor axis within the cone, the swing towards the plane axis
-within the cone and the plane limits (TODO(M13): Havok's limit is a cone and two planes); the
+Ball and socket → spherical; hinge → revolute; limited hinge → revolute limited to its angles
+(eased as Havok's soft limits are: below); prismatic → prismatic limited to its distances;
+ragdoll → spherical with three angle ranges: the twist, the swing towards the motor axis within
+the cone, the swing towards the plane axis within the cone and the plane limits (TODO(M13):
+Havok's limit is a cone and two planes); the
 hinges' and the ragdolls' twist and plane angles are mirrored, as Rapier measures a joint's
 turn the other way round from the files' limits (`node tools/ragdoll-info.ts --limits`: of
 12,149 limited hinges in the 1,257 complete placed ragdoll poses, the Creation Kit's settled
@@ -357,13 +358,63 @@ Havok state, 60 % lie within their limits unmirrored and 97 % mirrored; the plan
 and 97 %; unmirrored, knees and elbows bent only backwards, and a dying pose's bent knee
 started past its limit and snapped); stiff
 spring → rope (TODO(M13): a stiff spring also pushes); a chain → a ball and socket per link.
-**Friction:** a ragdoll's and a limited hinge's maximum friction torque (a prismatic's friction
-force) is a motor towards no relative speed on the joint's free axes whose force is that maximum
-(an absolute torque in Havok's units, kg·m²/s²: the human skeleton's ragdoll joints hold 10, its
-hinges 0, as the mammoth's, sabre cat's and centurion's), meant to hold limbs against less and
-let them give way to more (TODO(M13): measured, Rapier's velocity motor holds far less than its
-maximum: see "The dead"). Motors (no vanilla constraint has one), malleable strength and a chain's tau and
-damping are not applied (Rapier's joints are stiff). A joint is in the world only while one of its two bodies is simulated: between
+
+**The solver** (observed in the original): the engine makes its Havok world with Havok's
+medium solver (tau 0.6, damping 1, four iterations, one microstep), a maximum constraint
+violation of 0.05 Havok units (Havok's own is unbounded), an unbounded contact resting
+velocity, a collision tolerance of 0.1 and no activation of bodies whose transform is set.
+Every step it sets the solver again: with r the step over [HAVOK] fMaxTime × the time
+multiplier, tau is 0.6 × (fHavokTauRatio × r + 1 − fHavokTauRatio) (GMST, 0.5) and the
+iterations the larger of 4 and 3.9 × the time multiplier, rounded up, times r, at least 2; at
+the engine's own step that is tau 0.6 and four iterations (`constraint-solver.ts`,
+`solverSettings`; `PhysicsWorld.solver`). Havok's ragdoll constraint makes its twist, cone and
+plane limits with a tau factor of 0.8 and its limited hinge its angle limit with 1 (the files do
+not set it): a violated limit is brought back by tau × that share of its error a step. The world
+info's gravity is 9.81 down (TODO(M13): GRAVITY is 9.8, as mods read it from the running
+game; the hkpWorld may be given another later). What Rapier's joints cannot do as Havok's, the
+constraint solver does before each Rapier step (`constraint-solver.ts`):
+
+- **Friction:** a ragdoll's and a limited hinge's maximum friction torque (an absolute torque in
+  Havok's units, kg·m²/s²: every race skeleton's ragdoll joints have 10, its hinges 0.01) holds
+  the joint's relative turn still about each of its first body's frame axes (a ragdoll's three,
+  a hinge's axle) up to that torque × the step, solved with the joint's pivot (the velocities of
+  its two points kept together) and with the step's gravity speed already added, four times in
+  turn per iteration (a limb turns most of all about its pivot: solved once each they converged
+  so slowly that a held limb crept down). A limb whose weight pulls less than the friction stays
+  (`constraint-solver.test.ts`: a 1 kg rod 1 m long, 4.9 N·m, held by 6 sinks under a degree in
+  two seconds), one that pulls more swings down. Rapier's velocity motors cannot hold a torque:
+  with any gain and any maximum a pendulum swung down as against a damper. Rapier adds gravity in
+  each of its substeps and moves the bodies after each, so over a step a body moves as if it
+  went at its speed plus (n + 1) / 2n of the step's gravity speed (n substeps): solved with all
+  of it a held limb rose, with none it sank (`gravityShare`). A prismatic's friction is still a
+  motor (TODO(M13): it does little).
+- **Soft limits:** Rapier's limits are stiff (an error is gone within a step). A joint whose
+  angle lies more than 0.05 radians past a limit as it is made (a dying actor's animated pose let
+  go, a placed pose) has that limit moved to tau × its tau factor of the way from the angle back
+  to it every step until the angle is within (`easedLimit`, `PhysicsWorld.#easeLimits`). A joint
+  changed wakes its bodies (and changed while asleep, its bodies woke and fell through the
+  ground they lay on): only changes are set, never while both its bodies sleep. The eased bounds
+  only close in (what pushes a joint further past them does not widen them).
+- **Error clipping:** Havok clips a constraint's positional error to the world's maximum
+  constraint violation (0.05 Havok units, above): a ragdoll or limited hinge joint whose two
+  pivots lie farther apart (a ragdoll pulled apart: a limb pushed out of a rock the rest lies in)
+  has its second pivot moved for the step to that distance from the first, along the way
+  between them, so that it comes back by at most that much a step (`#clipViolation`); Rapier
+  corrects all of it at once, and Lokir's corpse, half under a rock as Alduin's landing woke
+  it, was flung about for five minutes. The large ragdolls settle later for it (the undead
+  dragon's, the Dwemer spider's, the gargoyle's within 26–32 s on a floor). TODO(M13): the
+  other kinds of joints (hinges, balls and sockets, stiff springs) are not clipped.
+- **Solver deactivation:** the engine's world (Havok's) slows slow bodies further: a body of
+  solver deactivation class low, medium, high or max (the file's; every race skeleton's bodies
+  are low) moving slower than 0.01, 0.017, 0.02, 0.025 × g (Havok units a second, g the
+  gravity's strength) and turning slower than that × 0.1 g has its velocities multiplied in each
+  of the solver's iterations by 1 − 8, 11.8, 15, 16 × 0.016 over the iterations (`slowBodyFactor`,
+  after each step: a slow low-class body loses an eighth of its speed a step). TODO(M13): Havok
+  slows a body only while its speed relative to its neighbours is also below a threshold per
+  class (0.05, 0.02, 0.013, 0.01 at four iterations; how it is measured is not known).
+
+Motors (no vanilla constraint has one), malleable strength and a chain's tau and damping are not
+applied. A joint is in the world only while one of its two bodies is simulated: between
 two keyframed or held bodies (a living actor's ragdoll keyframed to its pose, an object placed
 to wait) it is left out and made again from its constraint as a body is let go (a death, a
 knock-down, a touch). Rapier solves a joint between two kinematic bodies in every substep all
@@ -444,30 +495,38 @@ original:
   higher parts none (TODO(M13): the head's 1.5 the engine gives for some hits). It was an impulse
   of the force on every body, which sent hands and feet off at many times the trunk's speed.
 
-How a ragdoll comes to rest: Havok deactivates by place, not by speed (inferred from Havok's
-documented behaviour, TODO(M13): the engine's world settings are not read): a body is inactive
-while it stays within 0.02 Havok units (and 0.05 radians) of where it last moved, however it
-trembles there, and a system of bodies inactive for a second as a whole goes to sleep
-(`PhysicsWorld.#deactivate`, checked every quarter second). Rapier sleeps bodies by their speed
-alone, so a ragdoll whose limbs shook against a slope or a rock never slept (the Helgen skeleton
-flipped its vertical speed 12–31 times a second for half a minute). Also behind the shaking, and
-fixed: the landscape is solid from above only (`addMesh` with `ground`: Rapier's fixed internal
-edges, which drop contacts from below a triangle and smooth the edges between them), so a foot
-that went under the ground is no longer pushed further down while its joint pulls it up; and
+How a ragdoll comes to rest: Havok deactivates by place, not by speed: a body is inactive while
+it stays within the world's deactivation reference distance (observed in the original: its
+world info keeps Havok's 0.02 Havok units; from it Havok derives, per deactivation class, a
+frequent check within that distance and a turn of twice it, and a rarer one within four times
+it and a turn of eight times it) of where it last moved, however it trembles there, and a
+system of bodies inactive for a second as a whole goes to sleep (`PhysicsWorld.#deactivate`,
+checked every quarter second, within 0.02 units and 0.05 radians; TODO(M13): how often Havok
+runs its two checks and for how many frames a body must pass them are not read). Before that,
+Havok's solver slows a slow body down (solver deactivation, above). Rapier sleeps bodies by their
+speed alone, so a ragdoll whose limbs shook against a slope or a rock never slept (the Helgen
+skeleton flipped its vertical speed 12–31 times a second for half a minute). Also behind the
+shaking, and fixed: the landscape is solid from above only (`addMesh` with `ground`: Rapier's
+fixed internal edges, which drop contacts from below a triangle and smooth the edges between
+them), so a foot that went under the ground is no longer pushed further down while its joint
+pulls it up; static meshes are one-sided the same way (read from the data: every vanilla
+compressed mesh, the 6,298 of architecture, dungeons, clutter and landscape objects, has
+Havok's welding type 0, anticlockwise: one-sided welding, met from its triangles' anticlockwise
+fronts and smooth across their edges; their winding is consistent, 99.1–99.8 % of their shared
+edges run opposite ways, and of the rocks' flat triangles 94 % of the area faces up; a
+mirroring transform turns the triangles over to keep their fronts), so a limb that got behind a
+rock's face is pushed out to its front rather than back and forth; and
 trees' collision no longer sways with the wind (a fixed body in the file: only keyframed bodies
 follow their nodes; the swaying trunks' kinematic bodies kept every corpse and loose object
 against them stirring). Measured in Riverwood with 28 actor types spawned around the player and
 killed by script: ragdolls still awake 30 s later 12 (before) → 0 (40 s), most at rest within
-5–10 s. `node tools/ragdoll-info.ts [--still]` drops every race skeleton on a floor: 51 of 52
-rest within 20 s (TODO(M13): the Dwemer spider keeps stirring: a 50 kg body on a 5 kg hub held
-by a nearly rigid joint, under six legs of hinges); `--ref 97D60` lets one placed dead's
-ragdoll go from its placed pose (the Khajiit caravan's, which stopped at its tail and shook for
-good until the limits were mirrored, now rest within 3 s). A finding
-left open (TODO(M13)): Rapier's velocity motor does not hold a torque below its maximum as
-Havok's friction does (a 1 kg pendulum on a 1 m arm swings down against a 20 N·m limit), so the
-joints' friction does little; the deactivation does what it did for Havok. Also open
-(TODO(M13)): an animated pose past a joint's limits as the body is let go snaps back within a step
-(Rapier's limits are stiff, Havok's soft): a body may jump 2,000 units a second for a frame.
+5–10 s. `node tools/ragdoll-info.ts [--still]` drops every race skeleton on a floor: 50 of 52
+rest within 20 s, all let go still within 40 s (`--seconds 40`: the undead dragon, the Dwemer spider, which
+lands on its legs and keeps one swinging free on its hinges, and the gargoyle take 26–32 s;
+pushed, the spider keeps swinging);
+`--ref 97D60` lets one placed dead's ragdoll go
+from its placed pose (the Khajiit caravan's, which stopped at its tail and shook for good until
+the limits were mirrored, now rest within 3 s).
 
 Measured with the QA runner (docs/qa.md), before (the lead's sweep on main, or the coordinator's
 runs of `combat-melee`) and after: the opening's corpse-upright 3 → 1 (Lokir and the Helgen
@@ -475,10 +534,21 @@ skeleton lie; one Stormcloak stays), the Helgen skeleton's jitter (42 episodes, 
 none; ragdoll velocity spikes 17 (an Imperial soldier's) → 72, 65 of them Helgen's dead horse,
 which now lies on L_DEADBIP where MQ101's carts (L_PROPS) run into it;
 `combat` physics 0 → 0 with deaths in it; `combat-melee` 20–45 spikes a run and a dead soldier
-left standing in two runs → 3 and 18 spikes in two runs, none left standing (one still in its death animation at 5 s). The `deaths` scenario (28 kinds
-killed by script on Riverwood's rocky slopes) still shows a few ragdolls trembling against
-rocks (static meshes are two-sided triangle meshes: their winding is not consistent enough to
-make them one-sided like the landscape).
+left standing in two runs → 3 and 18 spikes in two runs, none left standing (one still in its death animation at 5 s).
+
+The constraint solver, the soft limits, the error clipping, the solver deactivation and the
+one-sided static meshes, measured with the QA runner against the build before them (the same
+monitors): `deaths` (28 kinds killed by script on Riverwood's slopes and river banks) physics
+anomalies 232 and 160 in two runs → 9, 12 and 4 in three (vertical velocity flips 166 and 144 →
+4, 0 and 0; ragdolls still stirring after 20 s 8 and 6 → 3, 2 and 2); the `opening` (on main
+5e0019f, its carts fixed) 0 physics anomalies through MQ101 stage 160 and the keep (Lokir, the
+Stormcloak at the block and the Helgen skeleton lie; before the error clipping, Lokir's corpse
+was flung about for five minutes); the Khajiit caravan's cell (`at-POIPineForest23`) 43 → 1
+and 3 (no spikes or trembling; its Khajiit 97D60 and horse, whose poses fall from where they stop,
+asleep within 30 s); `creature-combat` 3 → 0, `combat-melee` 0 → 0, Bleak Falls Barrow 0 →
+0, Dragonsreach 0 → 0. Left: the scenario's mammoth is placed against a fallen log, its ragdoll
+propped on it and stirring in some runs (as before); hanging game (pheasants, rabbits) on its
+limited hinges still trembles for a few seconds as its cell loads.
 
 **Border regions:** in a worldspace with border regions (see
 [esm.md](formats/esm.md#border-regions)) movement that would leave them stops at the edge, and
