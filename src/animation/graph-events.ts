@@ -71,6 +71,8 @@ export class GraphEventDispatch<S extends GraphEventSource> {
   readonly #handlers = new Map<string, GraphEventHandler<S>[]>();
   readonly #listeners: GraphEventListener<S>[] = [];
   readonly #otherwise: GraphEventHandler<S>[] = [];
+  /** Handler classes a system answers from its listener, by the event's name (class → system). */
+  readonly #heard = new Map<string, string>();
   /** What came before the response files were read (dispatched once they are). */
   #waiting: { source: S; events: readonly GraphEvent[] }[] = [];
   /** Handler classes events asked for that nothing implements (each once). */
@@ -125,6 +127,20 @@ export class GraphEventDispatch<S extends GraphEventSource> {
     this.#otherwise.push(implementation);
   }
 
+  /**
+   * A handler class that a system answers from its listener (it hears every event and follows
+   * these by name: the flight states, a get-up, a cart's exit), so the class needs no
+   * implementation of its own.
+   */
+  heardBy(handler: string, system: string): void {
+    this.#heard.set(handler.toLowerCase(), system);
+  }
+
+  /** Whether a handler class is answered: implemented, or heard by a system's listener. */
+  answered(handler: string): boolean {
+    return this.implements(handler) || this.#heard.has(handler.toLowerCase());
+  }
+
   /** Whether a handler class has an implementation. */
   implements(handler: string): boolean {
     return this.#handlers.has(handler.toLowerCase());
@@ -157,7 +173,7 @@ export class GraphEventDispatch<S extends GraphEventSource> {
       }
       const implementations = this.#handlers.get(handler.toLowerCase());
       if (!implementations) {
-        this.#unanswered.add(handler);
+        if (!this.#heard.has(handler.toLowerCase())) this.#unanswered.add(handler);
         continue;
       }
       for (const implementation of implementations) implementation(source, event);

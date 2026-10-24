@@ -79,6 +79,7 @@ import type { PlayerFurniture } from './player-furniture.ts';
 import { PlayerPilot } from './player-pilot.ts';
 import { reactionsOf } from '../ai/combat-reactions.ts';
 import { ProjectileAim } from './projectile-aim.ts';
+import { ActorAmbientIdles } from './actor-ambient-idles.ts';
 import { ActorAnimObjects } from './actor-anim-objects.ts';
 import { outOfSight } from '../ai/followers.ts';
 import { fliesByRace } from '../ai/flight.ts';
@@ -257,8 +258,8 @@ export class ActorStage {
   readonly graphEvents: ActorGraphEvents;
   /** Heads cut off (src/shell/actor-dismemberment.ts): the Decapitate handler and its cut. */
   readonly dismemberment: ActorDismemberment;
-  /** An actor's graph asks for a new idle (PickNewIdle): ambient idle picking answers. */
-  pickNewIdle?: (reference: number) => void;
+  /** The idles actors pick by themselves (src/shell/actor-ambient-idles.ts): PickNewIdle's. */
+  readonly ambientIdles: ActorAmbientIdles;
   /** The renderer's clock at the last frame (seconds between frames, for the AI). */
   #clock: number | undefined;
   /** Each actor as a user of furniture. */
@@ -716,6 +717,20 @@ export class ActorStage {
       killer: (reference) =>
         options.session.scriptsReady?.state.actors.get(reference)?.killer ??
         this.combat.killerOf(reference),
+    });
+    this.ambientIdles = new ActorAmbientIdles({
+      session: options.session,
+      actors: () => this.#actors.values(),
+      userOf: (staged) => this.userOf(staged),
+      furnitureOf: (reference) => this.furnitureOf(reference),
+      interaction: (reference) => this.furniture.interaction(reference),
+      packageOf: (reference) => this.ai.current(reference)?.id,
+      playAction: (user, target, inFurniture) => {
+        const runtime = options.session.scriptsReady;
+        const handle =
+          target === undefined || !runtime ? undefined : runtime.referenceHandle(target);
+        return this.furniture.actionEvent(user, 'ActionIdle', handle, inFurniture);
+      },
     });
     this.graphEvents = new ActorGraphEvents({
       session: options.session,
@@ -1638,6 +1653,7 @@ export class ActorStage {
     this.combat.frame(frame, this.#options.focus?.());
     this.knockdowns.frame(frame);
     this.graphEvents.frame(frame);
+    this.ambientIdles.frame(this.#options.focus?.());
     this.movers.frame(this.#actors.values(), this.#options.focus?.());
     this.#recell();
     // The cell each stands in: as it changes, its location is read again (an actor location
@@ -1812,6 +1828,7 @@ export class ActorStage {
   #remove(staged: StagedActor): void {
     this.graphEvents.remove(staged.reference);
     this.animObjects.remove(staged.reference);
+    this.ambientIdles.remove(staged.reference);
     this.looks.remove(staged.reference);
     this.moods.forget(staged.reference);
     this.#options.session.scriptsReady?.magic.unloaded(staged.reference);
