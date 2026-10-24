@@ -131,7 +131,10 @@ import {
   type CollisionGroup,
 } from './play-session.ts';
 
-/** Cells loaded around the camera's cell in each direction (uGridsToLoad 5 → 2). */
+/**
+ * Cells loaded around the cell of the streaming centre (#streamCenter: the player while playing)
+ * in each direction (uGridsToLoad 5 → 2).
+ */
 const GRID_RADIUS = 2;
 /** Cells further than this are unloaded (one cell of slack against thrashing). */
 const KEEP_RADIUS = GRID_RADIUS + 1;
@@ -377,6 +380,18 @@ export class WorldViewer {
   /** What the renderer looks through: the player's camera, or the free camera. */
   get #view(): Camera {
     return this.#play?.view ?? this.#camera;
+  }
+
+  /**
+   * Where the loaded area is centred. Playing, the player's feet: the engine's loaded grid is the
+   * uGridsToLoad cells around the player's cell (UESP: Skyrim INI), so a camera of its own (the
+   * free camera, a menu's, a kill camera, the QA harness's framing of a far anomaly) does not
+   * move it and the actors and carts around the player stay loaded. Before the player is placed,
+   * and without a play (the viewer), the camera.
+   */
+  get #streamCenter(): Vec3 {
+    const play = this.#play;
+    return play?.spawned === true ? play.player.feet : this.#view.position;
   }
 
   /** The player (while playing a world). */
@@ -714,6 +729,9 @@ export class WorldViewer {
       return actorScriptGraph(this.#stage?.get(reference)?.placed.behavior);
     },
     motionTypeChanged: (reference, motionType) => {
+      // A cart its horse pulls: its collision is the vehicles' (src/shell/actor-vehicles.ts).
+      if (this.#stage?.vehicles.motionTypeChanged(reference, motionType === MOTION_KEYFRAMED))
+        return;
       for (const placed of this.#play?.placementsOf(reference) ?? []) {
         this.#play?.physics.setMotion(placed, motionType === MOTION_KEYFRAMED);
       }
@@ -1665,11 +1683,11 @@ export class WorldViewer {
 
   // --- Streaming ------------------------------------------------------------------------
 
-  /** Queues the cells around the camera, nearest first, and unloads far ones. */
+  /** Queues the cells around the streaming centre, nearest first, and unloads far ones. */
   #update(): void {
     const world = this.#world;
     if (!world) return;
-    const [px, py] = this.#view.position;
+    const [px, py] = this.#streamCenter;
     const cx = Math.floor(px / CELL_SIZE);
     const cy = Math.floor(py / CELL_SIZE);
     for (const [key, cell] of this.#cells) {
@@ -2423,9 +2441,9 @@ export class WorldViewer {
     for (const cell of this.#cells.values()) if (cell.ready) yield* cell.grass;
   }
 
-  /** Loaded cells around the camera, where distant LOD gives way to them. */
+  /** Loaded cells around the streaming centre, where distant LOD gives way to them. */
   #lodMask(): LodMask {
-    const [px, py] = this.#view.position;
+    const [px, py] = this.#streamCenter;
     const originX = Math.floor(px / CELL_SIZE) - 3;
     const originY = Math.floor(py / CELL_SIZE) - 3;
     let low = 0;
@@ -2444,7 +2462,7 @@ export class WorldViewer {
 
   /** Cells of the large-reference grid whose large references are shown in full detail. */
   #largeRefMask(): LargeRefMask {
-    const [px, py] = this.#view.position;
+    const [px, py] = this.#streamCenter;
     const originX = Math.floor(px / CELL_SIZE) - LARGE_REFERENCE_RADIUS;
     const originY = Math.floor(py / CELL_SIZE) - LARGE_REFERENCE_RADIUS;
     const bits = new Uint32Array(4);

@@ -147,6 +147,8 @@ export interface Hitch {
   readonly body: RAPIER.RigidBody;
   /** Where the hitch is by the next step (game units). */
   move(world: Mat4): void;
+  /** Puts the hitch there at once, at rest (what it pulls was moved with it). */
+  place(world: Mat4): void;
   remove(): void;
 }
 
@@ -1297,6 +1299,19 @@ export class PhysicsWorld {
         });
         body.setNextKinematicRotation(matrixQuaternion(pose));
       },
+      place(to: Mat4): void {
+        const pose = rigidPart(to);
+        const at = {
+          x: toHavok(pose[12] ?? 0),
+          y: toHavok(pose[13] ?? 0),
+          z: toHavok(pose[14] ?? 0),
+        };
+        const turn = matrixQuaternion(pose);
+        body.setTranslation(at, true);
+        body.setRotation(turn, true);
+        body.setNextKinematicTranslation(at);
+        body.setNextKinematicRotation(turn);
+      },
       remove(): void {
         if (made.isValid()) world.removeImpulseJoint(made, true);
         if (body.isValid()) world.removeRigidBody(body);
@@ -1375,10 +1390,19 @@ export class PhysicsWorld {
 
   /**
    * A placement leaves the simulation or comes back (its reference disabled or enabled by a
-   * script): its bodies and colliders stay, switched off, so it returns where it was.
+   * script): its bodies and colliders stay, switched off, so it returns where it was. Coming
+   * back, its simulated bodies are only moved out of what they overlap there for
+   * DEPENETRATE_SECONDS, as placed ones are (Havok recovers penetrations slowly): MQ101's dead
+   * horse, enabled with the dragon's attack against the second cart's back in Helgen's square,
+   * was thrown at 14,000 units a second.
    */
   setEnabled(placed: PlacedCollision, enabled: boolean): void {
-    for (const { body } of placed.bodies) body.setEnabled(enabled);
+    for (const { body, data } of placed.bodies) {
+      // Only one that comes back (asked again while enabled, it moves on as it was).
+      if (enabled && !body.isEnabled() && data.motion === 'dynamic' && !data.phantom)
+        this.#depenetrating.set(body.handle, this.#time + DEPENETRATE_SECONDS);
+      body.setEnabled(enabled);
+    }
     for (const body of placed.fixedBodies) body.setEnabled(enabled);
     for (const collider of placed.colliders) collider.setEnabled(enabled);
     this.#changed = true;

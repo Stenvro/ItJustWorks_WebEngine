@@ -133,6 +133,8 @@ export class CartTether {
    */
   step(spine: Mat4): void {
     this.hitch.move(spine);
+    // Keyframed (a script's SetMotionType): nothing moves it, nor rights it.
+    if (!this.root.body.isDynamic()) return;
     const { x, y, z, w } = this.root.body.rotation();
     // The body's right and up axes' world z, and its forward axis.
     const rightZ = 2 * (x * z - y * w);
@@ -144,6 +146,16 @@ export class CartTether {
       { x: forward.x * impulse, y: forward.y * impulse, z: forward.z * impulse },
       true,
     );
+  }
+
+  /**
+   * The horse jumped (`from` → `to`: its spine before and now): the cart's bodies (`collision`)
+   * are moved as the spine moved, at rest, and the tether's body is put there at once, so the
+   * joint has nothing to pull (src/shell/actor-vehicles.ts decides when).
+   */
+  carry(physics: PhysicsWorld, collision: PlacedCollision, from: Mat4, to: Mat4): void {
+    physics.teleport(collision, from, to);
+    this.hitch.place(to);
   }
 
   remove(): void {

@@ -37,7 +37,13 @@ The output folder holds `summary.md` / `summary.json` (all scenarios: counts per
 times, the worst anomalies per system) and per scenario `report.md`, `report.json` (every
 anomaly kept, grouped by kind and by system, the worst first, the timeline of quest stages and
 scenes) and `shots/` (a screenshot of the first anomaly of each kind per actor or body, taken
-from a camera of the harness's own pointed at the place, `engineDev.qa.frame(id)`).
+from a camera of the harness's own pointed at the place, `engineDev.qa.frame(id)`). That camera
+does not move the loaded area: the cells load round the player, as the engine's grid does
+(`WorldViewer`'s streaming centre). Before, the cells followed the camera, and a shot of the
+Khajiit caravan's corpses four cells east of the opening's road unloaded Helgen's cell under the
+column: its horses and General Tullius left the stage, came back wherever their packages had them,
+and dragged their carts thousands of units (the opening's stalls of 2026-10-23, and most of its
+physics anomalies).
 
 ### Scenarios
 
