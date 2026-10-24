@@ -132,6 +132,8 @@ const STEP_AWAY_TRIES = 3;
  * navmesh and the collision part) or against a corner, it slides out instead of pressing on.
  */
 const SEEK_TURNS = [0.52, -0.52, 0.96, -0.96, 1.4, -1.4];
+/** An NPC held up by another actor alone moves off it at least this fast (units a second). */
+const OFF_ACTOR_SPEED = 100;
 /** A turned way is taken when it gets this share of its own length. */
 const SEEK_MADE = 0.3;
 
@@ -193,6 +195,14 @@ export class CharacterBody {
    */
   seeksAround = false;
   /**
+   * Whether another actor's shape is ground to it. Off (an NPC's), what holds it up only by
+   * another actor (it walked up the slope of one's lower shape, or stepped onto it) is no
+   * support: it slides off as from too steep a slope. The player stands on actors' heads.
+   * TODO(M13): Havok's character proxy's own rule for standing on other characters was not
+   * read; NPCs are not seen standing on one another in the game.
+   */
+  standsOnActors = true;
+  /**
    * How far it fell before landing in the last step (game units: from the highest point since it
    * left the ground), else undefined; a landing in water is none (falling damage:
    * src/gameplay/falling.ts).
@@ -202,6 +212,8 @@ export class CharacterBody {
   #fallTop: number | undefined;
   /** Standing on something too steep to walk on (sliding off). */
   #unsupported = false;
+  /** Held up by another actor alone: the way off it (unit, horizontal), until it lands. */
+  #offActor: [number, number] | undefined;
   /** Something below the shape touched it in the last step (ground, a slope, a step). */
   #below = false;
 
@@ -258,6 +270,81 @@ export class CharacterBody {
       owner?.kind === 'actor' &&
       owner.reference === this.owner.reference
     );
+  }
+
+  /**
+   * What holds it up once it moved by `moved` (Havok units): 'ground' when something that is not
+   * another actor lies within a stair's height under its feet (a ray down from its middle meets
+   * it, else its shape cast down meets it: brushing past another, its lower shape a little up the
+   * other's, it still stands on the floor), else the other actor's shape just under it, if any.
+   */
+  #support(
+    moved: RAPIER.Vector,
+    predicate: (collider: RAPIER.Collider) => boolean,
+  ): 'ground' | RAPIER.Collider | undefined {
+    const at = this.#body.translation();
+    const from = { x: at.x + moved.x, y: at.y + moved.y, z: at.z + moved.z };
+    const notActor = (collider: RAPIER.Collider): boolean =>
+      predicate(collider) && !this.#otherActor(collider);
+    const reach = this.settings.stairHeight + CONTROLLER_SHELL + 1;
+    const ray = this.physics.world.castRay(
+      new RAPIER.Ray(from, { x: 0, y: 0, z: -1 }),
+      toHavok(this.shape.height / 2 + reach),
+      true,
+      RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+      undefined,
+      this.#collider,
+      undefined,
+      notActor,
+    );
+    if (ray) return 'ground';
+    const cast = (keep: (collider: RAPIER.Collider) => boolean, distance: number) =>
+      this.physics.world.castShape(
+        from,
+        NO_ROTATION,
+        { x: 0, y: 0, z: -1 },
+        this.#collider.shape,
+        SKIN,
+        toHavok(distance),
+        false,
+        RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+        undefined,
+        this.#collider,
+        undefined,
+        keep,
+      );
+    if (cast(notActor, reach)) return 'ground';
+    // As far as it snaps to the ground (the radius) and its shell.
+    return cast(
+      (collider) => predicate(collider) && this.#otherActor(collider),
+      this.shape.radius + CONTROLLER_SHELL + 1,
+    )?.collider;
+  }
+
+  /** Another actor's shape its own overlaps where it is now (placed into it), if any. */
+  #overlappedActor(predicate: (collider: RAPIER.Collider) => boolean): RAPIER.Collider | undefined {
+    let found: RAPIER.Collider | undefined;
+    this.physics.world.intersectionsWithShape(
+      this.#body.translation(),
+      NO_ROTATION,
+      this.#collider.shape,
+      (other) => {
+        found = other;
+        return false;
+      },
+      RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+      undefined,
+      this.#collider,
+      undefined,
+      (collider) => predicate(collider) && this.#otherActor(collider),
+    );
+    return found;
+  }
+
+  /** A shape of another actor (its controller, its bodies). */
+  #otherActor(collider: RAPIER.Collider): boolean {
+    const owner = this.physics.ownerOf(collider);
+    return owner?.kind === 'actor' && owner.reference !== this.owner.reference;
   }
 
   /** Centre of the capsule (Havok units) for feet at `feet` (game units). */
@@ -450,8 +537,10 @@ export class CharacterBody {
       over.y += (down.normal1.y / n) * STEP_AWAY;
       down = cast(over, { x: 0, y: 0, z: -1 }, reach);
     }
-    // Nothing below: a drop, not a step. Too steep: not ground.
+    // Nothing below: a drop, not a step. Too steep: not ground. Another actor: not ground to one
+    // that does not stand on actors.
     if (!down || down.normal1.z < walkable) return undefined;
+    if (!this.standsOnActors && this.#otherActor(down.collider)) return undefined;
     const landed = over.z - down.time_of_impact;
     if (landed <= at.z + SKIN) return undefined;
     return { x: over.x - at.x, y: over.y - at.y, z: landed - at.z };
@@ -502,6 +591,10 @@ export class CharacterBody {
 
   /** One fixed step: gravity, the wanted movement, sliding and stepping. Before world.step. */
   step(seconds: number): void {
+    // Coming off another actor it is pressed into (placed into it: the player set at a coc
+    // marker where an NPC stands), first out of what it overlaps, as the character proxy
+    // recovers from penetration: the controller does not move a shape out of one it is in.
+    if (this.#offActor) this.recover();
     const gravity = -this.physics.world.gravity.z * HAVOK_SCALE;
     if (this.swimming) {
       this.#jumpSpeed = 0;
@@ -523,9 +616,12 @@ export class CharacterBody {
           : 1;
       this.verticalSpeed -= gravity * multiplier * seconds;
     }
+    // Off another actor it stood on: away from it at least as fast as it falls (as off a slope).
+    const off = this.#offActor;
+    const slide = off ? Math.max(OFF_ACTOR_SPEED, -this.verticalSpeed) : 0;
     const desired = {
-      x: toHavok(this.velocity[0] * seconds),
-      y: toHavok(this.velocity[1] * seconds),
+      x: toHavok((this.velocity[0] + (off ? off[0] * slide : 0)) * seconds),
+      y: toHavok((this.velocity[1] + (off ? off[1] * slide : 0)) * seconds),
       z: toHavok(this.verticalSpeed * seconds),
     };
     // On stairs (surfaces of a stair material) whole steps are climbed; elsewhere only what
@@ -587,12 +683,20 @@ export class CharacterBody {
     // Touching something below that is not walkable ground: sliding off it.
     this.touched.length = 0;
     let below = false;
+    // Another actor touched below it (standsOnActors).
+    let onActor: RAPIER.Collider | undefined;
+    // Another actor touched at all (its side too).
+    let byActor: RAPIER.Collider | undefined;
     for (let i = 0; i < this.#controller.numComputedCollisions(); i++) {
       const collision = this.#controller.computedCollision(i);
       if (!collision?.collider) continue;
       this.touched.push(collision.collider);
+      if (this.#otherActor(collision.collider)) byActor = collision.collider;
       // normal1: the surface touched, facing the character (up for ground below).
-      if (collision.normal1.z > 0.05) below = true;
+      if (collision.normal1.z > 0.05) {
+        below = true;
+        if (this.#otherActor(collision.collider)) onActor = collision.collider;
+      }
       if (seconds > 0) this.#push(collision, desired, seconds);
     }
     // Still blocked: an actor seeks a way round, its way turned a little, then more.
@@ -610,6 +714,38 @@ export class CharacterBody {
         this.#grounded = round.grounded;
       }
     }
+    // Held up by another actor alone (nothing else just under its shape where it goes): no
+    // ground; it slides off that actor, falling at the unsupported gravity.
+    // In the air, its fall stopped by another actor it is in or on: as held up by it.
+    const stopped = !this.#grounded && desired.z < 0 && moved.z > desired.z * 0.5;
+    const caught =
+      !this.standsOnActors && stopped
+        ? (onActor ?? byActor ?? this.#overlappedActor(predicate))
+        : undefined;
+    // In one: out of it at once.
+    if (caught !== undefined && !this.swimming && this.#overlappedActor(predicate)) {
+      this.recover();
+      moved = { x: 0, y: 0, z: 0 };
+    }
+    if (
+      !this.standsOnActors &&
+      (this.#grounded || (caught !== undefined && this.#support(moved, predicate) !== 'ground')) &&
+      !this.swimming
+    ) {
+      const support = this.#support(moved, predicate) ?? onActor ?? caught;
+      // Coming off one, nothing under it yet (it leans on that actor's side): still off it.
+      if (support === undefined && this.#offActor) this.#grounded = false;
+      if (support !== 'ground' && support !== undefined) {
+        this.#grounded = false;
+        const at = this.#body.translation();
+        const other = support.translation();
+        const dx = at.x - other.x;
+        const dy = at.y - other.y;
+        const length = Math.hypot(dx, dy);
+        this.#offActor = length > 1e-6 ? [dx / length, dy / length] : [1, 0];
+      }
+    }
+    if (this.#grounded || this.swimming) this.#offActor = undefined;
     this.#unsupported = !this.#grounded && !this.swimming && below;
     this.#below = below;
     // A ceiling stops the rise; the ground stops the fall.

@@ -205,6 +205,14 @@ interface ActorNow {
   readonly scale: number;
   /** It moves without animation by design (rider, vehicle, ragdoll, flight): why. */
   readonly exempt: string | undefined;
+  /**
+   * The player's controls drive it (the player, the horse the player rides). Observed in the
+   * original: the player's graph is told the controls' wish, never what the controller made of it
+   * (bPlayerGraphFeedback 0), and a horse's graph is told the wish whenever the movement made
+   * disagrees with it (motion feedback), so pressed against a wall or a fence either runs on the
+   * spot as long as the controls say so: no speed mismatch. (An NPC doing so is caught as stuck.)
+   */
+  readonly controls?: boolean;
   /** What it does (package, furniture, AI-driven), for the report. */
   readonly context: string | undefined;
   readonly grounded: boolean;
@@ -556,6 +564,7 @@ export class QaHarness {
         lean: undefined,
         scale: body.look.scale * body.actor.scale,
         exempt: riding ? 'riding' : knocked ? 'ragdoll' : undefined,
+        controls: !driven,
         context:
           [seated ? 'in furniture' : '', driven ? 'AI-driven' : ''].filter(Boolean).join(', ') ||
           undefined,
@@ -606,6 +615,7 @@ export class QaHarness {
       lean: leanOf(staged.placed.instances[0]?.world),
       scale: staged.placed.look.scale * staged.placed.actor.scale,
       exempt,
+      controls: stage?.mounts.riderOf(reference) === PLAYER_REF,
       context: context.length > 0 ? context.join(', ') : undefined,
       grounded:
         staged.grounded &&
@@ -765,6 +775,7 @@ export class QaHarness {
       const difference = Math.abs(speed - rootSpeed);
       const mismatched =
         free &&
+        now.controls !== true &&
         ready &&
         watched.hasRoot &&
         watched.root.ready &&

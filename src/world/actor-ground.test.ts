@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { referenceMatrix } from './cell-loader.ts';
 import { RaceFlag } from './actor-records.ts';
 import {
+  checkAbove,
   easeTilt,
+  GROUND_ABOVE,
   groundedPlacement,
   MAX_TILT,
   probedTilt,
@@ -91,5 +93,19 @@ describe('actors on the ground', () => {
     expect(column(bear, 1)[2]).toBeCloseTo(2 * Math.sin(Math.PI / 6));
     // Left side up: the normal leans to the right (+x facing +y).
     expect(tiltNormal({ pitch: 0, roll: 0.3 }, 0)[0]).toBeGreaterThan(0);
+  });
+});
+
+describe("the engine's position check", () => {
+  it('begins a quarter of the height above the feet, at most 32 units', () => {
+    // A chicken (about 40 units), a human (128), a giant.
+    expect(checkAbove(40)).toBe(10);
+    expect(checkAbove(128)).toBe(32);
+    expect(checkAbove(600)).toBe(32);
+    expect(checkAbove(-1)).toBe(0);
+  });
+
+  it("finds a floor 25 units over a navmesh point (Whiterun's porches) from a placement", () => {
+    expect(GROUND_ABOVE).toBeGreaterThan(25);
   });
 });
