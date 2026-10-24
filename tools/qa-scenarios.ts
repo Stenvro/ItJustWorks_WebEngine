@@ -377,9 +377,16 @@ var QA_PLAY = engineDev.world.#play;
     };
     let best;
     for (const t of targets) {
-      if (!t.holds) continue;
+      if (!t.holds || bot.skip?.has(t.reference)) continue;
       const m = measure(t);
       if (!best || m.d < best.d) best = m;
+    }
+    // No target shown (MQ101DragonAttack's stage 192: Hadvar ran ahead into his trigger and
+    // waits by the street's, which the player sets walking in): a player follows the guide
+    // they followed last, while it is about.
+    if (!best && bot.lastGuide !== undefined && W.actorStage?.get(bot.lastGuide)) {
+      const placement = await rt.placement(bot.lastGuide);
+      if (placement) best = measure({ quest: 0, objective: -1, order: 0, holds: true, reference: bot.lastGuide, placement });
     }
     if (!best) { bot.goal = undefined; bot.path = []; return; }
     // A place reached (no guide) where nothing moves on for a while: a player goes on the way
@@ -400,6 +407,28 @@ var QA_PLAY = engineDev.world.#play;
     let goal = [...best.t.placement.position];
     bot.door = undefined;
     bot.guide = W.actorStage?.get(best.t.reference) ? best.t.reference : undefined;
+    if (bot.guide !== undefined) bot.lastGuide = bot.guide;
+    // A target that is a load door here (MQ101's "Enter the Keep": the keep's doors) is used
+    // as a player uses it: walked to and activated.
+    // So is the load door by a place target (the keep's doors stand by MQ101's "Enter the Keep"
+    // markers, which the keep's navmesh does not reach).
+    if (best.same && bot.guide === undefined) {
+      const record = await (await play.session.db).get(best.t.reference);
+      if (record?.fields.has('XTEL')) bot.door = best.t.reference;
+      else {
+        const space = at.world !== undefined ? { kind: 'world', world: at.world } : { kind: 'interior', cell: at.cell ?? 0 };
+        const p = best.t.placement.position;
+        let nearest;
+        for (const door of (await play.session.routeMap()).doorsInSpace(space)) {
+          const d = Math.hypot(door.position[0] - p[0], door.position[1] - p[1]);
+          if (d < 400 && (!nearest || d < nearest.d)) nearest = { door, d };
+        }
+        if (nearest) {
+          bot.door = nearest.door.door;
+          goal = [...nearest.door.position];
+        }
+      }
+    }
     // A guide waited by for 15 s who stays where they are: a player walks on past them, into
     // the room they lead to (Ralof in Helgen's tower, the stage the player's step sets beyond
     // him), 160 units on the far side; the place holds while the guide stays.
@@ -428,6 +457,15 @@ var QA_PLAY = engineDev.world.#play;
     // as an actor closes a door it cannot pass.
     bot.stucks = (bot.stucks ?? []).filter((s) => now - s.time < 20000);
     const stuckHere = bot.stucks.filter((s) => Math.hypot(s.at[0] - feet[0], s.at[1] - feet[1]) < 64).length;
+    // Stuck again and again on the way to a target that is no guide (shut twice and still stuck: a quest blocker shuts the
+    // Stormcloak keep door's street to one who came with Hadvar): another shown target, as a
+    // player tries the other marker.
+    if (stuckHere >= 3 && bot.blockedFor === best.t.reference && (bot.blocked?.length ?? 0) >= 2 && bot.guide === undefined && targets.some((t) => t.holds && t.reference !== best.t.reference && !bot.skip?.has(t.reference))) {
+      (bot.skip ??= new Set()).add(best.t.reference);
+      bot.stucks = [];
+      say('the way to ' + best.t.reference.toString(16) + ' is shut: another target');
+      return;
+    }
     if (bot.blockedFor !== best.t.reference) { bot.blocked = []; bot.blockedFor = best.t.reference; }
     if (stuckHere >= 4 && onNav && bot.path?.[0]) {
       const ahead = bot.path[0];
@@ -996,6 +1034,41 @@ QA_PLAY.player.teleport([${String(x)}, ${String(y)}, ${String(z)}], Math.PI / 2)
         60000,
       );
       ctx.note('all killed by script');
+    },
+  },
+  {
+    name: 'seated-deaths',
+    description:
+      'The Bannered Mare at 20:00: everyone in furniture (seated, leaning, at the counter) killed by script 40 s after the start; their deaths watched (from the pose they sat in: no standing up first, corpse-rises).',
+    start: { kind: 'coc', cell: 'WhiterunBanneredMare' },
+    hour: 20,
+    bootSeconds: 240,
+    seconds: 60,
+    setup: async (ctx) => {
+      await ctx.console('tgm');
+      // Seated by then (the evening's patrons in their chairs, at the counter).
+      await sleepMs(30000);
+    },
+    // 10 s into the watch, with the monitors on: every actor furniture holds is killed at once
+    // (not awaited: a death's script events take their time).
+    tick: async (ctx) => {
+      ctx.state.ticks = Number(ctx.state.ticks ?? 0) + 1;
+      if (ctx.state.killed === true || Number(ctx.state.ticks) < 10) return false;
+      ctx.state.killed = true;
+      const killed = await ctx.page.eval<string>(
+        `(() => {
+          const rt = engineDev.play().session.scriptsReady;
+          const viewers = [engineDev.viewer, engineDev.world];
+          const stage = viewers.find((v) => v.actorStage && [...v.actorStage.all()].length > 0)?.actorStage;
+          if (!stage) return '';
+          const seated = [...stage.all()].filter((s) => !s.dead && stage.furniture.holds(s.reference));
+          for (const s of seated) void rt.actors.scriptKill(s.reference, 0x14);
+          return seated.map((s) => s.placed.look.editorId).join(', ');
+        })()`,
+        30000,
+      );
+      ctx.note(`killed in furniture: ${killed || 'nobody'}`);
+      return false;
     },
   },
   {

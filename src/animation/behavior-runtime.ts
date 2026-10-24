@@ -2535,6 +2535,8 @@ export class BehaviorRuntime {
     );
     let previous = state.time;
     let wrapped = false;
+    // Its first step since it became active: what lies at its start time is passed too.
+    const first = state.updated < 0;
     if (state.phase !== undefined) {
       const time = state.phase * duration;
       // Joining a syncing blender's cycle, it starts at its phase: it has not moved the
@@ -2586,10 +2588,15 @@ export class BehaviorRuntime {
     state.previous = previous;
     state.wrapped = wrapped;
     state.updated = this.#updates;
-    // Triggers (and the animation's annotations) passed in this step raise their events.
+    // Triggers (and the animation's annotations) passed in this step raise their events. The
+    // first step of a clip just activated takes in its start: a trigger at its local time 0
+    // fires as it starts (the tower wall's opening clip raises Begin there, which
+    // MQ101DragonAttack's stage 103 waits for; skipped, it never came).
     const passed = (time: number): boolean =>
-      wrapped ? time > previous || time <= state.time : time > previous && time <= state.time;
-    if (state.time === previous && !wrapped) return;
+      wrapped
+        ? time > previous || time <= state.time
+        : (first ? time >= previous : time > previous) && time <= state.time;
+    if (state.time === previous && !wrapped && !first) return;
     for (const trigger of node.triggers ?? []) {
       const time = trigger.relativeToEndOfClip ? duration + trigger.localTime : trigger.localTime;
       if (passed(time)) this.#raise(trigger.event, scope);

@@ -406,6 +406,12 @@ export class ActorFlight {
     return this.state(reference) === FlyingState.perching;
   }
 
+  /** The perch (a furniture reference) it sits on now, if it is perched. */
+  perchOf(reference: number): number | undefined {
+    const flier = this.#fliers.get(reference);
+    return flier?.state === FlyingState.perching ? flier.perch : undefined;
+  }
+
   /** Whether the flight holds an actor (it has no controller): in the air, taking off, perched. */
   holds(reference: number): boolean {
     if (this.#grabbed.has(reference)) return true;

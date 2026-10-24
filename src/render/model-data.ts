@@ -185,10 +185,8 @@ export interface ModelData {
   /** Shapes not drawn yet, with the milestone that adds them. */
   readonly skipped: readonly string[];
   /**
-   * Only an editor marker: BSXFlags Editor Marker set and nothing drawn but the shapes named
-   * EditorMarker (the game culls those; an xmarker, a trigger's arrow). A model with the flag and
-   * other shapes (996 vanilla models have it, 732 of them with more: cobweb walls, doors, puzzle
-   * pillars, a hanging key) is drawn and collides without them.
+   * A marker model: its BSXFlags have the editor-marker bit and it has nothing but marker
+   * nodes (MARKER_NODES) to show, so only the Creation Kit shows it; it has no collision.
    */
   readonly editorMarker: boolean;
   /**
@@ -497,12 +495,23 @@ function attachmentNode(file: NifFile): string | undefined {
   return undefined;
 }
 
-/** The names of the objects the game culls as editor markers (CommonLibSSE's FixedStrings). */
-function isEditorMarkerName(name: string): boolean {
-  return /^editormarker(:[0-2])?$/i.test(name);
+/**
+ * The names (parts of a node's name, any case) of the nodes the game hides: helper geometry for
+ * the Creation Kit. Observed in the original (the reference's marker toggle walks its 3D).
+ */
+const MARKER_NODES = ['editormarker', 'lrtmarker', 'animinteractionmarker', 'furnituremarker'];
+
+/** Whether a node is one the game hides (MARKER_NODES). */
+export function isMarkerNode(name: string): boolean {
+  const lower = name.toLowerCase();
+  return MARKER_NODES.some((marker) => lower.includes(marker));
 }
 
-/** BSXFlags Editor Marker: the model has editor marker objects (culled in game). */
+/**
+ * Whether the root's BSXFlags have the editor-marker bit. It hides no model by itself: of the
+ * 996 vanilla meshes with it, 683 have shapes outside marker nodes that the game shows (Orc
+ * longhouse doors, secret shelf doors, puzzle pillars, Helgen's tower wall, ambient effects).
+ */
 function isEditorMarker(file: NifFile): boolean {
   return file.roots.some((root) => {
     const node = file.blocks[root];
@@ -595,9 +604,10 @@ export function buildModel(file: NifFile, options: BuildOptions = {}): ModelData
     if (block.kind === 'node' && block.damageStage) {
       if (!shownAtDamageStage(block, options.damageStage ?? 0)) return;
     } else if ((block.flags & APP_CULLED) !== 0 && !currentWeaponBlood) return;
-    // Helper geometry only shown in the Creation Kit (e.g. activator trigger volumes): the
-    // engine culls the objects named EditorMarker, EditorMarker:0, :1 and :2.
-    if (isEditorMarkerName(block.name)) return;
+    // Helper geometry only shown in the Creation Kit (e.g. activator trigger volumes): observed in
+    // the original, it hides every node whose name contains one of MARKER_NODES (any
+    // case) with what is under it.
+    if (isMarkerNode(block.name)) return;
     // The engine replaces a root node's own transform with the placement of the object
     // (reference, inventory, ...), so it is ignored here: 866 vanilla meshes have a rotated
     // root (e.g. Raven Rock's hut pieces, turned 90°) and 96 a moved one.
@@ -892,8 +902,6 @@ export function buildModel(file: NifFile, options: BuildOptions = {}): ModelData
     center,
     radius,
     skipped,
-    // Only a marker when the marker is all there is: the flag says the model has editor marker
-    // objects, not that it is one.
     editorMarker: isEditorMarker(file) && parts.length === 0 && particles.length === 0,
     leafAnimation: file.roots.some((root) => {
       const type = file.blockTypes[root];

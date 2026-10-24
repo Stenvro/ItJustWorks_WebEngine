@@ -431,7 +431,8 @@ export class ActorVehicles {
     // The player's CartExit goes to both their graphs, as every event the engine sends an actor
     // goes to each graph of its manager: sent to the body's alone, the first-person graph stayed
     // in Cart_State on the exit clip's last frame, and the camera it carries slid along all the
-    // way to the block without a step (MQ101's "Follow the Captain").
+    // way to the block without a step (MQ101's "Follow the Captain") and stood 40 units over the
+    // body's head after the ride (the player "still a giant"; QA monitor player-camera).
     const avatar = actor === PLAYER_REF ? this.#options.player?.()?.avatar : undefined;
     for (const { name: event } of events) {
       if (BOUND_STANDING.has(event.toLowerCase())) {
@@ -466,6 +467,15 @@ export class ActorVehicles {
           view.avatar.bodyPitch = 0;
         }
       }
+    }
+  }
+
+  /** Where each cart its horse pulls stands now (its root), for the QA monitors. */
+  *cartPlaces(): Iterable<{ readonly reference: number; readonly at: Vec3 }> {
+    for (const cart of this.#carts.values()) {
+      if (!cart.body) continue;
+      const m = this.#rootOf(cart.body, 1);
+      yield { reference: cart.reference, at: [m[12] ?? 0, m[13] ?? 0, m[14] ?? 0] };
     }
   }
 
