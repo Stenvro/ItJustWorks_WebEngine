@@ -145,8 +145,11 @@ export interface ObjectUses {
   harvest?(object: CellObject): void;
   /** Whether flora has been harvested (it has not grown again). */
   harvested?(object: CellObject): boolean;
-  /** The player set a door or container swinging (its playback's new sequence: OnOpen, OnClose). */
-  swung?(object: CellObject, instance: ModelInstance): void;
+  /**
+   * A door or container was set swinging (its playback's new sequence: OnOpen, OnClose), by who
+   * activated it: the player, or an activate parent passing its activation on.
+   */
+  swung?(object: CellObject, instance: ModelInstance, activator: number): void;
   /** What the crosshair's prompt reads of the game's state (src/shell/activation-facts.ts). */
   readonly facts?: ActivationFacts;
 }
@@ -178,6 +181,8 @@ export function objectActivation(
   seat?: {
     use(object: CellObject, then?: (leave: () => void) => void): Promise<boolean>;
   },
+  /** Who activates it (the player; an activate parent, a script's Activate). */
+  activator = PLAYER_REF,
 ): Activatable | undefined {
   const at: Vec3 = [object.world[12] ?? 0, object.world[13] ?? 0, object.world[14] ?? 0];
   const play = (descriptor: number | undefined): void => {
@@ -190,8 +195,9 @@ export function objectActivation(
       ? uses.lockOf(object)
       : undefined;
   const prompt = objectPrompt(promptFacts(object, playback, travel, uses, lock));
+  // One only its activate parents activate offers the crosshair nothing (XAPD).
   const shown = (fallback: string): Pick<Activatable, 'verb' | 'name' | 'shown' | 'detail'> =>
-    prompt
+    prompt && object.parentActivateOnly !== true
       ? { ...promptTexts(prompt, uses), shown: true }
       : { verb: uses?.text(fallback) ?? fallback, name: object.name, shown: false };
   // A locked door or container: picked (the lockpicking menu), or opened with its key.
@@ -201,7 +207,7 @@ export function objectActivation(
       ...(teleport && !prompt && { name: travel.name(teleport) }),
       activate: () => {
         uses.unlock(object, () => {
-          objectActivation(object, instance, travel, sound, uses, seat)?.activate();
+          objectActivation(object, instance, travel, sound, uses, seat, activator)?.activate();
         });
       },
     };
@@ -222,7 +228,7 @@ export function objectActivation(
     if (!playback) return;
     playback.sequence = name;
     playback.start = clock();
-    uses?.swung?.(object, instance);
+    uses?.swung?.(object, instance, activator);
   };
   if (uses && object.baseType === 'CONT') {
     return {

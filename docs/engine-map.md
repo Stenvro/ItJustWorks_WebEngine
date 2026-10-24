@@ -33,12 +33,15 @@ These run through every area and explain most of what breaks in play.
 1. **Events nobody sends.** The original routes its happenings through about 50 event sources that feed
    the scripts, the story manager, the stats and the HUD at once. Ours calls each consumer from each
    producer, so many are never reached:
-   - about 20 script events are never sent (OnCombatStateChanged, OnReset, OnTrigger, OnEnterBleedout,
+   - the hub (src/scripting/runtime/event-hub.ts) is in, and one activation path for every activator;
+     still not sent (2026-10-24): OnReset, OnTrapHit*, OnPlayerLoadGame, OnAnimationEventUnregistered;
+     before the hub about 20 script events were never sent (OnCombatStateChanged, OnReset, OnTrigger, OnEnterBleedout,
      OnOpen/OnClose, OnTrapHit, OnSpellCast, OnGrab/OnRelease, OnAttachedToCell, …; about 400 vanilla
      scripts wait for them);
-   - story manager events never raised: Change Location (258 quest entries: favors, bounties, town
-     scenes, Daedric starts, bards), Cast Magic, Add/Remove
-     Item, Dead Body, Arrest, Actor Hello, New Voice Power;
+   - story manager events: Change Location (258 quest entries: favors, bounties, town scenes,
+     Daedric starts, bards), Cast Magic, Add/Remove Item, Dead Body, Arrest, Actor Hello, New Voice
+     Power and Player Activate Actor are raised now; Bribe, Flatter, Intimidate, Cure, Infection,
+     Player Gets Favor and Quest Start are not (vanilla has no quests on them);
    - about 65 of the 95 graph event handlers of the response files are not answered (ambient idles,
      animation objects, ragdoll on death, camera shake, animated cameras, voice fire, …), and graph event
      payloads are dropped.
@@ -61,20 +64,20 @@ These run through every area and explain most of what breaks in play.
 
 ### Scripting, events, world state, audio
 
-| System                      | Status    | Main gaps                                                                                                                                                       |
-| --------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Form types                  | complete  | VOLI, LENS (render)                                                                                                                                             |
-| Per-reference state         | partial   | physics-moved and animated state lost on unload, partial souls, alias display names (activate children: done, 158 of 6,527 pairs lie beyond the cells searched) |
-| Cell loading                | partial   | no buffered cells, OnAttached/DetachedFromCell, grid follows the camera                                                                                         |
-| Respawn, cell reset         | missing   | no reset or respawn, no OnReset, corpses stay, encounter zone levels frozen (vendor restock: iDaysToRespawnVendor, done)                                        |
-| Papyrus VM                  | different | natives not frame-synced; threads cannot be saved                                                                                                               |
-| Script events               | partial   | about 20 kinds never sent; OnHit on objects; OnLocationChange for NPCs                                                                                          |
-| Event sources               | different | no event hub                                                                                                                                                    |
-| Story manager               | partial   | mechanism complete; most event sources missing (see above)                                                                                                      |
-| Save and load               | missing   | M12                                                                                                                                                             |
-| Stats, skills, actor values | complete  | tracked-stats event                                                                                                                                             |
-| Audio                       | partial   | pause categories by DOBJ (menu fades, ducking and highlighting done), sounds held in menus, Slow Time only for its category, combat music rules                 |
-| Load order, settings        | partial   | plugins.txt and the user's INI files (M12)                                                                                                                      |
+| System                      | Status    | Main gaps                                                                                                                                                                           |
+| --------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Form types                  | complete  | VOLI, LENS (render)                                                                                                                                                                 |
+| Per-reference state         | partial   | physics-moved and animated state lost on unload, partial souls, alias display names (activate children: done, 158 of 6,527 pairs lie beyond the cells searched)                     |
+| Cell loading                | partial   | no buffered cells, OnAttached/DetachedFromCell, grid follows the camera                                                                                                             |
+| Respawn, cell reset         | missing   | no reset or respawn, no OnReset, corpses stay, encounter zone levels frozen (vendor restock: iDaysToRespawnVendor, done)                                                            |
+| Papyrus VM                  | different | natives not frame-synced; threads cannot be saved                                                                                                                                   |
+| Script events               | partial   | not produced: OnReset (cell reset), OnTrapHit* (traps), OnPlayerLoadGame (M12), OnAnimationEventUnregistered; 52 of 68 not yet checked in the simulation                            |
+| Event sources               | partial   | hub kinds without a producer: active effects, perk entries, quest init, scenes, topic infos, resets, trap hits, loading; 7 sources without a kind; the stats' sources besides kills |
+| Story manager               | partial   | not raised: Bribe, Flatter, Intimidate, Cure, Infection, Player Gets Favor, Quest Start; most raised types not yet checked in the simulation                                        |
+| Save and load               | missing   | M12                                                                                                                                                                                 |
+| Stats, skills, actor values | complete  | tracked-stats event                                                                                                                                                                 |
+| Audio                       | partial   | pause categories by DOBJ (menu fades, ducking and highlighting done), sounds held in menus, Slow Time only for its category, combat music rules                                     |
+| Load order, settings        | partial   | plugins.txt and the user's INI files (M12)                                                                                                                                          |
 
 ### AI
 

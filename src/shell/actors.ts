@@ -322,6 +322,43 @@ export function talkTargets(
   radius: number,
   picked?: { readonly reference: number; readonly distance: number },
 ) => ActorTarget | undefined {
+  const find = actorTargets(actors, session, terminal, other);
+  // Activating an actor is the engine's one activation (ScriptRuntime.activateRef): its scripts
+  // get OnActivate by the player, then what activating it does (talk, search, pickpocket,
+  // ride) unless a script blocks its activation (BlockActivation).
+  return (origin, direction, length, radius, picked) => {
+    const found = find(origin, direction, length, radius, picked);
+    if (!found) return undefined;
+    const { target } = found;
+    return {
+      ...found,
+      target: {
+        ...target,
+        activate: () => {
+          const runtime = session()?.scriptsReady;
+          if (runtime && target.reference !== undefined) {
+            runtime.playerActivated(target.reference, () => {
+              target.activate();
+            });
+          } else target.activate();
+        },
+      },
+    };
+  };
+}
+
+function actorTargets(
+  actors: () => Iterable<PlacedActor>,
+  session: () => GameSession | undefined,
+  terminal: Terminal,
+  other?: (placed: PlacedActor) => Activatable | undefined,
+): (
+  origin: Vec3,
+  direction: Vec3,
+  length: number,
+  radius: number,
+  picked?: { readonly reference: number; readonly distance: number },
+) => ActorTarget | undefined {
   return (origin, direction, length, radius, picked) => {
     let hit: { readonly actor: PlacedActor; readonly distance: number } | undefined;
     if (picked) {
