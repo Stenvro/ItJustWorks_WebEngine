@@ -184,7 +184,12 @@ export interface ModelData {
   readonly radius: number;
   /** Shapes not drawn yet, with the milestone that adds them. */
   readonly skipped: readonly string[];
-  /** BSXFlags editor marker: only shown in the Creation Kit, never in game. */
+  /**
+   * Only an editor marker: BSXFlags Editor Marker set and nothing drawn but the shapes named
+   * EditorMarker (the game culls those; an xmarker, a trigger's arrow). A model with the flag and
+   * other shapes (996 vanilla models have it, 732 of them with more: cobweb walls, doors, puzzle
+   * pillars, a hanging key) is drawn and collides without them.
+   */
   readonly editorMarker: boolean;
   /**
    * Its file is the game's own (Vfs.isGameContent; set as it is loaded): a texture it names
@@ -492,6 +497,12 @@ function attachmentNode(file: NifFile): string | undefined {
   return undefined;
 }
 
+/** The names of the objects the game culls as editor markers (CommonLibSSE's FixedStrings). */
+function isEditorMarkerName(name: string): boolean {
+  return /^editormarker(:[0-2])?$/i.test(name);
+}
+
+/** BSXFlags Editor Marker: the model has editor marker objects (culled in game). */
 function isEditorMarker(file: NifFile): boolean {
   return file.roots.some((root) => {
     const node = file.blocks[root];
@@ -584,8 +595,9 @@ export function buildModel(file: NifFile, options: BuildOptions = {}): ModelData
     if (block.kind === 'node' && block.damageStage) {
       if (!shownAtDamageStage(block, options.damageStage ?? 0)) return;
     } else if ((block.flags & APP_CULLED) !== 0 && !currentWeaponBlood) return;
-    // Helper geometry only shown in the Creation Kit (e.g. activator trigger volumes).
-    if (block.name.toLowerCase() === 'editormarker') return;
+    // Helper geometry only shown in the Creation Kit (e.g. activator trigger volumes): the
+    // engine culls the objects named EditorMarker, EditorMarker:0, :1 and :2.
+    if (isEditorMarkerName(block.name)) return;
     // The engine replaces a root node's own transform with the placement of the object
     // (reference, inventory, ...), so it is ignored here: 866 vanilla meshes have a rotated
     // root (e.g. Raven Rock's hut pieces, turned 90°) and 96 a moved one.
@@ -880,7 +892,9 @@ export function buildModel(file: NifFile, options: BuildOptions = {}): ModelData
     center,
     radius,
     skipped,
-    editorMarker: isEditorMarker(file),
+    // Only a marker when the marker is all there is: the flag says the model has editor marker
+    // objects, not that it is one.
+    editorMarker: isEditorMarker(file) && parts.length === 0 && particles.length === 0,
     leafAnimation: file.roots.some((root) => {
       const type = file.blockTypes[root];
       return type === 'BSLeafAnimNode' || type === 'BSTreeNode';

@@ -101,9 +101,15 @@ match groups.
 
 ## Hidden objects
 
-- Objects named `EditorMarker` (any block type) are helper geometry for the Creation Kit,
-  e.g. activator trigger volumes; the engine never draws them (1,012 vanilla meshes have one).
-- BSXFlags bit `0x20` on the root (editor marker) hides the whole model.
+- Objects named `EditorMarker` (or `EditorMarker:0`, `:1`, `:2`, the names CommonLibSSE's
+  FixedStrings list; any block type) are helper geometry for the Creation Kit, e.g. activator
+  trigger volumes; the engine never draws them (1,012 vanilla meshes have one).
+- BSXFlags bit `0x20` on the root (editor marker) says the model **has** such objects, not that
+  it is one: 996 models of the load order set it, 264 of them nothing but the marker (an
+  xmarker: never drawn, no collision), 732 with more (cobweb walls and dangles, Orc longhouse
+  doors, the Nordic puzzle pillars, a hanging key, creatures' and critters' models): those are
+  drawn and collide without the marker. Until 2026-10-24 the flag hid the whole model, so all
+  732 were missing (`node tools/effect-audit.ts --markers`).
 - The **root node's own transform is ignored** by the engine: placing the object replaces it.
   866 vanilla meshes have a rotated root and 96 a translated one (e.g. Raven Rock's
   `redoranhutintcap01.nif` is turned 90°; applying it leaves gaps between the hut pieces).
