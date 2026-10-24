@@ -573,7 +573,7 @@ scenarios, full length): `rocking` in the opening 67 (62 of them its four horses
 `creatures` 34 to 9, in `combat-melee` and `riverwood` 1 to 0 each; `foot-slide` in `riverwood`
 26 to 0, `combat-melee` 21 to 0, `creatures` 14 to 1, the opening 10 to 0, `whiterun-day` 1 to 0.
 The rest of the opening's player anomalies came from the QA follow bot (it set the view's yaw at
-once ten times a second; it turns it every frame now, as a mouse does) and from the third-person
+once ten times a second; now it turns it as a player does, past 5° at a steady rate, then holds it) and from the third-person
 body in MT WalkingCamera (above, "The player").
 
 TODO(M13): the actions are not resolved through the idle tree yet (the vanilla events are sent:
