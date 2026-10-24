@@ -221,8 +221,14 @@ export interface PlacedReference {
   readonly deleted: boolean;
   readonly initiallyDisabled: boolean;
   readonly enableParent: { readonly formId: number; readonly opposite: boolean } | undefined;
-  /** XRDS: added to the base light's radius (vanilla values range from -322 to +55). */
+  /** XRDS: added to the base light's radius (vanilla values range from -322 to +2,660). */
   readonly radiusOffset: number;
+  /**
+   * XLIG (a placed light's data, xEdit): degrees added to the base light's FOV ("FOV 90+/-")
+   * and an amount added to its fade ("Fade 1.35+/-"); 0 without one.
+   */
+  readonly lightFovOffset: number;
+  readonly lightFadeOffset: number;
 }
 
 /**
@@ -272,6 +278,7 @@ export function parseReference(record: GameRecord): PlacedReference {
   const data = record.fields.first('DATA');
   const placement = data && data.length >= 24 ? view(data) : undefined;
   const xesp = record.fields.first('XESP');
+  const xlig = record.fields.first('XLIG');
   return {
     formId: record.formId,
     editorId: record.editorId ?? '',
@@ -299,6 +306,8 @@ export function parseReference(record: GameRecord): PlacedReference {
         ? { formId: record.formIdAt(xesp), opposite: ((xesp[4] ?? 0) & 0x1) !== 0 }
         : undefined,
     radiusOffset: record.fields.f32('XRDS') ?? 0,
+    lightFovOffset: xlig && xlig.length >= 4 ? view(xlig).getFloat32(0, true) : 0,
+    lightFadeOffset: xlig && xlig.length >= 8 ? view(xlig).getFloat32(4, true) : 0,
   };
 }
 
@@ -388,11 +397,19 @@ export interface LightRecord {
   readonly color: Rgb;
   readonly flags: number;
   readonly falloffExponent: number;
+  /** DATA: a spot light's cone, degrees (90 in every vanilla light). */
+  readonly fov: number;
   readonly fade: number;
   /** Flicker and pulse: seconds per cycle, brightness and position amplitudes. */
   readonly period: number;
   readonly intensityAmplitude: number;
   readonly movementAmplitude: number;
+}
+
+/** A spot light's cone: its axis (a unit vector) and the cosine of half its angle. */
+export interface LightCone {
+  readonly direction: readonly [number, number, number];
+  readonly cosHalfAngle: number;
 }
 
 export const LightFlag = {
@@ -419,6 +436,7 @@ export function parseLight(record: GameRecord): LightRecord {
     color: color(data, 8),
     flags: data.getUint32(12, true),
     falloffExponent: data.getFloat32(16, true),
+    fov: data.byteLength >= 24 ? data.getFloat32(20, true) : 90,
     fade: record.fields.f32('FNAM') ?? 1,
     // DATA stores the frequency: 1 / period (UESP).
     period: data.byteLength >= 32 ? periodOf(data.getFloat32(28, true)) : 0,
