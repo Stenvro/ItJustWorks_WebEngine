@@ -85,3 +85,87 @@ export const POWER_ATTACK_DEFAULT: AttackData = {
   flags: AttackFlag.powerAttack,
   stagger: 1,
 };
+
+/** What the engine weighs an attack data by as it picks one (chooseAttackData). */
+export interface AttackChoiceContext {
+  /** The target is staggered or in a large recoil. */
+  readonly targetStaggered: boolean;
+  /** The target blocks, facing the attacker (within its hit cone). */
+  readonly targetBlockingFacing: boolean;
+  /** The target is dead (a corpse's strike cone is wider). */
+  readonly targetDead: boolean;
+  /** The target's bearing from the attacker's facing (radians, clockwise). */
+  readonly bearing: number;
+  /** The combat style's melee mults (CSTY CSME). */
+  readonly attackStaggeredMult: number;
+  readonly powerAttackStaggeredMult: number;
+  readonly powerAttackBlockingMult: number;
+  /** fCombatAttackStrikeAngleMult (0.67) and fCombatDeadActorHitConeMult (2). */
+  readonly strikeAngleMult: number;
+  readonly deadConeMult: number;
+  /** Whether an attack is still recovering from its last use (its recovery time). */
+  readonly recovering: (attack: AttackData) => boolean;
+}
+
+/**
+ * The engine's pick among an actor's attack data for a melee attack (observed in the
+ * original; in our words): every attack of the kind asked whose recovery time since its last use
+ * has passed is weighed by its attack chance, times the style's attack staggered mult (its
+ * power attack staggered mult for a power attack) when the target is staggered or recoiling,
+ * times its power attack blocking mult for a power attack on a target that blocks facing the
+ * attacker. One is picked by weight and taken with its weight as the chance; then the target
+ * must lie within its strike angle times fCombatAttackStrikeAngleMult about the attacker's
+ * facing turned by its attack angle (twice that for a dead target). One that fails either is
+ * dropped and the pick is made again among the rest. Undefined: none.
+ */
+export function chooseAttackData(
+  attacks: readonly AttackData[],
+  context: AttackChoiceContext,
+  random: () => number = Math.random,
+): AttackData | undefined {
+  const weighed = attacks
+    .filter((attack) => !context.recovering(attack))
+    .map((attack) => {
+      const power = (attack.flags & AttackFlag.powerAttack) !== 0;
+      let weight = attack.attackChance;
+      if (context.targetStaggered) {
+        weight *= power ? context.powerAttackStaggeredMult : context.attackStaggeredMult;
+      } else if (power && context.targetBlockingFacing) {
+        weight *= context.powerAttackBlockingMult;
+      }
+      return { attack, weight };
+    })
+    .filter((entry) => entry.weight > 0);
+  while (weighed.length > 0) {
+    const total = weighed.reduce((sum, entry) => sum + entry.weight, 0);
+    let pick = random() * total;
+    let index = weighed.length - 1;
+    for (let i = 0; i < weighed.length; i++) {
+      pick -= weighed[i]?.weight ?? 0;
+      if (pick < 0) {
+        index = i;
+        break;
+      }
+    }
+    const entry = weighed[index];
+    if (!entry) return undefined;
+    weighed.splice(index, 1);
+    if (random() >= entry.weight) continue;
+    const cone =
+      entry.attack.strikeAngle *
+      context.strikeAngleMult *
+      (context.targetDead ? context.deadConeMult : 1);
+    const off = Math.abs(angleBetween(context.bearing, (entry.attack.attackAngle * Math.PI) / 180));
+    if ((off * 180) / Math.PI > cone) continue;
+    return entry.attack;
+  }
+  return undefined;
+}
+
+/** The signed angle from a to b (radians, within ±π). */
+function angleBetween(a: number, b: number): number {
+  let d = (b - a) % (2 * Math.PI);
+  if (d > Math.PI) d -= 2 * Math.PI;
+  if (d < -Math.PI) d += 2 * Math.PI;
+  return d;
+}

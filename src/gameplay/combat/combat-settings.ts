@@ -20,6 +20,11 @@ export interface CombatSettings {
   readonly combatHitConeAngle: number;
   /** fCombatDeadActorHitConeMult: the player's strikes find the dead in a cone this much wider. */
   readonly deadActorHitConeMult: number;
+  /**
+   * fCombatAttackStrikeAngleMult: an NPC picks an attack only for a target within its strike
+   * angle times this (observed in the original).
+   */
+  readonly attackStrikeAngleMult: number;
   // --- Damage --------------------------------------------------------------------------------
   /** fDamageSneakAttackMult: times the sneak attack multiplier (1). */
   readonly damageSneakAttackMult: number;
@@ -140,6 +145,7 @@ export const COMBAT_DEFAULTS: CombatSettings = {
   combatBashReach: 141,
   combatHitConeAngle: 35,
   deadActorHitConeMult: 2,
+  attackStrikeAngleMult: 0.67,
   damageSneakAttackMult: 1,
   sneakMult: {
     hand: 2,
@@ -251,6 +257,7 @@ const SETTING_NAMES: Readonly<Partial<Record<keyof CombatSettings, string>>> = {
   hostileActorInteriorDistance: 'fHostileActorInteriorDistance',
   hostileFlyingActorExteriorDistance: 'fHostileFlyingActorExteriorDistance',
   deadActorHitConeMult: 'fCombatDeadActorHitConeMult',
+  attackStrikeAngleMult: 'fCombatAttackStrikeAngleMult',
   vatsImageSpaceTransitionTime: 'fVATSImageSpaceTransitionTime',
   vatsSafetyMaxTime: 'fVATSSafetyMaxTime',
   vatsSafetyMaxTimeRanged: 'fVATSSafetyMaxTimeRanged',
