@@ -10,6 +10,9 @@
 // (TESTrackedStatsEvent: ScriptRuntime.incrementStat). TODO(M13): two more counts the handler
 // makes after these (one for a victim with another default object's keyword, one on a flag of
 // the player) are not identified yet.
+//
+// The engine's misc stat incrementers (observed in the original: one per event source,
+// MiscStatIncrementer<…>): a location cleared (LocationCleared) counts in Dungeons Cleared.
 
 import { PLAYER_REF } from './forms.ts';
 import type { ScriptRuntime } from './runtime.ts';
@@ -25,6 +28,9 @@ export const KILL_STATS: readonly { readonly keyword: string; readonly stat: str
 
 /** A kill whose victim's race has none of those keywords. */
 export const OTHER_KILLS = 'Creatures Killed';
+
+/** The stat a cleared location counts in (the LocationCleared incrementer's). */
+export const DUNGEONS_CLEARED = 'Dungeons Cleared';
 
 /** The stats a killed actor counts in, from its keywords (its race's among them). */
 export async function killStats(
@@ -48,6 +54,9 @@ export function relayStatEvents(runtime: ScriptRuntime): () => void {
       for (const stat of await killStats(keywords, (use) => runtime.magic.defaultObject(use))) {
         runtime.incrementStat(stat);
       }
+    }),
+    runtime.events.on('locationCleared', () => {
+      runtime.incrementStat(DUNGEONS_CLEARED);
     }),
   ];
   return () => {

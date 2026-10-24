@@ -18,6 +18,10 @@ export const DefaultObjectUse = {
   successMusic: 'SCMS',
   levelUpMusic: 'LUMS',
   dungeonClearedMusic: 'DCMS',
+  /** LCRT of a location's bosses: it is cleared once they are dead (location-clearing.ts). */
+  bossReferenceType: 'LRTB',
+  /** KYWD of a location the player can clear (its clearing is told and counted). */
+  clearableLocation: 'KWDO',
   /** SNCT music plays in. */
   musicCategory: 'MDSC',
   /** MATT of the landscape (where a land texture names none). */

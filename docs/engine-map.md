@@ -34,7 +34,7 @@ These run through every area and explain most of what breaks in play.
    the scripts, the story manager, the stats and the HUD at once. Ours calls each consumer from each
    producer, so many are never reached:
    - the hub (src/scripting/runtime/event-hub.ts) is in, and one activation path for every activator;
-     still not sent (2026-10-24): OnReset, OnTrapHit*, OnPlayerLoadGame, OnAnimationEventUnregistered;
+     still not sent (2026-10-24): OnPlayerLoadGame, OnAnimationEventUnregistered (OnReset and OnTrapHit* are now);
      before the hub about 20 script events were never sent (OnCombatStateChanged, OnReset, OnTrigger, OnEnterBleedout,
      OnOpen/OnClose, OnTrapHit, OnSpellCast, OnGrab/OnRelease, OnAttachedToCell, …; about 400 vanilla
      scripts wait for them);
@@ -53,8 +53,9 @@ These run through every area and explain most of what breaks in play.
    Papyrus natives wait for the main thread. Ours runs every actor every frame (the budget's rule is
    read: src/ai/process-levels.ts) and runs natives at once; packages are re-evaluated every 15 s and
    on the hour, sandbox stays are in game hours (2026-10-24).
-4. **Persistence.** Cells never reset or respawn; objects moved by physics, animated objects and corpses
-   return to their editor places when a cell reloads; there are no buffered cells; state the saves need is
+4. **Persistence.** Cells reset and respawn by the engine's rule, and moved objects keep their places
+   (2026-10-24); animated objects and corpses still return to their editor places when a cell reloads;
+   there are no buffered cells; state the saves need is
    spread outside GameState, and Papyrus threads cannot be saved yet.
 5. **Decision structures.** Combat is a behaviour tree in the original (actions per equipment slot in
    parallel with a movement priority list); ours is one fixed path. The sandbox has a daily plan and
@@ -67,12 +68,12 @@ These run through every area and explain most of what breaks in play.
 | System                      | Status    | Main gaps                                                                                                                                                                           |
 | --------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Form types                  | complete  | VOLI, LENS (render)                                                                                                                                                                 |
-| Per-reference state         | partial   | physics-moved and animated state lost on unload, partial souls, alias display names (activate children: done, 158 of 6,527 pairs lie beyond the cells searched)                     |
-| Cell loading                | partial   | no buffered cells, OnAttached/DetachedFromCell, grid follows the camera                                                                                                             |
-| Respawn, cell reset         | missing   | no reset or respawn, no OnReset, corpses stay, encounter zone levels frozen (vendor restock: iDaysToRespawnVendor, done)                                                            |
+| Per-reference state         | partial   | animated state lost on unload, partial souls, alias display names (activate children: done, 158 of 6,527 pairs lie beyond the cells searched; MoveTo on a moving object: done)      |
+| Cell loading                | partial   | no buffered cells, OnAttached/DetachedFromCell not checked, grid follows the camera (detach hours: done)                                                                            |
+| Respawn, cell reset         | partial   | enable state on reset, the actors' own respawn clock, dropped items (reset rule, zones, OnReset, corpses, zone levels: done; vendor restock: done)                                  |
 | Papyrus VM                  | different | natives not frame-synced; threads cannot be saved                                                                                                                                   |
-| Script events               | partial   | not produced: OnReset (cell reset), OnTrapHit* (traps), OnPlayerLoadGame (M12), OnAnimationEventUnregistered; 52 of 68 not yet checked in the simulation                            |
-| Event sources               | partial   | hub kinds without a producer: active effects, perk entries, quest init, scenes, topic infos, resets, trap hits, loading; 7 sources without a kind; the stats' sources besides kills |
+| Script events               | partial   | not produced: OnPlayerLoadGame (M12), OnAnimationEventUnregistered; 52 of 68 not yet checked in the simulation                                                                      |
+| Event sources               | partial   | hub kinds without a producer: active effects, perk entries, quest init, scenes, topic infos, loading; 7 sources without a kind; the stats' sources besides kills; resets/traps done |
 | Story manager               | partial   | not raised: Bribe, Flatter, Intimidate, Cure, Infection, Player Gets Favor, Quest Start; most raised types not yet checked in the simulation                                        |
 | Save and load               | missing   | M12                                                                                                                                                                                 |
 | Stats, skills, actor values | complete  | tracked-stats event                                                                                                                                                                 |
@@ -154,15 +155,15 @@ These run through every area and explain most of what breaks in play.
 | System               | Status    | Main gaps                                                                |
 | -------------------- | --------- | ------------------------------------------------------------------------ |
 | World, time step     | partial   | steps per frame, velocity clamps, continuous collision for fast clutter  |
-| Triggers             | partial   | only actors enter triggers; the layer matrix is not checked for triggers |
+| Triggers             | partial   | only actors enter triggers (L_TRIGGER takes 14 layers): layers unchecked |
 | Constraints          | partial   | joint friction; script-made constraints (hanged corpses, hanging keys)   |
 | Character controller | different | moving platforms do not carry actors; moving bodies do not push them     |
 | Falling, swimming    | partial   | only the player takes fall damage or swims; no breath or drowning        |
 | Water physics        | missing   | buoyancy, currents, splashes                                             |
 | Physics damage       | missing   | heavy moving objects never hurt                                          |
-| Traps                | missing   | the trap hit events are never raised: traps never hit                    |
+| Traps                | partial   | hits on actors: done; material, initial flag, cloud traps unchecked      |
 | Gameplay impulses    | partial   | arrows, spells, blows and shouts do not move clutter                     |
-| Persistence          | partial   | moved objects reset on unload                                            |
+| Persistence          | partial   | animated objects and corpses; pushes without a script unchecked          |
 
 ### Rendering and camera
 
@@ -186,7 +187,7 @@ These run through every area and explain most of what breaks in play.
 | ------------------------------ | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Menu manager                   | partial | named menu stack, saving permission, a UI API for mods                                                                                                                  |
 | HUD                            | partial | HUD modes (book, map, crafting hide the HUD and lose notices), word of power and dragon soul notices, dungeon cleared, floating quest markers, meter fades, arrow count |
-| Locations cleared, misc stats  | missing | no rule clears a location; about 35 stats never counted                                                                                                                 |
+| Locations cleared, misc stats  | partial | clearing rule, Dungeons Cleared, the maps' Cleared: done; about 34 stats never counted                                                                                  |
 | Input                          | partial | menu contexts read the default keys; no gamepad                                                                                                                         |
 | Console                        | partial | about 25 of about 330 commands; no selection by click                                                                                                                   |
 | Tutorials, loading, map, stats | partial | low-stat tutorials, map relief overlay, beast perk trees, Survival HUD                                                                                                  |

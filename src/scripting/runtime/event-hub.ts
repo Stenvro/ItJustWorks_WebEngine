@@ -100,6 +100,11 @@ export interface GameEvents {
   };
   /** A saved game finished loading (TESLoadGameEvent). */
   loadGame: Record<string, never>;
+  /**
+   * A location the player can clear was cleared (LocationCleared::Event: its bosses dead,
+   * src/scripting/runtime/location-clearing.ts).
+   */
+  locationCleared: { readonly location: number };
   /** A lock's state changed (TESLockChangedEvent). */
   lockChanged: { readonly reference: number };
   /** A magic effect is applied to a target (TESMagicEffectApplyEvent). */

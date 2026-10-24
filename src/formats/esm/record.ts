@@ -29,6 +29,8 @@ export const RecordFlag = {
   /** Base objects (STAT, FURN, ...): an editor marker, never drawn in game. */
   isMarker: 0x800000,
   compressed: 0x40000,
+  /** REFR: never reset with its cell (xEdit "No Respawn"; the engine's reset skips it). */
+  noRespawn: 0x40000000,
 } as const;
 
 export const GroupType = {
