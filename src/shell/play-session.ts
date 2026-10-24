@@ -1412,6 +1412,15 @@ export class PlaySession {
     this.physics.remove(placed);
   }
 
+  /** The placed objects playing sequences (doors, containers) with their instances (QA). */
+  *sequenced(): Iterable<{ readonly reference: number; readonly instance: ModelInstance }> {
+    for (const group of this.#groups) {
+      for (const { placed, instance } of group.animated) {
+        if (placed.owner.kind === 'object') yield { reference: placed.owner.reference, instance };
+      }
+    }
+  }
+
   /** Takes a cell's collision out of the world (and out of the queue). */
   remove(group: CollisionGroup): void {
     for (let i = this.#queue.length - 1; i >= 0; i--) {

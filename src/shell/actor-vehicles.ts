@@ -428,8 +428,14 @@ export class ActorVehicles {
   ): void {
     const passenger = this.#passengers.get(actor);
     if (!passenger) return;
+    // The player's CartExit goes to both their graphs (as the engine notifies the player's
+    // animation graphs: src/shell/player-avatar.ts send): their first-person graph played the
+    // exit too, and left in Cart_State its camera stayed at the seat's height on the ground (the
+    // player "still a giant" after the ride).
+    const avatar = actor === PLAYER_REF ? this.#options.player?.()?.avatar : undefined;
+    const send = (name: string): boolean => (avatar ? avatar.send(name) : graph.sendEvent(name));
     for (const { name: event } of events) {
-      if (BOUND_STANDING.has(event.toLowerCase())) graph.sendEvent('CartExit');
+      if (BOUND_STANDING.has(event.toLowerCase())) send('CartExit');
       const effect = riderEvent(event);
       if (effect === 'detach' && !passenger.detached) {
         const pose = this.#poseOf(passenger.vehicle, 1) ?? passenger.still;
@@ -458,6 +464,15 @@ export class ActorVehicles {
           view.avatar.bodyPitch = 0;
         }
       }
+    }
+  }
+
+  /** Where each cart its horse pulls stands now (its root), for the QA monitors. */
+  *cartPlaces(): Iterable<{ readonly reference: number; readonly at: Vec3 }> {
+    for (const cart of this.#carts.values()) {
+      if (!cart.body) continue;
+      const m = this.#rootOf(cart.body, 1);
+      yield { reference: cart.reference, at: [m[12] ?? 0, m[13] ?? 0, m[14] ?? 0] };
     }
   }
 

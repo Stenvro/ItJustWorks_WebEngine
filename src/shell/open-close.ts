@@ -22,9 +22,12 @@ export function tellSwing(
   const { sequence, start } = playback;
   if (!runtime || (sequence !== 'open' && sequence !== 'close')) return;
   const seconds = sequences?.byName.get(sequence)?.duration ?? 0;
+  // GetOpenState follows the swing: opening (closing) until it has played.
+  runtime.swung(reference, sequence === 'open' ? 2 : 4);
   setTimeout(() => {
     // Turned back meanwhile: that swing tells.
     if (playback.sequence !== sequence || playback.start !== start) return;
+    runtime.swung(reference, sequence === 'open' ? 1 : 3);
     runtime.events.emit('openClose', { reference, actor, opened: sequence === 'open' });
   }, seconds * 1000);
 }

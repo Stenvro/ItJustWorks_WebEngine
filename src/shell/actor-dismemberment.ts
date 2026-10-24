@@ -176,17 +176,20 @@ export class ActorDismemberment {
   /**
    * Whether an actor's look change is the decapitation armor put on (asked before the actor is
    * made again for it): its body puts it on in place, so a dying body is not made again in the
-   * middle of its death. Anything else it puts on or takes off meanwhile makes it again.
+   * middle of its death. It is asked for every look change until the cut is made (putting the
+   * armor on may change what it wears in several steps, each told on its own). Anything else it
+   * puts on or takes off meanwhile makes it again.
    */
   async dressedInPlace(reference: number): Promise<boolean> {
     const dressing = this.#dressing.get(reference);
     if (!dressing) return false;
     const expected = await dressing.catch(() => undefined);
-    if (this.#dressing.get(reference) === dressing) this.#dressing.delete(reference);
     const runtime = this.#options.session.scriptsReady;
     if (!expected || !runtime) return false;
     const now = await runtime.equipment.worn(reference);
-    return now.length === expected.length && now.every((form) => expected.includes(form));
+    const same = now.length === expected.length && now.every((form) => expected.includes(form));
+    if (!same && this.#dressing.get(reference) === dressing) this.#dressing.delete(reference);
+    return same;
   }
 
   /**

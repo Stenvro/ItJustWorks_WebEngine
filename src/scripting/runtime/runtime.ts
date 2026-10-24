@@ -1967,7 +1967,20 @@ export class ScriptRuntime implements VmHost {
     this.world.openChanged?.(reference, open);
   }
 
-  /** GetOpenState: 1 open, 3 closed (as scripts or the plugin left it: ONAM open by default). */
+  /**
+   * A door or container swings (the player's activation, an actor going through, a script's
+   * SetOpen): its open state is the reference's from now on (2 opening, then 1 open; 4
+   * closing, then 3 closed), kept with the game as the engine keeps it, so GetOpenState and
+   * the door coming into view again agree with the swing.
+   */
+  swung(reference: number, openState: 1 | 2 | 3 | 4): void {
+    this.state.reference(reference).openState = openState;
+  }
+
+  /**
+   * GetOpenState: 1 open, 2 opening, 3 closed, 4 closing (as it last swung, or as the scripts
+   * or the plugin left it: ONAM open by default).
+   */
   async openState(reference: number): Promise<number> {
     const set = this.state.references.get(reference)?.openState;
     if (set !== undefined) return set;

@@ -1121,16 +1121,24 @@ export class ActorStage {
     this.talk.remove(reference);
     this.mounts.remove(reference);
     this.vehicles.remove(reference);
-    this.furniture.remove(reference);
     this.movers.request(reference, undefined);
     this.movers.release(reference);
     staged.placed.face?.stopSpeaking();
     this.knockdowns.remove(reference);
     // Its death plays as its graph has it, into its ragdoll (src/shell/actor-graph-events.ts).
-    this.graphEvents.died(staged, killer, silent).catch((error: unknown) => {
-      this.#options.terminal.log('actor', `a death: ${describe(error)}`, 'warn');
-      void this.bodies.kill(staged);
-    });
+    // Its furniture lets go of it once its death is chosen: the death idles ask whether it sat
+    // in it (the humans' ActionDeathWait drops one seated as a ragdoll from where it sat,
+    // IsInFurnitureState). Freed first, half of them played their standing death animation
+    // (GetRandomPercent): Helgen's beheaded prisoner stood up from the block, then fell.
+    this.graphEvents
+      .died(staged, killer, silent)
+      .catch((error: unknown) => {
+        this.#options.terminal.log('actor', `a death: ${describe(error)}`, 'warn');
+        void this.bodies.kill(staged);
+      })
+      .finally(() => {
+        if (this.#actors.get(reference) === staged) this.furniture.remove(reference);
+      });
   }
 
   /**
@@ -1473,13 +1481,26 @@ export class ActorStage {
     const race = session.scriptsReady?.state.actors.get(reference)?.race;
     const placer = await session.actors();
     const old = staged.placed;
+    const newRace = race !== undefined && race !== old.look.race;
     const placed = await placer
       .place(
         { ...old.actor, position: staged.position, rotation: [0, 0, staged.heading] },
         undefined,
         race,
-        // In a new race its graph starts at its beginning (the werewolf's change).
-        { here: true, fresh: race !== undefined && race !== old.look.race },
+        // In a new race its graph starts at its beginning (the werewolf's change); in its own
+        // the new body takes its graph over (src/shell/actors.ts place).
+        {
+          here: true,
+          fresh: newRace,
+          ...(!newRace &&
+            old.behavior && {
+              graph: {
+                behavior: old.behavior,
+                project: old.look.behavior,
+                female: old.look.female,
+              },
+            }),
+        },
       )
       .catch((error: unknown) => {
         this.#options.terminal.log('actor', `${old.actor.editorId}: ${describe(error)}`, 'warn');
@@ -1501,8 +1522,8 @@ export class ActorStage {
     const previous = staged.scene;
     staged.scene = this.#scene(placed, staged.visibility);
     previous?.destroy();
-    // In furniture, its new graph is put back in it.
-    await this.furniture.bodyReplaced(this.userOf(staged));
+    // In furniture, a new graph is put back in it (one taken over is in it still).
+    if (placed.behavior !== old.behavior) await this.furniture.bodyReplaced(this.userOf(staged));
   }
 
   /** The references whose animation events go to others too (their dependents), by reference. */
@@ -1522,6 +1543,15 @@ export class ActorStage {
     const removed = set?.delete(dependent) === true;
     if (set?.size === 0) this.#dependents.delete(reference);
     return removed;
+  }
+
+  /**
+   * The furniture an actor (the player too) is in, entering or leaving, or the perch a flier
+   * sits on: its graph follows the actor's (src/shell/actor-graph-events.ts).
+   */
+  furnitureOf(reference: number): number | undefined {
+    if (this.furniture.holds(reference)) return this.furniture.interaction(reference)?.furniture;
+    return this.flight.perchOf(reference);
   }
 
   /** The dependents of a reference that are here to animate (actors, the player). */

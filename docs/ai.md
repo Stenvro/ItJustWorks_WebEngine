@@ -819,7 +819,11 @@ A prisoner's exit clip ends with OffsetBoundStandingCartStart (seat A's, Ulfric'
 OffsetBoundStandingStart): it sends CartExit, the only way out of the human graph's Cart_State,
 whose exit raises ExitCartEnd (inferred from the data). The player rides so too, carried in the
 physics steps (their shape out of the world meanwhile); an actor's AI that goes somewhere lets it
-off. Before, the riders were at the cart's root but moved by their graphs' movement: actors
+off. The player's CartExit goes to both their graphs, as every event the engine sends the player
+(their first-person graph played the exit too): sent to the body's alone, the first-person graph
+stayed in Cart_State and its Camera1st, which is the camera, at the seat's height: after the ride
+the camera stood 40 units over the body's head (the player "still a giant"; the QA monitor
+`player-camera` watches it). Before, the riders were at the cart's root but moved by their graphs' movement: actors
 still walking or falling (Speed up to 1977) as SetVehicle came drifted up to 634
 units behind the cart (Ulfric "hovering above the next horse").
 

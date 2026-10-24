@@ -406,18 +406,26 @@ export class ActorFurniture {
 
   /**
    * As playAction: the event of the idle its graph took (undefined: none played). Asked of
-   * nothing, conditions run on the target fail (a flier's landing without a perch).
+   * nothing, conditions run on the target fail (a flier's landing without a perch). An actor in
+   * furniture plays none, unless `inFurniture` (its death: the death idles ask whether it sits,
+   * IsInFurnitureState, and Nurelion's MS12BedDeath plays in his bed).
    */
   async actionEvent(
     user: FurnitureUser,
     action: string,
     target?: ObjectHandle,
+    inFurniture = false,
   ): Promise<string | undefined> {
     const runtime = this.#options.session.scriptsReady;
     const tree = await this.#tree();
     const parent = tree.action(action);
     const graph = await this.#graphKey(user);
-    if (!runtime || !parent || graph === undefined || this.#uses.has(user.reference)) {
+    if (
+      !runtime ||
+      !parent ||
+      graph === undefined ||
+      (!inFurniture && this.#uses.has(user.reference))
+    ) {
       return undefined;
     }
     const subject = new ObjectHandle(user.reference, 'actor');
