@@ -1,4 +1,5 @@
-// Shell system log: timestamped lines that are quickly "typed out".
+// Shell system log: timestamped lines that are quickly "typed out". The engine logs through the
+// Terminal interface; the page's list is one of its logs.
 
 export type LogTone = 'info' | 'ok' | 'warn' | 'error';
 
@@ -22,16 +23,38 @@ interface PendingLine {
   shown: number;
 }
 
-export class Terminal {
+/**
+ * Where the engine logs what it does: a tag (the system), the text and its tone. The page's log
+ * (DomTerminal) is one; the headless simulation keeps its lines (src/sim/sim-log.ts).
+ */
+export interface Terminal {
+  log(tag: string, text: string, tone?: LogTone): void;
+  /**
+   * The warning and error lines logged so far (the latest MAX_PROBLEMS): the QA harness reports
+   * those of the boot (a new game's or a coc's quest starts) too.
+   */
+  readonly problems: readonly LoggedProblem[];
+}
+
+/** Keeps a logged line in `problems` if it is a warning or an error (the latest MAX_PROBLEMS). */
+export function keepProblem(
+  problems: LoggedProblem[],
+  tag: string,
+  text: string,
+  tone: LogTone,
+): void {
+  if (tone !== 'warn' && tone !== 'error') return;
+  problems.push({ at: performance.now(), tag, text, tone });
+  if (problems.length > MAX_PROBLEMS) problems.shift();
+}
+
+/** The page's log: its lines typed out into a list element. */
+export class DomTerminal implements Terminal {
   readonly #list: HTMLElement;
   readonly #start = performance.now();
   readonly #queue: PendingLine[] = [];
   readonly #instant: boolean;
   #animating = false;
-  /**
-   * The warning and error lines logged so far (the latest MAX_PROBLEMS): the QA harness reports
-   * those of the boot (a new game's or a coc's quest starts) too.
-   */
   readonly problems: LoggedProblem[] = [];
 
   constructor(list: HTMLElement) {
@@ -40,10 +63,7 @@ export class Terminal {
   }
 
   log(tag: string, text: string, tone: LogTone = 'info'): void {
-    if (tone === 'warn' || tone === 'error') {
-      this.problems.push({ at: performance.now(), tag, text, tone });
-      if (this.problems.length > MAX_PROBLEMS) this.problems.shift();
-    }
+    keepProblem(this.problems, tag, text, tone);
     const seconds = ((performance.now() - this.#start) / 1000).toFixed(3).padStart(8, ' ');
     const line = document.createElement('li');
     line.className = `log-line tone-${tone}`;

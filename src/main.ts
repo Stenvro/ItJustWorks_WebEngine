@@ -8,7 +8,7 @@ import { WorldViewer } from './shell/world-viewer.ts';
 import { showClockSpeed } from './shell/world-sky.ts';
 import { nextClockSpeed } from './world/game-time.ts';
 import { forgetPanels, setupHideShortcut, setupPanels } from './shell/panels.ts';
-import { Terminal } from './shell/terminal.ts';
+import { DomTerminal } from './shell/terminal.ts';
 import { BrowserGameFolder } from './vfs/browser/browser-game-folder.ts';
 import { HttpGameFolder } from './vfs/browser/http-game-folder.ts';
 import type { GameFolder } from './vfs/game-folder.ts';
@@ -138,7 +138,7 @@ const ui = {
 /** Starts a game session for a mounted VFS (set up once the GPU is ready). */
 let connectSession: ((vfs: Vfs) => Promise<void>) | undefined;
 
-const terminal = new Terminal(ui.log);
+const terminal = new DomTerminal(ui.log);
 const hexId = (formId: number): string => formId.toString(16).toUpperCase().padStart(8, '0');
 const numberFormat = new Intl.NumberFormat('en-US');
 
