@@ -8,6 +8,7 @@ import type RAPIER from '@dimforge/rapier3d-compat';
 import type { BehaviorRuntime } from '../../animation/behavior-runtime.ts';
 import { HAVOK_SCALE } from '../../physics/collision-data.ts';
 import { Layer } from '../../physics/collision-layers.ts';
+import { AttackState, WeaponState } from '../../gameplay/combat/combat-state.ts';
 import { ActorPose } from '../../animation/skeleton.ts';
 import { FlyCamera } from '../../render/fly-camera.ts';
 import type { Renderer } from '../../render/renderer.ts';
@@ -26,6 +27,7 @@ import {
   BodyWatch,
   brokenBone,
   ClipWatch,
+  CombatWatch,
   Episode,
   FrameStats,
   isLocomotionClip,
@@ -100,6 +102,11 @@ const FRAMES: QaSubject = { id: 'frames', name: 'frames', kind: 'log' };
  */
 const CORPSE_UPRIGHT = 0.6;
 const CORPSE_SECONDS = 5;
+/** WEAPON_STATE drawn and ATTACK_STATE_ENUM bow drawn (src/gameplay/combat/combat-state.ts). */
+const WEAPON_DRAWN = WeaponState.drawn;
+const BOW_DRAWN = AttackState.bowDrawn;
+/** A melee target this much beyond reach counts as within it (units: a step in). */
+const MELEE_SLACK = 64;
 /** A corpse's ragdoll with a body still awake this long (seconds) has not come to rest. */
 const RESTLESS_SECONDS = 20;
 
@@ -213,6 +220,8 @@ export class QaHarness {
   #slow = 0;
   readonly #watched = new Map<number, Watched>();
   readonly #bodies = new Map<number, { watch: BodyWatch; anomaly: QaAnomaly | undefined }>();
+  /** Each fighter's combat watch and its paired clip's mark episode. */
+  readonly #combat = new Map<number, { watch: CombatWatch; pair: Episode }>();
   #actorsWatched = 0;
   #bodiesSeen = new Set<number>();
   #scenes = new Map<
@@ -258,6 +267,7 @@ export class QaHarness {
     this.#frames = new FrameStats();
     this.#events = [];
     this.#watched.clear();
+    this.#combat.clear();
     this.#bodies.clear();
     this.#bodiesSeen = new Set();
     this.#actorsWatched = 0;
@@ -862,10 +872,109 @@ export class QaHarness {
         severity: progress.distance,
         ...describe(),
       }));
+      this.#combatCheck(world, now, watched, dt, describe);
     }
     this.#corpsesCheck(world, dt);
     this.#scenesCheck(world, session);
     this.#questsCheck(session);
+  }
+
+  /**
+   * A fighter's combat (src/shell/actor-combat.ts qaFighter): an archer fighting within its
+   * range that looses nothing, or holds its bow drawn; a creature fighting within its reach
+   * that never attacks, or never hits; a paired animation's partner away from its mark.
+   */
+  #combatCheck(
+    world: QaWorld,
+    now: ActorNow,
+    watched: Watched,
+    dt: number,
+    describe: () => Pick<AnomalyInput, 'states' | 'clips' | 'position' | 'context' | 'cell'>,
+  ): void {
+    const stage = world.actorStage;
+    const fighter = stage?.combat.qaFighter(now.reference);
+    if (!stage || !fighter || now.reference === PLAYER_REF) return;
+    const t = this.#thresholds;
+    let combat = this.#combat.get(now.reference);
+    if (!combat) {
+      combat = { watch: new CombatWatch(), pair: new Episode(0.3, 0.5) };
+      this.#combat.set(now.reference, combat);
+    }
+    const target = fighter.target;
+    const there =
+      target === undefined
+        ? undefined
+        : target === PLAYER_REF
+          ? world.player?.drawnFeet
+          : stage.get(target)?.position;
+    const distance = there
+      ? Math.hypot(there[0] - now.position[0], there[1] - now.position[1])
+      : Infinity;
+    const targetRadius = target === undefined ? 0 : (stage.movers.radius(target) ?? 20);
+    const inRange = fighter.ranged
+      ? distance <= fighter.range
+      : distance <= fighter.reach + targetRadius + MELEE_SLACK;
+    const melee = !fighter.ranged && watched.subject.kind === 'creature';
+    const change = combat.watch.update(
+      {
+        fighting: fighter.engaged && target !== undefined && !fighter.fleeing,
+        ranged: fighter.ranged,
+        inRange,
+        weaponDrawn: fighter.weaponState === WEAPON_DRAWN,
+        bowDrawnFor: fighter.attackState === BOW_DRAWN ? fighter.drawnFor : 0,
+        attacks: fighter.attacks,
+        shots: fighter.shots,
+        hits: fighter.hits,
+      },
+      dt,
+      t,
+    );
+    const values = {
+      distance: Math.round(distance),
+      attacks: fighter.attacks,
+      shots: fighter.shots,
+      hits: fighter.hits,
+      weaponState: fighter.weaponState,
+      attackState: fighter.attackState,
+    };
+    this.#episode(watched, 'archer-silent', change.archer, combat.watch.archer, () => ({
+      kind: 'archer-silent',
+      detail:
+        fighter.attackState === BOW_DRAWN && fighter.drawnFor >= t.bowHeldSeconds
+          ? `holds its bow drawn ${fighter.drawnFor.toFixed(0)} s at ${hex(target ?? 0)} without loosing`
+          : `fights ${hex(target ?? 0)} ${distance.toFixed(0)} units away (its range ${fighter.range.toFixed(0)}) and looses nothing for ${combat.watch.quiet.toFixed(0)} s (weapon state ${fighter.weaponState}, attack state ${fighter.attackState}, ${fighter.shots} shots so far)`,
+      values,
+      severity: Math.max(combat.watch.quiet, fighter.drawnFor),
+      ...describe(),
+    }));
+    if (melee) {
+      this.#episode(watched, 'creature-passive', change.melee, combat.watch.melee, () => ({
+        kind: 'creature-passive',
+        detail:
+          combat.watch.misses >= t.creatureMisses
+            ? `attacked ${hex(target ?? 0)} ${combat.watch.misses} times within reach without a hit`
+            : `fights ${hex(target ?? 0)} ${distance.toFixed(0)} units away (its reach ${fighter.reach.toFixed(0)}) and attacks not once for ${combat.watch.quiet.toFixed(0)} s (weapon state ${fighter.weaponState}, attack state ${fighter.attackState}, ${fighter.attacks} attacks so far)`,
+        values,
+        severity: combat.watch.quiet + combat.watch.misses,
+        ...describe(),
+      }));
+    }
+    const mark = fighter.mark;
+    const off =
+      mark !== undefined &&
+      (mark.distance > t.pairMarkUnits || mark.turn > t.pairMarkDegrees || !mark.partnerSide);
+    this.#episode(watched, 'pair-misaligned', combat.pair.update(off, dt), combat.pair, () => ({
+      kind: 'pair-misaligned',
+      detail: mark
+        ? `${mark.clip} at ${mark.time.toFixed(2)} s: ${mark.distance.toFixed(0)} units from its mark before ${hex(mark.leader)}, turned ${mark.turn.toFixed(0)}° off${mark.partnerSide ? '' : ', its graph playing the leader’s side'}`
+        : 'out of its paired clip',
+      values: {
+        distance: Math.round(mark?.distance ?? 0),
+        turn: Math.round(mark?.turn ?? 0),
+      },
+      severity: (mark?.distance ?? 0) + (mark?.turn ?? 0),
+      ...describe(),
+    }));
   }
 
   /**

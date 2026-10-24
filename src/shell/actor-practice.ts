@@ -21,6 +21,8 @@ import type { GameSession } from './game-session.ts';
 const STEP_LIMIT = 4;
 /** A drawn bow is held this long before it looses (seconds). TODO(M13): the engine's. */
 const BOW_HOLD = 0.6;
+/** An attack its graph refused is asked again this often (seconds: the combat tree's attack idle). */
+const ATTACK_RETRY = 0.25;
 /**
  * A practice's shot at a target that is no actor goes this high over its placement (units).
  * TODO(M13): the engine aims at the target's bounds; the vanilla archery butts stand on their
@@ -69,6 +71,7 @@ export class ActorPractice {
       doNoDamage: barrage.doNoDamage,
       alwaysHit: barrage.alwaysHit,
       combatStartOnHit: barrage.combatStartOnHit,
+      aimOnly: barrage.aimOnly,
     });
     if (barrage.headtrack) this.#options.session.scriptWorld.lookAt(actor, target, 'procedure');
     this.#face(actor, target);
@@ -86,15 +89,17 @@ export class ActorPractice {
     for (let i = 0; i < barrage.attacks; i++) {
       this.#face(actor, target);
       const state = (): ReturnType<ActorCombat['combatState']> => combat.combatState(actor);
+      const action = ranged
+        ? 'ActionRightAttack'
+        : barrage.powerAttack
+          ? 'ActionRightPowerAttack'
+          : 'ActionRightAttack';
+      if (!(await this.#begin(actor, action, ranged))) return false;
       if (ranged) {
-        if (!(await combat.attack(actor, 'ActionRightAttack'))) return false;
         await this.#until(() => state()?.attack === AttackState.bowDrawn);
         await this.#sleep(BOW_HOLD);
         if (barrage.aimOnly) continue;
         await combat.release(actor, 'ActionRightRelease');
-      } else {
-        const action = barrage.powerAttack ? 'ActionRightPowerAttack' : 'ActionRightAttack';
-        if (!(await combat.attack(actor, action))) return false;
       }
       await this.#until(() => {
         const now = state();
@@ -102,6 +107,35 @@ export class ActorPractice {
       });
     }
     return true;
+  }
+
+  /**
+   * An attack begun, asked again every ATTACK_RETRY seconds while its graph refuses it (STEP_LIMIT
+   * at most), as the engine's attack actions fail and are tried again: a graph just out of its
+   * draw, a release or a turn takes no attack for a moment (Helgen's archers drew at Lokir once
+   * each, the attack was refused as their draw blended out, and they shot no arrow). Whether it
+   * began (a bow: its arrow on the string; a swing: past its wind-up's first answer).
+   */
+  async #begin(actor: number, action: string, ranged: boolean): Promise<boolean> {
+    const combat = this.#options.combat();
+    const until = Date.now() + STEP_LIMIT * 1000;
+    while (Date.now() < until) {
+      if (await combat.attack(actor, action)) {
+        // Refused, its attack ends at the next frame (ActorCombat's unanswered attack); taken,
+        // it gets on (an arrow nocked, a swing past its wind-up).
+        const seen = { got: false };
+        await this.#until(() => {
+          const now = combat.combatState(actor);
+          seen.got ||=
+            now !== undefined &&
+            (ranged ? now.arrowNocked : attacking(now) && now.attack !== AttackState.draw);
+          return seen.got || now === undefined || !attacking(now);
+        }, ATTACK_RETRY * 4);
+        if (seen.got) return true;
+      }
+      await this.#sleep(ATTACK_RETRY);
+    }
+    return false;
   }
 
   /**

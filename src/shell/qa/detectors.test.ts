@@ -4,6 +4,7 @@ import {
   BodyWatch,
   brokenBone,
   ClipWatch,
+  CombatWatch,
   Episode,
   FrameStats,
   isLocomotionClip,
@@ -291,5 +292,64 @@ describe('sceneWait', () => {
 describe('messageKey', () => {
   it('puts numbers and form ids as #', () => {
     expect(messageKey('actor 0001A2B3 at 12.5, -3')).toBe(messageKey('actor 0002FFFF at 1, 7'));
+  });
+});
+
+describe('CombatWatch', () => {
+  const base = {
+    fighting: true,
+    ranged: true,
+    inRange: true,
+    weaponDrawn: true,
+    bowDrawnFor: 0,
+    attacks: 0,
+    shots: 0,
+    hits: 0,
+  };
+
+  it('reports an archer that looses nothing within range, and lets one that shoots be', () => {
+    const silent = new CombatWatch();
+    const changes: (string | undefined)[] = [];
+    for (let i = 0; i < 20; i++) changes.push(silent.update(base, 1, DEFAULT_THRESHOLDS).archer);
+    expect(changes.indexOf('begin')).toBe(DEFAULT_THRESHOLDS.archerSilentSeconds - 1);
+    const shooting = new CombatWatch();
+    for (let i = 0; i < 40; i++) {
+      const change = shooting.update({ ...base, shots: Math.floor(i / 5) }, 1, DEFAULT_THRESHOLDS);
+      expect(change.archer).toBeUndefined();
+    }
+  });
+
+  it('reports a bow held drawn too long', () => {
+    const watch = new CombatWatch();
+    expect(watch.update({ ...base, bowDrawnFor: 11 }, 0.25, DEFAULT_THRESHOLDS).archer).toBe(
+      'begin',
+    );
+  });
+
+  it('reports a melee fighter that never attacks, or never hits, within reach', () => {
+    const melee = { ...base, ranged: false };
+    const passive = new CombatWatch();
+    let begun = false;
+    for (let i = 0; i < 14; i++)
+      begun ||= passive.update(melee, 1, DEFAULT_THRESHOLDS).melee === 'begin';
+    expect(begun).toBe(true);
+    const missing = new CombatWatch();
+    begun = false;
+    for (let i = 0; i <= DEFAULT_THRESHOLDS.creatureMisses; i++)
+      begun ||= missing.update({ ...melee, attacks: i }, 1, DEFAULT_THRESHOLDS).melee === 'begin';
+    expect(begun).toBe(true);
+    const hitting = new CombatWatch();
+    for (let i = 0; i < 30; i++) {
+      const change = hitting.update({ ...melee, attacks: i, hits: i }, 1, DEFAULT_THRESHOLDS);
+      expect(change.melee).toBeUndefined();
+    }
+  });
+
+  it('does not judge one out of range or not fighting', () => {
+    const watch = new CombatWatch();
+    for (let i = 0; i < 30; i++) {
+      const sample = { ...base, inRange: i % 2 === 0, fighting: i < 15 };
+      expect(watch.update(sample, 1, DEFAULT_THRESHOLDS).archer).toBeUndefined();
+    }
   });
 });
