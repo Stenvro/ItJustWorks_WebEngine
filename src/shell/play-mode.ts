@@ -45,7 +45,7 @@ import { DialogueMenu } from './dialogue-menu.ts';
 import { cellPlacement, exteriorCells } from './cell-placement.ts';
 import { ConsoleMenu, isConsoleKey, type ConsoleRunner } from './console-menu.ts';
 import { ConsoleCommands, parseConsoleLine } from './console-commands.ts';
-import { Compass } from './compass.ts';
+import { Compass, questTargets } from './compass.ts';
 import { MenuHost, type Menu } from '../ui/menu-host.ts';
 import type { GameSession } from './game-session.ts';
 import { headPosition, type PlacedActor } from './actors.ts';
@@ -848,6 +848,7 @@ export class PlayMode {
             this.#world.player()?.play.player.setFov(world);
           },
           gameSettings: () => session.settings(),
+          questTargets: () => questTargets(runtime),
           pick: (x, y, aspect) => this.#world.player()?.play.pickAt(x, y, aspect),
           forceWeather: (weather, override) => {
             session.sky.forceWeather(weather, override);

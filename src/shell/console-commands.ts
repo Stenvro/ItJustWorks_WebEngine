@@ -25,7 +25,7 @@ import { MapMarkerFlag, readMapMarkers } from '../world/map-markers.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
 import { parseSpell, SpellType } from '../world/spell-records.ts';
 import { cellPlacement, gridPlacement } from './cell-placement.ts';
-import { questTargets } from './compass.ts';
+
 import { parseAxis, parseConsoleLine, parseConsoleNumber, parseFormId } from './console-parse.ts';
 import {
   CONSOLE_COMMANDS,
@@ -69,6 +69,8 @@ export interface ConsoleContext {
   setFov?(world: number, firstPerson: number): void;
   /** The game settings the session's systems read (setgs changes them there too). */
   gameSettings?(): Promise<GameSettings>;
+  /** The active quests' targets (movetoqt). */
+  questTargets?(): Promise<readonly { readonly quest: number; readonly reference: number }[]>;
   /** Clears the console's history (clear). */
   clear?(): void;
   /** The reference under a point of the frame (see ConsoleRunner.click). */
@@ -436,7 +438,9 @@ export class ConsoleCommands {
       // movetoqt <quest> [n]: the player goes to the quest's nth current target.
       case 'movetoquesttarget': {
         const quest = num(0);
-        const targets = (await questTargets(runtime)).filter((entry) => entry.quest === quest);
+        const targets = (await (context.questTargets?.() ?? Promise.resolve([]))).filter(
+          (entry) => entry.quest === quest,
+        );
         if (targets.length === 0) return ['No current targets'];
         const index = num(1, 1);
         if (index < 1 || index > targets.length) {
