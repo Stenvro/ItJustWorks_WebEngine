@@ -119,6 +119,38 @@ that actor at least 100 units a second as it falls; a step up never lands on an 
 past another, its lower shape a little up the other's, it still stands on the floor. The player stands on heads, as in the game. TODO(M13): Havok's character
 proxy's own rule was not read; NPCs are not seen standing on one another in the game.
 
+## Where coc puts the player
+
+Observed in the original (`src/world/coc-spot.ts`, `src/shell/cell-placement.ts`): the
+console's centeroncell starts an exterior cell at its middle on the landscape, an interior cell at
+its origin, and looks through the cell's references in order (deleted ones left out; in an
+exterior, the worldspace's persistent references in its square and its own, each only if it stands
+in the cell's square). It takes the first COCMarkerHeading (place and rotation), else the first
+XMarkerHeading (place and rotation), else the first XMarker (place), else the arrival point of the
+first door that leads into the cell (where its linked door here sends one; place), else the first
+static (place), else the last reference looked at (place). An exterior spot is then raised to the
+landscape and to the cell's water if it lies under them (bDefaultCOCPlacement, off, would skip the
+references and keep the middle). The player falls from there onto what is below.
+
+Before, an exterior used only a COCMarkerHeading of its own (not the persistent ones, where most of
+them are) and else its middle 64 units over the landscape: Riften's North put the player in the
+masonry under the walkway, Windhelm's market 12,000 units over the market (the landscape of the
+Windhelm worldspace lies far above the city floor there), and interiors always at the door in.
+`node tools/coc-audit.ts` checks every named cell's spot against its navmesh (on: a triangle
+under it within 48 units of its height; high: the nearest under it lower; under: above it;
+none: no navmesh under it); of the 2,378 named cells:
+
+| cells                  | on    | high | under | none |
+| ---------------------- | ----- | ---- | ----- | ---- |
+| 1,617 exterior, before | 781   | 334  | 84    | 418  |
+| exterior, now          | 1,245 | 83   | 19    | 270  |
+| 761 interior, before   | 679   | 5    | 4     | 73   |
+| interior, now          | 700   | 10   | 10    | 41   |
+
+The 10 interiors now "under" have their marker where no navmesh lies at its
+height (behind a shop's counter, a COC marker set a little low in a cave); the engine takes those
+markers as well.
+
 ## Water volumes
 
 Swimming and the sound under water test where water can be entered
