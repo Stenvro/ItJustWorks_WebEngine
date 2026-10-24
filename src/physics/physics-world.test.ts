@@ -922,3 +922,94 @@ describe('deactivation', () => {
     physics.free();
   });
 });
+
+describe('characters on characters', () => {
+  /** Static, and character controllers that collide with it and with one another. */
+  const actors = new CollisionMatrix([
+    { formId: 1, editorId: 'L_STATIC', index: Layer.static, name: '', flags: 0, collidesWith: [2] },
+    {
+      formId: 2,
+      editorId: 'L_CHARCONTROLLER',
+      index: Layer.charController,
+      name: '',
+      flags: 0,
+      collidesWith: [1, 2],
+    },
+  ]);
+
+  /** Where an actor set on another's head stands after two seconds (its feet's height). */
+  const onHead = (standsOnActors: boolean, at: [number, number, number] = [4, 0, 133]): number => {
+    const physics = new PhysicsWorld(actors, GRAVITY);
+    physics.addObject(collision(body(box([-400, -400, -20], [400, 400, 0]))), IDENTITY, {
+      reference: 1,
+      kind: 'object',
+    });
+    const shape = { radius: 14.42, height: 131.84 };
+    const under = new CharacterBody(physics, shape, settings(new Set()), [0, 0, 0], {
+      reference: 0x20,
+      kind: 'actor',
+    });
+    physics.step(1 / 60);
+    // A little off the other's centre, as one ends up on another.
+    const over = new CharacterBody(physics, shape, settings(new Set()), at, {
+      reference: 0x21,
+      kind: 'actor',
+    });
+    over.standsOnActors = standsOnActors;
+    for (let i = 0; i < 120; i++) {
+      under.step(1 / 60);
+      over.step(1 / 60);
+      physics.step(1 / 60);
+    }
+    const z = over.feet[2];
+    over.free();
+    under.free();
+    physics.free();
+    return z;
+  };
+
+  it('are no ground to an NPC: it slides off', () => {
+    expect(onHead(false)).toBeLessThan(5);
+  });
+
+  it('let an NPC placed into another (the player set at a coc marker on it) out to the floor', () => {
+    // Its feet 63 units up, its middle inside the other's shape.
+    expect(onHead(false, [20, 0, 63])).toBeLessThan(5);
+  });
+
+  it('are ground to the player, who stands on heads', () => {
+    expect(onHead(true)).toBeGreaterThan(100);
+  });
+
+  it('leave an NPC on the floor as it presses past another', () => {
+    const physics = new PhysicsWorld(actors, GRAVITY);
+    physics.addObject(collision(body(box([-400, -400, -20], [400, 400, 0]))), IDENTITY, {
+      reference: 1,
+      kind: 'object',
+    });
+    const shape = { radius: 14.42, height: 131.84 };
+    const still = new CharacterBody(physics, shape, settings(new Set()), [0, 0, 0], {
+      reference: 0x20,
+      kind: 'actor',
+    });
+    const walker = new CharacterBody(physics, shape, settings(new Set()), [-10, -80, 0], {
+      reference: 0x21,
+      kind: 'actor',
+    });
+    walker.standsOnActors = false;
+    physics.step(1 / 60);
+    let airborne = 0;
+    for (let i = 0; i < 120; i++) {
+      walker.velocity = [0, 120];
+      still.step(1 / 60);
+      walker.step(1 / 60);
+      physics.step(1 / 60);
+      if (i > 2 && !walker.grounded) airborne++;
+    }
+    expect(airborne).toBe(0);
+    expect(walker.feet[2]).toBeLessThan(5);
+    walker.free();
+    still.free();
+    physics.free();
+  });
+});

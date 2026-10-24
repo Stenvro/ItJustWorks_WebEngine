@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { Condition } from '../scripting/conditions.ts';
-import { PackageFlag, type PackageRecord, type ProcedureBranch } from './package-records.ts';
+import {
+  BranchFlag,
+  PackageFlag,
+  type PackageRecord,
+  type ProcedureBranch,
+} from './package-records.ts';
 import {
   ActorPackages,
   type PackageBody,
@@ -456,5 +461,72 @@ describe('ActorPackages', () => {
     await tick(actor, 1);
     expect(ran).toEqual(['find', 'sandbox', 'sleep', 'sandbox stopped']);
     expect(actor.current?.procedure).toBe('sleep');
+  });
+
+  it('ends a simultaneous branch as any child ends, a success completing the package at once', async () => {
+    // The Sit template's first phase: a Find that goes on while a Travel, whose success
+    // completes the package, arrives.
+    const ran: string[] = [];
+    const runners: Record<string, ProcedureRunner> = {
+      find: async (run) => {
+        ran.push('find');
+        while (!run.stopped()) await run.wait(1);
+        ran.push('find stopped');
+        return 'failure';
+      },
+      travel: () => {
+        ran.push('travel');
+        return Promise.resolve('success');
+      },
+      sit: () => {
+        ran.push('sit');
+        return Promise.resolve('success');
+      },
+    };
+    const tree = branch('Sequence', [
+      branch('Simultaneous', [procedure('find'), procedure('travel', 1)]),
+      procedure('sit'),
+    ]);
+    const { actor, events } = setup([pack(1, tree)], runners);
+    await tick(actor);
+    await tick(actor, 1);
+    expect(ran.slice(0, 3)).toEqual(['find', 'travel', 'find stopped']);
+    expect(ran).not.toContain('sit');
+    expect(events).toContain('end Pack1');
+  });
+
+  it('with allComplete ends a simultaneous branch as all its children have ended', async () => {
+    const ran: string[] = [];
+    let waited = 0;
+    const runners: Record<string, ProcedureRunner> = {
+      sit: () => {
+        ran.push('sit');
+        return Promise.resolve('success');
+      },
+      wait: async (run) => {
+        while (waited < 2 && !run.stopped()) {
+          await run.wait(1);
+          waited++;
+        }
+        ran.push('waited');
+        return 'success';
+      },
+      eat: async (run) => {
+        ran.push('eat');
+        while (!run.stopped()) await run.wait(1);
+        return 'failure';
+      },
+    };
+    const tree = branch('Sequence', [
+      branch('Simultaneous', [procedure('sit'), procedure('wait')], BranchFlag.allComplete),
+      procedure('eat'),
+    ]);
+    const { actor } = setup([pack(1, tree)], runners);
+    await tick(actor);
+    expect(ran).toEqual(['sit']);
+    await tick(actor, 1);
+    await tick(actor, 1);
+    await tick(actor, 1);
+    expect(ran).toEqual(['sit', 'waited', 'eat']);
   });
 });

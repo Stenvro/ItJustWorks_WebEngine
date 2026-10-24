@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { referenceMatrix } from './cell-loader.ts';
 import { RaceFlag } from './actor-records.ts';
-import { groundedPlacement, standsOnGround } from './actor-ground.ts';
+import { checkAbove, GROUND_ABOVE, groundedPlacement, standsOnGround } from './actor-ground.ts';
 
 const BEAR = RaceFlag.tiltFrontBack | RaceFlag.walks | RaceFlag.swims;
 const SPIDER = RaceFlag.tiltFrontBack | RaceFlag.tiltLeftRight | RaceFlag.walks;
@@ -47,5 +47,19 @@ describe('actors on the ground', () => {
   it('leaves out races that do not walk (slaughterfish swim where they were placed)', () => {
     expect(standsOnGround(RaceFlag.swims)).toBe(false);
     expect(standsOnGround(BEAR)).toBe(true);
+  });
+});
+
+describe("the engine's position check", () => {
+  it('begins a quarter of the height above the feet, at most 32 units', () => {
+    // A chicken (about 40 units), a human (128), a giant.
+    expect(checkAbove(40)).toBe(10);
+    expect(checkAbove(128)).toBe(32);
+    expect(checkAbove(600)).toBe(32);
+    expect(checkAbove(-1)).toBe(0);
+  });
+
+  it("finds a floor 25 units over a navmesh point (Whiterun's porches) from a placement", () => {
+    expect(GROUND_ABOVE).toBeGreaterThan(25);
   });
 });
