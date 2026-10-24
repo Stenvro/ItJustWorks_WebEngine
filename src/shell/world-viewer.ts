@@ -7,8 +7,6 @@ import { FlyCamera } from '../render/fly-camera.ts';
 import { identity } from '../render/math.ts';
 import type { Mat4, Vec3 } from '../render/math.ts';
 import type { Camera, Renderer } from '../render/renderer.ts';
-import type { ActorPose } from '../animation/skeleton.ts';
-import { articulatedPose } from '../physics/articulation.ts';
 import { GRAVITY, initPhysics, PhysicsWorld } from '../physics/physics-world.ts';
 import {
   placedParts,
@@ -96,11 +94,7 @@ import type { NavmeshSet } from '../ai/pathfinding.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement } from '../scripting/runtime/runtime.ts';
 import { instanceNodeWorld, MOTION_KEYFRAMED, type ScriptView } from './script-world.ts';
-import {
-  actorScriptGraph,
-  placedScriptGraph,
-  skeletonEventsToScripts,
-} from '../animation/script-graphs.ts';
+import { actorScriptGraph, placedScriptGraph } from '../animation/script-graphs.ts';
 import { CreatedObjects } from './created-objects.ts';
 import { FloraLooks } from './flora-looks.ts';
 import { DestructionLooks } from './destruction-looks.ts';
@@ -110,10 +104,11 @@ import { prepareCameraShake } from './camera-shake.ts';
 import { PlayerAvatar } from './player-avatar.ts';
 import type { PlayerView } from './race-menu.ts';
 import { TreeSway } from '../animation/tree-sway.ts';
+import { placeObject, type PlacedObject } from '../sim/placed-objects.ts';
 import { groundUnder, type SoundingWorld } from './actor-sounds.ts';
 import { CombatTargetKeywords } from './combat-target-keywords.ts';
 import type { GameSession } from './game-session.ts';
-import { clock, startObjectGraph, startPlacedSkeleton } from './object-graphs.ts';
+import { clock } from './object-graphs.ts';
 import { WorldLod } from './world-lod.ts';
 import { WorldSky, type SkyElements } from './world-sky.ts';
 import { sunInView } from '../world/sky-state.ts';
@@ -124,7 +119,6 @@ import type { LocalMapContent } from './local-map.ts';
 import {
   collisionGroup,
   objectActivation,
-  openable,
   perkActivation,
   PlaySession,
   type Activatable,
@@ -991,7 +985,7 @@ export class WorldViewer {
         name: (teleport) => this.#destinations.get(teleport.door)?.name ?? '',
         go: (teleport) => this.onTravel?.(teleport),
       },
-      (descriptor, at) => void this.#session?.soundSystem?.play(descriptor, at),
+      (descriptor, at) => void this.#session?.playSound(descriptor, at),
       this.#session?.hud.uses,
       this.#seat,
     );
@@ -1996,14 +1990,7 @@ export class WorldViewer {
     flow: WaterFlow,
     simulated = false,
     visibility?: (reference: number) => InstanceVisibility,
-  ): Promise<
-    {
-      object: CellObject;
-      instance: ModelInstance;
-      skeleton?: AnimatedSkeleton;
-      articulated?: ActorPose;
-    }[]
-  > {
+  ): Promise<PlacedObject[]> {
     const models = await Promise.all(objects.map((object) => session.model(object.model)));
     // In loaded cells, objects with simulated collision move: they get a matrix of their own.
     const collisions = simulated
@@ -2020,63 +2007,27 @@ export class WorldViewer {
           : session.waterType(object.water, flow),
       ),
     );
-    const placed: {
-      object: CellObject;
-      instance: ModelInstance;
-      skeleton?: AnimatedSkeleton;
-      articulated?: ActorPose;
-    }[] = [];
+    const placed: PlacedObject[] = [];
     objects.forEach((object, i) => {
       const model = models[i];
-      const water = waterTypes[i];
-      const directional = directionals[i];
       if (!model) return;
-      const graph = startObjectGraph(model, object.reference);
-      // The events its sequences raise reach its scripts (OnAnimationEvent).
-      if (graph)
-        graph.onEvent = (event) =>
-          this.#session?.scriptsReady?.animationEvent(object.reference, event);
-      const skeletal = startPlacedSkeleton(model, object.reference);
-      if (skeletal) {
-        skeletonEventsToScripts(skeletal.skeleton, (event) =>
-          this.#session?.scriptsReady?.animationEvent(object.reference, event),
-        );
-      }
-      // Bodies that move nodes one by one pose the model (ragdolls, hinged signs); objects
-      // simulated as one body get a matrix of their own.
-      const articulated = skeletal ? undefined : articulatedPose(model.nodes, collisions[i]);
-      const moves =
-        !articulated &&
-        collisions[i]?.bodies.some((body) => body.motion === 'dynamic' && !body.phantom) === true;
-      const posed = skeletal
-        ? { pose: skeletal.skeleton.pose, poseNodes: skeletal.poseNodes }
-        : (articulated ?? this.#treeSway(model, object));
-      placed.push({
-        object,
-        ...(skeletal && { skeleton: skeletal.skeleton }),
-        ...(articulated && { articulated: articulated.pose }),
-        instance: {
-          model,
-          world: moves ? new Float32Array(object.world) : object.world,
-          ...(moves && { motion: { version: 0 } }),
-          ...(visibility && { visibility: visibility(object.reference) }),
-          ...(graph && { graph }),
-          ...(posed && { pose: posed.pose, poseNodes: posed.poseNodes }),
-          ...(simulated && {
-            playback: openable(
-              object,
-              model.sequences?.byName.has('open') === true,
-              this.#session?.scriptsReady?.state.references.get(object.reference)?.openState,
-            ),
-          }),
-          ...(water && { water }),
-          ...(directional && { directional }),
-          ...(object.leafAnimation && { leafAnimation: object.leafAnimation }),
-          ...(object.emittance !== undefined && {
-            emittance: session.emittance(object.emittance),
-          }),
-        },
-      });
+      placed.push(
+        placeObject(
+          session,
+          object,
+          {
+            model,
+            collision: collisions[i],
+            water: waterTypes[i],
+            directional: directionals[i],
+          },
+          {
+            simulated,
+            ...(visibility && { visibility: visibility(object.reference) }),
+            sway: (swayed, swaying) => this.#treeSway(swayed, swaying),
+          },
+        ),
+      );
     });
     return placed;
   }
@@ -2396,7 +2347,7 @@ export class WorldViewer {
     // The player's body, in third person or seen from the free camera or a menu's.
     const play = this.#play;
     const avatar = this.#avatar;
-    if (play && avatar && play.bodyShown) yield avatar.scene;
+    if (play && avatar?.scene && play.bodyShown) yield avatar.scene;
     // In first person its arms, unless a script hides them (ShowFirstPersonGeometry).
     const firstScene = avatar?.firstPersonBody?.scene;
     if (play && firstScene && this.#firstPersonShown(play)) yield firstScene;

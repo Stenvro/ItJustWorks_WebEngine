@@ -6,7 +6,7 @@
 
 import { HARVESTED_SWITCH_CHILD } from '../world/flora-records.ts';
 import type { CellObject } from '../world/cell-loader.ts';
-import type { Renderer } from '../render/renderer.ts';
+import type { RenderPort } from '../render/render-port.ts';
 import type { GpuScene, InstanceVisibility } from '../render/scene-renderer.ts';
 import type { GameSession } from './game-session.ts';
 
@@ -19,7 +19,7 @@ interface Flora {
   /** The harvested look: loading, ready (its scene), or none (no switch node). */
   harvested:
     | Promise<void>
-    | { readonly scene: GpuScene; readonly visibility: InstanceVisibility }
+    | { readonly scene: GpuScene | undefined; readonly visibility: InstanceVisibility }
     | null
     | undefined;
   /** Whether the cell's instance is hidden here (harvested and its look ready). */
@@ -28,10 +28,10 @@ interface Flora {
 
 export class FloraLooks {
   readonly #session: GameSession;
-  readonly #renderer: Renderer;
+  readonly #renderer: RenderPort;
   readonly #floras = new Map<number, Flora>();
 
-  constructor(session: GameSession, renderer: Renderer) {
+  constructor(session: GameSession, renderer: RenderPort) {
     this.#session = session;
     this.#renderer = renderer;
   }
@@ -62,7 +62,7 @@ export class FloraLooks {
     const flora = this.#floras.get(reference);
     if (!flora) return;
     this.#floras.delete(reference);
-    if (flora.harvested && 'scene' in flora.harvested) flora.harvested.scene.destroy();
+    if (flora.harvested && 'scene' in flora.harvested) flora.harvested.scene?.destroy();
   }
 
   clear(): void {
@@ -87,7 +87,7 @@ export class FloraLooks {
           flora.visibility.hidden = !flora.enabled();
         }
       }
-      if (look && !look.visibility.hidden) yield look.scene;
+      if (look?.scene && !look.visibility.hidden) yield look.scene;
     }
   }
 

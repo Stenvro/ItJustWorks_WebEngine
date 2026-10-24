@@ -19,7 +19,7 @@ import { ActorPose, ActorSkeleton, wearOnRig, type RigData } from '../animation/
 import type { HkxSkeleton } from '../formats/hkx/animation.ts';
 import { firstPersonMatrix } from '../render/first-person-placement.ts';
 import type { Vec3 } from '../render/math.ts';
-import type { Renderer } from '../render/renderer.ts';
+import type { RenderPort } from '../render/render-port.ts';
 import type { GpuScene, InstanceMotion, ModelInstance } from '../render/scene-renderer.ts';
 import { partitionVisible, seededRandom, type ActorLook } from '../world/actors.ts';
 import { FIRST_PERSON_SKELETON } from '../world/player-body.ts';
@@ -43,7 +43,7 @@ interface Skeleton {
 
 export class FirstPersonBody {
   readonly #session: GameSession;
-  readonly #renderer: Renderer;
+  readonly #renderer: RenderPort;
   readonly #rig: RigData;
   readonly #havok: HkxSkeleton;
   readonly #skeleton: Skeleton;
@@ -56,7 +56,7 @@ export class FirstPersonBody {
 
   private constructor(
     session: GameSession,
-    renderer: Renderer,
+    renderer: RenderPort,
     rig: RigData,
     havok: HkxSkeleton,
     skeleton: Skeleton,
@@ -71,7 +71,7 @@ export class FirstPersonBody {
   /** The first-person skeleton running the first-person graph of the sex (IsFemale). */
   static async create(
     session: GameSession,
-    renderer: Renderer,
+    renderer: RenderPort,
     female: boolean,
   ): Promise<FirstPersonBody | undefined> {
     const animation = session.animation;

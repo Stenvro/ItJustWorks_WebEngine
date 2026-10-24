@@ -586,7 +586,11 @@ export class PapyrusVm {
    * in its current state) on a thread of its own once its OnInit has finished. Resolves when
    * they all have returned.
    */
+  /** Told of every event sent to an object's scripts (the headless simulation records them). */
+  onEventSent: ((target: ObjectHandle, event: string, args: readonly Value[]) => void) | undefined;
+
   async sendEvent(target: ObjectHandle, event: string, args: readonly Value[] = []): Promise<void> {
+    this.onEventSent?.(target, event, args);
     const instances = await this.#attachedInstances(target);
     await Promise.all(instances.map((instance) => this.#dispatch(instance, event, args, false)));
   }

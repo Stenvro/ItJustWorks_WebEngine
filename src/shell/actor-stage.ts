@@ -18,7 +18,7 @@ import {
 } from '../animation/animated-skeleton.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
 import type { Vec3 } from '../render/math.ts';
-import type { Renderer } from '../render/renderer.ts';
+import type { RenderPort } from '../render/render-port.ts';
 import type { GpuScene, InstanceVisibility } from '../render/scene-renderer.ts';
 import { ragdollOf, referenceMatrix, type CellActor } from '../world/cell-loader.ts';
 import { linkedReferences, parseReference } from '../world/cell-records.ts';
@@ -112,7 +112,7 @@ export interface StagedActor {
 
 export interface ActorStageOptions {
   readonly session: GameSession;
-  readonly renderer: Renderer;
+  readonly renderer: RenderPort;
   readonly terminal: Terminal;
   readonly sounding: SoundingWorld;
   /**

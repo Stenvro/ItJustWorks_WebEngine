@@ -30,7 +30,7 @@ import { ActorPose as Pose, ActorSkeleton, wearOnRig } from '../animation/skelet
 import { WeaponGraph } from '../animation/weapon-graph.ts';
 import type { ModelNode, ModelPart } from '../render/model-data.ts';
 import { multiply, transformPoint, type Mat4 } from '../render/math.ts';
-import type { Renderer } from '../render/renderer.ts';
+import type { RenderPort } from '../render/render-port.ts';
 import type {
   GpuModel,
   GpuScene,
@@ -140,7 +140,7 @@ export class HeldWeapons {
    */
   static async create(
     session: GameSession,
-    renderer: Renderer,
+    renderer: RenderPort,
     body: HeldBody,
     held: HeldModels,
     blood: HeldBlood = {},

@@ -12,7 +12,7 @@ import { impactAgainst } from '../audio/impacts.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
 import type { GpuDecals } from '../render/decals.ts';
-import type { Renderer } from '../render/renderer.ts';
+import type { RenderPort } from '../render/render-port.ts';
 import type { Mat4, Vec3 } from '../render/math.ts';
 import {
   expireDecals,
@@ -60,7 +60,7 @@ export interface HitImpact {
 
 export class CombatImpacts {
   readonly #session: GameSession;
-  readonly #renderer: Renderer;
+  readonly #renderer: RenderPort;
   readonly #decals: LivingDecal[] = [];
   readonly #decalData = new Map<number, Promise<ImpactDecal | undefined>>();
   /** Seconds now (the decals' lifetimes run on it). */
@@ -69,7 +69,7 @@ export class CombatImpacts {
 
   constructor(
     session: GameSession,
-    renderer: Renderer,
+    renderer: RenderPort,
     now: () => number = () => performance.now() / 1000,
   ) {
     this.#session = session;

@@ -106,7 +106,7 @@ import type { AimTarget, ProjectileAim, ShotKind } from './projectile-aim.ts';
 import { blockStagger, recoilOf, staggerMagnitude } from '../gameplay/combat/stagger.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import { transformPoint, type Mat4, type Vec3 } from '../render/math.ts';
-import type { Renderer } from '../render/renderer.ts';
+import type { RenderPort } from '../render/render-port.ts';
 import type { GpuDecals } from '../render/decals.ts';
 import type { GpuScene, InstanceVisibility } from '../render/scene-renderer.ts';
 import type { StagedActor } from './actor-stage.ts';
@@ -361,7 +361,7 @@ interface Gear {
 
 export interface ActorCombatOptions {
   readonly session: GameSession;
-  readonly renderer: Renderer;
+  readonly renderer: RenderPort;
   readonly terminal: Terminal;
   readonly movers: ActorMovers;
   readonly bodies: ActorBodies;
@@ -3650,16 +3650,15 @@ export class ActorCombat implements CombatBridge {
 
   #playSound(sound: number | undefined, fighter: Fighter): void {
     if (sound === undefined) return;
-    const sounds = this.#options.session.soundSystem;
     const feet = this.#feet(fighter);
-    if (!sounds || !feet) return;
+    if (!feet) return;
     const at = fighter.body?.pose.world('WEAPON');
     const world = fighter.player
       ? this.#avatar?.placement.world
       : fighter.body?.instances[0]?.world;
     const place: Vec3 =
       at && world ? transformPoint(world, [at[12] ?? 0, at[13] ?? 0, at[14] ?? 0]) : feet;
-    void sounds.play(sound, place, 0, fighter.reference);
+    void this.#options.session.playSound(sound, place, 0, fighter.reference);
   }
 
   #difficulty(): number {

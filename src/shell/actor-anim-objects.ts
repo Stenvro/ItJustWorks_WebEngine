@@ -18,7 +18,7 @@ import { AnimObjectList, type HeldAnimObject } from '../animation/anim-objects.t
 import type { ActorPose } from '../animation/skeleton.ts';
 import type { ModelTextureSwaps } from '../render/actor-model.ts';
 import { multiply } from '../render/math.ts';
-import type { Renderer } from '../render/renderer.ts';
+import type { RenderPort } from '../render/render-port.ts';
 import type {
   GpuModel,
   GpuScene,
@@ -59,7 +59,8 @@ interface Attached {
   readonly key: object;
   /** The node its "Prn" names (lower case; undefined: none, it shows nowhere). */
   readonly node: string | undefined;
-  readonly scene: GpuScene;
+  /** Its draws (none headless). */
+  readonly scene: GpuScene | undefined;
   readonly world: Float32Array;
   readonly motion: InstanceMotion;
   readonly visibility: InstanceVisibility;
@@ -69,7 +70,7 @@ type Entry = HeldAnimObject<AnimObjectRecord, Attached>;
 
 export interface ActorAnimObjectsOptions {
   readonly session: GameSession;
-  readonly renderer: Renderer;
+  readonly renderer: RenderPort;
   /** A staged actor by its reference. */
   readonly staged: (reference: number) => StagedActor | undefined;
   /** The player being played, if they are. */
@@ -143,7 +144,7 @@ export class ActorAnimObjects {
   /** Their scenes. */
   *scenes(): Iterable<GpuScene> {
     for (const entry of this.#list.all()) {
-      if (entry.attached) yield entry.attached.scene;
+      if (entry.attached?.scene) yield entry.attached.scene;
     }
   }
 
@@ -249,7 +250,7 @@ export class ActorAnimObjects {
       };
     }
     if (!this.#list.loaded(entry, attached)) {
-      attached?.scene.destroy();
+      attached?.scene?.destroy();
       return;
     }
     // The player holding one cannot switch the camera (the engine turns the control off).
@@ -284,7 +285,7 @@ export class ActorAnimObjects {
   #unloaded(entries: readonly Entry[]): void {
     let player = false;
     for (const entry of entries) {
-      entry.attached?.scene.destroy();
+      entry.attached?.scene?.destroy();
       if (entry.actor === PLAYER_REF && entry.attached) player = true;
     }
     if (player && this.#list.of(PLAYER_REF).every((entry) => !entry.attached)) {

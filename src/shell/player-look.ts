@@ -242,7 +242,7 @@ export class PlayerLook {
         const baked = bakeHeadPart(partPositions(modelPart), 3, morphs, weights);
         return withPositions(modelPart, baked);
       });
-      entry = session.renderer.scene
+      entry = session.render.scene
         .createModel({ ...data, parts }, session.textures)
         .catch((error: unknown) => {
           this.#terminal.log('actor', `${part.editorId}: ${describe(error)}`, 'warn');
@@ -273,7 +273,9 @@ export class PlayerLook {
     });
     const pixels = composeFaceTint(composite, FACE_TINT_SIZE, FACE_TINT_SIZE);
     const texture = this.#tintTexture();
-    const scene = this.#session.renderer.scene;
+    // A headless session paints none (nothing is drawn).
+    if (!texture) return;
+    const scene = this.#session.render.scene;
     rgbaMipChain(pixels, FACE_TINT_SIZE, FACE_TINT_SIZE).forEach((level, mip) => {
       scene.writePixels(texture, mip, level.width, level.height, level.data);
     });
@@ -281,15 +283,16 @@ export class PlayerLook {
   }
 
   /** The face tint texture, provided to the textures under its path (made once). */
-  #tintTexture(): GPUTexture {
+  #tintTexture(): GPUTexture | undefined {
     if (!this.#tint) {
       const levels = Math.floor(Math.log2(FACE_TINT_SIZE)) + 1;
-      this.#tint = this.#session.renderer.scene.createPixelTexture(
+      this.#tint = this.#session.render.scene.createPixelTexture(
         FACE_TINT_SIZE,
         FACE_TINT_SIZE,
         levels,
         'player face tint',
       );
+      if (!this.#tint) return undefined;
       this.#session.textures.provide(FACE_TINT_PATH, this.#tint);
       this.#painted = undefined;
     }

@@ -13,7 +13,7 @@ import { Layer } from '../physics/collision-layers.ts';
 import type { PlacedCollision } from '../physics/physics-world.ts';
 import { identity } from '../render/math.ts';
 import type { ModelTextureSwaps } from '../render/actor-model.ts';
-import type { Renderer } from '../render/renderer.ts';
+import type { RenderPort } from '../render/render-port.ts';
 import type { GpuScene, InstanceVisibility, ModelInstance } from '../render/scene-renderer.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { DestructionLook } from '../scripting/runtime/destruction-engine.ts';
@@ -49,7 +49,7 @@ const RECHECK_FRAMES = 30;
 
 interface StageLook {
   readonly key: string;
-  readonly scene: GpuScene;
+  readonly scene: GpuScene | undefined;
   readonly visibility: InstanceVisibility;
   readonly group: CollisionGroup | undefined;
   /** The play its collision is in (a new play places it again). */
@@ -77,7 +77,7 @@ interface Destructible {
 }
 
 interface DebrisPiece {
-  readonly scene: GpuScene;
+  readonly scene: GpuScene | undefined;
   readonly group: CollisionGroup | undefined;
   readonly play: PlaySession | undefined;
   readonly until: number;
@@ -85,7 +85,7 @@ interface DebrisPiece {
 
 export class DestructionLooks {
   readonly #session: GameSession;
-  readonly #renderer: Renderer;
+  readonly #renderer: RenderPort;
   readonly #play: () => PlaySession | undefined;
   readonly #entries = new Map<number, Destructible>();
   readonly #debris = new Set<DebrisPiece>();
@@ -94,7 +94,7 @@ export class DestructionLooks {
 
   constructor(
     session: GameSession,
-    renderer: Renderer,
+    renderer: RenderPort,
     play: () => PlaySession | undefined,
     warn: (message: string) => void,
   ) {
@@ -180,14 +180,14 @@ export class DestructionLooks {
         entry.visibility.hidden = !enabled;
       }
       this.#collide(entry, enabled);
-      if (look && !look.visibility.hidden) yield look.scene;
+      if (look?.scene && !look.visibility.hidden) yield look.scene;
     }
     for (const piece of [...this.#debris]) {
       if (now >= piece.until) {
         this.#dropPiece(piece);
         continue;
       }
-      yield piece.scene;
+      if (piece.scene) yield piece.scene;
     }
   }
 
@@ -294,7 +294,7 @@ export class DestructionLooks {
   }
 
   #dropLook(look: StageLook): void {
-    look.scene.destroy();
+    look.scene?.destroy();
     // An ended play's physics went with it.
     if (look.group && look.play && look.play === this.#play()) look.play.remove(look.group);
   }
@@ -397,7 +397,7 @@ export class DestructionLooks {
 
   #dropPiece(piece: DebrisPiece): void {
     this.#debris.delete(piece);
-    piece.scene.destroy();
+    piece.scene?.destroy();
     if (piece.group && piece.play && piece.play === this.#play()) piece.play.remove(piece.group);
   }
 }

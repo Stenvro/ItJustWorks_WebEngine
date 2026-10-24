@@ -18,7 +18,7 @@ import type { Vec3 } from '../render/math.ts';
 import type { ModelAnimation } from '../render/animation.ts';
 import { identity } from '../render/math.ts';
 import type { EffectMaterial, ModelPart } from '../render/model-data.ts';
-import type { Renderer } from '../render/renderer.ts';
+import type { RenderPort } from '../render/render-port.ts';
 import type {
   GpuModel,
   GpuScene,
@@ -52,7 +52,7 @@ export interface EffectBody {
 
 export interface ActorEffectsOptions {
   readonly session: GameSession;
-  readonly renderer: Renderer;
+  readonly renderer: RenderPort;
   readonly terminal: Terminal;
   /** An actor's body (a staged actor's, the player's avatar's), if it is shown. */
   readonly body: (actor: number) => EffectBody | undefined;
@@ -77,7 +77,8 @@ interface BuiltShader {
   readonly placed: PlacedActor;
   readonly fill: GpuScene | undefined;
   readonly edge: GpuScene | undefined;
-  readonly particles: { readonly scene: GpuScene; readonly source: SurfaceParticles } | undefined;
+  readonly particles:
+    { readonly scene: GpuScene | undefined; readonly source: SurfaceParticles } | undefined;
   readonly models: readonly GpuModel[];
   readonly sources: readonly GpuModel[];
 }
@@ -92,7 +93,7 @@ interface ArtShow {
   built:
     | {
         readonly placed: PlacedActor;
-        readonly scene: GpuScene;
+        readonly scene: GpuScene | undefined;
         readonly pose: ActorPose;
         readonly nodes: Int16Array;
       }
@@ -298,7 +299,7 @@ export class ActorEffects {
     const cover = async (
       material: EffectMaterial,
       scroll?: readonly [number, number],
-    ): Promise<GpuScene> => {
+    ): Promise<GpuScene | undefined> => {
       const instances: ModelInstance[] = [];
       for (const instance of placed.instances) {
         const overlay = await renderer.scene.createOverlay(
@@ -483,7 +484,7 @@ export class ActorEffects {
   #dropArt(key: string): void {
     const show = this.#arts.get(key);
     this.#arts.delete(key);
-    show?.built?.scene.destroy();
+    show?.built?.scene?.destroy();
   }
 
   // --- Lights -------------------------------------------------------------------------------
@@ -588,7 +589,7 @@ export class ActorEffects {
       }
       const body = this.#options.body(show.actor);
       if (show.built && body && show.built.placed !== body.placed) {
-        show.built.scene.destroy();
+        show.built.scene?.destroy();
         show.built = undefined;
       }
       if (!show.built && body && !show.building) {
@@ -596,7 +597,7 @@ export class ActorEffects {
         void this.#buildArt(show, body)
           .then((built) => {
             show.building = false;
-            if (this.#arts.get(key) !== show) built?.scene.destroy();
+            if (this.#arts.get(key) !== show) built?.scene?.destroy();
             else show.built = built;
           })
           .catch((error: unknown) => {
@@ -654,9 +655,9 @@ export class ActorEffects {
       if (!built) continue;
       if (built.fill) yield built.fill;
       if (built.edge) yield built.edge;
-      if (built.particles) yield built.particles.scene;
+      if (built.particles?.scene) yield built.particles.scene;
     }
-    for (const show of this.#arts.values()) if (show.built) yield show.built.scene;
+    for (const show of this.#arts.values()) if (show.built?.scene) yield show.built.scene;
   }
 }
 
@@ -714,7 +715,7 @@ function followSkeleton(pose: ActorPose, nodes: Int16Array, body: ActorPose): vo
 function destroyBuilt(built: BuiltShader): void {
   built.fill?.destroy();
   built.edge?.destroy();
-  built.particles?.scene.destroy();
+  built.particles?.scene?.destroy();
   for (const model of built.models) model.destroy();
   for (const model of built.sources) model.release();
 }

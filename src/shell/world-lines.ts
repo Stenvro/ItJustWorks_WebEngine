@@ -95,7 +95,7 @@ export class WorldLines {
     const engine = this.#session.scriptsReady?.dialogue;
     const path = await engine?.voiceFile(spoken, response, voiceType);
     if (!engine || path === undefined) return undefined;
-    if ((await this.#session.sounds()).hasFile(path)) return path;
+    if ((await this.#session.voices()).hasFile(path)) return path;
     if (!this.#missingVoices.has(path)) {
       this.#missingVoices.add(path);
       const gameLacks = engine.isGameContent(spoken);
