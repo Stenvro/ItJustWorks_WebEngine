@@ -406,9 +406,17 @@ export class Player implements Camera {
   /** The bow's zoom asked for (the field of view's factor: Mod Bow Zoom), and as eased now. */
   bowZoom = 1;
   #bowZoom = 1;
-  readonly #fovY: number;
-  /** fDefaultWorldFOV: degrees across a 4:3 frame. */
-  readonly #fovDegrees: number;
+  #fovY: number;
+  /** fDefaultWorldFOV: degrees across a 4:3 frame (the console's fov changes it). */
+  #fovDegrees: number;
+  /** The console's tcl: no collision, no gravity; the player flies where they look. */
+  noClip = false;
+
+  /** The world's field of view (degrees across a 4:3 frame): the console's fov. */
+  setFov(degrees: number): void {
+    this.#fovDegrees = degrees;
+    this.#fovY = verticalFov(degrees);
+  }
   /**
    * Whether the player holds an object heavier than fZKeyHeavyWeight (the play's grab): they
    * walk, as over-encumbered.
@@ -775,6 +783,10 @@ export class Player implements Camera {
     const pilot = this.pilot;
     if (pilot) [x, y] = this.#piloted(pilot, seconds);
     const moving = x !== 0 || y !== 0;
+    if (this.noClip) {
+      this.#fly(x, y, seconds);
+      return;
+    }
     // Swimming: deep enough water lifts the body.
     const [fx, fy, fz] = character.feet;
     const water = this.#setup.waterHeight(fx, fy, fz);
@@ -864,6 +876,27 @@ export class Player implements Camera {
         this.onBorder?.();
       }
     }
+  }
+
+  /**
+   * The console's tcl: the player passes through everything and goes where they look (the
+   * view's pitch too), without gravity. TODO(M13): the engine's speed for it (here the run
+   * speed).
+   */
+  #fly(x: number, y: number, seconds: number): void {
+    const moving = x !== 0 || y !== 0;
+    this.motion = { inputX: x, inputY: y, moving, running: true, sprinting: false };
+    const feet = this.character.feet;
+    if (!moving) {
+      this.character.carry(feet, feet);
+      return;
+    }
+    const speed = this.#setup.movement.normal.run.forward / Math.hypot(x, y);
+    const forward = this.forward;
+    const right: Vec3 = [Math.cos(this.yaw), -Math.sin(this.yaw), 0];
+    const step = (axis: 0 | 1 | 2): number =>
+      feet[axis] + (forward[axis] * y + right[axis] * x) * speed * seconds;
+    this.character.carry(feet, [step(0), step(1), step(2)]);
   }
 
   /**

@@ -260,6 +260,8 @@ export class ActorSenses implements ScriptSenses {
   /** Guards warning: whom. */
   readonly #warnings = new Map<number, number>();
   readonly #random = seededRandom(0x5ea5e);
+  /** Detection was on last frame (the console's tdetect). */
+  #detecting = true;
 
   constructor(options: ActorSensesOptions) {
     this.#options = options;
@@ -349,7 +351,14 @@ export class ActorSenses implements ScriptSenses {
     const allowed = this.#options.session.ini.number('General', 'iUpdateDetectionsAllowedPerFrame');
     let tests = 0;
     const flying = [...(this.#options.projectiles?.() ?? [])];
+    // The console's tdetect: no actor tests what it detects, and what each knew is forgotten
+    // as detection goes off (observed in the original).
+    const detecting = runtime.debug.detection;
+    if (!detecting && this.#detecting)
+      for (const body of bodies.values()) this.detections.forget(body.reference);
+    this.#detecting = detecting;
     for (const body of bodies.values()) {
+      if (!detecting) break;
       if (body.reference === PLAYER_REF) continue;
       // Its AI disabled (EnableAI false), it notices nothing (it is still seen).
       if (!this.#options.movers.runsAi(body.reference)) continue;
@@ -846,6 +855,7 @@ export class ActorSenses implements ScriptSenses {
   detects(observer: number, target: number): boolean {
     if (observer === target) return true;
     const runtime = this.#options.session.scriptsReady;
+    if (runtime?.debug.detection === false) return false;
     const tested = this.#tested.get(`${String(observer)}:${String(target)}`);
     if (runtime && (tested === undefined || this.#clock - tested > FRESH_SECONDS)) {
       const bodies = this.#bodies();

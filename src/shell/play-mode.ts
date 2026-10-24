@@ -824,7 +824,31 @@ export class PlayMode {
           toggleMenus: () => {
             this.#menusShown = !this.#menusShown;
             session.hud.shown(this.#menusShown);
+            return this.#menusShown;
           },
+          toggleCollision: () => {
+            const player = this.#world.player()?.play.player;
+            if (!player) return true;
+            player.noClip = !player.noClip;
+            return !player.noClip;
+          },
+          toggleFreeCamera: () => {
+            const play = this.#world.player()?.play;
+            if (!play) return false;
+            const free = play.freeCamera;
+            play.setFreeCamera(!free);
+            return !free;
+          },
+          toggleGrass: () => {
+            this.#renderer.showGrass = !this.#renderer.showGrass;
+            return this.#renderer.showGrass;
+          },
+          setFov: (world) => {
+            // TODO(M13): first person's own field of view (fDefault1stPersonFOV).
+            this.#world.player()?.play.player.setFov(world);
+          },
+          gameSettings: () => session.settings(),
+          pick: (x, y, aspect) => this.#world.player()?.play.pickAt(x, y, aspect),
           forceWeather: (weather, override) => {
             session.sky.forceWeather(weather, override);
           },

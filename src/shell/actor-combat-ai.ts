@@ -667,7 +667,8 @@ export class ActorCombatAi {
       if (view.player || runtime.state.actors.get(view.reference)?.dead === true) continue;
       if (this.#options.ridden?.(view.reference) === true) continue;
       const mind = this.#mind(view.reference);
-      if (this.#ignoresCombat(mind)) continue;
+      // The console's tcai stops all combat AI: as an ignoring package's, its fight waits.
+      if (!runtime.debug.combatAi || this.#ignoresCombat(mind)) continue;
       this.#refreshProfile(mind, runtime);
       if (this.#clock >= mind.next) {
         mind.next = this.#clock + DECIDE_SECONDS;
