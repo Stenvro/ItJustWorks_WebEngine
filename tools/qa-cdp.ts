@@ -358,7 +358,8 @@ export async function startChrome(options: {
       '--no-default-browser-check',
       'about:blank',
     ],
-    { stdio: 'ignore' },
+    // windowsHide: on Windows a child of a process without a console gets a window of its own.
+    { stdio: 'ignore', windowsHide: true },
   );
   const ready = await waitFor(
     async () =>
@@ -383,7 +384,7 @@ export async function startVite(root: string, port: number): Promise<ChildProces
       String(port),
       '--strictPort',
     ],
-    { cwd: root, stdio: 'ignore' },
+    { cwd: root, stdio: 'ignore', windowsHide: true },
   );
   const ready = await waitFor(
     async () => ((await fetch(`http://localhost:${port}/`)).ok ? true : undefined),
@@ -401,7 +402,10 @@ export async function startVite(root: string, port: number): Promise<ChildProces
 export function stopProcess(child: ChildProcess | undefined): void {
   if (!child?.pid || child.exitCode !== null) return;
   if (process.platform === 'win32') {
-    spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' });
+    spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    });
   } else {
     child.kill('SIGTERM');
   }
