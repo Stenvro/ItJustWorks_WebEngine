@@ -168,6 +168,18 @@ export class ActorGraphEvents {
       if (!source.firstPerson) {
         const runtime = this.#options.session.scriptsReady;
         for (const event of events) runtime?.animationEvent(source.reference, event.text);
+        // The furniture it uses follows it. Observed in the original: as an actor comes to
+        // want to sit or sleep in furniture, the furniture's animation graph manager joins the
+        // actor's sub-managers (the list AddDependentAnimatedObjectReference adds to); inferred
+        // from the data, what the actor's graph raises reaches it: Alduin's tower smash-bite
+        // clip raises Open, which opens the tower wall's own graph (a perch), whose opening
+        // raises the Begin its script sets MQ101DragonAttack's stage 103 on (the tower door
+        // opened, the inn's guiding collision).
+        const furniture = stage.furnitureOf(source.reference);
+        if (furniture !== undefined) {
+          const world = this.#options.session.scriptWorld;
+          for (const event of events) world.animationEvent(furniture, event.name);
+        }
       }
       stage.combat.heard(source, events);
       stage.casting.graphEvents(source, events);
@@ -456,7 +468,7 @@ export class ActorGraphEvents {
       const runtime = this.#options.session.scriptsReady;
       const target = killer === undefined || !runtime ? undefined : runtime.referenceHandle(killer);
       for (const action of DEATH_ACTIONS) {
-        event = await stage.furniture.actionEvent(user, action, target);
+        event = await stage.furniture.actionEvent(user, action, target, true);
         if (event !== undefined) break;
       }
     }

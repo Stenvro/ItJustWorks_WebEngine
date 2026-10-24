@@ -86,6 +86,12 @@ export class ActorDoors {
     return this.#open(door, entry, actor);
   }
 
+  /** A door of the loaded area that swings (not a load door), with its instance. */
+  swinging(door: number): DoorObject | undefined {
+    const entry = this.#options.find(door);
+    return entry?.object.baseType === 'DOOR' && !entry.object.teleport ? entry : undefined;
+  }
+
   /** The doors found shut to an actor lately (its paths keep off them). */
   shutTo(actor: number): ReadonlySet<number> {
     const doors = this.#shut.get(actor);
