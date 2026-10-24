@@ -70,6 +70,7 @@ export { GpuModel, type ModelAddon };
 import { gbufferTarget } from './gbuffer.ts';
 import { projectedUVParams, type MaterialObject } from '../world/material-object.ts';
 import type { WaterType } from '../world/water.ts';
+import type { LightCone } from '../world/cell-records.ts';
 
 export const SAMPLE_COUNT = 4;
 export const DEPTH_FORMAT: GPUTextureFormat = 'depth32float';
@@ -112,7 +113,10 @@ export interface LodMask {
   readonly high: number;
 }
 /** WGSL `PointLight`: position + radius, colour + unused. */
-const LIGHT_FLOATS = 8;
+/** Floats per point light: position, radius, colour, cone cosine (-2: none), cone axis, pad. */
+const LIGHT_FLOATS = 12;
+/** The cone cosine of a light without a cone. */
+const NO_CONE = -2;
 
 const SLSF1_ZBUFFER_TEST = 0x80000000;
 const SLSF1_DECAL = 0x4000000;
@@ -275,6 +279,8 @@ export interface PointLight {
   readonly radius: number;
   /** Already multiplied by the light's fade. */
   readonly color: Vec3;
+  /** A spot light: it lights only within its cone (undefined: every way). */
+  readonly spot?: LightCone;
 }
 
 export interface SceneFog {
@@ -2379,7 +2385,17 @@ export class SceneRenderer {
       for (let i = 0; i < lightCount; i++) {
         const light = lighting.lights[i];
         if (!light) continue;
-        this.#lightData.set([...light.position, light.radius, ...light.color, 0], i * LIGHT_FLOATS);
+        this.#lightData.set(
+          [
+            ...light.position,
+            light.radius,
+            ...light.color,
+            light.spot?.cosHalfAngle ?? NO_CONE,
+            ...(light.spot?.direction ?? [0, 0, 1]),
+            0,
+          ],
+          i * LIGHT_FLOATS,
+        );
       }
       this.#device.queue.writeBuffer(
         this.#frame.lights,

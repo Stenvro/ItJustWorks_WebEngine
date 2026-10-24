@@ -103,6 +103,10 @@ const TRIGGER_GATE_RADIUS = 4096;
 const FRAME_DISTANCE = 260;
 /** The subject of long frames (one, so they are kept as the worst of one kind). */
 const FRAMES: QaSubject = { id: 'frames', name: 'frames', kind: 'log' };
+/** The subject of effect floods (one: they are kept as the worst of one kind). */
+const EFFECTS: QaSubject = { id: 'effects', name: 'magic effects', kind: 'log' };
+/** A flood ends once the effects stay at or under the limit this long (seconds). */
+const FLOOD_END_SECONDS = 2;
 /**
  * A corpse whose head is higher above its feet than this share of its standing head height
  * stands (for CORPSE_SECONDS).
@@ -337,6 +341,7 @@ export class QaHarness {
     this.#scenes = new Map();
     this.#quests = new Map();
     this.#logLines.clear();
+    this.#flood = undefined;
     this.#triggerGates.clear();
     this.#entered.clear();
     this.#doorWays.clear();
@@ -524,6 +529,7 @@ export class QaHarness {
         const step = this.#slow;
         this.#slow = 0;
         this.#slowChecks(world, session, step);
+        this.#effectsCheck(world, session, step);
       }
     } catch (error: unknown) {
       // A monitor's own failure is reported once per message, never thrown into the game.
@@ -1221,6 +1227,88 @@ export class QaHarness {
       if (dx === 0 && dy === 0) depth = -above;
     }
     return usable ? { gap: Math.max(0, gap), depth, layer } : undefined;
+  }
+
+  /** The flood of magic effects going on: its anomaly, how long the effects have been under. */
+  #flood: { anomaly: QaAnomaly; under: number } | undefined;
+
+  /**
+   * effects-flood: more magic effects at once than effectsAtOnce: explosion, impact, muzzle
+   * flash and cone models showing, hazards standing, projectiles flying, flame streams. One anomaly per
+   * flood, its detail the worst moment's census (what showed, how many of each).
+   */
+  #effectsCheck(world: QaWorld, session: GameSession, dt: number): void {
+    const stage = world.actorStage;
+    if (!stage) return;
+    const census = new Map<string, number>();
+    const add = (key: string): void => {
+      census.set(key, (census.get(key) ?? 0) + 1);
+    };
+    const sum: [number, number, number] = [0, 0, 0];
+    let count = 0;
+    const at = (point: readonly number[]): void => {
+      count++;
+      sum[0] += point[0] ?? 0;
+      sum[1] += point[1] ?? 0;
+      sum[2] += point[2] ?? 0;
+    };
+    const base = (path: string | undefined): string =>
+      (path ?? '-').split(/[\\/]/).pop()?.toLowerCase() ?? '-';
+    for (const fx of stage.fx.shown()) {
+      add(`${fx.kind} ${base(fx.model)}`);
+      at(fx.at);
+    }
+    for (const flying of stage.projectiles.flying()) {
+      add(`projectile ${flying.projectile}`);
+      at(flying.at);
+    }
+    for (const flame of stage.projectiles.flames()) {
+      add(`flame ${flame.projectile}`);
+      at(flame.at);
+    }
+    for (const placed of session.scriptsReady?.hazards.active ?? []) {
+      add(`hazard ${placed.hazard.editorId}`);
+      const place = session.scriptsReady?.world.livePlacement?.(placed.reference)?.position;
+      if (place) at(place);
+    }
+    let total = 0;
+    for (const n of census.values()) total += n;
+    const flood = this.#flood;
+    if (total <= this.#thresholds.effectsAtOnce) {
+      if (flood) {
+        flood.under += dt;
+        if (flood.under >= FLOOD_END_SECONDS) this.#flood = undefined;
+      }
+      return;
+    }
+    const detail = `${total} magic effects at once: ${[...census]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([key, n]) => `${n}× ${key}`)
+      .join(', ')}`;
+    if (flood) {
+      flood.under = 0;
+      flood.anomaly.duration = Math.round((this.#now() - flood.anomaly.time) * 100) / 100;
+      if (total > flood.anomaly.severity) {
+        flood.anomaly.severity = total;
+        flood.anomaly.detail = detail;
+      }
+      return;
+    }
+    const position: [number, number, number] | undefined =
+      count > 0 ? [sum[0] / count, sum[1] / count, sum[2] / count] : undefined;
+    this.#flood = {
+      anomaly: this.#add({
+        kind: 'effects-flood',
+        subject: EFFECTS,
+        time: this.#now(),
+        position,
+        detail,
+        values: { effects: total },
+        severity: total,
+      }),
+      under: 0,
+    };
   }
 
   /**

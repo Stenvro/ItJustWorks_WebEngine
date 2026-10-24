@@ -17,6 +17,8 @@ import {
   resolveCellLighting,
   type CellLighting,
   type CellRecord,
+  type LightCone,
+  type LightRecord,
   type PlacedReference,
   type Rgb,
   parseTeleport,
@@ -347,6 +349,8 @@ export interface CellLight {
   readonly movementAmplitude: number;
   /** XEMI: the light or region whose colour the light takes (e.g. sunlight through windows). */
   readonly emittance?: number;
+  /** A spot light (LIGH Shadow Spotlight): its cone (lightCone). */
+  readonly spot?: LightCone;
 }
 
 /** What decides whether a reference is enabled. */
@@ -492,6 +496,30 @@ function directionalOf(base: GameRecord): { directional?: StaticDirectional } {
  * NiMatrix3::FromEulerAnglesXYZ.
  */
 const nonZeroId = (id: number | undefined): number | undefined => (id === 0 ? undefined : id);
+
+/**
+ * A spot light's cone (LIGH Shadow Spotlight): along the reference's local X axis (the Gamebryo
+ * spot light's axis: 123 of the 153 vanilla spot references point it the most downward, as
+ * sunbeams through ceilings do), its angle the base light's FOV plus the reference's XLIG FOV
+ * offset. None for other lights or an angle outside 0-180° (a light shining every way).
+ */
+export function lightCone(
+  light: Pick<LightRecord, 'flags' | 'fov'>,
+  ref: Pick<PlacedReference, 'rotation' | 'lightFovOffset'>,
+): { spot?: LightCone } {
+  if ((light.flags & LightFlag.shadowSpotlight) === 0) return {};
+  const fov = light.fov + ref.lightFovOffset;
+  if (!(fov > 0 && fov < 180)) return {};
+  const m = referenceMatrix({ position: [0, 0, 0], rotation: ref.rotation, scale: 1 });
+  const x: [number, number, number] = [m[0] ?? 1, m[1] ?? 0, m[2] ?? 0];
+  const length = Math.hypot(...x) || 1;
+  return {
+    spot: {
+      direction: [x[0] / length, x[1] / length, x[2] / length],
+      cosHalfAngle: Math.cos(((fov / 2) * Math.PI) / 180),
+    },
+  };
+}
 
 export function referenceMatrix(
   ref: Pick<PlacedReference, 'position' | 'rotation' | 'scale'>,
@@ -710,12 +738,14 @@ export async function loadCellData(
           position: ref.position,
           radius: Math.max(0, light.radius + ref.radiusOffset),
           color: light.color,
-          fade: light.fade,
+          // The reference's XLIG fade offset adds to the base light's fade.
+          fade: Math.max(0, light.fade + ref.lightFadeOffset),
           flags: light.flags,
           period: light.period,
           intensityAmplitude: light.intensityAmplitude,
           movementAmplitude: light.movementAmplitude,
           ...emittanceOf(record),
+          ...lightCone(light, ref),
         });
       }
     }

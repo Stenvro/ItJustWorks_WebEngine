@@ -143,6 +143,35 @@ describe('buildModel', () => {
     expect(part && transformPoint(part.world, [10, 0, 0]).map(Math.round)).toEqual([100, 20, 0]);
   });
 
+  it('culls the EditorMarker objects of a model flagged so, and keeps the rest drawn', () => {
+    // BSXFlags with Editor Marker (0x20), as fxcobwebwall01 has: a cobweb and its marker.
+    const bsx = { kind: 'integer-extra-data', name: 'BSX', value: 0x220 } as const;
+    const root = { ...node([1, 2, 3]), extraData: [4] };
+    const flagged = buildModel(
+      file([
+        root,
+        shape('Cylinder01', 5, positions(TRIANGLE), 3),
+        shape('EditorMarker', 5, positions(TRIANGLE), 3),
+        shape('EditorMarker:1', 5, positions(TRIANGLE), 3),
+        bsx,
+        shader,
+      ]),
+    );
+    expect(flagged.parts.map((p) => p.name)).toEqual(['Cylinder01']);
+    expect(flagged.editorMarker).toBe(false);
+    // Only a marker (an xmarker): nothing drawn, an editor marker.
+    const marker = buildModel(
+      file([
+        { ...node([1]), extraData: [2] },
+        shape('EditorMarker', 3, positions(TRIANGLE), 3),
+        bsx,
+        shader,
+      ]),
+    );
+    expect(marker.parts).toEqual([]);
+    expect(marker.editorMarker).toBe(true);
+  });
+
   it('draws nothing for shapes without a shader', () => {
     const model = buildModel(
       file([

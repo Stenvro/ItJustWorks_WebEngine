@@ -13,7 +13,8 @@ export type QaSystem =
   | 'scripts'
   | 'shell'
   | 'ui'
-  | 'performance';
+  | 'performance'
+  | 'effects';
 
 /** What a monitor saw. */
 export type QaKind =
@@ -79,7 +80,12 @@ export type QaKind =
   /** A creature fighting within its reach never attacks (or its attacks never hit). */
   | 'creature-passive'
   /** A paired animation's partner stands away from the mark its leader's clip puts it at. */
-  | 'pair-misaligned';
+  | 'pair-misaligned'
+  /**
+   * More magic effects show at once than a fight's: explosion and impact models, cones' waves,
+   * hazards standing and projectiles flying (a breath's sprays each leaving its own fire).
+   */
+  | 'effects-flood';
 
 /** The system each kind belongs to. */
 export const KIND_SYSTEM: Readonly<Record<QaKind, QaSystem>> = {
@@ -115,6 +121,7 @@ export const KIND_SYSTEM: Readonly<Record<QaKind, QaSystem>> = {
   'archer-silent': 'combat',
   'creature-passive': 'combat',
   'pair-misaligned': 'animation',
+  'effects-flood': 'effects',
 };
 
 /** What an anomaly happened to: an actor (the player too), a simulated body, a scene. */
@@ -240,6 +247,8 @@ export interface QaThresholds {
   /** A paired clip's partner this far from its mark (game units) or turned this far (degrees). */
   readonly pairMarkUnits: number;
   readonly pairMarkDegrees: number;
+  /** Magic effects (models, hazards, projectiles) showing at once above which they flood. */
+  readonly effectsAtOnce: number;
 }
 
 export const DEFAULT_THRESHOLDS: QaThresholds = {
@@ -281,6 +290,7 @@ export const DEFAULT_THRESHOLDS: QaThresholds = {
   creatureMisses: 8,
   pairMarkUnits: 24,
   pairMarkDegrees: 25,
+  effectsAtOnce: 40,
 };
 
 /** The frame times of a run (milliseconds). */
