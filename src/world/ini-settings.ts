@@ -324,6 +324,8 @@ export const INI_DEFAULTS = {
     fMaxTime: 1 / 60,
     // Bodies this heavy (kg) or heavier are not pushed by characters (src/physics/character.ts).
     fMoveLimitMass: 95,
+    // How fast a tilting actor leans to the ground under it, a second (src/world/actor-ground.ts).
+    fQuadrupedPitchMult: 10,
     // The least time between two tellings of a trigger volume's OnTrigger (ms; [Havok]).
     fTriggerEventDelayMS: 500,
     fUnsupportedGravMult: 4,

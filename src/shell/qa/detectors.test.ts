@@ -8,6 +8,7 @@ import {
   FrameStats,
   isLocomotionClip,
   isReferencePose,
+  LeanWatch,
   messageKey,
   RateWindow,
   sceneWait,
@@ -291,5 +292,35 @@ describe('sceneWait', () => {
 describe('messageKey', () => {
   it('puts numbers and form ids as #', () => {
     expect(messageKey('actor 0001A2B3 at 12.5, -3')).toBe(messageKey('actor 0002FFFF at 1, 7'));
+  });
+});
+
+describe('LeanWatch', () => {
+  it('counts a body pitching back and forth, not a slope leaned into once', () => {
+    const rocking = new LeanWatch(4);
+    let swings = 0;
+    // ±5° twice a second.
+    for (let i = 0; i <= 120; i++) {
+      const t = i / 60;
+      swings = rocking.update(t, 5 * Math.sin(2 * Math.PI * 2 * t));
+    }
+    expect(swings).toBeGreaterThanOrEqual(6);
+    const slope = new LeanWatch(4);
+    for (let i = 0; i <= 120; i++) swings = slope.update(i / 60, Math.min(20, i / 2));
+    expect(swings).toBe(0);
+    // Small bobs under the amplitude are no swings.
+    const bob = new LeanWatch(4);
+    for (let i = 0; i <= 120; i++) swings = bob.update(i / 60, 1.5 * Math.sin(i / 3));
+    expect(swings).toBe(0);
+  });
+
+  it('keeps the largest jump from one frame to the next', () => {
+    const watch = new LeanWatch(4);
+    watch.update(0, 0);
+    watch.update(1 / 60, 12);
+    watch.update(2 / 60, 13);
+    expect(watch.jump).toBe(12);
+    watch.reset();
+    expect(watch.jump).toBe(0);
   });
 });

@@ -284,6 +284,70 @@ export class StateWatch {
   }
 }
 
+/**
+ * How an actor's drawn body leans over time (its pitch, or roll, in degrees): its swings, each a
+ * turn of the lean the other way once it has gone back at least `amplitude` from its last
+ * extreme (a zig-zag filter: a slope leaned into once is no swing, a body pitching up and down
+ * as it goes is one each way), counted over `window` seconds; and the largest change from one
+ * frame to the next. A horse leaning with the ground's triangles at once (before it eased into
+ * the lean its ends' ground gives) swung 5° and more about once a second, jumping up to 70° in
+ * a frame: it rocked as it walked.
+ */
+export class LeanWatch {
+  readonly #amplitude: number;
+  readonly #swings: RateWindow;
+  #high: number | undefined;
+  #low: number | undefined;
+  /** Rising (1), falling (−1), not known yet (0). */
+  #direction = 0;
+  #last: number | undefined;
+  readonly #window: number;
+  /** Each frame's change within the window (degrees). */
+  readonly #jumps: { readonly time: number; readonly size: number }[] = [];
+
+  constructor(amplitude: number, window = 2) {
+    this.#amplitude = amplitude;
+    this.#window = window;
+    this.#swings = new RateWindow(window);
+  }
+
+  /** The largest change from one frame to the next within the window (degrees). */
+  get jump(): number {
+    let most = 0;
+    for (const { size } of this.#jumps) most = Math.max(most, size);
+    return most;
+  }
+
+  /** One frame's lean; returns its swings within the window. */
+  update(now: number, lean: number): number {
+    if (this.#last !== undefined)
+      this.#jumps.push({ time: now, size: Math.abs(lean - this.#last) });
+    while ((this.#jumps[0]?.time ?? now) <= now - this.#window) this.#jumps.shift();
+    this.#last = lean;
+    this.#high = Math.max(this.#high ?? lean, lean);
+    this.#low = Math.min(this.#low ?? lean, lean);
+    if (this.#direction >= 0 && lean <= this.#high - this.#amplitude) {
+      if (this.#direction > 0) this.#swings.add(now);
+      this.#direction = -1;
+      this.#low = lean;
+    } else if (this.#direction <= 0 && lean >= this.#low + this.#amplitude) {
+      if (this.#direction < 0) this.#swings.add(now);
+      this.#direction = 1;
+      this.#high = lean;
+    }
+    return this.#swings.count(now);
+  }
+
+  /** It was put somewhere else: what it leaned before says nothing now. */
+  reset(): void {
+    this.#high = undefined;
+    this.#low = undefined;
+    this.#direction = 0;
+    this.#last = undefined;
+    this.#jumps.length = 0;
+  }
+}
+
 /** A simulated body's vertical velocity over time: sign flips and one-frame jumps. */
 export class BodyWatch {
   readonly jitter: Episode;

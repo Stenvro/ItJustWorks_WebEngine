@@ -697,11 +697,14 @@ export class ActorMounts {
       const at = this.#riderPlace(ride, horse);
       const velocity = movers.state(ride.horse)?.velocity ?? [0, 0];
       const graphs: LocomotionGraph[] = [];
+      // Its Speed is over the rider's own scale (the engine's channel reads its actor's).
+      let riderScale: number;
       if (ride.rider === PLAYER_REF) {
         const view = this.#options.player?.();
         const avatar = view?.avatar;
         if (!view || !avatar) continue;
         avatar.bodyYaw = at.heading;
+        riderScale = avatar.body.look.scale * avatar.body.actor.scale;
         const body = avatar.body.behavior;
         if (body) graphs.push(body);
         const first = avatar.firstPerson?.behavior;
@@ -715,6 +718,7 @@ export class ActorMounts {
           continue;
         }
         this.#place(staged, at);
+        riderScale = staged.placed.look.scale * staged.placed.actor.scale;
         const behavior = staged.placed.behavior;
         if (behavior) graphs.push(behavior);
       }
@@ -724,6 +728,7 @@ export class ActorMounts {
           heading: horse.heading,
           turnRate: movers.turnRate(ride.horse),
           seconds: Math.max(seconds, 1e-3),
+          scale: riderScale,
           grounded: true,
           swimming: false,
           verticalSpeed: 0,

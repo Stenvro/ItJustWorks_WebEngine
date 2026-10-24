@@ -40,7 +40,16 @@ import { CharacterBody } from '../physics/character.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
 import type { Vec3 } from '../render/math.ts';
-import { groundedPlacement, standsOnGround } from '../world/actor-ground.ts';
+import {
+  easeTilt,
+  groundedPlacement,
+  MAX_TILT,
+  probedTilt,
+  standsOnGround,
+  tiltNormal,
+  UPRIGHT,
+  type Tilt,
+} from '../world/actor-ground.ts';
 import type { IniSettings } from '../world/ini-settings.ts';
 import { RaceFlag } from '../world/actor-records.ts';
 import { referenceMatrix } from '../world/cell-loader.ts';
@@ -73,8 +82,12 @@ export interface MoverWorld {
 export const HIGH_PROCESS_DISTANCE = 4096;
 /** They leave it beyond this (no churn at the edge). */
 const LEAVE_HIGH_DISTANCE = HIGH_PROCESS_DISTANCE * 1.25;
-/** A tilting race leans again with the ground once it moved this far (game units). */
+/** A tilting race probes the ground under its ends again once it moved this far (game units), */
 const TILT_AGAIN = 4;
+/** or turned this far (radians). */
+const TILT_TURN_AGAIN = 0.05;
+/** How far below its ends the ground is looked for (game units: the engine's 2.5 Havok units). */
+const TILT_PROBE_DEPTH = 175;
 /** An NPC sprinting pays its stamina this often (seconds of sprinting at a time). */
 const SPRINT_PAYMENT_SECONDS = 0.5;
 
@@ -87,6 +100,14 @@ function motionFeedbackSettings(ini: IniSettings): MotionFeedbackSettings {
     minSpeed: ini.number('Animation', 'fMotionFeedbackMinSpeed'),
     minTime: ini.number('Animation', 'fMotionFeedbackMinTime'),
   };
+}
+
+/**
+ * An actor's scale as the engine's GetScale has it: its reference's times its base's height (its
+ * race's by sex times its NPC record's).
+ */
+function actorScale(staged: StagedActor): number {
+  return staged.placed.actor.scale * staged.placed.look.scale;
 }
 
 /** An actor moved by its controller. */
@@ -138,7 +159,16 @@ interface Mover {
   heldByGraph: boolean;
   /** When its idle was last stopped for its AI's way (performance.now ms). */
   idleStoppedAt: number;
-  tilt: { readonly at: Vec3; readonly normal: Vec3 } | undefined;
+  /** Its walks have moved it by their root motion; how long its graph stood while it went. */
+  walked: boolean;
+  stalled: number;
+  /**
+   * How it leans with the ground (its race tilts): where its ends were last probed, the lean
+   * the ground there gives and the lean it has now, easing towards that (easeTilt).
+   */
+  tilt: { at: Vec3 | undefined; heading: number; target: Tilt; now: Tilt };
+  /** Its body's half length and half width (its bound's, scaled): where its lean is probed. */
+  readonly ends: { readonly length: number; readonly width: number };
   /** The trigger volumes it is in. */
   triggers: Set<number>;
   /** The trigger volumes its bodies reached at their last check. */
@@ -184,6 +214,12 @@ export interface ActorMoversOptions {
 
 /** An idle that did not stop for an actor's way is stopped again after this (ms). */
 const IDLE_STOP_AGAIN_MS = 1000;
+/** Its graph's clips moving it slower than this while it goes its way, it stands to them (u/s). */
+const STALLED_ROOT_SPEED = 5;
+/** Faster than this while it goes, its walks move it by their root motion (u/s). */
+const WALKED_ROOT_SPEED = 30;
+/** Standing to its graph so long while it goes, its idle is stopped (seconds). */
+const STALL_SECONDS = 0.5;
 
 /** An actor on its way to a place. */
 interface Travel {
@@ -995,7 +1031,7 @@ export class ActorMovers {
     mover.character.teleport(staged.position);
     mover.turning.reset();
     mover.drawn = [...staged.position];
-    mover.tilt = undefined;
+    mover.tilt.at = undefined;
   }
 
   /**
@@ -1296,6 +1332,7 @@ export class ActorMovers {
           turnRate,
           heading: staged.heading,
           seconds: Math.max(seconds, 1e-3),
+          scale: actorScale(staged),
           grounded: true,
           swimming: false,
           verticalSpeed: 0,
@@ -1470,7 +1507,10 @@ export class ActorMovers {
         rooted: false,
         heldByGraph: false,
         idleStoppedAt: -Infinity,
-        tilt: undefined,
+        walked: false,
+        stalled: 0,
+        tilt: { at: undefined, heading: 0, target: UPRIGHT, now: UPRIGHT },
+        ends: { length: sized.halfExtents[1] * scale, width: sized.halfExtents[0] * scale },
         triggers: new Set(),
         bodyTriggers: new Set(),
       });
@@ -1688,9 +1728,13 @@ export class ActorMovers {
     const behavior = staged.placed.behavior;
     const walker = mover ? undefined : this.#walkers.get(staged.reference);
     if (!behavior || seconds <= 0) return;
+    // Its clips move it as far as its skeleton is scaled: their root motion is in the
+    // skeleton's units (a giant's stride is longer, a fox's shorter).
+    const scale = actorScale(staged);
     if (walker) {
       const motion = behavior.rootMotion();
-      const [x, y] = motion.translation;
+      const x = motion.translation[0] * scale;
+      const y = motion.translation[1] * scale;
       const sin = Math.sin(staged.heading);
       const cos = Math.cos(staged.heading);
       walker.root = {
@@ -1702,7 +1746,8 @@ export class ActorMovers {
     if (!mover) return;
     const motion = behavior.rootMotion();
     const drive = this.#readDrive(staged.reference, behavior);
-    const [x, y] = motion.translation;
+    const x = motion.translation[0] * scale;
+    const y = motion.translation[1] * scale;
     // The actor's frame (x right, y forward) to the world's: right (cos, −sin), forward
     // (sin, cos) of its compass heading.
     const sin = Math.sin(staged.heading);
@@ -1714,6 +1759,84 @@ export class ActorMovers {
       driven: drive !== 'controller',
       rotates: drive === 'animation-rotation',
     };
+  }
+
+  /**
+   * How a moved actor whose race tilts leans now (observed in the original: the engine's quadruped
+   * orientation controller, docs/physics.md "Actors on the ground"): the ground under its front
+   * and back (its body's ends; left and right too for those that tilt across), each a ray down
+   * from its end's radius above its feet over 175 units (the engine's 2.5 Havok units: nothing
+   * there is that far down), gives a lean (probedTilt) it eases into by fQuadrupedPitchMult a
+   * second. Probed again as it moves or turns; eased every frame. Before, it took the normal of
+   * the one ground triangle under its middle and stood at it at once: every few steps across a
+   * road's triangles its whole body jumped to another pitch (a horse rocking as it walked).
+   */
+  #lean(mover: Mover, physics: PhysicsWorld, feet: Vec3, flags: number, seconds: number): void {
+    const tilt = mover.tilt;
+    const heading = mover.staged.heading;
+    const last = tilt.at;
+    const turned = Math.abs(angleBetween(tilt.heading, heading));
+    if (
+      !last ||
+      Math.hypot(feet[0] - last[0], feet[1] - last[1]) > TILT_AGAIN ||
+      turned > TILT_TURN_AGAIN
+    ) {
+      const { length, width } = mover.ends;
+      const forward: Vec3 = [Math.sin(heading), Math.cos(heading), 0];
+      const right: Vec3 = [Math.cos(heading), -Math.sin(heading), 0];
+      const top = feet[2] + width;
+      // Its ground, not what walks on it: other actors (a soldier beside a horse, its rider) and
+      // what its controller passes (its cart, in its collision group as in the engine); a rock or
+      // a log its end's ray starts in is met where the ray leaves it, as Havok's ray passes what
+      // it starts inside.
+      const ignored = mover.character.ignored;
+      const skip = (collider: RAPIER.Collider): boolean =>
+        ignored.has(collider.handle) || physics.ownerOf(collider)?.kind === 'actor';
+      const cast = (x: number, y: number, z: number, depth: number): number | undefined =>
+        physics.raycast(
+          [x, y, z],
+          [0, 0, -1],
+          depth,
+          Layer.charController,
+          mover.character.collider,
+          undefined,
+          skip,
+          false,
+        )?.point[2];
+      // On a slope its uphill end's ray starts under the ground and meets nothing (a road's
+      // surface met from below): then from as high as the steepest lean reaches over its length
+      // (inferred: the engine has its contact points there). Nothing either way: level with its
+      // feet (inferred; taken as 175 below, a cart horse's back on the road down to Helgen fell
+      // away and it reared 37° for a third of a second).
+      const high = feet[2] + length * Math.tan(MAX_TILT);
+      const ground = (along: Vec3, by: number): number => {
+        const x = feet[0] + along[0] * by;
+        const y = feet[1] + along[1] * by;
+        return (
+          cast(x, y, top, TILT_PROBE_DEPTH) ??
+          cast(x, y, high, high - top + TILT_PROBE_DEPTH) ??
+          feet[2]
+        );
+      };
+      const across = (flags & RaceFlag.tiltLeftRight) !== 0;
+      tilt.target = probedTilt(
+        {
+          front: ground(forward, length),
+          back: ground(forward, -length),
+          left: across ? ground(right, -width) : undefined,
+          right: across ? ground(right, width) : undefined,
+        },
+        2 * length,
+        flags,
+        2 * width,
+      );
+      tilt.at = [...feet];
+      tilt.heading = heading;
+      // Put down (a body made again, a teleport): it stands as the ground has it at once.
+      if (!last) tilt.now = tilt.target;
+    }
+    const rate = this.#options.session.ini.number('HAVOK', 'fQuadrupedPitchMult');
+    tilt.now = easeTilt(tilt.now, tilt.target, seconds, rate);
   }
 
   /** Draws a moved actor where its controller has it and drives its graph. */
@@ -1741,22 +1864,13 @@ export class ActorMovers {
       });
       const flags = placed.look.raceFlags;
       const tilts = (flags & (RaceFlag.tiltFrontBack | RaceFlag.tiltLeftRight)) !== 0;
-      if (tilts) {
-        const last = mover.tilt?.at;
-        if (!last || Math.hypot(feet[0] - last[0], feet[1] - last[1]) > TILT_AGAIN) {
-          const hit = physics.raycast(
-            [feet[0], feet[1], feet[2] + 16],
-            [0, 0, -1],
-            64,
-            Layer.charController,
-            mover.character.collider,
-          );
-          mover.tilt = { at: [...feet], normal: hit ? hit.normal : [0, 0, 1] };
-        }
-      }
+      if (tilts) this.#lean(mover, physics, feet, flags, seconds);
       instance.world.set(
-        tilts && mover.tilt
-          ? groundedPlacement(upright, flags, { point: feet, normal: mover.tilt.normal })
+        tilts
+          ? groundedPlacement(upright, flags, {
+              point: feet,
+              normal: tiltNormal(mover.tilt.now, staged.heading),
+            })
           : upright,
       );
       instance.motion.version++;
@@ -1782,7 +1896,22 @@ export class ActorMovers {
       // standing on moveStart only without bBlendOutSlow and bForceIdleStop, which such an idle
       // sets: told moveStart alone, it never moved, and the idle never ended (Lokir stood in
       // the line while the archers waited for him to run).
-      if (mover.rooted && mover.root.driven && request?.direction !== undefined) {
+      // Not animation-driven, an idle holds it as well where its graph does not leave the idle on
+      // moveStart (the human graph's NonOffsetIdles: MT_Idle_Nervous, the idles a scene plays):
+      // its controller took it on its way while its graph stood (Ralof glided 360 units a second
+      // through the dragon's attack in IdleNervous). Told it moves, its graph's clips moving it
+      // not at all for STALL_SECONDS while it wants to go (its walks have given root motion
+      // before: it is no creature whose clips move nothing), its idle is stopped as above.
+      const rootSpeed = Math.hypot(mover.root.velocity[0], mover.root.velocity[1]);
+      if (moving && rootSpeed > WALKED_ROOT_SPEED) mover.walked = true;
+      mover.stalled =
+        moving && !mover.rooted && mover.walked && rootSpeed < STALLED_ROOT_SPEED
+          ? mover.stalled + dt
+          : 0;
+      if (
+        request?.direction !== undefined &&
+        ((mover.rooted && mover.root.driven) || mover.stalled >= STALL_SECONDS)
+      ) {
         const now = performance.now();
         if (now - mover.idleStoppedAt >= IDLE_STOP_AGAIN_MS) {
           mover.idleStoppedAt = now;
@@ -1800,6 +1929,7 @@ export class ActorMovers {
         turnRate: this.#turnRate(mover),
         heading: staged.heading,
         seconds: dt,
+        scale: actorScale(staged),
         grounded: mover.character.grounded,
         swimming: mover.character.swimming,
         verticalSpeed: mover.character.verticalSpeed,
