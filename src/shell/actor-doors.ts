@@ -16,6 +16,7 @@ import type { ModelInstance } from '../render/scene-renderer.ts';
 import type { CellObject } from '../world/cell-loader.ts';
 import type { GameSession } from './game-session.ts';
 import { clock } from './object-graphs.ts';
+import { lockNow } from './object-locks.ts';
 import { tellSwing } from './open-close.ts';
 
 /** A placed door of the loaded area and its instance (its sequences). */
@@ -76,7 +77,7 @@ export class ActorDoors {
       this.#remember(actor, door);
       return 'shut';
     }
-    if (this.#options.session.hud.uses?.lockOf(entry.object) !== undefined) {
+    if (lockNow(entry.object, this.#options.session.scriptsReady?.state) !== undefined) {
       const allowed = this.#allowed(actor, door);
       if (allowed === undefined) return 'opening';
       if (!allowed) {

@@ -73,6 +73,8 @@ export interface CrimeSettings {
   readonly pickpocket: number;
   readonly escape: number;
   readonly werewolf: number;
+  /** fCrimeGoldSteal: a theft's multiplier on the items' value with Use Defaults. */
+  readonly steal: number;
   readonly stealHorse: number;
   readonly daysInPrisonMod: number;
   readonly guardWarnings: number;
@@ -108,6 +110,7 @@ const SETTINGS: readonly (readonly [keyof CrimeSettings, string, number])[] = [
   ['pickpocket', 'iCrimeGoldPickpocket', 25],
   ['escape', 'iCrimeGoldEscape', 100],
   ['werewolf', 'iCrimeGoldWerewolf', 1000],
+  ['steal', 'fCrimeGoldSteal', 0.5],
   ['stealHorse', 'iCrimeGoldStealHorse', 100],
   ['daysInPrisonMod', 'iCrimeDaysInPrisonMod', 100],
   ['guardWarnings', 'iGuardWarnings', 2],
@@ -144,12 +147,6 @@ export function readCrimeSettings(settings?: {
   ) as unknown as CrimeSettings;
 }
 
-/**
- * A theft's multiplier where a faction uses the defaults: half the item's value (UESP
- * "Skyrim:Crime": theft costs half the stolen item's value; every hold's CRVA stores 0.5).
- */
-export const DEFAULT_STEAL_MULT = 0.5;
-
 /** The CRVA fields of a crime faction (FactionCrime) as crime reads them. */
 export interface CrimeRecordValues {
   readonly arrest: boolean;
@@ -165,8 +162,11 @@ export interface CrimeRecordValues {
 
 /**
  * A crime faction's values: its CRVA, or with "Crime Gold: Use Defaults" (DATA 0x1000) the game
- * settings (the arrest and attack on sight flags stay its own). A faction without crime data
- * neither arrests nor attacks and charges the defaults.
+ * settings (the arrest and attack on sight flags stay its own). Observed in the original:
+ * as the faction loads, Use Defaults puts iCrimeGoldMurder, iCrimeGoldAttack, fCrimeGoldSteal,
+ * iCrimeGoldTrespass, iCrimeGoldPickpocket and iCrimeGoldEscape in place of its values; its
+ * werewolf value stays its own (iCrimeGoldWerewolf is not among them). A faction without crime
+ * data neither arrests nor attacks and charges the defaults.
  */
 export function crimeValues(
   flags: number,
@@ -181,9 +181,9 @@ export function crimeValues(
     assault: defaults ? settings.attack : record.assault,
     trespass: defaults ? settings.trespass : record.trespass,
     pickpocket: defaults ? settings.pickpocket : record.pickpocket,
-    stealMult: defaults ? DEFAULT_STEAL_MULT : record.stealMult,
+    stealMult: defaults ? settings.steal : record.stealMult,
     escape: defaults ? settings.escape : record.escape,
-    werewolf: defaults ? settings.werewolf : record.werewolf,
+    werewolf: record ? record.werewolf : settings.werewolf,
     flags,
   };
 }

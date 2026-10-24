@@ -495,6 +495,13 @@ export class SceneDirector {
   async #begin(playing: Playing): Promise<void> {
     const host = this.#host;
     const scene = playing.formId;
+    // Scene.Start only marks the scene active; it begins (its actors are cast and looked at,
+    // its begin fragment runs) in the scene system's next update (observed in the
+    // original). So a script that starts a scene from the end fragment of one its actor cannot play
+    // (the bard's songs while the bard fights: each ends at once as combat ends it) starts one
+    // a frame, not endlessly within one.
+    await this.#nextUpdate();
+    if (over(playing)) return;
     const record = await host.scene(scene);
     if (over(playing)) return;
     if (!record) {
