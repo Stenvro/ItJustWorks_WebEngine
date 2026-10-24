@@ -140,7 +140,8 @@ export class ActorMounts {
   readonly #options: ActorMountsOptions;
   readonly #rides = new Map<number, Ride>();
   readonly #offsets = new Map<number, Promise<MountOffsets>>();
-  readonly #mountRaces = new Map<number, MountKind | undefined>();
+  /** What each actor asked about is ridden as (undefined: no mount, or not known yet). */
+  readonly #mountKinds = new Map<number, MountKind | undefined>();
   /** Whether the player's perks let them ride each dragon asked about (Allow Mount Actor). */
   readonly #mayRide = new Map<number, boolean>();
   #stepHooks: Set<(step: number) => void> | undefined;
@@ -202,13 +203,16 @@ export class ActorMounts {
   /**
    * What activating an actor does when it is a horse: the player rides it ("Ride"); another's
    * horse is stolen (the red "Steal"; the game asks first, sStealHorse "Do you want to steal
-   * this horse?", then it is the crime: crime-engine.ts horseTheft); undefined for others and
-   * for a horse ridden.
+   * this horse?", then it is the crime: crime-engine.ts horseTheft); undefined for others, for
+   * a dead one and for a horse ridden.
    */
   activation(placed: PlacedActor): Activatable | undefined {
     const horse = placed.actor.reference;
-    const kind = this.#kindOf(placed.look.race);
+    const kind = this.#kindOf(horse);
     if (kind === undefined || this.ridden(horse)) return undefined;
+    const dead =
+      this.#options.session.scriptsReady?.state.actors.get(horse)?.dead ?? placed.actor.startsDead;
+    if (dead) return undefined;
     const session = this.#options.session;
     const uses = session.hud.uses;
     const name = placed.look.name !== '' ? placed.look.name : placed.look.editorId;
@@ -275,22 +279,23 @@ export class ActorMounts {
   readonly #stolen = new Map<number, boolean>();
 
   /**
-   * What a race is ridden as (its keywords: ActorTypeHorse, ActorTypeDragon), read once per
-   * race (known from the frame after it is first asked).
+   * What an actor is ridden as: its keywords, its base's and then its race's (ActorTypeHorse is
+   * the horses' NPC_'s keyword, ActorTypeDragon the dragons' race's; HorseEvents' condition asks
+   * the actor), read once per actor (known from the frame after it is first asked).
    */
-  #kindOf(race: number): MountKind | undefined {
-    if (this.#mountRaces.has(race)) return this.#mountRaces.get(race);
-    this.#mountRaces.set(race, undefined);
-    void this.#options.session.db.then(async (db) => {
-      const record = await db.get(race);
-      const keywords = record?.fields.first('KWDA');
-      if (!record || !keywords) return;
-      for (let at = 0; at + 4 <= keywords.length; at += 4) {
-        const keyword = record.formIdAt(keywords, at);
-        if (keyword === ACTOR_TYPE_HORSE) this.#mountRaces.set(race, 'horse');
-        if (keyword === ACTOR_TYPE_DRAGON) this.#mountRaces.set(race, 'dragon');
-      }
-    });
+  #kindOf(actor: number): MountKind | undefined {
+    if (this.#mountKinds.has(actor)) return this.#mountKinds.get(actor);
+    this.#mountKinds.set(actor, undefined);
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime) {
+      this.#mountKinds.delete(actor);
+      return undefined;
+    }
+    void (async () => {
+      if (await runtime.hasKeyword(actor, ACTOR_TYPE_HORSE)) this.#mountKinds.set(actor, 'horse');
+      else if (await runtime.hasKeyword(actor, ACTOR_TYPE_DRAGON))
+        this.#mountKinds.set(actor, 'dragon');
+    })().catch(() => undefined);
     return undefined;
   }
 
@@ -312,8 +317,7 @@ export class ActorMounts {
 
   /** What a horse (or dragon) is ridden as, if known. */
   #kindOfMount(horse: number): MountKind {
-    const race = this.#options.get(horse)?.placed.look.race;
-    return (race === undefined ? undefined : this.#mountRaces.get(race)) ?? 'horse';
+    return this.#mountKinds.get(horse) ?? 'horse';
   }
 
   /**

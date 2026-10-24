@@ -364,8 +364,9 @@ export class MagicProjectiles {
   }
 
   /**
-   * A cone (Unrelenting Force): every actor within its range and spread that it can see from
-   * its apex takes the spell at once.
+   * A cone (Unrelenting Force, Fire Breath): every actor within its range and spread that it
+   * can see from its apex takes the spell at once, and so does every object whose collision it
+   * meets there (L_CONEPROJECTILE: a web burnt, a destructible broken, an object's OnHit).
    */
   async #cone(
     runtime: ScriptRuntime,
@@ -387,6 +388,30 @@ export class MagicProjectiles {
       if (this.#blocked(delivered.caster, origin, middle)) continue;
       await this.#reach(runtime, delivered, target.reference, {
         facing: facing(target, origin),
+        ...(seconds !== undefined && { seconds }),
+      });
+    }
+    const physics = this.#physics;
+    const objects =
+      physics?.objectsNear(origin, range, Layer.coneProjectile) ?? new Map<number, Vec3>();
+    for (const [reference, middle] of objects) {
+      if (reference === delivered.caster) continue;
+      if (
+        !inCone(origin, aim, range, projectile.coneSpread, { feet: middle, height: 0, radius: 0 })
+      )
+        continue;
+      // Seen from its apex: nothing else first on the way to the object's body.
+      const way: Vec3 = [middle[0] - origin[0], middle[1] - origin[1], middle[2] - origin[2]];
+      const first = physics?.raycast(origin, way, Math.hypot(...way), Layer.coneProjectile);
+      if (
+        first &&
+        first.owner?.reference !== reference &&
+        first.owner?.reference !== delivered.caster
+      )
+        continue;
+      await runtime.casting.deliver(delivered, reference, {
+        facing: false,
+        projectile: projectile.formId,
         ...(seconds !== undefined && { seconds }),
       });
     }

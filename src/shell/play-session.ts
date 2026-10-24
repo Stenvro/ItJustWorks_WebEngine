@@ -33,6 +33,13 @@ import type { Camera } from '../render/view-camera.ts';
 import type { InstanceMotion, ModelInstance, PointLight } from '../render/scene-renderer.ts';
 import type { CellObject, CellPrimitive, ObjectLock, Teleport } from '../world/cell-loader.ts';
 import { lockDifficulty, lockLevelSetting } from '../gameplay/lockpicking.ts';
+import {
+  objectPrompt,
+  type ActivationPrompt,
+  type ObjectPromptFacts,
+} from '../gameplay/activation-prompt.ts';
+import { FurnitureMarkerType } from '../world/furniture-records.ts';
+import type { ActivationFacts } from './activation-facts.ts';
 import type { LandData } from '../world/land.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ActorMotion, ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -140,15 +147,22 @@ export interface ObjectUses {
   harvested?(object: CellObject): boolean;
   /** The player set a door or container swinging (its playback's new sequence: OnOpen, OnClose). */
   swung?(object: CellObject, instance: ModelInstance): void;
+  /** What the crosshair's prompt reads of the game's state (src/shell/activation-facts.ts). */
+  readonly facts?: ActivationFacts;
 }
 
 /**
  * What activating a placed object does: load doors take the player to their destination;
  * other doors open and close. In a running game (`uses`) containers open their menu (their
  * lid opening meanwhile), books read, other items taken, beds slept in; owned ones are stolen
- * (sSteal, sStealFrom: their red verbs) and locked ones picked (the lockpicking menu).
- * Flora is harvested (FLOR / TREE PFIG; as many as the perks give: Mod Ingredients Harvested,
- * Green Thumb). Furniture is sat in (sSit) and workbenches open the crafting menu.
+ * and locked ones picked (the lockpicking menu). Flora is harvested (FLOR / TREE PFIG; as many
+ * as the perks give: Mod Ingredients Harvested, Green Thumb). Furniture is sat in and
+ * workbenches open the crafting menu.
+ *
+ * What the crosshair says of it is the engine's prompt (src/gameplay/activation-prompt.ts:
+ * Search a container, Unlock with its lock's level under the name, Sit, Use a workbench, Take a
+ * stack "(n)", ...); `shown` is false where the crosshair offers nothing (an unnamed door, a
+ * static), whose default only a script's Activate runs.
  */
 export function objectActivation(
   object: CellObject,
@@ -169,15 +183,22 @@ export function objectActivation(
   const play = (descriptor: number | undefined): void => {
     if (descriptor !== undefined) sound?.(descriptor, at);
   };
-  const verb = (setting: string, english: string): string => uses?.text(setting) ?? english;
   const teleport = object.teleport;
-  // A locked door or container: "Unlock", its name with its lock's level (UESP, "Lockpicking").
-  const lock = (object.baseType === 'DOOR' || object.baseType === 'CONT') && uses?.lockOf(object);
+  const playback = instance?.playback;
+  const lock =
+    (object.baseType === 'DOOR' || object.baseType === 'CONT') && uses
+      ? uses.lockOf(object)
+      : undefined;
+  const prompt = objectPrompt(promptFacts(object, playback, travel, uses, lock));
+  const shown = (fallback: string): Pick<Activatable, 'verb' | 'name' | 'shown' | 'detail'> =>
+    prompt
+      ? { ...promptTexts(prompt, uses), shown: true }
+      : { verb: uses?.text(fallback) ?? fallback, name: object.name, shown: false };
+  // A locked door or container: picked (the lockpicking menu), or opened with its key.
   if (uses && lock) {
-    const name = teleport ? travel.name(teleport) : object.name;
     return {
-      verb: verb('sUnlock', 'Unlock'),
-      name: `${name} (${uses.text(lockLevelSetting(lockDifficulty(lock.level)))})`,
+      ...shown('sUnlock'),
+      ...(teleport && !prompt && { name: travel.name(teleport) }),
       activate: () => {
         uses.unlock(object, () => {
           objectActivation(object, instance, travel, sound, uses, seat)?.activate();
@@ -186,19 +207,17 @@ export function objectActivation(
     };
   }
   if (teleport) {
-    const name = travel.name(teleport);
     return {
-      verb: verb('sOpen', 'Open'),
-      name,
+      ...shown('sOpen'),
+      ...(!prompt && { name: travel.name(teleport) }),
       activate: () => {
         play(object.sounds?.open);
-        uses?.loadDoor(`${verb('sOpen', 'Open')}
-${name}`);
+        const texts = prompt ? promptTexts(prompt, uses) : undefined;
+        uses?.loadDoor(`${texts?.verb ?? ''}\n${texts?.name ?? travel.name(teleport)}`);
         travel.go(teleport);
       },
     };
   }
-  const playback = instance?.playback;
   const sequence = (name: 'open' | 'close'): void => {
     if (!playback) return;
     playback.sequence = name;
@@ -207,9 +226,7 @@ ${name}`);
   };
   if (uses && object.baseType === 'CONT') {
     return {
-      verb:
-        uses.owned?.(object) === true ? verb('sStealFrom', 'Steal from') : verb('sOpen', 'Open'),
-      name: object.name,
+      ...shown('sSearch'),
       activate: () => {
         play(object.sounds?.open);
         sequence('open');
@@ -220,13 +237,11 @@ ${name}`);
       },
     };
   }
-  // Flora with an ingredient is harvested ("Harvest", its RNAM: "Catch", "Pick"); harvested,
-  // it offers nothing until it grows again.
+  // Flora with an ingredient is harvested; harvested, it offers nothing until it grows again.
   if (uses?.harvest && object.harvestable) {
     if (uses.harvested?.(object) === true) return undefined;
     return {
-      verb: object.activateText ?? verb('sHarvest', 'Harvest'),
-      name: object.name,
+      ...shown('sHarvest'),
       activate: () => {
         uses.harvest?.(object);
       },
@@ -234,8 +249,7 @@ ${name}`);
   }
   if (uses && object.item && object.readable) {
     return {
-      verb: verb('sRead', 'Read'),
-      name: object.name,
+      ...shown('sRead'),
       item: object.item,
       activate: () => {
         uses.read(object);
@@ -244,8 +258,7 @@ ${name}`);
   }
   if (uses && object.item) {
     return {
-      verb: uses.owned?.(object) === true ? verb('sSteal', 'Steal') : verb('sTake', 'Take'),
-      name: object.name,
+      ...shown('sTake'),
       item: object.item,
       activate: () => {
         uses.take(object);
@@ -254,8 +267,7 @@ ${name}`);
   }
   if (uses && object.furniture && object.furniture.workbench !== 0) {
     return {
-      verb: verb('sCraft', 'Craft'),
-      name: object.name,
+      ...shown('sUse'),
       activate: () => {
         // At the workbench first (its idle), its menu then; closing it gets the player up.
         if (!seat || !object.furniture?.sit) {
@@ -270,8 +282,7 @@ ${name}`);
   }
   if (uses && object.furniture?.sleep) {
     return {
-      verb: verb('sFurnitureSleep', 'Sleep'),
-      name: object.name,
+      ...shown('sFurnitureSleep'),
       activate: () => {
         uses.sleep(object);
       },
@@ -279,8 +290,7 @@ ${name}`);
   }
   if (seat && object.furniture?.sit) {
     return {
-      verb: verb('sSit', 'Sit'),
-      name: object.name,
+      ...shown('sSit'),
       activate: () => {
         void seat.use(object);
       },
@@ -289,15 +299,106 @@ ${name}`);
   if (playback && object.baseType === 'DOOR') {
     const open = playback.sequence === 'open';
     return {
-      verb: open ? verb('sClose', 'Close') : verb('sOpen', 'Open'),
-      name: object.name,
+      ...shown(open ? 'sClose' : 'sOpen'),
       activate: () => {
         play(open ? object.sounds?.close : object.sounds?.open);
         sequence(open ? 'close' : 'open');
       },
     };
   }
-  return undefined;
+  // Nothing of its own to do (an activator: its scripts' OnActivate is all).
+  return prompt && { ...shown('sActivate'), activate: () => undefined };
+}
+
+/** What the prompt rule reads of a placed object in this game (src/shell/activation-facts.ts). */
+function promptFacts(
+  object: CellObject,
+  playback: Playback | undefined,
+  travel: { readonly name: (teleport: Teleport) => string },
+  uses: ObjectUses | undefined,
+  lock: ObjectLock | undefined,
+): ObjectPromptFacts {
+  const facts = uses?.facts;
+  const type = object.baseType;
+  const owned = uses?.owned?.(object) === true;
+  const furniture = object.furniture;
+  const marker = furniture?.firstMarker ?? 0;
+  return {
+    baseType: type,
+    name: object.name,
+    ...(object.count !== undefined && { count: object.count }),
+    ...(owned && { crime: true }),
+    ...(object.activateText !== undefined && { activateText: object.activateText }),
+    ...(object.carryable === true && { carryable: true }),
+    ...(object.harvestable === true && uses?.harvested?.(object) !== true && { harvestable: true }),
+    ...(object.teachesSpell === true && { teachesSpell: true }),
+    ...(lock && {
+      lock: {
+        level: lockLevelSetting(lockDifficulty(lock.level)),
+        // A door opens for the one holding its key (a container is unlocked all the same).
+        playerHasKey: lock.key !== undefined && facts?.playerHas(lock.key) === true,
+      },
+    }),
+    ...(type === 'DOOR' && {
+      open: playback ? playback.sequence === 'open' : object.openByDefault === true,
+    }),
+    ...(object.teleport && { destination: travel.name(object.teleport) }),
+    ...(type === 'CONT' && facts && { empty: facts.empty(object.reference) === true }),
+    ...(type === 'CONT' &&
+      object.showsOwner === true &&
+      owned &&
+      facts?.ownerName(object.reference) !== undefined && {
+        shownOwner: facts.ownerName(object.reference) ?? '',
+      }),
+    ...(furniture && {
+      furniture: {
+        firstMarker:
+          (marker & FurnitureMarkerType.sleep) !== 0
+            ? 'sleep'
+            : (marker & FurnitureMarkerType.sit) !== 0
+              ? 'sit'
+              : marker !== 0
+                ? 'lean'
+                : undefined,
+        workbench: furniture.workbench !== 0,
+        special: facts?.specialFurniture(object.base) === true,
+      },
+    }),
+  };
+}
+
+/** English verbs where no game is running (the sandbox's viewers have no game settings). */
+const ENGLISH: Readonly<Record<string, string>> = {
+  sActivate: 'Activate',
+  sClose: 'Close',
+  sEmpty: 'Empty',
+  sFurnitureSleep: 'Sleep',
+  sHarvest: 'Harvest',
+  sOpen: 'Open',
+  sOwned: 'Owned',
+  sPickpocket: 'Pickpocket',
+  sRead: 'Read',
+  sRide: 'Ride',
+  sSearch: 'Search',
+  sSit: 'Sit',
+  sSteal: 'Steal',
+  sStealFrom: 'Steal from',
+  sTake: 'Take',
+  sTakeAll: 'Take All',
+  sTalk: 'Talk',
+  sUnlock: 'Unlock',
+  sUse: 'Use',
+};
+
+/** A prompt's verb, name and third line as the HUD shows them (their game settings' texts). */
+export function promptTexts(
+  prompt: ActivationPrompt,
+  uses: Pick<ObjectUses, 'text'> | undefined,
+): { readonly verb: string; readonly name: string; readonly detail?: string } {
+  const text = (setting: string): string => uses?.text(setting) ?? ENGLISH[setting] ?? setting;
+  const verb = 'text' in prompt.verb ? prompt.verb.text : text(prompt.verb.setting);
+  const name = prompt.nameSuffix ? `${prompt.name} (${text(prompt.nameSuffix)})` : prompt.name;
+  return { verb, name, ...(prompt.detail !== undefined && { detail: text(prompt.detail) }) };
 }
 
 /** Something the player can activate: what the prompt says, and what activating does. */
@@ -306,10 +407,17 @@ export interface Activatable {
   readonly verb: string;
   /** What it is (a door's destination, an item's name). */
   readonly name: string;
+  /** A third line under the name (a lock's level, "Empty"), if any. */
+  readonly detail?: string;
   /** An item's weight and value (the crosshair shows them under its name). */
   readonly item?: { readonly weight: number; readonly value: number };
   /** The reference activated (the perks may keep the player from it: Filter Activation). */
   readonly reference?: number;
+  /**
+   * Whether the crosshair offers it (false: only a script's Activate runs its default, the
+   * prompt rule showing nothing: an unnamed door, a static); undefined counts as offered.
+   */
+  readonly shown?: boolean;
   activate(): void;
 }
 
@@ -1097,6 +1205,7 @@ export class PlaySession {
     if (
       target?.verb === this.#target?.verb &&
       target?.name === this.#target?.name &&
+      target?.detail === this.#target?.detail &&
       favor === this.#favorShown
     ) {
       this.#target = target;
@@ -1109,6 +1218,7 @@ export class PlaySession {
         target && {
           verb: target.verb,
           name: target.name,
+          ...(target.detail !== undefined && { detail: target.detail }),
           ...(target.item && { item: target.item }),
         },
         favor,
@@ -1120,7 +1230,9 @@ export class PlaySession {
     if (!prompt) return;
     prompt.hidden = !target;
     const key = this.player.keyOf('Activate') ?? '';
-    prompt.textContent = target ? `${key}  ${target.verb}  ${target.name}` : '';
+    prompt.textContent = target
+      ? `${key}  ${target.verb}  ${target.name}${target.detail !== undefined ? `  (${target.detail})` : ''}`
+      : '';
   }
 
   /**

@@ -1955,6 +1955,36 @@ export class PhysicsWorld {
     );
   }
 
+  /**
+   * The placed objects whose collision a ball overlaps (`center`, `radius` in game units) on
+   * bodies that collide with `layer` (a cone's: L_CONEPROJECTILE): each reference once, with
+   * the middle of its body nearest the centre (game units).
+   */
+  objectsNear(center: Vec3, radius: number, layer: number): Map<number, Vec3> {
+    const found = new Map<number, { point: Vec3; distance: number }>();
+    this.world.intersectionsWithShape(
+      { x: toHavok(center[0]), y: toHavok(center[1]), z: toHavok(center[2]) },
+      { x: 0, y: 0, z: 0, w: 1 },
+      new RAPIER.Ball(toHavok(radius)),
+      (other) => {
+        if (!other.isEnabled() || !this.matrix.collides(this.layerOf(other), layer)) return true;
+        const owner = this.ownerOf(other);
+        if (owner?.kind !== 'object' || owner.reference === 0) return true;
+        const t = other.translation();
+        const point: Vec3 = [t.x * HAVOK_SCALE, t.y * HAVOK_SCALE, t.z * HAVOK_SCALE];
+        const distance = Math.hypot(
+          point[0] - center[0],
+          point[1] - center[1],
+          point[2] - center[2],
+        );
+        const known = found.get(owner.reference);
+        if (!known || distance < known.distance) found.set(owner.reference, { point, distance });
+        return true;
+      },
+    );
+    return new Map([...found].map(([reference, { point }]) => [reference, point]));
+  }
+
   #triggersIn(
     translation: RAPIER.Vector,
     rotation: RAPIER.Rotation,
