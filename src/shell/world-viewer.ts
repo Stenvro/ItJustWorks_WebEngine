@@ -93,6 +93,7 @@ import { stageObject, type StageObject } from './actor-furniture.ts';
 import type { NavmeshSet } from '../ai/pathfinding.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement } from '../scripting/runtime/runtime.ts';
+import { noteMoved, placedAsMoved } from './moved-objects.ts';
 import { instanceNodeWorld, MOTION_KEYFRAMED, type ScriptView } from './script-world.ts';
 import { actorScriptGraph, placedScriptGraph } from '../animation/script-graphs.ts';
 import { CreatedObjects } from './created-objects.ts';
@@ -899,8 +900,8 @@ export class WorldViewer {
   /** A script moved a reference of a loaded cell: its instance and its collision follow. */
   async #scriptMoved(reference: number): Promise<void> {
     const runtime = this.#session?.scriptsReady;
-    // The player: where the script sent them, not where they stand.
-    const at = runtime && (await runtime.placement(reference, reference !== PLAYER_REF));
+    // Where the script sent it, not where the world shows it still (the player, a moving object).
+    const at = runtime && (await runtime.placement(reference, false));
     if (!at) return;
     if (reference === PLAYER_REF) {
       // Play: the player goes where the scripts send them, through a journey as a load door
@@ -1292,6 +1293,10 @@ export class WorldViewer {
     // The player walking into trigger volumes tells their scripts.
     play.onTrigger = (reference, entered) => {
       this.#session?.scriptsReady?.triggered(reference, PLAYER_REF, entered);
+    };
+    // The traps the player touches hit them (OnTrapHitStart, ...: trap-hits.ts).
+    play.onTrapTouch = (touching) => {
+      this.#session?.scriptsReady?.trapHits.touching(PLAYER_REF, touching);
     };
     // The player taking hold of an object and letting it go tells its scripts (OnGrab, OnRelease).
     play.onGrab = (reference, grabbed) => {
@@ -1858,15 +1863,22 @@ export class WorldViewer {
         )
       : Promise.resolve(undefined);
 
-    const data = await loadCellData(db, cellId, world.persistentReferences(cell.x, cell.y));
+    const persistent = world.persistentReferences(cell.x, cell.y);
+    // It resets if its time has come, before its references load (cell-reset.ts).
+    await session.scriptsReady?.cellResets.attaching(cellId, persistent);
+    const data = await loadCellData(db, cellId, persistent);
     const toggles = findToggles(data);
     const isEnabled = this.#enableState(session, data, cellId, toggles);
     cell.isEnabled = isEnabled;
     // Every reference that can appear (a script may enable it), drawn while enabled.
     // A cart its horse pulls is not its cell's any more (src/shell/actor-vehicles.ts).
-    const objects = data.objects.filter(
+    const unpulled = data.objects.filter(
       (object) => this.#stage?.vehicles.owns(object.reference) !== true,
     );
+    // Where the game left them (moved-objects.ts).
+    const objects = session.scriptsReady
+      ? placedAsMoved(unpulled, session.scriptsReady.state, cellId)
+      : unpulled;
     const shownBy = (reference: number): InstanceVisibility => {
       let entry = cell.visibility.get(reference);
       if (!entry) {
@@ -2293,6 +2305,9 @@ export class WorldViewer {
     const key = cellKey(cell.x, cell.y);
     if (cell.scriptsAttached && cell.data && runtime) {
       const loaded = new Set(this.#cellLoadedReferences(cell));
+      // Its moved objects keep their places; its reset waits from now (cell-reset.ts).
+      noteMoved(cell.placed, runtime.state);
+      if (cell.formId !== undefined) runtime.detach(runtime.cellResets.detached(cell.formId));
       const data = cell.data;
       runtime.detach(
         runtime.cellDetached(

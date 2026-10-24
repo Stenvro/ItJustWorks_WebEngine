@@ -1032,6 +1032,8 @@ export class GameSession {
       // The INI's settings the events read: OnTrigger's repeat, the attached area.
       const triggerDelay = this.ini.lookup('HAVOK', 'fTriggerEventDelayMS');
       if (triggerDelay !== undefined) runtime.triggerVolumes.delayMs = triggerDelay;
+      const trapDelay = this.ini.lookup('HAVOK', 'fTrapHitEventDelayMS');
+      if (trapDelay !== undefined) runtime.trapHits.delayMs = trapDelay;
       const grids = this.ini.lookup('General', 'uGridsToLoad');
       if (grids !== undefined) runtime.gridsToLoad = grids;
       runtime.magic.cloakInterval = this.ini.number('General', 'fCloakEffectUpdateInterval');

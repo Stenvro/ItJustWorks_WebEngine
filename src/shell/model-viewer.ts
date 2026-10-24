@@ -89,6 +89,7 @@ import type { NavmeshSet } from '../ai/pathfinding.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { matches, renderResults } from './finder.ts';
 import type { Placement } from '../scripting/runtime/runtime.ts';
+import { placedAsMoved } from './moved-objects.ts';
 import { instanceNodeWorld, MOTION_KEYFRAMED, type ScriptView } from './script-world.ts';
 import { actorScriptGraph, placedScriptGraph } from '../animation/script-graphs.ts';
 import { placeObject } from '../sim/placed-objects.ts';
@@ -624,8 +625,8 @@ export class ModelViewer {
   /** A script moved a reference: its drawn instance and its collision follow. */
   async #scriptMoved(reference: number): Promise<void> {
     const runtime = this.#session?.scriptsReady;
-    // The player: where the script sent them, not where they stand.
-    const at = runtime && (await runtime.placement(reference, reference !== PLAYER_REF));
+    // Where the script sent it, not where the world shows it still (the player, a moving object).
+    const at = runtime && (await runtime.placement(reference, false));
     if (!at) return;
     if (reference === PLAYER_REF) {
       // Play: the player goes where the scripts send them, through a journey as a load door
@@ -841,6 +842,10 @@ export class ModelViewer {
     // The player walking into trigger volumes tells their scripts.
     play.onTrigger = (reference, entered) => {
       this.#session?.scriptsReady?.triggered(reference, PLAYER_REF, entered);
+    };
+    // The traps the player touches hit them (OnTrapHitStart, ...: trap-hits.ts).
+    play.onTrapTouch = (touching) => {
+      this.#session?.scriptsReady?.trapHits.touching(PLAYER_REF, touching);
     };
     // The player taking hold of an object and letting it go tells its scripts (OnGrab, OnRelease).
     play.onGrab = (reference, grabbed) => {
@@ -1074,7 +1079,14 @@ export class ModelViewer {
     if (!db) return;
     const token = ++this.#loadToken;
     const start = performance.now();
-    const data = await loadCellData(db, formId);
+    // It resets if its time has come, before its references load (cell-reset.ts).
+    await this.#session?.scriptsReady?.cellResets.attaching(formId);
+    const loadedData = await loadCellData(db, formId);
+    // Its objects where the game left them (moved-objects.ts).
+    const scripts = this.#session?.scriptsReady;
+    const data = scripts
+      ? { ...loadedData, objects: placedAsMoved(loadedData.objects, scripts.state, formId) }
+      : loadedData;
     const label = `${data.cell.editorId}${data.cell.name ? ` "${data.cell.name}"` : ''}`;
     for (const skipped of data.skipped) this.#terminal.log('cell', skipped, 'warn');
 
@@ -1913,6 +1925,9 @@ export class ModelViewer {
     const runtime = this.#session?.scriptsReady;
     if (cell && runtime) {
       const loaded = new Set(this.#loadedReferences());
+      // Its reset waits from now (cell-reset.ts). TODO(sim): its moved objects' places are noted
+      // by the headless simulation and the world viewer only (moved-objects.ts noteMoved).
+      runtime.detach(runtime.cellResets.detached(cell.data.cell.formId));
       runtime.detach(
         runtime.cellDetached(
           [

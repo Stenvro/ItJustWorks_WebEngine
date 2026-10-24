@@ -44,6 +44,7 @@ import {
   type CellRagdoll,
   type CollisionGroup,
 } from '../shell/play-session.ts';
+import { noteMoved, placedAsMoved } from '../shell/moved-objects.ts';
 import { configurePhysics, Player } from '../shell/player.ts';
 import { PlayerAvatar } from '../shell/player-avatar.ts';
 import { PlayerFurniture } from '../shell/player-furniture.ts';
@@ -564,11 +565,10 @@ export class SimWorld {
   ): Promise<SimCell> {
     const session = this.session;
     const db = await session.db;
-    const data = await loadCellData(
-      db,
-      formId,
-      grid && world ? world.persistentReferences(grid[0], grid[1]) : [],
-    );
+    const persistent = grid && world ? world.persistentReferences(grid[0], grid[1]) : [];
+    // It resets if its time has come, before its references load (cell-reset.ts).
+    await this.runtime.cellResets.attaching(formId, persistent);
+    const data = await loadCellData(db, formId, persistent);
     for (const skipped of data.skipped) this.terminal.log('cell', skipped, 'warn');
     const toggles = findToggles(data);
     const isEnabled = this.#enableState(formId, data, toggles);
@@ -585,7 +585,12 @@ export class SimWorld {
       return entry;
     };
     // A cart its horse pulls is not its cell's any more (src/shell/actor-vehicles.ts).
-    const objects = data.objects.filter((object) => !this.stage.vehicles.owns(object.reference));
+    // Where the game left them (moved-objects.ts).
+    const objects = placedAsMoved(
+      data.objects.filter((object) => !this.stage.vehicles.owns(object.reference)),
+      this.runtime.state,
+      formId,
+    );
     const [models, collisions] = await Promise.all([
       Promise.all(objects.map((object) => session.model(object.model))),
       Promise.all(objects.map((object) => session.collision(object.model))),
@@ -832,6 +837,9 @@ export class SimWorld {
   /** A cell goes: its scripts hear it detach, its actors and collision leave. */
   #free(cell: SimCell): void {
     const loaded = new Set(this.#cellLoadedReferences(cell));
+    // Its moved objects keep their places; its reset waits from now (cell-reset.ts).
+    noteMoved(cell.placed, this.runtime.state);
+    this.runtime.detach(this.runtime.cellResets.detached(cell.formId));
     this.runtime.detach(
       this.runtime.cellDetached(
         [
@@ -933,6 +941,9 @@ export class SimWorld {
     this.stage.attachPlay(play);
     play.onTrigger = (reference, entered) => {
       this.runtime.triggered(reference, PLAYER_REF, entered);
+    };
+    play.onTrapTouch = (touching) => {
+      this.runtime.trapHits.touching(PLAYER_REF, touching);
     };
     play.onGrab = (reference, grabbed) => {
       this.runtime.events.emit('grabRelease', { reference, grabbed });
@@ -1426,7 +1437,8 @@ export class SimWorld {
   /** A script moved a reference: the player goes there, an actor or object follows. */
   async #scriptMoved(reference: number): Promise<void> {
     const runtime = this.runtime;
-    const at = await runtime.placement(reference, reference !== PLAYER_REF);
+    // Where the script put it (the world still shows it where it was).
+    const at = await runtime.placement(reference, false);
     if (!at) return;
     if (reference === PLAYER_REF) {
       // As Play: the player goes where the scripts send them, to another place through a journey.

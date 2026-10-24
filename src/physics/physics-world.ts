@@ -394,6 +394,16 @@ function alignY(direction: Vec3): Quaternion {
 
 const toHavok = (v: number): number => v / HAVOK_SCALE;
 
+/** Papyrus's motion types (ObjectReference.SetMotionType, OnTrapHit's aeMotionType). */
+export const MotionType = { dynamic: 1, keyframed: 4, fixed: 5 } as const;
+
+/** A trap an actor touches (trapsTouching): where (game units), its body's velocity, its motion. */
+export interface TrapTouch {
+  readonly position: Vec3;
+  readonly velocity: Vec3;
+  readonly motionType: number;
+}
+
 /** Rapier's raw joint set, which takes limits on any axis of any joint. */
 interface RawJointLimits {
   readonly rawSet: {
@@ -1983,6 +1993,52 @@ export class PhysicsWorld {
       },
     );
     return new Map([...found].map(([reference, { point }]) => [reference, point]));
+  }
+
+  /**
+   * The traps an actor's collider touches: bodies on L_TRAP and L_CLOUDTRAP (the layers the
+   * engine's trap listener takes as traps, observed in the original) within `margin` game units of it, by
+   * their owners' references, with where it touches and how the trap's body moves.
+   */
+  trapsTouching(collider: RAPIER.Collider, margin: number): Map<number, TrapTouch> {
+    const found = new Map<number, TrapTouch>();
+    const shape = collider.shape;
+    const reach =
+      shape instanceof RAPIER.Capsule
+        ? new RAPIER.Capsule(shape.halfHeight, shape.radius + toHavok(margin))
+        : shape instanceof RAPIER.Ball
+          ? new RAPIER.Ball(shape.radius + toHavok(margin))
+          : shape;
+    const at = collider.translation();
+    this.world.intersectionsWithShape(
+      at,
+      collider.rotation(),
+      reach,
+      (other) => {
+        if (!other.isEnabled()) return true;
+        const layer = this.layerOf(other);
+        if (layer !== Layer.trap && layer !== Layer.cloudTrap) return true;
+        const reference = this.ownerOf(other)?.reference;
+        if (reference === undefined || reference === 0 || found.has(reference)) return true;
+        const body = other.parent();
+        const velocity = body?.linvel() ?? { x: 0, y: 0, z: 0 };
+        found.set(reference, {
+          position: [at.x * HAVOK_SCALE, at.y * HAVOK_SCALE, at.z * HAVOK_SCALE],
+          velocity: [velocity.x * HAVOK_SCALE, velocity.y * HAVOK_SCALE, velocity.z * HAVOK_SCALE],
+          motionType:
+            !body || body.isFixed()
+              ? MotionType.fixed
+              : body.isDynamic()
+                ? MotionType.dynamic
+                : MotionType.keyframed,
+        });
+        return true;
+      },
+      undefined,
+      undefined,
+      collider,
+    );
+    return found;
   }
 
   #triggersIn(

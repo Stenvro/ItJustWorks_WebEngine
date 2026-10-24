@@ -39,6 +39,7 @@ import { parseNif } from '../formats/nif/nif.ts';
 import { CharacterBody } from '../physics/character.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
+import { TRAP_REACH } from '../scripting/runtime/trap-hits.ts';
 import type { Vec3 } from '../render/math.ts';
 import {
   CHECK_FALL_DISTANCE,
@@ -2090,6 +2091,11 @@ export class ActorMovers {
         if (!inside.has(trigger)) this.#options.onTrigger?.(trigger, staged.reference, false);
       }
       mover.triggers = inside;
+      // The traps it touches (their hits: src/scripting/runtime/trap-hits.ts).
+      this.#options.session.scriptsReady?.trapHits.touching(
+        staged.reference,
+        physics.trapsTouching(mover.character.collider, TRAP_REACH),
+      );
     }
   }
 }
