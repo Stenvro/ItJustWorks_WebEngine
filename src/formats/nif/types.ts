@@ -841,6 +841,11 @@ export interface CompressedMeshDataBlock {
   readonly kind: 'compressed-mesh-data';
   /** Quantization step of the chunk vertices. */
   readonly error: number;
+  /**
+   * hkpWeldingUtility::WeldingType of the mesh: 0 anticlockwise (one-sided: its triangles are met
+   * from their anticlockwise side), 4 clockwise, 5 two-sided, 6 none.
+   */
+  readonly weldingType: number;
   readonly materials: readonly { readonly material: number; readonly filter: HavokFilter }[];
   readonly transforms: readonly {
     readonly translation: Vec3;

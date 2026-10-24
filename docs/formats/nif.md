@@ -303,8 +303,9 @@ Values are in Havok units: **1 Havok unit = 69.99125 game units** (bhkWorld's sc
   grown around them (Havok's convex radius).
 - **bhkCompressedMeshShape** (target, user data, radius, f32, scale vec4, radius and scale
   copies, data ref) and **bhkCompressedMeshShapeData**: bits per index and winding index and
-  their masks, error (the quantization step, 0.001), AABB, welding and material type (u8),
-  three unused material tables, materials (material id u32 + HavokFilter each), named
+  their masks, error (the quantization step, 0.001), AABB, welding and material type (u8; the
+  welding type is hkpWeldingUtility's: 0 anticlockwise, one-sided, in every vanilla mesh, 4
+  clockwise, 5 two-sided, 6 none: [physics.md](../physics.md)), three unused material tables, materials (material id u32 + HavokFilter each), named
   materials count, transforms (translation vec4 + quaternion x y z w), big vertices (vec4), big
   triangles (3 × u16, material u32, welding u16), chunks, convex pieces count. A **chunk**:
   translation vec4, material index u32, reference u16 (another chunk whose geometry it shares;

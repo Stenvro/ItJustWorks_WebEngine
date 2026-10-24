@@ -31,6 +31,7 @@ const body = (layer: number, shapes: readonly CollisionShape[]): CollisionBody =
   maxLinearVelocity: 0,
   maxAngularVelocity: 0,
   quality: 0,
+  solverDeactivation: 1,
   shapes,
 });
 

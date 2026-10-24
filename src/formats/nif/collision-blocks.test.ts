@@ -247,7 +247,7 @@ describe('collision blocks', () => {
       .u32(0x1ffff)
       .f32(0.001) // error
       .f32(0, 0, 0, 0, 1, 1, 1, 0) // AABB
-      .u8(0)
+      .u8(5) // welding type: two-sided
       .u8(1)
       .u32(0)
       .u32(0)
@@ -298,6 +298,7 @@ describe('collision blocks', () => {
     const block = parse('bhkCompressedMeshShapeData', bytes);
     if (block.kind !== 'compressed-mesh-data') throw new Error('kind');
     expect(block.error).toBeCloseTo(0.001);
+    expect(block.weldingType).toBe(5);
     expect(block.materials).toEqual([
       { material: 500811281, filter: { layer: 1, flags: 0, group: 0 } },
     ]);

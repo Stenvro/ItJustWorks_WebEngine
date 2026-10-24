@@ -18,6 +18,17 @@ import {
 import { Layer, LayerFlag, type CollisionMatrix } from './collision-layers.ts';
 import type { BodyPush } from '../gameplay/magic/explosions.ts';
 import { PENETRATION_DEFAULTS, type PenetrationSettings } from './ragdoll-penetration.ts';
+import {
+  slowBodyFactor,
+  SOLVER_DEFAULTS,
+  solveJoints,
+  easedLimit,
+  HINGE_LIMIT_TAU_FACTOR,
+  RAGDOLL_LIMIT_TAU_FACTOR,
+  type SolverConstraint,
+  type SolverJoint,
+  type SolverSettings,
+} from './constraint-solver.ts';
 
 export type Rapier = typeof RAPIER;
 
@@ -104,9 +115,11 @@ const DEPENETRATE_SECONDS = 0.5;
 const HUNG_OVERLAP = 1 / HAVOK_SCALE;
 /**
  * Havok's deactivation (PhysicsWorld.#deactivate): how far a body may wander from its reference
- * (Havok units: hkpWorldCinfo's default deactivation reference distance), how far it may turn
- * (radians), how often it is checked and how long a system must stay so (seconds). TODO(M13):
- * Havok's defaults; the engine's own world settings are not read.
+ * (Havok units: the deactivation reference distance, which the engine's world info leaves at
+ * Havok's default; observed in the original), how far it may turn (radians), how often it is checked and
+ * how long a system must stay so (seconds). TODO(M13): Havok checks within that distance (a turn
+ * of twice it) often and within four times it (eight) rarely; how often, and for how many
+ * frames, is not read.
  */
 const DEACTIVATION_DISTANCE = 0.02;
 const DEACTIVATION_TURN = 0.05;
@@ -399,12 +412,94 @@ interface RawJointLimits {
 }
 
 /**
- * How firmly a joint's friction holds its axis still (the motor's gain towards no relative
- * speed, per second): stiff, so that the friction's maximum torque alone decides when the joint
- * gives way, as Havok's friction (an angular or linear friction atom: no relative motion, up to
- * the constraint's maximum friction torque or force).
+ * How firmly a prismatic joint's friction holds its axis still (the motor's gain towards no
+ * relative speed, per second). TODO(M13): Rapier's velocity motor does not hold a force below its
+ * maximum (a damper at best), so a prismatic's friction does little; the ragdolls' and limited
+ * hinges' friction is the constraint solver's (constraint-solver.ts).
  */
 const JOINT_FRICTION_GAIN = 1000;
+
+/**
+ * The world's maximum constraint violation (Havok units; observed in the original: its
+ * world info sets 0.05, Havok's own default is unbounded): PhysicsWorld.#clipViolation.
+ */
+const MAX_CONSTRAINT_VIOLATION = 0.05;
+/** A clipped pivot is moved again only when it moves by more than this (Havok units). */
+const CLIP_CHANGE = 1e-3;
+
+/** `v` turned by the unit quaternion `q`. */
+function rotateVector(q: RAPIER.Rotation, v: RAPIER.Vector): RAPIER.Vector {
+  const tx = 2 * (q.y * v.z - q.z * v.y);
+  const ty = 2 * (q.z * v.x - q.x * v.z);
+  const tz = 2 * (q.x * v.y - q.y * v.x);
+  return {
+    x: v.x + q.w * tx + (q.y * tz - q.z * ty),
+    y: v.y + q.w * ty + (q.z * tx - q.x * tz),
+    z: v.z + q.w * tz + (q.x * ty - q.y * tx),
+  };
+}
+
+/** An eased limit is set again only when it moves by more than this (radians: #easeLimits). */
+const EASED_CHANGE = 1e-3;
+
+/** A ragdoll's or limited hinge's inner data (a malleable one's). */
+function articulated(
+  data: ConstraintData,
+): Extract<ConstraintData, { type: 'ragdoll' | 'limited-hinge' }> | undefined {
+  // TODO(M13): the malleable constraint's strength (softness) is not applied.
+  if (data.type === 'malleable') return articulated(data.inner);
+  return data.type === 'ragdoll' || data.type === 'limited-hinge' ? data : undefined;
+}
+
+/**
+ * What the constraint solver (constraint-solver.ts) keeps of a ragdoll or limited hinge
+ * constraint (its friction), its frames scaled by `toLocal`; undefined for the other kinds.
+ */
+function solverConstraint(data: ConstraintData, toLocal: number): SolverConstraint | undefined {
+  const inner = articulated(data);
+  if (!inner) return undefined;
+  const frame = (f: ConstraintFrame) => ({
+    pivot: [f.pivot[0] * toLocal, f.pivot[1] * toLocal, f.pivot[2] * toLocal] as Vec3,
+    axes: [f.axes[0], f.axes[1]] as const,
+  });
+  return {
+    type: inner.type,
+    a: frame(inner.a),
+    b: frame(inner.b),
+    maxFriction: inner.maxFriction,
+  };
+}
+
+/** A limit of a Rapier joint on one of its axes. */
+interface AxisLimit {
+  readonly axis: RAPIER.JointAxis;
+  readonly min: number;
+  readonly max: number;
+}
+
+/**
+ * A ragdoll's or limited hinge's limits on its Rapier joint's axes (the hinge's angle; the
+ * ragdoll's twist, and the two swings each within the cone, the one towards the plane axis also
+ * within the plane limits), the angles mirrored (ANGLES_MIRRORED). TODO(M13): Havok's ragdoll
+ * limits are a cone (the twist axis within coneMaxAngle) and two planes.
+ */
+function axisLimits(data: ConstraintData): readonly AxisLimit[] {
+  const inner = articulated(data);
+  if (!inner) return [];
+  if (inner.type === 'limited-hinge') {
+    return [{ axis: RAPIER.JointAxis.AngX, min: -inner.maxAngle, max: -inner.minAngle }];
+  }
+  const cone = Math.abs(inner.coneMaxAngle);
+  return [
+    { axis: RAPIER.JointAxis.AngX, min: -inner.twistMaxAngle, max: -inner.twistMinAngle },
+    { axis: RAPIER.JointAxis.AngY, min: -cone, max: cone },
+    {
+      axis: RAPIER.JointAxis.AngZ,
+      min: Math.max(-cone, -inner.planeMaxAngle),
+      max: Math.min(cone, -inner.planeMinAngle),
+    },
+  ];
+}
 
 /*
  * ANGLES_MIRRORED: Rapier measures a joint's angles as its second body's frame turned from its
@@ -415,6 +510,44 @@ const JOINT_FRICTION_GAIN = 1000;
  * are about symmetric). Unmirrored, knees and elbows bent only the wrong way, and a dying pose's
  * bent knee started past its limit and snapped back.
  */
+
+/**
+ * A joint's angle on a Rapier axis as Rapier measures it for its limits: twice the arcsine of
+ * that component of the turn from the first body's frame to the second's.
+ */
+function jointAngle(joint: RAPIER.ImpulseJoint, axis: RAPIER.JointAxis): number {
+  const qa = joint.body1().rotation();
+  const qb = joint.body2().rotation();
+  const fa = joint.frameX1();
+  const fb = joint.frameX2();
+  const conj = (q: RAPIER.Rotation): RAPIER.Rotation => ({ x: -q.x, y: -q.y, z: -q.z, w: q.w });
+  const r = quatMultiply(conj(quatMultiply(qa, fa)), quatMultiply(qb, fb));
+  const sign = r.w < 0 ? -1 : 1;
+  const component =
+    axis === RAPIER.JointAxis.AngX ? r.x : axis === RAPIER.JointAxis.AngY ? r.y : r.z;
+  return 2 * Math.asin(Math.max(-1, Math.min(1, component * sign)));
+}
+
+function quatMultiply(a: RAPIER.Rotation, b: RAPIER.Rotation): RAPIER.Rotation {
+  return {
+    w: a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
+    x: a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+    y: a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+    z: a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+  };
+}
+
+function setJointLimits(
+  joint: RAPIER.ImpulseJoint,
+  axis: RAPIER.JointAxis,
+  min: number,
+  max: number,
+): void {
+  // Rapier keeps per-axis limits on every joint; the typed API exposes them only on one-axis
+  // joints.
+  const raw = joint as unknown as RawJointLimits;
+  raw.rawSet.jointSetLimits(raw.handle, axis, Math.min(min, max), Math.max(min, max));
+}
 
 function cross(a: Vec3, b: Vec3): Vec3 {
   return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -499,6 +632,12 @@ export class PhysicsWorld {
    */
   readonly #jointsOf = new Map<number, PlacedJoint[]>();
   readonly #jointScales = new Map<PlacedJoint, number>();
+  /** The placed ragdoll and limited hinge joints whose friction the constraint solver gives. */
+  readonly #solverJoints = new Map<PlacedJoint, SolverJoint>();
+  /** The joints whose second pivot is moved in for a step (#clipViolation). */
+  readonly #clipped = new Map<PlacedJoint, RAPIER.Vector>();
+  /** The joints whose limits are eased back to them, with their bounds now (#easeLimits). */
+  readonly #easing = new Map<PlacedJoint, readonly number[]>();
   /** Bodies settling after being placed: silent until they first sleep (or this time). */
   readonly #settling = new Map<number, number>();
   /**
@@ -532,9 +671,14 @@ export class PhysicsWorld {
   readonly #depenetrating = new Map<number, number>();
   /**
    * The simulated bodies' top speeds, as Havok's motions clamp them every step: the file's
-   * maximum linear velocity (Havok units per second) and angular velocity (radians per second).
+   * maximum linear velocity (Havok units per second) and angular velocity (radians per second);
+   * and their solver deactivation class (how Havok's solver slows them when slow:
+   * constraint-solver.ts, slowBodyFactor).
    */
-  readonly #limits = new Map<number, { readonly linear: number; readonly angular: number }>();
+  readonly #limits = new Map<
+    number,
+    { readonly linear: number; readonly angular: number; readonly solverDeactivation: number }
+  >();
   /**
    * Where each awake simulated body was when it last moved (its deactivation reference: the
    * position in Havok units and the rotation), and for how long it has stayed near it.
@@ -573,6 +717,11 @@ export class PhysicsWorld {
    * fDetectionUpdateTimeSec, fDesiredVel, fImpulseLimit: src/physics/ragdoll-penetration.ts).
    */
   penetration: PenetrationSettings = PENETRATION_DEFAULTS;
+  /**
+   * The constraint solver's tau, damping and iterations (constraint-solver.ts, solverSettings:
+   * the engine's at its step, from [HAVOK] fMaxTime and fHavokTauRatio).
+   */
+  solver: SolverSettings = SOLVER_DEFAULTS;
 
   /** `gravity`: Havok units per second² (downwards). Call initPhysics() first. */
   constructor(matrix: CollisionMatrix, gravity: number) {
@@ -670,7 +819,14 @@ export class PhysicsWorld {
         // Simulated bodies get the hull of the mesh (Rapier does not collide two meshes).
         if (dynamic) return hull(scaled(shape.vertices), 0);
         if (shape.indices.length < 3) return undefined;
-        return RAPIER.ColliderDesc.trimesh(scaled(shape.vertices), shape.indices);
+        // Havok's one-sided welding (collision-data.ts): Rapier's fixed internal edges keep
+        // contacts on the triangles' fronts and smooth across their edges (a limb that got
+        // behind a rock's face was pushed through it and back, and shook).
+        return RAPIER.ColliderDesc.trimesh(
+          scaled(shape.vertices),
+          shape.indices,
+          shape.oneSided === true ? RAPIER.TriMeshFlags.FIX_INTERNAL_EDGES : undefined,
+        );
       }
       case 'convex':
         return hull(scaled(shape.points), shape.radius * s);
@@ -763,10 +919,11 @@ export class PhysicsWorld {
           : RAPIER.RigidBodyDesc.fixed();
       desc.setTranslation(translation.x, translation.y, translation.z).setRotation(rotation);
       const body = this.world.createRigidBody(desc);
-      if (dynamic && data.maxLinearVelocity > 0 && data.maxAngularVelocity > 0) {
+      if (dynamic) {
         this.#limits.set(body.handle, {
-          linear: data.maxLinearVelocity,
-          angular: data.maxAngularVelocity,
+          linear: data.maxLinearVelocity > 0 ? data.maxLinearVelocity : Infinity,
+          angular: data.maxAngularVelocity > 0 ? data.maxAngularVelocity : Infinity,
+          solverDeactivation: data.solverDeactivation,
         });
       }
       if (dynamic && settle) {
@@ -832,6 +989,8 @@ export class PhysicsWorld {
       const placed: PlacedJoint = { joint: undefined, a, b, constraint };
       joints.push(placed);
       this.#jointScales.set(placed, scale / HAVOK_SCALE);
+      const solved = solverConstraint(constraint.data, scale / HAVOK_SCALE);
+      if (solved) this.#solverJoints.set(placed, { a: a.body, b: b.body, constraint: solved });
       for (const { body } of [a, b]) {
         const list = this.#jointsOf.get(body.handle);
         if (list) list.push(placed);
@@ -852,12 +1011,11 @@ export class PhysicsWorld {
    * A Havok constraint as a Rapier joint (`toLocal`: game units of the body's space to Havok
    * units, the placement's scale applied). The frames carry over as they are: where the two
    * coincide the constraint is at its zero. Bodies held together do not collide with each
-   * other. TODO(M13): Havok's ragdoll limits are a cone (twist axis within coneMaxAngle) and
-   * two planes; here they are three angle ranges (twist, and the two swings each within the
-   * cone, the one towards the plane axis also within the plane limits). Friction is a motor
-   * towards no relative speed limited to the friction's maximum (in the file's units: the
-   * placement's scale does not change it); the motors and malleable strength (softness) are not
-   * applied: Rapier's joints are stiff (no vanilla constraint has a motor).
+   * other. A ragdoll is a ball and socket here and a limited hinge a hinge: their limits and
+   * friction are the constraint solver's (constraint-solver.ts, #solverJoints). A prismatic's
+   * friction is a motor towards no relative speed limited to the friction's maximum (in the
+   * file's units: the placement's scale does not change it). The constraints' motors are not
+   * applied (no vanilla constraint has one).
    */
   #createJoint(
     data: ConstraintData,
@@ -883,30 +1041,11 @@ export class PhysicsWorld {
       made.setContactsEnabled(false);
       return made;
     };
-    const limit = (
-      joint: RAPIER.ImpulseJoint,
-      axis: RAPIER.JointAxis,
-      min: number,
-      max: number,
-    ) => {
-      // Rapier keeps per-axis limits on every joint; the typed API exposes them only on
-      // one-axis joints.
-      const raw = joint as unknown as RawJointLimits;
-      raw.rawSet.jointSetLimits(raw.handle, axis, Math.min(min, max), Math.max(min, max));
-    };
-    // A joint's friction: a motor towards no relative speed on its free axes, whose force is
-    // the constraint's maximum friction (torque, kg·m²/s², or force; Havok units).
-    const friction = (
-      joint: RAPIER.ImpulseJoint,
-      axes: readonly RAPIER.JointAxis[],
-      max: number,
-    ): void => {
-      if (!(max > 0)) return;
-      const raw = joint as unknown as RawJointLimits;
-      for (const axis of axes) {
-        raw.rawSet.jointConfigureMotorVelocity(raw.handle, axis, 0, JOINT_FRICTION_GAIN);
-        raw.rawSet.jointSetMotorMaxForce(raw.handle, axis, max);
-      }
+    // The ragdoll's and limited hinge's limits (axisLimits); their friction is the constraint
+    // solver's.
+    const limited = (joint: RAPIER.ImpulseJoint): RAPIER.ImpulseJoint => {
+      for (const { axis, min, max } of axisLimits(data)) setJointLimits(joint, axis, min, max);
+      return joint;
     };
     switch (data.type) {
       case 'ball-and-socket':
@@ -927,12 +1066,7 @@ export class PhysicsWorld {
         );
         joint.setLocalFrame1(point(data.a.pivot), frame(data.a.axes));
         joint.setLocalFrame2(point(data.b.pivot), frame(data.b.axes));
-        if (data.type === 'limited-hinge') {
-          // The angles mirrored (ANGLES_MIRRORED).
-          limit(joint, RAPIER.JointAxis.AngX, -data.maxAngle, -data.minAngle);
-          friction(joint, [RAPIER.JointAxis.AngX], data.maxFriction);
-        }
-        return joint;
+        return limited(joint);
       }
       case 'prismatic': {
         const joint = create(
@@ -944,30 +1078,27 @@ export class PhysicsWorld {
         );
         joint.setLocalFrame1(point(data.a.pivot), frame(data.a.axes));
         joint.setLocalFrame2(point(data.b.pivot), frame(data.b.axes));
-        limit(joint, RAPIER.JointAxis.LinX, data.minDistance * toLocal, data.maxDistance * toLocal);
-        friction(joint, [RAPIER.JointAxis.LinX], data.friction);
+        setJointLimits(
+          joint,
+          RAPIER.JointAxis.LinX,
+          data.minDistance * toLocal,
+          data.maxDistance * toLocal,
+        );
+        // Its friction: a motor towards no relative speed whose force is the constraint's
+        // maximum friction force (Havok units).
+        if (data.friction > 0) {
+          const raw = joint as unknown as RawJointLimits;
+          const axis = RAPIER.JointAxis.LinX;
+          raw.rawSet.jointConfigureMotorVelocity(raw.handle, axis, 0, JOINT_FRICTION_GAIN);
+          raw.rawSet.jointSetMotorMaxForce(raw.handle, axis, data.friction);
+        }
         return joint;
       }
       case 'ragdoll': {
         const joint = create(RAPIER.JointData.spherical(point(data.a.pivot), point(data.b.pivot)));
         joint.setLocalFrame1(point(data.a.pivot), frame(data.a.axes));
         joint.setLocalFrame2(point(data.b.pivot), frame(data.b.axes));
-        const cone = Math.abs(data.coneMaxAngle);
-        // The twist and the plane's angles mirrored (ANGLES_MIRRORED); the cone is symmetric.
-        limit(joint, RAPIER.JointAxis.AngX, -data.twistMaxAngle, -data.twistMinAngle);
-        limit(joint, RAPIER.JointAxis.AngY, -cone, cone);
-        limit(
-          joint,
-          RAPIER.JointAxis.AngZ,
-          Math.max(-cone, -data.planeMaxAngle),
-          Math.min(cone, -data.planeMinAngle),
-        );
-        friction(
-          joint,
-          [RAPIER.JointAxis.AngX, RAPIER.JointAxis.AngY, RAPIER.JointAxis.AngZ],
-          data.maxFriction,
-        );
-        return joint;
+        return limited(joint);
       }
       case 'malleable':
         return this.#createJoint(data.inner, bodyA, bodyB, toLocal);
@@ -991,6 +1122,7 @@ export class PhysicsWorld {
         if (needed && !placed.joint) {
           const scale = this.#jointScales.get(placed) ?? 1 / HAVOK_SCALE;
           placed.joint = this.#createJoint(placed.constraint.data, a, b, scale);
+          this.#easeLimits(placed);
         } else if (!needed && placed.joint) {
           if (placed.joint.isValid()) this.world.removeImpulseJoint(placed.joint, false);
           placed.joint = undefined;
@@ -999,10 +1131,73 @@ export class PhysicsWorld {
     }
   }
 
+  /**
+   * Soft limits (constraint-solver.ts, easedLimit): a ragdoll or limited hinge joint whose
+   * bodies lie past its limits (made in a dying actor's animated pose, or let go so) has those
+   * limits moved to tau (× the limit's tau factor) of the way from its angles back to them,
+   * every step until its angles are within them, as Havok's solver brings a violated limit back
+   * by tau of its error a step; Rapier's stiff limits snapped such a joint back within a step
+   * and flung its body off. Returns whether it still is past them.
+   */
+  #easeLimits(placed: PlacedJoint): boolean {
+    const joint = placed.joint;
+    const data = placed.constraint.data;
+    const inner = articulated(data);
+    if (!joint?.isValid() || !inner) {
+      this.#easing.delete(placed);
+      return false;
+    }
+    // Asleep, it stays as it is (a joint changed wakes its bodies, and they fell through the
+    // ground they lay on).
+    const { a, b } = placed;
+    if (this.#easing.has(placed) && a.body.isSleeping() && b.body.isSleeping()) return true;
+    const factor = inner.type === 'ragdoll' ? RAGDOLL_LIMIT_TAU_FACTOR : HINGE_LIMIT_TAU_FACTOR;
+    const tau = this.solver.tau * factor;
+    let past = false;
+    const before = this.#easing.get(placed);
+    const bounds: number[] = [];
+    const limits = axisLimits(data);
+    for (let i = 0; i < limits.length; i++) {
+      const limit = limits[i];
+      if (!limit) continue;
+      const { axis, min, max } = limit;
+      const wasLo = before?.[2 * i];
+      const wasHi = before?.[2 * i + 1];
+      const eased = easedLimit(jointAngle(joint, axis), min, max, tau);
+      if (eased) past = true;
+      let [lo, hi] = eased ?? [min, max];
+      // The bounds only close in (Havok's limit takes out the speed away from it: what pushes
+      // the joint further past it does not widen it).
+      if (eased && wasLo !== undefined && wasHi !== undefined) {
+        lo = Math.max(lo, wasLo);
+        hi = Math.min(hi, wasHi);
+      }
+      // Only a change is set (setting a joint wakes its bodies: a ragdoll held past a limit by
+      // the ground never slept).
+      if (
+        wasLo !== undefined &&
+        wasHi !== undefined &&
+        Math.abs(wasLo - lo) < EASED_CHANGE &&
+        Math.abs(wasHi - hi) < EASED_CHANGE
+      ) {
+        bounds.push(wasLo, wasHi);
+        continue;
+      }
+      bounds.push(lo, hi);
+      setJointLimits(joint, axis, lo, hi);
+    }
+    if (past) this.#easing.set(placed, bounds);
+    else this.#easing.delete(placed);
+    return past;
+  }
+
   /** A joint is gone for good (broken, or its bodies removed). */
   #forgetJoint(placed: PlacedJoint): void {
     this.#breakable.delete(placed);
     this.#jointScales.delete(placed);
+    this.#easing.delete(placed);
+    this.#clipped.delete(placed);
+    this.#solverJoints.delete(placed);
     for (const { body } of [placed.a, placed.b]) {
       const list = this.#jointsOf.get(body.handle);
       if (!list) continue;
@@ -1157,7 +1352,9 @@ export class PhysicsWorld {
     let steps = 0;
     while (this.#accumulator >= this.stepSeconds) {
       beforeStep?.(this.stepSeconds);
+      // Before the solver's changes: the joints' impulses (#breakJoints) include its own.
       this.#recordVelocities();
+      if (this.#solverJoints.size > 0) this.#solveJoints();
       this.world.step(this.#events, this.#hooks);
       this.#changed = false;
       if (this.#limits.size > 0) this.#limitVelocities();
@@ -1172,6 +1369,74 @@ export class PhysicsWorld {
       steps++;
     }
     return steps;
+  }
+
+  /**
+   * The ragdoll and limited hinge joints in the world (constraint-solver.ts): their friction for
+   * the step, and their limits eased where they lie past them (#easeLimits).
+   */
+  #solveJoints(): void {
+    for (const placed of [...this.#easing.keys()]) this.#easeLimits(placed);
+    const active: SolverJoint[] = [];
+    for (const [placed, joint] of this.#solverJoints) {
+      const made = placed.joint;
+      if (!made?.isValid()) continue;
+      active.push(joint);
+      this.#clipViolation(placed, made, joint);
+    }
+    solveJoints(
+      active,
+      this.stepSeconds,
+      this.world.gravity,
+      this.world.integrationParameters.numSolverIterations,
+      this.solver,
+    );
+  }
+
+  /**
+   * Havok's maximum constraint violation (observed in the original: its world clips a
+   * constraint's positional error to MAX_CONSTRAINT_VIOLATION): a joint whose two pivots lie
+   * farther apart (a ragdoll pulled apart: a limb pushed out of a rock the rest lies in, a body
+   * caught under an object) has its second pivot moved, for the step, to that distance from the
+   * first along the way between them, so that it comes back by at most that much a step. Rapier
+   * corrects all of the error at once: Lokir's corpse, half under a rock as Alduin's landing
+   * woke it, was flung about for five minutes. The true pivot is set back once within.
+   */
+  #clipViolation(placed: PlacedJoint, made: RAPIER.ImpulseJoint, joint: SolverJoint): void {
+    const { a, b } = joint;
+    if (a.isSleeping() && b.isSleeping()) return;
+    const pivotA = joint.constraint.a.pivot;
+    const pivotB = joint.constraint.b.pivot;
+    const ta = a.translation();
+    const tb = b.translation();
+    const pa = rotateVector(a.rotation(), { x: pivotA[0], y: pivotA[1], z: pivotA[2] });
+    const pb = rotateVector(b.rotation(), { x: pivotB[0], y: pivotB[1], z: pivotB[2] });
+    const dx = tb.x + pb.x - (ta.x + pa.x);
+    const dy = tb.y + pb.y - (ta.y + pa.y);
+    const dz = tb.z + pb.z - (ta.z + pa.z);
+    const gap = Math.hypot(dx, dy, dz);
+    if (gap > MAX_CONSTRAINT_VIOLATION) {
+      // The second body's anchor where the first's pivot plus the clipped error lies.
+      const k = MAX_CONSTRAINT_VIOLATION / gap;
+      const q = b.rotation();
+      const local = rotateVector(
+        { x: -q.x, y: -q.y, z: -q.z, w: q.w },
+        {
+          x: ta.x + pa.x + dx * k - tb.x,
+          y: ta.y + pa.y + dy * k - tb.y,
+          z: ta.z + pa.z + dz * k - tb.z,
+        },
+      );
+      // Only a change is set (setting a joint wakes its bodies: one held stretched by what it
+      // lies against would never sleep).
+      const last = this.#clipped.get(placed);
+      if (!last || Math.hypot(last.x - local.x, last.y - local.y, last.z - local.z) > CLIP_CHANGE) {
+        made.setAnchor2(local);
+        this.#clipped.set(placed, local);
+      }
+    } else if (this.#clipped.delete(placed)) {
+      made.setAnchor2({ x: pivotB[0], y: pivotB[1], z: pivotB[2] });
+    }
   }
 
   /**
@@ -1820,6 +2085,9 @@ export class PhysicsWorld {
 
   /** Clamps the moving bodies' speeds to their top speeds (#limits). */
   #limitVelocities(): void {
+    const gravity = this.world.gravity;
+    const g = Math.hypot(gravity.x, gravity.y, gravity.z);
+    const iterations = this.solver.iterations;
     for (const [handle, limit] of this.#limits) {
       const body = this.world.getRigidBody(handle) as RAPIER.RigidBody | null;
       if (!body) {
@@ -1828,23 +2096,23 @@ export class PhysicsWorld {
       }
       if (!body.isDynamic() || body.isSleeping()) continue;
       const v = body.linvel();
-      const speed = Math.hypot(v.x, v.y, v.z);
-      if (speed > limit.linear) {
-        const k = limit.linear / speed;
-        body.setLinvel({ x: v.x * k, y: v.y * k, z: v.z * k }, false);
-      }
       const w = body.angvel();
+      const speed = Math.hypot(v.x, v.y, v.z);
       const turn = Math.hypot(w.x, w.y, w.z);
-      if (turn > limit.angular) {
-        const k = limit.angular / turn;
-        body.setAngvel({ x: w.x * k, y: w.y * k, z: w.z * k }, false);
+      // Havok's solver slows slow bodies down (its solver deactivation).
+      const slow = slowBodyFactor(limit.solverDeactivation, g, speed, turn, iterations);
+      const linear = Math.min(slow, speed > limit.linear ? limit.linear / speed : 1);
+      const angular = Math.min(slow, turn > limit.angular ? limit.angular / turn : 1);
+      if (linear < 1) body.setLinvel({ x: v.x * linear, y: v.y * linear, z: v.z * linear }, false);
+      if (angular < 1) {
+        body.setAngvel({ x: w.x * angular, y: w.y * angular, z: w.z * angular }, false);
       }
     }
   }
 
   /**
-   * Havok's deactivation (inferred from Havok's documented behaviour, TODO(M13): the engine's
-   * world settings are not read): a body is inactive while it stays within
+   * Havok's deactivation (DEACTIVATION_DISTANCE: the distance read from the engine, the rest
+   * inferred from Havok's documented behaviour): a body is inactive while it stays within
    * DEACTIVATION_DISTANCE (and DEACTIVATION_TURN) of where it was when it last moved, however
    * it shakes there, and a system of bodies (a ragdoll, a hinged object) that has been inactive
    * for DEACTIVATION_SECONDS as a whole goes to sleep, until something wakes it. Rapier sends

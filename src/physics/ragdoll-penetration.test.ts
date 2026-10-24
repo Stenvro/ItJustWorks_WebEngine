@@ -45,6 +45,7 @@ function bone(name: string, z: number): CollisionBody {
     maxLinearVelocity: 100,
     maxAngularVelocity: 30,
     quality: 0,
+    solverDeactivation: 1,
     shapes: [{ type: 'sphere', layer: Layer.deadBip, material: 0, center: [0, 0, 0], radius: 5 }],
   };
 }
