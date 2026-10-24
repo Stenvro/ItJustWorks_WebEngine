@@ -273,8 +273,11 @@ quests (the College's MGR quests) may come out differently from one new game to 
   The start-up stage is set as it starts; its fragment runs on a thread of its own. Its scenes
   that begin on quest start start, and they end as it stops ([ai.md](ai.md#scenes)).
 - **SetStage** starts the quest if needed; without "allow repeated stages" a stage is set once;
-  the first log entry whose conditions hold happens (completes or fails the quest, starts the
-  next) and only its fragment runs; the caller waits for it. **Stop** sets the shut-down stage
+  every log entry whose conditions hold happens, in order (completes or fails the quest, adds
+  its journal text, runs its fragment); the caller waits for them. Observed in the original:
+  setting a stage walks all of the stage's items and runs each whose conditions hold (not only
+  the first). MQ101's keep stages rely on it: an entry without conditions for both routes and
+  one per FactionPath (1 Hadvar, 2 Ralof) that starts the route's scene and enables its actors. **Stop** sets the shut-down stage
   and empties the aliases; completing a quest does not stop it.
 - **Alias fills** (Quest Alias Tab): a specific reference or location, a unique actor, another
   quest's alias, a created reference, a location alias's reference of a type, a reference's
