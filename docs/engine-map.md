@@ -152,18 +152,18 @@ These run through every area and explain most of what breaks in play.
 
 ### Physics
 
-| System               | Status    | Main gaps                                                                |
-| -------------------- | --------- | ------------------------------------------------------------------------ |
-| World, time step     | partial   | steps per frame, velocity clamps, continuous collision for fast clutter  |
-| Triggers             | partial   | only actors enter triggers (L_TRIGGER takes 14 layers): layers unchecked |
-| Constraints          | partial   | joint friction; script-made constraints (hanged corpses, hanging keys)   |
-| Character controller | different | moving platforms do not carry actors; moving bodies do not push them     |
-| Falling, swimming    | partial   | only the player takes fall damage or swims; no breath or drowning        |
-| Water physics        | missing   | buoyancy, currents, splashes                                             |
-| Physics damage       | missing   | heavy moving objects never hurt                                          |
-| Traps                | partial   | hits on actors: done; material, initial flag, cloud traps unchecked      |
-| Gameplay impulses    | partial   | arrows, spells, blows and shouts do not move clutter                     |
-| Persistence          | partial   | animated objects and corpses; pushes without a script unchecked          |
+| System               | Status    | Main gaps                                                                      |
+| -------------------- | --------- | ------------------------------------------------------------------------------ |
+| World, time step     | partial   | the step under Slow Time; objects placed into what they lie on fall through it |
+| Triggers             | partial   | only actors enter triggers (L_TRIGGER takes 14 layers): layers unchecked       |
+| Constraints          | partial   | script-made constraints (hanged corpses, hanging keys); a census of types      |
+| Character controller | different | moving platforms do not carry actors; moving bodies do not push them           |
+| Falling, swimming    | partial   | only the player swims; the drowning sound and gasp; NPCs surfacing             |
+| Water physics        | missing   | buoyancy, currents (35 of 58 water types), splashes                            |
+| Physics damage       | partial   | the listener's damage to destructibles (no vanilla impact reaches it)          |
+| Traps                | partial   | hits on actors: done; material, initial flag, cloud traps unchecked            |
+| Gameplay impulses    | partial   | arrows, spells, blows and shouts do not move clutter                           |
+| Persistence          | partial   | animated objects and corpses; pushes without a script unchecked                |
 
 ### Rendering and camera
 

@@ -7,8 +7,17 @@
 // "Skyrim:Archery": 50 % and 75 %), the player with it, and costs stamina each second (Eagle
 // Eye's Mod Power Attack Stamina on bows: 10; UESP: "drains Stamina at 10 per second"); it
 // cannot be held without stamina nor under Slow Time. Falls take health, the player's and every
-// other actor's (src/gameplay/falling.ts; Mod Falling Damage).
+// other actor's (src/gameplay/falling.ts; Mod Falling Damage). Under water the player's breath
+// runs out and they drown (src/gameplay/breath.ts).
 
+import {
+  Breath,
+  BREATH_DEFAULTS,
+  BREATH_SETTING_NAMES,
+  drowningDamage,
+  type BreathSettings,
+} from '../gameplay/breath.ts';
+import { DIFFICULTY_SUFFIXES } from '../gameplay/combat/combat-settings.ts';
 import { fallDamage, fallSettings } from '../gameplay/falling.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -20,9 +29,15 @@ export function connectPlayerTime(
   player: {
     pace: (() => number) | undefined;
     onLanded: ((height: number) => void) | undefined;
+    onSubmersion: ((submersion: number, seconds: number) => void) | undefined;
   },
   session: () =>
-    { readonly time: TimeFlow; readonly scriptsReady: ScriptRuntime | undefined } | undefined,
+    | {
+        readonly time: TimeFlow;
+        readonly scriptsReady: ScriptRuntime | undefined;
+        readonly ini: { number(section: string, key: string): number };
+      }
+    | undefined,
 ): void {
   player.pace = () => session()?.time.playerPace ?? 1;
   player.onLanded = (height) => {
@@ -30,12 +45,23 @@ export function connectPlayerTime(
     const runtime = current?.scriptsReady;
     if (current && runtime) void current.time.fell(runtime, height);
   };
+  player.onSubmersion = (submersion, seconds) => {
+    const current = session();
+    const runtime = current?.scriptsReady;
+    if (current && runtime) {
+      const difficulty = current.ini.number('GamePlay', 'iDifficulty');
+      current.time.breathe(runtime, submersion, seconds, difficulty);
+    }
+  };
 }
 
 /** How often the perks' values are asked again (real seconds). */
 const REFRESH_SECONDS = 0.25;
 
 const BOW_SPEED_BONUS = actorValueIndex('BowSpeedBonus') ?? 0;
+const WATER_BREATHING = actorValueIndex('WaterBreathing') ?? 0;
+/** fDiffMultHPToPC's built-in values by difficulty (combat-settings.ts). */
+const DAMAGE_TO_PLAYER = [0.5, 0.75, 1, 1.5, 2, 3];
 
 export class TimeFlow {
   /** How fast the world's clock runs now (1: as the real one). */
@@ -57,6 +83,16 @@ export class TimeFlow {
   #slowedPace = 1;
   #wait = 0;
   #asking = false;
+  /** The player's breath (its settings once read), whether they breathe water, their health. */
+  #breath: Breath | undefined;
+  #breathRead = false;
+  #waterBreathing = false;
+  #baseHealth = 0;
+  #damageToPlayer = DAMAGE_TO_PLAYER;
+  /** The player's breath left (seconds), for the HUD's meter and the cases. */
+  get breath(): Breath | undefined {
+    return this.#breath;
+  }
 
   /** Whether the bow is zoomed now. */
   get bowZoomed(): boolean {
@@ -105,18 +141,63 @@ export class TimeFlow {
     const weapon = this.#zoomWeapon;
     const perks = runtime.perks;
     const actors = runtime.actors;
-    const [factor, cost, stamina, bowSpeed, pace] = await Promise.all([
+    const [factor, cost, stamina, bowSpeed, pace, waterBreathing, health] = await Promise.all([
       perks.apply(EntryPoint.modBowZoom, PLAYER_REF, 1, [weapon]),
       perks.apply(EntryPoint.modPowerAttackStamina, PLAYER_REF, 0, [weapon]),
       actors.value(PLAYER_REF, ActorValue.stamina),
       actors.value(PLAYER_REF, BOW_SPEED_BONUS),
       runtime.magic.playerPace(),
+      actors.value(PLAYER_REF, WATER_BREATHING),
+      actors.value(PLAYER_REF, ActorValue.health),
     ]);
+    this.#waterBreathing = waterBreathing.current > 0;
+    this.#baseHealth = health.base;
     this.#zoomFactor = factor > 0 ? factor : 1;
     this.#zoomCost = Math.max(0, cost);
     this.#canZoom = magic >= 1 && (this.#zoomCost <= 0 || stamina.current > 0);
     this.#bowSpeed = bowSpeed.current;
     this.#slowedPace = pace;
+  }
+
+  /**
+   * A step of the player at a submersion (breath.ts): their breath runs down under water and,
+   * once gone, each second takes fActorSwimBreathDamage of their base health, through the
+   * difficulty's damage to the player (`difficulty`: iDifficulty). TODO(M13): the drowning
+   * sound (NPCHumanDrowning) and the Leave Water Breath line on coming up are not played.
+   */
+  breathe(runtime: ScriptRuntime, submersion: number, seconds: number, difficulty: number): void {
+    if (!this.#breathRead) {
+      this.#breathRead = true;
+      void this.#readBreath(runtime);
+    }
+    const breath = this.#breath;
+    if (!breath) return;
+    const { drowning } = breath.step(seconds, submersion, this.#waterBreathing);
+    if (drowning <= 0 || this.#baseHealth <= 0) return;
+    const mult = this.#damageToPlayer[Math.round(difficulty)] ?? 1;
+    const damage = drowningDamage(this.#baseHealth, drowning, breath.settings) * mult;
+    void runtime.actors.damage(PLAYER_REF, ActorValue.health, damage);
+  }
+
+  async #readBreath(runtime: ScriptRuntime): Promise<void> {
+    const read = async (name: string, fallback: number): Promise<number> => {
+      const value = await runtime.gameSetting(name);
+      return typeof value === 'number' ? value : fallback;
+    };
+    const setting = (key: keyof BreathSettings): Promise<number> =>
+      read(BREATH_SETTING_NAMES[key], BREATH_DEFAULTS[key]);
+    const [base, mult, damage, leaveWaterTimer] = await Promise.all([
+      setting('base'),
+      setting('mult'),
+      setting('damage'),
+      setting('leaveWaterTimer'),
+    ]);
+    this.#damageToPlayer = await Promise.all(
+      DIFFICULTY_SUFFIXES.map((suffix, i) =>
+        read(`fDiffMultHPToPC${suffix}`, DAMAGE_TO_PLAYER[i] ?? 1),
+      ),
+    );
+    this.#breath = new Breath({ base, mult, damage, leaveWaterTimer });
   }
 
   /** The player landed after falling `height` units (actorFell). */

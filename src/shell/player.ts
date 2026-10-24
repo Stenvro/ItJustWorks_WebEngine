@@ -401,6 +401,8 @@ export class Player implements Camera {
   pace: (() => number) | undefined;
   /** The player landed after falling this far (units): falling damage. */
   onLanded: ((height: number) => void) | undefined;
+  /** Each step: how deep the player is in water (its share of their height, 0..1): breath. */
+  onSubmersion: ((submersion: number, seconds: number) => void) | undefined;
   /** The bow's zoom asked for (the field of view's factor: Mod Bow Zoom), and as eased now. */
   bowZoom = 1;
   #bowZoom = 1;
@@ -781,6 +783,7 @@ export class Player implements Camera {
       depth >= SWIM_SUBMERSION || (character.swimming && depth > SWIM_SUBMERSION - 0.05);
     character.swimming = swimming;
     if (swimming) this.sneaking = false;
+    this.onSubmersion?.(Math.min(1, Math.max(0, depth)), seconds);
     // "Run" walks while always-run is on, runs while it is off; over-encumbered, one walks.
     // Piloted, the package's gait.
     const burdened = (this.overEncumbered?.() ?? false) || (this.holdingHeavy?.() ?? false);
