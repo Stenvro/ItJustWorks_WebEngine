@@ -531,14 +531,14 @@ var QA_PLAY = engineDev.world.#play;
     if (bot.door !== undefined && toGoal < 110) {
       bot.release();
       const dz = goal[2] + 70 - (feet[2] + 120);
-      player.yaw = Math.atan2(goal[0] - feet[0], goal[1] - feet[1]);
+      bot.aim = goal;
       player.pitch = Math.atan2(dz, Math.max(1, toGoal));
       if (now - (bot.usedDoor ?? 0) > 2500) { bot.usedDoor = now; tap('KeyE'); say('use door ' + bot.door.toString(16)); }
       return;
     }
     while (bot.path.length > 1 && Math.hypot(bot.path[0][0] - feet[0], bot.path[0][1] - feet[1]) < 56) bot.path.shift();
     const next = bot.path[0] ?? goal;
-    player.yaw = Math.atan2(next[0] - feet[0], next[1] - feet[1]);
+    bot.aim = next;
     player.pitch = 0;
     // Sidestepping or backing off (a door frame, a corner) for a moment.
     const dodging = bot.dodge && now < bot.dodge.until;
@@ -557,6 +557,33 @@ var QA_PLAY = engineDev.world.#play;
       say('stuck at ' + feet.map(Math.round).join(',') + ': ' + { KeyA: 'step left', KeyD: 'step right', KeyS: 'back off' }[move] + (bot.stuckCount % 2 === 0 ? ', jump' : ''));
     }
   }, 100);
+  // The view turns to the point it heads for as a player turns a mouse: once it is more than 5°
+  // off, a turn at a steady rate until it is on it, then held (set at once ten times a second,
+  // the body's turn rate came and went: turnLeft and turnStop many times a second).
+  let lastFrame = performance.now();
+  const turn = (now) => {
+    if (window.__qaBot !== bot) return;
+    const dt = Math.min(0.1, (now - lastFrame) / 1000);
+    lastFrame = now;
+    const player = W.player;
+    const rt = engineDev.play()?.session.scriptsReady;
+    const aim = bot.aim;
+    if (player && rt && !rt.controls.aiDriven && aim) {
+      const feet = player.feet;
+      const want = Math.atan2(aim[0] - feet[0], aim[1] - feet[1]);
+      const off = Math.atan2(Math.sin(want - player.yaw), Math.cos(want - player.yaw));
+      if (Math.abs(off) > 0.09) bot.turning = true;
+      if (bot.turning) {
+        const step = Math.min(3, Math.max(0.6, Math.abs(off) * 6)) * dt;
+        if (Math.abs(off) <= step || Math.abs(off) < 0.01) {
+          player.yaw = want;
+          bot.turning = false;
+        } else player.yaw += Math.sign(off) * step;
+      }
+    }
+    requestAnimationFrame(turn);
+  };
+  requestAnimationFrame(turn);
   return 'started';
 })()`;
 

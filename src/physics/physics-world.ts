@@ -2310,7 +2310,9 @@ export class PhysicsWorld {
   /**
    * The first collider along a ray (game units) that `layer` collides with; not `exclude`, nor
    * any of the actor `ignore` (a reference: its own bodies, as an actor's sight passes its own
-   * head; Havok keeps an actor's bodies in one system group that does not collide with itself).
+   * head; Havok keeps an actor's bodies in one system group that does not collide with itself),
+   * nor any collider `skip` says to pass. Not `solid`, a ray that starts inside a shape meets it
+   * only where it leaves it (as Havok's ray casts pass what they start inside).
    */
   raycast(
     origin: Vec3,
@@ -2319,6 +2321,8 @@ export class PhysicsWorld {
     layer: number,
     exclude?: RAPIER.Collider,
     ignore?: number,
+    skip?: (collider: RAPIER.Collider) => boolean,
+    solid = true,
   ): RayHit | undefined {
     const length = Math.hypot(...direction) || 1;
     const ray = new RAPIER.Ray(
@@ -2327,18 +2331,19 @@ export class PhysicsWorld {
     );
     const collides = this.filterFor(layer);
     const filter =
-      ignore === undefined
+      ignore === undefined && skip === undefined
         ? collides
         : (collider: RAPIER.Collider): boolean => {
             const owner = this.ownerOf(collider);
             if (owner?.kind === 'actor' && owner.reference === ignore) return false;
+            if (skip?.(collider) === true) return false;
             return collides(collider);
           };
     // Phantoms (trigger volumes) are not surfaces: the character controller passes them too.
     const hit = this.world.castRayAndGetNormal(
       ray,
       toHavok(maxDistance),
-      true,
+      solid,
       RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
       undefined,
       exclude,

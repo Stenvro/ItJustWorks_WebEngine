@@ -5,7 +5,8 @@
 // mudcrabs, mammoths) lean with the ground under them. Races that do not walk (slaughterfish)
 // stay where they were placed, as do actors in furniture (their package's: Falmer in their
 // wall pods) and actors with nothing under them (held in a cell until their package moves
-// them). Their character controllers take over from there (src/shell/actor-movers.ts).
+// them). Their character controllers take over from there (src/shell/actor-movers.ts), leaning
+// them as the engine's orientation controllers do (probedTilt, easeTilt).
 // Platform-independent. Notes: docs/physics.md ("Actors on the ground").
 
 import type { Mat4, Vec3 } from '../render/math.ts';
@@ -79,6 +80,90 @@ export function groundedPlacement(world: Mat4, raceFlags: number, ground: Ground
   out[13] = ground.point[1];
   out[14] = ground.point[2];
   return out;
+}
+
+/**
+ * The most an actor leans with the ground, either way (radians: the engine's orientation
+ * controllers clamp their pitch and roll to a built-in 47°; observed in the original).
+ */
+export const MAX_TILT = (47 * Math.PI) / 180;
+
+/** How an actor leans: pitch (its nose up, positive) and roll (its left side up, positive). */
+export interface Tilt {
+  readonly pitch: number;
+  readonly roll: number;
+}
+
+export const UPRIGHT: Tilt = { pitch: 0, roll: 0 };
+
+/**
+ * The ground's height under a moving actor's ends (observed in the original: the engine's quadruped
+ * orientation controller): ahead and behind along its length, and for those that tilt across
+ * too, to its left and right.
+ */
+export interface TiltProbes {
+  readonly front: number;
+  readonly back: number;
+  readonly left?: number | undefined;
+  readonly right?: number | undefined;
+}
+
+/**
+ * The lean the ground under its ends gives an actor whose race tilts (observed in the original: the
+ * engine's quadruped orientation controller): the angle whose tangent is the height between its
+ * front and back probes over `base`, the same across from its left and right probes over
+ * `across` for races that tilt left and right, each clamped to MAX_TILT. Races that do not tilt
+ * that way get 0. The engine divides by its controller's length less its two end radii; ours by
+ * the distance between the probes (inferred: what its controller's length holds was not read,
+ * and less than the probes' distance it would lean a horse 1.45 times as steep as its ground).
+ */
+export function probedTilt(
+  probes: TiltProbes,
+  base: number,
+  raceFlags: number,
+  across = base,
+): Tilt {
+  const lean = (high: number, low: number, over: number): number => {
+    if (!(over > 0) || high === low) return 0;
+    const angle = Math.atan((high - low) / over);
+    return Math.max(-MAX_TILT, Math.min(MAX_TILT, angle));
+  };
+  const pitch =
+    (raceFlags & RaceFlag.tiltFrontBack) !== 0 ? lean(probes.front, probes.back, base) : 0;
+  const roll =
+    (raceFlags & RaceFlag.tiltLeftRight) !== 0 &&
+    probes.left !== undefined &&
+    probes.right !== undefined
+      ? lean(probes.left, probes.right, across)
+      : 0;
+  return { pitch, roll };
+}
+
+/**
+ * One update of the engine's lean (observed in the original): its pitch and roll move towards the ground's
+ * by fQuadrupedPitchMult ([HAVOK], 10) times the update's time of what is left, so a step onto
+ * another slope is leaned into over about a tenth of a second instead of at once.
+ */
+export function easeTilt(current: Tilt, target: Tilt, seconds: number, rate: number): Tilt {
+  const k = Math.max(0, Math.min(1, rate * seconds));
+  return {
+    pitch: current.pitch + (target.pitch - current.pitch) * k,
+    roll: current.roll + (target.roll - current.roll) * k,
+  };
+}
+
+/** The ground normal (world) a lean stands for, for an actor facing `heading` (compass). */
+export function tiltNormal(tilt: Tilt, heading: number): Vec3 {
+  const forward: Vec3 = [Math.sin(heading), Math.cos(heading), 0];
+  const right: Vec3 = [Math.cos(heading), -Math.sin(heading), 0];
+  // The plane rising tan(pitch) ahead and tan(roll) to the left: its normal leans back and right.
+  const ahead = Math.tan(tilt.pitch);
+  const across = Math.tan(tilt.roll);
+  return normalize([
+    -forward[0] * ahead + right[0] * across,
+    -forward[1] * ahead + right[1] * across,
+    1,
+  ]);
 }
 
 const dot = (a: Vec3, b: Vec3): number => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];

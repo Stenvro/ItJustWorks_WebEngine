@@ -259,6 +259,8 @@ const runtime = new BehaviorRuntime({
   host,
   skeleton,
   random: () => 0.5,
+  // The character's property values (a quadruped's IsCanine...); --set overrides variables only.
+  properties: { ...character.propertyValues },
   ...(character.footIk && { footIk: character.footIk }),
   ...(character.mirror && { mirror: character.mirror }),
   defaultEventMode: character.defaultEventMode,
@@ -416,6 +418,11 @@ for (let time = 0, frame = 0; time <= total; time += step, frame++) {
       console.log(`  ragdoll powered ${force.toFixed(0)}, keyframed bones ${String(keyframed)}`);
     const shown = procedural();
     if (shown) console.log(`  ${shown}`);
+    // Variables asked for (--show Speed --show SpeedSampled).
+    const shownVariables = option('--show').map(
+      (name) => `${name} ${runtime.variable(name)?.toFixed(2) ?? '-'}`,
+    );
+    if (shownVariables.length > 0) console.log(`  ${shownVariables.join(', ')}`);
     // The state the graph tags: the movement type whose iState_<name> variable holds it.
     const tagged = runtime.taggedState();
     if (tagged !== undefined) {
