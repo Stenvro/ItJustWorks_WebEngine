@@ -34,6 +34,7 @@ import {
   FrameStats,
   isLocomotionClip,
   isReferencePose,
+  LeanWatch,
   messageKey,
   RateWindow,
   sceneWait,
@@ -167,6 +168,16 @@ interface Watched {
   readonly root: SpeedMeter;
   readonly glide: Episode;
   readonly mismatch: Episode;
+  /** Its speed and its graph's root-motion speed over a second (foot sliding). */
+  readonly pace: SpeedMeter;
+  readonly rootPace: SpeedMeter;
+  readonly slide: Episode;
+  /** Its drawn pitch and roll swinging (rocking). */
+  readonly pitch: LeanWatch;
+  readonly roll: LeanWatch;
+  readonly rock: Episode;
+  /** How far it went over the rocking's window (two seconds). */
+  readonly travelled: SpeedMeter;
   readonly clips: ClipWatch;
   readonly states: StateWatch;
   readonly clipEpisode: Episode;
@@ -195,6 +206,10 @@ interface ActorNow {
   readonly behavior: BehaviorRuntime | undefined;
   readonly graphTime: number | undefined;
   readonly worlds: Float32Array | undefined;
+  /** How its drawn body leans (pitch nose up, roll left side up; degrees), if it is drawn so. */
+  readonly lean: readonly [number, number] | undefined;
+  /** Its scale (its root motion is in its skeleton's units). */
+  readonly scale: number;
   /** It moves without animation by design (rider, vehicle, ragdoll, flight): why. */
   readonly exempt: string | undefined;
   /**
@@ -214,6 +229,17 @@ interface ActorNow {
   /** Its capsule's radius (game units). */
   readonly radius: number;
   readonly shown: boolean;
+}
+
+/** How a drawn placement leans: its forward axis's rise and its right axis's fall (degrees). */
+function leanOf(world: Float32Array | undefined): readonly [number, number] | undefined {
+  if (!world) return undefined;
+  const toDegrees = 180 / Math.PI;
+  const [rx = 0, ry = 0, rz = 0, , fx = 0, fy = 0, fz = 0] = world;
+  return [
+    Math.atan2(fz, Math.hypot(fx, fy)) * toDegrees,
+    -Math.atan2(rz, Math.hypot(rx, ry)) * toDegrees,
+  ];
 }
 
 const hex = (formId: number): string => formId.toString(16).toUpperCase().padStart(8, '0');
@@ -545,6 +571,8 @@ export class QaHarness {
         behavior: body.behavior,
         graphTime: body.time,
         worlds: body.pose.worlds,
+        lean: undefined,
+        scale: body.look.scale * body.actor.scale,
         exempt: riding ? 'riding' : knocked ? 'ragdoll' : undefined,
         controls: !driven,
         context:
@@ -594,6 +622,8 @@ export class QaHarness {
       behavior: staged.placed.behavior,
       graphTime: staged.placed.time,
       worlds: staged.placed.pose.worlds,
+      lean: leanOf(staged.placed.instances[0]?.world),
+      scale: staged.placed.look.scale * staged.placed.actor.scale,
       exempt,
       controls: stage?.mounts.riderOf(reference) === PLAYER_REF,
       context: context.length > 0 ? context.join(', ') : undefined,
@@ -624,6 +654,13 @@ export class QaHarness {
         root: new SpeedMeter(0.3),
         glide: new Episode(t.glideSeconds),
         mismatch: new Episode(t.mismatchSeconds),
+        pace: new SpeedMeter(1),
+        rootPace: new SpeedMeter(1),
+        slide: new Episode(t.footSlideSeconds),
+        pitch: new LeanWatch(t.rockAmplitude),
+        roll: new LeanWatch(t.rockAmplitude),
+        rock: new Episode(t.rockSeconds),
+        travelled: new SpeedMeter(2),
         clips: new ClipWatch(),
         states: new StateWatch(),
         clipEpisode: new Episode(0.5, 1),
@@ -687,7 +724,16 @@ export class QaHarness {
         if (moved > TELEPORT) {
           watched.speed.reset();
           watched.root.reset();
-        } else watched.speed.add(dt, moved);
+          watched.pace.reset();
+          watched.travelled.reset();
+          watched.rootPace.reset();
+          watched.pitch.reset();
+          watched.roll.reset();
+        } else {
+          watched.speed.add(dt, moved);
+          watched.pace.add(dt, moved);
+          watched.travelled.add(dt, moved);
+        }
       }
       // What its graph moved it by (root motion of the clips of its last update).
       const behavior = now.behavior;
@@ -696,9 +742,10 @@ export class QaHarness {
         watched.graphTime = now.graphTime;
         if (before !== undefined && now.graphTime > before) {
           const [x, y] = behavior.rootMotion().translation;
-          const distance = Math.hypot(x, y);
+          const distance = Math.hypot(x, y) * now.scale;
           if (distance > 0) watched.hasRoot = true;
           watched.root.add(now.graphTime - before, distance);
+          watched.rootPace.add(now.graphTime - before, distance);
         }
       }
       const clips = behavior ? behavior.playing() : [];
@@ -757,6 +804,72 @@ export class QaHarness {
           ...describe(),
         }),
       );
+      // Foot sliding: its legs walk at another pace than it goes, short of a mismatch (a trot
+      // at a walk's speed, a walk played at half its rate for the speed it goes).
+      const pace = watched.pace.speed;
+      const rootPace = watched.rootPace.speed;
+      const slower = Math.min(pace, rootPace);
+      // The player's controls (and a horse they ride) run on the spot against a wall, as the
+      // engine's do: no foot sliding, as no speed mismatch.
+      const sliding =
+        free &&
+        now.controls !== true &&
+        watched.pace.ready &&
+        watched.rootPace.ready &&
+        watched.hasRoot &&
+        !mismatched &&
+        pace >= t.footSlideSpeed &&
+        rootPace >= t.locomotionRootSpeed &&
+        Math.abs(pace - rootPace) > t.footSlideAbsolute &&
+        Math.max(pace, rootPace) > t.footSlideRatio * slower;
+      this.#episode(
+        watched,
+        'foot-slide',
+        watched.slide.update(sliding, dt, Math.abs(pace - rootPace)),
+        watched.slide,
+        () => ({
+          kind: 'foot-slide',
+          detail: `goes ${pace.toFixed(0)} u/s while its legs walk ${rootPace.toFixed(0)} u/s (its graph's root motion over a second)`,
+          values: { speed: Math.round(pace), rootSpeed: Math.round(rootPace) },
+          severity: Math.abs(pace - rootPace),
+          ...describe(),
+        }),
+      );
+      // Rocking: its drawn body pitching or rolling back and forth (a lean jumping from one
+      // ground triangle to the next, a body tugged up and down).
+      const lean = now.lean;
+      if (lean) {
+        const swings = Math.max(
+          watched.pitch.update(clock, lean[0]),
+          watched.roll.update(clock, lean[1]),
+        );
+        const jump = Math.max(watched.pitch.jump, watched.roll.jump);
+        // Its way over the window (the meter's speed over its two seconds).
+        const travelled = watched.travelled.speed * 2;
+        this.#episode(
+          watched,
+          'rocking',
+          watched.rock.update(
+            free && swings >= t.rockSwings && travelled < swings * t.rockSpacing,
+            dt,
+            swings,
+          ),
+          watched.rock,
+          () => ({
+            kind: 'rocking',
+            detail: `its body pitches or rolls back and forth ${String(swings)}× in 2 s over ${travelled.toFixed(0)} units (swings of ${String(t.rockAmplitude)}° or more; up to ${jump.toFixed(1)}° in a frame)`,
+            values: {
+              swings,
+              travelled: Math.round(travelled),
+              jump: Math.round(jump * 10) / 10,
+              pitch: Math.round(lean[0] * 10) / 10,
+              roll: Math.round(lean[1] * 10) / 10,
+            },
+            severity: swings,
+            ...describe(),
+          }),
+        );
+      }
       if (!behavior) continue;
       // Stutter: a machine changing state, a clip restarting, events chattering.
       const chatter = watched.states.update(clock, states, t.stateChangesPerSecond);

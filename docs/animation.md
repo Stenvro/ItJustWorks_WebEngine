@@ -378,17 +378,23 @@ while the variables agree with it. For the player the controls are the movement 
 is the input's (a drop of more than fMaxMoveRampDownDelta, 500, in one update is limited to it),
 dampened (bDampenPlayerControls) and the direction frozen on a large change (The player, below).
 
-**The graph data channels** copy them into the graph's variables before every graph update:
+**The graph data channels** copy them into the graph's variables before every graph update. The
+Speed channel divides the speed by the actor's scale (observed in the original: the divisor is its
+reference's GetScale, read as the channel is made; the thresholds read the speed itself), and the
+clips' root motion is in the skeleton's units, scaled with it as it moves the actor: a fox (its
+race 1.2 tall) walking at 68 units a second gets Speed 57 and plays the walk whose stride, 1.2
+times as long, covers 68. Before, it got 68 and played a walk whose drawn stride went 125 units a
+second while it went 68 (QA foot-slide in the opening: 104 unscaled).
 
-| Variable                                        | Value                                                                                                                      | Actions as it crosses a threshold                                                                                                                                                                  |
-| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Speed                                           | the wanted speed, units per second (divided by a per-actor factor, 1 unless set)                                           | reaching 5 from below: ActionMoveStart; falling below 5: ActionMoveStop                                                                                                                            |
-| Direction                                       | the wanted direction against the facing, the turn wrapped to 0..1 (0 ahead, 0.25 right, 0.5 behind, 0.75 left), unsmoothed | between the front half (below 0.25, or from 0.75) and the back half: ActionMoveForward / ActionMoveBackward; between the right (above 0, up to 0.5) and the left: ActionMoveRight / ActionMoveLeft |
-| TurnDelta                                       | the rotation speed in degrees per second, left (counter-clockwise) positive                                                | faster than 1° a second from slower: ActionTurnLeft (positive) or ActionTurnRight; slower again: ActionTurnStop (a change of side while turning sends nothing)                                     |
-| TargetSpeed, Pitch, Roll, PitchDelta            | the target speed; the pitch and roll in degrees; the pitch rate                                                            | none                                                                                                                                                                                               |
-| weaponSpeedMult, leftWeaponSpeedMult, TimeDelta | the hands' weapon speeds; the frame's time                                                                                 | none                                                                                                                                                                                               |
-| iWantBlock                                      | the actor's want-block flag (set as ActionLeftAttack plays blockStart, cleared as ActionLeftRelease plays blockStop)       | none                                                                                                                                                                                               |
-| bHeadTracking                                   | whether it tracks a look-at target                                                                                         | none                                                                                                                                                                                               |
+| Variable                                        | Value                                                                                                                                           | Actions as it crosses a threshold                                                                                                                                                                  |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Speed                                           | the wanted speed, units per second, over the actor's scale (its GetScale: the reference's scale times the race's height by sex times the NPC's) | reaching 5 from below: ActionMoveStart; falling below 5: ActionMoveStop                                                                                                                            |
+| Direction                                       | the wanted direction against the facing, the turn wrapped to 0..1 (0 ahead, 0.25 right, 0.5 behind, 0.75 left), unsmoothed                      | between the front half (below 0.25, or from 0.75) and the back half: ActionMoveForward / ActionMoveBackward; between the right (above 0, up to 0.5) and the left: ActionMoveRight / ActionMoveLeft |
+| TurnDelta                                       | the rotation speed in degrees per second, left (counter-clockwise) positive                                                                     | faster than 1° a second from slower: ActionTurnLeft (positive) or ActionTurnRight; slower again: ActionTurnStop (a change of side while turning sends nothing)                                     |
+| TargetSpeed, Pitch, Roll, PitchDelta            | the target speed; the pitch and roll in degrees; the pitch rate                                                                                 | none                                                                                                                                                                                               |
+| weaponSpeedMult, leftWeaponSpeedMult, TimeDelta | the hands' weapon speeds; the frame's time                                                                                                      | none                                                                                                                                                                                               |
+| iWantBlock                                      | the actor's want-block flag (set as ActionLeftAttack plays blockStart, cleared as ActionLeftRelease plays blockStop)                            | none                                                                                                                                                                                               |
+| bHeadTracking                                   | whether it tracks a look-at target                                                                                                              | none                                                                                                                                                                                               |
 
 The engine never writes IsBlocking or IsSprinting: it reads them back from the graph (IsSprinting
 sets the actor's sprinting state; IsBlocking slows its speed). There is no smoothing in the
@@ -495,6 +501,22 @@ at the last parameter (ours before), a galloping horse played its trot with a se
 run at 450 units a second; now it gets 450 and gallops. The same holds for every table: a
 character running at 370 against state 0's curve that ends at 306.
 
+**The state comes from the character's properties.** Nine quadruped projects (bear, dog, wolf and
+fox, cow, deer and elk, goat, horker, mammoth, sabre cat) share the canine folder's quadruped
+behavior, whose root modifier list holds one list per creature (BearModifierList,
+CanineModifierList, ..., SkeeverModifierList), each enabled by a character property (IsBear,
+IsCanine, ... read by the binding's property index) and each setting iState to its creature's
+(iState_WolfDefault 100, iState_SabreCatDefault 80, ...). The property values are the
+character's (hkbCharacterData.characterPropertyValues, by the character string data's
+characterPropertyNames; `readCharacterPropertyValues`, given to every actor's graph before the
+actor's own IsFemale, IsNPC, ...). Without them every list ran (the binding's stored 1) and the
+skeever's, the last, set every one's iState to 90, which no table but the skeever's has: the
+blend took the Speed itself, and a wolf walking 80 units a second played a walk whose stride
+went at half that (QA `foot-slide` in Riverwood: 24 for three wolves). `node
+tools/locomotion-audit.ts --without` runs every race's project told it walks: 47 walk in a state
+their speed data has, 1 does not (the Falmer's 0 against its tables 1 and 2; its own data), and
+these 9 changed from 90 to their own.
+
 ### Horses
 
 The horse's graph (`meshes\actors\horse\behaviors\horsebehavior.hkx`) is driven as every
@@ -537,11 +559,27 @@ several (docs/ai.md, "Movement"), IsSprinting from the speed physics made of a s
 galloping into a fence flipped in and out of SprintState), and the speed sampler held at its
 last parameter past the table (a gallop played as a trot).
 
+**The rocking horses** (the opening's cart horses and the riders' horses "like rocking horses"):
+not their clips, which walked at the cart's speed in step with it (Speed 125, HorseSpeedSampled
+125.8, WalkForward), but their lean: the whole body was stood at the normal of the one ground
+triangle under its middle every 4 units, jumping up to 70° in a frame and swinging back and forth
+about once a second. They lean now as the engine's quadruped orientation controller leans them,
+by the ground under their two ends, eased by fQuadrupedPitchMult
+([physics.md](physics.md#actors-on-the-ground), with the numbers); the QA monitor `rocking`
+watches for it (docs/qa.md).
+
+Measured with the QA monitors (b9f6248 with the new monitors against this work, the same
+scenarios, full length): `rocking` in the opening 67 (62 of them its four horses) to 7 (4), in
+`creatures` 34 to 9, in `combat-melee` and `riverwood` 1 to 0 each; `foot-slide` in `riverwood`
+26 to 0, `combat-melee` 21 to 0, `creatures` 14 to 1, the opening 10 to 0, `whiterun-day` 1 to 0.
+The rest of the opening's player anomalies came from the QA follow bot (it set the view's yaw at
+once ten times a second; now it turns it as a player does, past 5° at a steady rate, then holds it) and from the third-person
+body in MT WalkingCamera (above, "The player").
+
 TODO(M13): the actions are not resolved through the idle tree yet (the vanilla events are sent:
 a rider's graph gets moveStart, and SprintStart is not refused while sneaking or blocking); the
 movement controller's acceleration (it ramps the speed by the race's acceleration and deceleration
-rates, RACE DATA: a factor 1 / rate, the scale it applies to not known) is not reproduced; the
-per-actor divisor of Speed; what sets the process flags that hold the channels and withhold
+rates, RACE DATA: a factor 1 / rate, the scale it applies to not known) is not reproduced; what sets the process flags that hold the channels and withhold
 ActionMoveStop.
 
 ## Graph events
