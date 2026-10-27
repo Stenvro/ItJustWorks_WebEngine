@@ -1873,6 +1873,8 @@ export class ActorMovers {
         );
       }
       mover.character.step(step);
+      // Standing on a turning body (a platform, a lift), it turns with it.
+      staged.heading += mover.character.carriedTurn;
       // Landed from a fall: the NPCs' falling damage, as the player's (horses too).
       const fell = mover.character.landedFrom;
       const runtime = this.#options.session.scriptsReady;
