@@ -5,7 +5,10 @@
 // repository (screenshots show the game's content).
 //
 //   node tools/qa-run.ts --out <folder> [scenario ...] [--seconds N] [--url http://localhost:5202]
-//                        [--vite-port 5202] [--chrome-port 9362] [--list]
+//                        [--vite-port 5202] [--chrome-port 9362] [--cpu-profile N] [--list]
+//
+// --cpu-profile N: the page's JavaScript is sampled (CDP Profiler) for the first N seconds the
+// monitors are on; written as profile.cpuprofile in the scenario's folder (DevTools opens it).
 //
 // Without --url it starts the repository's Vite on --vite-port and stops it at the end.
 
@@ -39,6 +42,8 @@ interface Options {
   readonly url: string | undefined;
   readonly vitePort: number;
   readonly chromePort: number;
+  /** Seconds of the watch to sample with the CDP profiler (none when undefined). */
+  readonly cpuProfile: number | undefined;
 }
 
 function parseOptions(argv: readonly string[]): Options | undefined {
@@ -47,6 +52,7 @@ function parseOptions(argv: readonly string[]): Options | undefined {
   let url: string | undefined;
   let vitePort = 5202;
   let chromePort = 9362;
+  let cpuProfile: number | undefined;
   const names: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i] ?? '';
@@ -56,6 +62,7 @@ function parseOptions(argv: readonly string[]): Options | undefined {
     else if (arg === '--url') url = value();
     else if (arg === '--vite-port') vitePort = Number(value());
     else if (arg === '--chrome-port') chromePort = Number(value());
+    else if (arg === '--cpu-profile') cpuProfile = Number(value());
     else if (arg === '--list') {
       for (const scenario of [...SCENARIOS, ...PLACES, ...STREETS, ...INTERACTION])
         console.log(`${scenario.name.padEnd(16)} ${scenario.description}`);
@@ -87,7 +94,7 @@ function parseOptions(argv: readonly string[]): Options | undefined {
           if (!scenario) throw new Error(`no scenario '${name}' (--list shows them)`);
           return [scenario];
         });
-  return { out: resolved, scenarios, seconds, url, vitePort, chromePort };
+  return { out: resolved, scenarios, seconds, url, vitePort, chromePort, cpuProfile };
 }
 
 /** The in-page hook: each first anomaly of a subject asks the runner for a screenshot. */
@@ -245,6 +252,12 @@ async function runScenario(
     if (!hooked) notes.push('the QA monitors were not there');
     ctx.note(`monitors on for ${watchSeconds} s`);
     const watchStart = Date.now();
+    let profiling = options.cpuProfile !== undefined;
+    if (profiling) {
+      await page.send('Profiler.enable');
+      await page.send('Profiler.setSamplingInterval', { interval: 500 });
+      await page.send('Profiler.start');
+    }
     while (Date.now() - watchStart < watchSeconds * 1000) {
       if (Date.now() > deadline) {
         outcome = 'timeout';
@@ -258,6 +271,12 @@ async function runScenario(
         ctx.note(`the page stopped answering (${PING_MS / 1000} s)`);
         extra.push(hangAnomaly((Date.now() - watchStart) / 1000));
         break;
+      }
+      if (profiling && Date.now() - watchStart >= (options.cpuProfile ?? 0) * 1000) {
+        profiling = false;
+        const { profile } = await page.send<{ profile: unknown }>('Profiler.stop', {}, 60000);
+        fs.writeFileSync(path.join(folder, 'profile.cpuprofile'), JSON.stringify(profile));
+        ctx.note('cpu profile written');
       }
       await answerBoxes(page).catch(() => undefined);
       const done = await scenario.tick?.(ctx).catch((error: unknown) => {

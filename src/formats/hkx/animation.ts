@@ -497,9 +497,16 @@ class SplineAnimation implements HkxAnimation {
       out[o + 1] = value[1] ?? 0;
       out[o + 2] = value[2] ?? 0;
       evaluate(track.rotation, frame, value);
-      // The curve blends unit quaternions: back to unit length.
-      const length = Math.hypot(value[0] ?? 0, value[1] ?? 0, value[2] ?? 0, value[3] ?? 0) || 1;
-      for (let k = 0; k < 4; k++) out[o + 3 + k] = (value[k] ?? 0) / length;
+      // The curve blends unit quaternions: back to unit length (sqrt: Math.hypot is slow).
+      const qx = value[0] ?? 0;
+      const qy = value[1] ?? 0;
+      const qz = value[2] ?? 0;
+      const qw = value[3] ?? 0;
+      const length = Math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw) || 1;
+      out[o + 3] = qx / length;
+      out[o + 4] = qy / length;
+      out[o + 5] = qz / length;
+      out[o + 6] = qw / length;
       evaluate(track.scale, frame, value);
       out[o + 7] = value[0] ?? 1;
       out[o + 8] = value[1] ?? 1;
@@ -758,11 +765,34 @@ function knotSpan(knots: Float32Array, degree: number, count: number, u: number)
   return mid;
 }
 
-/** The non-zero basis functions at a parameter (The NURBS Book, A2.2). */
-function basisFunctions(knots: Float32Array, degree: number, span: number, u: number): number[] {
-  const basis = [1];
-  const left: number[] = [];
-  const right: number[] = [];
+/**
+ * The basis functions' work arrays, kept (every channel of every track of every clip sampled
+ * asks: arrays made per call were most of the garbage the animation made). Float64: the same
+ * numbers as plain arrays hold.
+ */
+let basisScratch = new Float64Array(8);
+let leftScratch = new Float64Array(8);
+let rightScratch = new Float64Array(8);
+
+/**
+ * The non-zero basis functions at a parameter (The NURBS Book, A2.2): the first degree + 1 of
+ * the returned array, which is overwritten by the next call.
+ */
+function basisFunctions(
+  knots: Float32Array,
+  degree: number,
+  span: number,
+  u: number,
+): Float64Array {
+  if (degree + 1 > basisScratch.length) {
+    basisScratch = new Float64Array(degree + 1);
+    leftScratch = new Float64Array(degree + 1);
+    rightScratch = new Float64Array(degree + 1);
+  }
+  const basis = basisScratch;
+  const left = leftScratch;
+  const right = rightScratch;
+  basis[0] = 1;
   for (let j = 1; j <= degree; j++) {
     left[j] = u - (knots[span + 1 - j] ?? 0);
     right[j] = (knots[span + j] ?? 0) - u;

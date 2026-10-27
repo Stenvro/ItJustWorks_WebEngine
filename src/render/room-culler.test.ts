@@ -112,4 +112,24 @@ describe('RoomCuller', () => {
     expect(culler.visible([0, 500, 0], 50)).toBe(true);
     expect(culler.visible([0, 1500, 280], 50)).toBe(true);
   });
+
+  it('keeps every occluder of a frame, however many, and none of the last frame', () => {
+    // Forty boxes in a row across the view, each its own volume: more than the packed planes
+    // first hold.
+    const occluders = Array.from({ length: 40 }, (_, i) => ({
+      reference: 100 + i,
+      box: box([-4000 + i * 200, 1000, 0], [90, 5, 90]),
+    }));
+    const culler = new RoomCuller([{ rooms: [], portals: [], occluders, multibounds: [] }]);
+    culler.update(camera([0, 0, 0], [0, 1, 0]), [0, 0, 0]);
+    // Behind the box straight ahead, and behind one far to the side.
+    expect(culler.visible([0, 1500, 0], 20)).toBe(false);
+    // (The box at x 600, seen from the camera: x 900 half again as far.)
+    expect(culler.visible([900, 1500, 0], 20)).toBe(false);
+    // Between two boxes: seen.
+    expect(culler.visible([150, 1500, 0], 20)).toBe(true);
+    // The camera turned away: no box is in view, nothing is hidden.
+    culler.update(camera([0, 0, 0], [0, -1, 0]), [0, 0, 0]);
+    expect(culler.visible([0, 1500, 0], 20)).toBe(true);
+  });
 });
