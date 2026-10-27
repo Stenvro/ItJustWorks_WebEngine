@@ -913,6 +913,13 @@ export class MagicEngine {
     if (target === PLAYER_REF && effect.imageSpaceModifier !== undefined)
       runtime.world.imageSpace?.(effect.imageSpaceModifier, 'apply', 1, undefined, target);
     this.#show('start', key, entry, effect);
+    // The engine tells it (TESActiveEffectApplyRemoveEvent).
+    runtime.events.emit('activeEffectApplyRemove', {
+      caster: entry.caster,
+      target,
+      effect: entry.effect,
+      applied: true,
+    });
     const hit = effectSound(effect, EffectSound.onHit);
     if (hit !== undefined) runtime.world.playSound?.(hit, target);
     if (effect.scripted) {
@@ -949,6 +956,12 @@ export class MagicEngine {
     if (entry.target === PLAYER_REF && effect?.imageSpaceModifier !== undefined)
       runtime.world.imageSpace?.(effect.imageSpaceModifier, 'remove', 0);
     if (effect) this.#show('stop', key, entry, effect);
+    runtime.events.emit('activeEffectApplyRemove', {
+      caster: entry.caster,
+      target: entry.target,
+      effect: entry.effect,
+      applied: false,
+    });
     if (effect?.scripted) {
       const handle = handleOf(key);
       if (ending) this.#finishing.set(key, entry);

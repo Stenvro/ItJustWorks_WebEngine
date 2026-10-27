@@ -166,6 +166,18 @@ export function registerCore(n: Register, runtime: ScriptRuntime): void {
   n('form.unregisterforanimationevent', ({ self, args }) =>
     runtime.registerAnimationEvent(self, args[0] ?? null, str(args[1]), false),
   );
+  // SKSE's menu registrations (Form, Alias and ActiveMagicEffect alike): OnMenuOpen, OnMenuClose.
+  for (const type of ['form', 'alias', 'activemagiceffect']) {
+    n(`${type}.registerformenu`, ({ self, args }) =>
+      runtime.registerForMenu(self, str(args[0]), true),
+    );
+    n(`${type}.unregisterformenu`, ({ self, args }) =>
+      runtime.registerForMenu(self, str(args[0]), false),
+    );
+    n(`${type}.unregisterforallmenus`, ({ self }) =>
+      runtime.registerForMenu(self, undefined, false),
+    );
+  }
   n('form.registerforsleep', ({ self }) => runtime.registerFor('sleep', self, true));
   n('form.unregisterforsleep', ({ self }) => runtime.registerFor('sleep', self, false));
   n('form.registerfortrackedstatsevent', ({ self }) =>

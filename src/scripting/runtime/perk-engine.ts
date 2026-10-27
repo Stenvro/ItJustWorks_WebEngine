@@ -363,6 +363,13 @@ export class PerkEngine {
    */
   async runChoice(choice: ActivateChoice, owner: number, target: number): Promise<void> {
     const runtime = this.#runtime;
+    // The engine tells the entry's run (TESPerkEntryRunEvent), with the entry's fragment.
+    runtime.events.emit('perkEntryRun', {
+      cause: owner,
+      target,
+      perk: choice.perk,
+      flag: choice.fragment,
+    });
     if (choice.spell !== undefined) await runtime.magic.cast(choice.spell, owner, target, owner);
     const attachments = await runtime.forms.attachments(choice.perk);
     const fragment = attachments?.fragments.find((entry) => entry.stage === choice.fragment);
