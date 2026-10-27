@@ -200,7 +200,7 @@ export class GameSession {
 
   /** The INI settings: the player's over the installation's over the engine's defaults. */
   get ini(): IniSettings {
-    this.#ini ??= new IniSettings(this.vfs.defaultIni, this.preferences);
+    this.#ini ??= new IniSettings(this.vfs.ini, this.preferences);
     return this.#ini;
   }
 

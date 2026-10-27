@@ -5,6 +5,8 @@
 // defaults. TODO(M13): the detail presets and the Advanced settings (detail, view distance,
 // water) applied by the renderer; it draws at Ultra for now.
 
+import { iniValue, type Ini } from '../formats/ini/ini.ts';
+
 /** What the launcher's Options keep (SkyrimPrefs.ini). */
 export interface LauncherPrefs {
   /** [Display] bFull Screen off: a window (the page as it is) instead of full screen. */
@@ -15,6 +17,14 @@ export interface LauncherPrefs {
 
 const STORAGE_KEY = 'itjw.SkyrimPrefs';
 const DEFAULT_PREFS: LauncherPrefs = { windowed: false, detail: 'ultra' };
+
+function hasStoredPrefs(): boolean {
+  try {
+    return localStorage.getItem(STORAGE_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
 
 export function loadPrefs(): LauncherPrefs {
   try {
@@ -94,6 +104,17 @@ export class Launcher {
         }
       });
     }
+  }
+
+  /**
+   * The player's INI settings (an imported SkyrimPrefs.ini) where the launcher's Options were
+   * never saved here: [Display] bFull Screen 0 runs the game in a window.
+   */
+  useIni(ini: Ini): void {
+    if (hasStoredPrefs()) return;
+    const fullScreen = iniValue(ini, 'Display', 'bFull Screen');
+    if (fullScreen === undefined) return;
+    this.#prefs = { ...this.#prefs, windowed: Number.parseInt(fullScreen, 10) === 0 };
   }
 
   get prefs(): LauncherPrefs {

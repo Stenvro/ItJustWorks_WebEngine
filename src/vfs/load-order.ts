@@ -37,6 +37,8 @@ export interface PluginCandidate {
   readonly name: string;
   /** `undefined` if the header is unreadable; then only the extension counts. */
   readonly header: PluginHeader | undefined;
+  /** MAST: the plugins it needs loaded before it (none known if the record was unreadable). */
+  readonly masters?: readonly string[] | undefined;
 }
 
 export type PluginSource = 'implicit' | 'Skyrim.ccc' | 'plugins.txt';
@@ -55,6 +57,8 @@ export interface LoadOrderEntry {
 export interface LoadOrderResult {
   readonly entries: readonly LoadOrderEntry[];
   readonly problems: readonly string[];
+  /** Active plugins not loaded for a missing or inactive master (lower case → the reason). */
+  readonly refused: ReadonlyMap<string, string>;
 }
 
 function lines(text: string | undefined): string[] {
@@ -113,11 +117,13 @@ export function computeLoadOrder(input: {
     ...classified.filter((p) => p.isMaster),
     ...classified.filter((p) => !p.isMaster),
   ];
+  const refused = refuseMissingMasters(sorted, present, problems);
 
   const entries: LoadOrderEntry[] = [];
   let full = 0;
   let light = 0;
   for (const plugin of sorted) {
+    if (refused.has(asciiLowerCase(plugin.name))) continue;
     if (plugin.isLight) {
       if (light >= MAX_LIGHT_PLUGINS) {
         problems.push(`${plugin.name} not loaded: at most ${MAX_LIGHT_PLUGINS} light plugins`);
@@ -132,7 +138,53 @@ export function computeLoadOrder(input: {
       entries.push({ ...plugin, modIndex: full++, lightIndex: undefined });
     }
   }
-  return { entries, problems };
+  return { entries, problems, refused };
+}
+
+/**
+ * A plugin whose master (MAST) is missing from Data or not active is not loaded, and so in turn
+ * are the plugins that need it (the game refuses such a plugin rather than load records that
+ * point into a file it lacks). Returns the refused plugins (lower case) with the reason; a
+ * master that loads after a plugin needing it is reported but loaded.
+ * TODO(M13): what the original does with a master loading after its dependent (LOOT and
+ * libloadorder call that order invalid; the game is not documented to refuse it).
+ */
+function refuseMissingMasters(
+  sorted: readonly { readonly name: string }[],
+  present: ReadonlyMap<string, PluginCandidate>,
+  problems: string[],
+): Map<string, string> {
+  const refused = new Map<string, string>();
+  const mastersOf = (name: string): readonly string[] =>
+    present.get(asciiLowerCase(name))?.masters ?? [];
+  // Refusing one can refuse those that need it: repeat until nothing changes.
+  for (let changed = true; changed;) {
+    changed = false;
+    const loaded = new Set(
+      sorted.map((p) => asciiLowerCase(p.name)).filter((key) => !refused.has(key)),
+    );
+    for (const plugin of sorted) {
+      const key = asciiLowerCase(plugin.name);
+      if (refused.has(key)) continue;
+      const lacking = mastersOf(plugin.name).find((master) => !loaded.has(asciiLowerCase(master)));
+      if (lacking === undefined) continue;
+      const why = present.has(asciiLowerCase(lacking)) ? 'is not active' : 'is missing';
+      const reason = `its master ${lacking} ${why}`;
+      refused.set(key, reason);
+      problems.push(`${plugin.name} not loaded: ${reason}`);
+      changed = true;
+    }
+  }
+  const position = new Map(sorted.map((p, i) => [asciiLowerCase(p.name), i]));
+  sorted.forEach((plugin, i) => {
+    if (refused.has(asciiLowerCase(plugin.name))) return;
+    for (const master of mastersOf(plugin.name)) {
+      if ((position.get(asciiLowerCase(master)) ?? -1) > i) {
+        problems.push(`${plugin.name} loads before its master ${master}`);
+      }
+    }
+  });
+  return refused;
 }
 
 /** Archive list from the INI, or the default list if it is missing. */

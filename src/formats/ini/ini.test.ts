@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { iniValue, parseIni, splitIniList } from './ini.ts';
+import { iniValue, mergeIni, parseIni, splitIniList } from './ini.ts';
 
 describe('parseIni', () => {
   const ini = parseIni(
@@ -31,5 +31,17 @@ describe('parseIni', () => {
       'C.bsa',
     ]);
     expect(splitIniList(undefined)).toEqual([]);
+  });
+
+  it('layers files: a later one replaces only the keys it sets', () => {
+    const merged = mergeIni([
+      ini,
+      undefined,
+      parseIni('[ARCHIVE]\nbExtra=0\n[Display]\nfGamma=1.2'),
+    ]);
+    expect(iniValue(merged, 'Archive', 'bExtra')).toBe('0');
+    expect(iniValue(merged, 'General', 'sLanguage')).toBe('ENGLISH');
+    expect(iniValue(merged, 'Display', 'fGamma')).toBe('1.2');
+    expect(iniValue(ini, 'Archive', 'bExtra')).toBe('1');
   });
 });
