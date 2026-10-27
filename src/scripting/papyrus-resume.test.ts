@@ -89,7 +89,7 @@ class Host implements VmHost {
   native(script: string, fn: string): NativeFunction | undefined {
     if (script === 'utility' && fn === 'slow') {
       const answer = this.slow;
-      return () => (answer === undefined ? new Promise<null>(() => undefined) : answer);
+      return () => answer ?? new Promise<null>(() => undefined);
     }
     if (script !== 'utility' || fn !== 'wait') return undefined;
     return ({ vm, args, latent }) => {
