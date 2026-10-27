@@ -2279,6 +2279,84 @@ that took its draw stands in its combat stance: its teeth and claws are out (the
 weaponDraw on the way, the spider's only as its attacks end, and its draw ran out again and
 again).
 
+### The combat behaviour tree
+
+The tree's shape was observed in the original (the 28 functions that build its subtrees;
+behaviour only): `src/ai/combat-tree.ts` holds it as data, `src/ai/combat-subtrees.ts` the
+choices its leaves make, `src/shell/actor-combat-ai.ts` runs it.
+
+- **Movement.** A Movement Parallel runs Check Unreachable Target and Acquire Weapon beside the
+  Movement Selector, a dynamic selector checked every 0.25 s whose entries, first to last, are
+  Essential Down (an idle while an essential actor is down), Flight, Flee, Hide, Return To
+  Combat Area, Exit Water, Search (while its group searches), Ranged Movement (the inventory's
+  range beyond fCombatRangedDistance, 1024: a short-range spell closes in as a sword does),
+  Flanking Movement (the style's flanking flag) and Close Movement. Ours keeps that order;
+  Flight and Flee run from the root, Search as the search mode (below), and Acquire Weapon and
+  Check Unreachable Target take the movement over while they act (the engine's movement
+  resource).
+- **Exit Water** (read): the water stands above the actor's feet and its navmesh triangle is
+  flagged water, and a second test of the actor holds (TODO(M13): which; ours: its movers swim
+  it). It runs to the nearest dry triangle it reaches.
+- **Check Unreachable Target**: a way that could not be found marks the target unreachable for
+  fCombatUnreachableTargetCheckTime (3 s). With a ranged option the close movement falls back to
+  ranged (Fallback To Ranged); without one it holds where it stands, and target selection weighs
+  the unreachable target down so a reachable one is fought first (TODO(M13): the weight).
+- **Acquire Weapon** (Find Weapon Sequence, Move to Weapon, the pick-up): one that held a weapon
+  this fight and has only its fists looks within fCombatAcquireWeaponUnarmed (Disarmed)
+  DistanceMin .. Max (as far as its target stands, within the pair) for a weapon lying there,
+  not within fCombatAcquireWeaponMinimumTargetDistance of its target; each is scored by its
+  damage (melee × fCombatAcquireWeaponMeleeScoreMult) less its distance's share of
+  fCombatAcquireWeaponScoreCostMult, and taken if it beats its fists by
+  fCombatAcquireWeaponMinimumScoreMult; it runs there, bends fCombatAcquirePickupAnimationDelay
+  and takes it into its hand; it looks again fCombatAcquireWeaponSearchFailedDelay after a
+  failed search, SuccessDelay after a weapon (TODO(M13): the score is inferred from the
+  settings' names).
+- **Use Cover** (Find Cover Sequence; Use Cover Repeat: Wait Behind Cover, Attack From Cover),
+  the first of Ranged Movement's entries: the navmeshes' cover edges (NAVM triangle cover: a
+  value 4–14 is that many × 16 units high, 15 full) within fCombatCoverSearchDistanceMin ..
+  Max, facing the target (within 60°), at least fCombatCoverCheckCoverHeightMin high, at least
+  fCombatCoverMinimumRange from it and at most its range × fCombatCoverMaxRangeMult, its way
+  keeping fCombatCoverAvoidTargetRadius off it; the nearest is taken. There it crouches its wait
+  time (fCombatCoverWaitTimeMin / Mid / Max on its defensive mult) without drawing, stands to
+  shoot its attack time (fCombatCoverAttackTime\* on its offensive mult), and again; none found,
+  it looks again fCombatCoverSearchFailedDelay later (TODO(M13): the engine's scoring of cover
+  and the style value on the time scales).
+- **Flee** (Flee Context: Start Flee; the Flee Selector's Flee To Ally, Flee Through Door, Flee
+  To Cover, Flee, Unrestricted Flee, Boost Confidence; then Hide): through a door by
+  fCombatFleeUseDoorChance (0.33), the nearest within fCombatFleeDoorDistanceMax that lies
+  farther from its enemy than it stands and whose way keeps fCombatFleeDoorTargetCheckDistance
+  off it, not again within fCombatFleeUseDoorRestrictTime; to cover hidden from its enemy at
+  least fCombatFleeCoverMinDistance from it within fCombatFleeCoverSearchRadius, where it stays
+  turned to it; else away (fFleeDistance\*), cowering where it can go no farther (TODO(M13):
+  what it does past a load door).
+- **Flanking Movement** (Stalk, then the Flank Selector: Flank, Chase, Flank Distant, Watch
+  Target): far off the chase; else the maneuver (flank or stalk), out of range Flank Distant
+  (circling at a distance), else the close movement selector.
+- **Low Combat**, the low process's own root (the Low Combat Selector, every second): Flee while
+  it flees; Attack (blows without their animations, landing by fCombatLowTargetHitPercent, 0.5,
+  fCombatLowFleeingTargetHitPercent, 0.25, on one that flees) within
+  fCombatLowMaxAttackDistance (2048); else Pursue; Search once its group searches. Ours runs it
+  for a fighter the movers do not run (TODO(M13): ours keeps nearly every fighter of the loaded
+  area in the high process, and its blow still swings).
+- **Search** (Wait to Start Search; Search Repeat: the Search Selector's Search Location,
+  Search, Search Unimportant Location, Search Wander, Search Center, Search Idle and Fail Search,
+  then the Investigate Selector's Investigating Door, Investigating, Looking): ours stands
+  fCombatSearchStartWaitTime, goes to the place, investigates it, then wanders within the
+  search radius (fCombatSearchInterior / ExteriorRadiusMin .. Max) in steps of at most
+  fCombatSearchWanderDistance, looking fCombatSearchLookTime at each (TODO(M13): the priority
+  points and the doors).
+- **Casters** (`chooseCaster`, `holdsRestore`, `holdsWard`; TODO(M13): the stage still weighs
+  its support with `chooseSupport`, without reanimation, and the rules below are not wired to
+  it yet): a ward against what comes at it with
+  fCombatMagicWardMagickaCastLimit of its magicka, held at least fCombatMagicWardMinCastTime;
+  restore below its restore share, a held healing spell cast on until its health is
+  fCombatRestoreStopCastThreshold past that share (inferred); a summons (not within
+  fCombatMagicSummonRestrictTime); a corpse raised within fCombatMagicReanimateDistance (not
+  within its restrict time); a buff. Potions come before the hands' spells: the Action Equipment
+  Selector's slots run Scroll, Staff, Shout, Potion, Magic, Block, Ranged, Melee. Prepare Dual
+  Cast (Prepare Dual Cast Immediate / Concentration under the Casting Type Selector) holds while
+  both hands charge, broken off after fCombatMagicDualCastInterruptTime (2.5 s).
+
 ### Style values
 
 Observed in the original: the engine never uses a combat style's (CSTY) value as a chance

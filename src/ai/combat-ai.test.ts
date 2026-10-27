@@ -119,6 +119,14 @@ describe('combat AI: target selection', () => {
     expect(selectTarget([candidate(1), candidate(2, { attacking: true })], undefined)).toBe(2);
   });
 
+  it('turns from a target its way cannot reach to one it can (Check Unreachable Target)', () => {
+    const stuck = candidate(1, { distance: 100, unreachable: true });
+    const farther = candidate(2, { distance: 900 });
+    expect(selectTarget([stuck, farther], 1)).toBe(2);
+    // The only one: it stays its target.
+    expect(selectTarget([stuck], 1)).toBe(1);
+  });
+
   it('counts a target it lost less than one it sees', () => {
     const lost = candidate(1, { distance: 100, detected: false });
     const seen = candidate(2, { distance: 700 });

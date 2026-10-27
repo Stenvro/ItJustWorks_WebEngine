@@ -537,6 +537,8 @@ export interface TargetCandidate {
   readonly player?: boolean;
   /** How many of the actor's allies already fight it (crowding). */
   readonly crowd?: number;
+  /** Its way cannot reach it and it has nothing that reaches from afar (Check Unreachable Target). */
+  readonly unreachable?: boolean;
 }
 
 /**
@@ -602,9 +604,16 @@ export function targetScore(
     (candidate.attacking ? settings.attackerBonus : 0) +
     (candidate.player === true ? settings.playerTargetBonus : 0) -
     settings.crowdingPenalty * (candidate.crowd ?? 0) -
-    (candidate.detected ? 0 : settings.lostTargetPenalty)
+    (candidate.detected ? 0 : settings.lostTargetPenalty) -
+    (candidate.unreachable === true ? UNREACHABLE_TARGET_PENALTY : 0)
   );
 }
+
+/**
+ * An unreachable target's score is lowered by this, so a reachable one is fought first (the
+ * engine's reachability in target selection; TODO(M13): its weight, no setting names it).
+ */
+export const UNREACHABLE_TARGET_PENALTY = 2;
 
 /**
  * Whether it chooses its target again now (re-selection timing): every
