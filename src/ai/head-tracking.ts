@@ -136,45 +136,129 @@ export function noticesPlayer(
   eye: Vec3,
   maxDistance: number,
 ): boolean {
-  return chooseLookActor(head, heading, [{ reference: 0, head: eye }], maxDistance) === 0;
+  return (
+    chooseLookActor(head, heading, [{ reference: 0, head: eye }], maxDistance)?.reference === 0
+  );
+}
+
+/** Why another actor is worth a look (lookPriority). */
+export interface LookInterest {
+  /** It is the player. */
+  readonly player?: boolean | undefined;
+  /** The player is in a conversation. */
+  readonly talking?: boolean | undefined;
+  /** It says a line now (IsTalking). */
+  readonly speaking?: boolean | undefined;
+  /** It moves of itself. */
+  readonly moving?: boolean | undefined;
 }
 
 /** Another actor's head, as an actor choosing whom to look at sees it. */
 export interface LookCandidate {
   readonly reference: number;
   readonly head: Vec3;
+  readonly interest?: LookInterest | undefined;
+}
+
+/** The priorities of the looks an actor chooses itself, lowest first (lookPriority). */
+export const LookPriority = { idle: 0, moving: 1, speaking: 2, player: 3 } as const;
+
+/**
+ * The share of fAIMaxHeadTrackDistance within which the player is close enough to be looked at
+ * before anyone else. TODO(M13): the engine's scores of its candidates are not read; the order
+ * here is the one the game shows: the player in a conversation or close, then whoever speaks,
+ * then whoever moves, then the rest.
+ */
+export const PLAYER_CLOSE_SHARE = 0.5;
+
+/** How much a candidate is worth a look (LookPriority), `distance` away of `maxDistance`. */
+export function lookPriority(
+  interest: LookInterest | undefined,
+  distance: number,
+  maxDistance: number,
+): number {
+  if (!interest) return LookPriority.idle;
+  if (interest.player && (interest.talking || distance <= maxDistance * PLAYER_CLOSE_SHARE)) {
+    return LookPriority.player;
+  }
+  if (interest.speaking) return LookPriority.speaking;
+  if (interest.moving) return LookPriority.moving;
+  return LookPriority.idle;
 }
 
 /**
  * Whom an actor without a target of its own looks at among the other actors (observed in the
  * original): one within fAIMaxHeadTrackDistance of it (game units) and within 120° of
- * its facing (`heading`: compass, radians), the best one. TODO(M13): the engine scores the
- * candidates by a rule not read yet; here the nearest is the best.
+ * its facing (`heading`: compass, radians), the best one: the highest lookPriority, the nearest
+ * of those. One it chose a moment ago (`keep`) stays while it may still be looked at and none
+ * worth more has come.
  */
 export function chooseLookActor(
   head: Vec3,
   heading: number,
   candidates: Iterable<LookCandidate>,
   maxDistance: number,
-): number | undefined {
-  let best: number | undefined;
-  let bestDistance = Infinity;
+  keep?: number,
+): { readonly reference: number; readonly priority: number } | undefined {
+  let best: { reference: number; priority: number; distance: number } | undefined;
+  let kept: { reference: number; priority: number } | undefined;
   const facing = [Math.sin(heading), Math.cos(heading)] as const;
   for (const candidate of candidates) {
     const dx = candidate.head[0] - head[0];
     const dy = candidate.head[1] - head[1];
     const dz = candidate.head[2] - head[2];
     const distance = Math.hypot(dx, dy, dz);
-    if (distance > maxDistance || distance >= bestDistance) continue;
+    if (distance > maxDistance) continue;
     const horizontal = Math.hypot(dx, dy);
     if (horizontal > 1e-3) {
       const cosine = (dx * facing[0] + dy * facing[1]) / horizontal;
       if (cosine < Math.cos(LOOK_CHOICE_ANGLE)) continue;
     }
-    best = candidate.reference;
-    bestDistance = distance;
+    const priority = lookPriority(candidate.interest, distance, maxDistance);
+    if (candidate.reference === keep) kept = { reference: candidate.reference, priority };
+    if (
+      best &&
+      (priority < best.priority || (priority === best.priority && distance >= best.distance))
+    ) {
+      continue;
+    }
+    best = { reference: candidate.reference, priority, distance };
   }
-  return best;
+  if (kept && best && kept.priority >= best.priority) return kept;
+  return best && { reference: best.reference, priority: best.priority };
+}
+
+/** How far ahead along its path a walking actor looks (units). TODO(M13): the engine's. */
+export const PATH_LOOK_AHEAD = 256;
+
+/**
+ * Where an actor walking a path looks: the point `ahead` units along its way from where it
+ * stands (`from`: its feet) through the path's points still ahead, at its head's height (the
+ * path's end if that is nearer). Undefined: no way ahead.
+ */
+export function pathLookPoint(
+  from: Vec3,
+  headHeight: number,
+  points: readonly Vec3[],
+  ahead = PATH_LOOK_AHEAD,
+): Vec3 | undefined {
+  let left = ahead;
+  let at: Vec3 = from;
+  let last: Vec3 | undefined;
+  for (const point of points) {
+    const dx = point[0] - at[0];
+    const dy = point[1] - at[1];
+    const length = Math.hypot(dx, dy);
+    if (length < 1e-3) continue;
+    last = point;
+    if (length >= left) {
+      const t = left / length;
+      return [at[0] + dx * t, at[1] + dy * t, from[2] + headHeight];
+    }
+    left -= length;
+    at = point;
+  }
+  return last && [last[0], last[1], from[2] + headHeight];
 }
 
 /**

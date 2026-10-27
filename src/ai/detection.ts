@@ -436,6 +436,22 @@ export interface DetectionLevel {
   readonly skill: number;
 }
 
+/** PKDT package type of an Ambush package (CommonLibSSE PACKAGE_TYPE::kAmbush). */
+export const AMBUSH_PACKAGE_TYPE = 9;
+
+/**
+ * How an observer's ambush weighs a target (Observer.ambush): an observer whose running package
+ * is an Ambush waits for whom it would fight ('target': fSneakAmbushTargetMod, heard without a
+ * line of sight too), and is less watchful of anyone else ('other': fSneakAmbushNonTargetMod).
+ * Skyrim.esm has no package of that type (its ambushes are Sleep and Sit packages in ambush
+ * furniture, sprung by masterAmbushScript); plugins may. TODO(M13): the Ambush package's own
+ * target (TESAmbushPackageData) is not read; whom it is hostile to stands in for it.
+ */
+export function ambushOf(packageType: number | undefined, hostile: boolean): Observer['ambush'] {
+  if (packageType !== AMBUSH_PACKAGE_TYPE) return undefined;
+  return hostile ? 'target' : 'other';
+}
+
 /**
  * The engine's rounding of a detection level: a level between 0 and 1 is 1, else its whole part
  * (towards zero).

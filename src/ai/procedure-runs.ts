@@ -4,7 +4,7 @@
 // where the engine's own rule is not known it is marked TODO(M13). Platform-independent.
 
 import { AI_DEFAULTS, type AiSettings } from './ai-settings.ts';
-import { followGait, followRadii, followSpeed } from './followers.ts';
+import { followGait, followGoal, followRadii, followSpeed } from './followers.ts';
 import { IdleCollectionFlag } from './idle-records.ts';
 import { sameSpace } from './package-start.ts';
 import {
@@ -345,9 +345,10 @@ async function stayAtPatrolPoint(run: ProcedureRun, point: number): Promise<bool
 }
 
 /**
- * Follow: keeps within its maximum radius of its target, closing to the minimum when it falls
- * behind (one fFollowSpaceBetweenFollowers farther for each of the leader's followers nearer
- * it), running when far behind or when the leader runs; stands, facing it, between. Through
+ * Follow: keeps within its maximum radius of its target; fallen behind, it makes for its place
+ * its minimum behind the leader, on the side it is on (followGoal; one fFollowSpaceBetweenFollowers
+ * farther for each of the leader's followers nearer it), running beyond its walk zone or when
+ * the leader runs; stands, facing it, between. Through
  * load doors and on fast travel the player's followers come along (src/shell/actor-followers.ts);
  * its horse it rides where the package lets it (body.ride). Its radii without its own are the
  * engine's (followRadii); on its way its path follows the leader as it moves (searched again
@@ -374,10 +375,13 @@ const numberIn = (run: ProcedureRun, slot: number): number | undefined => {
   return value?.kind === 'int' || value?.kind === 'float' ? value.value : undefined;
 };
 
+/** A follower is at its place behind its leader this near it (units). */
+const FOLLOW_ARRIVE = 64;
+
 /**
  * One step of following a leader within radii (Follow, FollowTo): farther than its maximum
  * (one fFollowSpaceBetweenFollowers farther for each of the leader's followers nearer it) it
- * goes after it until within its minimum; else it stands facing it a moment.
+ * makes for its place behind it (followGoal); else it stands facing it a moment.
  */
 async function followStep(
   run: ProcedureRun,
@@ -410,10 +414,17 @@ async function followStep(
       player: leader === PLAYER,
     },
     settings.followStartSprintDistance,
+    settings.followWalkZoneMult,
   );
+  // It makes for its place behind the leader, on its side (followGoal), as the leader moves.
+  const goal = followGoal(at, here, near);
+  const offset = [goal[0] - at.position[0], goal[1] - at.position[1]] as const;
   const options: TravelOptions = {
     moving: {
-      position: () => run.mind.livePosition?.(leader),
+      position: () => {
+        const there = run.mind.livePosition?.(leader);
+        return there && [there[0] + offset[0], there[1] + offset[1], there[2]];
+      },
       recalc: settings.recalcFollowPath,
     },
     speedMult: (gaitSpeed) => {
@@ -429,7 +440,7 @@ async function followStep(
       });
     },
   };
-  if (!(await run.body.travel(at.position, gait, near, at.space, options))) {
+  if (!(await run.body.travel(goal, gait, FOLLOW_ARRIVE, at.space, options))) {
     await run.wait(IDLE_SECONDS);
   }
 }
