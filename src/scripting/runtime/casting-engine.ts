@@ -33,6 +33,7 @@ import {
   powerReady,
   regeneratesWhileCasting,
   releaseCast,
+  touchReach,
   type CastingSettings,
   type HandCast,
 } from '../../gameplay/magic/casting.ts';
@@ -130,7 +131,10 @@ export interface Delivered {
 export interface DeliverOptions {
   /** The target faces where it came from (a ward meets it). Default: true. */
   readonly facing?: boolean;
-  /** A concentration spell's hit: the seconds it stands for (its effects at once by that). */
+  /**
+   * A concentration spell's hit: the seconds it stands for (its effects held a few such past
+   * it, its skill trained by it).
+   */
   readonly seconds?: number;
   /** Where it landed (a Target Location spell's summon or hazard stands there). */
   readonly at?: Point;
@@ -217,6 +221,14 @@ export class CastingEngine {
   }
 
   #emit(event: CastEvent): void {
+    // A concentration spell that stops takes off what lasts only while it is held.
+    const cast = event.cast;
+    if (
+      cast !== undefined &&
+      (event.kind === 'stop' || event.kind === 'cancel') &&
+      cast.castable.item.castType === CastType.concentration
+    )
+      this.#runtime.magic.endHeld(cast.actor, cast.castable.item.formId);
     for (const listener of this.listeners) listener(event);
     this.#tellCast(event);
   }
@@ -244,6 +256,26 @@ export class CastingEngine {
       spell = event.cast.castable.item.formId;
     }
     if (spell !== undefined) this.#runtime.events.emit('spellCast', { caster: event.actor, spell });
+  }
+
+  /**
+   * How far a caster's Touch spell reaches (casting.ts touchReach): its race's unarmed reach ×
+   * its scale (its reference's, × its base's height, NPC_ NAM6, as the engine's GetScale).
+   */
+  async touchReach(caster: number): Promise<number> {
+    const runtime = this.#runtime;
+    const { casting } = await this.settings();
+    if (!(await runtime.actors.isActor(caster))) return touchReach(undefined, casting);
+    const race = await runtime.actors.race((await runtime.actors.raceOf(caster)) ?? 0);
+    const info = await runtime.actors.info(caster);
+    const base = info === undefined ? undefined : await runtime.forms.record(info.traits.formId);
+    const nam6 = base?.fields.first('NAM6');
+    const height =
+      nam6 && nam6.byteLength >= 4
+        ? new DataView(nam6.buffer, nam6.byteOffset, 4).getFloat32(0, true)
+        : 1;
+    const scale = ((await runtime.placement(caster))?.scale ?? 1) * (height > 0 ? height : 1);
+    return touchReach({ unarmedReach: race?.unarmedReach ?? 0, scale }, casting);
   }
 
   /** The settings (GMSTs), read once. */
@@ -504,7 +536,7 @@ export class CastingEngine {
       case 'spell': {
         const magicka = (await runtime.actors.value(actor, MAGICKA)).current;
         const needed = castable.item.castType === CastType.concentration ? 0 : cost.magicka;
-        // TODO(M13): what a concentration spell needs to begin (any magicka here).
+        // A concentration spell begins with any magicka left (observed in the original).
         if (magicka <= 0 || magicka < needed - 1e-6) return this.#refuse(actor, source, 'magicka');
         break;
       }
@@ -573,9 +605,25 @@ export class CastingEngine {
               : undefined;
       const text = setting === undefined ? undefined : await runtime.gameSetting(setting);
       if (typeof text === 'string' && text) runtime.world.notification?.(text);
+      await this.#failSound(source);
     }
     this.#emit({ actor, source, kind: 'refused', reason });
     return reason;
+  }
+
+  /**
+   * The player's cast fails (refused, or a concentration spell out of magicka): the magic
+   * system's failure sound, the voice's for a shout (CommonLibSSE PlayerCharacter
+   * PlayMagicFailureSound: the default objects Magic Fail Sound, Shout Fail Sound).
+   */
+  async #failSound(source: number): Promise<void> {
+    const runtime = this.#runtime;
+    const sound = await runtime.magic.defaultObject(
+      source === CastingSource.voice
+        ? DefaultObjectUse.shoutFailSound
+        : DefaultObjectUse.magicFailSound,
+    );
+    if (sound !== undefined) runtime.world.playSound?.(sound, PLAYER_REF);
   }
 
   /**
@@ -650,6 +698,7 @@ export class CastingEngine {
         const magicka = (await runtime.actors.value(actor, MAGICKA)).current;
         if (magicka < cost.magicka - 1e-6) {
           runtime.progression.refused(actor, 'magicka');
+          if (actor === PLAYER_REF) await this.#failSound(cast.source);
           return false;
         }
         await runtime.progression.spend(actor, MAGICKA, cost.magicka);
@@ -743,7 +792,12 @@ export class CastingEngine {
     }
   }
 
-  /** A concentration spell spends what it held for; out of magicka, it stops. */
+  /**
+   * A concentration spell spends what it held for; out of magicka, it stops (observed in the
+   * original: a concentration spell is cast while any magicka is left, a fire and
+   * forget spell needs its whole cost), the player hearing the failure sound as the HUD's
+   * magicka meter blinks.
+   */
   async #concentrate(key: string, cast: ActiveCast, amount: number): Promise<void> {
     const runtime = this.#runtime;
     // The time was held: it is paid even if the spell was let go meanwhile.
@@ -753,6 +807,7 @@ export class CastingEngine {
     this.#casts.delete(key);
     cast.hand.phase = 'done';
     runtime.progression.refused(cast.actor, 'magicka');
+    if (cast.actor === PLAYER_REF) await this.#failSound(cast.source);
     this.#emit({ actor: cast.actor, source: cast.source, kind: 'stop', cast, reason: 'magicka' });
   }
 
@@ -772,10 +827,10 @@ export class CastingEngine {
     const { caster, item } = delivered;
     const actor = await runtime.actors.isActor(target);
     const hostile = target !== caster && (await runtime.magic.hostile(item));
+    // A concentration spell's hit puts its effects on while it is held (they act each frame:
+    // magic-engine.ts); a fire and forget spell's act at once by what reaches.
     let scale =
-      options.effectiveness === undefined
-        ? options.seconds
-        : (options.seconds ?? 1) * Math.max(0, options.effectiveness);
+      options.effectiveness === undefined ? undefined : Math.max(0, options.effectiveness);
     if (actor && hostile && !(await runtime.actors.isDead(target))) {
       if (await this.#absorbed(delivered, target)) return 0;
       const ward = await this.#ward(delivered, target, options);
@@ -1227,6 +1282,7 @@ export class CastingEngine {
       return 'casting';
     }
     if (!unchecked && (runtime.state.actors.get(actor)?.voiceRecoveryTime ?? 0) > 0) {
+      if (actor === PLAYER_REF) await this.#failSound(CastingSource.voice);
       this.#emit({ actor, source: CastingSource.voice, kind: 'refused', reason: 'voice' });
       return 'voice';
     }

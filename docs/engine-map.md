@@ -122,12 +122,12 @@ These run through every area and explain most of what breaks in play.
 
 | System                  | Status  | Main gaps                                                                                                           |
 | ----------------------- | ------- | ------------------------------------------------------------------------------------------------------------------- |
-| Casting                 | partial | MQ101's storm rate in the sim; concentration refusal, Touch reach (unread); NPC ward past its minimum               |
+| Casting                 | partial | MQ101's storm rate in the sim; NPC ward past its minimum (concentration refusal, fail sound, Touch reach: done)     |
 | Magicka cost            | partial | an NPC's cast in the sim                                                                                            |
-| Active effects          | partial | displacement rules, the conditions' interval, concentration effects a frame at a time                               |
+| Active effects          | partial | displacement rules, the conditions' interval (concentration effects a frame at a time: done)                        |
 | Archetypes              | partial | invisibility's refraction shimmer (dithered now), a summon's other place when the way is blocked, Magelight's limit |
 | Skill use               | partial | staffs with perks, a lasting effect by its first frame                                                              |
-| Enchanting              | partial | the charge without EAMT; worn armour shows no glow (TODO(M13): unchecked in the game)                               |
+| Enchanting              | partial | the charge without EAMT; worn armour shows no glow (TODO(M13): unchecked); dropped and made items glow: done        |
 | Projectiles, explosions | partial | a cone's push as its front passes, a lobber's slide on a slope; cone waves and stuck Magelights not saved           |
 | Visual effects          | partial | RFCT flags (face target, attach to camera); art on held weapons at the hand node                                    |
 | Perks                   | partial | 16 entry points unused by vanilla (mods)                                                                            |

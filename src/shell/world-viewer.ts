@@ -968,7 +968,7 @@ export class WorldViewer {
         created.instance.world.set(world);
         created.instance.motion.version++;
       } else {
-        this.#created?.remove(reference, this.#play);
+        this.#removeCreated(reference);
         await this.#showCreated(reference);
       }
       return;
@@ -1574,6 +1574,11 @@ export class WorldViewer {
         };
       }
     }
+    // A reference the game made (dropped, placed by a script).
+    const created = this.#created?.get(reference);
+    if (created?.instance) {
+      return { placed: { instances: [created.instance] }, visibility: created.visibility };
+    }
     return undefined;
   }
 
@@ -1717,6 +1722,22 @@ export class WorldViewer {
     );
     if (this.#cells.get(key)?.ready !== true || this.#world !== world) return;
     await this.#created.add(runtime, reference, this.#play);
+    // An enchanted weapon or armour the game made (dropped, an enchanted copy, a script's)
+    // glows as the placed ones do (#glowCell).
+    const created = this.#created.get(reference);
+    const type = created?.object.baseType;
+    if (!created || (type !== 'WEAP' && type !== 'ARMO')) return;
+    const glow = await itemGlow((formId) => runtime.forms.record(formId), created.object.base);
+    if (!glow || this.#created.get(reference) !== created) return;
+    this.#stage?.effects.glow(groundGlow(reference), reference, glow, () =>
+      this.#objectBody(reference),
+    );
+  }
+
+  /** A reference the game made goes from the screen (with its glow). */
+  #removeCreated(reference: number): void {
+    this.#stage?.effects.unglow(groundGlow(reference));
+    this.#created?.remove(reference, this.#play);
   }
 
   /** How often each skeleton's graph updates, by where it is seen from (animationRate). */
@@ -2450,7 +2471,7 @@ export class WorldViewer {
         Math.floor((at[12] ?? 0) / CELL_SIZE),
         Math.floor((at[13] ?? 0) / CELL_SIZE),
       );
-      if (key === cellKey(cell.x, cell.y)) this.#created?.remove(entry.reference, this.#play);
+      if (key === cellKey(cell.x, cell.y)) this.#removeCreated(entry.reference);
     }
     this.#play?.remove(cell.collision);
     for (const object of cell.data?.objects ?? []) {
