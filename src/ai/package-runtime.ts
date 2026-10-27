@@ -12,6 +12,7 @@
 
 import type { Condition } from '../scripting/conditions.ts';
 import { AI_DEFAULTS, type AiSettings } from './ai-settings.ts';
+import { upFirst } from './engine-packages.ts';
 import type { FlightRequest } from './flight.ts';
 import type { Gait } from './locomotion.ts';
 import {
@@ -696,7 +697,11 @@ export class ActorPackages {
     this.#body.stop();
     this.#body.face(undefined);
     const settings = this.#mind.settings?.() ?? AI_DEFAULTS;
-    void runner({
+    // In its furniture, it gets up first unless the package may run there (Get Up From Chair Or Bed).
+    void upFirst(
+      kind,
+      runner,
+    )({
       actor: this.actor,
       body: this.#body,
       mind: this.#mind,

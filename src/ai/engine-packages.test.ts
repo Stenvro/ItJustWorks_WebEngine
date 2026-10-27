@@ -7,6 +7,7 @@ import {
   avoidPlayer,
   avoidsPlayer,
   awayFrom,
+  Breath,
   getUpFromChairBed,
   reactToDestroyedObject,
   StealWarnings,
@@ -150,5 +151,54 @@ describe('engine packages', () => {
     await tick(actor, 0.1);
     expect(left).toBe(1);
     expect(actor.engine()).toBeUndefined();
+  });
+});
+
+describe('what starts Get Up and Surface', () => {
+  it('gets an actor up from its furniture before an engine package that moves it', async () => {
+    const order: string[] = [];
+    const lasting: ProcedureRunner = async (run) => {
+      while (!run.stopped()) await run.wait(1);
+      return 'failure';
+    };
+    let near = true;
+    const { actor } = packageActor(
+      [pack(1, procedure('lasting'))],
+      { lasting },
+      {
+        mind: { livePosition: () => (near ? [20, 0, 0] : [5000, 0, 0]) },
+        body: {
+          position: () => [50, 0, 0],
+          leaveFurniture: () => {
+            order.push('up');
+            return Promise.resolve();
+          },
+          travel: () => {
+            order.push('travel');
+            near = false;
+            return Promise.resolve(true);
+          },
+        },
+      },
+    );
+    await tick(actor, 1);
+    order.length = 0;
+    expect(actor.push('avoidPlayer', avoidPlayer)).toBe(true);
+    await tick(actor, 0.1);
+    expect(order.slice(0, 2)).toEqual(['up', 'travel']);
+  });
+
+  it('has a swimmer under water surface once its breath is short of the rise and a second', () => {
+    const settings = { swimBreathBase: 10, swimBreathMult: 0.5 };
+    const breath = new Breath();
+    // 35 s of breath; 200 units down at 100 a second: it surfaces with under 4 s left.
+    let surfaced = -1;
+    for (let second = 1; second <= 40 && surfaced < 0; second++) {
+      if (breath.step(1, true, 200, 100, settings)) surfaced = second;
+    }
+    expect(surfaced).toBe(32);
+    // Its head out, its breath is full again.
+    expect(breath.step(1, false, 0, 100, settings)).toBe(false);
+    expect(breath.left).toBeUndefined();
   });
 });

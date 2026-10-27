@@ -23,6 +23,7 @@ import {
   type MoveRequest,
 } from '../ai/locomotion.ts';
 import { aiSettingsOf } from '../ai/ai-settings.ts';
+import { Breath, HEAD_UNDER } from '../ai/engine-packages.ts';
 import {
   avoidance,
   avoidanceNeighbours,
@@ -212,6 +213,13 @@ export interface ActorMoversOptions {
   readonly blockedByPlayer?: (actor: number) => void;
   /** Others kept an actor from going on (bUseMovementBlockedPackage): it stands `seconds`. */
   readonly movementBlocked?: (actor: number, seconds: number) => void;
+  /**
+   * An actor under water is short of breath (src/ai/engine-packages.ts, Breath): the engine's
+   * Surface package, the water's surface at `top`; asked every step while it does not run.
+   */
+  readonly surface?: (actor: number, top: number) => void;
+  /** Whether an actor breathes water (WaterBreathing): it never runs short of breath. */
+  readonly breathesWater?: (actor: number) => boolean;
   readonly terminal: Terminal;
   /** An actor walked into (true) or out of a trigger volume of a reference. */
   readonly onTrigger?: (trigger: number, actor: number, entered: boolean) => void;
@@ -264,6 +272,8 @@ const WALKED_ROOT_SPEED = 30;
 const STALL_SECONDS = 0.5;
 /** The action that ends an idle at once (AACT; the characters' idle IdleStopInstant). */
 const IDLE_STOP_INSTANT = 'ActionIdleStopInstant';
+/** The action an actor's path starts with (its idles: the turns it sets out with). */
+const PATH_START = 'ActionPathStart';
 
 /** An actor on its way to a place. */
 interface Travel {
@@ -291,6 +301,8 @@ interface Travel {
   blockedBy: AvoidNode | undefined;
   /** It asked the player standing in its way to move (once a travel, before it goes round). */
   askedPlayer: boolean;
+  /** Its path start was performed (ActionPathStart: the turn it sets out with). */
+  pathStarted: boolean;
   /** The navmesh obstacles' version its path was searched at. */
   obstacles: number;
 }
@@ -415,6 +427,8 @@ export class ActorMovers {
   readonly #sneaking = new Set<number>();
   /** The actors in water that harms (water-hazard.ts). */
   readonly #hazards = new Map<number, WaterHazard>();
+  /** The breath of actors with their heads under water. */
+  readonly #breaths = new Map<number, Breath>();
   #bumpTiming: BumpTiming | undefined;
   readonly #bounds = new Map<string, Promise<{ center: Vec3; halfExtents: Vec3 } | undefined>>();
   #world: MoverWorld | undefined;
@@ -494,6 +508,7 @@ export class ActorMovers {
         blockedFor: 0,
         blockedBy: undefined,
         askedPlayer: false,
+        pathStarted: false,
         obstacles: this.#options.obstacles?.version ?? 0,
         done: (arrived) => {
           if (this.#travels.get(reference) !== travel) return;
@@ -661,7 +676,26 @@ export class ActorMovers {
     }
     if (step.request) {
       this.#requests.set(reference, this.#paced(this.#types(mover), travel, step.request));
+      this.#pathStart(mover, travel);
     }
+  }
+
+  /**
+   * An actor sets out on its way: the path's start action (ActionPathStart) once a travel, as its
+   * first request is made. Its idle tree picks the turn it sets out with by the way the path goes
+   * against its facing and the speed it is asked (GetPathingTargetAngleOffset,
+   * GetPathingTargetSpeed): standing, a canned turn on the spot or a turn into a walk
+   * (NPC_TurnRight90, NPC_TurnToWalkLeft90, ...); already going (GetMovementSpeed 24 or more),
+   * none. Its root motion turns it. TODO(M13): when exactly the engine performs it (each new
+   * path, or once a travel as here), and ActionPathEnd's turn into the heading it arrives with
+   * (its pathing target then is not kept).
+   */
+  #pathStart(mover: Mover, travel: Travel): void {
+    if (travel.pathStarted) return;
+    travel.pathStarted = true;
+    const perform = this.#options.performAction;
+    if (!perform || travel.direct || mover.root.driven) return;
+    void perform(mover.staged.reference, PATH_START);
   }
 
   /**
@@ -1517,7 +1551,7 @@ export class ActorMovers {
     this.#options.terminal.log(
       'actor',
       `${mover.staged.placed.actor.editorId || reference.toString(16)} gives way to ` +
-        `${other.staged.placed.actor.editorId || other.staged.reference.toString(16)}`,
+        (other.staged.placed.actor.editorId || other.staged.reference.toString(16)),
       'info',
     );
     return true;
@@ -2094,6 +2128,25 @@ export class ActorMovers {
         void waterHarmed(runtime, reference, done).catch(() => undefined);
       }
       if (at.type === undefined) this.#hazards.delete(reference);
+    }
+    // Its head under water, its breath runs out: the engine's Surface package once it is short.
+    const surface = this.#options.surface;
+    if (surface) {
+      const under =
+        at.surface !== undefined &&
+        at.submersion >= HEAD_UNDER &&
+        this.#options.breathesWater?.(reference) !== true;
+      const breath = this.#breaths.get(reference) ?? (under ? new Breath() : undefined);
+      if (breath && at.surface !== undefined && under) {
+        this.#breaths.set(reference, breath);
+        const speed = this.#types(mover)?.run.run.forward ?? 0;
+        const settings = aiSettingsOf(this.#options.session);
+        if (breath.step(step, true, at.surface - character.feet[2], speed, settings)) {
+          surface(reference, at.surface);
+        }
+      } else {
+        this.#breaths.delete(reference);
+      }
     }
     return swimming ? at.surface : undefined;
   }

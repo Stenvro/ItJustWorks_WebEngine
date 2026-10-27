@@ -13,7 +13,7 @@ import {
   type InvisibilitySettings,
 } from '../gameplay/magic/invisibility.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
-import { movementBlocked, reactToDestroyedObject } from '../ai/engine-packages.ts';
+import { movementBlocked, reactToDestroyedObject, surfaceTo } from '../ai/engine-packages.ts';
 import { RAGDOLL_FALL_SHARE } from '../gameplay/falling.ts';
 import { actorFell } from './time-flow.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -29,6 +29,7 @@ import type { RenderPort } from '../render/render-port.ts';
 import type { GpuScene, InstanceVisibility } from '../render/scene-renderer.ts';
 import { ragdollOf, referenceMatrix, type CellActor } from '../world/cell-loader.ts';
 import { linkedReferences, parseReference } from '../world/cell-records.ts';
+import { actorValueIndex } from '../world/actor-values.ts';
 import { RecordFlag } from '../formats/esm/record.ts';
 import type { GaitMotion, SoundingWorld } from './actor-sounds.ts';
 import { ActorGraphEvents } from './actor-graph-events.ts';
@@ -108,6 +109,9 @@ import { fliesByRace } from '../ai/flight.ts';
 
 /** Actors this near an object destroyed look at it (units; ours, TODO(M13)). */
 const REACT_DESTROYED_RADIUS = 1024;
+/** An actor's WaterBreathing (its breath under water) is read again after this (ms). */
+const WATER_BREATHING_READ_MS = 1000;
+const WATER_BREATHING = actorValueIndex('WaterBreathing') ?? 0;
 
 /** Where something is: its position, and the cell and worldspace the game state gives it. */
 export interface StagePlace {
@@ -368,6 +372,14 @@ export class ActorStage {
       blockedByPlayer: (actor) => void this.talk.bark(actor, 'ACAC', PLAYER_REF),
       movementBlocked: (actor, seconds) =>
         void this.ai.pushEngine(actor, 'movementBlocked', movementBlocked(seconds)),
+      // Short of breath under water: Surface (the engine package's start, observed in the original).
+      surface: (actor, top) =>
+        void this.ai.pushEngine(
+          actor,
+          'surface',
+          surfaceTo(() => top),
+        ),
+      breathesWater: (actor) => this.#breathesWater(actor),
       // A paired animation (a killmove) holds both actors: their clip places them.
       held: (actor) =>
         this.furniture.holds(actor) ||
@@ -1271,6 +1283,29 @@ export class ActorStage {
 
   /** A play runs (its physics world: projectiles fly). */
   #playing = false;
+
+  /** Whether actors under water breathe it (WaterBreathing), read again each second. */
+  readonly #waterBreathing = new Map<number, { breathes: boolean; read: number }>();
+
+  /**
+   * Whether an actor breathes water (its WaterBreathing above 0): the last value read (none yet:
+   * not), read again once it is a second old.
+   */
+  #breathesWater(actor: number): boolean {
+    const known = this.#waterBreathing.get(actor);
+    const now = performance.now();
+    const runtime = this.#options.session.scriptsReady;
+    if (runtime && (!known || now - known.read > WATER_BREATHING_READ_MS)) {
+      this.#waterBreathing.set(actor, { breathes: known?.breathes ?? false, read: now });
+      void runtime.actors
+        .value(actor, WATER_BREATHING)
+        .then((value) =>
+          this.#waterBreathing.set(actor, { breathes: value.current > 0, read: now }),
+        )
+        .catch(() => undefined);
+    }
+    return known?.breathes ?? false;
+  }
 
   /**
    * An object was destroyed (its destruction stage's Destroy flag): the actors near it that
