@@ -384,6 +384,10 @@ export class GameSession {
 
   constructor(vfs: Vfs, terminal: Terminal, presentation: SessionPresentation) {
     followWithHud(this.menuStack, this.hud);
+    // Scripts registered for a menu hear it open and close (RegisterForMenu: OnMenuOpen).
+    this.menuStack.listeners.add((event) => {
+      this.scriptsReady?.menuOpenClose(event.name, event.opening);
+    });
     this.vfs = vfs;
     const storage =
       presentation.storage === null

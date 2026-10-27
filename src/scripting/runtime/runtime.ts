@@ -716,6 +716,8 @@ const ATTACK_STATE_BASH = 6;
 const PLAYER_ACTION_SECONDS = 2;
 /** fRefTranslationAlmostDonePercent's built-in default: a translation's share "almost done". */
 const ALMOST_TRANSLATED = 0.9;
+/** The registrations' key prefix of a menu's (RegisterForMenu: `menu:` and its lowercase name). */
+const MENU_REGISTRATION = 'menu:';
 /** [General] uGridsToLoad's built-in default: the exterior cells loaded round the player's. */
 export const GRIDS_TO_LOAD = 5;
 const CELL_UNITS = 4096;
@@ -1197,6 +1199,8 @@ export class ScriptRuntime implements VmHost {
     loaded: (reference: number) => boolean,
   ): Promise<void> {
     for (const reference of references) {
+      // Its 3D goes: the animation events registered on it go with its graph.
+      if (loaded(reference)) this.animationGraphUnloaded(reference);
       if (!(await this.#hasScripts(reference))) continue;
       if (loaded(reference)) this.events.emit('objectLoaded', { reference, loaded: false });
       this.events.emit('cellAttachDetach', { reference, attached: false });
@@ -1413,6 +1417,29 @@ export class ScriptRuntime implements VmHost {
     return true;
   }
 
+  /**
+   * A reference's 3D (and with it its behavior graph) unloaded: the registrations for its
+   * animation events are dropped, and each one that registered hears it
+   * (OnAnimationEventUnregistered(akSource, asEventName), as the Creation Kit describes the
+   * event: the game removed the registration, so the script may register again on OnLoad).
+   */
+  animationGraphUnloaded(reference: number): void {
+    const events = this.#animationEvents.get(reference);
+    if (!events) return;
+    this.#animationEvents.delete(reference);
+    // The name reaches the script as registered, lowercase (the registrations keep it so).
+    for (const [name, receivers] of events) {
+      for (const receiver of receivers.values()) {
+        this.detach(
+          this.#sendTo(receiver, 'OnAnimationEventUnregistered', [
+            this.referenceHandle(reference),
+            name,
+          ]),
+        );
+      }
+    }
+  }
+
   /** The engine: a reference's behavior graph raised an event (OnAnimationEvent, waits). */
   animationEvent(reference: number, event: string): void {
     const lower = event.toLowerCase();
@@ -1446,6 +1473,33 @@ export class ScriptRuntime implements VmHost {
     if (on) receivers.set(target.key, target);
     else receivers.delete(target.key);
     return null;
+  }
+
+  /**
+   * SKSE's RegisterForMenu, UnregisterForMenu (a menu by name) and UnregisterForAllMenus
+   * (`name` undefined): a form, alias or active effect hears that menu open and close
+   * (OnMenuOpen, OnMenuClose with the menu's name) until it unregisters.
+   */
+  registerForMenu(target: ObjectHandle | null, name: string | undefined, on: boolean): null {
+    if (!target) return null;
+    if (name === undefined) {
+      for (const [kind, receivers] of this.#registrations)
+        if (kind.startsWith(MENU_REGISTRATION)) receivers.delete(target.key);
+      return null;
+    }
+    const kind = MENU_REGISTRATION + name.toLowerCase();
+    const receivers = this.#registrations.get(kind) ?? new Map<string, ObjectHandle>();
+    this.#registrations.set(kind, receivers);
+    if (on) receivers.set(target.key, target);
+    else receivers.delete(target.key);
+    return null;
+  }
+
+  /** The menu stack: a menu opened or closed (MenuOpenCloseEvent) reaches those registered. */
+  menuOpenClose(name: string, opening: boolean): void {
+    const receivers = this.#registrations.get(MENU_REGISTRATION + name.toLowerCase());
+    for (const target of receivers?.values() ?? [])
+      this.detach(this.#sendTo(target, opening ? 'OnMenuOpen' : 'OnMenuClose', [name]));
   }
 
   /** The engine: an event to every object registered for a kind (OnSleepStart, ...). */
