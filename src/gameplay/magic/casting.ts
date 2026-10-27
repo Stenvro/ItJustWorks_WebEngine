@@ -53,10 +53,10 @@ const CASTING_SETTING_TABLE = {
   dualTimeMult: ['fMagicDualCastingTimeMult', 1],
   areaBaseCostMult: ['fMagicAreaBaseCostMult', 0],
   /**
-   * How far a Touch spell reaches (units). TODO(M13): the engine registers this setting but
-   * never reads it (original); what it takes a Touch spell's reach from is unknown.
+   * How far a Touch spell cast by an object (not an actor) reaches: touchReach. The engine
+   * registers fMagicDefaultTouchDistance but never reads it (original).
    */
-  touchDistance: ['fMagicDefaultTouchDistance', 256],
+  objectTouchReach: ['fCombatDistance', 128],
   /** Seconds before a lesser power is cast again. */
   lesserPowerCooldown: ['fMagicLesserPowerCooldownTimer', 3],
   /** NPCs regenerate magicka while they cast (1) or not (0). */
@@ -313,4 +313,17 @@ export function regeneratesWhileCasting(
   settings: Pick<CastingSettings, 'regenNpcMagickaDuringCast'> = CASTING_DEFAULTS,
 ): boolean {
   return !player && settings.regenNpcMagickaDuringCast !== 0;
+}
+
+/**
+ * How far a Touch spell reaches (observed in the original): an actor's race's unarmed reach
+ * (RACE DATA) × its scale; a caster that is no actor (a trap) fCombatDistance. The player's
+ * Touch spell takes the actor under the crosshair within it; an NPC's its target, else the
+ * nearest actor it sees within it.
+ */
+export function touchReach(
+  caster: { readonly unarmedReach: number; readonly scale: number } | undefined,
+  settings: Pick<CastingSettings, 'objectTouchReach'> = CASTING_DEFAULTS,
+): number {
+  return caster === undefined ? settings.objectTouchReach : caster.unarmedReach * caster.scale;
 }

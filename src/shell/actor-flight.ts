@@ -2086,6 +2086,37 @@ export class ActorFlight {
       case 'shoutstop':
         this.#options.casting()?.stopBreath(flier.reference);
         return;
+      case 'flightlandend':
+        // The engine's FlightLandEndHandler (observed in the original: the landing's end flag cleared):
+        // the landing is over, the next flier may land.
+        if (flier.state === FlyingState.none) {
+          flier.landing = undefined;
+          this.#shared.landing.delete(flier.reference);
+        }
+        return;
+      case 'flightactionend': {
+        // The engine's FlightActionEndHandler (observed in the original: the flier's flight action over):
+        // a grab not ended by its release ends without its victim.
+        const grab = flier.grab;
+        if (!grab) return;
+        if (grab.phase === 'carry') this.#grabbed.delete(grab.victim);
+        if (grab.phase !== 'done') grab.done(false);
+        return;
+      }
+      case 'flightcrashlandstart': {
+        // The engine's FlightCrashLandStartHandler (observed in the original: a crash landing begins
+        // where the flier's target was): it comes down there unless a landing is set.
+        const seen = flier.combat?.seen;
+        if (flier.landing === undefined && seen) {
+          flier.landing = {
+            spot: [...seen.feet],
+            heading: flier.staged.heading,
+            target: undefined,
+            perch: undefined,
+          };
+        }
+        return;
+      }
       default:
         return;
     }

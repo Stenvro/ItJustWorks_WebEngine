@@ -594,11 +594,15 @@ EXPL.
   voice, 3 instant. A hand casts its spell (magicka), its staff (a weapon whose EITM is a staff
   enchantment, ENCH 0x0C: its charge) or its scroll (used up as it is read); the voice its power
   (once a day), lesser power (whenever) or shout. Constant effect spells are not cast.
-- A cast is refused without the magicka (a fire and forget spell: its cost; a concentration
-  spell: any, TODO(M13)), the staff's charge (sMagicCastInsufficientItemCharge), the day's power
+- A cast is refused without the magicka (observed in the original: a fire and forget spell
+  needs its cost, a concentration spell any magicka at all; held, it stops as the magicka runs
+  out), the staff's charge (sMagicCastInsufficientItemCharge), the day's power
   (sMagicCastPowerUsed) or while shouting (sMagicCastCastWhileShouting); a shout while casting
   (sMagicCastShoutWhileCasting) or while the voice recovers (the shout meter flashes). Without
-  the magicka the HUD's magicka meter blinks (`progression.refused`). Casting ends invisibility.
+  the magicka the HUD's magicka meter blinks (`progression.refused`). The player hears each
+  refusal, and a concentration spell stopping for want of magicka, as the default object Magic
+  Fail Sound (MFSN: MAGFailSD), the voice's as Shout Fail Sound (SFSN: MAGFailShoutSD;
+  CommonLibSSE PlayerCharacter::PlayMagicFailureSound). Casting ends invisibility.
 
 ### Cost
 
@@ -696,11 +700,13 @@ Format/SPEL"; the game settings.
 
 ### Delivery
 
-- Self: on the caster at once. Touch: the actor aimed at, at once, within
-  fMagicDefaultTouchDistance (256 units: an NPC's combat target, which its AI casts at within
-  that reach; the player's the living actor along their aim, nothing on the spell layer before
-  it). TODO(M13): the engine registers that setting but never reads it (original); where its Touch
-  reach comes from is not known. Spells whose projectile has no range reach 2048 units
+- Self: on the caster at once. Touch (observed in the original: the casters' touch target
+  search): the actor aimed at, at once, within the caster's race's unarmed reach (RACE DATA) ×
+  its scale (its reference's × its base's height, NPC_ NAM6); a caster that is no actor reaches
+  fCombatDistance. The player's: the living actor along their aim, nothing on the spell layer
+  before it; an NPC's: its target (its AI casts at it within that reach), else the nearest actor
+  it sees within it (`CastingEngine.touchReach`, casting.ts touchReach). The engine registers
+  fMagicDefaultTouchDistance but never reads it. Spells whose projectile has no range reach 2048 units
   (`MAGIC_REACH`, src/shell/actor-casting.ts). Aimed,
   target actor and target location fly the costliest effect's projectile (docs/ai.md, "Magic in
   combat"); without one they reach the actor aimed at at once.
@@ -717,10 +723,14 @@ Format/SPEL"; the game settings.
   actor casts are interrupted) and the rest passes (UESP "Skyrim:Ward"). Then the magic
   system applies it (resistances, dual casting: "Magic effects"); a hostile spell's target hears
   OnHit (the caster, the spell or staff) and is attacked (detection: it searches for the caster).
-- A concentration spell's hit (a spray of Flames, a held Healing): its effects at once act by the
-  time the hit stands for (`ApplyOptions.scale`); those that last while it is held (wards,
-  Recover effects, Calm, Telekinesis: `hold`) last on with each hit (`extendHeld`) rather than
-  anew (a ward keeps what it has grown).
+- A concentration spell's hit (a spray of Flames, a held Healing) puts its effects on, or keeps
+  them on (`extendHeld`: a ward keeps what it has grown). Observed in the original: a
+  concentration spell's value effect changes its actor value each frame, its magnitude a second ×
+  the frame's time, even without a duration of its own. Those with a duration (every vanilla
+  concentration effect: Flames' 1 s) last it past the last hit; those without one (`hold`: wards,
+  Telekinesis, a mod's damage without a duration) last a few hits' time, and end as the cast
+  stops, their taper to come (`MagicEngine.endHeld`; TODO(M13): the engine's dispel as the cast
+  stops is inferred). Its skill trains by the seconds each hit stands for.
 - Areas: an effect with an area (feet) reaches the actors within it of where the spell landed
   (each the effects whose area reaches it) that the point sees, as an explosion sees (below:
   from the surface's buffer, a surface close before the actor not counting), unless the spell's

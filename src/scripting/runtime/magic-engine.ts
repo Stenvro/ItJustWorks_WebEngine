@@ -21,7 +21,6 @@
 import {
   accumulateRate,
   accumulateStep,
-  actsAtOnce,
   castStrength,
   DUAL_CASTING_POWER,
   EFFECT_DEFAULTS,
@@ -116,14 +115,15 @@ export interface ApplyOptions {
   /** Only these effect items, by index (an ingredient eaten: its first). */
   readonly effects?: readonly number[];
   /**
-   * The share of the magnitude its effects at once (no duration) give: a concentration spell's
-   * hit between two sprays, what passes a ward (src/scripting/runtime/casting-engine.ts).
+   * The share of the magnitude its effects at once (no duration) give: what passes a ward, a
+   * chain explosion's weakening (src/scripting/runtime/casting-engine.ts); with `hold`, of every
+   * effect's magnitude.
    */
   readonly scale?: number;
   /**
-   * A concentration spell held: its effects without a duration that do not act at once (wards,
-   * Recover effects, Calm, ...) last this many seconds (kept on by `extendHeld` while it is
-   * held), its effects at once act by `scale`.
+   * A concentration spell held: its effects without a duration (wards, Recover effects, Calm, a
+   * damage or restore without one, ...) last this many seconds (kept on by `extendHeld` while
+   * it is held, ended by `endHeld` as it stops); value effects among them act each frame.
    */
   readonly hold?: number;
   /** Where a Target Location spell landed: what it makes (summons, hazards) stands there. */
@@ -196,6 +196,18 @@ const MAKERS: ReadonlySet<number> = new Set([
 /** The seconds of an effect's duration before its taper (its effect item's, with perks). */
 function itemDuration(entry: ActiveEffectState): number {
   return Math.max(0, entry.duration - (entry.taper ?? 0));
+}
+
+/**
+ * How an active value effect changes its actor value (effect-rules.ts valueMode): one held by a
+ * concentration spell without a duration acts each frame, as one with a duration does.
+ */
+function entryMode(
+  entry: ActiveEffectState,
+  effect: MagicEffectRecord,
+): 'temporary' | 'once' | 'perSecond' {
+  const mode = valueMode(effect, itemDuration(entry), entry.lasting ?? false);
+  return mode === 'once' && entry.held === true ? 'perSecond' : mode;
 }
 
 /** The ActiveMagicEffect handle of an effect's key ("<hex form id>:-1"). */
@@ -593,6 +605,20 @@ export class MagicEngine {
   }
 
   /**
+   * A concentration spell stops (let go, out of magicka, interrupted): its effects from the
+   * caster that last only while it is held (no duration of their own: `held`) end now, their
+   * taper still to come; those with a duration (Flames' 1 s) run it out. TODO(M13): inferred
+   * from the engine's per-frame rule (an effect without a duration has no end of its own); the
+   * engine's dispel as the cast stops is unread.
+   */
+  endHeld(caster: number, item: number): void {
+    for (const [, entry] of this.#runtime.state.activeEffects) {
+      if (entry.held !== true || entry.caster !== caster || entry.item !== item) continue;
+      entry.duration = Math.min(entry.duration, entry.elapsed + (entry.taper ?? 0));
+    }
+  }
+
+  /**
    * A magic item's effects put on a target (each effect item that holds; see the module's
    * comment). Returns how many were applied.
    */
@@ -684,14 +710,18 @@ export class MagicEngine {
       );
     }
     if (lasting) duration = 0;
-    if (options.hold !== undefined && duration === 0 && !lasting && !actsAtOnce(effect))
-      duration = options.hold;
-    // Its taper's seconds follow its duration (observed in the original); a concentration
-    // spell's hit tapers with the spell's whole magnitude a second.
+    // A concentration spell's effect without a duration lasts while the spell is held (kept on
+    // by `extendHeld`, ended as the cast stops: endHeld); a value effect among them acts a frame
+    // at a time, its magnitude a second × the frame's time (observed in the original: an
+    // effect of a concentration spell is modified each frame even without a duration).
+    const held = options.hold !== undefined && !lasting && duration === 0;
+    if (held) duration = options.hold ?? 0;
+    // Its taper's seconds follow its duration (observed in the original).
     const taper = lasting ? 0 : taperSeconds(effect);
     let taperShare = 1;
-    if (options.scale !== undefined && duration === 0) {
-      taperShare = options.scale > 0 ? 1 / options.scale : 0;
+    if (options.scale !== undefined && (duration === 0 || options.hold !== undefined)) {
+      // A held spell's scale is only what passed a ward or a chain's weakening (no share of time).
+      if (options.hold === undefined) taperShare = options.scale > 0 ? 1 / options.scale : 0;
       magnitude *= Math.max(0, options.scale);
     }
 
@@ -772,6 +802,7 @@ export class MagicEngine {
       ...(dual && { dual }),
       ...(options.at && { at: options.at }),
       ...(taper > 0 && { taper, taperMagnitude: magnitude * taperShare }),
+      ...(held && { held }),
     };
     runtime.state.activeEffects.set(key, entry);
     const holds = await this.#conditionsHold(key, entry);
@@ -1043,7 +1074,7 @@ export class MagicEngine {
   async #valueStart(entry: ActiveEffectState, effect: MagicEffectRecord): Promise<void> {
     const runtime = this.#runtime;
     if (effect.actorValue < 0) return;
-    const mode = valueMode(effect, itemDuration(entry), entry.lasting ?? false);
+    const mode = entryMode(entry, effect);
     if (mode === 'perSecond') return;
     if (mode === 'once') {
       this.#did.set(entry, await this.#change(entry, effect, valueSign(effect) * entry.magnitude));
@@ -1844,7 +1875,7 @@ export class MagicEngine {
       entry.elapsed += seconds;
       const effect = this.#effects.get(entry.effect);
       if (!entry.inactive && effect && isValueEffect(effect) && effect.actorValue >= 0) {
-        const mode = valueMode(effect, itemDuration(entry), entry.lasting ?? false);
+        const mode = entryMode(entry, effect);
         // Each second of its duration, and of its taper after it (an effect at once: only that).
         const tail = mode === 'once' && (entry.taper ?? 0) > 0;
         if ((mode === 'perSecond' || tail) && entry.duration > 0) {
