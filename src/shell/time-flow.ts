@@ -20,6 +20,7 @@ import {
 import { DIFFICULTY_SUFFIXES } from '../gameplay/combat/combat-settings.ts';
 import { fallDamage, fallSettings } from '../gameplay/falling.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
+import { WaterHazard, type WaterHarm, type WaterHarmStep } from '../gameplay/water-hazard.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { ActorValue, actorValueIndex } from '../world/actor-values.ts';
@@ -29,7 +30,13 @@ export function connectPlayerTime(
   player: {
     pace: (() => number) | undefined;
     onLanded: ((height: number) => void) | undefined;
-    onSubmersion: ((submersion: number, seconds: number) => void) | undefined;
+    onSubmersion:
+      | ((
+          submersion: number,
+          seconds: number,
+          water?: { readonly type: number; readonly harm: WaterHarm | undefined },
+        ) => void)
+      | undefined;
   },
   session: () =>
     | {
@@ -45,12 +52,18 @@ export function connectPlayerTime(
     const runtime = current?.scriptsReady;
     if (current && runtime) void current.time.fell(runtime, height);
   };
-  player.onSubmersion = (submersion, seconds) => {
+  const hazard = new WaterHazard();
+  player.onSubmersion = (submersion, seconds, water) => {
     const current = session();
     const runtime = current?.scriptsReady;
     if (current && runtime) {
       const difficulty = current.ini.number('GamePlay', 'iDifficulty');
       current.time.breathe(runtime, submersion, seconds, difficulty);
+      // Harmful water (none in vanilla): its damage and spell.
+      const harmed = hazard.step(water?.type, water?.harm, submersion, seconds);
+      if (harmed.damage > 0 || harmed.spell !== undefined) {
+        void waterHarmed(runtime, PLAYER_REF, harmed).catch(() => undefined);
+      }
     }
   };
 }
@@ -204,6 +217,16 @@ export class TimeFlow {
   fell(runtime: ScriptRuntime, height: number): Promise<void> {
     return actorFell(runtime, PLAYER_REF, height);
   }
+}
+
+/** A step in harmful water (src/gameplay/water-hazard.ts): its damage and spell on an actor. */
+export async function waterHarmed(
+  runtime: ScriptRuntime,
+  reference: number,
+  harm: WaterHarmStep,
+): Promise<void> {
+  if (harm.damage > 0) await runtime.actors.damage(reference, ActorValue.health, harm.damage);
+  if (harm.spell !== undefined) await runtime.magic.cast(harm.spell, reference, reference);
 }
 
 /**

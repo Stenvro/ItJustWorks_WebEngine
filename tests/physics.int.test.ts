@@ -35,6 +35,7 @@ import { Worldspace } from '../src/world/worldspace.ts';
 import { WorldBorder } from '../src/world/border.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
+import { WATER_RULE_DEFAULTS } from '../src/physics/water-physics.ts';
 /** A player's bindings: the control map's, with no remaps. */ const withBase = (
   controls: ControlMap,
 ) => ({ baseControls: controls, controls });
@@ -301,6 +302,7 @@ describe.skipIf(!hasGamedata())('physics on the local game data', () => {
         havokTauRatio: 0.5,
         debris: DEBRIS_QUALITY,
         materialFlags: new Map(),
+        water: WATER_RULE_DEFAULTS,
         stairMaterials: new Set(),
         physics,
         waterHeight: () => undefined,
@@ -474,6 +476,7 @@ describe.skipIf(!hasGamedata())('physics on the local game data', () => {
         havokTauRatio: 0.5,
         debris: DEBRIS_QUALITY,
         materialFlags: new Map(),
+        water: WATER_RULE_DEFAULTS,
         stairMaterials: new Set(),
         physics,
         waterHeight: (_x, y) => (y < 1500 ? 0 : undefined),

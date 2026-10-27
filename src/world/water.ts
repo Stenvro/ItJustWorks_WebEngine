@@ -128,6 +128,50 @@ export function parseWater(record: Pick<GameRecord, 'formId' | 'editorId' | 'fie
   };
 }
 
+/**
+ * What a water type does to what is in it (WATR, xEdit's TES5 definition): its current (NAM0
+ * linear velocity, NAM1 angular velocity; Havok units a second and radians a second, as the
+ * [HAVOK] fDefaultWaterfallCurrentVelocity of 6), its damage (FNAM Causes Damage with DATA's
+ * damage per second), its spell (XNAM) and its material (TNAM: the puddles' MaterialWaterPuddle,
+ * else the WATER phantoms' Water). Of the 58 vanilla types 35 have a current; none has damage
+ * per second or a spell (Apocrypha's two set Causes Damage alone).
+ */
+export interface WaterBody {
+  readonly formId: number;
+  readonly linearVelocity: readonly [number, number, number];
+  readonly angularVelocity: readonly [number, number, number];
+  readonly causesDamage: boolean;
+  /** FNAM Enable Flowmap: its rivers flow along their cells' flow maps. */
+  readonly flowmap: boolean;
+  readonly damagePerSecond: number;
+  readonly spell: number | undefined;
+  readonly material: number | undefined;
+}
+
+export function parseWaterBody(
+  record: Pick<GameRecord, 'formId' | 'fields' | 'formIdField'>,
+): WaterBody {
+  const vec = (type: string): [number, number, number] => {
+    const data = record.fields.first(type);
+    if (!data || data.length < 12) return [0, 0, 0];
+    const d = view(data);
+    return [d.getFloat32(0, true), d.getFloat32(4, true), d.getFloat32(8, true)];
+  };
+  const damage = record.fields.first('DATA');
+  const spell = record.formIdField('XNAM');
+  const material = record.formIdField('TNAM');
+  return {
+    formId: record.formId,
+    linearVelocity: vec('NAM0'),
+    angularVelocity: vec('NAM1'),
+    causesDamage: ((record.fields.first('FNAM')?.[0] ?? 0) & WaterFlag.causesDamage) !== 0,
+    flowmap: ((record.fields.first('FNAM')?.[0] ?? 0) & WaterFlag.flowmap) !== 0,
+    damagePerSecond: damage && damage.length >= 2 ? view(damage).getUint16(0, true) : 0,
+    spell: spell === 0 ? undefined : spell,
+    material: material === 0 ? undefined : material,
+  };
+}
+
 /** XCLW of FLT_MAX: the worldspace's default water height. */
 const DEFAULT_HEIGHT = 3.4e38;
 
