@@ -22,6 +22,7 @@
 // effects); after the opening a new race also resets the skills to the race's (UESP "Console").
 // Notes: docs/ui.md ("Character creation").
 
+import { inputPlatform } from '../ui/input-platform.ts';
 import {
   applySlider,
   buildSliders,
@@ -271,7 +272,7 @@ class Editing {
       setup: async (opened) => {
         if (!(await opened.waitFor('_root.InitExtensions'))) return;
         opened.invoke('_root.InitExtensions');
-        opened.invoke('_root.SetPlatform', 0, false);
+        opened.invoke('_root.SetPlatform', inputPlatform(), false);
         if (this.#setup.limited) opened.set(`${PANELS}.bLimitedMenu`, true);
         opened.call('ShowTextEntry', true);
         opened.call('SetCategoriesList', ...categoryArguments((label) => this.#text(label)));

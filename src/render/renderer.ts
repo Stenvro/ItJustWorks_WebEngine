@@ -181,6 +181,12 @@ export class Renderer {
   ambientOcclusion = true;
   /** Grass is drawn (the console's tg turns it off and on). */
   showGrass = true;
+  /** Distant land and tree LOD are drawn (the console's tll). */
+  showLod = true;
+  /** Trees are drawn (the console's tt; TODO(M13): the near trees, TREE references, too). */
+  showTrees = true;
+  /** Water is drawn (the console's tws). */
+  showWater = true;
   readonly grass: GrassRenderer;
   readonly decals: DecalRenderer;
   readonly precipitation: PrecipitationRenderer;
@@ -478,11 +484,11 @@ export class Renderer {
     }
     if (view) {
       if (sky) this.sky.draw(opaque, this.scene.frameBindGroup, sky);
-      const terrain = view.terrain?.();
+      const terrain = this.showLod ? view.terrain?.() : undefined;
       if (terrain) {
         this.terrain.draw(opaque, this.scene.frameBindGroup, terrain, this.scene.viewPlanes);
       }
-      const trees = view.trees?.();
+      const trees = this.showLod && this.showTrees ? view.trees?.() : undefined;
       if (trees) this.treeLod.draw(opaque, this.scene.frameBindGroup, trees);
       const grass = this.showGrass ? view.grass?.() : undefined;
       if (grass) this.grass.draw(opaque, grass, this.scene.viewPlanes, view.camera.position);
@@ -494,7 +500,7 @@ export class Renderer {
     // The imagespace's depth of field reads the opaque scene's depth.
     const depthOfField = view !== undefined && (imageSpace?.depthOfField.strength ?? 0) > 0;
     if (view) {
-      const water = this.scene.hasWater(scenes);
+      const water = this.showWater && this.scene.hasWater(scenes);
       const decals = view.decals ? [...view.decals()] : [];
       const decalsInView = this.decals.visible(decals, this.scene.viewPlanes);
       // The opaque scene is finished as the engine does it: the snow's scattering on the lit,
