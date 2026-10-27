@@ -306,6 +306,22 @@ sprinting pay their stamina as the player does (their movers, half a second at a
 uses the armour skills of what its target wears (Light, Heavy Armor: any piece of that armour)
 by the blow's damage before armour (UESP "Skyrim:Light Armor"), unblocked.
 
+### Swimming
+
+`src/gameplay/swimming.ts`, for the player and the NPCs alike: an actor swims from a submersion
+of 0.69 (out again below 0.64), floating with its shoulders at the surface and rising or sinking
+to it at most at its swimming speed. An NPC swims only if its race has the Swims flag (RACE
+DATA); others walk the bottom. It swims at its race's swimming movement type (SWMV, else DOBJ
+DMSW, NPCSwimming), and its paths cross the navmesh's water triangles at no extra cost.
+TODO(M13): the packages' Allow Swimming flag.
+
+### Water damage
+
+`src/gameplay/water-hazard.ts`: a water type with Causes Damage takes its damage per second
+(WATR DATA) of the actors' health while they are in it; its spell (XNAM) is cast on them as they
+come in and once a second while they stay (TODO(M13): the engine's interval). No vanilla type
+has either (Apocrypha's two set the flag with 0 damage).
+
 ### Breath and drowning
 
 Observed in the original (`src/gameplay/breath.ts`; the player's in `src/shell/time-flow.ts`):

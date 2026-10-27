@@ -31,6 +31,7 @@ import { parseGrass, placeGrass, type GrassType } from '../world/grass.ts';
 import type { AmbientState } from '../audio/ambience.ts';
 import { waterAreaHeight } from '../audio/water-audio.ts';
 import { cellWater, DEFAULT_WATER } from '../world/water.ts';
+import { FlowMaps, waterPlugin } from '../world/flow-map.ts';
 import { surfaceOver, waterVolumes, type WaterVolume } from '../world/water-volumes.ts';
 import type { GpuTerrainCell, TerrainLodBlock, TerrainTexturePaths } from '../render/terrain.ts';
 import { parseLodSettings, type LodSettings } from '../formats/lod/lod.ts';
@@ -1266,6 +1267,8 @@ export class WorldViewer {
     const play = new PlaySession({
       physics,
       player,
+      waterAt: (x, y, z) => this.#waterAt(x, y, z),
+      waterRules: playerData.water,
       camera: this.#camera,
       canvas: this.#canvas,
       groundReady: (at) => this.#groundReady(at),
@@ -1310,6 +1313,16 @@ export class WorldViewer {
       this.#ui.freeCamera.checked = free;
     };
     this.#play = play;
+    // Rivers carry what floats along their cells' flow maps.
+    const flows = new FlowMaps((path) =>
+      session.vfs.has(path) ? session.vfs.read(path) : Promise.resolve(undefined),
+    );
+    if (play.water) {
+      play.water.flowAt = (x, y) => {
+        const world = this.#world;
+        return world ? flows.at(waterPlugin(world), x, y) : undefined;
+      };
+    }
     // The actors near the player move in its physics world.
     this.#stage?.attachPlay(play);
     // The player walking into trigger volumes tells their scripts.
