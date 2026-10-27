@@ -976,6 +976,15 @@ export class PlayMode {
             this.#renderer.showGrass = !this.#renderer.showGrass;
             return this.#renderer.showGrass;
           },
+          toggleRenderer: (what) => {
+            const renderer = this.#renderer;
+            if (what === 'lod') return (renderer.showLod = !renderer.showLod);
+            if (what === 'trees') return (renderer.showTrees = !renderer.showTrees);
+            return (renderer.showWater = !renderer.showWater);
+          },
+          openContainer: (reference) => {
+            session.hud.menus?.container(reference, () => undefined);
+          },
           // The world's and first person's own (src/render/first-person-view.ts).
           setFov: (world, firstPerson) => {
             this.#world.player()?.play.player.setFov(world, firstPerson);

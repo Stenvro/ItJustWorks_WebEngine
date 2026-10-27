@@ -188,8 +188,8 @@ These run through every area and explain most of what breaks in play.
 | Menu manager                   | partial | named stack with IMenu flags, saving permission, UI.IsMenuOpen and mod menus: done; SKSE's other UI natives, menu events to scripts (RegisterForMenu)                |
 | HUD                            | partial | modes per menu, held notices, word/soul/cleared notices, floating marker, meter keep, arrow count: done; the marker's bound height, lockpicking's notices (TODO M13) |
 | Locations cleared, misc stats  | partial | clearing rule, Dungeons Cleared, the maps' Cleared: done; about 34 stats never counted                                                                               |
-| Input                          | partial | menu contexts read the default keys; no gamepad                                                                                                                      |
-| Console                        | partial | about 25 of about 330 commands; no selection by click                                                                                                                |
+| Input                          | partial | gamepad (Gamepad API, contexts, GFx gamepad keys, remap) done; analog walk speed, rumble, live SetPlatform for open menus                                            |
+| Console                        | partial | about 115 commands; tfc 1 (no world freeze hook), tdetect variants, near trees under tt                                                                              |
 | Tutorials, loading, map, stats | partial | low-stat tutorials, map relief overlay, beast perk trees, Survival HUD                                                                                               |
 
 ## Order of work
