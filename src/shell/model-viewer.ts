@@ -35,6 +35,8 @@ import {
   type PlacedDirectional,
 } from '../render/scene-renderer.ts';
 import { studioLighting } from '../render/studio-lighting.ts';
+import { RoomCuller } from '../render/room-culler.ts';
+import { roomIndexAt } from '../world/cell-rooms.ts';
 import { cellSceneLighting, pointLights } from '../world/cell-lighting.ts';
 import {
   cellArrival,
@@ -1388,7 +1390,23 @@ export class ModelViewer {
         isEnabled: (reference) => this.#isEnabled(reference),
       });
     }
-    const scene = this.#renderer.scene.createScene(instances);
+    // Each placed object stands in the room holding its position (portal-strict lights).
+    const cellRooms = cell.data.rooms?.rooms ?? [];
+    const roomOfInstance = new Map<ModelInstance, number>();
+    if (cellRooms.length > 0) {
+      for (const [object, instance] of placed) {
+        const room = roomIndexAt(cellRooms, [
+          object.world[12] ?? 0,
+          object.world[13] ?? 0,
+          object.world[14] ?? 0,
+        ]);
+        if (room >= 0 && room < 255) roomOfInstance.set(instance, room + 1);
+      }
+    }
+    const scene = this.#renderer.scene.createScene(instances, {
+      roomOf: (instance) => roomOfInstance.get(instance),
+    });
+    const rooms = cell.data.rooms && new RoomCuller([cell.data.rooms]);
     const shownCount = this.#refreshEnabled();
     // The cell's imagespace with the image-space modifiers on the screen over it.
     const imageSpace = (): ImageSpace | undefined =>
@@ -1411,6 +1429,7 @@ export class ModelViewer {
       imageSpace,
       lights: cell.data.lights,
       decals: cell.decals,
+      ...(rooms && { rooms }),
     });
     return shownCount;
   }
@@ -1729,6 +1748,8 @@ export class ModelViewer {
           /** Placed lights, flickering and pulsing per frame. */
           lights: readonly CellLight[];
           decals: GpuDecals | undefined;
+          /** The cell's rooms, portals and occluders. */
+          rooms?: RoomCuller;
         },
   ): void {
     this.onActivate?.();
@@ -1760,7 +1781,7 @@ export class ModelViewer {
       } else {
         this.#detachControls = this.#fly.attach(this.#canvas);
       }
-      const { lighting, imageSpace, lights, decals } = view;
+      const { lighting, imageSpace, lights, decals, rooms } = view;
       this.#renderer.setView({
         // The cell's scene now (built again when an actor is made again in a new race).
         scenes: () => [
@@ -1792,6 +1813,7 @@ export class ModelViewer {
           ],
         }),
         imageSpace,
+        ...(rooms && { rooms: () => rooms }),
         // The cell's decals and the hits' blood (src/shell/combat-impacts.ts).
         decals: () => [...(decals ? [decals] : []), ...(this.#stage?.combat.decals() ?? [])],
         backdrop: false,
