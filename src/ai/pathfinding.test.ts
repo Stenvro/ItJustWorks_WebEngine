@@ -11,6 +11,7 @@ import {
   onNavmeshColumn,
   randomReachablePoint,
   straightReach,
+  summonPlace,
   type NavmeshSet,
 } from './pathfinding.ts';
 
@@ -369,5 +370,21 @@ describe("a point's column on the navmesh (a wander point at its place's middle'
     // Beyond its reach, or off the mesh: none.
     expect(onNavmeshColumn(set, [50, 50, 3000])).toBeUndefined();
     expect(onNavmeshColumn(set, [500, 50, 0])).toBeUndefined();
+  });
+});
+
+describe('summonPlace', () => {
+  it('stands a summon where the way ahead stays on the navmesh', () => {
+    const set = setOf([gridMesh(1, L_SQUARES)]);
+    expect(summonPlace(set, [50, 50, 0], [250, 50, 0], 10)).toEqual([250, 50, 0]);
+    // North from the first square the navmesh ends past y 100: it stands short of the edge.
+    const place = summonPlace(set, [50, 50, 0], [50, 300, 0], 10);
+    expect(place?.[1]).toBeGreaterThanOrEqual(50);
+    expect(place?.[1]).toBeLessThanOrEqual(100);
+  });
+
+  it('finds no place off the navmeshes', () => {
+    const set = setOf([gridMesh(1, L_SQUARES)]);
+    expect(summonPlace(set, [-500, -500, 0], [-500, 0, 0], 10)).toBeUndefined();
   });
 });

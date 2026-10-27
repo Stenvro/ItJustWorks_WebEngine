@@ -1436,14 +1436,12 @@ export class MagicEngine {
       // Observed in the original: it stands ahead of its summoner, both actors' radii and
       // half of fSummonedCreatureSearchRadius away; a Target Location spell's where it landed,
       // unless that is within fSummonDistanceCheckThreshold and nearer than the place ahead.
-      // TODO(M13): the engine then looks for the navmesh near there, the way clear of the
-      // summoner's line of sight; the place is taken as it is here.
+      // The engine then looks for the navmesh near there, the way to it clear (the world's
+      // summonPlace: as far as the summon goes straight on the navmeshes). TODO(M13): the
+      // engine's search when the way is blocked (another direction) is not read.
       const settings = await this.effectSettings();
-      const ahead = summonDistance(
-        await this.#radius(summoner),
-        await this.#radius(made),
-        settings,
-      );
+      const madeRadius = await this.#radius(made);
+      const ahead = summonDistance(await this.#radius(summoner), madeRadius, settings);
       const heading = at.rotation[2];
       let position: Vec3 = [
         at.position[0] + Math.sin(heading) * ahead,
@@ -1458,6 +1456,7 @@ export class MagicEngine {
         );
         if (summonAtLanding(landing, ahead, settings)) position = [...entry.at];
       }
+      position = runtime.world.summonPlace?.(at.position, position, madeRadius) ?? position;
       // Facing its summoner.
       const facing = Math.atan2(at.position[0] - position[0], at.position[1] - position[1]);
       runtime.move(made, position, [0, 0, facing], at.cell, at.world);
