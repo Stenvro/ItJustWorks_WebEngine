@@ -7,6 +7,8 @@ import { FlyCamera } from '../render/fly-camera.ts';
 import { identity } from '../render/math.ts';
 import type { Mat4, Vec3 } from '../render/math.ts';
 import type { Camera, Renderer } from '../render/renderer.ts';
+import { RoomCuller } from '../render/room-culler.ts';
+import type { CellRooms } from '../world/cell-rooms.ts';
 import { GRAVITY, initPhysics, PhysicsWorld } from '../physics/physics-world.ts';
 import {
   placedParts,
@@ -334,6 +336,9 @@ export class WorldViewer {
   }
   #lod: WorldLod | undefined;
   readonly #cells = new Map<string, LoadedCell>();
+  /** The loaded cells' culling markers, and the culler made of them (#rooms). */
+  #roomSets: readonly CellRooms[] = [];
+  #roomCuller: RoomCuller | undefined;
   readonly #queue: [number, number][] = [];
   #loading = 0;
   /** Whether large references stream in beyond the loaded cells (development switch). */
@@ -1360,6 +1365,7 @@ export class WorldViewer {
       precipitation: () => this.#sky?.precipitation() ?? [],
       lodMask: () => this.#lodMask(),
       largeRefMask: () => this.#largeRefMask(),
+      rooms: () => this.#rooms(),
       terrain: () => this.#readyTerrain(),
       camera: this.#view,
       lighting: (camera) => this.#lighting(camera.position),
@@ -2421,6 +2427,25 @@ export class WorldViewer {
       else high |= 1 << (bit - 32);
     }
     return { originX, originY, low, high };
+  }
+
+  /**
+   * The occluders (and any rooms) of the loaded cells, culling their objects; made again when
+   * the loaded cells change.
+   */
+  #rooms(): RoomCuller | undefined {
+    const sets: CellRooms[] = [];
+    for (const cell of this.#cells.values()) {
+      const rooms = cell.ready ? cell.data?.rooms : undefined;
+      if (rooms && (rooms.occluders.length > 0 || rooms.rooms.length > 0)) sets.push(rooms);
+    }
+    const same =
+      sets.length === this.#roomSets.length && sets.every((set, i) => set === this.#roomSets[i]);
+    if (!same) {
+      this.#roomSets = sets;
+      this.#roomCuller = sets.length > 0 ? new RoomCuller(sets) : undefined;
+    }
+    return this.#roomCuller;
   }
 
   /** Cells of the large-reference grid whose large references are shown in full detail. */

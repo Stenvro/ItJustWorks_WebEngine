@@ -58,6 +58,7 @@ function windVelocity(lighting: SceneLighting): Vec3 {
 /** Anything that can view a scene: the orbit camera, the free-flying camera, ... */
 export type { Camera } from './view-camera.ts';
 import type { Camera } from './view-camera.ts';
+import type { RoomCuller } from './room-culler.ts';
 
 /** What the renderer draws: scenes and terrain, seen by a camera, lit by a lighting source. */
 export interface SceneView {
@@ -79,6 +80,8 @@ export interface SceneView {
   readonly lodMask?: () => LodMask | undefined;
   /** Cells whose large references are loaded, where their object LOD gives way. */
   readonly largeRefMask?: () => LargeRefMask | undefined;
+  /** The rooms, portals and occluders that cull the view's objects (room-culler.ts). */
+  readonly rooms?: () => RoomCuller | undefined;
   /** Sky colours for water reflections and the weather's water tint. */
   readonly water?: () => WaterFrame | undefined;
   /** Imagespace of the frame (eye adaptation, bloom, grading); none: the image as rendered. */
@@ -316,6 +319,7 @@ export class Renderer {
         shadows,
         { width: targets.width, height: targets.height, near: view.camera.near },
         view.largeRefMask?.(),
+        view.rooms?.(),
       );
       wind = windVelocity(lighting);
     }

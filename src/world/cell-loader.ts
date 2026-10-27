@@ -30,6 +30,15 @@ import { parseTextureSet, placeDecal, type PlacedDecal, type TextureSet } from '
 import { BookFlag, parseItem } from './item-records.ts';
 import { parseStaticDirectional, type StaticDirectional } from './material-object.ts';
 import { parseRagdollData, type RagdollData } from './ragdoll-data.ts';
+import {
+  addCullingMarker,
+  roomIndexAt,
+  type CellMultibound,
+  type CellOccluder,
+  type CellPortal,
+  type CellRoom,
+  type CellRooms,
+} from './cell-rooms.ts';
 import type { GameRecord, RecordDatabase } from './record-db.ts';
 
 export interface CellObject {
@@ -395,6 +404,11 @@ export interface CellLight {
   readonly emittance?: number;
   /** A spot light (LIGH Shadow Spotlight): its cone (lightCone). */
   readonly spot?: LightCone;
+  /**
+   * A portal-strict light (LIGH flag): the room it alone lights, when it stands in one (its
+   * index in `CellData.rooms` plus one).
+   */
+  readonly room?: number;
 }
 
 /** What decides whether a reference is enabled. */
@@ -423,6 +437,8 @@ export interface CellData {
   readonly emitters: readonly CellSoundEmitter[];
   /** Markers (not drawn: idle markers, furniture markers); filter with `enabledReferences`. */
   readonly markers: readonly CellMarker[];
+  /** Rooms, portals, occluders and multibounds (the engine's culling markers). */
+  readonly rooms?: CellRooms;
   /** Placed acoustic spaces; filter with `enabledReferences`. */
   readonly acousticAreas: readonly CellAcousticArea[];
   /** Water activators' surfaces (ACTI WNAM; their bounds), for the sound of water. */
@@ -648,6 +664,12 @@ export async function loadCellData(
   const markers: CellMarker[] = [];
   const acousticAreas: CellAcousticArea[] = [];
   const waterAreas: CellWaterArea[] = [];
+  const culling: {
+    rooms: CellRoom[];
+    portals: CellPortal[];
+    occluders: CellOccluder[];
+    multibounds: CellMultibound[];
+  } = { rooms: [], portals: [], occluders: [], multibounds: [] };
   const skipped = new Map<string, number>();
   const skip = (reason: string): void => {
     skipped.set(reason, (skipped.get(reason) ?? 0) + 1);
@@ -742,6 +764,8 @@ export async function loadCellData(
       if (primitive) primitives.push(primitive);
       if (!base.fields.has('MODL')) continue;
     }
+    // Rooms, portals and occluders cull what is drawn; they stay markers too.
+    addCullingMarker(culling, record, base.formId, referenceMatrix(ref), ref.scale);
     if ((base.flags & RecordFlag.isMarker) !== 0 || base.type === 'IDLM') {
       markers.push({
         reference: ref.formId,
@@ -860,6 +884,13 @@ export async function loadCellData(
     });
   }
 
+  // A portal-strict light lights only the room it stands in.
+  for (const [i, light] of lights.entries()) {
+    if ((light.flags & LightFlag.portalStrict) === 0) continue;
+    const room = roomIndexAt(culling.rooms, light.position);
+    if (room >= 0) lights[i] = { ...light, room: room + 1 };
+  }
+
   const centre: [number, number, number] = [0, 1, 2].map((k) =>
     Number.isFinite(min[k]) ? ((min[k] ?? 0) + (max[k] ?? 0)) / 2 : 0,
   ) as [number, number, number];
@@ -874,6 +905,7 @@ export async function loadCellData(
     obstacles,
     emitters,
     markers,
+    rooms: culling,
     acousticAreas,
     waterAreas,
     references,
