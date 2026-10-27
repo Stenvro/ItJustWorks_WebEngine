@@ -54,6 +54,15 @@ import type { PlayerView } from './race-menu.ts';
 import type { Terminal } from './terminal.ts';
 import { lockNow } from './object-locks.ts';
 import { tellSwing } from './open-close.ts';
+import { SaveManager } from './save-manager.ts';
+import type { GameSave } from '../save/game-save.ts';
+import type { SaveHeader } from '../save/save-codec.ts';
+
+/** A save read back for loading. */
+interface LoadedSave {
+  readonly header: SaveHeader;
+  readonly save: GameSave;
+}
 
 /**
  * The main menu's properties, as its setupMainMenu reads them (sendMenuProperties' arguments
@@ -166,6 +175,8 @@ export class PlayMode {
   /** The menus open that take the mouse without pausing the game (the crafting menu). */
   #cursorMenus = 0;
   #starting = false;
+  /** Saving and loading: the saves' store, names and autosaves (save-manager.ts). */
+  readonly #saves: SaveManager;
   /** The player's data: its bindings (the menus show the keys of the events their texts name). */
   #playerData: PlayerData | undefined;
   /** The loading menu's text (the loading screen's, once chosen). */
@@ -222,6 +233,7 @@ export class PlayMode {
     this.#renderer = renderer;
     this.#world = world;
     this.#terminal = terminal;
+    this.#saves = new SaveManager(session, terminal);
     const log = (message: string): void => {
       terminal.log('ui', message);
     };
@@ -310,6 +322,11 @@ export class PlayMode {
         QuitToDesktop: () => {
           this.onQuit?.();
         },
+        CONTINUE: () => {
+          void this.#saves.latest().then((latest) => {
+            if (latest !== undefined) this.#loadSaved(latest);
+          });
+        },
         NEW: () => {
           this.#newGame().catch((error: unknown) => {
             this.#terminal.log(
@@ -341,8 +358,10 @@ export class PlayMode {
       setup: async (menu) => {
         await menu.waitFor('_root.MenuHolder.Menu_mc.InitExtensions');
         menu.invoke('_root.MenuHolder.Menu_mc.InitExtensions');
-        // TODO(M12): saves (Continue, Load).
-        menu.call('sendMenuProperties', ...mainMenuProperties(false));
+        // With saves, Continue (the most recent) shows and Load is enabled. TODO(M12): the main
+        // menu's own save list (Load).
+        const hasSaves = (await this.#saves.list().catch(() => [])).length > 0;
+        menu.call('sendMenuProperties', ...mainMenuProperties(hasSaves));
         // The platform: PC with keyboard and mouse (PLATFORM_PC_KBMOUSE 0; no PS3 button swap).
         menu.invoke('_root.MenuHolder.Menu_mc.SetPlatform', 0, false);
         // The delete-save hint (and the version beside it) only with saves to delete.
@@ -382,10 +401,19 @@ export class PlayMode {
    * loading menu goes. With a place (the main menu's coc) the game starts there, without the
    * opening (UESP, "Skyrim:Console": coc from the main menu skips it).
    */
-  async #newGame(place?: Placement): Promise<void> {
-    if (this.#starting) return;
+  async #newGame(place?: Placement, load?: LoadedSave): Promise<void> {
+    // A game started from the main menu runs, or is starting: only a load replaces it.
+    const running = this.#menus !== undefined;
+    if (this.#starting && !(load && running)) return;
     this.#starting = true;
     const session = this.#session;
+    // A game running goes first (a load from the journal, F9, the reload after death); the
+    // mist comes back behind the loading screen.
+    if (running) {
+      this.#endGame();
+      this.#world.leave();
+      this.#mist ??= await MistMenu.show(session, this.#renderer, false, true);
+    }
     const startMenu = this.#startMenu;
     startMenu?.call('FadeOutMenu');
     this.#stopMainTheme(FADE_OUT_MS / 1000);
@@ -395,7 +423,9 @@ export class PlayMode {
     // A new game: everything any game before it did goes. The loading menu over the mist while
     // its scripts start; the loading screen is chosen once the opening runs (a new game's own,
     // ChargenLoadScreen, asks for MQ101 at stage 10).
-    const ready = session.resetStates(place === undefined);
+    const ready = load
+      ? session.loadSaved(load.save, load.header)
+      : session.resetStates(place === undefined);
     this.#loadingText = '';
     this.#mist?.showMist();
     await this.#openLoadingMenu();
@@ -403,7 +433,7 @@ export class PlayMode {
     // The dialogue is read while the world loads: the first conversation need not wait for it.
     runtime.detach(runtime.dialogue.prepare());
     await ready;
-    const at = place ?? (await this.#openingPlacement(runtime));
+    const at = load?.save.player ?? place ?? (await this.#openingPlacement(runtime));
     if (!at) throw new Error('the opening placed no player');
     const screen = await this.#pickLoadingScreen(runtime);
     if (screen) {
@@ -427,6 +457,9 @@ export class PlayMode {
     this.#loadingMenu = undefined;
     this.#mist?.hide();
     this.#mist = undefined;
+    // A loaded game's sky as it was saved.
+    if (load?.save.weather !== undefined)
+      runtime.world.setWeather?.(load.save.weather, true, false, false);
     // In the game: its HUD, its compass.
     // Its enemies: those fighting the player on the actor stage (src/shell/actor-combat.ts).
     const compass = new Compass(session, () => this.#world.enemies?.() ?? []);
@@ -460,6 +493,20 @@ export class PlayMode {
       },
     );
     this.#menus = menus;
+    menus.saves = {
+      list: () => this.#saves.list(),
+      save: (overwrite) => this.#saves.save('save', overwrite),
+      quicksave: () => {
+        void this.#saves.save('quicksave');
+      },
+      load: (name) => {
+        this.#loadSaved(name);
+      },
+      delete: (name) => this.#saves.delete(name),
+    };
+    menus.onPassed = (slept) => {
+      void this.#saves.autosave(slept ? 'rest' : 'wait');
+    };
     menus.onQuit = (toDesktop) => {
       if (toDesktop) {
         this.onQuit?.();
@@ -522,16 +569,21 @@ export class PlayMode {
         dialogue.close();
         menus.close();
       },
-      // fPlayerDeathReloadTime after the death the game loads its most recent save.
-      // TODO(M12): load the most recent save (savegames); until then the game ends as Quit to
-      // main menu does.
+      // fPlayerDeathReloadTime after the death the game loads its most recent save (without
+      // one, the game ends as Quit to main menu does).
       reloadAfterDeath: () => {
-        this.#quitToMainMenu().catch((error: unknown) => {
-          this.#terminal.log(
-            'ui',
-            `the main menu does not open: ${error instanceof Error ? error.message : String(error)}`,
-            'error',
-          );
+        void this.#saves.latest().then((latest) => {
+          if (latest !== undefined) {
+            this.#loadSaved(latest);
+            return;
+          }
+          this.#quitToMainMenu().catch((error: unknown) => {
+            this.#terminal.log(
+              'ui',
+              `the main menu does not open: ${error instanceof Error ? error.message : String(error)}`,
+              'error',
+            );
+          });
         });
       },
       tutorial: (use) => {
@@ -608,6 +660,34 @@ export class PlayMode {
     document.addEventListener('pointerlockchange', this.#pointerLockChanged);
     window.addEventListener('beforeunload', this.#leaving);
     document.addEventListener('keydown', this.#consoleKey);
+    document.addEventListener('keydown', this.#saveKeys);
+  }
+
+  /** F5 quicksaves, F9 loads the quicksave (the game's Quicksave and Quickload keys). */
+  readonly #saveKeys = (event: KeyboardEvent): void => {
+    if (event.repeat || (event.key !== 'F5' && event.key !== 'F9')) return;
+    if (!this.#menus || this.#session.loading || this.#console.isOpen) return;
+    event.preventDefault();
+    if (event.key === 'F5') void this.#saves.save('quicksave');
+    else this.#loadSaved('Quicksave');
+  };
+
+  /** Loads a save by name: the world rebuilt behind the loading screen, then the save applied. */
+  #loadSaved(name: string): void {
+    void (async () => {
+      const load = await this.#saves.read(name);
+      if (!load) {
+        this.#terminal.log('save', `no save named ${name}`, 'warn');
+        return;
+      }
+      await this.#newGame(undefined, load);
+    })().catch((error: unknown) => {
+      this.#terminal.log(
+        'save',
+        `${name} does not load: ${error instanceof Error ? error.message : String(error)}`,
+        'error',
+      );
+    });
   }
 
   /** Why the player may not fast travel now (src/gameplay/fast-travel.ts), if not. */
@@ -725,6 +805,8 @@ export class PlayMode {
       if (leave) leave();
       else if (!session.menuMode) this.#world.capturePointer(true);
     }
+    // Through a load door (or a journey): the autosave on travel (bSaveOnTravel).
+    await this.#saves.autosave('travel');
   }
 
   /** The console (~): over the game and its menus, in menu mode while open. */
@@ -1169,6 +1251,7 @@ export class PlayMode {
     document.removeEventListener('pointerlockchange', this.#pointerLockChanged);
     window.removeEventListener('beforeunload', this.#leaving);
     document.removeEventListener('keydown', this.#consoleKey);
+    document.removeEventListener('keydown', this.#saveKeys);
     this.#console.close();
     this.#dialogue?.close();
     this.#dialogue = undefined;

@@ -10,6 +10,7 @@
 //   expect(sim.scriptEvents({ event: 'OnActivate', target: lever })).toHaveLength(1);
 //   sim.close();
 
+import { readGameSave, saveGame } from '../../src/save/game-save.ts';
 import type { GameEvents } from '../../src/scripting/runtime/event-hub.ts';
 import { PLAYER_REF } from '../../src/scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../../src/scripting/runtime/runtime.ts';
@@ -83,6 +84,39 @@ export async function openSim(options: OpenOptions = {}): Promise<Sim> {
   return sim;
 }
 
+/**
+ * Loads a save into a fresh simulation (docs/formats/save.md): the plugins' world, the save's
+ * game state, the player put down where they stood (their cell or worldspace), the weather.
+ */
+export async function loadSim(
+  bytes: Uint8Array,
+  options: { readonly seed?: number } = {},
+): Promise<Sim> {
+  const { header, save } = await readGameSave(bytes);
+  const folder = openGameFolder();
+  const vfs = await Vfs.mount(folder);
+  const world = await SimWorld.create({
+    vfs,
+    reads: folder.reads,
+    load: { save, header },
+    ...(options.seed !== undefined && { seed: options.seed }),
+  });
+  const sim = new Sim(world, vfs, await world.session.db);
+  await world.step(0);
+  const player = save.player;
+  const arrival: Arrival = { position: player.position, heading: player.rotation[2] };
+  const db = sim.db;
+  const interior =
+    player.cell !== undefined && db.worldOfCell(player.cell) === undefined
+      ? player.cell
+      : undefined;
+  if (interior !== undefined) await world.openInterior(interior, arrival);
+  else if (player.world !== undefined) await world.openExterior(player.world, { arrival });
+  if (save.weather !== undefined)
+    world.runtime.world.setWeather?.(save.weather, true, false, false);
+  return sim;
+}
+
 export class Sim {
   readonly world: SimWorld;
   readonly db: RecordDatabase;
@@ -103,6 +137,12 @@ export class Sim {
   /** Seconds the simulation has run. */
   get time(): number {
     return this.world.time;
+  }
+
+  /** Saves the game as it is now (the save file's bytes). */
+  async save(name = 'Save 1'): Promise<Uint8Array> {
+    const { bytes } = await saveGame(this.runtime, { name, kind: 'save', number: 1, now: 0 });
+    return bytes;
   }
 
   // --- Places and time ----------------------------------------------------------------------

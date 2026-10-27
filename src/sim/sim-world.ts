@@ -82,6 +82,8 @@ import { surfaceOver, waterVolumes, type WaterVolume } from '../world/water-volu
 import { weatherRegionAt } from '../world/sky-weather.ts';
 import { parseClimate } from '../world/weather.ts';
 import { cellKey, WorldFlag, type Arrival, type Worldspace } from '../world/worldspace.ts';
+import type { GameSave } from '../save/game-save.ts';
+import type { SaveHeader } from '../save/save-codec.ts';
 import { HeadlessRender } from './headless-render.ts';
 import { HeadlessVoices } from './headless-voices.ts';
 import { placeObject, type PlacedObject } from './placed-objects.ts';
@@ -120,6 +122,8 @@ export interface SimOptions {
    * every run loads what it loads in the same step (without, a load may land a step later).
    */
   readonly reads?: SimReads;
+  /** A saved game to load instead of a new game (docs/formats/save.md). */
+  readonly load?: { readonly save: GameSave; readonly header: SaveHeader };
 }
 
 /** The game folder's reads, as a step settles them (tools/node-game-folder.ts). */
@@ -311,7 +315,9 @@ export class SimWorld {
     });
     // The game's HUD and menus listen (as in Play): notifications go to the HUD.
     log.attachSession(session);
-    const runtime = await session.runtime(options.opening ?? false);
+    const runtime = options.load
+      ? await session.loadSaved(options.load.save, options.load.header)
+      : await session.runtime(options.opening ?? false);
     log.attachRuntime(runtime);
     return new SimWorld(
       session,
@@ -353,6 +359,11 @@ export class SimWorld {
   /** A loaded cell's form id by the stage's key. */
   cellFormId(key: string): number | undefined {
     return this.#cells.get(key)?.formId;
+  }
+
+  /** Every placed object of the loaded cells. */
+  placedObjects(): PlacedObject[] {
+    return [...this.#cells.values()].flatMap((cell) => [...cell.placed]);
   }
 
   /** The placed object of a loaded cell by its reference (its instance, its open sequence). */
