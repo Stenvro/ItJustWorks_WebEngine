@@ -58,6 +58,17 @@ export interface CrimeWorld {
 export type CrimeEvent =
   /** A crime was seen: its witnesses react (their line, an alarm to those near). */
   | { readonly kind: 'crime'; readonly crime: Crime; readonly act: CrimeAct }
+  /**
+   * An actor other than the player committed a crime that witnesses who care saw: no bounty;
+   * they raise the alarm, and the guards among them (and those who hear it) go after it.
+   */
+  | {
+      readonly kind: 'npcCrime';
+      readonly criminal: number;
+      readonly victim: number | undefined;
+      readonly witnesses: readonly number[];
+      readonly act: CrimeAct;
+    }
   /** The last witness of crimes died before they were reported: their bounty is gone. */
   | { readonly kind: 'forgiven'; readonly crimes: readonly Crime[] }
   /** The player was caught pickpocketing (sPickpocketFail): the menu closes. */
@@ -95,6 +106,8 @@ export class CrimeEngine {
   readonly #listeners = new Set<(event: CrimeEvent) => void>();
   #settings: Promise<CrimeSettings> | undefined;
   readonly #names = new Map<number, string>();
+  /** NPC assaults already answered (attacker:victim): one alarm per pair. */
+  readonly #npcAssaults = new Set<string>();
   readonly #jailMarkers = new Map<number, Promise<number | undefined>>();
   random: () => number = Math.random;
 
@@ -275,7 +288,10 @@ export class CrimeEngine {
       readonly witnesses?: readonly number[];
     },
   ): Promise<Crime | undefined> {
-    if (criminal !== PLAYER_REF) return undefined;
+    if (criminal !== PLAYER_REF) {
+      await this.#npcCrime(criminal, options);
+      return undefined;
+    }
     const runtime = this.#runtime;
     const { victim } = options;
     const faction =
@@ -346,6 +362,43 @@ export class CrimeEngine {
     }
     this.#emit({ kind: 'crime', crime, act: options.act });
     return crime;
+  }
+
+  /**
+   * A crime by an actor other than the player: the witnesses who care (the victim, those of
+   * the crime's faction or its crime group, not the criminal's friends) report it as an alarm
+   * (no bounty: only the player has bounties); guards answer it by fighting the criminal
+   * (actor-crime.ts). TODO(M13): the engine's rule for which NPC acts are crimes beyond
+   * assault, and whether it records them.
+   */
+  async #npcCrime(
+    criminal: number,
+    options: {
+      readonly act: CrimeAct;
+      readonly victim?: number | undefined;
+      readonly faction?: number | undefined;
+      readonly witnesses?: readonly number[];
+    },
+  ): Promise<void> {
+    const runtime = this.#runtime;
+    const { victim } = options;
+    const faction =
+      options.faction ?? (await this.crimeFactionFor({ victim, place: victim ?? criminal }));
+    const seen = options.witnesses ?? this.world?.witnesses(criminal, options.act, victim) ?? [];
+    const group = faction === undefined ? [] : await this.crimeGroup(faction);
+    const witnesses: number[] = [];
+    for (const witness of seen) {
+      if (witness === criminal || witness === PLAYER_REF) continue;
+      if (await runtime.actors.isDead(witness)) continue;
+      if (witness !== victim) {
+        const own = await runtime.actors.crimeFaction(witness);
+        if (own === undefined || !group.includes(own)) continue;
+        if (await this.#overlooks(witness, criminal, CrimeType.attack)) continue;
+      }
+      witnesses.push(witness);
+    }
+    if (witnesses.length === 0) return;
+    this.#emit({ kind: 'npcCrime', criminal, victim, witnesses, act: options.act });
   }
 
   /** A witness overlooks the crime: a friend of the criminal (minor crimes; allies assault). */
@@ -662,7 +715,23 @@ export class CrimeEngine {
    */
   async assault(attacker: number, victim: number): Promise<Crime | undefined> {
     const runtime = this.#runtime;
-    if (attacker !== PLAYER_REF || victim === attacker) return undefined;
+    if (victim === attacker) return undefined;
+    // An actor's first blow on one not hostile to it: an NPC crime (no bounty) its witnesses
+    // and the guards answer.
+    if (attacker !== PLAYER_REF) {
+      const key = `${String(attacker)}:${String(victim)}`;
+      if (this.#npcAssaults.has(key) || (await this.reaction(victim, attacker)) === 'hostile')
+        return undefined;
+      this.#npcAssaults.add(key);
+      const others = this.world?.witnesses(attacker, 'attack', victim) ?? [];
+      await this.commit(CrimeType.attack, attacker, {
+        act: 'attack',
+        victim,
+        faction: await this.victimCrimeFaction(victim),
+        witnesses: [victim, ...others.filter((actor) => actor !== victim)],
+      });
+      return undefined;
+    }
     if ((await this.reaction(victim, attacker)) === 'hostile') return undefined;
     if (this.ledger.known(CrimeType.attack, attacker, victim)) return undefined;
     // The one hit knows who hit it, seen or not; those who see the attacker too.

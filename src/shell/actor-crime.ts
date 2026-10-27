@@ -185,6 +185,17 @@ export class ActorCrime {
         }
         return;
       }
+      case 'npcCrime': {
+        // An NPC's crime: its witnesses raise the alarm (those near hear it), and the guards
+        // among them fight the criminal. TODO(M13): guards that only hear the alarm.
+        for (const witness of event.witnesses) {
+          senses.alarm(witness, event.criminal, ALARMS[event.act]);
+          void this.#isGuard(runtime, witness).then((guard) => {
+            if (guard) runtime.world.startCombat?.(witness, event.criminal);
+          });
+        }
+        return;
+      }
       case 'forgiven':
         void session.settings().then((settings) => {
           session.hud.notification(settings.string('sWitnessKilled') ?? '');
