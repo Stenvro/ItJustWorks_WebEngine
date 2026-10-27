@@ -230,7 +230,13 @@ export class JournalMenu {
         LoadGame: (menu, args) => {
           const index = typeof args[0] === 'number' ? args[0] : -1;
           const name = this.#listed?.headers[index]?.name;
-          if (name === undefined) return;
+          if (name === undefined) {
+            if (index === this.#listed?.headers.length && this.saves?.importEss) {
+              close(menu);
+              this.saves.importEss();
+            }
+            return;
+          }
           close(menu);
           this.saves?.load(name);
         },
@@ -416,7 +422,20 @@ export class JournalMenu {
         fileNum: header.number,
       });
     });
-    menu.call('onSaveLoadBatchComplete', true, headers.length, headers.length);
+    // Load ends with the import of an original save (.ess: a file picker).
+    const entries = headers.length + (!saving && this.saves?.importEss ? 1 : 0);
+    if (entries > headers.length) {
+      menu.invoke(`${path}.push`, {
+        text: IMPORT_ESS_TEXT,
+        name: '',
+        level: 0,
+        raceName: '',
+        playTime: '',
+        index: headers.length,
+        fileNum: 0,
+      });
+    }
+    menu.call('onSaveLoadBatchComplete', true, entries, entries);
   }
 
   #notAnswered(name: string): void {
@@ -442,4 +461,9 @@ export interface JournalSaves {
   quicksave(): void;
   load(name: string): void;
   delete(name: string): Promise<void>;
+  /** Picks an original save (.ess), imports it and loads it. */
+  importEss?(): void;
 }
+
+/** The Load list's last entry: the import of an original save. */
+const IMPORT_ESS_TEXT = 'Import .ess (a save of the original game)';
