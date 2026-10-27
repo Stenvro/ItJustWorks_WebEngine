@@ -75,6 +75,7 @@ import { StoryEvents } from './story-events.ts';
 import { ActorLocations, type PlacementSnapshot } from './actor-locations.ts';
 import { SceneDirector } from '../../ai/scene-runtime.ts';
 import type { WorldSave } from '../../save/world-save.ts';
+import type { SavedGraph } from '../../animation/script-graphs.ts';
 import { RuntimeSceneHost, type SceneSpeech } from './scene-host.ts';
 import {
   gameStateData,
@@ -82,6 +83,7 @@ import {
   restoreGameState,
   SAVED_RUNTIME_FIELDS,
   type RuntimeSave,
+  type SavedTranslation,
   type SavedUpdate,
 } from './runtime-save.ts';
 
@@ -496,6 +498,11 @@ export interface WorldBridge {
    * furniture, packages and fights, the graphs of objects moved from their start.
    */
   saveWorld?(): WorldSave;
+  /**
+   * A loaded object's animated state where it moved from its start (undefined: as it started),
+   * read as its 3D unloads so it loads again in that state.
+   */
+  savedGraph?(reference: number): SavedGraph | undefined;
 }
 
 /** A quest's update as the HUD announces it. */
@@ -721,6 +728,8 @@ const ATTACK_STATE_BASH = 6;
 const PLAYER_ACTION_SECONDS = 2;
 /** fRefTranslationAlmostDonePercent's built-in default: a translation's share "almost done". */
 const ALMOST_TRANSLATED = 0.9;
+/** The registrations' key prefix of a menu's (RegisterForMenu: `menu:` and its lowercase name). */
+const MENU_REGISTRATION = 'menu:';
 /** [General] uGridsToLoad's built-in default: the exterior cells loaded round the player's. */
 export const GRIDS_TO_LOAD = 5;
 const CELL_UNITS = 4096;
@@ -910,6 +919,13 @@ export class ScriptRuntime implements VmHost {
   #updateToken = 1;
   /** Animation event registrations: sender → event → receivers (handle keys and handles). */
   readonly #animationEvents = new Map<number, Map<string, Map<string, ObjectHandle>>>();
+  /** The names aliases give the references they hold (aliasDisplayName). */
+  readonly #aliasNames = new Map<number, string>();
+  /** Translations in progress (TranslateTo), by reference, with the real time each started. */
+  readonly #translations = new Map<
+    number,
+    { readonly translation: SavedTranslation; readonly started: number }
+  >();
   readonly #animationWaiters = new Map<string, (() => void)[]>();
   readonly #registrations = new Map<string, Map<string, ObjectHandle>>();
   readonly #formListAdded = new Map<number, number[]>();
@@ -1201,6 +1217,15 @@ export class ScriptRuntime implements VmHost {
     references: readonly number[],
     loaded: (reference: number) => boolean,
   ): Promise<void> {
+    // Before the view lets go of their 3D (no wait): each loaded object's animated state is
+    // kept (a chest's lid open, a lever pulled) and the animation events registered on it go
+    // with its graph.
+    for (const reference of references) {
+      if (!loaded(reference)) continue;
+      const graph = this.world.savedGraph?.(reference);
+      if (graph) this.state.graphs.set(reference, graph);
+      this.animationGraphUnloaded(reference);
+    }
     for (const reference of references) {
       if (!(await this.#hasScripts(reference))) continue;
       if (loaded(reference)) this.events.emit('objectLoaded', { reference, loaded: false });
@@ -1313,12 +1338,40 @@ export class ScriptRuntime implements VmHost {
     set.add(`${String(quest)}:${String(alias)}`);
     this.#aliasesOf.set(reference, set);
     this.#holding.delete(reference);
+    this.detach(this.#nameByAliases(reference));
   }
 
   aliasCleared(quest: number, alias: number, reference: number): void {
     this.#aliasesOf.get(reference)?.delete(`${String(quest)}:${String(alias)}`);
     this.#holding.delete(reference);
     this.quests.filler.released(quest, alias, reference);
+    this.detach(this.#nameByAliases(reference));
+  }
+
+  /**
+   * The name an alias holding a reference gives it (the alias's display name, ALDN: a message
+   * whose title names it), shown for it while the alias holds it (the crosshair, menus).
+   */
+  aliasDisplayName(reference: number): string | undefined {
+    return this.#aliasNames.get(reference);
+  }
+
+  /** A reference's alias name found again as an alias takes or lets go of it. */
+  async #nameByAliases(reference: number): Promise<void> {
+    let name: string | undefined;
+    for (const { quest, alias } of this.aliasesHolding(reference)) {
+      const message = (await this.forms.quest(quest))?.aliases.find(
+        (entry) => entry.id === alias,
+      )?.displayName;
+      if (message === undefined || message === 0) continue;
+      const text = (await this.forms.record(message))?.text('FULL');
+      if (text) {
+        name = text;
+        break;
+      }
+    }
+    if (name === undefined) this.#aliasNames.delete(reference);
+    else this.#aliasNames.set(reference, name);
   }
 
   /** The aliases that hold a reference. */
@@ -1418,6 +1471,29 @@ export class ScriptRuntime implements VmHost {
     return true;
   }
 
+  /**
+   * A reference's 3D (and with it its behavior graph) unloaded: the registrations for its
+   * animation events are dropped, and each one that registered hears it
+   * (OnAnimationEventUnregistered(akSource, asEventName), as the Creation Kit describes the
+   * event: the game removed the registration, so the script may register again on OnLoad).
+   */
+  animationGraphUnloaded(reference: number): void {
+    const events = this.#animationEvents.get(reference);
+    if (!events) return;
+    this.#animationEvents.delete(reference);
+    // The name reaches the script as registered, lowercase (the registrations keep it so).
+    for (const [name, receivers] of events) {
+      for (const receiver of receivers.values()) {
+        this.detach(
+          this.#sendTo(receiver, 'OnAnimationEventUnregistered', [
+            this.referenceHandle(reference),
+            name,
+          ]),
+        );
+      }
+    }
+  }
+
   /** The engine: a reference's behavior graph raised an event (OnAnimationEvent, waits). */
   animationEvent(reference: number, event: string): void {
     const lower = event.toLowerCase();
@@ -1451,6 +1527,33 @@ export class ScriptRuntime implements VmHost {
     if (on) receivers.set(target.key, target);
     else receivers.delete(target.key);
     return null;
+  }
+
+  /**
+   * SKSE's RegisterForMenu, UnregisterForMenu (a menu by name) and UnregisterForAllMenus
+   * (`name` undefined): a form, alias or active effect hears that menu open and close
+   * (OnMenuOpen, OnMenuClose with the menu's name) until it unregisters.
+   */
+  registerForMenu(target: ObjectHandle | null, name: string | undefined, on: boolean): null {
+    if (!target) return null;
+    if (name === undefined) {
+      for (const [kind, receivers] of this.#registrations)
+        if (kind.startsWith(MENU_REGISTRATION)) receivers.delete(target.key);
+      return null;
+    }
+    const kind = MENU_REGISTRATION + name.toLowerCase();
+    const receivers = this.#registrations.get(kind) ?? new Map<string, ObjectHandle>();
+    this.#registrations.set(kind, receivers);
+    if (on) receivers.set(target.key, target);
+    else receivers.delete(target.key);
+    return null;
+  }
+
+  /** The menu stack: a menu opened or closed (MenuOpenCloseEvent) reaches those registered. */
+  menuOpenClose(name: string, opening: boolean): void {
+    const receivers = this.#registrations.get(MENU_REGISTRATION + name.toLowerCase());
+    for (const target of receivers?.values() ?? [])
+      this.detach(this.#sendTo(target, opening ? 'OnMenuOpen' : 'OnMenuClose', [name]));
   }
 
   /** The engine: an event to every object registered for a kind (OnSleepStart, ...). */
@@ -2002,27 +2105,51 @@ export class ScriptRuntime implements VmHost {
           position[2] - from.position[2],
         )
       : 0;
-    const token = this.#updateToken++;
-    this.#updates.set(key, token);
     const seconds = speed > 0 ? distance / speed : 0;
     const almost = await this.gameSetting('fRefTranslationAlmostDonePercent');
     const share = typeof almost === 'number' ? almost : ALMOST_TRANSLATED;
+    this.#translateFor({ reference, position, rotation, seconds, share, done: 0 });
+  }
+
+  /**
+   * A translation's way in time: almost complete as it passes its share of the way, complete
+   * at its end; `done` seconds of it had gone already (a loaded save's). A save keeps it.
+   */
+  #translateFor(translation: SavedTranslation): void {
+    const { reference, position, rotation, seconds, share, done } = translation;
+    const key = `${String(reference)}:translation`;
+    const token = this.#updateToken++;
+    this.#updates.set(key, token);
     const scheduler = this.vm.scheduler;
+    const started = scheduler.realTime - done;
+    this.#translations.set(reference, { translation, started });
+    const almostAt = seconds * share;
+    const ends = (): boolean => {
+      if (this.#updates.get(key) === token) return false;
+      if (this.#translations.get(reference)?.started === started)
+        this.#translations.delete(reference);
+      return true;
+    };
     this.detach(
-      scheduler.waitReal(seconds * share).then(async () => {
-        if (this.#updates.get(key) !== token) return;
-        this.events.emit('objectTranslation', { reference, result: 2 });
-        await scheduler.waitReal(seconds * (1 - share));
-        if (this.#updates.get(key) !== token) return;
+      (async () => {
+        if (done < almostAt) {
+          await scheduler.waitReal(almostAt - done);
+          if (ends()) return;
+          this.events.emit('objectTranslation', { reference, result: 2 });
+        }
+        await scheduler.waitReal(seconds - Math.max(done, almostAt));
+        if (ends()) return;
         this.#updates.delete(key);
-        this.move(reference, position, rotation);
+        this.#translations.delete(reference);
+        this.move(reference, [...position], [...rotation]);
         await this.events.emitted('objectTranslation', { reference, result: 1 });
-      }),
+      })(),
     );
   }
 
   stopTranslation(reference: number): void {
     this.#updates.delete(`${String(reference)}:translation`);
+    this.#translations.delete(reference);
   }
 
   /** The location (LCTN) of the cell a reference is in (CELL XLCN). */
@@ -3359,7 +3486,7 @@ export class ScriptRuntime implements VmHost {
   /**
    * The scripts' side of a save: the game state, the runtime's switches and registrations, the
    * script instances, the waiting Papyrus threads' frames. `unsaved` hears what a save cannot
-   * hold (threads in a native's promise; scenes playing; objects translating).
+   * hold (a thread whose frames cannot be found again).
    */
   async saveData(unsaved: (what: string) => void = () => undefined): Promise<RuntimeSave> {
     const scheduler = this.vm.scheduler;
@@ -3367,9 +3494,11 @@ export class ScriptRuntime implements VmHost {
     for (const thread of threads.unsaved) {
       unsaved(`Papyrus thread ${String(thread.id)} (${thread.state}) at ${thread.where}`);
     }
-    for (const key of this.#updates.keys()) {
-      if (key.endsWith(':translation')) unsaved(`translation of ${key.split(':')[0] ?? key}`);
-    }
+    // Translations in progress: each with how far it got (it goes on as the save loads).
+    const translations = [...this.#translations.values()].map(({ translation, started }) => ({
+      ...translation,
+      done: Math.min(translation.seconds, Math.max(0, scheduler.realTime - started)),
+    }));
     const updates: SavedUpdate[] = [...this.#updateInfo.values()].map((update) => ({
       target: update.target,
       interval: update.interval,
@@ -3409,6 +3538,7 @@ export class ScriptRuntime implements VmHost {
       instances: await this.vm.savedInstances(),
       threads: threads.threads,
       scenes: this.scenes.saveData(),
+      translations,
     };
   }
 
@@ -3481,6 +3611,8 @@ export class ScriptRuntime implements VmHost {
     problems.push(...(await this.vm.restoreThreads(save.threads ?? [])));
     // The scenes that played go on in their phases (src/ai/scene-runtime.ts).
     this.scenes.restore(save.scenes);
+    // The translations in progress go on from where they were.
+    for (const translation of save.translations ?? []) this.#translateFor(translation);
     // The player's abilities, diseases and worn enchantments act again (magic-engine.ts).
     await this.magic.prepare(PLAYER_REF);
     await this.vm.idle();

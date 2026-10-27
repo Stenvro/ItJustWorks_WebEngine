@@ -54,9 +54,8 @@ These run through every area and explain most of what breaks in play.
    every 15 s and on the hour, sandbox stays are in game hours (2026-10-24); the actors beyond the
    high process take turns within the frame's budget (src/ai/process-levels.ts, 2026-10-27).
 4. **Persistence.** Cells reset and respawn by the engine's rule, and moved objects keep their places
-   (2026-10-24); animated objects and corpses still return to their editor places when a cell reloads;
-   there are no buffered cells; state the saves need is
-   spread outside GameState, and Papyrus threads cannot be saved yet.
+   (2026-10-24); animated objects keep their graph state and cells are buffered (2026-10-27);
+   corpses still return to their editor places when a cell reloads.
 5. **Decision structures.** Combat is a behaviour tree in the original (actions per equipment slot in
    parallel with a movement priority list); ours runs that tree (src/ai/combat-tree.ts), some subtrees still TODO(M13). The sandbox has a daily plan and
    weighted activities; ours picks at random.
@@ -68,16 +67,16 @@ These run through every area and explain most of what breaks in play.
 | System                      | Status    | Main gaps                                                                                                                                                                               |
 | --------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Form types                  | complete  |                                                                                                                                                                                         |
-| Per-reference state         | partial   | animated state lost on unload, partial souls, alias display names (activate children: done, 158 of 6,527 pairs lie beyond the cells searched; MoveTo on a moving object: done)          |
-| Cell loading                | partial   | no buffered cells, OnAttached/DetachedFromCell not checked, grid follows the camera (detach hours: done)                                                                                |
-| Respawn, cell reset         | partial   | enable state on reset, the actors' own respawn clock, dropped items (reset rule, zones, OnReset, corpses, zone levels: done; vendor restock: done)                                      |
-| Papyrus VM                  | different | natives not frame-synced; threads cannot be saved                                                                                                                                       |
-| Script events               | partial   | not produced: OnAnimationEventUnregistered; 52 of 68 not yet checked in the simulation                                                                                                  |
-| Event sources               | partial   | hub kinds without a producer: active effects, perk entries, quest init, scenes, topic infos, loading; 7 sources without a kind; the stats' sources besides kills; resets/traps done     |
+| Per-reference state         | partial   | partial souls listed one entry per gem base; corpses' poses on reload (animated state kept across unload, partial souls, alias display names: done 2026-10-27; activate children: done) |
+| Cell loading                | partial   | a buffered cell keeps its data, not its 3D; OnAttached/DetachedFromCell no sim case (cell buffers, grid on the player, detach hours: done)                                              |
+| Respawn, cell reset         | partial   | whether reset sets the initial enable state; what else sets an actor's respawn clock (enable state, the actor's clock from its death, dropped items: done 2026-10-27)                   |
+| Papyrus VM                  | different | natives not frame-synced (threads saved: done)                                                                                                                                          |
+| Script events               | partial   | 52 of 68 not yet checked in the simulation (OnAnimationEventUnregistered, OnMenuOpen/Close: done)                                                                                       |
+| Event sources               | partial   | 7 sources without a kind; the stats' sources besides kills (every hub kind has a producer: 2026-10-27; resets/traps done)                                                               |
 | Story manager               | partial   | most raised types not yet checked in the simulation; the engine's own raise sites of Bribe/Flatter/Intimidate (the counts), Player Gets Favor (SetDoingFavor) and Quest Start's members |
-| Save and load               | partial   | own format (docs/formats/save.md); threads in a native's promise, translations not saved; .ess import (M12)                                                                             |
+| Save and load               | partial   | own format (docs/formats/save.md); whether a native in flight is called again on load; .ess import (M12) (threads in a native's promise, translations, hazards, projectiles: done)      |
 | Stats, skills, actor values | complete  | tracked-stats event                                                                                                                                                                     |
-| Audio                       | partial   | the skills menu does not call setStatsMenu yet (SMSC mute) (pause categories by DOBJ, sounds held in menus and on the loading screen, Slow Time by DOBJ TSSC: done)                     |
+| Audio                       | partial   | (the skills menu's SMSC mute, pause categories by DOBJ, sounds held in menus and on the loading screen, Slow Time by DOBJ TSSC: done)                                                   |
 | Load order, settings        | partial   | a master loading after its dependent is only reported; the launcher's detail presets (plugin screen, Plugins.txt import, missing masters, plugin archives, layered INI files: done)     |
 
 ### AI

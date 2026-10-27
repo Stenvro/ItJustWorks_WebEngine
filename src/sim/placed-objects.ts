@@ -5,7 +5,7 @@
 // rule for interiors, exteriors and the simulation alike.
 
 import type { AnimatedSkeleton } from '../animation/animated-skeleton.ts';
-import { skeletonEventsToScripts } from '../animation/script-graphs.ts';
+import { skeletonEventsToScripts, type SavedGraph } from '../animation/script-graphs.ts';
 import type { ActorPose } from '../animation/skeleton.ts';
 import { articulatedPose } from '../physics/articulation.ts';
 import type { CollisionData } from '../physics/collision-data.ts';
@@ -52,6 +52,14 @@ export interface PlaceOptions {
   ) => { readonly pose: ActorPose; readonly poseNodes: Int16Array } | undefined;
 }
 
+/** The animated state an object kept as its 3D unloaded (GameState.graphs), once. */
+function takeUnloadedGraph(session: GameSession, object: CellObject): SavedGraph | undefined {
+  const graphs = session.scriptsReady?.state.graphs;
+  const graph = graphs?.get(object.reference);
+  graphs?.delete(object.reference);
+  return graph;
+}
+
 /** Places a cell's object with its model (see the file's comment). */
 export function placeObject(
   session: GameSession,
@@ -61,8 +69,11 @@ export function placeObject(
 ): PlacedObject {
   const { model, collision, water, directional } = parts;
   const graph = startObjectGraph(model, object.reference);
-  // A loaded save's graph: in the state it was saved in (a lever pulled stays down).
-  const saved = options.simulated ? session.restoring?.takeGraph(object.reference) : undefined;
+  // A loaded save's graph: in the state it was saved in (a lever pulled stays down); else the
+  // state it had as its 3D last unloaded (a chest left open is open as its cell loads again).
+  const saved = options.simulated
+    ? (session.restoring?.takeGraph(object.reference) ?? takeUnloadedGraph(session, object))
+    : undefined;
   if (graph && saved?.sequences) graph.restoreState(saved.sequences, clock());
   // The events its sequences raise reach its scripts (OnAnimationEvent).
   if (graph)

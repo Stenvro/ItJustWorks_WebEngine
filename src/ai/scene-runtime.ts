@@ -121,6 +121,15 @@ export interface SceneHost {
   warn(message: string): void;
   /** What happens, for tools (tools/scene-info.ts --play). */
   trace?(text: string): void;
+  /**
+   * The engine's scene events (TESSceneEvent, TESScenePhaseEvent, TESSceneActionEvent): the
+   * scene began or ended, a phase began or ended, an action started (its index).
+   */
+  sceneEvent?(
+    scene: number,
+    type: 'begin' | 'end' | 'phaseBegin' | 'phaseEnd' | 'action',
+    index?: number,
+  ): void;
 }
 
 /**
@@ -807,7 +816,10 @@ export class SceneDirector {
   async #play(playing: Playing, resumed?: number): Promise<void> {
     const record = playing.record;
     if (!record) return;
-    if (resumed === undefined) await this.#fragment(playing, 'begin');
+    if (resumed === undefined) {
+      this.#host.sceneEvent?.(playing.formId, 'begin');
+      await this.#fragment(playing, 'begin');
+    }
     for (let index = resumed ?? 0; index < record.phases.length; index++) {
       if (!live(playing)) return;
       const phase = record.phases[index];
@@ -832,12 +844,16 @@ export class SceneDirector {
         `phase ${String(index)}${phase.name ? ` "${phase.name}"` : ''}${goesOn ? ' (loaded)' : ''}`,
       );
       if (goesOn) this.#resumeActions(playing);
-      else await this.#phaseFragment(playing, index, PhaseFragmentFlag.onStart);
+      else {
+        this.#host.sceneEvent?.(playing.formId, 'phaseBegin', index);
+        await this.#phaseFragment(playing, index, PhaseFragmentFlag.onStart);
+      }
       if (!live(playing)) return;
       this.#startActions(playing, index);
       await this.#phaseDone(playing, index);
       if (!live(playing)) return;
       this.#trace(playing, `phase ${String(index)} completes`);
+      this.#host.sceneEvent?.(playing.formId, 'phaseEnd', index);
       await this.#phaseFragment(playing, index, PhaseFragmentFlag.onCompletion);
       if (!live(playing)) return;
       this.#endActions(playing, index);
@@ -876,6 +892,7 @@ export class SceneDirector {
   #startActions(playing: Playing, phase: number): void {
     for (const run of playing.actions) {
       if (run.action.startPhase !== phase || run.status !== 'waiting') continue;
+      this.#host.sceneEvent?.(playing.formId, 'action', run.action.index);
       this.#startRun(playing, run, false);
     }
   }
@@ -1088,6 +1105,7 @@ export class SceneDirector {
     for (const waiter of waiters) waiter.resolve();
     if (!started) return;
     this.#trace(playing, reason === 'done' ? 'ends' : 'stopped');
+    this.#host.sceneEvent?.(playing.formId, 'end');
     const record = playing.record;
     void (async () => {
       await this.#fragment(playing, 'end');

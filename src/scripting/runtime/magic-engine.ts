@@ -913,6 +913,13 @@ export class MagicEngine {
     if (target === PLAYER_REF && effect.imageSpaceModifier !== undefined)
       runtime.world.imageSpace?.(effect.imageSpaceModifier, 'apply', 1, undefined, target);
     this.#show('start', key, entry, effect);
+    // The engine tells it (TESActiveEffectApplyRemoveEvent).
+    runtime.events.emit('activeEffectApplyRemove', {
+      caster: entry.caster,
+      target,
+      effect: entry.effect,
+      applied: true,
+    });
     const hit = effectSound(effect, EffectSound.onHit);
     if (hit !== undefined) runtime.world.playSound?.(hit, target);
     if (effect.scripted) {
@@ -949,6 +956,12 @@ export class MagicEngine {
     if (entry.target === PLAYER_REF && effect?.imageSpaceModifier !== undefined)
       runtime.world.imageSpace?.(effect.imageSpaceModifier, 'remove', 0);
     if (effect) this.#show('stop', key, entry, effect);
+    runtime.events.emit('activeEffectApplyRemove', {
+      caster: entry.caster,
+      target: entry.target,
+      effect: entry.effect,
+      applied: false,
+    });
     if (effect?.scripted) {
       const handle = handleOf(key);
       if (ending) this.#finishing.set(key, entry);
@@ -1551,12 +1564,19 @@ export class MagicEngine {
       if (count <= 0) continue;
       const record = await runtime.forms.record(formId);
       const gem = record && parseSoulGem(record);
-      if (gem?.filled !== undefined) gems.push(gem);
+      // Those already holding a partial soul are not empty.
+      if (gem?.filled !== undefined && count > runtime.crafting.partialSouls(trapper, formId))
+        gems.push(gem);
     }
     const gem = soulGemFor(gems, size, npc);
     if (gem?.filled === undefined) return false;
-    await runtime.removeItem(trapper, runtime.formHandle(gem.formId), 1, true, undefined);
-    await runtime.addItem(trapper, runtime.formHandle(gem.filled), 1, true);
+    if (size < gem.capacity) {
+      // A smaller soul stays in the empty gem as a partial soul (ExtraSoul), not its filled form.
+      runtime.crafting.addSoul(trapper, gem.formId, size);
+    } else {
+      await runtime.removeItem(trapper, runtime.formHandle(gem.formId), 1, true, undefined);
+      await runtime.addItem(trapper, runtime.formHandle(gem.filled), 1, true);
+    }
     const sound = await this.defaultObject('SCSD');
     if (sound !== undefined) runtime.world.playSound?.(sound, trapper);
     return true;

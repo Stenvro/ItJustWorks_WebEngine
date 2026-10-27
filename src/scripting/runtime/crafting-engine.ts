@@ -589,6 +589,41 @@ export class CraftingEngine {
     return charge && charge.max > 0 ? chargePercent(charge.current, charge.max) : undefined;
   }
 
+  /**
+   * Partial souls (the game's ExtraSoul on an empty gem's inventory entry): a soul smaller than
+   * the gem can hold stays in the empty gem (a grand gem with a petty soul), not its filled form.
+   */
+  addSoul(container: number, gem: number, soul: number): void {
+    const list = this.#list(container, gem, true) ?? [];
+    const stack = list.find((entry) => entry.soul === soul && !entry.worn);
+    if (stack) stack.count++;
+    else list.push({ count: 1, health: 1, soul });
+  }
+
+  /** The greatest partial soul in a container's empty gems of a base (0: none). */
+  partialSoul(container: number, gem: number): number {
+    let best = 0;
+    for (const stack of this.stacks(container, gem))
+      if (stack.count > 0) best = Math.max(best, stack.soul ?? 0);
+    return best;
+  }
+
+  /** How many of a container's gems of a base hold a partial soul. */
+  partialSouls(container: number, gem: number): number {
+    return this.stacks(container, gem).reduce(
+      (sum, stack) => sum + ((stack.soul ?? 0) > 0 ? stack.count : 0),
+      0,
+    );
+  }
+
+  /** A gem's soul as used (its own, else its greatest partial one), and whether it is partial. */
+  async #gemSoul(container: number, gem: number): Promise<{ soul: number; partial: boolean }> {
+    const item = await this.#runtime.equipment.item(gem);
+    const own = item?.type === 'SLGM' ? (item.soul?.current ?? 0) : 0;
+    if (own > 0 || item?.type !== 'SLGM') return { soul: own, partial: false };
+    return { soul: this.partialSoul(container, gem), partial: true };
+  }
+
   /** The filled soul gems a container has, the smallest first. */
   async soulGems(container: number): Promise<SoulGemInfo[]> {
     const runtime = this.#runtime;
@@ -597,6 +632,24 @@ export class CraftingEngine {
       if (count <= 0) continue;
       const item = await runtime.equipment.item(formId);
       const soul = item?.type === 'SLGM' ? (item.soul?.current ?? 0) : 0;
+      if (item?.type === 'SLGM' && soul <= 0) {
+        // Empty gems holding partial souls: their greatest. TODO(M13): each partial soul
+        // level of a base listed as an entry of its own, as the game's menus list them.
+        const partial = this.partialSoul(container, formId);
+        const holding = this.stacks(container, formId).reduce(
+          (sum, stack) => sum + (stack.soul === partial ? stack.count : 0),
+          0,
+        );
+        if (partial > 0)
+          gems.push({
+            formId,
+            name: item.name,
+            count: holding,
+            soul: partial,
+            charge: SOUL_CAPACITY[partial] ?? 0,
+          });
+        continue;
+      }
       if (!item || soul <= 0) continue;
       gems.push({ formId, name: item.name, count, soul, charge: SOUL_CAPACITY[soul] ?? 0 });
     }
@@ -633,8 +686,7 @@ export class CraftingEngine {
     const runtime = this.#runtime;
     const charge = await this.charge(actor, weapon, which);
     if (!charge || charge.current >= charge.max) return false;
-    const item = await runtime.equipment.item(gem);
-    const soul = item?.type === 'SLGM' ? (item.soul?.current ?? 0) : 0;
+    const { soul } = await this.#gemSoul(actor, gem);
     if (soul <= 0 || (await runtime.itemCount(actor, gem)) <= 0) return false;
     const added = await this.perks.soulGemRecharge(actor, SOUL_CAPACITY[soul] ?? 0);
     this.setCharge(
@@ -653,10 +705,21 @@ export class CraftingEngine {
   /** A soul gem used up: it goes (a reusable one, Azura's Star, is kept empty: SLGM NAM0). */
   async #useSoulGem(actor: number, gem: number): Promise<void> {
     const runtime = this.#runtime;
-    await runtime.removeItem(actor, runtime.formHandle(gem), 1, true, undefined);
-    const record = await runtime.forms.record(gem);
     const item = await runtime.equipment.item(gem);
     const reusable = (await this.#defaultObjects()).get(REUSABLE_SOUL_GEM);
+    const { soul, partial } = await this.#gemSoul(actor, gem);
+    if (partial) {
+      // An empty gem's partial soul is used: the soul goes, the gem with it unless reusable.
+      const stack = this.stacks(actor, gem).find((entry) => entry.soul === soul && entry.count > 0);
+      if (stack) stack.count--;
+      this.#prune(actor, gem);
+      if (reusable === undefined || !item?.keywords.includes(reusable))
+        await runtime.removeItem(actor, runtime.formHandle(gem), 1, true, undefined);
+      this.#stat('soul gems used');
+      return;
+    }
+    await runtime.removeItem(actor, runtime.formHandle(gem), 1, true, undefined);
+    const record = await runtime.forms.record(gem);
     const empty = record?.formIdField('NAM0');
     if (reusable !== undefined && item?.keywords.includes(reusable) && empty)
       await runtime.addItem(actor, runtime.formHandle(empty), 1, true);
@@ -900,8 +963,7 @@ export class CraftingEngine {
     const runtime = this.#runtime;
     const item = await runtime.equipment.item(base);
     const record = await runtime.forms.record(base);
-    const gemItem = await runtime.equipment.item(gem);
-    const soul = gemItem?.type === 'SLGM' ? (gemItem.soul?.current ?? 0) : 0;
+    const { soul } = await this.#gemSoul(actor, gem);
     if (!item || !record || soul <= 0) return undefined;
     if ((await runtime.itemCount(actor, base)) <= 0 || (await runtime.itemCount(actor, gem)) <= 0)
       return undefined;

@@ -14,8 +14,13 @@
 //   container only if its base Respawns, an actor base only if it Respawns; a leveled actor
 //   unless "No Respawn"): what the game changed on it goes (its lock, open state, destruction,
 //   harvest), a container's inventory is picked anew from its records, an object that is not
-//   persistent goes back to its editor place, an actor comes back as its records make it, and
-//   it is told (TESResetEvent: the scripts' OnReset). A reference that may not reset keeps all.
+//   persistent goes back to its editor place, its enable state and animated state are as the
+//   plugins made them, an actor comes back as its records make it, and it is told
+//   (TESResetEvent: the scripts' OnReset). A reference that may not reset keeps all.
+// - An actor keeps a respawn clock of its own: a dead actor respawns only once the wait has
+//   passed since it died, also where its zone reset sooner.
+// - What the game made in the cell goes with its reset: references created there (dropped
+//   items, PlaceAtMe) lying in the world, unless a quest's alias holds them.
 // - Corpses: as a cell that left comes back, a dead actor that does not respawn, did not start
 //   dead and died more than iHoursToClearCorpses hours ago is removed.
 //
@@ -162,10 +167,11 @@ export class CellResets {
     const detached = state.cellDetached.get(cell) ?? 0;
     state.cellDetached.delete(cell);
     const location = zoneData?.location ?? (await this.#ownLocation(cell));
+    const cleared = this.#cleared(location);
     const decision = cellReturn({
       now,
       detached,
-      cleared: this.#cleared(location),
+      cleared,
       ...(zone !== undefined && zoneData && { zone: { neverResets, times: this.#times(zone) } }),
       waits,
     });
@@ -179,6 +185,13 @@ export class CellResets {
         if (await this.#clearCorpse(record, now, waits.corpses)) continue;
       }
       if (!decision.reset || !(await this.#mayReset(record))) continue;
+      // An actor's own clock: its respawn waits from its death.
+      if (
+        record.type === 'ACHR' &&
+        state.actors.get(reference)?.dead === true &&
+        !respawnDue(now, state.deathHours.get(reference) ?? 0, cleared, waits)
+      )
+        continue;
       this.#reset(record);
       reset.push(reference);
       this.#told.add(reference);
@@ -187,6 +200,7 @@ export class CellResets {
       if ((await runtime.forms.record(reference))?.type === 'ACHR')
         await runtime.locationClearing.revived(reference);
     }
+    if (decision.reset) this.#dropCreated(cell);
     return reset;
   }
 
@@ -222,6 +236,9 @@ export class CellResets {
       delete entry.destructionStage;
       delete entry.destructionHealth;
       delete entry.harvested;
+      // Enabled or disabled as the plugins made it (the engine sets it again as it resets).
+      // TODO(M13): read whether the engine sets the initial state or the one it had last.
+      delete entry.enabled;
       if ((record.flags & RecordFlag.persistent) === 0 && entry.container === undefined) {
         delete entry.position;
         delete entry.rotation;
@@ -231,10 +248,28 @@ export class CellResets {
     }
     state.inventories.delete(reference);
     state.itemStacks.delete(reference);
+    state.graphs.delete(reference);
     state.leveledLevels.delete(reference);
     if (record.type === 'ACHR') {
       state.actors.delete(reference);
       state.deathHours.delete(reference);
+    }
+  }
+
+  /**
+   * A cell's reset removes what the game made there: created references lying in it (dropped
+   * items, PlaceAtMe). TODO(M13): read from the engine which created references a reset keeps
+   * besides those a quest's alias holds (persistent ones made by scripts).
+   */
+  #dropCreated(cell: number): void {
+    const runtime = this.#runtime;
+    const state = runtime.state;
+    for (const reference of state.created.keys()) {
+      const entry = state.references.get(reference);
+      if (!entry || entry.deleted === true || entry.container !== undefined) continue;
+      if (entry.cell !== cell || runtime.aliasesHolding(reference).length > 0) continue;
+      entry.deleted = true;
+      state.graphs.delete(reference);
     }
   }
 

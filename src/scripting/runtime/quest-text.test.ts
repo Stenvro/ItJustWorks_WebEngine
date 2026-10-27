@@ -77,6 +77,7 @@ const runtime = {
   },
   gameSetting: (name: string) => Promise.resolve(SETTINGS[name]),
   baseOf: (reference: number) => Promise.resolve(reference === REFERENCE ? NPC : undefined),
+  aliasDisplayName: () => undefined,
 } as unknown as ScriptRuntime;
 
 const quest = {

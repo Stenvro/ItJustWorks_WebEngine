@@ -157,7 +157,12 @@ function setup(
   const slow = new Set<number>();
   const pending = new Map<number, () => void>();
   const made: { director?: SceneDirector } = {};
+  /** The engine's scene events (TESSceneEvent and its kin). */
+  const told: string[] = [];
   const host: SceneHost = {
+    sceneEvent: (formId, type, index) => {
+      told.push(`${type} ${formId.toString(16)}${index === undefined ? '' : ` ${String(index)}`}`);
+    },
     scene: (formId) => Promise.resolve(scenes.find((entry) => entry.formId === formId)),
     scenesOf: (quest) =>
       Promise.resolve(scenes.filter((entry) => entry.quest === quest).map((entry) => entry.formId)),
@@ -222,6 +227,7 @@ function setup(
   return {
     director: scenes_,
     events,
+    told,
     truths,
     aliases,
     running,
@@ -282,6 +288,20 @@ describe('scene phases and actions', () => {
     ]);
     expect(test.director.isPlaying(0x10)).toBe(false);
     expect(test.director.sceneOf(0x100)).toBeUndefined();
+    // The engine's events of it, in order: begin, each phase and the actions starting in it.
+    expect(test.told).toEqual([
+      'begin 10',
+      'phaseBegin 10 0',
+      'action 10 1',
+      'phaseEnd 10 0',
+      'phaseBegin 10 1',
+      'action 10 2',
+      'phaseEnd 10 1',
+      'phaseBegin 10 2',
+      'action 10 3',
+      'phaseEnd 10 2',
+      'end 10',
+    ]);
   });
 
   it('skips a phase whose start conditions do not hold', async () => {

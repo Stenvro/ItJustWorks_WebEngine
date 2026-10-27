@@ -158,18 +158,37 @@ takes its callee's result at its call instruction (the destination of `callmetho
 instance's other events again. What cannot be resumed (a script, function or instance gone) is
 logged under `save`.
 
-Not held (logged as not saved, by where they are and the native they are in): a thread in a
-native whose JavaScript promise is in flight (Quest.Start, SetStage, a story event, an animation
-event), between a callee's return and its caller taking the result, or in the full properties'
-Set functions before an OnInit (TODO(M13)).
+A thread in a native whose JavaScript promise is in flight (Quest.Start, SetStage, a story event,
+an animation event, a latent native waiting on the world) is saved at its call instruction and
+calls the native again as it loads (TODO(M13): whether the original calls it again or hands the
+caller the native's default result is not read).
+
+Not held (logged as not saved, by where they are): a thread between a callee's return and its
+caller taking the result, or in the full properties' Set functions before an OnInit
+(TODO(M13)).
+
+## Translations
+
+TranslateTo's translations in progress (`RuntimeSave.translations`): the reference, where to,
+the seconds the whole way takes, the share after which it is almost complete
+(fRefTranslationAlmostDonePercent) and the seconds gone. After a load each goes on from there:
+its almost-complete event if not yet told, then its end.
+
+## World state kept while unloaded
+
+GameState's own fields hold, and so save, what the world keeps of references that are not
+loaded: `graphs` (the animated state an object's graph had as its 3D unloaded: a chest's lid
+open, a lever pulled), the partial souls of soul gems (`itemStacks`' `soul`, the game's
+ExtraSoul).
 
 ## Not saved yet
 
-- Objects translating (TranslateTo), corpses' ragdoll
+- Corpses' ragdoll
   poses (a corpse lies again where it lay, its ragdoll falls anew), the procedures' own progress
   inside a step (a patrol's next marker, a sandbox's activity: they choose again), actors' graphs
   beyond their furniture, the sky's transition; the actors of cells not loaded when saving
   (their packages place them, as before).
+
 - The main menu's Load list and the save list's character filter (Continue loads the newest
   save), thumbnails, Save on Pause (bSaveOnPause with fAutosaveEveryXMins).
 

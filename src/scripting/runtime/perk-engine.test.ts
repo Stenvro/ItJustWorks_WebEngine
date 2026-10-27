@@ -85,6 +85,7 @@ function world(records: PerkRecord[], base: number[] = [], ranks = new Map<numbe
       Promise.resolve(
         conditions.every((c) => c.function !== GET_IS_ID || c.form === subject.formId),
       ),
+    events: { emit: () => undefined },
   } as unknown as ScriptRuntime;
   const engine = new PerkEngine(runtime);
   const byId = new Map(records.map((record) => [record.formId, record]));
@@ -154,6 +155,7 @@ describe("the perks' activation choices", () => {
         },
       },
       conditionsHold: () => Promise.resolve(true),
+      events: { emit: () => undefined },
     } as unknown as ScriptRuntime;
     const engine = new PerkEngine(runtime);
     engine.record = () => Promise.resolve(perk(1, entries));
