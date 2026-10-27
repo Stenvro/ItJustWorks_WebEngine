@@ -136,6 +136,15 @@ const SEEK_TURNS = [0.52, -0.52, 0.96, -0.96, 1.4, -1.4];
 const OFF_ACTOR_SPEED = 100;
 /** A turned way is taken when it gets this share of its own length. */
 const SEEK_MADE = 0.3;
+/**
+ * Every turn failed: while it stays where it is (SEEK_STILL Havok units) and wants the same way
+ * (SEEK_SAME_WAY, the cosine between them), the turns are tried again only every SEEK_RETRY
+ * steps (each try is a sweep of the controller; an actor pressed into a wall it cannot get
+ * round tried all six every step, as much as every other actor's movement together).
+ */
+const SEEK_RETRY = 8;
+const SEEK_STILL = 0.01;
+const SEEK_SAME_WAY = 0.999;
 
 /** The way along a surface (its normal) that is left of a horizontal direction, if enough. */
 function along(
@@ -214,6 +223,8 @@ export class CharacterBody {
   #unsupported = false;
   /** Held up by another actor alone: the way off it (unit, horizontal), until it lands. */
   #offActor: [number, number] | undefined;
+  /** Where every turn of its way failed, the way, and the steps since (SEEK_RETRY). */
+  #seekFailed: { at: RAPIER.Vector; x: number; y: number; steps: number } | undefined;
   /** Something below the shape touched it in the last step (ground, a slope, a step). */
   #below = false;
 
@@ -551,6 +562,22 @@ export class CharacterBody {
     desired: RAPIER.Vector,
     predicate: (collider: RAPIER.Collider) => boolean,
   ): { moved: RAPIER.Vector; grounded: boolean } | undefined {
+    const at = this.#body.translation();
+    const failed = this.#seekFailed;
+    if (failed && failed.steps < SEEK_RETRY) {
+      const length = Math.hypot(desired.x, desired.y) * Math.hypot(failed.x, failed.y);
+      const same =
+        length > 0 && (desired.x * failed.x + desired.y * failed.y) / length >= SEEK_SAME_WAY;
+      const still =
+        Math.abs(at.x - failed.at.x) <= SEEK_STILL &&
+        Math.abs(at.y - failed.at.y) <= SEEK_STILL &&
+        Math.abs(at.z - failed.at.z) <= SEEK_STILL;
+      if (same && still) {
+        failed.steps++;
+        return undefined;
+      }
+    }
+    this.#seekFailed = undefined;
     for (const turn of SEEK_TURNS) {
       const cos = Math.cos(turn);
       const sin = Math.sin(turn);
@@ -579,6 +606,7 @@ export class CharacterBody {
         };
       }
     }
+    this.#seekFailed = { at, x: desired.x, y: desired.y, steps: 0 };
     return undefined;
   }
 

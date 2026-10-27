@@ -2093,8 +2093,6 @@ export class PhysicsWorld {
       reach,
       (other) => {
         if (!other.isEnabled()) return true;
-        const layer = this.layerOf(other);
-        if (layer !== Layer.trap && layer !== Layer.cloudTrap) return true;
         const reference = this.ownerOf(other)?.reference;
         if (reference === undefined || reference === 0 || found.has(reference)) return true;
         const body = other.parent();
@@ -2114,9 +2112,25 @@ export class PhysicsWorld {
       undefined,
       undefined,
       collider,
+      undefined,
+      this.#isTrap,
     );
     return found;
   }
+
+  /**
+   * Query filters by layer alone (the layers are ours: no call into Rapier): given as a query's
+   * predicate, the colliders of other layers are passed over before their shapes are tested
+   * (each actor's capsule against the landscape's and the buildings' meshes, every frame, was
+   * most of the cost of the trigger and trap queries).
+   */
+  readonly #isTrap = (other: RAPIER.Collider): boolean => {
+    const layer = this.layerOf(other);
+    return layer === Layer.trap || layer === Layer.cloudTrap;
+  };
+
+  readonly #isTriggerVolume = (other: RAPIER.Collider): boolean =>
+    (this.matrix.flags(this.layerOf(other)) & LayerFlag.triggerVolume) !== 0;
 
   #triggersIn(
     translation: RAPIER.Vector,
@@ -2131,7 +2145,6 @@ export class PhysicsWorld {
       shape,
       (other) => {
         if (!other.isEnabled()) return true;
-        if ((this.matrix.flags(this.layerOf(other)) & LayerFlag.triggerVolume) === 0) return true;
         const reference = this.ownerOf(other)?.reference;
         if (reference !== undefined && reference !== 0) found.add(reference);
         return true;
@@ -2139,6 +2152,8 @@ export class PhysicsWorld {
       undefined,
       undefined,
       exclude,
+      undefined,
+      this.#isTriggerVolume,
     );
     return found;
   }
