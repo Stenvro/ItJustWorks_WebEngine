@@ -470,6 +470,11 @@ export interface SavedPackage {
   readonly found: readonly (readonly [number, readonly number[]])[];
   /** Packages that run once a day: the day each last ran. */
   readonly ranOn: readonly (readonly [number, number])[];
+  /**
+   * It ended and the actor sandboxed where it stood (its fallout): after the load it does so
+   * again, rather than standing done (and taking its tree again from the root).
+   */
+  readonly fallout?: boolean | undefined;
 }
 
 /** A package that runs, with its template's tree and its data. */
@@ -659,6 +664,7 @@ export class ActorPackages {
       path,
       found: [...running.found],
       ranOn,
+      ...(this.#fallingOut === running && { fallout: true }),
     };
   }
 
@@ -683,7 +689,10 @@ export class ActorPackages {
       resume: saved.path.length > 0 ? saved.path : undefined,
     };
     this.#running = running;
-    if (running.completed) return;
+    if (running.completed) {
+      if (saved.fallout === true) this.#fallout(running);
+      return;
+    }
     void this.#runTree(running);
     void this.#playIdles(running);
   }
@@ -829,8 +838,12 @@ export class ActorPackages {
       cut: false,
       parent: running,
     };
+    this.#fallingOut = running;
     void this.#procedure(view, FALLOUT_BRANCH);
   }
+
+  /** The package whose fallout runs (a save keeps it: SavedPackage.fallout). */
+  #fallingOut: Running | undefined;
 
   /** A package's begin, end or change action: its idle played, its topic said. */
   #act(event: PackageRecord['onBegin']): void {

@@ -59,7 +59,9 @@ the world loads again, as the original's change forms hold it (nothing of the re
 - `actors`: every actor on the stage: its loaded cell (as the view keys it), feet and heading;
   the furniture it is in (sitting, sleeping, leaning: not one it walks to); its package
   (`SavedPackage`: which, completed and ended, where it began, the branch it ran as each
-  branch's index among its parent's children, its Finds' results, the once-a-day packages' days);
+  branch's index among its parent's children, its Finds' results, the once-a-day packages' days,
+  whether it ended and the actor sandboxed where it stood, its fallout: it does so again after the
+  load, where before it stood done and could take its tree again from the root);
   its combat target and the confidence modifier its fight drew. As its cell loads it is placed there instead of where its package would
   put it, in its furniture at once; when its AI starts and chooses the saved package first, the
   package goes on without beginning again (no OnPackageStart, no begin fragment), its sequences
