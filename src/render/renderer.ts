@@ -6,6 +6,7 @@ import {
   lightShadowKey,
   lightShadowViews,
   MAX_SHADOW_LIGHTS,
+  shadowLightCandidates,
   ShadowLightSelector,
   type LightShadowViews,
   type ShadowSlot,
@@ -20,6 +21,15 @@ interface LightShadowState {
   readonly signatures: number[];
 }
 import { fitCascades, shadowAnchor, SHADOW_SPLITS, type Cascade } from './shadow-cascades.ts';
+import {
+  boundingSphere,
+  fitFocusShadow,
+  FOCUS_SHADOW_COUNT,
+  FOCUS_SHADOW_DISTANCE,
+  selectFocusShadows,
+  type FocusCandidate,
+  type FocusShadow,
+} from './focus-shadows.ts';
 
 /**
  * Frames between updates of each shadow cascade: the near ones every frame, the far ones
@@ -41,6 +51,9 @@ import {
   SHADOW_MAP_LAYERS,
   PRECIPITATION_OCCLUSION_LAYER,
   SHADOW_MAP_SIZE,
+  FOCUS_SHADOW_LAYER,
+  FOCUS_MAP_SIZE,
+  focusCascadeSlot,
   type FrameShadows,
   type LargeRefMask,
   type LodMask,
@@ -125,8 +138,13 @@ export interface SceneView {
   readonly backdrop: boolean;
   /** The directional light casts cascaded shadows (exteriors). */
   readonly shadows?: boolean;
-  /** Lights with LIGH shadow flags cast shadows (interiors: light-shadows.ts). */
+  /** Lights with LIGH shadow flags cast shadows (light-shadows.ts). */
   readonly lightShadows?: boolean;
+  /**
+   * The bodies the sun's focus shadows may fit round (focus-shadows.ts): the player's (when
+   * shown) and the actors'. Used with `shadows`.
+   */
+  readonly focusShadows?: () => Iterable<FocusBody>;
   /** Called once a frame before the scenes animate (actors take their poses). */
   readonly update?: (timeSeconds: number) => void;
   /**
@@ -134,6 +152,12 @@ export interface SceneView {
    * (the map's clouds drift while the game is in its menu).
    */
   readonly clock?: () => number;
+}
+
+/** A body that may take one of the sun's focus shadow maps. */
+export interface FocusBody {
+  readonly scene: GpuScene;
+  readonly player: boolean;
 }
 
 interface RenderTargets {
@@ -226,6 +250,11 @@ export class Renderer {
   /** Light-shadow map layers rendered in the last frame (the terminal's stats). */
   lightShadowPasses = 0;
   readonly #shadowLights = new ShadowLightSelector();
+  /** iNumFocusShadow and fMaxFocusShadowMapDistance ([Display]; the shell sets them). */
+  focusShadowCount = FOCUS_SHADOW_COUNT;
+  focusShadowDistance = FOCUS_SHADOW_DISTANCE;
+  /** Focus shadow maps rendered in the last frame (the terminal's stats). */
+  focusShadowPasses = 0;
   readonly #lightShadowStates: (LightShadowState | undefined)[] = [];
   /** The precipitation occlusion map: its view, where it was centred and when. */
   #occlusion: { viewProj: Mat4; center: Vec3; frame: number } | undefined;
@@ -346,6 +375,7 @@ export class Renderer {
     }
     let shadows: FrameShadows | undefined;
     let lightShadowSlots: readonly ShadowSlot[] = [];
+    let focus: readonly FocusShadow[] = [];
     let wind: Vec3 = [0, 0, 0];
     /** Cascades to render into the shadow map this frame. */
     const dueCascades: number[] = [];
@@ -384,7 +414,9 @@ export class Renderer {
         });
         // The shader samples each cascade with the matrix it was rendered with.
         shadows = { cascades: this.#cascades };
+        focus = this.#fitFocusShadows(view, lighting.sunDirection);
       }
+      this.scene.updateFocusShadows(focus);
       lightShadowSlots = this.#selectShadowLights(view, lighting.lights, delta);
       this.scene.updateFrame(
         this.#viewProjection,
@@ -426,6 +458,9 @@ export class Renderer {
         this.#shadowPass(encoder, i, cascade.viewProj, terrainCells, scenes, cascade.texelSize);
       }
     }
+    // The focus maps round the bodies near the player, every frame (they move).
+    this.focusShadowPasses = focus.length;
+    if (view && focus.length > 0) this.#focusShadowPass(encoder, focus, terrainCells, scenes);
     // The shadow lights' maps: only the layers whose casters changed.
     this.lightShadowPasses = 0;
     if (view) this.#lightShadowPasses(encoder, view, lightShadowSlots, scenes);
@@ -678,7 +713,11 @@ export class Renderer {
   ): readonly ShadowSlot[] {
     const rooms = view.rooms?.();
     const candidates = view.lightShadows
-      ? lights.filter((light) => light.shadow && (rooms?.inVisibleRoom(light.position) ?? true))
+      ? shadowLightCandidates(
+          lights,
+          frustumPlanes(this.#viewProjection),
+          rooms && ((point) => rooms.inVisibleRoom(point)),
+        )
       : [];
     const slots = this.#shadowLights.update(
       candidates,
@@ -729,6 +768,69 @@ export class Renderer {
         this.lightShadowPasses++;
       });
     }
+  }
+
+  /**
+   * The focus maps of the frame: the bodies near the player (focus-shadows.ts), each fitted by
+   * the bound of its scene's shadow casters.
+   */
+  #fitFocusShadows(view: SceneView, toLight: Vec3): FocusShadow[] {
+    if (!view.focusShadows || this.focusShadowCount <= 0) return [];
+    const candidates: FocusCandidate[] = [];
+    for (const body of view.focusShadows()) {
+      const bound = boundingSphere(
+        body.scene.draws.filter((draw) => draw.part.shadowPipeline && !draw.visibility?.hidden),
+      );
+      if (bound) candidates.push({ ...bound, player: body.player, target: body.scene });
+    }
+    const player = candidates.find((candidate) => candidate.player)?.center;
+    const anchor = shadowAnchor(view.camera.position);
+    return selectFocusShadows(
+      candidates,
+      player ?? view.camera.position,
+      this.focusShadowCount,
+      this.focusShadowDistance,
+    ).map((body) => fitFocusShadow(body.center, body.radius, toLight, FOCUS_MAP_SIZE, anchor));
+  }
+
+  /** Renders the focus maps into their quarters of the focus layer of the sun's shadow map. */
+  #focusShadowPass(
+    encoder: GPUCommandEncoder,
+    focus: readonly FocusShadow[],
+    terrain: readonly GpuTerrainCell[],
+    scenes: readonly GpuScene[],
+  ): void {
+    const pass = encoder.beginRenderPass({
+      label: 'focus-shadows',
+      colorAttachments: [],
+      depthStencilAttachment: {
+        view: this.scene.shadowMap.createView({
+          dimension: '2d',
+          baseArrayLayer: FOCUS_SHADOW_LAYER,
+          arrayLayerCount: 1,
+        }),
+        depthClearValue: 1,
+        depthLoadOp: 'clear',
+        depthStoreOp: 'store',
+      },
+    });
+    focus.forEach((shadow, i) => {
+      const x = (i % 2) * FOCUS_MAP_SIZE;
+      const y = Math.floor(i / 2) * FOCUS_MAP_SIZE;
+      pass.setViewport(x, y, FOCUS_MAP_SIZE, FOCUS_MAP_SIZE, 0, 1);
+      pass.setScissorRect(x, y, FOCUS_MAP_SIZE, FOCUS_MAP_SIZE);
+      const planes = frustumPlanes(shadow.viewProj);
+      const slot = focusCascadeSlot(i);
+      this.terrain.drawShadows(
+        pass,
+        this.scene.cascadeBindGroup,
+        this.scene.cascadeOffset(slot),
+        terrain,
+        planes,
+      );
+      this.scene.drawShadows(pass, scenes, slot, planes, shadow.texelSize * MIN_CASTER_TEXELS);
+    });
+    pass.end();
   }
 
   /** Renders shadow casters (terrain and scene parts) into a layer of the shadow map. */

@@ -6,7 +6,7 @@
 import { FlyCamera } from '../render/fly-camera.ts';
 import { identity } from '../render/math.ts';
 import type { Mat4, Vec3 } from '../render/math.ts';
-import type { Camera, Renderer } from '../render/renderer.ts';
+import type { Camera, FocusBody, Renderer } from '../render/renderer.ts';
 import { RoomCuller } from '../render/room-culler.ts';
 import type { CellRooms } from '../world/cell-rooms.ts';
 import { DestructionStageFlag } from '../world/destruction-records.ts';
@@ -1421,6 +1421,11 @@ export class WorldViewer {
       'ok',
     );
     play.attach();
+    this.#renderer.focusShadowCount = session.ini.number('Display', 'iNumFocusShadow');
+    this.#renderer.focusShadowDistance = session.ini.number(
+      'Display',
+      'fMaxFocusShadowMapDistance',
+    );
     this.#renderer.setView({
       scenes: () => this.#readyScenes(),
       trees: () => this.#lod?.trees(),
@@ -1444,6 +1449,9 @@ export class WorldViewer {
       screenBlood: () => this.#session?.screenBlood.frame(),
       backdrop: false,
       shadows: true,
+      // Campfires, braziers and forges with LIGH shadow flags cast shadows here too.
+      lightShadows: true,
+      focusShadows: () => this.#focusBodies(),
       update: (seconds) => {
         // The player animates at their own pace in slowed time.
         this.#avatar?.update(seconds * (this.#session?.time.playerPace ?? 1));
@@ -2506,6 +2514,14 @@ export class WorldViewer {
       // The full cell shows them once it is ready.
       if (large.ready && large.scene && this.#cells.get(key)?.ready !== true) yield large.scene;
     }
+  }
+
+  /** The bodies the sun's focus shadows may fit round: the player's (when shown), the actors'. */
+  *#focusBodies(): Iterable<FocusBody> {
+    const play = this.#play;
+    const scene = this.#avatar?.scene;
+    if (play && scene && play.bodyShown) yield { scene, player: true };
+    for (const body of this.#stage?.bodyScenes() ?? []) yield { scene: body, player: false };
   }
 
   *#readyDecals(): Iterable<GpuDecals> {

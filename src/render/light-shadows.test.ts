@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { project } from './frustum.ts';
+import { frustumPlanes, project } from './frustum.ts';
 import {
   lightShadowKey,
   lightShadowViews,
   MAX_SHADOW_LIGHTS,
   SHADOW_FADE_SECONDS,
+  shadowLightCandidates,
   ShadowLightSelector,
 } from './light-shadows.ts';
-import type { Vec3 } from './math.ts';
+import { lookAt, multiply, perspectiveReversedZ, type Vec3 } from './math.ts';
 import { ShadowKind, type PointLight } from './scene-lighting.ts';
 import { lightShadow } from '../world/cell-lighting.ts';
 import { LightFlag } from '../world/cell-records.ts';
@@ -21,6 +22,28 @@ const light = (id: number, x: number, kind: number = ShadowKind.omni): PointLigh
 const camera: Vec3 = [0, 0, 0];
 const ids = (slots: readonly { light: PointLight }[]): number[] =>
   slots.map((slot) => slot.light.shadow?.id ?? 0).sort((a, b) => a - b);
+
+describe('shadowLightCandidates', () => {
+  // Looking along +X from the origin.
+  const planes = frustumPlanes(
+    multiply(perspectiveReversedZ(Math.PI / 3, 16 / 9, 4), lookAt([0, 0, 0], [1, 0, 0], [0, 0, 1])),
+  );
+  const plain: PointLight = { position: [800, 0, 0], radius: 500, color: [1, 1, 1] };
+
+  it('keeps shadow lights whose reach meets the view, as in an exterior without rooms', () => {
+    const ahead = light(1, 800);
+    // Behind the camera, but its reach covers the camera's place: it still shadows the view.
+    const behindNear = light(2, -300);
+    const behindFar = light(3, -3000);
+    const picked = shadowLightCandidates([ahead, behindNear, behindFar, plain], planes);
+    expect(picked.map((l) => l.shadow?.id)).toEqual([1, 2]);
+  });
+
+  it('leaves out lights in rooms not seen', () => {
+    const picked = shadowLightCandidates([light(1, 800), light(2, 900)], planes, (p) => p[0] < 850);
+    expect(picked.map((l) => l.shadow?.id)).toEqual([1]);
+  });
+});
 
 describe('ShadowLightSelector', () => {
   it('picks the nearest shadow lights up to the limit, ignoring lights without shadows', () => {

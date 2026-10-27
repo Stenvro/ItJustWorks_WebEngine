@@ -58,12 +58,19 @@ struct PointLight {
 // The shadow lights' maps (light-shadows.ts): six layers per slot, each with the matrix it was
 // rendered with; per slot near, far, omni (1: a cube, 0: one frustum) and the world size of a
 // texel at distance 1; then the map size, the bias along the light (world units) and along the
-// normal (texels).
+// normal (texels). Then the sun's focus maps (focus-shadows.ts): each one's matrix, its texel
+// size (world units) and depth bias (x, y), and their count (focusParams.x).
 struct LightShadows {
   matrices: array<mat4x4f, 24>,
   slots: array<vec4f, 4>,
   params: vec4f,
+  focusMatrices: array<mat4x4f, 4>,
+  focusInfo: array<vec4f, 4>,
+  focusParams: vec4f,
 };
+
+// The layer of the sun's shadow map that holds the focus maps, one per quarter.
+const FOCUS_LAYER = 5;
 
 // Whether a portal-strict light leaves a draw of another room unlit (`room`: the draw's room,
 // 0 none).
@@ -154,13 +161,54 @@ fn depthToScene(fragCoord: vec4f) -> f32 {
   return viewDistance(scene) - viewDistance(fragCoord.z);
 }
 
-// How much of the sun reaches a point (0 in shadow, 1 lit): the first cascade that holds
-// it, sampled 3x3 with a small offset along the normal against acne, fading out at the end
-// of the shadow distance.
+// How much of the sun reaches a point (0 in shadow, 1 lit): a focus map that holds it (sharp
+// shadows round the bodies near the player), the cascades fading in over its square's outer
+// tenth and taking over outside it.
 fn sunShadow(worldPos: vec3f, n: vec3f) -> f32 {
   if (frame.shadowParams.x < 0.5) {
     return 1.0;
   }
+  let focus = focusShadow(worldPos, n);
+  if (focus.y >= 1.0) {
+    return focus.x;
+  }
+  return mix(cascadeShadow(worldPos, n), focus.x, focus.y);
+}
+
+// The first focus map whose view holds a point: how lit it is (x, sampled 3x3 within its
+// quarter of the layer) and how much it counts (y: 1 inside, 0 at and beyond its square's edge).
+fn focusShadow(worldPos: vec3f, n: vec3f) -> vec2f {
+  let count = min(u32(lightShadows.focusParams.x + 0.5), 4u);
+  for (var i = 0u; i < count; i++) {
+    let info = lightShadows.focusInfo[i];
+    let offset = n * info.x * frame.shadowParams.w;
+    let clip = lightShadows.focusMatrices[i] * vec4f(worldPos + offset, 1.0);
+    let edge = max(abs(clip.x), abs(clip.y));
+    if (edge >= 1.0 || clip.z < 0.0 || clip.z > 1.0) {
+      continue;
+    }
+    let quarter = vec2f(f32(i % 2u), f32(i / 2u)) * 0.5;
+    let uv = quarter + vec2f(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5) * 0.5;
+    let texel = 1.0 / frame.shadowParams.y;
+    let low = quarter + vec2f(texel);
+    let high = quarter + vec2f(0.5 - texel);
+    let depth = clip.z - info.y;
+    var lit = 0.0;
+    for (var y = -1; y <= 1; y++) {
+      for (var x = -1; x <= 1; x++) {
+        let at = clamp(uv + vec2f(f32(x), f32(y)) * texel, low, high);
+        lit += textureSampleCompareLevel(shadowMap, shadowSampler, at, FOCUS_LAYER, depth);
+      }
+    }
+    return vec2f(lit / 9.0, clamp((1.0 - edge) * 10.0, 0.0, 1.0));
+  }
+  return vec2f(1.0, 0.0);
+}
+
+// How much of the sun reaches a point by the cascades: the first cascade that holds it,
+// sampled 3x3 with a small offset along the normal against acne, fading out at the end of the
+// shadow distance.
+fn cascadeShadow(worldPos: vec3f, n: vec3f) -> f32 {
   let distance = length(worldPos - frame.cameraPos.xyz);
   var cascade = 4u;
   for (var i = 0u; i < 4u; i++) {
