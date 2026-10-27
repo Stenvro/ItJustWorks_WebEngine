@@ -56,10 +56,19 @@ it.
 
 Observed in the original (the settings are `[Audio]` INI settings, `src/world/ini-settings.ts`):
 
-- **Menu mode** (`AudioEngine.setInMenu`): the categories paused during menus go silent; the
-  fading one (DOBJ PDMC, AudioCategoryPausedDuringMenuFade) fades out over fMenuModeFadeOutTime
-  and back in over fMenuModeFadeInTime (3 and 1 s in Skyrim_Default.ini; 0.5 compiled in), the
-  immediate one (PIMC) and the loading one (PDLC) at once.
+- **Menu mode** (`AudioEngine.setInMenu`, rules in `category-rules.ts`): a menu that pauses the
+  game holds the categories the default objects name, with their whole branch of the tree: the
+  fading one (DOBJ PDMC, AudioCategoryPausedDuringMenuFade: ambience, magic, the world's effects)
+  fades out over fMenuModeFadeOutTime and back in over fMenuModeFadeInTime (3 and 1 s in
+  Skyrim_Default.ini; 0.5 compiled in), the immediate one (PIMC, AudioCategoryPausedDuringMenu:
+  the voices) at once. Their sounds hold their place (playback rate 0 once faded out) and go on
+  from there as the menu closes; sounds that start meanwhile wait. The loading screen
+  (`setLoading`) also holds PDLC (AudioCategoryPausedDuringMenuLoad: the effects and the
+  interface); the skills menu (`setStatsMenu`) mutes SMSC (AudioCategoryAMBr). Every other
+  category plays on: music, and the interface in menus.
+- **Slow Time** (`SoundSystem.setTimeMultiplier`): the world's clock slows only the sounds of
+  the time-sensitive category (DOBJ TSSC, AudioCategoryNPCKillMove) and its branch, pitch and
+  pace together; the rest keep theirs.
 - **Dialogue ducking** (`SoundSystem.duckForDialogue`): once the dialogue menu has named its
   speaker, the non-dialogue voices (DOBJ NDSC, AudioCategoryNonVOC) and the effects that fade
   during dialogue (SFDC, AudioCategorySFXFadeDuringDialogue) go down by fNonDialogVoiceDucking
@@ -134,8 +143,11 @@ or not, and the last lightning flash.
 ## Music
 
 `music.ts` decides what plays, `music-output.ts` plays it. Music types are in play: the
-location's and those game events add (combat: the default object BTMS, MUSCombat, while anyone
-fights the player, ending with its finale as the fight does: `src/shell/actor-combat.ts`, its
+location's and those game events add (combat: the default object BTMS, MUSCombat, or
+MUSCombatBoss against an actor with the location reference type Boss, as `combat-music.ts`
+decides: fights against the player or within the near-combat radius of them, started only when
+their strength against the player's side reaches fCombatMusicPlayerTargetedThreatRatio, ending
+a stop delay after the last fight with its finale; `src/shell/actor-combat.ts` feeds it; its
 conditions' GetCombatTargetHasKeyword asking the player's foes, the boss music against dragons;
 discoveries, quest moments
 and the rest through Papyrus MusicType.Add / Remove, from the script runtime). The location's is the cell's

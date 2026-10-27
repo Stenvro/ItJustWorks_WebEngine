@@ -6,10 +6,15 @@
 
 import type { Vec3 } from '../render/math.ts';
 import type { Reverb, SoundCategory } from '../world/sound-records.ts';
+import {
+  heldInMenu,
+  NO_CATEGORY_ROLES,
+  ownMenuRule,
+  timeSensitive,
+  type CategoryRoles,
+  type MenuAudio,
+} from './category-rules.ts';
 import { reverbImpulse } from './reverb.ts';
-
-/** The categories paused during menus (their editor ids begin so). */
-const PAUSED_IN_MENUS = 'audiocategorypausedduringmenu';
 
 export class AudioEngine {
   readonly context: AudioContext;
@@ -26,8 +31,15 @@ export class AudioEngine {
   #reverb: Reverb | undefined;
   /** The listener is under water: categories flagged so (SNCT FNAM 0x1) are muted. */
   #submerged = false;
-  /** The game is in a menu: the categories paused during menus are silent. */
+  /** The categories the default objects give a role (menus, Slow Time). */
+  #roles: CategoryRoles = NO_CATEGORY_ROLES;
+  /** A menu that pauses the game, the skills menu, the loading screen: what holds sounds. */
   #inMenu = false;
+  #stats = false;
+  #loading = false;
+  #menuFade: { readonly out: number; readonly in: number } = { out: 0.5, in: 0.5 };
+  /** Told when the held categories change (the sound system holds or frees its sounds). */
+  onHoldChange: (() => void) | undefined;
 
   constructor() {
     this.context = new AudioContext({ latencyHint: 'interactive' });
@@ -108,25 +120,82 @@ export class AudioEngine {
     }
   }
 
+  /** The categories the default objects name for menus and Slow Time (category-rules.ts). */
+  setRoles(roles: CategoryRoles): void {
+    this.#roles = roles;
+    for (const [formId, node] of this.#categories) node.gain.value = this.#gainOf(formId);
+  }
+
+  /** What holds sounds now. */
+  get menuAudio(): MenuAudio {
+    if (this.#loading) return 'loading';
+    if (!this.#inMenu) return 'none';
+    return this.#stats ? 'stats' : 'menu';
+  }
+
   /**
-   * The game goes into a menu or comes out: the categories the data pauses during menus
-   * (AudioCategoryPausedDuringMenu, ...Fade, ...Load) go silent, the others (music, the
-   * interface) play on. Observed in the original: the fading one (DOBJ PDMC) fades out over
-   * [Audio] fMenuModeFadeOutTime seconds and back in over fMenuModeFadeInTime (`fade`), the
-   * others at once. TODO(M13): their sounds hold their place instead of playing on silenced.
+   * The game goes into a menu that pauses it or comes out: the categories the default objects
+   * pause during menus go silent and their sounds hold their place, the others (music, the
+   * interface) play on. Observed in the original: the fading one (DOBJ PDMC) fades out
+   * over [Audio] fMenuModeFadeOutTime seconds and back in over fMenuModeFadeInTime (`fade`),
+   * the immediate one (PIMC) at once.
    */
   setInMenu(
     inMenu: boolean,
     fade: { readonly out: number; readonly in: number } = { out: 0.5, in: 0.5 },
   ): void {
     if (inMenu === this.#inMenu) return;
-    this.#inMenu = inMenu;
+    this.#menuFade = fade;
+    this.#changeMenu(() => (this.#inMenu = inMenu));
+  }
+
+  /** The skills menu opens or closes (it pauses as a menu does and mutes DOBJ SMSC). */
+  setStatsMenu(open: boolean): void {
+    if (open === this.#stats) return;
+    this.#changeMenu(() => (this.#stats = open));
+  }
+
+  /** The loading screen comes up or goes (it also holds DOBJ PDLC: effects, the interface). */
+  setLoading(loading: boolean): void {
+    if (loading === this.#loading) return;
+    this.#changeMenu(() => (this.#loading = loading));
+  }
+
+  /**
+   * Whether a sound of a category is held now: undefined if not, else the seconds it plays on
+   * before it holds (its category's fade out).
+   */
+  held(category: number | undefined): number | undefined {
+    const rule = heldInMenu(category, this.#parentOf, this.#roles, this.menuAudio);
+    if (rule === undefined) return undefined;
+    return rule === 'fade' ? this.#menuFade.out : 0;
+  }
+
+  /** Whether the world's clock (Slow Time) slows a sound of a category (DOBJ TSSC). */
+  timeSensitive(category: number | undefined): boolean {
+    return timeSensitive(category, this.#parentOf, this.#roles);
+  }
+
+  readonly #parentOf = (category: number): number | undefined =>
+    this.#categoryData.get(category)?.parent;
+
+  #changeMenu(change: () => void): void {
+    const before = this.menuAudio;
+    change();
+    const after = this.menuAudio;
+    if (before === after) return;
     for (const [formId, node] of this.#categories) {
-      const name = this.#categoryData.get(formId)?.editorId.toLowerCase() ?? '';
-      if (!name.startsWith(PAUSED_IN_MENUS)) continue;
-      const fades = name === `${PAUSED_IN_MENUS}fade`;
-      this.#rampTo(node, this.#gainOf(formId), fades ? (inMenu ? fade.out : fade.in) : 0);
+      const was = ownMenuRule(formId, this.#roles, before);
+      const is = ownMenuRule(formId, this.#roles, after);
+      if (was === is) continue;
+      const fades = (is ?? was) === 'fade';
+      this.#rampTo(
+        node,
+        this.#gainOf(formId),
+        fades ? (is ? this.#menuFade.out : this.#menuFade.in) : 0,
+      );
     }
+    this.onHoldChange?.();
   }
 
   /** The categories turned down (decibels) and by how much: dialogue's ducking. */
@@ -160,7 +229,7 @@ export class AudioEngine {
   #gainOf(formId: number): number {
     const data = this.#categoryData.get(formId);
     if (data?.muteWhenSubmerged && this.#submerged) return 0;
-    if (this.#inMenu && data?.editorId.toLowerCase().startsWith(PAUSED_IN_MENUS)) return 0;
+    if (ownMenuRule(formId, this.#roles, this.menuAudio)) return 0;
     const user = this.#userVolumes.get(formId) ?? (data?.onMenu ? data.menuVolume : 1);
     const ducked = this.#ducked.get(formId);
     return (data?.volume ?? 1) * user * (ducked === undefined ? 1 : 10 ** (-ducked / 20));

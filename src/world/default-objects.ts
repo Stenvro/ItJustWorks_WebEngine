@@ -36,6 +36,17 @@ export const DefaultObjectUse = {
    */
   nonDialogueCategory: 'NDSC',
   sfxFadeInDialogueCategory: 'SFDC',
+  /**
+   * SNCT whose sounds hold while a menu pauses the game: one fading out and in, one at once,
+   * and one held only by the loading menu (src/audio/category-rules.ts).
+   */
+  pauseDuringMenuFade: 'PDMC',
+  pauseDuringMenuImmediate: 'PIMC',
+  pauseDuringLoadingMenu: 'PDLC',
+  /** SNCT muted while the skills (stats) menu is open. */
+  statsMuteCategory: 'SMSC',
+  /** SNCT the world's clock (Slow Time, the kill camera) slows. */
+  timeSensitiveCategory: 'TSSC',
   /** SOPM of spoken lines in the world (SOMDialogue3DDefault) and at the listener (2D). */
   dialogueOutput3d: 'DOP2',
   dialogueOutput2d: 'DOP3',

@@ -33,6 +33,13 @@ import type { ActorGraphSource } from './actor-graph-events.ts';
 import { ActorValue } from '../world/actor-values.ts';
 import { DefaultObjectUse } from '../world/default-objects.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import {
+  CombatMusic,
+  readCombatMusicSettings,
+  type CombatMusicChoice,
+  type CombatMusicInput,
+  type CombatMusicThreat,
+} from '../audio/combat-music.ts';
 import type { ActorCombatState, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { ObjectHandle } from '../scripting/values.ts';
 import { EquippedItemType } from '../gameplay/equipment.ts';
@@ -150,6 +157,8 @@ import type { CellLight } from '../world/cell-loader.ts';
 import { parseLight, type LightRecord } from '../world/cell-records.ts';
 
 /** A human's shape for hits (its controller's radius and height at scale 1; game units). */
+/** The music type of a boss fight (MUSC; see #setMusic). */
+const BOSS_MUSIC = 'MUSCombatBoss';
 /** The vampire lord's graph's events to go up or down (standing, moving). */
 const LEVITATION_TOGGLE = 'LevitationToggle';
 const LEVITATION_TOGGLE_MOVING = 'LevitationToggleMoving';
@@ -433,8 +442,12 @@ export class ActorCombat implements CombatBridge {
   readonly #estimatedArmor = new Map<number, { readonly reduction: number; readonly at: number }>();
   /** The enemy bar's actor, its health shown (percent) and when that last changed. */
   #enemy: { readonly reference: number; changed: number; health: number } | undefined;
+  /** The music type combat plays now, and what it plays (src/audio/combat-music.ts). */
   #music: number | undefined;
-  #musicOn = false;
+  #musicOn: CombatMusicChoice = 'none';
+  readonly #combatMusic = new CombatMusic();
+  /** Whether a reference has the location reference type Boss (XLRT: DOBJ LRTB), once read. */
+  readonly #bosses = new Map<number, boolean>();
   #equipListening: ScriptRuntime | undefined;
   #camera: KillmoveCamera | undefined;
   /** The kill camera's image-space modifier shown now. */
@@ -549,7 +562,8 @@ export class ActorCombat implements CombatBridge {
     if (!play) {
       this.#projectiles.clear();
       this.#camera = undefined;
-      this.#setMusic(false);
+      this.#combatMusic.reset();
+      this.#setMusic('none');
     }
   }
 
@@ -1132,7 +1146,7 @@ export class ActorCombat implements CombatBridge {
       }
     }
     this.#enemyBar();
-    this.#setMusic(this.#fightingPlayer());
+    this.#setMusic(this.#combatMusic.update(seconds, this.#musicInput(runtime)));
   }
 
   /**
@@ -3587,25 +3601,76 @@ export class ActorCombat implements CombatBridge {
   }
 
   /**
-   * Combat music (DOBJ BTMS, MUSCombat) while anyone fights the player; it ends with its
-   * finale as the fight does (the music system's ducking and cue points).
+   * The fights combat music weighs (src/audio/combat-music.ts): every live actor in combat
+   * hostile to the player, against the player and their combat group.
    */
-  #setMusic(on: boolean): void {
-    if (on === this.#musicOn) return;
+  #musicInput(runtime: ScriptRuntime): CombatMusicInput {
+    const feet = this.#play?.player.feet;
+    const threats: CombatMusicThreat[] = [];
+    for (const fighter of this.#fighters.values()) {
+      if (fighter.player || fighter.state.life !== LifeState.alive) continue;
+      const reference = fighter.reference;
+      const targetsPlayer = fighter.target === PLAYER_REF;
+      if (!targetsPlayer) {
+        if (this.#brain.combatState(reference) !== 1) continue;
+        if (!this.#brain.hostile(reference, PLAYER_REF)) continue;
+      }
+      const at = this.#feet(fighter);
+      threats.push({
+        targetsPlayer,
+        distance:
+          feet && at ? Math.hypot(at[0] - feet[0], at[1] - feet[1], at[2] - feet[2]) : Infinity,
+        strength: this.#brain.strength(reference),
+        boss: this.#boss(reference, runtime),
+      });
+    }
+    const side = [PLAYER_REF, ...this.#brain.allies(PLAYER_REF)].map((reference) =>
+      this.#brain.strength(reference),
+    );
+    return { threats, side };
+  }
+
+  /** Whether a reference is a boss (location reference type DOBJ LRTB); false until read. */
+  #boss(reference: number, runtime: ScriptRuntime): boolean {
+    const known = this.#bosses.get(reference);
+    if (known !== undefined) return known;
+    this.#bosses.set(reference, false);
+    void Promise.all([
+      runtime.magic.defaultObject(DefaultObjectUse.bossReferenceType),
+      runtime.referenceTypes(reference),
+    ]).then(([boss, types]) => {
+      this.#bosses.set(reference, boss !== undefined && types.includes(boss));
+    });
+    return false;
+  }
+
+  /**
+   * Combat music: DOBJ BTMS (MUSCombat), or MUSCombatBoss against a boss, as combat-music.ts
+   * decides; it ends with its finale (the music system's ducking and cue points). TODO(M13): no
+   * default object names the boss music; the engine's way to it is not documented, so it is
+   * found by its editor id.
+   */
+  #setMusic(choice: CombatMusicChoice): void {
+    if (choice === this.#musicOn) return;
     const sounds = this.#options.session.soundSystem;
     if (!sounds) return;
-    this.#musicOn = on;
-    if (on) {
-      void this.#options.session.defaultObjects().then((objects) => {
-        const music = objects.get(DefaultObjectUse.battleMusic);
-        if (music === undefined || !this.#musicOn) return;
-        this.#music = music;
-        sounds.music.add(music);
-      });
-    } else if (this.#music !== undefined) {
-      sounds.music.remove(this.#music);
-      this.#music = undefined;
-    }
+    this.#musicOn = choice;
+    const wanted =
+      choice === 'none'
+        ? Promise.resolve(undefined)
+        : choice === 'boss'
+          ? sounds.musicNamed(BOSS_MUSIC).then(async (boss) => boss ?? this.#battleMusic())
+          : this.#battleMusic();
+    void wanted.then((music) => {
+      if (this.#musicOn !== choice || music === this.#music) return;
+      if (this.#music !== undefined) sounds.music.remove(this.#music);
+      this.#music = music;
+      if (music !== undefined) sounds.music.add(music);
+    });
+  }
+
+  async #battleMusic(): Promise<number | undefined> {
+    return (await this.#options.session.defaultObjects()).get(DefaultObjectUse.battleMusic);
   }
 
   /**
@@ -3709,6 +3774,7 @@ export class ActorCombat implements CombatBridge {
     this.#settingsRead = true;
     void this.#options.session.settings().then((settings) => {
       this.#settings = readCombatSettings((name) => settings.number(name));
+      this.#combatMusic.settings = readCombatMusicSettings((name) => settings.number(name));
     });
   }
 
@@ -3758,7 +3824,8 @@ export class ActorCombat implements CombatBridge {
     for (const fighter of [...this.#fighters.values()]) this.#drop(fighter);
     this.#projectiles.clear();
     this.#impacts.clear();
-    this.#setMusic(false);
+    this.#combatMusic.reset();
+    this.#setMusic('none');
   }
 
   /**
