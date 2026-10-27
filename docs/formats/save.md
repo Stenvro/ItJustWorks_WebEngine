@@ -60,10 +60,10 @@ the world loads again, as the original's change forms hold it (nothing of the re
   the furniture it is in (sitting, sleeping, leaning: not one it walks to); its package
   (`SavedPackage`: which, completed and ended, where it began, the branch it ran as each
   branch's index among its parent's children, its Finds' results, the once-a-day packages' days);
-  its combat target. As its cell loads it is placed there instead of where its package would
+  its combat target and the confidence modifier its fight drew. As its cell loads it is placed there instead of where its package would
   put it, in its furniture at once; when its AI starts and chooses the saved package first, the
   package goes on without beginning again (no OnPackageStart, no begin fragment), its sequences
-  from the child they had reached (a Simultaneous branch's children run anew); its fight starts
+  from the child they had reached (a Simultaneous branch's children run anew); its fight (with that modifier) starts
   again once it and its target are on the stage. Saved actors whose cell goes before it is
   placed come back where their packages have them.
 - `graphs`: the loaded objects whose graphs moved from their start (an event sent, a variable

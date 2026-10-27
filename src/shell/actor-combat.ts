@@ -737,9 +737,15 @@ export class ActorCombat implements CombatBridge {
     return this.#fighters.get(actor)?.state.paired !== undefined;
   }
 
-  startCombat(actor: number, target: number): void {
+  /** `modifier`: a loaded save's fight keeps the confidence modifier it drew. */
+  startCombat(actor: number, target: number, modifier?: number): void {
     if (actor === target || !this.#fighters.has(actor)) return;
-    this.#brain.startCombat(actor, target);
+    this.#brain.startCombat(actor, target, modifier);
+  }
+
+  /** The confidence modifier an actor's fight drew (a save keeps it). */
+  confidenceModifier(actor: number): number | undefined {
+    return this.#brain.confidenceModifier(actor);
   }
 
   stopCombat(actor: number): void {
