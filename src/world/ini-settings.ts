@@ -291,6 +291,8 @@ export const INI_DEFAULTS = {
   },
   General: {
     bBorderRegionsEnabled: 1,
+    // The engine's Movement Blocked package is made only while this is on (src/ai/engine-packages.ts).
+    bUseMovementBlockedPackage: 0,
     // No limb is cut off (src/shell/actor-dismemberment.ts).
     bDisableAllGore: 0,
     fAutoDoorFadeSecs: 0.5,

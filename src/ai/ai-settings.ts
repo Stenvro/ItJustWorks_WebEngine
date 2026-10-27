@@ -137,6 +137,13 @@ export interface AiSettings {
    */
   readonly triggerAvoidPlayerDistance: number;
   readonly avoidPlayerDistance: number;
+  /**
+   * The Steal Warning package: the owner warns iStealWarnings times before a theft it sees is
+   * the crime; the warnings are forgotten fWarningTimer after the first (and it ends once it
+   * has not seen the thief that long).
+   */
+  readonly stealWarnings: number;
+  readonly warningTimer: number;
   /** The process lists' update budget (ms a frame) by frame rate ([General] INI settings). */
   readonly processListsUpdateTimeMin: number;
   readonly processListsUpdateTimeMax: number;
@@ -224,6 +231,8 @@ const SETTINGS: readonly (readonly [keyof AiSettings, string, number])[] = [
   ['sandboxRadiusHysteresis', 'fSandBoxRadiusHysteresis', 50],
   ['triggerAvoidPlayerDistance', 'fTriggerAvoidPlayerDistance', 400],
   ['avoidPlayerDistance', 'fAvoidPlayerDistance', 100],
+  ['stealWarnings', 'iStealWarnings', 2],
+  ['warningTimer', 'fWarningTimer', 5],
   ['processListsUpdateTimeMin', 'fProcessListsUpdateTimeMin:General', 0.5],
   ['processListsUpdateTimeMax', 'fProcessListsUpdateTimeMax:General', 5],
   ['processListsUpdateLowFrameRate', 'fProcessListsUpdateLowFrameRate:General', 10],
