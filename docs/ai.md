@@ -506,6 +506,29 @@ casting-engine.ts`), the Shout procedure's shout through `ActorCasting.shoutAt` 
   house Mila runs her Sleep package: Find finds her bed, she gets into it and sleeps, and the
   house's door is locked.
 
+### The engine's own packages
+
+The engine creates some packages itself, no record holding them (CommonLibSSE PACKAGE_TYPE), and
+puts one in front of the actor's own (Actor::PutCreatedPackage): `ActorPackages.push`
+(`src/ai/engine-packages.ts`). The actor's package is set aside (its tree stops, its fallout
+with it; no package events), the engine package's procedure runs, and as it ends the actor's
+packages are chosen again: the one set aside, still chosen, runs again from its root (one that
+had ended falls out again). One at a time (TODO(M13): which may replace which).
+
+- **Avoid Player** (observed in the original): the player's swing of a melee weapon, bow
+  shot or projectile spell gives it to the actor picked to comment on the action (the nearest
+  that may: SwingMeleeWeapon, ShootBow, PlayerCastProjectileSpell), if it is within
+  fTriggerAvoidPlayerDistance (400), detects the player and fights no one. While the player is
+  within fAvoidPlayerDistance (100) it runs to a spot away from them; once they are farther a
+  short timer runs out and it ends. Inferred, TODO(M13): the spot (on the player's far side,
+  twice fAvoidPlayerDistance from them, turned up to 60° where not walkable), the timer (1 s).
+- Not built yet (TODO(M10)): React To Destroyed Object, Steal Warning and Pickpocket Warning
+  (iStealWarnings, iPickPocketWarnings 2; fWarningTimer 5: the owner comes up and warns before
+  the crime counts), Get Up From Chair or Bed, Surface (a swimmer under water comes up),
+  Movement Blocked (off while bUseMovementBlockedPackage:General is 0, its built-in value), an
+  actor blocked by the standing player asking them to move (today it searches its way round
+  them after fMaxTimeBlockedByActors).
+
 ### The player driven by AI
 
 While the scripts drive the player (`Game.SetPlayerAIDriven(true)`), the player runs AI packages
@@ -628,7 +651,15 @@ Actors use furniture as the engine's furniture handling does, as far as the data
   - **The pick** is at random by weight: each kind weighs the number of activities begun since it
     was last done (1 as it is done, at most 255), so what it did least lately is likeliest. The
     spot it is at is left out (but eating sitting at its chair), as is an idle marker nearer than
-    fSandBoxInterMarkerMinDist (100) to the one it stands at.
+    fSandBoxInterMarkerMinDist (100) to the one it stands at. With nothing else open it keeps its
+    idle marker and plays its idles there again (inferred, TODO(M13): what the engine does when
+    its pick finds nothing is not read); in a seat it stays seated.
+  - **At an idle marker** its path ends within fAIMarkerDestinationRadius (Skyrim.esm 50); it
+    then steps onto the marker, straight, and faces its way before its idles (inferred,
+    TODO(M13): how the engine sets an actor on its marker). Before, the Bannered Mare's
+    sandboxers stood 50 units short of their markers and stayed on the last after leaving it,
+    so the next to take a marker stopped beside them and they clumped (the inn's sim case in
+    tests/conformance/ai/sandbox.test.ts).
   - **The daily plan**: sleep (starting fSandboxSleepStartMin..Max, 19:00–1:00, for 6–10 h),
     breakfast (6–9), lunch (11.5–12.5) and dinner (18–19), each meal 0.1–0.25 h; of the four the
     next to come is planned, its start and length at random. While it is on, its kind weighs
