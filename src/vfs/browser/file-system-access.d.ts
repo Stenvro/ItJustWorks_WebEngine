@@ -17,7 +17,17 @@ interface DirectoryPickerOptions {
     FileSystemHandle | 'desktop' | 'documents' | 'downloads' | 'music' | 'pictures' | 'videos';
 }
 
+interface OpenFilePickerOptions {
+  id?: string;
+  multiple?: boolean;
+  excludeAcceptAllOption?: boolean;
+  startIn?: DirectoryPickerOptions['startIn'];
+  types?: { description?: string; accept: Record<string, string[]> }[];
+}
+
 interface Window {
   /** Missing outside Chromium; always check first. */
   showDirectoryPicker?(options?: DirectoryPickerOptions): Promise<FileSystemDirectoryHandle>;
+  /** Missing outside Chromium; always check first. */
+  showOpenFilePicker?(options?: OpenFilePickerOptions): Promise<FileSystemFileHandle[]>;
 }

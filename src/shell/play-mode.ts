@@ -58,6 +58,7 @@ import { lockNow } from './object-locks.ts';
 import { tellSwing } from './open-close.ts';
 import { SaveManager } from './save-manager.ts';
 import type { GameSave } from '../save/game-save.ts';
+import { essWorld } from '../save/ess-import.ts';
 import type { SaveHeader } from '../save/save-codec.ts';
 
 /** A save read back for loading. */
@@ -513,6 +514,9 @@ export class PlayMode {
         this.#loadSaved(name);
       },
       delete: (name) => this.#saves.delete(name),
+      importEss: () => {
+        this.#importEss();
+      },
     };
     menus.onPassed = (slept) => {
       void this.#saves.autosave(slept ? 'rest' : 'wait');
@@ -681,6 +685,36 @@ export class PlayMode {
     if (event.key === 'F5') void this.#saves.save('quicksave');
     else this.#loadSaved('Quicksave');
   };
+
+  /**
+   * Imports an original save (.ess) the player picks (their Saves folder, under Documents\My
+   * Games\Skyrim Special Edition) and loads it: it is kept as one of our saves.
+   */
+  #importEss(): void {
+    void (async () => {
+      if (!window.showOpenFilePicker) {
+        this.#terminal.log('save', 'importing a save needs the File System Access API', 'warn');
+        return;
+      }
+      const [handle] = await window.showOpenFilePicker({
+        id: 'ess-saves',
+        startIn: 'documents',
+        types: [{ description: 'Skyrim saves', accept: { 'application/octet-stream': ['.ess'] } }],
+      });
+      if (!handle) return;
+      const bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
+      const name = await this.#saves.importEss(bytes, essWorld(await this.#session.db));
+      this.#loadSaved(name);
+    })().catch((error: unknown) => {
+      // The picker closed without a choice.
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      this.#terminal.log(
+        'save',
+        `the save does not import: ${error instanceof Error ? error.message : String(error)}`,
+        'error',
+      );
+    });
+  }
 
   /** Loads a save by name: the world rebuilt behind the loading screen, then the save applied. */
   #loadSaved(name: string): void {

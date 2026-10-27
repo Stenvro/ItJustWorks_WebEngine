@@ -1,6 +1,6 @@
 # Savegames (our own format)
 
-The engine's own save format (M12). Import of the original `.ess` saves comes later. Code:
+The engine's own save format (M12). Import of the original `.ess` saves: docs/formats/ess.md. Code:
 `src/save/save-codec.ts` (the container), `src/save/game-save.ts` (what a save holds),
 `src/scripting/runtime/runtime-save.ts` and `ScriptRuntime.saveData` / `loadGame` (the scripts'
 side), `PapyrusVm.savedInstances` / `restoreInstances` (script variables), `src/save/save-store.ts`
