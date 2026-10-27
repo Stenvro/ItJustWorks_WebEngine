@@ -75,6 +75,7 @@ import { StoryEvents } from './story-events.ts';
 import { ActorLocations, type PlacementSnapshot } from './actor-locations.ts';
 import { SceneDirector } from '../../ai/scene-runtime.ts';
 import type { WorldSave } from '../../save/world-save.ts';
+import type { SavedGraph } from '../../animation/script-graphs.ts';
 import { RuntimeSceneHost, type SceneSpeech } from './scene-host.ts';
 import {
   gameStateData,
@@ -492,6 +493,11 @@ export interface WorldBridge {
    * furniture, packages and fights, the graphs of objects moved from their start.
    */
   saveWorld?(): WorldSave;
+  /**
+   * A loaded object's animated state where it moved from its start (undefined: as it started),
+   * read as its 3D unloads so it loads again in that state.
+   */
+  savedGraph?(reference: number): SavedGraph | undefined;
 }
 
 /** A quest's update as the HUD announces it. */
@@ -1204,9 +1210,16 @@ export class ScriptRuntime implements VmHost {
     references: readonly number[],
     loaded: (reference: number) => boolean,
   ): Promise<void> {
+    // Before the view lets go of their 3D (no wait): each loaded object's animated state is
+    // kept (a chest's lid open, a lever pulled) and the animation events registered on it go
+    // with its graph.
     for (const reference of references) {
-      // Its 3D goes: the animation events registered on it go with its graph.
-      if (loaded(reference)) this.animationGraphUnloaded(reference);
+      if (!loaded(reference)) continue;
+      const graph = this.world.savedGraph?.(reference);
+      if (graph) this.state.graphs.set(reference, graph);
+      this.animationGraphUnloaded(reference);
+    }
+    for (const reference of references) {
       if (!(await this.#hasScripts(reference))) continue;
       if (loaded(reference)) this.events.emit('objectLoaded', { reference, loaded: false });
       this.events.emit('cellAttachDetach', { reference, attached: false });

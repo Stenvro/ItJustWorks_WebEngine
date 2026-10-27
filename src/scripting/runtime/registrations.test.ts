@@ -55,6 +55,16 @@ describe('the registrations the engine ends or answers', () => {
   });
 });
 
+describe("an object's animated state across its cell's unload", () => {
+  it('is kept as its 3D unloads (a lid left open), only for the loaded', async () => {
+    const { runtime: scripts } = runtime();
+    const lid = { sequences: undefined, skeleton: undefined };
+    scripts.world.savedGraph = (reference) => (reference === LEVER ? lid : undefined);
+    await scripts.cellDetached([LEVER, QUEST], (reference) => reference === LEVER);
+    expect([...scripts.state.graphs]).toEqual([[LEVER, lid]]);
+  });
+});
+
 describe('a translation in a save', () => {
   it('keeps how far it got', async () => {
     const { runtime: scripts } = runtime();
