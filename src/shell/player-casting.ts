@@ -11,13 +11,18 @@
 import {
   TELEKINESIS_DEFAULTS,
   TELEKINESIS_SETTING_NAMES,
+  telekinesisDamage,
+  telekinesisDamageMult,
   telekinesisReach,
   type TelekinesisSettings,
 } from '../gameplay/magic/telekinesis.ts';
+import { pathHitsActor } from '../gameplay/magic/projectile-flight.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
+import type { Vec3 } from '../render/math.ts';
 import { CastingSource } from '../scripting/runtime/casting-engine.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
+import { ActorValue } from '../world/actor-values.ts';
 import { EffectArchetype } from '../world/magic-effects.ts';
 import type { ActorCasting } from './actor-casting.ts';
 import type { GameSession } from './game-session.ts';
@@ -28,6 +33,8 @@ export interface PlayerCastingOptions {
   readonly session: GameSession;
   readonly casting: ActorCasting;
   readonly player: () => PlayerView | undefined;
+  /** An object Telekinesis threw struck an actor (it is attacked by the player). */
+  readonly struck?: (target: number) => void;
 }
 
 /** The attack buttons by casting source. */
@@ -35,6 +42,9 @@ const BUTTONS: Readonly<Record<number, string>> = {
   [CastingSource.left]: 'Left Attack/Block',
   [CastingSource.right]: 'Right Attack/Block',
 };
+
+/** How wide a thrown object meets an actor (units; TODO(M13): its own collision's size). */
+const THROWN_RADIUS = 16;
 
 export class PlayerCasting implements CastingButtons {
   readonly #options: PlayerCastingOptions;
@@ -107,6 +117,53 @@ export class PlayerCasting implements CastingButtons {
       this.#dualTelekinesis,
       this.#telekinesisSettings,
     );
+    const thrown = view.play.telekinesisThrown;
+    if (thrown) void this.#strike(runtime, thrown);
+  }
+
+  /**
+   * An object Telekinesis threw strikes the first living actor its path meets (not the player):
+   * it is hurt by telekinesisDamage (the collision's own damage: none at vanilla speeds,
+   * src/gameplay/physics-damage.ts), the player's Mod Telekinesis Damage Mult and Mod Telekinesis
+   * Damage perks on it, and attacked by the player (OnHit, a hostile's reaction).
+   */
+  async #strike(
+    runtime: ScriptRuntime,
+    thrown: {
+      readonly from: Vec3;
+      readonly to: Vec3;
+      readonly dual: boolean;
+      readonly strike: () => void;
+    },
+  ): Promise<void> {
+    let best: { reference: number; t: number } | undefined;
+    for (const reference of runtime.world.loadedReferences?.() ?? []) {
+      if (reference === PLAYER_REF) continue;
+      const feet = runtime.world.livePlacement?.(reference)?.position;
+      if (!feet) continue;
+      const shape = { feet: [feet[0], feet[1], feet[2]] as Vec3, height: 128, radius: 24 };
+      const t = pathHitsActor(thrown.from, thrown.to, THROWN_RADIUS, shape);
+      if (t !== undefined && (!best || t < best.t)) best = { reference, t };
+    }
+    if (!best) return;
+    const target = best.reference;
+    if (!(await runtime.actors.isActor(target)) || (await runtime.actors.isDead(target))) return;
+    thrown.strike();
+    const settings = this.#telekinesisSettings;
+    const mult = await runtime.perks.apply(
+      EntryPoint.modTelekinesisDamageMult,
+      PLAYER_REF,
+      telekinesisDamageMult(thrown.dual, settings),
+      [target],
+    );
+    const damage = await runtime.perks.apply(
+      EntryPoint.modTelekinesisDamage,
+      PLAYER_REF,
+      telekinesisDamage(0, mult, settings),
+      [target],
+    );
+    if (damage > 0) await runtime.actors.damage(target, ActorValue.health, damage, PLAYER_REF);
+    this.#options.struck?.(target);
   }
 
   /** Spells whose costliest effect is Telekinesis, as read (asynchronously). */

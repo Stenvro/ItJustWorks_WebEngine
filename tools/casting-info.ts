@@ -243,6 +243,11 @@ if (values.audit) {
     const projectile = parseProjectile(record);
     const key = `${projectileTypeName(projectile.type)} (${flightKind(projectile)})`;
     types.set(key, (types.get(key) ?? 0) + 1);
+    // The lobbers (runes, thrown things): how they fall, wait and burst.
+    if (flightKind(projectile) === 'lobber')
+      console.log(
+        `  lobber ${projectile.editorId}: flags 0x${projectile.flags.toString(16)}, gravity ${String(projectile.gravity)}, speed ${String(projectile.speed)}, proximity ${String(projectile.proximity)}, timer ${String(projectile.timer)}, lifetime ${String(projectile.lifetime)}, range ${String(projectile.range)}`,
+      );
   }
   console.log(`PROJ by type: ${[...types].map(([type, n]) => `${type} ${String(n)}`).join(', ')}`);
   let explosions = 0;

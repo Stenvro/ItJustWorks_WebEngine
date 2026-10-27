@@ -26,6 +26,7 @@ import {
   CASTING_DEFAULTS,
   CASTING_SETTING_NAMES,
   chargeSeconds,
+  costliestEffectIndex,
   itemBaseCost,
   lesserPowerReady,
   magickaCost,
@@ -328,22 +329,20 @@ export class CastingEngine {
   }
 
   /**
-   * The effect that decides an item's school, projectile and art: its costliest (base cost ×
-   * magnitude), as the magic menu shows its level.
+   * The effect that decides an item's school, projectile and art: its costliest by its effect
+   * item's cost (casting.ts costliestEffectIndex: base cost × (magnitude × duration / 10)^1.1 ×
+   * the area's factor), as the engine ranks them and the magic menu shows its level.
    */
   async mainEffect(item: MagicItemRecord): Promise<MagicEffectRecord | undefined> {
-    let best: MagicEffectRecord | undefined;
-    let bestCost = -1;
+    const { casting } = await this.settings();
+    const effects = new Map<number, MagicEffectRecord>();
     for (const entry of item.effects) {
       const effect = await this.#runtime.magic.effect(entry.effect);
-      if (!effect) continue;
-      const cost = effect.baseCost * Math.max(1, entry.magnitude);
-      if (cost > bestCost) {
-        best = effect;
-        bestCost = cost;
-      }
+      if (effect) effects.set(entry.effect, effect);
     }
-    return best;
+    const index = costliestEffectIndex(item, (id) => effects.get(id)?.baseCost, casting);
+    const entry = item.effects[index];
+    return entry && effects.get(entry.effect);
   }
 
   /** An item's base cost (before skill): its own, or its effects' (casting.ts itemBaseCost). */
@@ -883,6 +882,21 @@ export class CastingEngine {
       )
         damage += entry.magnitude * (options.seconds ?? 1);
     }
+    return this.#wardTakes(target, damage, delivered.caster, delivered.item.formId, power);
+  }
+
+  /**
+   * A ward of `power` takes `damage` (a hostile spell's, an explosion's own): absorbed up to its
+   * strength, else broken with the rest passing. `spell`: the spell or explosion's form.
+   */
+  async #wardTakes(
+    target: number,
+    damage: number,
+    caster: number,
+    spell: number,
+    power: number,
+  ): Promise<'absorbed' | number> {
+    const runtime = this.#runtime;
     const until = this.#clock + WARD_STATE_SECONDS;
     // The ward gives magicka back for what it takes (Mod Ward Magicka Absorption Pct: Ward
     // Absorb, a share of the damage it absorbs).
@@ -890,16 +904,16 @@ export class CastingEngine {
       EntryPoint.modWardMagickaAbsorptionPct,
       target,
       0,
-      [delivered.item.formId],
-      { spell: delivered.item.formId },
+      [spell],
+      { spell },
     );
     if (absorb > 0) runtime.actors.restore(target, MAGICKA, Math.min(damage, power) * absorb);
     // The ward's hit is told (TESMagicWardHitEvent: OnWardHit, 1 absorbed, 2 broken).
     const told = (status: 1 | 2): void => {
       runtime.events.emit('magicWardHit', {
         target,
-        caster: delivered.caster,
-        spell: delivered.item.formId,
+        caster,
+        spell,
         status,
       });
     };
@@ -955,15 +969,27 @@ export class CastingEngine {
 
   /**
    * An area: the actors within an effect's area (feet) of a point take the effects whose area
-   * reaches them (`exclude`: the one hit directly, who has them already). Returns the actors
-   * reached.
+   * reaches them (`exclude`: the one hit directly, who has them already), those the point sees
+   * (an explosion's sight: from `direction`'s buffer off the surface, a surface close before the
+   * actor not counting) unless the spell's area ignores line of sight (SPIT 0x80000). Returns
+   * the actors reached.
    */
   async area(
     delivered: Delivered,
     point: Point,
-    options: { readonly exclude?: number; readonly seconds?: number } = {},
+    options: {
+      readonly exclude?: number;
+      readonly seconds?: number;
+      readonly direction?: Point;
+    } = {},
   ): Promise<number[]> {
     const runtime = this.#runtime;
+    const item = delivered.item;
+    const sees =
+      (item.type !== 'SPEL' && item.type !== 'SCRL') ||
+      (item.flags & MagicSpellFlag.areaIgnoresLineOfSight) === 0;
+    const settings = await this.explosionSettings();
+    const sight = explosionSightStart(point, options.direction, settings);
     const areas = delivered.item.effects.map((entry) => entry.area * UNITS_PER_FOOT);
     const widest = Math.max(0, ...areas);
     if (widest <= 0) return [];
@@ -978,7 +1004,8 @@ export class CastingEngine {
         continue;
       const effects = areas.flatMap((area, index) => (distance <= area ? [index] : []));
       if (effects.length === 0) continue;
-      // TODO(M13): line of sight from the point (SPIT 0x80000 "Area Effect Ignores LOS").
+      if (sees && runtime.world.explosionReaches?.(sight, reference, settings.losBuffer) === false)
+        continue;
       const applied = await this.deliver(delivered, reference, {
         facing: await this.#facesBurst(reference, point),
         effects,
@@ -1080,8 +1107,23 @@ export class CastingEngine {
       reached.push(reference);
       if (knockdownShareEnough(share, settings) && (await this.#knocksDown(explosion, reference)))
         runtime.world.knockDown?.(reference, [...point], explosion.force * share);
-      if (explosion.damage > 0)
-        await runtime.actors.damage(reference, HEALTH, explosion.damage * share, caster);
+      if (explosion.damage > 0) {
+        // Its own damage meets a ward that faces the burst as a spell's would (absorbed up to
+        // the ward's strength, the rest past a broken one).
+        let damage = explosion.damage * share;
+        const power = (await runtime.actors.value(reference, MagicValue.wardPower)).current;
+        if (power > 0 && (await this.#facesBurst(reference, point))) {
+          const passes = await this.#wardTakes(
+            reference,
+            damage,
+            caster ?? reference,
+            explosion.formId,
+            power,
+          );
+          damage = passes === 'absorbed' ? 0 : damage * passes;
+        }
+        if (damage > 0) await runtime.actors.damage(reference, HEALTH, damage, caster);
+      }
       if (enchantment)
         await this.deliver(
           {

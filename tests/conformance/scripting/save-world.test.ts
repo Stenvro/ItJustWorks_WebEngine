@@ -9,7 +9,8 @@
 //   whose graph goes down as it is pulled and stays there.
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { hasGamedata, loadSim, openSim, type Sim } from '../../helpers/sim.ts';
+import { parseMagicItem } from '../../../src/world/magic-records.ts';
+import { hasGamedata, loadSim, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
 
 const BANNERED_MARE = 0x1605e;
 const BLIND_CLIFF_CAVE = 0x152b7;
@@ -110,4 +111,49 @@ describe.skipIf(!hasGamedata())('the world a save keeps (simulation)', () => {
     await after.step(1);
     expect(graphOf(after, WALL_LEVER)).toBe(pulled);
   }, 120_000);
+
+  it('keeps a rune at rest where it landed and a hazard standing with its age', async () => {
+    const before = await openSim({ interior: BANNERED_MARE, hour: 10 });
+    sims.push(before);
+    const runtime = before.runtime;
+    const at = await before.position(PLAYER_REF);
+    const record = await before.db.get(await before.formId('SPEL', 'FireRune'));
+    const item = record ? parseMagicItem(record) : undefined;
+    expect(at && item).toBeTruthy();
+    if (!at || !item) return;
+    const projectiles = before.world.stage.projectiles;
+    await projectiles.launch(
+      {
+        caster: PLAYER_REF,
+        item,
+        via: 'spell',
+        dual: false,
+        cost: await runtime.casting.cost(PLAYER_REF, { item, via: 'spell' }),
+      },
+      [at[0], at[1], at[2] + 100],
+      [0, 0.2, -1],
+    );
+    await before.step(0.5);
+    const rune = [...projectiles.flying()].find((p) => p.projectile === 'RuneFireProjectile');
+    expect(rune).toBeDefined();
+    const hazard = await runtime.hazards.place(
+      await before.formId('HAZD', 'FireDragonHazard'),
+      [at[0] + 300, at[1], at[2]],
+      PLAYER_REF,
+    );
+    expect(hazard).toBeDefined();
+    await before.step(1);
+    const restAt = [...projectiles.flying()].find((p) => p.projectile === 'RuneFireProjectile')?.at;
+    expect(restAt).toBeDefined();
+
+    const after = await loadSim(await before.save());
+    sims.push(after);
+    await after.step(0.1);
+    const again = [...after.world.stage.projectiles.flying()].find(
+      (p) => p.projectile === 'RuneFireProjectile',
+    );
+    expect(again).toBeDefined();
+    expect(again?.at[2]).toBeCloseTo(restAt?.[2] ?? 0, 0);
+    expect(after.runtime.hazards.get(hazard ?? 0)?.age).toBeGreaterThan(0.9);
+  }, 180_000);
 });

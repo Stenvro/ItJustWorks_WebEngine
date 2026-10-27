@@ -17,7 +17,7 @@
 import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
 import { actorScriptGraph, placedScriptGraph } from '../animation/script-graphs.ts';
 import type { LightProbe } from '../ai/light-level.ts';
-import type { NavmeshSet } from '../ai/pathfinding.ts';
+import { summonPlace, type NavmeshSet } from '../ai/pathfinding.ts';
 import type { CollisionData } from '../physics/collision-data.ts';
 import { GRAVITY, initPhysics, PhysicsWorld } from '../physics/physics-world.ts';
 import type { Vec3 } from '../render/math.ts';
@@ -1450,6 +1450,7 @@ export class SimWorld {
     },
     explosionReaches: (from, target, buffer) =>
       this.stage.projectiles.reaches(from, target, buffer),
+    summonPlace: (from, to, radius) => summonPlace(this.#navmeshes, from, to, radius),
     destructionChanged: (reference, reached) => {
       this.#destruction.changed(reference, reached);
     },
@@ -1488,6 +1489,7 @@ export class SimWorld {
       this.stage.talk.randomSceneStarts(scene, first, second),
     facesForLine: (speaker, target) => this.stage.talk.faces(speaker, target),
     saveActors: () => this.stage.saveActors(),
+    saveProjectiles: () => this.stage.projectiles.save(),
     impactAt: (impactDataSet, from, direction, length) =>
       this.stage.combat.impactAt(impactDataSet, from, direction, length),
     pathTo: (actor, target, walkRun) => {
