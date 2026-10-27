@@ -46,6 +46,23 @@ describe('menu stack', () => {
     expect(stack.savingAllowed).toBe(false);
   });
 
+  it('lets an autosave wait until the menus allow saving (the map closes after fast travel)', async () => {
+    const stack = new MenuStack();
+    await stack.whenSavingAllowed();
+    stack.open(MenuName.map);
+    stack.open(MenuName.loading);
+    let allowed = false;
+    const waiting = stack.whenSavingAllowed().then(() => {
+      allowed = true;
+    });
+    stack.close(MenuName.loading);
+    await Promise.resolve();
+    expect(allowed).toBe(false);
+    stack.close(MenuName.map);
+    await waiting;
+    expect(allowed).toBe(true);
+  });
+
   it("registers a mod's own menu with its flags", () => {
     const stack = new MenuStack();
     stack.register('My Mod Menu', { flags: MenuFlag.pausesGame | MenuFlag.usesCursor });
