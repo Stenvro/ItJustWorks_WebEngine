@@ -80,6 +80,7 @@ import {
   type LightShadowViews,
   type ShadowSlot,
 } from './light-shadows.ts';
+import { MAX_FOCUS_SHADOWS, type FocusShadow } from './focus-shadows.ts';
 import waterShader from './shaders/water.wgsl?raw';
 import type { TextureCache } from './texture-cache.ts';
 import { CELL_SIZE } from '../world/land.ts';
@@ -110,11 +111,29 @@ export const SHADOW_MAP_SIZE = 2048;
 export const SHADOW_MAP_LAYERS = 4;
 /** An extra layer of the shadow map: the scene from straight above, for precipitation. */
 export const PRECIPITATION_OCCLUSION_LAYER = 4;
-const SHADOW_TEXTURE_LAYERS = SHADOW_MAP_LAYERS + 1;
+/**
+ * Another layer: the focus shadow maps (focus-shadows.ts), one in each quarter (keep in step
+ * with FOCUS_LAYER in frame.wgsl).
+ */
+export const FOCUS_SHADOW_LAYER = 5;
+/** Texels per side of a focus map (a quarter of the layer). */
+export const FOCUS_MAP_SIZE = SHADOW_MAP_SIZE / 2;
+const SHADOW_TEXTURE_LAYERS = SHADOW_MAP_LAYERS + 2;
 /** Layers of the light-shadow map (light-shadows.ts): six per shadow light. */
 const LIGHT_SHADOW_LAYERS = MAX_SHADOW_LIGHTS * LIGHT_SHADOW_FACES;
-/** WGSL `LightShadows`: a matrix per layer, a vec4 per slot, the parameters. */
-const LIGHT_SHADOW_FLOATS = LIGHT_SHADOW_LAYERS * 16 + MAX_SHADOW_LIGHTS * 4 + 4;
+/** Where the focus shadows start in WGSL `LightShadows` (after the shadow lights' part). */
+const FOCUS_FLOATS_START = LIGHT_SHADOW_LAYERS * 16 + MAX_SHADOW_LIGHTS * 4 + 4;
+/**
+ * WGSL `LightShadows`: a matrix per layer, a vec4 per slot, the parameters; then a matrix and
+ * a vec4 per focus map, and their count.
+ */
+const LIGHT_SHADOW_FLOATS = FOCUS_FLOATS_START + MAX_FOCUS_SHADOWS * 20 + 4;
+/** Receiver offset of the focus maps against acne along the light, in their texels. */
+const FOCUS_DEPTH_BIAS_TEXELS = 2;
+/** The cascade uniform slot of focus map `index` (after the sun's and the lights' layers). */
+export function focusCascadeSlot(index: number): number {
+  return SHADOW_TEXTURE_LAYERS + LIGHT_SHADOW_LAYERS + index;
+}
 /**
  * Receiver offsets of the light shadows against acne: along the light (world units) and along
  * the normal (texels).
@@ -1486,7 +1505,7 @@ export class SceneRenderer {
     });
     this.#cascadeBuffer = device.createBuffer({
       label: 'shadow-cascades',
-      size: CASCADE_STRIDE * (SHADOW_TEXTURE_LAYERS + LIGHT_SHADOW_LAYERS),
+      size: CASCADE_STRIDE * (SHADOW_TEXTURE_LAYERS + LIGHT_SHADOW_LAYERS + MAX_FOCUS_SHADOWS),
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.#cascadeBindGroup = device.createBindGroup({
@@ -2620,6 +2639,40 @@ export class SceneRenderer {
       slotBase + MAX_SHADOW_LIGHTS * 4,
     );
     this.#device.queue.writeBuffer(this.#lightShadowBuffer, 0, data);
+  }
+
+  /**
+   * The sun's focus maps of the frame (before updateFrame): each one's view into its cascade
+   * slot (to render it) and into the shaders' `LightShadows` (to sample it), with its texel
+   * size and depth bias; none turns them off.
+   */
+  updateFocusShadows(focus: readonly FocusShadow[]): void {
+    const data = this.#lightShadowData;
+    const count = Math.min(MAX_FOCUS_SHADOWS, focus.length);
+    for (let i = 0; i < count; i++) {
+      const shadow = focus[i];
+      if (!shadow) continue;
+      data.set(shadow.viewProj, FOCUS_FLOATS_START + i * 16);
+      data.set(
+        [shadow.texelSize, (FOCUS_DEPTH_BIAS_TEXELS * shadow.texelSize) / shadow.depthRange, 0, 0],
+        FOCUS_FLOATS_START + MAX_FOCUS_SHADOWS * 16 + i * 4,
+      );
+      this.#device.queue.writeBuffer(
+        this.#cascadeBuffer,
+        focusCascadeSlot(i) * CASCADE_STRIDE,
+        shadow.viewProj,
+      );
+    }
+    const countAt = FOCUS_FLOATS_START + MAX_FOCUS_SHADOWS * 20;
+    if (count === 0 && data[countAt] === 0) return;
+    data[countAt] = count;
+    this.#device.queue.writeBuffer(
+      this.#lightShadowBuffer,
+      FOCUS_FLOATS_START * 4,
+      data,
+      FOCUS_FLOATS_START,
+      LIGHT_SHADOW_FLOATS - FOCUS_FLOATS_START,
+    );
   }
 
   /**
