@@ -48,6 +48,22 @@ export interface PathOptions {
    * under one and the steps that cross one are closed.
    */
   readonly obstacles?: ObstacleIndex | readonly NavmeshObstacle[];
+  /**
+   * Avoid nodes (the actors that blocked it standing; the engine's, observed in the original): a circle the
+   * actor's middle keeps out of (`radius`: theirs and its own) and the cost of each unit a path
+   * step runs inside it (`cost` times its length). The triangles whose middle lies within one
+   * are closed (the goal's not); the way pulled tight goes round them where the navmeshes have
+   * room.
+   */
+  readonly avoid?: readonly AvoidNode[];
+}
+
+/** A place a path goes round (a standing actor that blocked the one searching). */
+export interface AvoidNode {
+  readonly at: Vec3;
+  readonly radius: number;
+  /** Each unit of a step inside it costs this many (fAvoidNodeCost). */
+  readonly cost: number;
 }
 
 /** A path over the navmeshes. */
@@ -297,6 +313,13 @@ export function findPath(
       if (door !== undefined && options.closedDoors?.has(door) === true) continue;
       if (options.blocked?.length && isBlocked(navmesh, triangle, options.blocked)) continue;
       const neighbourKey = keyOf(navmesh.formId, triangle);
+      if (
+        options.avoid?.length &&
+        neighbourKey !== goalKey &&
+        isBlocked(navmesh, triangle, options.avoid)
+      ) {
+        continue;
+      }
       const existing = nodes.get(neighbourKey);
       if (existing?.closed) continue;
       const [a, b] = edgeCorners(node.navmesh, node.triangle, edge);
@@ -308,7 +331,9 @@ export function findPath(
       ) {
         continue;
       }
-      const g = node.g + enterCost(target.flags, distance(node.at, at), options) + extra;
+      // A step through an avoid node costs its length inside it, many times over.
+      const avoided = options.avoid?.length ? avoidCost(node.at, at, options.avoid) : 0;
+      const g = node.g + enterCost(target.flags, distance(node.at, at), options) + extra + avoided;
       if (!Number.isFinite(g)) continue;
       if (existing) {
         if (g >= existing.g) continue;
@@ -340,8 +365,11 @@ export function findPath(
   for (let node: Node | undefined = end; node; node = node.parent) chain.push(node);
   chain.reverse();
   const goalPoint = reached ? to : end.at;
+  const tight = pullTight(chain, from, goalPoint, options.radius);
   return {
-    points: pullTight(chain, from, goalPoint, options.radius),
+    points: options.avoid?.length
+      ? goRoundAll(set, tight, options.avoid, options.radius, obstacles)
+      : tight,
     doors: doorsOn(chain),
     complete: reached !== undefined,
   };
@@ -460,6 +488,160 @@ function pullTight(chain: readonly Node[], from: Vec3, to: Vec3, radius: number)
 
 const samePoint = (a: Vec3, b: Vec3): boolean =>
   Math.abs(a[0] - b[0]) < 1e-3 && Math.abs(a[1] - b[1]) < 1e-3;
+
+const across = (a: Vec3, b: Vec3): number => Math.hypot(b[0] - a[0], b[1] - a[1]);
+
+/**
+ * Whether a step from `a` to `b` comes into a circle (horizontally). A step that begins inside
+ * it counts only if it goes deeper (an actor pressed against another walks off it).
+ */
+function entersCircle(a: Vec3, b: Vec3, circle: AvoidNode): boolean {
+  const [cx, cy] = circle.at;
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const length2 = dx * dx + dy * dy;
+  const t =
+    length2 > 1e-9 ? Math.max(0, Math.min(1, ((cx - a[0]) * dx + (cy - a[1]) * dy) / length2)) : 0;
+  const closest = Math.hypot(a[0] + dx * t - cx, a[1] + dy * t - cy);
+  const start = Math.hypot(a[0] - cx, a[1] - cy);
+  return closest < circle.radius - 1e-3 && closest < start - 1e-3;
+}
+
+/** What a step costs more through avoid nodes: its length inside each, times the node's cost. */
+function avoidCost(a: Vec3, b: Vec3, nodes: readonly AvoidNode[]): number {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const length = Math.hypot(dx, dy);
+  if (length < 1e-6) return 0;
+  let cost = 0;
+  for (const node of nodes) {
+    // Where the step's line meets the circle: t² + 2pt + q = 0 along its length.
+    const ox = a[0] - node.at[0];
+    const oy = a[1] - node.at[1];
+    const p = (ox * dx + oy * dy) / length;
+    const q = ox * ox + oy * oy - node.radius * node.radius;
+    const root = p * p - q;
+    if (root <= 0) continue;
+    const enter = Math.max(0, -p - Math.sqrt(root));
+    const leave = Math.min(length, -p + Math.sqrt(root));
+    if (leave > enter) cost += (leave - enter) * node.cost;
+  }
+  return cost;
+}
+
+/** The ring round a node is drawn in arcs of at most this (radians). */
+const ROUND_ARC = Math.PI / 4;
+/** Two ways round a node at once at the most (a node beside another). */
+const ROUND_PASSES = 2;
+
+/**
+ * A path pulled tight, bent round the avoid nodes its steps run into: each such step goes round
+ * the node on the shorter side the navmeshes leave room on (the actor's width, else its middle),
+ * as tight as the node lets it. A step ending inside a node (the goal beside the one in the way)
+ * cannot go round it and stays.
+ */
+function goRoundAll(
+  set: NavmeshSet,
+  points: readonly Vec3[],
+  nodes: readonly AvoidNode[],
+  radius: number,
+  obstacles: ObstacleIndex | undefined,
+): Vec3[] {
+  let way = [...points];
+  for (let pass = 0; pass < ROUND_PASSES; pass++) {
+    let bent = false;
+    for (const node of nodes) {
+      const first = way[0];
+      if (!first) return way;
+      const out: Vec3[] = [first];
+      for (let i = 1; i < way.length; i++) {
+        const b = way[i];
+        const a = out[out.length - 1];
+        if (!a || !b) continue;
+        if (entersCircle(a, b, node) && across(node.at, b) >= node.radius) {
+          const round = goRound(set, a, b, node, radius, obstacles);
+          if (round) {
+            out.push(...round);
+            bent = true;
+          }
+        }
+        out.push(b);
+      }
+      way = out;
+    }
+    if (!bent) break;
+  }
+  return way;
+}
+
+/** The points of the shorter way round a node from `a` to `b`, or undefined (no room). */
+function goRound(
+  set: NavmeshSet,
+  a: Vec3,
+  b: Vec3,
+  node: AvoidNode,
+  radius: number,
+  obstacles: ObstacleIndex | undefined,
+): Vec3[] | undefined {
+  const [cx, cy] = node.at;
+  const fromAngle = Math.atan2(a[1] - cy, a[0] - cx);
+  const toAngle = Math.atan2(b[1] - cy, b[0] - cx);
+  const clear = (p: Vec3, q: Vec3, width: number): boolean =>
+    straightReach(set, p, q, width) >= across(p, q) - 1 && obstacles?.crosses(p, q) !== true;
+  for (const width of radius > 0 ? [radius, 0] : [0]) {
+    let best: { points: Vec3[]; length: number } | undefined;
+    for (const side of [1, -1]) {
+      const sweep =
+        (((side * (toAngle - fromAngle)) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+      if (sweep < 1e-6) continue;
+      // A polygon round the circle, its sides touching it.
+      const arcs = Math.max(1, Math.ceil(sweep / ROUND_ARC));
+      const arc = sweep / arcs;
+      const ring = (node.radius + 1) / Math.cos(arc / 2);
+      const corners: Vec3[] = [];
+      for (let k = 0; k <= arcs; k++) {
+        const angle = fromAngle + side * k * arc;
+        const x = cx + Math.cos(angle) * ring;
+        const y = cy + Math.sin(angle) * ring;
+        const z = a[2] + ((b[2] - a[2]) * k) / arcs;
+        corners.push([x, y, set.nearest?.([x, y, z], ROUND_FLOOR_REACH)?.[2] ?? z]);
+      }
+      // Pulled tight: from each point kept to the farthest it sees past the circle.
+      const list = [...corners, b];
+      const kept: Vec3[] = [];
+      let from = a;
+      for (let next = 0; next < list.length;) {
+        let j = list.length - 1;
+        while (j > next) {
+          const to = list[j];
+          if (to && !entersCircle(from, to, node)) break;
+          j--;
+        }
+        const to = list[j];
+        if (!to || j === list.length - 1) break;
+        kept.push(to);
+        from = to;
+        next = j + 1;
+      }
+      const way = [a, ...kept, b];
+      let length = 0;
+      let ok = true;
+      for (let i = 1; i < way.length && ok; i++) {
+        const p = way[i - 1];
+        const q = way[i];
+        if (!p || !q) continue;
+        ok = clear(p, q, width);
+        length += across(p, q);
+      }
+      if (ok && (!best || length < best.length)) best = { points: kept, length };
+    }
+    if (best) return best.points;
+  }
+  return undefined;
+}
+
+/** A corner of the way round a node is set on the navmesh within this of its height (units). */
+const ROUND_FLOOR_REACH = 64;
 
 /** The line's samples are this far apart (units). */
 const STRAIGHT_STEP = 16;
