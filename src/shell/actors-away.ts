@@ -1,17 +1,24 @@
-// Actors away (docs/ai.md, "Actors away"; docs/m10-plan.md, 3.4): the low process. Actors that
-// are not in the loaded area still keep their schedules: as the game's hour changes, those of
-// the player's space and of the cells one door from it are asked where their packages have
-// them (src/ai/package-start.ts, its look resolved but no 3D made); one that should be
-// elsewhere sets out along its route (src/ai/routes.ts) and walks it, unseen, at its walking
-// speed: through each load door to the other side, until it reaches its place or comes into
+// Actors away (docs/ai.md, "Actors away"; docs/m10-plan.md, 3.4): the middle-low and low
+// processes (src/ai/process-levels.ts). Actors that are not in the loaded area still keep their
+// schedules: as the game's hour changes and every fEvaluatePackageTimer seconds, those of the
+// player's space and of the cells one door from it (the middle-low process) and the load
+// order's persistent actors wherever they are (the low process) are asked where their packages
+// have them (src/ai/package-start.ts, its look resolved but no 3D made), in
+// iLowProcessingMilliseconds slices of the frames; one that should be elsewhere sets out along
+// its route (src/ai/routes.ts) and walks it, unseen, at its walking speed: through each load
+// door to the other side, as many as its route has, until it reaches its place or comes into
 // the loaded area (a door into a loaded cell, a loaded cell of a worldspace it walks across),
 // where it appears and its AI goes on. An actor walking out of the loaded area through a load
-// door goes on the same way. Where the game's time jumps (waiting, sleeping, fast travel) or
-// the player comes into another space, actors are put where their packages have them at once.
-// TODO(M13): the engine's own rules for the low process (how often, how far round, its speed).
+// door goes on the same way. Where the game's time jumps (waiting, sleeping, fast travel) every
+// actor asked is put where its package has it at once; where the player comes into another
+// space, those of the middle-low process are. Actors that are not persistent are put where
+// their packages have them as their cells load.
+// TODO(M13): the engine's own rules for the low process (how often, its speed between doors).
 
 import type { PackageStart, Space } from '../ai/package-start.ts';
 import { MovementCatalog } from '../ai/movement-types.ts';
+import { LOW_PROCESSING_MS } from '../ai/process-levels.ts';
+import { aiSettingsOf } from '../ai/ai-settings.ts';
 import {
   findRoute,
   polylineLength,
@@ -71,9 +78,21 @@ interface Leg {
 /** A run of the schedules: how many actors it asked and sent or put elsewhere, how long. */
 interface ScheduleRun {
   readonly mode: 'jump' | 'walk';
+  /** It asked the low process too (the persistent actors of the whole world). */
+  readonly far: boolean;
   readonly actors: number;
   moved: number;
   seconds: number;
+}
+
+/**
+ * A run of the schedules asked for: `jump` puts actors where their packages have them at once,
+ * `walk` sends them on their way; `far`: the low process's actors too (else the middle-low's:
+ * those of the player's space and the spaces one door from it).
+ */
+interface Ask {
+  readonly mode: 'jump' | 'walk';
+  readonly far: boolean;
 }
 
 /** An actor on its way while away. */
@@ -99,11 +118,12 @@ const SKIP_SECONDS = 600;
 /** Actors asked at once by a run of the schedules. */
 const SCHEDULE_PARALLEL = 16;
 /**
- * How long a run of the schedules works before it lets a frame be drawn (ms): asking a
- * worldspace's actors where their packages have them is a long run of cached reads and
- * conditions (docs/ai.md, "Actors away").
+ * How long a run of the schedules works before it lets a frame be drawn (ms): the low
+ * process's slice of a frame (iLowProcessingMilliseconds). Asking a worldspace's actors where
+ * their packages have them is a long run of cached reads and conditions (docs/ai.md, "Actors
+ * away").
  */
-const SCHEDULE_SLICE_MS = 4;
+const SCHEDULE_SLICE_MS = LOW_PROCESSING_MS;
 /** The size of an exterior cell (units). */
 const CELL_SIZE = 4096;
 
@@ -129,7 +149,11 @@ export class ActorsAway {
   #scheduling = false;
   /** Real seconds since the player's space was last looked at. */
   #sincePlayer = Infinity;
-  #pending: 'jump' | 'walk' | undefined;
+  /** Real seconds since the schedules were last asked. */
+  #sinceAsked = 0;
+  /** The load order's persistent actors (the low process), found once. */
+  #persistent: readonly number[] | undefined;
+  #pending: Ask | undefined;
   #lastRun: ScheduleRun | undefined;
 
   constructor(options: ActorsAwayOptions) {
@@ -179,17 +203,9 @@ export class ActorsAway {
     if (!runtime || this.#options.staged(actor)) return;
     const session = this.#options.session;
     void (async () => {
-      // Those of the player's space and of the spaces one door from it, as the schedules.
-      const [routes, placer, player, at] = await Promise.all([
-        session.routeMap(),
-        session.actors(),
-        runtime.placement(PLAYER_REF),
-        runtime.placement(actor, false),
-      ]);
-      if (!player || !at) return;
-      const here = spaceOf(player);
-      const there = spaceOf(at);
-      if (![here, ...spacesNextTo(routes, here)].some((space) => sameSpace(space, there))) return;
+      // Wherever it is (the middle-low and low processes alike).
+      const [placer, at] = await Promise.all([session.actors(), runtime.placement(actor, false)]);
+      if (!at) return;
       await this.#scheduleActor(runtime, placer, actor, 'walk', true);
     })().catch((error: unknown) => {
       this.#options.terminal.log(
@@ -235,11 +251,22 @@ export class ActorsAway {
     const timescale = session.scriptsReady?.timeScale ?? 20;
     const jumped =
       previous !== undefined && gameSeconds - previous > seconds * timescale + SKIP_SECONDS;
+    this.#sinceAsked += seconds;
     if (jumped) {
+      // Every actor of the world is where its package has it after the time passed.
       this.#finishAll();
-      this.#ask('jump');
+      this.#ask({ mode: 'jump', far: true });
     } else if (this.#hour !== undefined && hour !== this.#hour) {
-      this.#ask('walk');
+      // The hour changed: the low process's actors set out where their packages send them.
+      this.#sinceAsked = 0;
+      this.#ask({ mode: 'walk', far: true });
+    } else if (this.#sinceAsked >= this.#evaluateTimer()) {
+      // Actors away choose again as often as the high process's do (fEvaluatePackageTimer): a
+      // package starting at a minute of the hour sends them then. A run over the world's 1,600
+      // persistent living actors takes about 80 ms in 2 ms slices. TODO(M13): the engine's own
+      // interval for its middle-low and low lists.
+      this.#sinceAsked = 0;
+      this.#ask({ mode: 'walk', far: true });
     }
     this.#hour = hour;
     this.#sincePlayer += seconds;
@@ -257,17 +284,27 @@ export class ActorsAway {
     const key = at.world !== undefined ? `w${String(at.world)}` : `c${String(at.cell)}`;
     if (key === this.#playerSpace) return;
     this.#playerSpace = key;
-    this.#ask('jump');
+    // What is near the player now is put where it should be (no time passed for the rest).
+    this.#ask({ mode: 'jump', far: false });
   }
 
-  /** Schedules are asked (one run at a time; a jump outranks a walk). */
-  #ask(mode: 'jump' | 'walk'): void {
+  /** fEvaluatePackageTimer (seconds). */
+  #evaluateTimer(): number {
+    return aiSettingsOf(this.#options.session).evaluatePackageTimer;
+  }
+
+  /** Schedules are asked (one run at a time; a jump outranks a walk, far outranks near). */
+  #ask(ask: Ask): void {
     if (this.#scheduling) {
-      if (this.#pending !== 'jump') this.#pending = mode;
+      const pending = this.#pending;
+      this.#pending = {
+        mode: pending?.mode === 'jump' ? 'jump' : ask.mode,
+        far: pending?.far === true || ask.far,
+      };
       return;
     }
     this.#scheduling = true;
-    void this.#schedule(mode)
+    void this.#schedule(ask)
       .catch((error: unknown) => {
         this.#options.terminal.log('actor', `actors away: ${describe(error)}`, 'warn');
       })
@@ -290,10 +327,11 @@ export class ActorsAway {
   }
 
   /**
-   * Where the actors of the player's space and of the cells one door from it should be now:
-   * `jump` puts them there at once, `walk` sends those that should be elsewhere on their way.
+   * Where the actors of the player's space and of the cells one door from it should be now,
+   * and (`far`) the persistent actors of the whole world: `jump` puts them there at once,
+   * `walk` sends those that should be elsewhere on their way (through any number of doors).
    */
-  async #schedule(mode: 'jump' | 'walk'): Promise<void> {
+  async #schedule({ mode, far }: Ask): Promise<void> {
     const session = this.#options.session;
     const runtime = session.scriptsReady;
     if (!runtime) return;
@@ -311,10 +349,10 @@ export class ActorsAway {
     const here = spaceOf(player);
     const spaces = [here, ...spacesNextTo(routes, here)];
     const begun = performance.now();
-    const candidates = await this.#candidates(runtime, spaces);
-    const run: ScheduleRun = { mode, actors: candidates.length, moved: 0, seconds: 0 };
-    // Several at once: each waits on its records more than it works.
-    const queue = [...candidates];
+    const candidates = await this.#candidates(runtime, spaces, far);
+    const run: ScheduleRun = { mode, far, actors: candidates.length, moved: 0, seconds: 0 };
+    // Several at once: each waits on its records more than it works. The nearest first.
+    const queue = [...candidates].reverse();
     const scheduler = runtime.vm.scheduler;
     let since = scheduler.now();
     const next = async (): Promise<void> => {
@@ -422,9 +460,14 @@ export class ActorsAway {
 
   /**
    * The actors to ask: those placed in the spaces (an interior's actors, a worldspace's
-   * persistent ones) and those the low process or scripts left there, living and enabled.
+   * persistent ones) and those the low process or scripts left there, then (`far`) the load
+   * order's persistent actors wherever they are; living and enabled, the nearest first.
    */
-  async #candidates(runtime: ScriptRuntime, spaces: readonly Space[]): Promise<number[]> {
+  async #candidates(
+    runtime: ScriptRuntime,
+    spaces: readonly Space[],
+    far: boolean,
+  ): Promise<number[]> {
     const db = runtime.forms.db;
     const found = new Set<number>();
     for (const space of spaces) {
@@ -449,6 +492,12 @@ export class ActorsAway {
           ? { kind: 'world', world: state.world }
           : { kind: 'interior', cell: state.cell ?? 0 };
       if (spaces.some((other) => sameSpace(other, space))) found.add(reference);
+    }
+    if (far) {
+      // The low process: persistent actors stay in the world's lists wherever they are (the
+      // others are put where their packages have them as their cells load).
+      this.#persistent ??= db.persistentActors();
+      for (const reference of this.#persistent) found.add(reference);
     }
     const living: number[] = [];
     let since = runtime.vm.scheduler.now();

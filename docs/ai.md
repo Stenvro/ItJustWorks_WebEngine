@@ -43,9 +43,10 @@ How actors move (`src/ai/locomotion.ts`, `src/ai/movement-types.ts`, `src/shell/
   its AI sends it away, its idle is stopped as a moved actor's is (ActionIdleStop, again each
   second): a chicken lying down otherwise gave up every walk its sandbox sent it on. Held so, its
   clips' root motion moves and turns it, as a controlled one's (a deer's canned flee turn
-  carries it on). TODO(M13): the engine's process levels (CommonLibSSE
-  `ProcessLists`: high, middle-high, middle-low, low) and how often each moves its actors are
-  not documented. The controllers are in the world the
+  carries it on). The levels (CommonLibSSE `ProcessLists`: high, middle-high, middle-low, low)
+  are decided in `src/ai/process-levels.ts`, and the middle-high actors walk on their turns of
+  the budget ([The AI's game settings](#the-ais-game-settings)); TODO(M13): the engine's own
+  distance rule is not a setting. The controllers are in the world the
   player moves in: the player bumps into actors and they into each other. The crosshair's pick
   (L_ITEMPICKER) meets an actor's controller, its BIPED bodies keyframed to its pose
   (`src/shell/actor-bodies.ts`) or a dead one's ragdoll and takes that actor (`talkTargets`,
@@ -993,30 +994,39 @@ with its cart in it, through which the cart, keyframed then, passed).
 
 ## Actors away
 
-Actors that are not in the loaded area keep their schedules (the low process,
-`src/shell/actors-away.ts`). Their schedules are asked for the actors of the player's space and
-of the spaces one load door from it: those placed there (an interior's actors, a worldspace's
-persistent ones) and those the game state has there, living and enabled; each where its package
-has it now (the placement above, from its packages, factions, race and sex, read once).
+Actors that are not in the loaded area keep their schedules (the middle-low and low processes,
+`src/shell/actors-away.ts`; the levels: `src/ai/process-levels.ts`). Their schedules are asked
+for the actors of the player's space and of the spaces one load door from it (the middle-low
+process: those placed there, an interior's actors, a worldspace's persistent ones, and those the
+game state has there) and for the load order's persistent actors wherever they are (the low
+process: ACHR records in a cell's persistent children, 2,411 in the vanilla load order, 1,653 of
+them living and enabled at the start), each where its package has it now (the placement above,
+from its packages, factions, race and sex, read once). Actors that are not persistent exist only
+with their cells: they are put where their packages have them as their cells load.
 
-- **When the hour changes** an actor its package wants elsewhere sets out from where it is. Its
-  trip follows the route (above) door to door at its walk speed (the default movement type's,
+- **When the hour changes, and every fEvaluatePackageTimer seconds** (as the high process
+  chooses again), an actor its package wants elsewhere sets out from where it is. Its trip
+  follows the route (above) door to door, through as many load doors as it has, at its walk
+  speed (the default movement type's,
   MOVT), along the roads where they serve. The game state has it in each space it comes into
   through a door (a script asking for its cell or worldspace gets that one; TODO(M13): its
   place along the way between). On a cell that is loaded it comes onto the
   stage there and walks on with its package (it comes out of a load door into the loaded area,
   or walks into it).
 - **When the game's time jumps** (waiting, sleeping, fast travel, a console `set gamehour`: more
-  than 10 game minutes beyond what the clock ran) trips end at once and every actor asked is
-  put where its package has it. So too when the player comes into another worldspace or
-  interior: what is there is where it should be as it loads.
+  than 10 game minutes beyond what the clock ran) trips end at once and every actor asked, of
+  both processes, is put where its package has it. When the player comes into another
+  worldspace or interior, the middle-low process's are: what is there is where it should be as
+  it loads (no time passed for the rest). A shopkeeper two doors from the player (Carlotta
+  Valentia at home, the player in the Bannered Mare) is at her market stall once the clock is
+  set past her market package's hour.
 - An actor of the loaded area on its way through a load door its package takes leaves the stage
   through it, and its trip goes on from the door's arrival point. It walks to the navmesh
   triangle the navmesh marks in front of the door (else the navmesh point nearest the door), not
   to the door's own place, which sits in its frame off the walkable floor (HelgenHomestead's
   door is a hundred units from Torolf's porch).
 - **When its package changes** (a script's EvaluatePackage, a scene's package action starting
-  or ending) an actor away of those spaces is asked again at once and sent where its package now
+  or ending) an actor away is asked again at once and sent where its package now
   has it. While a scene's package action runs, its packages are the actor's only ones away as
   on the stage (an action done: it stays). A trip that reaches the place a Travel sent it to
   completes that package, so a scene waiting on it goes on: MQ101TorriLedgeScene's last phase
@@ -1025,12 +1035,13 @@ has it now (the placement above, from its packages, factions, race and sex, read
 - Asked 16 at a time: at Whiterun's plains district 449 actors in 38 spaces in 8 seconds at the
   start (the jump as the game loads), 0.6 seconds at an hour's change. At 9:00 Mila Valentia
   steps out of her house's door and walks to her stall at the market; set to 10:00 she stands
-  there at once. TODO(M13): the engine's rule for who keeps a schedule while away (persistent
-  references, the low process's reach) and its pace are not documented.
-- A run works in slices: after 4 ms of asking it lets the browser draw a frame before it goes
-  on (`PapyrusScheduler.giveWay`), and the plugins' actors of each cell asked about are found
-  once (a worldspace's persistent cell has tens of thousands of references: looking through
-  them took 200 ms each run).
+  there at once. TODO(M13): the engine's own rule for who keeps a schedule while away (ours:
+  the persistent references, and those near the player) and its pace are not documented.
+- A run works in slices: after iLowProcessingMilliseconds (2 ms) of asking it lets the browser
+  draw a frame before it goes on (`PapyrusScheduler.giveWay`), and the plugins' actors of each
+  cell asked about are found once (a worldspace's persistent cell has tens of thousands of
+  references: looking through them took 200 ms each run). A run over the whole world's
+  persistent actors takes about 80 ms of work.
 
 A procedure that would go round without ever waiting (each step ending at once: a patrol of
 one point the actor stands on was one) is stopped after 100,000 rounds within one update: its
@@ -1050,8 +1061,18 @@ from the original game's behaviour only (in our words):
 - **The process lists' budget** (observed in the original, `src/ai/process-levels.ts`): a frame gives the
   lists' update fProcessListsUpdateTimeMax ms (5) at fProcessListsUpdateHighFrameRate (30) frames
   a second or more, fProcessListsUpdateTimeMin (0.5) below fProcessListsUpdateLowFrameRate (10),
-  (Min + Max) × rate / (Low + High) between ([General] INI settings). TODO(M13): ours does not
-  slice the actors' updates by it yet.
+  (Min + Max) × rate / (Low + High) between ([General] INI settings). The high process runs
+  every frame outside it; the middle-high actors (the loaded area beyond the high process) take
+  turns round-robin from where the last frame's stopped (CommonLibSSE `ProcessLists` keeps a
+  cursor per list), as many as their measured cost (an estimate per actor, updated by each
+  turn) fits in the budget, at least one a frame. A turn runs the packages and the walk with
+  all the time owed since the actor's last. An actor in combat, a scene, dialogue or asked-for
+  head tracking stays in the high process. At Whiterun's busiest cell (tools/sim-speed.ts
+  --budget: 5 high, 40 middle-high) a round of all forty costs 0.15 ms of the 5, so each has its
+  turn every frame and the step time is the same as without (about 10–11 ms either way, run to
+  run); the budget bounds the frame where many more actors are beyond the high process (a
+  battle, a crowded city with a heavy AI). TODO(M13): how the engine
+  shares the budget between its lists.
 - **Where an actor is at a place:** within the place's radius, at least
   fAIMarkerDestinationRadius at a marker (XMarker, XMarkerHeading; Skyrim.esm 50),
   fAIFurnitureDestinationRadius at furniture (Skyrim.esm 150), fAIDistanceRadiusMinLocation

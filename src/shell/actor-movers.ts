@@ -30,6 +30,11 @@ import {
   type Neighbour,
 } from '../ai/avoidance.ts';
 import { PathFollower, type DoorPassage } from '../ai/path-follower.ts';
+import {
+  HIGH_PROCESS_DISTANCE,
+  LEAVE_HIGH_DISTANCE,
+  type ProcessSlicer,
+} from '../ai/process-levels.ts';
 import { findPath, straightReach, type NavmeshSet, type NavPath } from '../ai/pathfinding.ts';
 import { obstaclesTouch, type NavmeshObstacleField } from '../ai/navmesh-obstacles.ts';
 import type { TravelOptions } from '../ai/package-runtime.ts';
@@ -80,13 +85,10 @@ export interface MoverWorld {
 }
 
 /**
- * Actors nearer the player than this are in the high process: their controller moves them
- * (game units, one exterior cell). The engine's rule for its process levels is not documented
- * (CommonLibSSE: ProcessLists' high, middle-high, middle-low and low lists). TODO(M13).
+ * Actors nearer the player than HIGH_PROCESS_DISTANCE are in the high process: their controller
+ * moves them; they leave it beyond LEAVE_HIGH_DISTANCE (src/ai/process-levels.ts).
  */
-export const HIGH_PROCESS_DISTANCE = 4096;
-/** They leave it beyond this (no churn at the edge). */
-const LEAVE_HIGH_DISTANCE = HIGH_PROCESS_DISTANCE * 1.25;
+export { HIGH_PROCESS_DISTANCE };
 /** A tilting race probes the ground under its ends again once it moved this far (game units), */
 const TILT_AGAIN = 4;
 /** or turned this far (radians). */
@@ -208,6 +210,8 @@ export interface ActorMoversOptions {
   readonly obstacles?: NavmeshObstacleField;
   /** Whether something else holds an actor now (furniture): it has no controller meanwhile. */
   readonly held?: (actor: number) => boolean;
+  /** The middle-high process's turns: walkers beyond the high process walk on theirs. */
+  readonly slicer?: ProcessSlicer;
   /**
    * An actor's AI sends it on its way while an animation-driven idle holds it: its idle stops
    * (ActionIdleStop: the graph's IdleStop), as the engine stops an actor's idle for its path.
@@ -1115,7 +1119,13 @@ export class ActorMovers {
       else if (held && this.#lives(staged)) this.#heldAway.add(reference);
       // Beyond the high process: it walks without a controller (not with its AI disabled).
       if (!near && !mover && this.#moves(staged) && !this.aiDisabled(reference)) {
-        this.#walk(staged, seconds);
+        // On its turn of the middle-high process, with the time it was owed.
+        const slicer = this.#options.slicer;
+        if (!slicer) this.#walk(staged, seconds);
+        else
+          slicer.turn('walk', reference, seconds, (owed) => {
+            this.#walk(staged, owed);
+          });
         continue;
       }
       this.#dropWalker(reference);
