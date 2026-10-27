@@ -17,6 +17,18 @@ export interface SavedUpdate {
   readonly left: number;
 }
 
+/** A translation in progress (TranslateTo): where to, and how far it got in time. */
+export interface SavedTranslation {
+  readonly reference: number;
+  readonly position: readonly [number, number, number];
+  readonly rotation: readonly [number, number, number];
+  /** Seconds the whole way takes, and the share of it after which it is almost complete. */
+  readonly seconds: number;
+  readonly share: number;
+  /** Seconds of it gone. */
+  readonly done: number;
+}
+
 export interface RuntimeSave {
   /** GameState's fields by name (game-state.ts), as they were. */
   readonly state: Record<string, unknown>;
@@ -51,6 +63,8 @@ export interface RuntimeSave {
   readonly threads?: readonly SavedThread[];
   /** The scenes playing and waiting (none in saves made before them). */
   readonly scenes?: SavedScenes;
+  /** The translations in progress (none in saves made before them). */
+  readonly translations?: readonly SavedTranslation[];
 }
 
 /** The runtime's fields a save keeps as they are (plain values and plain objects). */

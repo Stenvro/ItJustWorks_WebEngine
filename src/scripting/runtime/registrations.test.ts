@@ -9,7 +9,13 @@ const QUEST = 0x300;
 
 /** A runtime without plugins whose sent events are listed. */
 function runtime(): { runtime: ScriptRuntime; sent: string[] } {
-  const db = { plugins: [] } as unknown as RecordDatabase;
+  const db = {
+    plugins: [],
+    get: () => Promise.resolve(undefined),
+    worldOfCell: () => undefined,
+    cellOfReference: () => undefined,
+    formIdsOfType: () => [],
+  } as unknown as RecordDatabase;
   const made = new ScriptRuntime(db, new ScriptLibrary(() => Promise.resolve(undefined)));
   const sent: string[] = [];
   made.vm.sendEvent = (target: ObjectHandle, event: string, args: readonly Value[] = []) => {
@@ -46,5 +52,21 @@ describe('the registrations the engine ends or answers', () => {
     scripts.menuOpenClose('InventoryMenu', true);
     await Promise.resolve();
     expect(sent).toEqual(['OnMenuOpen 300 (InventoryMenu)', 'OnMenuClose 300 (InventoryMenu)']);
+  });
+});
+
+describe('a translation in a save', () => {
+  it('keeps how far it got', async () => {
+    const { runtime: scripts } = runtime();
+    const state = scripts.state.reference(LEVER);
+    state.position = [0, 0, 0];
+    state.rotation = [0, 0, 0];
+    state.cell = 0x1000;
+    await scripts.translate(LEVER, [100, 0, 0], [0, 0, 0], 50);
+    scripts.vm.scheduler.advance(0.5, 0);
+    const saved = await scripts.saveData();
+    expect(saved.translations).toEqual([
+      expect.objectContaining({ reference: LEVER, seconds: 2, done: 0.5 }),
+    ]);
   });
 });

@@ -82,6 +82,7 @@ import {
   restoreGameState,
   SAVED_RUNTIME_FIELDS,
   type RuntimeSave,
+  type SavedTranslation,
   type SavedUpdate,
 } from './runtime-save.ts';
 
@@ -907,6 +908,11 @@ export class ScriptRuntime implements VmHost {
   #updateToken = 1;
   /** Animation event registrations: sender → event → receivers (handle keys and handles). */
   readonly #animationEvents = new Map<number, Map<string, Map<string, ObjectHandle>>>();
+  /** Translations in progress (TranslateTo), by reference, with the real time each started. */
+  readonly #translations = new Map<
+    number,
+    { readonly translation: SavedTranslation; readonly started: number }
+  >();
   readonly #animationWaiters = new Map<string, (() => void)[]>();
   readonly #registrations = new Map<string, Map<string, ObjectHandle>>();
   readonly #formListAdded = new Map<number, number[]>();
@@ -2051,27 +2057,51 @@ export class ScriptRuntime implements VmHost {
           position[2] - from.position[2],
         )
       : 0;
-    const token = this.#updateToken++;
-    this.#updates.set(key, token);
     const seconds = speed > 0 ? distance / speed : 0;
     const almost = await this.gameSetting('fRefTranslationAlmostDonePercent');
     const share = typeof almost === 'number' ? almost : ALMOST_TRANSLATED;
+    this.#translateFor({ reference, position, rotation, seconds, share, done: 0 });
+  }
+
+  /**
+   * A translation's way in time: almost complete as it passes its share of the way, complete
+   * at its end; `done` seconds of it had gone already (a loaded save's). A save keeps it.
+   */
+  #translateFor(translation: SavedTranslation): void {
+    const { reference, position, rotation, seconds, share, done } = translation;
+    const key = `${String(reference)}:translation`;
+    const token = this.#updateToken++;
+    this.#updates.set(key, token);
     const scheduler = this.vm.scheduler;
+    const started = scheduler.realTime - done;
+    this.#translations.set(reference, { translation, started });
+    const almostAt = seconds * share;
+    const ends = (): boolean => {
+      if (this.#updates.get(key) === token) return false;
+      if (this.#translations.get(reference)?.started === started)
+        this.#translations.delete(reference);
+      return true;
+    };
     this.detach(
-      scheduler.waitReal(seconds * share).then(async () => {
-        if (this.#updates.get(key) !== token) return;
-        this.events.emit('objectTranslation', { reference, result: 2 });
-        await scheduler.waitReal(seconds * (1 - share));
-        if (this.#updates.get(key) !== token) return;
+      (async () => {
+        if (done < almostAt) {
+          await scheduler.waitReal(almostAt - done);
+          if (ends()) return;
+          this.events.emit('objectTranslation', { reference, result: 2 });
+        }
+        await scheduler.waitReal(seconds - Math.max(done, almostAt));
+        if (ends()) return;
         this.#updates.delete(key);
-        this.move(reference, position, rotation);
+        this.#translations.delete(reference);
+        this.move(reference, [...position], [...rotation]);
         await this.events.emitted('objectTranslation', { reference, result: 1 });
-      }),
+      })(),
     );
   }
 
   stopTranslation(reference: number): void {
     this.#updates.delete(`${String(reference)}:translation`);
+    this.#translations.delete(reference);
   }
 
   /** The location (LCTN) of the cell a reference is in (CELL XLCN). */
@@ -3408,7 +3438,7 @@ export class ScriptRuntime implements VmHost {
   /**
    * The scripts' side of a save: the game state, the runtime's switches and registrations, the
    * script instances, the waiting Papyrus threads' frames. `unsaved` hears what a save cannot
-   * hold (threads in a native's promise; scenes playing; objects translating).
+   * hold (a thread whose frames cannot be found again).
    */
   async saveData(unsaved: (what: string) => void = () => undefined): Promise<RuntimeSave> {
     const scheduler = this.vm.scheduler;
@@ -3416,9 +3446,11 @@ export class ScriptRuntime implements VmHost {
     for (const thread of threads.unsaved) {
       unsaved(`Papyrus thread ${String(thread.id)} (${thread.state}) at ${thread.where}`);
     }
-    for (const key of this.#updates.keys()) {
-      if (key.endsWith(':translation')) unsaved(`translation of ${key.split(':')[0] ?? key}`);
-    }
+    // Translations in progress: each with how far it got (it goes on as the save loads).
+    const translations = [...this.#translations.values()].map(({ translation, started }) => ({
+      ...translation,
+      done: Math.min(translation.seconds, Math.max(0, scheduler.realTime - started)),
+    }));
     const updates: SavedUpdate[] = [...this.#updateInfo.values()].map((update) => ({
       target: update.target,
       interval: update.interval,
@@ -3458,6 +3490,7 @@ export class ScriptRuntime implements VmHost {
       instances: await this.vm.savedInstances(),
       threads: threads.threads,
       scenes: this.scenes.saveData(),
+      translations,
     };
   }
 
@@ -3530,6 +3563,8 @@ export class ScriptRuntime implements VmHost {
     problems.push(...(await this.vm.restoreThreads(save.threads ?? [])));
     // The scenes that played go on in their phases (src/ai/scene-runtime.ts).
     this.scenes.restore(save.scenes);
+    // The translations in progress go on from where they were.
+    for (const translation of save.translations ?? []) this.#translateFor(translation);
     // The player's abilities, diseases and worn enchantments act again (magic-engine.ts).
     await this.magic.prepare(PLAYER_REF);
     await this.vm.idle();
