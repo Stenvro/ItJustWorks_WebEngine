@@ -98,6 +98,7 @@ function world() {
   const runtime = {
     state,
     world: {},
+    incrementStat: () => 0,
     wordsLearned,
     // The perk system: no perk changes a value; the actors may dual cast (the schools' Dual
     // Casting) and shout (AllowShoutingPerk).
