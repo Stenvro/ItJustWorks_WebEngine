@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { impactFacing } from './combat-impacts.ts';
+import { impactFacing } from './impact-records.ts';
 
 describe('impact effect models', () => {
   it('face along the blow (projectile vector) or back out of what was struck', () => {
