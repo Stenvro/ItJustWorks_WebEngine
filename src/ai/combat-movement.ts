@@ -17,6 +17,8 @@
 //
 // Platform-independent.
 
+import { BehaviourTree, type Status } from './behaviour-tree.ts';
+import { CLOSE_MOVEMENT_SELECTOR, COMBAT_TREES } from './combat-tree.ts';
 import type { TurnParameters } from './locomotion.ts';
 
 type Vec3 = readonly [number, number, number];
@@ -409,17 +411,38 @@ export function chooseCloseMovement(
   random: () => number,
   settings: CombatMovementSettings,
 ): readonly CloseBehaviour[] {
-  if (input.distance > input.range) {
-    return random() < input.circleDistantChance
-      ? ['advance', 'surround', 'circleDistant', 'idle']
-      : ['advance', 'surround', 'idle'];
-  }
-  if (input.outOfPosition) return ['reposition', 'surround', 'idle'];
+  // The combat tree's selector (combat-tree.ts CLOSE_MOVEMENT_SELECTOR), run with behaviours
+  // that only note that they were tried: the order the AI tries them in.
   const tries: CloseBehaviour[] = [];
-  if (random() < input.fallbackChance) tries.push('fallback');
-  else if (random() < input.circleChance) tries.push('circle');
-  if (random() < settings.backoffChance) tries.push('backoff');
-  tries.push('idle');
+  const tried = (behaviour: CloseBehaviour) => (): Status => {
+    tries.push(behaviour);
+    return behaviour === 'idle' ? 'success' : 'failure';
+  };
+  const tree = new BehaviourTree<undefined>(
+    {
+      trees: { ...COMBAT_TREES, Selector: CLOSE_MOVEMENT_SELECTOR },
+      values: {
+        outOfRange: () => input.distance > input.range,
+        outOfPosition: () => input.outOfPosition,
+        fallbackChance: () => input.fallbackChance,
+        circleChance: () => input.circleChance,
+        circleDistantChance: () => input.circleDistantChance,
+        backoffChance: () => settings.backoffChance,
+      },
+      actions: {
+        advance: tried('advance'),
+        surround: tried('surround'),
+        circleDistant: tried('circleDistant'),
+        reposition: tried('reposition'),
+        circle: tried('circle'),
+        fallback: tried('fallback'),
+        backoff: tried('backoff'),
+        closeIdle: tried('idle'),
+      },
+    },
+    'Selector',
+  );
+  tree.instance(random).tick(undefined, 0);
   return tries;
 }
 
