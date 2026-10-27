@@ -351,6 +351,35 @@ export function chooseEquipment(
   return best?.option;
 }
 
+/**
+ * The spell its left hand takes up beside a one-handed weapon (the engine's equip choice fills
+ * a free left hand): with a one-handed weapon (WeaponType 1..4) in its right hand and its left
+ * hand free (no shield, no weapon there), the best scored of its spells (equipmentScore);
+ * undefined to leave the hand be. TODO(M13): whether the engine weighs the left hand's spell on
+ * its own scale (ours: the same score as the right hand's options).
+ */
+export function leftHandSpell(
+  hands: {
+    readonly weaponType: number;
+    readonly shield: boolean;
+    readonly leftWeapon: boolean;
+  },
+  spells: readonly EquipOption[],
+  distance: number,
+  style: CombatStyle,
+  settings: CombatAiSettings,
+): number | undefined {
+  const oneHanded = hands.weaponType >= 1 && hands.weaponType <= 4;
+  if (!oneHanded || hands.shield || hands.leftWeapon) return undefined;
+  let best: { id: number; score: number } | undefined;
+  for (const option of spells) {
+    if (option.kind !== 'magic' || option.id === undefined) continue;
+    const score = equipmentScore(option, distance, style, settings);
+    if (score > 0 && (!best || score > best.score)) best = { id: option.id, score };
+  }
+  return best?.id;
+}
+
 // --- How it moves ---------------------------------------------------------------------------------
 
 /**
@@ -419,7 +448,9 @@ export function chooseManeuver(
     ) {
       return 'fallback';
     }
-    return random() < strafeChance(style, settings) ? 'strafe' : 'hold';
+    // The Strafe Selector (observed in the original: Strafe, Circle, else Ranged Movement Idle).
+    if (random() < strafeChance(style, settings)) return 'strafe';
+    return random() < circleChance(style, settings) ? 'circle' : 'hold';
   }
   const radii = input.radii ?? middleRadii(settings);
   if (input.distance > input.reach + radii.outer) {
