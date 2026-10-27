@@ -31,6 +31,8 @@ export interface ActorDoorsOptions {
   readonly find: (reference: number) => DoorObject | undefined;
   /** Whether the package an actor runs now unlocks the doors on its way. */
   readonly unlocks?: (actor: number) => boolean;
+  /** A script opened or shut a door (SetOpen): a navmesh obstacle's cut follows. */
+  readonly opened?: (door: number) => void;
 }
 
 /** A door actors opened shuts this long after the last came to it (seconds). TODO(M13). */
@@ -177,6 +179,7 @@ export class ActorDoors {
    * stays as the script left it (no actor's timer shuts it); one already so does nothing.
    */
   setOpen(door: number, open: boolean): void {
+    this.#options.opened?.(door);
     const entry = this.#options.find(door);
     const playback = entry?.instance?.playback;
     if (!entry || entry.object.teleport) return;

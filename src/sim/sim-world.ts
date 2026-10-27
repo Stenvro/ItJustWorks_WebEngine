@@ -24,7 +24,7 @@ import type { Vec3 } from '../render/math.ts';
 import type { InstanceVisibility } from '../render/scene-renderer.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
-import { ActorStage, type StagePlace } from '../shell/actor-stage.ts';
+import { ActorStage, type StageObstacleCell, type StagePlace } from '../shell/actor-stage.ts';
 import type { DoorObject } from '../shell/actor-doors.ts';
 import { stageObject, type StageObject } from '../shell/actor-furniture.ts';
 import { groundUnder, type SoundingWorld } from '../shell/actor-sounds.ts';
@@ -250,6 +250,11 @@ export class SimWorld {
     session.scriptWorld.attach(this.#scriptView);
   }
 
+  /** The navigation meshes of the loaded area (the actors' paths are searched over them). */
+  get navmeshes(): NavmeshSet {
+    return this.#navmeshes;
+  }
+
   /** The actors of the loaded area. */
   get stage(): ActorStage {
     return this.#stage;
@@ -273,6 +278,7 @@ export class SimWorld {
         collided: (key) => this.#cells.get(key)?.collided,
         navmeshes: () => this.#navmeshes,
         objects: () => this.#stageObjects(),
+        obstacles: () => this.#stageObstacles(),
         door: (reference) => this.#doorOf(reference),
         interior: kind === 'interior',
         light: (at) => this.#lightProbe(at),
@@ -1106,6 +1112,14 @@ export class SimWorld {
     return placed && { object: placed.object, instance: placed.instance };
   }
 
+  /** The loaded cells' navmesh obstacles (the stage cuts the navmesh under them). */
+  *#stageObstacles(): Iterable<StageObstacleCell> {
+    for (const cell of this.#cells.values()) {
+      const obstacles = cell.data.obstacles;
+      if (obstacles?.length) yield { key: cell.key, obstacles, isEnabled: cell.isEnabled };
+    }
+  }
+
   *#stageObjects(): Iterable<StageObject> {
     for (const cell of this.#cells.values()) {
       for (const object of cell.data.objects) {
@@ -1341,6 +1355,9 @@ export class SimWorld {
     },
     artEffect: (art, target, seconds) => {
       this.stage.effects.art(art, target, seconds);
+    },
+    animated: (reference, event) => {
+      this.stage.obstacleAnimated(reference, event);
     },
     graphOf: (reference) => {
       for (const cell of this.#cells.values()) {

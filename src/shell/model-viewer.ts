@@ -81,7 +81,7 @@ import {
 import type { InteriorCell, RecordDatabase } from '../world/record-db.ts';
 import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
 import { talkTargets, type PlacedActor } from './actors.ts';
-import { ActorStage } from './actor-stage.ts';
+import { ActorStage, type StageObstacleCell } from './actor-stage.ts';
 import type { DoorObject } from './actor-doors.ts';
 import { PlayerFurniture } from './player-furniture.ts';
 import { stageObject, type StageObject } from './actor-furniture.ts';
@@ -439,6 +439,9 @@ export class ModelViewer {
     artEffect: (art, target, seconds) => {
       this.#stage?.effects.art(art, target, seconds);
     },
+    animated: (reference, event) => {
+      this.#stage?.obstacleAnimated(reference, event);
+    },
     graphOf: (reference) =>
       placedScriptGraph(
         this.#instances.get(reference)?.graph,
@@ -581,6 +584,13 @@ export class ModelViewer {
    * The enabled objects and markers of the cell on screen, and those the scripts created
    * (what actors use and search for).
    */
+  /** The cell's navmesh obstacles (the stage cuts the navmesh under them). */
+  *#stageObstacles(): Iterable<StageObstacleCell> {
+    const obstacles = this.#cell?.data.obstacles;
+    if (this.#stageCell === undefined || !obstacles?.length) return;
+    yield { key: String(this.#stageCell), obstacles, isEnabled: this.#isEnabled };
+  }
+
   *#stageObjects(): Iterable<StageObject> {
     const data = this.#cell?.data;
     if (!data) return;
@@ -982,6 +992,7 @@ export class ModelViewer {
         at.cell !== undefined && at.cell === this.#stageCell ? String(at.cell) : undefined,
       navmeshes: () => this.#navmeshes,
       objects: () => this.#stageObjects(),
+      obstacles: () => this.#stageObstacles(),
       door: (reference) => this.#doorOf(reference),
       interior: true,
       light: (at) => this.#lightProbe(at),
