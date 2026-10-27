@@ -28,6 +28,11 @@ export const RecordFlag = {
   visibleWhenDistant: 0x8000,
   /** Base objects (STAT, FURN, ...): an editor marker, never drawn in game. */
   isMarker: 0x800000,
+  /**
+   * Base objects: a navmesh obstacle (TESForm kObstacle, bit 25): the navmesh under its enabled,
+   * shut references is cut (docs/ai.md, "Navmesh obstacles").
+   */
+  obstacle: 0x2000000,
   compressed: 0x40000,
   /** REFR: never reset with its cell (xEdit "No Respawn"; the engine's reset skips it). */
   noRespawn: 0x40000000,

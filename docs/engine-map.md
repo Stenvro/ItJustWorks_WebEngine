@@ -88,7 +88,7 @@ These run through every area and explain most of what breaks in play.
 | Package evaluation           | partial | flags Offers Services 85, Maintain Speed At Goal 62, Continue If PC Near 4, Skip Fallout Behavior 189, Allow Swimming 85     |
 | Procedures                   | partial | engine-only packages (avoid player, react to destroyed object, warnings, get up, surface); Wear Sleep Outfit has no sim case |
 | Sandbox                      | partial | rescan every 3–6 s, the search radius for a place without one, radius hysteresis, eating at the chair it sits on             |
-| Movement, paths              | partial | navmesh obstacles not cut (cases written), doors not obstacles, no path idles                                                |
+| Movement, paths              | partial | navmesh obstacles cut approximately (no re-triangulation: M13), no path idles                                                |
 | Avoidance                    | partial | the engine's way round (who is avoided and re-planning are its)                                                              |
 | Detection                    | partial | formula, reach, lines of sight, light and events the engine's; no one in ambush; the light's sum ours                        |
 | Crime                        | partial | NPC crimes, the report rule, alarm reach (actor crimes go to the victim's or its owner's crime faction: done)                |

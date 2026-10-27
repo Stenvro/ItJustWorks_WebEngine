@@ -85,7 +85,7 @@ import {
   type AnimationRate,
 } from '../animation/animated-skeleton.ts';
 import { talkTargets, type PlacedActor } from './actors.ts';
-import { ActorStage } from './actor-stage.ts';
+import { ActorStage, type StageObstacleCell } from './actor-stage.ts';
 import type { DoorObject } from './actor-doors.ts';
 import { PlayerFurniture } from './player-furniture.ts';
 import type { AdoptedVehicle } from './actor-vehicles.ts';
@@ -709,6 +709,9 @@ export class WorldViewer {
     artEffect: (art, target, seconds) => {
       this.#stage?.effects.art(art, target, seconds);
     },
+    animated: (reference, event) => {
+      this.#stage?.obstacleAnimated(reference, event);
+    },
     graphOf: (reference) => {
       for (const cell of this.#cells.values()) {
         const placed = placedByReference(cell, reference);
@@ -1105,6 +1108,7 @@ export class WorldViewer {
       navmeshes: () => this.#navmeshes,
       door: (reference) => this.#doorOf(reference),
       objects: () => this.#stageObjects(),
+      obstacles: () => this.#stageObstacles(),
       light: (at) => this.#lightProbe(at),
       focus: () => this.#play?.player.feet,
       // Actors walking into trigger volumes tell their scripts.
@@ -1525,6 +1529,14 @@ export class WorldViewer {
    * The enabled objects and markers of the loaded cells, and those the scripts created (what
    * actors use and search for).
    */
+  /** The loaded cells' navmesh obstacles (the stage cuts the navmesh under them). */
+  *#stageObstacles(): Iterable<StageObstacleCell> {
+    for (const [key, cell] of this.#cells) {
+      if (!cell.ready || !cell.data?.obstacles?.length) continue;
+      yield { key, obstacles: cell.data.obstacles, isEnabled: cell.isEnabled };
+    }
+  }
+
   *#stageObjects(): Iterable<StageObject> {
     for (const cell of this.#cells.values()) {
       if (!cell.ready || !cell.data) continue;

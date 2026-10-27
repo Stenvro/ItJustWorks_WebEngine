@@ -223,6 +223,20 @@ export interface CellPrimitive {
   readonly layer: number;
 }
 
+/**
+ * A navmesh obstacle placed in the cell (a reference of a base with record flag bit 25): its box
+ * is its collision bounds (a collision marker's primitive, else the base's OBND) as placed.
+ */
+export interface CellObstacle {
+  readonly reference: number;
+  /** The reference's placement (with its scale). */
+  readonly world: Mat4;
+  readonly min: readonly [number, number, number];
+  readonly max: readonly [number, number, number];
+  /** A door or an activator: open (GetOpenState 1), it cuts nothing. */
+  readonly opens: boolean;
+}
+
 /** REFR record flag: "Don't Havok Settle". */
 const DONT_HAVOK_SETTLE = 0x20000000;
 
@@ -316,6 +330,31 @@ function primitiveOf(
   };
 }
 
+/** A navmesh obstacle's box: a collision marker's primitive (XPRM), else the base's OBND. */
+function obstacleOf(
+  record: GameRecord,
+  base: GameRecord,
+  ref: ReturnType<typeof parseReference>,
+): CellObstacle | undefined {
+  const world = referenceMatrix(ref);
+  const opens = base.type === 'DOOR' || base.type === 'ACTI';
+  if (base.formId === COLLISION_MARKER) {
+    // XPRM: half extents, then the type at 28 (1 box, 2 sphere: its radius in x, 3 plane: a box
+    // of its own thinness, quest walls such as Saarthal's MG02TrapCollision).
+    const xprm = record.fields.first('XPRM');
+    if (!xprm || xprm.length < 32) return undefined;
+    const v = view(xprm);
+    const type = v.getUint32(28, true);
+    const x = v.getFloat32(0, true);
+    const half: [number, number, number] =
+      type === 2 ? [x, x, x] : [x, v.getFloat32(4, true), v.getFloat32(8, true)];
+    if (type < 1 || type > 3) return undefined;
+    return { reference: ref.formId, world, min: [-half[0], -half[1], -half[2]], max: half, opens };
+  }
+  const bounds = objectBounds(base);
+  return bounds && { reference: ref.formId, world, ...bounds, opens };
+}
+
 /** TREE CNAM leaf amplitude and frequency (the lighting shader's TreeParams). */
 export interface LeafAnimation {
   readonly amplitude: number;
@@ -378,6 +417,8 @@ export interface CellData {
   readonly decals: readonly CellDecal[];
   /** Collision primitives; filter with `enabledReferences`. */
   readonly primitives: readonly CellPrimitive[];
+  /** Navmesh obstacles; filter with `enabledReferences` (and their open state). */
+  readonly obstacles?: readonly CellObstacle[];
   /** Looping sound sources; filter with `enabledReferences`. */
   readonly emitters: readonly CellSoundEmitter[];
   /** Markers (not drawn: idle markers, furniture markers); filter with `enabledReferences`. */
@@ -602,6 +643,7 @@ export async function loadCellData(
   const lights: CellLight[] = [];
   const decals: CellDecal[] = [];
   const primitives: CellPrimitive[] = [];
+  const obstacles: CellObstacle[] = [];
   const emitters: CellSoundEmitter[] = [];
   const markers: CellMarker[] = [];
   const acousticAreas: CellAcousticArea[] = [];
@@ -684,6 +726,9 @@ export async function loadCellData(
     if (base.type === 'DOOR' && !entrance && record.fields.has('XTEL')) {
       entrance = [...ref.position];
     }
+    const obstacle =
+      (base.flags & RecordFlag.obstacle) !== 0 ? obstacleOf(record, base, ref) : undefined;
+    if (obstacle) obstacles.push(obstacle);
     if (base.formId === COLLISION_MARKER) {
       const primitive = primitiveOf(record, referenceMatrix(ref));
       if (primitive) primitives.push(primitive);
@@ -826,6 +871,7 @@ export async function loadCellData(
     lights,
     decals,
     primitives,
+    obstacles,
     emitters,
     markers,
     acousticAreas,

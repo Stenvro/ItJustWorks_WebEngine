@@ -13,6 +13,7 @@ import {
   triangleNeighbour,
   type Navmesh,
 } from '../world/navmesh.ts';
+import { ObstacleIndex, type NavmeshObstacle } from './navmesh-obstacles.ts';
 
 type Vec3 = readonly [number, number, number];
 
@@ -42,6 +43,11 @@ export interface PathOptions {
    * middle lies within each place's radius are closed.
    */
   readonly blocked?: readonly { readonly at: Vec3; readonly radius: number }[];
+  /**
+   * The active navmesh obstacles (src/ai/navmesh-obstacles.ts): the triangles whose middle lies
+   * under one and the steps that cross one are closed.
+   */
+  readonly obstacles?: ObstacleIndex | readonly NavmeshObstacle[];
 }
 
 /** A path over the navmeshes. */
@@ -197,6 +203,14 @@ function isBlocked(
   return places.some((place) => Math.hypot(place.at[0] - x, place.at[1] - y) <= place.radius);
 }
 
+/** The obstacles of a search, indexed (undefined: none). */
+function obstacleIndex(
+  obstacles: ObstacleIndex | readonly NavmeshObstacle[] | undefined,
+): ObstacleIndex | undefined {
+  if (obstacles instanceof ObstacleIndex) return obstacles;
+  return obstacles?.length ? new ObstacleIndex(obstacles) : undefined;
+}
+
 /** What it costs to enter a triangle along `length` (its flags against the actor). */
 function enterCost(flags: number, length: number, options: PathOptions): number {
   if (options.large === true && (flags & NavmeshFlag.noLargeCreatures) !== 0) return Infinity;
@@ -240,6 +254,7 @@ export function findPath(
   let bestH = first.f;
   let reached: Node | undefined;
   const limit = options.limit ?? SEARCH_LIMIT;
+  const obstacles = obstacleIndex(options.obstacles);
   let searched = 0;
   while (open.size > 0 && searched < limit) {
     const node = open.pop();
@@ -286,6 +301,13 @@ export function findPath(
       if (existing?.closed) continue;
       const [a, b] = edgeCorners(node.navmesh, node.triangle, edge);
       const at = middle(a, b);
+      // An obstacle's cut closes the triangles under it and the steps across it.
+      if (
+        obstacles &&
+        (obstacles.covers(triangleCentre(navmesh, triangle)) || obstacles.crosses(node.at, at))
+      ) {
+        continue;
+      }
       const g = node.g + enterCost(target.flags, distance(node.at, at), options) + extra;
       if (!Number.isFinite(g)) continue;
       if (existing) {
@@ -490,10 +512,11 @@ export function randomReachablePoint(
   radius: number,
   least: number,
   random: () => number,
-  options: Pick<PathOptions, 'large' | 'closedDoors'> = {},
+  options: Pick<PathOptions, 'large' | 'closedDoors' | 'obstacles'> = {},
 ): Vec3 | undefined {
   const start = set.locate(from);
   if (!start) return undefined;
+  const obstacles = obstacleIndex(options.obstacles);
   const candidates: { navmesh: Navmesh; triangle: number; area: number }[] = [];
   const seen = new Set<number>([keyOf(start.navmesh.formId, start.triangle)]);
   const queue: { navmesh: Navmesh; triangle: number }[] = [start];
@@ -538,6 +561,7 @@ export function randomReachablePoint(
       if (!Number.isFinite(enterCost(target.flags, 1, { radius: 0, ...options }))) continue;
       const door = options.closedDoors?.size ? doorOf(next, index) : undefined;
       if (door !== undefined && options.closedDoors?.has(door) === true) continue;
+      if (obstacles?.covers(triangleCentre(next, index))) continue;
       queue.push({ navmesh: next, triangle: index });
     }
   }

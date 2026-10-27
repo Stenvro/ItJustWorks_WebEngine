@@ -5,6 +5,7 @@ import {
   type Navmesh,
   type NavmeshTriangle,
 } from '../world/navmesh.ts';
+import { NavmeshObstacleField, obstacleCut, obstaclesTouch } from './navmesh-obstacles.ts';
 import {
   findPath,
   onNavmeshColumn,
@@ -213,6 +214,88 @@ describe('findPath', () => {
       blocked: [{ at: [50, 250, 0], radius: 40 }],
     });
     expect(elsewhere?.complete).toBe(true);
+  });
+});
+
+describe('findPath with navmesh obstacles', () => {
+  /** A hall 500 long (x) and 300 wide (y). */
+  const HALL: [number, number][] = [];
+  for (let x = 0; x < 5; x++) for (let y = 0; y < 3; y++) HALL.push([x, y]);
+  /** A box placed unrotated at (x, y, z) with these half extents (a collision marker's XPRM). */
+  const box = (reference: number, at: Point, half: Point): ReturnType<typeof obstacleCut> =>
+    obstacleCut({
+      reference,
+      world: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, at[0], at[1], at[2], 1],
+      min: [-half[0], -half[1], -half[2]],
+      max: half,
+    });
+
+  it('cuts only boxes tall enough (twice the least height, or the least height and width)', () => {
+    expect(box(1, [0, 0, 50], [50, 50, 48])).toBeDefined();
+    // 48 tall and 100 wide: it cuts; 48 tall and 10 wide: it does not.
+    expect(box(1, [0, 0, 24], [50, 50, 24])).toBeDefined();
+    expect(box(1, [0, 0, 24], [50, 5, 24])).toBeUndefined();
+    expect(box(1, [0, 0, 20], [50, 50, 20])).toBeUndefined();
+    // A thin wall at least 96 tall cuts.
+    expect(box(1, [0, 0, 48], [50, 5, 48])).toBeDefined();
+  });
+
+  it('routes round an obstacle across part of the way', () => {
+    const set = setOf([gridMesh(1, HALL)]);
+    // A box over x 200..300, y 0..200: the way is open along the hall's north side.
+    const wall = box(9, [250, 100, 64], [50, 100, 64]);
+    expect(wall).toBeDefined();
+    const path = findPath(set, [50, 50, 0], [450, 50, 0], {
+      radius: 10,
+      obstacles: wall ? [wall] : [],
+    });
+    expect(path?.complete).toBe(true);
+    // It goes north of the box.
+    expect(Math.max(...(path?.points ?? []).map((point) => point[1]))).toBeGreaterThan(200);
+  });
+
+  it('stops short of an obstacle across the whole way, and finds it open once it is gone', () => {
+    const set = setOf([gridMesh(1, HALL)]);
+    const wall = box(9, [250, 150, 64], [30, 160, 64]);
+    const shut = findPath(set, [50, 50, 0], [450, 50, 0], {
+      radius: 10,
+      obstacles: wall ? [wall] : [],
+    });
+    expect(shut?.complete).toBe(false);
+    for (const point of shut?.points ?? []) expect(point[0]).toBeLessThan(250);
+    expect(findPath(set, [50, 50, 0], [450, 50, 0], { radius: 10 })?.complete).toBe(true);
+  });
+
+  it('leaves the navmesh far below or above a box uncut', () => {
+    const set = setOf([gridMesh(1, HALL)]);
+    // A box on a floor 300 up (its bottom 300 over the hall: more than 128).
+    const above = box(9, [250, 150, 364], [30, 160, 64]);
+    expect(
+      findPath(set, [50, 50, 0], [450, 50, 0], { radius: 10, obstacles: above ? [above] : [] })
+        ?.complete,
+    ).toBe(true);
+  });
+
+  it('tells a mover its path is touched as an obstacle comes across it or goes', () => {
+    const set = setOf([gridMesh(1, HALL)]);
+    const field = new NavmeshObstacleField();
+    const path = findPath(set, [50, 50, 0], [450, 50, 0], { radius: 10 });
+    const points = path?.points ?? [];
+    const seen = field.version;
+    const across = box(9, [250, 150, 64], [30, 160, 64]);
+    const aside = box(10, [450, 250, 64], [30, 30, 64]);
+    field.setCell('0,0', aside ? [aside] : []);
+    expect(obstaclesTouch(field.changesSince(seen) ?? [], points, true)).toBe(false);
+    field.setCell(
+      '0,0',
+      [across, aside].filter((entry) => entry !== undefined),
+    );
+    expect(obstaclesTouch(field.changesSince(seen) ?? [], points, true)).toBe(true);
+    // Gone again: a path that stopped short searches again.
+    const shut = field.version;
+    field.setCell('0,0', []);
+    expect(field.active).toEqual([]);
+    expect(obstaclesTouch(field.changesSince(shut) ?? [], points, false)).toBe(true);
   });
 });
 
