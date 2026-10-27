@@ -170,7 +170,7 @@ These run through every area and explain most of what breaks in play.
 | --------------------------------------- | --------- | ------------------------------------------------------------------------------------ |
 | Object shader                           | partial   | character light luminance source, eye reflection centres, sparkle snow (type 14)     |
 | Lights                                  | different | per-object light lists (moving actors take their room each frame: done)              |
-| Shadows                                 | partial   | shadow lights (interiors) done; no focus shadows, no shadow lights in exteriors      |
+| Shadows                                 | partial   | shadow lights (all cells), focus shadows done; focus maps draw every caster          |
 | Fade, LOD                               | partial   | fade rule estimated (radius × fade setting, TODO(M13)); no fLODFadeOutMultSkyCell    |
 | Rooms, portals, occlusion               | partial   | LOD not culled by them (rooms' lighting templates and image spaces: done)            |
 | Image space                             | partial   | god rays are a screen-space blur, not the froxel volume; TAA without motion vectors  |

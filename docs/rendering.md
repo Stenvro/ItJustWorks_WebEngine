@@ -17,6 +17,35 @@ How a frame is put together (`src/render/renderer.ts`). Everything is drawn in H
    tested where their NiAlphaProperty tests; not LOD; objects smaller than 3 texels of a
    cascade are left out. Receivers (`Receive_Shadows`, SLSF1 `0x100`, and terrain) take 3×3
    PCF with a normal offset of 1.5 texels; the last cascade fades out over its last tenth.
+
+   **Focus shadows** (`focus-shadows.ts`): sharp sun shadow maps round the bodies near the
+   player ([Display] iNumFocusShadow 4, fMaxFocusShadowMapDistance 450). Observed in the
+   original: each frame it keys the actors whose 3D is loaded and shown by their squared
+   distance to the player less the square of their bound's larger horizontal half extent (at
+   least 1), keeps those below the distance squared, sorts them nearest first and hands out
+   the focus maps in that order after the player's own body (when shown). Here the four maps
+   are the quarters (1024² each) of one more layer of the sun's shadow map, rendered every
+   frame (actors move), each an orthographic view along the cascades' light view, fitted round
+   the bound of the body's casting parts plus 24 units, snapped to whole texels (about 0.2
+   units a texel for a person, against 0.7 for the first cascade), reaching as far towards the
+   sun as the cascades and 4000 units behind the body. A focus map holds every caster in its
+   column (terrain too), so a receiver inside its square takes its shadow from it alone; the
+   cascades fade in over the square's outer tenth and take over outside it. Its depth bias is
+   two of its texels. TODO(M13): whether the engine's focus maps draw only their actor (and
+   the cascades leave it out), and their resolution; the engine also checks a cell flag before
+   it renders them, read as "exteriors" here.
+
+   **Shadow lights** (`light-shadows.ts`), interiors and exteriors: lights whose LIGH carries
+   Shadow Spotlight, Shadow Hemisphere or Shadow Omnidirectional (`cell-lighting.ts`
+   lightShadow) cast shadows, four at once (no INI setting names a shadow-light count). Lights
+   whose sphere misses the view frustum, or that stand in a room not seen, take no slot; of
+   the rest the nearest to the camera hold the slots (the brighter at equal distance), each
+   fading in and out over half a second as it enters or leaves the set. An omnidirectional
+   light renders a cube (six 512² layers of the light-shadow map), a spot light one frustum
+   round its cone, a hemisphere light one 150° frustum round its axis. A layer is rendered
+   again only when its light moved a unit or one of its casters (parts within its radius)
+   moved, appeared or went.
+
 2. **Opaque pass:** the shell backdrop or the sky, terrain, tree LOD billboards, grass and the
    opaque parts of all scenes (LOD and cells), into the colour (unfogged) and a G-buffer
    (`gbuffer.ts`: normal, snow mask, snow specular). Every opaque pipeline writes the G-buffer,
