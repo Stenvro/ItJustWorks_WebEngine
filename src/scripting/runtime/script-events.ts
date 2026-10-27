@@ -8,7 +8,7 @@
 // registered for them. Kinds without a script event (quest stages, scenes, topic infos, waits,
 // perk entries) are the story manager's and the other consumers'. Platform-independent.
 
-import type { EventHub, GameEvents } from './event-hub.ts';
+import type { EventHub, GameEventKind, GameEventListener, GameEvents } from './event-hub.ts';
 import { PLAYER_REF } from './forms.ts';
 import type { ObjectHandle, Value } from '../values.ts';
 
@@ -79,12 +79,26 @@ export const SCRIPT_EVENTS = {
 const TRANSLATION = SCRIPT_EVENTS.objectTranslation;
 
 /**
- * Relays the hub's events to the scripts from now on; returns what stops it. Each listener
- * returns its sends, so a producer that waits (EventHub.emitted) waits for the scripts'
- * handlers to return, as it did when it sent the event itself; a death's do not (below).
+ * Relays the hub's events to the scripts from now on; returns what stops it. The engine never
+ * waits for a script's handler (Creation Kit, "Threading Notes (Papyrus)": an event is queued
+ * and the engine goes on): each event's sends start at once, in the order the hub tells them,
+ * and a producer that waits (EventHub.emitted) waits only for the engine's own listeners. So
+ * a death goes on to the crime while WIDeadBodyCleanupScript's OnDeath waits half a game day,
+ * and an EquipItem returns while the player's aliases' OnObjectEquipped wait for a frame.
  */
 export function relayScriptEvents(host: ScriptEventHost): () => void {
-  const hub = host.events;
+  const events = host.events;
+  const hub = {
+    on: <K extends GameEventKind>(kind: K, listener: GameEventListener<K>): (() => void) =>
+      events.on(kind, (event) => {
+        const sending = listener(event);
+        if (sending instanceof Promise) {
+          sending.catch((error: unknown) => {
+            events.onError(kind, error);
+          });
+        }
+      }),
+  };
   const ref = (reference: number | undefined): Value =>
     reference === undefined ? null : host.referenceHandle(reference);
   const actor = (reference: number | undefined): Value =>
@@ -124,16 +138,7 @@ export function relayScriptEvents(host: ScriptEventHost): () => void {
         );
       return Promise.all(sends);
     }),
-    // A death does not wait for its handlers (WIDeadBodyCleanupScript's OnDeath waits half a
-    // game day): OnDying and OnDeath are started in order, and the killing goes on at once to
-    // the crime and the story manager (actor-engine.ts kill).
-    hub.on('death', (e) => {
-      void send(e.actor, e.dead ? 'OnDeath' : 'OnDying', [actor(e.killer)]).catch(
-        (error: unknown) => {
-          hub.onError('death', error);
-        },
-      );
-    }),
+    hub.on('death', (e) => send(e.actor, e.dead ? 'OnDeath' : 'OnDying', [actor(e.killer)])),
     hub.on('destructionStageChanged', (e) =>
       send(e.reference, 'OnDestructionStageChanged', [e.oldStage, e.newStage]),
     ),
