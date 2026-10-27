@@ -2,7 +2,7 @@
 // the runtime's own switches and registrations, the script instances' variables. Written by
 // ScriptRuntime.saveData, put back by ScriptRuntime.loadGame. Platform-independent.
 
-import type { SavedInstance } from '../papyrus-vm.ts';
+import type { SavedInstance, SavedThread } from '../papyrus-vm.ts';
 import type { ObjectHandle, Value } from '../values.ts';
 import type { GameState } from './game-state.ts';
 
@@ -46,6 +46,8 @@ export interface RuntimeSave {
   readonly dialogue: unknown;
   readonly storyManager: unknown;
   readonly instances: readonly SavedInstance[];
+  /** The Papyrus threads that waited, with their frames (none in saves made before them). */
+  readonly threads?: readonly SavedThread[];
 }
 
 /** The runtime's fields a save keeps as they are (plain values and plain objects). */
