@@ -40,6 +40,7 @@ import { invert, project } from '../render/frustum.ts';
 import { multiply, type Mat4, type Vec3 } from '../render/math.ts';
 import type { Camera } from '../render/view-camera.ts';
 import type { InstanceMotion, ModelInstance, PointLight } from '../render/scene-renderer.ts';
+import { WaterRipples } from '../render/water-ripples.ts';
 import type { CellObject, CellPrimitive, ObjectLock, Teleport } from '../world/cell-loader.ts';
 import { lockDifficulty, lockLevelSetting } from '../gameplay/lockpicking.ts';
 import {
@@ -602,6 +603,8 @@ export class PlaySession {
   readonly water: WaterPhysics | undefined;
   /** A splash (its sound has been played): for the cases and the splash's model. */
   onSplash: ((splash: WaterSplash) => void) | undefined;
+  /** Rings on the water from splashes and wakes, for the water shader (renderer's seconds). */
+  readonly ripples = new WaterRipples();
   /** The free camera (tfc); also looks while the player waits for the ground to load. */
   readonly camera: FlyCamera;
   /** What the renderer looks through: the player's camera or the free camera. */
@@ -970,10 +973,15 @@ export class PlaySession {
     // Splashes sound as impacts against the water. TODO(M13): their model (sSplashParticles at
     // the splash's scale) is not shown yet.
     if (this.water) {
+      // Rings spread on the water from splashes and wakes (water-ripples.ts).
+      const now = performance.now() / 1000;
       for (const splash of this.water.drainSplashes()) {
         this.#onImpact?.(splashImpact(splash, this.water.waterMaterial(splash.waterType)));
         this.onSplash?.(splash);
+        this.ripples.splash(splash.position, splash.speed / 400, now);
+        if (splash.leaving && splash.actor) this.ripples.leave(splash.key);
       }
+      for (const wake of this.water.drainWakes()) this.ripples.wake(wake.key, wake.position, now);
     }
     this.#watchTriggers();
     // What waited for cells' collision, once queries see it.

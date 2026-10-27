@@ -41,6 +41,7 @@ import { frustumPlanes, invert, sphereVisible, type Plane } from './frustum.ts';
 import type { RoomCuller } from './room-culler.ts';
 import { identity, maxScale, multiply, transformPoint, type Mat4, type Vec3 } from './math.ts';
 import { fadeOut, fadeRange, type FadeKind, type FadeSettings } from './object-fade.ts';
+import { MAX_RIPPLES, type Ripple } from './water-ripples.ts';
 import type {
   AlphaState,
   EffectMaterial,
@@ -424,8 +425,8 @@ export interface WaterFlow {
   /** South-west corner of the cell the map covers. */
   readonly origin: readonly [number, number];
 }
-/** WGSL `WaterFrame`: 5 vec4 + 32 profile samples. */
-const WATER_FRAME_FLOATS = 20 + 32 * 4;
+/** WGSL `WaterFrame`: 5 vec4 + 32 profile samples + the ripples. */
+const WATER_FRAME_FLOATS = 20 + 32 * 4 + MAX_RIPPLES * 4;
 
 /** A water type (WATR) on the GPU: its parameters and noise textures. */
 export class GpuWaterType {
@@ -452,6 +453,8 @@ export interface WaterFrame {
   readonly multiplier: Vec3;
   /** Sky dome weights by elevation (ATMOSPHERE_SAMPLES × 4), if there is a sky. */
   readonly profile: Float32Array | undefined;
+  /** Rings on the water from splashes and wakes (water-ripples.ts), newest first. */
+  readonly ripples?: readonly Ripple[];
 }
 
 /**
@@ -3182,6 +3185,9 @@ export class SceneRenderer {
       // No sky (interiors): a plain gradient.
       for (let i = 0; i < 32; i++) data.set([1 - i / 31, i / 31, 0, 1], 20 + i * 4);
     }
+    (frame?.ripples ?? []).slice(0, MAX_RIPPLES).forEach((ring, i) => {
+      data.set([ring.x, ring.y, ring.age, ring.strength], 148 + i * 4);
+    });
     this.#device.queue.writeBuffer(this.#waterFrameBuffer, 0, data);
   }
 

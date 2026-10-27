@@ -44,7 +44,36 @@ struct WaterFrame {
   screen: vec4f,
   // Sky dome weights by elevation: horizon, lower, upper, alpha.
   profile: array<vec4f, 32>,
+  // Rings spreading on the water (water-ripples.ts): x, y, age (seconds), strength (0: none).
+  ripples: array<vec4f, 16>,
 };
+
+// Rings from splashes and wakes (water-ripples.ts): how fast their front spreads (units a
+// second), their wavelength and the width of the wave packet around the front (units), and how
+// long they last (seconds, RIPPLE_LIFETIME).
+const RIPPLE_SPEED = 80.0;
+const RIPPLE_WAVELENGTH = 22.0;
+const RIPPLE_WIDTH = 28.0;
+const RIPPLE_LIFETIME = 2.5;
+
+// The surface's slope from the rings at a point.
+fn rippleSlope(position: vec2f) -> vec2f {
+  var slope = vec2f(0.0);
+  for (var i = 0u; i < 16u; i++) {
+    let ring = waterFrame.ripples[i];
+    if (ring.w <= 0.0) {
+      continue;
+    }
+    let offset = position - ring.xy;
+    let d = length(offset);
+    let x = d - ring.z * RIPPLE_SPEED;
+    let envelope = exp(-x * x / (2.0 * RIPPLE_WIDTH * RIPPLE_WIDTH)) *
+      (1.0 - clamp(ring.z / RIPPLE_LIFETIME, 0.0, 1.0)) * ring.w;
+    let wave = cos(x * 6.2831853 / RIPPLE_WAVELENGTH);
+    slope += offset / max(d, 1e-3) * wave * envelope * 0.6;
+  }
+  return slope;
+}
 
 // The opaque scene's colour and depth come from the frame group (sceneColor, sceneDepth).
 @group(3) @binding(0) var<uniform> waterFrame: WaterFrame;
@@ -84,9 +113,12 @@ fn sceneDepthAt(uv: vec2f) -> f32 {
 }
 
 // Screen-space reflection: marches the reflected ray and returns the scene where it passes
-// behind something (rgb, a = hit), or no hit.
+// behind something (rgb, a = hit), or no hit. A ray that leaves the screen takes what stands
+// at the edge where it left (the shore's trees and hills above the view), half weighted; past
+// an edge of sky it finds nothing and the sky stays.
 fn screenReflection(origin: vec3f, direction: vec3f) -> vec4f {
   var distance = 64.0;
+  var onScreen = false;
   for (var i = 0; i < 24; i++) {
     let p = origin + direction * distance;
     let clip = frame.viewProj * vec4f(p, 1.0);
@@ -96,8 +128,14 @@ fn screenReflection(origin: vec3f, direction: vec3f) -> vec4f {
     let ndc = clip.xyz / clip.w;
     let uv = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
     if (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0))) {
+      let edge = clamp(uv, vec2f(0.0), vec2f(1.0));
+      // Reversed Z: the sky (cleared depth) is 0.
+      if (onScreen && sceneDepthAt(edge) > 0.0) {
+        return vec4f(textureSampleLevel(sceneColor, screenSampler, edge, 0.0).rgb, 0.5);
+      }
       break;
     }
+    onScreen = true;
     let scene = sceneDepthAt(uv);
     // Reversed Z: the scene is in front of the ray point when its depth is larger.
     if (scene > ndc.z && scene - ndc.z < 0.5 * ndc.z) {
@@ -142,7 +180,8 @@ fn fs_water(input: VertexOut) -> @location(0) vec4f {
     }
   }
   let combined = sum / max(sum.z, 1e-3);
-  let slope = combined.xy * clamp(water.surface.z / max(distance, 1.0), 0.15, 1.0);
+  let slope = combined.xy * clamp(water.surface.z / max(distance, 1.0), 0.15, 1.0) +
+    rippleSlope(input.worldPos.xy);
   let normal = normalize(vec3f(slope, 1.0));
 
   // Refraction: the scene below, shifted by the waves where that is still under the water.
