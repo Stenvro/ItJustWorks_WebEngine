@@ -755,6 +755,26 @@ The game's dialogue (20,000 topics, 41,000 infos, about 40 MB) is read in bulk o
 game starts. Each response's emotion shows on the speaker's face and it gestures (ActionTalking);
 an info with Force Subtitle shows its text whatever the setting. The dialogue camera turns the
 player's view to the speaker's head and zooms in while they talk (ai.md, "Talking").
+
+The info's flags and timers (`src/scripting/runtime/dialogue-rules.ts`, UESP and xEdit's INFO):
+
+- **Reset Hours** (ENAM's second half, 65535 a day: xEdit divides by 2730.625): once said, the
+  info is not said again until that many game hours have passed (6,999 vanilla infos: 4,021
+  Hello infos, most half an hour). Say Once without them is never said again; with them (61
+  infos) it comes back after them (TODO(M13): the engine's choice). Both are in the save.
+- **Invisible Continue** (1,534 infos): once said, the first of its choices whose info is
+  valid is said at once, unlisted and unchosen by the player, then the next one's choices show;
+  where none is valid the actor's topics show. An Invisible Continue greeting opens the menu
+  even with no topic to list. With Goodbye as well (37) the conversation ends after the line
+  it goes on to.
+- **Goodbye**: the conversation ends after the info (a Goodbye greeting is said where the actor
+  stands, no menu).
+- **Walk Away** (709) / **Walk Away Invisible In Menu** (261): Tab while the topics are listed
+  says the listed Walk Away topic's info where the actor stands, its fragments running as if
+  chosen; one marked invisible is not listed.
+- **Requires Player Activation**: said only in a conversation the player starts (none in
+  vanilla), never as a passing greeting or bark.
+
 Persuade, bribe and intimidate are the game's own topics: their infos' conditions (the
 player's Speech and perks, GetIntimidateSuccess, GetBribeSuccess, ...) are valued as every
 condition is (docs/scripting.md, "Conditions"), and FavorDialogueScript does the rest through the

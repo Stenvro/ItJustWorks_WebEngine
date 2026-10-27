@@ -110,6 +110,8 @@ export interface ScriptView {
    * the view brings them together (undefined: it does not show them).
    */
   randomSceneStarts?(scene: number, first: number, second: number): boolean | undefined;
+  /** Whether a speaker of the view faces its target for a line (undefined: not in the view). */
+  facesForLine?(speaker: number, target: number): boolean | undefined;
   /** The player passes into another cell or worldspace (a loading screen is up). */
   changingSpace?(): boolean;
   /** The regions of the player's cell (IsPlayerInRegion). */
@@ -480,6 +482,14 @@ export class ScriptWorld implements WorldBridge {
     for (const view of this.#views) {
       const running = view.currentPackage?.(actor);
       if (running !== undefined) return running;
+    }
+    return undefined;
+  }
+
+  facesForLine(speaker: number, target: number): boolean | undefined {
+    for (const view of this.#views) {
+      const answer = view.facesForLine?.(speaker, target);
+      if (answer !== undefined) return answer;
     }
     return undefined;
   }
