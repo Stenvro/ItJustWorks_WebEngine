@@ -61,6 +61,11 @@ export class PathFollower {
     return this.path.points[this.#next];
   }
 
+  /** The path's points still ahead, from the one it last passed. */
+  get remaining(): readonly Vec3[] {
+    return this.path.points.slice(Math.max(0, this.#next - 1));
+  }
+
   /**
    * One step for an actor at `position`: what it wants now, and whether it is on its way, has
    * arrived, is stuck or is blocked by a door shut to it (`door`). `door` is asked for each door
