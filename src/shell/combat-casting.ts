@@ -71,9 +71,11 @@ async function support(
     case 'potion':
       return stage.drinkPotion(actor, purpose.value);
     case 'heal':
-      return stage.healSelf(actor);
+      return stage.healSelf(actor, purpose.holds);
     case 'summon':
       return stage.summon(actor, target);
+    case 'reanimate':
+      return stage.reanimate(actor, purpose.corpse);
     case 'ward':
     case 'buff': {
       const spell = await runtime.casting.chooseSpell(actor, purpose.kind);

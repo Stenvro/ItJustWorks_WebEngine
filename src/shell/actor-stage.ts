@@ -13,6 +13,7 @@ import {
   type InvisibilitySettings,
 } from '../gameplay/magic/invisibility.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import { movementBlocked, reactToDestroyedObject } from '../ai/engine-packages.ts';
 import { RAGDOLL_FALL_SHARE } from '../gameplay/falling.ts';
 import { actorFell } from './time-flow.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -104,6 +105,9 @@ import { ActorAmbientIdles } from './actor-ambient-idles.ts';
 import { ActorAnimObjects } from './actor-anim-objects.ts';
 import { outOfSight } from '../ai/followers.ts';
 import { fliesByRace } from '../ai/flight.ts';
+
+/** Actors this near an object destroyed look at it (units; ours, TODO(M13)). */
+const REACT_DESTROYED_RADIUS = 1024;
 
 /** Where something is: its position, and the cell and worldspace the game state gives it. */
 export interface StagePlace {
@@ -360,6 +364,10 @@ export class ActorStage {
       swimAllowed: (actor) => this.ai.allowsSwimming(actor),
       shutPlaces: (actor) => this.doors.shutPlaces(actor),
       obstacles: this.obstacles,
+      // The engine's own packages for one kept from going on (src/ai/engine-packages.ts).
+      blockedByPlayer: (actor) => void this.talk.bark(actor, 'ACAC', PLAYER_REF),
+      movementBlocked: (actor, seconds) =>
+        void this.ai.pushEngine(actor, 'movementBlocked', movementBlocked(seconds)),
       // A paired animation (a killmove) holds both actors: their clip places them.
       held: (actor) =>
         this.furniture.holds(actor) ||
@@ -764,6 +772,7 @@ export class ActorStage {
       actors: () => this.#actors.values(),
       get: (reference) => this.#actors.get(reference),
       bark: (actor, subtype, target) => this.talk.bark(actor, subtype, target),
+      engaged: (actor) => this.combat.engaged(actor),
     });
     this.animObjects = new ActorAnimObjects({
       session: options.session,
@@ -1262,6 +1271,29 @@ export class ActorStage {
 
   /** A play runs (its physics world: projectiles fly). */
   #playing = false;
+
+  /**
+   * An object was destroyed (its destruction stage's Destroy flag): the actors near it that
+   * fight no one look at it a while (the engine's React To Destroyed Object package,
+   * src/ai/engine-packages.ts). TODO(M13): the engine's reach and whether they must see it
+   * (ours: within REACT_DESTROYED_RADIUS).
+   */
+  objectDestroyed(reference: number): void {
+    const at = this.#options.session.scriptWorld.livePlacement(reference)?.position;
+    if (!at) return;
+    for (const staged of this.#actors.values()) {
+      if (staged.dead || staged.visibility.hidden || this.combat.engaged(staged.reference))
+        continue;
+      const [x, y, z] = staged.position;
+      if (Math.hypot(x - at[0], y - at[1], z - at[2]) > REACT_DESTROYED_RADIUS) continue;
+      this.ai.pushEngine(
+        staged.reference,
+        'reactToDestroyedObject',
+        reactToDestroyedObject,
+        reference,
+      );
+    }
+  }
 
   /**
    * An actor died (Kill, killed in combat): it stops moving and acting, its ragdoll falls

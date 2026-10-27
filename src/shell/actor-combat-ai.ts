@@ -77,12 +77,14 @@ import {
 import { CombatSearch } from '../ai/combat-search.ts';
 import type { NavmeshSet } from '../ai/pathfinding.ts';
 import {
+  chooseCombatSupport,
   COMBAT_SUBTREE_DEFAULTS,
   coverSpots,
   coverTimes,
   doorSpots,
   dualCastHold,
   exitWaterPoint,
+  holdsRestore,
   lowCombatBlow,
   pickCover,
   pickFleeDoor,
@@ -109,7 +111,8 @@ import {
   castChance,
   chooseAttack,
   chooseEquipment,
-  chooseSupport,
+  leftHandSpell,
+  restoreShare,
   chooseManeuver,
   circleChance,
   circleDistantChance,
@@ -230,7 +233,11 @@ export interface CombatAiHost {
 
 /** One of the casts or potions an actor in combat uses for itself (combat-tactics chooseSupport). */
 export type CombatSupport =
-  | { readonly kind: 'heal' | 'summon' }
+  /** A held healing spell goes on while `holds` holds of its health share (holdsRestore). */
+  | { readonly kind: 'heal'; readonly holds?: (health: number) => boolean }
+  | { readonly kind: 'summon' }
+  /** A corpse raised (its reanimation spell cast at it). */
+  | { readonly kind: 'reanimate'; readonly corpse: number }
   | { readonly kind: 'potion'; readonly value: number }
   | { readonly kind: 'ward' | 'buff' };
 
@@ -434,6 +441,10 @@ interface Mind {
   nextSupport: number;
   healthRestoredAt: number;
   magickaRestoredAt: number;
+  /** When it last warded, summoned and raised a corpse (its casters' restrict times). */
+  wardedAt: number;
+  summonedAt: number;
+  reanimatedAt: number;
   supporting: boolean;
   /** It gets up out of the furniture that holds it. */
   gettingUp: boolean;
@@ -1027,6 +1038,9 @@ export class ActorCombatAi {
         nextSupport: 0,
         healthRestoredAt: -Infinity,
         magickaRestoredAt: -Infinity,
+        wardedAt: -Infinity,
+        summonedAt: -Infinity,
+        reanimatedAt: -Infinity,
         supporting: false,
         gettingUp: false,
         told: 0,
@@ -2309,6 +2323,23 @@ export class ActorCombatAi {
         );
         if (goal) return this.#newRun('strafe', goal, settings.speedFastWalk, seconds);
         break;
+      case 'circle': {
+        // Round its target at the distance it shoots from (the Strafe Selector's Circle).
+        const distance = Math.hypot(feet[0] - target.feet[0], feet[1] - target.feet[1]);
+        const angle = circleAngle(
+          mind.profile?.style.closeRange.circleMult ?? 0,
+          target.isPlayer,
+          view.radius,
+          distance,
+          this.#random,
+          settings,
+        );
+        for (const wanted of circleGoals(self, target, distance, angle, mind.side, settings)) {
+          goal = this.#straightGoal(mind, feet, wanted, least);
+          if (goal) return this.#newRun('circle', goal, settings.speedFastWalk, seconds);
+        }
+        break;
+      }
       default:
         break;
     }
@@ -2316,9 +2347,11 @@ export class ActorCombatAi {
   }
 
   /**
-   * What it does for itself (combat-tactics chooseSupport): a ward against a spell coming at
-   * it, its healing spell or a potion below its style's restore shares, a summons when none of
-   * its stands, a buff not on it.
+   * What it does for itself (combat-subtrees chooseCombatSupport: the Potion slot before its
+   * casters): a potion below its style's restore shares; else a ward against a spell coming at
+   * it, its healing spell (a held one cast on past its share by the stop threshold:
+   * holdsRestore), a summons when none of its stands, a corpse raised, a buff not on it, each
+   * caster not within its restrict time.
    */
   async #support(mind: Mind, view: FighterView, target: number): Promise<void> {
     const runtime = this.#options.session.scriptsReady;
@@ -2330,48 +2363,109 @@ export class ActorCombatAi {
       return value.max > 0 ? value.current / value.max : 1;
     };
     const spells = runtime.casting;
+    const style = mind.profile?.style ?? NO_STYLE;
+    const settings = this.#settings;
+    const subtrees = this.#subtrees;
+    const restoreBelow = restoreShare(style, 'health', settings);
     const ward = this.#threatened(mind, view)
       ? await spells.chooseSpell(reference, 'ward')
       : undefined;
     const summon = await spells.chooseSpell(reference, 'summon');
     const buff = await spells.chooseSpell(reference, 'buff');
-    const choice = chooseSupport(
+    const corpse = this.#nearestCorpse(view, subtrees.reanimateDistance);
+    const raise =
+      corpse === undefined
+        ? undefined
+        : await spells.chooseSpell(reference, 'reanimate', corpse.reference);
+    const health = await share(ActorValue.health);
+    const choice = chooseCombatSupport(
       {
-        health: await share(ActorValue.health),
+        health,
         magicka: await share(ActorValue.magicka),
-        sinceHealthRestore: this.#clock - mind.healthRestoredAt,
-        sinceMagickaRestore: this.#clock - mind.magickaRestoredAt,
+        restoreHealthBelow: restoreBelow,
+        wardThreat: ward !== undefined,
+        sinceWard: this.#clock - mind.wardedAt,
         canHeal: (await spells.chooseSpell(reference, 'heal')) !== undefined,
-        potions: {
-          health: (await spells.choosePotion(reference, ActorValue.health)) !== undefined,
-          magicka: (await spells.choosePotion(reference, ActorValue.magicka)) !== undefined,
-        },
+        sinceHealthRestore: this.#clock - mind.healthRestoredAt,
+        restoreHealthRestrictTime: settings.restoreHealthRestrictTime,
         canSummon: summon !== undefined && (await runtime.magic.summonsOf(reference)).length === 0,
+        sinceSummon: this.#clock - mind.summonedAt,
+        corpseDistance: corpse?.distance,
+        canReanimate: raise !== undefined,
+        sinceReanimate: this.#clock - mind.reanimatedAt,
         canBuff: buff !== undefined && !runtime.magic.hasItemOn(reference, buff.formId),
-        canWard: ward !== undefined,
       },
-      mind.profile?.style ?? NO_STYLE,
-      this.#settings,
+      {
+        restoreMagickaBelow: restoreShare(style, 'magicka', settings),
+        sinceMagickaRestore: this.#clock - mind.magickaRestoredAt,
+        restoreMagickaRestrictTime: settings.restoreMagickaRestrictTime,
+        health: (await spells.choosePotion(reference, ActorValue.health)) !== undefined,
+        magicka: (await spells.choosePotion(reference, ActorValue.magicka)) !== undefined,
+      },
+      subtrees,
     );
     if (!choice || mind.mode !== 'fight') return;
-    const purpose: CombatSupport =
-      choice.kind === 'potion'
-        ? {
-            kind: 'potion',
-            value: choice.value === 'health' ? ActorValue.health : ActorValue.magicka,
-          }
-        : { kind: choice.kind };
+    let purpose: CombatSupport;
+    switch (choice.kind) {
+      case 'potion':
+        purpose = {
+          kind: 'potion',
+          value: choice.value === 'health' ? ActorValue.health : ActorValue.magicka,
+        };
+        break;
+      case 'restore':
+        // A held healing spell goes on past its restore share by the stop threshold.
+        purpose = { kind: 'heal', holds: (now) => holdsRestore(now, restoreBelow, subtrees) };
+        break;
+      case 'reanimate':
+        if (!corpse) return;
+        purpose = { kind: 'reanimate', corpse: corpse.reference };
+        break;
+      default:
+        purpose = { kind: choice.kind };
+    }
+    // Warding and raising are begun, not waited on: their restrict times count from the try.
+    if (choice.kind === 'ward') mind.wardedAt = this.#clock;
+    if (choice.kind === 'reanimate') mind.reanimatedAt = this.#clock;
     if (!(await casting.support(reference, purpose, target))) return;
-    if (choice.kind === 'heal' || (choice.kind === 'potion' && choice.value === 'health')) {
+    if (choice.kind === 'restore' || (choice.kind === 'potion' && choice.value === 'health')) {
       mind.healthRestoredAt = this.#clock;
     }
     if (choice.kind === 'potion' && choice.value === 'magicka') {
       mind.magickaRestoredAt = this.#clock;
     }
+    if (choice.kind === 'summon') mind.summonedAt = this.#clock;
     // Its attacks wait while it casts for itself, and after a potion the combat tree's wait.
     const wait =
       choice.kind === 'potion' ? this.#settings.drinkPotionWaitTime : SUPPORT_CAST_SECONDS;
     mind.nextAttack = Math.max(mind.nextAttack, this.#clock + wait);
+  }
+
+  /** The nearest corpse (not the player's) within `radius` of a fighter, for its reanimation. */
+  #nearestCorpse(
+    view: FighterView,
+    radius: number,
+  ): { readonly reference: number; readonly distance: number } | undefined {
+    const feet = view.feet;
+    if (!feet) return undefined;
+    const runtime = this.#options.session.scriptsReady;
+    let best: { reference: number; distance: number } | undefined;
+    for (const other of this.#options.host.fighters()) {
+      if (other.player || other.reference === view.reference || !other.feet) continue;
+      const dead =
+        other.state.life === LifeState.dead ||
+        runtime?.state.actors.get(other.reference)?.dead === true;
+      if (!dead) continue;
+      const distance = Math.hypot(
+        other.feet[0] - feet[0],
+        other.feet[1] - feet[1],
+        other.feet[2] - feet[2],
+      );
+      if (distance <= radius && (!best || distance < best.distance)) {
+        best = { reference: other.reference, distance };
+      }
+    }
+    return best;
   }
 
   /** Whether a spell or a breath comes at it now (the threats it would dodge). */
@@ -3598,7 +3692,10 @@ export class ActorCombatAi {
     // drawn for good (the combat scenario's guards, 39 s).
     if (!best.equipped && attacking(view.state)) return;
     mind.equipped = best;
-    if (best.equipped) return;
+    if (best.equipped) {
+      await this.#fillLeftHand(mind, view, spells, distance, runtime);
+      return;
+    }
     // Taken up, it is kept a while (fCombatInventoryMinEquipTime*).
     mind.nextEquip = this.#clock + this.#equipWait(best.kind);
     // Spells are taken up as they are cast (castAt); a staff is a weapon in the hand.
@@ -3628,6 +3725,35 @@ export class ActorCombatAi {
     } finally {
       mind.equipping = false;
     }
+  }
+
+  /**
+   * A free left hand beside its one-handed weapon takes up its best spell (leftHandSpell): the
+   * combat tree's left-hand casting (mayCastLeft) then casts it beside its blows.
+   */
+  async #fillLeftHand(
+    mind: Mind,
+    view: FighterView,
+    spells: readonly EquipOption[],
+    distance: number,
+    runtime: ScriptRuntime,
+  ): Promise<void> {
+    const gear = view.gear;
+    const profile = mind.profile;
+    if (!gear || !profile || gear.weapon === undefined || gear.leftSpell !== undefined) return;
+    const spell = leftHandSpell(
+      {
+        weaponType: gear.weaponType,
+        shield: gear.shield,
+        leftWeapon: gear.leftWeapon === true,
+      },
+      spells,
+      distance,
+      profile.style,
+      this.#settings,
+    );
+    if (spell === undefined) return;
+    await runtime.equipment.equipSpell(mind.reference, spell, CastingSource.left);
   }
 
   /** Arrows for a bow, bolts for a crossbow: the best it carries. */

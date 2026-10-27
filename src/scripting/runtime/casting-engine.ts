@@ -167,7 +167,7 @@ export interface CastEvent {
 export type BeginResult = 'started' | 'nothing' | CastEvent['reason'];
 
 /** What the AI casts for (src/shell/actor-casting.ts castAt). */
-export type CastPurpose = 'attack' | 'heal' | 'summon' | 'ward' | 'buff';
+export type CastPurpose = 'attack' | 'heal' | 'summon' | 'reanimate' | 'ward' | 'buff';
 
 /** How long the AI's and the conditions' ward state lasts after a hit (seconds). */
 const WARD_STATE_SECONDS = 0.5;
@@ -1505,8 +1505,11 @@ export class CastingEngine {
               (effect.flags & (EffectFlag.detrimental | EffectFlag.hostile)) === 0,
           )
         );
+      // A summons calls a creature; a reanimation raises a corpse (cast at one).
       case 'summon':
-        return summons;
+        return archetypes.has(EffectArchetype.summonCreature);
+      case 'reanimate':
+        return archetypes.has(EffectArchetype.reanimate);
       case 'ward':
         return ward;
       case 'buff':

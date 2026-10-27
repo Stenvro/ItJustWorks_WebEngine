@@ -52,6 +52,11 @@ export type CrimeAct = 'steal' | 'pickpocket' | 'trespass' | 'attack' | 'murder'
 export interface CrimeWorld {
   /** The actors that detect `actor` now and so see it do `act` (Detections.witness). */
   witnesses(actor: number, act: CrimeAct, victim: number | undefined): number[];
+  /**
+   * The player's theft its owner sees: true when the owner warns them instead (the engine's
+   * Steal Warning package, src/ai/engine-packages.ts: iStealWarnings) and it is no crime yet.
+   */
+  stealWarning?(owner: number): boolean;
 }
 
 /** What crime tells its listeners (the stage: barks, alarms, the HUD). */
@@ -462,6 +467,16 @@ export class CrimeEngine {
     const faction = await this.crimeFactionFor({ victim: ownerActor, owner, place: from });
     const record = await runtime.forms.record(base);
     const value = (record ? (parseItem(record)?.value ?? 0) : 0) * count;
+    // Its owner sees it and warns them while warnings are left: stolen, but no crime yet.
+    if (
+      thief === PLAYER_REF &&
+      ownerActor !== undefined &&
+      this.world?.stealWarning?.(ownerActor) === true
+    ) {
+      this.markStolen(thief, base, count, faction, false);
+      this.#stat('items stolen', count);
+      return undefined;
+    }
     const crime = await this.commit(CrimeType.steal, thief, {
       act: 'steal',
       victim: ownerActor,
