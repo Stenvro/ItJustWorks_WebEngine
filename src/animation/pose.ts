@@ -59,7 +59,12 @@ export class PoseAccumulator {
       }
       for (let k = 0; k < 3; k++) out[o + k] = (sum[o + k] ?? 0) / w;
       for (let k = 7; k < 10; k++) out[o + k] = (sum[o + k] ?? 0) / w;
-      const length = Math.hypot(sum[o + 3] ?? 0, sum[o + 4] ?? 0, sum[o + 5] ?? 0, sum[o + 6] ?? 0);
+      const qx = sum[o + 3] ?? 0;
+      const qy = sum[o + 4] ?? 0;
+      const qz = sum[o + 5] ?? 0;
+      const qw = sum[o + 6] ?? 0;
+      // (sqrt: Math.hypot is slow, and this runs for every bone of every blend.)
+      const length = Math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw);
       if (length > 1e-8) {
         for (let k = 3; k < 7; k++) out[o + k] = (sum[o + k] ?? 0) / length;
       } else {
