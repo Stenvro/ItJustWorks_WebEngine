@@ -274,18 +274,12 @@ export class Sim {
   }
 
   /**
-   * Kills an actor (Actor.Kill) by a killer. Its death's script events may wait for frames (a
-   * native that waits for the next frame, Utility.Wait): the world steps until they are done,
-   * 10 s at most (the actor is dead in the world at once; scripts that never return its
-   * OnDeath, such as the Bannered Mare's patrons' today, are left running).
+   * Kills an actor (Actor.Kill) by a killer. The killing does not wait for its death's script
+   * handlers (they run on as the world steps); the crime and the story manager's event follow.
    */
   async kill(actor: number, killer?: number): Promise<void> {
-    const killing = { done: false };
-    void this.runtime.actors.kill(actor, killer).finally(() => {
-      killing.done = true;
-    });
+    await this.runtime.actors.kill(actor, killer);
     await this.world.settle();
-    if (!killing.done) await this.until(() => killing.done, 10);
   }
 
   // --- The player's actions -----------------------------------------------------------------
