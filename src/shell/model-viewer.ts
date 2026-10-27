@@ -36,7 +36,7 @@ import {
 } from '../render/scene-renderer.ts';
 import { studioLighting } from '../render/studio-lighting.ts';
 import { RoomCuller } from '../render/room-culler.ts';
-import { roomIndexAt } from '../world/cell-rooms.ts';
+import { roomIndexAt, type CellRoom } from '../world/cell-rooms.ts';
 import { cellSceneLighting, pointLights } from '../world/cell-lighting.ts';
 import {
   cellArrival,
@@ -730,6 +730,11 @@ export class ModelViewer {
   #allObjectSkeletons: readonly { reference: number; skeleton: AnimatedSkeleton }[] = [];
   /** The cell's lighting with its enabled lights (see #refreshEnabled). */
   #cellLighting: ReturnType<typeof cellSceneLighting> | undefined;
+  /** The lighting in a room with its own template, for the cell's lighting it is of. */
+  #roomLighting:
+    { room: number; of: SceneLighting | undefined; lighting: SceneLighting } | undefined;
+  /** The rooms' own image spaces (INAM) of the cell shown, by room index. */
+  #roomImageSpaces = new Map<number, ImageSpace>();
   /** The time and weather controls while a cell is shown. */
   #sky: InteriorSkyControls | undefined;
   /** The enabled water activators: their surfaces (heard) and volumes (entered). */
@@ -1433,12 +1438,21 @@ export class ModelViewer {
     const rooms = cell.data.rooms && new RoomCuller([cell.data.rooms]);
     const shownCount = this.#refreshEnabled();
     // The cell's imagespace with the image-space modifiers on the screen over it.
-    const imageSpace = (): ImageSpace | undefined =>
-      this.#session?.imageSpaceModifiers.imageSpace(cell.imageSpace) ?? cell.imageSpace;
+    // The room the camera is in: its own lighting template and image space while it is there.
+    const cameraRoom = (): number => {
+      const at = this.#renderer.view?.camera.position;
+      return at && cellRooms.length > 0 ? roomIndexAt(cellRooms, at) : -1;
+    };
+    this.#roomImageSpaces = new Map();
+    this.#loadRoomImageSpaces(cellRooms);
+    const imageSpace = (): ImageSpace | undefined => {
+      const own = this.#roomImageSpaces.get(cameraRoom()) ?? cell.imageSpace;
+      return this.#session?.imageSpaceModifiers.imageSpace(own) ?? own;
+    };
     this.#present(scene, undefined, {
       camera: 'fly',
       lighting: () => {
-        const lighting = this.#cellLighting ?? cellSceneLighting(cell.data, this.#isEnabled);
+        const lighting = this.#lightingInRoom(cell.data, cameraRoom());
         // The imagespace's Sunlight Scale brightens the cell's directional light (HDR).
         const scale = imageSpace()?.hdr.sunlightScale ?? 1;
         return {
@@ -1462,6 +1476,36 @@ export class ModelViewer {
       }),
     });
     return shownCount;
+  }
+
+  /** The cell's lighting with the camera in `room`: its own template's while it has one. */
+  #lightingInRoom(data: CellData, room: number): SceneLighting {
+    const cellLighting = this.#cellLighting ?? cellSceneLighting(data, this.#isEnabled);
+    if (room < 0 || data.roomLighting?.[room] === undefined) return cellLighting;
+    const cached = this.#roomLighting;
+    if (cached?.room === room && cached.of === this.#cellLighting) return cached.lighting;
+    const lighting = cellSceneLighting(data, this.#isEnabled, room);
+    this.#roomLighting = { room, of: this.#cellLighting, lighting };
+    return lighting;
+  }
+
+  /** Reads the rooms' own image spaces (INAM) for the cell shown. */
+  #loadRoomImageSpaces(rooms: readonly CellRoom[]): void {
+    const db = this.#session?.db;
+    if (!db) return;
+    const own = this.#roomImageSpaces;
+    rooms.forEach((room, i) => {
+      const formId = room.imageSpace;
+      if (formId === undefined) return;
+      void db
+        .then((records) => records.get(formId))
+        .then((record) => {
+          if (record?.type === 'IMGS') own.set(i, parseImageSpace(record));
+        })
+        .catch((error: unknown) => {
+          this.#terminal.log('world', `room image space: ${String(error)}`, 'warn');
+        });
+    });
   }
 
   /**
