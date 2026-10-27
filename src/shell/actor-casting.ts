@@ -134,7 +134,7 @@ const NODES: Readonly<Record<number, readonly string[]>> = {
 
 /**
  * The reach of a spell or shout whose projectile names none (projectiles with range 0; Touch
- * spells reach fMagicDefaultTouchDistance: casting.ts): the combat AI casts them within it
+ * spells reach as far as their caster's race unarmed: casting.ts touchReach): the combat AI casts them within it
  * (src/shell/combat-casting.ts). TODO(M13): the engine's value is not documented;
  * fCombatMagic* settings do not name one.
  */
@@ -924,10 +924,10 @@ export class ActorCasting {
       shot,
       seconds === undefined ? 'immediate' : 'concentration',
     );
-    // The player's Touch spell reaches the actor aimed at, as far as such spells reach
-    // (fMagicDefaultTouchDistance).
+    // The player's Touch spell reaches the actor aimed at, as far as their race reaches
+    // unarmed (casting-engine.ts touchReach).
     if (target === undefined && delivered.item.delivery === Delivery.touch) {
-      const reach = (await runtime.casting.settings()).casting.touchDistance;
+      const reach = await runtime.casting.touchReach(actor);
       target = this.#options.aimedActor?.(origin, aim, reach, actor);
     }
     await this.#options.projectiles.launch(delivered, origin, aim, {

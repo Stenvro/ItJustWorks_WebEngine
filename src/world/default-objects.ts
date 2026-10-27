@@ -63,6 +63,12 @@ export const DefaultObjectUse = {
   putDownIngredient: 'PDSI',
   /** SNDR of an activation that fails (a locked door without its key). */
   activateFail: 'NASD',
+  /**
+   * SNDR the player hears as a cast is refused or stops for want of magicka (MAGFailSD), and as
+   * a shout is refused (MAGFailShoutSD).
+   */
+  magicFailSound: 'MFSN',
+  shoutFailSound: 'SFSN',
   /** ARTO shown on an actor whose Spell Absorption absorbs a spell (AbsorbSpellEffect). */
   absorbSpellEffect: 'ABSE',
   /** IMAD pulsed while the player's health is low, and the heartbeat loops (SNDR). */

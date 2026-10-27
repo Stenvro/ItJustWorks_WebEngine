@@ -103,6 +103,7 @@ import {
 import { actorScriptGraph, placedScriptGraph } from '../animation/script-graphs.ts';
 import { placeObject } from '../sim/placed-objects.ts';
 import { CreatedObjects } from './created-objects.ts';
+import { itemGlow } from '../gameplay/magic/enchantment-glow.ts';
 import { FloraLooks } from './flora-looks.ts';
 import { DestructionLooks } from './destruction-looks.ts';
 import { connectPlayerTime } from './time-flow.ts';
@@ -175,6 +176,8 @@ interface CellView {
 }
 
 const numberFormat = new Intl.NumberFormat('en-US');
+/** The glow of an enchanted item lying in the cell (its effects' key). */
+const groundGlow = (reference: number): string => `ground:${String(reference)}`;
 const hex = (formId: number): string => formId.toString(16).toUpperCase().padStart(8, '0');
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -651,6 +654,43 @@ export class ModelViewer {
     const at = await runtime.placement(reference);
     if (at?.cell !== cell.data.cell.formId || this.#cell !== cell) return;
     await this.#created.add(runtime, reference, this.#play);
+    // An enchanted weapon or armour the game made (dropped, an enchanted copy) glows.
+    const created = this.#created.get(reference);
+    const type = created?.object.baseType;
+    if (!created || (type !== 'WEAP' && type !== 'ARMO')) return;
+    const glow = await itemGlow((formId) => runtime.forms.record(formId), created.object.base);
+    if (!glow || this.#created.get(reference) !== created) return;
+    this.#stage?.effects.glow(groundGlow(reference), reference, glow, () =>
+      created.instance
+        ? { placed: { instances: [created.instance] }, visibility: created.visibility }
+        : undefined,
+    );
+  }
+
+  /**
+   * The enchanted weapons and armour lying in the cell glow (their enchantment's shader and
+   * art: src/gameplay/magic/enchantment-glow.ts), hidden with them when taken; the stage's
+   * effects are cleared as the cell is left.
+   */
+  async #glowCell(token: number): Promise<void> {
+    const session = this.#session;
+    const cell = this.#cell;
+    if (!session || !cell) return;
+    const db = await session.db;
+    for (const object of cell.data.objects) {
+      if (object.baseType !== 'WEAP' && object.baseType !== 'ARMO') continue;
+      const reference = object.reference;
+      void itemGlow((formId) => db.get(formId), object.base).then((glow) => {
+        if (!glow || token !== this.#loadToken) return;
+        this.#stage?.effects.glow(groundGlow(reference), reference, glow, () => {
+          const instance = this.#instances.get(reference);
+          const visibility = this.#visibility.get(reference);
+          return instance
+            ? { placed: { instances: [instance] }, ...(visibility && { visibility }) }
+            : undefined;
+        });
+      });
+    }
   }
 
   /** A script moved a reference: its drawn instance and its collision follow. */
@@ -689,6 +729,7 @@ export class ModelViewer {
         created.instance.motion.version++;
       } else {
         // Its scene holds one instance: built again at the new place.
+        this.#stage?.effects.unglow(groundGlow(reference));
         this.#created?.remove(reference, this.#play);
         await this.#showCreated(reference);
       }
@@ -1250,6 +1291,7 @@ export class ModelViewer {
 
     this.#renderUpgrades();
     const visible = this.#applyCellSelection();
+    void this.#glowCell(token);
     void this.#attachToScripts(token);
     if (session) {
       this.#sky?.dispose();

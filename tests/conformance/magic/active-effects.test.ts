@@ -177,6 +177,46 @@ describe.skipIf(!hasGamedata())('the effects across the load order (data)', () =
     ).toEqual([]);
     runtime.actors.restore(PLAYER_REF, ActorValue.health, 100);
   }, 60_000);
+
+  it('burns a frame at a time while a concentration spell without a duration is held', async () => {
+    // Observed in the original: a concentration spell's value effect is modified each frame
+    // (its magnitude × the frame's time) even without a duration; it lasts while held.
+    const health = async (): Promise<number> =>
+      (await runtime.actors.value(PLAYER_REF, ActorValue.health)).current;
+    const settle = async (): Promise<void> => {
+      await runtime.vm.idle();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    runtime.progression.holdRegeneration(PLAYER_REF, ActorValue.health, 60);
+    let flames = 0;
+    for (const formId of db.formIdsOfType('SPEL'))
+      if ((await db.get(formId))?.editorId === 'Flames') flames = formId;
+    const record = await runtime.magic.item(flames);
+    const first = record?.effects[0];
+    if (!record || !first) throw new Error('Flames not read');
+    // Flames' 8 a second, its effect item's 1 s taken away (as a mod's effect without one).
+    const item = { ...record, effects: [{ ...first, duration: 0 }] };
+    const before = await health();
+    expect(
+      await runtime.magic.apply(item, PLAYER_REF, { caster: PLAYER_REF, effects: [0], hold: 0.5 }),
+    ).toBe(1);
+    await settle();
+    expect(await health()).toBe(before);
+    for (let frame = 0; frame < 8; frame++) {
+      runtime.update(0.05, 0);
+      await settle();
+    }
+    expect(before - (await health())).toBeCloseTo(8 * 0.4, 3);
+    // The spell stops: the effect ends after its taper (0.1 s), not the rest of its hold.
+    runtime.magic.endHeld(PLAYER_REF, flames);
+    for (let frame = 0; frame < 4; frame++) {
+      runtime.update(0.05, 0);
+      await settle();
+    }
+    expect(before - (await health())).toBeLessThan(8 * 0.4 + 0.2);
+    expect(runtime.magic.effectsOn(PLAYER_REF).filter(([, e]) => e.item === flames)).toEqual([]);
+    runtime.actors.restore(PLAYER_REF, ActorValue.health, 100);
+  }, 60_000);
 });
 
 describe('what the original does that we do not yet', () => {
@@ -185,8 +225,4 @@ describe('what the original does that we do not yet', () => {
       'CommonLibSSE ActiveEffect::displacementSpell) ends it (original)',
   );
   it.todo('conditions are checked at the engine’s interval (we check about each second)');
-  it.todo(
-    'a concentration spell’s effect runs a frame at a time while held (the engine adds the ' +
-      'magnitude × the frame; ours applies each spray’s share)',
-  );
 });
