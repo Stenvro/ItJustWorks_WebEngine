@@ -34,6 +34,7 @@ import {
   pathHitsActor,
   pointAt,
   stepFlight,
+  sticksAsLight,
   sweepCone,
   withinProximity,
   type ActorShape,
@@ -41,6 +42,7 @@ import {
   type Flight,
   type LobberSettings,
 } from '../gameplay/magic/projectile-flight.ts';
+import { castStrength, DUAL_CASTING_POWER } from '../gameplay/magic/effect-rules.ts';
 import { chainEffectiveness } from '../gameplay/magic/explosions.ts';
 import { ImpactPlacements } from '../gameplay/magic/impact-placement.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
@@ -173,6 +175,12 @@ export class MagicProjectiles {
   readonly #lobbers: { current: LobberSettings } = { current: LOBBER_DEFAULTS };
   /** The cones' waves sweeping out. */
   readonly #waves = new Set<Wave>();
+  /** Magelights stuck where they struck: their model, their effect's light, until when. */
+  readonly #stuck = new Set<{
+    readonly flying: Flying;
+    readonly until: number;
+    light: LightRecord | undefined;
+  }>();
 
   constructor(options: MagicProjectilesOptions) {
     this.#options = options;
@@ -250,6 +258,7 @@ export class MagicProjectiles {
   /** Their drawn scenes. */
   *scenes(): Iterable<GpuScene> {
     for (const flying of this.#flying) if (flying.scene) yield flying.scene;
+    for (const stuck of this.#stuck) if (stuck.flying.scene) yield stuck.flying.scene;
     yield* this.#beams.scenes();
     yield* this.#flames.scenes();
   }
@@ -683,6 +692,11 @@ export class MagicProjectiles {
       this.#clock += seconds;
       this.#beams.frame(seconds);
       this.#flames.frame(seconds);
+      for (const stuck of [...this.#stuck]) {
+        if (stuck.until > this.#clock) continue;
+        stuck.flying.scene?.destroy();
+        this.#stuck.delete(stuck);
+      }
     }
     const runtime = this.#options.session.scriptsReady;
     if (seconds > 0 && runtime)
@@ -728,7 +742,9 @@ export class MagicProjectiles {
         const point = hit ? pointAt(from, to, hit.t) : to;
         flying.flight.position = point;
         this.#knock(flying.projectile, hit?.ray, normalize(flying.flight.velocity));
-        this.#end(flying);
+        if (hit && hit.kind !== 'actor' && sticksAsLight(flying.effect?.archetype, 'surface'))
+          this.#stick(flying);
+        else this.#end(flying);
         // A flame reaches as far as its spray went (its full range when it met nothing).
         if (flying.stream) {
           const o = flying.origin;
@@ -1025,8 +1041,41 @@ export class MagicProjectiles {
     for (const flying of this.#flying) {
       if (flying.light && !flying.done) yield cellLight(0, flying.flight.position, flying.light, 1);
     }
+    for (const stuck of this.#stuck)
+      if (stuck.light) yield cellLight(0, stuck.flying.flight.position, stuck.light, 1);
     yield* this.#beams.lights();
     yield* this.#flames.lights();
+  }
+
+  /**
+   * A Magelight stays where it struck (projectile-flight.ts sticksAsLight): its model there and
+   * its effect's light (MGEF light) for the effect item's duration as cast (dual casting's power).
+   */
+  #stick(flying: Flying): void {
+    const effect = flying.effect;
+    const entry = flying.delivered.item.effects.find((item) => item.effect === effect?.formId);
+    flying.done = true;
+    this.#flying.delete(flying);
+    void flying.sound?.then((sound) => sound?.stop());
+    if (!effect || !entry) {
+      flying.scene?.destroy();
+      flying.scene = undefined;
+      return;
+    }
+    const { duration } = castStrength(
+      entry,
+      effect,
+      flying.delivered.dual ? DUAL_CASTING_POWER : 1,
+    );
+    if (flying.instance) {
+      flying.instance.world.set(placementOf(flying.flight));
+      flying.motion.version++;
+    }
+    const stuck = { flying, until: this.#clock + duration, light: flying.light };
+    this.#stuck.add(stuck);
+    void this.#options.fx?.lightRecord(effect.associatedItem).then((light) => {
+      if (light) stuck.light = light;
+    });
   }
 
   #end(flying: Flying): void {
@@ -1040,6 +1089,8 @@ export class MagicProjectiles {
   /** Every projectile goes (the play ended, the view changed). */
   clear(): void {
     for (const flying of [...this.#flying]) this.#end(flying);
+    for (const stuck of this.#stuck) stuck.flying.scene?.destroy();
+    this.#stuck.clear();
     this.#waves.clear();
     this.#placements.clear();
     this.#beams.clear();

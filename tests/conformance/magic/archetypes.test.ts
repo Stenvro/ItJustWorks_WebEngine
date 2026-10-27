@@ -23,6 +23,7 @@ import {
   summonDistance,
   TARGET_VALUES,
 } from '../../../src/gameplay/magic/effect-rules.ts';
+import { sticksAsLight } from '../../../src/gameplay/magic/projectile-flight.ts';
 import {
   telekinesisDamage,
   telekinesisDamageMult,
@@ -133,6 +134,12 @@ describe('wards, summons, telekinesis', () => {
     expect(telekinesisReach(15)).toBe(330);
   });
 
+  it('sticks a Light effect’s projectile where it strikes a surface (Magelight), not on an actor', () => {
+    expect(sticksAsLight(EffectArchetype.light, 'surface')).toBe(true);
+    expect(sticksAsLight(EffectArchetype.light, 'actor')).toBe(false);
+    expect(sticksAsLight(EffectArchetype.valueModifier, 'surface')).toBe(false);
+  });
+
   it('hurts with a thrown object by fMagicTelekinesisDamageBase (5) × the throw’s multiplier', () => {
     expect(telekinesisDamage(0, telekinesisDamageMult(false))).toBe(5);
     // Dual cast: × fMagicTelekinesisDualCastDamageMult (2).
@@ -174,11 +181,11 @@ describe.skipIf(!hasGamedata())('a cloak’s pulse (sim)', () => {
 });
 
 describe('what the original’s archetypes do that ours do not yet', () => {
-  it.todo('Light (Magelight): the light flies as a projectile and sticks where it lands (original)');
+  it.todo('Light (Magelight): how many stay at once, and on a moving object it struck');
   it.todo(
     'Invisibility: the actor is drawn with the invisibility look (fMagicPlayerMinimumInvisibility)',
   );
-  it.todo('Summon Creature: the summon is placed on the navmesh clear of the summoner’s sight');
+  it.todo('Summon Creature: the engine’s search for another place when the way ahead is blocked');
   it.todo('Dispel: the engine’s rule for what it ends (fMagicDispelMagnitudeMult 5)');
   it.todo('Darkness, Night Eye: the image space and fMagicNightEyeAmbient (0.75)');
   it.todo(

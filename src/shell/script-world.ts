@@ -112,6 +112,8 @@ export interface ScriptView {
   ): void;
   /** Whether an explosion seen from a point reaches an actor (WorldBridge.explosionReaches). */
   explosionReaches?(from: Vec3, target: number, buffer: number): boolean | undefined;
+  /** Where a summon stands on the navmeshes (WorldBridge.summonPlace). */
+  summonPlace?(from: Vec3, to: Vec3, radius: number): Vec3 | undefined;
   /**
    * A destructible reference's stage changed (src/shell/destruction-looks.ts): its look and
    * collision follow; `reached`: the stage just reached, whose debris is thrown.
@@ -439,6 +441,14 @@ export class ScriptWorld implements WorldBridge {
     for (const view of this.#views) {
       const reaches = view.explosionReaches?.(from, target, buffer);
       if (reaches !== undefined) return reaches;
+    }
+    return undefined;
+  }
+
+  summonPlace(from: Vec3, to: Vec3, radius: number): Vec3 | undefined {
+    for (const view of this.#views) {
+      const place = view.summonPlace?.(from, to, radius);
+      if (place !== undefined) return place;
     }
     return undefined;
   }

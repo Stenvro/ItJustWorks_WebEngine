@@ -491,6 +491,31 @@ export function straightReach(set: NavmeshSet, from: Vec3, to: Vec3, radius: num
   return length;
 }
 
+/**
+ * Where a summon stands on the navmeshes (the engine looks for the navmesh near the place ahead
+ * of its summoner, the way to it clear; observed in the original): as far toward `to` as an
+ * actor of `radius` goes straight from `from` on the navmeshes (straightReach), on the navmesh
+ * there (its column). Off the navmeshes the place itself, on a navmesh beneath or above it if one
+ * is there; undefined if nothing is (the caller keeps its place).
+ */
+export function summonPlace(
+  set: NavmeshSet,
+  from: Vec3,
+  to: Vec3,
+  radius: number,
+): [number, number, number] | undefined {
+  const length = Math.hypot(to[0] - from[0], to[1] - from[1]);
+  const reach = set.locate(from) ? straightReach(set, from, to, radius) : length;
+  const share = length > 1e-6 ? Math.min(1, reach / length) : 1;
+  const point: Vec3 = [
+    from[0] + (to[0] - from[0]) * share,
+    from[1] + (to[1] - from[1]) * share,
+    from[2] + (to[2] - from[2]) * share,
+  ];
+  const on = onNavmeshColumn(set, point);
+  return on && [on[0], on[1], on[2]];
+}
+
 /** A random location's search reaches at most this many triangles. */
 const RANDOM_SEARCH_LIMIT = 4000;
 /** A random location is tried this many times to lie far enough from the actor. */

@@ -23,6 +23,7 @@
 
 import { HAVOK_SCALE } from '../../physics/collision-data.ts';
 import type { Vec3 } from '../../render/math.ts';
+import { EffectArchetype } from '../../world/magic-effects.ts';
 import { ProjectileFlag, ProjectileType } from '../../world/projectile-data.ts';
 
 /** The world's gravity in game units per second² (the physics world's 9.8 m/s²). */
@@ -253,6 +254,17 @@ export function sweepCone<K extends number>(
     reached.push(key);
   }
   return reached;
+}
+
+/**
+ * Whether a projectile stays where it struck: a Light effect's (Magelight: "sticks where it
+ * strikes") on a surface, shining its effect's light there for the effect's duration; on an actor
+ * the effect takes hold on it instead (its light on the actor). TODO(M13): how many the engine
+ * keeps at once, and whether it follows a moving object it struck (read from the data: the
+ * vanilla Light effects that fly are Magelight's).
+ */
+export function sticksAsLight(archetype: number | undefined, struck: 'surface' | 'actor'): boolean {
+  return archetype === EffectArchetype.light && struck === 'surface';
 }
 
 /** An actor as projectiles meet it: an upright capsule from its feet. */
