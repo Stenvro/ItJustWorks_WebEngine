@@ -1,6 +1,7 @@
-// Shadows of point and spot lights (interiors): the lights whose LIGH carries a shadow flag
-// (Shadow Spotlight, Shadow Hemisphere, Shadow Omnidirectional) cast shadows, but only a few
-// at once. Each frame the nearest of them to the camera hold the shadow slots; a light that
+// Shadows of point and spot lights (interiors and exteriors): the lights whose LIGH carries a
+// shadow flag (Shadow Spotlight, Shadow Hemisphere, Shadow Omnidirectional) cast shadows, but
+// only a few at once. Lights whose reach lies outside the view (or in a room not seen) take no
+// slot. Each frame the nearest of the rest to the camera hold the shadow slots; a light that
 // enters the set fades its shadow in and one that leaves fades it out while it keeps its slot
 // (a light that enters waits for a free slot), so shadows do not pop as the camera walks
 // through a room. Each slot has six layers of the
@@ -10,11 +11,12 @@
 
 import { ShadowKind, type PointLight } from './scene-lighting.ts';
 import { lookAt, multiply, type Mat4, type Vec3 } from './math.ts';
+import { sphereVisible, type Plane } from './frustum.ts';
 
 /**
  * Shadow-casting lights drawn at once. The engine keeps this many slots (community
- * documentation: four shadow lights in view at a time).
- * TODO(M13): whether an INI setting raises it.
+ * documentation: four shadow lights in view at a time); no setting raises it (none of the
+ * executable's INI settings names a shadow-light count), in exteriors as in interiors.
  */
 export const MAX_SHADOW_LIGHTS = 4;
 /** Layers of the light-shadow map per slot (a cube's faces). */
@@ -32,6 +34,23 @@ export const SHADOW_FADE_SECONDS = 0.5;
 export const LIGHT_SHADOW_NEAR = 2;
 /** Angle a hemisphere light's frustum spans (a perspective view cannot reach 180°). */
 export const HEMISPHERE_FOV = (150 * Math.PI) / 180;
+
+/**
+ * The lights that may cast shadows this frame: those with a shadow flag whose reach (its
+ * sphere) meets the view frustum `planes` and, with rooms, lies in a room seen.
+ */
+export function shadowLightCandidates(
+  lights: readonly PointLight[],
+  planes: readonly Plane[],
+  inVisibleRoom?: (point: Vec3) => boolean,
+): PointLight[] {
+  return lights.filter(
+    (light) =>
+      light.shadow !== undefined &&
+      sphereVisible(planes, light.position, light.radius) &&
+      (inVisibleRoom?.(light.position) ?? true),
+  );
+}
 
 /** A light that holds a slot this frame. */
 export interface ShadowSlot {

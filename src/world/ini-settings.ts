@@ -233,6 +233,9 @@ export const INI_DEFAULTS = {
     // Point lights fade out from this distance: the executable starts it at
     // fLightLODDefaultStartFade (1000), Skyrim_Default.ini gives 3500.
     fLightLODStartFade: 1000,
+    // The sun's focus shadows round the bodies near the player (src/render/focus-shadows.ts).
+    fMaxFocusShadowMapDistance: 450,
+    iNumFocusShadow: 4,
     fNearDistance: 15,
     // The low-health modifier's pulses (src/gameplay/low-health.ts).
     bLowHealthIModEnabled: 1,

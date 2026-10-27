@@ -1379,6 +1379,16 @@ export class ActorStage {
   }
 
   /** The scenes of the actors of the cells shown (a disabled actor's draws are hidden). */
+  /** The shown actors' bodies (the sun's focus shadows fit round the nearest). */
+  *bodyScenes(): Iterable<GpuScene> {
+    const shown = this.#options.cellShown;
+    for (const staged of this.#actors.values()) {
+      if (staged.scene && !staged.visibility.hidden && (!shown || shown(staged.cell))) {
+        yield staged.scene;
+      }
+    }
+  }
+
   *scenes(): Iterable<GpuScene> {
     const shown = this.#options.cellShown;
     for (const staged of this.#actors.values()) {

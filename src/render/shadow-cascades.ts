@@ -13,7 +13,7 @@ export const SHADOW_CASCADES = 4;
 /** Far end of each cascade (game units); fShadowDistance (Ultra) is 8000. */
 export const SHADOW_SPLITS: readonly number[] = [700, 1800, 4000, 8000];
 /** Casters this far towards the light from a slice still throw shadows into it. */
-const CASTER_REACH = 20000;
+export const CASTER_REACH = 20000;
 /** The light's view turns about the camera's place rounded to this grid (an exterior cell). */
 export const SHADOW_ANCHOR_GRID = 4096;
 
