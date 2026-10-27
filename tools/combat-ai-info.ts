@@ -4,7 +4,7 @@
 // at; between the actors (and the player): how each regards the other (src/ai/combat-
 // reactions.ts) and whether it attacks it on sight (GetShouldAttack).
 //
-//   node tools/combat-ai-info.ts WhiterunGuard... BanditREF   by editor id or form id (hex)
+//   node tools/combat-ai-info.ts WhiterunGuard... BanditREF   by editor id (reference or base) or form id
 //   node tools/combat-ai-info.ts --new-game <actors>          after a new game (quests running)
 
 import {
@@ -57,6 +57,12 @@ async function reference(name: string): Promise<number | undefined> {
   if (/^[0-9a-f]+$/i.test(name) && db.locate(id)) return id;
   for (const formId of db.formIdsOfType('ACHR')) {
     if ((await db.get(formId))?.editorId?.toLowerCase() === name.toLowerCase()) return formId;
+  }
+  // An actor base's editor id: its first placed reference.
+  for (const formId of db.formIdsOfType('ACHR')) {
+    const base = await runtime.baseOf(formId);
+    if (base !== undefined && (await db.get(base))?.editorId?.toLowerCase() === name.toLowerCase())
+      return formId;
   }
   return undefined;
 }

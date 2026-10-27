@@ -1,8 +1,9 @@
 // The render port of the headless simulation: nothing is drawn. Models are made from their model
 // data without draws (no parts, no particle systems on a GPU), keeping what the world's systems
 // read of a model: its node tree, the node it hangs on, its controllers, sequences and graph, its
-// bounds. Scenes, morphs, water types, materials and decals are not made. The view has no camera;
-// the screen is a fixed 16:9 one (the player's aim reads its aspect). TODO(sim): what reads a
+// bounds. Scenes, morphs, water types, materials and decals are not made. The view is the player's
+// camera while a place is open (the sim sets it, so what reads the camera sees the player's eyes:
+// the graphs' update rate among them); the screen is a fixed 16:9 one (the player's aim reads its aspect). TODO(sim): what reads a
 // model's draw parts (a severed limb's skinned parts, an effect shader's membrane over a body)
 // finds none headless; those systems are to read the model data instead.
 
@@ -18,6 +19,7 @@ import type {
   GpuWaterType,
 } from '../render/scene-renderer.ts';
 import type { TextureCache } from '../render/texture-cache.ts';
+import type { Camera } from '../render/view-camera.ts';
 
 /** The headless screen's size in pixels (a common desktop one). */
 export const HEADLESS_SCREEN: readonly [number, number] = [1920, 1080];
@@ -123,7 +125,8 @@ export class HeadlessRender implements RenderPort {
       return Promise.resolve(undefined);
     },
   };
-  readonly view = undefined;
+  /** The player's camera while a place is open (SimWorld sets it), else none. */
+  view: { readonly camera: Camera } | undefined = undefined;
   readonly size = HEADLESS_SCREEN;
 
   project(): readonly [number, number] | undefined {

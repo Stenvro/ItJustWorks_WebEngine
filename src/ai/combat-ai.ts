@@ -469,6 +469,23 @@ export interface TargetCandidate {
   readonly threat: number;
 }
 
+/**
+ * The damage actorStrength weighs for an actor: its weapon's blow; without a weapon (a wolf's
+ * teeth, a bear's claws, fists) its race's unarmed damage times the damage mult of the
+ * strongest of its attack data's blows (ATKD; bashes left out), as those attacks deal it.
+ * TODO(M13): the engine's own measure for GetThreatRatio.
+ */
+export function strengthDamage(
+  blow: number,
+  armed: boolean,
+  attacks: Iterable<{ readonly damageMult: number; readonly bash: boolean }>,
+): number {
+  if (armed) return blow;
+  let mult = 1;
+  for (const attack of attacks) if (!attack.bash) mult = Math.max(mult, attack.damageMult);
+  return blow * mult;
+}
+
 /** How strong an actor is in a fight: its health now times the damage it deals. */
 export function actorStrength(health: number, damage: number): number {
   return Math.max(0, health) * Math.max(1, damage);
@@ -550,6 +567,35 @@ export function fleeHealth(confidence: number, settings: CombatAiSettings): numb
       return settings.fleeHealthBrave;
     default:
       return confidence < 0 ? 1 : 0;
+  }
+}
+
+/** One side of daresHelp: an actor's level and its strength (actorStrength). */
+export interface Measure {
+  readonly level: number;
+  readonly strength: number;
+}
+
+/**
+ * Whether its confidence lets an actor take up another's fight against `foe` (its assistance
+ * said it would help): UESP "Confidence": cowardly never (it flees), cautious "attacks only
+ * lower level enemies", average "avoids higher level" ones, brave "attacks unless being
+ * outmatched" (the foe twice its strength or more, as confidenceModifier's worst odds),
+ * foolhardy always. Those that do not dare keep out of the fight (a spectator flees from it).
+ * TODO(M13): the engine's own measure of being outmatched.
+ */
+export function daresHelp(confidence: number, own: Measure, foe: Measure): boolean {
+  switch (Math.round(confidence)) {
+    case Confidence.cowardly:
+      return false;
+    case Confidence.cautious:
+      return foe.level < own.level;
+    case Confidence.average:
+      return foe.level <= own.level;
+    case Confidence.brave:
+      return foe.strength < 2 * own.strength;
+    default:
+      return confidence >= Confidence.foolhardy;
   }
 }
 
