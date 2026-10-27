@@ -28,7 +28,7 @@ import { ActorStage, type StageObstacleCell, type StagePlace } from '../shell/ac
 import type { DoorObject } from '../shell/actor-doors.ts';
 import { stageObject, type StageObject } from '../shell/actor-furniture.ts';
 import { groundUnder, type SoundingWorld } from '../shell/actor-sounds.ts';
-import { talkTargets } from '../shell/actors.ts';
+import { actorFeet, headPosition, talkTargets } from '../shell/actors.ts';
 import { CreatedObjects } from '../shell/created-objects.ts';
 import { DestructionLooks } from '../shell/destruction-looks.ts';
 import { FloraLooks } from '../shell/flora-looks.ts';
@@ -1325,10 +1325,13 @@ export class SimWorld {
       (placed) => this.stage.mounts.activation(placed),
     );
     const eye = play.player.position;
-    const to = staged.position;
-    // At its chest, or at a body lying on the ground (a corpse to loot).
-    const height = staged.dead ? 15 : 100;
-    const direction: Vec3 = [to[0] - eye[0], to[1] - eye[1], to[2] + height - eye[2]];
+    // At the middle of its body as it is posed, feet to head (the line the crosshair's rule
+    // meets: actorOnRay): a standing actor's chest, a body lying on the ground (a corpse, its
+    // ragdoll's pose) where it lies.
+    const feet = actorFeet(staged.placed);
+    const head = headPosition(staged.placed);
+    const to: Vec3 = [(feet[0] + head[0]) / 2, (feet[1] + head[1]) / 2, (feet[2] + head[2]) / 2];
+    const direction: Vec3 = [to[0] - eye[0], to[1] - eye[1], to[2] - eye[2]];
     const length = Math.hypot(direction[0], direction[1], direction[2]);
     if (length === 0) return undefined;
     const hit = ray(
