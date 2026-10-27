@@ -6,6 +6,7 @@
 // focus); the menu answers buttonPress(index) and closes. The game is in menu mode while one is
 // open. Notes: docs/ui.md.
 
+import { inputPlatform } from '../ui/input-platform.ts';
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import type { GameSettings } from '../world/game-settings.ts';
 
@@ -115,7 +116,7 @@ export class MessageBoxes {
       setup: async (menu) => {
         await menu.waitFor('_root.InitExtensions');
         menu.invoke('_root.InitExtensions');
-        menu.invoke('_root.SetPlatform', 0, false);
+        menu.invoke('_root.SetPlatform', inputPlatform(), false);
         menu.call('setMessageText', pending.text, false);
         // A box with one button closes by Esc (or Tab) as by that button (inferred: the game's
         // single-button boxes close so).

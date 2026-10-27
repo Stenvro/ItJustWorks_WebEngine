@@ -896,6 +896,16 @@ export class MenuHost {
     }
   };
 
+  /**
+   * A gamepad button for the topmost menu, as GFx gives it (src/formats/controlmap/gamepad.ts
+   * menuPadKey: Enter, Tab, the arrows or a GFx gamepad code); false if no menu took it.
+   */
+  pressPadKey(type: 'keyDown' | 'keyHold' | 'keyUp', code: number): boolean {
+    const top = this.#topInteractive();
+    if (!top || top.typing) return false;
+    return top.pressKey(type, code);
+  }
+
   #topInteractive(): Menu | undefined {
     let top: Menu | undefined;
     for (const menu of this.#menus.values()) {
