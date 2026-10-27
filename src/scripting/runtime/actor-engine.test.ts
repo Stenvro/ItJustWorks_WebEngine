@@ -169,3 +169,38 @@ describe("the player's death", () => {
     expect(await actors.isDead(PLAYER_REF)).toBe(true);
   });
 });
+
+describe('vendors', () => {
+  /** A vendor in one faction trading 8–20 near a far-off reference; its package's PKDT flags. */
+  function vendor(hour: number, packageFlags: number | undefined): ActorEngine {
+    const pkdt = new Uint8Array(12);
+    new DataView(pkdt.buffer).setUint32(0, packageFlags ?? 0, true);
+    const record = {
+      type: 'PACK',
+      fields: { first: (sig: string) => (sig === 'PKDT' ? pkdt : undefined) },
+    };
+    const actors = new ActorEngine({
+      state: new GameState(),
+      gameHour: hour,
+      referenceHandle: () => ({}),
+      conditionsHold: () => Promise.resolve(true),
+      currentPackage: () => (packageFlags === undefined ? undefined : 0x500),
+      placement: () => Promise.resolve({ position: [0, 0, 0], world: 1, cell: 2 }),
+      forms: {
+        record: (formId: number) => Promise.resolve(formId === 0x500 ? record : undefined),
+      },
+    } as unknown as ScriptRuntime);
+    actors.factionsOf = () => Promise.resolve(new Map([[0x600, 0]]));
+    actors.faction = () =>
+      Promise.resolve({
+        vendor: { startHour: 8, endHour: 20, radius: 0, location: undefined, conditions: [] },
+      } as never);
+    return actors;
+  }
+
+  it('trade outside their hours while their package offers services (PKDT 0x1)', async () => {
+    expect(await vendor(12, 0).offersServicesNow(0x800)).toBe(true);
+    expect(await vendor(22, 0).offersServicesNow(0x800)).toBe(false);
+    expect(await vendor(22, 0x1).offersServicesNow(0x800)).toBe(true);
+  });
+});

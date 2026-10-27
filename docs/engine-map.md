@@ -65,38 +65,38 @@ These run through every area and explain most of what breaks in play.
 
 ### Scripting, events, world state, audio
 
-| System                      | Status    | Main gaps                                                                                                                                                                           |
-| --------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Form types                  | complete  |                                                                                                                                                                                     |
-| Per-reference state         | partial   | animated state lost on unload, partial souls, alias display names (activate children: done, 158 of 6,527 pairs lie beyond the cells searched; MoveTo on a moving object: done)      |
-| Cell loading                | partial   | no buffered cells, OnAttached/DetachedFromCell not checked, grid follows the camera (detach hours: done)                                                                            |
-| Respawn, cell reset         | partial   | enable state on reset, the actors' own respawn clock, dropped items (reset rule, zones, OnReset, corpses, zone levels: done; vendor restock: done)                                  |
-| Papyrus VM                  | different | natives not frame-synced; threads cannot be saved                                                                                                                                   |
-| Script events               | partial   | not produced: OnAnimationEventUnregistered; 52 of 68 not yet checked in the simulation                                                                                              |
-| Event sources               | partial   | hub kinds without a producer: active effects, perk entries, quest init, scenes, topic infos, loading; 7 sources without a kind; the stats' sources besides kills; resets/traps done |
-| Story manager               | partial   | not raised: Bribe, Flatter, Intimidate, Cure, Infection, Player Gets Favor, Quest Start; most raised types not yet checked in the simulation                                        |
-| Save and load               | partial   | own format (docs/formats/save.md); threads in a native's promise, translations, hazards, projectiles not saved; .ess import (M12)                                                   |
-| Stats, skills, actor values | complete  | tracked-stats event                                                                                                                                                                 |
-| Audio                       | partial   | the skills menu does not call setStatsMenu yet (SMSC mute) (pause categories by DOBJ, sounds held in menus and on the loading screen, Slow Time by DOBJ TSSC: done)                 |
-| Load order, settings        | partial   | plugins.txt and the user's INI files (M12)                                                                                                                                          |
+| System                      | Status    | Main gaps                                                                                                                                                                               |
+| --------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Form types                  | complete  |                                                                                                                                                                                         |
+| Per-reference state         | partial   | animated state lost on unload, partial souls, alias display names (activate children: done, 158 of 6,527 pairs lie beyond the cells searched; MoveTo on a moving object: done)          |
+| Cell loading                | partial   | no buffered cells, OnAttached/DetachedFromCell not checked, grid follows the camera (detach hours: done)                                                                                |
+| Respawn, cell reset         | partial   | enable state on reset, the actors' own respawn clock, dropped items (reset rule, zones, OnReset, corpses, zone levels: done; vendor restock: done)                                      |
+| Papyrus VM                  | different | natives not frame-synced; threads cannot be saved                                                                                                                                       |
+| Script events               | partial   | not produced: OnAnimationEventUnregistered; 52 of 68 not yet checked in the simulation                                                                                                  |
+| Event sources               | partial   | hub kinds without a producer: active effects, perk entries, quest init, scenes, topic infos, loading; 7 sources without a kind; the stats' sources besides kills; resets/traps done     |
+| Story manager               | partial   | most raised types not yet checked in the simulation; the engine's own raise sites of Bribe/Flatter/Intimidate (the counts), Player Gets Favor (SetDoingFavor) and Quest Start's members |
+| Save and load               | partial   | own format (docs/formats/save.md); threads in a native's promise, translations, hazards, projectiles not saved; .ess import (M12)                                                       |
+| Stats, skills, actor values | complete  | tracked-stats event                                                                                                                                                                     |
+| Audio                       | partial   | the skills menu does not call setStatsMenu yet (SMSC mute) (pause categories by DOBJ, sounds held in menus and on the loading screen, Slow Time by DOBJ TSSC: done)                     |
+| Load order, settings        | partial   | plugins.txt and the user's INI files (M12)                                                                                                                                              |
 
 ### AI
 
-| System                       | Status  | Main gaps                                                                                                                    |
-| ---------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| Process levels, budget       | partial | the high-process distance is ours (no setting names it); how the engine shares the budget between its lists                  |
-| Package evaluation           | partial | flags Offers Services 85, Maintain Speed At Goal 62, Continue If PC Near 4, Skip Fallout Behavior 189, Allow Swimming 85     |
-| Procedures                   | partial | engine-only packages (avoid player, react to destroyed object, warnings, get up, surface); Wear Sleep Outfit has no sim case |
-| Sandbox                      | partial | rescan every 3–6 s, the search radius for a place without one, radius hysteresis, eating at the chair it sits on             |
-| Movement, paths              | partial | navmesh obstacles cut approximately (no re-triangulation: M13), no path idles                                                |
-| Avoidance                    | partial | the engine's way round (who is avoided and re-planning are its)                                                              |
-| Detection                    | partial | the light's sum ours (walls keep lights off: done); an Ambush package's own target (Ambush packages: done)                   |
-| Crime                        | partial | NPC crimes, the report rule, alarm reach (actor crimes go to the victim's or its owner's crime faction: done)                |
-| Dialogue                     | partial | Say Once with Reset Hours (61 infos: comes back after them, TODO(M13)); walking off a greeting outside the menu              |
-| Scenes                       | partial | repeat pause (Repeat Conditions While True restarts at once); facing wait limit (3 s ours)                                   |
-| Actors away                  | partial | who keeps a schedule away (ours: persistent actors and those near) and its pace are ours; the place between doors            |
-| Followers, horses, furniture | partial | follow offset and walk zone's built-in value ours; mount from the right; enter by graph event; horse turns to camera         |
-| Head tracking                | partial | candidates' scores and look-ahead ours (player, speaker, mover; along the path: done); package target's look                 |
+| System                       | Status  | Main gaps                                                                                                                                      |
+| ---------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Process levels, budget       | partial | the high-process distance is ours (no setting names it); how the engine shares the budget between its lists                                    |
+| Package evaluation           | partial | ours: Continue If PC Near's reach, the fallout's radius and options (all PKDT flags honoured: src/ai/package-flags.test.ts)                    |
+| Procedures                   | partial | engine-only packages (avoid player, react to destroyed object, warnings, get up, surface); Wear Sleep Outfit has no sim case                   |
+| Sandbox                      | partial | which places the engine gives no radius; extra dialogue range; delay on arrival (rescan, search radius, hysteresis, eating at its chair: done) |
+| Movement, paths              | partial | navmesh obstacles cut approximately (no re-triangulation: M13), no path idles                                                                  |
+| Avoidance                    | partial | the engine's way round (who is avoided and re-planning are its)                                                                                |
+| Detection                    | partial | the light's sum ours (walls keep lights off: done); an Ambush package's own target (Ambush packages: done)                                     |
+| Crime                        | partial | NPC crimes beyond assault; guards that only hear an NPC's alarm; fCrimeAlarmRespMult (NPC assault alarms, guards fight: done)                  |
+| Dialogue                     | partial | Say Once with Reset Hours (61 infos: comes back after them, TODO(M13)); walking off a greeting outside the menu                                |
+| Scenes                       | partial | repeat pause (Repeat Conditions While True restarts at once); facing wait limit (3 s ours)                                                     |
+| Actors away                  | partial | who keeps a schedule away (ours: persistent actors and those near) and its pace are ours; the place between doors                              |
+| Followers, horses, furniture | partial | follow offset and walk zone's built-in value ours; mount from the right; enter by graph event; horse turns to camera                           |
+| Head tracking                | partial | candidates' scores and look-ahead ours (player, speaker, mover; along the path: done); package target's look                                   |
 
 ### Combat
 
@@ -158,7 +158,7 @@ These run through every area and explain most of what breaks in play.
 | Triggers             | partial | projectiles in flight do not enter triggers (rays, no reference yet)            |
 | Constraints          | partial | script-made joints across a cell reload; a census of types                      |
 | Character controller | partial | moving platforms do not carry actors; moving bodies do not push them            |
-| Falling, swimming    | partial | NPCs swim (race Swims); the drowning sound and gasp; Allow Swimming packages    |
+| Falling, swimming    | partial | the drowning sound and gasp (NPCs swim where their package allows: done)        |
 | Water physics        | partial | the splash model; Havok's own buoyancy and drag rule (ours from the data)       |
 | Physics damage       | partial | the listener's damage to destructibles (no vanilla impact reaches it)           |
 | Traps                | partial | hits on actors: done; material, initial flag, cloud traps unchecked             |

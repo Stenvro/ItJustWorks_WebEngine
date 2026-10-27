@@ -1,10 +1,10 @@
-// What a save keeps of the loaded world beside the scripts (src/save/world-save.ts,
+﻿// What a save keeps of the loaded world beside the scripts (src/save/world-save.ts,
 // docs/formats/save.md): saved in a running simulation and loaded into a fresh one, an NPC on
 // its way is still on its package near where it was, one sitting still sits, a scene goes on in
 // its phase, a pulled lever stays pulled.
 //
 // The cases, from the data (Skyrim.esm):
-// - The Bannered Mare [0001605E] at 20:00: its patrons travel, sit and sandbox; its scenes play.
+// - The Bannered Mare [0001605E] at 19:00 (guests travel in for their meal): its patrons travel, sit and sandbox; its scenes play.
 // - BlindCliffCave01 [000152B7]: the wall lever [0008CABC] (ACTI NorLever01, NorLever01SCRIPT),
 //   whose graph goes down as it is pulled and stays there.
 
@@ -29,19 +29,26 @@ describe.skipIf(!hasGamedata())('the world a save keeps (simulation)', () => {
   });
 
   it('keeps an NPC on its way, one seated, a scene in its phase', async () => {
-    const before = await openSim({ interior: BANNERED_MARE, hour: 20 });
+    const before = await openSim({ interior: BANNERED_MARE, hour: 19 });
     sims.push(before);
-    await before.step(8);
-    // One on its way: a Travel whose actor moves.
-    const places = new Map(before.actors().map((actor) => [actor.reference, [...actor.position]]));
-    await before.step(0.5);
-    const walker = before.actors().find((actor) => {
-      const was = places.get(actor.reference);
-      const moved =
-        was !== undefined &&
-        Math.hypot(actor.position[0] - (was[0] ?? 0), actor.position[1] - (was[1] ?? 0)) > 8;
-      return moved && before.package(actor.reference)?.procedure === 'Travel';
-    });
+    await before.step(1);
+    // One on its way: a Travel whose actor moves, looked for over a few seconds since who
+    // walks when follows the packages' timers.
+    let walker: ReturnType<Sim['actors']>[number] | undefined;
+    for (let tries = 0; tries < 120 && walker === undefined; tries++) {
+      const places = new Map(
+        before.actors().map((actor) => [actor.reference, [...actor.position]]),
+      );
+      await before.step(0.5);
+      walker = before.actors().find((actor) => {
+        const was = places.get(actor.reference);
+        const moved =
+          was !== undefined &&
+          Math.hypot(actor.position[0] - (was[0] ?? 0), actor.position[1] - (was[1] ?? 0)) > 8;
+        const procedure = before.package(actor.reference)?.procedure;
+        return moved && procedure === 'Travel';
+      });
+    }
     expect(walker).toBeDefined();
     const walkerRef = walker?.reference ?? 0;
     const walkerPackage = before.package(walkerRef)?.id;

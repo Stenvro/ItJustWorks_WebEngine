@@ -1395,13 +1395,18 @@ export class MagicEngine {
     cures: (item: MagicItemRecord) => boolean,
     spells = false,
   ): Promise<void> {
+    const cured = new Set<number>();
     for (const [key, entry] of this.effectsOn(target)) {
       const item = entry.item === undefined ? undefined : await this.item(entry.item);
       if (!item || !cures(item)) continue;
       if (spells && item.type === 'SPEL')
         await this.#runtime.actors.removeSpell(target, item.formId);
       await this.end(key);
+      if (item.kind === 'disease') cured.add(item.formId);
     }
+    // The player's diseases cured: the story manager's Player Cured (CURE), one each.
+    if (target !== PLAYER_REF) return;
+    for (const disease of cured) this.#runtime.detach(this.#runtime.storyEvents.cure(disease));
   }
 
   /** Summon Creature: its creature at the summoner's side, commanded by it while it lasts. */
@@ -1778,9 +1783,10 @@ export class MagicEngine {
   /**
    * A disease caught (a diseased creature's hit: src/shell/actor-combat.ts): unless the target's Disease
    * Resistance resists it (its percentage as a chance), it has the disease from now on (a
-   * spell it has, until cured). True if it caught it.
+   * spell it has, until cured). True if it caught it. The player catching one (from `carrier`):
+   * the story manager's Player Infected (INFC).
    */
-  async contractDisease(target: number, disease: number): Promise<boolean> {
+  async contractDisease(target: number, disease: number, carrier?: number): Promise<boolean> {
     const runtime = this.#runtime;
     const item = await this.item(disease);
     if (item?.kind !== 'disease' || (await runtime.actors.hasSpell(target, disease))) return false;
@@ -1796,6 +1802,7 @@ export class MagicEngine {
       return false;
     await runtime.actors.addSpell(target, disease);
     await this.syncLasting(target);
+    if (target === PLAYER_REF) runtime.detach(runtime.storyEvents.infection(carrier, disease));
     return true;
   }
 
