@@ -106,8 +106,11 @@ export async function loadSim(
   const player = save.player;
   const arrival: Arrival = { position: player.position, heading: player.rotation[2] };
   const db = sim.db;
-  const interior = player.cell !== undefined && db.worldOfCell(player.cell) === undefined;
-  if (interior && player.cell !== undefined) await world.openInterior(player.cell, arrival);
+  const interior =
+    player.cell !== undefined && db.worldOfCell(player.cell) === undefined
+      ? player.cell
+      : undefined;
+  if (interior !== undefined) await world.openInterior(interior, arrival);
   else if (player.world !== undefined) await world.openExterior(player.world, { arrival });
   if (save.weather !== undefined)
     world.runtime.world.setWeather?.(save.weather, true, false, false);

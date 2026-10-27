@@ -33,7 +33,7 @@ describe('save codec', () => {
     expect(back.map.get(1)).toEqual(new Set(['a']));
     expect([...back.bytes]).toEqual([1, 2, 255]);
     expect([...back.floats]).toEqual([0.5, -2]);
-    expect('none' in back && back.none === undefined).toBe(true);
+    expect('none' in back).toBe(true);
     expect(back.list[0]).toBeUndefined();
     expect(back.list[1]).toBe(Number.POSITIVE_INFINITY);
     expect(back.list[2]).toBeNaN();

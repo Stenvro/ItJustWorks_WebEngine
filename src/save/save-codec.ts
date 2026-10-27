@@ -115,9 +115,9 @@ export function encodeValue(value: unknown, where = '$'): Json {
   if (typeof value === 'object') {
     const prototype: unknown = Object.getPrototypeOf(value);
     if (prototype !== Object.prototype && prototype !== null) {
-      throw new Error(`save: ${where} is a ${(value as object).constructor.name}`);
+      throw new Error(`save: ${where} is a ${value.constructor.name}`);
     }
-    const out: { [key: string]: Json } = {};
+    const out: Record<string, Json> = {};
     for (const [key, item] of Object.entries(value)) {
       out[key] = encodeValue(item, `${where}.${key}`);
     }
@@ -130,7 +130,7 @@ export function encodeValue(value: unknown, where = '$'): Json {
 export function decodeValue(json: unknown): unknown {
   if (json === null || typeof json !== 'object') return json;
   if (Array.isArray(json)) return json.map(decodeValue);
-  const tagged = json as { [key: string]: unknown };
+  const tagged = json as Record<string, unknown>;
   if ('$u' in tagged) return undefined;
   if ('$n' in tagged) return Number(tagged.$n);
   if ('$b' in tagged) return BigInt(String(tagged.$b));
@@ -153,8 +153,8 @@ export function decodeValue(json: unknown): unknown {
     const copy = new Uint8Array(bytes);
     return new type(copy.buffer, 0, copy.byteLength / type.BYTES_PER_ELEMENT);
   }
-  const plain = '$o' in tagged ? (tagged.$o as { [key: string]: unknown }) : tagged;
-  const out: { [key: string]: unknown } = {};
+  const plain = '$o' in tagged ? (tagged.$o as Record<string, unknown>) : tagged;
+  const out: Record<string, unknown> = {};
   for (const [key, item] of Object.entries(plain)) out[key] = decodeValue(item);
   return out;
 }
