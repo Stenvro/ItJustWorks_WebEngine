@@ -4,8 +4,9 @@
 // Movement, FindAttackLocation, UseCover, Hide, DodgeThreat, CheckUnreachableTarget, ExitWater,
 // ReturnToCombatArea, LowCombat, ...}). Here it is data for the runtime in behaviour-tree.ts:
 //
-// - Combat, the root: Dodge Threat first (a dodge stops the rest while it runs), else, side by
-//   side, the equipment's actions, the movement priority list and the taunts.
+// - Combat, the root: Flee while it flees (Flee To Ally, away, cower; back to the fight once
+//   cornered), else Dodge Threat (a dodge stops the rest while it runs), else, side by side, the
+//   equipment's actions, the movement priority list and the taunts.
 // - Equipment (Action Equipment Selector): one subtree per slot that holds something, in
 //   parallel: the right hand (Melee, Ranged or Magic), the left hand (Magic, or a weapon's left
 //   attacks), shield and weapon (Block), spell and weapon (the left hand's Magic beside a
@@ -51,6 +52,7 @@ export const COMBAT_VALUES = [
   'mayChooseRun',
   // Melee.
   'mayAttack',
+  'mayAttackLeft',
   'specialAttackChance',
   // Ranged.
   'shotHeld',
@@ -61,8 +63,11 @@ export const COMBAT_VALUES = [
   'rangedUnready',
   // Magic and shouts.
   'mayCast',
+  'mayCastLeft',
   'concentration',
   'castChance',
+  'castChanceLeft',
+  'dualCastChance',
   'mayShout',
   // Block.
   'blocking',
@@ -70,6 +75,12 @@ export const COMBAT_VALUES = [
   'blowComing',
   'blockChance',
   'blockAttackChance',
+  'mayBlockAttack',
+  // Flee.
+  'fleeing',
+  'cornered',
+  'fleeSafe',
+  'allyNear',
   // Support.
   'maySupport',
   // The style's movement chances.
@@ -118,6 +129,7 @@ export const COMBAT_ACTIONS = [
   'bash',
   'powerBash',
   'specialAttack',
+  'offensiveBash',
   'leftAttack',
   // Ranged.
   'drawShot',
@@ -134,7 +146,15 @@ export const COMBAT_ACTIONS = [
   'noteBlow',
   'block',
   'releaseBlock',
+  'noteBlockAttack',
   'blockAttack',
+  'holdBlock',
+  // Flee.
+  'fightCornered',
+  'stopFleeing',
+  'fleeToAlly',
+  'fleeAway',
+  'cower',
   // Support, voice.
   'support',
   'taunt',
@@ -149,6 +169,7 @@ export const AttackPick = {
   bash: 2,
   powerBash: 3,
   special: 4,
+  offensiveBash: 5,
 } as const;
 
 const v = (value: CombatValue): Expr => ({ value });
@@ -212,6 +233,7 @@ function melee(): NodeSpec {
           act('bash'),
           act('powerBash'),
           act('specialAttack'),
+          act('offensiveBash'),
         ],
       }),
     ),
@@ -221,24 +243,44 @@ function melee(): NodeSpec {
 
 /** A hand's spell: a concentration spell held, else an immediate one, by its cast chance. */
 function magic(hand: 'castRight' | 'castLeft'): NodeSpec {
+  const left = hand === 'castLeft';
+  const castChance = v(left ? 'castChanceLeft' : 'castChance');
   return seq(
-    test(v('mayCast')),
+    test(v(left ? 'mayCastLeft' : 'mayCast')),
     ok(
       first(
-        seq(test(v('dualCast')), act('prepareDualCast')),
-        seq(test(v('concentration')), chance(v('castChance'), act('castConcentration'))),
-        chance(v('castChance'), act(hand)),
+        ...(left
+          ? []
+          : [seq(test(v('concentration')), chance(castChance, act('castConcentration')))]),
+        chance(castChance, act(hand)),
       ),
     ),
     { node: 'idle', seconds: v('attackIdle') },
   );
 }
 
+/**
+ * Dual: one spell in both hands, dual cast by fCombatMagicDualCastChance, else cast single by its
+ * cast chance (the right hand's Magic gives way to it).
+ */
+const DUAL: NodeSpec = seq(
+  test(v('mayCast')),
+  ok(
+    first(
+      chance(v('dualCastChance'), act('prepareDualCast')),
+      chance(v('castChance'), act('castRight')),
+    ),
+  ),
+  { node: 'idle', seconds: v('attackIdle') },
+);
+
 /** The combat tree's subtrees, by name. */
 export const COMBAT_TREES: Readonly<Record<string, NodeSpec>> = {
   Combat: {
     node: 'dynamicSelector',
     children: [
+      // Fleeing (its strength ratio below its confidence's: combat-ai.ts shouldFlee).
+      watch(v('fleeing'), link('Flee')),
       link('DodgeThreat'),
       {
         node: 'spawnParallel',
@@ -252,11 +294,11 @@ export const COMBAT_TREES: Readonly<Record<string, NodeSpec>> = {
     slots: [
       { slot: 'right', when: v('rightMelee'), child: link('Melee') },
       { slot: 'right', when: v('rightBow'), child: link('Ranged') },
-      { slot: 'right', when: v('rightMagic'), child: link('Magic') },
+      { slot: 'right', when: and(v('rightMagic'), not(v('dualCast'))), child: link('Magic') },
       {
         slot: 'left',
         when: and(v('leftWeapon'), not(v('leftShield'))),
-        child: seq(test(v('mayAttack')), act('leftAttack'), {
+        child: seq(test(v('mayAttackLeft')), act('leftAttack'), {
           node: 'idle',
           seconds: v('attackIdle'),
         }),
@@ -272,7 +314,11 @@ export const COMBAT_TREES: Readonly<Record<string, NodeSpec>> = {
         when: and(v('leftMagic'), v('rightMelee')),
         child: link('MagicLeft'),
       },
-      { slot: 'dual', when: v('dualCast'), child: act('prepareDualCast') },
+      {
+        slot: 'dual',
+        when: v('dualCast'),
+        child: { node: 'context', context: 'magic', child: DUAL },
+      },
       { slot: 'voice', when: v('voiceShout'), child: link('Shout') },
       { slot: 'potion', when: true, child: link('UsePotion') },
     ],
@@ -306,13 +352,35 @@ export const COMBAT_TREES: Readonly<Record<string, NodeSpec>> = {
     node: 'context',
     context: 'block',
     child: first(
-      // Blocking: held until the blow is over or its block time ran out.
+      // Blocking: held (sustained while its target stays near) until its block time ran out or
+      // its target is gone or backs off; meanwhile the block attack, the shield bash out of the
+      // block, by its block attack chance once per opening.
       seq(
         test(v('blocking')),
-        first(seq(test(v('blockOver')), act('releaseBlock')), ok(act('blockAttack'))),
+        first(
+          seq(test(v('blockOver')), act('releaseBlock')),
+          seq(
+            test(v('mayBlockAttack')),
+            act('noteBlockAttack'),
+            chance(v('blockAttackChance'), act('blockAttack')),
+          ),
+          ok(act('holdBlock')),
+        ),
       ),
       // A blow coming: blocked by its block chance (each blow weighed once).
       seq(test(v('blowComing')), act('noteBlow'), chance(v('blockChance'), act('block'))),
+    ),
+  },
+  // Flee (CombatBehaviorContextFlee): back to the fight once cornered, done once safe; else to an
+  // ally fCombatFleeAllyDistanceMin .. Max away, else away from its enemy, else it cowers.
+  // TODO(M13): Flee To Cover (fCombatFleeCover*) and Flee Through Door (fCombatFleeUseDoorChance).
+  Flee: {
+    node: 'context',
+    context: 'flee',
+    child: pick(
+      watch(v('cornered'), act('fightCornered')),
+      watch(v('fleeSafe'), act('stopFleeing')),
+      first(when(v('allyNear'), act('fleeToAlly')), act('fleeAway'), act('cower')),
     ),
   },
   UsePotion: seq(test(v('maySupport')), act('support')),
