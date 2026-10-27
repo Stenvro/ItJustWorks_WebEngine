@@ -210,6 +210,31 @@ Swimming and the sound under water test where water can be entered
 ([nif.md](formats/nif.md#water-volumes)), and the cell's water plane where it lies above the
 landscape (no bottom). Water without a volume is only seen and heard.
 
+## Water
+
+`src/physics/water-physics.ts`, one step hook of the play (`PlaySession.water`). Our rules where
+the engine's are not documented (TODO(M13)):
+
+- **Buoyancy.** A simulated body is lifted by (1 + b) × ρ × V × s × g: b its material's buoyancy
+  (MATT BNAM, −1 .. 1: stone and metal −1, Wood 0.25, Light Wood and baskets 0.5, a book 1), V
+  its volume with the shapes' convex radius (Rapier's volume leaves it out: a log's hull of
+  0.011 m³ is 0.025 m³ with its 2.5-unit shell), s its share under the surface (taken as a cube
+  of its volume round its centre of mass), ρ 1000 kg/m³. It floats where that meets its weight
+  (s = m / ((1 + b) ρ V)), else sinks. Ragdoll bones take `fBuoyancyMultBody` (1) for the trunk
+  and the head, `fBuoyancyMultExtremity` (−0.3) for the limbs.
+- **Current.** The water drags what is in it towards its velocity at 1.5/s × s (2/s for the
+  spin), which also damps the bobbing. A type's velocity is WATR NAM0/NAM1 (Havok units/s; 35 of
+  the 58 vanilla types). Types with Enable Flowmap (RiverWaterFlow: Riverwood's river) flow
+  along their cell's flow map (`src/world/flow-map.ts`) at 160 units/s. The map's R/G direction
+  is smooth across the river; its alpha is striped from texel to texel, so the physics leaves it
+  out.
+- **Splashes.** A body or an actor coming into the water downwards, or out of it upwards,
+  splashes by its vertical speed × `fSplashSoundVelocityMult` (× `fSplashSoundOutMult` coming out)
+  against `fSplashSoundLight` / `Medium` / `Heavy` (5, 25, 50), at most once per
+  `fSplashSoundTimer`. The sound is its material's impact against the water's material (WATR
+  TNAM, else Water) through the impact sounds. TODO(M13): the model (`sSplashParticles` at
+  `fSplashScale1..3`) is not shown yet.
+
 ## The character controller
 
 The engine's controller shape (hkCharControllerShape) is a convex hull of two rings of eight

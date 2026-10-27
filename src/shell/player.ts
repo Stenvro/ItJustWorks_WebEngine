@@ -46,10 +46,19 @@ import {
 import type { Vfs } from '../vfs/vfs.ts';
 import type { GameSettings } from '../world/game-settings.ts';
 import { IniSettings, type IniOverrides } from '../world/ini-settings.ts';
-import { MaterialFlag, parseMaterialType } from '../world/material-type.ts';
+import { MaterialFlag, materialId, parseMaterialType } from '../world/material-type.ts';
 import { directionalSpeed, parseMovementType, type MovementType } from '../world/movement.ts';
 import { readPlayerBody, type PlayerBody } from '../world/player-body.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
+import { parseWaterBody } from '../world/water.ts';
+import type { WaterHarm } from '../gameplay/water-hazard.ts';
+import { floatSpeed, submersion, SWIM_SUBMERSION, swims } from '../gameplay/swimming.ts';
+import {
+  SPLASH_DEFAULTS,
+  WATER_RULE_DEFAULTS,
+  type SplashSettings,
+  type WaterRules,
+} from '../physics/water-physics.ts';
 
 /** The movement types the player moves with (the behavior graph's states). */
 export interface PlayerMovement {
@@ -88,6 +97,28 @@ export interface PlayerData {
   readonly stairMaterials: ReadonlySet<number>;
   /** The flags of every material type (MATT FNAM) by material id. */
   readonly materialFlags: ReadonlyMap<number, number>;
+  /** What water does to bodies (src/physics/water-physics.ts): currents, buoyancy, splashes. */
+  readonly water: WaterRules;
+}
+
+/** The water physics' settings: GMSTs where the plugins set them, else the engine's values. */
+function splashSettings(settings: GameSettings): SplashSettings {
+  const d = SPLASH_DEFAULTS;
+  const n = (name: string, fallback: number): number => settings.number(name) ?? fallback;
+  return {
+    light: n('fSplashSoundLight', d.light),
+    medium: n('fSplashSoundMedium', d.medium),
+    heavy: n('fSplashSoundHeavy', d.heavy),
+    timer: n('fSplashSoundTimer', d.timer),
+    velocityMult: n('fSplashSoundVelocityMult', d.velocityMult),
+    outMult: n('fSplashSoundOutMult', d.outMult),
+    model: settings.string('sSplashParticles') ?? d.model,
+    scales: [
+      n('fSplashScale1', d.scales[0]),
+      n('fSplashScale2', d.scales[1]),
+      n('fSplashScale3', d.scales[2]),
+    ],
+  };
 }
 
 /** The keyboard, mouse and gamepad bindings. */
@@ -121,18 +152,54 @@ export async function readPlayerData(
   // Stair materials: what the character controller climbs as stairs.
   const stairMaterials = new Set<number>();
   const materialFlags = new Map<number, number>();
+  const buoyancy = new Map<number, number>();
+  const materialOfForm = new Map<number, number>();
   for (const formId of db.formIdsOfType('MATT')) {
     const record = await db.get(formId);
     if (!record || record.deleted) continue;
     const material = parseMaterialType(record);
     materialFlags.set(material.id, material.flags);
+    buoyancy.set(material.id, material.buoyancy);
+    materialOfForm.set(material.formId, material.id);
     if ((material.flags & MaterialFlag.stairs) !== 0) stairMaterials.add(material.id);
+  }
+  // The water types' currents, damage and spells (water-physics.ts, water-hazard.ts).
+  const currents = new Map<number, { linear: Vec3; angular: Vec3 }>();
+  const harms = new Map<number, WaterHarm>();
+  const waterMaterials = new Map<number, number>();
+  const flowmapTypes = new Set<number>();
+  for (const formId of db.formIdsOfType('WATR')) {
+    const record = await db.get(formId);
+    if (!record || record.deleted) continue;
+    const water = parseWaterBody(record);
+    if (water.spell !== undefined || (water.causesDamage && water.damagePerSecond > 0))
+      harms.set(formId, water);
+    if (water.flowmap) flowmapTypes.add(formId);
+    const own = water.material === undefined ? undefined : materialOfForm.get(water.material);
+    if (own !== undefined) waterMaterials.set(formId, own);
+    if (water.linearVelocity.some((v) => v !== 0) || water.angularVelocity.some((v) => v !== 0))
+      currents.set(formId, {
+        linear: [...water.linearVelocity],
+        angular: [...water.angularVelocity],
+      });
   }
   const controls = parseControlMap(decodeWindows1252(controlText));
   return {
     body,
     stairMaterials,
     materialFlags,
+    water: {
+      currents,
+      buoyancy,
+      ragdollBody: settings.number('fBuoyancyMultBody') ?? WATER_RULE_DEFAULTS.ragdollBody,
+      ragdollExtremity:
+        settings.number('fBuoyancyMultExtremity') ?? WATER_RULE_DEFAULTS.ragdollExtremity,
+      splash: splashSettings(settings),
+      waterMaterials,
+      waterMaterial: materialId('Water'),
+      harms,
+      flowmapTypes,
+    },
     ini: new IniSettings(vfs.defaultIni, preferences),
     baseControls: controls,
     controls,
@@ -236,13 +303,8 @@ export interface PlayerSetup extends PlayerData {
   readonly waterHeight: (x: number, y: number, z: number) => number | undefined;
 }
 
-/**
- * Submersion (water depth over the body's height) at which an actor swims, and the depth it
- * floats at: the shoulders. Not documented; measured in game by the author of "Wade In Water".
- */
 /** How fast the bow's zoom eases in and out (per second). */
 const BOW_ZOOM_RATE = 8;
-const SWIM_SUBMERSION = 0.69;
 /**
  * The highest stair stepped up on stair materials. How the engine climbs them is not
  * documented. The treads of the 330 vanilla stair collision meshes rise mostly 24 or 16 units,
@@ -403,7 +465,21 @@ export class Player implements Camera {
   /** The player landed after falling this far (units): falling damage. */
   onLanded: ((height: number) => void) | undefined;
   /** Each step: how deep the player is in water (its share of their height, 0..1): breath. */
-  onSubmersion: ((submersion: number, seconds: number) => void) | undefined;
+  onSubmersion:
+    | ((
+        submersion: number,
+        seconds: number,
+        water?: { readonly type: number; readonly harm: WaterHarm | undefined },
+      ) => void)
+    | undefined;
+  /** The water type at a point and its harm (water-hazard.ts), if the play has water. */
+  waterOf:
+    | ((
+        x: number,
+        y: number,
+        z: number,
+      ) => { readonly type: number; readonly harm: WaterHarm | undefined } | undefined)
+    | undefined;
   /** The bow's zoom asked for (the field of view's factor: Mod Bow Zoom), and as eased now. */
   bowZoom = 1;
   #bowZoom = 1;
@@ -882,12 +958,11 @@ export class Player implements Camera {
     // Swimming: deep enough water lifts the body.
     const [fx, fy, fz] = character.feet;
     const water = this.#setup.waterHeight(fx, fy, fz);
-    const depth = water === undefined ? 0 : (water - fz) / character.shape.height;
-    const swimming =
-      depth >= SWIM_SUBMERSION || (character.swimming && depth > SWIM_SUBMERSION - 0.05);
+    const depth = submersion(fz, character.shape.height, water);
+    const swimming = swims(depth, character.swimming);
     character.swimming = swimming;
     if (swimming) this.sneaking = false;
-    this.onSubmersion?.(Math.min(1, Math.max(0, depth)), seconds);
+    this.onSubmersion?.(depth, seconds, depth > 0 ? this.waterOf?.(fx, fy, fz) : undefined);
     // "Run" walks while always-run is on, runs while it is off; over-encumbered, one walks.
     // Piloted, the package's gait.
     const burdened = (this.overEncumbered?.() ?? false) || (this.holdingHeavy?.() ?? false);
@@ -937,12 +1012,17 @@ export class Player implements Camera {
       const diving = moving && y > 0 && (this.pitch < DIVE_PITCH || fz < surface - 1);
       const vertical = diving ? Math.sin(this.pitch) * speed : 0;
       // Rising and sinking to the surface goes at most at swimming speed, also when idle.
-      const rate = movement.swim.run.forward;
-      const float = Math.max(-rate, Math.min(rate, (surface - fz) / Math.max(seconds, 1e-3)));
       // Wading out: the shore lifts the body above the swimming depth; the water does not
       // pull it back down.
-      const floatSpeed = fz > surface && character.supported ? 0 : float;
-      character.verticalSpeed = diving ? Math.min(vertical, floatSpeed) : floatSpeed;
+      const rising = floatSpeed(
+        fz,
+        character.shape.height,
+        water,
+        movement.swim.run.forward,
+        seconds,
+        character.supported,
+      );
+      character.verticalSpeed = diving ? Math.min(vertical, rising) : rising;
     } else if (jump && !sprinting && character.grounded) {
       if (this.jumpTrigger) this.jumpTrigger(moving);
       else this.launchJump();

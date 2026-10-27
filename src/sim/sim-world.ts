@@ -78,6 +78,7 @@ import {
   NEAREST_TOLERANCE,
 } from '../world/navmesh.ts';
 import { cellWater } from '../world/water.ts';
+import { FlowMaps, waterPlugin } from '../world/flow-map.ts';
 import { surfaceOver, waterVolumes, type WaterVolume } from '../world/water-volumes.ts';
 import { weatherRegionAt } from '../world/sky-weather.ts';
 import { parseClimate } from '../world/weather.ts';
@@ -985,6 +986,8 @@ export class SimWorld {
     const play = new PlaySession({
       physics,
       player,
+      waterAt: (x, y, z) => this.#waterAt(x, y, z),
+      waterRules: playerData.water,
       camera: new FlyCamera(),
       groundReady: (at) => this.#groundReady(at),
       searchAbove,
@@ -1009,6 +1012,16 @@ export class SimWorld {
     });
     this.#play = play;
     this.stage.attachPlay(play);
+    // Rivers carry what floats along their cells' flow maps.
+    const flows = new FlowMaps((path) =>
+      session.vfs.has(path) ? session.vfs.read(path) : Promise.resolve(undefined),
+    );
+    if (play.water) {
+      play.water.flowAt = (x, y) => {
+        const place = this.#place;
+        return place?.kind === 'exterior' ? flows.at(waterPlugin(place.world), x, y) : undefined;
+      };
+    }
     play.onTrigger = (reference, entered) => {
       this.runtime.triggered(reference, PLAYER_REF, entered);
     };
