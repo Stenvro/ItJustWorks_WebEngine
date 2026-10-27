@@ -3,6 +3,7 @@ import {
   avoid,
   avoidance,
   avoidanceNeighbours,
+  givesWay,
   type Avoider,
   type Neighbour,
 } from './avoidance.ts';
@@ -79,5 +80,17 @@ describe('whom it goes round', () => {
     const ahead = standing(0, 60);
     expect(avoidance(walker, [ahead]).blocker).toBe(ahead);
     expect(avoidance(walker, [standing(0, -60)]).blocker).toBeUndefined();
+  });
+});
+
+describe('two on their way into each other', () => {
+  it('has exactly one give way, whichever asks: the slower gait, else the lower reference', () => {
+    const walking = { reference: 0x20, gait: 0 };
+    const running = { reference: 0x10, gait: 1 };
+    expect(givesWay(walking, running)).toBe(walking);
+    expect(givesWay(running, walking)).toBe(walking);
+    const other = { reference: 0x30, gait: 0 };
+    expect(givesWay(walking, other)).toBe(walking);
+    expect(givesWay(other, walking)).toBe(walking);
   });
 });

@@ -101,6 +101,25 @@ export function avoidance<N extends Neighbour>(
   };
 }
 
+/** Two actors on their way that keep each other from going on: who gives way. */
+export interface WayGiver {
+  readonly reference: number;
+  /** Its gait's rank: walk 0, run 1, sprint 2. */
+  readonly gait: number;
+}
+
+/**
+ * Of two actors on their way into each other (a narrow way, neither able to go round), the one
+ * that gives way: the slower gait, else the lower reference (always the same one of a pair,
+ * whichever of the two asks). The engine lays no avoid node for an actor that moves (observed in
+ * the original), so going round a moving one does not part them. TODO(M13): the engine's own rule for
+ * who yields is not read; this one only ensures one of the two does.
+ */
+export function givesWay<A extends WayGiver>(a: A, b: A): A {
+  if (a.gait !== b.gait) return a.gait < b.gait ? a : b;
+  return a.reference < b.reference ? a : b;
+}
+
 /** The INI's avoidance settings ([Pathfinding]). */
 export interface AvoidanceSettings {
   /** iMaxActorsToAvoid: at most this many are gone round (the engine: at most 32). */
