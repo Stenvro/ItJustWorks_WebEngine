@@ -1957,8 +1957,14 @@ export class MagicEngine {
     const center = runtime.world.livePlacement?.(entry.target)?.position;
     if (!spell || !center) return;
     const radius = entry.magnitude * UNITS_PER_FOOT;
+    // The cloak's spell reaches an actor anew only once the last it put there has ended (its
+    // pulse: a lasting burn is not restarted every interval).
+    const holding = new Set<number>();
+    for (const [key, other] of runtime.state.activeEffects)
+      if (other.item === spell.formId && other.caster === entry.target && !this.#ending.has(key))
+        holding.add(other.target);
     for (const reference of runtime.world.loadedReferences?.() ?? []) {
-      if (reference === entry.target) continue;
+      if (reference === entry.target || holding.has(reference)) continue;
       const at = runtime.world.livePlacement?.(reference)?.position;
       if (!at || Math.hypot(at[0] - center[0], at[1] - center[1], at[2] - center[2]) > radius)
         continue;
