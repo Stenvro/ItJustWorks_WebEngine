@@ -642,6 +642,26 @@ export class RecordDatabase {
     return [...references];
   }
 
+  /**
+   * Form ids of every persistent actor reference of the load order (ACHR records in a cell's
+   * persistent children: an interior's, a worldspace's persistent cell), found from the plugins'
+   * indexes without reading a record.
+   */
+  persistentActors(): number[] {
+    const achr = fourCCToInt('ACHR');
+    const found = new Set<number>();
+    for (const plugin of this.plugins) {
+      const { index } = plugin;
+      for (let record = 0; record < index.recordCount; record++) {
+        if (index.types[record] !== achr) continue;
+        const group = (index.parentGroups[record] ?? 0) - 1;
+        if (group < 0 || index.groupTypes[group] !== GroupType.cellPersistentChildren) continue;
+        found.add(this.toGlobal(plugin, index.formIds[record] ?? 0));
+      }
+    }
+    return [...found];
+  }
+
   async close(): Promise<void> {
     await Promise.all(
       this.plugins.map(async (plugin) => {
