@@ -23,6 +23,7 @@ import {
   summonDistance,
   TARGET_VALUES,
 } from '../../../src/gameplay/magic/effect-rules.ts';
+import { invisibilityVeil } from '../../../src/gameplay/magic/invisibility.ts';
 import { sticksAsLight } from '../../../src/gameplay/magic/projectile-flight.ts';
 import {
   telekinesisDamage,
@@ -140,6 +141,13 @@ describe('wards, summons, telekinesis', () => {
     expect(sticksAsLight(EffectArchetype.valueModifier, 'surface')).toBe(false);
   });
 
+  it('veils an invisible actor all but its least refraction, the player all but 0.1', () => {
+    expect(invisibilityVeil(false, true)).toBe(0);
+    expect(invisibilityVeil(true, false)).toBeCloseTo(0.99, 9);
+    // fMagicPlayerMinimumInvisibility: the player stays drawn at 0.1 at least.
+    expect(invisibilityVeil(true, true)).toBeCloseTo(0.9, 9);
+  });
+
   it('hurts with a thrown object by fMagicTelekinesisDamageBase (5) × the throw’s multiplier', () => {
     expect(telekinesisDamage(0, telekinesisDamageMult(false))).toBe(5);
     // Dual cast: × fMagicTelekinesisDualCastDamageMult (2).
@@ -182,9 +190,7 @@ describe.skipIf(!hasGamedata())('a cloak’s pulse (sim)', () => {
 
 describe('what the original’s archetypes do that ours do not yet', () => {
   it.todo('Light (Magelight): how many stay at once, and on a moving object it struck');
-  it.todo(
-    'Invisibility: the actor is drawn with the invisibility look (fMagicPlayerMinimumInvisibility)',
-  );
+  it.todo('Invisibility: the refraction shimmer through the actor (ours dithers it away)');
   it.todo('Summon Creature: the engine’s search for another place when the way ahead is blocked');
   it.todo('Dispel: the engine’s rule for what it ends (fMagicDispelMagnitudeMult 5)');
   it.todo('Darkness, Night Eye: the image space and fMagicNightEyeAmbient (0.75)');
