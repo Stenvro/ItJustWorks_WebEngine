@@ -152,18 +152,18 @@ These run through every area and explain most of what breaks in play.
 
 ### Physics
 
-| System               | Status  | Main gaps                                                                      |
-| -------------------- | ------- | ------------------------------------------------------------------------------ |
-| World, time step     | partial | the step under Slow Time; objects placed into what they lie on fall through it |
-| Triggers             | partial | only actors enter triggers (L_TRIGGER takes 14 layers): layers unchecked       |
-| Constraints          | partial | script-made constraints (hanged corpses, hanging keys); a census of types      |
-| Character controller | partial | moving platforms do not carry actors; moving bodies do not push them           |
-| Falling, swimming    | partial | NPCs swim (race Swims); the drowning sound and gasp; Allow Swimming packages   |
-| Water physics        | partial | the splash model; Havok's own buoyancy and drag rule (ours from the data)      |
-| Physics damage       | partial | the listener's damage to destructibles (no vanilla impact reaches it)          |
-| Traps                | partial | hits on actors: done; material, initial flag, cloud traps unchecked            |
-| Gameplay impulses    | partial | arrows, spells, blows and shouts do not move clutter                           |
-| Persistence          | partial | animated objects and corpses; pushes without a script unchecked                |
+| System               | Status  | Main gaps                                                                       |
+| -------------------- | ------- | ------------------------------------------------------------------------------- |
+| World, time step     | partial | objects placed into what they lie on fall through it                            |
+| Triggers             | partial | projectiles in flight do not enter triggers (rays, no reference yet)            |
+| Constraints          | partial | script-made joints across a cell reload; a census of types                      |
+| Character controller | partial | moving platforms do not carry actors; moving bodies do not push them            |
+| Falling, swimming    | partial | NPCs swim (race Swims); the drowning sound and gasp; Allow Swimming packages    |
+| Water physics        | partial | the splash model; Havok's own buoyancy and drag rule (ours from the data)       |
+| Physics damage       | partial | the listener's damage to destructibles (no vanilla impact reaches it)           |
+| Traps                | partial | hits on actors: done; material, initial flag, cloud traps unchecked             |
+| Gameplay impulses    | partial | the rules from settings, not read from the engine (TODO(M13)); ragdoll hit time |
+| Persistence          | partial | animated objects and corpses; pushes without a script unchecked                 |
 
 ### Rendering and camera
 

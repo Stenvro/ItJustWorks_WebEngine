@@ -1036,6 +1036,9 @@ export class SimWorld {
     play.onTrigger = (reference, entered) => {
       this.runtime.triggered(reference, PLAYER_REF, entered);
     };
+    play.onObjectTrigger = (trigger, object, entered) => {
+      this.runtime.triggered(trigger, object, entered);
+    };
     play.onTrapTouch = (touching) => {
       this.runtime.trapHits.touching(PLAYER_REF, touching);
     };
