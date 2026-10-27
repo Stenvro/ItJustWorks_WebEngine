@@ -225,6 +225,8 @@ export interface GameEvents {
   };
   /** The player's wait started or stopped (TESWaitStartEvent, TESWaitStopEvent). */
   wait: { readonly started: boolean; readonly interrupted: boolean };
+  /** The player learned a word of power new to them (Game.TeachWord: the HUD's notice). */
+  wordLearned: { readonly word: number };
 }
 
 export type GameEventKind = keyof GameEvents;

@@ -183,14 +183,14 @@ These run through every area and explain most of what breaks in play.
 
 ### UI
 
-| System                         | Status  | Main gaps                                                                                                                                                               |
-| ------------------------------ | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Menu manager                   | partial | named menu stack, saving permission, a UI API for mods                                                                                                                  |
-| HUD                            | partial | HUD modes (book, map, crafting hide the HUD and lose notices), word of power and dragon soul notices, dungeon cleared, floating quest markers, meter fades, arrow count |
-| Locations cleared, misc stats  | partial | clearing rule, Dungeons Cleared, the maps' Cleared: done; about 34 stats never counted                                                                                  |
-| Input                          | partial | menu contexts read the default keys; no gamepad                                                                                                                         |
-| Console                        | partial | about 25 of about 330 commands; no selection by click                                                                                                                   |
-| Tutorials, loading, map, stats | partial | low-stat tutorials, map relief overlay, beast perk trees, Survival HUD                                                                                                  |
+| System                         | Status  | Main gaps                                                                                                                                                            |
+| ------------------------------ | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Menu manager                   | partial | named stack with IMenu flags, saving permission, UI.IsMenuOpen and mod menus: done; SKSE's other UI natives, menu events to scripts (RegisterForMenu)                |
+| HUD                            | partial | modes per menu, held notices, word/soul/cleared notices, floating marker, meter keep, arrow count: done; the marker's bound height, lockpicking's notices (TODO M13) |
+| Locations cleared, misc stats  | partial | clearing rule, Dungeons Cleared, the maps' Cleared: done; about 34 stats never counted                                                                               |
+| Input                          | partial | menu contexts read the default keys; no gamepad                                                                                                                      |
+| Console                        | partial | about 25 of about 330 commands; no selection by click                                                                                                                |
+| Tutorials, loading, map, stats | partial | low-stat tutorials, map relief overlay, beast perk trees, Survival HUD                                                                                               |
 
 ## Order of work
 

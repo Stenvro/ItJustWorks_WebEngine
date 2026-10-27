@@ -1133,7 +1133,10 @@ export class CastingEngine {
    */
   async teachWord(word: number): Promise<void> {
     const runtime = this.#runtime;
-    if (!runtime.wordsLearned.has(word)) runtime.wordsLearned.set(word, false);
+    if (!runtime.wordsLearned.has(word)) {
+      runtime.wordsLearned.set(word, false);
+      runtime.events.emit('wordLearned', { word });
+    }
     for (const formId of runtime.forms.db.formIdsOfType('SHOU')) {
       const shout = await this.shout(formId);
       if (!shout?.words.some((entry) => entry.word === word)) continue;
