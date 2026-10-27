@@ -356,6 +356,22 @@ export class MenuStack {
     return this.#open.every((menu) => (menu.kind.flags & MenuFlag.allowSaving) !== 0);
   }
 
+  /**
+   * Resolves once the open menus allow saving (at once if they do): an autosave waits for the
+   * menus that do not (the map's fast travel autosaves after the travel, once the map closed).
+   */
+  whenSavingAllowed(): Promise<void> {
+    if (this.savingAllowed) return Promise.resolve();
+    return new Promise((resolve) => {
+      const listener = (): void => {
+        if (!this.savingAllowed) return;
+        this.listeners.delete(listener);
+        resolve();
+      };
+      this.listeners.add(listener);
+    });
+  }
+
   /** An open menu hides the HUD entirely. */
   get hidesHud(): boolean {
     return this.#open.some((menu) => menu.kind.hidesHud === true);

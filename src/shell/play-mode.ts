@@ -850,8 +850,10 @@ export class PlayMode {
       if (leave) leave();
       else if (!session.menuMode) this.#world.capturePointer(true);
     }
-    // Through a load door (or a journey): the autosave on travel (bSaveOnTravel).
-    await this.#saves.autosave('travel');
+    // Through a load door (or a journey): the autosave on travel (bSaveOnTravel). Not waited
+    // for: it waits itself for the menus that do not allow saving to close (the map, which
+    // closes once its fast travel has returned).
+    void this.#saves.autosave('travel');
   }
 
   /** The console (~): over the game and its menus, in menu mode while open. */

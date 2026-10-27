@@ -112,6 +112,9 @@ export class SaveManager {
       }
     }
     try {
+      // It waits for the menus open that do not allow saving (the map still on the stack as
+      // its fast travel ends): the original autosaves once they have closed.
+      await this.#session.menuStack.whenSavingAllowed();
       await this.save('autosave');
     } catch (error) {
       this.#terminal.log(
