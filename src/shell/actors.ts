@@ -397,6 +397,7 @@ function actorTargets(
         pickpocketable: facts?.pickpocketable === true,
         teammate: facts?.teammate === true,
         talks: facts?.talks ?? false,
+        hostile: facts?.hostile === true,
       });
     if (uses && !prompt) return undefined;
     if (prompt && instead && 'setting' in prompt.verb && prompt.verb.setting === 'sRide') {

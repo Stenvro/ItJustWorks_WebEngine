@@ -191,6 +191,12 @@ describe('actorPrompt', () => {
     expect(actorPrompt({ ...person, name: '' })).toBeUndefined();
   });
 
+  it('offers nothing on an enemy in the fight, but searches it dead', () => {
+    expect(actorPrompt({ ...person, hostile: true })).toBeUndefined();
+    expect(actorPrompt({ ...person, hostile: true, sneaking: true })).toBeUndefined();
+    expect(actorPrompt({ ...person, hostile: true, dead: true })?.verb).toEqual(verb('sSearch'));
+  });
+
   it('rides or steals a mount', () => {
     expect(actorPrompt({ ...horse, rideable: true })?.verb).toEqual(verb('sRide'));
     expect(actorPrompt({ ...horse, rideable: true, stealsRide: true })?.verb).toEqual(
