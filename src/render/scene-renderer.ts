@@ -69,6 +69,14 @@ import particleShader from './shaders/particle.wgsl?raw';
 import skinningShader from './shaders/skinning.wgsl?raw';
 import refractionShader from './shaders/refraction.wgsl?raw';
 import shadowShader from './shaders/shadow.wgsl?raw';
+import {
+  LIGHT_SHADOW_FACES,
+  LIGHT_SHADOW_MAP_SIZE,
+  LIGHT_SHADOW_NEAR,
+  MAX_SHADOW_LIGHTS,
+  type LightShadowViews,
+  type ShadowSlot,
+} from './light-shadows.ts';
 import waterShader from './shaders/water.wgsl?raw';
 import type { TextureCache } from './texture-cache.ts';
 import { CELL_SIZE } from '../world/land.ts';
@@ -100,6 +108,16 @@ export const SHADOW_MAP_LAYERS = 4;
 /** An extra layer of the shadow map: the scene from straight above, for precipitation. */
 export const PRECIPITATION_OCCLUSION_LAYER = 4;
 const SHADOW_TEXTURE_LAYERS = SHADOW_MAP_LAYERS + 1;
+/** Layers of the light-shadow map (light-shadows.ts): six per shadow light. */
+const LIGHT_SHADOW_LAYERS = MAX_SHADOW_LIGHTS * LIGHT_SHADOW_FACES;
+/** WGSL `LightShadows`: a matrix per layer, a vec4 per slot, the parameters. */
+const LIGHT_SHADOW_FLOATS = LIGHT_SHADOW_LAYERS * 16 + MAX_SHADOW_LIGHTS * 4 + 4;
+/**
+ * Receiver offsets of the light shadows against acne: along the light (world units) and along
+ * the normal (texels).
+ */
+const LIGHT_SHADOW_BIAS = 1;
+const LIGHT_SHADOW_NORMAL_OFFSET = 1.5;
 /** Shadow cascade uniforms: one view-projection per 256-byte slot. */
 const CASCADE_STRIDE = 256;
 /** Receiver offsets against shadow acne: depth (0..1 units) and along the normal (texels). */
@@ -111,6 +129,14 @@ export interface FrameShadows {
   readonly cascades: readonly { readonly viewProj: Mat4; readonly far: number }[];
 }
 
+/** A shadow caster within a shadow light's reach (SceneRenderer.lightCasters). */
+export interface LightCaster {
+  readonly scene: GpuScene;
+  readonly draw: Draw;
+  /** Skinned or morphed: its shadow changes every frame. */
+  readonly moves: boolean;
+}
+
 /** Loaded cells, where distant LOD is not drawn: a 7×7 grid from its south-west cell. */
 export interface LodMask {
   readonly originX: number;
@@ -120,8 +146,11 @@ export interface LodMask {
   readonly high: number;
 }
 /** WGSL `PointLight`: position + radius, colour + unused. */
-/** Floats per point light: position, radius, colour, cone cosine (-2: none), cone axis, pad. */
-const LIGHT_FLOATS = 12;
+/**
+ * Floats per point light: position, radius, colour, cone cosine (-2: none), cone axis, room,
+ * shadow slot (-1: none), shadow fade, pad.
+ */
+const LIGHT_FLOATS = 16;
 /** The cone cosine of a light without a cone. */
 const NO_CONE = -2;
 
@@ -1324,6 +1353,11 @@ export class SceneRenderer {
   readonly #cascadeBindGroup: GPUBindGroup;
   readonly #shadowModule: GPUShaderModule;
   readonly #shadowSampler: GPUSampler;
+  /** The shadow lights' maps (light-shadows.ts), their uniforms and this frame's slots. */
+  readonly #lightShadowMap: GPUTexture;
+  readonly #lightShadowBuffer: GPUBuffer;
+  readonly #lightShadowData = new Float32Array(LIGHT_SHADOW_FLOATS);
+  #lightShadowSlots = new Map<number, { slot: number; fade: number }>();
 
   constructor(device: GPUDevice, colorFormat: GPUTextureFormat) {
     this.#device = device;
@@ -1347,8 +1381,25 @@ export class SceneRenderer {
           texture: { sampleType: 'unfilterable-float' },
         },
         { binding: 6, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        { binding: 7, visibility: GPUShaderStage.FRAGMENT, buffer: {} },
+        {
+          binding: 8,
+          visibility: GPUShaderStage.FRAGMENT,
+          texture: { sampleType: 'depth', viewDimension: '2d-array' },
+        },
       ],
     }));
+    this.#lightShadowMap = device.createTexture({
+      label: 'light-shadow-map',
+      size: [LIGHT_SHADOW_MAP_SIZE, LIGHT_SHADOW_MAP_SIZE, LIGHT_SHADOW_LAYERS],
+      format: DEPTH_FORMAT,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.#lightShadowBuffer = device.createBuffer({
+      label: 'light-shadows',
+      size: LIGHT_SHADOW_FLOATS * 4,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
     this.#shadowMap = device.createTexture({
       label: 'sun-shadow-map',
       size: [SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, SHADOW_TEXTURE_LAYERS],
@@ -1367,7 +1418,7 @@ export class SceneRenderer {
     });
     this.#cascadeBuffer = device.createBuffer({
       label: 'shadow-cascades',
-      size: CASCADE_STRIDE * SHADOW_TEXTURE_LAYERS,
+      size: CASCADE_STRIDE * (SHADOW_TEXTURE_LAYERS + LIGHT_SHADOW_LAYERS),
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.#cascadeBindGroup = device.createBindGroup({
@@ -1675,6 +1726,8 @@ export class SceneRenderer {
         { binding: 4, resource: sceneColor },
         { binding: 5, resource: sceneDepth },
         { binding: 6, resource: this.#screenSampler },
+        { binding: 7, resource: { buffer: this.#lightShadowBuffer } },
+        { binding: 8, resource: this.#lightShadowMap.createView({ dimension: '2d-array' }) },
       ],
     });
   }
@@ -2392,6 +2445,7 @@ export class SceneRenderer {
             ...(light.spot?.direction ?? [0, 0, 1]),
             // A portal-strict light's room (0: every room).
             light.room ?? 0,
+            ...this.#lightShadowOf(light),
           ],
           i * LIGHT_FLOATS,
         );
@@ -2404,6 +2458,142 @@ export class SceneRenderer {
         lightCount * LIGHT_FLOATS,
       );
     }
+  }
+
+  /** A light's shadow slot and fade for the shader (slot −1: it casts none this frame). */
+  #lightShadowOf(light: PointLight): [number, number, number, number] {
+    const held = light.shadow && this.#lightShadowSlots.get(light.shadow.id);
+    return held ? [held.slot, held.fade, 0, 0] : [-1, 0, 0, 0];
+  }
+
+  /**
+   * The shadow lights of the frame (before updateFrame): which light holds which slot, with its
+   * fade, and the views each slot's map was last rendered with.
+   */
+  updateLightShadows(
+    slots: readonly ShadowSlot[],
+    views: readonly (LightShadowViews | undefined)[],
+  ): void {
+    this.#lightShadowSlots = new Map(
+      slots.flatMap((entry) =>
+        entry.light.shadow && views[entry.slot]
+          ? [[entry.light.shadow.id, { slot: entry.slot, fade: entry.fade }] as const]
+          : [],
+      ),
+    );
+    if (this.#lightShadowSlots.size === 0) return;
+    const data = this.#lightShadowData;
+    const slotBase = LIGHT_SHADOW_LAYERS * 16;
+    views.slice(0, MAX_SHADOW_LIGHTS).forEach((view, slot) => {
+      if (!view) return;
+      view.viewProj.forEach((matrix, face) => {
+        data.set(matrix, (slot * LIGHT_SHADOW_FACES + face) * 16);
+      });
+      data.set(
+        [
+          LIGHT_SHADOW_NEAR,
+          view.far,
+          view.viewProj.length > 1 ? 1 : 0,
+          view.spread / LIGHT_SHADOW_MAP_SIZE,
+        ],
+        slotBase + slot * 4,
+      );
+    });
+    data.set(
+      [LIGHT_SHADOW_MAP_SIZE, LIGHT_SHADOW_BIAS, LIGHT_SHADOW_NORMAL_OFFSET, 0],
+      slotBase + MAX_SHADOW_LIGHTS * 4,
+    );
+    this.#device.queue.writeBuffer(this.#lightShadowBuffer, 0, data);
+  }
+
+  /**
+   * The shadow casters a light reaches: draws that cast shadows within its radius, and (with
+   * rooms) in a room seen this frame.
+   */
+  lightCasters(
+    scenes: Iterable<GpuScene>,
+    position: Vec3,
+    radius: number,
+    rooms?: RoomCuller,
+  ): LightCaster[] {
+    const casters: LightCaster[] = [];
+    for (const scene of scenes) {
+      for (const draw of scene.draws) {
+        if (!draw.part.shadowPipeline || draw.visibility?.hidden) continue;
+        const dx = draw.center[0] - position[0];
+        const dy = draw.center[1] - position[1];
+        const dz = draw.center[2] - position[2];
+        const reach = radius + draw.radius;
+        if (dx * dx + dy * dy + dz * dz > reach * reach) continue;
+        if (rooms && !rooms.inVisibleRoom(draw.center)) continue;
+        // A skinned or morphed part changes shape without its transform changing.
+        const moves = draw.bones !== undefined || draw.face !== undefined;
+        casters.push({ scene, draw, moves });
+      }
+    }
+    return casters;
+  }
+
+  /**
+   * What a light's view shows of its casters, as a number that changes when one of them moves,
+   * appears or goes: their world transforms as the frame's animation left them (a part whose
+   * controllers only scroll its UVs keeps its map). NaN: a skinned caster, which changes every
+   * frame.
+   */
+  casterSignature(casters: readonly LightCaster[], planes: readonly Plane[]): number {
+    let hash = 2166136261;
+    for (const { scene, draw, moves } of casters) {
+      if (!sphereVisible(planes, draw.center, draw.radius)) continue;
+      if (moves) return NaN;
+      hash = Math.imul(hash ^ draw.uniformOffset, 16777619);
+      const world = new Float32Array(scene.uniformData, draw.uniformOffset, 16);
+      for (let i = 0; i < 16; i++) {
+        hash = Math.imul(hash ^ Math.round((world[i] ?? 0) * 64), 16777619);
+      }
+    }
+    return hash >>> 0;
+  }
+
+  /** Renders a light's casters into a layer of the light-shadow map with its view. */
+  drawLightShadows(
+    encoder: GPUCommandEncoder,
+    casters: readonly LightCaster[],
+    layer: number,
+    viewProj: Mat4,
+  ): void {
+    const slot = SHADOW_TEXTURE_LAYERS + layer;
+    this.#device.queue.writeBuffer(this.#cascadeBuffer, slot * CASCADE_STRIDE, viewProj);
+    const planes = frustumPlanes(viewProj);
+    const pass = encoder.beginRenderPass({
+      label: `light-shadow-${String(layer)}`,
+      colorAttachments: [],
+      depthStencilAttachment: {
+        view: this.#lightShadowMap.createView({
+          dimension: '2d',
+          baseArrayLayer: layer,
+          arrayLayerCount: 1,
+        }),
+        depthClearValue: 1,
+        depthLoadOp: 'clear',
+        depthStoreOp: 'store',
+      },
+    });
+    pass.setBindGroup(0, this.#cascadeBindGroup, [this.cascadeOffset(slot)]);
+    pass.setVertexBuffer(1, this.#fallbackVertices);
+    const state = passState();
+    for (const { scene, draw } of casters) {
+      const pipeline = draw.part.shadowPipeline;
+      if (!pipeline || !sphereVisible(planes, draw.center, draw.radius)) continue;
+      bindPart(pass, state, pipeline, draw.part);
+      pass.setBindGroup(1, scene.drawBindGroup, [draw.uniformOffset]);
+      this.#bindBones(pass, scene, draw);
+      if (draw.ranges) {
+        for (const range of draw.ranges) pass.drawIndexed(range.count, 1, range.first);
+      } else {
+        pass.drawIndexed(draw.part.indexCount);
+      }
+    }
+    pass.end();
   }
 
   /** Frame bind group layout (group 0), shared with the terrain and other world shaders. */

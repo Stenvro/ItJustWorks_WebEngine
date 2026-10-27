@@ -16,6 +16,20 @@ export interface PointLight {
    * ModelInstance.room); undefined lights every room.
    */
   readonly room?: number;
+  /** A shadow-casting light (LIGH shadow flags): how it casts (light-shadows.ts). */
+  readonly shadow?: LightShadow;
+}
+
+/** How a shadow light casts: LIGH Shadow Spotlight, Shadow Hemisphere, Shadow Omnidirectional. */
+export const ShadowKind = { spot: 1, hemisphere: 2, omni: 3 } as const;
+
+export interface LightShadow {
+  /** One of ShadowKind. */
+  readonly kind: number;
+  /** The light's identity across frames (its reference): its slot and fade follow it. */
+  readonly id: number;
+  /** A hemisphere light's axis (a spot light's is its cone's). */
+  readonly axis?: Vec3;
 }
 
 export interface SceneFog {

@@ -130,6 +130,9 @@ fn objectLighting(
   backLight: vec3f,
   s: SpecularInputs,
   wantSpecular: bool,
+  // The geometry's normal (the shadow lookups' offset) and whether it receives shadows.
+  shadowNormal: vec3f,
+  receivesShadows: bool,
 ) -> ObjectLighting {
   let flags2 = draw.flags.y;
   let soft = (flags2 & SLSF2_SOFT_LIGHTING) != 0u;
@@ -168,7 +171,10 @@ fn objectLighting(
     let color = light.color * (1.0 - falloff * falloff) * lightCone(light, offset);
     let toLight = offset / max(distance, 1e-4);
     let angle = dot(n, toLight);
-    result.diffuse += color * saturate(angle);
+    // The light's shadow darkens its direct light (as the sun's: not the soft, rim and back
+    // light).
+    let shadowed = color * select(1.0, pointShadow(light, worldPos, shadowNormal), receivesShadows);
+    result.diffuse += shadowed * saturate(angle);
     if (soft) {
       // The engine passes the unnormalized light vector here.
       result.diffuse += color * softLight(dot(n, offset)) * rimSoft;
@@ -180,7 +186,7 @@ fn objectLighting(
       result.diffuse += color * saturate(-angle) * backLight;
     }
     if (wantSpecular) {
-      result.specular += lightSpecular(toLight, color, s);
+      result.specular += lightSpecular(toLight, shadowed, s);
     }
   }
   return result;
@@ -389,6 +395,8 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
     slot7.rgb,
     inputs,
     (hasSpecular || multiPass) && !snow,
+    vertexNormal,
+    receivesShadows,
   );
   let ambient = directionalAmbient(shadingNormal);
 

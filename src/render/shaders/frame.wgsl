@@ -45,6 +45,19 @@ struct PointLight {
   coneAxis: vec3f,
   // A portal-strict light's room (0: it lights every room).
   room: f32,
+  // x: its slot of the light-shadow map (below 0: it casts no shadow this frame), y: how much
+  // of its shadow shows (fading in and out of the shadow lights).
+  shadow: vec4f,
+};
+
+// The shadow lights' maps (light-shadows.ts): six layers per slot, each with the matrix it was
+// rendered with; per slot near, far, omni (1: a cube, 0: one frustum) and the world size of a
+// texel at distance 1; then the map size, the bias along the light (world units) and along the
+// normal (texels).
+struct LightShadows {
+  matrices: array<mat4x4f, 24>,
+  slots: array<vec4f, 4>,
+  params: vec4f,
 };
 
 // Whether a portal-strict light leaves a draw of another room unlit (`room`: the draw's room,
@@ -73,6 +86,55 @@ fn lightCone(light: PointLight, offset: vec3f) -> f32 {
 @group(0) @binding(4) var sceneColor: texture_2d<f32>;
 @group(0) @binding(5) var sceneDepth: texture_2d<f32>;
 @group(0) @binding(6) var screenSampler: sampler;
+@group(0) @binding(7) var<uniform> lightShadows: LightShadows;
+@group(0) @binding(8) var lightShadowMap: texture_depth_2d_array;
+
+// How much of a shadow light reaches a point (0 in shadow, 1 lit), faded by how much of its
+// shadow shows: the cube face (omni) or the one frustum (spot, hemisphere) that holds the point,
+// sampled 3x3. The receiver's distance along the view, less the bias, is compared as the depth
+// the map stores; points outside a single frustum are lit.
+fn pointShadow(light: PointLight, worldPos: vec3f, n: vec3f) -> f32 {
+  if (light.shadow.x < 0.0 || light.shadow.y <= 0.0) {
+    return 1.0;
+  }
+  let slot = min(u32(light.shadow.x + 0.5), 3u);
+  let info = lightShadows.slots[slot];
+  let v = worldPos - light.position;
+  var face = 0u;
+  if (info.z > 0.5) {
+    let a = abs(v);
+    if (a.x >= a.y && a.x >= a.z) {
+      face = select(1u, 0u, v.x > 0.0);
+    } else if (a.y >= a.z) {
+      face = select(3u, 2u, v.y > 0.0);
+    } else {
+      face = select(5u, 4u, v.z > 0.0);
+    }
+  }
+  let layer = slot * 6u + face;
+  let texelWorld = length(v) * info.w;
+  let offset = n * texelWorld * lightShadows.params.z;
+  let clip = lightShadows.matrices[layer] * vec4f(worldPos + offset, 1.0);
+  if (clip.w <= info.x || clip.w >= info.y) {
+    return 1.0;
+  }
+  let ndc = clip.xy / clip.w;
+  let uv = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+  if (info.z < 0.5 && (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0)))) {
+    return 1.0;
+  }
+  let along = max(clip.w - lightShadows.params.y - texelWorld, info.x);
+  let depth = (info.y / (info.y - info.x)) * (1.0 - info.x / along);
+  let texel = 1.0 / lightShadows.params.x;
+  var lit = 0.0;
+  for (var y = -1; y <= 1; y++) {
+    for (var x = -1; x <= 1; x++) {
+      let at = uv + vec2f(f32(x), f32(y)) * texel;
+      lit += textureSampleCompareLevel(lightShadowMap, shadowSampler, at, i32(layer), depth);
+    }
+  }
+  return mix(1.0, lit / 9.0, light.shadow.y);
+}
 
 // View distance of a reversed-Z depth value (infinite far plane: depth = near / distance).
 fn viewDistance(depth: f32) -> f32 {
@@ -161,7 +223,7 @@ struct Lighting {
 
 // Ambient, the directional light (times `shadow`: 1 lit, 0 in shadow) and point lights
 // (brightness falls off as 1 - d^2/r^2).
-// TODO(M13): the engine's per-object light limit; shadows of interior point lights.
+// TODO(M13): the engine's per-object light limit.
 fn lightAt(
   n: vec3f,
   worldPos: vec3f,
@@ -188,7 +250,8 @@ fn lightAt(
       continue;
     }
     let toLight = offset * inverseSqrt(max(distanceSquared, 1e-4));
-    let attenuation = (1.0 - distanceSquared / radiusSquared) * lightCone(light, offset);
+    let attenuation = (1.0 - distanceSquared / radiusSquared) * lightCone(light, offset) *
+      pointShadow(light, worldPos, n);
     let nDotL = max(dot(n, toLight), 0.0);
     result.diffuse += light.color * nDotL * attenuation;
     if (specular && nDotL > 0.0) {
