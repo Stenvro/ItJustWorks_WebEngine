@@ -6,7 +6,7 @@
 // as the blow carries it. A decal lasts [Display] fDecalLifetime seconds; at most [Decals]
 // uMaxDecals are kept, the oldest going first (observed in the original: each dynamic decal
 // is made with the lifetime, the count capped by the setting). TODO(M13): whether a decal fades
-// at its end or vanishes; the impact's effect model (MODL: the blood spray's particles).
+// at its end or vanishes. Its effect model (MODL: the blood spray, the sparks) shows at the hit.
 
 import { impactAgainst } from '../audio/impacts.ts';
 import { Layer } from '../physics/collision-layers.ts';
@@ -21,7 +21,7 @@ import {
   type DecalData,
   type TextureSet,
 } from '../world/decal.ts';
-import type { Impact } from '../world/impact-records.ts';
+import { impactFacing, type Impact } from '../world/impact-records.ts';
 import type { GameSession } from './game-session.ts';
 
 /** How far behind a hit its blood lands (game units). */
@@ -67,14 +67,19 @@ export class CombatImpacts {
   readonly #now: () => number;
   #seed = 1;
 
+  /** Shows an impact's effect model (IPCT MODL) at a point, facing a way, for a time. */
+  readonly #showModel: ImpactModelShow | undefined;
+
   constructor(
     session: GameSession,
     renderer: RenderPort,
     now: () => number = () => performance.now() / 1000,
+    showModel?: ImpactModelShow,
   ) {
     this.#session = session;
     this.#renderer = renderer;
     this.#now = now;
+    this.#showModel = showModel;
   }
 
   /** The decals of hits (the viewers draw them with their cells'), those past their time gone. */
@@ -106,6 +111,10 @@ export class CombatImpacts {
     const sound = hit.heavy ? (impact.heavySound ?? impact.sound) : impact.sound;
     if (sound !== undefined) void sounds.play(sound, hit.position);
     if (hit.placeable && !hit.placeable(impact)) return impact;
+    // Its effect model (the blood's spray, the sparks off metal) where the blow landed.
+    if (impact.model && this.#showModel) {
+      this.#showModel(impact.model, hit.position, impactFacing(impact.orientation, hit.direction));
+    }
     if (physics) await this.#splatter(impact.formId, hit, physics);
     return impact;
   }
@@ -178,6 +187,9 @@ export class CombatImpacts {
     for (const decal of this.#decals.splice(0)) decal.gpu.destroy();
   }
 }
+
+/** Shows an impact's effect model for its own time: its path, where, the way it faces. */
+export type ImpactModelShow = (model: string, at: Vec3, facing: Vec3) => void;
 
 /** A vector of length 1 (or the one given, if it has none). */
 function normalize(v: Vec3): Vec3 {

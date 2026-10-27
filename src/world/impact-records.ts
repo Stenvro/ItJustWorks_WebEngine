@@ -87,3 +87,18 @@ export function parseImpact(record: RecordSource): Impact {
     model,
   };
 }
+
+/**
+ * The way an impact's model faces (IPCT DATA orientation): along the blow (projectile vector),
+ * else back out of what was struck, towards where the blow came from (surface normal and
+ * reflection: a hit's struck surface faces the blow). TODO(M13): the struck surface's own
+ * normal and the blow's reflection off it.
+ */
+export function impactFacing(
+  orientation: number,
+  direction: readonly [number, number, number],
+): [number, number, number] {
+  return orientation === 1
+    ? [direction[0], direction[1], direction[2]]
+    : [-direction[0], -direction[1], -direction[2]];
+}

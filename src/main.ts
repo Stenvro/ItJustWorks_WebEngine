@@ -900,6 +900,14 @@ async function main(): Promise<void> {
       // The settings Grass Fade and Brightness.
       if (session) {
         renderer.grass.fadeStart = session.ini.number('Grass', 'fGrassStartFadeDistance');
+        // Actor, Item and Object Fade (src/render/object-fade.ts).
+        const fade = renderer.scene.objectFade;
+        const actors = session.ini.number('LOD', 'fLODFadeOutMultActors');
+        const items = session.ini.number('LOD', 'fLODFadeOutMultItems');
+        const objects = session.ini.number('LOD', 'fLODFadeOutMultObjects');
+        if (fade.actors !== actors || fade.items !== items || fade.objects !== objects) {
+          renderer.scene.objectFade = { actors, items, objects };
+        }
         renderer.post.gamma = session.ini.number('Display', 'fGamma');
         // The launcher's anti-aliasing, volumetric lighting and lens flare.
         renderer.antiAliasing = session.ini.bool('Display', 'bUseTAA');

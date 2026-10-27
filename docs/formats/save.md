@@ -36,18 +36,53 @@ Tagged JSON keeps what JSON loses. An object with one of these keys is a tagged 
 | `$s` | a Set: `[value, …]`                                                 |
 | `$t` | a typed array: `{ $t: "u8" \| "f32" \| …, d: base64 of its bytes }` |
 | `$h` | a Papyrus object handle: `[formId, type, alias]`                    |
-| `$a` | a Papyrus array: `[value, …]`                                       |
+| `$a` | a Papyrus array: `[value, …]`, with its number `$i`                 |
+| `$r` | the Papyrus array numbered so before (the same array again)         |
 | `$o` | a plain object whose own keys start with `$` (wrapped)              |
 
 Any other class instance is refused while saving (state the save would lose silently). Papyrus
-arrays are saved by value: two variables that held the same array hold equal copies after a
-load (TODO(M13): array identity).
+arrays keep their identity, as in the original's save: each array is written once with a number
+(in the order the body is written) and after that as `{ $r: number }`, so two variables that held
+one array hold one array after a load. (Arrays are passed and assigned by reference in the VM
+too: a function that fills an array it was given fills its caller's.)
 
 ## The body
 
 `GameSave`: `runtime` (below), `player` (position, rotation, cell or worldspace, scale: as
-`ScriptRuntime.placement` gives it), `weather` (the sky's current weather) and `unsaved` (what
-could not be saved, logged again as it loads).
+`ScriptRuntime.placement` gives it), `weather` (the sky's current weather), `unsaved` (what
+could not be saved, logged again as it loads) and `world` (the loaded world beside the scripts,
+below).
+
+`WorldSave` (`src/save/world-save.ts`), the minimal state each system rebuilds itself from as
+the world loads again, as the original's change forms hold it (nothing of the rendering):
+
+- `actors`: every actor on the stage: its loaded cell (as the view keys it), feet and heading;
+  the furniture it is in (sitting, sleeping, leaning: not one it walks to); its package
+  (`SavedPackage`: which, completed and ended, where it began, the branch it ran as each
+  branch's index among its parent's children, its Finds' results, the once-a-day packages' days);
+  its combat target and the confidence modifier its fight drew. As its cell loads it is placed there instead of where its package would
+  put it, in its furniture at once; when its AI starts and chooses the saved package first, the
+  package goes on without beginning again (no OnPackageStart, no begin fragment), its sequences
+  from the child they had reached (a Simultaneous branch's children run anew); its fight (with that modifier) starts
+  again once it and its target are on the stage. Saved actors whose cell goes before it is
+  placed come back where their packages have them.
+- `graphs`: the loaded objects whose graphs moved from their start (an event sent, a variable
+  set): the sequences' graph (each active state machine's state in the order reached from the
+  root, the variables scripts set) and the skeletal graph (each state machine's state by its
+  place among the graph's machines, its variables). As the object is placed again its graph
+  starts there: its sequences played long ago, held at their ends, sending no text keys again
+  (a lever pulled stays down before its script's OnLoad). TODO(M13): machines inside behavior
+  references.
+
+`RuntimeSave.scenes` (`SceneDirector.saveData`): each playing scene's phase, cast, clock and
+actions (status, done, a timer's seconds left), and the starts waiting for their actors. On load
+a scene plays on in its phase (IsPlaying is true at once): its begin and that phase's start
+fragments do not run again, its actions not done start again (a line is said again, a package
+action gives its package again, a timer runs on), those done that still run keep their looks.
+
+After a load the scripts hear OnPlayerLoadGame (the player and its aliases). TODO(M13): the
+original sends it once the loaded world is up; here as the scripts are ready, before the
+player's cell loads.
 
 `RuntimeSave`:
 
@@ -114,14 +149,15 @@ logged under `save`.
 Not held (logged as not saved, by where they are and the native they are in): a thread in a
 native whose JavaScript promise is in flight (Quest.Start, SetStage, a story event, an animation
 event), between a callee's return and its caller taking the result, or in the full properties'
-Set functions before an OnInit (TODO(M13)). Arrays shared by two variables are saved as two
-copies (TODO(M13): array identity, as the original's save keeps it).
+Set functions before an OnInit (TODO(M13)).
 
 ## Not saved yet
 
-- Scenes playing, objects translating (TranslateTo), hazards standing, projectiles, actors' AI
-  package progress and combat, ragdolls and moved actors' places (actors start at their
-  packages' places), the sky's transition.
+- Objects translating (TranslateTo), hazards standing, projectiles in flight, corpses' ragdoll
+  poses (a corpse lies again where it lay, its ragdoll falls anew), the procedures' own progress
+  inside a step (a patrol's next marker, a sandbox's activity: they choose again), actors' graphs
+  beyond their furniture, the sky's transition; the actors of cells not loaded when saving
+  (their packages place them, as before).
 - The main menu's Load list and the save list's character filter (Continue loads the newest
   save), thumbnails, Save on Pause (bSaveOnPause with fAutosaveEveryXMins).
 

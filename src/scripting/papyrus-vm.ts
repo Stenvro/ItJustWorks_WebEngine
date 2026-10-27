@@ -295,12 +295,21 @@ const num = (value: Value): number => {
   return 0;
 };
 
-/** Retypes object handles (also inside arrays) to a declared type. */
+/**
+ * Retypes object handles (also inside arrays) to a declared type. An array stays the same
+ * array (its handles retyped in place): Papyrus arrays are passed and assigned by reference, so
+ * a function that fills an array it was given fills the caller's.
+ */
 function retype(value: Value, type: string): Value {
   if (value instanceof ObjectHandle && isObjectType(type)) return value.as(type);
   if (value instanceof PapyrusArray && isArrayType(type)) {
     const item = elementType(type);
-    return new PapyrusArray(value.items.map((v) => retype(v, item)));
+    const items = value.items;
+    for (let i = 0; i < items.length; i++) {
+      const entry = items[i];
+      if (entry instanceof ObjectHandle) items[i] = retype(entry, item);
+    }
+    return value;
   }
   return value;
 }
