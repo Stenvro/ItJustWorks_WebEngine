@@ -42,9 +42,9 @@ These run through every area and explain most of what breaks in play.
      Daedric starts, bards), Cast Magic, Add/Remove Item, Dead Body, Arrest, Actor Hello, New Voice
      Power and Player Activate Actor are raised now; Bribe, Flatter, Intimidate, Cure, Infection,
      Player Gets Favor and Quest Start are not (vanilla has no quests on them);
-   - of the 93 graph event handler classes of the response files 80 are answered, 2 do not exist in the
-     executable, and 11 are read but not answered (2026-10-24: BeginCast, the camera override, the bow
-     zoom, JumpBegin, MTState, three flight ends); graph event payloads reach the handlers.
+   - of the 93 graph event handler classes of the response files 91 are answered and 2 do not exist in
+     the executable (2026-10-27); the camera override's and MTState's flags are kept but nothing reads
+     them yet (their use is unread); graph event payloads reach the handlers.
 2. **Guessed numbers where the engine has a setting.** Every area has constants we chose (touch reach,
    dual-cast window, sandbox stays, search radii, block times, debris, decal cap, …) while a game setting
    with a built-in default exists. Those defaults are now known.
@@ -138,8 +138,8 @@ These run through every area and explain most of what breaks in play.
 | -------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | Graph runtime        | partial | bDisableInterp's setter; an event no node takes reported as not handled                                                                         |
 | Clips                | partial | mirrored additive clips by our own rule                                                                                                         |
-| Engine handlers      | partial | 11 of 93 classes read but not answered (BeginCast, camera override, bow zoom, JumpBegin, MTState, three flight ends)                            |
-| Weapons and aim      | partial | the player's casting pitch (PitchOverride), a crossbow's launch node, the bow zoom                                                              |
+| Engine handlers      | partial | all 91 classes answered; what reads the camera override's and MTState's flags (unread); NPCs' JumpBegin (their controllers do not jump)         |
+| Weapons and aim      | partial | the player's casting pitch (PitchOverride), a crossbow's launch node (the bow zoom by the graph's BowZoomStart / Stop: done)                    |
 | Ambient idles        | partial | which specific idles skip the next PickNewIdle; the complex scene's wait; the frame's budget; the meal gate                                     |
 | Animation objects    | partial | the female hands' scale; the POV switch while the player holds one; saves                                                                       |
 | Paired animations    | partial | the support's mark from the clip (engine's, set once), its side kept to the clip's end, death limp at the end: done; events not routed per side |

@@ -428,8 +428,12 @@ export class PlayerAvatar {
     body.onScriptEvents = undefined;
     body.onEvents = (events) => {
       sound(events);
-      // The jump's animation pushes off.
-      if (this.#jumping && events.some((event) => isEvent(event, 'JumpUp'))) {
+      // The jump's animation pushes off: its JumpBegin (the engine's JumpAnimEventHandler;
+      // its JumpUp if a graph raises none).
+      if (
+        this.#jumping &&
+        events.some((event) => isEvent(event, 'JumpBegin') || isEvent(event, 'JumpUp'))
+      ) {
         this.#jumping = false;
         player.launchJump();
       }

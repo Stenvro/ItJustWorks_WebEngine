@@ -133,9 +133,10 @@ export class PlayerCombat {
       }
     }
     // Block held with an arrow drawn zooms the view (Eagle Eye: Mod Bow Zoom; the tree's own
-    // block is the bow's zoom).
+    // block is the bow's zoom), between the graph's BowZoomStart and BowZoomStop once it raises
+    // them (the engine's BowZoomStartHandler, BowZoomStopHandler).
     player.bowZoom = this.#zoom(
-      bow && this.#blocking && state.current?.ranged === true,
+      bow && this.#blocking && state.current?.ranged === true && player.graphBowZoom !== false,
       combat.weaponOf(PLAYER_REF),
     );
     // A bow looses when the button is let go.

@@ -99,8 +99,8 @@ const RAGDOLL_EVENTS = new Set(['ragdoll', 'ragdollinstant']);
  * flight.ts flyingStateOf, src/shell/actor-flight.ts): observed in the original, each of
  * the state handlers sets the flier's flying state (take-off, cruising, hovering, landing,
  * perching, an action, landed: none), the action's entry end and grab and release go to its
- * flight action. FlightLandEnd, FlightActionEnd and FlightCrashLandStart are not answered yet
- * (tests/conformance/animation/engine-handlers.test.ts).
+ * flight action, the landing's end frees the landing, the action's end ends a grab, a crash
+ * landing comes down where its target was (tests/conformance/animation/engine-handlers.test.ts).
  */
 const HEARD_BY_FLIGHT = [
   'FlightTakeOffHandler',
@@ -113,6 +113,9 @@ const HEARD_BY_FLIGHT = [
   'FlightActionEntryEndHandler',
   'FlightActionGrabHandler',
   'FlightActionReleaseHandler',
+  'FlightLandEndHandler',
+  'FlightActionEndHandler',
+  'FlightCrashLandStartHandler',
 ];
 /** An NPC's activation waits this long for its graph's ActivationDone at most (seconds). */
 const ACTIVATION_WAIT = 3;
@@ -126,6 +129,8 @@ export class ActorGraphEvents {
   readonly #dialogueLocked = new Map<number, (() => void) | undefined>();
   /** Actors whose character pitch the graph enabled (EnableCharacterPitch). */
   readonly #pitch = new Set<number>();
+  /** Actors whose graph raised MTState (mtState). */
+  readonly #mtState = new Set<number>();
   /** Actors whose bumper the graph disabled (DisableBumper). */
   readonly #noBumper = new Set<number>();
   /** NPCs waiting for their graph's ActivationDone, with what it activates. */
@@ -247,6 +252,12 @@ export class ActorGraphEvents {
     d.handle('VoiceSpellFireHandler', (source) => {
       stage.casting.voiceFire(source);
     });
+    d.handle('LeftHandSpellCastHandler', (source) => {
+      stage.casting.beginCast(source, 'left');
+    });
+    d.handle('RightHandSpellCastHandler', (source) => {
+      stage.casting.beginCast(source, 'right');
+    });
     d.handle('VoiceSpellCastHandler', (source) => {
       stage.casting.voiceCast(source);
     });
@@ -316,6 +327,31 @@ export class ActorGraphEvents {
     });
     d.handle('PitchOverrideEndHandler', (source) => {
       if (source.player) this.#camera()?.setPitchOverride(false);
+    });
+    d.handle('CameraOverrideStartHandler', (source) => {
+      const camera = source.player ? this.#camera() : undefined;
+      if (camera) camera.cameraOverride = true;
+    });
+    d.handle('CameraOverrideStopHandler', (source) => {
+      const camera = source.player ? this.#camera() : undefined;
+      if (camera) camera.cameraOverride = false;
+    });
+    // The bow's zoom: the player's graph starts and stops it (src/shell/player-combat.ts).
+    d.handle('BowZoomStartHandler', (source) => {
+      const camera = source.player ? this.#camera() : undefined;
+      if (camera) camera.graphBowZoom = true;
+    });
+    d.handle('BowZoomStopHandler', (source) => {
+      const camera = source.player ? this.#camera() : undefined;
+      if (camera) camera.graphBowZoom = false;
+    });
+    // JumpBegin: the player's jump pushes off (src/shell/player-avatar.ts hears it). TODO(M10):
+    // NPCs' controllers do not jump (their graphs' jumps play in place).
+    d.heardBy('JumpAnimEventHandler', 'the player avatar');
+    // MTState: observed in the original, a flag of the actor's middle-high process set.
+    // TODO(M13): what reads the flag is not known; it is kept (mtState).
+    d.handle('MTStateHandler', (source) => {
+      if (!source.firstPerson) this.#mtState.add(source.reference);
     });
     d.handle('ZeroPitchHandler', (source) => {
       if (source.player) this.#camera()?.zeroPitch();
@@ -630,6 +666,7 @@ export class ActorGraphEvents {
     this.#dying.delete(reference);
     this.#dialogueLocked.delete(reference);
     this.#pitch.delete(reference);
+    this.#mtState.delete(reference);
     this.#noBumper.delete(reference);
     this.#attached.delete(reference);
     const waiting = this.#activations.get(reference);
@@ -670,6 +707,14 @@ export class ActorGraphEvents {
    */
   characterPitch(reference: number): boolean {
     return this.#pitch.has(reference);
+  }
+
+  /**
+   * MTState: observed in the original, a flag of the actor's middle-high process is set as
+   * its graph raises it. TODO(M13): what the engine reads it for is not known; nothing reads it.
+   */
+  mtState(reference: number): boolean {
+    return this.#mtState.has(reference);
   }
 
   /**

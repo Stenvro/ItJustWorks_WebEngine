@@ -1363,6 +1363,18 @@ export class ActorCasting {
   }
 
   /**
+   * The engine's LeftHandSpellCastHandler and RightHandSpellCastHandler (BeginCastLeft,
+   * BeginCastRight): the hand's cast charges from now (CastingEngine.graphBegan).
+   */
+  beginCast(source: ActorGraphSource, hand: 'left' | 'right'): void {
+    if (!this.#counts(source)) return;
+    this.#runtime?.casting.graphBegan(
+      source.reference,
+      hand === 'left' ? CastingSource.left : CastingSource.right,
+    );
+  }
+
+  /**
    * The engine's VoiceSpellCastHandler (BeginCastVoice, raised as the shout's start clip plays):
    * observed in the original, the voice's cast begins charging then. An NPC holds its
    * shout's words from then on.

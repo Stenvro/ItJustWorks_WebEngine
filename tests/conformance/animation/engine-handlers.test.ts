@@ -35,7 +35,11 @@ const ANSWERED: readonly (readonly [string, string])[] = [
   ['BedEnterHandler', 'the sleep state becomes sleeping'],
   ['BedFurnitureExitHandler', 'out of the bed'],
   ['BowDrawnHandler', 'the bow is drawn'],
+  ['BowZoomStartHandler', 'the player’s bow zoom begins (Mod Bow Zoom)'],
+  ['BowZoomStopHandler', 'the bow zoom ends'],
   ['BowReleaseHandler', 'the bow released'],
+  ['CameraOverrideStartHandler', 'a flag of the camera’s third-person state set'],
+  ['CameraOverrideStopHandler', 'that flag cleared'],
   ['CameraShakeHandler', 'shakes the camera by the payload’s strength'],
   ['ChairEnterHandler', 'the sit state becomes sitting'],
   ['ChairFurnitureExitHandler', 'out of the chair'],
@@ -49,12 +53,15 @@ const ANSWERED: readonly (readonly [string, string])[] = [
   ['EndSummonAnimationHandler', 'a summon takes its commander’s target'],
   ['ExitCartBeginHandler', 'the rider lets go of the cart'],
   ['ExitCartEndHandler', 'the ride ends'],
+  ['FlightActionEndHandler', 'the flier’s flight action over'],
   ['FlightActionEntryEndHandler', 'the flight action’s entry ended (the grab’s reach)'],
   ['FlightActionGrabHandler', 'the flight action’s grab'],
   ['FlightActionHandler', 'flying state 6, the flight action begins'],
   ['FlightActionReleaseHandler', 'the flight action’s release'],
+  ['FlightCrashLandStartHandler', 'a crash landing begins where the flier’s target was'],
   ['FlightCruisingHandler', 'flying state cruising'],
   ['FlightHoveringHandler', 'flying state hovering'],
+  ['FlightLandEndHandler', 'the landing’s end flag cleared'],
   ['FlightLandHandler', 'flying state 0 (FlightLanded)'],
   ['FlightLandingHandler', 'flying state landing'],
   ['FlightPerchingHandler', 'flying state perching'],
@@ -67,10 +74,13 @@ const ANSWERED: readonly (readonly [string, string])[] = [
   ['IdleDialogueEnterHandler', 'dialogue idles held'],
   ['IdleDialogueExitHandler', 'the held dialogue idle plays'],
   ['InterruptCastHandler', 'every hand’s and the voice’s cast interrupted'],
+  ['JumpAnimEventHandler', 'the character controller jumps fJumpHeightMin high'],
   ['KillActorHandler', 'the actor dies by its killmove’s leader'],
   ['KillMoveEndHandler', 'out of the killmove; one done to it dies'],
   ['KillMoveStartHandler', 'nothing'],
+  ['LeftHandSpellCastHandler', 'the left hand’s cast begins charging (BeginCastLeft)'],
   ['LeftHandSpellFireHandler', 'the left hand’s spell released'],
+  ['MTStateHandler', 'a flag of the actor’s middle-high process set'],
   ['MotionDrivenHandler', 'movement controller-driven at once'],
   ['MountDismountEndHandler', 'the mount or dismount ends'],
   ['NPCAttachHandler', 'attached to the payload node of its furniture'],
@@ -84,6 +94,7 @@ const ANSWERED: readonly (readonly [string, string])[] = [
   ['PlayerFurnitureExitHandler', 'the player out of furniture'],
   ['RecoilStopHandler', 'the recoil ends'],
   ['RemoveRagdollHandler', 'the ragdoll leaves the world'],
+  ['RightHandSpellCastHandler', 'the right hand’s cast begins charging (BeginCastRight)'],
   ['RightHandSpellFireHandler', 'the right hand’s spell released'],
   ['RightHandWeaponDrawHandler', 'the weapon drawn (weaponDraw)'],
   ['RightHandWeaponSheatheHandler', 'the weapon sheathed (weaponSheathe)'],
@@ -96,42 +107,6 @@ const ANSWERED: readonly (readonly [string, string])[] = [
   ['WeaponLeftSwingHandler', 'the left attack swings'],
   ['WeaponRightSwingHandler', 'the right attack swings'],
   ['ZeroPitchHandler', 'the camera’s pitch to level (ZeroOutCameraPitch)'],
-];
-
-/**
- * Classes we do not answer yet, with the engine's rule (observed in the original). TODO(M13) each: the
- * systems named implement them.
- */
-const NOT_ANSWERED: readonly (readonly [string, string])[] = [
-  [
-    'LeftHandSpellCastHandler',
-    'BeginCastLeft: the left hand’s caster waiting to start begins its cast (charging), if it ' +
-      'can cast (casting starts its charge at the action instead)',
-  ],
-  ['RightHandSpellCastHandler', 'BeginCastRight: as the left, for the right hand'],
-  [
-    'CameraOverrideStartHandler',
-    'CameraOverrideStart: for the camera’s target, a flag of its third-person state set (camera)',
-  ],
-  ['CameraOverrideStopHandler', 'CameraOverrideStop: that flag cleared (camera)'],
-  [
-    'JumpAnimEventHandler',
-    'JumpBegin: the character controller jumps fJumpHeightMin × the actor’s jump height mult ' +
-      'high, × fJumpSwimmingMult in water (physics: our controller jumps at the input)',
-  ],
-  ['MTStateHandler', 'MTState: a flag of the actor’s middle-high process set (its use not read)'],
-  [
-    'BowZoomStartHandler',
-    'BowZoomStart: the player’s bow zoom by the Mod Bow Zoom perk entry, its sound, controls ' +
-      'flag 8 off (camera, perks)',
-  ],
-  ['BowZoomStopHandler', 'BowZoomStop: the zoom back to 1, controls flag 8 on'],
-  ['FlightLandEndHandler', 'FlightLandEnd: the landing’s end flag cleared (flight)'],
-  ['FlightActionEndHandler', 'FlightActionEnd: the flier’s flight action over (flight)'],
-  [
-    'FlightCrashLandStartHandler',
-    'FlightCrashLandStart: a crash landing begins where the flier’s target was (flight)',
-  ],
 ];
 
 /** Named by the response files, but the executable has no class of these names. */
@@ -169,19 +144,12 @@ describe.skipIf(!hasGamedata())('the handler classes of the response files (data
   });
 
   it('are the classes of this suite, every one', () => {
-    const listed = [...ANSWERED, ...NOT_ANSWERED].map(([name]) => name);
+    const listed = ANSWERED.map(([name]) => name);
     expect(new Set([...listed, ...NOT_IN_THE_EXECUTABLE])).toEqual(new Set(classes.keys()));
   });
 
   for (const [handler, rule] of ANSWERED) {
     it(`${handler}: ${rule}  [original]`, () => {
-      expect(sim.world.stage.graphEvents.dispatch.answered(handler)).toBe(true);
-    });
-  }
-
-  for (const [handler, rule] of NOT_ANSWERED) {
-    // TODO(M13): the class's rule is read; the system named does not answer it yet.
-    it.fails(`${handler}: ${rule}  [original]`, () => {
       expect(sim.world.stage.graphEvents.dispatch.answered(handler)).toBe(true);
     });
   }
