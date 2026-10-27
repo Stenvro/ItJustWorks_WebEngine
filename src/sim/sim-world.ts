@@ -221,6 +221,12 @@ export class SimWorld {
   #travel: Promise<void> | undefined;
   /** Work started by the world that the next settle waits for (cells, created objects). */
   readonly #pending = new Set<Promise<unknown>>();
+  /**
+   * The clock the stages' process budget measures the actors' turns with (ms), set before a
+   * place opens. Without, the simulation's: it stands still within a step, so every turn fits
+   * (tools measuring the budget's effect give a real one).
+   */
+  processClock: (() => number) | undefined;
 
   private constructor(
     session: GameSession,
@@ -275,6 +281,7 @@ export class SimWorld {
         seat: () => this.#seat,
         sounding: this.#sounding,
         focus: () => this.#play?.player.feet,
+        ...(this.processClock && { processClock: this.processClock }),
         onTrigger: (trigger, actor, entered) => {
           this.runtime.triggered(trigger, actor, entered);
         },

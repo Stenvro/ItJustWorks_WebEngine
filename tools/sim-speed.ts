@@ -5,6 +5,7 @@
 //   node tools/sim-speed.ts --interior 1605e [--seconds 30] [--hour 10]
 //   node tools/sim-speed.ts --exterior 1a26f [x y] [--seconds 30] [--grid 1]
 //                                             (default: the worldspace's busiest cell)
+//   ... --budget                              the process budget on a real clock (time slicing)
 
 import { SIM_STEP, SimWorld } from '../src/sim/sim-world.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
@@ -29,6 +30,9 @@ const started = real();
 const vfs = await Vfs.mount(openGameFolder());
 const world = await SimWorld.create({ vfs, gridRadius: grid });
 world.terminal.echo = args.includes('--warnings');
+// --budget: the process budget measures the actors' turns on a real clock (the simulation's
+// stands still within a step, so every turn fits and nothing is sliced).
+if (args.includes('--budget')) world.processClock = () => Number(process.hrtime.bigint()) / 1e6;
 const created = real();
 world.runtime.setClockGlobal(0x38, hour);
 await world.step(0);
@@ -70,6 +74,16 @@ for (const staged of actors) {
       `${current ? current.id.toString(16) : ''} at ${staged.position.map(Math.round).join(', ')}`,
   );
 }
+const levels = [0, 0, 0, 0];
+for (const staged of actors) {
+  const level = world.stage.process.level(staged.reference);
+  if (level !== undefined) levels[level] = (levels[level] ?? 0) + 1;
+}
+console.log(
+  `process levels: ${String(levels[0])} high, ${String(levels[1])} middle-high ` +
+    `(${String(world.stage.process.turns.size)} had a turn in the last frame; a round of ` +
+    `theirs costs ${world.stage.process.roundCost.toFixed(2)} ms)`,
+);
 const kinds = new Map<string, number>();
 for (const record of world.log.records) {
   const key = record.kind === 'game' ? `game:${record.type}` : record.kind;
