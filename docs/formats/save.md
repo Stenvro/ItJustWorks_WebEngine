@@ -87,11 +87,38 @@ player's cell or worldspace behind the loading screen (as a new game does) and s
 weather. What could not be matched (a script no longer attached, a variable gone, a missing
 plugin) is logged under `save`.
 
+## Papyrus threads
+
+As the original, a save holds each waiting thread's frame stack (`RuntimeSave.threads`,
+`SavedThread` in `src/scripting/papyrus-vm.ts`). The VM keeps every call frame as data: per
+frame the function (its script, state and name, or a property's Get/Set; its instruction count,
+so a changed script is not resumed), the pc, the locals (temps included), self, the script
+instance (attached or a native type's) and the call depth. The thread keeps its origin (the
+event sent to one instance, or the engine's call, with its arguments), whether it is an OnInit,
+and its wait:
+
+- `clock`: in `Utility.Wait`, `WaitGameTime` or `WaitMenuMode` (the clock and the reading it
+  waits for; the clocks themselves are saved). The natives hand the VM the wait as data
+  (`NativeCall.latent(promise, clock)`).
+- `restart`: the innermost frame's instruction at pc has not begun and runs again: a thread past
+  the frame's budget, waiting for a lock or another script's OnInit before a call or property,
+  or for the next frame before a native handed to the main thread. With no frames, the origin
+  starts again (a thread waiting to begin).
+
+On load the frames are rebuilt and run on from the innermost: its wait first, then each caller
+takes its callee's result at its call instruction (the destination of `callmethod`,
+`callstatic`, `callparent`, `propget`) and goes on after it. A resumed OnInit holds its
+instance's other events again. What cannot be resumed (a script, function or instance gone) is
+logged under `save`.
+
+Not held (logged as not saved, by where they are and the native they are in): a thread in a
+native whose JavaScript promise is in flight (Quest.Start, SetStage, a story event, an animation
+event), between a callee's return and its caller taking the result, or in the full properties'
+Set functions before an OnInit (TODO(M13)). Arrays shared by two variables are saved as two
+copies (TODO(M13): array identity, as the original's save keeps it).
+
 ## Not saved yet
 
-- Papyrus threads in flight (a handler in `Utility.Wait`, `WaitGameTime`, a lock): their stacks
-  are JavaScript calls and cannot be written down. Each is logged as not saved (TODO(M12):
-  resumable frames). Update registrations are saved, so scripts that wait by registering go on.
 - Scenes playing, objects translating (TranslateTo), hazards standing, projectiles, actors' AI
   package progress and combat, ragdolls and moved actors' places (actors start at their
   packages' places), the sky's transition.
