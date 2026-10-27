@@ -331,6 +331,7 @@ describe('the subtrees', () => {
       'bash',
       'powerBash',
       'specialAttack',
+      'offensiveBash',
     ]);
   });
 
@@ -363,11 +364,30 @@ describe('the subtrees', () => {
     expect(t.tick()).toContain('castRight');
     const held = fighter({ rightMagic: true, mayCast: true, castChance: 1, concentration: true });
     expect(held.tick()).toContain('castConcentration');
-    const dual = fighter({ rightMagic: true, mayCast: true, dualCast: true });
+    const dual = fighter({ rightMagic: true, mayCast: true, dualCast: true, dualCastChance: 1 });
     expect(dual.tick()).toContain('prepareDualCast');
     // By its cast chance.
     const unlikely = fighter({ rightMagic: true, mayCast: true, castChance: 0.2 });
     expect(unlikely.tick()).not.toContain('castRight');
+  });
+
+  it('the left hand: a left weapon’s attacks, a left spell beside a weapon  [RTTI]', () => {
+    const dual = fighter({ rightMelee: true, leftWeapon: true, mayAttackLeft: true });
+    expect(dual.tick()).toContain('leftAttack');
+    expect([...dual.instance.slots]).toContain('left');
+    const spellsword = fighter({
+      rightMelee: true,
+      leftMagic: true,
+      mayCastLeft: true,
+      castChanceLeft: 1,
+    });
+    expect(spellsword.tick()).toContain('castLeft');
+    expect([...spellsword.instance.slots]).toContain('spellAndWeapon');
+    // Dual casting replaces the right hand's Magic; without the chance it casts single.
+    const single = fighter({ rightMagic: true, mayCast: true, dualCast: true, castChance: 1 });
+    const log = single.tick();
+    expect(log).toContain('castRight');
+    expect(log).not.toContain('prepareDualCast');
   });
 
   it('Shout: Equip Shout, Cast Shout  [RTTI]', () => {
@@ -384,7 +404,11 @@ describe('the subtrees', () => {
     expect(t.tick()).toEqual(expect.arrayContaining(['noteBlow', 'block']));
     t.ctx.values.blowComing = false;
     t.ctx.values.blocking = true;
-    expect(t.tick()).toContain('blockAttack');
+    // Held between the blows; the block attack (the shield bash) at an opening, by its chance.
+    expect(t.tick()).toContain('holdBlock');
+    t.ctx.values.mayBlockAttack = true;
+    t.ctx.values.blockAttackChance = 1;
+    expect(t.tick()).toEqual(expect.arrayContaining(['noteBlockAttack', 'blockAttack']));
     t.ctx.values.blockOver = true;
     expect(t.tick()).toContain('releaseBlock');
     // By its block chance.
@@ -467,7 +491,22 @@ describe('the subtrees', () => {
     expect(log).toContain('drawShot');
   });
 
-  it.todo('Flee: Flee, Flee To Ally, Flee To Cover, Flee Through Door  [RTTI]');
+  it('Flee: Flee, Flee To Ally, back to the fight cornered, done once safe  [RTTI]', () => {
+    // Fleeing takes the root over: no attack, no movement list.
+    const t = fighter({ rightMelee: true, mayAttack: true, fleeing: true });
+    expect(t.tick()).toEqual(['fleeAway']);
+    t.ctx.values.allyNear = true;
+    expect(t.tick()).toEqual(['fleeToAlly']);
+    t.ctx.values.cornered = true;
+    expect(t.tick()).toEqual(['fightCornered']);
+    const safe = fighter({ fleeing: true, fleeSafe: true });
+    expect(safe.tick()).toEqual(['stopFleeing']);
+    // Nowhere to go: it cowers.
+    const stuck = fighter({ fleeing: true });
+    stuck.ctx.results.fleeAway = 'failure';
+    expect(stuck.tick()).toEqual(['fleeAway', 'cower']);
+  });
+  it.todo('Flee To Cover, Flee Through Door  [RTTI]');
   it.todo('Search: Search Center, Location, Wander, Investigate Door  [RTTI]');
 
   it('Dodge Threat  [RTTI]', () => {
