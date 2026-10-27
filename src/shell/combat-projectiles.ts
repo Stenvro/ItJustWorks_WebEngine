@@ -25,6 +25,7 @@ import {
   type Flight,
 } from '../gameplay/combat/projectile.ts';
 import type { ProjectileCombat } from '../gameplay/combat/combat-records.ts';
+import { arrowKnock, loadImpulseSettings } from '../gameplay/impulses.ts';
 import { meshPath } from '../world/actors.ts';
 import { MaterialFlag } from '../world/material-type.ts';
 import type { GameSession } from './game-session.ts';
@@ -93,9 +94,12 @@ export class CombatProjectiles {
   /** The arrows lying where they hit (references made for them), oldest first. */
   readonly #stuck: number[] = [];
   readonly #models = new Map<string, Promise<GpuModel | undefined>>();
+  /** The gameplay impulses' settings (src/gameplay/impulses.ts), once read. */
+  readonly #impulses: ReturnType<typeof loadImpulseSettings>;
 
   constructor(options: ProjectileOptions) {
     this.#options = options;
+    this.#impulses = loadImpulseSettings(() => options.session.settings());
   }
 
   /** The shots' scenes. */
@@ -208,8 +212,15 @@ export class CombatProjectiles {
     const hit = physics.raycast(from, direction, length, Layer.projectile);
     if (!hit) return false;
     const owner = hit.owner;
+    const own = owner?.kind === 'actor' && owner.reference === shot.shooter;
+    if (own && shot.flight.distance < OWN_REACH) return false;
+    // It knocks the moving body it met (clutter, a corpse's ragdoll) by its speed.
+    const v = shot.flight.velocity;
+    const speed = Math.hypot(v[0], v[1], v[2]);
+    physics.knock(hit.collider, hit.point, direction, (layer, mass) =>
+      arrowKnock(speed, layer, mass, this.#impulses.current),
+    );
     if (owner?.kind === 'actor') {
-      if (owner.reference === shot.shooter && shot.flight.distance < OWN_REACH) return false;
       this.#actorHit(shot, owner.reference, hit.distance, from, direction);
       return true;
     }

@@ -137,6 +137,7 @@ function projectileLine(projectile: ProjectileRecord): string {
     (projectile.coneSpread > 0 ? `, cone ${num(projectile.coneSpread)}°` : '') +
     (projectile.relaunchInterval > 0 ? `, relaunch ${num(projectile.relaunchInterval)} s` : '') +
     (projectile.lifetime > 0 ? `, lifetime ${num(projectile.lifetime)} s` : '') +
+    (projectile.impactForce > 0 ? `, impact force ${num(projectile.impactForce)}` : '') +
     `, flags 0x${projectile.flags.toString(16)}`
   );
 }

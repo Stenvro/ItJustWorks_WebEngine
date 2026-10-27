@@ -1404,17 +1404,35 @@ export class PlaySession {
       if (!inside.has(reference)) this.onTrigger?.(reference, false);
     }
     this.#inTriggers = inside;
+    // Moving objects (clutter, dropped weapons, the dead's ragdolls) enter and leave them too, by
+    // the layer matrix. TODO(M13): projectiles in flight (they are rays here, with no reference
+    // to tell until one sticks).
+    for (const [object, now] of this.physics.movingInTriggers()) {
+      const before = this.#objectsInTriggers.get(object);
+      for (const trigger of now)
+        if (!before?.has(trigger)) this.onObjectTrigger?.(trigger, object, true);
+      for (const trigger of before ?? [])
+        if (!now.has(trigger)) this.onObjectTrigger?.(trigger, object, false);
+      if (now.size > 0) this.#objectsInTriggers.set(object, now);
+      else this.#objectsInTriggers.delete(object);
+    }
     // The traps they touch (their hits: src/scripting/runtime/trap-hits.ts).
     this.onTrapTouch?.(this.physics.trapsTouching(this.player.character.collider, TRAP_REACH));
   }
 
-  /** How many of the tracked (the player) are in a trigger volume now. */
+  /** How many of the tracked (the player, moving objects) are in a trigger volume now. */
   triggerCount(reference: number): number {
-    return this.#inTriggers.has(reference) ? 1 : 0;
+    let count = this.#inTriggers.has(reference) ? 1 : 0;
+    for (const triggers of this.#objectsInTriggers.values()) if (triggers.has(reference)) count++;
+    return count;
   }
 
   /** The player entered (true) or left a trigger volume of a reference. */
   onTrigger: ((reference: number, entered: boolean) => void) | undefined;
+  /** A moving object (its reference) entered (true) or left a trigger volume of a reference. */
+  onObjectTrigger: ((trigger: number, object: number, entered: boolean) => void) | undefined;
+  /** The triggers each moving object is in, by the object's reference. */
+  readonly #objectsInTriggers = new Map<number, Set<number>>();
   /** The traps the player touches now, each physics step (trap-hits.ts). */
   onTrapTouch: ((touching: ReadonlyMap<number, TrapTouch>) => void) | undefined;
   /**

@@ -14,10 +14,14 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+  CollisionMatrix as Matrix,
   Layer,
+  LayerFlag,
   readCollisionMatrix,
   type CollisionMatrix,
 } from '../../../src/physics/collision-layers.ts';
+import type { CollisionData } from '../../../src/physics/collision-data.ts';
+import { GRAVITY, initPhysics, PhysicsWorld } from '../../../src/physics/physics-world.ts';
 import {
   TRIGGER_EVENT_DELAY_MS,
   TriggerVolumes,
@@ -121,9 +125,105 @@ describe.skipIf(!hasGamedata())('what can be in a trigger (data)', () => {
 });
 
 describe('what enters a trigger', () => {
-  it.todo(
-    'tells a trigger a clutter object thrown or pushed into it (L_CLUTTER collides with ' +
-      'L_TRIGGER; TrapTriggerBase pressure plates)  [COLL] (sim)',
+  it(
+    'tells a trigger a clutter object thrown into it, and not an object of a layer the ' +
+      'trigger’s does not collide with (the layer matrix)  [COLL]',
+    async () => {
+      await initPhysics();
+      // L_TRIGGER meets L_CLUTTER, not L_PROPS.
+      const matrix = new Matrix([
+        {
+          formId: 3,
+          editorId: 'L_TRIGGER',
+          index: Layer.trigger,
+          name: '',
+          flags: LayerFlag.triggerVolume,
+          collidesWith: [4],
+        },
+        {
+          formId: 4,
+          editorId: 'L_CLUTTER',
+          index: Layer.clutter,
+          name: '',
+          flags: 0,
+          collidesWith: [3],
+        },
+        {
+          formId: 5,
+          editorId: 'L_PROPS',
+          index: Layer.props,
+          name: '',
+          flags: 0,
+          collidesWith: [],
+        },
+      ]);
+      const physics = new PhysicsWorld(matrix, GRAVITY);
+      const at = (x: number, y: number, z: number): Float32Array =>
+        new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1]);
+      physics.addPrimitive('box', [100, 100, 100], at(0, 0, 0), Layer.trigger, {
+        reference: 0x77,
+        kind: 'object',
+      });
+      const box = (layer: number): CollisionData => {
+        const points: number[] = [];
+        for (const x of [-5, 5])
+          for (const y of [-5, 5]) for (const z of [-5, 5]) points.push(x, y, z);
+        return {
+          bodies: [
+            {
+              node: 'Box',
+              transform: at(0, 0, 0),
+              motion: 'dynamic',
+              phantom: false,
+              layer,
+              mass: 2,
+              inertia: [0.02, 0.02, 0.02],
+              centerOfMass: [0, 0, 0],
+              friction: 0.5,
+              restitution: 0.4,
+              linearDamping: 0,
+              angularDamping: 0.05,
+              gravityFactor: 1,
+              maxLinearVelocity: 0,
+              maxAngularVelocity: 0,
+              quality: 0,
+              solverDeactivation: 1,
+              shapes: [
+                {
+                  type: 'convex',
+                  layer,
+                  material: 0,
+                  points: Float32Array.from(points),
+                  radius: 0,
+                },
+              ],
+            },
+          ],
+          skipped: [],
+        };
+      };
+      // Both thrown down through it from above.
+      const clutter = physics.addObject(box(Layer.clutter), at(0, 0, 150), {
+        reference: 0x10,
+        kind: 'object',
+      });
+      const prop = physics.addObject(box(Layer.props), at(30, 0, 150), {
+        reference: 0x11,
+        kind: 'object',
+      });
+      // They fall through it (past their settling once placed).
+      expect(clutter.dynamic && prop.dynamic).toBe(true);
+      const entered = new Map<number, Set<number>>();
+      for (let i = 0; i < 300; i++) {
+        physics.step(1 / 60);
+        for (const [object, triggers] of physics.movingInTriggers())
+          for (const trigger of triggers)
+            entered.set(object, (entered.get(object) ?? new Set()).add(trigger));
+      }
+      expect([...(entered.get(0x10) ?? [])]).toEqual([0x77]);
+      expect(entered.get(0x11)).toBeUndefined();
+      physics.free();
+    },
   );
   it.todo('tells a trigger an arrow or spell flying through it (L_PROJECTILE)  [COLL] (sim)');
   it.todo('tells a trigger a dead body in it (L_DEADBIP)  [COLL] (sim)');

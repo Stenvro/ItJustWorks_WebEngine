@@ -45,8 +45,11 @@ export function connectPlayerTime(
         readonly ini: { number(section: string, key: string): number };
       }
     | undefined,
+  physics?: { timeScale: (() => number) | undefined },
 ): void {
   player.pace = () => session()?.time.playerPace ?? 1;
+  // The physics world steps at the world's clock's rate (PhysicsWorld.step).
+  if (physics) physics.timeScale = () => session()?.time.multiplier ?? 1;
   player.onLanded = (height) => {
     const current = session();
     const runtime = current?.scriptsReady;
