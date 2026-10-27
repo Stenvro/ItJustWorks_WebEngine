@@ -44,6 +44,24 @@ describe('save codec', () => {
     expect(back.$tricky).toEqual({ $m: 1 });
   });
 
+  it('keeps one Papyrus array held by two variables one array', () => {
+    const shared = new PapyrusArray([1, 2]);
+    const value = {
+      a: shared,
+      b: [shared],
+      c: new Map([['x', shared]]),
+      other: new PapyrusArray([1, 2]),
+    };
+    const back = decodeValue(JSON.parse(JSON.stringify(encodeValue(value)))) as typeof value;
+    expect(back.b[0]).toBe(back.a);
+    expect(back.c.get('x')).toBe(back.a);
+    expect(back.other).not.toBe(back.a);
+    back.a.items.push(3);
+    expect(back.c.get('x')?.items).toEqual([1, 2, 3]);
+    // A save made before arrays had numbers reads as before.
+    expect((decodeValue({ $a: [1] }) as PapyrusArray).items).toEqual([1]);
+  });
+
   it('refuses class instances it would lose', () => {
     expect(() => encodeValue({ when: new Date(0) })).toThrow(/\$\.when is a Date/);
   });

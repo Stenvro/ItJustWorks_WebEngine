@@ -25,7 +25,8 @@ import type { ModelInstance } from '../render/scene-renderer.ts';
 import { matrixPlacement } from '../world/cell-loader.ts';
 import type { SoundSystem } from '../audio/sound-system.ts';
 import type { SoundInstance } from '../audio/sound-instance.ts';
-import type { ScriptGraph } from '../animation/script-graphs.ts';
+import type { SavedGraph, ScriptGraph } from '../animation/script-graphs.ts';
+import type { SavedActor, WorldSave } from '../save/world-save.ts';
 import type { ScreenModifiers } from './screen-modifiers.ts';
 import { SkyMode, type SkyWeather } from '../world/sky-weather.ts';
 import type { Terminal } from './terminal.ts';
@@ -112,6 +113,8 @@ export interface ScriptView {
   randomSceneStarts?(scene: number, first: number, second: number): boolean | undefined;
   /** Whether a speaker of the view faces its target for a line (undefined: not in the view). */
   facesForLine?(speaker: number, target: number): boolean | undefined;
+  /** What a save keeps of the view's actors (their stage's: src/save/world-save.ts). */
+  saveActors?(): readonly SavedActor[];
   /** The player passes into another cell or worldspace (a loading screen is up). */
   changingSpace?(): boolean;
   /** The regions of the player's cell (IsPlayerInRegion). */
@@ -484,6 +487,34 @@ export class ScriptWorld implements WorldBridge {
       if (running !== undefined) return running;
     }
     return undefined;
+  }
+
+  /**
+   * What a save keeps of the loaded world (src/save/world-save.ts): every view's actors, and the
+   * graphs of the loaded objects that moved from where they started (a lever pulled).
+   */
+  saveWorld(): WorldSave {
+    const actors: SavedActor[] = [];
+    const graphs: [number, SavedGraph][] = [];
+    const seen = new Set<number>();
+    for (const view of this.#views) {
+      for (const actor of view.saveActors?.() ?? []) {
+        if (seen.has(actor.reference)) continue;
+        seen.add(actor.reference);
+        actors.push(actor);
+      }
+    }
+    const graphed = new Set<number>();
+    for (const view of this.#views) {
+      for (const reference of view.loadedReferences()) {
+        if (seen.has(reference) || graphed.has(reference)) continue;
+        const state = view.graphOf?.(reference)?.save?.();
+        if (!state) continue;
+        graphed.add(reference);
+        graphs.push([reference, state]);
+      }
+    }
+    return { actors, graphs };
   }
 
   facesForLine(speaker: number, target: number): boolean | undefined {

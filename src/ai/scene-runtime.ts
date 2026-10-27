@@ -139,6 +139,29 @@ const FACING_PATIENCE = 3;
 
 type ActionStatus = 'waiting' | 'running' | 'ended';
 
+/** A playing scene as a save keeps it (SceneDirector.saveData). */
+export interface SavedScene {
+  readonly scene: number;
+  readonly force: boolean;
+  readonly random: boolean;
+  readonly phase: number;
+  readonly clock: number;
+  /** The references cast: [alias, reference]. */
+  readonly cast: readonly (readonly [number, number])[];
+  readonly actions: readonly {
+    readonly index: number;
+    readonly status: ActionStatus;
+    readonly complete: boolean;
+    readonly left: number;
+  }[];
+}
+
+export interface SavedScenes {
+  readonly playing: readonly SavedScene[];
+  /** Starts waiting for their actors: [scene, forced]. */
+  readonly waiting: readonly (readonly [number, boolean])[];
+}
+
 /** An action of a scene that plays. */
 interface ActionRun {
   readonly action: SceneAction;
@@ -498,6 +521,97 @@ export class SceneDirector {
     }));
   }
 
+  /**
+   * What a save keeps of the scenes (as the original's quest change forms keep their scenes):
+   * each playing one's phase, cast, clock and actions; the starts waiting for their actors.
+   */
+  saveData(): SavedScenes {
+    const playing: SavedScene[] = [];
+    for (const scene of this.#playing.values()) {
+      if (!live(scene)) continue;
+      playing.push({
+        scene: scene.formId,
+        force: scene.force,
+        random: scene.random,
+        phase: scene.phase,
+        clock: scene.clock,
+        cast: [...scene.cast],
+        actions: scene.actions.map((run) => ({
+          index: run.action.index,
+          status: run.status,
+          complete: run.complete,
+          left: run.left,
+        })),
+      });
+    }
+    return {
+      playing,
+      waiting: [...this.#waiting].map(([scene, waiting]) => [scene, waiting.force] as const),
+    };
+  }
+
+  /**
+   * A loaded save's scenes go on: each playing one in its phase with its cast (IsPlaying is
+   * true at once), its begin and phase start fragments not run again; the waiting starts wait
+   * again.
+   */
+  restore(saved: SavedScenes | undefined): void {
+    for (const entry of saved?.playing ?? []) {
+      if (this.#playing.has(entry.scene)) continue;
+      const playing: Playing = {
+        formId: entry.scene,
+        force: entry.force,
+        record: undefined,
+        cast: new Map(entry.cast),
+        actions: [],
+        phase: entry.phase,
+        state: 'playing',
+        paused: false,
+        random: entry.random,
+        clock: entry.clock,
+        rechecked: entry.clock,
+        waiters: [],
+      };
+      this.#playing.set(entry.scene, playing);
+      for (const reference of playing.cast.values()) this.#actors.set(reference, playing);
+      if (playing.random) this.#randomPlaying = playing;
+      void this.#goOn(playing, entry).catch((error: unknown) => {
+        this.#host.warn(`scene ${hex(entry.scene)}: ${describe(error)}`);
+        this.#end(playing, 'stopped');
+      });
+    }
+    for (const [scene, force] of saved?.waiting ?? []) this.start(scene, force);
+  }
+
+  async #goOn(playing: Playing, saved: SavedScene): Promise<void> {
+    await this.#nextUpdate();
+    if (!live(playing)) return;
+    const record = await this.#host.scene(playing.formId);
+    if (!live(playing)) return;
+    if (!record) {
+      this.#end(playing, 'stopped');
+      return;
+    }
+    playing.record = record;
+    const runs = new Map(saved.actions.map((run) => [run.index, run]));
+    for (const action of record.actions) {
+      const run = runs.get(action.index);
+      playing.actions.push({
+        action,
+        endPhase: Math.max(action.startPhase, action.endPhase),
+        actor: undefined,
+        status: run?.status ?? 'waiting',
+        complete: run?.complete ?? false,
+        left: run?.left ?? 0,
+        order: 0,
+      });
+    }
+    this.#trace(playing, `goes on in phase ${String(saved.phase)} (loaded)`);
+    this.#watchActors(playing);
+    if (!live(playing)) return;
+    await this.#play(playing, Math.max(0, saved.phase));
+  }
+
   /** The scenes waiting for their actors. */
   get waiting(): readonly number[] {
     return [...this.#waiting.keys()];
@@ -686,17 +800,23 @@ export class SceneDirector {
 
   // --- Playing ---------------------------------------------------------------------------
 
-  async #play(playing: Playing): Promise<void> {
+  /**
+   * Plays a scene through its phases. `resumed`: a loaded save's scene, which goes on in the
+   * phase it was in (its begin and that phase's start fragments ran before the save).
+   */
+  async #play(playing: Playing, resumed?: number): Promise<void> {
     const record = playing.record;
     if (!record) return;
-    await this.#fragment(playing, 'begin');
-    for (let index = 0; index < record.phases.length; index++) {
+    if (resumed === undefined) await this.#fragment(playing, 'begin');
+    for (let index = resumed ?? 0; index < record.phases.length; index++) {
       if (!live(playing)) return;
       const phase = record.phases[index];
       if (!phase) continue;
+      const goesOn = index === resumed;
       // A phase whose start conditions do not hold is skipped: the actions that start in it do
       // not run, those that end in it end.
       if (
+        !goesOn &&
         phase.startConditions.length > 0 &&
         !(await this.#holds(playing, phase.startConditions))
       ) {
@@ -707,8 +827,12 @@ export class SceneDirector {
       }
       if (!live(playing)) return;
       playing.phase = index;
-      this.#trace(playing, `phase ${String(index)}${phase.name ? ` "${phase.name}"` : ''}`);
-      await this.#phaseFragment(playing, index, PhaseFragmentFlag.onStart);
+      this.#trace(
+        playing,
+        `phase ${String(index)}${phase.name ? ` "${phase.name}"` : ''}${goesOn ? ' (loaded)' : ''}`,
+      );
+      if (goesOn) this.#resumeActions(playing);
+      else await this.#phaseFragment(playing, index, PhaseFragmentFlag.onStart);
       if (!live(playing)) return;
       this.#startActions(playing, index);
       await this.#phaseDone(playing, index);
@@ -752,6 +876,31 @@ export class SceneDirector {
   #startActions(playing: Playing, phase: number): void {
     for (const run of playing.actions) {
       if (run.action.startPhase !== phase || run.status !== 'waiting') continue;
+      this.#startRun(playing, run, false);
+    }
+  }
+
+  /**
+   * A loaded save's scene: the actions that ran and were not done start again (a line is said
+   * again, a package action gives its package again, a timer runs on with the seconds it had
+   * left); those done that still run hold their looks.
+   */
+  #resumeActions(playing: Playing): void {
+    for (const run of playing.actions) {
+      if (run.status !== 'running') continue;
+      if (run.complete) {
+        run.order = ++this.#order;
+        run.actor = this.#castOf(playing, run.action.alias);
+        if (run.actor !== undefined) this.#updateLook(playing, run.actor);
+        continue;
+      }
+      this.#startRun(playing, run, true);
+    }
+  }
+
+  /** An action starts (`resumed`: again, as a loaded save's scene goes on). */
+  #startRun(playing: Playing, run: ActionRun, resumed: boolean): void {
+    {
       run.status = 'running';
       run.order = ++this.#order;
       run.actor = this.#castOf(playing, run.action.alias);
@@ -764,7 +913,7 @@ export class SceneDirector {
       );
       switch (action.type) {
         case 'timer':
-          run.left = action.seconds;
+          if (!resumed) run.left = action.seconds;
           if (run.left <= 0) run.complete = true;
           break;
         case 'dialogue':

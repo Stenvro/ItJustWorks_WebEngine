@@ -8,6 +8,7 @@ import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { RuntimeSave } from '../scripting/runtime/runtime-save.ts';
 import { readSave, SAVE_VERSION, writeSave, type SaveHeader } from './save-codec.ts';
+import type { WorldSave } from './world-save.ts';
 
 /** The save file's body. */
 export interface GameSave {
@@ -18,6 +19,11 @@ export interface GameSave {
   readonly weather: number | undefined;
   /** What could not be saved (threads in flight, ...): logged again as it loads. */
   readonly unsaved: readonly string[];
+  /**
+   * The loaded world beside the scripts (src/save/world-save.ts): actors' places, furniture,
+   * packages and fights, moved objects' graphs. None in saves made before it, or without a view.
+   */
+  readonly world?: WorldSave | undefined;
   /**
    * Item counts to add to containers after their record's inventory is filled (an imported
    * .ess keeps inventories as changes against the records: ess-import.ts).
@@ -58,6 +64,7 @@ export async function saveGame(
     player,
     weather: runtime.world.currentWeather?.(),
     unsaved,
+    world: runtime.world.saveWorld?.(),
   };
   const header: SaveHeader = {
     version: SAVE_VERSION,

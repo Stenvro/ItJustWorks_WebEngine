@@ -3,8 +3,17 @@
 // the graph raises (OnAnimationEvent). Platform-independent.
 
 import type { AnimatedSkeleton } from './animated-skeleton.ts';
-import type { BehaviorRuntime } from './behavior-runtime.ts';
-import type { ObjectGraph } from './object-graph.ts';
+import type { BehaviorGraphState, BehaviorRuntime } from './behavior-runtime.ts';
+import type { ObjectGraph, ObjectGraphState } from './object-graph.ts';
+
+/**
+ * A placed object's graph as a save keeps it: the sequences' graph (ObjectGraph) and the
+ * skeleton's run of it (BehaviorRuntime), each where it was moved from its start.
+ */
+export interface SavedGraph {
+  readonly sequences?: ObjectGraphState | undefined;
+  readonly skeleton?: BehaviorGraphState | undefined;
+}
 
 /** A running behavior graph as scripts use it (PlayAnimation, the animation variables). */
 export interface ScriptGraph {
@@ -12,6 +21,8 @@ export interface ScriptGraph {
   send(event: string): boolean;
   variable(name: string): number | undefined;
   setVariable(name: string, value: number): void;
+  /** What a save keeps of a placed object's graph (undefined: as it started); none for actors. */
+  save?(): SavedGraph | undefined;
 }
 
 /** An object's graph (sequences) for the scripts; `clock`: the renderer's, in seconds. */
@@ -56,7 +67,13 @@ export function placedScriptGraph(
   const parts = [objectScriptGraph(graph, clock), actorScriptGraph(skeleton)].filter(
     (part): part is ScriptGraph => part !== undefined,
   );
-  if (parts.length <= 1) return parts[0];
+  const save = (): SavedGraph | undefined => {
+    const sequences = graph?.saveState();
+    const skeletal = skeleton?.saveState();
+    return sequences || skeletal ? { sequences, skeleton: skeletal } : undefined;
+  };
+  if (parts.length === 0) return undefined;
+  if (parts.length === 1 && parts[0]) return { ...parts[0], save };
   return {
     send: (event) => parts.map((part) => part.send(event)).some(Boolean),
     variable: (name) => {
@@ -69,6 +86,7 @@ export function placedScriptGraph(
     setVariable: (name, value) => {
       for (const part of parts) part.setVariable(name, value);
     },
+    save,
   };
 }
 

@@ -60,6 +60,17 @@ export function sequenceWeight(playing: PlayingSequence, now: number): number {
 type StateMachine = Extract<BehaviorGenerator, { kind: 'state-machine' }>;
 type SequenceLeaf = Extract<BehaviorGenerator, { kind: 'gamebryo-sequence' }>;
 
+/** A graph's state as a save keeps it (ObjectGraph.saveState). */
+export interface ObjectGraphState {
+  /** The active state machines' states, in the order they are reached from the root. */
+  readonly states: readonly number[];
+  /** The variables scripts set: [index, value]. */
+  readonly variables: readonly (readonly [number, number])[];
+}
+
+/** Seconds before a load a restored graph's sequences began: they have played to their ends. */
+const RESTORED_LONG_AGO = 3600;
+
 /** Events handled in one update at most (a looping sequence with keys at time 0 would spin). */
 const MAX_EVENTS_PER_UPDATE = 64;
 const CYCLE_LOOP = 0;
@@ -188,6 +199,7 @@ export class ObjectGraph {
             }
           }
           this.#states.set(node, target.id);
+          this.#touched = true;
           const entered = new Set(this.#leaves.keys());
           this.#activate(target.generator, time);
           if (blend) {
@@ -244,21 +256,80 @@ export class ObjectGraph {
     return machine.states.find((state) => state.id === id);
   }
 
-  #activate(node: BehaviorGenerator | undefined, time: number): void {
+  /**
+   * What a save keeps of the graph (as the original saves an object's graph): the state of each
+   * active state machine, in the order they are reached from the root, and the variables
+   * scripts set. Undefined while nothing has moved it from where it started.
+   */
+  saveState(): ObjectGraphState | undefined {
+    if (!this.#touched) return undefined;
+    const states: number[] = [];
+    const walk = (node: BehaviorGenerator | undefined): void => {
+      if (!node) return;
+      switch (node.kind) {
+        case 'state-machine': {
+          const current = this.#currentState(node);
+          if (!current) return;
+          states.push(current.id);
+          walk(current.generator);
+          return;
+        }
+        case 'blender':
+          for (const child of this.#activeChildren(node)) walk(child);
+          return;
+        case 'modifier-generator':
+          walk(node.generator);
+          return;
+        default:
+          return;
+      }
+    };
+    walk(this.#graph.root);
+    return { states, variables: [...this.#values] };
+  }
+
+  /**
+   * A saved graph put back as it loads (`now`: the clock): its variables, then its machines in
+   * their saved states, whose sequences played long ago (a lever pulled stays down, a gate
+   * raised stays up) and send no text keys again.
+   */
+  restoreState(saved: ObjectGraphState, now: number): void {
+    this.#values.clear();
+    for (const [index, value] of saved.variables) this.#values.set(index, value);
+    this.#deactivate(this.#graph.root);
+    this.#fading.clear();
+    const at = now - RESTORED_LONG_AGO;
+    this.#activate(this.#graph.root, at, { states: saved.states, next: 0 });
+    for (const state of this.#leaves.values()) state.sent = now;
+    this.#touched = true;
+    this.#refresh();
+  }
+
+  /** A state changed or a variable was set since the graph started (saveState). */
+  #touched = false;
+
+  #activate(
+    node: BehaviorGenerator | undefined,
+    time: number,
+    saved?: { readonly states: readonly number[]; next: number },
+  ): void {
     if (!node) return;
     switch (node.kind) {
       case 'state-machine': {
-        const start = this.#startState(node);
+        const id = saved?.states[saved.next++];
+        const start =
+          (id === undefined ? undefined : node.states.find((state) => state.id === id)) ??
+          this.#startState(node);
         if (!start) return;
         this.#states.set(node, start.id);
-        this.#activate(start.generator, time);
+        this.#activate(start.generator, time, saved);
         return;
       }
       case 'blender':
-        for (const child of this.#activeChildren(node)) this.#activate(child, time);
+        for (const child of this.#activeChildren(node)) this.#activate(child, time, saved);
         return;
       case 'modifier-generator':
-        this.#activate(node.generator, time);
+        this.#activate(node.generator, time, saved);
         return;
       case 'gamebryo-sequence':
         // Keys at the very start count: "sent" lies just before it.
@@ -383,6 +454,7 @@ export class ObjectGraph {
     );
     if (index < 0) return;
     this.#values.set(index, value);
+    this.#touched = true;
     this.#refresh();
   }
 
