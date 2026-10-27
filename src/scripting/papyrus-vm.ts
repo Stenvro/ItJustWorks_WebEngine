@@ -26,6 +26,15 @@ import {
   type Value,
 } from './values.ts';
 
+/** One script instance in a save: its object, script, state and variables per script level. */
+export interface SavedInstance {
+  readonly formId: number;
+  readonly alias: number;
+  readonly script: string;
+  readonly state: string;
+  readonly vars: readonly (readonly [string, readonly (readonly [string, Value])[]])[];
+}
+
 /** A script attached to a form, with the values its properties were given in the plugin. */
 export interface AttachedScriptInfo {
   readonly name: string;
@@ -361,6 +370,81 @@ export class PapyrusVm {
       kept.push(same);
     }
     this.#attached.set(target.key, Promise.resolve(kept));
+  }
+
+  // --- Saving ---------------------------------------------------------------------------
+
+  /**
+   * Every script instance that exists, with its variables per script level and its state (the
+   * save: docs/formats/save.md). Threads are not in it: see savableThreads.
+   */
+  async savedInstances(): Promise<SavedInstance[]> {
+    const saved: SavedInstance[] = [];
+    for (const pending of this.#attached.values()) {
+      for (const instance of await pending) {
+        saved.push({
+          formId: instance.target.formId,
+          alias: instance.target.alias,
+          script: instance.script.name,
+          state: instance.state,
+          vars: [...instance.vars].map(([level, vars]) => [level, [...vars]]),
+        });
+      }
+    }
+    return saved;
+  }
+
+  /**
+   * A save's script instances put back on a fresh VM (a game loaded): each object's scripts as
+   * the plugins attach them, their variables and states the save's, their properties' Set
+   * functions and OnInit not run again (they ran before the save). Returns what could not be
+   * matched (a script no longer attached, a variable it no longer has), for the log.
+   */
+  async restoreInstances(saved: readonly SavedInstance[]): Promise<string[]> {
+    const problems: string[] = [];
+    const byObject = new Map<string, SavedInstance[]>();
+    for (const instance of saved) {
+      const key = new ObjectHandle(instance.formId, 'form', instance.alias).key;
+      const list = byObject.get(key) ?? [];
+      list.push(instance);
+      byObject.set(key, list);
+    }
+    for (const list of byObject.values()) {
+      const first = list[0];
+      if (!first) continue;
+      const target = new ObjectHandle(first.formId, 'form', first.alias);
+      const instances = await this.#attachedInstances(target);
+      for (const entry of list) {
+        const instance = instances.find((i) => i.script.name === entry.script);
+        if (!instance) {
+          problems.push(`${entry.script} on ${formatValue(target)} is no longer attached`);
+          continue;
+        }
+        instance.state = entry.state;
+        instance.bound = [];
+        for (const [level, vars] of entry.vars) {
+          const own = instance.vars.get(level);
+          if (!own) {
+            problems.push(`${entry.script}: script level ${level} is gone`);
+            continue;
+          }
+          for (const [name, value] of vars) {
+            if (own.has(name)) own.set(name, value);
+            else problems.push(`${entry.script}: variable ${name} is gone`);
+          }
+        }
+      }
+    }
+    return problems;
+  }
+
+  /**
+   * The threads a save cannot hold: their stacks run as JavaScript calls, which cannot be
+   * written down (TODO(M12): resumable frames). Waits on clocks and registrations are saved by
+   * the runtime as registrations; these are logged as not saved.
+   */
+  unsavedThreads(): { readonly id: number; readonly state: string; readonly where: string }[] {
+    return this.pendingThreads().filter((thread) => thread.state !== 'done');
   }
 
   /** Native type chain instance (e.g. ObjectReference → Form) for a handle. */
