@@ -22,7 +22,7 @@ export const HDR_FORMAT: GPUTextureFormat = 'rgba16float';
 const BLOOM_DIVISOR = 4;
 /** The depth of field's blurred copy is made at half the resolution. */
 const DOF_DIVISOR = 2;
-const POST_FLOATS = 36;
+const POST_FLOATS = 40;
 const DOF_FLOATS = 16;
 const EFFECT_FLOATS = 8;
 
@@ -355,6 +355,8 @@ export class PostProcessor {
     data.set([...image.tintColor, image.tintAmount], 8);
     data.set(blurWeights(hdr.bloomBlurRadius), 16);
     data.set(effects ? [...effects.fadeColor, effects.fadeAmount] : [0, 0, 0, 0], 32);
+    const water = image.underwater;
+    data.set(water ? [...water.color, water.amount] : [0, 0, 0, 0], 36);
     const bloomWidth = targets.bloomA.width;
     const bloomHeight = targets.bloomA.height;
     const write = (index: number, stepX: number, stepY: number): void => {

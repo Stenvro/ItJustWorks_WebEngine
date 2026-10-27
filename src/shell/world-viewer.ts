@@ -31,7 +31,7 @@ import { parseGrass, placeGrass, type GrassType } from '../world/grass.ts';
 import type { AmbientState } from '../audio/ambience.ts';
 import { waterAreaHeight } from '../audio/water-audio.ts';
 import { cellWater, DEFAULT_WATER } from '../world/water.ts';
-import { UnderwaterView } from '../world/underwater.ts';
+import { UnderwaterView, withUnderwaterTint } from '../world/underwater.ts';
 import type { SceneFog } from '../render/scene-lighting.ts';
 import { FlowMaps, waterPlugin } from '../world/flow-map.ts';
 import { surfaceOver, waterVolumes, type WaterVolume } from '../world/water-volumes.ts';
@@ -844,6 +844,10 @@ export class WorldViewer {
     shakeCamera: (strength, seconds, source) => {
       this.#stage?.graphEvents.shakeCameraFrom(strength, seconds, source);
     },
+    // Game.TriggerScreenBlood (src/shell/screen-blood-view.ts).
+    screenBlood: (count) => {
+      this.#session?.screenBlood.splatter(count);
+    },
     interactionLocation: (furniture, from) =>
       this.#stage?.furniture.interactionLocation(furniture, from) ?? Promise.resolve(undefined),
     dependentAnimated: (reference, dependent, added) =>
@@ -1420,9 +1424,11 @@ export class WorldViewer {
       // stars or clouds; their weather still lights and fogs them.
       sky: () => (this.#noSky ? undefined : this.#sky?.skyFrame()),
       water: () => this.#waterFrame(),
-      imageSpace: () => this.#sky?.imageSpace(),
+      // Under water the water's colour lies over everything (src/world/underwater.ts).
+      imageSpace: () => withUnderwaterTint(this.#sky?.imageSpace(), this.#under),
       // No sun in a world without a sky: no rays or flare either.
       sunEffects: () => (this.#noSky ? undefined : this.#sky?.sunEffects()),
+      screenBlood: () => this.#session?.screenBlood.frame(),
       backdrop: false,
       shadows: true,
       update: (seconds) => {
@@ -2638,6 +2644,7 @@ export class WorldViewer {
     // A menu's lights (the race menu's) first: they light what it shows.
     const extra = this.#play?.extraLights ?? [];
     const under = this.#underwaterFog(camera, sky);
+    this.#under = under;
     return {
       ...sky,
       ...(under && { fog: under }),
@@ -2649,6 +2656,9 @@ export class WorldViewer {
   readonly #underwater = new UnderwaterView((formId) =>
     this.#session?.waterType(formId).then((gpu) => gpu?.type),
   );
+
+  /** The underwater fog of the last frame (its full-screen tint goes on the imagespace). */
+  #under: SceneFog | undefined;
 
   #underwaterFog(camera: Vec3, sky: Omit<SceneLighting, 'lights'>): SceneFog | undefined {
     return this.#underwater.fog(camera[2], this.#waterAt(camera[0], camera[1], camera[2]), sky);

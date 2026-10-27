@@ -205,6 +205,8 @@ export interface WorldBridge {
    * engine's fCameraShakeTime), from a reference's place (none: the player's).
    */
   shakeCamera?(strength: number, seconds: number, source?: number): void;
+  /** Splatters of blood on the screen (Game.TriggerScreenBlood). */
+  screenBlood?(count: number): void;
   grabbed?(): number | undefined;
   /**
    * A menu the scripts open; resolves once it has closed, with what it returns (ShowGiftMenu:

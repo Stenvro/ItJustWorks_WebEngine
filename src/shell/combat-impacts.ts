@@ -13,7 +13,8 @@ import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
 import type { GpuDecals } from '../render/decals.ts';
 import type { RenderPort } from '../render/render-port.ts';
-import type { Mat4, Vec3 } from '../render/math.ts';
+import { invert } from '../render/frustum.ts';
+import { multiply, transformPoint, type Mat4, type Vec3 } from '../render/math.ts';
 import {
   expireDecals,
   parseTextureSet,
@@ -31,6 +32,14 @@ const SPLATTER_REACH = 160;
 interface LivingDecal {
   readonly gpu: GpuDecals;
   readonly until: number;
+  /** A decal on a body: its box where the body's node has it now (undefined: not shown). */
+  readonly follow?: () => Mat4 | undefined;
+}
+
+/** A body a hit's blood lands on: its placement and its pose (node matrices, model space). */
+export interface BleedingBody {
+  readonly world: Mat4;
+  readonly pose: { readonly worlds: Float32Array };
 }
 
 /** An impact's decal (IPCT DODT and DNAM). */
@@ -85,7 +94,68 @@ export class CombatImpacts {
   /** The decals of hits (the viewers draw them with their cells'), those past their time gone. */
   *decals(): Iterable<GpuDecals> {
     this.#expire();
-    for (const decal of this.#decals) yield decal.gpu;
+    for (const decal of this.#decals) {
+      if (decal.follow) {
+        const box = decal.follow();
+        if (!box) continue;
+        decal.gpu.move(box);
+      }
+      yield decal.gpu;
+    }
+  }
+
+  /**
+   * The impact's blood decal on the body it struck (an actor's skin, as its pose moves): its box
+   * at the hit, facing along the blow, kept on the body's nearest node. TODO(M13): the engine
+   * builds skinned decals into the hit shape's own triangles; this projects the decal onto
+   * whatever of the body lies in its box, which follows the node it was put on.
+   */
+  async bodyDecal(
+    impact: Impact,
+    point: Vec3,
+    direction: Vec3,
+    body: () => BleedingBody | undefined,
+  ): Promise<void> {
+    const data = await this.#decal(impact.formId);
+    const now = body();
+    if (!data || !now) return;
+    const node = nearestNode(now, point);
+    if (node < 0) return;
+    const nodeWorld = (b: BleedingBody): Mat4 =>
+      multiply(b.world, b.pose.worlds.subarray(node * 16, node * 16 + 16));
+    const inverse = invert(nodeWorld(now));
+    if (!inverse) return;
+    const way = normalize(direction);
+    const placed = placeDecal(
+      data.decal,
+      this.#seed++,
+      decalFrame(point, [-way[0], -way[1], -way[2]]),
+    );
+    const local = multiply(inverse, placed.box);
+    const gpu = await this.#renderer.decals.createDecals(
+      [
+        {
+          reference: 0,
+          base: data.base,
+          textureSet: data.textureSet,
+          box: placed.box,
+          rect: placed.rect,
+        },
+      ],
+      this.#session.textures,
+    );
+    if (!gpu) return;
+    const lifetime = this.#session.ini.number('Display', 'fDecalLifetime');
+    const box = new Float32Array(16);
+    this.#decals.push({
+      gpu,
+      until: this.#now() + lifetime,
+      follow: () => {
+        const at = body();
+        return at && multiply(nodeWorld(at), local, box);
+      },
+    });
+    this.#expire();
   }
 
   #expire(): void {
@@ -190,6 +260,26 @@ export class CombatImpacts {
 
 /** Shows an impact's effect model for its own time: its path, where, the way it faces. */
 export type ImpactModelShow = (model: string, at: Vec3, facing: Vec3) => void;
+
+/** The body's node nearest a point in the world (-1: none). */
+export function nearestNode(body: BleedingBody, point: Vec3): number {
+  const worlds = body.pose.worlds;
+  let best = -1;
+  let bestDistance = Infinity;
+  for (let node = 0; node * 16 + 15 < worlds.length; node++) {
+    const at = transformPoint(body.world, [
+      worlds[node * 16 + 12] ?? 0,
+      worlds[node * 16 + 13] ?? 0,
+      worlds[node * 16 + 14] ?? 0,
+    ]);
+    const distance = Math.hypot(at[0] - point[0], at[1] - point[1], at[2] - point[2]);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = node;
+    }
+  }
+  return best;
+}
 
 /** A vector of length 1 (or the one given, if it has none). */
 function normalize(v: Vec3): Vec3 {
