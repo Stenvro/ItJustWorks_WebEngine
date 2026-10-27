@@ -35,6 +35,7 @@ import { GameState } from '../scripting/runtime/game-state.ts';
 import { gameStateData, type RuntimeSave } from '../scripting/runtime/runtime-save.ts';
 import type { Placement } from '../scripting/runtime/runtime.ts';
 import { ObjectHandle, PapyrusArray, type Value } from '../scripting/values.ts';
+import type { RecordDatabase } from '../world/record-db.ts';
 import type { GameSave } from './game-save.ts';
 import { SAVE_VERSION, type SaveHeader } from './save-codec.ts';
 
@@ -57,6 +58,17 @@ export interface EssWorld {
   readonly plugins: readonly PluginSlot[];
   /** A record's type ("CELL", "WRLD", "FACT", ...) by our form id. */
   recordType(formId: number): string | undefined;
+}
+
+/** Our world as the importer needs it, from the record database. */
+export function essWorld(db: RecordDatabase): EssWorld {
+  return {
+    plugins: db.plugins.map((plugin) => plugin.entry),
+    recordType: (formId) => {
+      const at = db.locate(formId);
+      return at ? db.typeAt(at) : undefined;
+    },
+  };
 }
 
 export interface EssImportRequest {
