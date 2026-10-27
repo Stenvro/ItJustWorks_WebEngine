@@ -300,6 +300,56 @@ describe('findPath with navmesh obstacles', () => {
   });
 });
 
+describe('findPath round an actor in the way (avoid nodes)', () => {
+  /** One square 2,000 across of two large triangles (an exterior's open ground). */
+  const field = (): NavmeshSet => {
+    const mesh = gridMesh(1, [[0, 0]]);
+    mesh.vertices.forEach((value, i) => (mesh.vertices[i] = value * 20));
+    return setOf([mesh]);
+  };
+  /** The closest the way's steps come to a point (horizontally). */
+  const closestTo = (points: readonly (readonly number[])[], at: Point): number => {
+    let least = Infinity;
+    for (let i = 1; i < points.length; i++) {
+      const [ax = 0, ay = 0] = points[i - 1] ?? [];
+      const [bx = 0, by = 0] = points[i] ?? [];
+      const dx = bx - ax;
+      const dy = by - ay;
+      const t = Math.max(0, Math.min(1, ((at[0] - ax) * dx + (at[1] - ay) * dy) / (dx * dx + dy * dy)));
+      least = Math.min(least, Math.hypot(ax + dx * t - at[0], ay + dy * t - at[1]));
+    }
+    return least;
+  };
+  const blocker: Point = [620, 1000, 0];
+  const node = { at: blocker, radius: 81, cost: 24 };
+
+  it('goes straight through a large triangle without one', () => {
+    const path = findPath(field(), [500, 1000, 0], [1500, 1000, 0], { radius: 35 });
+    expect(path?.points).toHaveLength(2);
+  });
+
+  it('goes round the one standing in its way within the triangle, its width kept off it', () => {
+    const path = findPath(field(), [500, 1000, 0], [1500, 1000, 0], {
+      radius: 35,
+      avoid: [node],
+    });
+    expect(path?.complete).toBe(true);
+    expect(path?.points.length).toBeGreaterThan(2);
+    expect(closestTo(path?.points ?? [], blocker)).toBeGreaterThanOrEqual(80);
+    expect(path?.points.at(-1)).toEqual([1500, 1000, 0]);
+  });
+
+  it('walks off the one it is pressed against and round it', () => {
+    const from: Point = [550, 1000, 0];
+    const path = findPath(field(), from, [1500, 1010, 0], { radius: 35, avoid: [node] });
+    const points = path?.points ?? [];
+    expect(points.length).toBeGreaterThan(2);
+    // Never nearer than where it stands, and clear of it after the first corner.
+    expect(closestTo(points, blocker)).toBeGreaterThanOrEqual(69);
+    expect(closestTo(points.slice(1), blocker)).toBeGreaterThanOrEqual(80);
+  });
+});
+
 describe('straightReach', () => {
   it('reaches the whole way along a clear line', () => {
     const set = setOf([gridMesh(1, L_SQUARES)]);
