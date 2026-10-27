@@ -337,6 +337,20 @@ describe('casting a spell', () => {
     expect(w.endedHeld).toEqual([FLAMES]);
   });
 
+  it('counts a charge from the graph’s BeginCast (the engine’s SpellCast handlers), once', async () => {
+    const w = world();
+    w.loadouts.set(PLAYER_REF, { right: FIREBOLT });
+    w.set(PLAYER_REF, ActorValue.magicka, 100);
+    expect(await w.engine.begin(PLAYER_REF, CastingSource.right)).toBe('started');
+    w.engine.update(0.2);
+    w.engine.graphBegan(PLAYER_REF, CastingSource.right);
+    const cast = need(w.engine.casting(PLAYER_REF, CastingSource.right));
+    expect(cast.hand.elapsed).toBe(0);
+    w.engine.update(0.1);
+    w.engine.graphBegan(PLAYER_REF, CastingSource.right);
+    expect(cast.hand.elapsed).toBeCloseTo(0.1, 9);
+  });
+
   it('dual casts at fMagicDualCastingCostMult times the cost', async () => {
     const w = world();
     w.loadouts.set(PLAYER_REF, { left: FIREBOLT, right: FIREBOLT });

@@ -112,6 +112,8 @@ export interface ActiveCast {
   readonly dual: boolean;
   readonly cost: CastCost;
   readonly hand: HandCast;
+  /** Its graph raised BeginCast for it (its charge counted from then: graphBegan). */
+  graphBegan?: boolean;
 }
 
 /** What reaches a target: the item cast, by whom, as strong and as costly as it was cast. */
@@ -648,6 +650,20 @@ export class CastingEngine {
     const delivered = this.#delivered(cast);
     this.#emit({ actor, source, kind: 'fire', cast, delivered });
     return delivered;
+  }
+
+  /**
+   * The engine's LeftHandSpellCastHandler / RightHandSpellCastHandler (BeginCastLeft,
+   * BeginCastRight: the graph's CastingState begun). Observed in the original: a hand's
+   * caster waiting to start begins its cast, its charge, as its graph raises BeginCast. Ours
+   * begins at the action (the attack button, the combat AI's cast); its charge counts from the
+   * graph's BeginCast instead, once.
+   */
+  graphBegan(actor: number, source: number): void {
+    const cast = this.casting(actor, source);
+    if (!cast || cast.graphBegan === true) return;
+    cast.graphBegan = true;
+    if (cast.hand.phase === 'charging') cast.hand.elapsed = 0;
   }
 
   /** A cast stops without firing (staggered, the hand changed, the actor died). */
