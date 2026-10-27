@@ -8,7 +8,8 @@
 // each actor's light from its renderer's lighting, a sum not read yet; here the light's
 // luminance (Rec. 709) at the actor, as the renderer has it: the mean of the six directional
 // ambients, the directional light unless something stands between it and the actor, each point
-// light within its radius with the renderer's falloff (1 − (d / r)²), all times 100.
+// light within its radius with the renderer's falloff (1 − (d / r)²) unless a wall stands
+// between it and the actor, all times 100.
 // Platform-independent.
 
 type Vec3 = readonly [number, number, number];
@@ -44,9 +45,16 @@ const LEVEL_SCALE = 100;
 
 /**
  * The light at a point (0 or more): `sunlit` says whether the directional light reaches it
- * (nothing stands between it and the light: the viewer's ray), see the file's comment.
+ * (nothing stands between it and the light: the viewer's ray), see the file's comment;
+ * `reaches`, whether a point light does (a wall between: it lights the other side, not this
+ * one; without it every light within its radius counts).
  */
-export function lightLevel(probe: LightProbe, at: Vec3, sunlit: boolean): number {
+export function lightLevel(
+  probe: LightProbe,
+  at: Vec3,
+  sunlit: boolean,
+  reaches?: (light: ProbeLight) => boolean,
+): number {
   let light = 0;
   if (probe.ambient.length > 0) {
     let sum = 0;
@@ -63,6 +71,7 @@ export function lightLevel(probe: LightProbe, at: Vec3, sunlit: boolean): number
     );
     const falloff = distance / point.radius;
     if (falloff >= 1) continue;
+    if (reaches && !reaches(point)) continue;
     light += luminance(point.color) * (1 - falloff * falloff);
   }
   return Math.max(0, light * LEVEL_SCALE);
