@@ -50,6 +50,8 @@ import {
   type StaticDirectional,
 } from '../world/material-object.ts';
 import { GameSettings } from '../world/game-settings.ts';
+import { ScreenBloodView } from './screen-blood-view.ts';
+import { lowStatTutorials } from '../gameplay/low-stat-tutorials.ts';
 import { WorldBorder } from '../world/border.ts';
 import { parseWater, WaterFlag, type WaterType } from '../world/water.ts';
 import {
@@ -203,6 +205,14 @@ export class GameSession {
   }
 
   #ini: IniSettings | undefined;
+
+  /** The blood on the screen when the player is hit (src/shell/screen-blood-view.ts). */
+  get screenBlood(): ScreenBloodView {
+    this.#screenBlood ??= new ScreenBloodView(this.settings(), this.textures);
+    return this.#screenBlood;
+  }
+
+  #screenBlood: ScreenBloodView | undefined;
   readonly loader: AssetLoader;
   readonly textures: TextureCache;
   /** Behavior projects, Havok skeletons and clips (actors and animated objects). */
@@ -1158,7 +1168,41 @@ export class GameSession {
   #lowHealth: LowHealthScreen | undefined;
   #lowHealthStarting = false;
 
+  /** The low-stat tutorials asked for in this session, and whether the stats are being read. */
+  readonly #lowStatsAsked = new Set<string>();
+  #lowStatsReading = false;
+  #lowStatsGame: object | undefined;
+
+  /** The first time a stat runs low, its tutorial (src/gameplay/low-stat-tutorials.ts). */
+  #checkLowStats(): void {
+    const runtime = this.scriptsReady;
+    if (!runtime) return;
+    // A new game (its own state) asks again.
+    if (this.#lowStatsGame !== runtime.state) {
+      this.#lowStatsGame = runtime.state;
+      this.#lowStatsAsked.clear();
+    }
+    if (this.#lowStatsReading || this.#lowStatsAsked.size === 3) return;
+    this.#lowStatsReading = true;
+    void Promise.all([
+      runtime.actors.value(PLAYER_REF, ActorValue.health),
+      runtime.actors.value(PLAYER_REF, ActorValue.magicka),
+      runtime.actors.value(PLAYER_REF, ActorValue.stamina),
+    ])
+      .then(([health, magicka, stamina]) => {
+        const shown = new Set([...runtime.state.tutorialsShown, ...this.#lowStatsAsked]);
+        for (const use of lowStatTutorials({ health, magicka, stamina }, shown)) {
+          this.#lowStatsAsked.add(use);
+          this.hud.menus?.tutorial?.(use);
+        }
+      })
+      .finally(() => {
+        this.#lowStatsReading = false;
+      });
+  }
+
   #updateLowHealth(realSeconds: number): void {
+    this.#checkLowStats();
     if (this.#lowHealth) {
       this.#lowHealth.update(realSeconds);
       return;

@@ -81,6 +81,8 @@ export interface ImageSpace {
   };
   /** The image-space modifiers' screen effects; absent: none. */
   readonly effects?: ScreenEffects;
+  /** The camera under water: the water's colour over the whole image (src/world/underwater.ts). */
+  readonly underwater?: { readonly color: Rgb; readonly amount: number };
 }
 
 /** DefaultImageSpaceInterior (Skyrim.esm): interiors without XCIM use it. */
