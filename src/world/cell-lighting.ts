@@ -152,6 +152,7 @@ export function cellSceneLighting(
       add(base, dalc.zPositive),
       add(base, dalc.zNegative),
     ],
+    ambientSpecular: { color: dalc.specular, fresnelPower: dalc.fresnelPower },
     fog: {
       nearColor: lighting.fogNearColor,
       farColor: lighting.fogFarColor,

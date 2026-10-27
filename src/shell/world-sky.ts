@@ -110,6 +110,10 @@ export function skyLighting(
       [...(ambientZ ?? dark)],
       [...(ambientNZ ?? dark)],
     ],
+    ambientSpecular: {
+      color: [...state.ambient.specular],
+      fresnelPower: state.ambient.fresnelPower,
+    },
     wind: state.windSpeed,
     windDirection: (state.windDirection * Math.PI) / 180,
     fog: {

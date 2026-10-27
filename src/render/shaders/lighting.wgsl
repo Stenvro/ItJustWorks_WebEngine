@@ -19,6 +19,7 @@ const SLSF1_SPECULAR = 0x1u;
 const SLSF1_VERTEX_ALPHA = 0x8u;
 const SLSF1_ENVIRONMENT_MAPPING = 0x80u;
 const SLSF1_RECEIVE_SHADOWS = 0x100u;
+const SLSF1_EYE_ENVIRONMENT_MAPPING = 0x20000u;
 const SLSF1_MODEL_SPACE_NORMALS = 0x1000u;
 const SLSF1_OWN_EMIT = 0x400000u;
 const SLSF1_EXTERNAL_EMITTANCE = 0x20000000u;
@@ -202,6 +203,19 @@ fn lodLandNoise(color: vec3f, noise: f32) -> f32 {
 
 // The lit colour and the G-buffer (written by opaque parts; blended parts' pipelines have no
 // second target).
+// The character light (Community Shaders' Lighting.hlsl CHARACTER_LIGHT, with the INI's
+// fCharacterLight... in the frame: primary and secondary intensity in ambient[4].w and [5].w,
+// luminance scale and maximum in time.zw): a light from the camera, and one from below and in
+// front of the actor (its model space), by the light around it. TODO(M13): the engine scales it
+// by a luminance texture it binds; ours is the directional ambient's luminance there.
+fn characterLight(n: vec3f, toCamera: vec3f, ambient: vec3f) -> vec3f {
+  let model = normalize(transpose(mat3x3f(draw.world[0].xyz, draw.world[1].xyz, draw.world[2].xyz)) * n);
+  let amount = frame.ambient[4].w * saturate(dot(toCamera, n)) +
+    frame.ambient[5].w * saturate(dot(vec2f(0.164399, -0.986394), model.yz));
+  let lum = dot(ambient, vec3f(0.2125, 0.7154, 0.0721));
+  return vec3f(amount * min(frame.time.w, frame.time.z * lum));
+}
+
 struct LightingOut {
   @location(0) color: vec4f,
   @location(1) gbuffer: vec4f,
@@ -414,7 +428,11 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
     // one, the shape's own emissive colour.
     emit = draw.emissive.rgb;
   }
-  let diffuseLight = ambient + emit + lights.diffuse;
+  var diffuseLight = ambient + emit + lights.diffuse;
+  // Actors' skin takes the character light.
+  if (shaderType == SHADER_FACEGEN || shaderType == SHADER_SKIN_TINT) {
+    diffuseLight += characterLight(shadingNormal, toCamera, ambient);
+  }
   var color = diffuseLight * base;
   var vertexColor = vec3f(1.0);
   if (hasVertexColors) {
@@ -443,9 +461,13 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
 
   // Environment map, lit like the surface; masked by the environment mask (else by the
   // specular mask).
+  // Eyes: their own flag (Eye_Environment_Mapping; bUseEyeEnvMapping 1) and their cube map
+  // scale. TODO(M13): the engine reflects about the eye's reflection centre (the shader's left
+  // and right centres by the vertex red); ours about the eye mesh's own normal.
   let environment =
     ((flags1 & SLSF1_ENVIRONMENT_MAPPING) != 0u &&
       (shaderType == SHADER_ENVIRONMENT_MAP || shaderType == SHADER_EYE_ENVIRONMENT_MAP)) ||
+    ((flags1 & SLSF1_EYE_ENVIRONMENT_MAPPING) != 0u && shaderType == SHADER_EYE_ENVIRONMENT_MAP) ||
     shaderType == SHADER_MULTI_LAYER_PARALLAX;
   if (environment) {
     let mask = select(glossiness, envMaskSample.r, draw.effect.z > 0.5) * draw.params.w;
@@ -461,6 +483,13 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
     specular = lights.specular * glossiness * draw.specular.rgb * draw.specular.a;
   } else if (multiPass) {
     specular = lights.specular * glossiness;
+  }
+  // Ambient specular (DALC's specular colour and fresnel power, in the frame's ambient w):
+  // a sheen towards grazing angles, times the specular mask (Community Shaders' AMBIENT_SPECULAR).
+  if (hasSpecular && !snow) {
+    let tint = vec3f(frame.ambient[0].w, frame.ambient[1].w, frame.ambient[2].w);
+    let facing = max(1.0 - saturate(dot(shadingNormal, toCamera)), 1e-4);
+    specular += tint * pow(facing, max(frame.ambient[3].w, 1e-4)) * glossiness;
   }
   color += specular;
   // Snow: the rim light in place of the specular (the engine's SnowParameters.x).

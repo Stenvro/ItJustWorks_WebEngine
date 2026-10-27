@@ -333,7 +333,10 @@ function lightingMaterial(file: NifFile, shader: BSLightingShaderPropertyBlock):
     specularColor: shader.specularColor,
     specularStrength: shader.specularStrength,
     environmentMapScale:
-      shader.environmentMapScale ?? shader.multiLayer?.environmentMapStrength ?? 0,
+      shader.environmentMapScale ??
+      shader.multiLayer?.environmentMapStrength ??
+      shader.eye?.cubemapScale ??
+      0,
     tintColor: shader.skinTintColor ?? shader.hairTintColor,
     refractionStrength: shader.refractionStrength,
     softLightRolloff: shader.lightingEffect1,

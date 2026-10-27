@@ -53,7 +53,25 @@ export interface SceneLighting {
   readonly wind?: number;
   /** Where the wind blows towards: radians clockwise from north (+Y). */
   readonly windDirection?: number;
+  /**
+   * Ambient specular (DALC's specular colour and fresnel power: the weather's, an interior's
+   * XCLL or lighting template's): a sheen at grazing angles on specular surfaces. None: none.
+   */
+  readonly ambientSpecular?: { readonly color: Vec3; readonly fresnelPower: number };
 }
+
+/**
+ * The character light ([Display] INI, the game's defaults: bCharacterLighting 1,
+ * fCharacterLightPrimaryLightIntensity 0.75, ...SecondaryLightIntensity 0.3, ...LumScale 2,
+ * ...LumMax 0.75): a light from the camera and one from below-front on actors' skin.
+ */
+export const CHARACTER_LIGHT = {
+  enabled: true,
+  primary: 0.75,
+  secondary: 0.3,
+  lumScale: 2,
+  lumMax: 0.75,
+} as const;
 
 /** Uniform ambient from every direction. */
 export function flatAmbient(color: Vec3): SceneLighting['ambient'] {
