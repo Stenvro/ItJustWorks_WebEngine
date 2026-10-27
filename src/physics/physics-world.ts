@@ -2362,11 +2362,47 @@ export class PhysicsWorld {
   readonly #isTriggerVolume = (other: RAPIER.Collider): boolean =>
     (this.matrix.flags(this.layerOf(other)) & LayerFlag.triggerVolume) !== 0;
 
+  /**
+   * The trigger volumes the moving objects are in (a bucket kicked onto a pressure plate, a
+   * corpse's ragdoll, a dropped weapon): for each simulated body awake now, by its reference,
+   * the triggers its colliders overlap whose layer collides with its own (the layer matrix:
+   * L_TRIGGER meets clutter, weapons, projectiles, dead bodies, ...). Sleeping bodies are not
+   * looked at (they stay where they were). The player's character is not among them.
+   */
+  movingInTriggers(): Map<number, Set<number>> {
+    const found = new Map<number, Set<number>>();
+    this.world.forEachActiveRigidBody((body) => {
+      if (!body.isDynamic()) return;
+      for (let i = 0; i < body.numColliders(); i++) {
+        const collider = body.collider(i);
+        const owner = this.ownerOf(collider);
+        if (!collider.isEnabled() || owner === undefined || owner.reference === 0) continue;
+        const layer = this.layerOf(collider);
+        let inside = found.get(owner.reference);
+        if (!inside) {
+          inside = new Set();
+          found.set(owner.reference, inside);
+        }
+        for (const trigger of this.#triggersIn(
+          collider.translation(),
+          collider.rotation(),
+          collider.shape,
+          collider,
+          layer,
+        )) {
+          if (trigger !== owner.reference) inside.add(trigger);
+        }
+      }
+    });
+    return found;
+  }
+
   #triggersIn(
     translation: RAPIER.Vector,
     rotation: RAPIER.Rotation,
     shape: RAPIER.Shape,
     exclude?: RAPIER.Collider,
+    layer?: number,
   ): Set<number> {
     const found = new Set<number>();
     this.world.intersectionsWithShape(
@@ -2375,6 +2411,8 @@ export class PhysicsWorld {
       shape,
       (other) => {
         if (!other.isEnabled()) return true;
+        // With a layer: only triggers whose own layer collides with it (the layer matrix).
+        if (layer !== undefined && !this.matrix.collides(this.layerOf(other), layer)) return true;
         const reference = this.ownerOf(other)?.reference;
         if (reference !== undefined && reference !== 0) found.add(reference);
         return true;

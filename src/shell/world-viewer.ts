@@ -1347,6 +1347,9 @@ export class WorldViewer {
     play.onTrigger = (reference, entered) => {
       this.#session?.scriptsReady?.triggered(reference, PLAYER_REF, entered);
     };
+    play.onObjectTrigger = (trigger, object, entered) => {
+      this.#session?.scriptsReady?.triggered(trigger, object, entered);
+    };
     // The traps the player touches hit them (OnTrapHitStart, ...: trap-hits.ts).
     play.onTrapTouch = (touching) => {
       this.#session?.scriptsReady?.trapHits.touching(PLAYER_REF, touching);
