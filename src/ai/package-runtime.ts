@@ -399,6 +399,39 @@ export type ShoutResult = 'shouted' | 'waiting' | 'none';
 export type ProcedureRunner = (run: ProcedureRun) => Promise<ProcedureResult>;
 
 /**
+ * The engine's own packages, those no record holds (CommonLibSSE PACKAGE_TYPE: kAvoidPlayer,
+ * kReactToDestroyedObject, kStealWarning, kPickPocketWarning, kGetUpFromChairBed, kSurface,
+ * kMovementBlocked): the engine creates one and puts it in front of the actor's own package
+ * (Actor::PutCreatedPackage); as it ends, the actor's packages are chosen again.
+ */
+export type EnginePackage =
+  | 'avoidPlayer'
+  | 'reactToDestroyedObject'
+  | 'stealWarning'
+  | 'pickPocketWarning'
+  | 'getUpFromChairBed'
+  | 'surface'
+  | 'movementBlocked';
+
+/** What an engine package's procedure is given: the actor, what it reacts to, its clock. */
+export interface EngineRun {
+  readonly actor: number;
+  readonly body: PackageBody;
+  readonly mind: PackageMind;
+  /** The reference it reacts to (the player it avoids or warns, the object destroyed). */
+  readonly target: number | undefined;
+  readonly settings: AiSettings;
+  /** Whether it was left (the actor stopped, another took it): it ends at once. */
+  stopped(): boolean;
+  /** Waits real seconds (shorter if it is left meanwhile). */
+  wait(seconds: number): Promise<void>;
+  random(): number;
+}
+
+/** An engine package's procedure; it ends as it resolves. */
+export type EngineRunner = (run: EngineRun) => Promise<void>;
+
+/**
  * Whether a running package (or a branch of it that ran beside another) was left (read after
  * awaits: it may change meanwhile).
  */
@@ -556,6 +589,8 @@ export class ActorPackages {
   /** Its own clock (real seconds, moved by update) and what waits on it. */
   #clock = 0;
   #waiting: { readonly until: number; readonly resolve: () => void }[] = [];
+  /** The engine package in front of its own (EnginePackage), while it runs. */
+  #engine: { readonly kind: EnginePackage; stopped: boolean } | undefined;
   /** Asked whether its procedure stopped this often since its clock last moved (LOOP_LIMIT). */
   #checks = 0;
   #checkedAt = -1;
@@ -643,6 +678,64 @@ export class ActorPackages {
     if (restart) this.#restart = true;
   }
 
+  /**
+   * Puts an engine package in front of the actor's own (EnginePackage): its package is set
+   * aside (its tree stops; its fallout with it), the engine package's procedure runs, and as it
+   * ends its packages are chosen again (the one set aside, still chosen, runs again from its
+   * root, without package events). One at a time: false while another runs.
+   * TODO(M13): which engine packages may replace which (the engine's created package's
+   * priority) is not read; the first keeps the actor.
+   */
+  push(kind: EnginePackage, runner: EngineRunner, target?: number): boolean {
+    if (this.#engine) return false;
+    const engine = { kind, stopped: false };
+    this.#engine = engine;
+    const current = this.#running;
+    if (current) current.stopped = true;
+    this.#release();
+    this.#body.stop();
+    this.#body.face(undefined);
+    const settings = this.#mind.settings?.() ?? AI_DEFAULTS;
+    void runner({
+      actor: this.actor,
+      body: this.#body,
+      mind: this.#mind,
+      target,
+      settings,
+      stopped: () => engine.stopped,
+      wait: (seconds) =>
+        engine.stopped
+          ? Promise.resolve()
+          : new Promise((resolve) => {
+              this.#waiting.push({ until: this.#clock + Math.max(0, seconds), resolve });
+            }),
+      random: this.#random,
+    })
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.#engine !== engine) return;
+        this.#engine = undefined;
+        this.#body.stop();
+        this.#body.face(undefined);
+        this.#wanted = true;
+      });
+    return true;
+  }
+
+  /** The engine package that runs in front of its own, if any. */
+  engine(): EnginePackage | undefined {
+    return this.#engine?.kind;
+  }
+
+  /** Its engine package is left (it stops at its next wait). */
+  #leaveEngine(): void {
+    const engine = this.#engine;
+    if (!engine) return;
+    engine.stopped = true;
+    this.#engine = undefined;
+    this.#release();
+  }
+
   /** What a save keeps of its package (SavedPackage); undefined while it runs none. */
   saveState(): SavedPackage | undefined {
     const running = this.#running;
@@ -699,6 +792,7 @@ export class ActorPackages {
 
   /** It leaves its package and stands (it left the high process, died, a scene took it). */
   stop(): void {
+    this.#leaveEngine();
     const running = this.#running;
     if (!running) return;
     running.stopped = true;
@@ -709,6 +803,8 @@ export class ActorPackages {
   }
 
   async #evaluate(): Promise<void> {
+    // An engine package in front: its own packages wait until it ends.
+    if (this.#engine) return;
     const current = this.#running;
     // A package that must complete is not left before it has, when the actor's packages are
     // chosen again; a scene's package action is not such a choice (observed in the
@@ -771,7 +867,15 @@ export class ActorPackages {
       // it runs (or ended under) may no longer (its conditions changed): then the tree is taken
       // again from its root, as the package stays (no package events). TODO(M13): the engine's
       // own rule for a running tree.
-      if ((await this.#branchesHold(current)) || this.#running !== current) return;
+      // Set aside by an engine package: one that ended falls out again, one that runs is taken
+      // again from its root.
+      if (current.stopped && current.ended) {
+        current.stopped = false;
+        this.#fallout(current);
+        return;
+      }
+      if (!current.stopped && (await this.#branchesHold(current))) return;
+      if (this.#running !== current) return;
       current.stopped = true;
       this.#release();
       this.#body.stop();
