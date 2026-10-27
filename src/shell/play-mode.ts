@@ -474,6 +474,7 @@ export class PlayMode {
       ini: () => session.ini,
       onSettingsChange: (listener) => session.preferences.onChange(listener),
       compass: () => compass.targets(),
+      plugins: () => session.vfs.loadOrder.map((entry) => entry.name),
       keyLabels: (text) => withKeyLabels(text, this.#playerData?.controls),
       floating: () => {
         const at = session.scriptWorld.livePlacement(PLAYER_REF);

@@ -488,7 +488,7 @@ export class ProgressionEngine {
   }
 
   /** Whether the player can take a perk now, and if not why. */
-  async perkAvailability(perk: number): Promise<PerkAvailability> {
+  async perkAvailability(perk: number, pointsValue?: number): Promise<PerkAvailability> {
     const runtime = this.#runtime;
     const actors = runtime.actors;
     const record = await this.#perk(perk);
@@ -508,14 +508,28 @@ export class ProgressionEngine {
     if (record.level > (await actors.playerLevel())) return 'requirements';
     if (!(await runtime.conditionsHold(record.conditions, runtime.referenceHandle(PLAYER_REF))))
       return 'requirements';
-    return runtime.perkPoints > 0 ? 'available' : 'noPoints';
+    return (await this.perkPointsOf(pointsValue)) > 0 ? 'available' : 'noPoints';
+  }
+
+  /**
+   * The perk points to spend: the player's, or a beast form's (its actor value: WerewolfPerks,
+   * VampirePerks; src/gameplay/beast-perk-trees.ts).
+   */
+  async perkPointsOf(pointsValue?: number): Promise<number> {
+    const runtime = this.#runtime;
+    if (pointsValue === undefined) return runtime.perkPoints;
+    return Math.max(0, Math.floor((await runtime.actors.value(PLAYER_REF, pointsValue)).current));
   }
 
   /** Takes a perk for a perk point if it is available (perkAvailability). */
-  async takePerk(perk: number): Promise<boolean> {
-    if ((await this.perkAvailability(perk)) !== 'available') return false;
+  async takePerk(perk: number, pointsValue?: number): Promise<boolean> {
+    if ((await this.perkAvailability(perk, pointsValue)) !== 'available') return false;
     const runtime = this.#runtime;
-    runtime.perkPoints = Math.max(0, runtime.perkPoints - 1);
+    if (pointsValue === undefined) runtime.perkPoints = Math.max(0, runtime.perkPoints - 1);
+    else {
+      const value = await runtime.actors.value(PLAYER_REF, pointsValue);
+      runtime.actors.setBase(PLAYER_REF, pointsValue, Math.max(0, value.base - 1));
+    }
     await runtime.perks.add(PLAYER_REF, perk);
     return true;
   }
