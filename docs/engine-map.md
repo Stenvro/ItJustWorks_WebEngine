@@ -50,9 +50,9 @@ These run through every area and explain most of what breaks in play.
    with a built-in default exists. Those defaults are now known.
 3. **Time and budget.** The original updates actors by process level on a per-frame time budget,
    re-evaluates packages every 15 s or on the hour, runs sandboxes on the game clock, and lets most
-   Papyrus natives wait for the main thread. Ours runs every actor every frame (the budget's rule is
-   read: src/ai/process-levels.ts) and runs natives at once; packages are re-evaluated every 15 s and
-   on the hour, sandbox stays are in game hours (2026-10-24).
+   Papyrus natives wait for the main thread. Ours runs natives at once; packages are re-evaluated
+   every 15 s and on the hour, sandbox stays are in game hours (2026-10-24); the actors beyond the
+   high process take turns within the frame's budget (src/ai/process-levels.ts, 2026-10-27).
 4. **Persistence.** Cells reset and respawn by the engine's rule, and moved objects keep their places
    (2026-10-24); animated objects and corpses still return to their editor places when a cell reloads;
    there are no buffered cells; state the saves need is
@@ -84,7 +84,7 @@ These run through every area and explain most of what breaks in play.
 
 | System                       | Status  | Main gaps                                                                                                                    |
 | ---------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| Process levels, budget       | partial | the budget rule is read, not applied: no time slicing, no middle-low tier, the high process by distance                      |
+| Process levels, budget       | partial | the high-process distance is ours (no setting names it); how the engine shares the budget between its lists                  |
 | Package evaluation           | partial | flags Offers Services 85, Maintain Speed At Goal 62, Continue If PC Near 4, Skip Fallout Behavior 189, Allow Swimming 85     |
 | Procedures                   | partial | engine-only packages (avoid player, react to destroyed object, warnings, get up, surface); Wear Sleep Outfit has no sim case |
 | Sandbox                      | partial | rescan every 3–6 s, the search radius for a place without one, radius hysteresis, eating at the chair it sits on             |
@@ -94,7 +94,7 @@ These run through every area and explain most of what breaks in play.
 | Crime                        | partial | NPC crimes, the report rule, alarm reach (actor crimes go to the victim's or its owner's crime faction: done)                |
 | Dialogue                     | partial | Say Once with Reset Hours (61 infos: comes back after them, TODO(M13)); walking off a greeting outside the menu              |
 | Scenes                       | partial | repeat pause (Repeat Conditions While True restarts at once); facing wait limit (3 s ours)                                   |
-| Actors away                  | partial | only one door away, hour steps                                                                                               |
+| Actors away                  | partial | who keeps a schedule away (ours: persistent actors and those near) and its pace are ours; the place between doors            |
 | Followers, horses, furniture | partial | walk zone; mount from the right; enter by graph event; the horse's turn to the camera                                        |
 | Head tracking                | partial | candidates' scores, look along the path, package target's look                                                               |
 

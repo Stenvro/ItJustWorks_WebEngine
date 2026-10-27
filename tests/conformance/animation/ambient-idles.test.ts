@@ -149,7 +149,9 @@ describe.skipIf(!hasGamedata())('ActionIdle across the load order (data)', () =>
 });
 
 // The Bannered Mare in the evening: its people stand, sit and lean; their graphs ask for idles
-// (PickNewIdle) and ActionIdle gives each the idle its conditions allow.
+// (PickNewIdle) and ActionIdle gives each the idle its conditions allow. The evening's guests come
+// in by their packages as the clock is set (the low process: Carlotta Valentia's 19:00 meal there,
+// src/shell/actors-away.ts) and first sandbox their way to seats, so two minutes are watched.
 
 const BANNERED_MARE = 0x1605e;
 /** Hulda (Skyrim.esm), the innkeeper: she leans at the bar counter. */
@@ -164,7 +166,7 @@ describe.skipIf(!hasGamedata())('the Bannered Mare in the evening (headless simu
   beforeAll(async () => {
     sim = await openSim({ interior: BANNERED_MARE, hour: 20 });
     tree = await readIdleTree(sim.db);
-    await sim.step(60);
+    await sim.step(120);
     played = [...sim.world.stage.ambientIdles.played];
     graphs = new Map(
       await Promise.all(
@@ -181,7 +183,7 @@ describe.skipIf(!hasGamedata())('the Bannered Mare in the evening (headless simu
     await sim.close();
   });
 
-  it('several of its people pick ambient idles within a minute', () => {
+  it('several of its people pick ambient idles within two minutes', () => {
     expect(new Set(played.map((idle) => idle.actor)).size).toBeGreaterThanOrEqual(3);
   });
 
