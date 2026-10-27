@@ -570,6 +570,9 @@ describe.skipIf(!hasGamedata())('the combat tree in a fight (headless simulation
   const hits = () => sim.world.log.game('hit');
 
   it('the sword-and-shield bandit attacks the wolves, its block slot beside its sword', () => {
+    // Through the player's eyes: the fight's graphs update at the animation rate LOD's pace
+    // (behind the camera every fAnimInterpMaxTime), and its blows still land.
+    expect(sim.world.session.render.view?.camera).toBeDefined();
     expect(hits().some((hit) => hit.aggressor === bandit && wolves.includes(hit.target))).toBe(
       true,
     );
