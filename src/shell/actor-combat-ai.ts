@@ -152,6 +152,8 @@ export interface FighterGear {
   readonly damage: number;
   readonly shotDamage: number;
   readonly range: number;
+  /** The damage its strength weighs (strengthDamage: the weapon's, or its best unarmed blow). */
+  readonly strengthDamage: number;
   /** Its attack data has a bash, and its power attacks' chance (ATKD). */
   readonly canBash: boolean;
   readonly powerChance: number;
@@ -1133,7 +1135,7 @@ export class ActorCombatAi {
         distance: flat(feet, where),
         detected,
         attacking: this.#fightTarget(other, views) === mind.reference,
-        threat: actorStrength(health, other.gear?.damage ?? 1),
+        threat: actorStrength(health, other.gear?.strengthDamage ?? 1),
       });
     }
     return candidates;
@@ -1268,7 +1270,7 @@ export class ActorCombatAi {
         level: theirs,
         strength: actorStrength(
           this.#health.get(foe.reference)?.points ?? 100,
-          foe.gear?.damage ?? 1,
+          foe.gear?.strengthDamage ?? 1,
         ),
       },
     );
@@ -1340,7 +1342,7 @@ export class ActorCombatAi {
   }
 
   #damageOf(reference: number): number {
-    return this.#options.host.fighter(reference)?.gear?.damage ?? 1;
+    return this.#options.host.fighter(reference)?.gear?.strengthDamage ?? 1;
   }
 
   // --- Entering, leaving ---------------------------------------------------------------------------

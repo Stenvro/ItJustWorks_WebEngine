@@ -15,6 +15,7 @@ import {
   readCombatAiSettings,
   selectTarget,
   shouldFlee,
+  strengthDamage,
   threatRatio,
   turnsOnAttacker,
   yields,
@@ -181,6 +182,21 @@ describe('combat AI: fleeing and yielding', () => {
     expect(acceptsYield({ fightsPlayer: true, playerEnemy: true, heldOff: 9, settings })).toBe(
       false,
     );
+  });
+});
+
+describe('the damage strength weighs', () => {
+  it("is a weapon's blow, or a creature's unarmed damage by its strongest attack", () => {
+    // WolfRace: unarmed damage 5, its lunges and power bites ×1.5 (ATKD).
+    const wolf = [
+      { damageMult: 1, bash: false },
+      { damageMult: 1.5, bash: false },
+    ];
+    expect(strengthDamage(5, false, wolf)).toBe(7.5);
+    expect(actorStrength(40, strengthDamage(5, false, wolf))).toBe(300);
+    // A bash is no blow of its; an armed actor's is its weapon's.
+    expect(strengthDamage(4, false, [{ damageMult: 3, bash: true }])).toBe(4);
+    expect(strengthDamage(7, true, wolf)).toBe(7);
   });
 });
 
