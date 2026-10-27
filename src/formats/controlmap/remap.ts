@@ -19,13 +19,10 @@ export type Remaps = ReadonlyMap<string, Remap>;
 
 /** An input the player pressed: a key (scan code), a mouse button or a gamepad button. */
 export type RemapInput =
-  | { readonly key: number }
-  | { readonly mouse: number }
-  | { readonly pad: number };
+  { readonly key: number } | { readonly mouse: number } | { readonly pad: number };
 
 /** The remappable column an input is in: 0 keyboard, 1 mouse, 2 gamepad. */
-const columnOf = (input: RemapInput): 0 | 1 | 2 =>
-  'key' in input ? 0 : 'mouse' in input ? 1 : 2;
+const columnOf = (input: RemapInput): 0 | 1 | 2 => ('key' in input ? 0 : 'mouse' in input ? 1 : 2);
 
 /** An event's bindings in an input's column, and the binding of the input itself. */
 function bindings(event: UserEvent, input: RemapInput): { old: Remap; bound: Remap } {

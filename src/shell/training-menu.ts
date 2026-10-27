@@ -177,6 +177,7 @@ export class TrainingMenu {
     }
     await runtime.removeItem(PLAYER_REF, runtime.formHandle(GOLD), cost, true, trainer);
     await runtime.progression.incrementSkill(skill);
+    runtime.incrementStat('Training Sessions');
     runtime.state.training = { level: playerLevel, sessions: sessions + 1 };
     // The meter fills (and the movie empties it again).
     menu.invoke(`${CARD}.SkillMeter.SetTargetPercent`, 100);

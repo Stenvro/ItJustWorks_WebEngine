@@ -1299,6 +1299,7 @@ export class CastingEngine {
     if (options.dryRun === true) return 'unlocked';
     runtime.actors.modify(PLAYER_REF, DRAGON_SOULS, -1);
     learned.set(word, true);
+    runtime.incrementStat('Words of Power Unlocked');
     return 'unlocked';
   }
 
