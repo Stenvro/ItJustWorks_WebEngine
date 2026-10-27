@@ -65,13 +65,19 @@ export interface SceneLighting {
  * fCharacterLightPrimaryLightIntensity 0.75, ...SecondaryLightIntensity 0.3, ...LumScale 2,
  * ...LumMax 0.75): a light from the camera and one from below-front on actors' skin.
  */
-export const CHARACTER_LIGHT = {
+export const CHARACTER_LIGHT: {
+  readonly enabled: boolean;
+  readonly primary: number;
+  readonly secondary: number;
+  readonly lumScale: number;
+  readonly lumMax: number;
+} = {
   enabled: true,
   primary: 0.75,
   secondary: 0.3,
   lumScale: 2,
   lumMax: 0.75,
-} as const;
+};
 
 /** Uniform ambient from every direction. */
 export function flatAmbient(color: Vec3): SceneLighting['ambient'] {
