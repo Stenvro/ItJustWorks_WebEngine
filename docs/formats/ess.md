@@ -4,7 +4,7 @@ Import of the original Special Edition saves (M12). Sources: UESP "Skyrim Mod:Sa
 xEdit's `wbDefinitionsTES5Saves.pas` (layouts and their order), CommonLibSSE's `ChangeFlags`
 enums (flag bits). Code: `src/formats/ess/` (parser, platform-independent), `src/save/ess-import.ts`
 (the importer), `tools/ess-info.ts` (the CLI). No real save is in the repo; the tests write
-synthetic ones (`ess-test-writer.ts`), and `tests/ess-import.int.test.ts` reads the first save in
+synthetic ones (`ess-test-writer.ts`), and `tests/sim-ess-import.int.test.ts` reads the first save in
 `Documents\My Games\Skyrim Special Edition\Saves` when there is one.
 
 ## The file
