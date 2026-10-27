@@ -57,6 +57,13 @@ describe.skipIf(!hasGamedata())('a save made and loaded (simulation)', () => {
       }
     }
     expect(dead).toBeDefined();
+    // Its WIDeadBodyCleanupScript waits in OnDeath (Utility.WaitGameTime, in a loop).
+    const cleanup = (s: Sim): string[] =>
+      s.runtime.vm
+        .pendingThreads()
+        .map((thread) => thread.where)
+        .filter((where) => where.includes('WIDeadBodyCleanupScript.OnDeath'));
+    expect(cleanup(before)).toHaveLength(1);
 
     // Set a stage.
     const quest = await before.formId('QUST', 'DialogueWhiterun');
@@ -96,8 +103,26 @@ describe.skipIf(!hasGamedata())('a save made and loaded (simulation)', () => {
     expect(state.gameDaysPassed).toBeCloseTo(saved.days, 3);
     expect(after.hour).toBeCloseTo(15, 0);
     const saveProblems = after.problems().filter((p) => p.tag === 'save');
-    // Every script instance found its script and variables again (threads in flight are only
-    // logged as not saved: TODO(M12) resumable frames).
+    // Every script instance found its script and variables again, every saved thread resumed
+    // (threads in a native's promise are only logged as not saved).
     expect(saveProblems.filter((p) => !p.text.startsWith('not saved: '))).toEqual([]);
+    // The body's cleanup thread was saved with its frames and waits on.
+    expect(saveProblems.filter((p) => p.text.includes('WIDeadBodyCleanupScript'))).toEqual([]);
+    expect(cleanup(after)).toHaveLength(1);
+    // When its game time comes (half a day after the death at 10), its wait ends where it was:
+    // it checks the body (still loaded, the player is in the cell) and waits half a day again.
+    const cleanupWait = (): number | undefined => {
+      const thread = after.runtime.vm
+        .saveThreads()
+        .threads.find((t) => t.where.includes('WIDeadBodyCleanupScript.OnDeath'));
+      return thread?.wait.kind === 'clock' ? thread.wait.at : undefined;
+    };
+    const firstWait = cleanupWait();
+    expect(firstWait).toBeDefined();
+    after.setHour(23);
+    await after.step(1);
+    const secondWait = cleanupWait();
+    expect(secondWait).toBeDefined();
+    expect((secondWait ?? 0) - (firstWait ?? 0)).toBeGreaterThan(0.4);
   }, 240_000);
 });

@@ -2,6 +2,8 @@
 // (signatures: the game's own declarations in Utility.pex, Debug.pex, ...).
 // Platform-independent. Notes: docs/scripting.md ("Natives").
 
+import type { NativeCall } from '../../papyrus-vm.ts';
+import type { Clock } from '../../scheduler.ts';
 import { formatValue } from '../../values.ts';
 import { globalValue } from '../condition-values.ts';
 import type { ScriptRuntime } from '../runtime.ts';
@@ -13,16 +15,15 @@ export function registerCore(n: Register, runtime: ScriptRuntime): void {
   const { state, forms } = runtime;
 
   // --- Utility ---------------------------------------------------------------------------
-  n('utility.wait', ({ args, latent, vm }) =>
-    latent(vm.scheduler.waitReal(num(args[0]))).then(() => null),
-  );
+  // The waits are handed to the VM as data: a save keeps the thread waiting there.
+  const waitOn = ({ args, latent, vm }: NativeCall, clock: Clock): Promise<null> => {
+    const wait = vm.scheduler.clockWait(clock, num(args[0]));
+    return latent(vm.scheduler.waitUntil(wait), wait).then(() => null);
+  };
+  n('utility.wait', (call) => waitOn(call, 'real'));
   // In menus the game's clocks stand still (Wait waits on); WaitMenuMode counts menus too.
-  n('utility.waitmenumode', ({ args, latent, vm }) =>
-    latent(vm.scheduler.waitWall(num(args[0]))).then(() => null),
-  );
-  n('utility.waitgametime', ({ args, latent, vm }) =>
-    latent(vm.scheduler.waitGame(num(args[0]))).then(() => null),
-  );
+  n('utility.waitmenumode', (call) => waitOn(call, 'wall'));
+  n('utility.waitgametime', (call) => waitOn(call, 'game'));
   n('utility.randomint', ({ args }) => {
     const min = int(args[0], 0);
     const max = int(args[1], 100);

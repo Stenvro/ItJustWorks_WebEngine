@@ -5,6 +5,19 @@
 // frame. Without frames (Node tools) nothing waits for one. Platform-independent.
 // Notes: docs/scripting.md ("Threads").
 
+/** The VM's clocks: real seconds (outside menus), game days, real seconds menus included. */
+export type Clock = 'real' | 'game' | 'wall';
+
+/**
+ * A wait for a clock to pass a time, as data (a save keeps a thread waiting in Utility.Wait
+ * with it: docs/formats/save.md).
+ */
+export interface ClockWait {
+  readonly clock: Clock;
+  /** The clock's reading it waits for (seconds, or game days for 'game'). */
+  readonly at: number;
+}
+
 /** Something waiting for a clock to pass a time. */
 interface Waiter {
   readonly at: number;
@@ -73,6 +86,31 @@ export class PapyrusScheduler {
     if (!(hours > 0)) return Promise.resolve();
     return new Promise((resume) => {
       this.#gameWaiters.push({ at: this.gameTime + hours / 24, resume });
+    });
+  }
+
+  /** A clock's reading now. */
+  clockTime(clock: Clock): number {
+    return clock === 'real' ? this.realTime : clock === 'game' ? this.gameTime : this.wallTime;
+  }
+
+  /** The wait for `amount` on a clock from now: seconds, or hours for the game's. */
+  clockWait(clock: Clock, amount: number): ClockWait {
+    const span = Math.max(0, amount) / (clock === 'game' ? 24 : 1);
+    return { clock, at: this.clockTime(clock) + span };
+  }
+
+  /** Resolves once a clock has passed a time (at once if it has). */
+  waitUntil(wait: ClockWait): Promise<void> {
+    if (!(wait.at > this.clockTime(wait.clock))) return Promise.resolve();
+    const waiters =
+      wait.clock === 'real'
+        ? this.#realWaiters
+        : wait.clock === 'game'
+          ? this.#gameWaiters
+          : this.#wallWaiters;
+    return new Promise((resume) => {
+      waiters.push({ at: wait.at, resume });
     });
   }
 
