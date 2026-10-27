@@ -1435,6 +1435,12 @@ export class ModelViewer {
       lights: cell.data.lights,
       decals: cell.decals,
       ...(rooms && { rooms }),
+      ...(cellRooms.length > 0 && {
+        roomAt: (point: Vec3): number => {
+          const room = roomIndexAt(cellRooms, point);
+          return room >= 0 && room < 255 ? room + 1 : 0;
+        },
+      }),
     });
     return shownCount;
   }
@@ -1755,6 +1761,8 @@ export class ModelViewer {
           decals: GpuDecals | undefined;
           /** The cell's rooms, portals and occluders. */
           rooms?: RoomCuller;
+          /** The room holding a point (1-255; 0 none): moving actors take theirs. */
+          roomAt?: (point: Vec3) => number;
         },
   ): void {
     this.onActivate?.();
@@ -1786,7 +1794,7 @@ export class ModelViewer {
       } else {
         this.#detachControls = this.#fly.attach(this.#canvas);
       }
-      const { lighting, imageSpace, lights, decals, rooms } = view;
+      const { lighting, imageSpace, lights, decals, rooms, roomAt } = view;
       this.#renderer.setView({
         // The cell's scene now (built again when an actor is made again in a new race).
         scenes: () => [
@@ -1822,6 +1830,7 @@ export class ModelViewer {
         // The cell's shadow lights cast shadows (interiors have no sun shadow).
         lightShadows: true,
         ...(rooms && { rooms: () => rooms }),
+        ...(roomAt && { roomAt }),
         // The cell's decals and the hits' blood (src/shell/combat-impacts.ts).
         decals: () => [...(decals ? [decals] : []), ...(this.#stage?.combat.decals() ?? [])],
         backdrop: false,
