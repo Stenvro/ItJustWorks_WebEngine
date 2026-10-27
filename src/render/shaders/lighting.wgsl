@@ -153,8 +153,12 @@ fn objectLighting(
   if (wantSpecular) {
     result.specular += lightSpecular(toSun, sunColor * shadow, s);
   }
+  let room = draw.flags.z >> 24u;
   for (var i = 0u; i < frame.counts.x; i++) {
     let light = pointLights[i];
+    if (lightOtherRoom(light, room)) {
+      continue;
+    }
     let offset = light.position - worldPos;
     let distance = length(offset);
     let falloff = saturate(distance / light.radius);
