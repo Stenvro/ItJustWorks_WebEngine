@@ -7,6 +7,7 @@
 
 import type { SavedPackage } from '../ai/package-runtime.ts';
 import type { SavedGraph } from '../animation/script-graphs.ts';
+import type { CastVia } from '../scripting/runtime/casting-engine.ts';
 
 /** An actor of the loaded area as the save found it. */
 export interface SavedActor {
@@ -29,10 +30,34 @@ export interface SavedActor {
   readonly confidenceModifier?: number | undefined;
 }
 
+/**
+ * A projectile in flight (or a rune at rest) as the save found it: what flies, the cast it
+ * carries, where it is and how it moves. It flies on as the world loads again.
+ */
+export interface SavedProjectile {
+  /** Its PROJ. */
+  readonly projectile: number;
+  /** The magic item it carries, how it was cast (CastVia), by whom, dual cast. */
+  readonly item: number;
+  readonly via: CastVia;
+  readonly caster: number;
+  readonly dual: boolean;
+  /** The staff, scroll or shout it came by. */
+  readonly object?: number | undefined;
+  readonly position: readonly [number, number, number];
+  readonly velocity: readonly [number, number, number];
+  /** Units flown and seconds since it left; at rest (a lobber waiting for its trigger). */
+  readonly traveled: number;
+  readonly age: number;
+  readonly resting?: boolean | undefined;
+}
+
 export interface WorldSave {
   readonly actors: readonly SavedActor[];
   /** The graphs of loaded objects moved from where they start, by reference. */
   readonly graphs: readonly (readonly [number, SavedGraph])[];
+  /** What flies (none in saves made before they were kept). */
+  readonly projectiles?: readonly SavedProjectile[];
 }
 
 /**
@@ -43,10 +68,19 @@ export interface WorldSave {
 export class WorldRestore {
   readonly #actors = new Map<number, SavedActor>();
   readonly #graphs = new Map<number, SavedGraph>();
+  #projectiles: readonly SavedProjectile[];
 
   constructor(save: WorldSave) {
     for (const actor of save.actors) this.#actors.set(actor.reference, actor);
     for (const [reference, graph] of save.graphs) this.#graphs.set(reference, graph);
+    this.#projectiles = save.projectiles ?? [];
+  }
+
+  /** What flew as the game was saved, once (the projectiles fly it on as the world loads). */
+  takeProjectiles(): readonly SavedProjectile[] {
+    const projectiles = this.#projectiles;
+    this.#projectiles = [];
+    return projectiles;
   }
 
   /** The saved actors not yet placed. */

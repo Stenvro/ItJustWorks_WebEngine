@@ -46,6 +46,7 @@ import { castStrength, DUAL_CASTING_POWER } from '../gameplay/magic/effect-rules
 import { chainEffectiveness } from '../gameplay/magic/explosions.ts';
 import { ImpactPlacements } from '../gameplay/magic/impact-placement.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
+import type { SavedProjectile } from '../save/world-save.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld, RayHit } from '../physics/physics-world.ts';
 import { conePush, loadImpulseSettings, projectileKnock } from '../gameplay/impulses.ts';
@@ -208,10 +209,79 @@ export class MagicProjectiles {
     });
   }
 
-  /** The physics world they fly in (undefined: the play ended; they are gone). */
+  /**
+   * The physics world they fly in (undefined: the play ended; they are gone). A loaded save's
+   * projectiles fly on in the first one (restore).
+   */
   attach(physics: PhysicsWorld | undefined): void {
     this.#physics = physics;
-    if (!physics) this.clear();
+    if (!physics) {
+      this.clear();
+      return;
+    }
+    const saved = this.#options.session.restoring?.takeProjectiles() ?? [];
+    if (saved.length > 0)
+      void this.restore(saved).catch((error: unknown) => {
+        this.#options.terminal.log('save', `projectiles: ${describe(error)}`, 'warn');
+      });
+  }
+
+  /** What flies now, for a save (src/save/world-save.ts; a flame's sprays are not kept). */
+  save(): SavedProjectile[] {
+    const saved: SavedProjectile[] = [];
+    for (const flying of this.#flying) {
+      if (flying.done || flying.stream) continue;
+      const { delivered, flight } = flying;
+      saved.push({
+        projectile: flying.projectile.formId,
+        item: delivered.item.formId,
+        via: delivered.via,
+        caster: delivered.caster,
+        dual: delivered.dual,
+        ...(delivered.object !== undefined && { object: delivered.object }),
+        position: [...flight.position],
+        velocity: [...flight.velocity],
+        traveled: flight.traveled,
+        age: flight.age,
+        ...(flight.resting && { resting: true }),
+      });
+    }
+    return saved;
+  }
+
+  /** A save's projectiles fly on where they were, carrying their casts. */
+  async restore(saved: readonly SavedProjectile[]): Promise<void> {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime) return;
+    for (const entry of saved) {
+      const item = await runtime.magic.item(entry.item);
+      const projectile = await runtime.casting.projectile(entry.projectile);
+      if (!item || !projectile) continue;
+      const delivered: Delivered = {
+        caster: entry.caster,
+        item,
+        via: entry.via,
+        dual: entry.dual,
+        ...(entry.object !== undefined && { object: entry.object }),
+        cost: await runtime.casting.cost(entry.caster, { item, via: entry.via }),
+      };
+      const effect = await runtime.casting.mainEffect(item);
+      const flight = launchFlight(projectile, [...entry.position], [0, 1, 0]);
+      flight.velocity = [...entry.velocity];
+      flight.traveled = entry.traveled;
+      flight.age = entry.age;
+      if (entry.resting) flight.resting = true;
+      this.#fly(
+        delivered,
+        projectile,
+        effect,
+        [...entry.position],
+        [0, 1, 0],
+        undefined,
+        undefined,
+        flight,
+      );
+    }
   }
 
   /**
@@ -375,6 +445,7 @@ export class MagicProjectiles {
     aim: Vec3,
     seconds: number | undefined,
     follow?: () => Vec3 | undefined,
+    restored?: Flight,
   ): void {
     const { session, renderer, terminal } = this.#options;
     const stream =
@@ -385,7 +456,7 @@ export class MagicProjectiles {
       delivered,
       projectile,
       effect,
-      flight: launchFlight(projectile, origin, aim),
+      flight: restored ?? launchFlight(projectile, origin, aim),
       seconds,
       instance: undefined,
       scene: undefined,
