@@ -33,6 +33,37 @@ import type { Terminal } from './terminal.ts';
 import type { HudSignals } from './hud-signals.ts';
 import type { Talking } from './world-lines.ts';
 import { LookRequests, type HeadTrackKind } from '../ai/head-tracking.ts';
+import { bodyOfNode, type PhysicsWorld, type PlacedCollision } from '../physics/physics-world.ts';
+
+/**
+ * A view's script-made constraints (Game.AddHavokBallAndSocketConstraint,
+ * RemoveHavokConstraints) on its physics: each reference's bodies by node, its objects' and its
+ * actors' (a hanged corpse's ragdoll).
+ */
+export function scriptConstraints(
+  physics: () => PhysicsWorld | undefined,
+  placements: (reference: number) => Iterable<PlacedCollision>,
+): Pick<ScriptView, 'ballAndSocket' | 'removeConstraints'> {
+  const bodies = (a: number, nodeA: string, b: number, nodeB: string) => {
+    const world = physics();
+    const bodyA = bodyOfNode(placements(a), nodeA);
+    const bodyB = bodyOfNode(placements(b), nodeB);
+    return world && bodyA && bodyB ? { world, bodyA, bodyB } : undefined;
+  };
+  return {
+    ballAndSocket: (a, nodeA, b, nodeB, offsetA, offsetB) => {
+      const found = bodies(a, nodeA, b, nodeB);
+      return (
+        found?.world.joinBallAndSocket(found.bodyA, [...offsetA], found.bodyB, [...offsetB]) ??
+        false
+      );
+    },
+    removeConstraints: (a, nodeA, b, nodeB) => {
+      const found = bodies(a, nodeA, b, nodeB);
+      return (found?.world.removeScriptJoints(found.bodyA, found.bodyB) ?? 0) > 0;
+    },
+  };
+}
 
 /** A viewer that shows references to the scripts (the interior or the world viewer). */
 export interface ScriptView {
@@ -53,6 +84,19 @@ export interface ScriptView {
   animated?(reference: number, event: string): void;
   /** SetMotionType (1 dynamic .. 4 keyframed). */
   motionTypeChanged?(reference: number, motionType: number): void;
+  /** Weapon.Fire (WorldBridge.fireWeapon): a shot from a reference. */
+  fireWeapon?(weapon: number, source: number, ammo: number | undefined): void;
+  /** WorldBridge.ballAndSocket (scriptConstraints). */
+  ballAndSocket?(
+    a: number,
+    nodeA: string,
+    b: number,
+    nodeB: string,
+    offsetA: readonly [number, number, number],
+    offsetB: readonly [number, number, number],
+  ): boolean;
+  /** WorldBridge.removeConstraints (scriptConstraints). */
+  removeConstraints?(a: number, nodeA: string, b: number, nodeB: string): boolean;
   /** A push (WorldBridge.impulse). */
   impulse?(
     reference: number,
@@ -354,6 +398,31 @@ export class ScriptWorld implements WorldBridge {
     share?: (layer: number) => number,
   ): void {
     for (const view of this.#views) view.impulse?.(reference, direction, magnitude, share);
+  }
+
+  fireWeapon(weapon: number, source: number, ammo: number | undefined): void {
+    for (const view of this.#views) view.fireWeapon?.(weapon, source, ammo);
+  }
+
+  ballAndSocket(
+    a: number,
+    nodeA: string,
+    b: number,
+    nodeB: string,
+    offsetA: readonly [number, number, number],
+    offsetB: readonly [number, number, number],
+  ): boolean {
+    let joined = false;
+    for (const view of this.#views)
+      joined = view.ballAndSocket?.(a, nodeA, b, nodeB, offsetA, offsetB) === true || joined;
+    return joined;
+  }
+
+  removeConstraints(a: number, nodeA: string, b: number, nodeB: string): boolean {
+    let removed = false;
+    for (const view of this.#views)
+      removed = view.removeConstraints?.(a, nodeA, b, nodeB) === true || removed;
+    return removed;
   }
 
   explosionPush(

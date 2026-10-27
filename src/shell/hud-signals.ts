@@ -93,6 +93,12 @@ export interface MenuSink {
   tutorial?(use: string): void;
   /** Whether a menu takes the keys now: the player's controls get none of them. */
   takesKeys?(): boolean;
+  /** A gamepad button for the topmost menu as GFx gives it (MenuHost.pressPadKey). */
+  padKey?(type: 'keyDown' | 'keyHold' | 'keyUp', code: number): boolean;
+  /** The open menus' names, the topmost last (for the gamepad's input contexts). */
+  openMenus?(): readonly string[];
+  /** How a held direction repeats in a menu (seconds). */
+  keyRepeat?(): { readonly long: number; readonly short: number };
 }
 
 /** What covers the screen (Play, from its main menu on: a new game's opening uses them). */

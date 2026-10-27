@@ -136,9 +136,24 @@ describe('the step (the engine’s rule)', () => {
     },
   );
 
-  it.todo(
-    'scales the step and its cap by the world’s time multiplier (Slow Time steps smaller)  [original]',
-  );
+  it('scales the step and its cap by the world’s time multiplier (Slow Time steps smaller)', () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    let multiplier = 0.25;
+    physics.timeScale = () => multiplier;
+    // A slowed frame (a quarter of 1/60 s) takes a whole step, a quarter as long.
+    const sizes: number[] = [];
+    expect(physics.step(PHYSICS_STEP * 0.25, (step) => sizes.push(step))).toBe(1);
+    expect(sizes[0]).toBeCloseTo(PHYSICS_STEP * 0.25, 9);
+    expect(physics.currentStep).toBeCloseTo(PHYSICS_STEP * 0.25, 9);
+    expect(physics.world.timestep).toBeCloseTo(PHYSICS_STEP * 0.25, 9);
+    // The cap scales too: a long slowed frame takes at most three of the short steps.
+    expect(physics.step(0.1)).toBe(3);
+    // Back at full speed, the fixed step.
+    multiplier = 1;
+    physics.step(1);
+    expect(physics.currentStep).toBeCloseTo(PHYSICS_STEP, 9);
+    physics.free();
+  });
   it.todo(
     'steps fMaxTimeComplex (1/30 s) once a frame in the engine’s complex mode  [original: what turns ' +
       'it on is not identified]',

@@ -6,6 +6,7 @@
 // player (MQ101: the cart to Helgen) and the world there has loaded.
 // In the game the HUD (hud-controller.ts) and the game's menus (game-menus.ts).
 
+import { inputPlatform } from '../ui/input-platform.ts';
 import { lockDifficulty, LOCKPICK, SKELETON_KEY } from '../gameplay/lockpicking.ts';
 import type { Renderer } from '../render/renderer.ts';
 import type { Vec3 } from '../render/math.ts';
@@ -366,7 +367,7 @@ export class PlayMode {
         const hasSaves = (await this.#saves.list().catch(() => [])).length > 0;
         menu.call('sendMenuProperties', ...mainMenuProperties(hasSaves));
         // The platform: PC with keyboard and mouse (PLATFORM_PC_KBMOUSE 0; no PS3 button swap).
-        menu.invoke('_root.MenuHolder.Menu_mc.SetPlatform', 0, false);
+        menu.invoke('_root.MenuHolder.Menu_mc.SetPlatform', inputPlatform(), false);
         // The delete-save hint (and the version beside it) only with saves to delete.
         menu.invoke('_root.MenuHolder.Menu_mc.ShowDeleteButtonHelp', false);
         menu.call('FadeInMenu');
@@ -540,6 +541,9 @@ export class PlayMode {
     session.hud.menus = {
       messageBox: (text, buttons) => boxes.show(text, buttons),
       takesKeys: () => this.#host.takesKeys,
+      padKey: (type, code) => this.#host.pressPadKey(type, code),
+      openMenus: () => session.menuStack.names,
+      keyRepeat: () => this.#host.keyRepeat,
       userEvent: (name) => {
         if (!dialogue.isOpen) menus.userEvent(name);
       },
@@ -972,6 +976,15 @@ export class PlayMode {
             this.#renderer.showGrass = !this.#renderer.showGrass;
             return this.#renderer.showGrass;
           },
+          toggleRenderer: (what) => {
+            const renderer = this.#renderer;
+            if (what === 'lod') return (renderer.showLod = !renderer.showLod);
+            if (what === 'trees') return (renderer.showTrees = !renderer.showTrees);
+            return (renderer.showWater = !renderer.showWater);
+          },
+          openContainer: (reference) => {
+            session.hud.menus?.container(reference, () => undefined);
+          },
           // The world's and first person's own (src/render/first-person-view.ts).
           setFov: (world, firstPerson) => {
             this.#world.player()?.play.player.setFov(world, firstPerson);
@@ -1273,7 +1286,7 @@ export class PlayMode {
       setup: async (menu) => {
         await menu.waitFor('_root.InitExtensions');
         menu.invoke('_root.InitExtensions');
-        menu.invoke('_root.SetPlatform', 0);
+        menu.invoke('_root.SetPlatform', inputPlatform());
         menu.invoke('_root.Menu_mc.FadeInMenu');
       },
     });

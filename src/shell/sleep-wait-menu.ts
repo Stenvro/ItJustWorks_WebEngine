@@ -16,6 +16,7 @@
 // The rested bonuses are the scripts': PlayerSleepQuest registers for sleep and its OnSleepStop
 // gives Rested, Well Rested or Lover's Comfort (abilities: the magic system's lasting effects).
 
+import { inputPlatform } from '../ui/input-platform.ts';
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import { formatGameDate } from '../world/game-time.ts';
 import type { GameSession } from './game-session.ts';
@@ -97,7 +98,7 @@ export class SleepWaitMenu {
       setup: async (menu) => {
         await menu.waitFor('_root.InitExtensions');
         menu.invoke('_root.InitExtensions');
-        menu.invoke('_root.SetPlatform', 0, false);
+        menu.invoke('_root.SetPlatform', inputPlatform(), false);
         menu.invoke(`${ROOT}.SetSleeping`, sleeping);
         menu.invoke(`${ROOT}.SetCurrentTime`, now);
       },
