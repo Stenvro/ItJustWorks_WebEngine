@@ -6,6 +6,7 @@
 import { view } from '../formats/esm/fields.ts';
 import { RecordFlag } from '../formats/esm/record.ts';
 import { identity, multiply, type Mat4 } from '../render/math.ts';
+import { fadeKind, neverFades, type FadeKind } from '../render/object-fade.ts';
 import {
   baseModelPath,
   enabledAtGameStart,
@@ -66,7 +67,9 @@ export interface CellObject {
    * something touches it, instead of settling when its cell loads.
    */
   readonly dontHavokSettle?: boolean;
-  /** XTEL: a load door's destination (the door it leads to and where the player arrives). */
+  /** Which fade setting it fades out by with distance; never fades without (object-fade.ts). */
+  readonly fade?: FadeKind;
+  /** XTEL:a load door's destination (the door it leads to and where the player arrives). */
   readonly teleport?: Teleport;
   /** ONAM: a door placed open ("Open by Default"); scripts may shut it since (SetOpen). */
   readonly openByDefault?: boolean;
@@ -878,6 +881,13 @@ export async function loadCellData(
       ...leafAnimationOf(base),
       ...emittanceOf(record),
       ...((record.flags & DONT_HAVOK_SETTLE) !== 0 && { dontHavokSettle: true }),
+      // Distance fade by its kind, unless it has distant LOD or is full LOD (object-fade.ts).
+      ...(!neverFades(base.type, base.flags, record.flags) && {
+        fade: fadeKind(
+          base.type,
+          base.type === 'LIGH' && (parseLight(base).flags & LightFlag.canCarry) !== 0,
+        ),
+      }),
       ...(base.type === 'DOOR' && { teleport: parseTeleport(record) }),
       ...(base.type === 'DOOR' && record.fields.has('ONAM') && { openByDefault: true }),
       ...(((record.fields.first('XAPD')?.[0] ?? 0) & 1) !== 0 && { parentActivateOnly: true }),

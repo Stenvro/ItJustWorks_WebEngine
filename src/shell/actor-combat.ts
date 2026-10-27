@@ -1394,7 +1394,13 @@ export class ActorCombat implements CombatBridge {
     const made = await HeldWeapons.create(
       this.#options.session,
       this.#options.renderer,
-      { pose: body.pose, world: placement.world, motion: placement.motion, visibility },
+      {
+        pose: body.pose,
+        world: placement.world,
+        motion: placement.motion,
+        visibility,
+        ...(!fighter.player && body.instances[0]?.fade && { fade: body.instances[0].fade }),
+      },
       held,
       blood,
       fighter.reference,

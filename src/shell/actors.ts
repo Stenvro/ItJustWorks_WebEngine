@@ -131,6 +131,7 @@ export function wornInPlace(
       model,
       world: first.world,
       ...(first.motion && { motion: first.motion }),
+      ...(first.fade && { fade: first.fade }),
       pose: placed.pose,
       ...(model.nodes && { poseNodes }),
       ...(first.tints && { tints: first.tints }),
@@ -979,6 +980,8 @@ export class ActorPlacer {
     // Every actor can move (its feet set on the ground, a script's MoveTo, its AI); the
     // dead's ragdolls pose them where they lie (ragdollsOf).
     const motion = { version: 0 };
+    // Actors fade out with distance as one (the setting Actor Fade); the player never does.
+    const fade = actor.reference === PLAYER_REF ? undefined : { kind: 'actor' as const };
     // What came off it (src/shell/actor-dismemberment.ts): read as its scene is built.
     const severing: Severing = { nodes: new Set(), face: false, heads: new Set(heads) };
     const instances = models.map(({ model, addon }, i): ModelInstance => {
@@ -988,6 +991,7 @@ export class ActorPlacer {
         model,
         world,
         motion,
+        ...(fade && { fade }),
         ...(graph && { graph }),
         pose,
         ...(dressed.nodeMaps[i] && { poseNodes: dressed.nodeMaps[i] }),
