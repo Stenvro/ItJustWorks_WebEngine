@@ -496,7 +496,8 @@ export interface AttackInput extends Opponent {
   readonly sinceLastAttack: number | undefined;
 }
 
-export type AttackChoice = 'none' | 'attack' | 'power' | 'bash' | 'powerBash';
+export type AttackChoice =
+  'none' | 'attack' | 'power' | 'bash' | 'powerBash' | 'special' | 'offensiveBash';
 
 /** An attack is decided this often: the combat tree's "Attack Idle" (and its ranged and cast idles; seconds). */
 export const ATTACK_DECISION_SECONDS = 0.25;
@@ -608,7 +609,100 @@ export function chooseAttack(
     return power() ? 'powerBash' : 'bash';
   }
   if (random() >= attackChance(style, input, settings)) return 'none';
-  return power() ? 'power' : 'attack';
+  if (power()) return 'power';
+  // Else the offensive bash (not blocking: its block raised to bash, offensiveBashChance), the
+  // special attack (the tree's Special Attack, by its chance) or a normal attack.
+  // TODO(M13): which attack data the special attack plays (here a power attack).
+  if (!input.blocking && input.canBash && random() < offensiveBashChance(style, input, settings)) {
+    return 'offensiveBash';
+  }
+  if (random() < specialAttackChance(style, settings) * SPECIAL_ATTACK_SHARE) return 'special';
+  return 'attack';
+}
+
+/**
+ * The share of the special attack chance one attack decision takes (ours: the style's chance
+ * spread over its attacks; TODO(M13): the engine's).
+ */
+export const SPECIAL_ATTACK_SHARE = 0.1;
+
+/**
+ * The angle (radians) its target may be off its facing for an attack to start: the attack's own
+ * angle (its attack data's ATKD strike angle, degrees; 0: none, the default below) ×
+ * fCombatAttackStrikeAngleMult, × fCombatAttackMovingStrikeAngleMult while it moves.
+ */
+export function attackStrikeAngle(
+  strikeAngle: number,
+  moving: boolean,
+  settings: CombatAiSettings,
+): number {
+  const degrees = strikeAngle > 0 ? strikeAngle : DEFAULT_STRIKE_ANGLE;
+  return (
+    ((degrees * Math.PI) / 180) *
+    settings.attackStrikeAngleMult *
+    (moving ? settings.attackMovingStrikeAngleMult : 1)
+  );
+}
+
+/** Degrees: an attack without attack data's strike angle (TODO(M13): the engine's default). */
+const DEFAULT_STRIKE_ANGLE = 45;
+
+/**
+ * The wait before its next attack decision after an attack (its attack data's recovery time,
+ * at least the attack idle). TODO(M13): the engine's per-attack cooldown rule.
+ */
+export function attackCooldown(recoveryTime: number): number {
+  return Math.max(ATTACK_DECISION_SECONDS, recoveryTime);
+}
+
+// --- Blocking -------------------------------------------------------------------------------------
+
+/** How near (the gap past the attacker's reach, units) a blow starts a block: by its defensive mult. */
+export function blockStartDistance(style: CombatStyle, settings: CombatAiSettings): number {
+  return lerp(
+    style.general.defensiveMult,
+    settings.blockStartDistanceMin,
+    settings.blockStartDistanceMax,
+  );
+}
+
+/** Its block is held while its target stays within this (units): by its defensive mult. */
+export function blockStopDistance(style: CombatStyle, settings: CombatAiSettings): number {
+  return lerp(
+    style.general.defensiveMult,
+    settings.blockStopDistanceMin,
+    settings.blockStopDistanceMax,
+  );
+}
+
+/**
+ * The sustained block: once up, a block is held (its block time not run out) while its target
+ * stays within the stop distance and does not back off faster than
+ * fCombatBlockMaxTargetRetreatVelocity, even between the blows.
+ */
+export function holdsBlock(
+  input: { readonly distance: number; readonly targetRetreatSpeed: number },
+  style: CombatStyle,
+  settings: CombatAiSettings,
+): boolean {
+  return (
+    input.distance <= blockStopDistance(style, settings) &&
+    input.targetRetreatSpeed <= settings.blockMaxTargetRetreatVelocity
+  );
+}
+
+/**
+ * The block attack's opening (the shield bash out of a block): its target within the bash reach
+ * × fCombatBlockAttackReachMult and within the strike angle × fCombatBlockAttackStrikeAngleMult.
+ */
+export function blockAttackOpening(
+  input: { readonly distance: number; readonly off: number; readonly strikeAngle: number },
+  settings: CombatAiSettings,
+): boolean {
+  return (
+    input.distance <= settings.bashReach * settings.blockAttackReachMult &&
+    input.off <= input.strikeAngle * settings.blockAttackStrikeAngleMult
+  );
 }
 
 export interface ShotInput extends Opponent {

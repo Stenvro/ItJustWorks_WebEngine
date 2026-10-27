@@ -374,6 +374,8 @@ interface Gear {
   readonly torch: { readonly model: string | undefined; readonly light: LightRecord } | undefined;
   /** A hand holds a spell or a scroll (GetEquippedItemType 9: the graphs' casting clips). */
   readonly spells: { readonly right: boolean; readonly left: boolean };
+  /** The spells (or scrolls) the hands hold, by form (the combat AI's left hand, dual casting). */
+  readonly spellForms: { readonly right: number | undefined; readonly left: number | undefined };
 }
 
 export interface ActorCombatOptions {
@@ -1290,6 +1292,10 @@ export class ActorCombat implements CombatBridge {
       race: raceRecord?.type === 'RACE' ? parseRaceHits(raceRecord) : undefined,
       torch,
       spells: { right: rightSpell, left: leftSpell },
+      spellForms: {
+        right: rightSpell ? loadout.right : undefined,
+        left: leftSpell ? loadout.left : undefined,
+      },
     };
   }
 
@@ -3120,10 +3126,20 @@ export class ActorCombat implements CombatBridge {
       right.weaponType !== WeaponType.staff;
     let powerChance = 0;
     let canBash = false;
+    // The attack data's strike angle and recovery times (its normal and power attacks').
+    let strikeAngle = 0;
+    let recoveryTime = 0;
+    let powerRecoveryTime = 0;
     for (const attack of gear?.attacks.all() ?? []) {
       const kind = attackEventKind(attack.event, attack);
       if (kind?.bash) canBash = true;
-      else if (kind?.power) powerChance = Math.max(powerChance, attack.attackChance);
+      else if (kind?.power) {
+        powerChance = Math.max(powerChance, attack.attackChance);
+        powerRecoveryTime = Math.max(powerRecoveryTime, attack.recoveryTime);
+      } else if (kind?.left !== true) {
+        strikeAngle = Math.max(strikeAngle, attack.strikeAngle);
+        recoveryTime = Math.max(recoveryTime, attack.recoveryTime);
+      }
     }
     return {
       reference: fighter.reference,
@@ -3150,6 +3166,13 @@ export class ActorCombat implements CombatBridge {
         range: gear.projectile?.range ?? 0,
         canBash,
         powerChance,
+        speed: gear.rightRecord?.speed ?? 1,
+        leftWeapon: gear.left.weapon !== undefined && gear.shield === undefined && !twoHanded,
+        rightSpell: gear.spellForms.right,
+        leftSpell: gear.spellForms.left,
+        strikeAngle,
+        recoveryTime,
+        powerRecoveryTime,
       },
     };
   }

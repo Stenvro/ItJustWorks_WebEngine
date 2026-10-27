@@ -177,6 +177,8 @@ export const INI_DEFAULTS = {
     fMountedAttackRange: 135,
     // A fighter's advance from afar sprints (src/shell/actor-combat-ai.ts; the executable's).
     bCombatPathSprinting: 1,
+    // Combat lines are off (src/ai/combat-dialogue.ts; the executable's).
+    bDisableCombatDialogue: 0,
     f1PArrowTiltUpAngle: 2,
     f1PBoltTiltUpAngle: 1,
     f3PArrowTiltUpAngle: 2.5,
