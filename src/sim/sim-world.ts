@@ -969,6 +969,8 @@ export class SimWorld {
       yaw,
     );
     player.povSwitchAllowed = () => this.runtime.controls.camSwitch;
+    // No auto vanity camera headless: a long wait would turn the cases' first person into third.
+    player.vanityAllowed = () => false;
     player.character.walkable = (x, y, z) =>
       this.#cellAt([x, y, z])?.navmesh.heightNear(x, y, z, NAVMESH_TOLERANCE) !== undefined;
     player.overEncumbered = () => session.overEncumbered;

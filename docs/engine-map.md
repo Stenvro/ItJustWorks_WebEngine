@@ -167,19 +167,19 @@ These run through every area and explain most of what breaks in play.
 
 ### Rendering and camera
 
-| System                                  | Status    | Main gaps                                                                              |
-| --------------------------------------- | --------- | -------------------------------------------------------------------------------------- |
-| Object shader                           | partial   | ambient specular, character light, eye reflections, sparkle snow, distance fades       |
-| Lights                                  | different | per-object light lists; portal-strict lights still reach actors of other rooms         |
-| Shadows                                 | partial   | shadow lights (interiors) done; no focus shadows, no shadow lights in exteriors        |
-| Fade, LOD                               | partial   | no distance fade of objects, items and actors                                          |
-| Rooms, portals, occlusion               | partial   | rooms' lighting templates and image spaces; LOD not culled by them                     |
-| Image space                             | partial   | volumetric lighting, lens flare, low-health effect, TAA                                |
-| Water                                   | partial   | underwater view, ripples, reflections of what is off screen                            |
-| Decals                                  | partial   | skinned decals, impact effect models, screen blood                                     |
-| First person                            | different | no pass of its own (own field of view and near plane)                                  |
-| Cameras                                 | partial   | camera shake, animated cameras, horse and dragon cameras, vanity, projectile kill cams |
-| Sky, weather, particles, terrain, grass | complete  | small calibrations                                                                     |
+| System                                  | Status    | Main gaps                                                                           |
+| --------------------------------------- | --------- | ----------------------------------------------------------------------------------- |
+| Object shader                           | partial   | ambient specular, character light, eye reflections, sparkle snow, distance fades    |
+| Lights                                  | different | per-object light lists; portal-strict lights still reach actors of other rooms      |
+| Shadows                                 | partial   | shadow lights (interiors) done; no focus shadows, no shadow lights in exteriors     |
+| Fade, LOD                               | partial   | no distance fade of objects, items and actors                                       |
+| Rooms, portals, occlusion               | partial   | rooms' lighting templates and image spaces; LOD not culled by them                  |
+| Image space                             | partial   | volumetric lighting, lens flare, low-health effect, TAA                             |
+| Water                                   | partial   | underwater view, ripples, reflections of what is off screen                         |
+| Decals                                  | partial   | skinned decals, impact effect models, screen blood                                  |
+| First person                            | partial   | own view and depth band done; engine near plane, first-person particles             |
+| Cameras                                 | partial   | states, shake, vanity, kill cams done; explosion shake, dragon lock-on, iron sights |
+| Sky, weather, particles, terrain, grass | complete  | small calibrations                                                                  |
 
 ### UI
 
