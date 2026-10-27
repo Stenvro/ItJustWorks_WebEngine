@@ -17,6 +17,7 @@
 // `warn`, and Detections' `witness` / `offence` (the player seen stealing, trespassing, ...).
 
 import {
+  ambushOf,
   angleOff,
   detectionLevel,
   detectionLight,
@@ -530,6 +531,11 @@ export class ActorSenses implements ScriptSenses {
       inCombat,
       otherThanTarget: combatTarget !== undefined && combatTarget !== target.reference,
       blindness: watcher.blindness,
+      // In an Ambush package: watchful of whom it waits for (ambushOf).
+      ambush: ambushOf(
+        this.#options.ai.current(observer.reference)?.type,
+        this.hostile(observer.reference, target.reference),
+      ),
     };
     const light = detectionLight(settings, this.#lightOn(target), {
       nightEye: watcher.nightEye,
