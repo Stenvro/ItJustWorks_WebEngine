@@ -782,6 +782,7 @@ export class WorldViewer {
     currentProcedure: (reference) => this.#stage?.ai.current(reference)?.procedure,
     randomSceneStarts: (scene, first, second) =>
       this.#stage?.talk.randomSceneStarts(scene, first, second),
+    facesForLine: (speaker, target) => this.#stage?.talk.faces(speaker, target),
     impactAt: (impactDataSet, from, direction, length) =>
       this.#stage?.combat.impactAt(impactDataSet, from, direction, length) ?? false,
     pathTo: (actor, target, walkRun) => {

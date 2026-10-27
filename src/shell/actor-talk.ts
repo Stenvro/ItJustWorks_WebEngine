@@ -384,6 +384,20 @@ export class ActorTalk {
    * the scene holds until they do. They stay so while it plays (the engine's in-game dialogue
    * package on both). Undefined: not actors of this stage.
    */
+  /**
+   * Whether a staged speaker faces whom it speaks to (an actor of the stage, the player) within
+   * fAIMinAngleRangeToStartSceneDialogue: a scene's Face Target line waits for it. One held in
+   * furniture faces as it sits. Undefined: either is not on this stage.
+   */
+  faces(speaker: number, target: number): boolean | undefined {
+    const self = this.#staged.get(speaker);
+    const at = target === PLAYER_REF ? this.#scene.player : this.#staged.get(target)?.position;
+    const settings = this.#settings;
+    if (!self || !at || !settings) return undefined;
+    if (this.#options.furniture.holds(speaker)) return true;
+    return facingWithin(self, at, settings.sceneDialogueAngle);
+  }
+
   randomSceneStarts(scene: number, first: number, second: number): boolean | undefined {
     const planner = this.#planner;
     const settings = this.#settings;
