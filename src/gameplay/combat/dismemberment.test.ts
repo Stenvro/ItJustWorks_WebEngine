@@ -6,6 +6,7 @@ import {
   HEAD_LIMB,
   limbGone,
   pieceShowsPartition,
+  redressing,
   rollLimb,
   WeaponHitBehavior,
 } from './dismemberment.ts';
@@ -15,6 +16,14 @@ describe('dismemberment', () => {
     expect(limbGone(undefined, HEAD_LIMB)).toBe(false);
     expect(limbGone([{ limb: HEAD_LIMB, worn: [] }], HEAD_LIMB)).toBe(true);
     expect(limbGone([{ limb: 0, worn: [] }], HEAD_LIMB)).toBe(false);
+  });
+
+  it('dresses a reloaded corpse again as its cut limb recorded it', () => {
+    const limbs = [{ limb: HEAD_LIMB, worn: [0x10, 0x20, 0xdecab] }];
+    // Its outfit came back without the decapitation armor and with a helmet.
+    expect(redressing(limbs, [0x10, 0x20, 0x30])).toEqual({ equip: [0xdecab], unequip: [0x30] });
+    expect(redressing(limbs, [0x20, 0xdecab, 0x10])).toBeUndefined();
+    expect(redressing(undefined, [0x10])).toBeUndefined();
   });
 
   it("shows the 100s on the cut piece; the head's own shapes lose their neck and biped slots", () => {

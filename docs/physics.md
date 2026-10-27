@@ -483,8 +483,9 @@ placement's scale on the pivots), and bodies held together do not collide with e
 Ball and socket → spherical; hinge → revolute; limited hinge → revolute limited to its angles
 (eased as Havok's soft limits are: below); prismatic → prismatic limited to its distances;
 ragdoll → spherical with three angle ranges: the twist, the swing towards the motor axis within
-the cone, the swing towards the plane axis within the cone and the plane limits (TODO(M13):
-Havok's limit is a cone and two planes); the
+the cone, the swing towards the plane axis within the cone and the plane limits, a box the
+constraint solver narrows to Havok's cone (below; TODO(M13): Havok's two planes are measured as
+the second body's twist axis's angle to the plane, Rapier's swing about the axis); the
 hinges' and the ragdolls' twist and plane angles are mirrored, as Rapier measures a joint's
 turn the other way round from the files' limits (`node tools/ragdoll-info.ts --limits`: of
 12,149 limited hinges in the 1,257 complete placed ragdoll poses, the Creation Kit's settled
@@ -547,8 +548,29 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   slows a body only while its speed relative to its neighbours is also below a threshold per
   class (0.05, 0.02, 0.013, 0.01 at four iterations; how it is measured is not known).
 
-Motors (no vanilla constraint has one), malleable strength and a chain's tau and damping are not
-applied. A joint is in the world only while one of its two bodies is simulated: between
+- **The cone:** Havok's ragdoll constraint keeps the second body's twist axis within its cone
+  (coneMaxAngle) of the first's; Rapier's limits are a box of two swings, as wide as the cone on
+  each axis and wider on its diagonals (by up to √2). A ragdoll joint whose twist axes lie
+  further apart than the cone is turned back about the line across them, by tau × the ragdoll
+  limits' tau factor of the excess a step (pushed back only). Hulda, killed still where she
+  leans at the Bannered Mare's counter (a Ragdoll death, no blow), stayed asleep on her feet,
+  her hips and knees in the box but past the cone and held there by their friction; with the
+  cone she slumps to the floor (`ragdolls-death.test.ts`).
+- **Motors** (the powered ragdoll: Havok's position motors, as the behavior graph's
+  hkbPoweredRagdollControlsModifier sets them; no constraint in the files has an enabled one):
+  a powered joint pulls its second body's turn relative to its first toward the turn the
+  graph's pose gives the two (`PhysicsWorld.power`, `JointMotor`): the turn left (a rotation
+  vector) is recovered at tau of it a step, no faster than proportionalRecoveryVelocity × its
+  angle + constantRecoveryVelocity, damping that share of the speed's error, with at most
+  maxForce × the step about each axis; a powered joint's friction gives way to its motor. A
+  knocked-down actor's ragdoll is powered by its graph's control data every frame (its pose
+  of that frame as the target, the bones it names; `ActorBodies`): FullyRagdoll's 0 leaves it
+  limp, matching the get-up's first pose (200) pulls its limbs toward it before the get-up
+  blends from it; powered bodies are kept awake. TODO(M13): Havok's controller drives the
+  ragdoll's root by its world-from-model mode, not done; the paralysed's stiff fall; a dying
+  graph's powered bones (vanilla keeps them all keyframed: AnimateToRagdoll).
+
+Malleable strength and a chain's tau and damping are not applied. A joint is in the world only while one of its two bodies is simulated: between
 two keyframed or held bodies (a living actor's ragdoll keyframed to its pose, an object placed
 to wait) it is left out and made again from its constraint as a body is let go (a death, a
 knock-down, a touch). Rapier solves a joint between two kinematic bodies in every substep all
@@ -574,8 +596,8 @@ at a new game, mostly draugr, people, Dwemer spiders and skeevers) lie as ragdol
 skeleton.nif holds a body on each main bone (capsules, 18 for humans) joined by ragdoll and
 limited hinge constraints, placed at the actor and articulated like the objects above, so the
 skinned body, its armor and head follow the bones. They run no behavior graph and no face. Those
-the running game kills lie the same way when their cell loads again (TODO(M12): from the rest
-pose; where their bodies lay is the save's); one that dies in sight falls from the pose it had
+the running game kills lie the same way when their cell loads again, where their ragdolls laid
+them (below: the corpse pose); one that dies in sight falls from the pose it had
 (its living bodies, keyframed to its pose, are let go: [ai.md](ai.md#movement)). One that had no
 bodies living (beyond the high process) gets them in the pose it has as it dies: they were made
 in the model's rest pose and let go before their keyframed move reached the pose, so Lokir and
@@ -610,9 +632,23 @@ original:
   Dwemer spiders' poses were made on a skeleton whose nodes differ, and their bodies all share
   biped part 0, so the engine's check passes; Rapier snapped such joints together in one step,
   flinging Helgen's dead horse and the carts beside it). A ragdoll held until touched is let go
-  as a whole: one body released alone hung, simulated, on its held neighbours' joints and shook. 8,670 objects carry a
-  pose too (TODO(M13): not applied to objects yet; single-body clutter's is never applied, its
-  body sits on its fade root).
+  as a whole: one body released alone hung, simulated, on its held neighbours' joints and shook.
+  8,670 objects carry a pose too (armour on the floor, open books, hanging game): an articulated
+  object's is walked the same way over its model's nodes (`poseObjectRagdoll` in
+  play-session.ts; XRGB turns only an actor's biped), its bodies placed on its posed nodes, a
+  complete walk leaving it at rest until touched and a stopped one settling; 7,534 apply
+  completely, 1,131 have no model with a pose order (`node tools/ragdoll-info.ts --pose`).
+  Single-body clutter's is never applied (its body sits on its fade root).
+- **The corpse pose** (`src/animation/corpse-pose.ts`): the original keeps a corpse's Havok
+  state with its reference; here, as a dead actor leaves the stage (its cell unloads) and as the
+  game is saved, the nodes its ragdoll placed (those not where their parents and the skeleton
+  put them) are kept in the world in its ActorState (`corpse`: saved with the game state,
+  dropped with the actor's state by a cell's reset). As its cell loads again (or the save
+  loads) its ragdoll is posed so before its XRGD, and lies at rest until touched if it lay at
+  rest (else it falls on); a corpse still dying by its graph is not kept (it falls anew).
+  `tests/sim-corpse-pose.int.test.ts`: Hulda knocked over and saved lies where she lay after the
+  load (363 units off without it). TODO(M13): what of a corpse's Havok state the original keeps
+  (its bodies' velocities, whether it was asleep) is not read.
 - **Ragdoll penetration** (`src/physics/ragdoll-penetration.ts`, the engine's
   bhkRagdollPenetrationUtil): for [RagdollAnim] fDetectionUpdateTimeSec (5 s) after a dead
   actor's ragdoll is set up, every frame while all its bodies are simulated, each bone is tested
