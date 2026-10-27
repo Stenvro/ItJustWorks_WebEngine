@@ -10,6 +10,7 @@ import {
   COMBAT_AI_DEFAULTS,
   Confidence,
   confidenceModifier,
+  daresHelp,
   fleeHealth,
   readCombatAiSettings,
   selectTarget,
@@ -180,5 +181,24 @@ describe('combat AI: fleeing and yielding', () => {
     expect(acceptsYield({ fightsPlayer: true, playerEnemy: true, heldOff: 9, settings })).toBe(
       false,
     );
+  });
+});
+
+describe('taking up a fight', () => {
+  it('lets confidence decide who helps against a criminal (UESP "Confidence")', () => {
+    const weak = { level: 1, strength: 100 };
+    const townsman = { level: 6, strength: 400 };
+    const veteran = { level: 20, strength: 3000 };
+    // A level-1 player who struck a townsman: all but the cowardly take them on.
+    expect(daresHelp(Confidence.cowardly, townsman, weak)).toBe(false);
+    expect(daresHelp(Confidence.cautious, townsman, weak)).toBe(true);
+    expect(daresHelp(Confidence.brave, townsman, weak)).toBe(true);
+    // A veteran: the cautious and the average keep away, the brave are outmatched.
+    expect(daresHelp(Confidence.cautious, townsman, veteran)).toBe(false);
+    expect(daresHelp(Confidence.average, townsman, veteran)).toBe(false);
+    expect(daresHelp(Confidence.brave, townsman, veteran)).toBe(false);
+    expect(daresHelp(Confidence.foolhardy, townsman, veteran)).toBe(true);
+    // Average: one of its own level, not higher.
+    expect(daresHelp(Confidence.average, townsman, townsman)).toBe(true);
   });
 });
