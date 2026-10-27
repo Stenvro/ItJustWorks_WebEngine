@@ -128,9 +128,9 @@ These run through every area and explain most of what breaks in play.
 | Active effects          | partial | displacement rules, the conditions' interval, concentration effects a frame at a time                               |
 | Archetypes              | partial | invisibility's refraction shimmer (dithered now), a summon's other place when the way is blocked, Magelight's limit |
 | Skill use               | partial | staffs with perks, a lasting effect by its first frame                                                              |
-| Enchanting              | partial | no glow on enchanted items; the charge without EAMT                                                                 |
+| Enchanting              | partial | the charge without EAMT; worn armour shows no glow (TODO(M13): unchecked in the game)                               |
 | Projectiles, explosions | partial | a cone's push as its front passes, a lobber's slide on a slope; cone waves and stuck Magelights not saved           |
-| Visual effects          | partial | effect shaders and art only on actors; RFCT visuals unread                                                          |
+| Visual effects          | partial | RFCT flags (face target, attach to camera); art on held weapons at the hand node                                    |
 | Perks                   | partial | 16 entry points unused by vanilla (mods)                                                                            |
 
 ### Animation and bodies
@@ -167,19 +167,19 @@ These run through every area and explain most of what breaks in play.
 
 ### Rendering and camera
 
-| System                                  | Status    | Main gaps                                                                              |
-| --------------------------------------- | --------- | -------------------------------------------------------------------------------------- |
-| Object shader                           | partial   | ambient specular, character light, eye reflections, sparkle snow (distance fade: done) |
-| Lights                                  | different | per-object light lists (moving actors take their room each frame: done)                |
-| Shadows                                 | partial   | shadow lights (interiors) done; no focus shadows, no shadow lights in exteriors        |
-| Fade, LOD                               | partial   | fade rule estimated (radius × fade setting, TODO(M13)); no fLODFadeOutMultSkyCell      |
-| Rooms, portals, occlusion               | partial   | rooms' lighting templates and image spaces; LOD not culled by them                     |
-| Image space                             | partial   | god rays are a screen-space blur, not the froxel volume; TAA without motion vectors    |
-| Water                                   | partial   | underwater fog, ripple rings, edge reflections done; engine displacement sim, colour   |
-| Decals                                  | partial   | skinned decals, screen blood (impact effect models: done)                              |
-| First person                            | partial   | own view and depth band done; engine near plane, first-person particles                |
-| Cameras                                 | partial   | states, shake, vanity, kill cams done; explosion shake, dragon lock-on, iron sights    |
-| Sky, weather, particles, terrain, grass | complete  | small calibrations                                                                     |
+| System                                  | Status    | Main gaps                                                                            |
+| --------------------------------------- | --------- | ------------------------------------------------------------------------------------ |
+| Object shader                           | partial   | character light luminance source, eye reflection centres, sparkle snow (type 14)     |
+| Lights                                  | different | per-object light lists (moving actors take their room each frame: done)              |
+| Shadows                                 | partial   | shadow lights (interiors) done; no focus shadows, no shadow lights in exteriors      |
+| Fade, LOD                               | partial   | fade rule estimated (radius × fade setting, TODO(M13)); no fLODFadeOutMultSkyCell    |
+| Rooms, portals, occlusion               | partial   | LOD not culled by them (rooms' lighting templates and image spaces: done)            |
+| Image space                             | partial   | god rays are a screen-space blur, not the froxel volume; TAA without motion vectors  |
+| Water                                   | partial   | underwater fog, ripple rings, edge reflections done; engine displacement sim, colour |
+| Decals                                  | partial   | skinned decals, screen blood (impact effect models: done)                            |
+| First person                            | partial   | own view and depth band done; engine near plane, first-person particles              |
+| Cameras                                 | partial   | states, shake, vanity, kill cams done; explosion shake, dragon lock-on, iron sights  |
+| Sky, weather, particles, terrain, grass | complete  | small calibrations                                                                   |
 
 ### UI
 
