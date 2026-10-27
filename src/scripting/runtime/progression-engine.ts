@@ -302,6 +302,8 @@ export class ProgressionEngine {
     const format = await runtime.gameSetting('sSkillIncreased');
     const playerLevel = await runtime.actors.playerLevel();
     for (const reached of result.reached) {
+      // Each level a skill gains is a Skill Increase (the stats).
+      runtime.incrementStat('Skill Increases');
       const from = levelFraction(playerLevel, state.playerExperience, settings);
       state.playerExperience += characterExperience(reached, settings);
       const to = levelFraction(playerLevel, state.playerExperience, settings);

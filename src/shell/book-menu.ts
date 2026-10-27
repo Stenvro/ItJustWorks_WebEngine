@@ -24,6 +24,7 @@
 // note's text is wider: NOTE_WIDTH 400 from the visible rect's left plus NOTE_X_OFFSET 20).
 // Notes: docs/ui.md ("Books").
 
+import { inputPlatform } from '../ui/input-platform.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
 import { multiply, type Mat4, type Vec3 } from '../render/math.ts';
@@ -359,7 +360,7 @@ class Reading {
       setup: async (menu) => {
         if (!(await menu.waitFor('_root.InitExtensions'))) return;
         menu.invoke('_root.InitExtensions');
-        menu.invoke('_root.SetPlatform', 0, false);
+        menu.invoke('_root.SetPlatform', inputPlatform(), false);
         await this.#showTake(menu);
       },
     });

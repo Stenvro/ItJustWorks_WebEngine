@@ -94,7 +94,12 @@ import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { matches, renderResults } from './finder.ts';
 import type { Placement } from '../scripting/runtime/runtime.ts';
 import { placedAsMoved } from './moved-objects.ts';
-import { instanceNodeWorld, MOTION_KEYFRAMED, type ScriptView } from './script-world.ts';
+import {
+  instanceNodeWorld,
+  MOTION_KEYFRAMED,
+  scriptConstraints,
+  type ScriptView,
+} from './script-world.ts';
 import { actorScriptGraph, placedScriptGraph } from '../animation/script-graphs.ts';
 import { placeObject } from '../sim/placed-objects.ts';
 import { CreatedObjects } from './created-objects.ts';
@@ -457,6 +462,16 @@ export class ModelViewer {
         this.#play?.physics.setMotion(placed, motionType === MOTION_KEYFRAMED);
       }
     },
+    fireWeapon: (weapon, source, ammo) => {
+      void this.#stage?.combat.fire(weapon, source, ammo);
+    },
+    ...scriptConstraints(
+      () => this.#play?.physics,
+      (reference) => [
+        ...(this.#play?.placementsOf(reference) ?? []),
+        ...(this.#stage?.bodies.placements(reference) ?? []),
+      ],
+    ),
     impulse: (reference, direction, magnitude, share) => {
       for (const placed of this.#play?.placementsOf(reference) ?? []) {
         this.#play?.physics.impulse(placed, direction, magnitude, share);
@@ -815,7 +830,7 @@ export class ModelViewer {
       this.#cell?.navmesh.heightNear(x, y, z, NAVMESH_TOLERANCE) !== undefined;
     player.overEncumbered = () => this.#session?.overEncumbered === true;
     // Slow Time's pace and the falls' damage (src/shell/time-flow.ts).
-    connectPlayerTime(player, () => this.#session);
+    connectPlayerTime(player, () => this.#session, physics);
     // What the player does that the actors near comment on (src/shell/actor-talk.ts).
     player.onAction = (subtype) => {
       void this.#stage?.talk.playerAction(subtype);
@@ -860,6 +875,9 @@ export class ModelViewer {
     // The player walking into trigger volumes tells their scripts.
     play.onTrigger = (reference, entered) => {
       this.#session?.scriptsReady?.triggered(reference, PLAYER_REF, entered);
+    };
+    play.onObjectTrigger = (trigger, object, entered) => {
+      this.#session?.scriptsReady?.triggered(trigger, object, entered);
     };
     // The traps the player touches hit them (OnTrapHitStart, ...: trap-hits.ts).
     play.onTrapTouch = (touching) => {

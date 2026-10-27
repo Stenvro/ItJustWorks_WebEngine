@@ -152,18 +152,18 @@ These run through every area and explain most of what breaks in play.
 
 ### Physics
 
-| System               | Status  | Main gaps                                                                      |
-| -------------------- | ------- | ------------------------------------------------------------------------------ |
-| World, time step     | partial | the step under Slow Time; objects placed into what they lie on fall through it |
-| Triggers             | partial | only actors enter triggers (L_TRIGGER takes 14 layers): layers unchecked       |
-| Constraints          | partial | script-made constraints (hanged corpses, hanging keys); a census of types      |
-| Character controller | partial | moving platforms do not carry actors; moving bodies do not push them           |
+| System               | Status  | Main gaps                                                                       |
+| -------------------- | ------- | ------------------------------------------------------------------------------- |
+| World, time step     | partial | objects placed into what they lie on fall through it                            |
+| Triggers             | partial | projectiles in flight do not enter triggers (rays, no reference yet)            |
+| Constraints          | partial | script-made joints across a cell reload; a census of types                      |
+| Character controller | partial | moving platforms do not carry actors; moving bodies do not push them            |
 | Falling, swimming    | partial | the drowning sound and gasp (NPCs swim where their package allows: done)        |
-| Water physics        | partial | the splash model; Havok's own buoyancy and drag rule (ours from the data)      |
-| Physics damage       | partial | the listener's damage to destructibles (no vanilla impact reaches it)          |
-| Traps                | partial | hits on actors: done; material, initial flag, cloud traps unchecked            |
-| Gameplay impulses    | partial | arrows, spells, blows and shouts do not move clutter                           |
-| Persistence          | partial | animated objects and corpses; pushes without a script unchecked                |
+| Water physics        | partial | the splash model; Havok's own buoyancy and drag rule (ours from the data)       |
+| Physics damage       | partial | the listener's damage to destructibles (no vanilla impact reaches it)           |
+| Traps                | partial | hits on actors: done; material, initial flag, cloud traps unchecked             |
+| Gameplay impulses    | partial | the rules from settings, not read from the engine (TODO(M13)); ragdoll hit time |
+| Persistence          | partial | animated objects and corpses; pushes without a script unchecked                 |
 
 ### Rendering and camera
 
@@ -183,14 +183,14 @@ These run through every area and explain most of what breaks in play.
 
 ### UI
 
-| System                         | Status  | Main gaps                                                                                                                                                            |
-| ------------------------------ | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Menu manager                   | partial | named stack with IMenu flags, saving permission, UI.IsMenuOpen and mod menus: done; SKSE's other UI natives, menu events to scripts (RegisterForMenu)                |
-| HUD                            | partial | modes per menu, held notices, word/soul/cleared notices, floating marker, meter keep, arrow count: done; the marker's bound height, lockpicking's notices (TODO M13) |
-| Locations cleared, misc stats  | partial | clearing rule, Dungeons Cleared, the maps' Cleared: done; about 34 stats never counted                                                                               |
-| Input                          | partial | menu contexts read the default keys; no gamepad                                                                                                                      |
-| Console                        | partial | about 25 of about 330 commands; no selection by click                                                                                                                |
-| Tutorials, loading, map, stats | partial | low-stat tutorials, map relief overlay, beast perk trees, Survival HUD                                                                                               |
+| System                         | Status  | Main gaps                                                                                                                                                                                               |
+| ------------------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Menu manager                   | partial | named stack with IMenu flags, saving permission, UI.IsMenuOpen and mod menus: done; SKSE's other UI natives, menu events to scripts (RegisterForMenu)                                                   |
+| HUD                            | partial | modes per menu, held notices, word/soul/cleared notices, floating marker, meter keep, arrow count: done; the marker's bound height, lockpicking's notices (TODO M13)                                    |
+| Locations cleared, misc stats  | partial | about 20 stats never counted (Gold Found, Chests Looted, Barters, the quest counts, beast forms); kills, crimes, crafts, books, shouts, words, sleep, food, skills, spells, harvests, discoveries: done |
+| Input                          | partial | gamepad (Gamepad API, contexts, GFx gamepad keys, remap) done; analog walk speed, rumble, live SetPlatform for open menus                                                                               |
+| Console                        | partial | about 115 commands; tfc 1 (no world freeze hook), tdetect variants, near trees under tt                                                                                                                 |
+| Tutorials, loading, map, stats | partial | low-stat tutorials, map relief overlay, beast perk trees, Survival HUD                                                                                                                                  |
 
 ## Order of work
 

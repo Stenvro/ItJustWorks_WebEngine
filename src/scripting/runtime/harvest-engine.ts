@@ -82,6 +82,7 @@ export class HarvestEngine {
       ]);
       count = Math.max(1, Math.round(perks));
       await runtime.addItem(actor, runtime.formHandle(flora.ingredient), count, false);
+      if (actor === PLAYER_REF) runtime.incrementStat('Ingredients Harvested');
     }
     return { ingredient: flora.ingredient, count, sound: flora.sound };
   }

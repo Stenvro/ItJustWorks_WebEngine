@@ -196,6 +196,9 @@ export const INI_DEFAULTS = {
     bInvertYValues: 0,
     // Both attack buttons pressed within this dual cast (seconds; src/shell/player-casting.ts).
     fDualCastChordTime: 0.05,
+    // Look with the right stick (src/shell/player.ts lookStick); the gamepad on (Prefs).
+    fGamepadHeadingSensitivity: 0.6667,
+    bGamepadEnable: 1,
     fMouseHeadingSensitivity: 0.0125,
     fMouseHeadingXScale: 0.02,
     fMouseHeadingYScale: 0.85,

@@ -9,6 +9,7 @@
 // on around a conversation (no menu mode); the player stands while it lasts.
 // Notes: docs/ui.md ("Dialogue").
 
+import { inputPlatform } from '../ui/input-platform.ts';
 import {
   type DialogueEngine,
   type SpokenInfo,
@@ -181,7 +182,7 @@ export class DialogueMenu {
       setup: async (menu) => {
         await menu.waitFor('_root.InitExtensions');
         menu.invoke('_root.InitExtensions');
-        menu.invoke('_root.SetPlatform', 0, false);
+        menu.invoke('_root.SetPlatform', inputPlatform(), false);
         menu.call('SetSpeakerName', speaker.look.name);
         // With the speaker named the other voices and effects duck (fNonDialogVoiceDucking).
         this.#session.soundSystem?.duckForDialogue(true);

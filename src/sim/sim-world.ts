@@ -49,7 +49,12 @@ import { configurePhysics, Player } from '../shell/player.ts';
 import { PlayerAvatar } from '../shell/player-avatar.ts';
 import { PlayerFurniture } from '../shell/player-furniture.ts';
 import type { PlayerView } from '../shell/race-menu.ts';
-import { instanceNodeWorld, MOTION_KEYFRAMED, type ScriptView } from '../shell/script-world.ts';
+import {
+  instanceNodeWorld,
+  MOTION_KEYFRAMED,
+  scriptConstraints,
+  type ScriptView,
+} from '../shell/script-world.ts';
 import { connectPlayerTime } from '../shell/time-flow.ts';
 import { FlyCamera } from '../render/fly-camera.ts';
 import type { Vfs } from '../vfs/vfs.ts';
@@ -979,7 +984,7 @@ export class SimWorld {
     player.character.walkable = (x, y, z) =>
       this.#cellAt([x, y, z])?.navmesh.heightNear(x, y, z, NAVMESH_TOLERANCE) !== undefined;
     player.overEncumbered = () => session.overEncumbered;
-    connectPlayerTime(player, () => session);
+    connectPlayerTime(player, () => session, physics);
     player.canSprint = () => this.runtime.progression.canSprint(PLAYER_REF);
     player.onSprintRefused = () => {
       this.runtime.progression.refused(PLAYER_REF, 'stamina');
@@ -1030,6 +1035,9 @@ export class SimWorld {
     }
     play.onTrigger = (reference, entered) => {
       this.runtime.triggered(reference, PLAYER_REF, entered);
+    };
+    play.onObjectTrigger = (trigger, object, entered) => {
+      this.runtime.triggered(trigger, object, entered);
     };
     play.onTrapTouch = (touching) => {
       this.runtime.trapHits.touching(PLAYER_REF, touching);
@@ -1420,6 +1428,16 @@ export class SimWorld {
         this.#play?.physics.setMotion(placed, motionType === MOTION_KEYFRAMED);
       }
     },
+    fireWeapon: (weapon, source, ammo) => {
+      void this.stage.combat.fire(weapon, source, ammo);
+    },
+    ...scriptConstraints(
+      () => this.#play?.physics,
+      (reference) => [
+        ...(this.#play?.placementsOf(reference) ?? []),
+        ...this.stage.bodies.placements(reference),
+      ],
+    ),
     impulse: (reference, direction, magnitude, share) => {
       for (const placed of this.#play?.placementsOf(reference) ?? []) {
         this.#play?.physics.impulse(placed, direction, magnitude, share);

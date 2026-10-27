@@ -802,8 +802,14 @@ export class ActorEngine {
     if (await this.hasSpell(reference, spell)) return false;
     this.#runtime.state.actor(reference).spells.set(spell, true);
     const record = await this.#runtime.forms.record(spell);
-    if (record?.type === 'SPEL' && parseSpell(record).spellType === SpellType.voice)
+    const type = record?.type === 'SPEL' ? parseSpell(record).spellType : undefined;
+    if (type === SpellType.voice)
       this.#runtime.detach(this.#runtime.storyEvents.newVoicePower(reference, spell));
+    // The player's stats: a spell (not a power, ability or disease) learned, a shout learned.
+    if (reference === PLAYER_REF && type === SpellType.spell)
+      this.#runtime.incrementStat('Spells Learned');
+    if (reference === PLAYER_REF && record?.type === 'SHOU')
+      this.#runtime.incrementStat('Shouts Learned');
     return true;
   }
 

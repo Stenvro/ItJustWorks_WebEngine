@@ -17,8 +17,6 @@ export const PLACEHOLDER_NATIVES: ReadonlyMap<string, string> = new Map([
   ['game.setsungazeimagespacemodifier', "TODO(M13): the sun gaze's image-space modifier"],
   ['game.isplayersungazing', 'TODO(M13): the sun gaze'],
   ['game.setcameratarget', "TODO(M13): the camera's target other than the player"],
-  ['game.addhavokballandsocketconstraint', 'TODO(M13): Havok constraints between references'],
-  ['game.removehavokconstraints', 'TODO(M13): Havok constraints between references'],
   ['actor.clearextraarrows', 'TODO(M13): arrows stuck in bodies (not shown yet)'],
   ['objectreference.forceaddragdolltoworld', 'TODO(M13): ragdolls a script adds and removes'],
   ['objectreference.forceremoveragdollfromworld', 'TODO(M13): ragdolls a script adds and removes'],
