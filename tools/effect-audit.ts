@@ -13,6 +13,10 @@
 //   node tools/effect-audit.ts --impacts     impacts (IPCT): placement radius, hazards they leave
 //                                            (their lifetime and limit), and the projectiles
 //                                            whose effects' impact data sets leave them, by kind
+//   node tools/effect-audit.ts --shaders     lighting shapes by shader type, and the eye and
+//                                            sparkle-snow shapes' environment and eye flags
+//   node tools/effect-audit.ts --glow       enchanted weapons and armour: the effect shader and
+//                                            art their enchantment shows (enchantment-glow.ts)
 //
 // Without an option: all of them.
 
@@ -26,6 +30,7 @@ import { parseHazard } from '../src/world/hazard-records.ts';
 import { parseImpact, parseImpactDataSet } from '../src/world/impact-records.ts';
 import { parseMagicEffect } from '../src/world/magic-effects.ts';
 import { parseProjectile } from '../src/world/projectile-data.ts';
+import { itemGlow } from '../src/gameplay/magic/enchantment-glow.ts';
 import { flightKind } from '../src/gameplay/magic/projectile-flight.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
@@ -37,9 +42,17 @@ const { values } = parseArgs({
     lit: { type: 'boolean', default: false },
     spots: { type: 'boolean', default: false },
     impacts: { type: 'boolean', default: false },
+    glow: { type: 'boolean', default: false },
+    shaders: { type: 'boolean', default: false },
   },
 });
-const all = !values.markers && !values.lit && !values.spots && !values.impacts;
+const all =
+  !values.markers &&
+  !values.lit &&
+  !values.spots &&
+  !values.impacts &&
+  !values.glow &&
+  !values.shaders;
 
 const vfs = await Vfs.mount(openGameFolder());
 const count = <K>(map: Map<K, number>, key: K, by = 1): void => {
@@ -58,6 +71,26 @@ async function* nifs(): AsyncGenerator<[string, NifFile]> {
       // A file the parser cannot read is nif-stats' to report.
     }
   }
+}
+
+if (all || values.shaders) {
+  const types = new Map<number, number>();
+  const special = new Map<string, number>();
+  for await (const [path, nif] of nifs()) {
+    for (const block of nif.blocks) {
+      if (block.kind !== 'lighting-shader') continue;
+      count(types, block.shaderType);
+      if (block.shaderType !== 14 && block.shaderType !== 16) continue;
+      // SLSF1 Environment_Mapping (0x80), Eye_Environment_Mapping (0x20000).
+      const env = (block.flags1 & 0x80) !== 0 ? ' env' : '';
+      const eye = (block.flags1 & 0x20000) !== 0 ? ' eye-env' : '';
+      count(special, `type ${String(block.shaderType)}${env}${eye}  ${folder(path)}`);
+    }
+  }
+  console.log('Lighting shapes by shader type:');
+  for (const [key, n] of sorted(types)) console.log(`  ${n}  type ${String(key)}`);
+  console.log('Eye and sparkle-snow shapes by flags and folder:');
+  for (const [key, n] of sorted(special)) console.log(`  ${n}  ${key}`);
 }
 
 const BSX_EDITOR_MARKER = 0x20;
@@ -239,4 +272,29 @@ if (all || values.impacts) {
   }
   console.log('  magic effects with a projectile and an impact data set, by flight:');
   for (const [key, n] of sorted(leaving)) console.log(`    ${n}  ${key}`);
+}
+
+if (all || values.glow) {
+  console.log('Enchanted items (EITM) and their glow:');
+  const get = (formId: number): ReturnType<typeof db.get> => db.get(formId);
+  for (const type of ['WEAP', 'ARMO']) {
+    const shaders = new Map<string, number>();
+    let enchanted = 0;
+    let glowing = 0;
+    let withArt = 0;
+    for (const formId of db.formIdsOfType(type)) {
+      const record = await db.get(formId);
+      if (record?.formIdField('EITM') === undefined) continue;
+      enchanted++;
+      const glow = await itemGlow(get, formId);
+      if (!glow) continue;
+      if (glow.shader !== undefined) {
+        glowing++;
+        count(shaders, (await db.get(glow.shader))?.editorId ?? glow.shader.toString(16));
+      }
+      if (glow.art !== undefined) withArt++;
+    }
+    console.log(`  ${type}: ${enchanted} enchanted, ${glowing} with a shader, ${withArt} with art`);
+    for (const [key, n] of sorted(shaders).slice(0, 12)) console.log(`    ${n}  ${key}`);
+  }
 }

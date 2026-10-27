@@ -18,6 +18,7 @@ import {
 } from './animation.ts';
 import { billboardWorld } from './billboard.ts';
 import {
+  CHARACTER_LIGHT,
   flatAmbient,
   type PointLight,
   type SceneFog,
@@ -2480,8 +2481,17 @@ export class SceneRenderer {
     data.set([...cameraPosition, 1], 16);
     data.set([...lighting.sunDirection, 0], 20);
     data.set([...lighting.sunColor, 1], 24);
+    // The directional ambient; in its w: the ambient specular colour (+X..+Y), its fresnel power
+    // (−Y), the character light's primary and secondary intensity (+Z, −Z).
+    const specular = lighting.ambientSpecular;
+    const ambientW = [
+      ...(specular?.color ?? [0, 0, 0]),
+      specular?.fresnelPower ?? 1,
+      CHARACTER_LIGHT.enabled ? CHARACTER_LIGHT.primary : 0,
+      CHARACTER_LIGHT.enabled ? CHARACTER_LIGHT.secondary : 0,
+    ];
     lighting.ambient.forEach((color, i) => {
-      data.set([...color, 1], 28 + i * 4);
+      data.set([...color, ambientW[i] ?? 0], 28 + i * 4);
     });
     const fog = lighting.fog;
     data.set([...(fog?.nearColor ?? [0, 0, 0]), 1], 52);
@@ -2489,7 +2499,10 @@ export class SceneRenderer {
     data.set([fog?.near ?? 0, fog?.far ?? 1, fog?.power ?? 1, fog?.max ?? 0], 60);
     const lightCount = Math.min(MAX_LIGHTS, lighting.lights.length);
     this.#frameUints.set([lightCount, fog ? 1 : 0, this.debugView, 0], 64);
-    data.set([timeSeconds, lighting.wind ?? 0, 0, 0], 68);
+    data.set(
+      [timeSeconds, lighting.wind ?? 0, CHARACTER_LIGHT.lumScale, CHARACTER_LIGHT.lumMax],
+      68,
+    );
     new Int32Array(data.buffer, 72 * 4, 4).set([
       lodMask?.originX ?? 0,
       lodMask?.originY ?? 0,

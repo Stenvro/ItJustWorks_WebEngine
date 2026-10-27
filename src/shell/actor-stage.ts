@@ -77,6 +77,8 @@ import { ActorFlight } from './actor-flight.ts';
 import { actorShape, MagicProjectiles, type ProjectileTarget } from './magic-projectiles.ts';
 import { MagicFx } from './magic-fx.ts';
 import { ActorEffects, type EffectBody } from './actor-effects.ts';
+import type { HeldWeapons } from './actor-weapons.ts';
+import { itemGlow } from '../gameplay/magic/enchantment-glow.ts';
 import { ActorDismemberment, type SeveredBody } from './actor-dismemberment.ts';
 import { firstDoorToward, questTargets } from './compass.ts';
 import { findPath } from '../ai/pathfinding.ts';
@@ -178,6 +180,8 @@ export interface ActorStageOptions {
   readonly seat?: () => PlayerFurniture | undefined;
   /** The view gives up a cart of its cells to be pulled (src/shell/actor-vehicles.ts). */
   readonly adoptVehicle?: (reference: number) => AdoptedVehicle | undefined;
+  /** An object of the loaded area as effects cover it (a script's shader on a static, an item). */
+  readonly objectBody?: (reference: number) => EffectBody | undefined;
 }
 
 /** A loaded cell's navmesh obstacles and its enable state. */
@@ -469,6 +473,9 @@ export class ActorStage {
       aim: () => this.aim,
       decapitate: (actor) => {
         void this.dismemberment.decapitate(actor);
+      },
+      held: (actor, view, models, weapons) => {
+        this.#heldGlow(actor, view, models, weapons);
       },
     });
     this.search = new ActorSearch({
@@ -848,7 +855,35 @@ export class ActorStage {
       return body && { placed: body };
     }
     const staged = this.#actors.get(actor);
-    return staged && { placed: staged.placed, visibility: staged.visibility };
+    if (staged) return { placed: staged.placed, visibility: staged.visibility };
+    // Not an actor: an object of the loaded area (a script's shader or visual effect on it).
+    return this.#options.objectBody?.(actor);
+  }
+
+  /**
+   * An enchanted weapon glows in its hand (its enchantment's shader and art: enchantment-glow.ts),
+   * on the models just made; the models made before lose theirs.
+   */
+  #heldGlow(
+    actor: number,
+    view: 'third' | 'first',
+    models: HeldWeapons,
+    weapons: { readonly right: number | undefined; readonly left: number | undefined },
+  ): void {
+    const runtime = this.#options.session.scriptsReady;
+    for (const hand of ['right', 'left'] as const) {
+      const key = `held:${String(actor)}:${view}:${hand}`;
+      this.effects.unglow(key);
+      const weapon = weapons[hand];
+      if (!runtime || weapon === undefined) continue;
+      void itemGlow((formId) => runtime.forms.record(formId), weapon).then((glow) => {
+        if (!glow || models.hand(hand) === undefined) return;
+        this.effects.glow(key, actor, glow, () => {
+          const instance = models.hand(hand);
+          return instance && { placed: { instances: [instance] }, visibility: models.visibility };
+        });
+      });
+    }
   }
 
   /** The living actors shown and where their feet are (the player too). */

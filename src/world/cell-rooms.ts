@@ -32,9 +32,9 @@ export interface CellRoom {
   readonly box: OrientedBox;
   /** XLRM: rooms linked to this one (seen together with it, without a portal). */
   readonly linked: readonly number[];
-  /** LNAM: the room's own lighting template. TODO(M13): apply it while the camera is inside. */
+  /** LNAM: the room's own lighting template, while the camera is inside (CellData.roomLighting). */
   readonly lightingTemplate?: number;
-  /** INAM: the room's own image space. TODO(M13): apply it while the camera is inside. */
+  /** INAM: the room's own image space, while the camera is inside. */
   readonly imageSpace?: number;
 }
 

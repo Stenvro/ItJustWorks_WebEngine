@@ -118,6 +118,8 @@ import { placeObject, type PlacedObject } from '../sim/placed-objects.ts';
 import { groundUnder, type SoundingWorld } from './actor-sounds.ts';
 import { CombatTargetKeywords } from './combat-target-keywords.ts';
 import type { GameSession } from './game-session.ts';
+import type { EffectBody } from './actor-effects.ts';
+import { itemGlow } from '../gameplay/magic/enchantment-glow.ts';
 import { clock } from './object-graphs.ts';
 import { WorldLod } from './world-lod.ts';
 import { WorldSky, type SkyElements } from './world-sky.ts';
@@ -282,6 +284,9 @@ type PlacedEntry = LoadedCell['placed'][number];
  * cell's objects for each was most of a quest start's time (docs/rendering.md, "Frame time").
  */
 const placedIndexes = new WeakMap<readonly PlacedEntry[], ReadonlyMap<number, PlacedEntry>>();
+
+/** The glow key of an item lying in the world (ActorEffects.glow). */
+const groundGlow = (reference: number): string => `ground:${String(reference)}`;
 
 function placedByReference(cell: LoadedCell, reference: number): PlacedEntry | undefined {
   let index = placedIndexes.get(cell.placed);
@@ -1142,6 +1147,7 @@ export class WorldViewer {
       objects: () => this.#stageObjects(),
       obstacles: () => this.#stageObstacles(),
       light: (at) => this.#lightProbe(at),
+      objectBody: (reference) => this.#objectBody(reference),
       focus: () => this.#play?.player.feet,
       // Actors walking into trigger volumes tell their scripts.
       onTrigger: (trigger, actor, entered) => {
@@ -1556,6 +1562,40 @@ export class WorldViewer {
   }
 
   /** A loaded cell's references meet the running game's scripts (once their game started). */
+  /** An object of the loaded cells as effects cover it: its model where it is now. */
+  #objectBody(reference: number): EffectBody | undefined {
+    for (const cell of this.#cells.values()) {
+      const placed = placedByReference(cell, reference);
+      if (placed) {
+        const instance = placed.instance;
+        return {
+          placed: { instances: [instance] },
+          ...(instance.visibility && { visibility: instance.visibility }),
+        };
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * The enchanted weapons and armour lying in a cell glow (their enchantment's shader:
+   * src/gameplay/magic/enchantment-glow.ts) while it is loaded; hidden with them when taken.
+   */
+  #glowCell(cell: LoadedCell): void {
+    const runtime = this.#session?.scriptsReady;
+    if (!runtime) return;
+    for (const { object } of cell.placed) {
+      if (object.baseType !== 'WEAP' && object.baseType !== 'ARMO') continue;
+      const reference = object.reference;
+      void itemGlow((formId) => runtime.forms.record(formId), object.base).then((glow) => {
+        if (!glow || this.#cells.get(cellKey(cell.x, cell.y)) !== cell) return;
+        this.#stage?.effects.glow(groundGlow(reference), reference, glow, () =>
+          this.#objectBody(reference),
+        );
+      });
+    }
+  }
+
   async #attachCellToScripts(cell: LoadedCell): Promise<void> {
     const session = this.#session;
     const data = cell.data;
@@ -1916,6 +1956,7 @@ export class WorldViewer {
           } else {
             cell.ready = true;
             void this.#attachCellToScripts(cell);
+            this.#glowCell(cell);
           }
           this.#pump();
         });
@@ -2380,6 +2421,8 @@ export class WorldViewer {
   }
 
   #free(cell: LoadedCell): void {
+    for (const entry of cell.placed)
+      this.#stage?.effects.unglow(groundGlow(entry.object.reference));
     const runtime = this.#session?.scriptsReady;
     const key = cellKey(cell.x, cell.y);
     if (cell.scriptsAttached && cell.data && runtime) {
