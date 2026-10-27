@@ -60,6 +60,7 @@ import { ActorValue } from '../world/actor-values.ts';
 import type { GameSettings } from '../world/game-settings.ts';
 import { parsePerk, type PerkRecord } from '../world/perk-records.ts';
 import { parseSkill, type PerkTreeNode, type SkillRecord } from '../world/perk-trees.ts';
+import { beastTree, type BeastTree } from '../gameplay/beast-perk-trees.ts';
 import type { GameSession } from './game-session.ts';
 import { clock, startObjectGraph } from './object-graphs.ts';
 import type { Terminal } from './terminal.ts';
@@ -278,6 +279,8 @@ class Viewing {
     return this.#settings.number(name) ?? fallback;
   }
   #tree: Tree | undefined;
+  /** The beast form whose tree shows instead of the ring (undefined: the ring). */
+  #beast: BeastTree | undefined;
   #selected: PerkStar | undefined;
   /** 0 the ring, 1 up in a tree. */
   #up = 0;
@@ -310,6 +313,13 @@ class Viewing {
 
   async start(): Promise<Menu> {
     const renderer = this.#session.renderer;
+    const race = await this.#runtime.actors.raceOf(PLAYER_REF);
+    const raceRecord = race === undefined ? undefined : await this.#runtime.forms.record(race);
+    this.#beast = beastTree(this.#runtime.beastForm, raceRecord?.editorId);
+    if (this.#beast) {
+      this.#targetYaw = 0;
+      this.#camera.yaw = 0;
+    }
     await this.#buildTrees();
     const { dome } = this.#setup;
     const identity = Float32Array.from([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
@@ -376,6 +386,8 @@ class Viewing {
     this.#menu.element?.addEventListener('wheel', this.#wheel, { passive: true });
     this.#menu.element?.addEventListener('pointerdown', this.#clicked);
     this.#sound('UISkillsTransitionUp');
+    // A beast form's tree is entered at once (there is no ring to go back to).
+    if (this.#beast) this.#enterTree();
     return this.#menu;
   }
 
@@ -389,8 +401,13 @@ class Viewing {
         (this.#settings.number('fStatsStarYIncrement') ?? 15) +
         (this.#settings.number('fStatsStarZIncrement') ?? -9),
     };
-    for (const [ring, skill] of RING_SKILLS.entries()) {
-      const record = await runtime.forms.actorValueForm(skill);
+    // In a beast form, its tree alone (src/gameplay/beast-perk-trees.ts), shown with its points.
+    const beast = this.#beast;
+    const skills = beast ? [beast.points] : RING_SKILLS;
+    for (const [ring, skill] of skills.entries()) {
+      const record = beast
+        ? await runtime.forms.actorValueFormNamed(beast.avif)
+        : await runtime.forms.actorValueForm(skill);
       if (!record) continue;
       const tree = parseSkill(record);
       const stars: PerkStar[] = [];
@@ -496,7 +513,7 @@ class Viewing {
   // --- The movie ----------------------------------------------------------------------------
 
   async #showAll(menu: Menu): Promise<void> {
-    menu.call('SetStatsMode', !this.#setup.levelUp, this.#runtime.perkPoints);
+    menu.call('SetStatsMode', !this.#setup.levelUp, await this.#perkPoints());
     // The perks' names go without their drop shadow: the Flash player draws a filtered text so
     // that it hides what lies under it on the page (here the very star the name stands at).
     for (let i = 0; i < PERK_NAMES; i++) {
@@ -556,7 +573,7 @@ class Viewing {
     menu.set('_global.StatsMenu.SkillStatsA', data);
     menu.call('UpdateSkillList', true);
     menu.call('SetDirection', this.#camera.yaw);
-    menu.call('SetStatsMode', !this.#setup.levelUp, this.#runtime.perkPoints);
+    menu.call('SetStatsMode', !this.#setup.levelUp, await this.#perkPoints());
   }
 
   /** The card of the skill faced, or of the perk selected. */
@@ -829,7 +846,7 @@ class Viewing {
   }
 
   #leaveTree(): void {
-    if (!this.#tree) return;
+    if (!this.#tree || this.#beast) return;
     this.#tree = undefined;
     this.#selected = undefined;
     this.#refreshStates();
@@ -837,6 +854,11 @@ class Viewing {
     this.#shownYaw = Number.NaN;
     this.#sound('UISkillsStopSD');
     this.#showCard();
+  }
+
+  /** The points perks are bought with: the player's, or the beast form's. */
+  #perkPoints(): Promise<number> {
+    return this.#runtime.progression.perkPointsOf(this.#beast?.points);
   }
 
   #select(star: PerkStar): void {
@@ -886,7 +908,11 @@ class Viewing {
     const runtime = this.#runtime;
     if (!star || star.owned >= star.ranks.length) return;
     const next = star.ranks[star.owned];
-    if (!next || (await runtime.progression.perkAvailability(next.formId)) !== 'available') return;
+    if (
+      !next ||
+      (await runtime.progression.perkAvailability(next.formId, this.#beast?.points)) !== 'available'
+    )
+      return;
     this.#asking = true;
     const answer = await this.#setup
       .confirm(this.#settings.string('sStatsPerkConfirm') ?? '', [
@@ -896,13 +922,18 @@ class Viewing {
       .finally(() => {
         this.#asking = false;
       });
-    if (answer !== 0 || this.#done || !(await runtime.progression.takePerk(next.formId))) return;
+    if (
+      answer !== 0 ||
+      this.#done ||
+      !(await runtime.progression.takePerk(next.formId, this.#beast?.points))
+    )
+      return;
     star.graph?.send('Own', clock());
     this.#sound('UISkillsPerkSelect2D');
     await this.#updateOwnership();
     this.#refreshStates();
     // (SetStatsMode keeps the count the card shows again.)
-    this.#menu?.call('SetStatsMode', !this.#setup.levelUp, runtime.perkPoints);
+    this.#menu?.call('SetStatsMode', !this.#setup.levelUp, await this.#perkPoints());
     this.#showCard();
   }
 

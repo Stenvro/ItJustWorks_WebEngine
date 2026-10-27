@@ -114,6 +114,11 @@ export class FormIndex {
 
   /** An actor value's AVIF record (its name, description): by its editor id (actorValueEditorId). */
   async actorValueForm(index: number): Promise<GameRecord | undefined> {
+    return this.actorValueFormNamed(actorValueEditorId(index));
+  }
+
+  /** An AVIF record by its editor id (the beast forms' trees: AVHealRatePowerMod, ...). */
+  async actorValueFormNamed(editorId: string): Promise<GameRecord | undefined> {
     this.#actorValueForms ??= (async () => {
       const byName = new Map<string, number>();
       for (const formId of this.db.formIdsOfType('AVIF')) {
@@ -122,7 +127,7 @@ export class FormIndex {
       }
       return byName;
     })();
-    const formId = (await this.#actorValueForms).get(actorValueEditorId(index).toLowerCase());
+    const formId = (await this.#actorValueForms).get(editorId.toLowerCase());
     return formId === undefined ? undefined : this.record(formId);
   }
 
