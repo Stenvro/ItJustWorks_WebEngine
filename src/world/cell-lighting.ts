@@ -2,9 +2,15 @@
 // renderer uses.
 
 import type { Vec3 } from '../render/math.ts';
-import { flatAmbient, type PointLight, type SceneLighting } from '../render/scene-lighting.ts';
+import {
+  flatAmbient,
+  ShadowKind,
+  type LightShadow,
+  type PointLight,
+  type SceneLighting,
+} from '../render/scene-lighting.ts';
 import type { CellData, CellLight } from './cell-loader.ts';
-import type { Rgb } from './cell-records.ts';
+import { LightFlag, type Rgb } from './cell-records.ts';
 import { FLICKERING_LIGHT_DISTANCE, lightFlicker } from './light-flicker.ts';
 
 /**
@@ -57,9 +63,37 @@ export function pointLights(
       color: [color[0] * brightness, color[1] * brightness, color[2] * brightness],
       ...(light.spot && { spot: light.spot }),
       ...(light.room !== undefined && { room: light.room }),
+      ...lightShadow(light),
     });
   }
   return result;
+}
+
+/**
+ * How a light casts shadows by its LIGH flags: a spot light round its cone, a hemisphere light
+ * round its axis, an omnidirectional light every way (and a spot light without a valid cone,
+ * which lights every way).
+ */
+export function lightShadow(
+  light: Pick<CellLight, 'flags' | 'reference' | 'spot' | 'hemisphereAxis'>,
+): { shadow?: LightShadow } {
+  const id = light.reference;
+  if ((light.flags & LightFlag.shadowSpotlight) !== 0 && light.spot) {
+    return { shadow: { kind: ShadowKind.spot, id } };
+  }
+  if ((light.flags & LightFlag.shadowHemisphere) !== 0) {
+    return {
+      shadow: {
+        kind: ShadowKind.hemisphere,
+        id,
+        ...(light.hemisphereAxis && { axis: light.hemisphereAxis }),
+      },
+    };
+  }
+  if ((light.flags & (LightFlag.shadowOmnidirectional | LightFlag.shadowSpotlight)) !== 0) {
+    return { shadow: { kind: ShadowKind.omni, id } };
+  }
+  return {};
 }
 
 const STEADY = { scale: 1, offset: [0, 0, 0] } as const;

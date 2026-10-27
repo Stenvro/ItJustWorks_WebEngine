@@ -368,6 +368,22 @@ export class RoomCuller {
     this.#seen = this.#rects.map((rects) => rects.map((rect) => rectPlanes(viewProj, rect)));
   }
 
+  /**
+   * Whether a point stands in a room seen this frame (or in no room, or rooms do not cull):
+   * shadow lights and their casters outside the rooms seen are left out, wherever on the
+   * screen their shadows would fall.
+   */
+  inVisibleRoom(point: Vec3): boolean {
+    if (!this.#active) return true;
+    let rooms = this.#membership.get(point);
+    if (!rooms) {
+      rooms = this.#boxes.flatMap((box, i) => (boxContains(box, point) ? [i] : []));
+      this.#membership.set(point, rooms);
+    }
+    if (rooms.length === 0) return true;
+    return rooms.some((room) => (this.#seen[room]?.length ?? 0) > 0);
+  }
+
   /** Whether a draw's bounding sphere may be seen this frame (rooms and occluders). */
   visible(center: Vec3, radius: number): boolean {
     this.tested++;
