@@ -127,6 +127,12 @@ export class ActorBodies {
     return entry && !entry.articulation ? entry.placed.colliders : [];
   }
 
+  /** An actor's bodies in the world, living or dead (none: not there). */
+  placements(reference: number): readonly PlacedCollision[] {
+    const entry = this.#bodies.get(reference);
+    return entry ? [entry.placed] : [];
+  }
+
   /** Whether an actor's bodies are in the world (living or dead). */
   has(reference: number): boolean {
     return this.#bodies.has(reference);

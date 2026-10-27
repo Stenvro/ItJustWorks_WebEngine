@@ -37,7 +37,8 @@ import { chainEffectiveness } from '../gameplay/magic/explosions.ts';
 import { ImpactPlacements } from '../gameplay/magic/impact-placement.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { Layer } from '../physics/collision-layers.ts';
-import type { PhysicsWorld } from '../physics/physics-world.ts';
+import type { PhysicsWorld, RayHit } from '../physics/physics-world.ts';
+import { conePush, loadImpulseSettings, projectileKnock } from '../gameplay/impulses.ts';
 import type { Vec3 } from '../render/math.ts';
 import type { RenderPort } from '../render/render-port.ts';
 import type { GpuScene, InstanceMotion, ModelInstance } from '../render/scene-renderer.ts';
@@ -158,9 +159,12 @@ export class MagicProjectiles {
   #clock = 0;
   /** Impacts placed and still showing (their placement radius keeps others off). */
   readonly #placements = new ImpactPlacements();
+  /** The gameplay impulses' settings (src/gameplay/impulses.ts), once read. */
+  readonly #impulses: ReturnType<typeof loadImpulseSettings>;
 
   constructor(options: MagicProjectilesOptions) {
     this.#options = options;
+    this.#impulses = loadImpulseSettings(() => options.session.settings());
     this.#beams = new MagicBeams({
       session: options.session,
       renderer: options.renderer,
@@ -410,6 +414,7 @@ export class MagicProjectiles {
     );
     const hit = this.#sweep(delivered.caster, origin, end, projectile.collisionRadius);
     const point = hit ? pointAt(origin, end, hit.t) : end;
+    this.#knock(projectile, hit?.ray, aim);
     // The beam from the hand to what it met (its model stretched to it, and its light).
     this.#beams.show(projectile, origin, aim, range * (hit ? hit.t : 1), options.follow);
     await this.#impact(runtime, delivered, projectile, effect, point, aim, hit, seconds);
@@ -467,6 +472,19 @@ export class MagicProjectiles {
         ...(seconds !== undefined && { seconds }),
       });
     }
+    // Its force pushes the moving bodies it sweeps (clutter flies, corpses tumble).
+    const force = projectile.impactForce;
+    if (force > 0)
+      physics?.pushCone(
+        origin,
+        aim,
+        range,
+        projectile.coneSpread,
+        Layer.coneProjectile,
+        (layer, mass, distance) =>
+          conePush(force, distance, range, layer, mass, this.#impulses.current),
+        delivered.caster,
+      );
     // Its sound from its apex; its wave (its model and light) sweeps out to its range.
     if (projectile.sound !== undefined)
       void this.#options.session.playSound(projectile.sound, origin);
@@ -478,6 +496,15 @@ export class MagicProjectiles {
       range,
       duration: range / speed + 0.25,
     });
+  }
+
+  /** A projectile's impact force pushes the moving body it met (src/gameplay/impulses.ts). */
+  #knock(projectile: ProjectileRecord, ray: RayHit | undefined, aim: Vec3): void {
+    if (!ray || !(projectile.impactForce > 0)) return;
+    const force = projectile.impactForce;
+    this.#physics?.knock(ray.collider, ray.point, aim, (layer, mass) =>
+      projectileKnock(force, layer, mass, this.#impulses.current),
+    );
   }
 
   /**
@@ -534,6 +561,8 @@ export class MagicProjectiles {
         readonly normal?: Vec3;
         /** The object hit (its reference), if a surface of one. */
         readonly reference?: number;
+        /** The physics world's hit, when it was one (its body is pushed: #knock). */
+        readonly ray?: RayHit;
       }
     | undefined {
     let best:
@@ -544,6 +573,7 @@ export class MagicProjectiles {
           kind: 'object' | 'landscape' | 'actor' | undefined;
           normal?: Vec3;
           reference?: number;
+          ray?: RayHit;
         }
       | undefined;
     const targets = new Map<number, ProjectileTarget>();
@@ -580,7 +610,7 @@ export class MagicProjectiles {
         owner?.kind === 'actor' || ACTOR_LAYERS.has(hit.layer)
           ? owner && targets.get(owner.reference)
           : undefined;
-      if (actor) best = { t, actor, material: 0, kind: 'actor' };
+      if (actor) best = { t, actor, material: 0, kind: 'actor', ray: hit };
       else if (!ACTOR_LAYERS.has(hit.layer))
         best = {
           t,
@@ -588,7 +618,11 @@ export class MagicProjectiles {
           kind: owner?.kind,
           normal: hit.normal,
           ...(owner?.kind === 'object' && owner.reference !== 0 && { reference: owner.reference }),
+          ray: hit,
         };
+      else if (hit.collider.parent()?.isDynamic() === true)
+        // A corpse's ragdoll (no target): the spell ends on it, and pushes it.
+        best = { t, material: hit.material, kind: 'actor', normal: hit.normal, ray: hit };
       break;
     }
     return best;
@@ -619,6 +653,7 @@ export class MagicProjectiles {
       if (hit || near || flying.flight.spent) {
         const point = hit ? pointAt(from, to, hit.t) : to;
         flying.flight.position = point;
+        this.#knock(flying.projectile, hit?.ray, normalize(flying.flight.velocity));
         this.#end(flying);
         // A flame reaches as far as its spray went (its full range when it met nothing).
         if (flying.stream) {

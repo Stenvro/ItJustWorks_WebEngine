@@ -278,6 +278,28 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
   n('game.precachechargenclear', () => null);
   n('game.requestmodel', () => null);
   n('game.usinggamepad', () => false);
-  n('game.addhavokballandsocketconstraint', () => false);
-  n('game.removehavokconstraints', () => false);
+  // AddHavokBallAndSocketConstraint(arRefA, arRefANode, arRefB, arRefBNode, A's local offset
+  // x y z, B's x y z): the world's physics joins the two (hanged corpses, hanging keys).
+  n('game.addhavokballandsocketconstraint', ({ args }) => {
+    const a = formOf(args[0]);
+    const b = formOf(args[2]);
+    if (a === undefined || b === undefined) return false;
+    return (
+      runtime.world.ballAndSocket?.(
+        a,
+        str(args[1]),
+        b,
+        str(args[3]),
+        [num(args[4]), num(args[5]), num(args[6])],
+        [num(args[7]), num(args[8]), num(args[9])],
+      ) ?? false
+    );
+  });
+  // RemoveHavokConstraints(arFirstRef, arFirstRefNodeName, arSecondRef, arSecondRefNodeName).
+  n('game.removehavokconstraints', ({ args }) => {
+    const a = formOf(args[0]);
+    const b = formOf(args[2]);
+    if (a === undefined || b === undefined) return false;
+    return runtime.world.removeConstraints?.(a, str(args[1]), b, str(args[3])) ?? false;
+  });
 }
