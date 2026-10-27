@@ -237,29 +237,57 @@ that the triangles connect is missed; 0.19 ms a search on average, 5.7 ms the lo
 that do not connect lie on islands of their own: Apocrypha's moving books, Dwemer ruins' lifts and
 gates (Bthardamz, Nchuand-Zel), Blackreach's elevators, and the like.
 
-### Navmesh obstacles (not built yet)
+### Navmesh obstacles
 
-The engine cuts the navmesh under obstacles while they are there: its classes say so
-(CommonLibSSE: NavMeshObstacleManager, BSNavmeshObstacleData per triangle and
-BSNavmeshObstacleUndoData to restore the cut, bhkObstacleDeactivationListener for a Havok body
-that comes to rest, DoorObstacleAdapter for doors), and a base object carries TESForm record
-flag bit 25 (`kObstacle`, GetObstacle) when its references are such obstacles. Our paths
-(`findPath`) do not know them: an NPC, or the QA follow bot, finds a way through a quest's
-collision box that its character controller then cannot pass.
+The engine cuts the navmesh under obstacles while they are there (CommonLibSSE:
+NavMeshObstacleManager, BSNavmeshObstacleData per triangle and BSNavmeshObstacleUndoData to
+restore the cut, bhkObstacleDeactivationListener for a Havok body that comes to rest,
+DoorObstacleAdapter for doors). A base object carries TESForm record flag bit 25 (`kObstacle`,
+GetObstacle, `RecordFlag.obstacle`) when its references are such obstacles.
 
 `node tools/navmesh-obstacle-audit.ts` (Skyrim.esm with the DLCs and CC, 2026-10-24): 65 flagged
 bases, 6,953 references. Almost all are the collision primitive marker CollisionMarker (STAT
 0x21: 4,663 references, every collision box a quest or an enable parent switches on and off;
 832 references of obstacle bases are initially disabled, 2,474 have an enable parent). The other
-flagged bases are what opens and shuts a way: portcullises and their poles (PortGatePole01 has
-511 references), retractable bridges, secret doors and shelves, Whiterun's drawbridge, falling
-rock traps, destructible spider webs and boulders, catapults, a few movable statics (RuinsPot03,
-HandCart01Wheel). The cases: tests/conformance/ai/movement-paths.test.ts. TODO(M13): build it
-(the exe keeps the classes' RTTI: NavMeshObstacleManager, BSNavmeshObstacleData,
-BSNavmeshObstacleUndoData, to follow to their code in the original): which shape cuts (a
-collision box's XPRM box or sphere; an activator's collision in its current animation state),
-how a triangle partly covered is cut, when the cut is made again (enable, disable, an animated
-gate's open state, a body coming to rest).
+flagged bases are what opens and shuts a way: portcullises (NorPortcullis, an activator with
+default2StateActivator) and their poles (PortGatePole01 has 511 references), retractable
+bridges, secret doors and shelves, Whiterun's drawbridge, falling rock traps, destructible
+spider webs and boulders, catapults, a few movable statics (RuinsPot03, HandCart01Wheel).
+
+The rules (read from the engine):
+
+- **The box.** An obstacle's box is its reference's collision bounds, scaled and rotated by the
+  reference: a collision marker's XPRM primitive (a box, a sphere's radius on each axis, a plane
+  as a box of its own thinness: Saarthal's MG02TrapCollision walls are planes), else the base's
+  OBND (`src/world/cell-loader.ts`, `CellData.obstacles`). Its footprint is the outline of the
+  box's corners seen from above (`obstacleCut` in `src/ai/navmesh-obstacles.ts`).
+- **Tall enough.** A box cuts only when it is at least 2 × fObstacleManagerMinHeight (48), so 96,
+  tall; or at least 48 tall when it is at least fObstacleManagerMinWidth (16) wide (its least
+  width across, seen from above).
+- **The heights it cuts.** A navmesh triangle counts as under it when its height lies between
+  the box's bottom minus fMaxHeightFromNavmeshToObstacleBoxBottom (128) and the box's top plus
+  fMaxHeightFromObstacleBoxToToNavmesh (−16): a box on the floor above leaves the hall below it
+  open.
+- **When it cuts.** While the reference is enabled and, for a door or an activator, shut: open
+  (GetOpenState 1 after a script's SetOpen, or its last animation event an open one: a
+  portcullis's `Open`/`Opened`) it cuts nothing; its close animation (`Close`/`Closed`) cuts
+  again.
+
+Ours: the actor stage (`src/shell/actor-stage.ts`, `refreshObstacles`) keeps a per-cell set of
+active footprints (`NavmeshObstacleField`), replaced as the views apply enable states, a script
+opens or shuts a door, or an obstacle activator's open or close animation plays. `findPath`
+takes them as `obstacles`: the triangles whose middle lies under one and the path steps that
+cross one are closed (a step that starts inside one does not count: an actor in a box walks out).
+A mover whose way on an obstacle came across, or whose path stopped short while one went, searches
+again (`ActorMovers`). A wander's random point (`randomReachablePoint`) keeps off them too.
+The cases: tests/conformance/ai/movement-paths.test.ts (Korvanjund's MQ103BanditDisabler box
+across the hall stops a walking NPC, disabled it lets her through; Saarthal's portcullis cuts as
+it shuts) and src/ai/pathfinding.test.ts.
+
+TODO(M13): the engine re-triangulates the navmesh under an obstacle (a triangle partly covered is
+split, its free part stays open), and redoes an animated obstacle's cut from its collision body
+where it comes to rest (bhkObstacleDeactivationListener), not from its animation events; an
+activator's collision in its current animation state, not its OBND, is the box then.
 
 Found in the opening (MQ101DragonAttack, Helgen's burning inn, cell 3,-21): stage 120 and the
 inn's enable markers (dunCGInnCollisionMarker, dunCGRubbleBMarker, dunCGPostBClutterMarker)

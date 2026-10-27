@@ -31,6 +31,7 @@ import {
 } from '../ai/avoidance.ts';
 import { PathFollower, type DoorPassage } from '../ai/path-follower.ts';
 import { findPath, straightReach, type NavmeshSet, type NavPath } from '../ai/pathfinding.ts';
+import { obstaclesTouch, type NavmeshObstacleField } from '../ai/navmesh-obstacles.ts';
 import type { TravelOptions } from '../ai/package-runtime.ts';
 import { RaceSize } from '../ai/race-combat-records.ts';
 import type { MovementTypes } from '../ai/locomotion.ts';
@@ -203,6 +204,8 @@ export interface ActorMoversOptions {
   readonly shutPlaces?: (
     actor: number,
   ) => readonly { readonly at: Vec3; readonly radius: number }[];
+  /** The navmesh obstacles' cuts (paths keep off them; a path one changes on is searched again). */
+  readonly obstacles?: NavmeshObstacleField;
   /** Whether something else holds an actor now (furniture): it has no controller meanwhile. */
   readonly held?: (actor: number) => boolean;
   /**
@@ -254,6 +257,8 @@ interface Travel {
   /** How long others in its way have kept it from going on (seconds), and the last that did. */
   blockedFor: number;
   blockedBy: { readonly at: Vec3; readonly radius: number } | undefined;
+  /** The navmesh obstacles' version its path was searched at. */
+  obstacles: number;
 }
 
 /** A travel ended by skipped hours sets the actor on the navmesh within this of its place. */
@@ -450,6 +455,7 @@ export class ActorMovers {
         speedMult: options.speedMult,
         blockedFor: 0,
         blockedBy: undefined,
+        obstacles: this.#options.obstacles?.version ?? 0,
         done: (arrived) => {
           if (this.#travels.get(reference) !== travel) return;
           this.#travels.delete(reference);
@@ -508,6 +514,7 @@ export class ActorMovers {
   #travelFrame(mover: Mover, travel: Travel, seconds: number): void {
     const reference = mover.staged.reference;
     this.#followMoving(travel);
+    this.#obstaclesChanged(travel);
     if (!travel.follower && travel.direct) {
       const path: NavPath = {
         points: [[...mover.staged.position], travel.destination],
@@ -534,6 +541,7 @@ export class ActorMovers {
           large: (mover.race?.size ?? RaceSize.medium) >= RaceSize.large,
           closedDoors: this.#closedFor(reference, travel),
           blocked: this.#blockedFor(reference, travel),
+          obstacles: this.#options.obstacles?.index,
         });
       const path =
         found && !on ? { ...found, points: [[...position] as Vec3, ...found.points] } : found;
@@ -806,6 +814,22 @@ export class ActorMovers {
     if (door === undefined || !hit) return undefined;
     const passage = this.#options.openDoor?.(door, mover.staged.reference);
     return passage && { door, passage, at: hit.point };
+  }
+
+  /**
+   * A navmesh obstacle came across an actor's way on, or went while its path stopped short of
+   * its place: it searches again (not counted as a search of its being stuck).
+   */
+  #obstaclesChanged(travel: Travel): void {
+    const field = this.#options.obstacles;
+    if (!field || field.version === travel.obstacles) return;
+    const changes = field.changesSince(travel.obstacles);
+    travel.obstacles = field.version;
+    const follower = travel.follower;
+    if (!follower || travel.direct) return;
+    if (changes && !obstaclesTouch(changes, follower.remaining, follower.path.complete)) return;
+    travel.follower = undefined;
+    travel.searches = Math.max(0, travel.searches - 1);
   }
 
   /** The places an actor's search keeps off: doors the navmesh does not mark, shut to it. */
@@ -1478,6 +1502,7 @@ export class ActorMovers {
     const staged = walker.staged;
     const reference = staged.reference;
     this.#followMoving(travel);
+    this.#obstaclesChanged(travel);
     if (!travel.follower) {
       const set = this.#options.navmeshes?.();
       if (!set) return true;
@@ -1487,6 +1512,7 @@ export class ActorMovers {
         large: (walker.race?.size ?? RaceSize.medium) >= RaceSize.large,
         closedDoors: this.#closedFor(reference, travel),
         blocked: this.#blockedFor(reference, travel),
+        obstacles: this.#options.obstacles?.index,
       });
       if (!path || path.points.length < 2) {
         this.#giveUp(reference, travel);

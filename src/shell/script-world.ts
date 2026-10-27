@@ -48,6 +48,8 @@ export interface ScriptView {
   moved?(reference: number): void;
   /** A shown reference's running behavior graph (an object's or an actor's). */
   graphOf?(reference: number): ScriptGraph | undefined;
+  /** A script sent an animation event to a reference's graph (PlayAnimation). */
+  animated?(reference: number, event: string): void;
   /** SetMotionType (1 dynamic .. 4 keyframed). */
   motionTypeChanged?(reference: number, motionType: number): void;
   /** A push (WorldBridge.impulse). */
@@ -317,8 +319,10 @@ export class ScriptWorld implements WorldBridge {
 
   animationEvent(reference: number, event: string): boolean {
     let handled = false;
-    for (const view of this.#views)
+    for (const view of this.#views) {
       handled = (view.graphOf?.(reference)?.send(event) ?? false) || handled;
+      view.animated?.(reference, event);
+    }
     return handled;
   }
 

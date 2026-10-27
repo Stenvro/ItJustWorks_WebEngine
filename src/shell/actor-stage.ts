@@ -68,7 +68,12 @@ import { firstDoorToward, questTargets } from './compass.ts';
 import { findPath } from '../ai/pathfinding.ts';
 import type { MagicEffectShown } from '../scripting/runtime/magic-engine.ts';
 import { EffectArchetype } from '../world/magic-effects.ts';
-import type { CellLight } from '../world/cell-loader.ts';
+import type { CellLight, CellObstacle } from '../world/cell-loader.ts';
+import {
+  NavmeshObstacleField,
+  obstacleCut,
+  type NavmeshObstacle,
+} from '../ai/navmesh-obstacles.ts';
 import { PlayerCasting } from './player-casting.ts';
 import { CastingSource } from '../scripting/runtime/casting-engine.ts';
 import { combatCasting } from './combat-casting.ts';
@@ -139,6 +144,11 @@ export interface ActorStageOptions {
   readonly door?: (reference: number) => DoorObject | undefined;
   /** The enabled objects and markers of the loaded area (what actors use and search for). */
   readonly objects?: () => Iterable<StageObject>;
+  /**
+   * The navmesh obstacles of the loaded cells (src/ai/navmesh-obstacles.ts), by the stage's cell
+   * key, and each cell's enable state: their cuts follow enable and open state.
+   */
+  readonly obstacles?: () => Iterable<StageObstacleCell>;
   /** The view's lighting near a place (the light on actors: src/shell/actor-senses.ts). */
   readonly light?: (at: Vec3) => LightProbe | undefined;
   /** The view shows an interior (detection's reach and light inside). */
@@ -150,6 +160,16 @@ export interface ActorStageOptions {
   /** The view gives up a cart of its cells to be pulled (src/shell/actor-vehicles.ts). */
   readonly adoptVehicle?: (reference: number) => AdoptedVehicle | undefined;
 }
+
+/** A loaded cell's navmesh obstacles and its enable state. */
+export interface StageObstacleCell {
+  readonly key: string;
+  readonly obstacles: readonly CellObstacle[];
+  readonly isEnabled: (reference: number) => boolean;
+}
+
+/** Each obstacle's cut, made once (null: its box is too low to cut). */
+const obstacleCuts = new WeakMap<CellObstacle, NavmeshObstacle | null>();
 
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -217,6 +237,12 @@ export class ActorStage {
   readonly away: ActorsAway;
   /** The doors the actors go through (src/shell/actor-doors.ts). */
   readonly doors: ActorDoors;
+  /** The navmesh obstacles' cuts of the loaded area (src/ai/navmesh-obstacles.ts). */
+  readonly obstacles = new NavmeshObstacleField();
+  /** The cells whose obstacles are in the field. */
+  #obstacleCells = new Set<string>();
+  /** Obstacle activators' last open or close animation (true: open). */
+  readonly #animatedOpen = new Map<number, boolean>();
   /** What the actors notice: detection, their reactions (src/shell/actor-senses.ts). */
   readonly senses: ActorSenses;
   /** The actors riding horses, the player too (src/shell/actor-mounts.ts). */
@@ -271,6 +297,10 @@ export class ActorStage {
       session: options.session,
       find: (reference) => options.door?.(reference),
       unlocks: (actor) => this.ai.unlocksDoors(actor),
+      // A door or gate that is a navmesh obstacle cuts as it shuts, and opens the way as it opens.
+      opened: () => {
+        this.refreshObstacles();
+      },
     });
     this.furniture = new ActorFurniture({
       session: options.session,
@@ -301,6 +331,7 @@ export class ActorStage {
       openDoor: (door, actor) => this.doors.passage(door, actor),
       shutTo: (actor) => this.doors.shutTo(actor),
       shutPlaces: (actor) => this.doors.shutPlaces(actor),
+      obstacles: this.obstacles,
       // A paired animation (a killmove) holds both actors: their clip places them.
       held: (actor) =>
         this.furniture.holds(actor) ||
@@ -1375,11 +1406,65 @@ export class ActorStage {
     for (const staged of [...this.#actors.values()]) this.#remove(staged);
   }
 
-  /** The enable states changed: what is drawn follows. */
+  /** The enable states changed: what is drawn follows, and the navmesh obstacles' cuts. */
   refresh(): void {
     for (const staged of this.#actors.values()) {
       staged.visibility.hidden = !staged.enabled(staged.reference);
     }
+    this.refreshObstacles();
+  }
+
+  /**
+   * A script sent an animation event to a reference's graph: an obstacle activator (a portcullis,
+   * a retractable bridge: default2StateActivator's open, opened, close, closed) opens the way as it
+   * opens and cuts it again as it shuts. TODO(M13): the engine redoes the cut from the obstacle's
+   * collision body where it comes to rest (bhkObstacleDeactivationListener), not from its events.
+   */
+  obstacleAnimated(reference: number, event: string): void {
+    const lower = event.toLowerCase();
+    const open = lower.startsWith('open') ? true : lower.startsWith('close') ? false : undefined;
+    if (open === undefined || this.#animatedOpen.get(reference) === open) return;
+    this.#animatedOpen.set(reference, open);
+    this.refreshObstacles();
+  }
+
+  /** Whether an obstacle door or activator is open (GetOpenState 1, or its last animation). */
+  #obstacleOpen(
+    reference: number,
+    states: ReadonlyMap<number, { readonly openState?: number }> | undefined,
+  ): boolean {
+    const animated = this.#animatedOpen.get(reference);
+    if (animated !== undefined) return animated;
+    return states?.get(reference)?.openState === 1;
+  }
+
+  /**
+   * The navmesh obstacles' cuts follow the loaded cells' enable states and their doors' and
+   * activators' open state (open: GetOpenState 1, no cut; opening, shut or closing: cut). Cells
+   * no longer loaded drop theirs.
+   */
+  refreshObstacles(): void {
+    const source = this.#options.obstacles;
+    if (!source) return;
+    const states = this.#options.session.scriptsReady?.state.references;
+    const loaded = new Set<string>();
+    for (const cell of source()) {
+      loaded.add(cell.key);
+      const active: NavmeshObstacle[] = [];
+      for (const obstacle of cell.obstacles) {
+        if (!cell.isEnabled(obstacle.reference)) continue;
+        if (obstacle.opens && this.#obstacleOpen(obstacle.reference, states)) continue;
+        let cut = obstacleCuts.get(obstacle);
+        if (cut === undefined) {
+          cut = obstacleCut(obstacle) ?? null;
+          obstacleCuts.set(obstacle, cut);
+        }
+        if (cut) active.push(cut);
+      }
+      this.obstacles.setCell(cell.key, active);
+    }
+    for (const key of this.#obstacleCells) if (!loaded.has(key)) this.obstacles.dropCell(key);
+    this.#obstacleCells = loaded;
   }
 
   /**
