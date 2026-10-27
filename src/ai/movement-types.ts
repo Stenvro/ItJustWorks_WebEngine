@@ -98,6 +98,21 @@ export class MovementCatalog {
    * gait, else its race's (else the defaults); with the race's own speeds for a type it
    * overrides. Undefined if the load order has no movement type at all.
    */
+  /**
+   * The movement type an actor swims by: its race's (RACE SWMV), else the default one (DOBJ
+   * DMSW), else NPCSwimming; with its race's speeds for it (MTYP + SPED).
+   */
+  swimming(race: RaceMovement | undefined): MovementType | undefined {
+    const id = race?.movementTypes.swim;
+    const type =
+      (id === undefined ? undefined : this.#byId.get(id)) ??
+      this.#defaults.swim ??
+      this.named('NPCSwimming');
+    if (!type) return undefined;
+    const override = race?.movementOverrides.find((entry) => entry.movementType === type.formId);
+    return override ? { ...type, ...override.speeds } : type;
+  }
+
   forActor(race: RaceMovement | undefined, tagged: string | undefined): MovementTypes | undefined {
     const own = (id: number | undefined): MovementType | undefined =>
       id === undefined ? undefined : this.#byId.get(id);
