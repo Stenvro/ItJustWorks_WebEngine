@@ -18,6 +18,11 @@ export interface GameSave {
   readonly weather: number | undefined;
   /** What could not be saved (threads in flight, ...): logged again as it loads. */
   readonly unsaved: readonly string[];
+  /**
+   * Item counts to add to containers after their record's inventory is filled (an imported
+   * .ess keeps inventories as changes against the records: ess-import.ts).
+   */
+  readonly inventoryDeltas?: readonly (readonly [number, readonly (readonly [number, number])[]])[];
 }
 
 export interface SaveRequest {
@@ -98,6 +103,14 @@ export async function loadGameScripts(
     if (!loaded.has(plugin.toLowerCase())) problems.push(`the save's plugin ${plugin} is missing`);
   }
   problems.push(...(await runtime.loadGame(save.runtime, progress)));
+  for (const [container, items] of save.inventoryDeltas ?? []) {
+    const inventory = await runtime.inventory(container);
+    for (const [item, delta] of items) {
+      const count = (inventory.get(item) ?? 0) + delta;
+      if (count > 0) inventory.set(item, count);
+      else inventory.delete(item);
+    }
+  }
   for (const what of save.unsaved) problems.push(`not saved: ${what}`);
   return problems;
 }
