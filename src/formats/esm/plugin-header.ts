@@ -1,6 +1,6 @@
 import { BinaryReader, FormatError } from '../binary-reader.ts';
 import { Fields, view, zstring } from './fields.ts';
-import type { Field } from './record.ts';
+import { parseFields, type Field } from './record.ts';
 
 // The TES4 record at the top of every plugin. `parsePluginHeader` only needs the first
 // 12 bytes (for the load order); `parsePluginInfo` reads the full record.
@@ -71,4 +71,12 @@ export function parsePluginInfo(fieldList: readonly Field[]): PluginInfo {
     masters: fields.all('MAST').map(zstring),
     overrides,
   };
+}
+
+/**
+ * MAST: the masters a plugin names, from its TES4 record's field data alone (no need to read
+ * the rest of the plugin), for the load order's master checks.
+ */
+export function parsePluginMasters(data: Uint8Array): string[] {
+  return new Fields(parseFields(data)).all('MAST').map(zstring);
 }

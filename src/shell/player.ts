@@ -206,7 +206,7 @@ export async function readPlayerData(
       harms,
       flowmapTypes,
     },
-    ini: new IniSettings(vfs.defaultIni, preferences),
+    ini: new IniSettings(vfs.ini, preferences),
     baseControls: controls,
     controls,
     // The behavior graph's movement states (MOVT MNAM).

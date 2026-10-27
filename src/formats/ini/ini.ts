@@ -35,3 +35,19 @@ export function splitIniList(value: string | undefined): string[] {
     .map((item) => item.trim())
     .filter((item) => item !== '');
 }
+
+/**
+ * INI files layered as the engine reads them, low to high: a key a later file sets replaces the
+ * earlier one's (Skyrim_Default.ini < Skyrim.ini < SkyrimPrefs.ini < the plugins' INIs).
+ */
+export function mergeIni(layers: readonly (Ini | undefined)[]): Ini {
+  const merged = new Map<string, Map<string, string>>();
+  for (const layer of layers) {
+    for (const [name, keys] of layer ?? []) {
+      const section = merged.get(name) ?? new Map<string, string>();
+      merged.set(name, section);
+      for (const [key, value] of keys) section.set(key, value);
+    }
+  }
+  return merged;
+}

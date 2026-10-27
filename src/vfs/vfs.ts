@@ -10,11 +10,12 @@ import {
 import {
   PLUGIN_HEADER_SIZE,
   parsePluginHeader,
-  type PluginHeader,
+  parsePluginMasters,
 } from '../formats/esm/plugin-header.ts';
+import { parseRecordHeader, RECORD_HEADER_SIZE } from '../formats/esm/record.ts';
 import { BlockCache, DEFAULT_BLOCK_SIZE } from '../formats/block-cache.ts';
 import { MemoryByteSource, type ByteSource } from '../formats/byte-source.ts';
-import { parseIni, type Ini } from '../formats/ini/ini.ts';
+import { mergeIni, parseIni, type Ini } from '../formats/ini/ini.ts';
 import { normalizePath } from '../formats/paths.ts';
 import { asciiLowerCase, decodeWindows1252 } from '../formats/text.ts';
 import type { GameFolder } from './game-folder.ts';
@@ -24,7 +25,14 @@ import {
   computeLoadOrder,
   gameContentArchives,
   type LoadOrderEntry,
+  type PluginCandidate,
 } from './load-order.ts';
+
+/** The name without its extension: `Dawnguard` for `Dawnguard.esm`. */
+function baseName(name: string): string {
+  const dot = name.lastIndexOf('.');
+  return dot < 0 ? name : name.slice(0, dot);
+}
 
 export interface MountedArchive {
   readonly name: string;
@@ -52,7 +60,11 @@ export interface VfsProblem {
 
 export interface MountOptions {
   /** Contents of plugins.txt (mods). Without it: only implicit masters and Creation Club. */
-  readonly pluginsTxt?: string;
+  readonly pluginsTxt?: string | undefined;
+  /** The player's Skyrim.ini (Documents\My Games), over the installation's Skyrim_Default.ini. */
+  readonly skyrimIni?: string | undefined;
+  /** The player's SkyrimPrefs.ini, over Skyrim.ini. */
+  readonly skyrimPrefsIni?: string | undefined;
   /** Verify all hashes in the archives (slower; for tools and tests). */
   readonly verifyHashes?: boolean;
 }
@@ -84,8 +96,21 @@ export class Vfs {
   readonly problems: readonly VfsProblem[];
   /** Skyrim.ccc was reachable (otherwise Creation Club plugins are inactive). */
   readonly hasCreationClubList: boolean;
+  /** Skyrim.ccc's text, if it was reachable. */
+  readonly creationClubList: string | undefined;
   /** Skyrim_Default.ini of the installation, if it was readable. */
   readonly defaultIni: Ini | undefined;
+  /**
+   * The INI settings the engine reads: Skyrim_Default.ini < the player's Skyrim.ini <
+   * SkyrimPrefs.ini < `<Plugin>.ini` in Data for each loaded plugin, in load order.
+   */
+  readonly ini: Ini;
+  /** The plugin INIs that were read, in the order they were layered. */
+  readonly pluginInis: readonly string[];
+  /** Every plugin in Data with its header and masters (for the plugin screen). */
+  readonly plugins: readonly PluginCandidate[];
+  /** Active plugins not loaded for a missing or inactive master (lower case → the reason). */
+  readonly refused: ReadonlyMap<string, string>;
   readonly #folder: GameFolder;
   readonly #files: ReadonlyMap<string, VfsFile>;
   /** Archives without names, high → low; these are searched by hash. */
@@ -101,17 +126,26 @@ export class Vfs {
     loadOrder: readonly LoadOrderEntry[];
     archives: readonly MountedArchive[];
     problems: readonly VfsProblem[];
-    hasCreationClubList: boolean;
+    creationClubList: string | undefined;
     defaultIni: Ini | undefined;
+    ini: Ini;
+    pluginInis: readonly string[];
+    plugins: readonly PluginCandidate[];
+    refused: ReadonlyMap<string, string>;
     files: ReadonlyMap<string, VfsFile>;
     blocks: BlockCache;
   }) {
+    this.ini = init.ini;
+    this.pluginInis = init.pluginInis;
+    this.plugins = init.plugins;
+    this.refused = init.refused;
     this.#folder = init.folder;
     this.blocks = init.blocks;
     this.loadOrder = init.loadOrder;
     this.archives = init.archives;
     this.problems = init.problems;
-    this.hasCreationClubList = init.hasCreationClubList;
+    this.creationClubList = init.creationClubList;
+    this.hasCreationClubList = init.creationClubList !== undefined;
     this.defaultIni = init.defaultIni;
     this.#files = init.files;
     this.#hashOnly = init.archives.filter((a) => !a.archive.hasNames).reverse();
@@ -135,28 +169,32 @@ export class Vfs {
         return undefined;
       }
     };
-    const readHeader = async (name: string): Promise<PluginHeader | undefined> => {
+    // The TES4 record: its flags (master, light) and its masters (MAST).
+    const readHeader = async (name: string): Promise<PluginCandidate> => {
       try {
         const source = await folder.openDataFile(name);
         try {
-          return parsePluginHeader(await source.read(0, Math.min(PLUGIN_HEADER_SIZE, source.size)));
+          const top = await source.read(0, Math.min(RECORD_HEADER_SIZE, source.size));
+          const header = parsePluginHeader(top.subarray(0, PLUGIN_HEADER_SIZE));
+          const { dataSize } = parseRecordHeader(top);
+          if (RECORD_HEADER_SIZE + dataSize > source.size) {
+            throw new Error(`TES4 record of ${dataSize} bytes runs past the end of the file`);
+          }
+          const data = await source.read(RECORD_HEADER_SIZE, dataSize);
+          return { name, header, masters: parsePluginMasters(data) };
         } finally {
           await source.close?.();
         }
       } catch (error) {
         problems.push({ source: name, message: describe(error) });
-        return undefined;
+        return { name, header: undefined };
       }
     };
 
     const [ccc, iniText, plugins] = await Promise.all([
       readRootText('Skyrim.ccc'),
       readRootText('Skyrim_Default.ini'),
-      Promise.all(
-        rootFiles
-          .filter((name) => PLUGIN_FILE.test(name))
-          .map(async (name) => ({ name, header: await readHeader(name) })),
-      ),
+      Promise.all(rootFiles.filter((name) => PLUGIN_FILE.test(name)).map(readHeader)),
     ]);
 
     const order = computeLoadOrder({ plugins, ccc, pluginsTxt: options.pluginsTxt });
@@ -168,14 +206,44 @@ export class Vfs {
       });
     }
 
+    // The settings, layered: the installation's default, the player's two files, then each
+    // loaded plugin's own INI in Data (`<Plugin>.ini`), in load order.
     const defaultIni = iniText === undefined ? undefined : parseIni(iniText);
-    const iniArchives = archiveListFromIni(defaultIni);
+    const rootByName = new Map(rootFiles.map((name) => [asciiLowerCase(name), name]));
+    const pluginInis = order.entries
+      .map((entry) => rootByName.get(asciiLowerCase(`${baseName(entry.name)}.ini`)))
+      .filter((name) => name !== undefined);
+    const pluginIniTexts = await Promise.all(
+      pluginInis.map(async (name) => {
+        try {
+          const source = await folder.openDataFile(name);
+          try {
+            return parseIni(decodeWindows1252(await source.read(0, source.size)));
+          } finally {
+            await source.close?.();
+          }
+        } catch (error) {
+          problems.push({ source: name, message: describe(error) });
+          return undefined;
+        }
+      }),
+    );
+    const userIni = (text: string | undefined): Ini | undefined =>
+      text === undefined ? undefined : parseIni(text);
+    const ini = mergeIni([
+      defaultIni,
+      userIni(options.skyrimIni),
+      userIni(options.skyrimPrefsIni),
+      ...pluginIniTexts,
+    ]);
+    const iniArchives = archiveListFromIni(ini);
     const archiveNames = computeArchiveOrder(
       iniArchives,
       order.entries,
       rootFiles.filter((name) => ARCHIVE_FILE.test(name)),
     );
-    const official = gameContentArchives(iniArchives, order.entries);
+    // The game's own: the default INI's list, not what the player's or a mod's INI adds.
+    const official = gameContentArchives(archiveListFromIni(defaultIni), order.entries);
     const blocks = new BlockCache(DEFAULT_BLOCK_SIZE, ARCHIVE_CACHE_BYTES);
     const opened = await Promise.allSettled(
       archiveNames.map(async (name) => {
@@ -221,8 +289,12 @@ export class Vfs {
       loadOrder: order.entries,
       archives,
       problems,
-      hasCreationClubList: ccc !== undefined,
+      creationClubList: ccc,
       defaultIni,
+      ini,
+      pluginInis,
+      plugins,
+      refused: order.refused,
       files,
       blocks,
     });

@@ -68,3 +68,13 @@ export async function saveDirectoryHandle(
 export async function deleteHandle(key: string): Promise<void> {
   await withStore('readwrite', (store) => store.delete(key));
 }
+
+/** A text kept beside the handles (the player's Plugins.txt and INI files). */
+export async function loadText(key: string): Promise<string | undefined> {
+  const value: unknown = await withStore('readonly', (store) => store.get(key));
+  return typeof value === 'string' ? value : undefined;
+}
+
+export async function saveText(key: string, text: string): Promise<void> {
+  await withStore('readwrite', (store) => store.put(text, key));
+}

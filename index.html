@@ -78,6 +78,19 @@
       </nav>
 
       <section id="vfs-summary" class="panels" hidden>
+        <!-- The player's plugin list (Plugins.txt) and their imported INI files. -->
+        <details id="plugins" class="panel" data-panel="plugins">
+          <summary id="plugins-title">plugins</summary>
+          <ol id="plugin-list" class="table plugin-list"></ol>
+          <div class="actions plugin-actions">
+            <button id="plugins-apply" type="button" disabled>apply</button>
+            <button id="plugins-import" type="button">import plugins.txt</button>
+            <button id="ini-import" type="button">import skyrim.ini</button>
+            <button id="prefs-import" type="button">import skyrimprefs.ini</button>
+            <button id="ini-forget" type="button" hidden>forget ini files</button>
+          </div>
+          <p id="plugins-note" class="plugin-note"></p>
+        </details>
         <details id="load-order" class="panel" data-panel="load-order">
           <summary id="load-order-title">load order</summary>
           <ol id="load-order-list" class="table"></ol>

@@ -100,6 +100,38 @@ describe('computeLoadOrder', () => {
     expect(entries.at(-1)).toMatchObject({ name: 'X.esl', isMaster: true, isLight: true });
   });
 
+  it('refuses plugins with a missing master, and those that need them, and checks the order', () => {
+    const withMasters = (name: string, masters: string[], master = false): PluginCandidate => ({
+      ...plugin(name, { master }),
+      masters,
+    });
+    const { entries, problems, refused } = computeLoadOrder({
+      plugins: [
+        ...vanilla,
+        withMasters('NeedsGone.esp', ['Skyrim.esm', 'Gone.esm']),
+        withMasters('NeedsNeedsGone.esp', ['NeedsGone.esp']),
+        withMasters('Patch.esp', ['Late.esp']),
+        withMasters('Late.esp', ['Skyrim.esm']),
+        withMasters('Fine.esp', ['Skyrim.esm', 'Dawnguard.esm']),
+      ],
+      pluginsTxt: '*NeedsGone.esp\n*NeedsNeedsGone.esp\n*Patch.esp\n*Late.esp\n*Fine.esp',
+    });
+    expect(entries.slice(5).map((e) => [e.name, formatModIndex(e)])).toEqual([
+      ['Patch.esp', '05'],
+      ['Late.esp', '06'],
+      ['Fine.esp', '07'],
+    ]);
+    expect([...refused]).toEqual([
+      ['needsgone.esp', 'its master Gone.esm is missing'],
+      ['needsneedsgone.esp', 'its master NeedsGone.esp is not active'],
+    ]);
+    expect(problems).toEqual([
+      'NeedsGone.esp not loaded: its master Gone.esm is missing',
+      'NeedsNeedsGone.esp not loaded: its master NeedsGone.esp is not active',
+      'Patch.esp loads before its master Late.esp',
+    ]);
+  });
+
   it('reports plugins beyond the limit of 254 full plugins', () => {
     const many = Array.from({ length: 260 }, (_, i) => plugin(`Mod${i}.esp`));
     const { entries, problems } = computeLoadOrder({
