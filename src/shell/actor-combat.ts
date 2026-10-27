@@ -18,6 +18,7 @@
 // assistance, target choice, the combat style's movement and attacks, fleeing, searching): it
 // sets each fighter's target and asks for its draws, attacks, blocks and releases here.
 
+import { strengthDamage } from '../ai/combat-ai.ts';
 import { parseNpcCombat, parseRaceCombat } from '../ai/race-combat-records.ts';
 import {
   behaviorGraphKey,
@@ -352,6 +353,8 @@ export interface Practice {
 /** What a fighter's hands hold, for combat. */
 interface Gear {
   readonly right: WeaponStats;
+  /** The damage its strength weighs (strengthDamage: its weapon's, or its best unarmed blow). */
+  readonly strengthDamage: number;
   readonly left: WeaponStats;
   readonly rightRecord: WeaponCombat | undefined;
   readonly leftRecord: WeaponCombat | undefined;
@@ -1264,8 +1267,17 @@ export class ActorCombat implements CombatBridge {
       return type === 'SPEL' || type === 'SCRL';
     };
     const [rightSpell, leftSpell] = await Promise.all([spell(loadout.right), spell(loadout.left)]);
+    const attacks = new AttackSet(raceAttacks, own);
     return {
       right,
+      strengthDamage: strengthDamage(
+        right.damage,
+        right.weapon !== undefined,
+        [...attacks.all()].map((attack) => ({
+          damageMult: attack.damageMult,
+          bash: attackEventKind(attack.event, attack)?.bash === true,
+        })),
+      ),
       left,
       rightRecord,
       leftRecord,
@@ -1274,7 +1286,7 @@ export class ActorCombat implements CombatBridge {
       projectile: projectileRecord?.type === 'PROJ' ? parseProjectile(projectileRecord) : undefined,
       ammoModel: right.ammo === undefined ? undefined : ammo?.model,
       ammoNode: ammoNode(ammo?.flags ?? AmmoFlag.nonBolt),
-      attacks: new AttackSet(raceAttacks, own),
+      attacks,
       race: raceRecord?.type === 'RACE' ? parseRaceHits(raceRecord) : undefined,
       torch,
       spells: { right: rightSpell, left: leftSpell },
@@ -3133,6 +3145,7 @@ export class ActorCombat implements CombatBridge {
           twoHanded ||
           (gear.right.weapon !== undefined && gear.left.weapon === undefined),
         damage: gear.right.damage,
+        strengthDamage: gear.strengthDamage,
         shotDamage: gear.right.shotDamage,
         range: gear.projectile?.range ?? 0,
         canBash,
@@ -3314,8 +3327,11 @@ export class ActorCombat implements CombatBridge {
    * An attack of an actor whose idle tree has none for the action (creatures: the wolf's graph
    * has no ActionRightAttack idles): one of its attack data (its race's ATKD / ATKE) of the
    * action's kind (power or not; bashes for a bash) whose event its graph has (the canine race's
-   * data serves wolves and dogs: attackStart_AttackRight1 is a dog's), picked as the engine
-   * picks its melee attacks (chooseAttackData: by attack chance and the style's mults, past its
+   * data serves wolves and dogs: attackStart_AttackRight1 is a dog's) and would take now (as the
+   * engine's graph notify answers: a sword-and-shield bandit's graph refuses the race's H2H
+   * combo; chosen, the attack waited for the refusal and the fight went on without a blow; the
+   * pick turned on the dice, so the animation rate LOD's other order of rolls showed it), picked
+   * as the engine picks its melee attacks (chooseAttackData: by attack chance and the style's mults, past its
    * recovery time, the target within its strike angle about its attack angle), its event sent
    * to the graph. TODO(M13): the engine also measures the attack's reach with the lunge of its
    * clip (the animation set's root motion); the combat AI's reach check stands for it here.
@@ -3332,7 +3348,7 @@ export class ActorCombat implements CombatBridge {
         kind?.power === power &&
         kind.bash === bash &&
         !fighter.deadAttacks.has(attack.event.toLowerCase()) &&
-        graphs.some((graph) => graph.declares(attack.event))
+        graphs.some((graph) => graph.declares(attack.event) && graph.wouldHandle(attack.event))
       );
     });
     const target = fighter.target === undefined ? undefined : this.#fighters.get(fighter.target);
