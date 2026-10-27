@@ -65,6 +65,10 @@ export const DefaultObjectUse = {
   activateFail: 'NASD',
   /** ARTO shown on an actor whose Spell Absorption absorbs a spell (AbsorbSpellEffect). */
   absorbSpellEffect: 'ABSE',
+  /** IMAD pulsed while the player's health is low, and the heartbeat loops (SNDR). */
+  lowHealthImageSpace: 'IMLH',
+  heartbeatSlow: 'HSSD',
+  heartbeatFast: 'HFSD',
 } as const;
 
 /** Entries of DOBJ DNAM: u32 use code (four characters), form id. */

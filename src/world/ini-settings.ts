@@ -229,6 +229,21 @@ export const INI_DEFAULTS = {
     // fLightLODDefaultStartFade (1000), Skyrim_Default.ini gives 3500.
     fLightLODStartFade: 1000,
     fNearDistance: 15,
+    // The low-health modifier's pulses (src/gameplay/low-health.ts).
+    bLowHealthIModEnabled: 1,
+    fLowHealthIModInterval: 2,
+    fLowHealthIModStrengthMax: 1.5,
+    fLowHealthIModStrengthMin: 0.8,
+    // Temporal anti-aliasing (the launcher's TAA), and the weather's volumetric lighting.
+    bUseTAA: 1,
+    bVolumetricLightingDisableInterior: 1,
+    bVolumetricLightingEnable: 1,
+    fVolumetricLightingIntensity: 2,
+  },
+  // The sun's lens flare (LENS): on, and the strength of all flares.
+  ImageSpace: {
+    bLensFlare: 1,
+    fLensFlareGlobalIntensity: 1,
   },
   GamePlay: {
     bShowFloatingQuestMarkers: 1,

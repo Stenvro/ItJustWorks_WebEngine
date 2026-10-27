@@ -14,6 +14,9 @@ import {
 import { ImageSpaceModifiers } from '../src/world/image-space-modifiers.ts';
 import { NEUTRAL_IMAGE_SPACE } from '../src/world/image-space.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
+import { DefaultObjects, DefaultObjectUse } from '../src/world/default-objects.ts';
+import { parseVolumetricLighting } from '../src/world/volumetric-lighting.ts';
+import { parseWeather } from '../src/world/weather.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
 
@@ -110,5 +113,34 @@ describe.skipIf(!hasGamedata())('image-space modifiers on the local game data', 
     expect(frame.fade).toEqual([0, 0, 0, 1]);
     expect(frame.saturation.mult).toBe(1);
     expect(hold.channels[IMAD_CINEMATIC_CHANNELS.saturation]?.mult.length).toBeGreaterThan(0);
+  });
+
+  it('names LowHealthImod and the heartbeats as the low-health default objects', async () => {
+    const defaults = await DefaultObjects.read(db);
+    expect(defaults.get(DefaultObjectUse.lowHealthImageSpace)).toBe(LOW_HEALTH);
+    const editorId = async (use: string): Promise<string | undefined> => {
+      const formId = defaults.get(use);
+      return formId === undefined ? undefined : (await db.get(formId))?.editorId;
+    };
+    expect(await editorId(DefaultObjectUse.heartbeatSlow)).toBe('UIHealthHeartbeatALPSD');
+    expect(await editorId(DefaultObjectUse.heartbeatFast)).toBe('UIHealthHeartbeatBLPSD');
+  });
+
+  it("reads SkyrimClear's volumetric lighting by time of day; vanilla has no lens flares", async () => {
+    let record: Awaited<ReturnType<RecordDatabase['get']>>;
+    for (const formId of db.formIdsOfType('WTHR')) {
+      const candidate = await db.get(formId);
+      if (candidate?.editorId === 'SkyrimClear') record = candidate;
+    }
+    expect(record?.editorId).toBe('SkyrimClear');
+    if (!record) return;
+    const parsed = parseWeather(record);
+    const day = parsed.volumetricLighting?.[1];
+    expect(day).toBeDefined();
+    const voli = day === undefined ? undefined : await db.get(day);
+    expect(voli?.editorId).toBe('VLClearDay');
+    if (voli) expect(parseVolumetricLighting(voli).intensity).toBe(2);
+    expect(parsed.lensFlare).toBeUndefined();
+    expect(db.formIdsOfType('LENS')).toEqual([]);
   });
 });
