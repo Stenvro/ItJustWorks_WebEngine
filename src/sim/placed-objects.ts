@@ -18,7 +18,7 @@ import type {
 } from '../render/scene-renderer.ts';
 import type { CellObject } from '../world/cell-loader.ts';
 import type { GameSession } from '../shell/game-session.ts';
-import { startObjectGraph, startPlacedSkeleton } from '../shell/object-graphs.ts';
+import { clock, startObjectGraph, startPlacedSkeleton } from '../shell/object-graphs.ts';
 import { openable } from '../shell/play-session.ts';
 
 /** A placed object: its instance, the skeleton its graph moves, its hinged bodies' pose. */
@@ -61,10 +61,14 @@ export function placeObject(
 ): PlacedObject {
   const { model, collision, water, directional } = parts;
   const graph = startObjectGraph(model, object.reference);
+  // A loaded save's graph: in the state it was saved in (a lever pulled stays down).
+  const saved = options.simulated ? session.restoring?.takeGraph(object.reference) : undefined;
+  if (graph && saved?.sequences) graph.restoreState(saved.sequences, clock());
   // The events its sequences raise reach its scripts (OnAnimationEvent).
   if (graph)
     graph.onEvent = (event) => session.scriptsReady?.animationEvent(object.reference, event);
   const skeletal = startPlacedSkeleton(model, object.reference);
+  if (saved?.skeleton) skeletal?.skeleton.behavior?.restoreState(saved.skeleton);
   if (skeletal) {
     skeletonEventsToScripts(skeletal.skeleton, (event) =>
       session.scriptsReady?.animationEvent(object.reference, event),

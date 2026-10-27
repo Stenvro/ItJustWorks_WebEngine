@@ -427,8 +427,32 @@ export function gaitOf(flags: PackageFlags): Gait {
   return flags.speed === 1 || flags.speed === 2 ? 'run' : 'walk';
 }
 
+/**
+ * An actor's package as a save keeps it (as the original's actor change form keeps its
+ * process's package): which, whether it completed, where it began, the branch it runs and what
+ * its Finds found. On load the actor's packages are chosen as ever; when the saved one is
+ * chosen again it goes on where it was, without beginning again (no OnPackageStart, no begin
+ * fragment), its tree from the step it had reached.
+ */
+export interface SavedPackage {
+  readonly id: number;
+  readonly completed: boolean;
+  readonly ended: boolean;
+  readonly start?: Vec3 | undefined;
+  /** The branch it ran: each branch's index among its parent's children, from the root down. */
+  readonly path: readonly number[];
+  readonly found: readonly (readonly [number, readonly number[]])[];
+  /** Packages that run once a day: the day each last ran. */
+  readonly ranOn: readonly (readonly [number, number])[];
+}
+
 /** A package that runs, with its template's tree and its data. */
 interface Running {
+  /**
+   * A saved package going on (SavedPackage.path): the branch indices still to be found again
+   * as its tree runs down to the step it had reached; undefined once there (or off that way).
+   */
+  resume?: readonly number[] | undefined;
   readonly id: number;
   readonly pack: PackageRecord;
   readonly tree: ProcedureBranch;
@@ -588,6 +612,56 @@ export class ActorPackages {
     if (restart) this.#restart = true;
   }
 
+  /** What a save keeps of its package (SavedPackage); undefined while it runs none. */
+  saveState(): SavedPackage | undefined {
+    const running = this.#running;
+    const ranOn = [...this.#ranOn];
+    if (!running) return undefined;
+    const path: number[] = [];
+    const branches = running.path;
+    for (let i = 1; i < branches.length; i++) {
+      const child = branches[i];
+      const index = child ? (branches[i - 1]?.children.indexOf(child) ?? -1) : -1;
+      if (index < 0) break;
+      path.push(index);
+    }
+    return {
+      id: running.id,
+      completed: running.completed,
+      ended: running.ended,
+      start: running.context.start,
+      path,
+      found: [...running.found],
+      ranOn,
+    };
+  }
+
+  /** A loaded save's package: it goes on if it is the one chosen first (SavedPackage). */
+  resume(saved: SavedPackage): void {
+    this.#resumed = saved;
+    for (const [id, day] of saved.ranOn) this.#ranOn.set(id, day);
+  }
+
+  #resumed: SavedPackage | undefined;
+
+  /** The saved package taken up where it was, as it is chosen (instead of beginning it). */
+  #takeUp(chosen: Running, saved: SavedPackage): void {
+    const context = { ...chosen.context, start: saved.start ?? chosen.context.start };
+    const running: Running = {
+      ...chosen,
+      context,
+      data: { ...chosen.data, context },
+      found: new Map(saved.found),
+      completed: saved.completed,
+      ended: saved.ended,
+      resume: saved.path.length > 0 ? saved.path : undefined,
+    };
+    this.#running = running;
+    if (running.completed) return;
+    void this.#runTree(running);
+    void this.#playIdles(running);
+  }
+
   /** It leaves its package and stands (it left the high process, died, a scene took it). */
   stop(): void {
     const running = this.#running;
@@ -633,6 +707,13 @@ export class ActorPackages {
     }
     const chosen = await this.#choose(undefined);
     if (this.#running !== current) return;
+    // A loaded save's package, chosen again first: it goes on where it was.
+    const resumed = this.#resumed;
+    this.#resumed = undefined;
+    if (resumed && !current && chosen?.id === resumed.id) {
+      this.#takeUp(chosen, resumed);
+      return;
+    }
     // A scene's action starting it again: the package done already is a new start (its
     // scripts hear it begin, its tree runs from the root).
     if (chosen && chosen.id === current?.id && !(restart && current.ended)) {
@@ -792,6 +873,15 @@ export class ActorPackages {
       return 'skipped';
     }
     const repeat = (branch.branchFlags & BranchFlag.repeatWhenComplete) !== 0;
+    // A saved package going on: this branch is on the saved way down, or the rest runs anew.
+    const resume = running.resume;
+    if (resume) {
+      const depth = running.active.length;
+      const parent = running.active[depth - 1];
+      if (parent && parent.children.indexOf(branch) !== resume[depth - 1]) {
+        running.resume = undefined;
+      } else if (depth >= resume.length) running.resume = undefined;
+    }
     running.active.push(branch);
     running.path = [...running.active];
     try {
@@ -817,7 +907,9 @@ export class ActorPackages {
         return this.#procedure(running, branch);
       case 'sequence': {
         let ran = false;
-        for (const child of branch.children) {
+        // A saved package going on starts at the child it had reached.
+        const from = running.resume?.[running.active.length - 1] ?? 0;
+        for (const child of branch.children.slice(from)) {
           const result = await this.#branch(running, child);
           if (result === 'stopped' || result === 'complete') return result;
           if (result !== 'skipped') ran = true;
@@ -840,6 +932,8 @@ export class ActorPackages {
         // first child, the Sit template's search for a seat, while the Travel beside it, whose
         // success completes the package, had arrived, held Sit packages for ever: the last phases
         // of DialogueRiftenSS02Scene and IvarsteadSSScene.)
+        // (Its children run anew after a load: they share the running branches' list.)
+        running.resume = undefined;
         const views: Running[] = branch.children.map(() => ({
           ...running,
           stopped: false,
