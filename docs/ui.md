@@ -526,6 +526,41 @@ Favorites, Wait), one at a time, each in menu mode, and sets the HUD's mode for 
 (`ShowElements(mode, show)`: the HUD shows the elements of its last mode, `TweenMode`,
 `InventoryMode`, `DialogueMode`, `BookMode`, `BarterMode`, `WorldMapMode`, ...).
 
+### The menu stack
+
+Every menu that opens goes on the session's menu stack (`src/ui/menu-stack.ts`) by its engine
+name (`"InventoryMenu"`, `"Book Menu"`, `"MapMenu"`, ...) with the IMenu flags its constructor
+sets (CommonLibSSE records them per menu: PausesGame, UsesCursor, FreezeFrameBackground,
+AllowSaving, ...). The stack answers what the flags say together: menu mode follows PausesGame
+(the crafting and dialogue menus have none), saving waits while a menu without AllowSaving is
+open (F5 in an item menu, a book or the map saves nothing), and scripts ask it through SKSE's
+`UI.IsMenuOpen`. A mod registers its own menus with their flags (`register`).
+
+The HUD follows the stack: each menu has the mode it puts hudmenu.swf in, and the movie's own
+element lists say what shows then (read from its `SetModes`). `MessagesBlock` and
+`QuestUpdateBaseInstance` show in `BookMode`, `InventoryMode`, `BarterMode`, `TweenMode`,
+`DialogueMode`; only `MessagesBlock` in `WorldMapMode`; nothing in `JournalMode`. The book, the
+map and the crafting menu use their modes (the crafting menu `InventoryMode`; TODO(M13): its
+own is not recorded) instead of hiding the HUD, so their notices show. The skills, the race
+menu, lockpicking, credits and the loading menu hide the HUD. Quest notices wait in the queue
+while the HUD is hidden or in a mode without them.
+
+### Meters, ammo, the floating marker, the game's notices
+
+The meters' clips (`HealthMeterAnim`, `MagickaMeterAnim`, `StaminaMeterAnim`: 200 frames, a
+`Pause` label at 40, frame 200 plays the clip back) fade themselves: a new percent plays the
+fade-in on from where it is, and with no further change the clip holds and plays back out. The
+engine keeps a meter that is not full shown by playing its clip on every second it stands still;
+stamina that has filled is faded at once (`FadeOutStamina`). A drawn bow or crossbow shows its
+ammo (`ShowArrowCount(count, hide, name)`: the movie writes "name (count)"). The floating quest
+marker (`FloatingQuestMarkerInstance`) stands over the nearest quest target (or the load door
+toward it) within fFloatQuestMarkerMaxDistance (2000), fully shown up to
+fFloatQuestMarkerMinDistance (1000), fFloatQuestMarkerFloatHeight above it, while [GamePlay]
+bShowFloatingQuestMarkers is on. A word of power learned (Game.TeachWord, the hub's
+`wordLearned`) is `ShowNotification`'s `SHOUT_UPDATE` (3): sShoutAdded with the word in the
+dragon letters (`aDragonText`); a dragon soul absorbed (the player's DragonSouls rising) shows
+sDragonSoulAcquired; a location cleared (the hub's `locationCleared`) its name with sCleared.
+
 Esc: a page cannot keep the browser from freeing the mouse on Esc, so in Play the mouse let go
 while the game plays opens Pause, as Esc does in the game. In full screen the page keeps the
 game's keys (Keyboard Lock, Chromium: `LOCKED_KEYS` in `src/main.ts`, every key but Tab and

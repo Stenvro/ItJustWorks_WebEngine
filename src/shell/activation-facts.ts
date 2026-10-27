@@ -8,6 +8,7 @@
 import { RaceAiFlag } from '../ai/race-combat-records.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { referenceName } from '../scripting/runtime/quest-text.ts';
+import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { GameSession } from './game-session.ts';
 
 /** How long a fact read stays before it is read again (ms). */
@@ -36,6 +37,8 @@ export interface ActorPromptState {
   readonly commander: string | undefined;
   /** It carries nothing (a corpse's sEmpty). */
   readonly empty: boolean;
+  /** In combat and hostile to the player (no prompt then). */
+  readonly hostile: boolean;
 }
 
 export class ActivationFacts {
@@ -174,6 +177,17 @@ export class ActivationFacts {
       teammate: own?.playerTeammate === true,
       commander: commander === '' ? undefined : commander,
       empty: this.empty(reference) === true,
+      hostile: hostileInCombat(runtime, reference),
     };
   }
+}
+
+/**
+ * An actor in combat and hostile to the player: fighting them, or holding them an enemy (the combat
+ * AI's view of a loaded actor).
+ */
+function hostileInCombat(runtime: ScriptRuntime, actor: number): boolean {
+  const state = runtime.world.combat?.(actor);
+  if (state?.inCombat !== true) return false;
+  return state.combatTarget === PLAYER_REF || runtime.world.hostile?.(actor, PLAYER_REF) === true;
 }

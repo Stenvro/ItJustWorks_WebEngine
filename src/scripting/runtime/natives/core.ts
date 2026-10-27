@@ -36,6 +36,8 @@ export function registerCore(n: Register, runtime: ScriptRuntime): void {
   n('utility.getcurrentrealtime', () => state.realTime);
   n('utility.getcurrentgametime', () => state.gameDaysPassed);
   n('utility.isinmenumode', () => runtime.inMenuMode);
+  // SKSE's UI script: whether a menu is open, by its name ("InventoryMenu", "Book Menu", ...).
+  n('ui.ismenuopen', ({ args }) => runtime.menuOpen?.(str(args[0])) ?? false);
   n('utility.gametimetostring', ({ args }) => runtime.gameTimeString(num(args[0])));
   n('utility.getcurrentmemory', () => 0);
   n('utility.getbudgetcount', () => 0);

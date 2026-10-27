@@ -846,6 +846,8 @@ export class ScriptRuntime implements VmHost {
   perkPoints = 0;
   lastHorse: number | undefined;
   inMenuMode = false;
+  /** Whether a menu of that name is open (the menu manager's stack: SKSE's UI.IsMenuOpen). */
+  menuOpen: ((name: string) => boolean) | undefined;
   /** The actor the player is in a conversation with (IsInDialogueWithPlayer), if any. */
   dialogueSpeaker: number | undefined;
   frameRate = 60;
