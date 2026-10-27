@@ -44,6 +44,8 @@ import {
   type DetectionReport,
   type GroupTarget,
 } from '../ai/combat-groups.ts';
+import { BehaviourTree, type Status, type TreeInstance } from '../ai/behaviour-tree.ts';
+import { AttackPick, combatRegistry } from '../ai/combat-tree.ts';
 import { CombatProfiles, NO_STYLE, type CombatProfile } from '../ai/combat-profile.ts';
 import { FightReaction, reactionOf } from '../ai/combat-reactions.ts';
 import {
@@ -52,7 +54,6 @@ import {
   around,
   backoffGoal,
   bearing,
-  chooseCloseMovement,
   circleAngle,
   circleDistantGoals,
   circleGoals,
@@ -74,6 +75,8 @@ import {
   advanceRadii,
   ATTACK_DECISION_SECONDS,
   avoidsThreat,
+  blockAttackChance,
+  blockChance,
   blockTime,
   bowHoldTime,
   castChance,
@@ -81,7 +84,6 @@ import {
   chooseEquipment,
   chooseSupport,
   chooseManeuver,
-  choosesBlock,
   circleChance,
   circleDistantChance,
   fallbackChance,
@@ -93,7 +95,9 @@ import {
   minEquipTime,
   offensiveMult,
   rangedAttackChance,
+  specialAttackChance,
   threatens,
+  type AdvanceRadii,
   type EquipKind,
   type EquipOption,
   type Maneuver,
@@ -361,6 +365,39 @@ interface Mind {
   /** The combat state last told (TESCombatEvent), and the target told with it. */
   told: CombatStateValue;
   toldTarget: number | undefined;
+  /** Its run of the combat tree (made as it first fights; dropped as its fight ends). */
+  tree: TreeInstance<CombatFrame> | undefined;
+}
+
+/** One fighter's frame as its combat tree reads it (src/ai/combat-tree.ts). */
+interface CombatFrame {
+  readonly mind: Mind;
+  readonly view: FighterView;
+  readonly target: FighterView;
+  readonly profile: Profile;
+  /** Where its group knows its target to be, and its own feet. */
+  readonly there: Vec3;
+  readonly feet: Vec3;
+  readonly distance: number;
+  /** The heading to its target, and the one it faces (its aim controller's). */
+  readonly facing: number;
+  readonly face: number;
+  /** Away from its combat override package's place. */
+  readonly tethered: boolean;
+  readonly option: EquipOption | undefined;
+  readonly opponent: Opponent;
+  /** Its melee reach with its target's radius; its bow's, spell's or shout's range. */
+  readonly reach: number;
+  readonly range: number;
+  /** The close and ranged movement's measures (made as first asked). */
+  close:
+    | {
+        readonly radii: AdvanceRadii;
+        readonly range: number;
+        readonly moving: MovementTarget;
+        readonly optimal: number;
+      }
+    | undefined;
 }
 
 /** GetCombatState: 0 not in combat, 1 in combat, 2 searching. */
@@ -445,6 +482,8 @@ export class ActorCombatAi {
   #sprints = true;
   /** The places round each target its attackers hold (combat-movement.ts). */
   readonly #locations = new TargetLocations();
+  /** The combat behaviour tree every fighter runs (src/ai/combat-tree.ts). */
+  readonly #tree: BehaviourTree<CombatFrame>;
   #settingsRead = false;
   /** The running game its reactions were valued in. */
   #runtime: ScriptRuntime | undefined;
@@ -456,6 +495,7 @@ export class ActorCombatAi {
 
   constructor(options: ActorCombatAiOptions) {
     this.#options = options;
+    this.#tree = this.#makeTree();
   }
 
   // --- What combat and the scripts ask -----------------------------------------------------------
@@ -859,6 +899,7 @@ export class ActorCombatAi {
         gettingUp: false,
         told: 0,
         toldTarget: undefined,
+        tree: undefined,
       };
       this.#minds.set(reference, mind);
     }
@@ -1420,6 +1461,7 @@ export class ActorCombatAi {
     mind.run = undefined;
     mind.runTravel = undefined;
     mind.aim = undefined;
+    mind.tree = undefined;
     this.#locations.release(reference);
     mind.search?.cancel();
     mind.search = undefined;
@@ -1529,7 +1571,6 @@ export class ActorCombatAi {
     const feet = view.feet;
     if (!profile || !target || !feet) return;
     const host = this.#options.host;
-    const movers = this.#options.movers;
     const reference = mind.reference;
     const state = view.state;
     // Where its group knows the target to be: where it is while the group follows it (detected
@@ -1601,174 +1642,32 @@ export class ActorCombatAi {
       ranged,
       distance <= view.reach + target.radius,
     );
-    if (this.#dodge(mind, view, face)) return;
     // Its combat override package's place: back to it, and fight from there.
     const leash = mind.leash;
     const tethered = leash !== undefined && flat(feet, leash.center) > leash.radius;
-    if (tethered && !mind.chase) {
-      mind.chase = leash.center;
-      void movers.travel(reference, leash.center, 'run', leash.radius / 2).then(() => {
-        if (mind.chase === leash.center) mind.chase = undefined;
-      });
-    }
-    // What it does for itself now and then (heals, potions, summons, wards, buffs).
-    if (this.#clock >= mind.nextSupport && !mind.supporting) {
-      mind.nextSupport = this.#clock + SUPPORT_SECONDS;
-      mind.supporting = true;
-      void this.#support(mind, view, target.reference)
-        .catch((error: unknown) => {
-          this.#warn(`${reference.toString(16)} support: ${describe(error)}`);
-        })
-        .finally(() => {
-          mind.supporting = false;
-        });
-    }
+    // Its combat tree (src/ai/combat-tree.ts): a dodge first, else its equipment slots' actions
+    // beside its movement priority list.
     const option = mind.equipped;
-    const casts =
-      option && (option.kind === 'magic' || option.kind === 'staff' || option.kind === 'shout');
-    if (casts) {
-      this.#cast(mind, view, target.reference, option, distance, facing, face);
-      return;
-    }
-    if (view.gear?.bow === true) {
-      this.#shoot(mind, view, target, profile, distance, facing, there, tethered);
-      return;
-    }
-    this.#defend(mind, view, target, distance);
-    this.#melee(mind, view, target, profile, distance, facing, there, tethered);
-    if (this.#clock >= mind.nextLine) {
-      mind.nextLine = this.#clock + this.#between(this.#settings.tauntMin, this.#settings.tauntMax);
-      this.#bark(reference, 'Taunt', target.reference);
-    }
-  }
-
-  /** Close combat: its close movement about its reach (combat-movement.ts), and its attacks. */
-  #melee(
-    mind: Mind,
-    view: FighterView,
-    target: FighterView,
-    profile: Profile,
-    distance: number,
-    facing: number,
-    there: Vec3,
-    tethered: boolean,
-  ): void {
-    const movers = this.#options.movers;
-    const reference = mind.reference;
-    const reach = view.reach + target.radius;
-    if (tethered) return;
-    const face = this.#aimFace(mind, view, target, there, false, distance <= reach);
-    // Its combat override package's place: it does not leave it for a target beyond.
-    const leash = mind.leash;
-    if (leash && flat(there, leash.center) > leash.radius + reach) {
-      this.#stopRun(mind);
-      movers.request(reference, this.#standing(face));
-      return;
-    }
-    // Far: over the navmeshes, running, its way taken again as the target moves.
-    if (distance > reach + CHASE_BEYOND) {
-      this.#stopRun(mind);
-      this.#chase(mind, there, reach * 0.8, distance);
-      return;
-    }
-    if (mind.chase) {
-      mind.chase = undefined;
-      movers.stop(reference);
-    }
-    const style = profile.style;
-    const opponent = this.#opponent(mind, target.reference);
-    // Its advance radii (its style's defensive against offensive mult; a defensive one keeps its
-    // distance a while after it was hurt).
-    const radii = advanceRadii(
-      style,
-      {
-        ...opponent,
-        targetStaggered: target.state.staggered,
-        reach: view.reach,
-        targetReach: target.reach,
-        sinceDamaged: mind.damagedAt === undefined ? undefined : this.#clock - mind.damagedAt,
-      },
-      this.#settings,
-    );
-    // Where it fights from: its reach and its inner advance radius.
-    const range = reach + radii.inner;
-    const state = view.state;
-    const feet = view.feet ?? there;
-    const moving = this.#movementTarget(target, there);
-    this.#updateRun(mind, view, moving, range, distance);
-    if (!mind.run && this.#clock >= mind.nextRun && !attacking(state)) {
-      mind.nextRun = this.#clock + DECIDE_SECONDS;
-      mind.run = this.#chooseRun(
-        mind,
-        view,
-        target,
-        moving,
-        style,
-        opponent,
-        radii,
-        range,
-        distance,
-      );
-    }
-    // An attack plays where it stands: its controller does not move it meanwhile.
-    // (its clip's own root motion carries it: a forward power attack's lunge).
-    if (attacking(state)) movers.request(reference, { ...this.#standing(face), rootMotion: true });
-    else this.#driveRun(mind, feet, face, distance);
-    // Its attack: within reach and facing it, in its own time; not at one above its reach (a
-    // flier overhead: it waits for it to come down).
-    if (distance > reach || Math.abs(turnBetween(view.heading, facing)) > STRIKE_ANGLE) return;
-    if (
-      !withinReach(
-        { feet, height: view.height, reach: view.reach },
-        { feet: there, height: target.height },
-      )
-    ) {
-      return;
-    }
-    if (this.#clock < mind.nextAttack) return;
-    // The engine's rule (observed in the original): a new attack waits while it is still in its last one,
-    // but no longer than fCombatAttackAnimationDrivenDelayTime after it chose that one; in the
-    // last one's chain window the next one follows. Refused by its graph, it asks again at its
-    // next decision (the combat tree's attack idle: ATTACK_DECISION_SECONDS).
-    const chaining =
-      state.attack === AttackState.nextAttack || state.attack === AttackState.followThrough;
-    const sinceLast = mind.lastAttack === undefined ? Infinity : this.#clock - mind.lastAttack;
-    if (
-      attacking(state) &&
-      !chaining &&
-      !state.blocking &&
-      sinceLast <= this.#settings.attackAnimationDrivenDelayTime
-    ) {
-      return;
-    }
-    const gear = view.gear;
-    const choice = chooseAttack(
-      style,
-      {
-        targetStaggered: target.state.staggered,
-        targetBlocking: target.state.blocking,
-        targetAttacking: attacking(target.state),
-        targetPowerAttacking: target.state.current?.power === true,
-        targetRecoiling: target.state.recoiling,
-        blocking: state.blocking,
-        canBash: gear?.canBash === true,
-        powerChance: gear?.powerChance ?? 0,
-        ...opponent,
-        sinceLastAttack: mind.lastAttack === undefined ? undefined : this.#clock - mind.lastAttack,
-      },
-      this.#random,
-      this.#settings,
-    );
-    mind.nextAttack = this.#clock + ATTACK_DECISION_SECONDS;
-    if (choice === 'none') return;
-    // Its last attack is the one its graph took (the engine notes the time as the action
-    // succeeds).
-    const asked = this.#clock;
-    const action =
-      choice === 'power' || choice === 'powerBash' ? 'ActionRightPowerAttack' : 'ActionRightAttack';
-    void this.#options.host.attack(reference, action).then((began) => {
-      if (began) mind.lastAttack = asked;
-    });
+    const bowRange = view.gear?.range ?? this.#settings.maximumProjectileRange;
+    const frame: CombatFrame = {
+      mind,
+      view,
+      target,
+      profile,
+      there,
+      feet,
+      distance,
+      facing,
+      face,
+      tethered,
+      option,
+      opponent: this.#opponent(mind, target.reference),
+      reach: view.reach + target.radius,
+      range: view.gear?.bow === true || option === undefined ? bowRange : option.range,
+      close: undefined,
+    };
+    mind.tree ??= this.#tree.instance(this.#random);
+    mind.tree.tick(frame, Math.max(0, this.#clock - mind.tree.clock));
   }
 
   /**
@@ -1874,73 +1773,6 @@ export class ActorCombatAi {
     if (got < least) return undefined;
     const t = got / Math.max(1, whole);
     return [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t, to[2]];
-  }
-
-  /**
-   * The close movement selector (combat-movement.ts chooseCloseMovement; a flanking style's
-   * stalk and flank, chooseManeuver): the first behaviour of its tries whose goal can be found.
-   */
-  #chooseRun(
-    mind: Mind,
-    view: FighterView,
-    target: FighterView,
-    moving: MovementTarget,
-    style: CombatProfile['style'],
-    opponent: Opponent,
-    radii: { readonly inner: number; readonly outer: number },
-    range: number,
-    distance: number,
-  ): MovementRun | undefined {
-    mind.side = this.#random() < 0.5 ? -1 : 1;
-    const feet = view.feet ?? moving.feet;
-    if ((style.flags & CombatStyleFlag.flanking) !== 0) {
-      mind.maneuver = chooseManeuver(
-        style,
-        {
-          distance,
-          reach: view.reach + target.radius,
-          ranged: false,
-          allies: opponent.allies,
-          previous: mind.maneuver,
-          radii,
-        },
-        this.#random,
-        this.#settings,
-      );
-      const seconds = maneuverTime(style, mind.maneuver, this.#random, this.#settings);
-      if (mind.maneuver === 'flank') {
-        return this.#newRun('flank', feet, this.#movement.speedRun, seconds);
-      }
-      if (mind.maneuver === 'stalk') {
-        // Round it just out of its reach for its stalk time: a circle at its distance.
-        const run = this.#startRun('circle', mind, view, target, moving, style, range, distance);
-        if (run) return { ...run, behaviour: 'stalk', until: this.#clock + seconds };
-      }
-    }
-    const tries = chooseCloseMovement(
-      {
-        distance,
-        range,
-        outer: radii.outer,
-        outOfPosition: this.#locations.outOfPosition(
-          mind.reference,
-          target.reference,
-          feet,
-          moving.feet,
-          this.#movement,
-        ),
-        fallbackChance: fallbackChance(style, this.#settings),
-        circleChance: circleChance(style, this.#settings),
-        circleDistantChance: circleDistantChance(style, this.#settings),
-      },
-      this.#random,
-      this.#movement,
-    );
-    for (const behaviour of tries) {
-      const run = this.#startRun(behaviour, mind, view, target, moving, style, range, distance);
-      if (run) return run;
-    }
-    return undefined;
   }
 
   /** A behaviour started: its goal, or undefined when it has none now (the next is tried). */
@@ -2247,147 +2079,6 @@ export class ActorCombatAi {
   }
 
   /**
-   * At range with a bow: the style's distance and strafing; draw (by its ranged attack chance,
-   * a decision every ATTACK_DECISION_SECONDS), hold (its hold time), loose.
-   */
-  #shoot(
-    mind: Mind,
-    view: FighterView,
-    target: FighterView,
-    profile: Profile,
-    distance: number,
-    facing: number,
-    there: Vec3,
-    tethered: boolean,
-  ): void {
-    const movers = this.#options.movers;
-    const host = this.#options.host;
-    const reference = mind.reference;
-    const style = profile.style;
-    const opponent = this.#opponent(mind, target.reference);
-    const range = view.gear?.range ?? this.#settings.maximumProjectileRange;
-    const face = this.#aimFace(mind, view, target, there, true, false);
-    if (!tethered) {
-      if (distance > range) {
-        this.#stopRun(mind);
-        this.#chase(mind, there, range * 0.8, distance);
-        return;
-      }
-      if (mind.chase) {
-        mind.chase = undefined;
-        movers.stop(reference);
-      }
-      const optimal = Math.min(range, maxOptimalRange(style, opponent, this.#settings));
-      const moving = this.#movementTarget(target, there);
-      this.#updateRun(mind, view, moving, optimal, distance);
-      if (!mind.run && this.#clock >= mind.nextRun) {
-        mind.nextRun = this.#clock + DECIDE_SECONDS;
-        mind.maneuver = chooseManeuver(
-          style,
-          {
-            distance,
-            reach: range,
-            ranged: true,
-            allies: opponent.allies,
-            previous: mind.maneuver,
-            optimalRange: optimal,
-          },
-          this.#random,
-          this.#settings,
-        );
-        mind.side = this.#random() < 0.5 ? -1 : 1;
-        const seconds = maneuverTime(style, mind.maneuver, this.#random, this.#settings);
-        mind.run = this.#rangedRun(mind, view, moving, mind.maneuver, optimal, seconds);
-      }
-      this.#driveRun(mind, view.feet ?? there, face, 0);
-    }
-    const state = view.state;
-    // Observed in the original: held its hold time, the bow is loosed once its target lies
-    // within fCombatRangedProjectileFiringArc of its aim (else it looks again a quarter second
-    // later; TODO(M13): the line of fire it also asks for); held past
-    // fCombatRangedAttackMaximumHoldTime it is let down unloosed (ActionRightInterrupt:
-    // CancelBowAttack). Its facing gates only a new draw: a drawn bow waiting on its archer's
-    // turn was never loosed (Helgen's archers held theirs drawn).
-    const off = Math.abs(turnBetween(view.heading, facing));
-    if (state.attack === AttackState.bowDrawn && state.drawnFor >= mind.bowHold) {
-      if (state.drawnFor > this.#settings.rangedAttackMaximumHoldTime) {
-        void host.release(reference, 'ActionRightInterrupt');
-        mind.nextAttack = this.#clock + ATTACK_DECISION_SECONDS;
-      } else if (off <= (this.#settings.rangedProjectileFiringArc * Math.PI) / 180) {
-        void host.release(reference, 'ActionRightRelease');
-        mind.nextAttack = this.#clock + ATTACK_DECISION_SECONDS;
-      }
-      return;
-    }
-    if (off > STRIKE_ANGLE) return;
-    if (!attacking(state) && this.#clock >= mind.nextAttack) {
-      mind.nextAttack = this.#clock + ATTACK_DECISION_SECONDS;
-      const sinceLastAttack =
-        mind.lastAttack === undefined ? undefined : this.#clock - mind.lastAttack;
-      const chance = rangedAttackChance(style, { ...opponent, sinceLastAttack }, this.#settings);
-      if (this.#random() >= chance) return;
-      const asked = this.#clock;
-      void host.attack(reference, 'ActionRightAttack').then((began) => {
-        if (began) mind.lastAttack = asked;
-      });
-      mind.bowHold = bowHoldTime(
-        style,
-        { ...opponent, distance, radii: view.radius + target.radius },
-        this.#random,
-        this.#settings,
-      );
-    }
-  }
-
-  /**
-   * A spell, staff or shout it fights with (5.3's castAt): facing its target within the
-   * option's range and not casting already, it casts at a decision every ATTACK_DECISION_SECONDS
-   * (the combat tree's cast idles) by its cast chance (a spell or staff: castChance; a shout
-   * whenever its voice has recovered), src/shell/actor-casting.ts castAt and shoutAt (a
-   * concentration spell held while it serves).
-   */
-  #cast(
-    mind: Mind,
-    view: FighterView,
-    target: number,
-    option: EquipOption,
-    distance: number,
-    facing: number,
-    face: number,
-  ): void {
-    const movers = this.#options.movers;
-    const reference = mind.reference;
-    this.#stopRun(mind);
-    if (distance > option.range) {
-      movers.request(reference, {
-        direction: [Math.sin(facing), Math.cos(facing)],
-        gait: 'run',
-        face,
-        turning: this.#turning,
-      });
-      return;
-    }
-    movers.request(reference, this.#standing(face));
-    if (this.#clock < mind.nextAttack || Math.abs(turnBetween(view.heading, facing)) > STRIKE_ANGLE)
-      return;
-    const casting = this.#options.casting?.();
-    const runtime = this.#options.session.scriptsReady;
-    const shout = option.kind === 'shout';
-    mind.nextAttack = this.#clock + (shout ? SHOUT_DECISION_SECONDS : ATTACK_DECISION_SECONDS);
-    if (!casting || !runtime) return;
-    const source = shout ? CastingSource.voice : CastingSource.right;
-    if (runtime.casting.casting(reference, source)) return;
-    if (!shout) {
-      const style = mind.profile?.style ?? NO_STYLE;
-      const opponent = this.#opponent(mind, target);
-      const chance = castChance(style, opponent, option.concentration === true, this.#settings);
-      if (this.#random() >= chance) return;
-    }
-    mind.lastAttack = this.#clock;
-    void casting.castAt(reference, shout ? 'voice' : 'right', target, option);
-  }
-
-  /**
    * What it does for itself (combat-tactics chooseSupport): a ward against a spell coming at
    * it, its healing spell or a potion below its style's restore shares, a summons when none of
    * its stands, a buff not on it.
@@ -2457,30 +2148,511 @@ export class ActorCombatAi {
     return false;
   }
 
-  /**
-   * It blocks a blow coming at it (its style's block chance), and lets go as the blow ends or
-   * after its block time. TODO(M13): phase 5, the combat tree's sustained Block and Block Attack.
-   */
-  #defend(mind: Mind, view: FighterView, target: FighterView, distance: number): void {
-    const state = view.state;
-    const swing = target.state.current;
+  // --- The combat behaviour tree (src/ai/combat-tree.ts) ------------------------------------
+
+  /** The close movement's radii, range and moving target for a frame (made as first asked). */
+  #close(f: CombatFrame): NonNullable<CombatFrame['close']> {
+    if (f.close) return f.close;
+    const style = f.profile.style;
+    // Its advance radii (its style's defensive against offensive mult; a defensive one keeps its
+    // distance a while after it was hurt).
+    const radii = advanceRadii(
+      style,
+      {
+        ...f.opponent,
+        targetStaggered: f.target.state.staggered,
+        reach: f.view.reach,
+        targetReach: f.target.reach,
+        sinceDamaged: f.mind.damagedAt === undefined ? undefined : this.#clock - f.mind.damagedAt,
+      },
+      this.#settings,
+    );
+    f.close = {
+      radii,
+      // Where it fights from: its reach and its inner advance radius.
+      range: f.reach + radii.inner,
+      moving: this.#movementTarget(f.target, f.there),
+      optimal: Math.min(f.range, maxOptimalRange(style, f.opponent, this.#settings)),
+    };
+    return f.close;
+  }
+
+  /** A blow its target swings at it now (within its reach), else undefined. */
+  #blowAt(f: CombatFrame): object | undefined {
+    const swing = f.target.state.current;
     const coming =
       swing !== undefined &&
       !swing.ranged &&
-      target.target === mind.reference &&
-      distance <= target.reach + view.radius + 32;
-    if (state.blocking) {
-      if (!coming || this.#clock >= mind.blockUntil) this.#releaseBlock(mind, view);
-      return;
-    }
-    if (!coming || mind.blockedSwing === swing || attacking(state)) return;
-    if (view.gear?.canBlock !== true) return;
-    mind.blockedSwing = swing;
-    const style = mind.profile?.style ?? NO_STYLE;
-    const shield = view.gear.shield;
-    if (!choosesBlock(style, shield, this.#random, this.#settings)) return;
-    mind.blockUntil = this.#clock + blockTime(style, this.#settings);
-    void this.#options.host.block(mind.reference, true);
+      f.target.target === f.mind.reference &&
+      f.distance <= f.target.reach + f.view.radius + 32;
+    return coming ? swing : undefined;
+  }
+
+  /** How far its bow's aim is off its target now (radians). */
+  #off(f: CombatFrame): number {
+    return Math.abs(turnBetween(f.view.heading, f.facing));
+  }
+
+  /** It may cast from a hand or its voice now: in range, facing, its decision due, not casting. */
+  #mayCast(f: CombatFrame, source: number): boolean {
+    const option = f.option;
+    const runtime = this.#options.session.scriptsReady;
+    return (
+      option !== undefined &&
+      f.distance <= option.range &&
+      this.#off(f) <= STRIKE_ANGLE &&
+      this.#clock >= f.mind.nextAttack &&
+      this.#options.casting?.() !== undefined &&
+      runtime !== undefined &&
+      !runtime.casting.casting(f.mind.reference, source)
+    );
+  }
+
+  #castWith(f: CombatFrame, hand: 'left' | 'right' | 'voice'): Status {
+    const casting = this.#options.casting?.();
+    if (!casting || !f.option) return 'failure';
+    f.mind.lastAttack = this.#clock;
+    void casting.castAt(f.mind.reference, hand, f.target.reference, f.option);
+    return 'success';
+  }
+
+  /** An attack asked of its graph; its last attack is the one its graph took. */
+  #strike(f: CombatFrame, action: string): Status {
+    const asked = this.#clock;
+    const mind = f.mind;
+    void this.#options.host.attack(mind.reference, action).then((began) => {
+      if (began) mind.lastAttack = asked;
+    });
+    return 'success';
+  }
+
+  /** A close movement behaviour started (the selector's leaf): whether its goal was found. */
+  #tryRun(f: CombatFrame, behaviour: CloseBehaviour): Status {
+    const close = this.#close(f);
+    const run = this.#startRun(
+      behaviour,
+      f.mind,
+      f.view,
+      f.target,
+      close.moving,
+      f.profile.style,
+      close.range,
+      f.distance,
+    );
+    if (!run) return 'failure';
+    f.mind.run = run;
+    return 'success';
+  }
+
+  /** Standing where it is, facing its target, its movement behaviour ended. */
+  #hold(f: CombatFrame): Status {
+    this.#stopRun(f.mind);
+    this.#options.movers.request(f.mind.reference, this.#standing(f.face));
+    return 'running';
+  }
+
+  /** The combat tree with this AI's values and actions (combat-tree.ts names them). */
+  #makeTree(): BehaviourTree<CombatFrame> {
+    const host = this.#options.host;
+    const movers = this.#options.movers;
+    const settings = (): CombatAiSettings => this.#settings;
+    const style = (f: CombatFrame): CombatStyle => f.profile.style;
+    const kind = (f: CombatFrame): EquipKind | undefined => f.option?.kind;
+    const casts = (f: CombatFrame): boolean =>
+      kind(f) === 'magic' || kind(f) === 'staff' || kind(f) === 'shout';
+    // A bow in its hand without its arrows (FighterGear.bow wants both): the arrows go on.
+    const unready = (f: CombatFrame): boolean =>
+      kind(f) === 'ranged' &&
+      f.view.gear?.bow !== true &&
+      f.option?.id !== undefined &&
+      f.view.gear?.weapon === f.option.id;
+    const bow = (f: CombatFrame): boolean => !casts(f) && (f.view.gear?.bow === true || unready(f));
+    const melee = (f: CombatFrame): boolean => !casts(f) && !bow(f);
+    const ranged = (f: CombatFrame): boolean => bow(f) || casts(f);
+    const sinceLast = (f: CombatFrame): number | undefined =>
+      f.mind.lastAttack === undefined ? undefined : this.#clock - f.mind.lastAttack;
+    const bowState = (f: CombatFrame): boolean =>
+      f.view.state.attack === AttackState.bowDrawn && f.view.state.drawnFor >= f.mind.bowHold;
+    return new BehaviourTree<CombatFrame>(
+      combatRegistry<CombatFrame>(
+        {
+          rightMelee: melee,
+          rightBow: bow,
+          rightMagic: (f) => kind(f) === 'magic' || kind(f) === 'staff',
+          leftShield: (f) => f.view.gear?.shield === true,
+          // TODO(M13): the left hand's weapon or spell and dual casting (FighterGear knows the
+          // right hand; the equipment choice picks one option for it).
+          leftWeapon: () => false,
+          leftMagic: () => false,
+          dualCast: () => false,
+          // TODO(M13): a shout beside its weapon (the equipment choice picks the voice alone).
+          voiceShout: (f) => kind(f) === 'shout',
+          canBlock: (f) => f.view.gear?.canBlock === true,
+          tethered: (f) => f.tethered,
+          // Its combat override package's place: it does not leave it for a target beyond.
+          targetBeyondLeash: (f) => {
+            const leash = f.mind.leash;
+            return (
+              !ranged(f) &&
+              leash !== undefined &&
+              flat(f.there, leash.center) > leash.radius + f.reach
+            );
+          },
+          // TODO(M13): Exit Water's and Low Combat's conditions (the fighters' swimming and their
+          // process level are not read here: every fighter runs the high process's combat).
+          inWater: () => false,
+          lowCombat: () => false,
+          // Hide: sneaking, unseen by its target (TODO(M13): the engine's hiding rule).
+          unseen: (f) => {
+            const senses = this.#options.senses?.();
+            return (
+              senses !== undefined &&
+              senses.sneaking(f.mind.reference) &&
+              !senses.detects(f.target.reference, f.mind.reference)
+            );
+          },
+          // No way found to it lately (its chase waits to look again).
+          unreachable: (f) => this.#clock < f.mind.chaseRetry,
+          hasRangedOption: (f) =>
+            f.profile.options.some((option) => option.kind === 'ranged' || option.kind === 'staff'),
+          rangedMovement: ranged,
+          flanking: (f) => (style(f).flags & CombatStyleFlag.flanking) !== 0,
+          farAway: (f) => f.distance > f.reach + CHASE_BEYOND,
+          beyondRange: (f) => f.distance > f.range,
+          outOfRange: (f) => f.distance > this.#close(f).range,
+          outOfPosition: (f) =>
+            this.#locations.outOfPosition(
+              f.mind.reference,
+              f.target.reference,
+              f.feet,
+              this.#close(f).moving.feet,
+              this.#movement,
+            ),
+          mayChooseRun: (f) =>
+            !f.mind.run && this.#clock >= f.mind.nextRun && (ranged(f) || !attacking(f.view.state)),
+          // Its attack: within reach and facing it, in its own time; not at one above its reach
+          // (a flier overhead). The engine's rule (observed in the original): a new attack waits while it is
+          // still in its last one, but no longer than fCombatAttackAnimationDrivenDelayTime after
+          // it chose that one; in the last one's chain window the next one follows.
+          mayAttack: (f) => {
+            const state = f.view.state;
+            if (f.tethered || f.distance > f.reach || this.#off(f) > STRIKE_ANGLE) return false;
+            if (this.#clock < f.mind.nextAttack) return false;
+            if (
+              !withinReach(
+                { feet: f.feet, height: f.view.height, reach: f.view.reach },
+                { feet: f.there, height: f.target.height },
+              )
+            ) {
+              return false;
+            }
+            const chaining =
+              state.attack === AttackState.nextAttack || state.attack === AttackState.followThrough;
+            return !(
+              attacking(state) &&
+              !chaining &&
+              !state.blocking &&
+              (sinceLast(f) ?? Infinity) <= this.#settings.attackAnimationDrivenDelayTime
+            );
+          },
+          specialAttackChance: (f) => specialAttackChance(style(f), settings()),
+          // Observed in the original: held its hold time, the bow is loosed once its target
+          // lies within fCombatRangedProjectileFiringArc of its aim (else it looks again a
+          // quarter second later; TODO(M13): the line of fire it also asks for); held past
+          // fCombatRangedAttackMaximumHoldTime it is let down unloosed. Its facing gates only a
+          // new draw: a drawn bow waiting on its archer's turn was never loosed.
+          shotHeld: bowState,
+          shotOverheld: (f) => f.view.state.drawnFor > this.#settings.rangedAttackMaximumHoldTime,
+          shotInArc: (f) =>
+            this.#off(f) <= (this.#settings.rangedProjectileFiringArc * Math.PI) / 180,
+          mayDraw: (f) =>
+            !bowState(f) &&
+            this.#off(f) <= STRIKE_ANGLE &&
+            !attacking(f.view.state) &&
+            this.#clock >= f.mind.nextAttack,
+          rangedAttackChance: (f) =>
+            rangedAttackChance(
+              style(f),
+              { ...f.opponent, sinceLastAttack: sinceLast(f) },
+              settings(),
+            ),
+          rangedUnready: unready,
+          mayCast: (f) => this.#mayCast(f, CastingSource.right),
+          concentration: (f) => f.option?.concentration === true,
+          castChance: (f) =>
+            castChance(style(f), f.opponent, f.option?.concentration === true, settings()),
+          mayShout: (f) => this.#mayCast(f, CastingSource.voice),
+          blocking: (f) => f.view.state.blocking,
+          blockOver: (f) => this.#blowAt(f) === undefined || this.#clock >= f.mind.blockUntil,
+          blowComing: (f) => {
+            const blow = this.#blowAt(f);
+            return (
+              blow !== undefined &&
+              f.mind.blockedSwing !== blow &&
+              !attacking(f.view.state) &&
+              f.view.gear?.canBlock === true
+            );
+          },
+          blockChance: (f) => blockChance(style(f), f.view.gear?.shield === true, settings()),
+          blockAttackChance: (f) => blockAttackChance(style(f), settings()),
+          maySupport: (f) => this.#clock >= f.mind.nextSupport && !f.mind.supporting,
+          fallbackChance: (f) => fallbackChance(style(f), settings()),
+          circleChance: (f) => circleChance(style(f), settings()),
+          circleDistantChance: (f) => circleDistantChance(style(f), settings()),
+          backoffChance: () => this.#movement.backoffChance,
+          attackIdle: () => ATTACK_DECISION_SECONDS,
+          shoutIdle: () => SHOUT_DECISION_SECONDS,
+          mayTaunt: (f) => melee(f) && this.#clock >= f.mind.nextLine,
+        },
+        {
+          dodgeThreat: (f) => (this.#dodge(f.mind, f.view, f.face) ? 'running' : 'failure'),
+          // Back to its combat override package's place, and it fights from there.
+          returnToCombatArea: (f) => {
+            const mind = f.mind;
+            const leash = mind.leash;
+            if (leash && !mind.chase) {
+              mind.chase = leash.center;
+              void movers.travel(mind.reference, leash.center, 'run', leash.radius / 2).then(() => {
+                if (mind.chase === leash.center) mind.chase = undefined;
+              });
+            }
+            return 'running';
+          },
+          holdPosition: (f) => this.#hold(f),
+          // TODO(M13): Exit Water's way to the shore and Low Combat's attacks (their conditions
+          // do not hold here yet).
+          exitWater: () => 'failure',
+          attackLow: () => 'failure',
+          hide: (f) => this.#hold(f),
+          // It stands while its equipment choice takes up its ranged weapon (scored by range).
+          // TODO(M13): the engine's back-off to fCombatRangedDistance meanwhile.
+          fallbackToRanged: (f) => this.#hold(f),
+          // TODO(M13): Use Cover's cover search (Find Cover, Attack From Cover, Wait Behind
+          // Cover); none is found yet, so ranged movement runs.
+          findCover: () => 'failure',
+          // Far: over the navmeshes, running, its way taken again as the target moves.
+          chase: (f) => {
+            this.#stopRun(f.mind);
+            const arrive = ranged(f) ? f.range * 0.8 : f.reach * 0.8;
+            this.#chase(f.mind, f.there, arrive, f.distance);
+            return 'running';
+          },
+          trackRun: (f) => {
+            const mind = f.mind;
+            if (mind.chase && !f.tethered) {
+              mind.chase = undefined;
+              movers.stop(mind.reference);
+            }
+            const close = this.#close(f);
+            this.#updateRun(
+              mind,
+              f.view,
+              close.moving,
+              ranged(f) ? close.optimal : close.range,
+              f.distance,
+            );
+            return 'success';
+          },
+          decideRun: (f) => {
+            f.mind.nextRun = this.#clock + DECIDE_SECONDS;
+            f.mind.side = this.#random() < 0.5 ? -1 : 1;
+            return 'success';
+          },
+          // An attack plays where it stands: its controller does not move it meanwhile (its
+          // clip's own root motion carries it: a forward power attack's lunge).
+          driveRun: (f) => {
+            if (!ranged(f) && attacking(f.view.state)) {
+              movers.request(f.mind.reference, { ...this.#standing(f.face), rootMotion: true });
+            } else this.#driveRun(f.mind, f.feet, f.face, ranged(f) ? 0 : f.distance);
+            return 'success';
+          },
+          // Ranged Movement's Maintain Optimal Range: the style's distance, strafing and
+          // falling back (chooseManeuver), for a bow, a spell, a staff or a shout alike.
+          maintainOptimalRange: (f) => {
+            const mind = f.mind;
+            const close = this.#close(f);
+            mind.maneuver = chooseManeuver(
+              style(f),
+              {
+                distance: f.distance,
+                reach: f.range,
+                ranged: true,
+                allies: f.opponent.allies,
+                previous: mind.maneuver,
+                optimalRange: close.optimal,
+              },
+              this.#random,
+              this.#settings,
+            );
+            const seconds = maneuverTime(style(f), mind.maneuver, this.#random, this.#settings);
+            mind.run = this.#rangedRun(
+              mind,
+              f.view,
+              close.moving,
+              mind.maneuver,
+              close.optimal,
+              seconds,
+            );
+            return 'success';
+          },
+          advance: (f) => this.#tryRun(f, 'advance'),
+          surround: (f) => this.#tryRun(f, 'surround'),
+          circleDistant: (f) => this.#tryRun(f, 'circleDistant'),
+          reposition: (f) => this.#tryRun(f, 'reposition'),
+          circle: (f) => this.#tryRun(f, 'circle'),
+          fallback: (f) => this.#tryRun(f, 'fallback'),
+          backoff: (f) => this.#tryRun(f, 'backoff'),
+          closeIdle: (f) => this.#tryRun(f, 'idle'),
+          // A flanking style's maneuver (chooseManeuver): flank or stalk, else the selector.
+          flankingManeuver: (f, run) => {
+            const mind = f.mind;
+            mind.maneuver = chooseManeuver(
+              style(f),
+              {
+                distance: f.distance,
+                reach: f.reach,
+                ranged: false,
+                allies: f.opponent.allies,
+                previous: mind.maneuver,
+                radii: this.#close(f).radii,
+              },
+              this.#random,
+              this.#settings,
+            );
+            run.blackboard.set(
+              'maneuver',
+              mind.maneuver === 'flank' ? 0 : mind.maneuver === 'stalk' ? 1 : -1,
+            );
+            run.blackboard.set(
+              'maneuverSeconds',
+              maneuverTime(style(f), mind.maneuver, this.#random, this.#settings),
+            );
+            return 'success';
+          },
+          flank: (f, run) => {
+            const seconds = Number(run.blackboard.get('maneuverSeconds') ?? 1);
+            f.mind.run = this.#newRun('flank', f.feet, this.#movement.speedRun, seconds);
+            return 'success';
+          },
+          // Round it just out of its reach for its stalk time: a circle at its distance.
+          stalk: (f, run) => {
+            const seconds = Number(run.blackboard.get('maneuverSeconds') ?? 1);
+            const close = this.#close(f);
+            const circle = this.#startRun(
+              'circle',
+              f.mind,
+              f.view,
+              f.target,
+              close.moving,
+              style(f),
+              close.range,
+              f.distance,
+            );
+            if (!circle) return 'failure';
+            f.mind.run = { ...circle, behaviour: 'stalk', until: this.#clock + seconds };
+            return 'success';
+          },
+          chooseAttack: (f, run) => {
+            const gear = f.view.gear;
+            const target = f.target;
+            const choice = chooseAttack(
+              style(f),
+              {
+                targetStaggered: target.state.staggered,
+                targetBlocking: target.state.blocking,
+                targetAttacking: attacking(target.state),
+                targetPowerAttacking: target.state.current?.power === true,
+                targetRecoiling: target.state.recoiling,
+                blocking: f.view.state.blocking,
+                canBash: gear?.canBash === true,
+                powerChance: gear?.powerChance ?? 0,
+                ...f.opponent,
+                sinceLastAttack: sinceLast(f),
+              },
+              this.#random,
+              this.#settings,
+            );
+            run.blackboard.set('attack', AttackPick[choice]);
+            return choice === 'none' ? 'failure' : 'success';
+          },
+          attack: (f) => this.#strike(f, 'ActionRightAttack'),
+          powerAttack: (f) => this.#strike(f, 'ActionRightPowerAttack'),
+          // Blocking, its graph turns an attack into a bash.
+          bash: (f) => this.#strike(f, 'ActionRightAttack'),
+          powerBash: (f) => this.#strike(f, 'ActionRightPowerAttack'),
+          // TODO(M13): the special attack's own idle (the chooser does not pick it yet).
+          specialAttack: (f) => this.#strike(f, 'ActionRightPowerAttack'),
+          leftAttack: (f) => this.#strike(f, 'ActionLeftAttack'),
+          drawShot: (f) => {
+            this.#strike(f, 'ActionRightAttack');
+            f.mind.bowHold = bowHoldTime(
+              style(f),
+              { ...f.opponent, distance: f.distance, radii: f.view.radius + f.target.radius },
+              this.#random,
+              this.#settings,
+            );
+            return 'success';
+          },
+          releaseShot: (f) => {
+            void host.release(f.mind.reference, 'ActionRightRelease');
+            return 'success';
+          },
+          cancelShot: (f) => {
+            void host.release(f.mind.reference, 'ActionRightInterrupt');
+            return 'success';
+          },
+          equipRanged: (f) => {
+            const runtime = this.#options.session.scriptsReady;
+            const weapon = f.option?.id;
+            if (!runtime || weapon === undefined) return 'failure';
+            void this.#equipAmmo(f.mind.reference, weapon, runtime);
+            return 'success';
+          },
+          castRight: (f) => this.#castWith(f, 'right'),
+          castConcentration: (f) => this.#castWith(f, 'right'),
+          castLeft: (f) => this.#castWith(f, 'left'),
+          // TODO(M13): dual casting (its condition does not hold yet).
+          prepareDualCast: () => 'failure',
+          castShout: (f) => this.#castWith(f, 'voice'),
+          noteBlow: (f) => {
+            f.mind.blockedSwing = this.#blowAt(f);
+            return 'success';
+          },
+          block: (f) => {
+            f.mind.blockUntil = this.#clock + blockTime(style(f), this.#settings);
+            void host.block(f.mind.reference, true);
+            return 'success';
+          },
+          releaseBlock: (f) => {
+            this.#releaseBlock(f.mind, f.view);
+            return 'success';
+          },
+          // TODO(M13): Block Attack's timed block against a swing (the block holds meanwhile).
+          blockAttack: () => 'success',
+          // What it does for itself (heals, potions, summons, wards, buffs), now and then.
+          support: (f) => {
+            const mind = f.mind;
+            mind.nextSupport = this.#clock + SUPPORT_SECONDS;
+            mind.supporting = true;
+            void this.#support(mind, f.view, f.target.reference)
+              .catch((error: unknown) => {
+                this.#warn(`${mind.reference.toString(16)} support: ${describe(error)}`);
+              })
+              .finally(() => {
+                mind.supporting = false;
+              });
+            return 'success';
+          },
+          taunt: (f) => {
+            f.mind.nextLine =
+              this.#clock + this.#between(this.#settings.tauntMin, this.#settings.tauntMax);
+            this.#bark(f.mind.reference, 'Taunt', f.target.reference);
+            return 'success';
+          },
+        },
+      ),
+      'Combat',
+    );
   }
 
   #releaseBlock(mind: Mind, view: FighterView | undefined): void {

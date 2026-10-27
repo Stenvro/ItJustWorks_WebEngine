@@ -58,7 +58,7 @@ These run through every area and explain most of what breaks in play.
    there are no buffered cells; state the saves need is
    spread outside GameState, and Papyrus threads cannot be saved yet.
 5. **Decision structures.** Combat is a behaviour tree in the original (actions per equipment slot in
-   parallel with a movement priority list); ours is one fixed path. The sandbox has a daily plan and
+   parallel with a movement priority list); ours runs that tree (src/ai/combat-tree.ts), some subtrees still TODO(M13). The sandbox has a daily plan and
    weighted activities; ours picks at random.
 
 ## Areas
@@ -100,24 +100,24 @@ These run through every area and explain most of what breaks in play.
 
 ### Combat
 
-| System            | Status    | Main gaps                                                                                                                                                            |
-| ----------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Controller, state | different | per-behaviour timers; the per-fight confidence roll (read: fCombatConfidenceModifierMin .. Max, drawn as a fight begins; not applied)                                |
-| Target selection  | different | additive scores, re-selection timing, crowding, reachability (the group's target knowledge and stealth points are the engine's: ai.md Combat detection)              |
-| Flee              | different | strength ratio (damage per second × health against armour) instead of health share                                                                                   |
-| Behaviour tree    | partial   | per-slot actions (left and dual attacks, shield and weapon, spell and weapon), cover, find attack location, hide, low combat (close movement: ai.md Combat movement) |
-| Style values      | complete  | (on the engine's scale; the special attack, block attack and offensive bash behaviours wait for the tree)                                                            |
-| Inventory         | partial   | hand pairs, continuous weighing after the minimum equip times, torches, ammunition                                                                                   |
-| Melee choice      | partial   | attacks from attack data while closing in, per-attack angle and cooldown, special attack                                                                             |
-| Block, bash       | different | sustained block, block attack, offensive bash                                                                                                                        |
-| Close movement    | partial   | the selector's range split and Fallback To Ranged's condition (inferred); the flanking and ranged movement trees                                                     |
-| Ranged            | partial   | line of fire (hold and release, firing arc, maximum hold: done), cover                                                                                               |
-| Combat magic      | partial   | casters by purpose, dual casting, reanimate a corpse                                                                                                                 |
-| Potions           | partial   | the casters' order in the tree; the stop-cast threshold of a held healing spell                                                                                      |
-| Damage, stagger   | partial   | sneak attacks by the player only, attack damage mult, the blocked hit's stagger terms (stagger by the Mass actor value and the critical chance actor value: done)    |
-| Combat dialogue   | partial   | per-subtype cooldowns and distance gates                                                                                                                             |
-| Combat music      | different | threat-ratio gate, near-combat radius, stop delay                                                                                                                    |
-| Kill moves        | partial   | the magic kill cam (rules read: docs/gameplay.md), the kill camera's radial blur between shots                                                                       |
+| System            | Status    | Main gaps                                                                                                                                                                                               |
+| ----------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Controller, state | different | per-behaviour timers; the per-fight confidence roll (read: fCombatConfidenceModifierMin .. Max, drawn as a fight begins; not applied)                                                                   |
+| Target selection  | different | additive scores, re-selection timing, crowding, reachability (the group's target knowledge and stealth points are the engine's: ai.md Combat detection)                                                 |
+| Flee              | different | strength ratio (damage per second × health against armour) instead of health share                                                                                                                      |
+| Behaviour tree    | partial   | left-hand weapon and spell, dual cast, Use Cover, Exit Water, Low Combat, Acquire Weapon, Flee and Search as subtrees (runtime, slots in parallel, movement priority list: done, src/ai/combat-tree.ts) |
+| Style values      | complete  | (on the engine's scale; the special attack, block attack and offensive bash behaviours wait for the tree)                                                                                               |
+| Inventory         | partial   | hand pairs, continuous weighing after the minimum equip times, torches, ammunition                                                                                                                      |
+| Melee choice      | partial   | attacks from attack data while closing in, per-attack angle and cooldown, special attack                                                                                                                |
+| Block, bash       | different | sustained block, block attack, offensive bash                                                                                                                                                           |
+| Close movement    | partial   | the selector's range split and Fallback To Ranged's condition (inferred); the flanking and ranged movement trees                                                                                        |
+| Ranged            | partial   | line of fire (hold and release, firing arc, maximum hold: done), cover                                                                                                                                  |
+| Combat magic      | partial   | casters by purpose, dual casting, reanimate a corpse                                                                                                                                                    |
+| Potions           | partial   | the casters' order in the tree; the stop-cast threshold of a held healing spell                                                                                                                         |
+| Damage, stagger   | partial   | sneak attacks by the player only, attack damage mult, the blocked hit's stagger terms (stagger by the Mass actor value and the critical chance actor value: done)                                       |
+| Combat dialogue   | partial   | per-subtype cooldowns and distance gates                                                                                                                                                                |
+| Combat music      | different | threat-ratio gate, near-combat radius, stop delay                                                                                                                                                       |
+| Kill moves        | partial   | the magic kill cam (rules read: docs/gameplay.md), the kill camera's radial blur between shots                                                                                                          |
 
 ### Magic, effects, perks
 
