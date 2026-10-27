@@ -67,7 +67,7 @@ These run through every area and explain most of what breaks in play.
 
 | System                      | Status    | Main gaps                                                                                                                                                                           |
 | --------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Form types                  | complete  | VOLI, LENS (render)                                                                                                                                                                 |
+| Form types                  | complete  |                                                                                                                                                                                     |
 | Per-reference state         | partial   | animated state lost on unload, partial souls, alias display names (activate children: done, 158 of 6,527 pairs lie beyond the cells searched; MoveTo on a moving object: done)      |
 | Cell loading                | partial   | no buffered cells, OnAttached/DetachedFromCell not checked, grid follows the camera (detach hours: done)                                                                            |
 | Respawn, cell reset         | partial   | enable state on reset, the actors' own respawn clock, dropped items (reset rule, zones, OnReset, corpses, zone levels: done; vendor restock: done)                                  |
@@ -174,7 +174,7 @@ These run through every area and explain most of what breaks in play.
 | Shadows                                 | partial   | shadow lights (interiors) done; no focus shadows, no shadow lights in exteriors     |
 | Fade, LOD                               | partial   | no distance fade of objects, items and actors                                       |
 | Rooms, portals, occlusion               | partial   | rooms' lighting templates and image spaces; LOD not culled by them                  |
-| Image space                             | partial   | volumetric lighting, lens flare, low-health effect, TAA                             |
+| Image space                             | partial   | god rays are a screen-space blur, not the froxel volume; TAA without motion vectors |
 | Water                                   | partial   | underwater view, ripples, reflections of what is off screen                         |
 | Decals                                  | partial   | skinned decals, impact effect models, screen blood                                  |
 | First person                            | partial   | own view and depth band done; engine near plane, first-person particles             |

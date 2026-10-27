@@ -901,6 +901,10 @@ async function main(): Promise<void> {
       if (session) {
         renderer.grass.fadeStart = session.ini.number('Grass', 'fGrassStartFadeDistance');
         renderer.post.gamma = session.ini.number('Display', 'fGamma');
+        // The launcher's anti-aliasing, volumetric lighting and lens flare.
+        renderer.antiAliasing = session.ini.bool('Display', 'bUseTAA');
+        renderer.sunEffects.rays = session.ini.bool('Display', 'bVolumetricLightingEnable');
+        renderer.sunEffects.flare = session.ini.bool('ImageSpace', 'bLensFlare');
       }
       lastScriptTick = now;
       session?.soundSystem?.update(renderer.view?.camera);

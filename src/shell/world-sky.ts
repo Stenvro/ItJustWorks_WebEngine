@@ -22,6 +22,14 @@ import { parsePrecipitation, precipitationAmounts } from '../world/precipitation
 import type { GpuSky, SkyFrame, SkyRenderer } from '../render/sky.ts';
 import { skyShapes } from '../render/sky-data.ts';
 import { blendImageSpaces, parseImageSpace, type ImageSpace } from '../world/image-space.ts';
+import { parseLensFlare, type LensFlare } from '../world/lens-flare.ts';
+import {
+  blendVolumetricLighting,
+  godRays,
+  parseVolumetricLighting,
+  type VolumetricLighting,
+} from '../world/volumetric-lighting.ts';
+import type { SunEffectsFrame } from '../render/sun-effects.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
 import { skySettings, skyState, type SkySettings, type SkyState } from '../world/sky-state.ts';
 import { SkyMode, weatherRegionAt } from '../world/sky-weather.ts';
@@ -155,6 +163,11 @@ export class WorldSky {
   readonly #gpu: GpuSky;
   /** Imagespaces by form id; undefined while loading or if missing. */
   readonly #imageSpaces = new Map<number, ImageSpace | undefined>();
+  readonly #volumetric = new Map<number, VolumetricLighting | undefined>();
+  readonly #lenses = new Map<
+    number,
+    { lens: LensFlare; textures: Map<string, GPUTexture> } | undefined
+  >();
   #imageSpace: ImageSpace | undefined;
   readonly #detach: () => void;
   /** The sky's current and outgoing weather of the last frame, and the change between. */
@@ -532,6 +545,78 @@ export class WorldSky {
         });
     }
     return this.#precipitation.get(formId);
+  }
+
+  /**
+   * The weather's god rays (its VOLI by time of day, scaled by [Display]
+   * fVolumetricLightingIntensity) and its sun's lens flare (LENS, [ImageSpace]
+   * fLensFlareGlobalIntensity) for the last frame; none while the sky is off.
+   */
+  sunEffects(): SunEffectsFrame | undefined {
+    const state = this.#state;
+    if (!state || this.#session.sky.mode === SkyMode.none) return undefined;
+    const ini = this.#session.ini;
+    const entries: { lighting: VolumetricLighting; weight: number }[] = [];
+    for (const { formId, weight } of state.volumetricLightings ?? []) {
+      const lighting = this.#loadVolumetric(formId);
+      if (lighting) entries.push({ lighting, weight });
+    }
+    const lighting = blendVolumetricLighting(entries);
+    const rays = godRays(
+      lighting,
+      {
+        enabled: ini.bool('Display', 'bVolumetricLightingEnable'),
+        intensity: ini.number('Display', 'fVolumetricLightingIntensity'),
+      },
+      state.sunlight,
+      Math.abs(state.sunDirection[2]),
+    );
+    const lens = state.lensFlare === undefined ? undefined : this.#loadLens(state.lensFlare);
+    return {
+      lightDirection: state.lightDirection,
+      ...(rays.strength > 0 && {
+        rays: { ...rays, reach: Math.min(1, lighting.rangeFactor / 40) },
+      }),
+      ...(lens &&
+        ini.bool('ImageSpace', 'bLensFlare') && {
+          flare: {
+            lens: lens.lens,
+            textures: lens.textures,
+            sunDirection: state.sunDirection,
+            color: state.sunGlareColor,
+            intensity: ini.number('ImageSpace', 'fLensFlareGlobalIntensity'),
+          },
+        }),
+    };
+  }
+
+  #loadVolumetric(formId: number): VolumetricLighting | undefined {
+    if (!this.#volumetric.has(formId)) {
+      this.#volumetric.set(formId, undefined);
+      void this.#db.get(formId).then((record) => {
+        if (record?.type === 'VOLI') this.#volumetric.set(formId, parseVolumetricLighting(record));
+      });
+    }
+    return this.#volumetric.get(formId);
+  }
+
+  /** A lens flare and its sprites' textures (each shown once it is loaded). */
+  #loadLens(formId: number): { lens: LensFlare; textures: Map<string, GPUTexture> } | undefined {
+    if (!this.#lenses.has(formId)) {
+      this.#lenses.set(formId, undefined);
+      void this.#db.get(formId).then((record) => {
+        if (record?.type !== 'LENS') return;
+        const entry = { lens: parseLensFlare(record), textures: new Map<string, GPUTexture>() };
+        this.#lenses.set(formId, entry);
+        for (const { texture } of entry.lens.sprites) {
+          if (texture === '' || entry.textures.has(texture)) continue;
+          void this.#session.textures.get(texture, true).then((gpu) => {
+            if (gpu) entry.textures.set(texture, gpu);
+          });
+        }
+      });
+    }
+    return this.#lenses.get(formId);
   }
 
   #loadImageSpace(formId: number): ImageSpace | undefined {
