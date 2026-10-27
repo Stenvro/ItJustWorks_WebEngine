@@ -305,7 +305,12 @@ describe.skipIf(!hasGamedata())('the script runtime on the local game data', () 
     };
     try {
       await runtime.events.emitted('combat', { actor: dragon, target: PLAYER, state: 1 });
-      await runtime.vm.idle();
+      // The hub does not wait for the handlers (script-events.ts): they start once the dragon's
+      // scripts are made.
+      for (let i = 0; i < 200 && ran.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        await runtime.vm.idle();
+      }
       expect(ran).toContain('dragonactorscript.OnCombatStateChanged');
     } finally {
       runtime.vm.handled = undefined;
