@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { RecordDatabase } from '../../world/record-db.ts';
+import type { QuestRecord } from '../../world/quest-records.ts';
+import type { GameRecord, RecordDatabase } from '../../world/record-db.ts';
 import { ScriptLibrary } from '../script-library.ts';
 import { formatValue, ObjectHandle, type Value } from '../values.ts';
 import { ScriptRuntime } from './runtime.ts';
@@ -18,7 +19,7 @@ function runtime(): { runtime: ScriptRuntime; sent: string[] } {
   } as unknown as RecordDatabase;
   const made = new ScriptRuntime(db, new ScriptLibrary(() => Promise.resolve(undefined)));
   const sent: string[] = [];
-  made.vm.sendEvent = (target: ObjectHandle, event: string, args: readonly Value[] = []) => {
+  made.vm.sendEvent = (target: ObjectHandle, event: string, args: readonly Value[]) => {
     sent.push(`${event} ${target.formId.toString(16)} (${args.map(formatValue).join(', ')})`);
     return Promise.resolve();
   };
@@ -62,6 +63,32 @@ describe("an object's animated state across its cell's unload", () => {
     scripts.world.savedGraph = (reference) => (reference === LEVER ? lid : undefined);
     await scripts.cellDetached([LEVER, QUEST], (reference) => reference === LEVER);
     expect([...scripts.state.graphs]).toEqual([[LEVER, lid]]);
+  });
+});
+
+describe("an alias's display name", () => {
+  it('names the reference while the alias holds it', async () => {
+    const { runtime: scripts } = runtime();
+    const MESSAGE = 0x400;
+    scripts.forms.quest = (formId: number) =>
+      Promise.resolve(
+        formId === QUEST
+          ? ({ aliases: [{ id: 2, displayName: MESSAGE }] } as unknown as QuestRecord)
+          : undefined,
+      );
+    scripts.forms.record = (formId: number) =>
+      Promise.resolve(
+        formId === MESSAGE
+          ? ({ text: () => "Ulfric's Letter" } as unknown as GameRecord)
+          : undefined,
+      );
+    scripts.forceAlias(QUEST, 2, LEVER);
+    await scripts.vm.idle();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(scripts.aliasDisplayName(LEVER)).toBe("Ulfric's Letter");
+    scripts.clearAlias(QUEST, 2);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(scripts.aliasDisplayName(LEVER)).toBeUndefined();
   });
 });
 
