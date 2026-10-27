@@ -3,6 +3,7 @@
 // environment. Disposed when another folder is mounted.
 
 import { loadGameScripts, type GameSave } from '../save/game-save.ts';
+import { WorldRestore } from '../save/world-save.ts';
 import type { SaveHeader } from '../save/save-codec.ts';
 import { loadRouteMap } from '../ai/route-map.ts';
 import type { Space } from '../ai/package-start.ts';
@@ -245,6 +246,8 @@ export class GameSession {
   #runtime: Promise<ScriptRuntime> | undefined;
   /** The running game's scripts once their new game has started. */
   scriptsReady: ScriptRuntime | undefined;
+  /** A loaded save's world, taken by the actors and objects as they are placed again. */
+  restoring: WorldRestore | undefined;
   /** The scripts while their new game starts, and what they are doing (dev checks). */
   scriptsStarting: ScriptRuntime | undefined;
   scriptsProgress = '';
@@ -1078,6 +1081,10 @@ export class GameSession {
         'ok',
       );
       this.scriptsReady = runtime;
+      // A loaded game: the scripts that listen hear it (OnPlayerLoadGame, to the player and
+      // its aliases). TODO(M13): the original sends it once the loaded world is up; here as
+      // the scripts are, before the player's cell has loaded.
+      if (load) void runtime.events.emitted('loadGame', {});
       // Sounds and music read the running game's globals from now on.
       if (!this.#voices)
         void this.sounds().then((sounds) => {
@@ -1119,6 +1126,9 @@ export class GameSession {
     this.scriptsProgress = '';
     this.#runtime = undefined;
     this.cellSelections.clear();
+    // A loaded save's world (its actors' places, objects' graphs) is handed out as it loads.
+    const world = this.#pendingLoad?.save.world;
+    this.restoring = world && new WorldRestore(world);
     if (!this.#voices)
       void this.sounds().then((sounds) => {
         sounds.globals = undefined;
