@@ -19,6 +19,7 @@ import {
   type PackageTarget,
 } from '../ai/package-records.ts';
 import { PROCEDURES } from '../ai/procedure-runs.ts';
+import type { ProcessSlicer } from '../ai/process-levels.ts';
 import { aiSettingsOf } from '../ai/ai-settings.ts';
 import { patrolIdleTime } from '../ai/package-records.ts';
 import { ActorValue } from '../world/actor-values.ts';
@@ -157,6 +158,7 @@ export class ActorAi {
   readonly #talkHeld = new Map<number, () => Vec3 | undefined>();
   /** Whether an actor fights now (its packages wait meanwhile: src/shell/actor-combat.ts). */
   readonly #engaged: ((reference: number) => boolean) | undefined;
+  readonly #slicer: ProcessSlicer | undefined;
   /** The actors talking with the player now (their packages wait). */
   readonly #talking = new Set<number>();
   /**
@@ -229,7 +231,10 @@ export class ActorAi {
      * events, src/shell/actor-graph-events.ts); resolves then, or after a while without one.
      */
     readonly activationDone?: (actor: number) => Promise<void>;
+    /** The middle-high process's turns: their packages run on theirs (src/ai/process-levels.ts). */
+    readonly slicer?: ProcessSlicer;
   }) {
+    this.#slicer = options.slicer;
     this.#session = options.session;
     this.#movers = options.movers;
     this.#furniture = options.furniture;
@@ -442,7 +447,13 @@ export class ActorAi {
         continue;
       }
       if (this.#ridden.delete(reference)) entry.packages.evaluate();
-      entry.packages.update(seconds);
+      // Beyond the high process, on its turn (with the time it was owed).
+      const packages = entry.packages;
+      if (!this.#slicer) packages.update(seconds);
+      else
+        this.#slicer.turn('packages', reference, seconds, (owed) => {
+          packages.update(owed);
+        });
     }
     for (const reference of [...this.#actors.keys()]) {
       if (!live.has(reference)) this.remove(reference);
