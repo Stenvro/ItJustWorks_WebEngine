@@ -13,6 +13,8 @@
 //   node tools/effect-audit.ts --impacts     impacts (IPCT): placement radius, hazards they leave
 //                                            (their lifetime and limit), and the projectiles
 //                                            whose effects' impact data sets leave them, by kind
+//   node tools/effect-audit.ts --glow        enchanted weapons and armour: the effect shader and
+//                                            art their enchantment shows (enchantment-glow.ts)
 //
 // Without an option: all of them.
 
@@ -26,6 +28,7 @@ import { parseHazard } from '../src/world/hazard-records.ts';
 import { parseImpact, parseImpactDataSet } from '../src/world/impact-records.ts';
 import { parseMagicEffect } from '../src/world/magic-effects.ts';
 import { parseProjectile } from '../src/world/projectile-data.ts';
+import { itemGlow } from '../src/gameplay/magic/enchantment-glow.ts';
 import { flightKind } from '../src/gameplay/magic/projectile-flight.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
@@ -37,9 +40,10 @@ const { values } = parseArgs({
     lit: { type: 'boolean', default: false },
     spots: { type: 'boolean', default: false },
     impacts: { type: 'boolean', default: false },
+    glow: { type: 'boolean', default: false },
   },
 });
-const all = !values.markers && !values.lit && !values.spots && !values.impacts;
+const all = !values.markers && !values.lit && !values.spots && !values.impacts && !values.glow;
 
 const vfs = await Vfs.mount(openGameFolder());
 const count = <K>(map: Map<K, number>, key: K, by = 1): void => {
@@ -239,4 +243,29 @@ if (all || values.impacts) {
   }
   console.log('  magic effects with a projectile and an impact data set, by flight:');
   for (const [key, n] of sorted(leaving)) console.log(`    ${n}  ${key}`);
+}
+
+if (all || values.glow) {
+  console.log('Enchanted items (EITM) and their glow:');
+  const get = (formId: number): ReturnType<typeof db.get> => db.get(formId);
+  for (const type of ['WEAP', 'ARMO']) {
+    const shaders = new Map<string, number>();
+    let enchanted = 0;
+    let glowing = 0;
+    let withArt = 0;
+    for (const formId of db.formIdsOfType(type)) {
+      const record = await db.get(formId);
+      if (record?.formIdField('EITM') === undefined) continue;
+      enchanted++;
+      const glow = await itemGlow(get, formId);
+      if (!glow) continue;
+      if (glow.shader !== undefined) {
+        glowing++;
+        count(shaders, (await db.get(glow.shader))?.editorId ?? glow.shader.toString(16));
+      }
+      if (glow.art !== undefined) withArt++;
+    }
+    console.log(`  ${type}: ${enchanted} enchanted, ${glowing} with a shader, ${withArt} with art`);
+    for (const [key, n] of sorted(shaders).slice(0, 12)) console.log(`    ${n}  ${key}`);
+  }
 }

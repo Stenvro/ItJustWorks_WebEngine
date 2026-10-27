@@ -1,6 +1,7 @@
 // An effect shader's particles (EFSH's particle shader: src/world/effect-shader-records.ts) off
 // an actor's surfaces: born at points of its skin as its pose has them now (its skinned shapes'
-// vertices, sampled), at the shader's birth rate (ramping up, full, ramping down, then its
+// vertices, sampled; on an object without a skeleton, its rigid shapes' vertices where its model
+// places them), at the shader's birth rate (ramping up, full, ramping down, then its
 // persistent count a second), moving off along the surface normal and with the shader's
 // velocity and acceleration, sized by its two scale keys and coloured by its three colour keys
 // over their lives, turning, in frames of its texture's atlas. A ParticleSource for the scene
@@ -19,11 +20,16 @@ import {
 import { fromHalf } from '../render/skinning.ts';
 import { EffectShaderFlag, type EffectShaderRecord } from '../world/effect-shader-records.ts';
 
-/** A body particles are born on: its skinned shapes, its pose, its placement. */
+/** A body particles are born on: its shapes, its pose (none: an object's rigid shapes), its placement. */
 export interface ParticleBody {
   readonly parts: readonly ModelPart[];
-  readonly pose: ActorPose;
+  readonly pose: ActorPose | undefined;
   readonly world: Mat4;
+  /**
+   * Without a pose: where a rigid shape is now under `world` (a held weapon's shape on its hand
+   * node); undefined, or none given: where its model places it.
+   */
+  readonly hang?: (part: ModelPart) => Mat4 | undefined;
 }
 
 /** Most particles alive at once per shader on one body. */
@@ -251,9 +257,12 @@ export class SurfaceParticles implements ParticleSource {
   /** Picks the points of the skin particles are born at. */
   #sample(body: ParticleBody): void {
     this.#sampledFor = body;
-    const skinned = body.parts.filter(
-      (part) =>
-        part.skin !== undefined && (part.layout.skinning ?? -1) >= 0 && part.vertexCount > 0,
+    // An actor's skinned shapes; an object's (no pose) rigid ones.
+    const pose = body.pose;
+    const skinned = body.parts.filter((part) =>
+      pose
+        ? part.skin !== undefined && (part.layout.skinning ?? -1) >= 0 && part.vertexCount > 0
+        : part.skin === undefined && part.vertexCount > 0 && part.billboard === undefined,
     );
     const samples: Sample[] = [];
     const total = skinned.reduce((sum, part) => sum + part.vertexCount, 0);
@@ -267,7 +276,7 @@ export class SurfaceParticles implements ParticleSource {
         part,
         Int16Array.from(
           part.skin?.names ?? [],
-          (name) => body.pose.skeleton.nodeByName.get(name.toLowerCase()) ?? -1,
+          (name) => pose?.skeleton.nodeByName.get(name.toLowerCase()) ?? -1,
         ),
       );
     }
@@ -322,7 +331,6 @@ export class SurfaceParticles implements ParticleSource {
     const { part, vertex, nodes } = sample;
     const skin = part.skin;
     const skinning = part.layout.skinning;
-    if (!skin || skinning === undefined) return undefined;
     const view = new DataView(
       part.vertices.buffer,
       part.vertices.byteOffset,
@@ -333,6 +341,10 @@ export class SurfaceParticles implements ParticleSource {
     const py = view.getFloat32(base + 4, true);
     const pz = view.getFloat32(base + 8, true);
     const normal = normalAt(view, base + part.layout.normal, part.layout.normal >= 0);
+    const worlds = body.pose?.worlds;
+    // A rigid shape: its vertex where the model places the shape.
+    if (!worlds) return placed(body.world, body.hang?.(part) ?? part.world, [px, py, pz], normal);
+    if (!skin || skinning === undefined) return undefined;
     let x = 0;
     let y = 0;
     let z = 0;
@@ -340,7 +352,6 @@ export class SurfaceParticles implements ParticleSource {
     let ny = 0;
     let nz = 0;
     let total = 0;
-    const worlds = body.pose.worlds;
     const bone = this.#bone;
     for (let k = 0; k < 4; k++) {
       const weight = fromHalf(view.getUint16(base + skinning + k * 2, true));
@@ -368,18 +379,7 @@ export class SurfaceParticles implements ParticleSource {
       total += weight;
     }
     if (total <= 0) return undefined;
-    x /= total;
-    y /= total;
-    z /= total;
-    const w = body.world;
-    const wx = (w[0] ?? 0) * x + (w[4] ?? 0) * y + (w[8] ?? 0) * z + (w[12] ?? 0);
-    const wy = (w[1] ?? 0) * x + (w[5] ?? 0) * y + (w[9] ?? 0) * z + (w[13] ?? 0);
-    const wz = (w[2] ?? 0) * x + (w[6] ?? 0) * y + (w[10] ?? 0) * z + (w[14] ?? 0);
-    const tx = (w[0] ?? 0) * nx + (w[4] ?? 0) * ny + (w[8] ?? 0) * nz;
-    const ty = (w[1] ?? 0) * nx + (w[5] ?? 0) * ny + (w[9] ?? 0) * nz;
-    const tz = (w[2] ?? 0) * nx + (w[6] ?? 0) * ny + (w[10] ?? 0) * nz;
-    const length = Math.hypot(tx, ty, tz) || 1;
-    return [wx, wy, wz, tx / length, ty / length, tz / length];
+    return placed(body.world, IDENTITY, [x / total, y / total, z / total], [nx, ny, nz]);
   }
 
   write(out: Float32Array, offset: number): number {
@@ -478,4 +478,27 @@ export function colorAt(
   }
   const last = keys[keys.length - 1] ?? first;
   return [...last.color, last.alpha];
+}
+
+const IDENTITY: Mat4 = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+
+/** A point and its normal through a shape's place in its model, then the model's in the world. */
+function placed(
+  world: Mat4,
+  local: Mat4,
+  point: readonly [number, number, number],
+  normal: readonly [number, number, number],
+): [number, number, number, number, number, number] {
+  const at = (m: Mat4, v: readonly number[], w: number): [number, number, number] => {
+    const [x = 0, y = 0, z = 0] = v;
+    return [
+      (m[0] ?? 0) * x + (m[4] ?? 0) * y + (m[8] ?? 0) * z + (m[12] ?? 0) * w,
+      (m[1] ?? 0) * x + (m[5] ?? 0) * y + (m[9] ?? 0) * z + (m[13] ?? 0) * w,
+      (m[2] ?? 0) * x + (m[6] ?? 0) * y + (m[10] ?? 0) * z + (m[14] ?? 0) * w,
+    ];
+  };
+  const [wx, wy, wz] = at(world, at(local, point, 1), 1);
+  const [tx, ty, tz] = at(world, at(local, normal, 0), 0);
+  const length = Math.hypot(tx, ty, tz) || 1;
+  return [wx, wy, wz, tx / length, ty / length, tz / length];
 }

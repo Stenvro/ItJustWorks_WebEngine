@@ -133,6 +133,8 @@ export class HeldWeapons {
       }
     | undefined;
   #destroyed = false;
+  /** Each hand's weapon instance (an enchanted one's glow covers it: actor-effects.ts). */
+  readonly #hands = new Map<'right' | 'left', ModelInstance>();
 
   private constructor(body: HeldBody, held: HeldModels) {
     this.#body = body;
@@ -222,6 +224,12 @@ export class HeldWeapons {
       partShown,
       ...(level && { weaponBlood: level }),
     }));
+    hung.forEach(({ slot }, i) => {
+      const instance = instances[i];
+      if (!instance) return;
+      if (slot === Slot.right) weapons.#hands.set('right', instance);
+      else if (slot === Slot.left) weapons.#hands.set('left', instance);
+    });
     if (torch) {
       const world = new Float32Array(16);
       const motion: InstanceMotion = { version: 0 };
@@ -237,6 +245,16 @@ export class HeldWeapons {
     }
     weapons.#scene = renderer.scene.createScene(instances);
     return weapons;
+  }
+
+  /** A hand's weapon as drawn (undefined: none, or the models are gone). */
+  hand(hand: 'right' | 'left'): ModelInstance | undefined {
+    return this.#destroyed ? undefined : this.#hands.get(hand);
+  }
+
+  /** Whether the models are shown (their body's visibility). */
+  get visibility(): InstanceVisibility {
+    return this.#body.visibility;
   }
 
   /** The scene that draws them. */
