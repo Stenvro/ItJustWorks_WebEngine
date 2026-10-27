@@ -6,6 +6,12 @@
 // created there. The game state says where an actor is when no loaded cell shows it, and
 // whether it is dead (the dead lie as ragdolls when their cell loads again).
 
+import {
+  INVISIBILITY_DEFAULTS,
+  INVISIBILITY_SETTING_NAMES,
+  invisibilityVeil,
+  type InvisibilitySettings,
+} from '../gameplay/magic/invisibility.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { RAGDOLL_FALL_SHARE } from '../gameplay/falling.ts';
 import { actorFell } from './time-flow.ts';
@@ -949,6 +955,37 @@ export class ActorStage {
     ];
   }
 
+  /** Invisibility's settings (GMSTs), once read. */
+  #invisibility: InvisibilitySettings | undefined;
+
+  /** Invisible actors are drawn veiled, the player faintly (src/gameplay/magic/invisibility.ts). */
+  #veil(): void {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime) return;
+    if (!this.#invisibility) {
+      this.#invisibility = INVISIBILITY_DEFAULTS;
+      void (async () => {
+        const read = async (key: keyof InvisibilitySettings): Promise<number> => {
+          const value = await runtime.gameSetting(INVISIBILITY_SETTING_NAMES[key]);
+          return typeof value === 'number' ? value : INVISIBILITY_DEFAULTS[key];
+        };
+        this.#invisibility = {
+          playerMinimum: await read('playerMinimum'),
+          minRefraction: await read('minRefraction'),
+        };
+      })();
+    }
+    for (const staged of this.#actors.values()) {
+      const fade = staged.placed.instances[0]?.fade;
+      if (!fade) continue;
+      fade.veil = invisibilityVeil(
+        runtime.magic.aiState(staged.reference).invisible,
+        staged.reference === PLAYER_REF,
+        this.#invisibility,
+      );
+    }
+  }
+
   /** The living actors projectiles can meet, the player too. */
   *#projectileTargets(): Iterable<ProjectileTarget> {
     for (const staged of this.#actors.values()) {
@@ -1875,6 +1912,7 @@ export class ActorStage {
     this.casting.frame(frame);
     this.projectiles.frame(frame);
     this.effects.frame(frame);
+    this.#veil();
     this.fx.frame(frame);
     for (const [key, guide] of this.#guides) {
       guide.wait -= frame;
