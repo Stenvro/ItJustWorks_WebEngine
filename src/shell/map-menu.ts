@@ -16,6 +16,7 @@
 // What is inside (a dungeon, a house) shows at the door that leads in. The map's acoustic
 // space (UIWorldMap: the wind) plays while it is open. Notes: docs/ui.md ("The map").
 
+import { inputPlatform } from '../ui/input-platform.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
@@ -334,7 +335,7 @@ class OpenMap {
       setup: async (opened) => {
         if (!(await opened.waitFor(`${ROOT}.SetNumMarkers`))) return;
         opened.invoke('_root.InitExtensions');
-        opened.invoke('_root.SetPlatform', 0, false);
+        opened.invoke('_root.SetPlatform', inputPlatform(), false);
         // Its size from the stage's rects as they are now (it read them as it started).
         opened.invoke(`${ROOT}.onResize`);
         opened.set(`${ROOT}.PlayerLocationMarkerType`, MapIcon.youAreHere);

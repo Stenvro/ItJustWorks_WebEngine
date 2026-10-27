@@ -19,7 +19,13 @@ import type { Camera } from '../render/view-camera.ts';
 import type { MoveRequest } from '../ai/locomotion.ts';
 import { lookAt, multiply, perspectiveReversedZ, type Mat4, type Vec3 } from '../render/math.ts';
 import { firstPersonViewProjection, verticalFov } from '../render/first-person-view.ts';
-import { parseControlMap, SCAN_CODES, type ControlMap } from '../formats/controlmap/controlmap.ts';
+import {
+  InputContext,
+  parseControlMap,
+  SCAN_CODES,
+  type ControlMap,
+} from '../formats/controlmap/controlmap.ts';
+import { padEvents } from '../formats/controlmap/gamepad.ts';
 import type { NifFile } from '../formats/nif/nif.ts';
 import { decodeWindows1252 } from '../formats/text.ts';
 import {
@@ -949,6 +955,9 @@ export class Player implements Camera {
     if (this.#event('Back')) y -= 1;
     if (this.#event('Strafe Right')) x += 1;
     if (this.#event('Strafe Left')) x -= 1;
+    // The left stick adds to the keys (a gamepad's Move).
+    x = Math.max(-1, Math.min(1, x + this.stick[0]));
+    y = Math.max(-1, Math.min(1, y + this.stick[1]));
     if (this.#event('Back') || this.#event('Forward')) this.#autoMove = false;
     const pilot = this.pilot;
     if (pilot) [x, y] = this.#piloted(pilot, seconds);
@@ -1400,9 +1409,45 @@ export class Player implements Camera {
     return this.#mouseEvents.get(button);
   }
 
+  /** The control map with the player's remaps, as the player reads it now. */
+  get controlMap(): ControlMap | undefined {
+    this.#current();
+    return this.#bound;
+  }
+
+  /** The user events of the main gameplay context bound to a gamepad input (PadInput). */
+  eventsOfPad(input: number): readonly string[] {
+    this.#current();
+    return this.#bound ? padEvents(this.#bound, InputContext.gameplay, input) : [];
+  }
+
+  /**
+   * The left stick (Move): x right, y forward, past its dead zone (src/shell/gamepad-input.ts).
+   * TODO(M13): walking at a part deflection (the stick's own speed between walk and run).
+   */
+  stick: readonly [number, number] = [0, 0];
+
+  /**
+   * The right stick (Look) held for some seconds: fGamepadHeadingSensitivity of π radians per
+   * second at full deflection. TODO(M13): the engine's own look rate and its acceleration.
+   */
+  lookStick(x: number, y: number, seconds: number): void {
+    if (x === 0 && y === 0) return;
+    const { ini } = this.#setup;
+    const rate = Math.PI * (ini.number('Controls', 'fGamepadHeadingSensitivity') || 0.6667);
+    const invert = ini.bool('Controls', 'bInvertYValues') ? -1 : 1;
+    this.#input = true;
+    this.yaw += x * rate * seconds;
+    this.pitch = Math.max(
+      -MAX_PITCH,
+      Math.min(MAX_PITCH, this.pitch - invert * y * rate * seconds),
+    );
+  }
+
   /** Forgets every held key (the window lost focus). */
   releaseAll(): void {
     this.#held.clear();
+    this.stick = [0, 0];
   }
 
   /**

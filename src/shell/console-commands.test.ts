@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { ConsoleCommands, type ConsoleContext } from './console-commands.ts';
+import {
+  ConsoleCommands,
+  handSlot,
+  placementOffset,
+  type ConsoleContext,
+} from './console-commands.ts';
 import { parseAxis, parseConsoleLine, parseConsoleNumber, parseFormId } from './console-parse.ts';
 import { consoleCommand } from './console-table.ts';
 
@@ -264,5 +269,70 @@ describe('parseConsoleLine', () => {
     expect(consoleCommand('movetoqt')?.name).toBe('MoveToQuestTarget');
     expect(consoleCommand('MoveTo')?.name).toBe('MoveToMarker');
     expect(consoleCommand('etp')).toBeUndefined();
+    expect(consoleCommand('inv')?.name).toBe('ShowInventory');
+    expect(consoleCommand('sifh')?.name).toBe('SetIgnoreFriendlyHits');
+  });
+});
+
+describe('ConsoleCommands, the rest', () => {
+  it('switches the renderer and holds the world still under tfc 1', async () => {
+    const shown = { lod: true, trees: true, water: true };
+    let frozen = false;
+    let free = false;
+    const commands = new ConsoleCommands(
+      fakeContext({
+        toggleRenderer: (what: keyof typeof shown) => (shown[what] = !shown[what]),
+        toggleFreeCamera: () => (free = !free),
+        freezeWorld: (to: boolean) => (frozen = to),
+      }),
+    );
+    expect(await commands.run('tll')).toEqual(['LOD Land -> Off']);
+    expect(await commands.run('tt')).toEqual(['Trees -> Off']);
+    expect(await commands.run('tws')).toEqual(['Water -> Off']);
+    expect(await commands.run('tfc 1')).toEqual(['Fly Camera Is On']);
+    expect(frozen).toBe(true);
+    expect(await commands.run('tfc')).toEqual(['Fly Camera Is Off']);
+    expect(frozen).toBe(false);
+  });
+
+  it('sets the player’s level and a base’s essential flag, and lists an inventory', async () => {
+    const context = fakeContext({});
+    const actors = new Map<number, { level?: number }>();
+    const bases = new Map<number, { essential?: boolean }>();
+    const state = {
+      created: new Map(),
+      actors,
+      playerExperience: 120,
+      actor: (id: number) => actors.get(id) ?? actors.set(id, {}).get(id),
+      actorBase: (id: number) => bases.get(id) ?? bases.set(id, {}).get(id),
+    };
+    Object.assign(context.runtime, {
+      state,
+      inventory: () =>
+        Promise.resolve(
+          new Map([
+            [0xf, 250],
+            [0x1, 0],
+          ]),
+        ),
+    });
+    const commands = new ConsoleCommands(context);
+    expect(await commands.run('player.setlevel 30')).toEqual([]);
+    expect(actors.get(0x14)?.level).toBe(30);
+    expect(state.playerExperience).toBe(0);
+    expect(await commands.run('player.showinventory')).toEqual(['250 -  (0000000F)']);
+  });
+
+  it('reads a hand and PlaceAtMe’s direction', () => {
+    expect(handSlot('Left')).toBe(2);
+    expect(handSlot('right')).toBe(1);
+    expect(handSlot('both')).toBeUndefined();
+    const [x, y] = placementOffset(90, 100, 0);
+    expect(x).toBeCloseTo(100);
+    expect(y).toBeCloseTo(0);
+    const [bx, by] = placementOffset(0, 100, 1);
+    expect(bx).toBeCloseTo(0);
+    expect(by).toBeCloseTo(-100);
+    expect(placementOffset(0, 100, 2)[0]).toBeCloseTo(-100);
   });
 });

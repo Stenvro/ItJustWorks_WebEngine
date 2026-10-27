@@ -73,6 +73,12 @@ export interface ConsoleContext {
   questTargets?(): Promise<readonly { readonly quest: number; readonly reference: number }[]>;
   /** Clears the console's history (clear). */
   clear?(): void;
+  /** The renderer's switches (tll: distant LOD, tt: trees, tws: water); whether it is on now. */
+  toggleRenderer?(what: 'lod' | 'trees' | 'water'): boolean;
+  /** Opens the container menu of a container (openactorcontainer on one). */
+  openContainer?(reference: number): void;
+  /** The world held still or going again (tfc 1). */
+  freezeWorld?(frozen: boolean): void;
   /** The reference under a point of the frame (see ConsoleRunner.click). */
   pick?(x: number, y: number, aspect: number): number | undefined;
 }
@@ -133,6 +139,28 @@ const TAMRIEL = 0x3c;
 const NOT_SAVED = 'Compiled script not saved!';
 /** What the game prints for a function it does not support. */
 const NOT_SUPPORTED = 'This function not supported';
+
+/** EquipItemEx's slot of a hand the console names: 1 right, 2 left. */
+export function handSlot(hand: string): number | undefined {
+  const lower = hand.toLowerCase();
+  if (lower === 'right') return 1;
+  if (lower === 'left') return 2;
+  return undefined;
+}
+
+/**
+ * Where PlaceAtMe's distance puts a reference from its placer facing `heading` degrees (0 north,
+ * clockwise): direction 0 in front, 1 behind, 2 to the left, 3 to the right.
+ */
+export function placementOffset(
+  heading: number,
+  distance: number,
+  direction: number,
+): [number, number] {
+  const turn = [0, 180, -90, 90][direction] ?? 0;
+  const angle = ((heading + turn) * Math.PI) / 180;
+  return [distance * Math.sin(angle), distance * Math.cos(angle)];
+}
 
 const onOff = (on: boolean): string => (on ? 'On' : 'Off');
 const fixed = (value: number): string => value.toFixed(2);
@@ -390,9 +418,13 @@ export class ConsoleCommands {
         return [`AI Detection is  ${onOff(runtime.debug.detection)}`];
       case 'toggleflycam': {
         if (!context.toggleFreeCamera) return [NOT_SUPPORTED];
-        // tfc 1 also holds the world still. TODO(M13): the world held still under tfc 1.
-        if ([1, 2, 5].includes(num(0))) return [NOT_SUPPORTED];
-        return [`Fly Camera Is ${onOff(context.toggleFreeCamera())}`];
+        // tfc 1 also holds the world still while the free camera is on.
+        // TODO(M13): tfc 2 and 5 (the camera's own debug modes).
+        if ([2, 5].includes(num(0))) return [NOT_SUPPORTED];
+        if (num(0) === 1 && !context.freezeWorld) return [NOT_SUPPORTED];
+        const free = context.toggleFreeCamera();
+        context.freezeWorld?.(free && num(0) === 1);
+        return [`Fly Camera Is ${onOff(free)}`];
       }
       case 'togglemenus':
         return [`Menus -> ${onOff(context.toggleMenus())}`];
@@ -404,12 +436,16 @@ export class ConsoleCommands {
       case 'togglefogofwar':
         runtime.debug.fogOfWar = !runtime.debug.fogOfWar;
         return [`Fog of war - ${runtime.debug.fogOfWar ? 'ENABLED' : 'DISABLED'}.`];
-      // TODO(M13): the renderer's switches for trees (near and distant), the water and the
-      // distant land, objects, trees and water (tll).
+      // The renderer's switches: trees, the water, the distant land and trees (tll).
       case 'toggletrees':
+        if (!context.toggleRenderer) return [NOT_SUPPORTED];
+        return [`Trees -> ${onOff(context.toggleRenderer('trees'))}`];
       case 'togglewatersystem':
+        if (!context.toggleRenderer) return [NOT_SUPPORTED];
+        return [`Water -> ${onOff(context.toggleRenderer('water'))}`];
       case 'togglelodland':
-        return [NOT_SUPPORTED];
+        if (!context.toggleRenderer) return [NOT_SUPPORTED];
+        return [`LOD Land -> ${onOff(context.toggleRenderer('lod'))}`];
 
       // --- Places ----------------------------------------------------------------------------
       case 'centeroncell': {
@@ -459,13 +495,27 @@ export class ConsoleCommands {
           num(3),
         ]);
         return [];
+      // PlaceAtMe <form> [count] [distance] [direction: 0 front, 1 back, 2 left, 3 right].
       case 'placeatme': {
-        // TODO(M13): PlaceAtMe's distance and direction (the new references stand at it).
-        if (num(2) !== 0 || num(3) !== 0) return [NOT_SUPPORTED];
-        await this.#native('objectreference.placeatme', target, [
+        const placed = await this.#native('objectreference.placeatme', target, [
           this.#formValue(num(0)),
           Math.max(1, num(1, 1)),
         ]);
+        const distance = num(2);
+        if (distance !== 0 && placed instanceof ObjectHandle) {
+          const heading = await this.#native('objectreference.getanglez', target);
+          const [dx, dy] = placementOffset(
+            typeof heading === 'number' ? heading : 0,
+            distance,
+            num(3),
+          );
+          await this.#native('objectreference.moveto', placed.formId, [
+            this.#ref(target),
+            dx,
+            dy,
+            0,
+          ]);
+        }
         return [];
       }
       case 'getpos':
@@ -524,8 +574,17 @@ export class ConsoleCommands {
       }
       case 'equipitem':
       case 'unequipitem':
-        // TODO(M13): the hand (left, right) the console names.
-        if (text(2) !== '') return [NOT_SUPPORTED];
+        // A hand named (left, right): as EquipItemEx/UnequipItemEx's slot (1 right, 2 left).
+        if (text(2) !== '') {
+          const hand = handSlot(text(2));
+          if (hand === undefined) return [NOT_SUPPORTED];
+          await this.#native(`actor.${name}ex`, target, [
+            this.#formValue(num(0)),
+            hand,
+            ...(name === 'equipitem' ? [num(1) !== 0, false] : []),
+          ]);
+          return [];
+        }
         await this.#native(`actor.${name}`, target, [this.#formValue(num(0)), num(1) !== 0, false]);
         return [];
 
@@ -560,9 +619,13 @@ export class ConsoleCommands {
         if (name === 'incrementpcskill') await runtime.progression.incrementSkill(text(0), 1);
         else await runtime.progression.useSkill(PLAYER_REF, text(0), num(1));
         return [];
-      // TODO(M13): SetLevel (an actor's level set outright, the player's experience with it).
-      case 'setlevel':
-        return [NOT_SUPPORTED];
+      // SetLevel <level>: the actor's level set outright (the player's experience to the next
+      // level starts again). TODO(M13): an NPC's level multiplier and calc min and max.
+      case 'setlevel': {
+        runtime.state.actor(target).level = Math.max(1, Math.round(num(0, 1)));
+        if (target === PLAYER_REF) runtime.state.playerExperience = 0;
+        return [];
+      }
 
       // --- Quests ----------------------------------------------------------------------------
       case 'setstage':
@@ -639,9 +702,17 @@ export class ConsoleCommands {
         return [`GetLocked >> ${fixed(locked ? 1 : 0)}`];
       }
       // As Actor.OpenInventory(true): the actor's inventory as a container.
+      // On a container: its container menu (no lock or owner asked).
       case 'openactorcontainer':
-        if (!(await runtime.actors.isActor(target))) return [NOT_SUPPORTED];
-        await this.#native('actor.openinventory', target, [true]);
+        if (await runtime.actors.isActor(target)) {
+          await this.#native('actor.openinventory', target, [true]);
+          return [];
+        }
+        if (!context.openContainer) return [NOT_SUPPORTED];
+        if ((await this.#typeOf((await runtime.baseOf(target)) ?? 0)) !== 'CONT') {
+          return [NOT_SUPPORTED];
+        }
+        context.openContainer(target);
         return [];
       // SetOwnership [owner]: an actor base's or a faction's; without one, the player's.
       case 'setownership': {
@@ -660,9 +731,75 @@ export class ConsoleCommands {
           num(1) !== 0,
         ]);
         return [];
-      // TODO(M13): SetEssential on an actor base (the base's flag changed in the game state).
+      // SetEssential <base> [0/1]: the base's flag in the game state (as ActorBase.SetEssential).
       case 'setessential':
-        return [NOT_SUPPORTED];
+        runtime.state.actorBase(num(0)).essential = num(1, 1) !== 0;
+        return [];
+      case 'setignorefriendlyhits':
+        await this.#native('objectreference.ignorefriendlyhits', target, [num(0, 1) !== 0]);
+        return [];
+
+      // --- Crime and factions ----------------------------------------------------------------
+      // SetCrimeGold <gold> [faction], PayCrimeGold [remove stolen] [go to jail] [faction]:
+      // without a faction, the crime faction of where the player is.
+      case 'setcrimegold':
+      case 'paycrimegold': {
+        const named = name === 'setcrimegold' ? args[1] : args[2];
+        const faction =
+          typeof named === 'number' ? named : await runtime.crime.placeCrimeFaction(PLAYER_REF);
+        if (faction === undefined) return [];
+        if (name === 'setcrimegold') {
+          await this.#native('faction.setcrimegold', faction, [num(0)]);
+        } else {
+          await this.#native('faction.playerpaycrimegold', faction, [
+            num(0, 1) !== 0,
+            num(1, 1) !== 0,
+          ]);
+        }
+        return [];
+      }
+      // A member keeps the rank it has (as Actor.AddToFaction).
+      case 'addtofaction':
+        if ((await runtime.actors.factionRank(target, num(0))) < 0) {
+          await this.#native('actor.setfactionrank', target, [this.#formValue(num(0)), 0]);
+        }
+        return [];
+      case 'removefromfaction':
+        await this.#native('actor.removefromfaction', target, [this.#formValue(num(0))]);
+        return [];
+      // A rank below 0 takes the actor out.
+      case 'setfactionrank':
+        await this.#native(
+          num(1) < 0 ? 'actor.removefromfaction' : 'actor.setfactionrank',
+          target,
+          [this.#formValue(num(0)), num(1)],
+        );
+        return [];
+      case 'getfactionrank': {
+        const rank = await runtime.actors.factionRank(target, num(0));
+        return [`GetFactionRank >> ${fixed(Math.max(-1, rank))}`];
+      }
+      case 'setrelationshiprank':
+        await this.#native('actor.setrelationshiprank', target, [this.#ref(num(0)), num(1)]);
+        return [];
+      case 'getrelationshiprank': {
+        const rank = await this.#native('actor.getrelationshiprank', target, [this.#ref(num(0))]);
+        return [`GetRelationshipRank >> ${fixed(typeof rank === 'number' ? rank : 0)}`];
+      }
+
+      // --- Inventories -----------------------------------------------------------------------
+      case 'showinventory':
+        return this.#inventory(target);
+      // DuplicateAllItems <container>: a copy of everything it holds put in the other.
+      case 'duplicateallitems': {
+        const into = args[0];
+        if (typeof into !== 'number') return [];
+        for (const [item, count] of await runtime.inventory(target)) {
+          if (count <= 0) continue;
+          await this.#native('objectreference.additem', into, [this.#formValue(item), count, true]);
+        }
+        return [];
+      }
 
       // --- Magic -----------------------------------------------------------------------------
       case 'playerspellbook':
@@ -784,6 +921,19 @@ export class ConsoleCommands {
     }
   }
 
+  /** showinventory: each item it holds with its count, name and form id. */
+  async #inventory(reference: number): Promise<string[]> {
+    const runtime = this.#context.runtime;
+    const lines: string[] = [];
+    for (const [item, count] of await runtime.inventory(reference)) {
+      if (count <= 0) continue;
+      const record = await runtime.forms.record(item);
+      const name = record?.text('FULL') ?? record?.editorId ?? '';
+      lines.push(`${String(count)} - ${name} (${hex(item)})`);
+    }
+    return lines;
+  }
+
   /** Selects a reference for the console (prid, a click). */
   async #pick(reference: number): Promise<string[]> {
     this.#selected = reference;
@@ -802,7 +952,14 @@ export class ConsoleCommands {
     const value = parseConsoleNumber(text);
     if (value === undefined)
       return ['Syntax Error.  Missing expression in set command.', NOT_SAVED];
-    // TODO(M13): a quest script's variables (set <quest>.<variable> to <value>).
+    // set <quest>.<variable> to <value>: a property of a script on the quest.
+    const dot = name.indexOf('.');
+    if (dot > 0) {
+      const quest = await this.#form(name.slice(0, dot), ['QUST']);
+      if (quest === undefined) return [`Unknown variable '${name}'.`, NOT_SAVED];
+      await runtime.vm.setProperty(new ObjectHandle(quest, 'quest'), name.slice(dot + 1), value);
+      return [];
+    }
     const global = await this.#form(name, ['GLOB']);
     if (global === undefined) return [`Unknown variable '${name}'.`, NOT_SAVED];
     if (name.toLowerCase() === 'timescale') runtime.timeScale = value;
