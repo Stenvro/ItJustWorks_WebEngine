@@ -354,6 +354,47 @@ describe('the character controller', () => {
     expect(out.away).toBeGreaterThan(60);
     expect(out.up).toBeGreaterThan(40);
   });
+
+  it('stays in a pocket it cannot get out of its way, and leaves it the moment it turns', () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    // A floor, and walls east, north and south: a pocket open to the west.
+    physics.addObject(
+      collision(
+        body(box([-300, -300, -20], [300, 300, 0])),
+        body(box([40, -60, 0], [60, 60, 200])),
+        body(box([-200, 30, 0], [60, 60, 200])),
+        body(box([-200, -60, 0], [60, -30, 200])),
+      ),
+      IDENTITY,
+      { reference: 1, kind: 'object' },
+    );
+    physics.step(1 / 60);
+    const character = new CharacterBody(
+      physics,
+      { radius: 11.2, height: 102.4 },
+      settings(new Set()),
+      [0, 0, 0],
+      { reference: 0x1a676, kind: 'actor' },
+    );
+    character.seeksAround = true;
+    const walk = (velocity: [number, number], steps: number): void => {
+      for (let i = 0; i < steps; i++) {
+        character.velocity = velocity;
+        character.step(1 / 60);
+        physics.step(1 / 60);
+      }
+    };
+    // A second into the end wall: every turn of its way is blocked too.
+    walk([78, 0], 60);
+    expect(character.feet[0]).toBeLessThan(40);
+    expect(Math.abs(character.feet[1])).toBeLessThan(30);
+    // Turned back, it goes at once (the failed seeking held for the way it had, not this one).
+    const before = character.feet[0];
+    walk([-78, 0], 30);
+    expect(character.feet[0]).toBeLessThan(before - 30);
+    character.free();
+    physics.free();
+  });
 });
 
 describe('physics constraints', () => {
