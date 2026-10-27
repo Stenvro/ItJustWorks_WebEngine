@@ -155,6 +155,9 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> EffectPix
   // A multi-pass directional material with an effect shader (the engine's PROJECTED_UV with
   // normals): texture coordinates from the projection, shown where the surface faces the
   // material by more than 0.4 to 0.6 (noise), on the triangles within the max angle.
+  if (fadeDiscarded(in.position.xy)) {
+    discard;
+  }
   let multiPass = (draw.flags.z & DRAW_MULTI_PASS) != 0u;
   let projectedUv = projectedCoordinates(in.worldPos) * draw.projectedColor.y;
   let uv = select(in.uv, projectedUv, multiPass);

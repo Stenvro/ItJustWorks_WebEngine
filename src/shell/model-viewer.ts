@@ -51,6 +51,8 @@ import {
 } from '../world/cell-loader.ts';
 import type { Arrival } from '../world/worldspace.ts';
 import { DEFAULT_WATER } from '../world/water.ts';
+import { UnderwaterView } from '../world/underwater.ts';
+import type { SceneLighting } from '../render/scene-lighting.ts';
 import { surfaceOver, waterVolumes, type WaterVolume } from '../world/water-volumes.ts';
 import {
   cellNavmeshes,
@@ -1434,6 +1436,12 @@ export class ModelViewer {
       lights: cell.data.lights,
       decals: cell.decals,
       ...(rooms && { rooms }),
+      ...(cellRooms.length > 0 && {
+        roomAt: (point: Vec3): number => {
+          const room = roomIndexAt(cellRooms, point);
+          return room >= 0 && room < 255 ? room + 1 : 0;
+        },
+      }),
     });
     return shownCount;
   }
@@ -1754,6 +1762,8 @@ export class ModelViewer {
           decals: GpuDecals | undefined;
           /** The cell's rooms, portals and occluders. */
           rooms?: RoomCuller;
+          /** The room holding a point (1-255; 0 none): moving actors take theirs. */
+          roomAt?: (point: Vec3) => number;
         },
   ): void {
     this.onActivate?.();
@@ -1785,7 +1795,7 @@ export class ModelViewer {
       } else {
         this.#detachControls = this.#fly.attach(this.#canvas);
       }
-      const { lighting, imageSpace, lights, decals, rooms } = view;
+      const { lighting, imageSpace, lights, decals, rooms, roomAt } = view;
       this.#renderer.setView({
         // The cell's scene now (built again when an actor is made again in a new race).
         scenes: () => [
@@ -1797,29 +1807,31 @@ export class ModelViewer {
           ...(this.#destruction?.scenes() ?? []),
         ],
         camera,
-        lighting: () => ({
-          ...lighting(),
-          lights: [
-            // A menu's lights (the race menu's) first: they light what it shows.
-            ...(this.#play?.extraLights ?? []),
-            ...pointLights(
-              [
-                ...lights.filter((light) => this.#isEnabled(light.reference)),
-                ...(this.#created?.lights() ?? []),
-                // Magic's: effects on actors, casts in hands, what flies and bursts.
-                ...(this.#stage?.lights() ?? []),
-              ],
-              this.#tickClock(),
-              camera.position,
-              (id) => this.#emittanceRgb(id),
-              this.#session?.ini.number('Display', 'fLightLODStartFade'),
-            ),
-          ],
-        }),
+        lighting: () =>
+          this.#withUnderwater(camera.position, {
+            ...lighting(),
+            lights: [
+              // A menu's lights (the race menu's) first: they light what it shows.
+              ...(this.#play?.extraLights ?? []),
+              ...pointLights(
+                [
+                  ...lights.filter((light) => this.#isEnabled(light.reference)),
+                  ...(this.#created?.lights() ?? []),
+                  // Magic's: effects on actors, casts in hands, what flies and bursts.
+                  ...(this.#stage?.lights() ?? []),
+                ],
+                this.#tickClock(),
+                camera.position,
+                (id) => this.#emittanceRgb(id),
+                this.#session?.ini.number('Display', 'fLightLODStartFade'),
+              ),
+            ],
+          }),
         imageSpace,
         // The cell's shadow lights cast shadows (interiors have no sun shadow).
         lightShadows: true,
         ...(rooms && { rooms: () => rooms }),
+        ...(roomAt && { roomAt }),
         // The cell's decals and the hits' blood (src/shell/combat-impacts.ts).
         decals: () => [...(decals ? [decals] : []), ...(this.#stage?.combat.decals() ?? [])],
         backdrop: false,
@@ -1861,6 +1873,18 @@ export class ModelViewer {
   };
 
   /** Whether the camera is under the interior's water. */
+  /** The view below water surfaces: the water type's underwater fog (underwater.ts). */
+  readonly #underwaterView = new UnderwaterView((formId) =>
+    this.#session?.waterType(formId).then((gpu) => gpu?.type),
+  );
+
+  /** A cell's lighting, with the water type's underwater fog when the camera is under water. */
+  #withUnderwater(camera: Vec3, lighting: SceneLighting): SceneLighting {
+    const water = this.#waterAt(camera[0], camera[1], camera[2]);
+    const fog = this.#underwaterView.fog(camera[2], water, lighting);
+    return fog ? { ...lighting, fog } : lighting;
+  }
+
   #underwater(): boolean {
     const camera = this.#renderer.view?.camera.position;
     if (!camera) return false;
