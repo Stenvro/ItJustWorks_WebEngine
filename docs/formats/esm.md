@@ -1314,7 +1314,30 @@ death, SCMS success, LUMS level up (both MUSSpecialSuccess), DCMS dungeon cleare
 (`_NONE`), DDSC / NDSC / SFDC / PDMC / PIMC / PDLC / SMSC / TSSC categories, DOP2 / DOP3 /
 POPM / P3OM / IOPM output models, RVBT the default reverb, UWLS the loop under water, DLMT the
 landscape's material; PUSG / PDSG (and per item kind) the sounds of picking up and putting
-down (`itemSound`, src/gameplay/inventory.ts).
+down (`itemSound`, src/gameplay/inventory.ts). Low health: IMLH the modifier pulsed
+(LowHealthImod 0010C445), HSSD / HFSD the slow and fast heartbeat loops
+(UIHealthHeartbeatALPSD / BLPSD), HBLH the help message (src/gameplay/low-health.ts).
+
+## Lens flares and volumetric lighting
+
+Both are new in Skyrim SE (xEdit's TES5 definitions).
+
+**VOLI** (`src/world/volumetric-lighting.ts`): twelve single-float fields: CNAM intensity, DNAM
+custom colour contribution, ENAM / FNAM / GNAM the custom colour, HNAM density contribution,
+INAM density size, JNAM wind speed, KNAM falling speed, LNAM phase contribution, MNAM phase
+scattering, NNAM sampling range factor. 42 in the vanilla load order, all in Update.esm and the
+DLCs (VLClearDay: intensity 2, VLClearSunrise/Sunset 4; every vanilla one has density 0.3 /
+size 10 / wind 15 / falling 0.3 and range 40). Weathers name four in **WTHR HNAM** (16 bytes:
+sunrise, day, sunset, night form ids; 87 of 108 weathers name some). The [Display] settings
+fVolumetricLightingIntensity (2), bVolumetricLightingEnable and the 3D texture sizes per
+quality scale and size the engine's froxel volume.
+
+**LENS** (`src/world/lens-flare.ts`): CNAM colour influence, DNAM (before the sprites) fade
+distance radius scale, LFSP the sprite count, then per sprite DNAM its id (string), FNAM its
+texture, LFSD 36 bytes: tint (3 floats), width, height, position, angular fade, opacity, flags
+(0x1 rotates, 0x2 shrinks when occluded). Named by **WTHR GNAM** (the sun's glare) and **LIGH
+LNAM**. The vanilla load order has **no LENS records** and no weather names one: the sun's
+flare is a plugin feature. [ImageSpace] bLensFlare and fLensFlareGlobalIntensity apply.
 
 ## Crafting
 
