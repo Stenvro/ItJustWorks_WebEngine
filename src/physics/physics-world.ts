@@ -176,6 +176,27 @@ export interface Hitch {
   remove(): void;
 }
 
+/**
+ * The body of a reference's placements a script names by its node (case aside; none: the
+ * first simulated body, else the first).
+ */
+export function bodyOfNode(
+  placements: Iterable<PlacedCollision>,
+  node: string,
+): PlacedBody | undefined {
+  const name = node.trim().toLowerCase();
+  let first: PlacedBody | undefined;
+  let simulated: PlacedBody | undefined;
+  for (const placed of placements) {
+    for (const entry of placed.bodies) {
+      if (name !== '' && entry.data.node.toLowerCase() === name) return entry;
+      first ??= entry;
+      if (entry.data.motion !== 'fixed') simulated ??= entry;
+    }
+  }
+  return name === '' ? (simulated ?? first) : undefined;
+}
+
 /** The collision of one placed model (or landscape cell). */
 export class PlacedCollision {
   readonly owner: PhysicsOwner;
@@ -1428,6 +1449,61 @@ export class PhysicsWorld {
     this.#changed = true;
     return new PlacedCollision(owner, [], colliders, 1, [body]);
   }
+
+  /**
+   * A script joins two bodies by a ball and socket (Game.AddHavokBallAndSocketConstraint: a
+   * hanged corpse's neck to its noose, a key to its hook): `pivotA` and `pivotB` in each body's
+   * own frame (game units; the node's local offsets). The two do not collide with each other;
+   * held bodies move from now on. Returns whether they were joined. TODO(M13): the offsets are
+   * taken in the body's frame, which is its node's for the vanilla bodies the calls name.
+   */
+  joinBallAndSocket(a: PlacedBody, pivotA: Vec3, b: PlacedBody, pivotB: Vec3): boolean {
+    const bodyA = a.body;
+    const bodyB = b.body;
+    if (!bodyA.isValid() || !bodyB.isValid() || bodyA.handle === bodyB.handle) return false;
+    if (!bodyA.isDynamic() && !bodyB.isDynamic() && !this.#held.has(bodyA.handle)) {
+      if (!this.#held.has(bodyB.handle)) return false;
+    }
+    for (const body of [bodyA, bodyB]) this.release(body);
+    const havok = (v: Vec3): RAPIER.Vector => ({
+      x: toHavok(v[0]),
+      y: toHavok(v[1]),
+      z: toHavok(v[2]),
+    });
+    const joint = this.world.createImpulseJoint(
+      RAPIER.JointData.spherical(havok(pivotA), havok(pivotB)),
+      bodyA,
+      bodyB,
+      true,
+    );
+    joint.setContactsEnabled(false);
+    this.#scriptJoints.push({ joint, a: bodyA.handle, b: bodyB.handle });
+    this.#changed = true;
+    return true;
+  }
+
+  /**
+   * Game.RemoveHavokConstraints: the joints scripts made between two bodies go (they fall
+   * free). Returns how many went.
+   */
+  removeScriptJoints(a: PlacedBody, b: PlacedBody): number {
+    const handles = new Set([a.body.handle, b.body.handle]);
+    let removed = 0;
+    for (const entry of [...this.#scriptJoints]) {
+      if (!entry.joint.isValid()) {
+        this.#scriptJoints.splice(this.#scriptJoints.indexOf(entry), 1);
+        continue;
+      }
+      if (!handles.has(entry.a) || !handles.has(entry.b)) continue;
+      this.world.removeImpulseJoint(entry.joint, true);
+      this.#scriptJoints.splice(this.#scriptJoints.indexOf(entry), 1);
+      removed++;
+    }
+    return removed;
+  }
+
+  /** The joints scripts made (joinBallAndSocket), with their bodies' handles. */
+  readonly #scriptJoints: { joint: RAPIER.ImpulseJoint; a: number; b: number }[] = [];
 
   remove(placed: PlacedCollision): void {
     // Removing a body removes its joints.

@@ -17,7 +17,15 @@
 // - The settings' built-in values (the engine's defaults): fHavokTauRatio 0.5, [HAVOK]
 //   bUseConstraintProjector 1.
 
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { HAVOK_SCALE, type CollisionData } from '../../../src/physics/collision-data.ts';
+import { CollisionMatrix, Layer } from '../../../src/physics/collision-layers.ts';
+import {
+  bodyOfNode,
+  GRAVITY,
+  initPhysics,
+  PhysicsWorld,
+} from '../../../src/physics/physics-world.ts';
 import {
   easedLimit,
   HINGE_LIMIT_TAU_FACTOR,
@@ -63,12 +71,82 @@ describe('the constraint solver (the engine’s rule)', () => {
 });
 
 describe('constraints made by scripts', () => {
-  it.todo(
+  const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  const matrix = new CollisionMatrix([
+    { formId: 1, editorId: 'L_STATIC', index: Layer.static, name: '', flags: 0, collidesWith: [] },
+    {
+      formId: 4,
+      editorId: 'L_CLUTTER',
+      index: Layer.clutter,
+      name: '',
+      flags: 0,
+      collidesWith: [],
+    },
+  ]);
+  /** A body on a node: a 10-unit box, fixed (a hook) or simulated (a key, 1 kg). */
+  const part = (node: string, dynamic: boolean): CollisionData => {
+    const points: number[] = [];
+    for (const x of [-5, 5]) for (const y of [-5, 5]) for (const z of [-5, 5]) points.push(x, y, z);
+    const layer = dynamic ? Layer.clutter : Layer.static;
+    return {
+      bodies: [
+        {
+          node,
+          transform: IDENTITY,
+          motion: dynamic ? 'dynamic' : 'fixed',
+          phantom: false,
+          layer,
+          mass: dynamic ? 1 : 0,
+          inertia: [0.01, 0.01, 0.01],
+          centerOfMass: [0, 0, 0],
+          friction: 0.5,
+          restitution: 0.4,
+          linearDamping: 0,
+          angularDamping: 0.05,
+          gravityFactor: 1,
+          maxLinearVelocity: 0,
+          maxAngularVelocity: 0,
+          quality: 0,
+          solverDeactivation: 1,
+          shapes: [
+            { type: 'convex', layer, material: 0, points: Float32Array.from(points), radius: 0 },
+          ],
+        },
+      ],
+      skipped: [],
+    };
+  };
+
+  beforeAll(async () => {
+    await initPhysics();
+  });
+
+  it(
     'joins two references’ nodes with a ball and socket (Game.AddHavokBallAndSocketConstraint, ' +
-      'at the nodes’ local offsets): hanged corpses, hanging keys  [data: 9 calls] (sim)',
-  );
-  it.todo(
-    'removes them (Game.RemoveHavokConstraints), the bodies falling free  [data: 3 calls] (sim)',
+      'at the nodes’ local offsets), and removes it (Game.RemoveHavokConstraints): the body ' +
+      'falls free  [data: 9 and 3 calls]',
+    () => {
+      const physics = new PhysicsWorld(matrix, GRAVITY);
+      const hook = physics.addObject(part('Hook', false), IDENTITY, {
+        reference: 1,
+        kind: 'object',
+      });
+      const key = physics.addObject(part('Key', true), IDENTITY, { reference: 2, kind: 'object' });
+      const hookBody = bodyOfNode([hook], 'hook');
+      const keyBody = bodyOfNode([key], '');
+      if (!hookBody || !keyBody) throw new Error('no bodies');
+      expect(bodyOfNode([key], 'Nothing')).toBeUndefined();
+      // The key hangs 20 units under the hook's middle, by its own middle.
+      expect(physics.joinBallAndSocket(hookBody, [0, 0, -20], keyBody, [0, 0, 0])).toBe(true);
+      for (let i = 0; i < 120; i++) physics.step(1 / 60);
+      const z = (): number => keyBody.body.translation().z * HAVOK_SCALE;
+      expect(z()).toBeGreaterThan(-25);
+      expect(z()).toBeLessThan(-15);
+      expect(physics.removeScriptJoints(hookBody, keyBody)).toBe(1);
+      for (let i = 0; i < 30; i++) physics.step(1 / 60);
+      expect(z()).toBeLessThan(-60);
+      physics.free();
+    },
   );
   it.todo('keeps a script-made constraint across its cell’s unload and load  [original] (sim)');
 });
