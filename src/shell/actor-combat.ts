@@ -153,7 +153,7 @@ import {
   type FighterView,
 } from './actor-combat-ai.ts';
 import type { Threat } from '../ai/combat-tactics.ts';
-import { cellLight } from './magic-fx.ts';
+import { cellLight, type MagicFx } from './magic-fx.ts';
 import type { CellLight } from '../world/cell-loader.ts';
 import { parseLight, type LightRecord } from '../world/cell-records.ts';
 
@@ -394,6 +394,8 @@ export interface ActorCombatOptions {
   readonly casting?: () => CastingButtons | undefined;
   /** Their packages (the combat override packages' places; evaluated as combat ends). */
   readonly ai?: () => ActorAi | undefined;
+  /** Effect models shown for a while (impacts' models: src/shell/magic-fx.ts). */
+  readonly fx?: () => MagicFx | undefined;
   /** Inside a cell (how far the fleeing run). */
   readonly interior?: () => boolean;
   /** An actor gets off its horse to fight; a horse ridden is its rider's to move. */
@@ -480,7 +482,17 @@ export class ActorCombat implements CombatBridge {
     });
     // The wait menu asks whether someone fights the player.
     options.session.combatWatch = this;
-    this.#impacts = new CombatImpacts(options.session, options.renderer);
+    this.#impacts = new CombatImpacts(
+      options.session,
+      options.renderer,
+      undefined,
+      // Its own time: the IPCT duration is its decal's, not the model's.
+      (model, at, facing) =>
+        options.fx?.()?.show(model, undefined, at, {
+          kind: 'impact',
+          direction: facing,
+        }),
+    );
     this.#projectiles = new CombatProjectiles({
       session: options.session,
       renderer: options.renderer,
