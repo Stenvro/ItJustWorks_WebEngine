@@ -118,6 +118,28 @@ describe('crimes and their witnesses', () => {
     expect(events[0]?.values.get('V1')).toBe(40);
   });
 
+  it('of an NPC: no bounty; the witnesses who care raise the alarm', async () => {
+    const { crime, state } = engine();
+    const told: CrimeEvent[] = [];
+    crime.listen((event) => told.push(event));
+    const committed = await crime.commit(CrimeType.attack, BANDIT, {
+      act: 'attack',
+      victim: VICTIM,
+      witnesses: [VICTIM, CITIZEN, RIFTEN_CITIZEN, PLAYER_REF],
+    });
+    expect(committed).toBeUndefined();
+    expect(state.factions.get(WHITERUN)?.crimeGoldViolent ?? 0).toBe(0);
+    expect(told).toEqual([
+      {
+        kind: 'npcCrime',
+        criminal: BANDIT,
+        victim: VICTIM,
+        witnesses: [VICTIM, CITIZEN],
+        act: 'attack',
+      },
+    ]);
+  });
+
   it('are nothing unseen, or seen only by those who do not care', async () => {
     const { crime, state } = engine();
     expect(

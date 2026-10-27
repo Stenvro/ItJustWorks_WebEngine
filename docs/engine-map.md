@@ -91,7 +91,7 @@ These run through every area and explain most of what breaks in play.
 | Movement, paths              | partial | navmesh obstacles cut approximately (no re-triangulation: M13), no path idles                                                |
 | Avoidance                    | partial | the engine's way round (who is avoided and re-planning are its)                                                              |
 | Detection                    | partial | the light's sum ours (walls keep lights off: done); an Ambush package's own target (Ambush packages: done)                   |
-| Crime                        | partial | NPC crimes, the report rule, alarm reach (actor crimes go to the victim's or its owner's crime faction: done)                |
+| Crime                        | partial | NPC crimes beyond assault; guards that only hear an NPC's alarm; fCrimeAlarmRespMult (NPC assault alarms, guards fight: done) |
 | Dialogue                     | partial | Say Once with Reset Hours (61 infos: comes back after them, TODO(M13)); walking off a greeting outside the menu              |
 | Scenes                       | partial | repeat pause (Repeat Conditions While True restarts at once); facing wait limit (3 s ours)                                   |
 | Actors away                  | partial | who keeps a schedule away (ours: persistent actors and those near) and its pace are ours; the place between doors            |
@@ -158,7 +158,7 @@ These run through every area and explain most of what breaks in play.
 | Triggers             | partial | only actors enter triggers (L_TRIGGER takes 14 layers): layers unchecked       |
 | Constraints          | partial | script-made constraints (hanged corpses, hanging keys); a census of types      |
 | Character controller | partial | moving platforms do not carry actors; moving bodies do not push them           |
-| Falling, swimming    | partial | NPCs swim (race Swims); the drowning sound and gasp; Allow Swimming packages   |
+| Falling, swimming    | partial | the drowning sound and gasp (NPCs swim where their package allows: done)        |
 | Water physics        | partial | the splash model; Havok's own buoyancy and drag rule (ours from the data)      |
 | Physics damage       | partial | the listener's damage to destructibles (no vanilla impact reaches it)          |
 | Traps                | partial | hits on actors: done; material, initial flag, cloud traps unchecked            |
