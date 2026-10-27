@@ -218,7 +218,10 @@ export class SimWorld {
   readonly #flora: FloraLooks;
   readonly #destruction: DestructionLooks;
   readonly #destinations = new Map<number, DoorDestination | undefined>();
-  /** Travel through a load door started by an activation (awaited by the next step). */
+  /**
+   * Travel through a load door started by an activation, or a script's move of the player to
+   * another place (awaited by the next step).
+   */
   #travel: Promise<void> | undefined;
   /** Work started by the world that the next settle waits for (cells, created objects). */
   readonly #pending = new Set<Promise<unknown>>();
@@ -1539,7 +1542,17 @@ export class SimWorld {
     if (!at) return;
     if (reference === PLAYER_REF) {
       // As Play: the player goes where the scripts send them, to another place through a journey.
-      if (!this.#sendPlayer(at)) await this.#journey(at);
+      // A journey goes as a load door's travel does, awaited by the next step: it is not the
+      // world's work that a settle waits for, as the place it opens settles itself (waiting
+      // for it there waited for itself: a script's MoveTo of the player to another cell, such
+      // as MQ101's stage 4 to the cart, hung the sim).
+      if (!this.#sendPlayer(at)) {
+        const before = this.#travel;
+        this.#travel = (async () => {
+          await before;
+          await this.#journey(at);
+        })();
+      }
       return;
     }
     if (this.stage.get(reference)) {
