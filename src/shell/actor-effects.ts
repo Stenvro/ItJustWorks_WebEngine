@@ -4,6 +4,10 @@
 // Detect Life's shader on the living within its area in feet that its conditions pick
 // (friends and enemies: the Detect Life spells' variants), seen through walls (its particles'
 // z test); scripts' EffectShader.Play and VisualEffect.Play (RFCT: art and shader).
+// They show on any reference, not only actors: a script's shader or visual effect on an object
+// covers its model's shapes (its particles off its rigid shapes, its art at its origin), and an
+// enchanted item glows (src/gameplay/magic/enchantment-glow.ts): a held weapon's model while it
+// is equipped, an item lying in the world.
 //
 // An effect shader is its membrane (the actor's shapes again with the fill texture in its
 // colour keys, and its edge: a second cover whose opacity grows towards the silhouette), each
@@ -16,7 +20,7 @@
 import { ActorPose, ActorSkeleton, wearOnRig } from '../animation/skeleton.ts';
 import type { Vec3 } from '../render/math.ts';
 import type { ModelAnimation } from '../render/animation.ts';
-import { identity } from '../render/math.ts';
+import { identity, multiply, type Mat4 } from '../render/math.ts';
 import type { EffectMaterial, ModelPart } from '../render/model-data.ts';
 import type { RenderPort } from '../render/render-port.ts';
 import type {
@@ -37,18 +41,31 @@ import {
   timelineAlpha,
   type EffectShaderRecord,
 } from '../world/effect-shader-records.ts';
+import type { EnchantmentGlow } from '../gameplay/magic/enchantment-glow.ts';
 import { EffectArchetype } from '../world/magic-effects.ts';
 import { parseArtObject } from '../world/magic-records.ts';
-import type { PlacedActor } from './actors.ts';
 import type { GameSession } from './game-session.ts';
 import { alphaFlags, SurfaceParticles, texturePath, Z_TEST_ALWAYS } from './surface-particles.ts';
 import type { Terminal } from './terminal.ts';
 
-/** An actor as the effects see it: its body and whether it is shown. */
+/**
+ * What effects cover: an actor's body (its instances and pose), an object's model (no pose), a
+ * held weapon's model (the weapons' own pose).
+ */
+export interface EffectShape {
+  readonly instances: readonly ModelInstance[];
+  readonly pose?: ActorPose | undefined;
+}
+
+/** A reference as the effects see it: its shapes and whether it is shown. */
 export interface EffectBody {
-  readonly placed: PlacedActor;
+  readonly placed: EffectShape;
   readonly visibility?: InstanceVisibility;
 }
+
+/** The same body as when built (an actor made again, an object reloaded: not). */
+const sameShape = (a: EffectShape, b: EffectShape): boolean =>
+  a === b || (a.instances[0] !== undefined && a.instances[0] === b.instances[0]);
 
 export interface ActorEffectsOptions {
   readonly session: GameSession;
@@ -60,9 +77,11 @@ export interface ActorEffectsOptions {
   readonly living: () => Iterable<{ readonly reference: number; readonly feet: Vec3 }>;
 }
 
-/** An effect shader on an actor. */
+/** An effect shader on a reference. */
 interface ShaderShow {
   readonly actor: number;
+  /** What it covers now (undefined: not shown). */
+  readonly body: () => EffectBody | undefined;
   readonly shader: EffectShaderRecord;
   /** Seconds since it began, and since it was told to stop (undefined: on). */
   age: number;
@@ -74,7 +93,7 @@ interface ShaderShow {
 }
 
 interface BuiltShader {
-  readonly placed: PlacedActor;
+  readonly placed: EffectShape;
   readonly fill: GpuScene | undefined;
   readonly edge: GpuScene | undefined;
   readonly particles:
@@ -83,16 +102,17 @@ interface BuiltShader {
   readonly sources: readonly GpuModel[];
 }
 
-/** An art object on an actor. */
+/** An art object on a reference. */
 interface ArtShow {
   readonly actor: number;
+  readonly body: () => EffectBody | undefined;
   readonly model: string;
   age: number;
   readonly duration: number | undefined;
   stopping: boolean;
   built:
     | {
-        readonly placed: PlacedActor;
+        readonly placed: EffectShape;
         readonly scene: GpuScene | undefined;
         readonly pose: ActorPose;
         readonly nodes: Int16Array;
@@ -212,6 +232,26 @@ export class ActorEffects {
     });
   }
 
+  /**
+   * An enchanted item's glow (its enchantment's shader and art) on `body`, until unglow: a held
+   * weapon's model, an item lying in the world. `owner` is the reference it goes with.
+   */
+  glow(
+    key: string,
+    owner: number,
+    glow: EnchantmentGlow,
+    body: () => EffectBody | undefined,
+  ): void {
+    const own = `glow:${key}`;
+    if (glow.shader !== undefined) void this.#startShader(own, owner, glow.shader, undefined, body);
+    if (glow.art !== undefined) this.#startArt(own, owner, glow.art, undefined, body);
+  }
+
+  /** An item's glow goes (unequipped, picked up, unloaded). */
+  unglow(key: string): void {
+    this.#stop(`glow:${key}`);
+  }
+
   /** Everything on an actor goes (it unloaded, or died for good). */
   removeActor(actor: number): void {
     for (const [key, show] of this.#shaders) if (show.actor === actor) this.#dropShader(key);
@@ -264,6 +304,7 @@ export class ActorEffects {
     actor: number,
     formId: number,
     duration: number | undefined,
+    body: () => EffectBody | undefined = () => this.#options.body(actor),
   ): Promise<void> {
     const shader = await this.#shaderRecord(formId);
     if (!shader) return;
@@ -278,6 +319,7 @@ export class ActorEffects {
     );
     this.#shaders.set(key, {
       actor,
+      body,
       shader,
       age: 0,
       stopping: undefined,
@@ -322,6 +364,7 @@ export class ActorEffects {
           ...(instance.pose && { pose: instance.pose }),
           ...(instance.poseNodes && { poseNodes: instance.poseNodes }),
           ...(instance.partitionVisible && { partitionVisible: instance.partitionVisible }),
+          ...(instance.partShown && { partShown: instance.partShown }),
           ...(instance.face && { face: instance.face }),
         });
       }
@@ -379,8 +422,8 @@ export class ActorEffects {
     let particles: BuiltShader['particles'];
     if ((flags & EffectShaderFlag.noParticleShader) === 0 && shader.particleTexture !== '') {
       const source = new SurfaceParticles(shader, () => {
-        const now = this.#options.body(show.actor);
-        if (now?.placed !== placed) return undefined;
+        const now = show.body();
+        if (!now || !sameShape(now.placed, placed)) return undefined;
         const first = placed.instances[0];
         if (!first) return undefined;
         return {
@@ -389,6 +432,7 @@ export class ActorEffects {
           ),
           pose: placed.pose,
           world: first.world,
+          hang: hungOn(placed),
         };
       });
       const model = await renderer.scene.createModel(
@@ -428,7 +472,13 @@ export class ActorEffects {
   // --- Art ---------------------------------------------------------------------------------
 
   /** An art object (ARTO) on an actor: `duration` seconds (0: once; undefined: until stopped). */
-  #startArt(key: string, actor: number, art: number, duration: number | undefined): void {
+  #startArt(
+    key: string,
+    actor: number,
+    art: number,
+    duration: number | undefined,
+    body: () => EffectBody | undefined = () => this.#options.body(actor),
+  ): void {
     void (async () => {
       const record = await this.#options.session.scriptsReady?.forms.record(art);
       const model = record ? parseArtObject(record)?.model : undefined;
@@ -436,6 +486,7 @@ export class ActorEffects {
       this.#dropArt(key);
       this.#arts.set(key, {
         actor,
+        body,
         model,
         age: 0,
         duration: duration === 0 ? ONCE_SECONDS : duration,
@@ -462,9 +513,10 @@ export class ActorEffects {
       [{ nodes: model.nodes ?? [], attachTo: model.attachTo }],
     );
     const pose = new ActorPose(new ActorSkeleton(dressed.rig, undefined));
+    // An object's art stands at its origin (no skeleton to follow).
     const nodes = Int16Array.from(
       dressed.rig.names,
-      (name) => placed.pose.skeleton.nodeByName.get(name.toLowerCase()) ?? -1,
+      (name) => placed.pose?.skeleton.nodeByName.get(name.toLowerCase()) ?? -1,
     );
     const scene = renderer.scene.createScene([
       {
@@ -544,9 +596,10 @@ export class ActorEffects {
       show.age += seconds;
       if (show.stopping !== undefined) show.stopping += seconds;
       else if (show.duration !== undefined && show.age >= show.duration) show.stopping = 0;
-      const body = this.#options.body(show.actor);
-      // Its actor made again (a new look): built again on its new body.
-      if (show.built && body && show.built.placed !== body.placed) {
+      const body = show.body();
+      // Its actor made again (a new look), its object reloaded or gone: built again on its new
+      // body (when it is back).
+      if (show.built && (!body || !sameShape(show.built.placed, body.placed))) {
         destroyBuilt(show.built);
         show.built = undefined;
       }
@@ -587,8 +640,8 @@ export class ActorEffects {
         this.#dropArt(key);
         continue;
       }
-      const body = this.#options.body(show.actor);
-      if (show.built && body && show.built.placed !== body.placed) {
+      const body = show.body();
+      if (show.built && (!body || !sameShape(show.built.placed, body.placed))) {
         show.built.scene?.destroy();
         show.built = undefined;
       }
@@ -606,7 +659,8 @@ export class ActorEffects {
           });
       }
       const built = show.built;
-      if (built) followSkeleton(built.pose, built.nodes, built.placed.pose);
+      const follow = built?.placed.pose;
+      if (built && follow) followSkeleton(built.pose, built.nodes, follow);
     }
     for (const detect of this.#detects.values()) {
       detect.wait -= seconds;
@@ -659,6 +713,26 @@ export class ActorEffects {
     }
     for (const show of this.#arts.values()) if (show.built?.scene) yield show.built.scene;
   }
+}
+
+/**
+ * Where a body's rigid shapes hang now under its first instance's place: a shape on a pose node
+ * (a held weapon's on its hand) at that node and its own transform, as the renderer hangs it.
+ */
+function hungOn(placed: EffectShape): ((part: ModelPart) => Mat4 | undefined) | undefined {
+  if (placed.pose) return undefined;
+  const owners = new Map<ModelPart, ModelInstance>();
+  for (const instance of placed.instances) {
+    for (const gpu of instance.model.parts) owners.set(gpu.part, instance);
+  }
+  return (part) => {
+    const instance = owners.get(part);
+    const pose = instance?.pose;
+    const node = pose && part.node !== undefined ? (instance.poseNodes?.[part.node] ?? -1) : -1;
+    if (!pose || node < 0) return undefined;
+    const at = pose.worlds.subarray(node * 16, node * 16 + 16);
+    return part.local ? multiply(at, part.local) : at;
+  };
 }
 
 /** Skin shapes (Affect Skin Only): the FaceGen and skin-tinted ones. */

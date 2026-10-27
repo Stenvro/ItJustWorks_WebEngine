@@ -332,16 +332,29 @@ constants of Nukem9's decompiled `BSLightingShader`:
    (the engine's SnowParameters.y): the projected material's blend weight, 1 in the
    multi-index snow pass, else the diffuse alpha. The mask goes into the G-buffer for the
    snow's subsurface scattering (see [Snow](#snow)).
-8. LOD landscape noise (type 18): diffuse × 0.8333 (p (0.37 − noise) + noise) + 0.37 with
+8. Ambient specular (Community Shaders' AMBIENT_SPECULAR): the directional ambient's specular
+   colour × (1 − n·v)^fresnel power × the specular mask, on specular surfaces (not snow). The
+   colour and power are DALC's (the weather's, blended by time of day; an interior's XCLL or
+   lighting template), in the frame's ambient w components.
+   Character light (CHARACTER_LIGHT; [Display] bCharacterLighting, fCharacterLightPrimary /
+   SecondaryLightIntensity 0.75 / 0.3, ...LumScale 2, ...LumMax 0.75): on actors' skin (FaceGen
+   and skin tint shapes) primary × saturate(n·v) + secondary × saturate((0.1644, −0.9864) ·
+   n.yz in the actor's model space), times min(LumMax, LumScale × luminance). TODO(M13): the
+   engine takes the luminance from a texture it binds (ours: the directional ambient's).
+   Eyes (type 16, 3,320 vanilla shapes, `node tools/effect-audit.ts --shaders`) carry
+   Eye_Environment_Mapping (SLSF1 `0x20000`), not Environment_Mapping, and reflect their cube
+   map (slot 4) by their eye cube map scale. TODO(M13): the engine reflects about the shader's
+   left / right eye reflection centres (by the vertex red); ours about the mesh normal.
+9. LOD landscape noise (type 18): diffuse × 0.8333 (p (0.37 − noise) + noise) + 0.37 with
    `textures\terrain\noise.dds` at 3 × UV and p from the colour's brightness.
-9. Leaf flutter (SLSF2 Tree_Anim, `leafShift` in common.wgsl, the engine's
-   GetTreeShiftVector): a vertex moves along its normal by
-   `(e(0.1 t) + 0.1 e(0.25 t)) · amplitude · vertex alpha`, e = a smoothed triangle wave of
-   `t · frequency · wind` plus the sum of the vertex's coordinates, t = 6 × seconds. Leaf
-   amplitude and frequency come from the TREE record (1 and 1 without one; without a leaf
-   animation root the timer stands still); the amplitude fades out between 3600 and 4600 units
-   from the camera (fLeafAnimDampenDistStart / End); wind = the weather's wind speed (0..1).
-   The vertex alpha is the leaf weight, not transparency.
+10. Leaf flutter (SLSF2 Tree_Anim, `leafShift` in common.wgsl, the engine's
+    GetTreeShiftVector): a vertex moves along its normal by
+    `(e(0.1 t) + 0.1 e(0.25 t)) · amplitude · vertex alpha`, e = a smoothed triangle wave of
+    `t · frequency · wind` plus the sum of the vertex's coordinates, t = 6 × seconds. Leaf
+    amplitude and frequency come from the TREE record (1 and 1 without one; without a leaf
+    animation root the timer stands still); the amplitude fades out between 3600 and 4600 units
+    from the camera (fLeafAnimDampenDistStart / End); wind = the weather's wind speed (0..1).
+    The vertex alpha is the leaf weight, not transparency.
 
 Parallax (type 3, 11 vanilla shapes in Markarth): the height map (slot 3) shifts the texture
 coordinates by (height × 0.08 − 0.04) along the x and y of the **model-space** view direction,
@@ -394,6 +407,25 @@ quad facing the camera (the frame's camera axes, turned by the particle's rotati
 along the velocity (aspect flag `0x1`, height scaled by the aspect ratio), or a ribbon segment
 facing the camera for strip particles. Blended particles test but never write depth (their
 quads overlap unsorted within a system).
+
+### Effect shaders on references
+
+Effect shaders (EFSH) and art objects (ARTO) cover any reference, not only actors
+(`src/shell/actor-effects.ts`): a script's EffectShader.Play or VisualEffect.Play (RFCT: its art
+and shader) on an object covers its model's shapes, its particles come off its rigid shapes as its
+model places them, its art stands at its origin. An enchanted item glows
+(`src/gameplay/magic/enchantment-glow.ts`): its enchantment's costliest effect's Enchant Shader
+and Enchant Art (MGEF DATA), on a weapon in the hand (third and first person; the particles off
+the blade where its hand node holds it) and on weapons and armour lying in a loaded cell (hidden
+with them when taken). 2,903 of 3,018 enchanted vanilla weapons and 2,819 of 2,847 enchanted
+armours have a shader (`node tools/effect-audit.ts --glow`). TODO(M13): worn armour shows none
+(as remembered of the game, unchecked); items dropped or created at run time do not glow yet.
+
+### Rooms' lighting
+
+A room marker's LNAM lighting template (XRMR flag `0x80`) takes the cell template's place, under
+the cell's own XCLL values and inheritance flags, and its INAM image space (flag `0x40`) the
+cell's, while the camera stands in that room (`lightingInRoom`, `src/shell/model-viewer.ts`).
 
 ### Spot lights
 
