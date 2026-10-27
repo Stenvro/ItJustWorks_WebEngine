@@ -18,6 +18,7 @@ import {
 import { ObjectHandle, type Value } from '../values.ts';
 import { PLAYER_REF } from './forms.ts';
 import type { ScriptRuntime } from './runtime.ts';
+import { refill } from './runtime-save.ts';
 
 /** What an event tells the story manager (Creation Kit: each event's "Event Data"). */
 export interface StoryEventData {
@@ -151,6 +152,17 @@ export class StoryManager {
 
   constructor(runtime: ScriptRuntime) {
     this.#runtime = runtime;
+  }
+
+  /** What the save keeps: when quests were last started, what each node started. */
+  saveData(): unknown {
+    return { lastStarted: this.#lastStarted, startedBy: this.#startedBy };
+  }
+
+  loadData(data: unknown): void {
+    const saved = data as { lastStarted?: unknown; startedBy?: unknown } | undefined;
+    refill(this.#lastStarted, saved?.lastStarted);
+    refill(this.#startedBy, saved?.startedBy);
   }
 
   #load(): Promise<Map<string, StoryNode>> {

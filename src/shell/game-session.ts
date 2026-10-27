@@ -2,6 +2,8 @@
 // VFS, the asset workers, texture and model caches, the record database and the Papyrus
 // environment. Disposed when another folder is mounted.
 
+import { loadGameScripts, type GameSave } from '../save/game-save.ts';
+import type { SaveHeader } from '../save/save-codec.ts';
 import { loadRouteMap } from '../ai/route-map.ts';
 import type { Space } from '../ai/package-start.ts';
 import type { RouteMap } from '../ai/routes.ts';
@@ -1037,11 +1039,19 @@ export class GameSession {
       const grids = this.ini.lookup('General', 'uGridsToLoad');
       if (grids !== undefined) runtime.gridsToLoad = grids;
       runtime.magic.cloakInterval = this.ini.number('General', 'fCloakEffectUpdateInterval');
-      await runtime.newGame((what) => {
+      const progress = (what: string): void => {
         if (runtime.retired) return;
         this.scriptsProgress = what;
         this.#terminal.log('papyrus', what);
-      }, opening);
+      };
+      const load = this.#pendingLoad;
+      this.#pendingLoad = undefined;
+      if (load) {
+        // A saved game: the plugins' records, then the save's state (docs/formats/save.md).
+        for (const problem of await loadGameScripts(runtime, load.save, load.header, progress)) {
+          this.#terminal.log('save', problem, 'warn');
+        }
+      } else await runtime.newGame(progress, opening);
       // A new game asked for meanwhile replaced this one.
       if (runtime.retired) return runtime;
       // From now on threads share each frame's budget ([Papyrus] fUpdateBudgetMS).
@@ -1054,7 +1064,7 @@ export class GameSession {
       const running = [...runtime.state.quests.values()].filter((quest) => quest.running).length;
       this.#terminal.log(
         'papyrus',
-        `new game: ${String(running)} quests running · ${(performance.now() - start).toFixed(0)} ms`,
+        `${load ? 'loaded' : 'new game'}: ${String(running)} quests running · ${(performance.now() - start).toFixed(0)} ms`,
         'ok',
       );
       this.scriptsReady = runtime;
@@ -1078,6 +1088,18 @@ export class GameSession {
    * state; the viewers load their scene again to show it. Without `opening` the new game starts
    * without Unbound (the main menu's coc).
    */
+  /**
+   * Throws the running game away and loads a saved one: its scripts from the save (instead of a
+   * new game's start). The caller then loads the world where the save's player stands.
+   */
+  loadSaved(save: GameSave, header: SaveHeader): Promise<ScriptRuntime> {
+    this.#pendingLoad = { save, header };
+    return this.resetStates(false);
+  }
+
+  /** A saved game the next runtime loads instead of starting a new game. */
+  #pendingLoad: { readonly save: GameSave; readonly header: SaveHeader } | undefined;
+
   resetStates(opening = true): Promise<ScriptRuntime> {
     this.scriptsReady?.retire();
     this.scriptsStarting?.retire();

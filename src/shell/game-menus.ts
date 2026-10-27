@@ -9,7 +9,7 @@ import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import { formatGameDate } from '../world/game-time.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
-import { JournalMenu, JournalPage } from './journal-menu.ts';
+import { JournalMenu, JournalPage, type JournalSaves } from './journal-menu.ts';
 import { inventoryModel } from './inventory-menu.ts';
 import { magicModel } from './magic-menu.ts';
 import { ItemMenu, type ItemMenuModel } from './item-menu.ts';
@@ -170,6 +170,16 @@ export class GameMenus {
   /** Quit to the main menu (false) or to the desktop (true), from the journal's system page. */
   set onQuit(quit: ((toDesktop: boolean) => void) | undefined) {
     this.#journal.onQuit = quit;
+  }
+
+  /** What the journal's Save, Load and Quicksave do (Play's save manager). */
+  set saves(saves: JournalSaves | undefined) {
+    this.#journal.saves = saves;
+  }
+
+  /** The hours have passed in the sleep and wait menu (slept, or waited). */
+  set onPassed(passed: ((slept: boolean) => void) | undefined) {
+    this.#sleepWait.onPassed = passed;
   }
 
   /** Whether one of these menus is open. */
