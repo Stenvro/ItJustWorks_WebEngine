@@ -131,6 +131,12 @@ export interface AiSettings {
   readonly maxSandboxRescanSeconds: number;
   /** fSandBoxRadiusHysteresis: a sandboxer goes back into its place once this far outside it. */
   readonly sandboxRadiusHysteresis: number;
+  /**
+   * The engine's Avoid Player package: the player's swing, bow shot or projectile spell within
+   * fTriggerAvoidPlayerDistance starts it; it keeps the actor fAvoidPlayerDistance from them.
+   */
+  readonly triggerAvoidPlayerDistance: number;
+  readonly avoidPlayerDistance: number;
   /** The process lists' update budget (ms a frame) by frame rate ([General] INI settings). */
   readonly processListsUpdateTimeMin: number;
   readonly processListsUpdateTimeMax: number;
@@ -216,6 +222,8 @@ const SETTINGS: readonly (readonly [keyof AiSettings, string, number])[] = [
   ['maxSandboxRescanSeconds', 'fMaxSandboxRescanSeconds', 6],
   // TODO(M13): the engine's built-in value (Skyrim.esm sets 50).
   ['sandboxRadiusHysteresis', 'fSandBoxRadiusHysteresis', 50],
+  ['triggerAvoidPlayerDistance', 'fTriggerAvoidPlayerDistance', 400],
+  ['avoidPlayerDistance', 'fAvoidPlayerDistance', 100],
   ['processListsUpdateTimeMin', 'fProcessListsUpdateTimeMin:General', 0.5],
   ['processListsUpdateTimeMax', 'fProcessListsUpdateTimeMax:General', 5],
   ['processListsUpdateLowFrameRate', 'fProcessListsUpdateLowFrameRate:General', 10],
