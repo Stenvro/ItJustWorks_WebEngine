@@ -281,7 +281,9 @@ export class ActorAi {
   /** The package running for an actor now (GetCurrentPackage), if its AI runs. */
   current(
     reference: number,
-  ): { id: number; procedure: string | undefined; flags: number; interrupts: number } | undefined {
+  ):
+    | { id: number; type?: number; procedure: string | undefined; flags: number; interrupts: number }
+    | undefined {
     if (reference === PLAYER_REF) return this.#player?.packages.current;
     return this.#actors.get(reference)?.packages.current;
   }
