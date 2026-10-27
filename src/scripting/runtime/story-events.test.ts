@@ -163,4 +163,30 @@ describe('the story events', () => {
       new ObjectHandle(NPC, 'objectreference'),
     ]);
   });
+
+  it('raises Flatter, Bribe, Intimidate, Player Gets Favor, Infection, Cure and Quest Start', async () => {
+    const { story, raised, events } = stubRuntime();
+    await story.persuaded('FLAT', NPC);
+    await story.persuaded('BRIB', NPC);
+    await story.persuaded('INTM', GUARD);
+    await story.playerGetsFavor(NPC);
+    await story.infection(DOG, SPELL);
+    await story.cure(SPELL);
+    await events.emitted('questStartStop', { quest: 0x9000, started: true });
+    await events.emitted('questStartStop', { quest: 0x9000, started: false });
+    expect(raised.map((event) => [event.type, members(event)])).toEqual([
+      ['FLAT', { R1: NPC }],
+      ['BRIB', { R1: NPC }],
+      ['INTM', { R1: GUARD }],
+      ['PRFV', { R1: NPC }],
+      ['INFC', { R1: DOG, F1: SPELL }],
+      ['CURE', { F1: SPELL }],
+      ['QSTR', { F1: 0x9000 }],
+    ]);
+    // OnStoryInfection(akTransmittingActor, akInfection).
+    expect(raised[4]?.args).toEqual([
+      new ObjectHandle(DOG, 'objectreference'),
+      new ObjectHandle(SPELL, 'form'),
+    ]);
+  });
 });

@@ -347,6 +347,7 @@ export class ActorStage {
       ...(options.navmeshes && { navmeshes: options.navmeshes }),
       openDoor: (door, actor) => this.doors.passage(door, actor),
       shutTo: (actor) => this.doors.shutTo(actor),
+      swimAllowed: (actor) => this.ai.allowsSwimming(actor),
       shutPlaces: (actor) => this.doors.shutPlaces(actor),
       obstacles: this.obstacles,
       // A paired animation (a killmove) holds both actors: their clip places them.

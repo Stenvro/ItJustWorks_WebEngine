@@ -215,6 +215,11 @@ export interface ActorMoversOptions {
   readonly openDoor?: (door: number, actor: number) => DoorPassage | undefined;
   /** The doors found shut to an actor lately (its paths keep off them), and where they are. */
   readonly shutTo?: (actor: number) => ReadonlySet<number>;
+  /**
+   * Whether the package an actor runs lets it swim (PKDT Allow Swimming): only then does one of
+   * a race that swims cross water as readily as land. Without the option: it may.
+   */
+  readonly swimAllowed?: (actor: number) => boolean;
   readonly shutPlaces?: (
     actor: number,
   ) => readonly { readonly at: Vec3; readonly radius: number }[];
@@ -568,7 +573,9 @@ export class ActorMovers {
           radius: mover.character.shape.radius * travel.searches,
           large: (mover.race?.size ?? RaceSize.medium) >= RaceSize.large,
           // A swimmer crosses water as readily as land (the navmesh's water triangles).
-          swims: (mover.staged.placed.look.raceFlags & RaceFlag.swims) !== 0,
+          swims:
+            (mover.staged.placed.look.raceFlags & RaceFlag.swims) !== 0 &&
+            this.#options.swimAllowed?.(reference) !== false,
           closedDoors: this.#closedFor(reference, travel),
           blocked: this.#blockedFor(reference, travel),
           obstacles: this.#options.obstacles?.index,
@@ -1546,7 +1553,9 @@ export class ActorMovers {
       const path = findPath(set, staged.position, travel.destination, {
         radius: WALKER_RADIUS * travel.searches,
         large: (walker.race?.size ?? RaceSize.medium) >= RaceSize.large,
-        swims: (staged.placed.look.raceFlags & RaceFlag.swims) !== 0,
+        swims:
+          (staged.placed.look.raceFlags & RaceFlag.swims) !== 0 &&
+          this.#options.swimAllowed?.(reference) !== false,
         closedDoors: this.#closedFor(reference, travel),
         blocked: this.#blockedFor(reference, travel),
         obstacles: this.#options.obstacles?.index,

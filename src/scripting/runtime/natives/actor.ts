@@ -367,7 +367,14 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     entry.canDoFavor = bool(call.args[1], true);
   });
   ask('isdoingfavor', false, (actor) => state.actors.get(actor)?.doingFavor ?? false);
-  flag('setdoingfavor', 'doingFavor');
+  // As one starts doing the player a favor: the story manager's Player Gets Favor (PRFV).
+  act('setdoingfavor', (actor, call) => {
+    const doing = bool(call.args[0], true);
+    const was = state.actors.get(actor)?.doingFavor === true;
+    state.actor(actor).doingFavor = doing;
+    if (doing && !was && actor !== PLAYER_REF)
+      runtime.detach(runtime.storyEvents.playerGetsFavor(actor));
+  });
   // Summoned, reanimated or commanded by an effect (magic-engine.ts).
   ask('iscommandedactor', false, (actor) => runtime.magic.commander(actor) !== undefined);
   ask('isbribed', false, (actor) => state.actors.get(actor)?.bribed ?? false);

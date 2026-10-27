@@ -303,6 +303,15 @@ export class ActorAi {
     return (flags & (PackageFlag.unlockDoorsAtStart | PackageFlag.unlockDoorsOnChange)) !== 0;
   }
 
+  /**
+   * Whether the package an actor runs lets it swim (PKDT Allow Swimming: 85 vanilla packages);
+   * one running no package may. TODO(M13): the engine's rule without a package, and in combat.
+   */
+  allowsSwimming(reference: number): boolean {
+    const current = this.current(reference);
+    return current === undefined || (current.flags & PackageFlag.allowSwimming) !== 0;
+  }
+
   /** EvaluatePackage: the actor chooses its package again. */
   evaluate(reference: number, restart = false): void {
     this.#actors.get(reference)?.packages.evaluate(restart);

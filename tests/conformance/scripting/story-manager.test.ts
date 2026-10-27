@@ -25,6 +25,7 @@ import {
   parseStoryNode,
   type StoryNode,
 } from '../../../src/world/story-manager-records.ts';
+import { parseInfo } from '../../../src/world/dialogue-records.ts';
 import { hasGamedata, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
 
 /** The Bannered Mare (interior CELL) and its location (LCTN). */
@@ -223,12 +224,18 @@ const RAISED: Readonly<Record<string, string>> = {
   AIPL: 'the takes, the container and barter menus',
   ARRT: 'the guards’ arrest',
   ASSU: 'crime-engine.ts',
+  BRIB: 'dialogue-engine.ts (a bribe counted)',
   CAST: 'casting-engine.ts',
   CHRR: 'crime-engine.ts',
   CRFT: 'crafting-menu.ts',
+  CURE: 'magic-engine.ts (Cure Disease)',
   DEAD: 'the senses',
   ESJA: 'crime-engine.ts',
+  INFC: 'magic-engine.ts (contractDisease)',
+  INTM: 'dialogue-engine.ts (an intimidation counted)',
   JAIL: 'crime-engine.ts',
+  PRFV: 'Actor.SetDoingFavor',
+  QSTR: 'story-events.ts (the quest start event)',
   KILL: 'crime-engine.ts (checked in event-sources.test.ts)',
   LEVL: 'progression-engine.ts',
   LOCK: 'crime-engine.ts',
@@ -241,8 +248,10 @@ const RAISED: Readonly<Record<string, string>> = {
   TRES: 'crime-engine.ts',
 };
 
-/** The types the interaction cases of this suite check (CLOC above, AFAV below). */
-const CHECKED = new Set(['CLOC', 'AFAV']);
+/** The types the interaction cases of this suite check (CLOC above, AFAV and FLAT below). */
+const CHECKED = new Set(['CLOC', 'AFAV', 'FLAT']);
+/** The Whiterun gate guard's line as the player's persuasion succeeds (its fragment: Persuade). */
+const GATE_PERSUADED_INFO = 0xd1981;
 
 describe('every story manager event type', () => {
   for (const [type, { event, when }] of Object.entries(STORY_TYPES)) {
@@ -334,4 +343,25 @@ describe.skipIf(!hasGamedata())('the story manager’s events (data, headless si
       [{ form: PLAYER_REF }],
     ]);
   });
+
+  it('raises Flatter (FLAT: R1 the actor) as a persuasion succeeds in dialogue', async () => {
+    expect(talkedTo).not.toBe(0);
+    const record = await sim.db.get(GATE_PERSUADED_INFO);
+    expect(record).toBeDefined();
+    if (!record) return;
+    const since = sim.time;
+    // The info's fragments as it is said: FavorDialogueScript.Persuade counts a persuasion. (Its
+    // scripts run as the simulation steps.)
+    const info = parseInfo(record);
+    const said = (async () => {
+      await sim.runtime.dialogue.runFragment(info, 'begin', talkedTo);
+      await sim.runtime.dialogue.runFragment(info, 'end', talkedTo);
+    })();
+    for (let i = 0; i < 20 && sim.storyEvents('FLAT').length === 0; i++) await sim.step(0.5);
+    await sim.step(0.5);
+    void said;
+    expect(sim.runtime.stats.get('persuasions')).toBeGreaterThan(0);
+    const raised = sim.storyEvents('FLAT').filter((event) => event.at >= since);
+    expect(raised.map((event) => event.forms.R1)).toEqual([talkedTo]);
+  }, 60_000);
 });

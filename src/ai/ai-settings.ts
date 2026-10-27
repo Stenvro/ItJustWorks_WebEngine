@@ -129,6 +129,8 @@ export interface AiSettings {
   readonly sandboxInterMarkerMinDist: number;
   readonly minSandboxRescanSeconds: number;
   readonly maxSandboxRescanSeconds: number;
+  /** fSandBoxRadiusHysteresis: a sandboxer goes back into its place once this far outside it. */
+  readonly sandboxRadiusHysteresis: number;
   /** The process lists' update budget (ms a frame) by frame rate ([General] INI settings). */
   readonly processListsUpdateTimeMin: number;
   readonly processListsUpdateTimeMax: number;
@@ -212,6 +214,8 @@ const SETTINGS: readonly (readonly [keyof AiSettings, string, number])[] = [
   ['sandboxInterMarkerMinDist', 'fSandBoxInterMarkerMinDist', 100],
   ['minSandboxRescanSeconds', 'fMinSandboxRescanSeconds', 3],
   ['maxSandboxRescanSeconds', 'fMaxSandboxRescanSeconds', 6],
+  // TODO(M13): the engine's built-in value (Skyrim.esm sets 50).
+  ['sandboxRadiusHysteresis', 'fSandBoxRadiusHysteresis', 50],
   ['processListsUpdateTimeMin', 'fProcessListsUpdateTimeMin:General', 0.5],
   ['processListsUpdateTimeMax', 'fProcessListsUpdateTimeMax:General', 5],
   ['processListsUpdateLowFrameRate', 'fProcessListsUpdateLowFrameRate:General', 10],
