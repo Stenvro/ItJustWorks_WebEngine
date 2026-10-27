@@ -34,6 +34,7 @@ import type { RenderPort } from '../render/render-port.ts';
 import type {
   GpuModel,
   GpuScene,
+  InstanceFade,
   InstanceMotion,
   InstanceVisibility,
   ModelInstance,
@@ -67,6 +68,8 @@ export interface HeldBody {
   readonly world: Float32Array;
   readonly motion: InstanceMotion;
   readonly visibility: InstanceVisibility;
+  /** The body's distance fade: what it holds fades with it (ModelInstance.fade). */
+  readonly fade?: InstanceFade;
   /** The first-person arms: the models are drawn in first person's view (ModelInstance). */
   readonly firstPerson?: boolean;
 }
@@ -212,6 +215,7 @@ export class HeldWeapons {
       world: body.world,
       motion: body.motion,
       visibility: body.visibility,
+      ...(body.fade && { fade: body.fade }),
       ...(body.firstPerson && { firstPerson: true }),
       pose,
       ...(dressed.nodeMaps[i] && { poseNodes: dressed.nodeMaps[i] }),
@@ -227,6 +231,7 @@ export class HeldWeapons {
         world,
         motion,
         visibility: body.visibility,
+        ...(body.fade && { fade: body.fade }),
         ...(body.firstPerson && { firstPerson: true }),
       });
     }

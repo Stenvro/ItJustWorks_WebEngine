@@ -40,6 +40,8 @@ import {
 import { frustumPlanes, invert, sphereVisible, type Plane } from './frustum.ts';
 import type { RoomCuller } from './room-culler.ts';
 import { identity, maxScale, multiply, transformPoint, type Mat4, type Vec3 } from './math.ts';
+import { fadeOut, fadeRange, type FadeKind, type FadeSettings } from './object-fade.ts';
+import { MAX_RIPPLES, type Ripple } from './water-ripples.ts';
 import type {
   AlphaState,
   EffectMaterial,
@@ -423,8 +425,8 @@ export interface WaterFlow {
   /** South-west corner of the cell the map covers. */
   readonly origin: readonly [number, number];
 }
-/** WGSL `WaterFrame`: 5 vec4 + 32 profile samples. */
-const WATER_FRAME_FLOATS = 20 + 32 * 4;
+/** WGSL `WaterFrame`: 5 vec4 + 32 profile samples + the ripples. */
+const WATER_FRAME_FLOATS = 20 + 32 * 4 + MAX_RIPPLES * 4;
 
 /** A water type (WATR) on the GPU: its parameters and noise textures. */
 export class GpuWaterType {
@@ -451,6 +453,8 @@ export interface WaterFrame {
   readonly multiplier: Vec3;
   /** Sky dome weights by elevation (ATMOSPHERE_SAMPLES × 4), if there is a sky. */
   readonly profile: Float32Array | undefined;
+  /** Rings on the water from splashes and wakes (water-ripples.ts), newest first. */
+  readonly ripples?: readonly Ripple[];
 }
 
 /**
@@ -469,6 +473,11 @@ export interface InstanceVisibility {
   hidden: boolean;
 }
 
+/** A reference's distance fade: the setting it fades by (object-fade.ts). */
+export interface InstanceFade {
+  readonly kind: FadeKind;
+}
+
 export interface ModelInstance {
   readonly model: GpuModel;
   readonly world: Mat4;
@@ -476,6 +485,11 @@ export interface ModelInstance {
   readonly motion?: InstanceMotion;
   /** Shown or hidden (an enabled or disabled reference); always shown without. */
   readonly visibility?: InstanceVisibility;
+  /**
+   * A placed reference that fades out with distance by its kind's setting (object-fade.ts);
+   * never fades without. Instances sharing one fade as one.
+   */
+  readonly fade?: InstanceFade;
   /**
    * The room the instance stands in (1-255; 0 or none: no room): portal-strict lights of
    * another room leave it unlit (PointLight.room).
@@ -680,6 +694,19 @@ interface Draw {
   readonly visibility?: InstanceVisibility;
   /** The player's first-person geometry (ModelInstance.firstPerson): never culled. */
   readonly firstPerson?: boolean;
+  /** Its instance's distance fade (ModelInstance.fade). */
+  readonly fade?: FadeGroup;
+}
+
+/**
+ * An instance's distance fade: its draws, its bound's radius, and how far it has faded this
+ * frame (0..255, in the top byte of the draws' flags.w: common.wgsl fadeDiscarded).
+ */
+interface FadeGroup {
+  readonly kind: FadeKind;
+  readonly draws: Draw[];
+  radius: number;
+  level: number;
 }
 
 /** A draw that changes every frame (animated, or turning to the camera). */
@@ -929,6 +956,8 @@ export class GpuScene {
   readonly bones: SceneBones | undefined;
   /** Draws of weapons' blood shapes (updated when their weapon's blood changes). */
   readonly weaponBlood: readonly WeaponBloodDraw[];
+  /** Instances that fade out with distance (ModelInstance.fade). */
+  fades: readonly FadeGroup[] = [];
   /** The models it draws (held while it exists). */
   readonly #models: readonly GpuModel[];
 
@@ -1310,6 +1339,9 @@ export interface SceneFrame {
   rooms?: RoomCuller | undefined;
 }
 
+/** The fade multipliers before the settings are read (the executable's [LOD] defaults). */
+const DEFAULT_FADE: FadeSettings = { actors: 6, items: 3, objects: 5 };
+
 export class SceneRenderer {
   /** One of DebugView; 0 shows the normal image. */
   debugView = 0;
@@ -1317,6 +1349,14 @@ export class SceneRenderer {
   lastCulling: { readonly tested: number; readonly culled: number } = { tested: 0, culled: 0 };
   /** Water type for water surfaces whose placement names none (DefaultWater). */
   defaultWater: GpuWaterType | undefined;
+  /** The settings Actor, Item and Object Fade (INI [LOD] fLODFadeOutMult*). */
+  objectFade: FadeSettings = DEFAULT_FADE;
+  /**
+   * The room (1-255; 0: none) holding a point of the cell drawn, if it has rooms: the draws of
+   * moving instances (actors walking from room to room) take the room they are in each frame,
+   * so portal-strict lights of other rooms leave them unlit (ModelInstance.room).
+   */
+  roomAt: ((point: Vec3) => number) | undefined;
   readonly #device: GPUDevice;
   readonly #colorFormat: GPUTextureFormat;
   readonly #frameData = new Float32Array(FRAME_FLOATS);
@@ -1931,10 +1971,28 @@ export class SceneRenderer {
     const movingAddons: MovingAddon[] = [];
     // Rooms by instance (an add-on stands in its parent's).
     const rooms = new Map<ModelInstance, number>();
-    const place = (instance: ModelInstance, depth: number, parentRoom?: number): void => {
+    // Fades by instance (an add-on fades with its parent).
+    const fades = new Map<ModelInstance, FadeGroup>();
+    // Instances sharing a fade (an actor's body, head and what it wears) fade as one.
+    const fadeGroups = new Map<InstanceFade, FadeGroup>();
+    const place = (
+      instance: ModelInstance,
+      depth: number,
+      parentRoom?: number,
+      parentFade?: FadeGroup,
+    ): void => {
       placed.push(instance);
       const room = instance.room ?? parentRoom ?? options.roomOf?.(instance);
       if (room) rooms.set(instance, room);
+      let fade = parentFade;
+      if (!fade && instance.fade && !instance.firstPerson) {
+        fade = fadeGroups.get(instance.fade);
+        if (!fade) {
+          fade = { kind: instance.fade.kind, draws: [], radius: 0, level: 0 };
+          fadeGroups.set(instance.fade, fade);
+        }
+      }
+      if (fade) fades.set(instance, fade);
       if (depth >= 2) return;
       for (const addon of instance.model.addons) {
         const world = multiply(instance.world, addon.world);
@@ -1960,6 +2018,7 @@ export class SceneRenderer {
           },
           depth + 1,
           room,
+          fade,
         );
       }
     };
@@ -2027,6 +2086,7 @@ export class SceneRenderer {
       const animation = instance.model.animation;
       const directional = instance.directional;
       const material = directional?.material;
+      const fadeGroup = fades.get(instance);
       for (const [partIndex, part] of instance.model.parts.entries()) {
         if (instance.partShown && !instance.partShown(part.part)) continue;
         // A weapon's blood shapes only on a held weapon that can bleed.
@@ -2216,8 +2276,13 @@ export class SceneRenderer {
           ...(face && { face: { morphs: face.morphs, offset: face.offset } }),
           ...(instance.visibility && { visibility: instance.visibility }),
           ...(firstPerson && { firstPerson }),
+          ...(fadeGroup && { fade: fadeGroup }),
         };
         draws.push(draw);
+        if (fadeGroup) {
+          fadeGroup.draws.push(draw);
+          fadeGroup.radius = Math.max(fadeGroup.radius, draw.radius);
+        }
         follows?.draws.push(draw);
         if (instance.motion) {
           moving.push({
@@ -2258,8 +2323,10 @@ export class SceneRenderer {
             ...(ranges && { ranges }),
             ...(instance.visibility && { visibility: instance.visibility }),
             ...(firstPerson && { firstPerson }),
+            ...(fadeGroup && { fade: fadeGroup }),
           };
           draws.push(passDraw);
+          fadeGroup?.draws.push(passDraw);
           follows?.draws.push(passDraw);
           if (instance.motion) {
             moving.push({
@@ -2320,7 +2387,7 @@ export class SceneRenderer {
       entries: [{ binding: 0, resource: { buffer, size: DRAW_SIZE } }],
     });
     const models = [...new Set(placed.map((instance) => instance.model))];
-    return new GpuScene(
+    const scene = new GpuScene(
       draws,
       bindGroup,
       buffer,
@@ -2338,6 +2405,8 @@ export class SceneRenderer {
         ),
       weaponBlood,
     );
+    scene.fades = [...new Set(fades.values())].filter((group) => group.draws.length > 0);
+    return scene;
   }
 
   /**
@@ -2655,6 +2724,10 @@ export class SceneRenderer {
     };
     const world = new Float32Array(16);
     const sceneList = [...scenes];
+    for (const scene of sceneList) {
+      this.#updateFades(scene, camera);
+      this.#updateRooms(scene);
+    }
     // Each instance's sequence is evaluated once per frame.
     const played = new Map<Playback, AnimationFrame | undefined>();
     const playedFrame = (playback: AnimatedDraw['playback']): AnimationFrame | undefined => {
@@ -3121,6 +3194,9 @@ export class SceneRenderer {
       // No sky (interiors): a plain gradient.
       for (let i = 0; i < 32; i++) data.set([1 - i / 31, i / 31, 0, 1], 20 + i * 4);
     }
+    (frame?.ripples ?? []).slice(0, MAX_RIPPLES).forEach((ring, i) => {
+      data.set([ring.x, ring.y, ring.age, ring.strength], 148 + i * 4);
+    });
     this.#device.queue.writeBuffer(this.#waterFrameBuffer, 0, data);
   }
 
@@ -3189,6 +3265,7 @@ export class SceneRenderer {
       for (const draw of scene.draws) {
         const { part } = draw;
         if (!part.shadowPipeline || draw.radius < minRadius || draw.visibility?.hidden) continue;
+        if (draw.fade && draw.fade.level >= 255) continue;
         if (!sphereVisible(planes, draw.center, draw.radius)) continue;
         bindPart(pass, state, part.shadowPipeline, part);
         pass.setBindGroup(1, scene.drawBindGroup, [draw.uniformOffset]);
@@ -3202,8 +3279,58 @@ export class SceneRenderer {
     }
   }
 
+  /**
+   * How far each fading instance of a scene has faded from the camera (object-fade.ts): the
+   * level goes into its draws' flags.w top byte, uploaded only when it changes.
+   */
+  #updateFades(scene: GpuScene, camera: Vec3): void {
+    if (scene.fades.length === 0) return;
+    const uints = new Uint32Array(scene.uniformData);
+    const runs = new UniformRuns(this.#device, scene.uniforms, scene.uniformData);
+    for (const group of scene.fades) {
+      const center = group.draws[0]?.center;
+      if (!center) continue;
+      const { start, end } = fadeRange(group.kind, group.radius, this.objectFade);
+      const distance = Math.hypot(
+        center[0] - camera[0],
+        center[1] - camera[1],
+        center[2] - camera[2],
+      );
+      const level = Math.round(fadeOut(distance, start, end) * 255);
+      if (level === group.level) continue;
+      group.level = level;
+      for (const draw of group.draws) {
+        const at = draw.uniformOffset / 4 + 39;
+        uints[at] = ((uints[at] ?? 0) & 0xffffff) | (level << 24);
+        runs.add(draw.uniformOffset + 39 * 4, 4);
+      }
+    }
+    runs.flush();
+  }
+
+  /** Moving draws take the room their centre is in (roomAt), uploaded when it changes. */
+  #updateRooms(scene: GpuScene): void {
+    const roomAt = this.roomAt;
+    if (!roomAt || scene.moving.length === 0) return;
+    const uints = new Uint32Array(scene.uniformData);
+    const runs = new UniformRuns(this.#device, scene.uniforms, scene.uniformData);
+    for (const { draw } of scene.moving) {
+      if (draw.firstPerson || draw.sky) continue;
+      const at = draw.uniformOffset / 4 + 38;
+      const before = uints[at] ?? 0;
+      const room = roomAt(draw.center) & 0xff;
+      const after = ((before & ~(0xff << DRAW_ROOM_SHIFT)) | (room << DRAW_ROOM_SHIFT)) >>> 0;
+      if (after === before) continue;
+      uints[at] = after;
+      runs.add(draw.uniformOffset + 38 * 4, 4);
+    }
+    runs.flush();
+  }
+
   #visible(draw: Draw): boolean {
     if (draw.visibility?.hidden) return false;
+    // Faded out entirely with distance (object-fade.ts).
+    if (draw.fade && draw.fade.level >= 255) return false;
     if (draw.sky || draw.firstPerson) return true;
     if (!sphereVisible(this.#frame.planes, draw.center, draw.radius)) return false;
     return this.#frame.rooms?.visible(draw.center, draw.radius) ?? true;
