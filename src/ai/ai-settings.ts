@@ -69,6 +69,12 @@ export interface AiSettings {
   /** fFollowExtraCatchUpSpeedMult: a follower behind goes up to this much faster. */
   readonly followExtraCatchUpSpeedMult: number;
   /**
+   * fFollowWalkZoneMult: a follower within this many times its maximum radius of its leader walks
+   * (beyond, it runs). TODO(M13): the engine's built-in value is not read (Skyrim.esm does not
+   * store it); 2, the walk zone used before.
+   */
+  readonly followWalkZoneMult: number;
+  /**
    * fFollowWalk/RunMaxSpeedupMultiplier, …MinSlowdownMultiplier: a follower's speed stays within
    * these times its own (or its leader's), walking and running.
    */
@@ -173,6 +179,7 @@ const SETTINGS: readonly (readonly [keyof AiSettings, string, number])[] = [
   ['followSlowdownZoneWidth', 'fFollowSlowdownZoneWidth', 150],
   ['followMatchSpeedZoneWidth', 'fFollowMatchSpeedZoneWidth', 128],
   ['followExtraCatchUpSpeedMult', 'fFollowExtraCatchUpSpeedMult', 0.2],
+  ['followWalkZoneMult', 'fFollowWalkZoneMult', 2],
   ['followWalkMaxSpeedup', 'fFollowWalkMaxSpeedupMultiplier', 1.5],
   ['followWalkMinSlowdown', 'fFollowWalkMinSlowdownMultiplier', 0.75],
   ['followRunMaxSpeedup', 'fFollowRunMaxSpeedupMultiplier', 1.25],

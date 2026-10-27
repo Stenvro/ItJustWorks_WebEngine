@@ -282,7 +282,13 @@ export class ActorAi {
   current(
     reference: number,
   ):
-    | { id: number; type?: number; procedure: string | undefined; flags: number; interrupts: number }
+    | {
+        id: number;
+        type?: number;
+        procedure: string | undefined;
+        flags: number;
+        interrupts: number;
+      }
     | undefined {
     if (reference === PLAYER_REF) return this.#player?.packages.current;
     return this.#actors.get(reference)?.packages.current;
