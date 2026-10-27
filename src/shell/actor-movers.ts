@@ -69,13 +69,19 @@ import type { ActorMotion } from '../scripting/runtime/runtime.ts';
 import type { StagedActor } from './actor-stage.ts';
 import type { GameSession } from './game-session.ts';
 import { controllerSettings, controllerShape } from './player.ts';
-import { actorFell } from './time-flow.ts';
+import { actorFell, waterHarmed } from './time-flow.ts';
+import { floatSpeed, swims } from '../gameplay/swimming.ts';
+import { WaterHazard } from '../gameplay/water-hazard.ts';
+import type { WaterPhysics } from '../physics/water-physics.ts';
+import { materialId } from '../world/material-type.ts';
 import type { Terminal } from './terminal.ts';
 
 /** The physics world of a play and its fixed steps (PlaySession). */
 export interface MoverWorld {
   readonly physics: PhysicsWorld;
   readonly stepHooks: Set<(step: number) => void>;
+  /** The water's physics (src/physics/water-physics.ts): who swims, who splashes. */
+  readonly water?: WaterPhysics | undefined;
   /** The player: actors go round them and react when they bump into them. */
   readonly player?: {
     readonly character: CharacterBody;
@@ -97,6 +103,12 @@ const TILT_TURN_AGAIN = 0.05;
 const TILT_PROBE_DEPTH = 175;
 /** An NPC sprinting pays its stamina this often (seconds of sprinting at a time). */
 const SPRINT_PAYMENT_SECONDS = 0.5;
+/** The movement types' key while an actor swims (Mover.typesFor). */
+const SWIMMING_TYPES = '(swimming)';
+/** A swimmer without movement types rises and sinks to the surface at most this fast (units/s). */
+const SWIM_RISE_SPEED = 100;
+/** What an actor splashes as (its impact against the water). TODO(M13): the engine's choice. */
+const ACTOR_SPLASH_MATERIAL = materialId('Skin');
 
 /** [Animation] bFeedbackToGraphFromCharacterController and fMotionFeedback* (MotionFeedback). */
 function motionFeedbackSettings(ini: IniSettings): MotionFeedbackSettings {
@@ -381,6 +393,8 @@ export class ActorMovers {
   readonly #reactions = new Map<number, Reaction>();
   /** The actors that sneak now (src/shell/actor-senses.ts: Always Sneak, StartSneaking). */
   readonly #sneaking = new Set<number>();
+  /** The actors in water that harms (water-hazard.ts). */
+  readonly #hazards = new Map<number, WaterHazard>();
   #bumpTiming: BumpTiming | undefined;
   readonly #bounds = new Map<string, Promise<{ center: Vec3; halfExtents: Vec3 } | undefined>>();
   #world: MoverWorld | undefined;
@@ -553,6 +567,8 @@ export class ActorMovers {
           // again. TODO(M13): the engine's own way out (not documented).
           radius: mover.character.shape.radius * travel.searches,
           large: (mover.race?.size ?? RaceSize.medium) >= RaceSize.large,
+          // A swimmer crosses water as readily as land (the navmesh's water triangles).
+          swims: (mover.staged.placed.look.raceFlags & RaceFlag.swims) !== 0,
           closedDoors: this.#closedFor(reference, travel),
           blocked: this.#blockedFor(reference, travel),
           obstacles: this.#options.obstacles?.index,
@@ -1530,6 +1546,7 @@ export class ActorMovers {
       const path = findPath(set, staged.position, travel.destination, {
         radius: WALKER_RADIUS * travel.searches,
         large: (walker.race?.size ?? RaceSize.medium) >= RaceSize.large,
+        swims: (staged.placed.look.raceFlags & RaceFlag.swims) !== 0,
         closedDoors: this.#closedFor(reference, travel),
         blocked: this.#blockedFor(reference, travel),
         obstacles: this.#options.obstacles?.index,
@@ -1792,6 +1809,7 @@ export class ActorMovers {
         request = { ...wanted, direction: passing.direction };
         this.#blockedByActors(mover, passing.blocker, step, avoiding.maxTimeBlocked);
       }
+      const surface = this.#atWater(mover, step);
       const types = this.#types(mover);
       const root = mover.root;
       // Animation-driven (bAnimationDriven: furniture, staggers, dialogue), or standing while
@@ -1842,6 +1860,18 @@ export class ActorMovers {
         mover.turning.reset();
       }
       mover.turned.seconds += step;
+      // Swimming, it floats with its shoulders at the surface (as the player).
+      if (surface !== undefined) {
+        const character = mover.character;
+        character.verticalSpeed = floatSpeed(
+          character.feet[2],
+          character.shape.height,
+          surface,
+          types?.run.run.forward ?? SWIM_RISE_SPEED,
+          step,
+          character.supported,
+        );
+      }
       mover.character.step(step);
       // Landed from a fall: the NPCs' falling damage, as the player's (horses too).
       const fell = mover.character.landedFrom;
@@ -1894,12 +1924,60 @@ export class ActorMovers {
   #types(mover: Mover): MovementTypes | undefined {
     const behavior = mover.staged.placed.behavior;
     const tagged = behavior ? taggedMovementType(behavior) : undefined;
-    if (mover.types && tagged === mover.typesFor) return mover.types;
+    // Swimming, it walks and runs at its swimming type's speeds (no sprinting in water).
+    const swimming = mover.character.swimming;
+    const key = swimming ? SWIMMING_TYPES : tagged;
+    if (mover.types && key === mover.typesFor) return mover.types;
     const catalog = this.#catalogRead;
     if (!catalog) return mover.types;
-    mover.types = catalog.forActor(mover.race, tagged);
-    mover.typesFor = tagged;
+    const types = catalog.forActor(mover.race, tagged);
+    const swim = swimming ? catalog.swimming(mover.race) : undefined;
+    mover.types = types && swim ? { ...types, walk: swim, run: swim, sprint: undefined } : types;
+    mover.typesFor = key;
     return mover.types;
+  }
+
+  /**
+   * An actor's step at the water (src/gameplay/swimming.ts): one of a race that swims (RACE
+   * DATA Swims) swims in water deep enough, floating at the surface; one that does not walks
+   * the bottom. It splashes coming in and out (water-physics.ts), and harmful water harms it
+   * (water-hazard.ts). Returns the surface it floats at while it swims, else undefined.
+   */
+  #atWater(mover: Mover, step: number): number | undefined {
+    const water = this.#world?.water;
+    const character = mover.character;
+    if (!water) {
+      character.swimming = false;
+      return undefined;
+    }
+    const reference = mover.staged.reference;
+    const at = water.actor(
+      reference,
+      character.feet,
+      character.shape.height,
+      character.verticalSpeed,
+      ACTOR_SPLASH_MATERIAL,
+    );
+    const canSwim = (mover.staged.placed.look.raceFlags & RaceFlag.swims) !== 0;
+    const swimming =
+      canSwim && at.surface !== undefined && swims(at.submersion, character.swimming);
+    character.swimming = swimming;
+    // Harmful water (none in vanilla): its damage and spell.
+    let hazard = this.#hazards.get(reference);
+    if (!hazard && at.type !== undefined) {
+      hazard = new WaterHazard();
+      this.#hazards.set(reference, hazard);
+    }
+    if (hazard) {
+      const harm = at.type === undefined ? undefined : water.rules.harms.get(at.type);
+      const done = hazard.step(at.type, harm, at.submersion, step);
+      const runtime = this.#options.session.scriptsReady;
+      if (runtime && (done.damage > 0 || done.spell !== undefined)) {
+        void waterHarmed(runtime, reference, done).catch(() => undefined);
+      }
+      if (at.type === undefined) this.#hazards.delete(reference);
+    }
+    return swimming ? at.surface : undefined;
   }
 
   /**

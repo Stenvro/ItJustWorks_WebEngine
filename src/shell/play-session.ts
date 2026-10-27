@@ -17,6 +17,13 @@ import {
   type TelekinesisSettings,
 } from '../gameplay/magic/telekinesis.ts';
 import { Layer } from '../physics/collision-layers.ts';
+import {
+  splashImpact,
+  WaterPhysics,
+  type WaterAt,
+  type WaterRules,
+  type WaterSplash,
+} from '../physics/water-physics.ts';
 import { TRAP_REACH } from '../scripting/runtime/trap-hits.ts';
 import { landscapeMesh } from '../physics/landscape.ts';
 import type {
@@ -591,6 +598,10 @@ export interface CellRagdoll {
 export class PlaySession {
   readonly physics: PhysicsWorld;
   readonly player: Player;
+  /** Water's physics (buoyancy, currents, splashes), when the play has water. */
+  readonly water: WaterPhysics | undefined;
+  /** A splash (its sound has been played): for the cases and the splash's model. */
+  onSplash: ((splash: WaterSplash) => void) | undefined;
   /** The free camera (tfc); also looks while the player waits for the ground to load. */
   readonly camera: FlyCamera;
   /** What the renderer looks through: the player's camera or the free camera. */
@@ -701,9 +712,28 @@ export class PlaySession {
     notice?: HTMLElement;
     /** Collisions hard enough to be heard (the sound system's impact sounds). */
     onImpact?: (impact: PhysicsImpact) => void;
+    /** The water a point is in or over: bodies float in it, the player and the bodies splash. */
+    waterAt?: WaterAt;
+    /** What water does (PlayerData.water). */
+    waterRules?: WaterRules;
   }) {
     this.physics = init.physics;
     this.player = init.player;
+    if (init.waterAt) {
+      const waterAt = init.waterAt;
+      const water = new WaterPhysics(init.physics, waterAt, init.waterRules);
+      this.water = water;
+      init.player.waterOf = (x, y, z) => {
+        const at = waterAt(x, y, z);
+        return at && { type: at.type, harm: water.rules.harms.get(at.type) };
+      };
+      // Before the movers' and the player's steps: the bodies the water carries.
+      this.stepHooks.add((step) => {
+        water.step(step);
+        const character = init.player.character;
+        water.actor(PLAYER_REF, character.feet, character.shape.height, character.verticalSpeed);
+      });
+    }
     // Holding a heavy object the player walks (fZKeyHeavyWeight).
     init.player.holdingHeavy = () => {
       const body = this.#grab?.spring.body;
@@ -937,6 +967,14 @@ export class PlaySession {
       }
     }
     for (const impact of this.physics.drainImpacts()) this.#onImpact?.(impact);
+    // Splashes sound as impacts against the water. TODO(M13): their model (sSplashParticles at
+    // the splash's scale) is not shown yet.
+    if (this.water) {
+      for (const splash of this.water.drainSplashes()) {
+        this.#onImpact?.(splashImpact(splash, this.water.waterMaterial(splash.waterType)));
+        this.onSplash?.(splash);
+      }
+    }
     this.#watchTriggers();
     // What waited for cells' collision, once queries see it.
     if (this.#completed.length > 0 && this.physics.queriesCurrent) {
