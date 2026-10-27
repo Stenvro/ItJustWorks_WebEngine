@@ -550,6 +550,50 @@ export function chooseCaster(
   return undefined;
 }
 
+/** Its potions as the Action Equipment Selector's Potion slot weighs them. */
+export interface PotionState {
+  /** Its restore share for magicka (restoreShare), seconds since it restored it. */
+  readonly restoreMagickaBelow: number;
+  readonly sinceMagickaRestore: number;
+  readonly restoreMagickaRestrictTime: number;
+  /** It carries a potion restoring Health, Magicka. */
+  readonly health: boolean;
+  readonly magicka: boolean;
+}
+
+/** One thing it does for itself in its fight: a potion, or one of its casters. */
+export type CombatSupportChoice =
+  | { readonly kind: 'potion'; readonly value: 'health' | 'magicka' }
+  | { readonly kind: CasterPurpose };
+
+/**
+ * What it does for itself now, in the Action Equipment Selector's order (Potion before
+ * Magic): a health potion below its restore share (not within its restrict time), a magicka
+ * potion below its magicka share, else its casters (chooseCaster).
+ */
+export function chooseCombatSupport(
+  state: CasterState,
+  potions: PotionState,
+  settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
+): CombatSupportChoice | undefined {
+  if (
+    potions.health &&
+    state.health < state.restoreHealthBelow &&
+    state.sinceHealthRestore >= state.restoreHealthRestrictTime
+  ) {
+    return { kind: 'potion', value: 'health' };
+  }
+  if (
+    potions.magicka &&
+    state.magicka < potions.restoreMagickaBelow &&
+    potions.sinceMagickaRestore >= potions.restoreMagickaRestrictTime
+  ) {
+    return { kind: 'potion', value: 'magicka' };
+  }
+  const caster = chooseCaster(state, settings);
+  return caster === undefined ? undefined : { kind: caster };
+}
+
 /**
  * A held (concentration) restoring spell: cast on until its health share is
  * fCombatRestoreStopCastThreshold past the share it started below, or full. TODO(M13): the

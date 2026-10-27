@@ -4,6 +4,7 @@ import { CombatSearch } from './combat-search.ts';
 import {
   COMBAT_SUBTREE_DEFAULTS as S,
   chooseCaster,
+  chooseCombatSupport,
   coverSpots,
   coverTimes,
   doorSpots,
@@ -126,6 +127,41 @@ describe('the combat subtrees', () => {
   it('the held healing spell stops fCombatRestoreStopCastThreshold past its share', () => {
     expect(holdsRestore(0.6, 0.5)).toBe(true);
     expect(holdsRestore(0.76, 0.5)).toBe(false);
+  });
+
+  it('its support: the Potion slot before its casters', () => {
+    const hurt: CasterState = {
+      health: 0.3,
+      magicka: 0.2,
+      restoreHealthBelow: 0.5,
+      wardThreat: false,
+      sinceWard: Infinity,
+      canHeal: true,
+      sinceHealthRestore: Infinity,
+      restoreHealthRestrictTime: 15,
+      canSummon: true,
+      sinceSummon: Infinity,
+      corpseDistance: undefined,
+      canReanimate: false,
+      sinceReanimate: Infinity,
+      canBuff: false,
+    };
+    const potions = {
+      restoreMagickaBelow: 0.3,
+      sinceMagickaRestore: Infinity,
+      restoreMagickaRestrictTime: 15,
+      health: true,
+      magicka: true,
+    };
+    expect(chooseCombatSupport(hurt, potions)).toEqual({ kind: 'potion', value: 'health' });
+    expect(chooseCombatSupport(hurt, { ...potions, health: false })).toEqual({
+      kind: 'potion',
+      value: 'magicka',
+    });
+    // No potions: its healing spell, then (whole) its summons.
+    const none = { ...potions, health: false, magicka: false };
+    expect(chooseCombatSupport(hurt, none)).toEqual({ kind: 'restore' });
+    expect(chooseCombatSupport({ ...hurt, health: 1 }, none)).toEqual({ kind: 'summon' });
   });
 
   it('Prepare Dual Cast: held while it charges, broken off after its interrupt time', () => {

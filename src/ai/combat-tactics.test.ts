@@ -15,6 +15,7 @@ import {
   chooseAttack,
   chooseEquipment,
   chooseManeuver,
+  leftHandSpell,
   chooseSupport,
   choosesBlock,
   circleChance,
@@ -282,8 +283,26 @@ describe('combat tactics: how it moves', () => {
     expect(chooseManeuver(archer, { ...ranged, distance: 1000 }, randoms(0.1), settings)).toBe(
       'strafe',
     );
-    expect(chooseManeuver(archer, { ...ranged, distance: 1000 }, randoms(0.2), settings)).toBe(
-      'hold',
+    // The Strafe Selector's Circle: its circle chance once it does not strafe.
+    expect(chooseManeuver(archer, { ...ranged, distance: 1000 }, randoms(0.2, 0), settings)).toBe(
+      'circle',
+    );
+    expect(
+      chooseManeuver(archer, { ...ranged, distance: 1000 }, randoms(0.2, 0.99), settings),
+    ).toBe('hold');
+  });
+
+  it('a free left hand beside a one-handed weapon takes up its best spell', () => {
+    const flames: EquipOption = { kind: 'magic', id: 7, damage: 8, range: 600, equipped: false };
+    const sparks: EquipOption = { kind: 'magic', id: 8, damage: 12, range: 600, equipped: false };
+    const hands = { weaponType: 1, shield: false, leftWeapon: false };
+    expect(leftHandSpell(hands, [flames, sparks], 300, melee, settings)).toBe(8);
+    expect(leftHandSpell({ ...hands, shield: true }, [flames], 300, melee, settings)).toBe(
+      undefined,
+    );
+    // A two-handed sword fills both hands.
+    expect(leftHandSpell({ ...hands, weaponType: 5 }, [flames], 300, melee, settings)).toBe(
+      undefined,
     );
   });
 
