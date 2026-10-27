@@ -50,20 +50,29 @@ As the Creation Kit wiki's "Threading Notes (Papyrus)" describe them (`papyrus-v
   stage's fragments, each on a thread of its own (the wiki warns that setting a stage in
   OnInit can deadlock: the fragment waits for the OnInit that waits for it); the scheduler (`scheduler.ts`) resumes waits on its clocks: real seconds outside
   menus (Utility.Wait) and game time (WaitGameTime).
-- Each frame, threads run for the [Papyrus] **fUpdateBudgetMS** budget (1.2 ms); a thread
-  past it goes on in the next frame, keeping its lock. Without frames (Node tools) threads
-  run straight through, and one that runs two million instructions without ever waiting is
-  stopped as an endless loop.
+- **The frame's budget** (`scheduler.ts`; observed in the original): each frame the
+  game's main loop runs the VM's update for 0.9 of [Papyrus] **fUpdateBudgetMS** and then the
+  scripts' tasklets for **fExtraTaskletBudgetMS** more (1.2 ms each by default, so threads get
+  2.28 ms a frame); a thread past it goes on in the next frame, keeping its lock. Once a saved
+  game has loaded, the VM runs on its own, update after update, for
+  **fPostLoadUpdateTimeMS** (Skyrim_Default.ini: 500 ms) before the game goes on: no budget,
+  and its frame waits go on at once. The engine also runs two queues of latent calls' work
+  (render-safe and post-render) for 0.05 of fUpdateBudgetMS each; ours runs latent natives
+  through their own systems (TODO(M13): those queues' timing). Without frames (Node tools)
+  threads run straight through, and one that runs two million instructions without ever
+  waiting is stopped as an endless loop; the headless sim runs so, deterministically.
 - **Natives wait for the frame** (`native-timing.ts`; observed in the original): the game
   registers each native with two marks, latent and callable from the script's thread. Only the
   68 of its 669 natives that are callable there and not latent run at once (the Math functions,
   Debug's traces, GlobalVariable Get / SetValue, Game.GetForm and GetFormFromFile, the aliases'
   fills and registrations, the inventory event filters, Enable / DisableNoWait, the profiling
   switches); every other call is handed to the main thread, and its thread waits for the next
-  frame (keeping its own object's lock), so a loop of object natives runs a frame a call. Latent
-  natives (Wait, AddItem, Disable, Cast, ...) then wait for what they started. Without frames
-  (Node tools) nothing waits. TODO(M13): where in its frame the engine runs the calls handed to
-  it (one call a frame per thread is assumed). MQ101's dunCGDragonVoiceStormCall
+  frame (keeping its own object's lock), so a loop of object natives runs a frame a call. The
+  handed calls begin in that frame's VM update in the order they came, the first at once, each
+  next one when the one before has begun, while the update's share (0.9 of fUpdateBudgetMS)
+  lasts; the rest wait for the next frame, still first in line. Latent natives (Wait, AddItem,
+  Disable, Cast, ...) then wait for what they started. Without frames (Node tools) nothing
+  waits. MQ101's dunCGDragonVoiceStormCall
   (magicProjectileStormScript: an OnUpdate with some ten such natives, then fRecast) sent a
   meteor every 0.12 s while every native returned at once, about two and a half times the
   game's rate.
@@ -137,9 +146,17 @@ called that is missing; `node tools/papyrus-natives.ts` lists the natives done p
   Node) the bridge does nothing and the state alone answers. Those that do not do all the game
   does yet are listed in `natives/placeholders.ts`, each with the milestone that brings what
   they lack (`node tools/papyrus-natives.ts --placeholders`, with the vanilla scripts' calls of
-  each; the integration test holds each to a milestone): 16 of them called by the vanilla
-  scripts, for the player's forms and vampirism (M11), saves (M12), effects the
-  engine does not show yet, Havok constraints and controllers (M13). Natives that rightly do
+  each; the integration test holds each to a milestone): 21, 3 of them called by the vanilla
+  scripts (arrows stuck in bodies, ragdolls a script adds, the seated player's camera turn),
+  the rest never (the movement controller's overrides, synced animations, the terrain's
+  effects at a node, the camera's target, actors under player controls; all M13).
+  RequestSave / RequestAutoSave queue a save (a new one, the next autosave) that Play makes
+  once the game may save (`src/shell/save-manager.ts` requested); ShakeController rumbles
+  the gamepad (the Gamepad API's dual-rumble, [Controls] bGamePadRumble); ClearTempEffects
+  clears the hits' decals (TODO(M13): the other temporary effects); the sun gaze
+  (`src/gameplay/sun-gaze.ts`, observed in the original: the camera within
+  fPlayerSunGazeDelta of a fully shown sun for fPlayerSunGazeStartTimer applies the modifier
+  SetSunGazeImageSpaceModifier set, once a gaze) answers IsPlayerSunGazing. Natives that rightly do
   nothing here (profiling, the console's debug helpers, achievements, preloading) are not
   placeholders.
 - **Conditions** (`condition-values.ts`): see Conditions below.
