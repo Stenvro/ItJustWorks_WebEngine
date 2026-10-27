@@ -1565,12 +1565,19 @@ export class MagicEngine {
       if (count <= 0) continue;
       const record = await runtime.forms.record(formId);
       const gem = record && parseSoulGem(record);
-      if (gem?.filled !== undefined) gems.push(gem);
+      // Those already holding a partial soul are not empty.
+      if (gem?.filled !== undefined && count > runtime.crafting.partialSouls(trapper, formId))
+        gems.push(gem);
     }
     const gem = soulGemFor(gems, size, npc);
     if (gem?.filled === undefined) return false;
-    await runtime.removeItem(trapper, runtime.formHandle(gem.formId), 1, true, undefined);
-    await runtime.addItem(trapper, runtime.formHandle(gem.filled), 1, true);
+    if (size < gem.capacity) {
+      // A smaller soul stays in the empty gem as a partial soul (ExtraSoul), not its filled form.
+      runtime.crafting.addSoul(trapper, gem.formId, size);
+    } else {
+      await runtime.removeItem(trapper, runtime.formHandle(gem.formId), 1, true, undefined);
+      await runtime.addItem(trapper, runtime.formHandle(gem.filled), 1, true);
+    }
     const sound = await this.defaultObject('SCSD');
     if (sound !== undefined) runtime.world.playSound?.(sound, trapper);
     return true;
