@@ -26,6 +26,7 @@ import {
   CASTING_DEFAULTS,
   CASTING_SETTING_NAMES,
   chargeSeconds,
+  costliestEffectIndex,
   itemBaseCost,
   lesserPowerReady,
   magickaCost,
@@ -328,22 +329,20 @@ export class CastingEngine {
   }
 
   /**
-   * The effect that decides an item's school, projectile and art: its costliest (base cost ×
-   * magnitude), as the magic menu shows its level.
+   * The effect that decides an item's school, projectile and art: its costliest by its effect
+   * item's cost (casting.ts costliestEffectIndex: base cost × (magnitude × duration / 10)^1.1 ×
+   * the area's factor), as the engine ranks them and the magic menu shows its level.
    */
   async mainEffect(item: MagicItemRecord): Promise<MagicEffectRecord | undefined> {
-    let best: MagicEffectRecord | undefined;
-    let bestCost = -1;
+    const { casting } = await this.settings();
+    const effects = new Map<number, MagicEffectRecord>();
     for (const entry of item.effects) {
       const effect = await this.#runtime.magic.effect(entry.effect);
-      if (!effect) continue;
-      const cost = effect.baseCost * Math.max(1, entry.magnitude);
-      if (cost > bestCost) {
-        best = effect;
-        bestCost = cost;
-      }
+      if (effect) effects.set(entry.effect, effect);
     }
-    return best;
+    const index = costliestEffectIndex(item, (id) => effects.get(id)?.baseCost, casting);
+    const entry = item.effects[index];
+    return entry && effects.get(entry.effect);
   }
 
   /** An item's base cost (before skill): its own, or its effects' (casting.ts itemBaseCost). */
