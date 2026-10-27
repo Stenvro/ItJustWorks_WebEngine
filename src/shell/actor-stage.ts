@@ -1339,6 +1339,7 @@ export class ActorStage {
         furniture: seated ? use.furniture : undefined,
         package: this.ai.savedPackage(reference),
         combatTarget: this.combat.targetOf(reference),
+        confidenceModifier: this.combat.confidenceModifier(reference),
       });
     }
     return saved;
@@ -1356,11 +1357,16 @@ export class ActorStage {
         continue;
       }
       const target = pending.target;
-      if (target === PLAYER_REF || this.#actors.has(target)) this.combat.startCombat(actor, target);
+      if (target === PLAYER_REF || this.#actors.has(target)) {
+        this.combat.startCombat(actor, target, pending.modifier);
+      }
     }
   }
 
-  readonly #restoredCombat = new Map<number, { readonly target: number; left: number }>();
+  readonly #restoredCombat = new Map<
+    number,
+    { readonly target: number; readonly modifier: number | undefined; left: number }
+  >();
 
   /** Where a staged actor stands now (scripts' live placement). */
   livePlacement(
@@ -2028,7 +2034,11 @@ export class ActorStage {
           session.restoring?.drop(reference);
           if (saved.package) this.ai.resume(reference, saved.package);
           if (saved.combatTarget !== undefined) {
-            this.#restoredCombat.set(reference, { target: saved.combatTarget, left: 5 });
+            this.#restoredCombat.set(reference, {
+              target: saved.combatTarget,
+              modifier: saved.confidenceModifier,
+              left: 5,
+            });
           }
           if (saved.furniture !== undefined) {
             void this.furniture.use(

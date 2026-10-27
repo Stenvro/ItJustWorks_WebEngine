@@ -613,13 +613,21 @@ export class ActorCombatAi {
   }
 
   /** StartCombat: the actor fights the target (whatever its reaction). */
-  startCombat(actor: number, target: number): void {
+  startCombat(actor: number, target: number, modifier?: number): void {
     if (actor === target || actor === PLAYER_REF) return;
     const mind = this.#mind(actor);
     mind.enemies.add(target);
     mind.next = 0;
     if (mind.mode !== 'idle') this.#setTarget(mind, target);
     else if (this.#options.host.fighter(actor)) this.#enter(mind, target, false);
+    // A loaded save's fight keeps the confidence modifier it drew (src/save/world-save.ts).
+    if (modifier !== undefined && mind.mode !== 'idle') mind.modifier = modifier;
+  }
+
+  /** The confidence modifier an actor's fight drew (a save keeps it); none out of combat. */
+  confidenceModifier(reference: number): number | undefined {
+    const mind = this.#minds.get(reference);
+    return mind && mind.mode !== 'idle' ? mind.modifier : undefined;
   }
 
   /** StopCombat: the actor ends its combat (it may fight again if it meets an enemy). */

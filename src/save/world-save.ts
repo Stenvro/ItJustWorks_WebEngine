@@ -25,6 +25,8 @@ export interface SavedActor {
   readonly package?: SavedPackage | undefined;
   /** Whom it fights (its combat target). */
   readonly combatTarget?: number | undefined;
+  /** The confidence modifier its fight drew (fCombatConfidenceModifier*), kept for the fight. */
+  readonly confidenceModifier?: number | undefined;
 }
 
 export interface WorldSave {
