@@ -31,6 +31,32 @@ import { PROCEDURE_PARAMETERS, ProcedureInputs } from './procedures.ts';
 /** The procedures' parameter that lets an actor ride its horse. */
 const RIDE_HORSE = 'Ride Horse If Possible';
 
+const PLAYER_REF = 0x14;
+/** Continue If PC Near: the player this near (units). TODO(M13): the engine's reach. */
+const PC_NEAR = 1024;
+/** The fallout's sandbox: round where the actor stands, this far (units). TODO(M13). */
+const FALLOUT_RADIUS = 256;
+/** Input ids of the fallout's sandbox (above any a package has: they are bytes). */
+const FALLOUT_INPUTS: readonly PackageInput[] = [
+  {
+    id: 1000,
+    type: 'Location',
+    value: { kind: 'location', location: { type: 12, form: 0, radius: FALLOUT_RADIUS } },
+  },
+  { id: 1001, type: 'Bool', value: { kind: 'bool', value: false } },
+];
+/** The fallout's Sandbox: near itself; no eating, sleeping or wandering. */
+const FALLOUT_BRANCH: ProcedureBranch = {
+  type: 'Procedure',
+  conditions: [],
+  branchFlags: 0,
+  procedure: 'Sandbox',
+  flags: 0,
+  inputs: [1000, 1001, 1001, 255, 255, 255, 1001, 255, 255, 255, 255],
+  flagOverride: undefined,
+  children: [],
+};
+
 type Vec3 = readonly [number, number, number];
 
 /** A place a package names: where it is and how far round it counts. */
@@ -695,18 +721,33 @@ export class ActorPackages {
     // A package that completed ends (its scripts and its end action hear of it) and stays, done,
     // while it is still the one chosen: it does not run again (a branch that repeats when
     // complete is what goes round; a patrol not repeatable stops at its end: MQ101's carts at
-    // Helgen's gate). TODO(M13): the fallout behaviour of one without Skip Fallout Behavior (it
-    // stands here).
+    // Helgen's gate). With Maintain Speed At Goal it does not stop as it ends: the next
+    // package's travel takes its motion over.
+    let fallout = false;
     if (current?.completed && !current.ended) {
       current.ended = true;
       this.#release();
-      this.#body.stop();
+      if (!this.#keepsSpeed(current)) this.#body.stop();
       this.#body.face(undefined);
       this.#mind.packageEvent(this.actor, 'end', current.pack);
       this.#act(current.pack.onEnd);
+      fallout = true;
     }
     const chosen = await this.#choose(undefined);
     if (this.#running !== current) return;
+    // Continue If PC Near (PKDT 0x200): a package still running is kept, though another would be
+    // chosen (its conditions, its schedule over), while the player is near the actor.
+    if (
+      current &&
+      !current.completed &&
+      chosen?.id !== current.id &&
+      (current.pack.flags & PackageFlag.continueIfPcNear) !== 0 &&
+      this.#playerNear()
+    ) {
+      return;
+    }
+    // Its fallout: a package that ended and stays chosen, without Skip Fallout Behavior.
+    if (fallout && current && chosen?.id === current.id && !restart) this.#fallout(current);
     // A loaded save's package, chosen again first: it goes on where it was.
     const resumed = this.#resumed;
     this.#resumed = undefined;
@@ -734,16 +775,15 @@ export class ActorPackages {
     if (!current && !chosen) return;
     if (current) {
       current.stopped = true;
-      if (!current.ended) {
-        this.#release();
-        if (chosen) {
-          this.#mind.packageEvent(this.actor, 'change', current.pack, chosen.pack);
-          this.#act(current.pack.onChange);
-        }
+      // (Its fallout, if it ended, stops with it.)
+      this.#release();
+      if (!current.ended && chosen) {
+        this.#mind.packageEvent(this.actor, 'change', current.pack, chosen.pack);
+        this.#act(current.pack.onChange);
       }
     }
     this.#running = chosen;
-    this.#body.stop();
+    if (!(current?.completed === true && this.#keepsSpeed(current))) this.#body.stop();
     this.#body.face(undefined);
     if (!chosen) return;
     if ((chosen.pack.flags & PackageFlag.oncePerDay) !== 0) {
@@ -753,6 +793,43 @@ export class ActorPackages {
     this.#act(chosen.pack.onBegin);
     void this.#runTree(chosen);
     void this.#playIdles(chosen);
+  }
+
+  /** Maintain Speed At Goal (PKDT 0x8, also by a procedure's override): it keeps going. */
+  #keepsSpeed(running: Running): boolean {
+    return (
+      (packageFlags(running.pack, running.overrides).flags & PackageFlag.maintainSpeedAtGoal) !== 0
+    );
+  }
+
+  /** Whether the player is near the actor (Continue If PC Near). TODO(M13): the engine's reach. */
+  #playerNear(): boolean {
+    const player = this.#mind.livePosition?.(PLAYER_REF);
+    const here = this.#body.position();
+    if (!player || !here) return false;
+    return Math.hypot(player[0] - here[0], player[1] - here[1], player[2] - here[2]) <= PC_NEAR;
+  }
+
+  /**
+   * A package's fallout: one that ended and is still chosen, without Skip Fallout Behavior
+   * (PKDT 0x1000, 189 vanilla packages), leaves the actor sandboxing where it stands (its idle
+   * markers and seats near it) until another package is chosen; one in furniture stays in it.
+   * TODO(M13): the engine's fallout radius and what it allows (no wandering, eating or sleeping
+   * here).
+   */
+  #fallout(running: Running): void {
+    if ((running.pack.flags & PackageFlag.skipFalloutBehavior) !== 0 || running.cut) return;
+    if (!this.#runners.sandbox || !this.#body.standing()) return;
+    const inputs = new Map(running.data.inputs);
+    for (const input of FALLOUT_INPUTS) inputs.set(input.id, input);
+    const view: Running = {
+      ...running,
+      data: { ...running.data, inputs },
+      stopped: false,
+      cut: false,
+      parent: running,
+    };
+    void this.#procedure(view, FALLOUT_BRANCH);
   }
 
   /** A package's begin, end or change action: its idle played, its topic said. */

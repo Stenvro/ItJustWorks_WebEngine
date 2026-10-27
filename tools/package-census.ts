@@ -139,6 +139,20 @@ export async function packageCensus(db: RecordDatabase): Promise<PackageCensus> 
 if (import.meta.main) {
   const vfs = await Vfs.mount(openGameFolder());
   const db = await RecordDatabase.open(vfs);
+  // --flag <hex>: the packages setting a general flag, by editor ID and procedures.
+  const flagAt = process.argv.indexOf('--flag');
+  if (flagAt >= 0) {
+    const bit = Number.parseInt(process.argv[flagAt + 1] ?? '0', 16);
+    for (const formId of db.formIdsOfType('PACK')) {
+      const record = await db.get(formId);
+      if (!record || record.deleted) continue;
+      const pack = parsePackage(record);
+      if ((pack.flags & bit) === 0) continue;
+      const tree = pack.tree ? [...procedures(pack.tree, new Set())].join(' ') : 'template';
+      console.log(`${formId.toString(16).padStart(8, '0')} ${pack.editorId} ${tree}`);
+    }
+    process.exit(0);
+  }
   const census = await packageCensus(db);
   const bits = (map: ReadonlyMap<number, number>): string =>
     [...map]

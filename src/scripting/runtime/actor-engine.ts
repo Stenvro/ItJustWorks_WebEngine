@@ -31,7 +31,7 @@ import { RecordFlag } from '../../formats/esm/record.ts';
 import { AliasFlag } from '../../world/quest-records.ts';
 import { PLAYER_BASE, PLAYER_REF } from './forms.ts';
 import type { Placement, ScriptRuntime } from './runtime.ts';
-import { LocationType } from '../../ai/package-records.ts';
+import { LocationType, PackageFlag } from '../../ai/package-records.ts';
 import { parseSpell, SpellType } from '../../world/spell-records.ts';
 
 export interface ActorInfo {
@@ -550,6 +550,10 @@ export class ActorEngine {
     now = true,
   ): Promise<{ readonly faction: number; readonly vendor: FactionVendor } | undefined> {
     const hour = this.#runtime.gameHour;
+    // A package with Offers Services (PKDT 0x1: 85 vanilla packages, vendors' meals and work
+    // away from the counter) makes it trade while it runs, past its faction's hours and place.
+    // TODO(M13): whether the faction's conditions still apply then (kept here).
+    const services = now && (await this.#packageOffersServices(reference));
     for (const [formId, rank] of await this.factionsOf(reference)) {
       if (rank < 0) continue;
       const vendor = (await this.faction(formId))?.vendor;
@@ -557,18 +561,29 @@ export class ActorEngine {
       if (!now) return { faction: formId, vendor };
       const { startHour, endHour } = vendor;
       const open =
-        startHour <= endHour
+        services ||
+        (startHour <= endHour
           ? hour >= startHour && hour < endHour
-          : hour >= startHour || hour < endHour;
+          : hour >= startHour || hour < endHour);
       if (!open) continue;
       const self = this.#runtime.referenceHandle(reference);
       if (
         (await this.#runtime.conditionsHold(vendor.conditions, self)) &&
-        (await this.#atVendorPlace(reference, vendor))
+        (services || (await this.#atVendorPlace(reference, vendor)))
       )
         return { faction: formId, vendor };
     }
     return undefined;
+  }
+
+  /** Whether the package an actor runs now sets Offers Services (PKDT flag 0x1). */
+  async #packageOffersServices(reference: number): Promise<boolean> {
+    const pack = this.#runtime.currentPackage(reference);
+    if (pack === undefined) return false;
+    const pkdt = (await this.#runtime.forms.record(pack))?.fields.first('PKDT');
+    if (!pkdt || pkdt.length < 4) return false;
+    const flags = new DataView(pkdt.buffer, pkdt.byteOffset, 4).getUint32(0, true);
+    return (flags & PackageFlag.offersServices) !== 0;
   }
 
   /** Whether an actor is where its vendor faction trades (PLVD, VENV's radius). */

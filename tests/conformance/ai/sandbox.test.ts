@@ -221,23 +221,147 @@ describe('sandbox: a sandboxing actor’s activities in game time', () => {
   });
 });
 
+/** A Sandbox package with these Bool inputs (slot → value), at a place, Energy 50. */
+function sandboxer(
+  bools: Readonly<Record<number, boolean>>,
+  place: { position: [number, number, number]; radius: number; reference?: number },
+  options: Parameters<typeof packageActor>[2] = {},
+) {
+  const inputs: PackageInput[] = [
+    {
+      id: 0,
+      type: 'Location',
+      value: { kind: 'location', location: { type: 12, form: 0, radius: place.radius } },
+    },
+    { id: 8, type: 'Float', value: { kind: 'float', value: 50 } },
+  ];
+  const slots = [0, 255, 255, 255, 255, 255, 255, 255, 8, 255, 255];
+  for (const [slot, value] of Object.entries(bools)) {
+    const id = 20 + Number(slot);
+    inputs.push({ id, type: 'Bool', value: { kind: 'bool', value } });
+    slots[Number(slot)] = id;
+  }
+  const branch = { ...procedure('Sandbox'), inputs: slots };
+  return packageActor([pack(1, branch, { inputs })], PROCEDURES, {
+    settings: SKYRIM,
+    ...options,
+    mind: { place: () => Promise.resolve(place), ...options.mind },
+  });
+}
+
+describe('sandbox: scans, radius and the chair it sits on', () => {
+  it('scans its place every fMin..fMaxSandboxRescanSeconds (3–6 s), also while it sits', async () => {
+    let scans = 0;
+    const { actor } = sandboxer(
+      { 5: true, 6: false },
+      { position: [0, 0, 0], radius: 500 },
+      {
+        mind: {
+          around: () => {
+            scans++;
+            return Promise.resolve([{ reference: 0x100, kind: 'sit', position: [100, 0, 0] }]);
+          },
+        },
+        body: { useFurniture: () => Promise.resolve(true) },
+      },
+    );
+    for (let second = 0; second < 20; second++) await tick(actor, 1);
+    // At 0, 3, 6, ..., 18 s (the least interval: the harness rolls 0).
+    expect(scans).toBeGreaterThanOrEqual(6);
+  });
+
+  it('searches fSandBoxSearchRadius round a place with no reference and no radius', async () => {
+    const radii: number[] = [];
+    const { actor } = sandboxer(
+      { 6: false },
+      { position: [0, 0, 0], radius: 0 },
+      {
+        mind: {
+          around: (_center, radius) => {
+            radii.push(radius);
+            return Promise.resolve([]);
+          },
+        },
+      },
+    );
+    await tick(actor, 1);
+    expect(radii[0]).toBe(6000);
+  });
+
+  it('eats at the chair it sits on without getting up', async () => {
+    let seated = false;
+    const sat: number[] = [];
+    let left = 0;
+    const eaten: number[] = [];
+    let eatenSeated = false;
+    let leftAtSit = -1;
+    const { actor, time } = sandboxer(
+      { 1: true, 5: true, 6: false },
+      { position: [0, 0, 0], radius: 500 },
+      {
+        mind: {
+          // The chair is free only while it does not sit on it.
+          around: () =>
+            Promise.resolve(
+              seated ? [] : [{ reference: 0x100, kind: 'sit', position: [100, 0, 0] }],
+            ),
+          fakeFood: () => Promise.resolve(0x999),
+        },
+        body: {
+          useFurniture: (reference) => {
+            sat.push(reference);
+            leftAtSit = left;
+            seated = true;
+            return Promise.resolve(true);
+          },
+          leaveFurniture: () => {
+            left++;
+            seated = false;
+            return Promise.resolve();
+          },
+          useItem: (item) => {
+            eaten.push(item);
+            if (seated && sat.length === 1 && left === leftAtSit) eatenSeated = true;
+            return Promise.resolve(true);
+          },
+        },
+      },
+    );
+    for (let second = 0; second < 120; second++) {
+      time.hour += 20 / 3600;
+      await tick(actor, 1);
+    }
+    expect(eaten).toContain(0x999);
+    // Sat down once, never up, before it ate.
+    expect(eatenSeated).toBe(true);
+  });
+
+  it('goes back into its place only once outside it by more than fSandBoxRadiusHysteresis', async () => {
+    const travels = async (x: number): Promise<number> => {
+      let count = 0;
+      const { actor } = sandboxer(
+        { 6: false },
+        { position: [0, 0, 0], radius: 500 },
+        {
+          body: {
+            position: () => [x, 0, 0],
+            travel: () => {
+              count++;
+              return Promise.resolve(true);
+            },
+          },
+        },
+      );
+      for (let second = 0; second < 12; second++) await tick(actor, 1);
+      return count;
+    };
+    // 540: within the band (500 + 50): only the walk there as it starts.
+    expect(await travels(540)).toBe(1);
+    expect(await travels(600)).toBeGreaterThan(1);
+  });
+});
+
 describe('sandbox: the rest of the engine’s rule (not built yet)', () => {
-  it.todo(
-    'scans its place again every fMinSandboxRescanSeconds..fMaxSandboxRescanSeconds (3–6 s, real ' +
-      'seconds) rather than as each activity ends (observed in the original)',
-  );
-  it.todo(
-    'searches fSandBoxSearchRadius (6000) round a place that has no radius of its own (read with ' +
-      'original; which places the engine gives no radius is not read yet)',
-  );
-  it.todo(
-    'eats sitting at the chair it sits on, then stays seated (eat sitting at the spot it is at ' +
-      'is the one candidate the engine keeps; ours gets up and sits again)',
-  );
-  it.todo(
-    'goes back into its place once outside it by more than fSandBoxRadiusHysteresis (Skyrim.esm ' +
-      '50) (the engine's defaults; observed in the original)',
-  );
   it.todo(
     'talks with others within fSandBoxExtraDialogueRange (384) beyond its place (the engine's defaults)',
   );
