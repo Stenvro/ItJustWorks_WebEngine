@@ -74,7 +74,7 @@ These run through every area and explain most of what breaks in play.
 | Papyrus VM                  | different | natives not frame-synced; threads cannot be saved                                                                                                                                   |
 | Script events               | partial   | not produced: OnAnimationEventUnregistered; 52 of 68 not yet checked in the simulation                                                                                              |
 | Event sources               | partial   | hub kinds without a producer: active effects, perk entries, quest init, scenes, topic infos, loading; 7 sources without a kind; the stats' sources besides kills; resets/traps done |
-| Story manager               | partial   | not raised: Bribe, Flatter, Intimidate, Cure, Infection, Player Gets Favor, Quest Start; most raised types not yet checked in the simulation                                        |
+| Story manager               | partial   | most raised types not yet checked in the simulation; the engine's own raise sites of Bribe/Flatter/Intimidate (the counts), Player Gets Favor (SetDoingFavor) and Quest Start's members |
 | Save and load               | partial   | own format (docs/formats/save.md); threads in a native's promise, translations, hazards, projectiles not saved; .ess import (M12)                                                   |
 | Stats, skills, actor values | complete  | tracked-stats event                                                                                                                                                                 |
 | Audio                       | partial   | the skills menu does not call setStatsMenu yet (SMSC mute) (pause categories by DOBJ, sounds held in menus and on the loading screen, Slow Time by DOBJ TSSC: done)                 |
@@ -85,9 +85,9 @@ These run through every area and explain most of what breaks in play.
 | System                       | Status  | Main gaps                                                                                                                    |
 | ---------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | Process levels, budget       | partial | the high-process distance is ours (no setting names it); how the engine shares the budget between its lists                  |
-| Package evaluation           | partial | flags Offers Services 85, Maintain Speed At Goal 62, Continue If PC Near 4, Skip Fallout Behavior 189, Allow Swimming 85     |
+| Package evaluation           | partial | ours: Continue If PC Near's reach, the fallout's radius and options (all PKDT flags honoured: src/ai/package-flags.test.ts)  |
 | Procedures                   | partial | engine-only packages (avoid player, react to destroyed object, warnings, get up, surface); Wear Sleep Outfit has no sim case |
-| Sandbox                      | partial | rescan every 3–6 s, the search radius for a place without one, radius hysteresis, eating at the chair it sits on             |
+| Sandbox                      | partial | which places the engine gives no radius; extra dialogue range; delay on arrival (rescan, search radius, hysteresis, eating at its chair: done) |
 | Movement, paths              | partial | navmesh obstacles cut approximately (no re-triangulation: M13), no path idles                                                |
 | Avoidance                    | partial | the engine's way round (who is avoided and re-planning are its)                                                              |
 | Detection                    | partial | the light's sum ours (walls keep lights off: done); an Ambush package's own target (Ambush packages: done)                   |
