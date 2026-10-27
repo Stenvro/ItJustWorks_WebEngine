@@ -156,7 +156,7 @@ describe.skipIf(!hasGamedata())('a ward against a fireball’s burst (sim)', () 
       placement.position[2] + 60,
     ];
     const world = runtime.world;
-    const sight = world.explosionReaches;
+    const sight = world.explosionReaches?.bind(world);
     world.explosionReaches = () => false;
     const delivered = (flags: number) => ({
       caster: caster.reference,
@@ -173,7 +173,7 @@ describe.skipIf(!hasGamedata())('a ward against a fireball’s burst (sim)', () 
         target.reference,
       );
     } finally {
-      world.explosionReaches = sight;
+      if (sight) world.explosionReaches = sight;
       runtime.actors.restore(target.reference, ActorValue.health, 1000);
     }
   }, 120_000);
