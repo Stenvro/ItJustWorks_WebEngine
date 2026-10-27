@@ -75,6 +75,14 @@ import { StoryEvents } from './story-events.ts';
 import { ActorLocations, type PlacementSnapshot } from './actor-locations.ts';
 import { SceneDirector } from '../../ai/scene-runtime.ts';
 import { RuntimeSceneHost, type SceneSpeech } from './scene-host.ts';
+import {
+  gameStateData,
+  refill,
+  restoreGameState,
+  SAVED_RUNTIME_FIELDS,
+  type RuntimeSave,
+  type SavedUpdate,
+} from './runtime-save.ts';
 
 /** What scripts do to the world the engine shows, and what they read of it (nothing in Node). */
 /** A menu a script opens (Actor.ShowBarterMenu, Game.ShowTrainingMenu, ...). */
@@ -854,6 +862,17 @@ export class ScriptRuntime implements VmHost {
     readonly { readonly quest: number; readonly alias: number }[]
   >();
   readonly #updates = new Map<string, number>();
+  /** The update registrations as the save keeps them: when each fires next (scheduler time). */
+  readonly #updateInfo = new Map<
+    string,
+    {
+      readonly target: ObjectHandle;
+      readonly interval: number;
+      readonly gameTime: boolean;
+      readonly repeat: boolean;
+      readonly due: number;
+    }
+  >();
   #updateToken = 1;
   /** Animation event registrations: sender → event → receivers (handle keys and handles). */
   readonly #animationEvents = new Map<number, Map<string, Map<string, ObjectHandle>>>();
@@ -1305,6 +1324,8 @@ export class ScriptRuntime implements VmHost {
     interval: number,
     gameTime: boolean,
     repeat: boolean,
+    /** The first wait, if not the interval (a loaded game's registration goes on). */
+    first = interval,
   ): null {
     if (!target) return null;
     const key = `${target.key}:${gameTime ? 'game' : 'real'}`;
@@ -1312,23 +1333,30 @@ export class ScriptRuntime implements VmHost {
     this.#updates.set(key, token);
     const event = gameTime ? 'OnUpdateGameTime' : 'OnUpdate';
     const scheduler = this.vm.scheduler;
-    const fire = (): void => {
-      const wait = gameTime ? scheduler.waitGame(interval) : scheduler.waitReal(interval);
+    const fire = (wait: number): void => {
+      const due = gameTime ? scheduler.gameTime + wait / 24 : scheduler.realTime + wait;
+      this.#updateInfo.set(key, { target, interval, gameTime, repeat, due });
+      const waiting = gameTime ? scheduler.waitGame(wait) : scheduler.waitReal(wait);
       this.detach(
-        wait.then(async () => {
+        waiting.then(async () => {
           if (this.#updates.get(key) !== token) return;
-          if (!repeat) this.#updates.delete(key);
-          else fire();
+          if (!repeat) {
+            this.#updates.delete(key);
+            this.#updateInfo.delete(key);
+          } else fire(interval);
           await this.#sendTo(target, event, []);
         }),
       );
     };
-    fire();
+    fire(first);
     return null;
   }
 
   unregisterUpdate(target: ObjectHandle | null, gameTime: boolean): null {
-    if (target) this.#updates.delete(`${target.key}:${gameTime ? 'game' : 'real'}`);
+    if (!target) return null;
+    const key = `${target.key}:${gameTime ? 'game' : 'real'}`;
+    this.#updates.delete(key);
+    this.#updateInfo.delete(key);
     return null;
   }
 
@@ -3290,6 +3318,132 @@ export class ScriptRuntime implements VmHost {
     // The player's abilities, diseases and worn enchantments act (magic-engine.ts).
     await this.magic.prepare(PLAYER_REF);
     await this.vm.idle();
+  }
+
+  // --- Saving and loading (docs/formats/save.md) ---------------------------------------------
+
+  /**
+   * The scripts' side of a save: the game state, the runtime's switches and registrations, the
+   * script instances. `unsaved` hears what a save cannot hold (threads in flight: their stacks
+   * are JavaScript calls, TODO(M12) resumable frames; scenes playing; objects translating).
+   */
+  async saveData(unsaved: (what: string) => void = () => undefined): Promise<RuntimeSave> {
+    const scheduler = this.vm.scheduler;
+    for (const thread of this.vm.unsavedThreads()) {
+      unsaved(`Papyrus thread ${String(thread.id)} (${thread.state}) at ${thread.where}`);
+    }
+    for (const key of this.#updates.keys()) {
+      if (key.endsWith(':translation')) unsaved(`translation of ${key.split(':')[0] ?? key}`);
+    }
+    const updates: SavedUpdate[] = [...this.#updateInfo.values()].map((update) => ({
+      target: update.target,
+      interval: update.interval,
+      gameTime: update.gameTime,
+      repeat: update.repeat,
+      left: Math.max(
+        0,
+        update.gameTime ? (update.due - scheduler.gameTime) * 24 : update.due - scheduler.realTime,
+      ),
+    }));
+    const fields: Record<string, unknown> = {};
+    for (const name of SAVED_RUNTIME_FIELDS) fields[name] = this[name];
+    return {
+      state: gameStateData(this.state),
+      clocks: {
+        realTime: scheduler.realTime,
+        gameTime: scheduler.gameTime,
+        wallTime: scheduler.wallTime,
+      },
+      startDate: this.#startDate,
+      startDays: this.#startDays,
+      fields,
+      stats: this.stats,
+      wordsLearned: this.wordsLearned,
+      iniOverrides: this.iniOverrides,
+      updates,
+      animationEvents: this.#animationEvents,
+      registrations: this.#registrations,
+      lineOfSight: this.#lineOfSight,
+      inventoryFilters: this.#inventoryFilters,
+      formListAdded: this.#formListAdded,
+      mapMarkers: this.#mapMarkers,
+      initialized: [...this.#initialized],
+      seeded: [...this.#seeded],
+      dialogue: this.#dialogue?.saveData(),
+      storyManager: this.storyManager.saveData(),
+      instances: await this.vm.savedInstances(),
+    };
+  }
+
+  /**
+   * A saved game's scripts on this fresh runtime (instead of newGame): the plugins' records
+   * read as a new game reads them, then the save's state, registrations and script instances
+   * put back; no OnInit runs again and no quest starts again. Returns what could not be put
+   * back (for the log).
+   */
+  async loadGame(save: RuntimeSave, progress?: (what: string) => void): Promise<string[]> {
+    const db = this.forms.db;
+    this.#startDate = save.startDate;
+    this.#startDays = save.startDays;
+    await this.#findClockGlobals();
+    progress?.('reading quests');
+    await db.scan(
+      ['QUST'],
+      () => true,
+      (record) => {
+        this.forms.remember(record.detached());
+      },
+    );
+    await this.persistentIndex();
+    progress?.('restoring the game state');
+    restoreGameState(this.state, save.state);
+    const scheduler = this.vm.scheduler;
+    scheduler.realTime = save.clocks.realTime;
+    scheduler.gameTime = save.clocks.gameTime;
+    scheduler.wallTime = save.clocks.wallTime;
+    const fields = this as unknown as Record<string, unknown>;
+    for (const name of SAVED_RUNTIME_FIELDS) {
+      const value = save.fields[name];
+      const current = fields[name];
+      if (!(name in save.fields)) continue;
+      if (
+        current !== null &&
+        typeof current === 'object' &&
+        value !== null &&
+        typeof value === 'object'
+      ) {
+        Object.assign(current, value);
+      } else fields[name] = value;
+    }
+    refill(this.stats, save.stats);
+    refill(this.wordsLearned, save.wordsLearned);
+    refill(this.iniOverrides, save.iniOverrides);
+    refill(this.#animationEvents, save.animationEvents);
+    refill(this.#registrations, save.registrations);
+    refill(this.#lineOfSight, save.lineOfSight);
+    refill(this.#inventoryFilters, save.inventoryFilters);
+    refill(this.#formListAdded, save.formListAdded);
+    refill(this.#mapMarkers, save.mapMarkers);
+    refill(this.#initialized, save.initialized);
+    refill(this.#seeded, save.seeded);
+    if (save.dialogue !== undefined) this.dialogue.loadData(save.dialogue);
+    this.storyManager.loadData(save.storyManager);
+    progress?.(`restoring ${String(save.instances.length)} script instances`);
+    const problems = await this.vm.restoreInstances(save.instances);
+    // The update registrations go on where they were.
+    for (const update of save.updates) {
+      this.registerUpdate(
+        update.target,
+        update.interval,
+        update.gameTime,
+        update.repeat,
+        update.left,
+      );
+    }
+    // The player's abilities, diseases and worn enchantments act again (magic-engine.ts).
+    await this.magic.prepare(PLAYER_REF);
+    await this.vm.idle();
+    return problems;
   }
 
   /** A global's value now by its editor id (as scripts left it, else its record's). */

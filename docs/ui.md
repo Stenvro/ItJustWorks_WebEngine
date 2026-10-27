@@ -671,7 +671,7 @@ Quit. Quit to the main menu ends the game and opens its main menu; quit to the d
 Play. Help: `PopulateHelpTopics(list)` gets the topics of HelpManualPC (FLST 0x163, Skyrim.esm:
 its messages, by their titles) as `{text, index}`; `RequestHelpText(index, titleField,
 textField)` sets the message's title and text, and the menu turns its "[Event]"s into key art
-(`GetButtonFromUserEvent`, answered for every menu in Play). TODO(M12): saving and loading.
+(`GetButtonFromUserEvent`, answered for every menu in Play). Saving and loading: docs/formats/save.md.
 Show on Map: an objective with a target on the map gets the `questTargetID` of its first
 target (its reference); the movie closes the journal and calls `ShowTargetOnMap(id)`, and the
 map opens over that target (`src/shell/game-menus.ts`: the map of the target's world, without
