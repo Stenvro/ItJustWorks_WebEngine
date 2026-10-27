@@ -20,6 +20,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   CASTING_DEFAULTS,
+  costliestEffectIndex,
   effectItemCost,
   itemBaseCost,
   magickaCost,
@@ -31,6 +32,22 @@ import { MagicSpellFlag, parseMagicItem } from '../../../src/world/magic-records
 import { RecordDatabase } from '../../../src/world/record-db.ts';
 import { openGameFolder } from '../../../tools/gamedata-path.ts';
 import { hasGamedata } from '../../helpers/sim.ts';
+
+describe('the costliest effect', () => {
+  it('ranks the effect items by their cost, duration and all, not base cost × magnitude', () => {
+    // 10 points for 60 s at base 1 outweighs 30 points at once at base 1.5.
+    const item = {
+      castType: 0,
+      effects: [
+        { effect: 1, magnitude: 30, duration: 0, area: 0 },
+        { effect: 2, magnitude: 10, duration: 60, area: 0 },
+      ],
+    };
+    const base = (effect: number): number => (effect === 1 ? 1.5 : 1);
+    expect(costliestEffectIndex(item, base)).toBe(1);
+    expect(costliestEffectIndex({ ...item, effects: [] }, base)).toBe(-1);
+  });
+});
 
 describe('the cost formula', () => {
   it('reads the settings the load order and the engine give', () => {
@@ -117,9 +134,5 @@ describe('what the original costs that we do not yet', () => {
   it.todo(
     'an NPC casting Firebolt in the sim pays its cost by its Destruction skill (the sim: an NPC ' +
       'of a known skill casts at a target; its Magicka drops by the NPC formula)',
-  );
-  it.todo(
-    'the costliest effect that picks a spell’s school is the engine’s (its effect items’ costs, ' +
-      'original; ours ranks base cost × magnitude)',
   );
 });

@@ -40,7 +40,14 @@ import type { BehaviorRuntime } from '../animation/behavior-runtime.ts';
 import { castStartEvent } from '../gameplay/magic/casting.ts';
 import { AIM_HEIGHT } from '../gameplay/combat/aim.ts';
 import { ProjectileFlag } from '../world/projectile-data.ts';
-import { aimDirection, normalize, WORLD_GRAVITY } from '../gameplay/magic/projectile-flight.ts';
+import {
+  aimDirection,
+  comesAt,
+  normalize,
+  wardHeld,
+  WORLD_GRAVITY,
+} from '../gameplay/magic/projectile-flight.ts';
+import { MagicValue } from '../gameplay/magic/effect-rules.ts';
 import { wordsByHold } from '../gameplay/magic/shouts.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { SoundLevel } from '../ai/detection.ts';
@@ -194,10 +201,16 @@ const HANDS_REFRESH = 0.25;
 /**
  * An NPC holds a concentration spell while it serves: at a target while the target lives and
  * stays within its projectile's reach (and the magicka lasts: the casting engine ends it); one
- * without a target this long at most, a healing spell less once its health is whole.
- * TODO(M13): how long the engine holds a ward is not documented.
+ * without a target this long at most (a ward: projectile-flight.ts wardHeld), a healing spell
+ * less once its health is whole.
  */
 const NPC_WARD_SECONDS = 2.5;
+/** fCombatMagicWardMinCastTime's built-in default (the combat AI's least ward hold, seconds). */
+const WARD_MIN_CAST_TIME = 1.5;
+/** A threat this near and coming keeps an NPC's ward up (units; TODO(M13): the AI's reach). */
+const WARD_THREAT_REACH = 2048;
+/** Where a threat is measured at on the warding actor (above its feet, units). */
+const WARD_THREAT_HEIGHT = 64;
 /** How often an NPC's held concentration spell is looked at (seconds). */
 const HOLD_CHECK_SECONDS = 0.25;
 /** The reach of a concentration spell without a projectile range (units). */
@@ -226,6 +239,11 @@ interface Shown {
   spray: number;
   /** An NPC lets go then (seconds left), if it decides. */
   holdFor: number | undefined;
+  /**
+   * An NPC's ward (a spell on WardPower) without a target: held for fCombatMagicWardMinCastTime,
+   * then while something flies at it (projectile-flight.ts wardHeld); its seconds held.
+   */
+  ward?: { minimum: number; held: number };
   /** Seconds to an NPC's next look at whether its concentration spell still serves. */
   holdCheck: number;
   sounds: Promise<SoundInstance | undefined>[];
@@ -660,6 +678,7 @@ export class ActorCasting {
       done: false,
     };
     this.#shown.set(key, shown);
+    if (shown.holdFor !== undefined) void this.#wardHold(shown);
     return shown;
   }
 
@@ -937,7 +956,11 @@ export class ActorCasting {
       // NPCs: a fire and forget spell goes once ready; a concentration spell after a while.
       if (cast.actor !== PLAYER_REF) {
         if (cast.hand.phase === 'ready') void this.letGo(cast.actor, cast.source);
-        if (cast.hand.phase === 'casting' && shown.holdFor !== undefined) {
+        if (cast.hand.phase === 'casting' && shown.ward) {
+          shown.ward.held += seconds;
+          if (!wardHeld(shown.ward.held, shown.ward.minimum, this.#threatened(cast.actor)))
+            void this.letGo(cast.actor, cast.source);
+        } else if (cast.hand.phase === 'casting' && shown.holdFor !== undefined) {
           shown.holdFor -= seconds;
           if (shown.holdFor <= 0) void this.letGo(cast.actor, cast.source);
         }
@@ -1004,6 +1027,30 @@ export class ActorCasting {
         if (!delivered) this.#shouts.delete(actor);
       });
     }
+  }
+
+  /** Whether something flies at an actor (its ward is held on: wardHeld). */
+  #threatened(actor: number): boolean {
+    const feet = this.#place(actor)?.feet;
+    if (!feet) return false;
+    const middle: Vec3 = [feet[0], feet[1], feet[2] + WARD_THREAT_HEIGHT];
+    for (const threat of this.#options.projectiles.threats())
+      if (
+        threat.source !== actor &&
+        comesAt(threat.position, threat.velocity, middle, WARD_THREAT_REACH)
+      )
+        return true;
+    return false;
+  }
+
+  /** An NPC's untargeted concentration spell that raises a ward is held as a ward (wardHeld). */
+  async #wardHold(shown: Shown): Promise<void> {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime) return;
+    const main = await runtime.casting.mainEffect(shown.cast.castable.item);
+    if (main?.actorValue !== MagicValue.wardPower) return;
+    const minimum = await runtime.gameSetting('fCombatMagicWardMinCastTime');
+    shown.ward = { minimum: typeof minimum === 'number' ? minimum : WARD_MIN_CAST_TIME, held: 0 };
   }
 
   /**

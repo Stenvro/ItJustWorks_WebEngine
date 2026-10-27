@@ -30,6 +30,7 @@ import {
   releaseCast,
   staffCastsLeft,
 } from '../../../src/gameplay/magic/casting.ts';
+import { comesAt, wardHeld } from '../../../src/gameplay/magic/projectile-flight.ts';
 import { AT_ONCE_NATIVES, nativeWaitsForFrame } from '../../../src/scripting/native-timing.ts';
 import {
   PapyrusVm,
@@ -272,12 +273,23 @@ describe('a script’s Cast loop', () => {
   );
 });
 
+describe('an NPC’s ward', () => {
+  it('is held fCombatMagicWardMinCastTime (1.5 s), then while something flies at it', () => {
+    expect(wardHeld(1, 1.5, false)).toBe(true);
+    expect(wardHeld(2, 1.5, false)).toBe(false);
+    expect(wardHeld(2, 1.5, true)).toBe(true);
+    // A fireball 1000 units off flying at the actor, one flying away.
+    expect(comesAt([0, 1000, 64], [0, -1500, 0], [0, 0, 64], 2048)).toBe(true);
+    expect(comesAt([0, 1000, 64], [0, 1500, 0], [0, 0, 64], 2048)).toBe(false);
+  });
+});
+
 describe('what the original casts that we do not yet', () => {
   it.todo(
     'a concentration spell is refused only once the magicka is out (what the engine asks of ' +
       'the magicka before a concentration cast, original)',
   );
-  it.todo('an NPC’s ward is held as the combat AI’s ward time says (fCombatMagicWardMinCastTime)');
+  it.todo('an NPC’s ward past fCombatMagicWardMinCastTime as the combat AI’s ward behaviour says');
   it.todo(
     'a Touch spell reaches as far as the engine says (fMagicDefaultTouchDistance is never read)',
   );

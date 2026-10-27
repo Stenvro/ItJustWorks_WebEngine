@@ -267,6 +267,26 @@ export function sticksAsLight(archetype: number | undefined, struck: 'surface' |
   return archetype === EffectArchetype.light && struck === 'surface';
 }
 
+/**
+ * Whether something flying comes at a point: nearer than `reach` and moving toward it (an NPC's
+ * ward is held on while one does: wardHeld).
+ */
+export function comesAt(position: Vec3, velocity: Vec3, at: Vec3, reach: number): boolean {
+  const way: Vec3 = [at[0] - position[0], at[1] - position[1], at[2] - position[2]];
+  const distance = length(way);
+  if (distance > reach) return false;
+  return way[0] * velocity[0] + way[1] * velocity[1] + way[2] * velocity[2] > 0;
+}
+
+/**
+ * Whether an NPC holds its ward on: always until the combat AI's fCombatMagicWardMinCastTime
+ * (1.5 s), then while something flies at it. TODO(M13): the combat AI's own rule past the minimum
+ * (its ward behaviour's conditions) is not read; a spell or arrow coming is what a ward is for.
+ */
+export function wardHeld(held: number, minimum: number, threatened: boolean): boolean {
+  return held < minimum || threatened;
+}
+
 /** An actor as projectiles meet it: an upright capsule from its feet. */
 export interface ActorShape {
   readonly feet: Vec3;
