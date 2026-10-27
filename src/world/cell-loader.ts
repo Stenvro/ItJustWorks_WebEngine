@@ -404,6 +404,8 @@ export interface CellLight {
   readonly emittance?: number;
   /** A spot light (LIGH Shadow Spotlight): its cone (lightCone). */
   readonly spot?: LightCone;
+  /** A Shadow Hemisphere light: the axis its shadows are cast round (hemisphereAxis). */
+  readonly hemisphereAxis?: readonly [number, number, number];
   /**
    * A portal-strict light (LIGH flag): the room it alone lights, when it stands in one (its
    * index in `CellData.rooms` plus one).
@@ -581,6 +583,21 @@ export function lightCone(
       cosHalfAngle: Math.cos(((fov / 2) * Math.PI) / 180),
     },
   };
+}
+
+/**
+ * A Shadow Hemisphere light's axis: the reference's local X axis, as a spot light's.
+ * TODO(M13): confirm the engine's hemisphere axis from the data's ceiling lights.
+ */
+export function hemisphereAxis(
+  light: Pick<LightRecord, 'flags'>,
+  ref: Pick<PlacedReference, 'rotation'>,
+): { hemisphereAxis?: readonly [number, number, number] } {
+  if ((light.flags & LightFlag.shadowHemisphere) === 0) return {};
+  const m = referenceMatrix({ position: [0, 0, 0], rotation: ref.rotation, scale: 1 });
+  const x: [number, number, number] = [m[0] ?? 1, m[1] ?? 0, m[2] ?? 0];
+  const length = Math.hypot(...x) || 1;
+  return { hemisphereAxis: [x[0] / length, x[1] / length, x[2] / length] };
 }
 
 export function referenceMatrix(
@@ -820,6 +837,7 @@ export async function loadCellData(
           movementAmplitude: light.movementAmplitude,
           ...emittanceOf(record),
           ...lightCone(light, ref),
+          ...hemisphereAxis(light, ref),
         });
       }
     }
