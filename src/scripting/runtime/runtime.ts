@@ -67,6 +67,7 @@ import type { BodyPush } from '../../gameplay/magic/explosions.ts';
 import { installPerkHooks } from './perk-hooks.ts';
 import { UsageStats } from './usage-stats.ts';
 import { WarmthEngine } from './warmth-engine.ts';
+import { SunGaze } from '../../gameplay/sun-gaze.ts';
 import { QuestEngine } from './quests.ts';
 import { DialogueEngine } from './dialogue-engine.ts';
 import { questText } from './quest-text.ts';
@@ -214,6 +215,21 @@ export interface WorldBridge {
   shakeCamera?(strength: number, seconds: number, source?: number): void;
   /** Splatters of blood on the screen (Game.TriggerScreenBlood). */
   screenBlood?(count: number): void;
+  /**
+   * Game.RequestSave / RequestAutoSave: a save (a new one, or the next autosave in turn) made
+   * as soon as the game may save.
+   */
+  requestSave?(kind: 'save' | 'autosave'): void;
+  /**
+   * Game.ClearTempEffects: the world's temporary effects go at once (the hits' decals).
+   * TODO(M13): the engine's other temporary effects too (impact models, effect shaders and art
+   * on references, debris), which it clears with them.
+   */
+  clearTempEffects?(): void;
+  /**
+   * Game.ShakeController: the gamepad's motors rumble (strengths 0..1) for seconds.
+   */
+  shakeController?(small: number, big: number, seconds: number): void;
   grabbed?(): number | undefined;
   /**
    * A menu the scripts open; resolves once it has closed, with what it returns (ShowGiftMenu:
@@ -867,6 +883,10 @@ export class ScriptRuntime implements VmHost {
    * land (docs/gameplay.md, "Dragon riding").
    */
   flyingMountLandingAllowed = true;
+  /** The player gazing at the sun (src/gameplay/sun-gaze.ts; the shell's view updates it). */
+  readonly sunGaze = new SunGaze();
+  /** Game.SetSunGazeImageSpaceModifier: what a gaze at the sun applies (none: nothing). */
+  sunGazeModifier: number | undefined;
   /**
    * God mode (the console's tgm, Debug.SetGodMode): the player takes no damage and cannot die.
    * TODO(M13): its unlimited carry weight and ammunition.

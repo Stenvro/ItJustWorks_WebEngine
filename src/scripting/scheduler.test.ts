@@ -36,4 +36,46 @@ describe('PapyrusScheduler', () => {
     expect(await scheduler.giveWay(0, 4)).toBe(5);
     expect(yields).toBe(1);
   });
+
+  it("gives threads the update's share of fUpdateBudgetMS and fExtraTaskletBudgetMS", () => {
+    const scheduler = new PapyrusScheduler();
+    scheduler.configure(2, 1);
+    expect(scheduler.budgetMs).toBeCloseTo(2.8);
+  });
+
+  it('begins the calls handed to the main thread in the next frame, in their order', async () => {
+    const scheduler = new PapyrusScheduler();
+    scheduler.framed = true;
+    const begun: string[] = [];
+    const calls = Promise.all(
+      ['a', 'b', 'c'].map(async (name) => {
+        await scheduler.mainThread();
+        begun.push(name);
+      }),
+    );
+    await Promise.resolve();
+    expect(begun).toEqual([]);
+    expect(scheduler.waiting.frame).toBe(3);
+    scheduler.advance(1 / 60, 0);
+    await calls;
+    expect(begun).toEqual(['a', 'b', 'c']);
+  });
+
+  it('runs the VM on its own for fPostLoadUpdateTimeMS after a load', async () => {
+    let now = 0;
+    const scheduler = new PapyrusScheduler(1, () => now);
+    scheduler.framed = true;
+    scheduler.postLoad(500);
+    now = 400;
+    // Within the window: no budget, and frame waits and handed calls go on at once.
+    expect(scheduler.overBudget).toBe(false);
+    await scheduler.mainThread();
+    await scheduler.nextFrame();
+    now = 501;
+    expect(scheduler.overBudget).toBe(true);
+    let waited = false;
+    void scheduler.nextFrame().then(() => (waited = true));
+    await Promise.resolve();
+    expect(waited).toBe(false);
+  });
 });

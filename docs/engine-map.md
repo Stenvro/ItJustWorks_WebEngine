@@ -17,7 +17,7 @@ Status words: **complete** (as the original, for what the game's data uses), **p
 ## What is already complete
 
 - Every record type the game uses is read; every Papyrus native the game's scripts declare exists (686, of
-  which 30 still do less than the original); every condition function the data uses is valued.
+  which 21 still do less than the original); every condition function the data uses is valued.
 - Every behaviour graph generator and modifier the vanilla graphs use runs; every particle modifier,
   emitter and collider; every effect shader flag; terrain, grass, distant trees.
 - Every menu a PC player reaches plays from its original movie, driven through its own calls.
@@ -50,7 +50,8 @@ These run through every area and explain most of what breaks in play.
    with a built-in default exists. Those defaults are now known.
 3. **Time and budget.** The original updates actors by process level on a per-frame time budget,
    re-evaluates packages every 15 s or on the hour, runs sandboxes on the game clock, and lets most
-   Papyrus natives wait for the main thread. Ours runs natives at once; packages are re-evaluated
+   Papyrus natives wait for the main thread. Ours does too: natives wait for the frame by their
+   registration, the calls handed to the main thread begin in the next frame's VM update, threads run within the INI's budgets, and a loaded game's VM runs on its own first (2026-10-27); packages are re-evaluated
    every 15 s and on the hour, sandbox stays are in game hours (2026-10-24); the actors beyond the
    high process take turns within the frame's budget (src/ai/process-levels.ts, 2026-10-27).
 4. **Persistence.** Cells reset and respawn by the engine's rule, and moved objects keep their places
@@ -64,20 +65,20 @@ These run through every area and explain most of what breaks in play.
 
 ### Scripting, events, world state, audio
 
-| System                      | Status    | Main gaps                                                                                                                                                                               |
-| --------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Form types                  | complete  |                                                                                                                                                                                         |
-| Per-reference state         | partial   | partial souls listed one entry per gem base; corpses' poses on reload (animated state kept across unload, partial souls, alias display names: done 2026-10-27; activate children: done) |
-| Cell loading                | partial   | a buffered cell keeps its data, not its 3D; OnAttached/DetachedFromCell no sim case (cell buffers, grid on the player, detach hours: done)                                              |
-| Respawn, cell reset         | partial   | whether reset sets the initial enable state; what else sets an actor's respawn clock (enable state, the actor's clock from its death, dropped items: done 2026-10-27)                   |
-| Papyrus VM                  | different | natives not frame-synced (threads saved: done)                                                                                                                                          |
-| Script events               | partial   | 52 of 68 not yet checked in the simulation (OnAnimationEventUnregistered, OnMenuOpen/Close: done)                                                                                       |
-| Event sources               | partial   | 7 sources without a kind; the stats' sources besides kills (every hub kind has a producer: 2026-10-27; resets/traps done)                                                               |
-| Story manager               | partial   | most raised types not yet checked in the simulation; the engine's own raise sites of Bribe/Flatter/Intimidate (the counts), Player Gets Favor (SetDoingFavor) and Quest Start's members |
-| Save and load               | partial   | own format (docs/formats/save.md); whether a native in flight is called again on load; .ess import (M12) (threads in a native's promise, translations, hazards, projectiles: done)      |
-| Stats, skills, actor values | complete  | tracked-stats event                                                                                                                                                                     |
-| Audio                       | partial   | (the skills menu's SMSC mute, pause categories by DOBJ, sounds held in menus and on the loading screen, Slow Time by DOBJ TSSC: done)                                                   |
-| Load order, settings        | partial   | a master loading after its dependent is only reported; the launcher's detail presets (plugin screen, Plugins.txt import, missing masters, plugin archives, layered INI files: done)     |
+| System                      | Status   | Main gaps                                                                                                                                                                                                                            |
+| --------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Form types                  | complete |                                                                                                                                                                                                                                      |
+| Per-reference state         | partial  | partial souls listed one entry per gem base; corpses' poses on reload (animated state kept across unload, partial souls, alias display names: done 2026-10-27; activate children: done)                                              |
+| Cell loading                | partial  | a buffered cell keeps its data, not its 3D; OnAttached/DetachedFromCell no sim case (cell buffers, grid on the player, detach hours: done)                                                                                           |
+| Respawn, cell reset         | partial  | whether reset sets the initial enable state; what else sets an actor's respawn clock (enable state, the actor's clock from its death, dropped items: done 2026-10-27)                                                                |
+| Papyrus VM                  | partial  | its own scheduling of stacks (inferred), the handed calls' share of the update budget, latent calls' render-safe / post-render queues, stack memory (iMaxAllocatedMemoryBytes) (frame sync, budgets, post-load run: done 2026-10-27) |
+| Script events               | partial  | 52 of 68 not yet checked in the simulation (OnAnimationEventUnregistered, OnMenuOpen/Close: done)                                                                                                                                    |
+| Event sources               | partial  | 7 sources without a kind; the stats' sources besides kills (every hub kind has a producer: 2026-10-27; resets/traps done)                                                                                                            |
+| Story manager               | partial  | most raised types not yet checked in the simulation; the engine's own raise sites of Bribe/Flatter/Intimidate (the counts), Player Gets Favor (SetDoingFavor) and Quest Start's members                                              |
+| Save and load               | partial  | own format (docs/formats/save.md); whether a native in flight is called again on load; .ess import (M12) (threads in a native's promise, translations, hazards, projectiles: done)                                                   |
+| Stats, skills, actor values | complete | tracked-stats event                                                                                                                                                                                                                  |
+| Audio                       | partial  | (the skills menu's SMSC mute, pause categories by DOBJ, sounds held in menus and on the loading screen, Slow Time by DOBJ TSSC: done)                                                                                                |
+| Load order, settings        | partial  | a master loading after its dependent is only reported; the launcher's detail presets (plugin screen, Plugins.txt import, missing masters, plugin archives, layered INI files: done)                                                  |
 
 ### AI
 

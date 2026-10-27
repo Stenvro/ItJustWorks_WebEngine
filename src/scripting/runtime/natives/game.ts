@@ -184,15 +184,31 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
     world.shakeCamera?.(strength, num(args[2], 0), runtime.reference(args[0] ?? null));
     return null;
   });
-  n('game.shakecontroller', () => null);
+  // ShakeController(afSmallMotorStrength, afBigMotorStrength, afDuration): the gamepad's motors,
+  // each strength kept within 0 and 1.
+  n('game.shakecontroller', ({ args }) => {
+    const unit = (value: number): number => Math.min(1, Math.max(0, value));
+    world.shakeController?.(
+      unit(num(args[0], 0)),
+      unit(num(args[1], 0)),
+      Math.max(0, num(args[2], 0)),
+    );
+    return null;
+  });
   n('game.setcameratarget', () => null);
   // TriggerScreenBlood(aiValue): that many splatters of blood on the screen.
   n('game.triggerscreenblood', ({ args }) => {
     world.screenBlood?.(Math.max(0, Math.floor(num(args[0], 0))));
     return null;
   });
-  n('game.setsungazeimagespacemodifier', () => null);
-  n('game.isplayersungazing', () => false);
+  // SetSunGazeImageSpaceModifier(akImod): what the player's gaze at the sun applies (None: nothing);
+  // IsPlayerSunGazing: whether they gaze at it now (src/gameplay/sun-gaze.ts).
+  n('game.setsungazeimagespacemodifier', ({ args }) => {
+    const modifier = formOf(args[0]);
+    runtime.sunGazeModifier = modifier === 0 ? undefined : modifier;
+    return null;
+  });
+  n('game.isplayersungazing', () => runtime.sunGaze.gazing);
   for (const axis of ['x', 'y', 'z'] as const)
     n(
       `game.getsunposition${axis}`,
@@ -200,8 +216,16 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
     );
   n('game.getplayergrabbedref', () => runtime.referenceHandleOrNone(world.grabbed?.()));
   n('game.getplayerslastriddenhorse', () => object(runtime.lastHorse, 'actor'));
-  n('game.requestsave', () => null);
-  n('game.requestautosave', () => null);
+  // RequestSave / RequestAutoSave: observed in the original, both only queue a task with the
+  // save manager (a save, an autosave), which makes it once the game may save.
+  n('game.requestsave', () => {
+    world.requestSave?.('save');
+    return null;
+  });
+  n('game.requestautosave', () => {
+    world.requestSave?.('autosave');
+    return null;
+  });
   n('game.showracemenu', () => {
     void world.menu?.({ name: 'RaceSex Menu', limited: false });
     return null;
@@ -272,7 +296,11 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
     await runtime.crime.serveTime();
     return null;
   });
-  n('game.cleartempeffects', () => null);
+  // ClearTempEffects: the temporary effects in the world go at once (the hits' decals).
+  n('game.cleartempeffects', () => {
+    world.clearTempEffects?.();
+    return null;
+  });
   // SetPlayerReportCrime(abReportCrime): whether crimes against the player are reported.
   n('game.setplayerreportcrime', ({ args }) => {
     runtime.state.crime.reportCrimeAgainstPlayer = bool(args[0], true);

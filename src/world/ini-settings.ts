@@ -199,6 +199,9 @@ export const INI_DEFAULTS = {
     // Look with the right stick (src/shell/player.ts lookStick); the gamepad on (Prefs).
     fGamepadHeadingSensitivity: 0.6667,
     bGamepadEnable: 1,
+    // The Vibration setting: Game.ShakeController rumbles the gamepad (on in SkyrimPrefs.ini as
+    // the launcher writes it; the executable's own object starts off).
+    bGamePadRumble: 1,
     fMouseHeadingSensitivity: 0.0125,
     fMouseHeadingXScale: 0.02,
     fMouseHeadingYScale: 0.85,
@@ -334,6 +337,14 @@ export const INI_DEFAULTS = {
     fMinFailureDistance: 50,
     fWarpPathOffset: 100,
     fWarpMaxTime: 5,
+  },
+  // The Papyrus VM's share of each frame (src/scripting/scheduler.ts: its update gets 0.9 of
+  // fUpdateBudgetMS, the tasklets after it fExtraTaskletBudgetMS) and how long it runs on its
+  // own once a saved game has loaded (Skyrim_Default.ini: 500); the executable's defaults.
+  Papyrus: {
+    fUpdateBudgetMS: 1.2,
+    fExtraTaskletBudgetMS: 1.2,
+    fPostLoadUpdateTimeMS: 2000,
   },
   // The kill cameras of the player's shots and casts (src/shell/actor-combat.ts: whether one
   // plays; the executable's defaults).

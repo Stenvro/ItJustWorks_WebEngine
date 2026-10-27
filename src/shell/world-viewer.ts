@@ -129,6 +129,8 @@ import type { Rgb } from '../world/cell-records.ts';
 import type { Terminal } from './terminal.ts';
 import { configurePhysics, Player } from './player.ts';
 import type { LocalMapContent } from './local-map.ts';
+import { SkyMode } from '../world/sky-weather.ts';
+import { SUN_GAZE_DEFAULTS, type SunGazeSettings } from '../gameplay/sun-gaze.ts';
 import {
   collisionGroup,
   objectActivation,
@@ -860,6 +862,10 @@ export class WorldViewer {
     screenBlood: (count) => {
       this.#session?.screenBlood.splatter(count);
     },
+    // Game.ClearTempEffects: the hits' decals go (src/shell/combat-impacts.ts).
+    clearTempEffects: () => {
+      this.#stage?.combat.clearDecals();
+    },
     interactionLocation: (furniture, from) =>
       this.#stage?.furniture.interactionLocation(furniture, from) ?? Promise.resolve(undefined),
     dependentAnimated: (reference, dependent, added) =>
@@ -1453,6 +1459,7 @@ export class WorldViewer {
       lightShadows: true,
       focusShadows: () => this.#focusBodies(),
       update: (seconds) => {
+        this.#sunGaze(seconds);
         // The player animates at their own pace in slowed time.
         this.#avatar?.update(seconds * (this.#session?.time.playerPace ?? 1));
         if (this.#avatar) this.#seat?.frame(this.#avatar.stepped);
@@ -2639,6 +2646,40 @@ export class WorldViewer {
       ...(this.#play && { ripples: this.#play.ripples.active(performance.now() / 1000) }),
     };
   }
+
+  /**
+   * The player's gaze at the sun (src/gameplay/sun-gaze.ts): under a full sky with the sun up,
+   * the camera looking at it; once the gaze has lasted, the modifier a script set applies.
+   */
+  #sunGaze(seconds: number): void {
+    const session = this.#session;
+    const runtime = session?.scriptsReady;
+    const camera = this.#renderer.view?.camera;
+    const look = camera?.forward;
+    if (!session || !runtime || !look) return;
+    if (!this.#gazeSettings) {
+      this.#gazeSettings = SUN_GAZE_DEFAULTS;
+      void session.settings().then((gmst) => {
+        this.#gazeSettings = {
+          delta: gmst.number('fPlayerSunGazeDelta') ?? SUN_GAZE_DEFAULTS.delta,
+          startTimer: gmst.number('fPlayerSunGazeStartTimer') ?? SUN_GAZE_DEFAULTS.startTimer,
+        };
+      });
+    }
+    const sun = this.#sky?.lighting()?.sunDirection;
+    const shown =
+      !this.#noSky && session.sky.mode === SkyMode.full && sun !== undefined && sun[2] > 0;
+    const applies = runtime.sunGaze.update(
+      seconds,
+      look,
+      shown ? sun : undefined,
+      this.#gazeSettings,
+    );
+    if (applies && runtime.sunGazeModifier !== undefined)
+      runtime.world.imageSpace?.(runtime.sunGazeModifier, 'apply', 1);
+  }
+
+  #gazeSettings: SunGazeSettings | undefined;
 
   /** The current colour of an emittance source (lights with REFR XEMI). */
   readonly #emittanceRgb = (formId: number): Rgb =>

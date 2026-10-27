@@ -661,6 +661,11 @@ export class ActorCombat implements CombatBridge {
     return this.#impacts.decals();
   }
 
+  /** The hits' decals go at once (Game.ClearTempEffects). */
+  clearDecals(): void {
+    this.#impacts.clear();
+  }
+
   /**
    * An impact where something (a spell) met a surface or an actor: its sound and decal; resolves
    * the impact (IPCT) for what else it leaves (its model, its hazard: src/shell/magic-fx.ts).
