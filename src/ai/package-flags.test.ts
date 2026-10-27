@@ -55,6 +55,27 @@ describe('package flags', () => {
     expect(await run(PackageFlag.skipFalloutBehavior)).toEqual([]);
   });
 
+  it('a save keeps the fallout: after the load the actor sandboxes again where it stands', async () => {
+    let sandboxes = 0;
+    const sandbox: ProcedureRunner = async (procedureRun) => {
+      sandboxes++;
+      while (!procedureRun.stopped()) await procedureRun.wait(1);
+      return 'failure';
+    };
+    const { actor } = packageActor([pack(1, procedure('done'))], { done, sandbox });
+    for (let i = 0; i < 3; i++) await tick(actor, 1);
+    const saved = actor.saveState();
+    expect(saved).toMatchObject({ id: 1, completed: true, ended: true, fallout: true });
+    expect(sandboxes).toBe(1);
+    // Loaded: the package is taken up done, its fallout running again (no begin, no new tree).
+    const loaded = packageActor([pack(1, procedure('done'))], { done, sandbox });
+    if (saved) loaded.actor.resume(saved);
+    for (let i = 0; i < 3; i++) await tick(loaded.actor, 1);
+    expect(sandboxes).toBe(2);
+    expect(loaded.events.filter((event) => event.startsWith('begin'))).toEqual([]);
+    expect(loaded.actor.saveState()?.fallout).toBe(true);
+  });
+
   it('Maintain Speed At Goal does not stop the actor as its package ends', async () => {
     const stops = async (flags: number): Promise<number> => {
       let count = 0;
