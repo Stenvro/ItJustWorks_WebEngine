@@ -25,6 +25,7 @@ import {
   easedLimit,
   HINGE_LIMIT_TAU_FACTOR,
   RAGDOLL_LIMIT_TAU_FACTOR,
+  type JointMotor,
   type SolverConstraint,
   type SolverJoint,
   type SolverSettings,
@@ -280,6 +281,16 @@ interface Quaternion {
   w: number;
 }
 
+/** a⁻¹ b: the turn `b` is from `a` (unit quaternions). */
+function relativeTurn(a: Quaternion, b: Quaternion): Quaternion {
+  return {
+    x: a.w * b.x - a.x * b.w - a.y * b.z + a.z * b.y,
+    y: a.w * b.y + a.x * b.z - a.y * b.w - a.z * b.x,
+    z: a.w * b.z - a.x * b.y + a.y * b.x - a.z * b.w,
+    w: a.w * b.w + a.x * b.x + a.y * b.y + a.z * b.z,
+  };
+}
+
 /** Quaternion of the rotation part of a column-major matrix (assumed orthonormal). */
 export function matrixQuaternion(m: Mat4): Quaternion {
   const m00 = m[0] ?? 1;
@@ -511,6 +522,7 @@ function solverConstraint(data: ConstraintData, toLocal: number): SolverConstrai
     a: frame(inner.a),
     b: frame(inner.b),
     maxFriction: inner.maxFriction,
+    ...(inner.type === 'ragdoll' && { cone: Math.abs(inner.coneMaxAngle) }),
   };
 }
 
@@ -1854,6 +1866,57 @@ export class PhysicsWorld {
       body.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, false);
     }
     this.#syncJoints(placed.bodies.map(({ body }) => body));
+  }
+
+  /**
+   * Powers a ragdoll (the behavior graph's hkbPoweredRagdollControlsModifier: Havok's powered
+   * ragdoll controller): each of its ragdoll and limited hinge joints whose second body has a
+   * pose in `poses` (its pose in the model, game units, under the placement `world`, as
+   * moveBody takes it) gets a motor pulling that body's turn relative to the first toward the
+   * two poses' (constraint-solver.ts, JointMotor), with the graph's control data; `only`: just
+   * the joints whose second body is one of these. The others, and all of them without `motor`
+   * (or with no force), go limp again (their friction holds them). Powered bodies are kept
+   * awake: the pose they are pulled toward moves.
+   */
+  power(
+    placed: PlacedCollision,
+    poses: ReadonlyMap<PlacedBody, Mat4>,
+    world: Mat4,
+    motor: Omit<JointMotor, 'target'> | undefined,
+    only?: ReadonlySet<PlacedBody>,
+  ): void {
+    const turns = new Map<PlacedBody, Quaternion>();
+    const turnOf = (body: PlacedBody): Quaternion | undefined => {
+      let turn = turns.get(body);
+      const pose = poses.get(body);
+      if (!turn && pose) {
+        const m = new Float32Array(16);
+        multiplyInto(rigidPart(world), rigidPart(pose), m);
+        turn = matrixQuaternion(m);
+        turns.set(body, turn);
+      }
+      return turn;
+    };
+    let powered = false;
+    for (const joint of placed.joints) {
+      const solver = this.#solverJoints.get(joint);
+      if (!solver) continue;
+      const on = motor !== undefined && motor.maxForce > 0 && (!only || only.has(joint.b));
+      const a = on ? turnOf(joint.a) : undefined;
+      const b = a && turnOf(joint.b);
+      if (!motor || !a || !b) {
+        solver.motor = undefined;
+        continue;
+      }
+      // qA⁻¹ qB: the second body's turn relative to the first's.
+      const target = relativeTurn(a, b);
+      solver.motor = { ...motor, target };
+      powered = true;
+    }
+    if (!powered) return;
+    for (const { body } of placed.bodies) {
+      if (body.isDynamic() && body.isSleeping()) body.wakeUp();
+    }
   }
 
   /**

@@ -243,6 +243,20 @@ type CyclicBlend = Extract<BehaviorGenerator, { kind: 'cyclic-blend' }>;
 type OffsetAnimation = Extract<BehaviorGenerator, { kind: 'offset-animation' }>;
 type RigidBodyRagdoll = Extract<BehaviorModifier, { kind: 'rigid-body-ragdoll' }>;
 
+/**
+ * An active hkbPoweredRagdollControlsModifier's control data (hkbPoweredRagdollControlData):
+ * the ragdoll's joint motors' strength and recovery, and the animation bones of the ragdoll
+ * bones it powers (none named: all of them).
+ */
+export interface PoweredRagdollControl {
+  readonly maxForce: number;
+  readonly tau: number;
+  readonly damping: number;
+  readonly proportionalRecoveryVelocity: number;
+  readonly constantRecoveryVelocity: number;
+  readonly bones: readonly string[];
+}
+
 /** A pose matcher's state while it is active: the child it shows and whether it plays. */
 interface MatchState {
   index: number;
@@ -517,6 +531,7 @@ export class BehaviorRuntime {
   readonly #getUpFrom = new WeakMap<object, Float32Array>();
   /** The ragdoll controls active in this update. */
   #poweredForce = 0;
+  #powered: PoweredRagdollControl | undefined;
   #rigidBody: RigidBodyRagdoll | undefined;
   /** The character's mirroring (mirrored clips), if it has one. */
   readonly #mirror: MirroredSkeleton | undefined;
@@ -816,6 +831,14 @@ export class BehaviorRuntime {
     return this.#poweredForce;
   }
 
+  /**
+   * The strongest active hkbPoweredRagdollControlsModifier's control data this update (its
+   * motors' settings and the bones it powers), if any is active.
+   */
+  poweredRagdoll(): PoweredRagdollControl | undefined {
+    return this.#powered;
+  }
+
   /** The active hkbRigidBodyRagdollControlsModifier this update (its gains), if any. */
   rigidBodyRagdoll(): RigidBodyRagdoll | undefined {
     return this.#rigidBody;
@@ -1012,6 +1035,7 @@ export class BehaviorRuntime {
     this.#keyframed = new Set();
     this.#tweens = [];
     this.#poweredForce = 0;
+    this.#powered = undefined;
     this.#rigidBody = undefined;
     this.#updateNode(this.#root, dt, active);
     // Nodes no longer active are deactivated (their state reset, their exit events raised).
@@ -2922,9 +2946,21 @@ export class BehaviorRuntime {
           this.#raise(modifier.contactEvent, scope);
         }
         return;
-      case 'powered-ragdoll':
-        this.#poweredForce = Math.max(this.#poweredForce, this.#read(modifier.maxForce, scope));
+      case 'powered-ragdoll': {
+        const maxForce = this.#read(modifier.maxForce, scope);
+        if (this.#powered === undefined || maxForce > this.#poweredForce) {
+          this.#powered = {
+            maxForce,
+            tau: this.#read(modifier.tau, scope),
+            damping: this.#read(modifier.damping, scope),
+            proportionalRecoveryVelocity: this.#read(modifier.proportionalRecoveryVelocity, scope),
+            constantRecoveryVelocity: this.#read(modifier.constantRecoveryVelocity, scope),
+            bones: this.ragdollBoneNames(modifier.bones),
+          };
+        }
+        this.#poweredForce = Math.max(this.#poweredForce, maxForce);
         return;
+      }
       case 'rigid-body-ragdoll':
         this.#rigidBody = modifier;
         return;
