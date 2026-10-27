@@ -13,7 +13,9 @@
 //   node tools/effect-audit.ts --impacts     impacts (IPCT): placement radius, hazards they leave
 //                                            (their lifetime and limit), and the projectiles
 //                                            whose effects' impact data sets leave them, by kind
-//   node tools/effect-audit.ts --glow        enchanted weapons and armour: the effect shader and
+//   node tools/effect-audit.ts --shaders     lighting shapes by shader type, and the eye and
+//                                            sparkle-snow shapes' environment and eye flags
+//   node tools/effect-audit.ts --glow       enchanted weapons and armour: the effect shader and
 //                                            art their enchantment shows (enchantment-glow.ts)
 //
 // Without an option: all of them.
@@ -41,9 +43,16 @@ const { values } = parseArgs({
     spots: { type: 'boolean', default: false },
     impacts: { type: 'boolean', default: false },
     glow: { type: 'boolean', default: false },
+    shaders: { type: 'boolean', default: false },
   },
 });
-const all = !values.markers && !values.lit && !values.spots && !values.impacts && !values.glow;
+const all =
+  !values.markers &&
+  !values.lit &&
+  !values.spots &&
+  !values.impacts &&
+  !values.glow &&
+  !values.shaders;
 
 const vfs = await Vfs.mount(openGameFolder());
 const count = <K>(map: Map<K, number>, key: K, by = 1): void => {
@@ -62,6 +71,26 @@ async function* nifs(): AsyncGenerator<[string, NifFile]> {
       // A file the parser cannot read is nif-stats' to report.
     }
   }
+}
+
+if (all || values.shaders) {
+  const types = new Map<number, number>();
+  const special = new Map<string, number>();
+  for await (const [path, nif] of nifs()) {
+    for (const block of nif.blocks) {
+      if (block.kind !== 'lighting-shader') continue;
+      count(types, block.shaderType);
+      if (block.shaderType !== 14 && block.shaderType !== 16) continue;
+      // SLSF1 Environment_Mapping (0x80), Eye_Environment_Mapping (0x20000).
+      const env = (block.flags1 & 0x80) !== 0 ? ' env' : '';
+      const eye = (block.flags1 & 0x20000) !== 0 ? ' eye-env' : '';
+      count(special, `type ${String(block.shaderType)}${env}${eye}  ${folder(path)}`);
+    }
+  }
+  console.log('Lighting shapes by shader type:');
+  for (const [key, n] of sorted(types)) console.log(`  ${n}  type ${String(key)}`);
+  console.log('Eye and sparkle-snow shapes by flags and folder:');
+  for (const [key, n] of sorted(special)) console.log(`  ${n}  ${key}`);
 }
 
 const BSX_EDITOR_MARKER = 0x20;
