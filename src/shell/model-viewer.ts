@@ -1813,6 +1813,8 @@ export class ModelViewer {
           ],
         }),
         imageSpace,
+        // The cell's shadow lights cast shadows (interiors have no sun shadow).
+        lightShadows: true,
         ...(rooms && { rooms: () => rooms }),
         // The cell's decals and the hits' blood (src/shell/combat-impacts.ts).
         decals: () => [...(decals ? [decals] : []), ...(this.#stage?.combat.decals() ?? [])],
