@@ -251,6 +251,8 @@ export class WaterPhysics {
   readonly #actors = new Map<number, Tracked>();
   readonly #props = new Map<number, BodyWater>();
   #splashes: WaterSplash[] = [];
+  /** Actors standing in or swimming through the water this step (their wakes: water-ripples.ts). */
+  #wakes: { readonly key: number; readonly position: Vec3 }[] = [];
   #time = 0;
 
   constructor(physics: PhysicsWorld, waterAt: WaterAt, rules: WaterRules = WATER_RULE_DEFAULTS) {
@@ -362,7 +364,19 @@ export class WaterPhysics {
       );
     }
     tracked.share = share;
+    // Wading or swimming at the surface: it leaves a wake.
+    // (Kept to a frame's worth where nothing drains them: the headless simulation.)
+    if (water && share > 0.05 && share < 1 && this.#wakes.length < 256) {
+      this.#wakes.push({ key: reference, position: [feet[0], feet[1], water.height] });
+    }
     return { submersion: share, surface: water?.height, type: water?.type };
+  }
+
+  /** The actors in the water since the last call, at the surface above their feet. */
+  drainWakes(): { readonly key: number; readonly position: Vec3 }[] {
+    const wakes = this.#wakes;
+    this.#wakes = [];
+    return wakes;
   }
 
   /** An actor left the world (its splash state is forgotten). */

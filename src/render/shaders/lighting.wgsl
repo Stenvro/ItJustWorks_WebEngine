@@ -212,7 +212,11 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
   let flags1 = draw.flags.x;
   let flags2 = draw.flags.y;
   let drawFlags = draw.flags.z;
-  let shaderType = draw.flags.w;
+  // The top byte holds the distance fade (common.wgsl fadeDiscarded).
+  let shaderType = draw.flags.w & 0xffffffu;
+  if (fadeDiscarded(in.position.xy)) {
+    discard;
+  }
   let multiPass = (drawFlags & DRAW_MULTI_PASS) != 0u;
   let projected = (drawFlags & DRAW_PROJECTED) != 0u;
   let lodLand = shaderType == SHADER_LOD_LANDSCAPE || shaderType == SHADER_LOD_LANDSCAPE_NOISE;

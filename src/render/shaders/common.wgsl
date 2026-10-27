@@ -70,6 +70,18 @@ struct VertexOut {
   @location(5) color: vec4f,
 };
 
+// Distance fade (object-fade.ts): how far the draw's reference has faded out (0..255 in the top
+// byte of flags.w); a 4x4 ordered dither drops that share of its pixels, so it dissolves.
+fn fadeDiscarded(pixel: vec2f) -> bool {
+  let level = draw.flags.w >> 24u;
+  if (level == 0u) {
+    return false;
+  }
+  var bayer = array<u32, 16>(0u, 8u, 2u, 10u, 12u, 4u, 14u, 6u, 3u, 11u, 1u, 9u, 15u, 7u, 13u, 5u);
+  let p = vec2u(pixel) & vec2u(3u);
+  return (f32(bayer[p.y * 4u + p.x]) + 0.5) / 16.0 < f32(level) / 255.0;
+}
+
 // Directional materials: coordinates across the direction surfaces face to get the material
 // (the engine's TexCoord0.zw; single pass faces up, giving world y and -x).
 fn projectedCoordinates(worldPos: vec3f) -> vec2f {

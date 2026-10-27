@@ -444,6 +444,7 @@ export class ActorStage {
       senses: () => this.senses,
       casting: () => this.playerCasting,
       ai: () => this.ai,
+      fx: () => this.fx,
       interior: () => options.interior === true,
       dismount: (actor) => this.mounts.getOff(actor),
       furniture: {
