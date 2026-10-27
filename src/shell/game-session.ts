@@ -1142,6 +1142,8 @@ export class GameSession {
    * sky moves the hour); a script that set the clock (GameHour) sets the game's.
    */
   tickScripts(realSeconds: number): void {
+    // The loading screen holds the sounds the default objects pause on it (DOBJ PDLC).
+    this.soundSystem?.engine.setLoading(this.loading);
     const runtime = this.scriptsReady;
     if (!runtime) return;
     runtime.inMenuMode = this.menuMode;

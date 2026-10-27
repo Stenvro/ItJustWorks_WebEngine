@@ -519,6 +519,16 @@ export class ActorCombatAi {
     }
   }
 
+  /** How strong an actor is in a fight (actorStrength; combat music weighs the odds so). */
+  strength(reference: number): number {
+    return actorStrength(this.#health.get(reference)?.points ?? 100, this.#damageOf(reference));
+  }
+
+  /** The actors fighting beside one (its combat group). */
+  allies(reference: number): number[] {
+    return [...this.#groups.allies(reference)];
+  }
+
   /** An actor's combat style, once its profile is read. */
   styleOf(reference: number): CombatStyle | undefined {
     return this.#minds.get(reference)?.profile?.style;

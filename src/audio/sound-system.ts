@@ -56,6 +56,7 @@ import { materialId, parseMaterialType, type MaterialType } from '../world/mater
 import { WebMusicOutput } from './music-output.ts';
 import type { AudioLoader } from './audio-loader.ts';
 import { AudioEngine } from './audio-engine.ts';
+import { readCategoryRoles } from './category-rules.ts';
 import { distanceGain } from './attenuation.ts';
 import { SoundInstance, type SoundBuffer, type SoundPlace } from './sound-instance.ts';
 
@@ -188,6 +189,12 @@ export class SoundSystem {
     this.#db = db;
     this.#loader = loader;
     this.#ini = ini;
+    // The categories menus hold and Slow Time slows; a menu's change holds or frees the sounds.
+    engine.setRoles(readCategoryRoles(defaults));
+    engine.onHoldChange = () => {
+      for (const instance of this.#playing)
+        instance.hold(this.engine.held(instance.descriptor.category));
+    };
     this.#defaultMusic = defaults.get(DefaultObjectUse.defaultMusic);
     this.#underwaterSound = defaults.get(DefaultObjectUse.underwaterLoop);
     this.#dialogueCategory = defaults.get(DefaultObjectUse.dialogueCategory);
@@ -808,10 +815,9 @@ export class SoundSystem {
   #timeMultiplier = 1;
 
   /**
-   * The world's clock runs at `multiplier` (Slow Time, src/shell/time-flow.ts): the sounds placed
-   * in the world play slowed and lowered with it. TODO(M13): which of the engine's sounds keep
-   * their pitch is not documented (SSE's SNCT has no such flag); the 2D ones (the interface,
-   * music) do here.
+   * The world's clock runs at `multiplier` (Slow Time, the kill camera: src/shell/time-flow.ts):
+   * the sounds of the time-sensitive category (DOBJ TSSC, AudioCategoryNPCKillMove in Skyrim.esm)
+   * play slowed and lowered with it; every other category keeps its pace.
    */
   setTimeMultiplier(multiplier: number): void {
     if (multiplier === this.#timeMultiplier) return;
@@ -821,7 +827,7 @@ export class SoundSystem {
   }
 
   #timeAffects(instance: SoundInstance): boolean {
-    return instance.placed;
+    return this.engine.timeSensitive(instance.descriptor.category);
   }
 
   /** Every frame: the listener at the camera, sounds following, placed loops in range. */
