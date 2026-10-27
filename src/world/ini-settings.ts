@@ -301,6 +301,9 @@ export const INI_DEFAULTS = {
     // The exterior cells loaded round the player's, a side (src/shell/world-viewer.ts, the
     // scripts' attached area in src/scripting/runtime/runtime.ts).
     uGridsToLoad: 5,
+    // The cells kept after the player leaves them (src/world/cell-buffer.ts; UESP's defaults).
+    'uInterior Cell Buffer': 3,
+    'uExterior Cell Buffer': 36,
   },
   // Where actors look by themselves (src/shell/actor-looks.ts): at most this many choose a
   // frame, each again after 1–1.5 s, a new target held 3–8 s (the executable's defaults).

@@ -62,7 +62,6 @@ import { cellSceneLighting, pointLights } from '../world/cell-lighting.ts';
 import {
   cellArrival,
   doorDestination,
-  loadCellData,
   referenceMatrix,
   type CellData,
   type CellObject,
@@ -645,7 +644,7 @@ export class SimWorld {
     const persistent = grid && world ? world.persistentReferences(grid[0], grid[1]) : [];
     // It resets if its time has come, before its references load (cell-reset.ts).
     await this.runtime.cellResets.attaching(formId, persistent);
-    const data = await loadCellData(db, formId, persistent);
+    const data = await session.cellData(formId, grid && world ? persistent : undefined);
     for (const skipped of data.skipped) this.terminal.log('cell', skipped, 'warn');
     const toggles = findToggles(data);
     const isEnabled = this.#enableState(formId, data, toggles);

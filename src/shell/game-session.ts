@@ -81,7 +81,8 @@ import {
 import { PackageData } from '../ai/package-data.ts';
 import { packageStart, type GameTime, type PackageStart } from '../ai/package-start.ts';
 import type { ActorMind } from '../world/actors.ts';
-import type { CellActor } from '../world/cell-loader.ts';
+import { loadCellData, type CellActor, type CellData } from '../world/cell-loader.ts';
+import { CellBuffer, cellBufferSizes } from '../world/cell-buffer.ts';
 import { ScriptLibrary } from '../scripting/script-library.ts';
 import { PapyrusScheduler } from '../scripting/scheduler.ts';
 import { ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -205,6 +206,36 @@ export class GameSession {
   }
 
   #ini: IniSettings | undefined;
+  #cellBuffers:
+    | {
+        readonly interior: CellBuffer<Promise<CellData>>;
+        readonly exterior: CellBuffer<Promise<CellData>>;
+      }
+    | undefined;
+
+  /**
+   * A cell's data as the plugins make it (src/world/cell-buffer.ts): read again only once it has
+   * left its buffer (uInterior Cell Buffer, uExterior Cell Buffer), so a cell the player just
+   * left loads again without reading its records. `persistent`: an exterior cell's references
+   * kept in its world's persistent cell.
+   */
+  cellData(cell: number, persistent?: readonly number[]): Promise<CellData> {
+    const sizes = cellBufferSizes((section, key) => this.ini.lookup(section, key));
+    this.#cellBuffers ??= {
+      interior: new CellBuffer(sizes.interior),
+      exterior: new CellBuffer(sizes.exterior),
+    };
+    const buffer = persistent ? this.#cellBuffers.exterior : this.#cellBuffers.interior;
+    const buffered = buffer.get(cell);
+    if (buffered) return buffered;
+    const loading = this.db.then((db) => loadCellData(db, cell, persistent));
+    buffer.set(cell, loading);
+    // A cell that failed to read is not kept.
+    loading.catch(() => {
+      buffer.delete(cell, loading);
+    });
+    return loading;
+  }
 
   /** The blood on the screen when the player is hit (src/shell/screen-blood-view.ts). */
   get screenBlood(): ScreenBloodView {
