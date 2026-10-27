@@ -67,6 +67,8 @@ export interface HeldBody {
   readonly world: Float32Array;
   readonly motion: InstanceMotion;
   readonly visibility: InstanceVisibility;
+  /** The first-person arms: the models are drawn in first person's view (ModelInstance). */
+  readonly firstPerson?: boolean;
 }
 
 /** The weapons' blood (shared by the third- and first-person models of the same weapons). */
@@ -210,6 +212,7 @@ export class HeldWeapons {
       world: body.world,
       motion: body.motion,
       visibility: body.visibility,
+      ...(body.firstPerson && { firstPerson: true }),
       pose,
       ...(dressed.nodeMaps[i] && { poseNodes: dressed.nodeMaps[i] }),
       partShown,
@@ -219,7 +222,13 @@ export class HeldWeapons {
       const world = new Float32Array(16);
       const motion: InstanceMotion = { version: 0 };
       weapons.#torch = { world, motion, light: nodeWorld(torch.nodes ?? [], ATTACH_LIGHT) };
-      instances.push({ model: torch, world, motion, visibility: body.visibility });
+      instances.push({
+        model: torch,
+        world,
+        motion,
+        visibility: body.visibility,
+        ...(body.firstPerson && { firstPerson: true }),
+      });
     }
     weapons.#scene = renderer.scene.createScene(instances);
     return weapons;

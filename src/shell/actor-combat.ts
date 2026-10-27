@@ -1457,6 +1457,7 @@ export class ActorCombat implements CombatBridge {
         world: arms.world,
         motion: arms.motion,
         visibility: this.#firstPersonVisibility,
+        firstPerson: true,
       },
       held,
       // The same weapons' blood as in third person.

@@ -186,6 +186,7 @@ export class Renderer {
   readonly #backdropBindGroup: GPUBindGroup;
   readonly #depthResolve: GPURenderPipeline;
   readonly #viewProjection = new Float32Array(16);
+  readonly #firstPersonViewProjection = new Float32Array(16);
   #targets: RenderTargets | undefined;
   #view: SceneView | undefined;
   /** The cascades as last rendered into the shadow map, and a frame counter for updates. */
@@ -317,6 +318,11 @@ export class Renderer {
     if (view) {
       view.camera.update(delta);
       view.camera.viewProjection(targets.width / targets.height, this.#viewProjection);
+      // First person's own field of view and near plane (the player's arms: common.wgsl).
+      const firstPerson = view.camera.firstPersonViewProjection?.(
+        targets.width / targets.height,
+        this.#firstPersonViewProjection,
+      );
       const lighting = view.lighting(view.camera);
       const inverse = view.shadows ? invert(this.#viewProjection) : undefined;
       if (inverse) {
@@ -349,6 +355,7 @@ export class Renderer {
         { width: targets.width, height: targets.height, near: view.camera.near },
         view.largeRefMask?.(),
         view.rooms?.(),
+        firstPerson,
       );
       wind = windVelocity(lighting);
     }
