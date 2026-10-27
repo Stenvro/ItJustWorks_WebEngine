@@ -78,10 +78,10 @@ export const INI_DEFAULTS = {
     // bReturnTo1stPersonFromVanity.
     f1st3rdSwitchDelay: 0.25,
     bReturnTo1stPersonFromVanity: 0,
-    // The auto vanity camera (phase 7: its state is not built yet): after
-    // fAutoVanityModeDelay seconds without input in third person it circles the player
-    // (fAutoVanityIncrement radians an update) fDefaultAutoVanityZoom away; never with
-    // bDisableAutoVanityMode, at once with bForceAutoVanityMode.
+    // The auto vanity camera (src/shell/camera-states.ts): after fAutoVanityModeDelay seconds
+    // without input it circles the player (fAutoVanityIncrement radians an update)
+    // fDefaultAutoVanityZoom away; never with bDisableAutoVanityMode, at once with
+    // bForceAutoVanityMode.
     bDisableAutoVanityMode: 0,
     bForceAutoVanityMode: 0,
     fAutoVanityIncrement: 0.01,
@@ -118,6 +118,11 @@ export const INI_DEFAULTS = {
     fOverShoulderCombatPosZ: 20,
     fOverShoulderPosX: 30,
     fOverShoulderPosZ: -10,
+    // Riding a horse the third-person camera takes these shoulder offsets instead (the mount's
+    // camera state: src/shell/camera-states.ts). TODO(M13): the engine's built-in values.
+    fOverShoulderHorseAddY: -80,
+    fOverShoulderHorsePosX: 0,
+    fOverShoulderHorsePosZ: 20,
     // Looking down, the third-person camera pulls back up to this far (src/shell/player.ts).
     fPitchZoomOutMaxDist: 100,
     // How fast the third-person camera moves to its shoulder offsets (a share a second).
@@ -130,7 +135,7 @@ export const INI_DEFAULTS = {
     fTweenCamZoomSpeed: 25,
     fVanityModeMaxDist: 600,
     fVanityModeMinDist: 155,
-    // Flying (a dragon's back; phase 7): the zoom's ends are fVanityModeMinDistFly and
+    // Flying (a dragon's back: src/shell/camera-states.ts): the zoom's ends are fVanityModeMinDistFly and
     // fVanityModeMaxDist × fVanityModeMaxDistFlyMult.
     fVanityModeMaxDistFlyMult: 4,
     fVanityModeMinDistFly: 1200,

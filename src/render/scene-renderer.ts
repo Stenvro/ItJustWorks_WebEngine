@@ -267,6 +267,11 @@ const DRAW_SKINNED = 0x800000;
  * (cleared from them first).
  */
 const DRAW_FIRST_PERSON = 0x8000;
+
+/** Sets (or clears) a draw's DRAW_FIRST_PERSON flag in its uniform's flags. */
+function markFirstPerson(uints: Uint32Array, firstPerson: boolean): void {
+  uints[38] = ((uints[38] ?? 0) & ~DRAW_FIRST_PERSON) | (firstPerson ? DRAW_FIRST_PERSON : 0);
+}
 /** Draw flag bits 24-31: the room its instance stands in (ModelInstance.room). */
 const DRAW_ROOM_SHIFT = 24;
 const SLSF2_TREE_ANIM = 0x20000000;
@@ -2100,7 +2105,7 @@ export class SceneRenderer {
         if (sky) uints[38] = (uints[38] ?? 0) | SKY_DRAW;
         if (part.part.skin) uints[38] = (uints[38] ?? 0) | DRAW_SKINNED;
         const firstPerson = instance.firstPerson === true;
-        uints[38] = ((uints[38] ?? 0) & ~DRAW_FIRST_PERSON) | (firstPerson ? DRAW_FIRST_PERSON : 0);
+        markFirstPerson(uints, firstPerson);
         const room = rooms.get(instance);
         if (room) uints[38] = (uints[38] ?? 0) | ((room & 0xff) << DRAW_ROOM_SHIFT);
         const tints = instance.tints;
@@ -2240,8 +2245,7 @@ export class SceneRenderer {
             directional.snow,
           );
           if (room) passUints[38] = (passUints[38] ?? 0) | ((room & 0xff) << DRAW_ROOM_SHIFT);
-          passUints[38] =
-            ((passUints[38] ?? 0) & ~DRAW_FIRST_PERSON) | (firstPerson ? DRAW_FIRST_PERSON : 0);
+          markFirstPerson(passUints, firstPerson);
           const passDraw: Draw = {
             part: passPart,
             uniformOffset: passOffset,
