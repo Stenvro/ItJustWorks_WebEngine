@@ -10,7 +10,7 @@ import {
   type SceneLighting,
 } from '../render/scene-lighting.ts';
 import type { CellData, CellLight } from './cell-loader.ts';
-import { LightFlag, type Rgb } from './cell-records.ts';
+import { LightFlag, type CellLighting, type Rgb } from './cell-records.ts';
 import { FLICKERING_LIGHT_DISTANCE, lightFlicker } from './light-flicker.ts';
 
 /**
@@ -114,15 +114,27 @@ function directionalLightDirection(rotationXY: number, rotationZ: number): Vec3 
 const add = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 
 /**
+ * The cell's lighting with the camera in room `room` (its index in the cell's rooms; âˆ’1: in
+ * none): the room's own lighting template's, else the cell's.
+ */
+export function lightingInRoom(
+  data: Pick<CellData, 'lighting' | 'roomLighting'>,
+  room: number,
+): CellLighting | undefined {
+  return (room >= 0 ? data.roomLighting?.[room] : undefined) ?? data.lighting;
+}
+
+/**
  * Lighting for an interior cell. The ambient term is the cell's ambient colour plus its
  * directional ambient per axis; the directional light and fog come straight from XCLL.
- * Lights are given at time 0; per frame, replace them with `pointLights(…, seconds)`.
+ * Lights are given at time 0; per frame, replace them with `pointLights(â€¦, seconds)`.
  */
 export function cellSceneLighting(
   data: CellData,
   isEnabled: (reference: number) => boolean = () => true,
+  room = -1,
 ): SceneLighting {
-  const lighting = data.lighting;
+  const lighting = lightingInRoom(data, room);
   const lights = pointLights(
     data.lights.filter((light) => isEnabled(light.reference)),
     0,

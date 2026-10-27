@@ -444,6 +444,11 @@ export interface CellData {
   readonly markers: readonly CellMarker[];
   /** Rooms, portals, occluders and multibounds (the engine's culling markers). */
   readonly rooms?: CellRooms;
+  /**
+   * Each room's lighting (by its index in `rooms.rooms`): its LNAM template in place of the
+   * cell's, under the cell's own XCLL and inheritance flags; undefined: the cell's.
+   */
+  readonly roomLighting?: readonly (CellLighting | undefined)[];
   /** Placed acoustic spaces; filter with `enabledReferences`. */
   readonly acousticAreas: readonly CellAcousticArea[];
   /** Water activators' surfaces (ACTI WNAM; their bounds), for the sound of water. */
@@ -919,6 +924,20 @@ export async function loadCellData(
     if (room >= 0) lights[i] = { ...light, room: room + 1 };
   }
 
+  // A room's lighting template takes the cell's template's place while the camera is in it.
+  const roomLighting: (CellLighting | undefined)[] = [];
+  for (const [i, room] of culling.rooms.entries()) {
+    if (room.lightingTemplate === undefined) continue;
+    try {
+      const record = await db.get(room.lightingTemplate);
+      if (record?.type === 'LGTM')
+        roomLighting[i] = resolveCellLighting(cell, parseLightingTemplate(record));
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      skip(`unreadable room lighting template (${reason})`);
+    }
+  }
+
   const centre: [number, number, number] = [0, 1, 2].map((k) =>
     Number.isFinite(min[k]) ? ((min[k] ?? 0) + (max[k] ?? 0)) / 2 : 0,
   ) as [number, number, number];
@@ -934,6 +953,7 @@ export async function loadCellData(
     emitters,
     markers,
     rooms: culling,
+    ...(roomLighting.length > 0 && { roomLighting }),
     acousticAreas,
     waterAreas,
     references,
