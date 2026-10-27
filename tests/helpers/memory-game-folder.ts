@@ -36,10 +36,30 @@ export class MemoryGameFolder implements GameFolder {
   }
 }
 
-/** Minimal TES4 header with the given flags. */
-export function pluginBytes(flags = 0): Uint8Array {
-  const bytes = new Uint8Array(24);
-  bytes.set(new TextEncoder().encode('TES4'));
-  new DataView(bytes.buffer).setUint32(8, flags, true);
+/** Minimal TES4 record with the given flags and masters (MAST + DATA fields, as plugins have). */
+export function pluginBytes(flags = 0, masters: readonly string[] = []): Uint8Array {
+  const encoder = new TextEncoder();
+  const fields = masters.flatMap((master) => {
+    const name = encoder.encode(`${master}\0`);
+    const mast = new Uint8Array(6 + name.length);
+    mast.set(encoder.encode('MAST'));
+    new DataView(mast.buffer).setUint16(4, name.length, true);
+    mast.set(name, 6);
+    const data = new Uint8Array(6 + 8);
+    data.set(encoder.encode('DATA'));
+    new DataView(data.buffer).setUint16(4, 8, true);
+    return [mast, data];
+  });
+  const dataSize = fields.reduce((sum, field) => sum + field.length, 0);
+  const bytes = new Uint8Array(24 + dataSize);
+  bytes.set(encoder.encode('TES4'));
+  const view = new DataView(bytes.buffer);
+  view.setUint32(4, dataSize, true);
+  view.setUint32(8, flags, true);
+  let offset = 24;
+  for (const field of fields) {
+    bytes.set(field, offset);
+    offset += field.length;
+  }
   return bytes;
 }

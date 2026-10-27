@@ -196,7 +196,7 @@ export class MistMenu {
     logo = true,
     overlay = false,
   ): Promise<MistMenu> {
-    const ini = new IniSettings(session.vfs.defaultIni);
+    const ini = new IniSettings(session.vfs.ini);
     const n = (key: keyof (typeof INI_DEFAULTS)['Interface']): number =>
       ini.number('Interface', key);
     const skeletons: AnimatedSkeleton[] = [];

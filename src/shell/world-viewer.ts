@@ -138,11 +138,13 @@ import {
 
 /**
  * Cells loaded around the cell of the streaming centre (#streamCenter: the player while playing)
- * in each direction (uGridsToLoad 5 → 2).
+ * in each direction: half of [General] uGridsToLoad (the default 5 → 2; an even or odd count
+ * alike, as the engine centres the grid on the player's cell).
  */
-const GRID_RADIUS = 2;
-/** Cells further than this are unloaded (one cell of slack against thrashing). */
-const KEEP_RADIUS = GRID_RADIUS + 1;
+function gridRadius(session: GameSession | undefined): number {
+  const grids = session?.ini.number('General', 'uGridsToLoad') ?? 5;
+  return Math.max(1, Math.floor(grids / 2));
+}
 const MAX_PARALLEL_LOADS = 3;
 /** Large references load this many cells around the camera (uLargeRefLODGridSize 11). */
 const LARGE_REFERENCE_RADIUS = Math.floor(LARGE_REFERENCE_GRID / 2);
@@ -1747,16 +1749,18 @@ export class WorldViewer {
     const [px, py] = this.#streamCenter;
     const cx = Math.floor(px / CELL_SIZE);
     const cy = Math.floor(py / CELL_SIZE);
+    const radius = gridRadius(this.#session);
+    // Cells further than one past the grid are unloaded (one cell of slack against thrashing).
     for (const [key, cell] of this.#cells) {
-      if (Math.max(Math.abs(cell.x - cx), Math.abs(cell.y - cy)) > KEEP_RADIUS) {
+      if (Math.max(Math.abs(cell.x - cx), Math.abs(cell.y - cy)) > radius + 1) {
         this.#free(cell);
         this.#cells.delete(key);
         this.#refreshSounds();
       }
     }
     this.#queue.length = 0;
-    for (let dy = -GRID_RADIUS; dy <= GRID_RADIUS; dy++) {
-      for (let dx = -GRID_RADIUS; dx <= GRID_RADIUS; dx++) {
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
         if (!this.#cells.has(cellKey(cx + dx, cy + dy))) this.#queue.push([cx + dx, cy + dy]);
       }
     }
@@ -1779,8 +1783,9 @@ export class WorldViewer {
    */
   #updateLargeReferences(world: Worldspace, cx: number, cy: number): void {
     const wanted = largeReferencesAround(world.largeReferences, cx, cy);
+    const radius = gridRadius(this.#session);
     const inGrid = (x: number, y: number): boolean =>
-      Math.max(Math.abs(x - cx), Math.abs(y - cy)) <= GRID_RADIUS;
+      Math.max(Math.abs(x - cx), Math.abs(y - cy)) <= radius;
     const beyond = (x: number, y: number): boolean =>
       Math.max(Math.abs(x - cx), Math.abs(y - cy)) > LARGE_REFERENCE_RADIUS + 1;
     /** The references of cells reloaded because more of theirs are wanted (kept with the new). */
