@@ -455,6 +455,9 @@ export class ModelViewer {
         this.#play?.physics.setMotion(placed, motionType === MOTION_KEYFRAMED);
       }
     },
+    fireWeapon: (weapon, source, ammo) => {
+      void this.#stage?.combat.fire(weapon, source, ammo);
+    },
     impulse: (reference, direction, magnitude, share) => {
       for (const placed of this.#play?.placementsOf(reference) ?? []) {
         this.#play?.physics.impulse(placed, direction, magnitude, share);
@@ -812,7 +815,7 @@ export class ModelViewer {
       this.#cell?.navmesh.heightNear(x, y, z, NAVMESH_TOLERANCE) !== undefined;
     player.overEncumbered = () => this.#session?.overEncumbered === true;
     // Slow Time's pace and the falls' damage (src/shell/time-flow.ts).
-    connectPlayerTime(player, () => this.#session);
+    connectPlayerTime(player, () => this.#session, physics);
     // What the player does that the actors near comment on (src/shell/actor-talk.ts).
     player.onAction = (subtype) => {
       void this.#stage?.talk.playerAction(subtype);

@@ -74,6 +74,7 @@ import {
   COMBAT_DEFAULTS,
   type CombatSettings,
 } from '../gameplay/combat/combat-settings.ts';
+import { IMPULSE_DEFAULTS, readImpulseSettings, weaponKnock } from '../gameplay/impulses.ts';
 import {
   AttackState,
   KnockState,
@@ -430,6 +431,8 @@ export class ActorCombat implements CombatBridge {
   readonly #impacts: CombatImpacts;
   readonly #projectiles: CombatProjectiles;
   #settings: CombatSettings = COMBAT_DEFAULTS;
+  /** The gameplay impulses' settings (a blow's knock: src/gameplay/impulses.ts). */
+  #impulses = IMPULSE_DEFAULTS;
   #settingsRead = false;
   #tree: Promise<IdleTree> | undefined;
   readonly #graphKeys = new Map<string, Promise<string | undefined>>();
@@ -1869,6 +1872,15 @@ export class ActorCombat implements CombatBridge {
       const wall = physics?.queriesCurrent
         ? physics.raycast(chest, forward, strike.reach, Layer.weapon)
         : undefined;
+      // The blow knocks the moving body it met (clutter, a corpse's ragdoll) by the weapon's
+      // weight (src/gameplay/impulses.ts).
+      if (wall && physics) {
+        const held = current.hand === 'left' ? fighter.gear?.leftRecord : fighter.gear?.rightRecord;
+        const weight = held?.weight ?? 0;
+        physics.knock(wall.collider, wall.point, forward, (layer, mass) =>
+          weaponKnock(weight, layer, mass, this.#impulses),
+        );
+      }
       if (wall && wall.owner?.kind !== 'actor') {
         const recoil = recoilOf(current, 'wall', undefined, this.#settings);
         if (recoil !== 'none')
@@ -2684,6 +2696,66 @@ export class ActorCombat implements CombatBridge {
     if (fighter.lookedAt === target) return;
     fighter.lookedAt = target;
     this.#options.session.scriptWorld.lookTargets.lookAt(fighter.reference, target, 'combat');
+  }
+
+  /**
+   * Weapon.Fire: a weapon fires its ammo (`ammo`, a bolt or an arrow) from a reference (a trap's
+   * ballista, an actor) as a full draw along the way it faces (its heading and pitch), or from
+   * `from` along `aim` where given; the shot's damage is the weapon's. TODO(M13): the source's
+   * firing node (the shot leaves its origin) and the weapon's own ammo where none is given.
+   */
+  async fire(
+    weapon: number,
+    source: number,
+    ammo: number | undefined,
+    way?: { readonly from: Vec3; readonly aim: Vec3 },
+  ): Promise<boolean> {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime || ammo === undefined) return false;
+    const forms = runtime.forms;
+    const [weaponRecord, ammoRecord] = await Promise.all([
+      forms.record(weapon),
+      forms.record(ammo),
+    ]);
+    const ammoData = ammoRecord?.type === 'AMMO' ? parseAmmo(ammoRecord) : undefined;
+    const projectileRecord =
+      ammoData?.projectile === undefined ? undefined : await forms.record(ammoData.projectile);
+    if (!ammoData || projectileRecord?.type !== 'PROJ') return false;
+    const projectile = parseProjectile(projectileRecord);
+    let from = way?.from;
+    let aim = way?.aim;
+    if (!from || !aim) {
+      const placement = await runtime.placement(source);
+      if (!placement) return false;
+      const [pitch, , heading] = placement.rotation;
+      from = [placement.position[0], placement.position[1], placement.position[2]];
+      aim = [
+        Math.sin(heading) * Math.cos(pitch),
+        Math.cos(heading) * Math.cos(pitch),
+        -Math.sin(pitch),
+      ];
+    }
+    const record = weaponRecord?.type === 'WEAP' ? parseWeaponCombat(weaponRecord) : undefined;
+    const payload: ShotPayload = {
+      attacker: source,
+      damage: (record?.damage ?? 0) + ammoData.damage,
+      weapon,
+      ammo,
+      power: 1,
+      impactDataSet: record?.impactDataSet,
+      projectile: projectile.formId,
+      kind: { power: false, bash: false, sneak: false, ranged: true },
+    };
+    await this.#projectiles.loose({
+      shooter: source,
+      ammo,
+      projectile,
+      from,
+      aim,
+      power: 1,
+      payload,
+    });
+    return true;
   }
 
   /** The arrow leaves the bow (arrowRelease): a shot along the aim, its damage by the draw. */
@@ -3814,6 +3886,7 @@ export class ActorCombat implements CombatBridge {
     this.#settingsRead = true;
     void this.#options.session.settings().then((settings) => {
       this.#settings = readCombatSettings((name) => settings.number(name));
+      this.#impulses = readImpulseSettings((name) => settings.number(name));
       this.#combatMusic.settings = readCombatMusicSettings((name) => settings.number(name));
     });
   }

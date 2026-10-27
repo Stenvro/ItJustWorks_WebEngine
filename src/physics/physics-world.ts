@@ -60,6 +60,9 @@ export const PHYSICS_STEP = 1 / 60;
 export const MAX_STEPS_PER_UPDATE = 3;
 /** A frame shorter than this (seconds) steps nothing; its time is owed (observed in the original). */
 export const MIN_FRAME_SECONDS = 0.001;
+
+/** The shortest share of its step the world steps at (a time multiplier of 0 stops it). */
+const MIN_TIME_SCALE = 0.01;
 /** Rounding allowance of the step clock (seconds). */
 const STEP_EPSILON = 1e-9;
 /**
@@ -243,6 +246,8 @@ export interface RayHit {
   readonly owner: PhysicsOwner | undefined;
   /** The material id (MATT) of the shape hit (0: the landscape, by its land texture). */
   readonly material: number;
+  /** The collider hit (PhysicsWorld.knock pushes its body). */
+  readonly collider: RAPIER.Collider;
 }
 
 // --- Small math helpers -------------------------------------------------------------------
@@ -743,6 +748,8 @@ export class PhysicsWorld {
   /** At most this many steps per frame (`[HAVOK] uMaxNumPhysicsStepsPerUpdate`). */
   maxSteps = MAX_STEPS_PER_UPDATE;
   #step = PHYSICS_STEP;
+  /** The step being taken (#step × the time multiplier). */
+  #size = PHYSICS_STEP;
   /**
    * Which simulated bodies are swept continuously (fDebrisMinExtent, fDebrisMaxVelocity:
    * DEBRIS_QUALITY); set before placing objects.
@@ -801,8 +808,20 @@ export class PhysicsWorld {
   set stepSeconds(seconds: number) {
     if (!(seconds > 0)) return;
     this.#step = seconds;
+    this.#size = seconds;
     this.world.timestep = seconds;
   }
+
+  /** The step being taken now (seconds): the fixed step × the world's time multiplier. */
+  get currentStep(): number {
+    return this.#size;
+  }
+
+  /**
+   * The world's time multiplier (Slow Time; undefined: 1), asked each frame: the step is made
+   * as much shorter (PhysicsWorld.step).
+   */
+  timeScale: (() => number) | undefined;
 
   /** The layer of a collider. */
   layerOf(collider: RAPIER.Collider): number {
@@ -1304,7 +1323,7 @@ export class PhysicsWorld {
         const before = this.#velocities.get(body.handle);
         if (!before || !body.isDynamic()) continue;
         const after = body.linvel();
-        const g = data.gravityFactor * this.stepSeconds;
+        const g = data.gravityFactor * this.#size;
         impulse = Math.max(
           impulse,
           body.mass() *
@@ -1432,10 +1451,18 @@ export class PhysicsWorld {
     // The engine's rule (observed in the original): a frame hands Havok its time and the time still owed,
     // at most uMaxNumPhysicsStepsPerUpdate steps of it (the rest stays owed: a slow frame is
     // made up later), and nothing under a millisecond (it is owed too). Havok then steps its
-    // fixed step until its time reaches what it was handed.
+    // fixed step until its time reaches what it was handed. The step and its cap scale with the
+    // world's time multiplier (Slow Time: `seconds` is the slowed frame's), so it steps as often
+    // as at full speed, each step shorter.
+    const scale = Math.min(1, Math.max(MIN_TIME_SCALE, this.timeScale?.() ?? 1));
+    const size = this.#step * scale;
+    if (size !== this.#size) {
+      this.#size = size;
+      this.world.timestep = size;
+    }
     const owed = this.#owed + seconds;
-    const handed = Math.min(owed, this.stepSeconds * this.maxSteps);
-    if (handed < MIN_FRAME_SECONDS) {
+    const handed = Math.min(owed, size * this.maxSteps);
+    if (handed < MIN_FRAME_SECONDS * scale) {
       this.#owed = owed;
       return 0;
     }
@@ -1443,21 +1470,21 @@ export class PhysicsWorld {
     this.#accumulator += handed;
     let steps = 0;
     while (this.#accumulator > STEP_EPSILON) {
-      beforeStep?.(this.stepSeconds);
+      beforeStep?.(size);
       // Before the solver's changes: the joints' impulses (#breakJoints) include its own.
       this.#recordVelocities();
       if (this.#solverJoints.size > 0) this.#solveJoints();
       this.world.step(this.#events, this.#hooks);
       this.#changed = false;
       if (this.#limits.size > 0) this.#limitVelocities();
-      this.#time += this.stepSeconds;
+      this.#time += size;
       if (this.#depenetrating.size > 0) this.#depenetrate();
       if (this.#held.size > 0) this.#releaseTouched();
       if (this.#hungToCheck.length > 0) this.#ignoreHungOverlaps();
       if (this.#breakable.size > 0) this.#breakJoints();
       this.#deactivate();
       this.#collectImpacts();
-      this.#accumulator -= this.stepSeconds;
+      this.#accumulator -= size;
       steps++;
     }
     return steps;
@@ -1478,7 +1505,7 @@ export class PhysicsWorld {
     }
     solveJoints(
       active,
-      this.stepSeconds,
+      this.#size,
       this.world.gravity,
       this.world.integrationParameters.numSolverIterations,
       this.solver,
@@ -1886,6 +1913,124 @@ export class PhysicsWorld {
       const spin = (): number => (Math.random() * 2 - 1) * (angular / HAVOK_SCALE);
       body.applyTorqueImpulse({ x: spin(), y: spin(), z: spin() }, true);
     }
+  }
+
+  /** A body's mass (Havok kg; 1 where Rapier has none yet). */
+  #massOf(body: RAPIER.RigidBody): number {
+    const mass = body.mass();
+    return mass > 0 ? mass : 1;
+  }
+
+  /** Whether a body can be pushed: simulated, or held until something moves it. */
+  #pushable(body: RAPIER.RigidBody | null): body is RAPIER.RigidBody {
+    return body !== null && body.isValid() && (body.isDynamic() || this.#held.has(body.handle));
+  }
+
+  /**
+   * A hit pushes the body of the collider it met (src/gameplay/impulses.ts: a projectile's
+   * impact, a weapon's blow) at `point` (game units) along `direction`, by `impulse` for its
+   * layer and mass (Havok units, kg·m/s); a held body moves from now on. Fixed and keyframed
+   * bodies (a living actor's, an animated object's) are not moved. Returns whether it pushed.
+   */
+  knock(
+    collider: RAPIER.Collider,
+    point: Vec3,
+    direction: Vec3,
+    impulse: (layer: number, mass: number) => number,
+  ): boolean {
+    const body = collider.parent();
+    if (!this.#pushable(body) || this.#passing.has(collider.handle)) return false;
+    const magnitude = impulse(this.layerOf(collider), this.#massOf(body));
+    const length = Math.hypot(direction[0], direction[1], direction[2]);
+    if (!(magnitude > 0) || length < 1e-6) return false;
+    this.release(body);
+    const k = magnitude / length;
+    body.applyImpulseAtPoint(
+      { x: direction[0] * k, y: direction[1] * k, z: direction[2] * k },
+      { x: toHavok(point[0]), y: toHavok(point[1]), z: toHavok(point[2]) },
+      true,
+    );
+    return true;
+  }
+
+  /**
+   * A cone's push (Unrelenting Force: src/gameplay/impulses.ts conePush) on every moving body
+   * within `range` of `apex` and `spread` degrees of `direction` that the apex sees (the first
+   * surface a ray on `layer` meets on the way is its own): each along the way from the apex by
+   * `push` for its layer, mass and distance (game units, made Havok's here), with a random spin
+   * of up to its angular impulse. Bodies of the actor `ignore` (the caster) are passed over.
+   * Returns the bodies pushed.
+   */
+  pushCone(
+    apex: Vec3,
+    direction: Vec3,
+    range: number,
+    spread: number,
+    layer: number,
+    push: (layer: number, mass: number, distance: number) => BodyPush,
+    ignore?: number,
+  ): number {
+    const d = Math.hypot(direction[0], direction[1], direction[2]);
+    if (!(range > 0) || d < 1e-6) return 0;
+    const unit: Vec3 = [direction[0] / d, direction[1] / d, direction[2] / d];
+    const cosSpread = Math.cos((Math.max(0, spread) * Math.PI) / 180);
+    const bodies = new Map<number, { body: RAPIER.RigidBody; collider: RAPIER.Collider }>();
+    this.world.intersectionsWithShape(
+      { x: toHavok(apex[0]), y: toHavok(apex[1]), z: toHavok(apex[2]) },
+      { x: 0, y: 0, z: 0, w: 1 },
+      new RAPIER.Ball(toHavok(range)),
+      (other) => {
+        if (!other.isEnabled() || !this.matrix.collides(this.layerOf(other), layer)) return true;
+        const owner = this.ownerOf(other);
+        if (owner?.kind === 'actor' && owner.reference === ignore) return true;
+        const body = other.parent();
+        if (!this.#pushable(body) || bodies.has(body.handle)) return true;
+        bodies.set(body.handle, { body, collider: other });
+        return true;
+      },
+    );
+    let pushed = 0;
+    for (const { body, collider } of bodies.values()) {
+      const t = body.translation();
+      const way: Vec3 = [
+        t.x * HAVOK_SCALE - apex[0],
+        t.y * HAVOK_SCALE - apex[1],
+        t.z * HAVOK_SCALE - apex[2],
+      ];
+      const distance = Math.hypot(...way);
+      if (distance > range) continue;
+      const toward: Vec3 =
+        distance > 1e-6 ? [way[0] / distance, way[1] / distance, way[2] / distance] : unit;
+      if (
+        distance > 1e-6 &&
+        toward[0] * unit[0] + toward[1] * unit[1] + toward[2] * unit[2] < cosSpread
+      )
+        continue;
+      // Seen from the apex: nothing but its own system (or the caster) first on the way.
+      if (distance > 1e-6) {
+        const first = this.raycast(apex, way, distance, layer, undefined, ignore);
+        if (first && first.collider.parent()?.handle !== body.handle) {
+          const system = this.#systems.get(collider.handle);
+          if (system === undefined || this.#systems.get(first.collider.handle) !== system) continue;
+        }
+      }
+      const { linear, upBias, angular } = push(
+        this.layerOf(collider),
+        this.#massOf(body),
+        distance,
+      );
+      if (!(linear > 0) && !(angular > 0)) continue;
+      this.release(body);
+      const scale = linear / HAVOK_SCALE;
+      body.applyImpulse(
+        { x: toward[0] * scale, y: toward[1] * scale, z: (toward[2] + upBias) * scale },
+        true,
+      );
+      const spin = (): number => (Math.random() * 2 - 1) * (angular / HAVOK_SCALE);
+      body.applyTorqueImpulse({ x: spin(), y: spin(), z: spin() }, true);
+      pushed++;
+    }
+    return pushed;
   }
 
   /**
@@ -2307,7 +2452,7 @@ export class PhysicsWorld {
    * a rock (stacked joints and contacts never quite at rest) never slept.
    */
   #deactivate(): void {
-    this.#sinceDeactivation += this.stepSeconds;
+    this.#sinceDeactivation += this.#size;
     if (this.#sinceDeactivation < DEACTIVATION_CHECK) return;
     const elapsed = this.#sinceDeactivation;
     this.#sinceDeactivation = 0;
@@ -2465,7 +2610,7 @@ export class PhysicsWorld {
    * is at or ahead of it (as Havok draws bodies at the frame's time between their steps).
    */
   get alpha(): number {
-    return Math.min(1, Math.max(0, 1 + this.#accumulator / this.stepSeconds));
+    return Math.min(1, Math.max(0, 1 + this.#accumulator / this.#size));
   }
 
   /**
@@ -2524,6 +2669,7 @@ export class PhysicsWorld {
       layer: this.layerOf(hit.collider),
       owner: this.ownerOf(hit.collider),
       material: this.materialOf(hit.collider),
+      collider: hit.collider,
     };
   }
 
