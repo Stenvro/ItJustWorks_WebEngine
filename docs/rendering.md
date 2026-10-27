@@ -658,6 +658,39 @@ from their centre (the engine offsets the corners in clip space by size × the p
 scale, CS Particle.hlsl ENVCUBE); rain drops are scaled × 50 to match the texture's thin line:
 TODO(M13) calibrate rain against the original.
 
+## First person
+
+The engine draws the first-person geometry (the arms, the weapon, a torch, an animation object
+in the hands) through a camera of its own over the world: first person's field of view
+(`[Display] fDefault1stPersonFOV`, the console's second `fov` value) and a near plane of its
+own. Here those instances carry `ModelInstance.firstPerson`; their draws get the
+`DRAW_FIRST_PERSON` flag (a bit the NiAlphaProperty flags leave unused) and are never culled.
+`objectVertex` (common.wgsl) projects them with `frame.firstPersonViewProj` (the player's view
+with first person's projection, src/render/first-person-view.ts) and moves their reversed-Z
+depth linearly into the band `[0.98, 1]`. The player's controller keeps the eye farther than the
+world's near plane (`fNearDistance` 15) from any wall, and a wall at 15.3 units already has
+depth 0.98: the arms never sink into a wall, and still hide their own far sides (the band is
+linear in clip space, so it interpolates as depth does). A bow's zoom, the dialogue zoom and the
+tween menu narrow the world's view only. TODO(M13): the engine's first-person near plane (1
+here); first-person particles (a weapon's enchantment) still use the world's projection; the
+composite reads the arms' depth as about 15 units away (fog, ambient occlusion).
+
+## Cameras
+
+The player camera has the engine's states (CommonLibSSE `PlayerCamera::CameraStates`;
+src/shell/camera-states.ts), worked out each frame by precedence: a kill camera (VATS: the
+killmove and ranged kill cameras, src/shell/killmove-camera.ts), the free camera, the tween
+menu's, an animated camera (StartAnimatedCamera), bleedout, furniture, auto vanity, a dragon's
+back, then first person, or third person, or a mount's. Riding a horse the third-person camera
+takes `fOverShoulderHorse{PosX,AddY,PosZ}` (TODO(M13): the engine's values); on a dragon it is
+always third person, zoomed between `fVanityModeMinDistFly` and `fVanityModeMaxDist` ×
+`fVanityModeMaxDistFlyMult`. The auto vanity camera starts after `fAutoVanityModeDelay` seconds
+without a key, the mouse or movement (not in combat, a menu, a conversation or on a mount; never
+with `bDisableAutoVanityMode`, at once with `bForceAutoVanityMode`) and circles the player
+`fDefaultAutoVanityZoom` units away, `fAutoVanityIncrement` radians a 60th of a second; any
+input ends it, back to the point of view it came from. The camera's shake
+(src/shell/camera-shake.ts) comes from the graphs' CameraShake event and Game.ShakeCamera.
+
 ## Memory
 
 The session keeps the models and textures it loads (`game-session.ts`, `texture-cache.ts`)

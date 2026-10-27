@@ -86,6 +86,13 @@ fn projectedCoordinates(worldPos: vec3f) -> vec2f {
 const DRAW_TREE_ANIM = 0x400000u;
 // The part is skinned (skinning.wgsl): its model-space normals turn with its bones.
 const DRAW_SKINNED = 0x800000u;
+// The player's first-person geometry (its arms and what they hold): drawn through
+// frame.firstPersonViewProj, its depth moved into the band nearest the eye (reversed Z: from
+// FIRST_PERSON_DEPTH to 1) that the world, kept beyond the near plane, never reaches. The
+// engine draws first person in a pass of its own over the world; the band does the same in one
+// pass: the arms and weapon never sink into a wall, and still hide their own far sides.
+const DRAW_FIRST_PERSON = 0x8000u;
+const FIRST_PERSON_DEPTH = 0.98;
 const LEAF_DAMPEN_START = 3600.0;
 const LEAF_DAMPEN_END = 4600.0;
 
@@ -118,7 +125,16 @@ fn vs_main(in: VertexIn) -> VertexOut {
 // A vertex at its world position, its normal frame turned by `rotation` (model to world).
 fn objectVertex(in: VertexIn, world: vec4f, rotation: mat3x3f) -> VertexOut {
   var out: VertexOut;
-  out.position = frame.viewProj * world;
+  if ((draw.flags.z & DRAW_FIRST_PERSON) != 0u) {
+    let clip = frame.firstPersonViewProj * world;
+    out.position = vec4f(
+      clip.xy,
+      FIRST_PERSON_DEPTH * clip.w + (1.0 - FIRST_PERSON_DEPTH) * clip.z,
+      clip.w,
+    );
+  } else {
+    out.position = frame.viewProj * world;
+  }
   out.worldPos = world.xyz;
   out.uv = in.uv * draw.uvTransform.zw + draw.uvTransform.xy;
   out.normal = safeNormalize(rotation * (in.normal.xyz * 2.0 - 1.0));

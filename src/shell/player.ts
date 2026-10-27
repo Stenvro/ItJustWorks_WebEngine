@@ -6,10 +6,19 @@
 
 import { DialogueCamera } from './dialogue-camera.ts';
 import { CameraShake } from './camera-shake.ts';
+import {
+  AutoVanity,
+  cameraState,
+  horseShoulder,
+  zoomRange,
+  type CameraConditions,
+  type CameraState,
+} from './camera-states.ts';
 import { TweenCamera } from './tween-camera.ts';
 import type { Camera } from '../render/view-camera.ts';
 import type { MoveRequest } from '../ai/locomotion.ts';
 import { lookAt, multiply, perspectiveReversedZ, type Mat4, type Vec3 } from '../render/math.ts';
+import { firstPersonViewProjection, verticalFov } from '../render/first-person-view.ts';
 import { parseControlMap, SCAN_CODES, type ControlMap } from '../formats/controlmap/controlmap.ts';
 import type { NifFile } from '../formats/nif/nif.ts';
 import { decodeWindows1252 } from '../formats/text.ts';
@@ -293,14 +302,6 @@ export interface PlayerMotion {
   readonly sprinting: boolean;
 }
 
-/**
- * The vertical field of view (radians) of a horizontal one across a 4:3 frame (degrees), as
- * fDefaultWorldFOV is (wider screens see more at the sides).
- */
-function verticalFov(degrees: number): number {
-  return 2 * Math.atan(Math.tan((degrees * Math.PI) / 360) * 0.75);
-}
-
 /** An animated camera the player's graph starts (src/shell/actor-graph-events.ts). */
 export interface AnimatedCameraRequest {
   /** The node's world matrix now (undefined: it is gone). */
@@ -412,10 +413,16 @@ export class Player implements Camera {
   /** The console's tcl: no collision, no gravity; the player flies where they look. */
   noClip = false;
 
-  /** The world's field of view (degrees across a 4:3 frame): the console's fov. */
-  setFov(degrees: number): void {
+  /** fDefault1stPersonFOV: first person's own field of view (degrees across a 4:3 frame). */
+  #firstPersonFov: number;
+  /** The view of the last viewProjection (the first-person view looks along it). */
+  readonly #view = new Float32Array(16);
+
+  /** The world's and first person's fields of view (degrees across a 4:3 frame): fov. */
+  setFov(degrees: number, firstPerson?: number): void {
     this.#fovDegrees = degrees;
     this.#fovY = verticalFov(degrees);
+    if (firstPerson !== undefined) this.#firstPersonFov = firstPerson;
   }
   /**
    * Whether the player holds an object heavier than fZKeyHeavyWeight (the play's grab): they
@@ -438,6 +445,31 @@ export class Player implements Camera {
   readonly dialogue = new DialogueCamera();
   /** The camera's shake (a giant's stomp, Game.ShakeCamera): stepped with the game's time. */
   readonly shake = new CameraShake();
+  /** The auto vanity camera: it circles the player after a while without input. */
+  readonly vanity = new AutoVanity();
+  /** The point of view the vanity camera came from (it goes back to it). */
+  #vanityPov: Pov | undefined;
+  /** Input came this frame (a key, the mouse, the wheel): the vanity camera's idle clock. */
+  #input = false;
+  /** What the player rides (the mount's and the dragon's camera states); undefined: none. */
+  mount: (() => 'horse' | 'dragon' | undefined) | undefined;
+  /** Whether the vanity camera may start (no combat, no menu); undefined: always. */
+  vanityAllowed: (() => boolean) | undefined;
+
+  /**
+   * The camera's state (src/shell/camera-states.ts), from what the player does; `others`: the
+   * states the play session knows (the free camera, a kill camera, bleedout, furniture).
+   */
+  cameraState(others: Partial<CameraConditions> = {}): CameraState {
+    return cameraState({
+      pov: this.pov,
+      animated: this.#animated !== undefined,
+      tween: this.tween.active,
+      vanity: this.vanity.active,
+      mount: this.mount?.(),
+      ...others,
+    });
+  }
   /** The race's body (the cameras' heights). */
   #body: PlayerBody;
 
@@ -459,6 +491,7 @@ export class Player implements Camera {
     // more at the sides).
     this.#fovDegrees = ini.number('Display', 'fDefaultWorldFOV');
     this.#fovY = verticalFov(this.#fovDegrees);
+    this.#firstPersonFov = ini.number('Display', 'fDefault1stPersonFOV');
     this.tween = new TweenCamera({
       rotAngle: ini.number('Camera', 'fTweenCamRotAngle'),
       rotSpeed: ini.number('Camera', 'fTweenCamRotSpeed'),
@@ -584,6 +617,19 @@ export class Player implements Camera {
     return [Math.sin(this.yaw) * c, Math.cos(this.yaw) * c, Math.sin(this.pitch)];
   }
 
+  /** The camera's heading: the player's, or the vanity camera's about them. */
+  #viewYaw(): number {
+    return this.vanity.active ? this.vanity.yaw : this.yaw;
+  }
+
+  /** Where the camera looks (the vanity camera: at the player, from its heading). */
+  #viewForward(): Vec3 {
+    if (!this.vanity.active) return this.forward;
+    const yaw = this.vanity.yaw;
+    const c = Math.cos(this.pitch);
+    return [Math.sin(yaw) * c, Math.cos(yaw) * c, Math.sin(this.pitch)];
+  }
+
   /** Where the player stands (game units). */
   get feet(): Vec3 {
     return this.character.feet;
@@ -693,10 +739,48 @@ export class Player implements Camera {
     const zoom = this.bowZoom;
     this.#bowZoom += (zoom - this.#bowZoom) * Math.min(1, deltaSeconds * BOW_ZOOM_RATE);
     if (Math.abs(this.#bowZoom - zoom) < 1e-3) this.#bowZoom = zoom;
+    this.#stepCameraState(deltaSeconds);
     this.#moveShoulder(deltaSeconds);
     this.#placeCamera(physics.alpha, deltaSeconds);
     this.shake.step(deltaSeconds);
     if (this.#animated) this.#animated.since += deltaSeconds;
+  }
+
+  /**
+   * The camera states the player's own camera has (src/shell/camera-states.ts): a dragon's back
+   * is seen in third person; the auto vanity camera starts after the idle delay (in third
+   * person, from either) and any input ends it, back to the point of view it came from.
+   */
+  #stepCameraState(deltaSeconds: number): void {
+    const { ini } = this.#setup;
+    const mount = this.mount?.();
+    if (mount === 'dragon' && this.pov === 'first') this.setPov('third');
+    const input = this.#input;
+    this.#input = false;
+    const idle = !input && this.#held.size === 0 && !this.motion.moving && this.pilot === undefined;
+    // TODO(M13): what else keeps it from starting in the engine (sneaking, a drawn weapon).
+    const allowed =
+      (this.vanityAllowed?.() ?? true) &&
+      mount === undefined &&
+      !this.povLocked &&
+      !this.noClip &&
+      this.#animated === undefined &&
+      !this.dialogue.active &&
+      !this.tween.active;
+    const started = this.vanity.step(deltaSeconds, idle, allowed, this.yaw, {
+      delay: ini.number('Camera', 'fAutoVanityModeDelay'),
+      increment: ini.number('Camera', 'fAutoVanityIncrement'),
+      zoom: ini.number('Camera', 'fDefaultAutoVanityZoom'),
+      disabled: ini.bool('Camera', 'bDisableAutoVanityMode'),
+      forced: ini.bool('Camera', 'bForceAutoVanityMode'),
+    });
+    if (started) {
+      this.#vanityPov = this.pov;
+      this.pov = 'third';
+    } else if (!this.vanity.active && this.#vanityPov !== undefined) {
+      this.pov = this.#vanityPov;
+      this.#vanityPov = undefined;
+    }
   }
 
   /** Seconds Toggle POV has been held (undefined: it is up), and whether the hold switched. */
@@ -746,13 +830,21 @@ export class Player implements Camera {
   #moveShoulder(deltaSeconds: number): void {
     const ini = this.#setup.ini;
     const drawn = this.weaponDrawn?.() === true;
-    const target: [number, number, number] = drawn
-      ? [
-          ini.number('Camera', 'fOverShoulderCombatPosX'),
-          -ini.number('Camera', 'fOverShoulderCombatAddY'),
-          ini.number('Camera', 'fOverShoulderCombatPosZ'),
-        ]
-      : [ini.number('Camera', 'fOverShoulderPosX'), 0, ini.number('Camera', 'fOverShoulderPosZ')];
+    // The mount's camera state: the horse's shoulder offsets, drawn or not.
+    const target: [number, number, number] =
+      this.mount?.() === 'horse'
+        ? horseShoulder((key) => ini.number('Camera', key))
+        : drawn
+          ? [
+              ini.number('Camera', 'fOverShoulderCombatPosX'),
+              -ini.number('Camera', 'fOverShoulderCombatAddY'),
+              ini.number('Camera', 'fOverShoulderCombatPosZ'),
+            ]
+          : [
+              ini.number('Camera', 'fOverShoulderPosX'),
+              0,
+              ini.number('Camera', 'fOverShoulderPosZ'),
+            ];
     const now = this.#shoulder;
     if (!now || this.pov === 'first') {
       this.#shoulder = target;
@@ -961,6 +1053,9 @@ export class Player implements Camera {
 
   /** First or third person (third: zoomed out at least to the shoulder). */
   setPov(pov: Pov): void {
+    // A point of view asked for ends the vanity camera (it does not go back after).
+    this.vanity.input();
+    this.#vanityPov = undefined;
     this.pov = pov;
     if (pov === 'third') this.#zoomTarget = Math.max(this.#zoomTarget, 0);
   }
@@ -999,25 +1094,32 @@ export class Player implements Camera {
       feet[1] + sy + body.thirdPersonTarget[1],
       feet[2] + sz + body.thirdPersonTarget[2],
     ];
-    const min = ini.number('Camera', 'fVanityModeMinDist');
-    const max = ini.number('Camera', 'fVanityModeMaxDist');
-    const [shoulderX, shoulderBack, shoulderZ] = this.#shoulder ?? [
-      ini.number('Camera', 'fOverShoulderPosX'),
-      0,
-      ini.number('Camera', 'fOverShoulderPosZ'),
-    ];
+    // A dragon's back widens the zoom's ends (src/shell/camera-states.ts).
+    const [min, max] = zoomRange((key) => ini.number('Camera', key), this.mount?.());
+    // The vanity camera circles the body itself, fDefaultAutoVanityZoom away.
+    const vanity = this.vanity.active;
+    const [shoulderX, shoulderBack, shoulderZ] = vanity
+      ? [0, 0, 0]
+      : (this.#shoulder ?? [
+          ini.number('Camera', 'fOverShoulderPosX'),
+          0,
+          ini.number('Camera', 'fOverShoulderPosZ'),
+        ]);
     const pitchZoom =
       this.pitch < 0
         ? (-this.pitch / (Math.PI / 2)) * ini.number('Camera', 'fPitchZoomOutMaxDist')
         : 0;
-    const distance = Math.max(0, min + this.#zoom * (max - min) + shoulderBack + pitchZoom);
-    const right: Vec3 = [Math.cos(this.yaw), -Math.sin(this.yaw), 0];
+    const distance = vanity
+      ? ini.number('Camera', 'fDefaultAutoVanityZoom')
+      : Math.max(0, min + this.#zoom * (max - min) + shoulderBack + pitchZoom);
+    const yaw = this.#viewYaw();
+    const right: Vec3 = [Math.cos(yaw), -Math.sin(yaw), 0];
     const pivot: Vec3 = [
       target[0] + right[0] * shoulderX,
       target[1] + right[1] * shoulderX,
       target[2] + shoulderZ,
     ];
-    const forward = this.forward;
+    const forward = this.#viewForward();
     const back: Vec3 = [-forward[0], -forward[1], -forward[2]];
     // The camera sphere (fCameraCasterSize) stops at walls between the player and the camera.
     const reach = physics.sphereCast(
@@ -1132,8 +1234,8 @@ export class Player implements Camera {
       this.pitch = view.pitch;
       fovY = verticalFov(this.#fovDegrees + view.fov);
     }
-    let forward = this.forward;
-    let yaw = this.yaw;
+    let forward = this.#viewForward();
+    let yaw = this.#viewYaw();
     let pitch = this.pitch;
     if (this.tween.active) {
       const added = this.tween.sample(performance.now());
@@ -1172,9 +1274,19 @@ export class Player implements Camera {
       this.position[2] + forward[2],
     ];
     const view = lookAt(this.position, target, up);
+    this.#view.set(view);
     const projection = perspectiveReversedZ(fovY, aspect, this.near);
     projection[8] = -this.lensShift;
     return multiply(projection, view, out);
+  }
+
+  /**
+   * The arms' view-projection (src/render/first-person-view.ts): the view just made, with first
+   * person's own field of view: a bow's zoom, a conversation's and the tween menu's narrow the
+   * world's, not this.
+   */
+  firstPersonViewProjection(aspect: number, out: Mat4 = new Float32Array(16)): Mat4 {
+    return firstPersonViewProjection(this.#view, this.#firstPersonFov, aspect, this.lensShift, out);
   }
 
   /** Told of each user event the player presses (help messages wait for one). */
@@ -1183,6 +1295,7 @@ export class Player implements Camera {
   /** Presses or releases a user event by its control map name ("Forward", "Jump", ...). */
   press(name: string, down: boolean): void {
     if (down) {
+      this.#input = true;
       if (!this.#held.has(name)) {
         this.#pressed.add(name);
         this.onPress?.(name);
@@ -1216,6 +1329,7 @@ export class Player implements Camera {
    */
   look(countsX: number, countsY: number): void {
     const { ini } = this.#setup;
+    if (countsX !== 0 || countsY !== 0) this.#input = true;
     const perCount =
       Math.PI *
       ini.number('Controls', 'fMouseHeadingSensitivity') *
@@ -1238,6 +1352,7 @@ export class Player implements Camera {
    */
   zoom(zoomIn: boolean): void {
     const { ini } = this.#setup;
+    this.#input = true;
     const step = ini.number('Camera', 'fMouseWheelZoomIncrement');
     if (zoomIn) {
       if (this.pov === 'third') {

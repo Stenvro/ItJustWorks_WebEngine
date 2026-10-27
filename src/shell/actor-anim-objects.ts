@@ -243,7 +243,10 @@ export class ActorAnimObjects {
         side,
         key: body.key,
         node: model.attachTo?.toLowerCase(),
-        scene: renderer.scene.createScene([{ model, world, motion, visibility }]),
+        // In the first-person arms' hands: drawn in first person's view, as they are.
+        scene: renderer.scene.createScene([
+          { model, world, motion, visibility, ...(side === 'first' && { firstPerson: true }) },
+        ]),
         world,
         motion,
         visibility,

@@ -1240,6 +1240,18 @@ export class WorldViewer {
         .get(cellKey(Math.floor(px / CELL_SIZE), Math.floor(py / CELL_SIZE)))
         ?.navmesh?.heightNear(px, py, pz, NAVMESH_TOLERANCE) !== undefined;
     player.overEncumbered = () => this.#session?.overEncumbered === true;
+    // The mount's and the dragon's camera states (src/shell/camera-states.ts).
+    player.mount = () => {
+      const mounts = this.#stage?.mounts;
+      if (mounts?.horseOf(PLAYER_REF) === undefined) return undefined;
+      return mounts.flyingMount(PLAYER_REF) ? 'dragon' : 'horse';
+    };
+    // The vanity camera waits while a menu is open or the player fights.
+    player.vanityAllowed = () => {
+      const session = this.#session;
+      if (!session || session.menuMode) return false;
+      return session.scriptsReady?.world.combat?.(PLAYER_REF)?.inCombat !== true;
+    };
     // Slow Time's pace and the falls' damage (src/shell/time-flow.ts).
     connectPlayerTime(player, () => this.#session);
     // Sprinting takes stamina (src/scripting/runtime/progression-engine.ts).
