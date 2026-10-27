@@ -24,15 +24,18 @@ import {
   aggroResponse,
   Assistance,
   assists,
+  attackDps,
   attacksOnSight,
-  confidenceModifier,
+  combatStrength,
   daresHelp,
+  drawConfidenceModifier,
+  maySwitchTarget,
   readCombatAiSettings,
   COMBAT_AI_DEFAULTS,
   Confidence,
   selectTarget,
   shouldFlee,
-  threatRatio,
+  strengthRatio,
   turnsOnAttacker,
   yields,
   type CombatAiSettings,
@@ -47,6 +50,7 @@ import {
 } from '../ai/combat-groups.ts';
 import { BehaviourTree, type Status, type TreeInstance } from '../ai/behaviour-tree.ts';
 import { AttackPick, combatRegistry } from '../ai/combat-tree.ts';
+import { CombatDialogue, isCombatLine, readCombatDialogueSettings } from '../ai/combat-dialogue.ts';
 import { CombatProfiles, NO_STYLE, type CombatProfile } from '../ai/combat-profile.ts';
 import { FightReaction, reactionOf } from '../ai/combat-reactions.ts';
 import {
@@ -75,8 +79,13 @@ import { readDetectionSettings } from '../ai/detection.ts';
 import {
   advanceRadii,
   ATTACK_DECISION_SECONDS,
+  attackCooldown,
+  attackStrikeAngle,
   avoidsThreat,
   blockAttackChance,
+  blockAttackOpening,
+  blockStartDistance,
+  holdsBlock,
   blockChance,
   blockTime,
   bowHoldTime,
@@ -157,6 +166,17 @@ export interface FighterGear {
   /** Its attack data has a bash, and its power attacks' chance (ATKD). */
   readonly canBash: boolean;
   readonly powerChance: number;
+  /** Its right weapon's speed (WEAP DNAM; 1 for fists): its damage per second. */
+  readonly speed?: number;
+  /** A one-handed weapon in its left hand (it dual wields). */
+  readonly leftWeapon?: boolean;
+  /** The spell its right and left hands hold (undefined: none). */
+  readonly rightSpell?: number;
+  readonly leftSpell?: number;
+  /** Its normal attack's ATKD strike angle (degrees) and recovery times (seconds). */
+  readonly strikeAngle?: number;
+  readonly recoveryTime?: number;
+  readonly powerRecoveryTime?: number;
 }
 
 /** A fighter as combat has it now (the player too). */
@@ -207,7 +227,7 @@ export interface CombatCasting {
   options(actor: number, target?: number): Promise<readonly EquipOption[]>;
   castAt(
     actor: number,
-    hand: 'left' | 'right' | 'voice',
+    hand: 'left' | 'right' | 'both' | 'voice',
     target: number,
     option: EquipOption,
   ): Promise<boolean>;
@@ -300,6 +320,17 @@ interface Mind {
   healthPoints: number;
   modifier: number;
   nextOdds: number;
+  /** Its side's strength ratio against its enemies (strengthRatio), as last weighed. */
+  ratio: number;
+  /** When its target is chosen again, and when it last switched to another. */
+  nextSelect: number;
+  switchedAt: number;
+  /** A dual wielder's next hand. */
+  hand: 'right' | 'left';
+  /** The block attack's opening last weighed (its target's swing), and its target's last place. */
+  blockAttacked: object | undefined;
+  blockTargetAt:
+    { readonly distance: number; readonly at: number; readonly speed: number } | undefined;
   maneuver: Maneuver;
   maneuverUntil: number;
   side: number;
@@ -368,6 +399,8 @@ interface Mind {
   /** The combat state last told (TESCombatEvent), and the target told with it. */
   told: CombatStateValue;
   toldTarget: number | undefined;
+  /** It detects one of its enemies now (as last decided; a fleeing actor's safety). */
+  seesEnemy: boolean;
   /** Its run of the combat tree (made as it first fights; dropped as its fight ends). */
   tree: TreeInstance<CombatFrame> | undefined;
 }
@@ -431,6 +464,10 @@ const SUPPORT_CAST_SECONDS = 1.5;
 /** A fighter left without a weapon picks one up lying this near, reached this near (units). */
 const PICK_UP_REACH = 1024;
 const PICK_UP_ARRIVE = 64;
+/** An offensive bash raises its block this long at most before the bash (seconds; TODO(M13)). */
+const OFFENSIVE_BASH_RAISE = 0.5;
+/** Its target's retreat speed is sampled this often while it blocks (seconds). */
+const RETREAT_SAMPLE_SECONDS = 0.2;
 /** A dodge lasts this long (seconds). */
 const DODGE_SECONDS = 0.6;
 /** A shout is tried this often (the combat tree's wait after Cast Shout; seconds). */
@@ -475,7 +512,14 @@ export class ActorCombatAi {
   readonly #reactions = new Map<string, { value: number | undefined; read: number }>();
   readonly #reacting = new Set<string>();
   readonly #profiles = new CombatProfiles();
-  readonly #health = new Map<number, { share: number; points: number; read: number }>();
+  readonly #health = new Map<
+    number,
+    { share: number; points: number; read: number; reduction: number }
+  >();
+  /** Its combat lines' cooldowns and distance gates (src/ai/combat-dialogue.ts). */
+  readonly #dialogue = new CombatDialogue();
+  /** Whether an actor may dual cast a spell (its perks), by "actor:spell", as read. */
+  readonly #dualCasts = new Map<string, boolean>();
   /** Actors' levels (daresHelp), read with their health. */
   readonly #levels = new Map<number, number>();
   readonly #random = seededRandom(0xc0ba7);
@@ -868,6 +912,12 @@ export class ActorCombatAi {
         healthPoints: 1,
         modifier: 0,
         nextOdds: 0,
+        ratio: Number.POSITIVE_INFINITY,
+        nextSelect: 0,
+        switchedAt: -Infinity,
+        hand: 'right',
+        blockAttacked: undefined,
+        blockTargetAt: undefined,
         maneuver: 'advance',
         maneuverUntil: 0,
         side: 1,
@@ -916,6 +966,7 @@ export class ActorCombatAi {
         gettingUp: false,
         told: 0,
         toldTarget: undefined,
+        seesEnemy: false,
         tree: undefined,
       };
       this.#minds.set(reference, mind);
@@ -982,9 +1033,20 @@ export class ActorCombatAi {
       this.#end(mind, mind.mode === 'search' ? 'lost' : 'won');
       return;
     }
-    // Its target: the one target selection picks (it may switch).
-    const target = selectTarget(candidates, mind.target, this.#settings);
-    if (target !== undefined && target !== mind.target) this.#setTarget(mind, target);
+    // Its target: the one target selection picks, every fCombatSelectTargetUpdateTime; it turns
+    // to another no sooner than fCombatSelectTargetSwitchUpdateTime after its last switch, but
+    // at once when its target is gone.
+    const kept = candidates.some((candidate) => candidate.reference === mind.target);
+    let target = mind.target;
+    if (!kept || this.#clock >= mind.nextSelect) {
+      mind.nextSelect = this.#clock + this.#settings.selectTargetUpdateTime;
+      target = selectTarget(candidates, mind.target, this.#settings);
+      const switches = !kept || maySwitchTarget(this.#clock - mind.switchedAt, this.#settings);
+      if (target !== undefined && target !== mind.target && switches) {
+        mind.switchedAt = this.#clock;
+        this.#setTarget(mind, target);
+      }
+    }
     // Lost and found: its group searches once it lost all its targets, and fights again once
     // it finds one (observed in the original: combat-groups.ts).
     const searching = this.#groups.searching(mind.reference);
@@ -1003,14 +1065,14 @@ export class ActorCombatAi {
       return;
     }
     if (mind.mode === 'search') return;
-    // The odds, now and then (fCombatThreatRatioUpdateTime).
+    // Its side's strength against its enemies', now and then (fCombatStrengthUpdateTime).
     if (this.#clock >= mind.nextOdds) {
-      mind.nextOdds = this.#clock + this.#settings.threatRatioUpdateTime;
-      mind.modifier = confidenceModifier(this.#odds(mind, candidates), this.#settings);
+      mind.nextOdds = this.#clock + this.#settings.strengthUpdateTime;
+      mind.ratio = this.#strengthRatio(mind, candidates);
     }
     const flee = shouldFlee(
       {
-        health: mind.health,
+        ratio: mind.ratio,
         confidence: profile.confidence,
         modifier: mind.modifier,
         afraid: magic.fleeing,
@@ -1061,19 +1123,9 @@ export class ActorCombatAi {
       }
       return;
     }
-    // Fleeing: back to the fight once it would not flee, or cornered.
-    if (!flee) {
-      mind.mode = 'fight';
-      return;
-    }
-    const enemy = mind.target === undefined ? undefined : views.get(mind.target);
-    const near = enemy?.feet && view.feet ? flat(enemy.feet, view.feet) : Number.POSITIVE_INFINITY;
-    if (mind.fleeFailed && near < this.#settings.corneredDistance && !magic.fleeing) {
-      mind.corneredUntil = this.#clock + CORNERED_SECONDS;
-      mind.mode = 'fight';
-      return;
-    }
-    if (near > this.#fleeDistance() && detected.length === 0) this.#end(mind, 'stopped');
+    // Fleeing: back to the fight once it would not flee (cornered, or safe: its tree's Flee).
+    mind.seesEnemy = detected.length > 0;
+    if (!flee) mind.mode = 'fight';
   }
 
   /**
@@ -1135,7 +1187,9 @@ export class ActorCombatAi {
         distance: flat(feet, where),
         detected,
         attacking: this.#fightTarget(other, views) === mind.reference,
-        threat: actorStrength(health, other.gear?.strengthDamage ?? 1),
+        threat: combatStrength(this.#dps(other.gear), health, this.#reduction(mind.reference)),
+        player: reference === PLAYER_REF,
+        crowd: this.#alliesOn(mind, reference),
       });
     }
     return candidates;
@@ -1329,20 +1383,45 @@ export class ActorCombatAi {
     return false;
   }
 
-  /** The fight's odds for its side: its targets' strength against its group's. */
-  #odds(mind: Mind, candidates: readonly TargetCandidate[]): number {
-    const side = [actorStrength(mind.healthPoints, this.#damageOf(mind.reference))];
+  /**
+   * Its side's strength ratio: its own and its group's strength (damage per second against its
+   * target's armour × health) against its enemies' (theirs against its armour: the candidates'
+   * threat).
+   */
+  #strengthRatio(mind: Mind, candidates: readonly TargetCandidate[]): number {
+    const against = mind.target === undefined ? 0 : this.#reduction(mind.target);
+    const side = [combatStrength(this.#dpsOf(mind.reference), mind.healthPoints, against)];
     for (const ally of this.#groups.allies(mind.reference)) {
-      side.push(actorStrength(this.#health.get(ally)?.points ?? 100, this.#damageOf(ally)));
+      const health = this.#health.get(ally)?.points ?? 100;
+      side.push(combatStrength(this.#dpsOf(ally), health, against));
     }
-    return threatRatio(
-      candidates.map((candidate) => candidate.threat),
+    return strengthRatio(
       side,
+      candidates.map((candidate) => candidate.threat),
     );
   }
 
+  /** The damage its strength weighs (combat music's and daresHelp's actorStrength). */
   #damageOf(reference: number): number {
     return this.#options.host.fighter(reference)?.gear?.strengthDamage ?? 1;
+  }
+
+  #dpsOf(reference: number): number {
+    return this.#dps(this.#options.host.fighter(reference)?.gear);
+  }
+
+  #dps(gear: FighterGear | undefined): number {
+    return attackDps(
+      gear?.strengthDamage ?? 1,
+      gear?.speed ?? 1,
+      gear?.bow === true,
+      this.#settings,
+    );
+  }
+
+  /** An actor's armour's damage reduction (0 .. 1), as last read. */
+  #reduction(reference: number): number {
+    return this.#health.get(reference)?.reduction ?? 0;
   }
 
   // --- Entering, leaving ---------------------------------------------------------------------------
@@ -1355,6 +1434,12 @@ export class ActorCombatAi {
     mind.sheatheAt = undefined;
     mind.nextLine = this.#clock + this.#between(this.#settings.tauntMin, this.#settings.tauntMax);
     mind.nextEquip = 0;
+    // The fight's confidence modifier, drawn once; its strengths weighed at once.
+    mind.modifier = drawConfidenceModifier(this.#random, this.#settings);
+    mind.nextOdds = 0;
+    mind.ratio = Number.POSITIVE_INFINITY;
+    mind.switchedAt = this.#clock;
+    mind.nextSelect = this.#clock + this.#settings.selectTargetUpdateTime;
     // Its combat group: of an ally already fighting beside it; its target becomes the group's.
     const allies: number[] = [];
     for (const other of this.#minds.values()) {
@@ -1598,7 +1683,7 @@ export class ActorCombatAi {
         return;
       }
       case 'flee':
-        this.#flee(mind, view, views);
+        this.#fleeTick(mind, view, views);
         return;
       case 'yield': {
         const player = views.get(PLAYER_REF)?.feet;
@@ -2245,8 +2330,7 @@ export class ActorCombatAi {
   }
 
   /** It may cast from a hand or its voice now: in range, facing, its decision due, not casting. */
-  #mayCast(f: CombatFrame, source: number): boolean {
-    const option = f.option;
+  #mayCast(f: CombatFrame, source: number, option = f.option): boolean {
     const runtime = this.#options.session.scriptsReady;
     return (
       option !== undefined &&
@@ -2259,12 +2343,94 @@ export class ActorCombatAi {
     );
   }
 
-  #castWith(f: CombatFrame, hand: 'left' | 'right' | 'voice'): Status {
+  #castWith(f: CombatFrame, hand: 'left' | 'right' | 'both' | 'voice', option = f.option): Status {
     const casting = this.#options.casting?.();
-    if (!casting || !f.option) return 'failure';
+    if (!casting || !option) return 'failure';
     f.mind.lastAttack = this.#clock;
-    void casting.castAt(f.mind.reference, hand, f.target.reference, f.option);
+    void casting.castAt(f.mind.reference, hand, f.target.reference, option);
     return 'success';
+  }
+
+  /** The offensive spell its left hand holds (another than its right's), as an option. */
+  #leftOption(f: CombatFrame): EquipOption | undefined {
+    const gear = f.view.gear;
+    const spell = gear?.leftSpell;
+    if (spell === undefined || spell === gear?.rightSpell) return undefined;
+    return f.profile.options.find((option) => option.kind === 'magic' && option.id === spell);
+  }
+
+  /** Whether an actor may dual cast a spell (its perks: the casting engine's canDualCast). */
+  #canDual(actor: number, spell: number): boolean {
+    const key = `${actor.toString(16)}:${spell.toString(16)}`;
+    const known = this.#dualCasts.get(key);
+    if (known !== undefined) return known;
+    this.#dualCasts.set(key, false);
+    const runtime = this.#options.session.scriptsReady;
+    void runtime?.casting
+      .canDualCast(actor, spell)
+      .then((can) => this.#dualCasts.set(key, can))
+      .catch(() => undefined);
+    return false;
+  }
+
+  /**
+   * Whether it may strike now: within reach and its attack's angle (attackStrikeAngle: the
+   * attack data's strike angle × fCombatAttackStrikeAngleMult, wider while it moves), in its own
+   * time; not at one above its reach (a flier overhead). The engine's rule (observed in the original): a new
+   * attack waits while it is still in its last one, but no longer than
+   * fCombatAttackAnimationDrivenDelayTime after it chose that one; in the last one's chain
+   * window the next one follows.
+   */
+  #mayStrike(f: CombatFrame): boolean {
+    const state = f.view.state;
+    const moving = f.mind.run !== undefined || f.mind.chase !== undefined;
+    const angle = attackStrikeAngle(f.view.gear?.strikeAngle ?? 0, moving, this.#settings);
+    if (f.tethered || f.distance > f.reach || this.#off(f) > angle) return false;
+    if (this.#clock < f.mind.nextAttack) return false;
+    if (
+      !withinReach(
+        { feet: f.feet, height: f.view.height, reach: f.view.reach },
+        { feet: f.there, height: f.target.height },
+      )
+    ) {
+      return false;
+    }
+    const chaining =
+      state.attack === AttackState.nextAttack || state.attack === AttackState.followThrough;
+    const sinceLast = f.mind.lastAttack === undefined ? Infinity : this.#clock - f.mind.lastAttack;
+    return !(
+      attacking(state) &&
+      !chaining &&
+      !state.blocking &&
+      sinceLast <= this.#settings.attackAnimationDrivenDelayTime
+    );
+  }
+
+  /**
+   * A melee attack: asked of its graph, its line (the combat dialogue's gates), its next attack
+   * after its attack data's recovery time; a dual wielder's hands take turns.
+   */
+  #melee(f: CombatFrame, action: string, line: string): Status {
+    const gear = f.view.gear;
+    const power = action === 'ActionRightPowerAttack';
+    f.mind.nextAttack =
+      this.#clock + attackCooldown((power ? gear?.powerRecoveryTime : gear?.recoveryTime) ?? 0);
+    if (gear?.leftWeapon === true) f.mind.hand = f.mind.hand === 'left' ? 'right' : 'left';
+    this.#bark(f.mind.reference, line, f.target.reference);
+    return this.#strike(f, action);
+  }
+
+  /** How fast its target backs off from it (units per second; sampled while it blocks). */
+  #retreatSpeed(f: CombatFrame): number {
+    const sample = f.mind.blockTargetAt;
+    const now = this.#clock;
+    if (!sample || now - sample.at >= RETREAT_SAMPLE_SECONDS) {
+      const passed = sample ? now - sample.at : 0;
+      const speed =
+        sample && passed > 0 && passed < 1 ? (f.distance - sample.distance) / passed : 0;
+      f.mind.blockTargetAt = { distance: f.distance, at: now, speed };
+    }
+    return f.mind.blockTargetAt?.speed ?? 0;
   }
 
   /** An attack asked of its graph; its last attack is the one its graph took. */
@@ -2331,11 +2497,21 @@ export class ActorCombatAi {
           rightBow: bow,
           rightMagic: (f) => kind(f) === 'magic' || kind(f) === 'staff',
           leftShield: (f) => f.view.gear?.shield === true,
-          // TODO(M13): the left hand's weapon or spell and dual casting (FighterGear knows the
-          // right hand; the equipment choice picks one option for it).
-          leftWeapon: () => false,
-          leftMagic: () => false,
-          dualCast: () => false,
+          // The left hand: a one-handed weapon (dual wielding), a spell other than the right's
+          // (TODO(M13): the equipment choice's spell for the left hand beside a weapon); dual
+          // casting: its spell in both hands, its perks allowing (the left hand free).
+          leftWeapon: (f) => f.view.gear?.leftWeapon === true,
+          leftMagic: (f) => this.#leftOption(f) !== undefined,
+          dualCast: (f) => {
+            const gear = f.view.gear;
+            const spell = f.option?.kind === 'magic' ? f.option.id : undefined;
+            return (
+              spell !== undefined &&
+              gear?.shield !== true &&
+              gear?.leftWeapon !== true &&
+              this.#canDual(f.mind.reference, spell)
+            );
+          },
           // TODO(M13): a shout beside its weapon (the equipment choice picks the voice alone).
           voiceShout: (f) => kind(f) === 'shout',
           canBlock: (f) => f.view.gear?.canBlock === true,
@@ -2381,31 +2557,10 @@ export class ActorCombatAi {
             ),
           mayChooseRun: (f) =>
             !f.mind.run && this.#clock >= f.mind.nextRun && (ranged(f) || !attacking(f.view.state)),
-          // Its attack: within reach and facing it, in its own time; not at one above its reach
-          // (a flier overhead). The engine's rule (observed in the original): a new attack waits while it is
-          // still in its last one, but no longer than fCombatAttackAnimationDrivenDelayTime after
-          // it chose that one; in the last one's chain window the next one follows.
-          mayAttack: (f) => {
-            const state = f.view.state;
-            if (f.tethered || f.distance > f.reach || this.#off(f) > STRIKE_ANGLE) return false;
-            if (this.#clock < f.mind.nextAttack) return false;
-            if (
-              !withinReach(
-                { feet: f.feet, height: f.view.height, reach: f.view.reach },
-                { feet: f.there, height: f.target.height },
-              )
-            ) {
-              return false;
-            }
-            const chaining =
-              state.attack === AttackState.nextAttack || state.attack === AttackState.followThrough;
-            return !(
-              attacking(state) &&
-              !chaining &&
-              !state.blocking &&
-              (sinceLast(f) ?? Infinity) <= this.#settings.attackAnimationDrivenDelayTime
-            );
-          },
+          mayAttack: (f) =>
+            this.#mayStrike(f) && !(f.view.gear?.leftWeapon === true && f.mind.hand === 'left'),
+          mayAttackLeft: (f) =>
+            this.#mayStrike(f) && f.view.gear?.leftWeapon === true && f.mind.hand === 'left',
           specialAttackChance: (f) => specialAttackChance(style(f), settings()),
           // Observed in the original: held its hold time, the bow is loosed once its target
           // lies within fCombatRangedProjectileFiringArc of its aim (else it looks again a
@@ -2429,21 +2584,71 @@ export class ActorCombatAi {
             ),
           rangedUnready: unready,
           mayCast: (f) => this.#mayCast(f, CastingSource.right),
+          mayCastLeft: (f) => this.#mayCast(f, CastingSource.left, this.#leftOption(f)),
+          castChanceLeft: (f) =>
+            castChance(
+              style(f),
+              f.opponent,
+              this.#leftOption(f)?.concentration === true,
+              settings(),
+            ),
+          dualCastChance: () => this.#settings.magicDualCastChance,
           concentration: (f) => f.option?.concentration === true,
           castChance: (f) =>
             castChance(style(f), f.opponent, f.option?.concentration === true, settings()),
           mayShout: (f) => this.#mayCast(f, CastingSource.voice),
           blocking: (f) => f.view.state.blocking,
-          blockOver: (f) => this.#blowAt(f) === undefined || this.#clock >= f.mind.blockUntil,
+          // The sustained block: held between the blows while its target stays near and does
+          // not back off (holdsBlock), until its block time runs out.
+          blockOver: (f) =>
+            this.#clock >= f.mind.blockUntil ||
+            (this.#blowAt(f) === undefined &&
+              !holdsBlock(
+                { distance: f.distance, targetRetreatSpeed: this.#retreatSpeed(f) },
+                style(f),
+                settings(),
+              )),
+          // A blow coming within its block start distance (the gap past the attacker's reach).
           blowComing: (f) => {
             const blow = this.#blowAt(f);
+            const gap = f.distance - f.target.reach - f.view.radius;
             return (
               blow !== undefined &&
               f.mind.blockedSwing !== blow &&
               !attacking(f.view.state) &&
-              f.view.gear?.canBlock === true
+              f.view.gear?.canBlock === true &&
+              gap <= blockStartDistance(style(f), settings())
             );
           },
+          // The block attack's opening: its target swinging within the bash reach and angle.
+          mayBlockAttack: (f) => {
+            const blow = this.#blowAt(f);
+            return (
+              blow !== undefined &&
+              f.mind.blockAttacked !== blow &&
+              f.view.gear?.canBash === true &&
+              blockAttackOpening(
+                {
+                  distance: f.distance,
+                  off: this.#off(f),
+                  strikeAngle: attackStrikeAngle(f.view.gear.strikeAngle ?? 0, false, settings()),
+                },
+                settings(),
+              )
+            );
+          },
+          // Flee (the root's first branch while it flees).
+          fleeing: (f) => f.mind.mode === 'flee',
+          cornered: (f) =>
+            f.mind.scaredFrom === undefined &&
+            f.mind.fleeFailed &&
+            f.distance < this.#settings.corneredDistance &&
+            this.#options.session.scriptsReady?.magic.aiState(f.mind.reference).fleeing !== true,
+          fleeSafe: (f) =>
+            f.mind.scaredFrom === undefined &&
+            f.distance > this.#fleeDistance() &&
+            !f.mind.seesEnemy,
+          allyNear: (f) => f.mind.scaredFrom === undefined && this.#fleeAlly(f) !== undefined,
           blockChance: (f) => blockChance(style(f), f.view.gear?.shield === true, settings()),
           blockAttackChance: (f) => blockAttackChance(style(f), settings()),
           maySupport: (f) => this.#clock >= f.mind.nextSupport && !f.mind.supporting,
@@ -2626,14 +2831,28 @@ export class ActorCombatAi {
             run.blackboard.set('attack', AttackPick[choice]);
             return choice === 'none' ? 'failure' : 'success';
           },
-          attack: (f) => this.#strike(f, 'ActionRightAttack'),
-          powerAttack: (f) => this.#strike(f, 'ActionRightPowerAttack'),
+          attack: (f) => this.#melee(f, 'ActionRightAttack', 'Attack'),
+          powerAttack: (f) => this.#melee(f, 'ActionRightPowerAttack', 'PowerAttack'),
           // Blocking, its graph turns an attack into a bash.
-          bash: (f) => this.#strike(f, 'ActionRightAttack'),
-          powerBash: (f) => this.#strike(f, 'ActionRightPowerAttack'),
-          // TODO(M13): the special attack's own idle (the chooser does not pick it yet).
-          specialAttack: (f) => this.#strike(f, 'ActionRightPowerAttack'),
-          leftAttack: (f) => this.#strike(f, 'ActionLeftAttack'),
+          bash: (f) => this.#melee(f, 'ActionRightAttack', 'Bash'),
+          powerBash: (f) => this.#melee(f, 'ActionRightPowerAttack', 'Bash'),
+          // TODO(M13): the special attack's own attack data (here its power attack).
+          specialAttack: (f) => this.#melee(f, 'ActionRightPowerAttack', 'PowerAttack'),
+          // The offensive bash: its block raised first, then the bash out of it (its graph
+          // turns the attack into a bash); the block goes down after (the Block subtree's block
+          // time, or at once without one).
+          offensiveBash: (f, run) => {
+            const reference = f.mind.reference;
+            if (!f.view.state.blocking) {
+              if (run.first) void host.block(reference, true);
+              return run.elapsed > OFFENSIVE_BASH_RAISE ? 'failure' : 'running';
+            }
+            f.mind.blockUntil = this.#clock + OFFENSIVE_BASH_RAISE;
+            const status = this.#melee(f, 'ActionRightAttack', 'Bash');
+            if (f.view.gear?.canBlock !== true) void host.block(reference, false);
+            return status;
+          },
+          leftAttack: (f) => this.#melee(f, 'ActionLeftAttack', 'Attack'),
           drawShot: (f) => {
             this.#strike(f, 'ActionRightAttack');
             f.mind.bowHold = bowHoldTime(
@@ -2661,9 +2880,10 @@ export class ActorCombatAi {
           },
           castRight: (f) => this.#castWith(f, 'right'),
           castConcentration: (f) => this.#castWith(f, 'right'),
-          castLeft: (f) => this.#castWith(f, 'left'),
-          // TODO(M13): dual casting (its condition does not hold yet).
-          prepareDualCast: () => 'failure',
+          castLeft: (f) => this.#castWith(f, 'left', this.#leftOption(f)),
+          // Dual casting: its spell from both hands (the casting engine's dual cast, its perks
+          // allowing; TODO(M13): the engine's Prepare Dual Cast hold, fCombatMagicDualCastInterruptTime).
+          prepareDualCast: (f) => this.#castWith(f, 'both'),
           castShout: (f) => this.#castWith(f, 'voice'),
           noteBlow: (f) => {
             f.mind.blockedSwing = this.#blowAt(f);
@@ -2671,15 +2891,44 @@ export class ActorCombatAi {
           },
           block: (f) => {
             f.mind.blockUntil = this.#clock + blockTime(style(f), this.#settings);
+            f.mind.blockTargetAt = undefined;
             void host.block(f.mind.reference, true);
+            this.#bark(f.mind.reference, 'Block', f.target.reference);
             return 'success';
           },
           releaseBlock: (f) => {
             this.#releaseBlock(f.mind, f.view);
             return 'success';
           },
-          // TODO(M13): Block Attack's timed block against a swing (the block holds meanwhile).
-          blockAttack: () => 'success',
+          noteBlockAttack: (f) => {
+            f.mind.blockAttacked = this.#blowAt(f);
+            return 'success';
+          },
+          // The block attack: the shield bash out of the block, against the target's swing.
+          blockAttack: (f) => this.#melee(f, 'ActionRightAttack', 'Bash'),
+          holdBlock: () => 'success',
+          // Flee.
+          fightCornered: (f) => {
+            f.mind.corneredUntil = this.#clock + CORNERED_SECONDS;
+            f.mind.mode = 'fight';
+            return 'success';
+          },
+          stopFleeing: (f) => {
+            this.#end(f.mind, 'stopped');
+            return 'success';
+          },
+          fleeToAlly: (f) => {
+            const ally = this.#fleeAlly(f);
+            if (!ally) return 'failure';
+            this.#flee(f.mind, f.view, f.there, ally);
+            return 'running';
+          },
+          fleeAway: (f) => {
+            if (this.#clock < f.mind.fleeRetry) return 'failure';
+            this.#flee(f.mind, f.view, f.there);
+            return 'running';
+          },
+          cower: () => 'running',
           // What it does for itself (heals, potions, summons, wards, buffs), now and then.
           support: (f) => {
             const mind = f.mind;
@@ -2747,25 +2996,79 @@ export class ActorCombatAi {
   }
 
   /**
+   * A fleeing actor's frame: its combat tree's Flee subtree (the root's first branch while it
+   * flees), from where its enemy is (a scared spectator: the fight it saw).
+   */
+  #fleeTick(mind: Mind, view: FighterView, views: ReadonlyMap<number, FighterView>): void {
+    const profile = mind.profile;
+    const feet = view.feet;
+    if (!profile || !feet) return;
+    const enemy = mind.target === undefined ? undefined : views.get(mind.target);
+    const there =
+      mind.scaredFrom ??
+      enemy?.feet ??
+      (mind.target === undefined ? undefined : mind.lastKnown.get(mind.target));
+    if (!there) return;
+    const facing = headingTo(feet, there);
+    const frame: CombatFrame = {
+      mind,
+      view,
+      // A spectator flees no target: its own view stands in (Flee reads only where it is from).
+      target: enemy ?? view,
+      profile,
+      there,
+      feet,
+      distance: flat(feet, there),
+      facing,
+      face: facing,
+      tethered: false,
+      option: mind.equipped,
+      opponent: this.#opponent(mind, enemy?.reference ?? mind.reference),
+      reach: view.reach + (enemy?.radius ?? 0),
+      range: 0,
+      close: undefined,
+    };
+    mind.tree ??= this.#tree.instance(this.#random);
+    mind.tree.tick(frame, Math.max(0, this.#clock - mind.tree.clock));
+  }
+
+  /**
+   * Flee To Ally: the nearest ally of its group fCombatFleeAllyDistanceMin .. Max away that is
+   * not fleeing and stands farther from its enemy than it does. TODO(M13): the engine's choice.
+   */
+  #fleeAlly(f: CombatFrame): Vec3 | undefined {
+    const settings = this.#settings;
+    const own = flat(f.feet, f.there);
+    let best: { feet: Vec3; distance: number } | undefined;
+    for (const ally of this.#groups.allies(f.mind.reference)) {
+      if (this.#minds.get(ally)?.mode === 'flee') continue;
+      const feet = this.#options.host.fighter(ally)?.feet;
+      if (!feet) continue;
+      const distance = flat(f.feet, feet);
+      if (distance < settings.fleeAllyDistanceMin || distance > settings.fleeAllyDistanceMax)
+        continue;
+      if (flat(feet, f.there) < own) continue;
+      if (!best || distance < best.distance) best = { feet, distance };
+    }
+    return best?.feet;
+  }
+
+  /**
    * Fleeing: running from its enemy over the navmeshes, fFleeDistance away; where it cannot go
    * on it cowers (ActionIdle: the idles IsFleeing picks) until cornered.
    */
-  #flee(mind: Mind, view: FighterView, views: ReadonlyMap<number, FighterView>): void {
+  #flee(mind: Mind, view: FighterView, from: Vec3, to?: Vec3): void {
     const feet = view.feet;
-    const from =
-      mind.scaredFrom ??
-      (mind.target === undefined ? undefined : views.get(mind.target)?.feet) ??
-      (mind.target === undefined ? undefined : mind.lastKnown.get(mind.target));
-    if (!feet || !from || mind.fleeWay || this.#clock < mind.fleeRetry) return;
+    if (!feet || mind.fleeWay || this.#clock < mind.fleeRetry) return;
     this.#releaseBlock(mind, view);
     const away = Math.hypot(feet[0] - from[0], feet[1] - from[1]) || 1;
     const reach = this.#fleeDistance();
-    const to: Vec3 = [
+    const goal: Vec3 = to ?? [
       feet[0] + ((feet[0] - from[0]) / away) * reach,
       feet[1] + ((feet[1] - from[1]) / away) * reach,
       feet[2],
     ];
-    const way = this.#options.movers.travel(mind.reference, to, 'run', 256);
+    const way = this.#options.movers.travel(mind.reference, goal, 'run', 256);
     mind.fleeWay = way;
     void way.then((arrived) => {
       if (mind.fleeWay !== way) return;
@@ -2783,7 +3086,7 @@ export class ActorCombatAi {
     const magic = this.#options.session.scriptsReady?.magic.aiState(mind.reference);
     return shouldFlee(
       {
-        health: mind.health,
+        ratio: mind.ratio,
         confidence: profile.confidence,
         modifier: mind.modifier,
         afraid: magic?.fleeing === true,
@@ -3081,7 +3384,13 @@ export class ActorCombatAi {
     const share = value.max > 0 ? value.current / value.max : 0;
     mind.health = share;
     mind.healthPoints = value.current;
-    this.#health.set(mind.reference, { share, points: value.current, read: this.#clock });
+    const armour = await runtime.equipment.armorRating(mind.reference);
+    this.#health.set(mind.reference, {
+      share,
+      points: value.current,
+      read: this.#clock,
+      reduction: armour.reduction,
+    });
     if (!this.#levels.has(mind.reference)) {
       this.#levels.set(mind.reference, await runtime.actors.level(mind.reference));
     }
@@ -3090,10 +3399,12 @@ export class ActorCombatAi {
     if (!player || this.#clock - player.read > 1) {
       this.#levels.set(PLAYER_REF, await runtime.actors.level(PLAYER_REF));
       const own = await runtime.actors.value(PLAYER_REF, ActorValue.health);
+      const armour = await runtime.equipment.armorRating(PLAYER_REF);
       this.#health.set(PLAYER_REF, {
         share: own.max > 0 ? own.current / own.max : 0,
         points: own.current,
         read: this.#clock,
+        reduction: armour.reduction,
       });
     }
   }
@@ -3107,6 +3418,10 @@ export class ActorCombatAi {
       this.#sprints = this.#options.session.ini.bool('Combat', 'bCombatPathSprinting');
       this.#turning = combatTurning(this.#movement);
       this.#groups.settings = readCombatGroupSettings((name) => settings.number(name));
+      this.#dialogue.settings = readCombatDialogueSettings(
+        (name) => settings.number(name),
+        this.#options.session.ini.bool('Combat', 'bDisableCombatDialogue'),
+      );
     });
   }
 
@@ -3114,10 +3429,21 @@ export class ActorCombatAi {
     return min + (max - min) * this.#random();
   }
 
-  /** A line of a topic subtype (src/shell/actor-talk.ts bark). */
+  /**
+   * A line of a topic subtype (src/shell/actor-talk.ts bark); a combat line only through its
+   * gates (src/ai/combat-dialogue.ts: its cooldown, the player within its distance, its chance).
+   */
   #bark(actor: number, subtype: string, target?: number): void {
     const talk = this.#options.talk?.();
     if (!talk) return;
+    if (isCombatLine(subtype)) {
+      const own = this.#options.host.fighter(actor)?.feet;
+      const player = this.#options.host.fighter(PLAYER_REF)?.feet;
+      const listener = own && player ? flat(own, player) : 0;
+      if (!this.#dialogue.may(actor, subtype, this.#clock, { listener, random: this.#random })) {
+        return;
+      }
+    }
     talk.bark(actor, subtype, target ?? PLAYER_REF).catch((error: unknown) => {
       this.#warn(`a ${subtype} line: ${describe(error)}`);
     });
