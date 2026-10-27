@@ -26,6 +26,7 @@ import {
   assists,
   attacksOnSight,
   confidenceModifier,
+  daresHelp,
   readCombatAiSettings,
   COMBAT_AI_DEFAULTS,
   Confidence,
@@ -473,6 +474,8 @@ export class ActorCombatAi {
   readonly #reacting = new Set<string>();
   readonly #profiles = new CombatProfiles();
   readonly #health = new Map<number, { share: number; points: number; read: number }>();
+  /** Actors' levels (daresHelp), read with their health. */
+  readonly #levels = new Map<number, number>();
   readonly #random = seededRandom(0xc0ba7);
   readonly #spectating = new Set<number>();
   #settings: CombatAiSettings = COMBAT_AI_DEFAULTS;
@@ -666,6 +669,7 @@ export class ActorCombatAi {
     this.#groups.forget(reference);
     this.#locations.release(reference);
     this.#health.delete(reference);
+    this.#levels.delete(reference);
     this.#spectating.delete(reference);
     for (const other of this.#minds.values()) {
       other.enemies.delete(reference);
@@ -683,6 +687,7 @@ export class ActorCombatAi {
     this.#locations.clear();
     this.#reactions.clear();
     this.#health.clear();
+    this.#levels.clear();
     this.#spectating.clear();
   }
 
@@ -1191,14 +1196,18 @@ export class ActorCombatAi {
         // `other` attacks `target`: help the victim; guards help any innocent (the crime
         // itself, its bounty and the guards' arrest: src/shell/actor-crime.ts).
         const victim = this.#reaction(mind.reference, target);
-        if (victim !== undefined && assists(assistance, victim)) return this.#join(mind, reference);
+        if (victim !== undefined && assists(assistance, victim)) {
+          return this.#helps(mind, profile, other) && this.#join(mind, reference);
+        }
         if (profile.guard && victim !== FightReaction.enemy && this.#innocent(target, reference)) {
           return this.#join(mind, reference);
         }
       } else if (target === reference) {
         // `fighter` fights `other`: help it.
         const ally = this.#reaction(mind.reference, fighter.reference);
-        if (ally !== undefined && assists(assistance, ally)) return this.#join(mind, reference);
+        if (ally !== undefined && assists(assistance, ally)) {
+          return this.#helps(mind, profile, other) && this.#join(mind, reference);
+        }
       }
     }
     return false;
@@ -1240,6 +1249,36 @@ export class ActorCombatAi {
   }
 
   /** It takes up another's fight: it remembers `enemy` as its own. */
+  /**
+   * Whether one its assistance would have help dares take on `foe` (daresHelp: its confidence,
+   * the levels, the strengths). The player's teammates always do. One that does not dare keeps
+   * out of the fight and runs from it (as a cowardly spectator does): a street of townsfolk
+   * does not crowd a criminal, only the brave of them and the guards. Until both levels are
+   * read it waits.
+   */
+  #helps(mind: Mind, profile: Profile, foe: FighterView): boolean {
+    if (profile.teammate || mind.mode !== 'idle') return true;
+    const own = this.#levels.get(mind.reference);
+    const theirs = this.#levels.get(foe.reference);
+    if (own === undefined || theirs === undefined) return false;
+    const dares = daresHelp(
+      profile.confidence,
+      { level: own, strength: actorStrength(mind.healthPoints, this.#damageOf(mind.reference)) },
+      {
+        level: theirs,
+        strength: actorStrength(
+          this.#health.get(foe.reference)?.points ?? 100,
+          foe.gear?.damage ?? 1,
+        ),
+      },
+    );
+    if (!dares && foe.feet && this.#clock >= mind.scaredUntil) {
+      mind.scaredFrom = [foe.feet[0], foe.feet[1], foe.feet[2]];
+      mind.scaredUntil = this.#clock + SCARED_SECONDS;
+    }
+    return dares;
+  }
+
   #join(mind: Mind, enemy: number): true {
     mind.enemies.add(enemy);
     return true;
@@ -3041,9 +3080,13 @@ export class ActorCombatAi {
     mind.health = share;
     mind.healthPoints = value.current;
     this.#health.set(mind.reference, { share, points: value.current, read: this.#clock });
-    // The player's too, for the odds.
+    if (!this.#levels.has(mind.reference)) {
+      this.#levels.set(mind.reference, await runtime.actors.level(mind.reference));
+    }
+    // The player's too, for the odds (their level as they level up).
     const player = this.#health.get(PLAYER_REF);
     if (!player || this.#clock - player.read > 1) {
+      this.#levels.set(PLAYER_REF, await runtime.actors.level(PLAYER_REF));
       const own = await runtime.actors.value(PLAYER_REF, ActorValue.health);
       this.#health.set(PLAYER_REF, {
         share: own.max > 0 ? own.current / own.max : 0,
