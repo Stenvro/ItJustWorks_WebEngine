@@ -39,6 +39,9 @@ export class SleepWaitMenu {
   readonly #session: GameSession;
   readonly #terminal: Terminal;
 
+  /** The hours have passed (slept, or waited): Play's autosave. */
+  onPassed: ((slept: boolean) => void) | undefined;
+
   constructor(host: MenuHost, session: GameSession, terminal: Terminal) {
     this.#host = host;
     this.#session = session;
@@ -144,5 +147,7 @@ export class SleepWaitMenu {
     for (const listener of session.timeSkipped) listener();
     if (sleeping) await runtime.events.emitted('sleep', { started: false, interrupted });
     else runtime.events.emit('wait', { started: false, interrupted });
+    // The autosave after resting or waiting (bSaveOnRest, bSaveOnWait).
+    this.onPassed?.(sleeping);
   }
 }
