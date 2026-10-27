@@ -208,6 +208,11 @@ export class RuntimeSceneHost implements SceneHost {
     return this.#runtime.world.randomSceneStarts?.(scene, first, second) ?? true;
   }
 
+  /** Whether the world's speaker faces its target (without a world: unknown, no wait). */
+  faces(speaker: number, target: number): boolean | undefined {
+    return this.#runtime.world.facesForLine?.(speaker, target);
+  }
+
   randomSceneAgain(): number {
     const [min, max] = this.#again ?? RANDOM_SCENE_AGAIN;
     return min + (Math.max(min, max) - min) * Math.random();

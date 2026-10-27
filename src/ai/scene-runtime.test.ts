@@ -376,6 +376,49 @@ describe('scene phases and actions', () => {
     expect(PLAYER_REF).toBe(0x14);
   });
 
+  it('waits until a Face Target line faces its listener before saying it', async () => {
+    let facing = false;
+    const test = setup(
+      [
+        scene(0x10, {
+          actors: [actor(0), actor(1)],
+          phases: [phase()],
+          actions: [
+            line(1, 0, 0, 0, 0x900, { headtrackAlias: 1, flags: SceneActionFlag.faceTarget }),
+          ],
+        }),
+      ],
+      () => ({ faces: (speaker, target) => speaker === 0x64 && target === 0x65 && facing }),
+    );
+    test.director.start(0x10);
+    for (let i = 0; i < 5; i++) await test.tick();
+    expect(test.only('say')).toEqual([]);
+    facing = true;
+    await test.tick();
+    await test.tick();
+    expect(test.only('say')).toEqual(['say 64 900']);
+  });
+
+  it('says a Face Target line all the same once its speaker cannot turn for 3 seconds', async () => {
+    const test = setup(
+      [
+        scene(0x10, {
+          actors: [actor(0), actor(1)],
+          phases: [phase()],
+          actions: [
+            line(1, 0, 0, 0, 0x900, { headtrackAlias: 1, flags: SceneActionFlag.faceTarget }),
+          ],
+        }),
+      ],
+      () => ({ faces: () => false }),
+    );
+    test.director.start(0x10);
+    for (let i = 0; i < 20; i++) await test.tick();
+    expect(test.only('say')).toEqual([]);
+    for (let i = 0; i < 12; i++) await test.tick();
+    expect(test.only('say')).toEqual(['say 64 900']);
+  });
+
   it('says a looping line again until its phase ends', async () => {
     const test = setup([
       scene(0x10, {

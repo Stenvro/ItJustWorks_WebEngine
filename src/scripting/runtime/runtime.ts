@@ -464,6 +464,11 @@ export interface WorldBridge {
    * the scene meanwhile (src/shell/actor-talk.ts). Undefined: the world does not show them.
    */
   randomSceneStarts?(scene: number, first: number, second: number): boolean | undefined;
+  /**
+   * Whether a loaded speaker faces whom it speaks to within fAIMinAngleRangeToStartSceneDialogue
+   * (a scene's line waits for it). Undefined: not loaded.
+   */
+  facesForLine?(speaker: number, target: number): boolean | undefined;
 }
 
 /** A quest's update as the HUD announces it. */
