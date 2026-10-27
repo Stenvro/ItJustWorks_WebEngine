@@ -63,9 +63,8 @@ export interface FollowLeader {
 /**
  * The gait a follower closes the distance at. After the running player it sprints while they
  * sprint or once farther behind than fFollowStartSprintDistance (observed in the original);
- * farther behind than twice its maximum radius it runs, as with a running leader; else its
- * package's. TODO(M13): the engine's walk zone (fFollowWalkZoneMult times a radius) is not
- * read yet.
+ * beyond its walk zone (fFollowWalkZoneMult times its maximum radius) it runs, as with a running
+ * leader; within it, its package's.
  */
 export function followGait(
   distance: number,
@@ -73,14 +72,46 @@ export function followGait(
   packageGait: Gait,
   leader: FollowLeader,
   sprintDistance: number,
+  walkZoneMult: number,
 ): Gait {
   if (leader.player && leader.running && (leader.sprinting || distance > sprintDistance)) {
     return 'sprint';
   }
-  if (leader.running || leader.sprinting || distance > max * 2) {
+  if (leader.running || leader.sprinting || distance > max * walkZoneMult) {
     return packageGait === 'sprint' ? 'sprint' : 'run';
   }
   return packageGait;
+}
+
+/**
+ * How far off straight behind its leader a follower keeps (radians), on the side it is on.
+ * TODO(M13): the engine's follow offset is not read; a quarter turn's third keeps it in the
+ * leader's wake without walking in front of them.
+ */
+export const FOLLOW_SIDE_ANGLE = Math.PI / 6;
+
+/**
+ * Where a follower goes when it has fallen behind (Follow): its follow distance behind its leader,
+ * FOLLOW_SIDE_ANGLE off straight behind on the side of the leader's way it is on (left or right;
+ * straight behind it keeps to the right), so it trails the leader and does not cross in front.
+ */
+export function followGoal(
+  leader: FollowPlace,
+  follower: Vec3,
+  distance: number,
+): [number, number, number] {
+  const dx = follower[0] - leader.position[0];
+  const dy = follower[1] - leader.position[1];
+  // Right of the leader's way (compass: forward (sin, cos), right (cos, −sin)).
+  const right = dx * Math.cos(leader.heading) - dy * Math.sin(leader.heading);
+  const side = right < 0 ? -1 : 1;
+  // Behind it, turned towards its side.
+  const angle = leader.heading + Math.PI - side * FOLLOW_SIDE_ANGLE;
+  return [
+    leader.position[0] + Math.sin(angle) * distance,
+    leader.position[1] + Math.cos(angle) * distance,
+    leader.position[2],
+  ];
 }
 
 /** What a follower's speed is matched by. */

@@ -17,6 +17,7 @@
 // `warn`, and Detections' `witness` / `offence` (the player seen stealing, trespassing, ...).
 
 import {
+  ambushOf,
   angleOff,
   detectionLevel,
   detectionLight,
@@ -175,6 +176,12 @@ const EYES = { standing: 0.92, sitting: 0.62, lying: 0.2 } as const;
 const CHEST = { standing: 0.6, sitting: 0.42, lying: 0.15 } as const;
 /** The sun is looked for this far along its direction (units). */
 const SUN_RAY = 8192;
+/**
+ * The last stretch of the way to a placed light that may be its own fixture (a lantern's glass, a
+ * sconce's wall): what is hit there does not stand between (units). TODO(M13): how the engine
+ * keeps a light from lighting through walls (its renderer's shadows or rooms) is not read.
+ */
+const LIGHT_FIXTURE = 48;
 /** A sight ray counts as reaching what it aimed at within this of it (units). */
 const RAY_SLACK = 16;
 /** The camera's frame is about this wide against its height (OnGainLOS for the player). */
@@ -530,6 +537,11 @@ export class ActorSenses implements ScriptSenses {
       inCombat,
       otherThanTarget: combatTarget !== undefined && combatTarget !== target.reference,
       blindness: watcher.blindness,
+      // In an Ambush package: watchful of whom it waits for (ambushOf).
+      ambush: ambushOf(
+        this.#options.ai.current(observer.reference)?.type,
+        this.hostile(observer.reference, target.reference),
+      ),
     };
     const light = detectionLight(settings, this.#lightOn(target), {
       nightEye: watcher.nightEye,
@@ -683,11 +695,40 @@ export class ActorSenses implements ScriptSenses {
           -1,
         ) ??
           true);
-      level = lightLevel(probe, body.chest, sunlit);
+      // A placed light lights it only where nothing stands between them (its own fixture, the
+      // last LIGHT_FIXTURE units of the way, aside).
+      level = lightLevel(probe, body.chest, sunlit, (light) =>
+        this.#lightReaches(light.position, body),
+      );
       ambient = brightestAmbient(probe);
     }
     this.#lights.set(body.reference, { level, ambient, at: this.#clock });
     return level;
+  }
+
+  /**
+   * Whether a point light reaches a body: a ray on the line-of-sight layer from its chest to the
+   * light meets nothing before the light's own fixture (the physics not asked now: it does).
+   */
+  #lightReaches(light: Vec3, body: Body): boolean {
+    const physics = this.#world?.physics;
+    if (!physics?.queriesCurrent) return true;
+    const length = distance(body.chest, light);
+    if (length <= LIGHT_FIXTURE) return true;
+    const direction: Vec3 = [
+      (light[0] - body.chest[0]) / length,
+      (light[1] - body.chest[1]) / length,
+      (light[2] - body.chest[2]) / length,
+    ];
+    const hit = physics.raycast(
+      body.chest,
+      direction,
+      length,
+      Layer.lineOfSight,
+      undefined,
+      body.reference,
+    );
+    return !hit || hit.distance >= length - LIGHT_FIXTURE;
   }
 
   /** The brightest channel of the ambient light where a body is (0..1: the interior's mod). */
