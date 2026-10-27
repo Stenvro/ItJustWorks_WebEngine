@@ -38,10 +38,20 @@ export class SaveManager {
     return (await this.#open()).list();
   }
 
-  /** Whether the game may be saved now (not in chargen, not while a place loads). */
+  /**
+   * Whether the game may be saved now: not in chargen, not while a place loads, and every menu
+   * open allows saving (the menu stack's AllowSaving: F5 in an item menu, a book or the map
+   * saves nothing; the journal, the tween and the wait menus allow it).
+   */
   get canSave(): boolean {
     const runtime = this.#session.scriptsReady;
-    return !!runtime && !runtime.chargen.noSaving && !this.#session.loading && !this.#saving;
+    return (
+      !!runtime &&
+      !runtime.chargen.noSaving &&
+      !this.#session.loading &&
+      !this.#saving &&
+      this.#session.menuStack.savingAllowed
+    );
   }
 
   /**
