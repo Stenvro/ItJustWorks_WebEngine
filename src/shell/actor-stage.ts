@@ -712,6 +712,11 @@ export class ActorStage {
         session: options.session,
         casting: this.casting,
         player: options.player,
+        // An object Telekinesis threw struck an actor: it turns on the player (a blow's hit).
+        struck: (target) => {
+          this.combat.spellHit(PLAYER_REF, target);
+          if (target !== PLAYER_REF) this.senses.attackedBy(target, PLAYER_REF);
+        },
       });
     this.flight = new ActorFlight({
       session: options.session,

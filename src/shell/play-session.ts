@@ -12,6 +12,7 @@ import { GrabSpring } from '../physics/grab.ts';
 import {
   beginTelekinesis,
   stepTelekinesis,
+  TELEKINESIS_THROW_SECONDS,
   telekinesisThrowSpeed,
   type TelekinesisHold,
   type TelekinesisSettings,
@@ -597,6 +598,9 @@ export interface CellRagdoll {
   readonly dontHavokSettle?: boolean;
 }
 
+/** Below this speed (units a second) an object Telekinesis threw hurts no more. */
+const THROWN_REST_SPEED = 150;
+
 export class PlaySession {
   readonly physics: PhysicsWorld;
   readonly player: Player;
@@ -662,6 +666,58 @@ export class PlaySession {
     | undefined;
   /** The object held (its spring), how far in front of the camera, and its reference. */
   #grab: HeldObject | undefined;
+  /** The object Telekinesis threw last, while it can still hurt (its path this frame). */
+  #thrown:
+    | {
+        readonly body: RAPIER.RigidBody;
+        readonly dual: boolean;
+        age: number;
+        at: Vec3;
+        path: { readonly from: Vec3; readonly to: Vec3 } | undefined;
+      }
+    | undefined;
+
+  /**
+   * The object Telekinesis threw, while it flies and can hurt: its path over the last frame,
+   * whether the throw was dual cast. `strike()` ends it (it hurt what it met).
+   */
+  get telekinesisThrown():
+    | {
+        readonly from: Vec3;
+        readonly to: Vec3;
+        readonly dual: boolean;
+        readonly strike: () => void;
+      }
+    | undefined {
+    const thrown = this.#thrown;
+    if (!thrown?.path) return undefined;
+    return {
+      ...thrown.path,
+      dual: thrown.dual,
+      strike: () => {
+        if (this.#thrown === thrown) this.#thrown = undefined;
+      },
+    };
+  }
+
+  /** The thrown object moves on: its path this frame; slowed to a stop or too old, it is done. */
+  #followThrown(seconds: number): void {
+    const thrown = this.#thrown;
+    if (!thrown) return;
+    thrown.age += seconds;
+    const body = thrown.body;
+    if (!body.isValid() || thrown.age > TELEKINESIS_THROW_SECONDS) {
+      this.#thrown = undefined;
+      return;
+    }
+    const at = body.translation();
+    const to: Vec3 = [at.x * HAVOK_SCALE, at.y * HAVOK_SCALE, at.z * HAVOK_SCALE];
+    thrown.path = { from: thrown.at, to };
+    thrown.at = to;
+    const v = body.linvel();
+    // At rest it can hurt no more (TODO(M13): the engine's end of a throw's hit is unread).
+    if (Math.hypot(v.x, v.y, v.z) * HAVOK_SCALE < THROWN_REST_SPEED) this.#thrown = undefined;
+  }
 
   /**
    * The player takes hold of an object or lets it go: the engine tells both (TESGrabReleaseEvent:
@@ -1219,9 +1275,9 @@ export class PlaySession {
    * spring with Telekinesis's own settings (the player's grabSpring, as the Z key's: CommonLibSSE
    * PlayerCharacter GrabbingType kTelekinesis; fMagicTelekinesisSpring*, observed in the original) and pulled
    * in before the camera, `seconds` at a time; let go held, it is thrown along the view (`dual`:
-   * dual cast), its turning stopped; let go still pulled in, it stops. TODO(M13): the
-   * thrown object's damage (fMagicTelekinesisDamageBase and Mult, Mod Telekinesis Damage and
-   * Damage Mult: the engine adds them to what its collision deals).
+   * dual cast), its turning stopped; let go still pulled in, it stops. The object thrown is
+   * followed for TELEKINESIS_THROW_SECONDS (`telekinesisThrown`: what it strikes is hurt,
+   * src/shell/player-casting.ts).
    */
   telekinesis(
     active: boolean,
@@ -1239,6 +1295,16 @@ export class PlaySession {
         const speed = telekinesisThrowSpeed(grab.telekinesis, dual, settings) ?? 0;
         // Thrown, it stops turning (the engine clears both speeds before the throw's impulse).
         if (body.isValid() && speed > 0) body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+        if (body.isValid() && speed > 0) {
+          const at = body.translation();
+          this.#thrown = {
+            body,
+            dual,
+            age: 0,
+            at: [at.x * HAVOK_SCALE, at.y * HAVOK_SCALE, at.z * HAVOK_SCALE],
+            path: undefined,
+          };
+        }
         if (body.isValid())
           body.setLinvel(
             {
@@ -1255,6 +1321,7 @@ export class PlaySession {
       stepTelekinesis(grab.telekinesis, seconds, reach, settings);
       return;
     }
+    this.#followThrown(seconds);
     if (grab || this.seated || this.dead || this.knocked) return;
     const ray = this.#pickRay();
     const hit = this.physics.pick(
