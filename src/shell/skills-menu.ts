@@ -216,6 +216,8 @@ export class SkillsMenu {
     const sounds = session.soundSystem;
     const music = await sounds?.musicNamed(SKILLS_MUSIC);
     if (music !== undefined) sounds?.music.add(music);
+    // The skills menu's own category goes quiet while it is open (DOBJ SMSC).
+    sounds?.engine.setStatsMenu(true);
     const viewing = new Viewing(this.#host, session, runtime, settings, {
       levelUp,
       dome,
@@ -226,6 +228,7 @@ export class SkillsMenu {
       closed: (ring) => {
         this.#ring = ring;
         if (music !== undefined) sounds?.music.remove(music);
+        sounds?.engine.setStatsMenu(false);
         closed();
       },
     });
