@@ -1,7 +1,7 @@
 // INI settings as the engine takes them: the default compiled into SkyrimSE.exe (some set as the
-// executable starts: iDifficulty 2, fHUDOpacity 1, the autosaves), then the installation's
-// Skyrim_Default.ini, then the player's INI files (SkyrimPrefs.ini, written from a graphics
-// preset; read in M12: until then the player's changes in the settings menu, Preferences). Only
+// executable starts: iDifficulty 2, fHUDOpacity 1, the autosaves), then the INI files layered by
+// the VFS (Vfs.ini: Skyrim_Default.ini < the player's imported Skyrim.ini < SkyrimPrefs.ini <
+// the plugins' own INIs), then the player's changes in the settings menu (Preferences). Only
 // the settings the engine uses are listed. The defaults are the executable's own (its setting
 // objects, checked against a local dump with tools/setting-defaults.ts).
 // Platform-independent. Notes: docs/formats/esm.md ("INI settings").
@@ -298,6 +298,9 @@ export const INI_DEFAULTS = {
     fCloakEffectUpdateInterval: 0.5,
     // At most this many detection tests a frame (src/shell/actor-senses.ts).
     iUpdateDetectionsAllowedPerFrame: 100,
+    // The exterior cells loaded round the player's, a side (src/shell/world-viewer.ts, the
+    // scripts' attached area in src/scripting/runtime/runtime.ts).
+    uGridsToLoad: 5,
   },
   // Where actors look by themselves (src/shell/actor-looks.ts): at most this many choose a
   // frame, each again after 1–1.5 s, a new target held 3–8 s (the executable's defaults).

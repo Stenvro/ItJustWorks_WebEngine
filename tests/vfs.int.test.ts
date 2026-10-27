@@ -22,6 +22,18 @@ describe.skipIf(!hasGamedata())('VFS on the local game data', () => {
     expect(vfs.hasCreationClubList).toBe(true);
   });
 
+  it("reads every plugin's masters, all of them loaded before it", () => {
+    expect(vfs.refused.size).toBe(0);
+    const masters = new Map(vfs.plugins.map((p) => [p.name, p.masters]));
+    expect(masters.get('Dawnguard.esm')).toEqual(['Skyrim.esm', 'Update.esm']);
+    const names = vfs.loadOrder.map((e) => e.name);
+    for (const [i, name] of names.entries()) {
+      for (const master of masters.get(name) ?? []) {
+        expect(names.indexOf(master)).toBeLessThan(i);
+      }
+    }
+  });
+
   it('loads the fixed masters first, then Creation Club in Skyrim.ccc order', () => {
     const names = vfs.loadOrder.map((e) => e.name);
     expect(names.slice(0, IMPLICIT_MASTERS.length)).toEqual([...IMPLICIT_MASTERS]);

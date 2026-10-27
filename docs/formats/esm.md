@@ -1407,9 +1407,10 @@ launcher writes SkyrimPrefs.ini from a graphics preset (Low, Medium, High, Ultra
 installation) and the game writes its current values back. Skyrim.ini's values reach preference
 settings too (the maintainer's SkyrimPrefs.ini carries Skyrim_Default.ini's fLightLODStartFade
 3500, fGrassMinStartFadeDistance 0, fTreesMidLODSwitchDist 9999999), so this engine reads
-Skyrim_Default.ini for both. The player's INI files are M12's (TODO(M12): Skyrim.ini,
-SkyrimPrefs.ini with their preset); until then the player's own layer is what the settings menu
-changes (`src/shell/preferences.ts`). `INI_DEFAULTS` therefore holds the executable's defaults,
+Skyrim_Default.ini for both. The INI layer is the VFS's (`Vfs.ini`, docs/formats/load-order.md
+"INI files"): Skyrim_Default.ini < the player's imported Skyrim.ini < SkyrimPrefs.ini < each
+loaded plugin's `<Plugin>.ini`; over it the changes made in the settings menu
+(`src/shell/preferences.ts`). `INI_DEFAULTS` therefore holds the executable's defaults,
 never a preset's. Some defaults the executable sets as it starts (the dump of its stored values
 shows 0 for them): iDifficulty 2, fHUDOpacity 1, bShowFloatingQuestMarkers 1, bSaveOnRest /
 Wait / Travel 1 (bSaveOnPause 0), fAutosaveEveryXMins 15, fLightLODStartFade = fLightLODDefaultStartFade

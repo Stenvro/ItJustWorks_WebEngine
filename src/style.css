@@ -1162,6 +1162,52 @@ details:not([open]) > .viewer-head {
   font-variant-numeric: tabular-nums;
 }
 
+/* The plugin screen: a checkbox, the index, the name, why it is not loaded, up and down. */
+.plugin-row {
+  align-items: center;
+}
+
+.plugin-row input[type='checkbox'] {
+  flex: none;
+  margin: 0;
+  accent-color: var(--gold);
+}
+
+.plugin-refused .value,
+.plugin-refused .meta {
+  color: var(--danger);
+}
+
+button.plugin-move {
+  flex: none;
+  padding: 0 6px;
+  font-size: 11px;
+  letter-spacing: 0;
+}
+
+button.plugin-move::before,
+button.plugin-move::after {
+  content: none;
+}
+
+button.plugin-move:disabled,
+.plugin-actions button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.plugin-actions {
+  padding: 0 16px 10px;
+}
+
+.plugin-note {
+  margin: 0;
+  padding: 0 16px 12px;
+  font-size: 11px;
+  color: var(--ash-dim);
+  white-space: pre-wrap;
+}
+
 /* --- Fatal error --------------------------------------------------------- */
 
 .fatal {
