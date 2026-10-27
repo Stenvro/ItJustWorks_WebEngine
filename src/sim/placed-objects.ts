@@ -93,6 +93,7 @@ export function placeObject(
       world: moves ? new Float32Array(object.world) : object.world,
       ...(moves && { motion: { version: 0 } }),
       ...(visibility && { visibility }),
+      ...(object.fade && { fade: { kind: object.fade } }),
       ...(graph && { graph }),
       ...(posed && { pose: posed.pose, poseNodes: posed.poseNodes }),
       ...(options.simulated && {
