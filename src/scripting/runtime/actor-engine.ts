@@ -920,7 +920,8 @@ export class ActorEngine {
       for (const list of lists)
         await this.#runtime.addItem(reference, this.#runtime.formHandle(list), 1, true);
     }
-    // The hub tells it dying, then dead (TESDeathEvent: OnDying, OnDeath).
+    // The hub tells it dying, then dead (TESDeathEvent: OnDying, OnDeath). The engine's own
+    // listeners are waited for; the scripts' handlers are only started (script-events.ts).
     const events = this.#runtime.events;
     await events.emitted('death', { actor: reference, killer, dead: false });
     await events.emitted('death', { actor: reference, killer, dead: true });

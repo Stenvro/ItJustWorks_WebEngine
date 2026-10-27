@@ -84,7 +84,13 @@ describe('the graph runtime (todo)', () => {
   // TODO(M13): MQ101's walk to the block plays IdleWalkingCameraStart (an idle for 0_Master.hkx)
   // on the player; the third-person graph takes it into MT WalkingCamera, an additive arm clip
   // alone, so the body glides there in third person. Whether the engine keeps that idle from the
-  // third-person graph (or the view in first person) is not read yet.
+  // third-person graph (or the view in first person) is not read yet. The data so far
+  // (2026-10-27): MT WalkingCamera is state 49 of the Master machine itself (on
+  // IdleWalkingCameraStart from Root, out on IdleWalkingCameraEnd), its only generator the clip
+  // MT_WalkingCamera.hkx (0.333 s, 10 tracks, additive), so any rule that keeps the graph in it
+  // leaves no walk to add to; and MQ101 disables the camera switch from stage 4 on
+  // (DisablePlayerControls abCamSwitch), so the original walks to the block in the view of the
+  // cart (first person) and its third-person body there is never seen.
   it.todo(
     'the AI-driven player’s third-person body walks to the block: its steps match the walk’s root motion  [original]',
   );

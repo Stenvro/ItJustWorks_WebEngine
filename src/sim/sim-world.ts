@@ -28,7 +28,7 @@ import { ActorStage, type StageObstacleCell, type StagePlace } from '../shell/ac
 import type { DoorObject } from '../shell/actor-doors.ts';
 import { stageObject, type StageObject } from '../shell/actor-furniture.ts';
 import { groundUnder, type SoundingWorld } from '../shell/actor-sounds.ts';
-import { talkTargets } from '../shell/actors.ts';
+import { actorFeet, headPosition, talkTargets } from '../shell/actors.ts';
 import { CreatedObjects } from '../shell/created-objects.ts';
 import { DestructionLooks } from '../shell/destruction-looks.ts';
 import { FloraLooks } from '../shell/flora-looks.ts';
@@ -218,7 +218,10 @@ export class SimWorld {
   readonly #flora: FloraLooks;
   readonly #destruction: DestructionLooks;
   readonly #destinations = new Map<number, DoorDestination | undefined>();
-  /** Travel through a load door started by an activation (awaited by the next step). */
+  /**
+   * Travel through a load door started by an activation, or a script's move of the player to
+   * another place (awaited by the next step).
+   */
   #travel: Promise<void> | undefined;
   /** Work started by the world that the next settle waits for (cells, created objects). */
   readonly #pending = new Set<Promise<unknown>>();
@@ -1325,10 +1328,13 @@ export class SimWorld {
       (placed) => this.stage.mounts.activation(placed),
     );
     const eye = play.player.position;
-    const to = staged.position;
-    // At its chest, or at a body lying on the ground (a corpse to loot).
-    const height = staged.dead ? 15 : 100;
-    const direction: Vec3 = [to[0] - eye[0], to[1] - eye[1], to[2] + height - eye[2]];
+    // At the middle of its body as it is posed, feet to head (the line the crosshair's rule
+    // meets: actorOnRay): a standing actor's chest, a body lying on the ground (a corpse, its
+    // ragdoll's pose) where it lies.
+    const feet = actorFeet(staged.placed);
+    const head = headPosition(staged.placed);
+    const to: Vec3 = [(feet[0] + head[0]) / 2, (feet[1] + head[1]) / 2, (feet[2] + head[2]) / 2];
+    const direction: Vec3 = [to[0] - eye[0], to[1] - eye[1], to[2] - eye[2]];
     const length = Math.hypot(direction[0], direction[1], direction[2]);
     if (length === 0) return undefined;
     const hit = ray(
@@ -1542,7 +1548,17 @@ export class SimWorld {
     if (!at) return;
     if (reference === PLAYER_REF) {
       // As Play: the player goes where the scripts send them, to another place through a journey.
-      if (!this.#sendPlayer(at)) await this.#journey(at);
+      // A journey goes as a load door's travel does, awaited by the next step: it is not the
+      // world's work that a settle waits for, as the place it opens settles itself (waiting
+      // for it there waited for itself: a script's MoveTo of the player to another cell, such
+      // as MQ101's stage 4 to the cart, hung the sim).
+      if (!this.#sendPlayer(at)) {
+        const before = this.#travel;
+        this.#travel = (async () => {
+          await before;
+          await this.#journey(at);
+        })();
+      }
       return;
     }
     if (this.stage.get(reference)) {

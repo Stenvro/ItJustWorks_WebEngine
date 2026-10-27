@@ -13,6 +13,8 @@ const KEEP = 0x5de24;
 const INTRO_RALOF = 0x4e1e2;
 /** MQ101's PlayerFriend alias (stage 250's route entry fills it). */
 const PLAYER_FRIEND = 73;
+/** Gunjar's body (MQ101CorpseSons01), lying in the keep. */
+const GUNJAR = 0xb1694;
 
 describe.skipIf(!hasGamedata())('MQ101 in Helgen Keep', () => {
   it('starts the route’s keep scene as the player enters with Ralof (stage 220, then 250)', async () => {
@@ -41,10 +43,33 @@ describe.skipIf(!hasGamedata())('MQ101 in Helgen Keep', () => {
     }
   }, 300_000);
 
+  // Found 2026-10-24: the sim aimed its activation at a standing actor's chest, above a body
+  // lying on the floor. It aims where the crosshair's rule meets an actor: its posed body.
+  it('lets the player activate Gunjar’s corpse lying on the floor (stage 257)', async () => {
+    const sim = await openSim({ opening: true });
+    try {
+      await sim.step(1);
+      for (const playing of sim.runtime.scenes.snapshot()) sim.runtime.scenes.stop(playing.scene);
+      void sim.runtime.quests.setStage(MQ101, 220);
+      await sim.step(0.5);
+      await sim.openInterior(KEEP);
+      await sim.step(1);
+      const gunjar = sim.actor(GUNJAR);
+      expect(gunjar).toBeDefined();
+      const [x, y, z] = gunjar?.position ?? [0, 0, 0];
+      await sim.moveTo([x + 80, y, z + 10]);
+      await sim.step(0.5);
+      expect(sim.activate(GUNJAR)).toBe(true);
+      await sim.step(1);
+      expect(sim.stageDone(MQ101, 257)).toBe(true);
+    } finally {
+      await sim.close();
+    }
+  }, 300_000);
   it.todo(
     'opens the keep’s inner gate by the Imperial soldier’s lever package (KeepIntroSceneB ' +
-      'phases 20-25) once the player has looted Gunjar: the sim’s activation of a corpse ' +
-      '(MQ101CorpseSons01) misses it, so stage 257 is not reached headless yet',
+      'phases 20-25, MQ101HadvarOpenGate2 pulls MQ101KeepLever02) once the player has looted ' +
+      'Gunjar: headless, the scene stays in phase 6 (Ralof’s dialogue) for 30 s and more',
   );
   it.todo(
     'runs both routes through the torture room, the caves (spiders, bear) and out (stage 900)',

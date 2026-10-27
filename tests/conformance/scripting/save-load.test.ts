@@ -64,6 +64,14 @@ describe.skipIf(!hasGamedata())('a save made and loaded (simulation)', () => {
         .map((thread) => thread.where)
         .filter((where) => where.includes('WIDeadBodyCleanupScript.OnDeath'));
     expect(cleanup(before)).toHaveLength(1);
+    // The killing does not wait for it: the world steps until its OnDeath waits on the clock.
+    const clockWait = (s: Sim): number | undefined => {
+      const thread = s.runtime.vm
+        .saveThreads()
+        .threads.find((t) => t.where.includes('WIDeadBodyCleanupScript.OnDeath'));
+      return thread?.wait.kind === 'clock' ? thread.wait.at : undefined;
+    };
+    expect(await before.until(() => clockWait(before) !== undefined, 10)).toBe(true);
 
     // Set a stage.
     const quest = await before.formId('QUST', 'DialogueWhiterun');
@@ -124,5 +132,12 @@ describe.skipIf(!hasGamedata())('a save made and loaded (simulation)', () => {
     const secondWait = cleanupWait();
     expect(secondWait).toBeDefined();
     expect((secondWait ?? 0) - (firstWait ?? 0)).toBeGreaterThan(0.4);
+
+    // A coc to another cell after the load goes there and the world steps on (reported
+    // 2026-10-24 as hanging to the timeout).
+    const breezehome = await after.formId('CELL', 'WhiterunBreezehome');
+    await after.openInterior(breezehome);
+    await after.step(1);
+    expect((await after.runtime.placement(PLAYER_REF))?.cell).toBe(breezehome);
   }, 240_000);
 });

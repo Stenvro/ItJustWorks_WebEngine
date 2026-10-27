@@ -10,18 +10,48 @@
 //   cleaned up, so its OnDeath returns only after half a game day or more.
 // - The [Papyrus] INI settings' defaults (fUpdateBudgetMS, fExtraTaskletBudgetMS, ...).
 
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+
+import { EventHub } from '../../../src/scripting/runtime/event-hub.ts';
+import {
+  relayScriptEvents,
+  type ScriptEventHost,
+} from '../../../src/scripting/runtime/script-events.ts';
+import type { ObjectHandle } from '../../../src/scripting/values.ts';
 
 describe('the Papyrus VM', () => {
-  // Found 2026-10-24 (the Bannered Mare's patrons): Actor.Kill waits for every death handler to
-  // return (actor-engine.ts kill awaits the hub's 'death' events, whose script listener awaits
-  // the handlers), so OnDeath is sent only after OnDying returns, and the murder, the crime
-  // report and the story manager's Kill Actor event wait half a game day for
-  // WIDeadBodyCleanupScript's OnDeath. TODO(M13): the event's producer must not wait for the
-  // scripts' handlers, only start them in order.
-  it.todo(
+  // Found 2026-10-24 (the Bannered Mare's patrons): Actor.Kill waited for every death handler to
+  // return, so the murder, the crime report and the story manager's Kill Actor event waited half
+  // a game day for WIDeadBodyCleanupScript's OnDeath.
+  it(
     'a death does not wait for its script handlers: OnDying and OnDeath are both sent at once, ' +
       'and the crime and story manager events follow without waiting for them  [CK threading notes]',
+    async () => {
+      const events = new EventHub();
+      const sent: string[] = [];
+      const handle = (): ObjectHandle => ({}) as ObjectHandle;
+      const host = {
+        events,
+        // Handlers that never return (an OnDeath that waits a game day).
+        sendEvent: (_target: number, event: string) => {
+          sent.push(event);
+          return new Promise<void>(() => undefined);
+        },
+        registeredEvent: () => Promise.resolve(),
+        referenceHandle: handle,
+        actorHandle: handle,
+        formHandle: handle,
+        livingActor: () => Promise.resolve(true),
+        itemScripted: () => Promise.resolve(false),
+        deleted: () => false,
+      } satisfies ScriptEventHost;
+      const stop = relayScriptEvents(host);
+      // What actor-engine.ts kill does before it goes on to crime.killed.
+      await events.emitted('death', { actor: 0x10, killer: 0x14, dead: false });
+      await events.emitted('death', { actor: 0x10, killer: 0x14, dead: true });
+      expect(sent).toEqual(['OnDying', 'OnDeath']);
+      stop();
+    },
   );
   it.todo(
     'every vanilla OnDeath handler of a placed actor in a sample of cells returns within N ' +
