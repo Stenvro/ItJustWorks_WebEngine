@@ -9,7 +9,14 @@
 
 import { describe, expect, it } from 'vitest';
 import { COMBAT_AI_DEFAULTS } from '../../../src/ai/combat-ai.ts';
-import { ATTACK_DECISION_SECONDS, attackChance } from '../../../src/ai/combat-tactics.ts';
+import {
+  ATTACK_DECISION_SECONDS,
+  attackChance,
+  attackCooldown,
+  attackStrikeAngle,
+  chooseAttack,
+} from '../../../src/ai/combat-tactics.ts';
+import { NO_STYLE } from '../../../src/ai/combat-profile.ts';
 import { ENGINE } from './settings.ts';
 import { styleWith } from './style.ts';
 
@@ -58,8 +65,33 @@ describe('the attack decision (formula)', () => {
   });
 
   it.todo('the attack from the attack data while closing in (ATKD chance, recovery time)  [original]');
-  it.todo('the strike angle × fCombatAttackStrikeAngleMult (0.67), per attack’s angle  [original]');
-  it.todo('the special attack (CSME special attack mult, the tree’s Special Attack)  [original]');
+  it('the strike angle × fCombatAttackStrikeAngleMult (0.67), per attack’s angle', () => {
+    // An attack's ATKD strike angle of 60°: 40.2° standing, × 1.5 moving.
+    const standing = attackStrikeAngle(60, false, settings);
+    expect((standing * 180) / Math.PI).toBeCloseTo(60 * ENGINE.fCombatAttackStrikeAngleMult);
+    expect(attackStrikeAngle(60, true, settings)).toBeCloseTo(standing * 1.5);
+  });
+
+  it('the next attack waits its attack data’s recovery time (at least the attack idle)', () => {
+    expect(attackCooldown(0)).toBe(ATTACK_DECISION_SECONDS);
+    expect(attackCooldown(1.2)).toBe(1.2);
+  });
+
+  it('the special attack: by the CSME special attack mult (the tree’s Special Attack)', () => {
+    const style = styleWith(
+      { offensiveMult: 1 },
+      { melee: { ...NO_STYLE.melee, specialAttackMult: 1 } },
+    );
+    // Attack rolled, no power attack, then the special attack's roll.
+    const rolls = [0, 0.99, 0];
+    expect(chooseAttack(style, input, () => rolls.shift() ?? 0.5, settings)).toBe('special');
+    const none = styleWith(
+      { offensiveMult: 1 },
+      { melee: { ...NO_STYLE.melee, specialAttackMult: 0 } },
+    );
+    const again = [0, 0.99, 0];
+    expect(chooseAttack(none, input, () => again.shift() ?? 0.5, settings)).toBe('attack');
+  });
   it.todo('power attacks by the attack data’s power chance and the staggered mults  [original]');
   it.todo('left-hand and dual attacks (Allow Dual Wielding)  [CommonLibSSE TESCombatStyle]');
   it.todo('NPC sneak attacks: an attacker unseen by its target  [UESP Sneak]');

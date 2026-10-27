@@ -9,13 +9,15 @@ import {
   attacksOnSight,
   COMBAT_AI_DEFAULTS,
   Confidence,
-  confidenceModifier,
+  combatStrength,
   daresHelp,
-  fleeHealth,
+  drawConfidenceModifier,
+  fleeRatio,
   readCombatAiSettings,
   selectTarget,
   shouldFlee,
   strengthDamage,
+  strengthRatio,
   threatRatio,
   turnsOnAttacker,
   yields,
@@ -86,9 +88,9 @@ describe('combat AI: entering combat', () => {
     const read = readCombatAiSettings((name) =>
       name === 'fConfidenceAverage' ? 0.2 : name === 'iFriendHitCombatAllowed' ? 2 : undefined,
     );
-    expect(read.fleeHealthAverage).toBe(0.2);
+    expect(read.fleeRatioAverage).toBe(0.2);
     expect(read.friendHitCombatAllowed).toBe(2);
-    expect(read.fleeHealthCautious).toBe(0.375);
+    expect(read.fleeRatioCautious).toBe(0.375);
     expect(read.fleeDistanceExterior).toBe(5000);
   });
 });
@@ -124,38 +126,46 @@ describe('combat AI: target selection', () => {
     expect(selectTarget([], undefined)).toBeUndefined();
   });
 
-  it('weighs the odds into a confidence modifier', () => {
+  it('weighs strengths: damage per second through armour × health, a side against its enemies', () => {
     expect(threatRatio([], [100])).toBe(0);
     expect(threatRatio([100, 100], [100])).toBe(2);
-    expect(confidenceModifier(0, settings)).toBe(1);
-    expect(confidenceModifier(1, settings)).toBe(0);
-    expect(confidenceModifier(3, settings)).toBe(-0.25);
     expect(actorStrength(50, 10)).toBe(500);
+    // 10 damage a second, half of it through armour, 50 health.
+    expect(combatStrength(10, 50, 0.5)).toBe(250);
+    expect(strengthRatio([250], [500, 500])).toBe(0.25);
+    expect(strengthRatio([250], [])).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it('draws its confidence modifier once per fight in fCombatConfidenceModifierMin .. Max', () => {
+    expect(drawConfidenceModifier(() => 0, settings)).toBe(-0.25);
+    expect(drawConfidenceModifier(() => 1, settings)).toBe(1);
   });
 });
 
 describe('combat AI: fleeing and yielding', () => {
-  it('flees below its confidence share of health', () => {
-    expect(fleeHealth(Confidence.cowardly, settings)).toBe(1);
-    expect(fleeHealth(Confidence.cautious, settings)).toBe(0.375);
-    expect(fleeHealth(Confidence.average, settings)).toBe(0.15);
-    expect(fleeHealth(Confidence.brave, settings)).toBe(0.0375);
-    expect(fleeHealth(Confidence.foolhardy, settings)).toBe(0);
+  it('flees below its confidence’s strength ratio (fConfidence*)', () => {
+    expect(fleeRatio(Confidence.cowardly, settings)).toBe(1000);
+    expect(fleeRatio(Confidence.cautious, settings)).toBe(0.375);
+    expect(fleeRatio(Confidence.average, settings)).toBe(0.15);
+    expect(fleeRatio(Confidence.brave, settings)).toBe(0.0375);
+    expect(fleeRatio(Confidence.foolhardy, settings)).toBe(0);
+    // Between two levels (a confidence moved by the fight's modifier): interpolated.
+    expect(fleeRatio(2.5, settings)).toBeCloseTo(0.09375);
   });
 
-  it('flees by confidence, health, odds, fear and rally', () => {
-    const base = { health: 0.3, modifier: 0, afraid: false, rallied: false };
+  it('flees by confidence, strength ratio, the fight’s modifier, fear and rally', () => {
+    const base = { ratio: 0.3, modifier: 0, afraid: false, rallied: false };
     const flees = (confidence: number, more: Partial<typeof base> = {}): boolean =>
       shouldFlee({ ...base, confidence, ...more }, settings);
-    expect(flees(Confidence.cowardly, { health: 1 })).toBe(true);
+    expect(flees(Confidence.cowardly, { ratio: 1 })).toBe(true);
     expect(flees(Confidence.cautious)).toBe(true);
     expect(flees(Confidence.average)).toBe(false);
-    expect(flees(Confidence.average, { health: 0.1 })).toBe(true);
-    expect(flees(Confidence.brave, { health: 0.1 })).toBe(false);
-    expect(flees(Confidence.foolhardy, { health: 0.01 })).toBe(false);
-    // Outnumbered (modifier −0.25) it flees sooner; winning (0.5), later.
-    expect(flees(Confidence.average, { health: 0.17, modifier: -0.25 })).toBe(true);
-    expect(flees(Confidence.average, { health: 0.1, modifier: 0.5 })).toBe(false);
+    expect(flees(Confidence.average, { ratio: 0.1 })).toBe(true);
+    expect(flees(Confidence.brave, { ratio: 0.1 })).toBe(false);
+    expect(flees(Confidence.foolhardy, { ratio: 0.01 })).toBe(false);
+    // A low modifier drawn for the fight (−0.25) flees sooner; a high one (0.5), later.
+    expect(flees(Confidence.average, { ratio: 0.17, modifier: -0.25 })).toBe(true);
+    expect(flees(Confidence.average, { ratio: 0.1, modifier: 0.5 })).toBe(false);
     // Fear makes even the foolhardy flee; rally keeps the cowardly.
     expect(flees(Confidence.foolhardy, { afraid: true })).toBe(true);
     expect(flees(Confidence.cowardly, { rallied: true })).toBe(false);
