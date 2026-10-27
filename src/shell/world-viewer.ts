@@ -735,6 +735,9 @@ export class WorldViewer {
         this.#play?.physics.setMotion(placed, motionType === MOTION_KEYFRAMED);
       }
     },
+    fireWeapon: (weapon, source, ammo) => {
+      void this.#stage?.combat.fire(weapon, source, ammo);
+    },
     impulse: (reference, direction, magnitude, share) => {
       for (const placed of this.#play?.placementsOf(reference) ?? []) {
         this.#play?.physics.impulse(placed, direction, magnitude, share);
@@ -1254,7 +1257,7 @@ export class WorldViewer {
       return session.scriptsReady?.world.combat?.(PLAYER_REF)?.inCombat !== true;
     };
     // Slow Time's pace and the falls' damage (src/shell/time-flow.ts).
-    connectPlayerTime(player, () => this.#session);
+    connectPlayerTime(player, () => this.#session, physics);
     // Sprinting takes stamina (src/scripting/runtime/progression-engine.ts).
     player.canSprint = () => this.#session?.scriptsReady?.progression.canSprint(PLAYER_REF) ?? true;
     player.onSprintRefused = () => {

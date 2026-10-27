@@ -52,6 +52,8 @@ export interface ScriptView {
   animated?(reference: number, event: string): void;
   /** SetMotionType (1 dynamic .. 4 keyframed). */
   motionTypeChanged?(reference: number, motionType: number): void;
+  /** Weapon.Fire (WorldBridge.fireWeapon): a shot from a reference. */
+  fireWeapon?(weapon: number, source: number, ammo: number | undefined): void;
   /** A push (WorldBridge.impulse). */
   impulse?(
     reference: number,
@@ -351,6 +353,10 @@ export class ScriptWorld implements WorldBridge {
     share?: (layer: number) => number,
   ): void {
     for (const view of this.#views) view.impulse?.(reference, direction, magnitude, share);
+  }
+
+  fireWeapon(weapon: number, source: number, ammo: number | undefined): void {
+    for (const view of this.#views) view.fireWeapon?.(weapon, source, ammo);
   }
 
   explosionPush(

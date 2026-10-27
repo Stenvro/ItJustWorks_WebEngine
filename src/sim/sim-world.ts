@@ -979,7 +979,7 @@ export class SimWorld {
     player.character.walkable = (x, y, z) =>
       this.#cellAt([x, y, z])?.navmesh.heightNear(x, y, z, NAVMESH_TOLERANCE) !== undefined;
     player.overEncumbered = () => session.overEncumbered;
-    connectPlayerTime(player, () => session);
+    connectPlayerTime(player, () => session, physics);
     player.canSprint = () => this.runtime.progression.canSprint(PLAYER_REF);
     player.onSprintRefused = () => {
       this.runtime.progression.refused(PLAYER_REF, 'stamina');
@@ -1419,6 +1419,9 @@ export class SimWorld {
       for (const placed of this.#play?.placementsOf(reference) ?? []) {
         this.#play?.physics.setMotion(placed, motionType === MOTION_KEYFRAMED);
       }
+    },
+    fireWeapon: (weapon, source, ammo) => {
+      void this.stage.combat.fire(weapon, source, ammo);
     },
     impulse: (reference, direction, magnitude, share) => {
       for (const placed of this.#play?.placementsOf(reference) ?? []) {
