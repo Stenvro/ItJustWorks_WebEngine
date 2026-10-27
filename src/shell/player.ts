@@ -838,7 +838,9 @@ export class Player implements Camera {
     const allowed =
       (this.vanityAllowed?.() ?? true) &&
       mount === undefined &&
-      !this.povLocked &&
+      // A script that keeps the camera as it is (DisablePlayerControls' abCamSwitch, MQ101's cart
+      // and walk to the block) keeps the vanity camera off too.
+      !this.#povFixed &&
       !this.noClip &&
       this.#animated === undefined &&
       !this.dialogue.active &&
