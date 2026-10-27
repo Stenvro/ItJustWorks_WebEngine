@@ -32,6 +32,13 @@ import type { CellRagdoll } from './play-session.ts';
 import type { Terminal } from './terminal.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import type { NavmeshSet } from '../ai/pathfinding.ts';
+import { aiSettingsOf } from '../ai/ai-settings.ts';
+import {
+  processLevel,
+  processListsBudget,
+  ProcessSlicer,
+  type ProcessLevel,
+} from '../ai/process-levels.ts';
 import { ActorAi } from './actor-ai.ts';
 import { ActorScenes } from './actor-scenes.ts';
 import { ActorSearch } from './actor-search.ts';
@@ -136,6 +143,11 @@ export interface ActorStageOptions {
   readonly collided?: (cell: string) => boolean | undefined;
   /** Where the player is (the actors near it move by themselves: src/shell/actor-movers.ts). */
   readonly focus?: () => Vec3 | undefined;
+  /**
+   * The clock the process budget measures the actors' turns with (ms; default performance.now:
+   * the simulation's stands still within a step, so every turn fits).
+   */
+  readonly processClock?: () => number;
   /** An actor walked into (true) or out of a trigger volume of a reference. */
   readonly onTrigger?: (trigger: number, actor: number, entered: boolean) => void;
   /** The navigation meshes of the loaded area (actors' paths). */
@@ -290,9 +302,12 @@ export class ActorStage {
   #clock: number | undefined;
   /** Each actor as a user of furniture. */
   readonly #users = new WeakMap<StagedActor, FurnitureUser>();
+  /** The process levels' turns: who beyond the high process is updated this frame. */
+  readonly process: ProcessSlicer;
 
   constructor(options: ActorStageOptions) {
     this.#options = options;
+    this.process = new ProcessSlicer(options.processClock ?? (() => performance.now()));
     this.doors = new ActorDoors({
       session: options.session,
       find: (reference) => options.door?.(reference),
@@ -325,6 +340,7 @@ export class ActorStage {
     this.movers = new ActorMovers({
       session: options.session,
       terminal: options.terminal,
+      slicer: this.process,
       ...(options.onTrigger && { onTrigger: options.onTrigger }),
       bodyColliders: (actor) => this.bodies.colliders(actor),
       ...(options.navmeshes && { navmeshes: options.navmeshes }),
@@ -466,6 +482,7 @@ export class ActorStage {
     });
     this.ai = new ActorAi({
       session: options.session,
+      slicer: this.process,
       movers: this.movers,
       furniture: this.furniture,
       search: this.search,
@@ -1706,12 +1723,46 @@ export class ActorStage {
     return this.#placing.size > 0;
   }
 
+  /**
+   * The process level of each actor on the stage (src/ai/process-levels.ts), and the turns of
+   * those beyond the high process within this frame's budget.
+   */
+  #levelActors(frame: number): void {
+    const focus = this.#options.focus?.();
+    const session = this.#options.session;
+    const runtime = session.scriptsReady;
+    const looks = session.scriptWorld.lookTargets;
+    const levels = new Map<number, ProcessLevel>();
+    for (const staged of this.#actors.values()) {
+      const reference = staged.reference;
+      const distance = focus
+        ? Math.hypot(staged.position[0] - focus[0], staged.position[1] - focus[1])
+        : 0;
+      const kept =
+        this.combat.engaged(reference) ||
+        runtime?.dialogueSpeaker === reference ||
+        runtime?.scenes.sceneOf(reference) !== undefined ||
+        looks.target(reference) !== undefined;
+      levels.set(
+        reference,
+        processLevel({
+          loaded: true,
+          distance,
+          wasHigh: this.movers.inHighProcess(reference),
+          kept,
+        }),
+      );
+    }
+    this.process.begin(levels, frame > 0 ? processListsBudget(frame, aiSettingsOf(session)) : 0);
+  }
+
   /** Moves the enabled actors' skeletons; far or unseen ones less often (animationRate). */
   animate(seconds: number): void {
     // Their AI first (what they want now), then their movement.
     const frame =
       this.#clock === undefined ? 0 : Math.min(0.25, Math.max(0, seconds - this.#clock));
     this.#clock = seconds;
+    this.#levelActors(frame);
     this.ai.frame(this.#actors.values(), frame, this.#options.focus?.());
     this.packageGear.frame(this.ai.running(), frame);
     this.pilot.frame(frame);
