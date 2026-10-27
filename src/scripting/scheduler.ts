@@ -3,8 +3,8 @@
 // wait (Utility.Wait, WaitGameTime, update registrations) resume when their time has come, and
 // threads that ran past the frame's budget go on in the next frame. Observed in the
 // original: each frame the game's main loop gives the VM's update 0.9 of [Papyrus] fUpdateBudgetMS
-// (the calls scripts handed to the main thread begin there, in the order they came, while it
-// lasts) and then runs the scripts' tasklets for [Papyrus] fExtraTaskletBudgetMS more; once a
+// (the calls scripts handed to the main thread begin there, in the order they came) and then
+// runs the scripts' tasklets for [Papyrus] fExtraTaskletBudgetMS more; once a
 // saved game has loaded, the VM runs on its own, update after update, for
 // fPostLoadUpdateTimeMS before the game goes on. Without frames (Node tools) nothing waits for
 // one. Platform-independent. Notes: docs/scripting.md ("Threads").
@@ -47,20 +47,12 @@ export class PapyrusScheduler {
    * and the extra tasklets after it (fExtraTaskletBudgetMS).
    */
   budgetMs: number;
-  /**
-   * Milliseconds of each frame the calls handed to the main thread may begin in (the VM's
-   * update: 0.9 of fUpdateBudgetMS); the rest wait for the next frame, still in their order.
-   */
-  mainThreadMs: number;
   #realWaiters: Waiter[] = [];
   #gameWaiters: Waiter[] = [];
   #wallWaiters: Waiter[] = [];
   #frameWaiters: (() => void)[] = [];
-  /** Calls handed to the main thread, in the order they came, by their tickets. */
-  #handed: { readonly ticket: number; readonly resume: (ticket: number) => void }[] = [];
-  #tickets = 0;
-  /** The handed call let go that has not begun its native yet (-1: none). */
-  #inFlight = -1;
+  /** Calls handed to the main thread, in the order they came. */
+  #handed: (() => void)[] = [];
   #frameStart = 0;
   /** Until when (on the budget's clock) the VM runs on its own after a load. */
   #postLoadUntil = -Infinity;
@@ -74,14 +66,12 @@ export class PapyrusScheduler {
     now: () => number = () => Date.now(),
   ) {
     this.budgetMs = budgetMs;
-    this.mainThreadMs = Math.min(budgetMs, DEFAULT_UPDATE_MS * UPDATE_SHARE);
     this.#now = now;
   }
 
   /** The INI's budgets: [Papyrus] fUpdateBudgetMS and fExtraTaskletBudgetMS (milliseconds). */
   configure(updateMs: number, extraTaskletMs: number): void {
-    this.mainThreadMs = Math.max(0, updateMs) * UPDATE_SHARE;
-    this.budgetMs = this.mainThreadMs + Math.max(0, extraTaskletMs);
+    this.budgetMs = Math.max(0, updateMs) * UPDATE_SHARE + Math.max(0, extraTaskletMs);
   }
 
   /**
@@ -110,10 +100,10 @@ export class PapyrusScheduler {
     this.#realWaiters = this.#release(this.#realWaiters, this.realTime);
     this.#gameWaiters = this.#release(this.#gameWaiters, this.gameTime);
     this.#wallWaiters = this.#release(this.#wallWaiters, this.wallTime);
-    // The VM's update: the calls handed to the main thread begin, the first at once, then
-    // each as the one before it has begun, while the update's share lasts.
-    this.#inFlight = -1;
-    this.#releaseHanded();
+    // The VM's update: the calls handed to the main thread begin, in the order they came.
+    const handed = this.#handed;
+    this.#handed = [];
+    for (const resume of handed) resume();
     const frame = this.#frameWaiters;
     this.#frameWaiters = [];
     for (const resume of frame) resume();
@@ -204,30 +194,17 @@ export class PapyrusScheduler {
   }
 
   /**
-   * A call handed to the main thread: resolves when it may begin, in the next frame's VM update
-   * while the update's share lasts, in the order the calls came, to its ticket. The caller
-   * says `mainThreadBegun` with it once its native has begun; the next call may begin then.
+   * A call handed to the main thread: resolves when it begins, in the next frame's VM update,
+   * in the order the calls came (after a load, at once while the VM runs on its own).
+   * TODO(M13): the engine begins them only while the update's share of fUpdateBudgetMS lasts;
+   * our natives cost far more time than the engine's, so a share of wall time would starve the
+   * scripts (and make the headless sim depend on the machine): all begin in the next frame.
    */
-  mainThread(): Promise<number> {
-    if (!this.framed || this.#postLoading) return Promise.resolve(-1);
-    const ticket = this.#tickets++;
+  mainThread(): Promise<void> {
+    if (!this.framed || this.#postLoading) return Promise.resolve();
     return new Promise((resume) => {
-      this.#handed.push({ ticket, resume });
+      this.#handed.push(resume);
     });
-  }
-
-  /** A call handed to the main thread has begun its native: the next one may begin. */
-  mainThreadBegun(ticket: number): void {
-    if (ticket < 0 || ticket !== this.#inFlight) return;
-    this.#inFlight = -1;
-    if (this.#now() - this.#frameStart <= this.mainThreadMs) this.#releaseHanded();
-  }
-
-  #releaseHanded(): void {
-    const next = this.#handed.shift();
-    if (!next) return;
-    this.#inFlight = next.ticket;
-    next.resume(next.ticket);
   }
 
   /** How many threads wait for a clock or a frame (tools run until none wait for long). */

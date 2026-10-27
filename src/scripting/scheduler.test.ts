@@ -40,30 +40,22 @@ describe('PapyrusScheduler', () => {
   it("gives threads the update's share of fUpdateBudgetMS and fExtraTaskletBudgetMS", () => {
     const scheduler = new PapyrusScheduler();
     scheduler.configure(2, 1);
-    expect(scheduler.mainThreadMs).toBeCloseTo(1.8);
     expect(scheduler.budgetMs).toBeCloseTo(2.8);
   });
 
-  it("begins the calls handed to the main thread in order while the update's share lasts", async () => {
-    let now = 0;
-    const scheduler = new PapyrusScheduler(2, () => now);
+  it('begins the calls handed to the main thread in the next frame, in their order', async () => {
+    const scheduler = new PapyrusScheduler();
     scheduler.framed = true;
-    scheduler.mainThreadMs = 1;
     const begun: string[] = [];
-    // Each call takes 0.6 ms to begin: two fit in a frame's 1 ms share, the third waits.
-    const call = async (name: string): Promise<void> => {
-      const ticket = await scheduler.mainThread();
-      begun.push(name);
-      now += 0.6;
-      scheduler.mainThreadBegun(ticket);
-    };
-    const calls = Promise.all(['a', 'b', 'c'].map(call));
+    const calls = Promise.all(
+      ['a', 'b', 'c'].map(async (name) => {
+        await scheduler.mainThread();
+        begun.push(name);
+      }),
+    );
     await Promise.resolve();
     expect(begun).toEqual([]);
-    scheduler.advance(1 / 60, 0);
-    for (let i = 0; i < 10; i++) await Promise.resolve();
-    expect(begun).toEqual(['a', 'b']);
-    expect(scheduler.waiting.frame).toBe(1);
+    expect(scheduler.waiting.frame).toBe(3);
     scheduler.advance(1 / 60, 0);
     await calls;
     expect(begun).toEqual(['a', 'b', 'c']);
@@ -77,7 +69,7 @@ describe('PapyrusScheduler', () => {
     now = 400;
     // Within the window: no budget, and frame waits and handed calls go on at once.
     expect(scheduler.overBudget).toBe(false);
-    expect(await scheduler.mainThread()).toBe(-1);
+    await scheduler.mainThread();
     await scheduler.nextFrame();
     now = 501;
     expect(scheduler.overBudget).toBe(true);

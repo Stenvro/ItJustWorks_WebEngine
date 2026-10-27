@@ -1278,20 +1278,13 @@ export class PapyrusVm {
       // Threads waiting meanwhile count the VM's patience with this native.
       this.#watchNative();
       // A native the game hands to its main thread runs in the next frame's VM update, after
-      // the calls handed before it, while the update's share of the budget lasts
-      // (native-timing.ts, scheduler.ts); the thread waits meanwhile, keeping the lock of its
-      // own object's script. It has not begun then: a save restarts its call.
+      // the calls handed before it (native-timing.ts, scheduler.ts mainThread); the thread
+      // waits meanwhile, keeping the lock of its own object's script. It has not begun then: a
+      // save restarts its call.
       const run = nativeWaitsForFrame(level.name, name)
         ? async (): Promise<Value> => {
-            const ticket = await this.#latent(thread, this.scheduler.mainThread(), RESTART);
-            // The next handed call may begin once this one has (not once it is done).
-            let result: Value | Promise<Value>;
-            try {
-              result = native(call);
-            } finally {
-              this.scheduler.mainThreadBegun(ticket);
-            }
-            return result;
+            await this.#latent(thread, this.scheduler.mainThread(), RESTART);
+            return native(call);
           }
         : (): Promise<Value> => Promise.resolve(native(call));
       try {

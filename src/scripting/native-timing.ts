@@ -8,8 +8,7 @@
 // handed to the game's main thread, and the script waits for it there: it runs in the next
 // frame (the Creation Kit wiki's threading notes: a call that must sync with the game takes a
 // frame). So a loop of object natives runs a frame a call, as in the game. The handed calls
-// begin in the next frame's VM update, in order, while its share of the budget lasts
-// (scheduler.ts mainThread).
+// begin in the next frame's VM update, in order (scheduler.ts mainThread).
 // Platform-independent.
 
 /** The natives that run on the script's thread at once, by "script.function" in lower case. */

@@ -68,9 +68,7 @@ As the Creation Kit wiki's "Threading Notes (Papyrus)" describe them (`papyrus-v
   fills and registrations, the inventory event filters, Enable / DisableNoWait, the profiling
   switches); every other call is handed to the main thread, and its thread waits for the next
   frame (keeping its own object's lock), so a loop of object natives runs a frame a call. The
-  handed calls begin in that frame's VM update in the order they came, the first at once, each
-  next one when the one before has begun, while the update's share (0.9 of fUpdateBudgetMS)
-  lasts; the rest wait for the next frame, still first in line. Latent natives (Wait, AddItem,
+  handed calls begin in that frame's VM update in the order they came. TODO(M13): the engine begins them only while the update's share (0.9 of fUpdateBudgetMS) lasts; our natives cost far more time than its own, so a share of wall time would starve the scripts and make the headless sim depend on the machine: all begin in the next frame. Latent natives (Wait, AddItem,
   Disable, Cast, ...) then wait for what they started. Without frames (Node tools) nothing
   waits. MQ101's dunCGDragonVoiceStormCall
   (magicProjectileStormScript: an OnUpdate with some ten such natives, then fRecast) sent a
