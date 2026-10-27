@@ -1048,6 +1048,8 @@ export class Player implements Camera {
       }
     }
     character.step(seconds);
+    // Standing on a turning body (a platform, a lift), it turns with it.
+    this.yaw += character.carriedTurn;
     // Landed from a fall (not in water): its height, for falling damage (GameSession).
     if (character.landedFrom !== undefined) this.onLanded?.(character.landedFrom);
     if (border) {

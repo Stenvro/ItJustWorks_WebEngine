@@ -853,6 +853,14 @@ export class PhysicsWorld {
     return this.#owners.get(collider.handle);
   }
 
+  /**
+   * A simulated body's linear velocity before the last step (Havok units per second): how it came
+   * at what it touched in that step, before the contacts' response; else its velocity now.
+   */
+  velocityBefore(body: RAPIER.RigidBody): RAPIER.Vector {
+    return this.#velocities.get(body.handle) ?? body.linvel();
+  }
+
   /** A filter for queries and the character controller: colliders `layer` collides with. */
   filterFor(layer: number): (collider: RAPIER.Collider) => boolean {
     // The ragdolls' one-sided copies of meshes are not surfaces of their own.

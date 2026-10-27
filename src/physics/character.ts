@@ -166,6 +166,118 @@ function along(
 
 const toHavok = (v: number): number => v / HAVOK_SCALE;
 
+/**
+ * The mass a character's controller pushes back with (kg), against a moving body's
+ * (pushedSpeed). TODO(M13): the engine's character proxy mass is not documented.
+ */
+export const ACTOR_MASS = 100;
+/** The most a moving body speeds a character it hits (game units per second). */
+const PUSHED_MAX_SPEED = 400;
+/** How fast a push dies away (per second: its speed falls by e every 1/PUSH_DAMPING seconds). */
+const PUSH_DAMPING = 6;
+/** A body pushes from contacts at most this far apart (Havok units: the narrow phase's margin). */
+const PUSH_CONTACT = 0.02;
+/** How far under its feet a moving body carries a character (game units). */
+const CARRIER_REACH = 4;
+/** A carrier moved less than this (Havok units, radians) since its last step did not move. */
+const CARRIER_STILL = 1e-5;
+
+/**
+ * The speed (game units per second, along the push) a body closing on a character at `closing`
+ * gives it: the character's share of an elastic blow between the two masses, never faster than
+ * the body itself, held to PUSHED_MAX_SPEED. TODO(M13): Havok's proxy's own response is not known.
+ */
+export function pushedSpeed(closing: number, bodyMass: number, actorMass: number): number {
+  if (!(closing > 0) || !(bodyMass > 0)) return 0;
+  const share = Math.min(1, (2 * bodyMass) / (bodyMass + Math.max(1e-3, actorMass)));
+  return Math.min(PUSHED_MAX_SPEED, closing * share);
+}
+
+/** A body's pose (Havok units). */
+interface Pose {
+  readonly at: RAPIER.Vector;
+  readonly turn: RAPIER.Rotation;
+}
+
+function multiply(a: RAPIER.Rotation, b: RAPIER.Rotation): RAPIER.Rotation {
+  return {
+    x: a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+    y: a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+    z: a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+    w: a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
+  };
+}
+
+const conjugate = (q: RAPIER.Rotation): RAPIER.Rotation => ({ x: -q.x, y: -q.y, z: -q.z, w: q.w });
+
+function rotate(q: RAPIER.Rotation, v: RAPIER.Vector): RAPIER.Vector {
+  // v + 2w(q × v) + 2 q × (q × v)
+  const cx = q.y * v.z - q.z * v.y;
+  const cy = q.z * v.x - q.x * v.z;
+  const cz = q.x * v.y - q.y * v.x;
+  return {
+    x: v.x + 2 * (q.w * cx + q.y * cz - q.z * cy),
+    y: v.y + 2 * (q.w * cy + q.z * cx - q.x * cz),
+    z: v.z + 2 * (q.w * cz + q.x * cy - q.y * cx),
+  };
+}
+
+/** The turn about the up axis (radians, counter-clockwise seen from above) of a rotation. */
+const yawOf = (q: RAPIER.Rotation): number =>
+  Math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z));
+
+/** Where a point on a body at `from` is once the body is at `to`. */
+function carryPoint(from: Pose, to: Pose, point: RAPIER.Vector): RAPIER.Vector {
+  const r = rotate(multiply(to.turn, conjugate(from.turn)), {
+    x: point.x - from.at.x,
+    y: point.y - from.at.y,
+    z: point.z - from.at.z,
+  });
+  return { x: to.at.x + r.x, y: to.at.y + r.y, z: to.at.z + r.z };
+}
+
+/** The turn about the up axis from one pose to another (radians, counter-clockwise). */
+const yawBetween = (from: Pose, to: Pose): number => yawOf(multiply(to.turn, conjugate(from.turn)));
+
+/**
+ * The pose a body has at the end of the coming step of `seconds`: a keyframed body its next
+ * keyframe (where its animation or mover sets it), else where its velocity takes it.
+ */
+function poseAfter(body: RAPIER.RigidBody, seconds: number): Pose {
+  if (body.bodyType() === RAPIER.RigidBodyType.KinematicPositionBased) {
+    return { at: body.nextTranslation(), turn: body.nextRotation() };
+  }
+  const at = body.translation();
+  const turn = body.rotation();
+  const com = body.worldCom();
+  const v = body.linvel();
+  const w = body.angvel();
+  const angle = Math.hypot(w.x, w.y, w.z) * seconds;
+  const s = angle > 1e-9 ? Math.sin(angle / 2) / (angle / seconds) : 0;
+  const spin = { x: w.x * s, y: w.y * s, z: w.z * s, w: Math.cos(angle / 2) };
+  const r = rotate(spin, { x: at.x - com.x, y: at.y - com.y, z: at.z - com.z });
+  return {
+    at: {
+      x: com.x + v.x * seconds + r.x,
+      y: com.y + v.y * seconds + r.y,
+      z: com.z + v.z * seconds + r.z,
+    },
+    turn: multiply(spin, turn),
+  };
+}
+
+function samePose(a: Pose, b: Pose): boolean {
+  return (
+    Math.abs(a.at.x - b.at.x) < CARRIER_STILL &&
+    Math.abs(a.at.y - b.at.y) < CARRIER_STILL &&
+    Math.abs(a.at.z - b.at.z) < CARRIER_STILL &&
+    Math.abs(
+      a.turn.x * b.turn.x + a.turn.y * b.turn.y + a.turn.z * b.turn.z + a.turn.w * b.turn.w,
+    ) >
+      1 - CARRIER_STILL
+  );
+}
+
 export class CharacterBody {
   readonly physics: PhysicsWorld;
   readonly shape: CharacterShape;
@@ -227,6 +339,21 @@ export class CharacterBody {
   #seekFailed: { at: RAPIER.Vector; x: number; y: number; steps: number } | undefined;
   /** Something below the shape touched it in the last step (ground, a slope, a step). */
   #below = false;
+  /**
+   * The moving body it stands on (keyframed: a lift, a turning platform, a cart's bed; or
+   * simulated) and the pose of it that it was carried to so far: the engine's character proxy
+   * moves with the velocity of the surface under it.
+   */
+  #carrier: { body: RAPIER.RigidBody; collider: RAPIER.Collider; pose: Pose } | undefined;
+  /**
+   * How much the body it stands on turned it in the last step (radians, as the game's headings
+   * go: clockwise seen from above): its owner adds it to the actor's heading.
+   */
+  carriedTurn = 0;
+  /** The speed a moving body that hit it gave it, dying away (game units per second). */
+  #pushed: [number, number] = [0, 0];
+  /** The mass it pushes back with against moving bodies (kg; pushedSpeed). */
+  mass = ACTOR_MASS;
 
   constructor(
     physics: PhysicsWorld,
@@ -402,6 +529,8 @@ export class CharacterBody {
     this.verticalSpeed = 0;
     this.#fallTop = undefined;
     this.landedFrom = undefined;
+    this.#carrier = undefined;
+    this.#pushed = [0, 0];
     this.#body.setTranslation(this.#center(feet), true);
     this.#body.setNextKinematicTranslation(this.#center(feet));
   }
@@ -416,6 +545,8 @@ export class CharacterBody {
     this.verticalSpeed = 0;
     this.#fallTop = undefined;
     this.landedFrom = undefined;
+    this.#carrier = undefined;
+    this.carriedTurn = 0;
     this.#body.setNextKinematicTranslation(this.#center(feet));
   }
 
@@ -623,6 +754,25 @@ export class CharacterBody {
     // marker where an NPC stands), first out of what it overlaps, as the character proxy
     // recovers from penetration: the controller does not move a shape out of one it is in.
     if (this.#offActor) this.recover();
+    // Carried by what it stands on (#carrier): first by what that moved since its last step (a
+    // script set it there: TranslateTo, SetPosition), so the shape stands on it again.
+    this.carriedTurn = 0;
+    const carrier =
+      this.#carrier?.body.isValid() === true && !this.swimming ? this.#carrier : undefined;
+    this.#carrier = undefined;
+    const carrierNow: Pose | undefined = carrier && {
+      at: carrier.body.translation(),
+      turn: carrier.body.rotation(),
+    };
+    if (carrier && carrierNow && !samePose(carrier.pose, carrierNow)) {
+      const to = carryPoint(carrier.pose, carrierNow, this.#body.translation());
+      this.#body.setTranslation(to, true);
+      this.#body.setNextKinematicTranslation(to);
+      this.physics.world.propagateModifiedBodyPositionsToColliders();
+      this.carriedTurn -= yawBetween(carrier.pose, carrierNow);
+    }
+    // Moving bodies that hit it push it (#takePushes).
+    this.#takePushes(carrier?.body, seconds);
     const gravity = -this.physics.world.gravity.z * HAVOK_SCALE;
     if (this.swimming) {
       this.#jumpSpeed = 0;
@@ -648,8 +798,8 @@ export class CharacterBody {
     const off = this.#offActor;
     const slide = off ? Math.max(OFF_ACTOR_SPEED, -this.verticalSpeed) : 0;
     const desired = {
-      x: toHavok((this.velocity[0] + (off ? off[0] * slide : 0)) * seconds),
-      y: toHavok((this.velocity[1] + (off ? off[1] * slide : 0)) * seconds),
+      x: toHavok((this.velocity[0] + this.#pushed[0] + (off ? off[0] * slide : 0)) * seconds),
+      y: toHavok((this.velocity[1] + this.#pushed[1] + (off ? off[1] * slide : 0)) * seconds),
       z: toHavok(this.verticalSpeed * seconds),
     };
     // On stairs (surfaces of a stair material) whole steps are climbed; elsewhere only what
@@ -781,6 +931,27 @@ export class CharacterBody {
     if (this.#grounded && this.verticalSpeed < 0) this.verticalSpeed = 0;
     const current = this.#body.translation();
     const next = { x: current.x + moved.x, y: current.y + moved.y, z: current.z + moved.z };
+    // What it stands on, where everything is now (before this step moves the bodies).
+    const standing =
+      this.#grounded && !this.swimming ? this.#findCarrier(next, predicate, seconds) : undefined;
+    // Then by what the body it stands on does in this step (its next keyframe, its velocity),
+    // as far as nothing else stops the shape.
+    // TODO(M13): leaving it (a jump, a step off) the actor does not keep its velocity.
+    if (standing) {
+      const now = { at: standing.body.translation(), turn: standing.body.rotation() };
+      const to = carryPoint(now, standing.pose, next);
+      const carried = this.#carryBlocked(
+        next,
+        { x: to.x - next.x, y: to.y - next.y, z: to.z - next.z },
+        standing.collider,
+        predicate,
+      );
+      next.x += carried.x;
+      next.y += carried.y;
+      next.z += carried.z;
+      this.carriedTurn -= yawBetween(now, standing.pose);
+    }
+    this.#carrier = standing;
     this.#body.setNextKinematicTranslation(next);
     this.#previous = this.#feet;
     this.#feet = [
@@ -806,6 +977,139 @@ export class CharacterBody {
       this.landedFrom = Math.max(0, this.#fallTop - z);
       this.#fallTop = undefined;
     }
+  }
+
+  /**
+   * The moving body (keyframed or simulated; not fixed, not an actor's) the shape stands on with
+   * its centre at `center` (Havok units), if any, and the pose that body has by the end of the
+   * coming step (poseAfter).
+   */
+  #findCarrier(
+    center: RAPIER.Vector,
+    predicate: (collider: RAPIER.Collider) => boolean,
+    seconds: number,
+  ): { body: RAPIER.RigidBody; collider: RAPIER.Collider; pose: Pose } | undefined {
+    const hit = this.physics.world.castShape(
+      center,
+      NO_ROTATION,
+      { x: 0, y: 0, z: -1 },
+      this.#collider.shape,
+      SKIN,
+      toHavok(CARRIER_REACH),
+      true,
+      RAPIER.QueryFilterFlags.EXCLUDE_SENSORS | RAPIER.QueryFilterFlags.EXCLUDE_FIXED,
+      undefined,
+      this.#collider,
+      undefined,
+      (collider) => predicate(collider) && !this.#otherActor(collider),
+    );
+    const body = hit?.collider.parent();
+    if (!hit || !body || hit.normal1.z <= 0.05) return undefined;
+    return { body, collider: hit.collider, pose: poseAfter(body, seconds) };
+  }
+
+  /**
+   * How much of `move` (Havok units) the shape at `center` gets being carried, before something
+   * other than its carrier (and the placement's other moving bodies: a lift's cage), and other
+   * actors (carried as well) stops it: a lift's shaft, a wall a turning platform passes. Ground it
+   * slides over (facing up) does not stop it.
+   */
+  #carryBlocked(
+    center: RAPIER.Vector,
+    move: RAPIER.Vector,
+    carrier: RAPIER.Collider,
+    predicate: (collider: RAPIER.Collider) => boolean,
+  ): RAPIER.Vector {
+    const length = Math.hypot(move.x, move.y, move.z);
+    if (length < 1e-9) return move;
+    const parent = carrier.parent();
+    const placement = this.physics.ownerOf(carrier);
+    const carried = (collider: RAPIER.Collider): boolean => {
+      const body = collider.parent();
+      if (!body || body.isFixed()) return false;
+      if (body.handle === parent?.handle) return true;
+      const owner = this.physics.ownerOf(collider);
+      return (
+        placement !== undefined &&
+        owner?.kind === placement.kind &&
+        owner.reference === placement.reference
+      );
+    };
+    const hit = this.physics.world.castShape(
+      center,
+      NO_ROTATION,
+      { x: move.x / length, y: move.y / length, z: move.z / length },
+      this.#collider.shape,
+      SKIN,
+      length,
+      false,
+      RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+      undefined,
+      this.#collider,
+      undefined,
+      (collider) => predicate(collider) && !carried(collider) && !this.#otherActor(collider),
+    );
+    if (!hit || hit.normal1.z > 0.7) return move;
+    const share = Math.max(0, hit.time_of_impact) / length;
+    return { x: move.x * share, y: move.y * share, z: move.z * share };
+  }
+
+  /**
+   * Simulated bodies that came at it in the last step (a rolling barrel, a swinging log trap)
+   * push it along their way, by their speed and mass against its own (pushedSpeed); what pushed
+   * it dies away (PUSH_DAMPING). Not the body it stands on, its own bodies or projectiles.
+   */
+  #takePushes(support: RAPIER.RigidBody | undefined, seconds: number): void {
+    const decay = Math.exp(-PUSH_DAMPING * seconds);
+    const pushed = this.#pushed;
+    pushed[0] *= decay;
+    pushed[1] *= decay;
+    if (Math.hypot(pushed[0], pushed[1]) < 1) pushed.fill(0);
+    if (!this.#collider.isEnabled()) return;
+    const world = this.physics.world;
+    const narrow = world.narrowPhase;
+    const own = this.#collider.handle;
+    const center = this.#body.translation();
+    narrow.contactPairsWith(own, (handle) => {
+      const other = world.getCollider(handle) as RAPIER.Collider | null;
+      const body = other?.parent();
+      if (!other || !body?.isDynamic() || body.handle === support?.handle) return;
+      if (this.#ownBody(other) || this.physics.layerOf(other) === Layer.projectile) return;
+      const contact: { touching: boolean; point: RAPIER.Vector | undefined } = {
+        touching: false,
+        point: undefined,
+      };
+      narrow.contactPair(own, handle, world.bodies, (manifold) => {
+        for (let k = 0; k < manifold.numContacts(); k++) {
+          if (manifold.contactDist(k) < PUSH_CONTACT) contact.touching = true;
+        }
+        if (manifold.numSolverContacts() > 0) {
+          contact.point = manifold.solverContactPoint(0) ?? contact.point;
+        }
+      });
+      if (!contact.touching) return;
+      const com = body.worldCom();
+      const dx = center.x - com.x;
+      const dy = center.y - com.y;
+      const length = Math.hypot(dx, dy);
+      if (length < 1e-6) return;
+      const nx = dx / length;
+      const ny = dy / length;
+      const at = contact.point ?? center;
+      const v = this.physics.velocityBefore(body);
+      const w = body.angvel();
+      const rx = at.x - com.x;
+      const ry = at.y - com.y;
+      const rz = at.z - com.z;
+      const closing =
+        ((v.x + w.y * rz - w.z * ry) * nx + (v.y + w.z * rx - w.x * rz) * ny) * HAVOK_SCALE;
+      const speed = pushedSpeed(closing, body.mass(), this.mass);
+      const along = pushed[0] * nx + pushed[1] * ny;
+      if (speed > along) {
+        pushed[0] += (speed - along) * nx;
+        pushed[1] += (speed - along) * ny;
+      }
+    });
   }
 
   /**
