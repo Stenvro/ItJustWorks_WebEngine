@@ -21,6 +21,7 @@ import { DialogueIndex, voiceFileName } from '../../world/dialogue.ts';
 import { ObjectHandle } from '../values.ts';
 import { PLAYER_BASE, PLAYER_REF } from './forms.ts';
 import { questText } from './quest-text.ts';
+import { refill } from './runtime-save.ts';
 import type { ScriptRuntime } from './runtime.ts';
 import { failsForSpeaker, type SpeakerFacts } from './speaker-filter.ts';
 
@@ -57,13 +58,26 @@ const RUMORS = 'RUMO';
 export class DialogueEngine {
   readonly #runtime: ScriptRuntime;
   readonly index: DialogueIndex;
-  /** Infos said with Say Once, topics the player has chosen (TODO(M12): in the save). */
+  /** Infos said with Say Once, topics the player has chosen (in the save). */
   readonly #saidOnce = new Set<number>();
   readonly #chosen = new Set<number>();
 
   constructor(runtime: ScriptRuntime) {
     this.#runtime = runtime;
     this.index = new DialogueIndex(runtime.forms.db);
+  }
+
+  /** What the save keeps: infos said once, topics chosen, what topics said before repeating. */
+  saveData(): unknown {
+    return { saidOnce: this.#saidOnce, chosen: this.#chosen, saidInTopic: this.#saidInTopic };
+  }
+
+  loadData(data: unknown): void {
+    const saved = data as
+      { saidOnce?: unknown; chosen?: unknown; saidInTopic?: unknown } | undefined;
+    refill(this.#saidOnce, saved?.saidOnce);
+    refill(this.#chosen, saved?.chosen);
+    refill(this.#saidInTopic, saved?.saidInTopic);
   }
 
   /**
