@@ -78,7 +78,7 @@ These run through every area and explain most of what breaks in play.
 | Save and load               | partial   | own format (docs/formats/save.md); threads in a native's promise, translations, hazards, projectiles not saved; .ess import (M12)                                                       |
 | Stats, skills, actor values | complete  | tracked-stats event                                                                                                                                                                     |
 | Audio                       | partial   | the skills menu does not call setStatsMenu yet (SMSC mute) (pause categories by DOBJ, sounds held in menus and on the loading screen, Slow Time by DOBJ TSSC: done)                     |
-| Load order, settings        | partial   | plugins.txt and the user's INI files (M12)                                                                                                                                              |
+| Load order, settings        | partial   | a master loading after its dependent is only reported; the launcher's detail presets (plugin screen, Plugins.txt import, missing masters, plugin archives, layered INI files: done)     |
 
 ### AI
 

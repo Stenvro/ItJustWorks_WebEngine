@@ -22,6 +22,8 @@ import {
   resolveGameFolder,
 } from './vfs/browser/data-folder.ts';
 import { formatModIndex } from './vfs/load-order.ts';
+import { loadUserFiles } from './vfs/browser/user-files.ts';
+import { PluginScreen } from './shell/plugin-screen.ts';
 import { doorDestination, type Teleport } from './world/cell-loader.ts';
 import { CELL_SIZE } from './world/land.ts';
 import { Vfs } from './vfs/vfs.ts';
@@ -133,12 +135,27 @@ const ui = {
     detail: byId('quest-detail', HTMLElement),
   },
   fatal: byId('fatal', HTMLDivElement),
+  plugins: {
+    title: byId('plugins-title', HTMLElement),
+    list: byId('plugin-list', HTMLOListElement),
+    apply: byId('plugins-apply', HTMLButtonElement),
+    importPlugins: byId('plugins-import', HTMLButtonElement),
+    importIni: byId('ini-import', HTMLButtonElement),
+    importPrefs: byId('prefs-import', HTMLButtonElement),
+    forgetIni: byId('ini-forget', HTMLButtonElement),
+    note: byId('plugins-note', HTMLElement),
+  },
 };
 
 /** Starts a game session for a mounted VFS (set up once the GPU is ready). */
 let connectSession: ((vfs: Vfs) => Promise<void>) | undefined;
 
 const terminal = new DomTerminal(ui.log);
+/** The mounted game folder, mounted again when the plugin screen's changes are applied. */
+let currentFolder: GameFolder | undefined;
+const pluginScreen = new PluginScreen(ui.plugins, terminal, async () => {
+  if (currentFolder) await mountGame(currentFolder);
+});
 const hexId = (formId: number): string => formId.toString(16).toUpperCase().padStart(8, '0');
 const numberFormat = new Intl.NumberFormat('en-US');
 
@@ -370,10 +387,17 @@ async function useFolder(handle: FileSystemDirectoryHandle, isNewChoice: boolean
 async function mountGame(folder: GameFolder): Promise<void> {
   ui.status.textContent = 'mounting';
   const start = performance.now();
-  const vfs = await Vfs.mount(folder);
+  // The player's plugin list and INI files, kept in the browser (the plugin screen).
+  const userFiles = await loadUserFiles().catch((error: unknown) => {
+    terminal.log('warn', `stored plugin list and INI files: ${describeError(error)}`, 'warn');
+    return {};
+  });
+  const vfs = await Vfs.mount(folder, userFiles);
   const elapsed = performance.now() - start;
   await currentVfs?.close();
   currentVfs = vfs;
+  currentFolder = folder;
+  pluginScreen.show(vfs, userFiles);
 
   for (const entry of vfs.loadOrder) {
     terminal.log('esm', `${formatModIndex(entry).padEnd(6)} ${entry.name}`);
@@ -804,6 +828,7 @@ async function main(): Promise<void> {
   ui.menuPlay.addEventListener('click', () => {
     if (!session || play) return;
     showScreen('launcher');
+    launcher.useIni(session.vfs.ini);
     launcher.show();
   });
   launcher.onExit = () => {
