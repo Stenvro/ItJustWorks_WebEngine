@@ -201,6 +201,10 @@ export interface ActorMoversOptions {
   readonly session: GameSession;
   /** The player bumped into an actor (its idle, its line). */
   readonly onBump?: (actor: number, bump: Bump) => void;
+  /** The player standing in an actor's way kept it from going on: it asks them to move. */
+  readonly blockedByPlayer?: (actor: number) => void;
+  /** Others kept an actor from going on (bUseMovementBlockedPackage): it stands `seconds`. */
+  readonly movementBlocked?: (actor: number, seconds: number) => void;
   readonly terminal: Terminal;
   /** An actor walked into (true) or out of a trigger volume of a reference. */
   readonly onTrigger?: (trigger: number, actor: number, entered: boolean) => void;
@@ -278,6 +282,8 @@ interface Travel {
   /** How long others in its way have kept it from going on (seconds), and the last that did. */
   blockedFor: number;
   blockedBy: { readonly at: Vec3; readonly radius: number } | undefined;
+  /** It asked the player standing in its way to move (once a travel, before it goes round). */
+  askedPlayer: boolean;
   /** The navmesh obstacles' version its path was searched at. */
   obstacles: number;
 }
@@ -478,6 +484,7 @@ export class ActorMovers {
         speedMult: options.speedMult,
         blockedFor: 0,
         blockedBy: undefined,
+        askedPlayer: false,
         obstacles: this.#options.obstacles?.version ?? 0,
         done: (arrived) => {
           if (this.#travels.get(reference) !== travel) return;
@@ -709,6 +716,20 @@ export class ActorMovers {
     travel.blockedFor = stuck ? travel.blockedFor + step : 0;
     if (!blocker || travel.blockedFor <= most) return;
     travel.blockedFor = 0;
+    const reference = mover.staged.reference;
+    // The player standing in its way is asked to move (its ActorCollidewithActor line) before
+    // it goes round them. TODO(M13): the engine's own line and wait (ours: once a travel, one
+    // more fMaxTimeBlockedByActors).
+    const player = blocker.mover === undefined;
+    if (player && !travel.askedPlayer && Math.hypot(...blocker.velocity) < BLOCKED_SPEED) {
+      travel.askedPlayer = true;
+      this.#options.blockedByPlayer?.(reference);
+      return;
+    }
+    // bUseMovementBlockedPackage: the engine's Movement Blocked package stands it a while.
+    if (this.#options.session.ini.bool('General', 'bUseMovementBlockedPackage')) {
+      this.#options.movementBlocked?.(reference, most);
+    }
     // Its search keeps off the last one that blocked it (it moves on: only that one).
     const z = mover.character.feet[2];
     travel.blockedBy = {
