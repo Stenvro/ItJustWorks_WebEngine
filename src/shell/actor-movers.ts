@@ -514,6 +514,16 @@ export class ActorMovers {
     );
   }
 
+  /**
+   * The way still ahead of an actor on its travel: its path's points it has yet to reach (straight
+   * there: its destination), undefined while it travels nowhere (head tracking looks along it).
+   */
+  wayAhead(reference: number): readonly Vec3[] | undefined {
+    const travel = this.#travels.get(reference);
+    if (!travel) return undefined;
+    return travel.follower ? travel.follower.ahead : [travel.destination];
+  }
+
   /** One frame of an actor's travel: its path searched (again), followed, ended. */
   #travelFrame(mover: Mover, travel: Travel, seconds: number): void {
     const reference = mover.staged.reference;

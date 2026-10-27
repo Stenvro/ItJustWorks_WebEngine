@@ -13,8 +13,11 @@ import {
   HEAD_TRACK_KINDS,
   HEAD_TRACK_SETTINGS,
   HeadTracker,
+  LookPriority,
+  pathLookPoint,
   VANILLA_HEAD_TRACK,
   type HeadTrackKind,
+  type LookCandidate,
   type HeadTrackSettings,
   type LookTarget,
   type Vec3,
@@ -67,9 +70,12 @@ export class ActorLooks {
   /**
    * Each actor's choice of whom to look at when nothing else is asked of it (made every
    * fUpdateDelaySecondsMin–Max), the seconds to the next choice, and how long a new one is held
-   * (fUpdateDelayNewTargetSecondsMin–Max).
+   * (fUpdateDelayNewTargetSecondsMin–Max), and what it is worth (LookPriority).
    */
-  readonly #choices = new Map<number, { wait: number; chosen: number | undefined; hold: number }>();
+  readonly #choices = new Map<
+    number,
+    { wait: number; chosen: number | undefined; hold: number; priority: number }
+  >();
   /** The choices made this frame (at most iUpdateActorsPerFrame). */
   #chosenThisFrame = 0;
   /**
@@ -176,8 +182,13 @@ export class ActorLooks {
     if (chosen?.kind === 'script' && this.#restsFromScript(reference, dt)) chosen = undefined;
     else if (chosen?.kind !== 'script') this.#scriptLooks.delete(reference);
     if (chosen) return chosen;
-    // Its own choice: the player (once it has detected them) or another actor.
-    const other = this.#choices.get(reference)?.chosen;
+    // Its own choice: the player (once it has detected them) or another actor; walking its
+    // way, it looks along it unless someone speaks or the player is close (LookPriority).
+    const choice = this.#choices.get(reference);
+    const other = choice?.chosen;
+    const along = (choice?.priority ?? LookPriority.idle) < LookPriority.speaking;
+    const path = along ? this.#alongPath(staged) : undefined;
+    if (path) return { target: path, kind: 'default' };
     if (other === PLAYER_REF) {
       return this.#options.detects?.(reference, PLAYER_REF) !== false
         ? { target: PLAYER_REF, kind: 'default' }
@@ -187,6 +198,17 @@ export class ActorLooks {
     return seen && !seen.dead && !seen.visibility.hidden
       ? { target: seen.reference, kind: 'default' }
       : undefined;
+  }
+
+  /** Where an actor walking its travel's path looks: along it (pathLookPoint). */
+  #alongPath(staged: StagedActor): Vec3 | undefined {
+    const movers = this.#options.movers;
+    const reference = staged.reference;
+    if (movers.motion(reference)?.moving !== true) return undefined;
+    const way = movers.wayAhead(reference);
+    if (!way || way.length === 0) return undefined;
+    const head = headPosition(staged.placed);
+    return pathLookPoint(staged.position, head[2] - staged.position[2], way);
   }
 
   /**
@@ -233,7 +255,7 @@ export class ActorLooks {
     let choice = this.#choices.get(reference);
     if (!choice) {
       // The first choices spread over the interval (not all on one frame).
-      choice = { wait: Math.random() * max, chosen: undefined, hold: 0 };
+      choice = { wait: Math.random() * max, chosen: undefined, hold: 0, priority: 0 };
       this.#choices.set(reference, choice);
     }
     choice.wait -= dt;
@@ -247,12 +269,15 @@ export class ActorLooks {
     const eye = this.#world?.player?.eye;
     const before = choice.chosen;
     let chosen: number | undefined;
+    let priority: number = LookPriority.idle;
     if (
       !eye ||
       Math.hypot(eye[0] - head[0], eye[1] - head[1], eye[2] - head[2]) <= reach.fromPlayer
     ) {
       const detects = this.#options.detects;
-      const candidates = all
+      const session = this.#options.session;
+      const talking = session.scriptWorld.talking;
+      const candidates: LookCandidate[] = all
         .filter(
           (other) =>
             other !== staged &&
@@ -260,20 +285,39 @@ export class ActorLooks {
             !other.visibility.hidden &&
             detects?.(reference, other.reference) !== false,
         )
-        .map((other) => ({ reference: other.reference, head: headPosition(other.placed) }));
+        .map((other) => ({
+          reference: other.reference,
+          head: headPosition(other.placed),
+          interest: {
+            speaking: talking?.(other.reference) !== undefined,
+            moving: this.#options.movers.motion(other.reference)?.moving === true,
+          },
+        }));
       if (eye && detects?.(reference, PLAYER_REF) !== false) {
-        candidates.push({ reference: PLAYER_REF, head: eye });
+        candidates.push({
+          reference: PLAYER_REF,
+          head: eye,
+          interest: {
+            player: true,
+            talking: session.scriptsReady?.dialogueSpeaker !== undefined,
+            speaking: talking?.(PLAYER_REF) !== undefined,
+          },
+        });
       }
-      // A new choice held a while stays while it still may be looked at.
-      const kept =
-        choice.hold > 0 && before !== undefined
-          ? candidates.filter((candidate) => candidate.reference === before)
-          : [];
-      chosen =
-        chooseLookActor(head, staged.heading, kept, reach.others) ??
-        chooseLookActor(head, staged.heading, candidates, reach.others);
+      // A new choice held a while stays while it still may be looked at, and none worth more
+      // has come (chooseLookActor's keep).
+      const best = chooseLookActor(
+        head,
+        staged.heading,
+        candidates,
+        reach.others,
+        choice.hold > 0 ? before : undefined,
+      );
+      chosen = best?.reference;
+      priority = best?.priority ?? LookPriority.idle;
     }
     choice.chosen = chosen;
+    choice.priority = priority;
     if (chosen === undefined || chosen === before) return;
     choice.hold =
       ini.number('HeadTracking', 'fUpdateDelayNewTargetSecondsMin') +

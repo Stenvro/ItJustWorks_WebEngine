@@ -526,6 +526,8 @@ export class ActorPackages {
   get current():
     | {
         readonly id: number;
+        /** PKDT package type (18 a package; 9 an Ambush: detection's ambush). */
+        readonly type: number;
         readonly procedure: string | undefined;
         readonly flags: number;
         readonly interrupts: number;
@@ -538,6 +540,7 @@ export class ActorPackages {
     const flags = packageFlags(running.pack, running.overrides);
     return {
       id: running.id,
+      type: running.pack.type,
       procedure: running.procedure,
       flags: flags.flags,
       interrupts: flags.interrupts,

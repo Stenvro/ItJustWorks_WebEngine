@@ -1182,8 +1182,13 @@ What the actors notice (`src/ai/detection.ts`, `src/ai/detection-states.ts`,
   Ignore Running During Detection is the target, the observer the second): Ignore Running
   takes its running away, and its moving while it sneaks. Its sneaking counts whenever it
   sneaks (in combat too). TODO(M13): the perks' conditions on the observer are not given (one
-  profile serves all observers), and which packages are ambushes (the engine's package type 9)
-  is not read yet. Skyrim.esm stores 18 fSneak\* settings and fDetectionSneakLightMod; the
+  profile serves all observers). An observer running an Ambush package (PKDT type 9) weighs
+  whom it is hostile to as its ambush's target, anyone else as not (`ambushOf`; TODO(M13): the
+  package's own target is not read). Skyrim.esm has no such package: its ambushes (draugr in
+  sarcophagi, creatures in alcoves) are Sleep or Sit packages in ambush furniture, conditioned
+  on Variable01 0, that masterAmbushScript ends; asleep, they hear the player near and climb out
+  through the furniture's exit to fight (tests/conformance/ai/ambush.test.ts). The light on a
+  target counts a placed light only when nothing stands between them. Skyrim.esm stores 18 fSneak\* settings and fDetectionSneakLightMod; the
   others are the engine's built-in values (fSneakEquippedWeightBase 12, Mult 0.5,
   fSneakLightMoveMult 0.01, fSneakLightRunMult 0.2, fSneakCombatMod −0.4, fDetectionViewCone
   190, ...: `node tools/detection-info.ts --settings`). In daylight outside a bandit (Sneak 25)
