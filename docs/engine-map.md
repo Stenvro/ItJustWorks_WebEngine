@@ -75,7 +75,7 @@ These run through every area and explain most of what breaks in play.
 | Script events               | partial   | not produced: OnAnimationEventUnregistered; 52 of 68 not yet checked in the simulation                                                                                                  |
 | Event sources               | partial   | hub kinds without a producer: active effects, perk entries, quest init, scenes, topic infos, loading; 7 sources without a kind; the stats' sources besides kills; resets/traps done     |
 | Story manager               | partial   | most raised types not yet checked in the simulation; the engine's own raise sites of Bribe/Flatter/Intimidate (the counts), Player Gets Favor (SetDoingFavor) and Quest Start's members |
-| Save and load               | partial   | own format (docs/formats/save.md); threads in a native's promise, translations, hazards, projectiles not saved; .ess import (M12)                                                       |
+| Save and load               | partial   | own format (docs/formats/save.md); threads in a native's promise, translations not saved; .ess import (M12)                                                                             |
 | Stats, skills, actor values | complete  | tracked-stats event                                                                                                                                                                     |
 | Audio                       | partial   | the skills menu does not call setStatsMenu yet (SMSC mute) (pause categories by DOBJ, sounds held in menus and on the loading screen, Slow Time by DOBJ TSSC: done)                     |
 | Load order, settings        | partial   | plugins.txt and the user's INI files (M12)                                                                                                                                              |
@@ -121,17 +121,17 @@ These run through every area and explain most of what breaks in play.
 
 ### Magic, effects, perks
 
-| System                  | Status  | Main gaps                                                                                   |
-| ----------------------- | ------- | ------------------------------------------------------------------------------------------- |
-| Casting                 | partial | MQ101's storm rate in the sim; concentration refusal, NPC ward hold, Touch reach (unread)   |
-| Magicka cost            | partial | an NPC's cast in the sim; the costliest effect that picks the school                        |
-| Active effects          | partial | displacement rules, the conditions' interval, concentration effects a frame at a time       |
-| Archetypes              | partial | Magelight, invisibility look, summon navmesh placement, telekinesis damage, cloak pulse     |
-| Skill use               | partial | staffs with perks, a lasting effect by its first frame                                      |
-| Enchanting              | partial | no glow on enchanted items; the charge without EAMT                                         |
-| Projectiles, explosions | partial | impact force, cone sweep, lobber bounce, line of sight for areas, an explosion's own damage |
-| Visual effects          | partial | effect shaders and art only on actors; RFCT visuals unread                                  |
-| Perks                   | partial | 16 entry points unused by vanilla (mods)                                                    |
+| System                  | Status  | Main gaps                                                                                                           |
+| ----------------------- | ------- | ------------------------------------------------------------------------------------------------------------------- |
+| Casting                 | partial | MQ101's storm rate in the sim; concentration refusal, Touch reach (unread); NPC ward past its minimum               |
+| Magicka cost            | partial | an NPC's cast in the sim                                                                                            |
+| Active effects          | partial | displacement rules, the conditions' interval, concentration effects a frame at a time                               |
+| Archetypes              | partial | invisibility's refraction shimmer (dithered now), a summon's other place when the way is blocked, Magelight's limit |
+| Skill use               | partial | staffs with perks, a lasting effect by its first frame                                                              |
+| Enchanting              | partial | no glow on enchanted items; the charge without EAMT                                                                 |
+| Projectiles, explosions | partial | a cone's push as its front passes, a lobber's slide on a slope; cone waves and stuck Magelights not saved           |
+| Visual effects          | partial | effect shaders and art only on actors; RFCT visuals unread                                                          |
+| Perks                   | partial | 16 entry points unused by vanilla (mods)                                                                            |
 
 ### Animation and bodies
 

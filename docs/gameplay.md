@@ -447,7 +447,8 @@ the player in a runtime on the game data, `--audit` reads every record).
   that holds it (its NAM0 form), with the Soul Captured sound (DOBJ SCSD).
 - Cloaks put their spell on the other actors within their magnitude in feet every [General]
   fCloakEffectUpdateInterval (0.5 s; observed in the original: the radius is the
-  magnitude). Invisibility ends as its actor activates. An actor's effects end as it dies but
+  magnitude), anew on an actor only once the last it put there has ended (Flame Cloak's 1 s burn
+  is not restarted every interval). Invisibility ends as its actor activates. An actor's effects end as it dies but
   No Death Dispel ones.
 - Accumulate Magnitude (observed in the original): a ward (WardPower) grows by
   (fMagicWardPowerMaxMult × its caster's skill in its school + fMagicWardPowerMaxBase) × its
@@ -459,8 +460,10 @@ the player in a runtime on the game data, `--audit` reads every record).
   both actors' radii (half the wider side of their bounds) and half of
   fSummonedCreatureSearchRadius (512), facing it; a Target Location spell's where it landed,
   unless that is within fSummonDistanceCheckThreshold (750) and nearer than the place ahead.
-  TODO(M13): the engine then looks for the navmesh near that place, the way clear of the
-  summoner's line of sight; fMagicSummonMaxAppearTime (4 s: the summon appears at the latest
+  The engine then looks for the navmesh near that place, the way to it clear: the summon stands
+  as far toward it as it could walk straight on the navmeshes (src/ai/pathfinding.ts
+  summonPlace; TODO(M13): the engine's search elsewhere when the way is blocked);
+  fMagicSummonMaxAppearTime (4 s: the summon appears at the latest
   then, whatever its placement art does) is not used.
 - Slow Time (src/shell/time-flow.ts): its magnitude on the player (the slowest) is the world's
   clock: the frame's game clock (main.ts: animations, physics, the actors, particles, what
@@ -485,9 +488,13 @@ the player in a runtime on the game data, `--audit` reads every record).
   fMagicTelekinesiDistanceMult); held there its throw gathers fMagicTelekinesisThrowAccelerate
   (10) a second up to fMagicTelekinesisThrowMax (30). Let go held, it is thrown along the view at
   fMagicTelekinesisThrow (1000) plus that (dual cast × fMagicTelekinesisDualCastThrowMult, 2);
-  its turning stopped; let go while pulled in, it stops. TODO(M13): the thrown object's damage
-  (fMagicTelekinesisDamageBase plus its collision's, × fMagicTelekinesisDamageMult or the dual
-  cast's, Mod Telekinesis Damage / Damage Mult). Grab Actor holds its target's ragdoll
+  its turning stopped; let go while pulled in, it stops. Thrown, it hurts the first living actor
+  its path meets within 5 s of the throw (TODO(M13): ours) (src/shell/player-casting.ts; observed
+  in the original: a hit made from the collision of an object telekinesis threw): its
+  collision's damage (none at vanilla speeds: "Physics damage") plus fMagicTelekinesisDamageBase
+  (5), × the throw's multiplier (fMagicTelekinesisDamageMult, dual cast ×
+  fMagicTelekinesisDualCastDamageMult 2: TODO(M13) inferred; Mod Telekinesis Damage Mult on it),
+  then the thrower's Mod Telekinesis Damage; the actor turns on the thrower. Grab Actor holds its target's ragdoll
   fMagicGrabActorMinDistance (120, Dawnguard.esm) before its caster, and flings it away with
   fMagicGrabActorThrowForce (15) as it ends (docs/ai.md, "Combat"; observed in the
   original; fMagicGrabActorRange and DrawSpeed's pull are not read: the engine never reads the
@@ -504,6 +511,8 @@ the player in a runtime on the game data, `--audit` reads every record).
 - What the world shows (src/shell/actor-effects.ts, WorldBridge.magicEffect): the hit shader
   (EFSH) and hit art (ARTO) on the target as the effect takes hold (with FX Persist while it
   lasts, else their own time once), the light of a Light effect over its shoulder (Candlelight;
+  Magelight's projectile that strikes a surface stays there, its model and its effect's light,
+  for the effect's duration as cast: projectile-flight.ts sticksAsLight, TODO(M13) how many stay;
   TODO(M13): where the engine floats it; fMagicLightForwardOffset, SideOffset and HeightOffset
   are registered but never read by the engine, original), the image-space modifier while an effect
   acts on the player (aimed at it: radial blur and depth of field that use their target), the
@@ -524,6 +533,11 @@ the player in a runtime on the game data, `--audit` reads every record).
   and coloured by the three colour keys over their lives, turning, in a frame of the texture's
   atlas (TODO(M13): Particle Animated's frame runs), through the particle palette. TODO(M13):
   holes (NAM7), addon models (DEBR), the ambient sound.
+- Invisibility (src/gameplay/magic/invisibility.ts; observed in the original): an invisible
+  actor is drawn veiled, dithered away as a distance fade is (the renderer's InstanceFade.veil),
+  all but fInvisibilityMinRefraction (0.01); the player all but fMagicPlayerMinimumInvisibility
+  (0.1), the least of their alpha the engine keeps. TODO(M13): the refraction shimmer through the
+  actor (fInvisibilityMaxRefraction) and the engine's fade in and out.
 - Art objects (ARTO) hang on the actor's skeleton: the art model's nodes follow the bones of
   their names each frame, its skinned shapes with them.
 - Detect Life shows its hit shader (LifeDetected's particles, through walls) on the living
@@ -601,7 +615,7 @@ Format/SPEL"; the game settings.
   24.6 at 100); the NPCs': fMagicCasterSkillCostBase, fMagicSkillCostScale,
   fMagicCasterSkillCostMult (0.005 the engine's, 0.5, 0.5: an NPC pays half at skill 0, a
   quarter at 50, 0.15 at 100, nothing from 200). The skill is the school of the costliest effect
-  (base cost × magnitude), with its fortifications; then the perks' Mod Spell Cost (the
+  (its effect item cost: casting.ts costliestEffectIndex), with its fortifications; then the perks' Mod Spell Cost (the
   schools' half-cost perks by the spell's casting perk, Fortify <School> through the skill boost
   perks: "Perks"). Dual cast: × fMagicDualCastingCostMult (2.8), only with the school's Dual
   Casting perk (Can Dual Cast Spell). The magic menu shows this cost.
@@ -620,8 +634,9 @@ Format/SPEL"; the game settings.
   fire. Concentration spells cast from their charge time on until let go or out of magicka.
   NPCs release a ready spell at once; a concentration spell they hold while it serves: at a
   target while it lives and stays within its projectile's reach (and the magicka lasts), one
-  without a target 2.5 s at most (TODO(M13): the engine's ward hold), a healing spell less once
-  their health is whole; UseMagic's for its cast time. The combat AI's spells, staffs, heals,
+  without a target 2.5 s at most, a ward at least the combat AI's fCombatMagicWardMinCastTime
+  (1.5 s) and then while a spell or arrow flies at it (projectile-flight.ts wardHeld; TODO(M13):
+  the AI's ward behaviour past its minimum), a healing spell less once their health is whole; UseMagic's for its cast time. The combat AI's spells, staffs, heals,
   potions, summons, wards and buffs: docs/ai.md, "Combat AI".
 - What shows (src/shell/actor-casting.ts, magic-projectiles.ts, magic-fx.ts): the casting art
   in the hand (MGEF casting art, on the player's hands while their magic is drawn; dual cast:
@@ -707,7 +722,9 @@ Format/SPEL"; the game settings.
   Recover effects, Calm, Telekinesis: `hold`) last on with each hit (`extendHeld`) rather than
   anew (a ward keeps what it has grown).
 - Areas: an effect with an area (feet) reaches the actors within it of where the spell landed
-  (each the effects whose area reaches it; TODO(M13): line of sight and SPIT 0x80000).
+  (each the effects whose area reaches it) that the point sees, as an explosion sees (below:
+  from the surface's buffer, a surface close before the actor not counting), unless the spell's
+  area ignores line of sight (SPIT 0x80000).
   A ward meets the hostile effects of a burst (an area's, an explosion's enchantment) whose point
   lies within half of fWardAngleForExplosions (90°) of its actor's facing (observed in the
   original; explosions.ts wardFacesBurst).
@@ -718,7 +735,9 @@ Format/SPEL"; the game settings.
   spell layer from the burst point moved fExplosionLOSBufferDistance (24) units off the surface
   it burst on (the hit's normal, else back along the flight) to the actor's middle, a surface
   met within fExplosionLOSBuffer (3) of the actor not counting (TODO(M13): the engine allows
-  that buffer only for an explosion facing straight down). Its knock-down flags (Always; By
+  that buffer only for an explosion facing straight down); its damage meets a ward facing the
+  burst as a hostile spell's does (absorbed up to the ward's strength, the rest past a broken
+  one). Its knock-down flags (Always; By
   Formula; both: anyone but the player) knock an actor down only where its share is above
   fExplosionForceKnockdownMinimum (0.15). Its force pushes each moving body within the radius
   (not falling off with distance): force × fGameplayImpulseScale (150) × the layer's
@@ -782,13 +801,21 @@ same aim; what differs is where they leave from and, for an NPC, what it aims at
   Correction keeps the caster's own aim. An NPC's arrow then strays by up to
   fBowNPCSpreadAngle (5°) times what its Archery lacks of 100 (none at 100), in a random direction
   around the aim; Always Hit shots fly onto the target.
+- Lobbers (the runes; CommonLibSSE GrenadeProjectile): meeting a surface a lobber bounces off it
+  by fGrenadeRestitution (its speed into the surface) and fGrenadeFriction (along it), both 0: it
+  rests where it lands; one with an alternative trigger then waits at rest for an actor within
+  its proximity (the runes' 150) or its timer, then bursts; without one it bursts on the surface.
+  An actor it meets in flight sets it off. TODO(M13): sliding on a slope; fGrenadeAgeMax is
+  not read (the runes wait without a lifetime).
 - Speeds and falls: missiles and arrows fly at the PROJ's speed (an arrow's times the draw) and
   fall by the PROJ's gravity × 9.8 m/s²; beams reach their range at once; flames are sprays,
   one every relaunch interval. fArrowSpeedMult and fArrowGravityBase are not read by the engine.
 - The beam's bolt is drawn from the hand to the hit ("A hand's cast", Beams).
 - What shots reach of the world: arrows hit on L_PROJECTILE, bolts, sprays and beams on L_SPELL,
-  and a cone (Unrelenting Force, Fire Breath) meets every object whose collision collides with
-  L_CONEPROJECTILE within its range and spread that its apex sees (trigger volumes too: the
+  and a cone (Unrelenting Force, Fire Breath) sweeps out from its apex at its PROJ speed to its
+  range (projectile-flight.ts ConeWave), meeting every actor and every object whose collision
+  collides with L_CONEPROJECTILE within its spread as its front passes them, those its apex sees
+  (its push on bodies is at once: TODO(M13)) (trigger volumes too: the
   Greybeards' and Blackreach's shout triggers). An object a spell reaches takes it: OnHit with the
   spell and its projectile, OnMagicEffectApply per effect, a destructible's health by its Damage
   Health effects (Arvel's web in Bleak Falls Barrow: 10 health, its first stage capping the first
