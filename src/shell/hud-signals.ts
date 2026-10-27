@@ -89,6 +89,8 @@ export interface MenuSink {
   playerDied?(): void;
   /** fPlayerDeathReloadTime after the death: the game loads its most recent save. */
   reloadAfterDeath?(): void;
+  /** Game.RequestSave / RequestAutoSave: a save as soon as the game may save. */
+  requestSave?(kind: 'save' | 'autosave'): void;
   /** A tutorial (a default object's help message: HBFT), the first time. */
   tutorial?(use: string): void;
   /** Whether a menu takes the keys now: the player's controls get none of them. */
