@@ -21,7 +21,7 @@ import {
   type DecalData,
   type TextureSet,
 } from '../world/decal.ts';
-import type { Impact } from '../world/impact-records.ts';
+import { impactFacing, type Impact } from '../world/impact-records.ts';
 import type { GameSession } from './game-session.ts';
 
 /** How far behind a hit its blood lands (game units). */
@@ -190,16 +190,6 @@ export class CombatImpacts {
 
 /** Shows an impact's effect model for its own time: its path, where, the way it faces. */
 export type ImpactModelShow = (model: string, at: Vec3, facing: Vec3) => void;
-
-/**
- * The way an impact's model faces (IPCT DATA orientation): along the blow (projectile vector),
- * else back out of what was struck, towards where the blow came from (surface normal and
- * reflection: a hit's struck surface faces the blow). TODO(M13): the struck surface's own
- * normal and the blow's reflection off it.
- */
-export function impactFacing(orientation: number, direction: Vec3): Vec3 {
-  return orientation === 1 ? direction : [-direction[0], -direction[1], -direction[2]];
-}
 
 /** A vector of length 1 (or the one given, if it has none). */
 function normalize(v: Vec3): Vec3 {
