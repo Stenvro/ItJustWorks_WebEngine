@@ -265,7 +265,7 @@ interface Fighter {
   log: string[];
 }
 
-function fighter(values: Fighter['values'] = {}, random = () => 0.5) {
+function fighter(values: Fighter['values'] = {}, random = () => 0.5, root = 'Combat') {
   const ctx: Fighter = {
     values: { attackIdle: 0.25, shoutIdle: 1, ...values },
     results: {},
@@ -282,12 +282,17 @@ function fighter(values: Fighter['values'] = {}, random = () => 0.5) {
         if (name === 'chooseAttack')
           run.blackboard.set('attack', f.values.mayAttack === true ? 1 : -1);
         if (name === 'flankingManeuver') run.blackboard.set('maneuver', 1);
-        const fails = name === 'dodgeThreat' || name === 'findCover';
+        // By default nothing is found: no threat, no cover, no door.
+        const fails =
+          name === 'dodgeThreat' ||
+          name === 'findCover' ||
+          name === 'fleeThroughDoor' ||
+          name === 'fleeToCover';
         return f.results[name] ?? (fails ? 'failure' : 'success');
       },
     ]),
   ) as Record<CombatAction, TreeAction<Fighter>>;
-  const tree = new BehaviourTree(combatRegistry(valueOf, actions), 'Combat');
+  const tree = new BehaviourTree(combatRegistry(valueOf, actions), root);
   const instance: TreeInstance<Fighter> = tree.instance(random);
   return {
     ctx,
@@ -450,7 +455,18 @@ describe('the subtrees', () => {
   it('Flanking Movement: Flank, Flank Distant, Stalk, Circle Distant  [RTTI]', () => {
     const t = fighter({ rightMelee: true, mayChooseRun: true, flanking: true });
     expect(t.tick()).toEqual(expect.arrayContaining(['flankingManeuver', 'stalk']));
-    expect(t.tree.actionsOf('FlankingMovement')).toEqual(['flankingManeuver', 'flank', 'stalk']);
+    expect(t.tree.actionsOf('FlankSequence')).toEqual(['flankingManeuver', 'flank', 'stalk']);
+    // No maneuver out of range: Flank Distant (circling at a distance).
+    const distant = fighter({
+      rightMelee: true,
+      mayChooseRun: true,
+      flanking: true,
+      outOfRange: true,
+    });
+    distant.ctx.results.stalk = 'failure';
+    expect(distant.tick()).toEqual(expect.arrayContaining(['stalk', 'circleDistant']));
+    // Far off: the chase.
+    expect(fighter({ rightMelee: true, flanking: true, farAway: true }).tick()).toContain('chase');
   });
 
   it('Ranged Movement: Maintain Optimal Range, Reposition, Fallback To Ranged  [RTTI]', () => {
@@ -470,10 +486,24 @@ describe('the subtrees', () => {
   });
 
   it('Use Cover: Find Cover, Attack From Cover, Wait Behind Cover  [RTTI]', () => {
-    // Tried first by a ranged fighter (TODO(M13): no cover is found yet, so ranged movement runs).
-    const t = fighter({ rightBow: true, rangedMovement: true, mayChooseRun: true });
+    // Tried first by a ranged fighter; no cover found, ranged movement runs.
+    const t = fighter({
+      rightBow: true,
+      rangedMovement: true,
+      mayChooseRun: true,
+      mayUseCover: true,
+    });
     const log = t.tick();
     expect(log.indexOf('findCover')).toBeLessThan(log.indexOf('maintainOptimalRange'));
+    // Cover found: behind it, then out of it to shoot, again and again.
+    const covered = fighter({ rightBow: true, rangedMovement: true, mayUseCover: true });
+    covered.ctx.results.findCover = 'success';
+    covered.ctx.results.waitBehindCover = 'running';
+    expect(covered.tick()).toEqual(expect.arrayContaining(['findCover', 'waitBehindCover']));
+    covered.ctx.results.waitBehindCover = 'success';
+    covered.ctx.results.attackFromCover = 'running';
+    expect(covered.tick()).toEqual(expect.arrayContaining(['waitBehindCover', 'attackFromCover']));
+    expect(covered.tick()).not.toContain('maintainOptimalRange');
   });
 
   it('Hide  [RTTI]', () => {
@@ -494,7 +524,7 @@ describe('the subtrees', () => {
   it('Flee: Flee, Flee To Ally, back to the fight cornered, done once safe  [RTTI]', () => {
     // Fleeing takes the root over: no attack, no movement list.
     const t = fighter({ rightMelee: true, mayAttack: true, fleeing: true });
-    expect(t.tick()).toEqual(['fleeAway']);
+    expect(t.tick()).toEqual(['fleeThroughDoor', 'fleeToCover', 'fleeAway']);
     t.ctx.values.allyNear = true;
     expect(t.tick()).toEqual(['fleeToAlly']);
     t.ctx.values.cornered = true;
@@ -504,10 +534,37 @@ describe('the subtrees', () => {
     // Nowhere to go: it cowers.
     const stuck = fighter({ fleeing: true });
     stuck.ctx.results.fleeAway = 'failure';
-    expect(stuck.tick()).toEqual(['fleeAway', 'cower']);
+    expect(stuck.tick()).toEqual(['fleeThroughDoor', 'fleeToCover', 'fleeAway', 'cower']);
   });
-  it.todo('Flee To Cover, Flee Through Door  [RTTI]');
-  it.todo('Search: Search Center, Location, Wander, Investigate Door  [RTTI]');
+
+  it('Flee To Cover, Flee Through Door  [RTTI]', () => {
+    // The Flee Selector: Flee To Ally, Flee Through Door, Flee To Cover, then away.
+    const door = fighter({ fleeing: true });
+    door.ctx.results.fleeThroughDoor = 'running';
+    expect(door.tick()).toEqual(['fleeThroughDoor']);
+    const cover = fighter({ fleeing: true });
+    cover.ctx.results.fleeToCover = 'running';
+    expect(cover.tick()).toEqual(['fleeThroughDoor', 'fleeToCover']);
+  });
+
+  it('Search: the low process searches once its group does  [RTTI]', () => {
+    const t = fighter({ groupSearching: true }, () => 0.5, 'LowCombat');
+    expect(t.tick()).toEqual(['search']);
+  });
+
+  it('Acquire Weapon: Find Weapon, Move to Weapon, the pick-up  [RTTI]', () => {
+    const t = fighter({ mayAcquireWeapon: true, farAway: true });
+    t.ctx.results.moveToWeapon = 'running';
+    const log = t.tick();
+    expect(log).toEqual(expect.arrayContaining(['findWeapon', 'moveToWeapon']));
+    // It takes the movement over: no chase meanwhile.
+    expect(log).not.toContain('chase');
+  });
+
+  it('Essential Down: an essential actor bleeding out stands  [RTTI]', () => {
+    const t = fighter({ essentialDown: true, farAway: true });
+    expect(t.tick()).not.toContain('chase');
+  });
 
   it('Dodge Threat  [RTTI]', () => {
     const t = fighter({ rightMelee: true, mayAttack: true });
@@ -533,8 +590,13 @@ describe('the subtrees', () => {
   });
 
   it('Low Combat (Attack Low)  [RTTI]', () => {
-    const t = fighter({ rightMelee: true, lowCombat: true });
-    expect(t.tick()).toContain('attackLow');
+    // The low process's root: Attack within fCombatLowMaxAttackDistance, else Pursue.
+    const t = fighter({ lowInReach: true }, () => 0.5, 'LowCombat');
+    expect(t.tick()).toEqual(['attackLow']);
+    t.ctx.values.lowInReach = false;
+    expect(t.tick()).toEqual(['pursue']);
+    t.ctx.values.fleeing = true;
+    expect(t.tick()).toEqual(['fleeThroughDoor', 'fleeToCover', 'fleeAway']);
   });
 
   it.todo('Flight: Takeoff, Land, Hover, Orbit, Dive Bomb, Perch / Ground / Flying Attack  [RTTI]');
