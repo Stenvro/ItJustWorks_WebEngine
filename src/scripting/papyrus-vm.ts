@@ -560,7 +560,11 @@ export class PapyrusVm {
   }
 
   #saveThread(thread: Thread): SavedThread | undefined {
-    const { origin, resume } = thread;
+    const { origin } = thread;
+    // Inside a native whose promise is in flight (a latent native waiting on the world): it is
+    // saved at its call, which runs again as the save loads. TODO(M13): whether the original
+    // calls the native again or hands its caller the native's default result is not read.
+    const resume = thread.resume ?? (thread.native !== undefined ? RESTART : undefined);
     if (!origin || !resume) return undefined;
     const frames: SavedFrame[] = [];
     for (const [i, frame] of thread.frames.entries()) {
