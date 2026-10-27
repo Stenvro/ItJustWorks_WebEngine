@@ -157,8 +157,9 @@ export function menuPadKey(
   input: number,
   contexts: readonly number[] = [InputContext.menuMode],
 ): number | undefined {
-  for (const context of map ? contexts : []) {
-    for (const name of padEvents(map as ControlMap, context, input)) {
+  if (!map) return GFX_PAD_KEYS.get(input);
+  for (const context of contexts) {
+    for (const name of padEvents(map, context, input)) {
       const code = MENU_EVENT_CODES[name];
       if (code !== undefined) return code;
     }
