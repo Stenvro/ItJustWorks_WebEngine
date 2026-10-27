@@ -46,7 +46,6 @@ import { pointLights } from '../world/cell-lighting.ts';
 import type { LightProbe } from '../ai/light-level.ts';
 import {
   doorDestination,
-  loadCellData,
   type CellLight,
   type CellAcousticArea,
   type CellData,
@@ -1946,7 +1945,7 @@ export class WorldViewer {
     const persistent = world.persistentReferences(cell.x, cell.y);
     // It resets if its time has come, before its references load (cell-reset.ts).
     await session.scriptsReady?.cellResets.attaching(cellId, persistent);
-    const data = await loadCellData(db, cellId, persistent);
+    const data = await session.cellData(cellId, persistent);
     const toggles = findToggles(data);
     const isEnabled = this.#enableState(session, data, cellId, toggles);
     cell.isEnabled = isEnabled;
@@ -2183,7 +2182,7 @@ export class WorldViewer {
     if (!world || !session || !db) return;
     const cellId = await world.cell(large.x, large.y);
     if (cellId === undefined) return;
-    const data = await loadCellData(db, cellId, world.persistentReferences(large.x, large.y));
+    const data = await session.cellData(cellId, world.persistentReferences(large.x, large.y));
     const toggles = findToggles(data);
     const isEnabled = enabledReferences(data, toggles, this.#selection(session, cellId, toggles));
     const objects = data.objects.filter(

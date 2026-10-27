@@ -21,7 +21,11 @@ const SCRIPTS: BuildScript[] = [
   { name: 'Form' },
   {
     name: 'Utility',
-    functions: [{ name: 'Wait', native: true, params: [['afSeconds', 'Float']] }],
+    functions: [
+      { name: 'Wait', native: true, params: [['afSeconds', 'Float']] },
+      // A native whose promise is in flight (a latent native waiting on the world).
+      { name: 'Slow', native: true, returnType: 'Int' },
+    ],
   },
   {
     name: 'Counter',
@@ -40,6 +44,14 @@ const SCRIPTS: BuildScript[] = [
           ['callmethod', id('Triple'), id('self'), id('r'), id('a')],
           ['iadd', id('::sum_var'), id('::sum_var'), id('r')],
           ['iadd', id('::sum_var'), id('::sum_var'), id('a')],
+        ],
+      },
+      {
+        name: 'OnSlow',
+        locals: [['r', 'Int']],
+        code: [
+          ['callstatic', id('Utility'), id('Slow'), id('r')],
+          ['iadd', id('::sum_var'), id('r'), int(1)],
         ],
       },
       {
@@ -63,6 +75,8 @@ const SCRIPTS: BuildScript[] = [
 
 class Host implements VmHost {
   readonly warnings: string[] = [];
+  /** What Slow answers: a value at once, or never (its promise stays in flight). */
+  slow: number | undefined;
 
   formType(): Promise<string | undefined> {
     return Promise.resolve('form');
@@ -73,6 +87,10 @@ class Host implements VmHost {
   }
 
   native(script: string, fn: string): NativeFunction | undefined {
+    if (script === 'utility' && fn === 'slow') {
+      const answer = this.slow;
+      return () => answer ?? new Promise<null>(() => undefined);
+    }
     if (script !== 'utility' || fn !== 'wait') return undefined;
     return ({ vm, args, latent }) => {
       const wait = vm.scheduler.clockWait('real', typeof args[0] === 'number' ? args[0] : 0);
@@ -144,5 +162,23 @@ describe('Papyrus threads in a save', () => {
     expect(after.vm.threads).toEqual({ running: 0, waiting: 0 });
     expect(await after.vm.getVariable(target, '::sum_var')).toBe(49);
     expect(after.host.warnings).toEqual([]);
+  });
+
+  it("saves a thread inside a native's promise: the native is called again as it loads", async () => {
+    const before = setup();
+    void before.vm.sendEvent(target, 'OnSlow');
+    await settle();
+    const { threads, unsaved } = before.vm.saveThreads();
+    expect(unsaved).toEqual([]);
+    expect(threads.map((t) => t.frames.map((f) => `${f.name}@${String(f.pc)}`))).toEqual([
+      ['OnSlow@0'],
+    ]);
+    const after = setup();
+    after.host.slow = 41;
+    expect(await after.vm.restoreInstances(await before.vm.savedInstances())).toEqual([]);
+    expect(await after.vm.restoreThreads(threads)).toEqual([]);
+    await settle();
+    await after.vm.idle();
+    expect(await after.vm.getVariable(target, '::sum_var')).toBe(42);
   });
 });

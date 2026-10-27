@@ -601,6 +601,14 @@ export class ScriptWorld implements WorldBridge {
     return { actors, graphs, ...(projectiles.length > 0 && { projectiles }) };
   }
 
+  savedGraph(reference: number): SavedGraph | undefined {
+    for (const view of this.#views) {
+      const state = view.graphOf?.(reference)?.save?.();
+      if (state) return state;
+    }
+    return undefined;
+  }
+
   facesForLine(speaker: number, target: number): boolean | undefined {
     for (const view of this.#views) {
       const answer = view.facesForLine?.(speaker, target);

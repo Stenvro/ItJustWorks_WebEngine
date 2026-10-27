@@ -1118,7 +1118,7 @@ export class ModelViewer {
     const start = performance.now();
     // It resets if its time has come, before its references load (cell-reset.ts).
     await this.#session?.scriptsReady?.cellResets.attaching(formId);
-    const loadedData = await loadCellData(db, formId);
+    const loadedData = await (this.#session?.cellData(formId) ?? loadCellData(db, formId));
     // Its objects where the game left them (moved-objects.ts).
     const scripts = this.#session?.scriptsReady;
     const data = scripts

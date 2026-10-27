@@ -143,6 +143,9 @@ export async function referenceName(
   short = false,
 ): Promise<string> {
   if (reference === PLAYER_REF) return runtime.actors.playerName();
+  // An alias holding it names it (its display name, ALDN).
+  const aliased = runtime.aliasDisplayName(reference);
+  if (aliased !== undefined) return aliased;
   let base = await runtime.baseOf(reference);
   for (let depth = 0; base !== undefined && depth < TEMPLATE_DEPTH; depth++) {
     const record = await runtime.forms.record(base);

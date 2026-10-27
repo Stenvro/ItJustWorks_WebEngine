@@ -314,6 +314,9 @@ export class DialogueEngine {
   /** Runs an info's fragment ("begin" as its first response starts, "end" after its last). */
   async runFragment(info: InfoRecord, when: 'begin' | 'end', speaker: number): Promise<void> {
     const runtime = this.#runtime;
+    // Every way a line is said (the dialogue menu, scenes, lines in the world) comes here as
+    // it begins and ends: the engine's TESTopicInfoEvent.
+    runtime.events.emit('topicInfo', { speaker, topicInfo: info.formId, type: when });
     const attachments = await runtime.forms.attachments(info.formId);
     for (const fragment of attachments?.fragments ?? []) {
       if (fragment.stage !== when) continue;

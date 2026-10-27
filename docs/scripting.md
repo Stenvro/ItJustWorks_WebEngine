@@ -543,7 +543,20 @@ stats go to every object registered for them. What each kind becomes:
   OnLocationChange.
 - Trap hits come from the traps' contacts with actors ("Traps" below), resets from the cells
   that reset as they come back ("Cell reset and cleared locations").
-- Not produced yet: loading a game (M12).
+- Loading a game (`game-session.ts`: OnPlayerLoadGame as the loaded game's scripts are up).
+- Scenes (`scene-runtime.ts` through `scene-host.ts`): a scene's begin and end, each phase's
+  begin and end, each action as it starts. Topic infos (`dialogue-engine.ts` runFragment):
+  each said line's begin and end, however it is said (menu, scene, world). Quest init
+  (`quests.ts`): as a quest's and its aliases' OnInit are set going. Perk entries
+  (`perk-engine.ts`): an Activate entry's choice as it runs, with its fragment. Active
+  effects (`magic-engine.ts`): an effect starting and stopping to act on its target.
+- Animation event registrations end with the graph: as a reference's 3D unloads, the
+  registrations for its animation events are dropped and each script that registered hears
+  OnAnimationEventUnregistered (the source and the event's name, lowercase), as the Creation
+  Kit describes it (it may register again on OnLoad).
+- Menus (SKSE's RegisterForMenu, UnregisterForMenu, UnregisterForAllMenus on Form, Alias and
+  ActiveMagicEffect): the menu stack's open and close (MenuOpenCloseEvent) reach the scripts
+  registered for that menu as OnMenuOpen and OnMenuClose with its name.
 
 `tools/script-events.ts` lists each event's declarations in the base scripts and the scripts
 of the load order that handle it. `PapyrusVm.handled` (debugging) hears every handler that
@@ -568,9 +581,15 @@ times are whole game hours, 0 for never):
   actor unless No Respawn. What a reset does: the reference's lock, open state, destruction and
   harvest go, a container's inventory is picked anew, an object that is not persistent goes
   back to its editor place, an actor comes back as its records make it, and the reset is told
-  (TESResetEvent: OnReset, after OnCellAttach). Read but not done yet: the engine also sets the
-  reference's enable state again (whether to the initial one is not read) and keeps a clock of
-  its own on each actor that its respawn waits from.
+  (TESResetEvent: OnReset, after OnCellAttach). The engine also sets the reference's enable
+  state again: ours sets the one the plugins give it (TODO(M13): whether the engine sets the
+  initial one is not read), and the animated state it kept (`GameState.graphs`) goes. It keeps
+  a clock of its own on each actor that its respawn waits from: ours is the actor's death, so a
+  dead actor respawns only once the wait has passed since it died, also where its zone reset
+  sooner (what else sets the clock is not read, TODO(M13)).
+- What the game made in the cell goes with its reset: references created there (dropped items,
+  PlaceAtMe) lying in the world, unless a quest's alias holds them (TODO(M13): which created
+  references the engine keeps besides).
 - Corpses: as a cell that left comes back, an actor that does not respawn, did not start dead
   and died more than iHoursToClearCorpses (24) hours ago is removed (disabled); two further
   checks of the engine's are not identified (a corpse a quest's alias holds is kept here).
@@ -583,6 +602,19 @@ times are whole game hours, 0 for never):
   ClearableLocation (KWDO), which also plays Music - Dungeon Cleared (DCMS) and tells
   LocationCleared (the hub's `locationCleared`): the misc stat Dungeons Cleared counts it.
   sDungeonCleared ("Dungeon Cleared!") is read by no code: the engine shows no notice.
+- Animated state (`ScriptRuntime.cellDetached`, `src/sim/placed-objects.ts`): as a cell
+  detaches, each loaded object whose graph moved from its start (a chest's lid open, a lever
+  pulled, a gate raised) keeps that state (`GameState.graphs`, saved with the game state) and
+  is placed in it as its cell loads again; its cell's reset drops it.
+- Alias display names (`ScriptRuntime.aliasDisplayName`): while an alias with a display name
+  (ALDN: a message whose title names it) holds a reference, the reference is so named: the
+  crosshair, the menus and the scripts' text replacement show it, until the alias lets go.
+- Cell buffers (`src/world/cell-buffer.ts`, `GameSession.cellData`): the cells used most
+  recently keep their data as the plugins make it, interiors and exteriors in buffers of their
+  own ([General] uInterior Cell Buffer 3, uExterior Cell Buffer 36: UESP's defaults), so going
+  back into a cell just left does not read its records again; the least recently used leaves
+  as a buffer fills. A buffered cell is detached like any other (OnCellDetach as it left, its
+  reset clock running); the game's changes to it live in GameState either way.
 - Moved objects (`src/shell/moved-objects.ts`): a cell leaving the loaded area notes where its
   moving objects are; a cell loading places its objects where the game left them, until its
   reset puts the non-persistent ones back.

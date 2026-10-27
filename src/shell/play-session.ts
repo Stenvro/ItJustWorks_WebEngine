@@ -464,6 +464,8 @@ export interface PerkActivation {
    * in a message box); resolves whether the default activation goes on.
    */
   choose(reference: number, verb: string, name: string): Promise<boolean>;
+  /** The name an alias holding it gives it (its display name, ALDN), if any. */
+  displayName?(reference: number): string | undefined;
 }
 
 /** The player's perk activation on a running game's perk system. */
@@ -478,6 +480,7 @@ export function perkActivation(runtime: () => ScriptRuntime | undefined): PerkAc
       const perks = runtime()?.perks;
       return !perks || perks.activate(PLAYER_REF, reference, verb, name);
     },
+    displayName: (reference) => runtime()?.aliasDisplayName(reference),
   };
 }
 
@@ -1410,7 +1413,10 @@ export class PlaySession {
         asked.verb = verb ?? null;
       });
     }
-    return label.verb ? { ...target, verb: label.verb } : target;
+    // An alias's display name names it while the alias holds it.
+    const name = perks.displayName?.(reference);
+    const named = name === undefined ? target : { ...target, name };
+    return label.verb ? { ...named, verb: label.verb } : named;
   }
 
   /**

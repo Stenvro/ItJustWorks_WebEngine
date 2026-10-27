@@ -45,6 +45,15 @@ export class RuntimeSceneHost implements SceneHost {
     this.#runtime = runtime;
   }
 
+  /** The scenes' engine events go to the hub (TESSceneEvent and its kin: the story manager's). */
+  sceneEvent(
+    scene: number,
+    type: 'begin' | 'end' | 'phaseBegin' | 'phaseEnd' | 'action',
+    index?: number,
+  ): void {
+    this.#runtime.events.emit('scene', { scene, type, index });
+  }
+
   scene(formId: number): Promise<SceneRecord | undefined> {
     let pending = this.#scenes.get(formId);
     if (!pending) {

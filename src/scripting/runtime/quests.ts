@@ -257,6 +257,8 @@ export class QuestEngine {
         vm.startInitialize(new ObjectHandle(record.formId, 'form', alias.id)),
       ),
     );
+    // The engine tells it (TESQuestInitEvent) once the quest's scripts are set going.
+    this.#runtime.events.emit('questInit', { quest: record.formId });
   }
 
   /** Quest.GetAlias: the alias as a script object. */

@@ -4,6 +4,7 @@
 // scripts created. Plain data, all of it saved (docs/formats/save.md). Platform-independent.
 // Notes: docs/scripting.md ("Game state").
 
+import type { SavedGraph } from '../../animation/script-graphs.ts';
 import type { PlayerAppearance } from '../../gameplay/chargen.ts';
 import type { DismemberedLimb } from '../../gameplay/combat/dismemberment.ts';
 import { emptyLoadout, type Loadout } from '../../gameplay/equipment.ts';
@@ -358,6 +359,11 @@ export interface ItemStack {
   charge?: number;
   /** The one of its base an actor wears or wields (the game's ExtraWorn on the list). */
   worn?: boolean;
+  /**
+   * ExtraSoul: the soul an empty soul gem holds where it is smaller than the gem can hold
+   * (1 petty .. 5 grand; crafting-engine.ts addSoul).
+   */
+  soul?: number;
 }
 
 /** A reference a script created (PlaceAtMe, alias Create Reference). */
@@ -390,6 +396,12 @@ export class GameState {
   readonly zoneTimes = new Map<number, ZoneTimes>();
   /** When (whole game hours) each actor died: its respawn and its corpse's clearing wait. */
   readonly deathHours = new Map<number, number>();
+  /**
+   * The animated state of placed objects whose 3D unloaded after a script or the player moved
+   * their graph from where it starts (a chest's lid open, a lever pulled, a gate raised): put
+   * back as they load again, gone with their cell's reset.
+   */
+  readonly graphs = new Map<number, SavedGraph>();
   /** Relationship ranks scripts set between two NPC_ bases ("low:high" form ids). */
   readonly relationships = new Map<string, number>();
   /** Crime: stolen items, jail, places off limits, favor (crime-engine.ts). */
