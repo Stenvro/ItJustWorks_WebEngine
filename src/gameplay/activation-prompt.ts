@@ -25,7 +25,9 @@
 //   under it when it carries nothing); a horse the player may ride sRide, or sSteal; sneaking,
 //   one whose race allows pickpocketing (and not the player's teammate) sPickpocket, any other
 //   (not a teammate) nothing; else sTalk when it may talk to the player (Actor.AllowPCDialogue,
-//   else its race's Allow PC Dialogue), else nothing.
+//   else its race's Allow PC Dialogue), else nothing. A living actor in combat and hostile to the
+//   player shows nothing at all (its name shows in the enemy health bar instead). TODO(M13): the
+//   engine's own test of hostility here is not recorded; the combat AI's is used.
 //
 // The third line is the HUD's diamond marker and the word (InterfaceStrings' marker image).
 // Platform-independent.
@@ -207,12 +209,16 @@ export interface ActorPromptFacts {
   readonly teammate: boolean;
   /** It may talk to the player (Actor.AllowPCDialogue, else its race's Allow PC Dialogue). */
   readonly talks: boolean;
+  /** In combat and hostile to the player (fighting them, or holding them an enemy). */
+  readonly hostile?: boolean;
 }
 
 /** The prompt of an actor, or undefined where the crosshair shows nothing. */
 export function actorPrompt(facts: ActorPromptFacts): ActivationPrompt | undefined {
   const { name } = facts;
   if (name === '') return undefined;
+  // An enemy in the fight: no prompt (activating it does nothing).
+  if (facts.hostile === true && !facts.dead) return undefined;
   // One an actor commands shows only whose it is (no verb, not even a dead one's search).
   if (facts.commander !== undefined && facts.commander !== '') {
     const label =
