@@ -186,6 +186,8 @@ export interface ScriptView {
   shakeCamera?(strength: number, seconds: number, source: number | undefined): void;
   /** Splatters of blood on the screen: Game.TriggerScreenBlood. */
   screenBlood?(count: number): void;
+  /** Game.ClearTempEffects: the view's temporary effects go (its hits' decals). */
+  clearTempEffects?(): void;
   /** Where an actor would use a furniture of the view (its marker), if the view holds it. */
   interactionLocation?(
     furniture: number,
@@ -697,6 +699,10 @@ export class ScriptWorld implements WorldBridge {
 
   screenBlood(count: number): void {
     for (const view of this.#views) view.screenBlood?.(count);
+  }
+
+  clearTempEffects(): void {
+    for (const view of this.#views) view.clearTempEffects?.();
   }
 
   /** Game.RequestSave / RequestAutoSave: Play saves as soon as it may; elsewhere only noted. */

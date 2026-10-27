@@ -1284,11 +1284,14 @@ export class PapyrusVm {
       const run = nativeWaitsForFrame(level.name, name)
         ? async (): Promise<Value> => {
             const ticket = await this.#latent(thread, this.scheduler.mainThread(), RESTART);
+            // The next handed call may begin once this one has (not once it is done).
+            let result: Value | Promise<Value>;
             try {
-              return native(call);
+              result = native(call);
             } finally {
               this.scheduler.mainThreadBegun(ticket);
             }
+            return result;
           }
         : (): Promise<Value> => Promise.resolve(native(call));
       try {

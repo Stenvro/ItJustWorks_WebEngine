@@ -201,8 +201,14 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
     world.screenBlood?.(Math.max(0, Math.floor(num(args[0], 0))));
     return null;
   });
-  n('game.setsungazeimagespacemodifier', () => null);
-  n('game.isplayersungazing', () => false);
+  // SetSunGazeImageSpaceModifier(akImod): what the player's gaze at the sun applies (None: nothing);
+  // IsPlayerSunGazing: whether they gaze at it now (src/gameplay/sun-gaze.ts).
+  n('game.setsungazeimagespacemodifier', ({ args }) => {
+    const modifier = formOf(args[0]);
+    runtime.sunGazeModifier = modifier === 0 ? undefined : modifier;
+    return null;
+  });
+  n('game.isplayersungazing', () => runtime.sunGaze.gazing);
   for (const axis of ['x', 'y', 'z'] as const)
     n(
       `game.getsunposition${axis}`,
@@ -290,7 +296,11 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
     await runtime.crime.serveTime();
     return null;
   });
-  n('game.cleartempeffects', () => null);
+  // ClearTempEffects: the temporary effects in the world go at once (the hits' decals).
+  n('game.cleartempeffects', () => {
+    world.clearTempEffects?.();
+    return null;
+  });
   // SetPlayerReportCrime(abReportCrime): whether crimes against the player are reported.
   n('game.setplayerreportcrime', ({ args }) => {
     runtime.state.crime.reportCrimeAgainstPlayer = bool(args[0], true);
