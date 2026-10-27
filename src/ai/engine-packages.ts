@@ -16,7 +16,7 @@
 // start weighs beyond detection and combat.
 
 import type { AiSettings } from './ai-settings.ts';
-import type { EngineRunner } from './package-runtime.ts';
+import type { EnginePackage, EngineRunner } from './package-runtime.ts';
 
 type Vec3 = readonly [number, number, number];
 
@@ -181,6 +181,28 @@ export const getUpFromChairBed: EngineRunner = async (run) => {
   await run.body.leaveFurniture();
 };
 
+/**
+ * The engine packages an actor may take in its furniture (it looks from its seat); the others
+ * get it up first, as Get Up From Chair Or Bed does. The engine puts a created package with a
+ * flag allowing it from furniture (Actor::PutCreatedPackage's allowFromFurniture, CommonLibSSE);
+ * TODO(M13): which packages it allows was not read, nor what makes the Get Up package itself (no
+ * maker of it was found among the package factory's callers: the engine's packages leave
+ * furniture as they start, as ours do).
+ */
+const FROM_FURNITURE: ReadonlySet<EnginePackage> = new Set([
+  'reactToDestroyedObject',
+  'getUpFromChairBed',
+]);
+
+/** An engine package's procedure, the actor got up from its furniture first where it must. */
+export function upFirst(kind: EnginePackage, runner: EngineRunner): EngineRunner {
+  if (FROM_FURNITURE.has(kind)) return runner;
+  return async (run) => {
+    await getUpFromChairBed(run);
+    if (!run.stopped()) await runner(run);
+  };
+}
+
 /** How long an actor looks at an object destroyed near it (real seconds; ours). */
 const REACT_SECONDS = 3;
 
@@ -199,10 +221,58 @@ export const reactToDestroyedObject: EngineRunner = async (run) => {
 /** Within this of the surface its head is out (units; ours). */
 const SURFACE_REACH = 32;
 
+// Surface, its start observed in the original (behaviour only, in our words): an NPC whose
+// head is under water (at least HEAD_UNDER of it submerged) and who does not breathe water
+// (WaterBreathing 0) uses up its breath, fActorSwimBreathBase + fActorSwimBreathMult × 50
+// seconds (35) at the most. Each update, once the breath left is less than one and a half times
+// the time it takes to rise to the surface at its speed (its depth: the water's height over its
+// feet) plus a second, it is given Surface, unless it runs that already. Only the player drowns
+// (the engine's damage and drowning sound are the player's): an NPC surfaces first.
+// Inferred, TODO(M13): its breath refills at once with its head out (the engine sets it
+// elsewhere); its speed is its run's (the engine asks its movement speed).
+
+/** At least this share of the actor under water, its head is under (the engine's). */
+export const HEAD_UNDER = 0.875;
+/** The skill the engine weighs an NPC's breath by (fActorSwimBreathMult × this). */
+const NPC_BREATH_SKILL = 50;
+
+/** An NPC's breath under water: when it must surface. */
+export class Breath {
+  #left: number | undefined;
+
+  /** The breath left (seconds; undefined: full). */
+  get left(): number | undefined {
+    return this.#left;
+  }
+
+  /**
+   * One update of `seconds`: `under` its head is under water (and it does not breathe water),
+   * `depth` below the surface (its feet), rising at `speed` (units per second). True: it must
+   * surface now (asked again every update while it does not).
+   */
+  step(
+    seconds: number,
+    under: boolean,
+    depth: number,
+    speed: number,
+    settings: Pick<AiSettings, 'swimBreathBase' | 'swimBreathMult'>,
+  ): boolean {
+    const most = NPC_BREATH_SKILL * settings.swimBreathMult + settings.swimBreathBase;
+    if (!under) {
+      this.#left = undefined;
+      return false;
+    }
+    const left = Math.max(0, Math.min(most, this.#left ?? most) - seconds);
+    this.#left = left;
+    const rise = speed > 0 ? Math.max(0, depth) / speed : Infinity;
+    return left < rise * 1.5 + 1;
+  }
+}
+
 /**
  * Surface: a swimmer under water rises straight up to the surface (`surface`: the water's
- * height above it), then its package goes on. TODO(M13): the engine's start (ours: a swimmer
- * under water whose breath runs low) and whether it heads for air elsewhere.
+ * height above it), then its package goes on. TODO(M13): whether the engine heads for air
+ * elsewhere (under a ceiling of ice).
  */
 export function surfaceTo(surface: (actor: number) => number | undefined): EngineRunner {
   return async (run) => {

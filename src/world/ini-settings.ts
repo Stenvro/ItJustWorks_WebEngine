@@ -327,6 +327,8 @@ export const INI_DEFAULTS = {
     fMinAvoidanceRadius: 256,
     fMaxAvoidanceRadius: 512,
     fMaxTimeBlockedByActors: 1,
+    fAvoidNodeRadiusAdd: 11,
+    fAvoidNodeCost: 24,
     bWarpOnConsecutiveFailures: 1,
     iWarpMaxPathFailureCount: 3,
     fMinFailureDistance: 50,
