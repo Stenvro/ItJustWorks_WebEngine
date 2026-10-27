@@ -914,6 +914,8 @@ export class ScriptRuntime implements VmHost {
   #updateToken = 1;
   /** Animation event registrations: sender → event → receivers (handle keys and handles). */
   readonly #animationEvents = new Map<number, Map<string, Map<string, ObjectHandle>>>();
+  /** The names aliases give the references they hold (aliasDisplayName). */
+  readonly #aliasNames = new Map<number, string>();
   /** Translations in progress (TranslateTo), by reference, with the real time each started. */
   readonly #translations = new Map<
     number,
@@ -1331,12 +1333,40 @@ export class ScriptRuntime implements VmHost {
     set.add(`${String(quest)}:${String(alias)}`);
     this.#aliasesOf.set(reference, set);
     this.#holding.delete(reference);
+    this.detach(this.#nameByAliases(reference));
   }
 
   aliasCleared(quest: number, alias: number, reference: number): void {
     this.#aliasesOf.get(reference)?.delete(`${String(quest)}:${String(alias)}`);
     this.#holding.delete(reference);
     this.quests.filler.released(quest, alias, reference);
+    this.detach(this.#nameByAliases(reference));
+  }
+
+  /**
+   * The name an alias holding a reference gives it (the alias's display name, ALDN: a message
+   * whose title names it), shown for it while the alias holds it (the crosshair, menus).
+   */
+  aliasDisplayName(reference: number): string | undefined {
+    return this.#aliasNames.get(reference);
+  }
+
+  /** A reference's alias name found again as an alias takes or lets go of it. */
+  async #nameByAliases(reference: number): Promise<void> {
+    let name: string | undefined;
+    for (const { quest, alias } of this.aliasesHolding(reference)) {
+      const message = (await this.forms.quest(quest))?.aliases.find(
+        (entry) => entry.id === alias,
+      )?.displayName;
+      if (message === undefined || message === 0) continue;
+      const text = (await this.forms.record(message))?.text('FULL');
+      if (text) {
+        name = text;
+        break;
+      }
+    }
+    if (name === undefined) this.#aliasNames.delete(reference);
+    else this.#aliasNames.set(reference, name);
   }
 
   /** The aliases that hold a reference. */
