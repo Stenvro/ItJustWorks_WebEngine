@@ -582,6 +582,9 @@ export class PlayMode {
           );
         });
       },
+      requestSave: (kind) => {
+        void this.#saves.requested(kind);
+      },
       // Dying ends a conversation and a menu open meanwhile (a script's kill); the console and
       // the system page stay the player's (GameMenus.userEvent).
       playerDied: () => {

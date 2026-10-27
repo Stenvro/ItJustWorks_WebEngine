@@ -199,6 +199,9 @@ export const INI_DEFAULTS = {
     // Look with the right stick (src/shell/player.ts lookStick); the gamepad on (Prefs).
     fGamepadHeadingSensitivity: 0.6667,
     bGamepadEnable: 1,
+    // The Vibration setting: Game.ShakeController rumbles the gamepad (on in SkyrimPrefs.ini as
+    // the launcher writes it; the executable's own object starts off).
+    bGamePadRumble: 1,
     fMouseHeadingSensitivity: 0.0125,
     fMouseHeadingXScale: 0.02,
     fMouseHeadingYScale: 0.85,

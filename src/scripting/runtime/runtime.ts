@@ -214,6 +214,15 @@ export interface WorldBridge {
   shakeCamera?(strength: number, seconds: number, source?: number): void;
   /** Splatters of blood on the screen (Game.TriggerScreenBlood). */
   screenBlood?(count: number): void;
+  /**
+   * Game.RequestSave / RequestAutoSave: a save (a new one, or the next autosave in turn) made
+   * as soon as the game may save.
+   */
+  requestSave?(kind: 'save' | 'autosave'): void;
+  /**
+   * Game.ShakeController: the gamepad's motors rumble (strengths 0..1) for seconds.
+   */
+  shakeController?(small: number, big: number, seconds: number): void;
   grabbed?(): number | undefined;
   /**
    * A menu the scripts open; resolves once it has closed, with what it returns (ShowGiftMenu:
