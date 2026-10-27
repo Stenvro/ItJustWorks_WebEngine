@@ -10,6 +10,7 @@ import {
   type PackageBody,
   type PackageMind,
   type PackagePlace,
+  type SavedPackage,
 } from '../ai/package-runtime.ts';
 import {
   LocationType,
@@ -378,6 +379,18 @@ export class ActorAi {
     return found;
   }
 
+  /** What a save keeps of an actor's package (its AI runs). */
+  savedPackage(reference: number): SavedPackage | undefined {
+    return this.#actors.get(reference)?.packages.saveState();
+  }
+
+  /** A loaded save's package for an actor placed again: it goes on as its AI starts. */
+  resume(reference: number, saved: SavedPackage): void {
+    this.#resumes.set(reference, saved);
+  }
+
+  readonly #resumes = new Map<number, SavedPackage>();
+
   /** The actor leaves its AI (it left the stage, died). */
   remove(reference: number): void {
     this.#talkHeld.delete(reference);
@@ -419,6 +432,12 @@ export class ActorAi {
         };
         this.#actors.set(staged.reference, entry);
         this.#joined.set(staged.reference, performance.now());
+        // A loaded save's package goes on where it was (src/save/world-save.ts).
+        const resumed = this.#resumes.get(staged.reference);
+        if (resumed) {
+          this.#resumes.delete(staged.reference);
+          entry.packages.resume(resumed);
+        }
       }
       // Talking with the player (the engine's in-game dialogue package): its package waits; it
       // stops where it is and faces the player (sitting, it stays seated). So too while it talks

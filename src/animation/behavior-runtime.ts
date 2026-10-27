@@ -62,6 +62,14 @@ import { isPaired, pairedTrackBones, type PairedSide } from './paired-clips.ts';
 import { graphEvent, type GraphEvent } from './graph-events.ts';
 
 /** What a running graph needs from outside: its clips and referenced behavior files. */
+/** A placed object's skeletal graph as a save keeps it (BehaviorRuntime.saveState). */
+export interface BehaviorGraphState {
+  /** [the machine's place among the graph's machines, its state id]. */
+  readonly states: readonly (readonly [number, number])[];
+  /** The variables by index. */
+  readonly variables: readonly number[];
+}
+
 export interface BehaviorHost {
   /**
    * A clip's animation by its name (as the graph names it); undefined while it loads or if
@@ -698,6 +706,67 @@ export class BehaviorRuntime {
   setVariable(name: string, value: number): void {
     const index = this.#variableIndex.get(name.toLowerCase());
     if (index !== undefined) this.#values[index] = value;
+    this.#told = true;
+  }
+
+  /** An event was sent or a variable set from outside since it started (saveState). */
+  #told = false;
+
+  /**
+   * What a save keeps of a placed object's graph (a lever's, a gate's): each state machine's
+   * state, by its place among the graph's machines, and the variables. Undefined while nothing
+   * has told it anything (it runs as it started). Not for actors: their graphs are rebuilt
+   * from what they do (the furniture they are in, their packages).
+   */
+  saveState(): BehaviorGraphState | undefined {
+    if (!this.#told) return undefined;
+    const states: [number, number][] = [];
+    this.#allMachines().forEach((node, index) => {
+      // (One not entered yet since a load: the state it will start in.)
+      const machine = this.#machines.get(node);
+      const id = machine?.current?.id ?? machine?.startOverride;
+      if (id !== undefined) states.push([index, id]);
+    });
+    return { states, variables: [...this.#values] };
+  }
+
+  /**
+   * A saved graph put back before it first runs: its variables, and each machine starts in its
+   * saved state (what that state plays starts there).
+   */
+  restoreState(saved: BehaviorGraphState): void {
+    saved.variables.forEach((value, index) => {
+      if (index < this.#values.length) this.#values[index] = value;
+    });
+    const machines = this.#allMachines();
+    for (const [index, id] of saved.states) {
+      const node = machines[index];
+      if (!node?.states.some((state) => state.id === id)) continue;
+      this.#machines.set(node, {
+        current: undefined,
+        previous: undefined,
+        timeInState: 0,
+        transition: undefined,
+        startOverride: id,
+        received: new Map(),
+        pending: undefined,
+      });
+    }
+    this.#told = true;
+  }
+
+  /** Every state machine of the graph, in the order they are reached from the root. */
+  #allMachines(): StateMachine[] {
+    const machines: StateMachine[] = [];
+    const seen = new Set<object>();
+    const visit = (node: BehaviorGenerator | undefined): void => {
+      if (!node || seen.has(node)) return;
+      seen.add(node);
+      if (node.kind === 'state-machine') machines.push(node);
+      for (const child of children(node)) visit(child);
+    };
+    visit(this.#root);
+    return machines;
   }
 
   /** A vector variable's value (TargetLocation), or undefined if no graph has one so named. */
@@ -794,6 +863,7 @@ export class BehaviorRuntime {
   sendEvent(name: string, payload?: string): boolean {
     const id = this.#eventIndex.get(name.toLowerCase());
     if (id === undefined) return false;
+    this.#told = true;
     this.#queue.push(payload === undefined ? { id } : { id, payload });
     this.#answers.delete(id);
     return true;

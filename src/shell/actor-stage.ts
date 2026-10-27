@@ -28,6 +28,7 @@ import { ActorGraphEvents } from './actor-graph-events.ts';
 import { actorOnRay, groundActor, moveActor, ragdollsOf, type PlacedActor } from './actors.ts';
 import { createdEnabled } from './created-objects.ts';
 import type { GameSession } from './game-session.ts';
+import type { SavedActor } from '../save/world-save.ts';
 import type { CellRagdoll } from './play-session.ts';
 import type { Terminal } from './terminal.ts';
 import { Layer } from '../physics/collision-layers.ts';
@@ -1320,6 +1321,47 @@ export class ActorStage {
     yield* this.dismemberment.scenes();
   }
 
+  /**
+   * What a save keeps of the actors on the stage (src/save/world-save.ts): where each stands,
+   * the furniture it is in, its package and how far it got, whom it fights.
+   */
+  saveActors(): SavedActor[] {
+    const saved: SavedActor[] = [];
+    for (const staged of this.#actors.values()) {
+      const reference = staged.reference;
+      const use = this.furniture.interaction(reference);
+      const seated = use !== undefined && this.furniture.holds(reference);
+      saved.push({
+        reference,
+        cell: staged.cell,
+        position: [staged.position[0], staged.position[1], staged.position[2]],
+        heading: staged.heading,
+        furniture: seated ? use.furniture : undefined,
+        package: this.ai.savedPackage(reference),
+        combatTarget: this.combat.targetOf(reference),
+      });
+    }
+    return saved;
+  }
+
+  /**
+   * A loaded save's fights start again (the original re-forms its combat groups as it loads):
+   * each as soon as its fighter and its target are on the stage, given a few seconds.
+   */
+  #restoreCombat(seconds: number): void {
+    for (const [actor, pending] of this.#restoredCombat) {
+      pending.left -= seconds;
+      if (this.combat.targetOf(actor) === pending.target || pending.left <= 0) {
+        this.#restoredCombat.delete(actor);
+        continue;
+      }
+      const target = pending.target;
+      if (target === PLAYER_REF || this.#actors.has(target)) this.combat.startCombat(actor, target);
+    }
+  }
+
+  readonly #restoredCombat = new Map<number, { readonly target: number; left: number }>();
+
   /** Where a staged actor stands now (scripts' live placement). */
   livePlacement(
     reference: number,
@@ -1346,11 +1388,30 @@ export class ActorStage {
     const runtime = this.#options.session.scriptsReady;
     const own = new Set(actors.map((actor) => actor.reference));
     const candidates: { actor: CellActor; here: boolean }[] = [];
+    // A loaded save's actors stand where they stood (src/save/world-save.ts).
+    const restoring = this.#options.session.restoring;
+    const savedAt = (
+      reference: number,
+    ): { position: Vec3; rotation: Vec3; cell: string } | undefined => {
+      const saved = restoring?.actor(reference);
+      return (
+        saved && {
+          position: [...saved.position],
+          rotation: [0, 0, saved.heading],
+          cell: saved.cell,
+        }
+      );
+    };
     for (const actor of actors) {
       if (this.#actors.has(actor.reference) || this.#placing.has(actor.reference)) continue;
       const now = runtime ? await this.#movedPlace(runtime, actor.reference) : undefined;
       if (now === null) continue;
-      if (now) {
+      const saved = savedAt(actor.reference);
+      if (saved) {
+        // In another loaded cell: it is placed with that one.
+        if (saved.cell !== key) continue;
+        candidates.push({ actor: this.#at(actor, saved, runtime), here: true });
+      } else if (now) {
         // Moved by a script: where it is now, if that is in this cell.
         if (this.#options.cellOf(now) !== key) continue;
         candidates.push({ actor: this.#at(actor, now, runtime), here: true });
@@ -1365,8 +1426,24 @@ export class ActorStage {
         if (this.#actors.has(reference) || this.#placing.has(reference)) continue;
         if (!(await this.#isActor(runtime, reference))) continue;
         const now = await this.#movedPlace(runtime, reference);
-        if (!now || this.#options.cellOf(now) !== key) continue;
-        const actor = await this.#cellActor(runtime, reference, now);
+        if (!now) continue;
+        const saved = savedAt(reference);
+        if (saved ? saved.cell !== key : this.#options.cellOf(now) !== key) continue;
+        const at = saved ?? now;
+        const actor = await this.#cellActor(runtime, reference, at);
+        if (actor) candidates.push({ actor: this.#dead(actor, runtime), here: true });
+      }
+      // Those a loaded save has standing in this cell, away from their own.
+      for (const saved of restoring?.actors() ?? []) {
+        const reference = saved.reference;
+        if (own.has(reference) || runtime.state.references.get(reference)?.position) continue;
+        if (this.#actors.has(reference) || this.#placing.has(reference)) continue;
+        if (candidates.some((candidate) => candidate.actor.reference === reference)) continue;
+        const at = savedAt(reference);
+        if (at?.cell !== key) continue;
+        if ((await this.#movedPlace(runtime, reference)) === null) continue;
+        if (!(await this.#isActor(runtime, reference))) continue;
+        const actor = await this.#cellActor(runtime, reference, at);
         if (actor) candidates.push({ actor: this.#dead(actor, runtime), here: true });
       }
     }
@@ -1398,6 +1475,13 @@ export class ActorStage {
   /** A loaded cell goes: the actors standing in it leave the stage. */
   detachCell(key: string): void {
     this.#cells.delete(key);
+    // A loaded save's actors of this cell not placed: they come back as their packages have them.
+    const restoring = this.#options.session.restoring;
+    for (const saved of [...(restoring?.actors() ?? [])]) {
+      if (saved.cell === key) {
+        restoring?.drop(saved.reference);
+      }
+    }
     for (const staged of [...this.#actors.values()]) {
       if (staged.cell === key) this.#remove(staged);
     }
@@ -1786,6 +1870,7 @@ export class ActorStage {
       void this.#guide(key, guide.hazard);
     }
     this.away.frame(frame);
+    this.#restoreCombat(frame);
     this.combat.frame(frame, this.#options.focus?.());
     this.knockdowns.frame(frame);
     this.graphEvents.frame(frame);
@@ -1936,6 +2021,25 @@ export class ActorStage {
         // Its abilities, diseases and worn enchantments act while it is here.
         const scripts = session.scriptsReady;
         if (scripts) scripts.detach(scripts.magic.prepare(reference));
+        // A loaded save's actor: in its furniture again at once, its package going on where
+        // it was, fighting whom it fought.
+        const saved = session.restoring?.actor(reference);
+        if (saved) {
+          session.restoring?.drop(reference);
+          if (saved.package) this.ai.resume(reference, saved.package);
+          if (saved.combatTarget !== undefined) {
+            this.#restoredCombat.set(reference, { target: saved.combatTarget, left: 5 });
+          }
+          if (saved.furniture !== undefined) {
+            void this.furniture.use(
+              this.userOf(entry),
+              saved.furniture,
+              () => Promise.resolve(false),
+              () => undefined,
+              { quick: true },
+            );
+          }
+        }
         // Placed in the furniture its package uses: in it at once.
         const start = actor.start;
         if (actor.inFurniture && start?.kind === 'at') {
