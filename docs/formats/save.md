@@ -179,13 +179,14 @@ its almost-complete event if not yet told, then its end.
 GameState's own fields hold, and so save, what the world keeps of references that are not
 loaded: `graphs` (the animated state an object's graph had as its 3D unloaded: a chest's lid
 open, a lever pulled), the partial souls of soul gems (`itemStacks`' `soul`, the game's
-ExtraSoul).
+ExtraSoul), and the corpses' ragdoll poses (`ActorState.corpse`, src/animation/corpse-pose.ts:
+the nodes its ragdoll placed, in the world, and whether it lay at rest; kept as the corpse's
+cell unloads and as the game is saved, before the state is written: the save's state holds the
+live maps). A corpse lies again where it lay.
 
 ## Not saved yet
 
-- Corpses' ragdoll
-  poses (a corpse lies again where it lay, its ragdoll falls anew), the procedures' own progress
-  inside a step (a patrol's next marker, a sandbox's activity: they choose again), actors' graphs
+- The procedures' own progress inside a step (a patrol's next marker, a sandbox's activity: they choose again), actors' graphs
   beyond their furniture, the sky's transition; the actors of cells not loaded when saving
   (their packages place them, as before).
 
