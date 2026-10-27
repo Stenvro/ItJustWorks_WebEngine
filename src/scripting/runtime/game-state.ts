@@ -1,7 +1,7 @@
 // What the running game has changed on top of the plugins: the clocks, globals, quests (running,
 // stages, objectives, who fills their aliases), placed references (enabled, moved, opened,
 // locked, destroyed), actors (actor values, factions, death), inventories and the references
-// scripts created. Plain data, to be saved (TODO(M12)). Platform-independent.
+// scripts created. Plain data, all of it saved (docs/formats/save.md). Platform-independent.
 // Notes: docs/scripting.md ("Game state").
 
 import type { PlayerAppearance } from '../../gameplay/chargen.ts';
@@ -78,7 +78,7 @@ export interface ReferenceState {
   actorCause?: number;
   /**
    * Flora harvested (harvest-engine.ts): when (game days) and in which cell; it grows again as
-   * that cell resets. TODO(M12): in the save.
+   * that cell resets.
    */
   harvested?: { readonly at: number; readonly cell?: number };
 }
@@ -295,8 +295,7 @@ export interface ActorMagicState {
 }
 
 /**
- * What casting keeps of an actor (src/scripting/runtime/casting-engine.ts). TODO(M12): in the
- * save.
+ * What casting keeps of an actor (src/scripting/runtime/casting-engine.ts).
  */
 export interface ActorCastingState {
   /** Powers it used, by spell: the game day (GameDaysPassed) of the last use. */
@@ -321,7 +320,7 @@ export interface JailState {
   readonly inventoryTaken: boolean;
 }
 
-/** What crime keeps of the player (src/scripting/runtime/crime-engine.ts). TODO(M12): saved. */
+/** What crime keeps of the player (src/scripting/runtime/crime-engine.ts). */
 export interface CrimeState {
   /**
    * Stolen items by container, then base, then whose ("faction:witnessed", the crime faction
@@ -380,14 +379,14 @@ export class GameState {
   readonly factions = new Map<number, FactionState>();
   readonly locations = new Map<number, LocationState>();
   readonly cells = new Map<number, CellState>();
-  /** When (game days) the player was last in each cell (cells reset after; TODO(M12): saved). */
+  /** When (game days) the player was last in each cell (cells reset after). */
   readonly cellVisits = new Map<number, number>();
   /**
    * When (whole game hours) each cell last left the loaded area: its reset waits from then
-   * (cell-reset.ts). TODO(M12): in the save.
+   * (cell-reset.ts).
    */
   readonly cellDetached = new Map<number, number>();
-  /** The encounter zones' clocks (cell-reset.ts). TODO(M12): in the save. */
+  /** The encounter zones' clocks (cell-reset.ts). */
   readonly zoneTimes = new Map<number, ZoneTimes>();
   /** When (whole game hours) each actor died: its respawn and its corpse's clearing wait. */
   readonly deathHours = new Map<number, number>();
@@ -435,23 +434,22 @@ export class GameState {
   readonly restocked = new Map<number, { readonly days: number; readonly count: number }>();
   /** The player has finished the race menu once (the opening): a new race then resets skills. */
   raceChosen = false;
-  /** The books the player has read (a skill book teaches once; TODO(M12): in the save). */
+  /** The books the player has read (a skill book teaches once). */
   readonly booksRead = new Set<number>();
   /** The tutorials shown in this game (their default objects' uses: "HBLK", ...). */
   readonly tutorialsShown = new Set<string>();
-  /** How often each skill (actor value) has been made Legendary (TODO(M12): in the save). */
+  /** How often each skill (actor value) has been made Legendary. */
   readonly legendary = new Map<number, number>();
   /** What the player has seen of interiors (the local map's fog of war), by cell. */
   readonly seen = new Map<number, Map<string, Uint8Array>>();
   /**
-   * The player's own map marker (the map's Place Marker), in the map's world: where it stands
-   * (TODO(M12): in the save).
+   * The player's own map marker (the map's Place Marker), in the map's world: where it stands.
    */
   playerMarker:
     { readonly world: number; readonly position: readonly [number, number, number] } | undefined;
   /**
    * The player's current location as the engine keeps it (actor-locations.ts): none at a new
-   * game, set as they enter a cell of another location. TODO(M12): in the save.
+   * game, set as they enter a cell of another location.
    */
   playerLocation: number | undefined;
   /** Training sessions the player had at a level (five a level: the training menu). */
@@ -461,22 +459,21 @@ export class GameState {
   /**
    * The player's experience (src/scripting/runtime/progression-engine.ts): each skill's toward
    * its next level (by actor value), and the character's toward its next level-up (UESP
-   * "Leveling"). TODO(M12): in the save.
+   * "Leveling").
    */
   readonly skillExperience = new Map<number, number>();
   playerExperience = 0;
-  /** Encounter zones' levels, set as first met (ECZN). TODO(M12): in the save. */
+  /** Encounter zones' levels, set as first met (ECZN). */
   readonly zoneLevels = new Map<number, number>();
   /** The level each reference's leveled lists were picked at (it keeps its picks). */
   readonly leveledLevels = new Map<number, number>();
   /**
    * What the player looks like (the race menu's choices; its race is the Player base's race,
    * ActorBase.GetRace, while Actor.SetRace changes the actor's own: ActorState.race). Made from
-   * the Player record (NPC_ 0x7) when first needed; undefined until then. TODO(M12): in the
-   * save.
+   * the Player record (NPC_ 0x7) when first needed; undefined until then.
    */
   playerAppearance: PlayerAppearance | undefined;
-  /** The name the player chose in the race menu (else the Player record's). TODO(M12). */
+  /** The name the player chose in the race menu (else the Player record's). */
   playerName: string | undefined;
   /** Actors dead, by their base (GetDeadCount). */
   readonly deadCounts = new Map<number, number>();
@@ -484,13 +481,12 @@ export class GameState {
    * Items of containers with data of their own (ItemStack: an improved weapon's health), by
    * container, then base: alike items of a base in stacks; the rest of the base's count (the
    * inventory's) is plain. Kept by the crafting engine (src/scripting/runtime/crafting-engine.ts).
-   * TODO(M12): in the save.
    */
   readonly itemStacks = new Map<number, Map<number, ItemStack[]>>();
   /**
    * Forms the game made (the player's enchantments, enchanted items, potions and poisons:
    * src/world/created-forms.ts), by form id (the save's own range, as created references).
-   * TODO(M12): in the save (and those no inventory holds any more left out).
+   * TODO(M13): those no inventory holds any more left out of the save.
    */
   readonly createdForms = new Map<number, CreatedForm>();
   /** Enchantments the player learned by disenchanting (their base enchantments). */

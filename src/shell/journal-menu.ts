@@ -9,6 +9,7 @@ import { MISC_STATS, StatCategory } from '../gameplay/misc-stats.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { journalQuests, MISC_QUEST_TYPE, type JournalQuest } from '../scripting/runtime/journal.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
+import type { SaveHeader } from '../save/save-codec.ts';
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import { formatGameDate } from '../world/game-time.ts';
 import type { GameSession } from './game-session.ts';
@@ -61,6 +62,10 @@ export class JournalMenu {
   readonly #unanswered = new Set<string>();
   /** Quit to the main menu, or the game, ends Play's game. */
   onQuit: ((toDesktop: boolean) => void) | undefined;
+  /** Saving and loading (Play's): unset, the system page's Save, Load and Quicksave do nothing. */
+  saves: JournalSaves | undefined;
+  /** The saves the list shows now (the system page's Save or Load), and whether it saves. */
+  #listed: { headers: SaveHeader[]; saving: boolean; list: string } | undefined;
   /** Show on Map: the journal closes, the map opens on a quest target (its reference). */
   onShowOnMap: ((reference: number) => void) | undefined;
   /** The objectives' targets on the map ("quest:objective" → the first target's reference). */
@@ -204,6 +209,50 @@ export class JournalMenu {
         updateStats: (menu, args) => {
           menu.respond(args[0], ...this.#stats());
         },
+        // Save and Load list the saves (the movie adds its [NEW SAVE] on Save), newest first.
+        SAVE: (menu, args) => {
+          void this.#listSaves(menu, args[0], true);
+        },
+        LOAD: (menu, args) => {
+          void this.#listSaves(menu, args[0], false);
+        },
+        SaveGame: (menu, args) => {
+          const listed = this.#listed;
+          const index = typeof args[0] === 'number' ? args[0] : 0;
+          // The first entry is the new save; the others are saved over.
+          const over = index > 0 ? listed?.headers[index - 1]?.name : undefined;
+          close(menu);
+          void this.saves?.save(over);
+        },
+        IsOKtoLoad: (menu) => {
+          menu.call('ConfirmOKToLoad');
+        },
+        LoadGame: (menu, args) => {
+          const index = typeof args[0] === 'number' ? args[0] : -1;
+          const name = this.#listed?.headers[index]?.name;
+          if (name === undefined) return;
+          close(menu);
+          this.saves?.load(name);
+        },
+        DeleteSave: (menu, args) => {
+          const listed = this.#listed;
+          const index = typeof args[0] === 'number' ? args[0] : -1;
+          const name = listed?.headers[listed.saving ? index - 1 : index]?.name;
+          if (!listed || name === undefined) return;
+          void this.saves
+            ?.delete(name)
+            .then(() => this.#listSaves(menu, listed.list, listed.saving));
+        },
+        QuickSave: (menu) => {
+          close(menu);
+          this.saves?.quicksave();
+        },
+        // One list for every character (TODO(M13): the character filter), all at once.
+        UseCurrentCharacterFilter: () => undefined,
+        ForceStopSaveListLoading: () => undefined,
+        // TODO(M13): the save's thumbnail shown (img://BGSSaveLoadHeader_Screenshot).
+        PrepSaveGameScreenshot: () => undefined,
+        SetSaveDisabled: () => undefined,
         QuitToMainMenu: (menu) => {
           close(menu);
           this.onQuit?.(false);
@@ -344,6 +393,32 @@ export class JournalMenu {
     return topics;
   }
 
+  /**
+   * Fills the save list (the movie's entryList) with the saves, then tells the movie it is
+   * complete (onSaveLoadBatchComplete: initial update, entries processed, entries in all). An
+   * entry: its text (the list's line), the player's name, level and race, the game time.
+   */
+  async #listSaves(menu: Menu, list: unknown, saving: boolean): Promise<void> {
+    const path = typeof list === 'string' && list.startsWith('_') ? list : menu.reference(list);
+    if (!path) return;
+    const headers = (await this.saves?.list()) ?? [];
+    this.#listed = { headers, saving, list: path };
+    const runtime = this.#session.scriptsReady;
+    menu.set(`${path}.length`, 0);
+    headers.forEach((header, index) => {
+      menu.invoke(`${path}.push`, {
+        text: `${header.name}  ${header.location}`,
+        name: header.playerName,
+        level: header.playerLevel,
+        raceName: '',
+        playTime: runtime?.gameTimeString(header.gameDays) ?? '',
+        index,
+        fileNum: header.number,
+      });
+    });
+    menu.call('onSaveLoadBatchComplete', true, headers.length, headers.length);
+  }
+
   #notAnswered(name: string): void {
     if (this.#unanswered.has(name)) return;
     this.#unanswered.add(name);
@@ -356,19 +431,15 @@ export class JournalMenu {
   }
 }
 
-/** The system page's requests not answered yet: saving and loading (TODO(M12)). */
-const UNBUILT = [
-  'SAVE',
-  'LOAD',
-  'SaveGame',
-  'LoadGame',
-  'DeleteSave',
-  'QuickSave',
-  'IsOKtoLoad',
-  'PopulateCharacterList',
-  'CharacterSelected',
-  'UseCurrentCharacterFilter',
-  'ForceStopSaveListLoading',
-  'PrepSaveGameScreenshot',
-  'SetSaveDisabled',
-] as const;
+/** The system page's requests not answered yet: the save list's character filter (TODO(M13)). */
+const UNBUILT = ['PopulateCharacterList', 'CharacterSelected'] as const;
+
+/** What the journal's Save, Load and Quicksave do (Play's save manager). */
+export interface JournalSaves {
+  list(): Promise<SaveHeader[]>;
+  /** A new save, or over the save of this name. */
+  save(overwrite?: string): Promise<unknown>;
+  quicksave(): void;
+  load(name: string): void;
+  delete(name: string): Promise<void>;
+}
