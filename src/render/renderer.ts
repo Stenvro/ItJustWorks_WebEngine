@@ -1,6 +1,24 @@
 import { GBUFFER_FORMAT, gbufferTarget } from './gbuffer.ts';
-import { frustumPlanes, invert } from './frustum.ts';
+import { frustumPlanes, invert, type Plane } from './frustum.ts';
 import type { GpuContext } from './gpu.ts';
+import {
+  LIGHT_SHADOW_FACES,
+  lightShadowKey,
+  lightShadowViews,
+  MAX_SHADOW_LIGHTS,
+  ShadowLightSelector,
+  type LightShadowViews,
+  type ShadowSlot,
+} from './light-shadows.ts';
+
+/** What a slot of the light-shadow map holds: the light's views and each layer's casters. */
+interface LightShadowState {
+  readonly key: string;
+  readonly views: LightShadowViews | undefined;
+  readonly planes: readonly Plane[][];
+  /** Each layer's caster signature when it was rendered (none: not yet). */
+  readonly signatures: number[];
+}
 import { fitCascades, shadowAnchor, SHADOW_SPLITS, type Cascade } from './shadow-cascades.ts';
 
 /**
@@ -26,6 +44,7 @@ import {
   type FrameShadows,
   type LargeRefMask,
   type LodMask,
+  type PointLight,
   type SceneLighting,
   type WaterFrame,
 } from './scene-renderer.ts';
@@ -93,6 +112,8 @@ export interface SceneView {
   readonly backdrop: boolean;
   /** The directional light casts cascaded shadows (exteriors). */
   readonly shadows?: boolean;
+  /** Lights with LIGH shadow flags cast shadows (interiors: light-shadows.ts). */
+  readonly lightShadows?: boolean;
   /** Called once a frame before the scenes animate (actors take their poses). */
   readonly update?: (timeSeconds: number) => void;
   /**
@@ -170,6 +191,12 @@ export class Renderer {
   /** The cascades as last rendered into the shadow map, and a frame counter for updates. */
   readonly #cascades: Cascade[] = [];
   #shadowFrame = 0;
+  /** Shadow lights drawn at once (at most MAX_SHADOW_LIGHTS). */
+  shadowLightLimit = MAX_SHADOW_LIGHTS;
+  /** Light-shadow map layers rendered in the last frame (the terminal's stats). */
+  lightShadowPasses = 0;
+  readonly #shadowLights = new ShadowLightSelector();
+  readonly #lightShadowStates: (LightShadowState | undefined)[] = [];
   /** The precipitation occlusion map: its view, where it was centred and when. */
   #occlusion: { viewProj: Mat4; center: Vec3; frame: number } | undefined;
   #lastTime: number | undefined;
@@ -283,6 +310,7 @@ export class Renderer {
       device.queue.writeBuffer(this.#backdropBuffer, 0, this.#backdropData);
     }
     let shadows: FrameShadows | undefined;
+    let lightShadowSlots: readonly ShadowSlot[] = [];
     let wind: Vec3 = [0, 0, 0];
     /** Cascades to render into the shadow map this frame. */
     const dueCascades: number[] = [];
@@ -310,6 +338,7 @@ export class Renderer {
         // The shader samples each cascade with the matrix it was rendered with.
         shadows = { cascades: this.#cascades };
       }
+      lightShadowSlots = this.#selectShadowLights(view, lighting.lights, delta);
       this.scene.updateFrame(
         this.#viewProjection,
         view.camera.position,
@@ -348,6 +377,9 @@ export class Renderer {
         this.#shadowPass(encoder, i, cascade.viewProj, terrainCells, scenes, cascade.texelSize);
       }
     }
+    // The shadow lights' maps: only the layers whose casters changed.
+    this.lightShadowPasses = 0;
+    if (view) this.#lightShadowPasses(encoder, view, lightShadowSlots, scenes);
     // Precipitation: the casters seen from above (where it rains), redrawn as the camera moves.
     const precipitation = view?.precipitation?.().filter((entry) => entry.amount > 0) ?? [];
     if (view && precipitation.length > 0) {
@@ -565,6 +597,70 @@ export class Renderer {
       scene: targets.sceneColor,
       refraction: targets.refractionResolved,
     });
+  }
+
+  /**
+   * Picks this frame's shadow lights (the nearest of those in a room seen, light-shadows.ts),
+   * keeps each slot's views while its light stays put, and hands the slots to the scene.
+   */
+  #selectShadowLights(
+    view: SceneView,
+    lights: readonly PointLight[],
+    delta: number,
+  ): readonly ShadowSlot[] {
+    const rooms = view.rooms?.();
+    const candidates = view.lightShadows
+      ? lights.filter((light) => light.shadow && (rooms?.inVisibleRoom(light.position) ?? true))
+      : [];
+    const slots = this.#shadowLights.update(
+      candidates,
+      view.camera.position,
+      this.shadowLightLimit,
+      delta,
+    );
+    const views: (LightShadowViews | undefined)[] = [];
+    for (const { light, slot } of slots) {
+      const key = lightShadowKey(light);
+      let state = this.#lightShadowStates[slot];
+      if (state?.key !== key) {
+        const shadowViews = lightShadowViews(light);
+        state = {
+          key,
+          views: shadowViews,
+          planes: shadowViews?.viewProj.map((matrix) => frustumPlanes(matrix)) ?? [],
+          signatures: [],
+        };
+        this.#lightShadowStates[slot] = state;
+      }
+      views[slot] = state.views;
+    }
+    this.scene.updateLightShadows(slots, views);
+    return slots;
+  }
+
+  /**
+   * Renders the layers of the shadow lights' maps whose casters moved, appeared or went (all of
+   * a slot's layers when its light changed or moved): a still room keeps its maps.
+   */
+  #lightShadowPasses(
+    encoder: GPUCommandEncoder,
+    view: SceneView,
+    slots: readonly ShadowSlot[],
+    scenes: readonly GpuScene[],
+  ): void {
+    const rooms = view.rooms?.();
+    for (const { light, slot } of slots) {
+      const state = this.#lightShadowStates[slot];
+      if (!state?.views) continue;
+      const casters = this.scene.lightCasters(scenes, light.position, light.radius, rooms);
+      state.views.viewProj.forEach((viewProj, face) => {
+        const signature = this.scene.casterSignature(casters, state.planes[face] ?? []);
+        if (signature === state.signatures[face]) return;
+        state.signatures[face] = signature;
+        this.scene.drawLightShadows(encoder, casters, slot * LIGHT_SHADOW_FACES + face, viewProj);
+        this.lightShadowPasses++;
+      });
+    }
   }
 
   /** Renders shadow casters (terrain and scene parts) into a layer of the shadow map. */
