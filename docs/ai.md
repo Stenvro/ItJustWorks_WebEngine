@@ -197,8 +197,17 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   player riding (a horse, a cart) is carried and no one to go round: their own horse went round
   them every step, its way wavering left and right under its rider.
   Kept from going on by one in its way (slower than 16 units a second) for longer than
-  fMaxTimeBlockedByActors (1 s), it searches its path again round that one. TODO(M13): how the
-  engine's own avoidance turns the way is not read yet.
+  fMaxTimeBlockedByActors (1 s), it searches its path again round that one. The player standing
+  in its way is first asked to move (its ActorCollidewithActor line, once a travel); it goes
+  round them once it is kept another fMaxTimeBlockedByActors. TODO(M13): how the engine's own
+  avoidance turns the way is not read yet.
+  TODO(M10), a deadlock seen in Whiterun's market (Mila Valentia stood 216 units short of her
+  scene travel for 36 s, pressed against a standing scene actor): the search keeps off the
+  blocker only by closing the triangles whose middle lies within its circle, and in an
+  exterior's large triangles none does, so each search finds the same way through the one
+  standing there, and the actor is blocked again a second later. The search should close the
+  steps that pass within the circle (as an obstacle's cut does) and the path should keep its
+  width off it.
 - **Bumped** (`src/shell/actor-movers.ts`): the player walking into an actor's controller (at
   40 units a second or more, towards it) is a bump: where the player came from, clockwise from
   the actor's facing (GetLastBumpDirection), and whether it was small (IsSmallBump; observed in
@@ -522,12 +531,31 @@ had ended falls out again). One at a time (TODO(M13): which may replace which).
   within fAvoidPlayerDistance (100) it runs to a spot away from them; once they are farther a
   short timer runs out and it ends. Inferred, TODO(M13): the spot (on the player's far side,
   twice fAvoidPlayerDistance from them, turned up to 60° where not walkable), the timer (1 s).
-- Not built yet (TODO(M10)): React To Destroyed Object, Steal Warning and Pickpocket Warning
-  (iStealWarnings, iPickPocketWarnings 2; fWarningTimer 5: the owner comes up and warns before
-  the crime counts), Get Up From Chair or Bed, Surface (a swimmer under water comes up),
-  Movement Blocked (off while bUseMovementBlockedPackage:General is 0, its built-in value), an
-  actor blocked by the standing player asking them to move (today it searches its way round
-  them after fMaxTimeBlockedByActors).
+- **Steal Warning** (observed in the original): a theft by the player that its owner sees
+  (on the stage, alive, detecting them, fighting no one) of anything but a horse, while the
+  player has had fewer than iStealWarnings (2) warnings, gives the owner the warning instead of
+  the crime (the item is stolen, unseen): the crime engine asks the stage
+  (`CrimeWorld.stealWarning`, `src/shell/actor-crime.ts`). Each warning counts one; the first
+  starts the player's warning timer at fWarningTimer (5 s). Once used up, the next theft seen
+  is the crime. The owner walks up to them (within 150 units), turns to them, says its line
+  and watches them fWarningTimer (the engine ends it once it has not seen them that long).
+  Inferred, TODO(M13): the timer forgets the warnings as it runs out; the line is the crime's
+  own (Steal for a guard, StealFromNC else); which thefts the engine lets warn.
+- **Pickpocket Warning**: built as the steal warning in the engine, but nothing makes it and
+  iPickPocketWarnings is never read: a pickpocket caught is the crime at once, in the engine
+  as in ours (`warnThief` is there for it, started nowhere).
+- **React To Destroyed Object**: an object reaching a destruction stage with the Destroy flag
+  makes the actors within 1024 units that fight no one turn to it and look 3 s
+  (`ActorStage.objectDestroyed`; TODO(M13): the engine's reach, sight and length, all ours).
+- **Movement Blocked**: made only while bUseMovementBlockedPackage:General is on (its built-in
+  value is 0, so never in vanilla): an actor kept from going on fMaxTimeBlockedByActors stands
+  that long, then searches its way again.
+- **Get Up From Chair Or Bed** (`getUpFromChairBed`: it leaves its furniture) and **Surface**
+  (`surfaceTo`: a swimmer under water rises to the surface) are built; TODO(M10): what makes
+  them (the engine's starts are not read: ours has its packages leave furniture themselves,
+  and NPCs do not drown).
+- The player standing in a mover's way: [Movement](#movement) (its ActorCollidewithActor line
+  before it goes round them).
 
 ### The player driven by AI
 
@@ -2376,15 +2404,19 @@ choices its leaves make, `src/shell/actor-combat-ai.ts` runs it.
   search radius (fCombatSearchInterior / ExteriorRadiusMin .. Max) in steps of at most
   fCombatSearchWanderDistance, looking fCombatSearchLookTime at each (TODO(M13): the priority
   points and the doors).
-- **Casters** (`chooseCaster`, `holdsRestore`, `holdsWard`; TODO(M13): the stage still weighs
-  its support with `chooseSupport`, without reanimation, and the rules below are not wired to
-  it yet): a ward against what comes at it with
+- **Casters** (`chooseCombatSupport`: the Potion slot, then `chooseCaster`; `holdsRestore`,
+  `holdsWard`; the stage's support every second, `src/shell/actor-combat-ai.ts`): a health
+  potion below its restore share, a magicka potion below its magicka share, then a ward against
+  what comes at it with
   fCombatMagicWardMagickaCastLimit of its magicka, held at least fCombatMagicWardMinCastTime;
   restore below its restore share, a held healing spell cast on until its health is
   fCombatRestoreStopCastThreshold past that share (inferred); a summons (not within
-  fCombatMagicSummonRestrictTime); a corpse raised within fCombatMagicReanimateDistance (not
-  within its restrict time); a buff. Potions come before the hands' spells: the Action Equipment
-  Selector's slots run Scroll, Staff, Shout, Potion, Magic, Block, Ranged, Melee. Prepare Dual
+  fCombatMagicSummonRestrictTime); the nearest corpse raised within
+  fCombatMagicReanimateDistance (its reanimation spell, a cast purpose of its own, cast at it;
+  not within fCombatMagicReanimateRestrictTime); a buff. Potions come before the hands' spells:
+  the Action Equipment Selector's slots run Scroll, Staff, Shout, Potion, Magic, Block, Ranged,
+  Melee. A free left hand beside a one-handed weapon takes up its best offensive spell
+  (`leftHandSpell`; TODO(M13): the engine's own score for it), cast beside its blows. Prepare Dual
   Cast (Prepare Dual Cast Immediate / Concentration under the Casting Type Selector) holds while
   both hands charge, broken off after fCombatMagicDualCastInterruptTime (2.5 s).
 
@@ -2545,8 +2577,12 @@ bash behaviours (their values are ready); the flanking and ranged movement selec
   circle), then come at it from the side with allies on the target (round to the point a quarter
   round it, their flank distance past their reach), else advance; at range it closes to its
   optimal range (Style values), falls back within fCombatAdvanceOuterRadiusMax (fallback chance),
-  strafes aside (strafe chance) or holds, and chases beyond its range (TODO(M13): the ranged and
-  flanking movement trees are not read). Its combat override package list (NPC\_ / alias ECOR: the first package
+  strafes aside (strafe chance), circles at its distance (circle chance) or holds: the Strafe
+  Selector observed in the original (Strafe, Circle, else Ranged Movement Idle, inside both the In Range
+  and the Out of Range Movement Selectors, beside Use Cover, Find Attack Location and, out of
+  range, Maintain Optimal Range); it chases beyond its range (TODO(M13): Find Attack Location,
+  and which chances the Strafe and Circle value nodes read: ours the style's strafe and circle
+  mults). Its combat override package list (NPC\_ / alias ECOR: the first package
   whose conditions hold) keeps it within that package's place: back there first, no chase of a
   target beyond it.
 - **Attacks** (`chooseAttack`, every 0.25 s: The attack decision): within reach and facing

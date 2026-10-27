@@ -11,6 +11,7 @@
 // escape.
 
 import { aiSettingsOf } from '../ai/ai-settings.ts';
+import { StealWarnings, warnThief } from '../ai/engine-packages.ts';
 import { CrimeType, TrespassWarnings, type CrimeSettings } from '../gameplay/crime.ts';
 import type { CrimeAct, CrimeEvent } from '../scripting/runtime/crime-engine.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -31,6 +32,8 @@ export interface ActorCrimeOptions {
   readonly get: (reference: number) => StagedActor | undefined;
   /** An actor says a line of a topic subtype (src/shell/actor-talk.ts bark). */
   readonly bark: (actor: number, subtype: string, target: number | undefined) => Promise<boolean>;
+  /** Whether an actor fights now (one in combat warns no thief). */
+  readonly engaged?: (actor: number) => boolean;
 }
 
 /** Guards look for the wanted player this often (seconds). */
@@ -101,6 +104,8 @@ export class ActorCrime {
   };
   readonly #warnings = new TrespassWarnings();
   readonly #warners = new Set<number>();
+  /** The player's steal warnings (iStealWarnings, fWarningTimer). */
+  readonly #stealWarnings = new StealWarnings();
   /** The player has been inside the jail's cell (leaving it unserved is an escape). */
   #inJail = false;
 
@@ -158,6 +163,7 @@ export class ActorCrime {
     const { senses } = this.#options;
     runtime.crime.world = {
       witnesses: (actor, act, victim) => senses.detections.witness(actor, act, victim),
+      stealWarning: (owner) => this.#stealWarning(owner),
     };
     this.#stopListening = runtime.crime.listen((event) => {
       this.#heard(runtime, event);
@@ -213,6 +219,25 @@ export class ActorCrime {
       default:
         this.#endArrest(true);
     }
+  }
+
+  /**
+   * The player's theft its owner sees (src/ai/engine-packages.ts, Steal Warning): the owner on
+   * the stage, alive, detecting them and fighting no one, while their warnings are not used up
+   * (iStealWarnings), comes up and warns them; the theft is no crime yet.
+   */
+  #stealWarning(owner: number): boolean {
+    const { senses, ai, session } = this.#options;
+    const staged = this.#options.get(owner);
+    if (!staged || staged.dead || staged.visibility.hidden) return false;
+    if (!senses.detections.detects(owner, PLAYER_REF)) return false;
+    if (this.#options.engaged?.(owner) === true) return false;
+    const settings = aiSettingsOf(session);
+    if (!this.#stealWarnings.due(this.#clock, settings)) return false;
+    const line = LINES.steal[this.#guards.get(owner) === true ? 0 : 1];
+    if (!ai.pushEngine(owner, 'stealWarning', warnThief(line), PLAYER_REF)) return false;
+    this.#stealWarnings.give(this.#clock, settings);
+    return true;
   }
 
   #isGuard(runtime: ScriptRuntime, actor: number): Promise<boolean> {

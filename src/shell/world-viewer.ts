@@ -9,6 +9,7 @@ import type { Mat4, Vec3 } from '../render/math.ts';
 import type { Camera, Renderer } from '../render/renderer.ts';
 import { RoomCuller } from '../render/room-culler.ts';
 import type { CellRooms } from '../world/cell-rooms.ts';
+import { DestructionStageFlag } from '../world/destruction-records.ts';
 import { GRAVITY, initPhysics, PhysicsWorld } from '../physics/physics-world.ts';
 import {
   placedParts,
@@ -773,6 +774,9 @@ export class WorldViewer {
     summonPlace: (from, to, radius) => summonPlace(this.#navmeshes, from, to, radius),
     destructionChanged: (reference, reached) => {
       this.#destruction?.changed(reference, reached);
+      if (reached && (reached.flags & DestructionStageFlag.destroy) !== 0) {
+        this.#stage?.objectDestroyed(reference);
+      }
     },
     explosion: (explosion, at, source) => {
       void this.#stage?.projectiles.burst(explosion, at, source ?? 0);

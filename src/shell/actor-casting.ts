@@ -244,6 +244,11 @@ interface Shown {
    * then while something flies at it (projectile-flight.ts wardHeld); its seconds held.
    */
   ward?: { minimum: number; held: number };
+  /**
+   * An NPC's held healing spell goes on while this holds of its health share (the combat AI's
+   * restore stop threshold: combat-subtrees.ts holdsRestore); without it, until it is whole.
+   */
+  healHolds?: (health: number) => boolean;
   /** Seconds to an NPC's next look at whether its concentration spell still serves. */
   holdCheck: number;
   sounds: Promise<SoundInstance | undefined>[];
@@ -561,6 +566,8 @@ export class ActorCasting {
       readonly target?: number;
       /** An NPC's concentration spell held this long (UseMagic's cast time), whatever it serves. */
       readonly hold?: number;
+      /** A held healing spell goes on while this holds of its health share (Shown.healHolds). */
+      readonly healHolds?: (health: number) => boolean;
     } = {},
   ): Promise<boolean> {
     const runtime = this.#listen();
@@ -574,6 +581,7 @@ export class ActorCasting {
     const cast = runtime.casting.casting(actor, source);
     if (!cast) return false;
     const shown = this.#show(cast, options.target);
+    if (options.healHolds) shown.healHolds = options.healHolds;
     if (
       options.hold !== undefined &&
       actor !== PLAYER_REF &&
@@ -1080,7 +1088,8 @@ export class ActorCasting {
       (main.flags & EffectFlag.detrimental) === 0;
     if (!heals) return true;
     const health = await runtime.actors.value(cast.actor, ActorValue.health);
-    return health.current < health.max;
+    if (health.current >= health.max) return false;
+    return shown.healHolds?.(health.max > 0 ? health.current / health.max : 1) ?? true;
   }
 
   /** One spray of a breath: the interval's share of its shout's spell, from the head. */
@@ -1175,6 +1184,8 @@ export class ActorCasting {
       readonly purpose?: CastPurpose;
       /** A concentration spell held this long (UseMagic's cast time). */
       readonly hold?: number;
+      /** A held healing spell goes on while this holds of its health share. */
+      readonly healHolds?: (health: number) => boolean;
     } = {},
   ): Promise<boolean> {
     const runtime = this.#listen();
@@ -1193,13 +1204,27 @@ export class ActorCasting {
       dual: hand === 'both',
       ...(target !== undefined && { target }),
       ...(options.hold !== undefined && { hold: options.hold }),
+      ...(options.healHolds !== undefined && { healHolds: options.healHolds }),
     });
   }
 
-  /** An NPC heals itself (its best healing spell it has the magicka for). */
-  async healSelf(actor: number): Promise<boolean> {
+  /**
+   * An NPC heals itself (its best healing spell it has the magicka for); a held one goes on
+   * while `holds` holds of its health share (the combat AI's stop threshold), else until whole.
+   */
+  async healSelf(actor: number, holds?: (health: number) => boolean): Promise<boolean> {
     const spell = (await this.#listen()?.casting.chooseSpell(actor, 'heal'))?.formId;
-    return spell !== undefined && this.castAt(actor, 'right', actor, { spell });
+    if (spell === undefined) return false;
+    return this.castAt(actor, 'right', actor, {
+      spell,
+      ...(holds !== undefined && { healHolds: holds }),
+    });
+  }
+
+  /** An NPC raises a corpse with its best reanimation spell, cast at it. */
+  async reanimate(actor: number, corpse: number): Promise<boolean> {
+    const spell = (await this.#listen()?.casting.chooseSpell(actor, 'reanimate', corpse))?.formId;
+    return spell !== undefined && this.castAt(actor, 'right', corpse, { spell });
   }
 
   /**
