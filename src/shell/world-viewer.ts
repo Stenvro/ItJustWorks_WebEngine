@@ -803,6 +803,7 @@ export class WorldViewer {
       this.#stage?.talk.randomSceneStarts(scene, first, second),
     facesForLine: (speaker, target) => this.#stage?.talk.faces(speaker, target),
     saveActors: () => this.#stage?.saveActors() ?? [],
+    saveProjectiles: () => this.#stage?.projectiles.save() ?? [],
     impactAt: (impactDataSet, from, direction, length) =>
       this.#stage?.combat.impactAt(impactDataSet, from, direction, length) ?? false,
     pathTo: (actor, target, walkRun) => {

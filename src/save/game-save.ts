@@ -8,6 +8,7 @@ import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { RuntimeSave } from '../scripting/runtime/runtime-save.ts';
 import { readSave, SAVE_VERSION, writeSave, type SaveHeader } from './save-codec.ts';
+import type { SavedHazard } from '../scripting/runtime/hazard-engine.ts';
 import type { WorldSave } from './world-save.ts';
 
 /** The save file's body. */
@@ -24,6 +25,8 @@ export interface GameSave {
    * packages and fights, moved objects' graphs. None in saves made before it, or without a view.
    */
   readonly world?: WorldSave | undefined;
+  /** The hazards standing (their lifetimes and hits); none in saves made before they were kept. */
+  readonly hazards?: readonly SavedHazard[] | undefined;
   /**
    * Item counts to add to containers after their record's inventory is filled (an imported
    * .ess keeps inventories as changes against the records: ess-import.ts).
@@ -65,6 +68,7 @@ export async function saveGame(
     weather: runtime.world.currentWeather?.(),
     unsaved,
     world: runtime.world.saveWorld?.(),
+    hazards: runtime.hazards.save(),
   };
   const header: SaveHeader = {
     version: SAVE_VERSION,
@@ -110,6 +114,7 @@ export async function loadGameScripts(
     if (!loaded.has(plugin.toLowerCase())) problems.push(`the save's plugin ${plugin} is missing`);
   }
   problems.push(...(await runtime.loadGame(save.runtime, progress)));
+  await runtime.hazards.restore(save.hazards ?? []);
   for (const [container, items] of save.inventoryDeltas ?? []) {
     const inventory = await runtime.inventory(container);
     for (const [item, delta] of items) {
