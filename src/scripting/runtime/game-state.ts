@@ -359,6 +359,11 @@ export interface ItemStack {
   charge?: number;
   /** The one of its base an actor wears or wields (the game's ExtraWorn on the list). */
   worn?: boolean;
+  /**
+   * ExtraSoul: the soul an empty soul gem holds where it is smaller than the gem can hold
+   * (1 petty .. 5 grand; crafting-engine.ts addSoul).
+   */
+  soul?: number;
 }
 
 /** A reference a script created (PlaceAtMe, alias Create Reference). */
