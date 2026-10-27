@@ -96,6 +96,8 @@ export class SoundInstance {
       this.#distance.connect(reverb);
       reverb.connect(engine.reverbSend);
     }
+    // One starting while a menu holds its category waits for the menu to close.
+    this.#held = engine.held(descriptor.category) !== undefined;
     this.#source = this.#start(0, descriptor.looping !== 'none');
   }
 
@@ -106,7 +108,34 @@ export class SoundInstance {
   setTimeRate(rate: number): void {
     if (rate === this.#timeRate) return;
     this.#timeRate = rate;
-    this.#source.playbackRate.value = this.#rate * rate;
+    if (!this.#held) this.#applyRate(this.#source, 0);
+  }
+
+  /** A menu holds it (category-rules.ts): it stands still where it is until freed. */
+  #held = false;
+
+  /**
+   * A menu holds it after `seconds` (its category fading out first), or frees it (undefined):
+   * it goes on from where it stood. Its category is silent meanwhile.
+   */
+  hold(seconds: number | undefined): void {
+    const held = seconds !== undefined;
+    if (held === this.#held || this.ended) return;
+    this.#held = held;
+    this.#applyRate(this.#source, seconds ?? 0);
+  }
+
+  get held(): boolean {
+    return this.#held;
+  }
+
+  /** Its pitch × the world's clock, or standing still while held, from `delay` seconds on. */
+  #applyRate(source: AudioBufferSourceNode, delay: number): void {
+    const time = this.#engine.context.currentTime;
+    const rate = source.playbackRate;
+    rate.cancelScheduledValues(time);
+    rate.setValueAtTime(this.#held ? rate.value : this.#rate * this.#timeRate, time);
+    if (this.#held) rate.setValueAtTime(0, time + Math.max(0, delay));
   }
 
   /** Whether it has a place in the world (not 2D: the interface, music). */
@@ -223,7 +252,7 @@ export class SoundInstance {
     const context = this.#engine.context;
     const source = context.createBufferSource();
     source.buffer = this.#sound.buffer;
-    source.playbackRate.value = this.#rate * this.#timeRate;
+    source.playbackRate.value = this.#held ? 0 : this.#rate * this.#timeRate;
     if (loop) {
       source.loop = true;
       const region = this.#sound.loop;
