@@ -2326,7 +2326,7 @@ export class ActorCombat implements CombatBridge {
     // creature's attack (its attack data's spell) may pass its disease on.
     if (!hit.bash && !blocks) await runtime.magic.weaponHit(attackerRef, targetRef, stats?.weapon);
     if (!hit.shot && !blocks && data.spell !== undefined) {
-      await runtime.magic.contractDisease(targetRef, data.spell);
+      await runtime.magic.contractDisease(targetRef, data.spell, attackerRef);
     }
     // The perks' spells on the one hit: a hit's (Apply Combat Hit Spell: Paralyzing Strike,
     // the creatures' poisons), a bash's (Apply Bashing Spell: Disarming Bash).

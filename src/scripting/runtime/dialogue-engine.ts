@@ -59,6 +59,12 @@ export interface SpokenInfo {
 const HELLO = 'HELO';
 const GOODBYE = 'GBYE';
 const RUMORS = 'RUMO';
+/** The misc stats a persuasion's outcome counts, and the story manager event each raises. */
+const PERSUASION_STATS: readonly (readonly [string, 'FLAT' | 'BRIB' | 'INTM'])[] = [
+  ['persuasions', 'FLAT'],
+  ['bribes', 'BRIB'],
+  ['intimidations', 'INTM'],
+];
 
 export class DialogueEngine {
   readonly #runtime: ScriptRuntime;
@@ -311,9 +317,17 @@ export class DialogueEngine {
     const attachments = await runtime.forms.attachments(info.formId);
     for (const fragment of attachments?.fragments ?? []) {
       if (fragment.stage !== when) continue;
+      const before = PERSUASION_STATS.map(([stat]) => runtime.stats.get(stat) ?? 0);
       await runtime.vm.call(new ObjectHandle(info.formId, fragment.script), fragment.function, [
         runtime.referenceHandle(speaker),
       ]);
+      // A persuasion's outcome (FavorDialogueScript's Persuade, Bribe, Intimidate count it):
+      // the story manager's Flatter, Bribe or Intimidate event, of the one spoken to.
+      // TODO(M13): the engine's own raise site is not read; the count is where it shows.
+      PERSUASION_STATS.forEach(([stat, event], i) => {
+        if ((runtime.stats.get(stat) ?? 0) > (before[i] ?? 0))
+          runtime.detach(runtime.storyEvents.persuaded(event, speaker));
+      });
     }
   }
 
