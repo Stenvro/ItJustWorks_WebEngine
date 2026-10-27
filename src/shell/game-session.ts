@@ -14,6 +14,7 @@ import { loadBehaviorGraph, type BehaviorGraph } from '../formats/hkx/behavior.t
 import { parseNif, type NifFile } from '../formats/nif/nif.ts';
 import type { CollisionData } from '../physics/collision-data.ts';
 import { IniSettings } from '../world/ini-settings.ts';
+import { followWithHud, MenuStack } from '../ui/menu-stack.ts';
 import { HudSignals } from './hud-signals.ts';
 import { readPlayerData, type PlayerData } from './player.ts';
 import { readCollisionMatrix, type CollisionMatrix } from '../physics/collision-layers.ts';
@@ -287,6 +288,12 @@ export class GameSession {
   /** What the game tells its HUD (Play's hudmenu.swf listens). */
   readonly hud = new HudSignals();
   /**
+   * The menus open now, by name, with their flags (src/ui/menu-stack.ts): the HUD follows them
+   * (its mode for each, hidden behind those that hide it), scripts ask them (UI.IsMenuOpen),
+   * saving asks them.
+   */
+  readonly menuStack = new MenuStack();
+  /**
    * The image-space modifiers on the screen (scripts', the menus', low health's), laid over
    * the viewers' imagespace each frame.
    */
@@ -361,6 +368,7 @@ export class GameSession {
   #morphBytes = 0;
 
   constructor(vfs: Vfs, terminal: Terminal, presentation: SessionPresentation) {
+    followWithHud(this.menuStack, this.hud);
     this.vfs = vfs;
     const storage =
       presentation.storage === null
@@ -1137,6 +1145,7 @@ export class GameSession {
     const runtime = this.scriptsReady;
     if (!runtime) return;
     runtime.inMenuMode = this.menuMode;
+    runtime.menuOpen ??= (name) => this.menuStack.isOpen(name);
     if (this.loading) return;
     if (this.menuMode) {
       runtime.updateInMenu(realSeconds);

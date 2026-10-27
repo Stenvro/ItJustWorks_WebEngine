@@ -80,6 +80,12 @@ export class Compass {
     { readonly door: number; readonly position: readonly number[] } | undefined
   >();
 
+  /**
+   * Where the quest targets in the player's space were at the last reading (a target elsewhere:
+   * the load door toward it): the floating quest marker's (hud-elements.ts).
+   */
+  questPositions: readonly (readonly number[])[] = [];
+
   /** Where the actors fighting the player are now. */
   readonly #enemies: () => readonly (readonly number[])[];
 
@@ -98,6 +104,7 @@ export class Compass {
     const number = (name: string, fallback: number): number => settings.number(name) ?? fallback;
     const look = markerLookSettings((name) => settings.number(name));
     const markers: CompassMarker[] = [...(await this.#questTargets(runtime, at))];
+    this.questPositions = markers.map((marker) => marker.position);
     const data = (): number[] =>
       markers.slice(0, MAX_COMPASS_MARKERS).flatMap(({ position, frame }) => {
         const quest = frame === CompassFrame.quest || frame === CompassFrame.questDoor;

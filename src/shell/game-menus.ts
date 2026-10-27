@@ -6,6 +6,7 @@
 
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
+import { MenuFlag, MenuName, type MenuStack } from '../ui/menu-stack.ts';
 import { formatGameDate } from '../world/game-time.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
@@ -182,6 +183,29 @@ export class GameMenus {
     this.#sleepWait.onPassed = passed;
   }
 
+  /** The menu manager's stack (the session's). */
+  get #stack(): MenuStack {
+    return this.#session.menuStack;
+  }
+
+  /**
+   * A menu of the stack opens: in menu mode while it pauses the game (its PausesGame flag: all
+   * but the crafting menu), on the stack (the HUD follows it). Returns what ends both, once.
+   */
+  #held(name: string): () => void {
+    const pauses =
+      ((this.#stack.kind(name)?.flags ?? MenuFlag.pausesGame) & MenuFlag.pausesGame) !== 0;
+    const leaveMenuMode = this.#enterMenuMode(pauses);
+    const unstack = this.#stack.hold(name);
+    let left = false;
+    return () => {
+      if (left) return;
+      left = true;
+      unstack();
+      leaveMenuMode();
+    };
+  }
+
   /** Whether one of these menus is open. */
   get isOpen(): boolean {
     return this.#open !== undefined;
@@ -268,16 +292,18 @@ export class GameMenus {
       closed();
       return;
     }
-    this.#openItems(containerModel(this.#session, reference, this.#inventory), closed).catch(
-      (error: unknown) => {
-        this.#terminal.log(
-          'ui',
-          `the container menu does not open: ${error instanceof Error ? error.message : String(error)}`,
-          'error',
-        );
-        this.#closeOpen();
-      },
-    );
+    this.#openItems(
+      containerModel(this.#session, reference, this.#inventory),
+      closed,
+      MenuName.container,
+    ).catch((error: unknown) => {
+      this.#terminal.log(
+        'ui',
+        `the container menu does not open: ${error instanceof Error ? error.message : String(error)}`,
+        'error',
+      );
+      this.#closeOpen();
+    });
   }
 
   /**
@@ -292,6 +318,7 @@ export class GameMenus {
     this.#openItems(
       containerModel(this.#session, actor, this.#inventory, false, true),
       closed,
+      MenuName.container,
     ).catch((error: unknown) => {
       this.#terminal.log(
         'ui',
@@ -330,16 +357,19 @@ export class GameMenus {
     }
     if (request.name === 'RaceSex Menu') return this.#openRaceMenu(request.limited);
     let model: ItemMenuModel | undefined;
+    let name: string = MenuName.container;
     switch (request.name) {
       case 'Container Menu':
         model = containerModel(session, request.actor, this.#inventory, true);
         break;
       case 'Barter Menu':
         model = await barterModel(session, this.#terminal, request.actor);
+        name = MenuName.barter;
         this.#tutorial('HBBR');
         break;
       case 'Gift Menu':
         model = await giftModel(session, request.actor, request);
+        name = MenuName.gift;
         break;
       default:
         this.#terminal.log('ui', `the ${request.name} is not built yet`, 'warn');
@@ -347,9 +377,13 @@ export class GameMenus {
     }
     const opened = model;
     return new Promise((resolve) => {
-      this.#openItems(opened, () => {
-        resolve(opened.result?.() ?? 0);
-      }).catch((error: unknown) => {
+      this.#openItems(
+        opened,
+        () => {
+          resolve(opened.result?.() ?? 0);
+        },
+        name,
+      ).catch((error: unknown) => {
         this.#terminal.log(
           'ui',
           `the ${request.name} does not open: ${error instanceof Error ? error.message : String(error)}`,
@@ -363,7 +397,7 @@ export class GameMenus {
 
   /** The training menu for a trainer; resolves once it has closed. */
   async #openTraining(trainer: number): Promise<number> {
-    const open = { menu: undefined as Menu | undefined, leave: this.#enterMenuMode() };
+    const open = { menu: undefined as Menu | undefined, leave: this.#held(MenuName.training) };
     this.#open = open;
     return new Promise((resolve) => {
       const closed = (): void => {
@@ -397,12 +431,11 @@ export class GameMenus {
    */
   async #openRaceMenu(limited: boolean): Promise<number> {
     const leaveMenuMode = this.#enterMenuMode();
-    const hud = this.#session.hud;
-    hud.shown(false);
+    const unstack = this.#stack.hold(MenuName.raceSex);
     const open = {
       menu: undefined as Menu | undefined,
       leave: () => {
-        hud.shown(true);
+        unstack();
         leaveMenuMode();
       },
     };
@@ -430,7 +463,7 @@ export class GameMenus {
           // Closed from outside (Play ends): the player's camera and pose come back.
           open.leave = () => {
             opened.close();
-            hud.shown(true);
+            unstack();
             leaveMenuMode();
           };
         })
@@ -447,7 +480,7 @@ export class GameMenus {
 
   /** A level-up waiting: the player picks an attribute, then the skills menu opens. */
   async #openLevelUp(): Promise<void> {
-    const open = { menu: undefined as Menu | undefined, leave: this.#enterMenuMode() };
+    const open = { menu: undefined as Menu | undefined, leave: this.#held(MenuName.levelUp) };
     this.#open = open;
     open.menu = await this.#levelUp.open(MENU_DEPTH, (chose) => {
       if (this.#open !== open) return;
@@ -471,16 +504,7 @@ export class GameMenus {
    * camera's outro.
    */
   async #openSkills(levelUp: boolean): Promise<void> {
-    const leaveMenuMode = this.#enterMenuMode();
-    const hud = this.#session.hud;
-    hud.shown(false);
-    const open = {
-      menu: undefined as Menu | undefined,
-      leave: () => {
-        hud.shown(true);
-        leaveMenuMode();
-      },
-    };
+    const open = { menu: undefined as Menu | undefined, leave: this.#held(MenuName.stats) };
     this.#open = open;
     const opened = await this.#skills.open(levelUp, () => {
       if (this.#open !== open) return;
@@ -498,18 +522,13 @@ export class GameMenus {
     }
   }
 
-  /** The map, the HUD hidden; the world map's 3D in place of the world while it is open. */
+  /**
+   * The map, the HUD in its WorldMapMode (only its messages show); the world map's 3D in place
+   * of the world while it is open.
+   */
   async #openMap(focus?: number): Promise<void> {
-    const leaveMenuMode = this.#enterMenuMode();
-    const hud = this.#session.hud;
-    hud.shown(false);
-    const open = {
-      menu: undefined as Menu | undefined,
-      leave: () => {
-        hud.shown(true);
-        leaveMenuMode();
-      },
-    };
+    const leaveMap = this.#held(MenuName.map);
+    const open = { menu: undefined as Menu | undefined, leave: leaveMap };
     this.#open = open;
     const opened = await this.#map.open(
       MENU_DEPTH,
@@ -531,8 +550,7 @@ export class GameMenus {
       // Closed from outside (Play ends): the map gives the world back.
       open.leave = () => {
         opened.close();
-        hud.shown(true);
-        leaveMenuMode();
+        leaveMap();
       };
     }
   }
@@ -569,7 +587,7 @@ export class GameMenus {
       session.hud.notification(settings.string(reason) ?? '');
       return;
     }
-    const open = { menu: undefined as Menu | undefined, leave: this.#enterMenuMode() };
+    const open = { menu: undefined as Menu | undefined, leave: this.#held(MenuName.sleepWait) };
     this.#open = open;
     open.menu = await this.#sleepWait.open(sleeping, MENU_DEPTH, () => {
       if (this.#open !== open) return;
@@ -580,8 +598,8 @@ export class GameMenus {
   }
 
   /**
-   * A book lying in the world, read (its activation): the book menu, the HUD hidden; not while
-   * the player fights (sCanNotReadBook).
+   * A book lying in the world, read (its activation): the book menu, the HUD in its BookMode
+   * (its messages and notices show); not while the player fights (sCanNotReadBook).
    */
   readBook(read: BookToRead): void {
     if (this.#open || this.#reading || this.#session.menuMode) return;
@@ -591,11 +609,7 @@ export class GameMenus {
       });
       return;
     }
-    const hud = this.#session.hud;
-    hud.shown(false);
-    this.#read(read, () => {
-      hud.shown(true);
-    });
+    this.#read(read, () => undefined);
   }
 
   /**
@@ -635,7 +649,7 @@ export class GameMenus {
 
   /** Opens the book menu, in menu mode while it is open. */
   #read(read: BookToRead, closed: () => void): void {
-    const leave = this.#enterMenuMode();
+    const leave = this.#held(MenuName.book);
     const reading: { close: () => void } = {
       close: () => {
         // Not open yet.
@@ -670,13 +684,10 @@ export class GameMenus {
   /** Picking a lock (the lockpicking menu), the HUD hidden. */
   pickLock(reference: number): void {
     if (this.#open || this.#reading || this.#session.menuMode) return;
-    const hud = this.#session.hud;
-    hud.shown(false);
-    const leave = this.#enterMenuMode();
+    const leave = this.#held(MenuName.lockpicking);
     const open = { menu: undefined as Menu | undefined, leave: () => undefined as unknown };
     const closed = (): void => {
       if (this.#open === open) this.#open = undefined;
-      hud.shown(true);
       leave();
     };
     open.leave = closed;
@@ -710,14 +721,12 @@ export class GameMenus {
       done?.();
       return;
     }
-    const hud = this.#session.hud;
-    hud.shown(false);
-    // The one item menu that does not pause the game: the world goes on around the workbench.
-    const leave = this.#enterMenuMode(false);
+    // The one item menu that does not pause the game (no PausesGame flag): the world goes on
+    // around the workbench. The HUD keeps its messages and notices over it.
+    const leave = this.#held(MenuName.crafting);
     const open = { menu: undefined as Menu | undefined, leave: () => undefined as unknown };
     const closed = (): void => {
       if (this.#open === open) this.#open = undefined;
-      hud.shown(true);
       leave();
       done?.();
     };
@@ -783,20 +792,20 @@ export class GameMenus {
    * An item menu (inventory, magic), the HUD aside; it closes itself after its fade (CloseMenu),
    * back to the tween menu if the player went there.
    */
-  async #openItems(model: ItemMenuModel, closed?: () => void): Promise<void> {
-    const leaveMenuMode = this.#enterMenuMode();
-    const hud = this.#session.hud;
-    // The HUD stays in its mode for the menu (InventoryMode, BarterMode): its messages show
-    // over it (sItemTooExpensive, what is added or removed), the rest hides.
-    const hudMode = model.hudMode ?? 'InventoryMode';
-    hud.mode(hudMode, true);
+  async #openItems(
+    model: ItemMenuModel,
+    closed?: () => void,
+    name: string = model === this.#magic ? MenuName.magic : MenuName.inventory,
+  ): Promise<void> {
+    // The HUD stays in the menu's mode (InventoryMode, BarterMode: the stack's): its messages
+    // show over it (sItemTooExpensive, what is added or removed), the rest hides.
+    const leaveMenu = this.#held(name);
     const unblur = this.#blur();
     const open = {
       menu: undefined as Menu | undefined,
       leave: () => {
         unblur();
-        hud.mode(hudMode, false);
-        leaveMenuMode();
+        leaveMenu();
         closed?.();
       },
     };
@@ -812,7 +821,7 @@ export class GameMenus {
 
   /** The favorites menu, over the game (the HUD stays); it closes after its fade (FadeDone). */
   async #openFavorites(): Promise<void> {
-    const open = { menu: undefined as Menu | undefined, leave: this.#enterMenuMode() };
+    const open = { menu: undefined as Menu | undefined, leave: this.#held(MenuName.favorites) };
     this.#open = open;
     open.menu = await this.#favorites.open(() => {
       if (this.#open !== open) return;
@@ -825,16 +834,7 @@ export class GameMenus {
 
   /** The journal: on the system page for Pause, else on the page it was left on. */
   async #openJournal(page: number | undefined): Promise<void> {
-    const leaveMenuMode = this.#enterMenuMode();
-    const hud = this.#session.hud;
-    hud.shown(false);
-    const open = {
-      menu: undefined as Menu | undefined,
-      leave: () => {
-        hud.shown(true);
-        leaveMenuMode();
-      },
-    };
+    const open = { menu: undefined as Menu | undefined, leave: this.#held(MenuName.journal) };
     this.#open = open;
     open.menu = await this.#journal.open(
       page,
@@ -910,9 +910,7 @@ export class GameMenus {
    * Esc: its close animation, then CloseMenu).
    */
   async #openTween(): Promise<void> {
-    const leaveMenuMode = this.#enterMenuMode();
-    const hud = this.#session.hud;
-    hud.mode('TweenMode', true);
+    const leaveMenu = this.#held(MenuName.tween);
     // The view leans and zooms while it is open (the tween camera), and goes back as it closes.
     const camera = this.#world.tweenCamera();
     camera?.open();
@@ -922,8 +920,7 @@ export class GameMenus {
       leave: () => {
         unblur();
         camera?.close();
-        hud.mode('TweenMode', false);
-        leaveMenuMode();
+        leaveMenu();
       },
     };
     this.#open = open;

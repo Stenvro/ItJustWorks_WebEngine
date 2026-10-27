@@ -47,6 +47,8 @@ import { ConsoleMenu, isConsoleKey, type ConsoleRunner } from './console-menu.ts
 import { ConsoleCommands, parseConsoleLine } from './console-commands.ts';
 import { Compass, questTargets } from './compass.ts';
 import { MenuHost, type Menu } from '../ui/menu-host.ts';
+import { MenuName } from '../ui/menu-stack.ts';
+import { floatingMarker } from './hud-elements.ts';
 import type { GameSession } from './game-session.ts';
 import { headPosition, type PlacedActor } from './actors.ts';
 import type { PlayerData } from './player.ts';
@@ -471,6 +473,14 @@ export class PlayMode {
       onSettingsChange: (listener) => session.preferences.onChange(listener),
       compass: () => compass.targets(),
       keyLabels: (text) => withKeyLabels(text, this.#playerData?.controls),
+      floating: () => {
+        const at = session.scriptWorld.livePlacement(PLAYER_REF);
+        return at
+          ? floatingMarker(compass.questPositions, at.position, (point) =>
+              session.render.project(point),
+            )
+          : undefined;
+      },
     });
     this.#hud = hud;
     await hud.open();
@@ -773,7 +783,8 @@ export class PlayMode {
     const session = this.#session;
     const runtime = session.scriptsReady;
     let leave: ((pointer?: boolean) => void) | undefined = this.#enterMenuMode();
-    session.hud.shown(false);
+    // The loading menu hides the HUD (the stack's).
+    const unstack = session.menuStack.hold(MenuName.loading);
     // The world goes at once (the loading screen's mist and model come as they load).
     const unblack = MistMenu.blackout(this.#renderer);
     let mist: MistMenu | undefined;
@@ -801,7 +812,7 @@ export class PlayMode {
       this.#loadingMenu = undefined;
       mist?.hide();
       unblack();
-      session.hud.shown(true);
+      unstack();
       if (leave) leave();
       else if (!session.menuMode) this.#world.capturePointer(true);
     }
@@ -991,7 +1002,7 @@ export class PlayMode {
    */
   #talk(dialogue: DialogueMenu, menus: GameMenus, speaker: PlacedActor, opening?: number): void {
     if (dialogue.isOpen || menus.isOpen || this.#session.menuMode) return;
-    const hud = this.#session.hud;
+    const session = this.#session;
     // The view turns to the speaker and zooms in while they talk (src/shell/dialogue-camera.ts).
     const camera = this.#world.player()?.play.player.dialogue;
     dialogue
@@ -999,7 +1010,7 @@ export class PlayMode {
         speaker,
         {
           opened: () => {
-            hud.mode('DialogueMode', true);
+            session.menuStack.open(MenuName.dialogue);
             this.#talking = true;
             this.#world.capturePointer(false);
             camera?.open(() => headPosition(speaker));
@@ -1007,7 +1018,7 @@ export class PlayMode {
           closed: () => {
             this.#talking = false;
             camera?.close();
-            hud.mode('DialogueMode', false);
+            session.menuStack.close(MenuName.dialogue);
             this.#world.capturePointer(true);
           },
         },

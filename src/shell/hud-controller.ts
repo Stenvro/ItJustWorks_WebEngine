@@ -17,6 +17,13 @@
 // The enemy health bar (enemy). The charge meters of the enchanted weapons in the player's hands
 // (SetChargeMeterPercent(percent, force, left hand, shown): the crafting engine's charge).
 // Riding: HorseMode, with the weapon drawn WarHorseMode (the movie's own element lists).
+// The menus' modes come through the menu stack (src/ui/menu-stack.ts); quest notices wait while
+// the HUD is hidden or in a mode that does not show them (hud-elements.ts). The meters show as
+// they change and while they are not full (hud-elements.ts' MeterFade); a drawn bow or crossbow
+// shows its ammo and count (ShowArrowCount); the floating quest marker stands over the nearest
+// quest target near enough (FloatingQuestMarkerInstance). Notices of the game's own: a word of
+// power learned (sShoutAdded over the word in the dragon letters), a dragon soul absorbed
+// (sDragonSoulAcquired), a location cleared (its name, sCleared).
 
 import type { CastEvent } from '../scripting/runtime/casting-engine.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -26,6 +33,13 @@ import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import { ActorValue } from '../world/actor-values.ts';
 import type { GameSettings } from '../world/game-settings.ts';
 import type { IniSettings } from '../world/ini-settings.ts';
+import {
+  HudModes,
+  METER_PAUSE_FRAME,
+  MeterFade,
+  type FloatingMarker,
+  type MeterStep,
+} from './hud-elements.ts';
 import type { HelpMessage, HudSignals, HudSink, HudTarget } from './hud-signals.ts';
 import { StealthMeter } from './hud-stealth.ts';
 
@@ -42,6 +56,8 @@ export interface HudSource {
   readonly compass?: () => Promise<number[]>;
   /** A text's "[Event]"s as the keys bound to them (the help messages). */
   readonly keyLabels?: (text: string) => string;
+  /** The floating quest marker now (hud-elements.ts' floatingMarker), if it shows. */
+  readonly floating?: () => FloatingMarker | undefined;
 }
 
 /** The image the engine writes before a prompt's third line (InterfaceStrings). */
@@ -58,7 +74,13 @@ const COMPASS_INTERVAL_MS = 250;
 const QUESTS = `${BASE}.QuestUpdateBaseInstance`;
 
 /** QuestNotification's notification types (QUEST_UPDATE, SKILL_LEVEL_UPDATE, ...). */
-const NotificationType = { quest: 0, skill: 1 } as const;
+const NotificationType = { quest: 0, skill: 1, playerLevel: 2, shout: 3 } as const;
+
+/** EquippedItemType of a bow and a crossbow (GetEquippedItemType). */
+const BOW = 7;
+const CROSSBOW = 12;
+/** WEAPON_STATE drawn. */
+const WEAPON_DRAWN = 3;
 
 /** Quest type: miscellaneous objectives (no quest of their own is announced). */
 const MISC_QUEST = 6;
@@ -75,6 +97,8 @@ interface QuestNotice {
   readonly objectives: string[];
   /** A skill increase: the player's level and the level meter's progress from and to (0..1). */
   readonly skill?: { readonly level: number; readonly from: number; readonly to: number };
+  /** A word of power: the word in the dragon letters (SHOUT_UPDATE's aDragonText). */
+  readonly dragon?: string;
 }
 
 /** A help message being shown: its timers. */
@@ -90,7 +114,23 @@ export class HudController implements HudSink {
   readonly #source: HudSource;
   #menu: Menu | undefined;
   #frame = 0;
-  #shown = { heading: Number.NaN, health: -1, magicka: -1, stamina: -1 };
+  #shown = { heading: Number.NaN };
+  /** The meters' showing (hud-elements.ts). */
+  readonly #meters = {
+    health: new MeterFade(),
+    magicka: new MeterFade(),
+    stamina: new MeterFade(),
+  };
+  /** The movie's modes on (ShowElements), and whether the HUD is hidden. */
+  readonly #modes = new HudModes();
+  #hidden = false;
+  /** The player's dragon souls last read (undefined: not yet, for this runtime). */
+  #souls: number | undefined;
+  /** The arrow info shown ('' hidden; undefined: not sent yet), and the floating marker's. */
+  #arrowsShown: string | undefined;
+  #floatShown = '';
+  /** The runtime whose events the HUD hears (word learned, location cleared). */
+  #events: { runtime: ScriptRuntime; stop: () => void } | undefined;
   /** The charge meters shown, by hand (−1: hidden; undefined: not yet). */
   #chargeShown: { left?: number; right?: number } = {};
   /** The shout meter shown (−1: not yet), and the runtime whose casts it hears. */
@@ -133,7 +173,11 @@ export class HudController implements HudSink {
         // own constructor fails to clear) never shows; only spoken lines replace it.
         menu.call('ShowSubtitle', ' ');
         // Everything the HUD shows anew after a reload.
-        this.#shown = { heading: Number.NaN, health: -1, magicka: -1, stamina: -1 };
+        this.#shown = { heading: Number.NaN };
+        for (const meter of Object.values(this.#meters)) meter.reset();
+        this.#modes.reset();
+        this.#arrowsShown = undefined;
+        this.#floatShown = '';
         this.#shoutShown = -1;
         this.#chargeShown = {};
         this.#cartMode = false;
@@ -201,6 +245,8 @@ export class HudController implements HudSink {
   close(): void {
     this.#heard?.stop();
     this.#heard = undefined;
+    this.#events?.stop();
+    this.#events = undefined;
     this.#stopSettings?.();
     this.#stopSettings = undefined;
     cancelAnimationFrame(this.#frame);
@@ -263,12 +309,14 @@ export class HudController implements HudSink {
   }
 
   shown(on: boolean): void {
+    this.#hidden = !on;
     const element = this.#menu?.element;
     if (element) element.style.visibility = on ? '' : 'hidden';
   }
 
   /** ShowElements(mode, show): the HUD's modes, a stack whose last one says what shows. */
   mode(name: string, on: boolean): void {
+    this.#modes.set(name, on);
     this.#menu?.call('ShowElements', name, on);
   }
 
@@ -415,7 +463,9 @@ export class HudController implements HudSink {
       this.#horseMode = horse;
       if (horse) this.mode(horse, true);
     }
+    this.#hear(this.#source.runtime());
     this.#showNotice(menu);
+    this.#updateFloating(menu);
     this.#updateCompass(menu);
     this.#updateShoutMeter(menu);
     this.#stealth.update(menu, this.#signals.stealth?.(), performance.now(), {
@@ -433,7 +483,9 @@ export class HudController implements HudSink {
   /** The next quest notification, once the HUD can show one (the last one has played out). */
   #showNotice(menu: Menu): void {
     const notice = this.#notices[0];
-    if (!notice || menu.invoke(`${QUESTS}.CanShowNotification`) !== true) return;
+    // Not while the HUD is hidden or in a mode without its notices (the map, the journal).
+    if (!notice || this.#hidden || !this.#modes.showsNotices) return;
+    if (menu.invoke(`${QUESTS}.CanShowNotification`) !== true) return;
     this.#notices.shift();
     menu.set(`${QUESTS}.ObjectivesA`, notice.objectives);
     // (aNotificationText, aStatus, aSoundID, aObjectiveCount, aNotificationType, aLevel,
@@ -444,11 +496,15 @@ export class HudController implements HudSink {
       notice.status,
       notice.sound,
       notice.objectives.length / 2,
-      notice.skill ? NotificationType.skill : NotificationType.quest,
+      notice.skill
+        ? NotificationType.skill
+        : notice.dragon !== undefined
+          ? NotificationType.shout
+          : NotificationType.quest,
       notice.skill?.level ?? 0,
       notice.skill?.from ?? 0,
       notice.skill?.to ?? 0,
-      '',
+      notice.dragon ?? '',
     );
   }
 
@@ -516,6 +572,131 @@ export class HudController implements HudSink {
     menu.call('SetEnemyHealthTargetPercent', percent);
   }
 
+  /**
+   * A meter: its percent sent as it changes (the movie plays its fade-in on), or, kept while not
+   * full, its clip played on from where it is (the movie's RunMeterAnim) so it does not fade.
+   */
+  #sendMeter(
+    menu: Menu,
+    name: 'Health' | 'Magicka' | 'Stamina',
+    percent: number,
+    step: MeterStep,
+  ): void {
+    if (step.set) menu.call(`Set${name}MeterPercent`, percent, false);
+    else if (step.keep) {
+      const clip = `${BASE}.${name}MeterAnim`;
+      const frame = menu.get(`${clip}._currentframe`);
+      const at = typeof frame === 'number' ? frame : 1;
+      // Fading out (played back from its end) or faded: played forward again.
+      if (at !== METER_PAUSE_FRAME) menu.invoke(`${clip}.PlayForward`, at);
+    }
+  }
+
+  /** The events whose notices the HUD shows (the runtime's hub), heard once per runtime. */
+  #hear(runtime: ScriptRuntime | undefined): void {
+    if (this.#events?.runtime === runtime) return;
+    this.#events?.stop();
+    this.#events = undefined;
+    this.#souls = undefined;
+    if (!runtime) return;
+    const setting = (name: string, fallback: string): string =>
+      this.#settings?.string(name) ?? fallback;
+    const stops = [
+      // Game.TeachWord: "Word of Power Learned" over the word in the dragon letters.
+      runtime.events.on('wordLearned', async ({ word }) => {
+        const name = (await runtime.forms.record(word))?.text('FULL') ?? '';
+        this.#notices.push({
+          quest: -1,
+          text: setting('sShoutAdded', 'Word of Power Learned'),
+          status: '',
+          sound: '',
+          objectives: [],
+          dragon: name,
+        });
+      }),
+      // A location cleared: its name and "Cleared", as a place discovered is announced.
+      runtime.events.on('locationCleared', async ({ location }) => {
+        const name = (await runtime.forms.record(location))?.text('FULL') ?? '';
+        if (name !== '') this.discovered(name, setting('sCleared', 'Cleared'));
+      }),
+    ];
+    this.#events = {
+      runtime,
+      stop: () => {
+        for (const stop of stops) stop();
+      },
+    };
+  }
+
+  /**
+   * A dragon soul absorbed: the player's DragonSouls rose (the absorption adds one;
+   * DragonSoulsGained). TODO(M13): the engine raises the notice from the event the absorb
+   * sends; the value rising is read here, the first reading of a runtime only noted.
+   */
+  async #updateSouls(runtime: ScriptRuntime): Promise<void> {
+    const souls = (await runtime.actors.value(PLAYER_REF, ActorValue.dragonSouls)).current;
+    if (this.#events?.runtime !== runtime) return;
+    const before = this.#souls;
+    this.#souls = souls;
+    if (before === undefined || souls <= before) return;
+    this.#notices.push({
+      quest: -1,
+      text: this.#settings?.string('sDragonSoulAcquired') ?? 'Dragon Soul Absorbed',
+      status: '',
+      sound: '',
+      objectives: [],
+    });
+  }
+
+  /**
+   * The arrow info: a bow or crossbow drawn shows the ammo equipped and how many the player
+   * carries (ShowArrowCount(count, hide, name): "Iron Arrow (24)"); hidden otherwise.
+   */
+  async #updateArrows(menu: Menu, runtime: ScriptRuntime): Promise<void> {
+    const drawn = (runtime.world.combat?.(PLAYER_REF)?.weaponState ?? 0) === WEAPON_DRAWN;
+    const type = drawn ? await runtime.equipment.itemType(PLAYER_REF, 'right') : 0;
+    const ammo =
+      type === BOW || type === CROSSBOW ? await runtime.equipment.ammo(PLAYER_REF) : undefined;
+    let shown = '';
+    let count = 0;
+    let name = '';
+    if (ammo !== undefined) {
+      count = await runtime.itemCount(PLAYER_REF, ammo);
+      name = (await runtime.forms.record(ammo))?.text('FULL') ?? '';
+      shown = `${name}|${String(count)}`;
+    }
+    if (menu !== this.#menu || shown === this.#arrowsShown) return;
+    this.#arrowsShown = shown;
+    menu.call('ShowArrowCount', count, shown === '', name);
+  }
+
+  /** The floating quest marker over its target (its clip moved; hidden by its alpha). */
+  #updateFloating(menu: Menu): void {
+    const ini = this.#source.ini();
+    const marker = ini.bool('GamePlay', 'bShowFloatingQuestMarkers')
+      ? this.#source.floating?.()
+      : undefined;
+    const clip = `${BASE}.FloatingQuestMarkerInstance`;
+    if (!marker) {
+      if (this.#floatShown !== '') menu.set(`${clip}._alpha`, 0);
+      this.#floatShown = '';
+      return;
+    }
+    // Screen to stage: the part of the stage the screen shows (Stage.visibleRect).
+    const rect = (field: string, fallback: number): number => {
+      const value = menu.get(`Stage.visibleRect.${field}`);
+      return typeof value === 'number' ? value : fallback;
+    };
+    const x = rect('x', 0) + marker.screen[0] * rect('width', menu.stageWidth);
+    const y = rect('y', 0) + marker.screen[1] * rect('height', menu.stageHeight);
+    const key = `${String(Math.round(x))},${String(Math.round(y))},${String(marker.alpha)}`;
+    if (key === this.#floatShown) return;
+    this.#floatShown = key;
+    menu.set(`${clip}._x`, x);
+    menu.set(`${clip}._y`, y);
+    menu.set(`${clip}._alpha`, marker.alpha);
+  }
+
   async #updateMeters(menu: Menu): Promise<void> {
     const runtime = this.#source.runtime();
     if (!runtime) return;
@@ -529,10 +710,16 @@ export class HudController implements HudSink {
       percent(ActorValue.stamina),
     ]);
     if (menu !== this.#menu) return;
-    if (health !== this.#shown.health) menu.call('SetHealthMeterPercent', health, false);
-    if (magicka !== this.#shown.magicka) menu.call('SetMagickaMeterPercent', magicka, false);
-    if (stamina !== this.#shown.stamina) menu.call('SetStaminaMeterPercent', stamina, false);
-    this.#shown = { ...this.#shown, health, magicka, stamina };
+    const now = performance.now();
+    const meters = this.#meters;
+    this.#sendMeter(menu, 'Health', health, meters.health.step(health, now));
+    this.#sendMeter(menu, 'Magicka', magicka, meters.magicka.step(magicka, now));
+    const staminaStep = meters.stamina.step(stamina, now);
+    this.#sendMeter(menu, 'Stamina', stamina, staminaStep);
+    // Stamina filled up: the engine fades it at once (FadeOutStamina); the others fade themselves.
+    if (staminaStep.filled) menu.call('FadeOutStamina', stamina);
+    await this.#updateSouls(runtime);
+    await this.#updateArrows(menu, runtime);
     // Each hand's enchanted weapon: its charge (shown while it holds one).
     for (const hand of ['left', 'right'] as const) {
       const weapon = await runtime.equipment.weapon(PLAYER_REF, hand);

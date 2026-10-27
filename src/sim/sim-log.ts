@@ -151,6 +151,7 @@ const GAME_EVENT_KINDS: Readonly<Record<GameEventKind, true>> = {
   trigger: true,
   triggerEnterLeave: true,
   wait: true,
+  wordLearned: true,
 };
 
 /** A logged script value (see SimValue). */
