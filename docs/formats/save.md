@@ -111,6 +111,16 @@ player's cell loads.
 - `instances`: every script instance (quests, aliases, references, active magic effects): its
   object, script, state and variables per script level.
 
+Beside the runtime's data the body keeps `hazards` (src/scripting/runtime/hazard-engine.ts
+SavedHazard: each hazard standing, its HAZD, source, age, lifetime, seconds to its next hits and
+radius; its reference comes back with the game's created references and the hazard engine tracks
+it again as the save loads) and, in `world`, `projectiles` (src/save/world-save.ts
+SavedProjectile: each projectile in flight and each lobber at rest, a rune waiting for its
+trigger: its PROJ, the magic item it carries with its caster, how it was cast and dual casting,
+its position, velocity, the units flown, its age and whether it rests). They fly on as the loaded
+world's physics attaches (MagicProjectiles.restore); a flame's sprays are not kept (the stream
+ends with the cast), nor a cone's wave or a Magelight stuck to a wall (TODO(M13)).
+
 ## Loading
 
 The world is rebuilt from the plugins as for a new game, except that no quest starts and no
@@ -153,7 +163,7 @@ Set functions before an OnInit (TODO(M13)).
 
 ## Not saved yet
 
-- Objects translating (TranslateTo), hazards standing, projectiles in flight, corpses' ragdoll
+- Objects translating (TranslateTo), corpses' ragdoll
   poses (a corpse lies again where it lay, its ragdoll falls anew), the procedures' own progress
   inside a step (a patrol's next marker, a sandbox's activity: they choose again), actors' graphs
   beyond their furniture, the sky's transition; the actors of cells not loaded when saving

@@ -95,7 +95,7 @@ import type { DoorObject } from './actor-doors.ts';
 import { PlayerFurniture } from './player-furniture.ts';
 import type { AdoptedVehicle } from './actor-vehicles.ts';
 import { stageObject, type StageObject } from './actor-furniture.ts';
-import type { NavmeshSet } from '../ai/pathfinding.ts';
+import { summonPlace, type NavmeshSet } from '../ai/pathfinding.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement } from '../scripting/runtime/runtime.ts';
 import { noteMoved, placedAsMoved } from './moved-objects.ts';
@@ -766,6 +766,7 @@ export class WorldViewer {
     },
     explosionReaches: (from, target, buffer) =>
       this.#stage?.projectiles.reaches(from, target, buffer),
+    summonPlace: (from, to, radius) => summonPlace(this.#navmeshes, from, to, radius),
     destructionChanged: (reference, reached) => {
       this.#destruction?.changed(reference, reached);
     },
@@ -804,6 +805,7 @@ export class WorldViewer {
       this.#stage?.talk.randomSceneStarts(scene, first, second),
     facesForLine: (speaker, target) => this.#stage?.talk.faces(speaker, target),
     saveActors: () => this.#stage?.saveActors() ?? [],
+    saveProjectiles: () => this.#stage?.projectiles.save() ?? [],
     impactAt: (impactDataSet, from, direction, length) =>
       this.#stage?.combat.impactAt(impactDataSet, from, direction, length) ?? false,
     pathTo: (actor, target, walkRun) => {

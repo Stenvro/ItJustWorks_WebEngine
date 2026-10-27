@@ -162,6 +162,11 @@ export interface WorldBridge {
    * does lies within `buffer` units of it (undefined: the world cannot tell; it reaches).
    */
   explosionReaches?(from: Vec3, target: number, buffer: number): boolean | undefined;
+  /**
+   * Where a summon stands: on the navmeshes as far toward `to` as an actor of `radius` goes
+   * straight from `from` (src/ai/pathfinding.ts summonPlace; undefined: keep `to`).
+   */
+  summonPlace?(from: Vec3, to: Vec3, radius: number): Vec3 | undefined;
   /** PushActorAway: the actor is knocked down, pushed away from a reference by a force. */
   pushAway?(pushed: number, from: number, force: number): void;
   /** An explosion's knock-down flags: the actor is knocked down, away from where it burst. */

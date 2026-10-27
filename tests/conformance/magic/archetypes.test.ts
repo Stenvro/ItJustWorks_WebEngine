@@ -23,13 +23,20 @@ import {
   summonDistance,
   TARGET_VALUES,
 } from '../../../src/gameplay/magic/effect-rules.ts';
-import { telekinesisReach } from '../../../src/gameplay/magic/telekinesis.ts';
+import { invisibilityVeil } from '../../../src/gameplay/magic/invisibility.ts';
+import { sticksAsLight } from '../../../src/gameplay/magic/projectile-flight.ts';
+import {
+  telekinesisDamage,
+  telekinesisDamageMult,
+  telekinesisReach,
+} from '../../../src/gameplay/magic/telekinesis.ts';
 import { Vfs } from '../../../src/vfs/vfs.ts';
 import { EffectArchetype } from '../../../src/world/magic-effects.ts';
 import { RecordDatabase } from '../../../src/world/record-db.ts';
 import { openGameFolder } from '../../../tools/gamedata-path.ts';
 import { magicCensus, type MagicCensus } from '../../../tools/magic-census.ts';
-import { hasGamedata } from '../../helpers/sim.ts';
+import { parseMagicItem } from '../../../src/world/magic-records.ts';
+import { hasGamedata, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
 
 describe.skipIf(!hasGamedata())('the archetypes across the load order (data)', () => {
   let vfs: Vfs;
@@ -127,19 +134,64 @@ describe('wards, summons, telekinesis', () => {
   it('reaches a Telekinesis target its magnitude in feet × 22 units', () => {
     expect(telekinesisReach(15)).toBe(330);
   });
+
+  it('sticks a Light effect’s projectile where it strikes a surface (Magelight), not on an actor', () => {
+    expect(sticksAsLight(EffectArchetype.light, 'surface')).toBe(true);
+    expect(sticksAsLight(EffectArchetype.light, 'actor')).toBe(false);
+    expect(sticksAsLight(EffectArchetype.valueModifier, 'surface')).toBe(false);
+  });
+
+  it('veils an invisible actor all but its least refraction, the player all but 0.1', () => {
+    expect(invisibilityVeil(false, true)).toBe(0);
+    expect(invisibilityVeil(true, false)).toBeCloseTo(0.99, 9);
+    // fMagicPlayerMinimumInvisibility: the player stays drawn at 0.1 at least.
+    expect(invisibilityVeil(true, true)).toBeCloseTo(0.9, 9);
+  });
+
+  it('hurts with a thrown object by fMagicTelekinesisDamageBase (5) × the throw’s multiplier', () => {
+    expect(telekinesisDamage(0, telekinesisDamageMult(false))).toBe(5);
+    // Dual cast: × fMagicTelekinesisDualCastDamageMult (2).
+    expect(telekinesisDamage(0, telekinesisDamageMult(true))).toBe(10);
+  });
+});
+
+describe.skipIf(!hasGamedata())('a cloak’s pulse (sim)', () => {
+  let sim: Sim;
+  beforeAll(async () => {
+    sim = await openSim({ interior: 0x1605e, hour: 10 });
+  }, 300_000);
+  afterAll(async () => {
+    await sim.close();
+  });
+
+  it('puts its spell on an actor near anew only once the last has ended (Flame Cloak’s 1 s burn)', async () => {
+    const runtime = sim.runtime;
+    const [near] = sim.actors();
+    const at = near && (await sim.position(near.reference));
+    const record = await sim.db.get(await sim.formId('SPEL', 'flameCloak'));
+    const cloak = record ? parseMagicItem(record) : undefined;
+    expect(at && cloak).toBeTruthy();
+    if (!near || !at || !cloak) return;
+    await sim.moveTo([at[0] + 60, at[1], at[2]]);
+    const burn = await sim.formId('MGEF', 'FireDamageConcAimedCloak');
+    const burns = (): number =>
+      sim
+        .events('magicEffectApply')
+        .filter((event) => event.target === near.reference && event.effect === burn).length;
+    const before = burns();
+    await runtime.magic.apply(cloak, PLAYER_REF, { caster: PLAYER_REF });
+    await sim.step(3);
+    const reached = burns() - before;
+    // Every 0.5 s it looks; a burn lasts 1 s and its taper: no more than three in 3 s.
+    expect(reached).toBeGreaterThan(0);
+    expect(reached).toBeLessThanOrEqual(3);
+  }, 120_000);
 });
 
 describe('what the original’s archetypes do that ours do not yet', () => {
-  it.todo('Light (Magelight): the light flies as a projectile and sticks where it lands (original)');
-  it.todo(
-    'Invisibility: the actor is drawn with the invisibility look (fMagicPlayerMinimumInvisibility)',
-  );
-  it.todo(
-    'Telekinesis: a thrown object hurts by fMagicTelekinesisDamageBase plus its collision’s, × ' +
-      'fMagicTelekinesisDamageMult (dual cast × fMagicTelekinesisDualCastDamageMult)',
-  );
-  it.todo('Summon Creature: the summon is placed on the navmesh clear of the summoner’s sight');
-  it.todo('Cloak: the engine’s pulse (the cloak’s spell reaches anew only as the last one ends)');
+  it.todo('Light (Magelight): how many stay at once, and on a moving object it struck');
+  it.todo('Invisibility: the refraction shimmer through the actor (ours dithers it away)');
+  it.todo('Summon Creature: the engine’s search for another place when the way ahead is blocked');
   it.todo('Dispel: the engine’s rule for what it ends (fMagicDispelMagnitudeMult 5)');
   it.todo('Darkness, Night Eye: the image space and fMagicNightEyeAmbient (0.75)');
   it.todo(

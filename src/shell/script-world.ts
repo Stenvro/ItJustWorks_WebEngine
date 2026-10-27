@@ -26,7 +26,7 @@ import { matrixPlacement } from '../world/cell-loader.ts';
 import type { SoundSystem } from '../audio/sound-system.ts';
 import type { SoundInstance } from '../audio/sound-instance.ts';
 import type { SavedGraph, ScriptGraph } from '../animation/script-graphs.ts';
-import type { SavedActor, WorldSave } from '../save/world-save.ts';
+import type { SavedActor, SavedProjectile, WorldSave } from '../save/world-save.ts';
 import type { ScreenModifiers } from './screen-modifiers.ts';
 import { SkyMode, type SkyWeather } from '../world/sky-weather.ts';
 import type { Terminal } from './terminal.ts';
@@ -112,6 +112,8 @@ export interface ScriptView {
   ): void;
   /** Whether an explosion seen from a point reaches an actor (WorldBridge.explosionReaches). */
   explosionReaches?(from: Vec3, target: number, buffer: number): boolean | undefined;
+  /** Where a summon stands on the navmeshes (WorldBridge.summonPlace). */
+  summonPlace?(from: Vec3, to: Vec3, radius: number): Vec3 | undefined;
   /**
    * A destructible reference's stage changed (src/shell/destruction-looks.ts): its look and
    * collision follow; `reached`: the stage just reached, whose debris is thrown.
@@ -159,6 +161,8 @@ export interface ScriptView {
   facesForLine?(speaker: number, target: number): boolean | undefined;
   /** What a save keeps of the view's actors (their stage's: src/save/world-save.ts). */
   saveActors?(): readonly SavedActor[];
+  /** What flies in this view (projectiles in flight, runes at rest), for a save. */
+  saveProjectiles?(): readonly SavedProjectile[];
   /** The player passes into another cell or worldspace (a loading screen is up). */
   changingSpace?(): boolean;
   /** The regions of the player's cell (IsPlayerInRegion). */
@@ -443,6 +447,14 @@ export class ScriptWorld implements WorldBridge {
     return undefined;
   }
 
+  summonPlace(from: Vec3, to: Vec3, radius: number): Vec3 | undefined {
+    for (const view of this.#views) {
+      const place = view.summonPlace?.(from, to, radius);
+      if (place !== undefined) return place;
+    }
+    return undefined;
+  }
+
   destructionChanged(reference: number, reached: DestructionStage | undefined): void {
     for (const view of this.#views) view.destructionChanged?.(reference, reached);
   }
@@ -585,7 +597,8 @@ export class ScriptWorld implements WorldBridge {
         graphs.push([reference, state]);
       }
     }
-    return { actors, graphs };
+    const projectiles = [...this.#views].flatMap((view) => view.saveProjectiles?.() ?? []);
+    return { actors, graphs, ...(projectiles.length > 0 && { projectiles }) };
   }
 
   facesForLine(speaker: number, target: number): boolean | undefined {

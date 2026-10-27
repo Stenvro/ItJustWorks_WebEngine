@@ -96,6 +96,33 @@ export function effectItemCost(
 }
 
 /**
+ * The effect item that decides a magic item's school, projectile and art: the costliest by its
+ * effect item cost (effectItemCost; the first of equals), as the engine ranks them. -1: none.
+ */
+export function costliestEffectIndex(
+  item: {
+    readonly castType: number;
+    readonly effects: readonly Pick<ItemEffect, 'effect' | 'magnitude' | 'duration' | 'area'>[];
+  },
+  effectBaseCost: (effect: number) => number | undefined,
+  settings: Pick<CastingSettings, 'areaBaseCostMult'> = CASTING_DEFAULTS,
+): number {
+  const concentration = item.castType === CastType.concentration;
+  let best = -1;
+  let bestCost = -1;
+  for (const [index, entry] of item.effects.entries()) {
+    const base = effectBaseCost(entry.effect);
+    if (base === undefined) continue;
+    const cost = effectItemCost(base, entry, concentration, settings);
+    if (cost > bestCost) {
+      best = index;
+      bestCost = cost;
+    }
+  }
+  return best;
+}
+
+/**
  * A magic item's base cost before the caster's skill: its own when it is not calculated (SPIT
  * 0x1; an enchantment's "no auto calc" 0x1 with its ENIT cost), else its effects' costs summed.
  */

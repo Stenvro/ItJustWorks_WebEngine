@@ -476,6 +476,13 @@ export interface InstanceVisibility {
 /** A reference's distance fade: the setting it fades by (object-fade.ts). */
 export interface InstanceFade {
   readonly kind: FadeKind;
+  /** It fades with distance (false: the player, who never does). Default: true. */
+  readonly byDistance?: boolean;
+  /**
+   * How much of it is veiled whatever the distance (0..1, dithered away as the fade is): an
+   * invisible actor's (src/gameplay/magic/invisibility.ts).
+   */
+  veil?: number;
 }
 
 export interface ModelInstance {
@@ -707,6 +714,8 @@ interface FadeGroup {
   readonly draws: Draw[];
   radius: number;
   level: number;
+  /** The instances' fade it stands for (its veil, whether distance counts). */
+  readonly of?: InstanceFade;
 }
 
 /** A draw that changes every frame (animated, or turning to the camera). */
@@ -1988,7 +1997,7 @@ export class SceneRenderer {
       if (!fade && instance.fade && !instance.firstPerson) {
         fade = fadeGroups.get(instance.fade);
         if (!fade) {
-          fade = { kind: instance.fade.kind, draws: [], radius: 0, level: 0 };
+          fade = { kind: instance.fade.kind, draws: [], radius: 0, level: 0, of: instance.fade };
           fadeGroups.set(instance.fade, fade);
         }
       }
@@ -3296,7 +3305,8 @@ export class SceneRenderer {
         center[1] - camera[1],
         center[2] - camera[2],
       );
-      const level = Math.round(fadeOut(distance, start, end) * 255);
+      const away = group.of?.byDistance === false ? 0 : fadeOut(distance, start, end);
+      const level = Math.round(Math.max(away, Math.min(1, group.of?.veil ?? 0)) * 255);
       if (level === group.level) continue;
       group.level = level;
       for (const draw of group.draws) {

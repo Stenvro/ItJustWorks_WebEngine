@@ -7,7 +7,9 @@
 // fMagicTelekinesiDistanceMult). Held, its throw gathers fMagicTelekinesisThrowAccelerate a
 // second up to fMagicTelekinesisThrowMax. Let go held, it is thrown along the view at
 // fMagicTelekinesisThrow plus what the throw gathered (dual cast × fMagicTelekinesisDualCast
-// ThrowMult); let go while still pulled in, it stops where it is.
+// ThrowMult); let go while still pulled in, it stops where it is. The object thrown hurts the
+// actor it strikes: its collision's damage plus fMagicTelekinesisDamageBase, × the throw's damage
+// multiplier, then the thrower's Mod Telekinesis Damage perks (telekinesisDamage).
 // Platform-independent: src/shell/play-session.ts (telekinesis) holds the object.
 
 /**
@@ -25,6 +27,9 @@ const TELEKINESIS_SETTING_TABLE = {
   throwMax: ['fMagicTelekinesisThrowMax', 30],
   throwAccelerate: ['fMagicTelekinesisThrowAccelerate', 10],
   dualCastThrowMult: ['fMagicTelekinesisDualCastThrowMult', 2],
+  damageBase: ['fMagicTelekinesisDamageBase', 5],
+  damageMult: ['fMagicTelekinesisDamageMult', 1],
+  dualCastDamageMult: ['fMagicTelekinesisDualCastDamageMult', 2],
   unitsPerFoot: ['fMagicUnitsPerFoot', 22],
 } as const satisfies Readonly<Record<string, readonly [string, number]>>;
 
@@ -103,4 +108,34 @@ export function telekinesisThrowSpeed(
 ): number | undefined {
   if (hold.phase !== 'held' || hold.charge <= 0) return undefined;
   return (settings.throw + hold.charge) * (dual ? settings.dualCastThrowMult : 1);
+}
+
+/** How long a thrown object can still hurt what it strikes (seconds after the throw). */
+export const TELEKINESIS_THROW_SECONDS = 5;
+
+/**
+ * The damage multiplier a throw carries: fMagicTelekinesisDamageMult, a dual cast's × fMagic
+ * TelekinesisDualCastDamageMult (TODO(M13): observed in the original that the throw stores one multiplier,
+ * not which settings make it; the dual cast's on top of the base multiplier is inferred), then
+ * the thrower's Mod Telekinesis Damage Mult perks on it (the caller's).
+ */
+export function telekinesisDamageMult(
+  dual: boolean,
+  settings: Pick<TelekinesisSettings, 'damageMult' | 'dualCastDamageMult'> = TELEKINESIS_DEFAULTS,
+): number {
+  return settings.damageMult * (dual ? settings.dualCastDamageMult : 1);
+}
+
+/**
+ * What a thrown object deals the actor it strikes (observed in the original: a hit made
+ * from a collision with an object telekinesis threw): its collision's own damage (physics
+ * damage, src/gameplay/physics-damage.ts: none at vanilla speeds) plus fMagicTelekinesisDamageBase,
+ * × the throw's multiplier; the thrower's Mod Telekinesis Damage perks then change it.
+ */
+export function telekinesisDamage(
+  collision: number,
+  mult: number,
+  settings: Pick<TelekinesisSettings, 'damageBase'> = TELEKINESIS_DEFAULTS,
+): number {
+  return (Math.max(0, collision) + settings.damageBase) * mult;
 }

@@ -28,6 +28,18 @@ export interface PlacedHazard {
   readonly radius: number;
 }
 
+/** A hazard standing as the game was saved (its reference is the game's; src/save/game-save.ts). */
+export interface SavedHazard {
+  readonly reference: number;
+  /** Its HAZD. */
+  readonly hazard: number;
+  readonly source: number | undefined;
+  readonly age: number;
+  readonly lifetime: number | undefined;
+  readonly nextHit: number;
+  readonly radius: number;
+}
+
 export class HazardEngine {
   readonly #runtime: ScriptRuntime;
   readonly #records = new Map<number, Promise<HazardRecord | undefined>>();
@@ -123,6 +135,39 @@ export class HazardEngine {
       nextHit: 0,
       radius: feet * UNITS_PER_FOOT,
     });
+  }
+
+  /** The hazards standing, for a save. */
+  save(): SavedHazard[] {
+    return [...this.#placed.values()].map((placed) => ({
+      reference: placed.reference,
+      hazard: placed.hazard.formId,
+      source: placed.source,
+      age: placed.age,
+      lifetime: placed.lifetime,
+      nextHit: placed.nextHit,
+      radius: placed.radius,
+    }));
+  }
+
+  /**
+   * A save's hazards stand again as they stood: their age, lifetime, next hits and radius (their
+   * references came back with the game's state).
+   */
+  async restore(saved: readonly SavedHazard[]): Promise<void> {
+    for (const entry of saved) {
+      const hazard = await this.record(entry.hazard);
+      if (!hazard) continue;
+      this.#placed.set(entry.reference, {
+        reference: entry.reference,
+        hazard,
+        source: entry.source,
+        age: entry.age,
+        lifetime: entry.lifetime,
+        nextHit: entry.nextHit,
+        radius: entry.radius,
+      });
+    }
   }
 
   /** A hazard goes (its lifetime ran out, its effect ended, its limit). */
