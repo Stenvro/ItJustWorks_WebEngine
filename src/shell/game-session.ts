@@ -85,6 +85,8 @@ import { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { ScriptWorld } from './script-world.ts';
 import { TimeFlow } from './time-flow.ts';
 import { ScreenModifiers } from './screen-modifiers.ts';
+import { LowHealthScreen, lowHealthSettings } from './low-health-screen.ts';
+import { ActorValue } from '../world/actor-values.ts';
 import { AssetLoader } from '../workers/asset-loader.ts';
 import { PluginIndexer } from '../workers/plugin-indexer.ts';
 import { ActorPlacer } from './actors.ts';
@@ -1109,6 +1111,7 @@ export class GameSession {
   #pendingLoad: { readonly save: GameSave; readonly header: SaveHeader } | undefined;
 
   resetStates(opening = true): Promise<ScriptRuntime> {
+    this.#lowHealth?.stop();
     this.scriptsReady?.retire();
     this.scriptsStarting?.retire();
     this.scriptsReady = undefined;
@@ -1141,6 +1144,36 @@ export class GameSession {
    * Every frame: the scripts' clocks move with the game's (real seconds, and game days as the
    * sky moves the hour); a script that set the clock (GameHour) sets the game's.
    */
+  /** The heartbeat and the low-health modifier's pulses (made once the records are read). */
+  #lowHealth: LowHealthScreen | undefined;
+  #lowHealthStarting = false;
+
+  #updateLowHealth(realSeconds: number): void {
+    if (this.#lowHealth) {
+      this.#lowHealth.update(realSeconds);
+      return;
+    }
+    if (this.#lowHealthStarting) return;
+    this.#lowHealthStarting = true;
+    void Promise.all([this.defaultObjects(), this.settings()]).then(([defaults, gmst]) => {
+      this.#lowHealth = new LowHealthScreen(
+        {
+          health: async () => {
+            const runtime = this.scriptsReady;
+            return runtime && (await runtime.actors.value(PLAYER_REF, ActorValue.health));
+          },
+          applyModifier: (formId, strength) => {
+            void this.imageSpaceModifiers.apply(formId, strength);
+          },
+          play: (descriptor, fadeIn) =>
+            this.soundSystem?.play(descriptor, undefined, fadeIn) ?? Promise.resolve(undefined),
+        },
+        defaults,
+        lowHealthSettings(gmst, this.ini),
+      );
+    });
+  }
+
   tickScripts(realSeconds: number): void {
     // The loading screen holds the sounds the default objects pause on it (DOBJ PDLC).
     this.soundSystem?.engine.setLoading(this.loading);
@@ -1156,6 +1189,7 @@ export class GameSession {
     this.#watchLocation(runtime);
     this.#watchSeen(runtime, realSeconds);
     this.#watchEncumbrance(runtime, realSeconds);
+    this.#updateLowHealth(realSeconds);
     // Slow Time and a bow's zoom set the world's clock and the player's pace.
     this.time.update(runtime, realSeconds);
     this.soundSystem?.setTimeMultiplier(this.time.multiplier);

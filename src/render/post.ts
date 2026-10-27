@@ -698,8 +698,10 @@ export class PostProcessor {
         usage:
           GPUTextureUsage.RENDER_ATTACHMENT |
           GPUTextureUsage.TEXTURE_BINDING |
-          GPUTextureUsage.COPY_SRC,
+          GPUTextureUsage.COPY_SRC |
+          GPUTextureUsage.COPY_DST,
       });
+    // COPY_DST: the temporal anti-aliasing copies its result back into it (taa.ts).
     const hdr = texture('hdr', width, height);
     const bloomA = texture(
       'bloom-a',

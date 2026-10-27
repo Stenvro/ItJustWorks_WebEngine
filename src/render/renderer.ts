@@ -58,6 +58,9 @@ import { TreeLodRenderer, type TreeLodFrame } from './tree-lod.ts';
 import { SnowScattering } from './snow-sss.ts';
 import { Sao } from './sao.ts';
 import { Composite } from './composite.ts';
+import { SunEffects, type SunEffectsFrame } from './sun-effects.ts';
+import { TemporalAA } from './taa.ts';
+import { jitterPixels, jitterProjection, reprojection } from './taa-data.ts';
 import { REFRACTION_FORMAT, RefractionComposite } from './refraction.ts';
 import { GrassRenderer, type GpuGrassField } from './grass.ts';
 import { DecalRenderer, type GpuDecals } from './decals.ts';
@@ -105,6 +108,8 @@ export interface SceneView {
   readonly water?: () => WaterFrame | undefined;
   /** Imagespace of the frame (eye adaptation, bloom, grading); none: the image as rendered. */
   readonly imageSpace?: () => ImageSpace | undefined;
+  /** The sun's god rays and lens flare this frame (exteriors). */
+  readonly sunEffects?: () => SunEffectsFrame | undefined;
   readonly camera: Camera;
   /** Called every frame (lighting may depend on the camera, e.g. a studio light). */
   readonly lighting: (camera: Camera) => SceneLighting;
@@ -175,6 +180,15 @@ export class Renderer {
   readonly decals: DecalRenderer;
   readonly precipitation: PrecipitationRenderer;
   readonly post: PostProcessor;
+  /** The weather's god rays and the sun's lens flare (sun-effects.ts). */
+  readonly sunEffects: SunEffects;
+  /** Temporal anti-aliasing ([Display] bUseTAA; main.ts sets it). */
+  antiAliasing = true;
+  readonly #taa: TemporalAA;
+  /** The camera's view-projection without the jitter, this frame's and the last TAA frame's. */
+  readonly #unjittered = new Float32Array(16);
+  #previousUnjittered: Float32Array | undefined;
+  #taaFrame = 0;
   /** What an open menu shows in 3D over the world (none: nothing). */
   overlay: OverlayView | undefined;
   readonly #menu: MenuOverlay;
@@ -220,6 +234,8 @@ export class Renderer {
     this.decals = new DecalRenderer(device, HDR_FORMAT, this.scene.frameLayout);
     this.precipitation = new PrecipitationRenderer(device, HDR_FORMAT, this.scene.frameLayout);
     this.post = new PostProcessor(device, format);
+    this.sunEffects = new SunEffects(device);
+    this.#taa = new TemporalAA(device);
     this.#menu = new MenuOverlay(device, format, this.scene, this.terrain);
 
     const module = device.createShaderModule({ label: 'backdrop', code: backdropShader });
@@ -267,6 +283,8 @@ export class Renderer {
   setView(view: SceneView | undefined): void {
     // A new view starts adapted to itself (like after a loading screen).
     this.post.resetAdaptation();
+    this.#taa.reset();
+    this.#previousUnjittered = undefined;
     this.#view = view;
   }
 
@@ -318,11 +336,18 @@ export class Renderer {
     if (view) {
       view.camera.update(delta);
       view.camera.viewProjection(targets.width / targets.height, this.#viewProjection);
+      this.#unjittered.set(this.#viewProjection);
       // First person's own field of view and near plane (the player's arms: common.wgsl).
       const firstPerson = view.camera.firstPersonViewProjection?.(
         targets.width / targets.height,
         this.#firstPersonViewProjection,
       );
+      // The TAA moves the image by a sub-pixel offset each frame.
+      if (this.antiAliasing && !view.backdrop) {
+        const pixels = jitterPixels(this.#taaFrame++);
+        jitterProjection(this.#viewProjection, pixels, targets.width, targets.height);
+        if (firstPerson) jitterProjection(firstPerson, pixels, targets.width, targets.height);
+      }
       const lighting = view.lighting(view.camera);
       const inverse = view.shadows ? invert(this.#viewProjection) : undefined;
       if (inverse) {
@@ -550,6 +575,23 @@ export class Renderer {
       }
       blended.end();
       if (refraction) this.#refract(encoder, targets, scenes, depthView, hdrView, view.camera);
+      const hdrTexture = this.post.hdrTexture(targets.width, targets.height);
+      // The history blended in (from the last frame's place of each pixel), then the sun's
+      // rays and flare over the steady image.
+      if (this.antiAliasing && !view.backdrop) {
+        const previous = this.#previousUnjittered;
+        const reproject = previous && reprojection(previous, this.#viewProjection);
+        this.#taa.resolve(encoder, hdrTexture, targets.sceneDepth, reproject);
+        this.#previousUnjittered ??= new Float32Array(16);
+        this.#previousUnjittered.set(this.#unjittered);
+      } else {
+        this.#previousUnjittered = undefined;
+        this.#taa.reset();
+      }
+      const sun = view.sunEffects?.();
+      if (sun) {
+        this.sunEffects.run(encoder, hdrTexture, targets.sceneDepth, this.#unjittered, sun);
+      }
     }
 
     const canvasView = canvasTexture.createView();

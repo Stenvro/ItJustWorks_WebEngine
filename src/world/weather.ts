@@ -118,6 +118,10 @@ export interface WeatherRecord {
   readonly skyStatics: readonly number[];
   /** Aurora model (meshes\...), '' for none. */
   readonly aurora: string;
+  /** VOLI per time of day (HNAM, Skyrim SE). */
+  readonly volumetricLighting?: readonly (number | undefined)[];
+  /** LENS of the sun's glare (GNAM, Skyrim SE; none in vanilla). */
+  readonly lensFlare?: number | undefined;
 }
 
 const meshPath = (value: string): string => withRoot('meshes', value);
@@ -272,6 +276,10 @@ export function parseWeather(record: WeatherSource): WeatherRecord {
     sounds,
     skyStatics,
     aurora: meshPath(fields.zstring('MODL') ?? ''),
+    volumetricLighting: Array.from({ length: TIMES_OF_DAY }, (_, t) =>
+      formIdOr(fields.first('HNAM'), t * 4),
+    ),
+    lensFlare: formIdOr(fields.first('GNAM')),
   };
 }
 

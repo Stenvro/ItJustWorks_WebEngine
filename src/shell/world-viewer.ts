@@ -1400,6 +1400,8 @@ export class WorldViewer {
       sky: () => (this.#noSky ? undefined : this.#sky?.skyFrame()),
       water: () => this.#waterFrame(),
       imageSpace: () => this.#sky?.imageSpace(),
+      // No sun in a world without a sky: no rays or flare either.
+      sunEffects: () => (this.#noSky ? undefined : this.#sky?.sunEffects()),
       backdrop: false,
       shadows: true,
       update: (seconds) => {
