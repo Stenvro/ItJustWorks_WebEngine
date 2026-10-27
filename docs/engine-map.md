@@ -77,7 +77,7 @@ These run through every area and explain most of what breaks in play.
 | Story manager               | partial   | not raised: Bribe, Flatter, Intimidate, Cure, Infection, Player Gets Favor, Quest Start; most raised types not yet checked in the simulation                                        |
 | Save and load               | partial   | own format (docs/formats/save.md); threads in flight, scenes, AI progress not saved; .ess import (M12)                                                                              |
 | Stats, skills, actor values | complete  | tracked-stats event                                                                                                                                                                 |
-| Audio                       | partial   | pause categories by DOBJ (menu fades, ducking and highlighting done), sounds held in menus, Slow Time only for its category, combat music rules                                     |
+| Audio                       | partial   | the skills menu does not call setStatsMenu yet (SMSC mute) (pause categories by DOBJ, sounds held in menus and on the loading screen, Slow Time by DOBJ TSSC: done)                 |
 | Load order, settings        | partial   | plugins.txt and the user's INI files (M12)                                                                                                                                          |
 
 ### AI
@@ -116,7 +116,7 @@ These run through every area and explain most of what breaks in play.
 | Potions           | partial   | the casters' order in the tree; the stop-cast threshold of a held healing spell                                                                                                                         |
 | Damage, stagger   | partial   | sneak attacks by the player only, attack damage mult, the blocked hit's stagger terms (stagger by the Mass actor value and the critical chance actor value: done)                                       |
 | Combat dialogue   | partial   | per-subtype cooldowns and distance gates                                                                                                                                                                |
-| Combat music      | different | threat-ratio gate, near-combat radius, stop delay                                                                                                                                                       |
+| Combat music      | partial   | the near-combat radius and the stop delay are our values (no plugin names them); the odds use our actorStrength (threat-ratio gate, boss music, stop delay: done)                                       |
 | Kill moves        | partial   | the magic kill cam (rules read: docs/gameplay.md), the kill camera's radial blur between shots                                                                                                          |
 
 ### Magic, effects, perks
