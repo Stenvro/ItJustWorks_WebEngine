@@ -18,6 +18,7 @@
 // assistance, target choice, the combat style's movement and attacks, fleeing, searching): it
 // sets each fighter's target and asks for its draws, attacks, blocks and releases here.
 
+import { strengthDamage } from '../ai/combat-ai.ts';
 import { parseNpcCombat, parseRaceCombat } from '../ai/race-combat-records.ts';
 import {
   behaviorGraphKey,
@@ -352,6 +353,8 @@ export interface Practice {
 /** What a fighter's hands hold, for combat. */
 interface Gear {
   readonly right: WeaponStats;
+  /** The damage its strength weighs (strengthDamage: its weapon's, or its best unarmed blow). */
+  readonly strengthDamage: number;
   readonly left: WeaponStats;
   readonly rightRecord: WeaponCombat | undefined;
   readonly leftRecord: WeaponCombat | undefined;
@@ -1264,8 +1267,17 @@ export class ActorCombat implements CombatBridge {
       return type === 'SPEL' || type === 'SCRL';
     };
     const [rightSpell, leftSpell] = await Promise.all([spell(loadout.right), spell(loadout.left)]);
+    const attacks = new AttackSet(raceAttacks, own);
     return {
       right,
+      strengthDamage: strengthDamage(
+        right.damage,
+        right.weapon !== undefined,
+        [...attacks.all()].map((attack) => ({
+          damageMult: attack.damageMult,
+          bash: attackEventKind(attack.event, attack)?.bash === true,
+        })),
+      ),
       left,
       rightRecord,
       leftRecord,
@@ -1274,7 +1286,7 @@ export class ActorCombat implements CombatBridge {
       projectile: projectileRecord?.type === 'PROJ' ? parseProjectile(projectileRecord) : undefined,
       ammoModel: right.ammo === undefined ? undefined : ammo?.model,
       ammoNode: ammoNode(ammo?.flags ?? AmmoFlag.nonBolt),
-      attacks: new AttackSet(raceAttacks, own),
+      attacks,
       race: raceRecord?.type === 'RACE' ? parseRaceHits(raceRecord) : undefined,
       torch,
       spells: { right: rightSpell, left: leftSpell },
@@ -3133,6 +3145,7 @@ export class ActorCombat implements CombatBridge {
           twoHanded ||
           (gear.right.weapon !== undefined && gear.left.weapon === undefined),
         damage: gear.right.damage,
+        strengthDamage: gear.strengthDamage,
         shotDamage: gear.right.shotDamage,
         range: gear.projectile?.range ?? 0,
         canBash,

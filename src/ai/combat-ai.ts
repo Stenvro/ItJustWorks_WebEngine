@@ -469,6 +469,23 @@ export interface TargetCandidate {
   readonly threat: number;
 }
 
+/**
+ * The damage actorStrength weighs for an actor: its weapon's blow; without a weapon (a wolf's
+ * teeth, a bear's claws, fists) its race's unarmed damage times the damage mult of the
+ * strongest of its attack data's blows (ATKD; bashes left out), as those attacks deal it.
+ * TODO(M13): the engine's own measure for GetThreatRatio.
+ */
+export function strengthDamage(
+  blow: number,
+  armed: boolean,
+  attacks: Iterable<{ readonly damageMult: number; readonly bash: boolean }>,
+): number {
+  if (armed) return blow;
+  let mult = 1;
+  for (const attack of attacks) if (!attack.bash) mult = Math.max(mult, attack.damageMult);
+  return blow * mult;
+}
+
 /** How strong an actor is in a fight: its health now times the damage it deals. */
 export function actorStrength(health: number, damage: number): number {
   return Math.max(0, health) * Math.max(1, damage);
