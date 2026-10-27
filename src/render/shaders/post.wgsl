@@ -3,7 +3,7 @@
 // Image post-processing as the game's HDR imagespace shader does it: eye adaptation from
 // two running averages of the scene luminance, a Reinhard tone curve, bloom added where the
 // image is dark enough to receive it, then saturation, tint, brightness and contrast, the
-// image-space modifiers' fade colour over it all, and last the player's brightness setting
+// image-space modifiers' fade colour over it all (under water first the water's colour), and last the player's brightness setting
 // (fGamma) as a gamma curve.
 // ASCII only.
 
@@ -22,6 +22,8 @@ struct Post {
   weights: array<vec4f, 4>,
   // Fade colour (rgb) and amount (a): the image-space modifiers' full-screen colour.
   fade: vec4f,
+  // Underwater colour (rgb) and amount (a): the camera below a water surface tints everything.
+  water: vec4f,
 };
 
 @group(0) @binding(0) var<uniform> post: Post;
@@ -89,6 +91,7 @@ fn fs_composite(input: FullscreenOut) -> @location(0) vec4f {
   }
   var blended = toneCurve(color);
   blended += clamp(vec3f(post.param.x) - blended, vec3f(0.0), vec3f(1.0)) * bloom;
+  blended = mix(blended, post.water.rgb, post.water.a);
   let luminance = dot(blended, LUMINANCE);
   let saturated = mix(vec3f(luminance), blended, post.cinematic.x);
   let tinted = post.cinematic.w * mix(saturated, luminance * post.tint.rgb, post.tint.a);

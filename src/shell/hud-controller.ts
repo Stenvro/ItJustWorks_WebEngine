@@ -43,6 +43,12 @@ import {
 } from './hud-elements.ts';
 import type { HelpMessage, HudSignals, HudSink, HudTarget } from './hud-signals.ts';
 import { StealthMeter } from './hud-stealth.ts';
+import {
+  SURVIVAL_GLOBALS,
+  SURVIVAL_PLUGIN,
+  survivalHud,
+  survivalHudKey,
+} from '../gameplay/survival-hud.ts';
 
 /** What the HUD reads of the game every frame. */
 export interface HudSource {
@@ -55,6 +61,8 @@ export interface HudSource {
   readonly onSettingsChange: (listener: () => void) => () => void;
   /** The compass's markers now (CompassTargetDataA: 4 numbers a marker), src/shell/compass.ts. */
   readonly compass?: () => Promise<number[]>;
+  /** The plugins of the load order (Survival Mode's HUD shows only with its plugin). */
+  readonly plugins?: () => readonly string[];
   /** A text's "[Event]"s as the keys bound to them (the help messages). */
   readonly keyLabels?: (text: string) => string;
   /** The floating quest marker now (hud-elements.ts' floatingMarker), if it shows. */
@@ -185,6 +193,7 @@ export class HudController implements HudSink {
         this.#floatShown = '';
         this.#shoutShown = -1;
         this.#chargeShown = {};
+        this.#survivalShown = undefined;
         this.#cartMode = false;
         this.#stealth.reset();
         // (The HUD is not this.#menu yet as it first opens.)
@@ -702,6 +711,32 @@ export class HudController implements HudSink {
     menu.set(`${clip}._alpha`, marker.alpha);
   }
 
+  /** Survival Mode's temperature and penalty meters (src/gameplay/survival-hud.ts), as they change. */
+  async #updateSurvival(menu: Menu, runtime: ScriptRuntime): Promise<void> {
+    const loaded =
+      this.#source.plugins?.().some((name) => name.toLowerCase() === SURVIVAL_PLUGIN) ?? false;
+    const values = new Map<string, number | undefined>();
+    if (loaded) {
+      for (const name of Object.values(SURVIVAL_GLOBALS)) {
+        values.set(name, await runtime.globalNamed(name));
+      }
+    }
+    const hud = survivalHud(loaded, (name) => values.get(name));
+    const key = survivalHudKey(hud);
+    if (menu !== this.#menu || key === this.#survivalShown) return;
+    const force = this.#survivalShown === undefined;
+    this.#survivalShown = key;
+    menu.invoke(
+      '_root.HUDMovieBaseInstance.ShowSurvivalElements',
+      hud.show,
+      hud.show ? hud.data : undefined,
+      force,
+    );
+  }
+
+  /** What the survival elements show (survivalHudKey); undefined: not sent yet. */
+  #survivalShown: string | undefined;
+
   async #updateMeters(menu: Menu): Promise<void> {
     const runtime = this.#source.runtime();
     if (!runtime) return;
@@ -725,6 +760,7 @@ export class HudController implements HudSink {
     if (staminaStep.filled) menu.call('FadeOutStamina', stamina);
     await this.#updateSouls(runtime);
     await this.#updateArrows(menu, runtime);
+    await this.#updateSurvival(menu, runtime);
     // Each hand's enchanted weapon: its charge (shown while it holds one).
     for (const hand of ['left', 'right'] as const) {
       const weapon = await runtime.equipment.weapon(PLAYER_REF, hand);

@@ -36,8 +36,19 @@ const CUBE_INDICES = Uint16Array.from([
 interface DecalInstance {
   readonly reference: number;
   readonly data: Float32Array;
-  readonly center: readonly [number, number, number];
-  readonly radius: number;
+  center: readonly [number, number, number];
+  radius: number;
+}
+
+/** Writes a decal's box and the rows of its inverse (world → unit cube) into its data. */
+function writeBox(data: Float32Array, box: Mat4): boolean {
+  const inverse = invert(box);
+  if (!inverse) return false;
+  data.set(box, 0);
+  for (let row = 0; row < 3; row++) {
+    for (let col = 0; col < 4; col++) data[16 + row * 4 + col] = inverse[col * 4 + row] ?? 0;
+  }
+  return true;
 }
 
 interface DecalGroup {
@@ -72,6 +83,20 @@ export class GpuDecals {
       for (const instance of group.shown) data.set(instance.data, at++ * INSTANCE_FLOATS);
     }
     if (at > 0) this.#device.queue.writeBuffer(this.buffer, 0, data, 0, at * INSTANCE_FLOATS);
+  }
+
+  /** Moves every decal of the set to a box (a decal following a body), as shown. */
+  move(box: Mat4): void {
+    let moved = false;
+    for (const group of this.groups) {
+      for (const instance of group.instances) {
+        if (!writeBox(instance.data, box)) continue;
+        instance.center = [box[12] ?? 0, box[13] ?? 0, box[14] ?? 0];
+        instance.radius = maxScale(box) * Math.sqrt(3) * 0.5;
+        moved = true;
+      }
+    }
+    if (moved) this.select(() => true);
   }
 
   destroy(): void {
@@ -195,14 +220,8 @@ export class DecalRenderer {
         normal !== undefined && (set.flags & TextureSetFlag.noSpecularMap) === 0 ? 1 : 0;
       const instances: DecalInstance[] = [];
       for (const placement of list) {
-        const inverse = invert(placement.box);
-        if (!inverse) continue;
         const data = new Float32Array(INSTANCE_FLOATS);
-        data.set(placement.box, 0);
-        // Rows of the inverse (world → unit cube).
-        for (let row = 0; row < 3; row++) {
-          for (let col = 0; col < 4; col++) data[16 + row * 4 + col] = inverse[col * 4 + row] ?? 0;
-        }
+        if (!writeBox(data, placement.box)) continue;
         data.set(placement.rect, 28);
         data.set([...decal.color, decal.shininess], 32);
         data.set([decal.flags, specular, 0, 0], 36);

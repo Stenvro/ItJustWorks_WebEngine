@@ -7,6 +7,7 @@
 // image space it adds below the surface) is not read from the executable yet.
 
 import type { SceneFog, SceneLighting } from '../render/scene-lighting.ts';
+import { NEUTRAL_IMAGE_SPACE, type ImageSpace } from './image-space.ts';
 import type { Vec3 } from '../render/math.ts';
 import type { WaterType } from './water.ts';
 
@@ -52,6 +53,32 @@ export class UnderwaterView {
     const type = this.#types.get(water.type);
     return type && underwaterFog(type, lighting);
   }
+}
+
+/**
+ * How much of the water's colour lies over the whole image below the surface, at the water's full
+ * fog amount. The fog colours only the geometry; the tint gives the sky, the grass and the water's
+ * surface seen from below the water's colour too. TODO(M13): the engine's underwater image space
+ * is not read from the executable; half of the fog's amount looks like the game.
+ */
+export const UNDERWATER_TINT = 0.5;
+
+/** The full-screen tint of the underwater fog (its near colour); none above the surface. */
+export function underwaterTint(
+  fog: SceneFog | undefined,
+): { readonly color: Vec3; readonly amount: number } | undefined {
+  if (!fog) return undefined;
+  return { color: fog.nearColor, amount: UNDERWATER_TINT * Math.min(1, Math.max(0, fog.max)) };
+}
+
+/** An imagespace with the underwater tint (the neutral one where there is none). */
+export function withUnderwaterTint(
+  space: ImageSpace | undefined,
+  fog: SceneFog | undefined,
+): ImageSpace | undefined {
+  const underwater = underwaterTint(fog);
+  if (!underwater) return space;
+  return { ...(space ?? NEUTRAL_IMAGE_SPACE), underwater };
 }
 
 /** The fog seen from under the water of a type, in the scene's light. */

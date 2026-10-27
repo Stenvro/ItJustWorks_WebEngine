@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { flatAmbient } from '../render/scene-lighting.ts';
-import { isUnderwater, underwaterFog, underwaterLight } from './underwater.ts';
+import { NEUTRAL_IMAGE_SPACE } from './image-space.ts';
+import {
+  isUnderwater,
+  UNDERWATER_TINT,
+  underwaterFog,
+  underwaterLight,
+  underwaterTint,
+  withUnderwaterTint,
+} from './underwater.ts';
 
 // DefaultWater (Skyrim.esm): underwater fog amount 0.9, near -500, far 1600.
 const DEFAULT_WATER = {
@@ -50,5 +58,20 @@ describe('underwater view', () => {
     expect(underwaterLight(NIGHT)).toBeLessThan(underwaterLight(DAY));
     const night = underwaterFog(DEFAULT_WATER, NIGHT);
     expect(night.nearColor[1]).toBeLessThan(underwaterFog(DEFAULT_WATER, DAY).nearColor[1]);
+  });
+
+  it('tints the whole image with the water colour only below the surface', () => {
+    const fog = underwaterFog(DEFAULT_WATER, DAY);
+    // Above the surface: no fog, no tint, the imagespace as it is.
+    expect(underwaterTint(undefined)).toBeUndefined();
+    expect(withUnderwaterTint(undefined, undefined)).toBeUndefined();
+    expect(withUnderwaterTint(NEUTRAL_IMAGE_SPACE, undefined)).toBe(NEUTRAL_IMAGE_SPACE);
+    // Below: the fog's near colour at the tint's share of its amount.
+    const tint = underwaterTint(fog);
+    expect(tint?.color).toEqual(fog.nearColor);
+    expect(tint?.amount).toBeCloseTo(UNDERWATER_TINT * 0.9);
+    const space = withUnderwaterTint(undefined, fog);
+    expect(space?.underwater?.amount).toBeCloseTo(UNDERWATER_TINT * 0.9);
+    expect(space?.saturation).toBe(NEUTRAL_IMAGE_SPACE.saturation);
   });
 });

@@ -133,6 +133,7 @@ import { HeldWeapons, type HeldModels } from './actor-weapons.ts';
 import { WeaponBlood } from '../gameplay/combat/weapon-blood.ts';
 import { armorSkill } from '../gameplay/inventory.ts';
 import { CombatImpacts, type HitImpact } from './combat-impacts.ts';
+import { splattersForHit } from '../render/screen-blood-data.ts';
 import type { Impact } from '../world/impact-records.ts';
 import { CombatProjectiles } from './combat-projectiles.ts';
 import type { GameSession } from './game-session.ts';
@@ -2294,9 +2295,19 @@ export class ActorCombat implements CombatBridge {
         this.#play?.physics,
       )
       .then(async (impact) => {
-        // A weapon's blow that drew blood (its impact leaves a blood decal) bloodies the blade.
-        if (!impact || hit.shot || hit.bash || blocks || stats?.weapon === undefined) return;
-        if (!(await this.#impacts.bleeds(impact))) return;
+        if (!impact || blocks || !(await this.#impacts.bleeds(impact))) return;
+        // A blow that drew blood (its impact leaves a blood decal) bloodies the body it struck,
+        // and the player's screen when it struck the player (src/render/screen-blood-data.ts).
+        void this.#impacts.bodyDecal(impact, hit.point, hit.direction, () => {
+          const body = target.body;
+          const first = body?.instances[0];
+          return body && first && { world: first.world, pose: body.pose };
+        });
+        if (targetRef === PLAYER_REF) {
+          this.#options.session.screenBlood.splatter(splattersForHit(hit.power));
+        }
+        // A weapon's blow that drew blood bloodies the blade.
+        if (hit.shot || hit.bash || stats?.weapon === undefined) return;
         (left ? attacker.blood?.left : attacker.blood?.right)?.hit();
       })
       .catch((error: unknown) => {
