@@ -229,6 +229,10 @@ export interface SkyState {
   readonly aurora: number;
   /** Imagespaces of the time of day and their weights (both weathers during a change). */
   readonly imageSpaces: readonly { readonly formId: number; readonly weight: number }[];
+  /** Volumetric lightings (VOLI) of the time of day and their weights, weighed the same way. */
+  readonly volumetricLightings?: readonly { readonly formId: number; readonly weight: number }[];
+  /** The sun's lens flare (LENS) of the weather shown most. */
+  readonly lensFlare?: number | undefined;
 }
 
 export interface SkyInput {
@@ -484,6 +488,17 @@ export function skyState(input: SkyInput): SkyState {
   };
   addImageSpaces(input.weather, transition);
   if (input.previous) addImageSpaces(input.previous, 1 - transition);
+  const volumetricLightings: { formId: number; weight: number }[] = [];
+  const addVolumetric = (weather: WeatherRecord, share: number): void => {
+    weather.volumetricLighting?.forEach((formId, t) => {
+      const weight = (weights[t] ?? 0) * share;
+      if (formId !== undefined && weight > 0) volumetricLightings.push({ formId, weight });
+    });
+  };
+  addVolumetric(input.weather, transition);
+  if (input.previous) addVolumetric(input.previous, 1 - transition);
+  const lensFlare =
+    input.previous && transition < 0.5 ? input.previous.lensFlare : input.weather.lensFlare;
 
   // A lightning flash lights the sky and, less, everything under it.
   const flash = Math.max(0, Math.min(1, input.lightning ?? 0));
@@ -539,6 +554,8 @@ export function skyState(input: SkyInput): SkyState {
     sunGlareSize: settings.sunGlareSize,
     aurora,
     imageSpaces,
+    volumetricLightings,
+    lensFlare,
   };
 }
 
