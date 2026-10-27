@@ -279,9 +279,7 @@ export class ActorAi {
   }
 
   /** The package running for an actor now (GetCurrentPackage), if its AI runs. */
-  current(
-    reference: number,
-  ):
+  current(reference: number):
     | {
         id: number;
         type?: number;
