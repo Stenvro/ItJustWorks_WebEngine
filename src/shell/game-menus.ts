@@ -4,6 +4,7 @@
 // Magic, Quick Stats, Quick Map, Favorites, Wait); each pauses the game (menu mode) while open.
 // One of these is open at a time. Notes: docs/ui.md.
 
+import { inputPlatform } from '../ui/input-platform.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import { MenuFlag, MenuName, type MenuStack } from '../ui/menu-stack.ts';
@@ -967,7 +968,7 @@ export class GameMenus {
       setup: async (menu) => {
         await menu.waitFor('_root.InitExtensions');
         menu.invoke('_root.InitExtensions');
-        menu.invoke('_root.SetPlatform', 0, false);
+        menu.invoke('_root.SetPlatform', inputPlatform(), false);
         // (abLevelUp, the date, the level, the progress to the next level 0..100).
         menu.call('StartOpenMenuAnim', levelUp, date, String(level), progress);
       },

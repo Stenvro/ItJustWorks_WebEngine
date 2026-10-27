@@ -10,6 +10,7 @@
 // sCanNotTrainHigher, sInsufficientGoldToTrain). The card's meter shows the skill's progress;
 // a session fills it (the movie empties a full meter of itself) to the new level's.
 
+import { inputPlatform } from '../ui/input-platform.ts';
 import { TRAININGS_PER_LEVEL, trainingCost } from '../gameplay/training.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -99,7 +100,7 @@ export class TrainingMenu {
       },
       setup: async (menu) => {
         await menu.waitFor(`${CARD}.SetPlatform`);
-        menu.invoke(`${CARD}.SetPlatform`, 0, false);
+        menu.invoke(`${CARD}.SetPlatform`, inputPlatform(), false);
         await this.#show(menu, runtime, settings, teaches);
         const progress = await runtime.progression.skillProgress(TrainingMenu.#skill(teaches));
         menu.invoke(`${CARD}.SkillMeter.SetPercent`, progress * 100);

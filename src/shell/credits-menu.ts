@@ -6,6 +6,7 @@
 // Tab or Esc). The second field takes text the first has no room for; here the first holds it
 // all; its logos are left out (src/ui/credits-text.ts). Notes: docs/ui.md ("Credits").
 
+import { inputPlatform } from '../ui/input-platform.ts';
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import { decodeGameText } from '../formats/text.ts';
 import { creditsHtml } from '../ui/credits-text.ts';
@@ -56,7 +57,7 @@ export class CreditsMenu {
       },
       setup: async (menu) => {
         if (!(await menu.waitFor('_root.onCodeObjectInit'))) return;
-        menu.invoke('_root.SetPlatform', 0, false);
+        menu.invoke('_root.SetPlatform', inputPlatform(), false);
         menu.native('_root.CodeObj', ['requestCredits', 'getScrollSpeed', 'closeMenu']);
         menu.invoke('_root.onCodeObjectInit');
       },

@@ -9,6 +9,7 @@
 
 import { InputContext, SCAN_CODES } from '../formats/controlmap/controlmap.ts';
 import type { RemapInput } from '../formats/controlmap/remap.ts';
+import { cancelPadButton, nextPadButton } from './gamepad-input.ts';
 import { buttonArt } from '../ui/button-art.ts';
 import type { Menu, MenuCallHandler } from '../ui/menu-host.ts';
 import type { GameSession } from './game-session.ts';
@@ -33,7 +34,7 @@ export function controlsHandlers(session: GameSession): Record<string, MenuCallH
   const fill = (menu: Menu, list: string): void => {
     if (!data) return;
     const events = (data.controls.contexts[InputContext.gameplay] ?? []).filter(
-      (event) => event.remappable[0] || event.remappable[1],
+      (event) => event.remappable[0] || event.remappable[1] || event.remappable[2],
     );
     menu.invoke(`${list}.splice`, 0, Number(menu.get(`${list}.length`) ?? 0));
     for (const event of events) {
@@ -51,16 +52,29 @@ export function controlsHandlers(session: GameSession): Record<string, MenuCallH
       if (event) menu.set(`${list}.${String(index)}.buttonName`, buttonArt(event));
     }
   };
-  /** Waits for the next key or mouse button the player presses (taking it from the page). */
+  /**
+   * Waits for the next key, mouse button or gamepad button the player presses (taking it from
+   * the page and the game).
+   */
   const nextInput = (): Promise<RemapInput | undefined> =>
     new Promise((resolve) => {
-      const done = (input: RemapInput | undefined, event: Event): void => {
-        event.preventDefault();
-        event.stopImmediatePropagation();
+      let finished = false;
+      const finish = (input: RemapInput | undefined): void => {
+        if (finished) return;
+        finished = true;
+        cancelPadButton();
         window.removeEventListener('keydown', onKey, true);
         window.removeEventListener('mousedown', onMouse, true);
         resolve(input);
       };
+      const done = (input: RemapInput | undefined, event: Event): void => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        finish(input);
+      };
+      void nextPadButton().then((pad) => {
+        finish({ pad });
+      });
       const onKey = (event: KeyboardEvent): void => {
         if (event.repeat) return;
         const scanCode = SCAN_CODE_OF.get(event.code);

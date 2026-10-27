@@ -54,6 +54,7 @@ import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ActorMotion, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { Player } from './player.ts';
 import { attachPlayerInput } from './player-input.ts';
+import { attachGamepad } from './gamepad-input.ts';
 import type { HudSignals } from './hud-signals.ts';
 import type { ActorTarget } from './actors.ts';
 import { bodyOnPose, poseRagdoll, type RagdollData } from '../world/ragdoll-data.ts';
@@ -1655,6 +1656,20 @@ export class PlaySession {
           () => this.#hud?.listening === true,
           () => this.#hud?.menus?.takesKeys?.() === true,
         );
+    if (this.#freeCamera) return;
+    const keys = this.#detach;
+    const pad = attachGamepad({
+      player: this.player,
+      controls: () => this.player.controlMap,
+      openMenus: () => this.#hud?.menus?.openMenus?.() ?? [],
+      menuTakesKeys: () => this.#hud?.menus?.takesKeys?.() === true,
+      menuKey: (type, code) => this.#hud?.menus?.padKey?.(type, code) === true,
+      keyRepeat: () => this.#hud?.menus?.keyRepeat?.() ?? { long: 0.5, short: 0.1 },
+    });
+    this.#detach = () => {
+      keys();
+      pad();
+    };
   }
 
   /** Stops taking input. */
