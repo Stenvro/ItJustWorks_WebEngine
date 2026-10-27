@@ -1438,7 +1438,10 @@ export class Player implements Camera {
     const invert = ini.bool('Controls', 'bInvertYValues') ? -1 : 1;
     this.#input = true;
     this.yaw += x * rate * seconds;
-    this.pitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, this.pitch - invert * y * rate * seconds));
+    this.pitch = Math.max(
+      -MAX_PITCH,
+      Math.min(MAX_PITCH, this.pitch - invert * y * rate * seconds),
+    );
   }
 
   /** Forgets every held key (the window lost focus). */
