@@ -746,6 +746,8 @@ export class PlaySession {
         this.cameraOverride?.update(deltaSeconds);
       },
       viewProjection: (aspect, out) => active().viewProjection(aspect, out),
+      firstPersonViewProjection: (aspect, out) =>
+        active().firstPersonViewProjection?.(aspect, out),
     };
   }
 

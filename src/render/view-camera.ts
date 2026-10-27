@@ -12,4 +12,9 @@ export interface Camera {
   readonly fovY?: number;
   update(deltaSeconds: number): void;
   viewProjection(aspect: number, out?: Mat4): Mat4;
+  /**
+   * The first-person geometry's view-projection: the last viewProjection's view with first
+   * person's own field of view and near plane; undefined: the camera's own (no first person).
+   */
+  firstPersonViewProjection?(aspect: number, out?: Mat4): Mat4 | undefined;
 }

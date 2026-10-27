@@ -10,6 +10,7 @@ import { TweenCamera } from './tween-camera.ts';
 import type { Camera } from '../render/view-camera.ts';
 import type { MoveRequest } from '../ai/locomotion.ts';
 import { lookAt, multiply, perspectiveReversedZ, type Mat4, type Vec3 } from '../render/math.ts';
+import { firstPersonViewProjection, verticalFov } from '../render/first-person-view.ts';
 import { parseControlMap, SCAN_CODES, type ControlMap } from '../formats/controlmap/controlmap.ts';
 import type { NifFile } from '../formats/nif/nif.ts';
 import { decodeWindows1252 } from '../formats/text.ts';
@@ -293,14 +294,6 @@ export interface PlayerMotion {
   readonly sprinting: boolean;
 }
 
-/**
- * The vertical field of view (radians) of a horizontal one across a 4:3 frame (degrees), as
- * fDefaultWorldFOV is (wider screens see more at the sides).
- */
-function verticalFov(degrees: number): number {
-  return 2 * Math.atan(Math.tan((degrees * Math.PI) / 360) * 0.75);
-}
-
 /** An animated camera the player's graph starts (src/shell/actor-graph-events.ts). */
 export interface AnimatedCameraRequest {
   /** The node's world matrix now (undefined: it is gone). */
@@ -412,10 +405,16 @@ export class Player implements Camera {
   /** The console's tcl: no collision, no gravity; the player flies where they look. */
   noClip = false;
 
-  /** The world's field of view (degrees across a 4:3 frame): the console's fov. */
-  setFov(degrees: number): void {
+  /** fDefault1stPersonFOV: first person's own field of view (degrees across a 4:3 frame). */
+  #firstPersonFov: number;
+  /** The view of the last viewProjection (the first-person view looks along it). */
+  readonly #view = new Float32Array(16);
+
+  /** The world's and first person's fields of view (degrees across a 4:3 frame): the console's fov. */
+  setFov(degrees: number, firstPerson?: number): void {
     this.#fovDegrees = degrees;
     this.#fovY = verticalFov(degrees);
+    if (firstPerson !== undefined) this.#firstPersonFov = firstPerson;
   }
   /**
    * Whether the player holds an object heavier than fZKeyHeavyWeight (the play's grab): they
@@ -459,6 +458,7 @@ export class Player implements Camera {
     // more at the sides).
     this.#fovDegrees = ini.number('Display', 'fDefaultWorldFOV');
     this.#fovY = verticalFov(this.#fovDegrees);
+    this.#firstPersonFov = ini.number('Display', 'fDefault1stPersonFOV');
     this.tween = new TweenCamera({
       rotAngle: ini.number('Camera', 'fTweenCamRotAngle'),
       rotSpeed: ini.number('Camera', 'fTweenCamRotSpeed'),
@@ -1172,9 +1172,19 @@ export class Player implements Camera {
       this.position[2] + forward[2],
     ];
     const view = lookAt(this.position, target, up);
+    this.#view.set(view);
     const projection = perspectiveReversedZ(fovY, aspect, this.near);
     projection[8] = -this.lensShift;
     return multiply(projection, view, out);
+  }
+
+  /**
+   * The arms' view-projection (src/render/first-person-view.ts): the view just made, with first
+   * person's own field of view: a bow's zoom, a conversation's and the tween menu's narrow the
+   * world's, not this.
+   */
+  firstPersonViewProjection(aspect: number, out: Mat4 = new Float32Array(16)): Mat4 {
+    return firstPersonViewProjection(this.#view, this.#firstPersonFov, aspect, this.lensShift, out);
   }
 
   /** Told of each user event the player presses (help messages wait for one). */

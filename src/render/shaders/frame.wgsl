@@ -33,6 +33,9 @@ struct Frame {
   cameraUp: vec4f,
   // Clip space back to world space (screen-space decals).
   inverseViewProj: mat4x4f,
+  // The first-person geometry's view-projection (the player's arms and what they hold): the
+  // same view with first person's own field of view and near plane (common.wgsl).
+  firstPersonViewProj: mat4x4f,
 };
 
 struct PointLight {
