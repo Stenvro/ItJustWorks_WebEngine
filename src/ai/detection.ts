@@ -447,10 +447,7 @@ export const AMBUSH_PACKAGE_TYPE = 9;
  * furniture, sprung by masterAmbushScript); plugins may. TODO(M13): the Ambush package's own
  * target (TESAmbushPackageData) is not read; whom it is hostile to stands in for it.
  */
-export function ambushOf(
-  packageType: number | undefined,
-  hostile: boolean,
-): Observer['ambush'] {
+export function ambushOf(packageType: number | undefined, hostile: boolean): Observer['ambush'] {
   if (packageType !== AMBUSH_PACKAGE_TYPE) return undefined;
   return hostile ? 'target' : 'other';
 }
