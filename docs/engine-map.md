@@ -170,10 +170,10 @@ These run through every area and explain most of what breaks in play.
 | System                                  | Status    | Main gaps                                                                              |
 | --------------------------------------- | --------- | -------------------------------------------------------------------------------------- |
 | Object shader                           | partial   | ambient specular, character light, eye reflections, sparkle snow, distance fades       |
-| Lights                                  | different | per-object light lists; portal-strict lights leak through walls                        |
+| Lights                                  | different | per-object light lists; portal-strict lights still reach actors of other rooms         |
 | Shadows                                 | partial   | no interior or point-light shadows, no focus shadows                                   |
 | Fade, LOD                               | partial   | no distance fade of objects, items and actors                                          |
-| Rooms, portals, occlusion               | missing   | everything is drawn                                                                    |
+| Rooms, portals, occlusion               | partial   | rooms' lighting templates and image spaces; shadows and LOD not culled by them         |
 | Image space                             | partial   | volumetric lighting, lens flare, low-health effect, TAA                                |
 | Water                                   | partial   | underwater view, ripples, reflections of what is off screen                            |
 | Decals                                  | partial   | skinned decals, impact effect models, screen blood                                     |

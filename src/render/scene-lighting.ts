@@ -11,6 +11,11 @@ export interface PointLight {
   readonly color: Vec3;
   /** A spot light: it lights only within its cone (undefined: every way). */
   readonly spot?: LightCone;
+  /**
+   * A portal-strict light: the room it alone lights (an id the scene's draws carry:
+   * ModelInstance.room); undefined lights every room.
+   */
+  readonly room?: number;
 }
 
 export interface SceneFog {
