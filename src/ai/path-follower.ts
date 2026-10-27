@@ -61,6 +61,11 @@ export class PathFollower {
     return this.path.points[this.#next];
   }
 
+  /** The path's points it has still to reach, from the one it goes to now. */
+  get ahead(): readonly Vec3[] {
+    return this.path.points.slice(this.#next);
+  }
+
   /** The path's points still ahead, from the one it last passed. */
   get remaining(): readonly Vec3[] {
     return this.path.points.slice(Math.max(0, this.#next - 1));

@@ -46,6 +46,21 @@ describe('light level', () => {
     expect(at(600)).toBe(0);
   });
 
+  it('leaves out the point lights a wall keeps off it', () => {
+    const lights: LightProbe = {
+      ...dark,
+      lights: [
+        { position: [0, 0, 100], radius: 400, color: [1, 1, 1] },
+        { position: [0, 200, 0], radius: 400, color: [1, 1, 1] },
+      ],
+    };
+    const both = lightLevel(lights, [0, 0, 0], true);
+    // The second (75 at 200 of 400) behind a wall: only the first (93.75 at 100) lights it.
+    const one = lightLevel(lights, [0, 0, 0], true, (light) => light.position[1] === 0);
+    expect(both).toBeCloseTo(93.75 + 75, 9);
+    expect(one).toBeCloseTo(93.75, 9);
+  });
+
   it("gives the ambient light's brightest channel (the interior's light mod)", () => {
     const blue: LightProbe = {
       ...dark,

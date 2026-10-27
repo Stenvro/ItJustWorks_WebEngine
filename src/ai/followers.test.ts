@@ -9,6 +9,7 @@ import {
   followDistance,
   followerRanks,
   followGait,
+  followGoal,
   followRadii,
   followSpeed,
   outOfSight,
@@ -46,14 +47,34 @@ describe('followers', () => {
   it('run to catch up and with a running leader; sprint after the player', () => {
     const walking = { running: false, sprinting: false, player: true };
     const running = { running: true, sprinting: false, player: true };
-    expect(followGait(300, 384, 'walk', walking, 500)).toBe('walk');
-    expect(followGait(900, 384, 'walk', walking, 500)).toBe('run');
-    expect(followGait(300, 384, 'walk', running, 500)).toBe('run');
+    expect(followGait(300, 384, 'walk', walking, 500, 2)).toBe('walk');
+    expect(followGait(900, 384, 'walk', walking, 500, 2)).toBe('run');
+    expect(followGait(300, 384, 'walk', running, 500, 2)).toBe('run');
     // Farther than fFollowStartSprintDistance behind the running player, or as they sprint.
-    expect(followGait(600, 384, 'walk', running, 500)).toBe('sprint');
-    expect(followGait(300, 384, 'walk', { ...running, sprinting: true }, 500)).toBe('sprint');
+    expect(followGait(600, 384, 'walk', running, 500, 2)).toBe('sprint');
+    expect(followGait(300, 384, 'walk', { ...running, sprinting: true }, 500, 2)).toBe('sprint');
     // Not after another actor.
-    expect(followGait(600, 384, 'walk', { ...running, player: false }, 500)).toBe('run');
+    expect(followGait(600, 384, 'walk', { ...running, player: false }, 500, 2)).toBe('run');
+  });
+
+  it('walk within their walk zone (fFollowWalkZoneMult times the maximum radius)', () => {
+    const walking = { running: false, sprinting: false, player: true };
+    expect(followGait(600, 384, 'walk', walking, 500, 2)).toBe('walk');
+    expect(followGait(600, 384, 'walk', walking, 500, 1.5)).toBe('run');
+  });
+
+  it('make for their place behind the leader, on the side they are on', () => {
+    // The leader at the origin facing +Y (compass 0): behind is −Y, right is +X.
+    const leader = { position: [0, 0, 0] as const, heading: 0 };
+    const right = followGoal(leader, [300, 500, 0], 200);
+    const left = followGoal(leader, [-300, -500, 0], 200);
+    expect(Math.hypot(right[0], right[1])).toBeCloseTo(200, 6);
+    expect(right[0]).toBeGreaterThan(0);
+    expect(right[1]).toBeLessThan(0);
+    expect(left[0]).toBeCloseTo(-right[0], 6);
+    expect(left[1]).toBeCloseTo(right[1], 6);
+    // 30° off straight behind.
+    expect(Math.atan2(right[0], -right[1])).toBeCloseTo(Math.PI / 6, 6);
   });
 
   it('match their speed to the leader between their radii', () => {

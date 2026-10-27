@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AMBUSH_PACKAGE_TYPE,
+  ambushOf,
   angleOff,
   detectionLevel,
   detectionLight,
@@ -224,6 +226,14 @@ describe('the detection formula (the engine’s)', () => {
     const ambush = result({ lineOfSight: false }, { moving: true }, { ambush: 'target' });
     expect(ambush.sound).toBeCloseTo(22 * A, 9);
     expect(ambush.skill).toBeCloseTo(A * 25 * 3.5 * 0.5, 9);
+  });
+
+  it('waits in ambush only in an Ambush package, for whom it would fight', () => {
+    expect(ambushOf(AMBUSH_PACKAGE_TYPE, true)).toBe('target');
+    expect(ambushOf(AMBUSH_PACKAGE_TYPE, false)).toBe('other');
+    // A package (18), the draugr's ambushSleepPackage among them: no ambush of its own.
+    expect(ambushOf(18, true)).toBeUndefined();
+    expect(ambushOf(undefined, true)).toBeUndefined();
   });
 
   it('a sneaking expert is not detected in the dark where a novice in daylight would be', () => {
