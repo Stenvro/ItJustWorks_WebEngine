@@ -100,8 +100,8 @@ const IDENTITY = identity();
 const PALETTE_BYTES = MAX_PALETTE_BONES * PALETTE_BONE_FLOATS * 4;
 /** Palettes start at storage buffer offset alignment. */
 const PALETTE_ALIGNMENT = 256;
-/** WGSL `Frame` struct: 176 floats. */
-const FRAME_FLOATS = 176;
+/** WGSL `Frame` struct: 192 floats. */
+const FRAME_FLOATS = 192;
 /** Sun shadow map: one layer per cascade. */
 export const SHADOW_MAP_SIZE = 2048;
 export const SHADOW_MAP_LAYERS = 4;
@@ -261,6 +261,12 @@ const SLSF2_EFFECT_LIGHTING = 0x40000000;
 const DRAW_TREE_ANIM = 0x400000;
 /** A skinned part: model-space normals turn with its bones (common.wgsl). */
 const DRAW_SKINNED = 0x800000;
+/**
+ * Draw flag (common.wgsl): the player's first-person geometry, drawn through the first-person
+ * view-projection in the depth band nearest the eye. A bit the NiAlphaProperty flags leave unused
+ * (cleared from them first).
+ */
+const DRAW_FIRST_PERSON = 0x8000;
 /** Draw flag bits 24-31: the room its instance stands in (ModelInstance.room). */
 const DRAW_ROOM_SHIFT = 24;
 const SLSF2_TREE_ANIM = 0x20000000;
@@ -470,6 +476,11 @@ export interface ModelInstance {
    * another room leave it unlit (PointLight.room).
    */
   readonly room?: number;
+  /**
+   * The player's first-person geometry (the arms, what they hold): drawn with first person's own
+   * field of view and near plane, over the world (DRAW_FIRST_PERSON); never culled.
+   */
+  readonly firstPerson?: boolean;
   /** The sequence the instance plays (a door opening); its model's sequences. */
   readonly playback?: Playback;
   /** The instance's running behavior graph (over its model's graph and sequences). */
@@ -662,6 +673,8 @@ interface Draw {
   readonly face?: { readonly morphs: GpuMorphs; readonly offset: number };
   /** Its instance's visibility (hidden: not drawn, no shadow). */
   readonly visibility?: InstanceVisibility;
+  /** The player's first-person geometry (ModelInstance.firstPerson): never culled. */
+  readonly firstPerson?: boolean;
 }
 
 /** A draw that changes every frame (animated, or turning to the camera). */
@@ -2086,6 +2099,8 @@ export class SceneRenderer {
         writeMaterial(floats, uints, part.part);
         if (sky) uints[38] = (uints[38] ?? 0) | SKY_DRAW;
         if (part.part.skin) uints[38] = (uints[38] ?? 0) | DRAW_SKINNED;
+        const firstPerson = instance.firstPerson === true;
+        uints[38] = ((uints[38] ?? 0) & ~DRAW_FIRST_PERSON) | (firstPerson ? DRAW_FIRST_PERSON : 0);
         const room = rooms.get(instance);
         if (room) uints[38] = (uints[38] ?? 0) | ((room & 0xff) << DRAW_ROOM_SHIFT);
         const tints = instance.tints;
@@ -2195,6 +2210,7 @@ export class SceneRenderer {
           ...(ranges && { ranges }),
           ...(face && { face: { morphs: face.morphs, offset: face.offset } }),
           ...(instance.visibility && { visibility: instance.visibility }),
+          ...(firstPerson && { firstPerson }),
         };
         draws.push(draw);
         follows?.draws.push(draw);
@@ -2224,6 +2240,8 @@ export class SceneRenderer {
             directional.snow,
           );
           if (room) passUints[38] = (passUints[38] ?? 0) | ((room & 0xff) << DRAW_ROOM_SHIFT);
+          passUints[38] =
+            ((passUints[38] ?? 0) & ~DRAW_FIRST_PERSON) | (firstPerson ? DRAW_FIRST_PERSON : 0);
           const passDraw: Draw = {
             part: passPart,
             uniformOffset: passOffset,
@@ -2235,6 +2253,7 @@ export class SceneRenderer {
             bones,
             ...(ranges && { ranges }),
             ...(instance.visibility && { visibility: instance.visibility }),
+            ...(firstPerson && { firstPerson }),
           };
           draws.push(passDraw);
           follows?.draws.push(passDraw);
@@ -2366,6 +2385,7 @@ export class SceneRenderer {
     screen?: { readonly width: number; readonly height: number; readonly near: number },
     largeRefMask?: LargeRefMask,
     rooms?: RoomCuller,
+    firstPersonViewProjection?: Mat4,
   ): void {
     this.#frame.planes = frustumPlanes(viewProjection);
     this.#frame.lodMask = lodMask;
@@ -2430,6 +2450,7 @@ export class SceneRenderer {
     data.set(axis(0), 152);
     data.set(axis(1), 156);
     data.set(invert(viewProjection) ?? viewProjection, 160);
+    data.set(firstPersonViewProjection ?? viewProjection, 176);
     this.#device.queue.writeBuffer(this.#frame.buffer, 0, data);
 
     if (lightCount > 0) {
@@ -3179,7 +3200,7 @@ export class SceneRenderer {
 
   #visible(draw: Draw): boolean {
     if (draw.visibility?.hidden) return false;
-    if (draw.sky) return true;
+    if (draw.sky || draw.firstPerson) return true;
     if (!sphereVisible(this.#frame.planes, draw.center, draw.radius)) return false;
     return this.#frame.rooms?.visible(draw.center, draw.radius) ?? true;
   }
