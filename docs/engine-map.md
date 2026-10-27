@@ -90,13 +90,13 @@ These run through every area and explain most of what breaks in play.
 | Sandbox                      | partial | rescan every 3–6 s, the search radius for a place without one, radius hysteresis, eating at the chair it sits on             |
 | Movement, paths              | partial | navmesh obstacles cut approximately (no re-triangulation: M13), no path idles                                                |
 | Avoidance                    | partial | the engine's way round (who is avoided and re-planning are its)                                                              |
-| Detection                    | partial | formula, reach, lines of sight, light and events the engine's; no one in ambush; the light's sum ours                        |
+| Detection                    | partial | the light's sum ours (walls keep lights off: done); an Ambush package's own target (Ambush packages: done)                   |
 | Crime                        | partial | NPC crimes, the report rule, alarm reach (actor crimes go to the victim's or its owner's crime faction: done)                |
 | Dialogue                     | partial | Say Once with Reset Hours (61 infos: comes back after them, TODO(M13)); walking off a greeting outside the menu              |
 | Scenes                       | partial | repeat pause (Repeat Conditions While True restarts at once); facing wait limit (3 s ours)                                   |
 | Actors away                  | partial | who keeps a schedule away (ours: persistent actors and those near) and its pace are ours; the place between doors            |
-| Followers, horses, furniture | partial | walk zone; mount from the right; enter by graph event; the horse's turn to the camera                                        |
-| Head tracking                | partial | candidates' scores, look along the path, package target's look                                                               |
+| Followers, horses, furniture | partial | follow offset and walk zone's built-in value ours; mount from the right; enter by graph event; horse turns to camera         |
+| Head tracking                | partial | candidates' scores and look-ahead ours (player, speaker, mover; along the path: done); package target's look                 |
 
 ### Combat
 
