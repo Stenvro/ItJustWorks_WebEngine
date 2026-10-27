@@ -635,6 +635,8 @@ export class PhysicsWorld {
   readonly #owners = new Map<number, PhysicsOwner>();
   /** Material id (MATT) per collider handle. */
   readonly #materials = new Map<number, number>();
+  /** Simulated colliders' nodes (water-physics.ts: a ragdoll's trunk floats, its limbs hang). */
+  readonly #nodes = new Map<number, string>();
   /** The materials of all of an object's shapes, per collider of the object. */
   readonly #objectMaterials = new Map<number, ReadonlySet<number>>();
   readonly #hooks: RAPIER.PhysicsHooks;
@@ -841,6 +843,12 @@ export class PhysicsWorld {
     this.#passing.delete(collider.handle);
     this.#twoSided.delete(collider.handle);
     this.#ragdollFaces.delete(collider.handle);
+    this.#nodes.delete(collider.handle);
+  }
+
+  /** The node a simulated body's collider belongs to (its model's), if known. */
+  nodeOf(collider: RAPIER.Collider): string | undefined {
+    return this.#nodes.get(collider.handle);
   }
 
   /** The material id (MATT) of a collider's surface; 0 if unknown. */
@@ -1004,6 +1012,7 @@ export class PhysicsWorld {
         if (data.phantom) colliderDesc.setActiveHooks(RAPIER.ActiveHooks.FILTER_INTERSECTION_PAIRS);
         const collider = this.world.createCollider(colliderDesc, body);
         this.register(collider, shape.layer, owner, shape.material);
+        if (dynamic) this.#nodes.set(collider.handle, data.node);
         colliders.push(collider);
         if (shape.type === 'mesh' && shape.oneSided === true && !dynamic) {
           const s = scale / HAVOK_SCALE;

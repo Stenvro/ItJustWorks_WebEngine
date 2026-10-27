@@ -820,6 +820,8 @@ export class ModelViewer {
     const play = new PlaySession({
       physics,
       player,
+      waterAt: (x, y, z) => this.#waterAt(x, y, z),
+      waterRules: playerData.water,
       camera: this.#fly,
       canvas: this.#canvas,
       groundReady: () => this.#collision.ready,

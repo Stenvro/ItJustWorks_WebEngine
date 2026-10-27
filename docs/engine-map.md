@@ -158,8 +158,8 @@ These run through every area and explain most of what breaks in play.
 | Triggers             | partial | only actors enter triggers (L_TRIGGER takes 14 layers): layers unchecked       |
 | Constraints          | partial | script-made constraints (hanged corpses, hanging keys); a census of types      |
 | Character controller | partial | moving platforms do not carry actors; moving bodies do not push them           |
-| Falling, swimming    | partial | only the player swims; the drowning sound and gasp; NPCs surfacing             |
-| Water physics        | partial | buoyancy, currents (35 of 58 water types), splashes                            |
+| Falling, swimming    | partial | NPCs swim (race Swims); the drowning sound and gasp; Allow Swimming packages   |
+| Water physics        | partial | the splash model; Havok's own buoyancy and drag rule (ours from the data)      |
 | Physics damage       | partial | the listener's damage to destructibles (no vanilla impact reaches it)          |
 | Traps                | partial | hits on actors: done; material, initial flag, cloud traps unchecked            |
 | Gameplay impulses    | partial | arrows, spells, blows and shouts do not move clutter                           |
