@@ -1351,6 +1351,12 @@ export class SceneRenderer {
   defaultWater: GpuWaterType | undefined;
   /** The settings Actor, Item and Object Fade (INI [LOD] fLODFadeOutMult*). */
   objectFade: FadeSettings = DEFAULT_FADE;
+  /**
+   * The room (1-255; 0: none) holding a point of the cell drawn, if it has rooms: the draws of
+   * moving instances (actors walking from room to room) take the room they are in each frame,
+   * so portal-strict lights of other rooms leave them unlit (ModelInstance.room).
+   */
+  roomAt: ((point: Vec3) => number) | undefined;
   readonly #device: GPUDevice;
   readonly #colorFormat: GPUTextureFormat;
   readonly #frameData = new Float32Array(FRAME_FLOATS);
@@ -2718,7 +2724,10 @@ export class SceneRenderer {
     };
     const world = new Float32Array(16);
     const sceneList = [...scenes];
-    for (const scene of sceneList) this.#updateFades(scene, camera);
+    for (const scene of sceneList) {
+      this.#updateFades(scene, camera);
+      this.#updateRooms(scene);
+    }
     // Each instance's sequence is evaluated once per frame.
     const played = new Map<Playback, AnimationFrame | undefined>();
     const playedFrame = (playback: AnimatedDraw['playback']): AnimationFrame | undefined => {
@@ -3295,6 +3304,25 @@ export class SceneRenderer {
         uints[at] = ((uints[at] ?? 0) & 0xffffff) | (level << 24);
         runs.add(draw.uniformOffset + 39 * 4, 4);
       }
+    }
+    runs.flush();
+  }
+
+  /** Moving draws take the room their centre is in (roomAt), uploaded when it changes. */
+  #updateRooms(scene: GpuScene): void {
+    const roomAt = this.roomAt;
+    if (!roomAt || scene.moving.length === 0) return;
+    const uints = new Uint32Array(scene.uniformData);
+    const runs = new UniformRuns(this.#device, scene.uniforms, scene.uniformData);
+    for (const { draw } of scene.moving) {
+      if (draw.firstPerson || draw.sky) continue;
+      const at = draw.uniformOffset / 4 + 38;
+      const before = uints[at] ?? 0;
+      const room = roomAt(draw.center) & 0xff;
+      const after = ((before & ~(0xff << DRAW_ROOM_SHIFT)) | (room << DRAW_ROOM_SHIFT)) >>> 0;
+      if (after === before) continue;
+      uints[at] = after;
+      runs.add(draw.uniformOffset + 38 * 4, 4);
     }
     runs.flush();
   }

@@ -104,6 +104,11 @@ export interface SceneView {
   readonly largeRefMask?: () => LargeRefMask | undefined;
   /** The rooms, portals and occluders that cull the view's objects (room-culler.ts). */
   readonly rooms?: () => RoomCuller | undefined;
+  /**
+   * The room (1-255; 0 none) holding a point, where the view has rooms: moving actors and
+   * objects take theirs each frame (portal-strict lights: SceneRenderer.roomAt).
+   */
+  readonly roomAt?: (point: Vec3) => number;
   /** Sky colours for water reflections and the weather's water tint. */
   readonly water?: () => WaterFrame | undefined;
   /** Imagespace of the frame (eye adaptation, bloom, grading); none: the image as rendered. */
@@ -391,6 +396,7 @@ export class Renderer {
     // Controllers of the placed models (UV scrolling, turning parts, idle sequences) and
     // their particle systems.
     if (view) {
+      this.scene.roomAt = view.roomAt;
       this.scene.animate(scenes, view.clock?.() ?? timeSeconds, view.camera.position, wind);
     }
     const overlay = this.overlay;
