@@ -1,10 +1,12 @@
 // A conversation in the game's dialogue menu (interface\dialoguemenu.swf): the actor greets the
 // player, the player picks topics, the actor says each info's responses (its voice file for
 // its voice type, its face lip-syncing, the line as the menu's subtitle), the info's fragments
-// run before and after, and its choices are the next topics; a Goodbye info, Tab, or no topics
-// left end it. An actor with no topics only says its greeting (no menu opens). What is said
-// comes from the dialogue engine (src/scripting/runtime/dialogue-engine.ts). The game goes on
-// around a conversation (no menu mode); the player stands while it lasts.
+// run before and after, and its choices are the next topics (an Invisible Continue info goes on
+// to its next topic without them); a Goodbye info, Tab, or no topics left end it, and walking
+// away with Tab says the listed topics' Walk Away line. An actor with no topics only says its
+// greeting (no menu opens). What is said comes from the dialogue engine
+// (src/scripting/runtime/dialogue-engine.ts; the flags' rules: dialogue-rules.ts). The game goes
+// on around a conversation (no menu mode); the player stands while it lasts.
 // Notes: docs/ui.md ("Dialogue").
 
 import {
@@ -13,6 +15,7 @@ import {
   type TopicChoice,
 } from '../scripting/runtime/dialogue-engine.ts';
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
+import { afterInfo } from '../scripting/runtime/dialogue-rules.ts';
 import { InfoFlag } from '../world/dialogue-records.ts';
 import { silentLineSeconds } from '../world/dialogue.ts';
 import type { PlacedActor, SpokenLine } from './actors.ts';
@@ -21,6 +24,9 @@ import type { Terminal } from './terminal.ts';
 
 /** The dialogue menu's depth among the game's menus. */
 const DIALOGUE_DEPTH = 5;
+
+/** Invisible Continue infos said one after another at most (a loop of them in a mod ends). */
+const MAX_CONTINUES = 32;
 
 /** Seconds per character of a line without a voice file (GMST fAIDefaultSpeechMult). */
 const DEFAULT_SPEECH_MULT = 0.15;
@@ -32,6 +38,10 @@ export class DialogueMenu {
   #menu: Menu | undefined;
   #speaker: PlacedActor | undefined;
   #choices: TopicChoice[] = [];
+  /** The topic said as the player walks away from the topics listed now (INFO Walk Away). */
+  #walkAway: TopicChoice | undefined;
+  /** Tab was pressed while the topics were listed: the walk-away line is said once it fades. */
+  #walkingAway: TopicChoice | undefined;
   /** The line being said (Skip ends it). */
   #line: { stop(): void; skip: () => void } | undefined;
   #closed: (() => void) | undefined;
@@ -116,7 +126,13 @@ export class DialogueMenu {
     } finally {
       this.#starting = false;
     }
-    if (choices.length === 0) {
+    // With nothing to list, or a Goodbye greeting, the greeting is said where the actor stands;
+    // an Invisible Continue greeting goes on in the menu.
+    const after = greeting && afterInfo(greeting.info);
+    if (
+      (choices.every((choice) => choice.hidden === true) && after !== 'continue') ||
+      after === 'close'
+    ) {
       if (!greeting) {
         this.#terminal.log('ui', `${speaker.look.name} has nothing to say`);
         return;
@@ -151,11 +167,15 @@ export class DialogueMenu {
         },
         // Tab: the menu fades out and asks to close; FadeDone once it has faded.
         CloseMenu: () => {
+          this.#walkingAway = this.#busy ? undefined : this.#walkAway;
           this.#line?.stop();
           this.#line = undefined;
         },
         FadeDone: () => {
+          const walkAway = this.#walkingAway;
+          this.#walkingAway = undefined;
           this.close();
+          if (walkAway) void this.#walkAwayLine(walkAway, reference);
         },
       },
       setup: async (menu) => {
@@ -169,7 +189,52 @@ export class DialogueMenu {
     });
     runtime.state.actor(reference).talkedToPlayer = true;
     if (greeting) await this.#say(greeting);
-    await this.#showTopics(greeting?.info.choices);
+    await this.#goOn(greeting);
+  }
+
+  /**
+   * The player walked away from the topics (Tab): the actor says the Walk Away topic's line
+   * where it stands, its fragments running as if the player had chosen it (a quest's "I'll
+   * think about it").
+   */
+  async #walkAwayLine(choice: TopicChoice, reference: number): Promise<void> {
+    const engine = this.#engine();
+    if (!engine) return;
+    const spoken = await engine.choose(choice, reference);
+    if (spoken) await this.#session.lines.speak(spoken, reference);
+  }
+
+  /**
+   * After an info: Invisible Continue says its next topic at once (again while the next has
+   * the flag too), Goodbye ends the conversation, else the topics show: the last info's
+   * choices, or the actor's topics where a continue found nothing to say.
+   */
+  async #goOn(spoken: SpokenInfo | undefined): Promise<void> {
+    const engine = this.#engine();
+    const speaker = this.#speaker;
+    if (!engine || !speaker) return;
+    let current = spoken;
+    let closing = false;
+    let offered = spoken?.info.choices;
+    for (let step = 0; current && step < MAX_CONTINUES; step++) {
+      if ((current.info.flags & InfoFlag.goodbye) !== 0) closing = true;
+      if (afterInfo(current.info) !== 'continue') break;
+      const next = await engine.continueAfter(current, speaker.actor.reference);
+      if (!next) {
+        offered = undefined;
+        break;
+      }
+      if (!this.#menu) return;
+      await this.#say(next);
+      current = next;
+      offered = next.info.choices;
+    }
+    if (!this.#menu) return;
+    if (closing || (current && (current.info.flags & InfoFlag.goodbye) !== 0)) {
+      this.#menu.call('StartHideMenu');
+      return;
+    }
+    await this.#showTopics(offered);
   }
 
   #openMenu(): Menu | undefined {
@@ -189,6 +254,7 @@ export class DialogueMenu {
     const runtime = this.#session.scriptsReady;
     if (runtime) runtime.dialogueSpeaker = undefined;
     this.#speaker = undefined;
+    this.#walkAway = undefined;
     const closed = this.#closed;
     this.#closed = undefined;
     closed?.();
@@ -203,12 +269,12 @@ export class DialogueMenu {
     this.#lastChosen = choice.text;
     try {
       const spoken = await engine.choose(choice, speaker.actor.reference);
-      if (spoken) await this.#say(spoken);
-      if (!spoken || (spoken.info.flags & InfoFlag.goodbye) !== 0) {
+      if (!spoken) {
         this.#menu?.call('StartHideMenu');
         return;
       }
-      await this.#showTopics(spoken.info.choices);
+      await this.#say(spoken);
+      await this.#goOn(spoken);
     } finally {
       this.#busy = false;
     }
@@ -223,7 +289,9 @@ export class DialogueMenu {
     const speaker = this.#speaker;
     const menu = this.#menu;
     if (!engine || !speaker || !menu) return;
-    this.#choices = await engine.topics(speaker.actor.reference, offered);
+    const all = await engine.topics(speaker.actor.reference, offered);
+    this.#walkAway = all.find((choice) => choice.walkAway === true);
+    this.#choices = all.filter((choice) => choice.hidden !== true);
     if (this.#choices.length === 0) {
       menu.call('StartHideMenu');
       return;

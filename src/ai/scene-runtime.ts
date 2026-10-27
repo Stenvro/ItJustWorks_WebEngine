@@ -111,6 +111,12 @@ export interface SceneHost {
   randomSceneStarts?(scene: number, first: number, second: number): boolean;
   /** Seconds before the next random scene may begin (fRandomSceneAgainMinTime .. MaxTime). */
   randomSceneAgain?(): number;
+  /**
+   * Whether a speaker faces whom it speaks to closely enough to begin a line
+   * (fAIMinAngleRangeToStartSceneDialogue). Undefined: the world does not show them (the line
+   * does not wait).
+   */
+  faces?(speaker: number, target: number): boolean | undefined;
   random(): number;
   warn(message: string): void;
   /** What happens, for tools (tools/scene-info.ts --play). */
@@ -123,6 +129,13 @@ export interface SceneHost {
  * the scene. TODO(M13): the engine queues fragments to the Papyrus VM and goes on.
  */
 const FRAGMENT_PATIENCE = 0.5;
+
+/**
+ * Seconds of the scene's clock a line waits for its speaker to face whom it speaks to before
+ * it is said all the same (one that cannot turn: held in furniture, blocked). TODO(M13): the
+ * engine's own limit, if it has one.
+ */
+const FACING_PATIENCE = 3;
 
 type ActionStatus = 'waiting' | 'running' | 'ended';
 
@@ -845,6 +858,9 @@ export class SceneDirector {
       while (playing.paused && live(playing)) await this.#nextUpdate();
       if (!live(playing) || run.status !== 'running') return;
       const look = this.#lookOf(playing, speaker);
+      if (look?.face === true && look.target !== undefined) {
+        if (!(await this.#faceFirst(playing, run, speaker, look.target))) return;
+      }
       try {
         await this.#host.say({
           scene: playing.formId,
@@ -867,6 +883,28 @@ export class SceneDirector {
       const max = Math.max(min, action.loopingMin, action.loopingMax);
       await this.#wait(playing, min + (max - min) * this.#host.random());
     }
+  }
+
+  /**
+   * A line whose action has its actor face its target (Face Target: it turns while the action
+   * runs) begins once the speaker faces whom it speaks to (the host's measure:
+   * fAIMinAngleRangeToStartSceneDialogue), or after FACING_PATIENCE seconds of the scene.
+   * False: the scene or the action ended meanwhile.
+   */
+  async #faceFirst(
+    playing: Playing,
+    run: ActionRun,
+    speaker: number,
+    target: number,
+  ): Promise<boolean> {
+    const host = this.#host;
+    const goesOn = (): boolean => live(playing) && run.status === 'running';
+    if (!host.faces) return true;
+    const until = playing.clock + FACING_PATIENCE;
+    while (goesOn() && playing.clock < until && host.faces(speaker, target) === false) {
+      await this.#nextUpdate();
+    }
+    return goesOn();
   }
 
   // --- Ending ----------------------------------------------------------------------------

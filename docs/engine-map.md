@@ -92,8 +92,8 @@ These run through every area and explain most of what breaks in play.
 | Avoidance                    | partial | the engine's way round (who is avoided and re-planning are its)                                                              |
 | Detection                    | partial | formula, reach, lines of sight, light and events the engine's; no one in ambush; the light's sum ours                        |
 | Crime                        | partial | NPC crimes, the report rule, alarm reach (actor crimes go to the victim's or its owner's crime faction: done)                |
-| Dialogue                     | partial | Invisible Continue (1,534 responses close the menu), Reset Hours (6,999), walk-away                                          |
-| Scenes                       | partial | lines do not wait for facing; repeat pause                                                                                   |
+| Dialogue                     | partial | Say Once with Reset Hours (61 infos: comes back after them, TODO(M13)); walking off a greeting outside the menu              |
+| Scenes                       | partial | repeat pause (Repeat Conditions While True restarts at once); facing wait limit (3 s ours)                                   |
 | Actors away                  | partial | only one door away, hour steps                                                                                               |
 | Followers, horses, furniture | partial | walk zone; mount from the right; enter by graph event; the horse's turn to the camera                                        |
 | Head tracking                | partial | candidates' scores, look along the path, package target's look                                                               |
@@ -204,8 +204,8 @@ Systems that everything uses come first; each phase makes the next cheaper.
 3. **World rules.** Activate parents and children, triggers for objects and projectiles, trap hits,
    location clearing, cell reset and respawn, keeping moved and animated state.
 4. **Living actors.** Ambient idles, animation objects, the sandbox's daily plan, package flags and
-   overrides, evaluation timing, process levels and the AI budget, head tracking, dialogue's Invisible
-   Continue and Reset Hours, actor conversations.
+   overrides, evaluation timing, process levels and the AI budget, head tracking, actor
+   conversations.
 5. **Combat and magic rules.** Style values on the engine's scale, flee by strength, target selection,
    combat dialogue and music, blocking, potions, damage and stagger rules; taper, NPC magicka cost, skill
    use, line of sight and wards for areas and explosions, enchantment glow and value.

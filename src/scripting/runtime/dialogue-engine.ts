@@ -18,6 +18,7 @@ import {
   type TopicRecord,
 } from '../../world/dialogue-records.ts';
 import { DialogueIndex, voiceFileName } from '../../world/dialogue.ts';
+import { InfoMemory, hiddenInMenu, saidOnWalkAway, saysUnasked } from './dialogue-rules.ts';
 import { ObjectHandle } from '../values.ts';
 import { PLAYER_BASE, PLAYER_REF } from './forms.ts';
 import { questText } from './quest-text.ts';
@@ -35,6 +36,10 @@ export interface TopicChoice {
   readonly quest: number;
   /** A Rumors entry: the rumor topics it stands for (one of them is said, at random). */
   readonly rumors?: readonly TopicChoice[];
+  /** Its info is said as the player walks away from the menu (INFO flag Walk Away). */
+  readonly walkAway?: boolean;
+  /** Not listed: said only as the player walks away (Walk Away Invisible In Menu). */
+  readonly hidden?: boolean;
 }
 
 /** What an info says: its responses, from it or the info it shares them with. */
@@ -58,8 +63,8 @@ const RUMORS = 'RUMO';
 export class DialogueEngine {
   readonly #runtime: ScriptRuntime;
   readonly index: DialogueIndex;
-  /** Infos said with Say Once, topics the player has chosen (in the save). */
-  readonly #saidOnce = new Set<number>();
+  /** Infos said with Say Once or Reset Hours (dialogue-rules.ts), topics chosen (in the save). */
+  readonly #memory = new InfoMemory();
   readonly #chosen = new Set<number>();
 
   constructor(runtime: ScriptRuntime) {
@@ -69,13 +74,19 @@ export class DialogueEngine {
 
   /** What the save keeps: infos said once, topics chosen, what topics said before repeating. */
   saveData(): unknown {
-    return { saidOnce: this.#saidOnce, chosen: this.#chosen, saidInTopic: this.#saidInTopic };
+    return {
+      saidOnce: this.#memory.saidOnce,
+      saidAt: this.#memory.saidAt,
+      chosen: this.#chosen,
+      saidInTopic: this.#saidInTopic,
+    };
   }
 
   loadData(data: unknown): void {
     const saved = data as
-      { saidOnce?: unknown; chosen?: unknown; saidInTopic?: unknown } | undefined;
-    refill(this.#saidOnce, saved?.saidOnce);
+      { saidOnce?: unknown; saidAt?: unknown; chosen?: unknown; saidInTopic?: unknown } | undefined;
+    refill(this.#memory.saidOnce, saved?.saidOnce);
+    refill(this.#memory.saidAt, saved?.saidAt);
     refill(this.#chosen, saved?.chosen);
     refill(this.#saidInTopic, saved?.saidInTopic);
   }
@@ -101,9 +112,12 @@ export class DialogueEngine {
     await Promise.all([this.#topicsOfSubtype(HELLO), this.#topicsOfSubtype(GOODBYE)]);
   }
 
-  /** The greeting an actor says as the conversation starts (its Hello topics' first valid info). */
+  /**
+   * The greeting an actor says as the player starts the conversation (its Hello topics' first
+   * valid info; one that requires the player's activation may be said).
+   */
   greeting(speaker: number): Promise<SpokenInfo | undefined> {
-    return this.subtypeLine(speaker, HELLO);
+    return this.subtypeLine(speaker, HELLO, PLAYER_REF, { activated: true });
   }
 
   /** What an actor says as the player ends the conversation (its Goodbye topics). */
@@ -160,6 +174,8 @@ export class DialogueEngine {
         priority: (record?.priority ?? 0) * 1000 + topic.priority,
         blocking,
         rumor: topic.subtypeName === RUMORS,
+        ...(saidOnWalkAway(info) && { walkAway: true }),
+        ...(hiddenInMenu(info) && { hidden: true }),
       });
     }
     const blocking = choices.filter((choice) => choice.blocking);
@@ -174,14 +190,17 @@ export class DialogueEngine {
     if (rumors.length > 0) {
       shown = shown.filter((choice) => !choice.rumor || choice === named);
     }
-    // An entry without text is never shown (the menu would list an empty line).
+    // An entry without text is never shown (the menu would list an empty line); a hidden Walk
+    // Away topic stays for the menu to say as the player walks away.
     return shown
-      .filter((choice) => choice.text !== '')
-      .map(({ topic, text, isNew, quest }) => ({
+      .filter((choice) => choice.text !== '' || choice.hidden === true)
+      .map(({ topic, text, isNew, quest, walkAway, hidden }) => ({
         topic,
         text,
         isNew,
         quest,
+        ...(walkAway === true && { walkAway }),
+        ...(hidden === true && { hidden }),
         ...(rumors.length > 1 &&
           topic === named?.topic && {
             rumors: rumors.map((rumor) => ({
@@ -222,9 +241,34 @@ export class DialogueEngine {
     return info && (await this.#spoken(info, record, record.quest));
   }
 
-  /** The info is said: Say Once infos are not said again. */
+  /**
+   * An info with Invisible Continue is said: the first of its choices that has a valid info,
+   * said without the player choosing it (the menu does not list it), marked chosen.
+   */
+  async continueAfter(spoken: SpokenInfo, speaker: number): Promise<SpokenInfo | undefined> {
+    for (const formId of spoken.info.choices) {
+      const topic = await this.index.topic(formId);
+      const quest = topic?.quest;
+      if (!topic || quest === undefined || !(await this.#questSpeaks(quest, speaker))) continue;
+      const info = await this.#validInfo(topic, quest, speaker);
+      if (!info) continue;
+      this.#chosen.add(topic.formId);
+      return this.#spoken(info, topic, quest);
+    }
+    return undefined;
+  }
+
+  /**
+   * The info is said: Say Once infos are not said again, those with Reset Hours not before
+   * their hours have passed (dialogue-rules.ts).
+   */
   said(info: InfoRecord): void {
-    if ((info.flags & InfoFlag.sayOnce) !== 0) this.#saidOnce.add(info.formId);
+    this.#memory.said(info, this.#runtime.state.gameDaysPassed);
+  }
+
+  /** Whether an info's flags and timers let it be said now (not its conditions). */
+  #maySay(info: InfoRecord): boolean {
+    return this.#memory.maySay(info, this.#runtime.state.gameDaysPassed);
   }
 
   /**
@@ -302,7 +346,7 @@ export class DialogueEngine {
     const runtime = this.#runtime;
     const infos = await this.index.infos(topic.formId);
     const holds = async (info: InfoRecord): Promise<boolean> =>
-      !this.#saidOnce.has(info.formId) &&
+      this.#maySay(info) &&
       (await runtime.conditionsHold(info.conditions, runtime.referenceHandle(speaker), undefined, {
         target: runtime.referenceHandle(target),
         quest,
@@ -378,6 +422,7 @@ export class DialogueEngine {
     speaker: number,
     subtype: string,
     target: number = PLAYER_REF,
+    options: { readonly activated?: boolean } = {},
   ): Promise<SpokenInfo | undefined> {
     const runtime = this.#runtime;
     const facts = await this.#speakerFacts(speaker);
@@ -390,7 +435,7 @@ export class DialogueEngine {
         speaks.set(quest, questSpeaks);
       }
       if (!questSpeaks) continue;
-      const info = await this.#infoFor(topic, quest, speaker, target, facts);
+      const info = await this.#infoFor(topic, quest, speaker, target, facts, options.activated);
       if (info) return this.#spoken(info, topic, quest);
     }
     return undefined;
@@ -492,8 +537,8 @@ export class DialogueEngine {
   }
 
   /**
-   * A topic's first info the speaker says to the target (its conditions hold; not said once
-   * already; ANAM, if any, names it); where it starts a run of Random infos, one of the valid
+   * A topic's first info the speaker says to the target (its conditions hold; its flags and
+   * timers let it: dialogue-rules.ts; ANAM, if any, names it); where it starts a run of Random infos, one of the valid
    * ones of the run at random, one not said since the topic started over if the topic says all
    * before repeating (DIAL DATA flag 0x1).
    */
@@ -503,6 +548,7 @@ export class DialogueEngine {
     speaker: number,
     target: number,
     facts: SpeakerFacts,
+    activated = false,
   ): Promise<InfoRecord | undefined> {
     const runtime = this.#runtime;
     const infos = await this.index.infos(topic.formId);
@@ -512,7 +558,7 @@ export class DialogueEngine {
       aliasIs: (alias) => aliases?.get(alias) === speaker,
     };
     const holds = async (info: InfoRecord): Promise<boolean> => {
-      if (this.#saidOnce.has(info.formId)) return false;
+      if (!this.#maySay(info) || (!activated && !saysUnasked(info))) return false;
       if (info.speaker !== undefined && info.speaker !== 0) {
         if (info.speaker !== speaker && info.speaker !== facts.base) return false;
       }
