@@ -419,6 +419,16 @@ export interface ActorCombatOptions {
   readonly aim?: () => ProjectileAim | undefined;
   /** A killmove's victim loses its head (src/shell/actor-dismemberment.ts). */
   readonly decapitate?: (actor: number) => void;
+  /**
+   * An actor's weapons' models were made (third person, or the player's first-person ones), with
+   * the weapons in its hands: an enchanted one glows on them (actor-stage.ts).
+   */
+  readonly held?: (
+    actor: number,
+    view: 'third' | 'first',
+    models: HeldWeapons,
+    weapons: { readonly right: number | undefined; readonly left: number | undefined },
+  ) => void;
 }
 
 const describe = (error: unknown): string =>
@@ -1441,6 +1451,10 @@ export class ActorCombat implements CombatBridge {
     fighter.held?.destroy();
     fighter.held = made;
     fighter.heldFor = key;
+    if (made) {
+      const weapons = { right: gear.right.weapon, left: gear.left.weapon };
+      this.#options.held?.(fighter.reference, 'third', made, weapons);
+    }
     if (fighter.player) await this.#makeFirstPersonModels(fighter, gear, key);
   }
 
@@ -1517,6 +1531,10 @@ export class ActorCombat implements CombatBridge {
     this.#weaponVariables(made, gear);
     fighter.firstHeld?.destroy();
     fighter.firstHeld = made;
+    if (made) {
+      const weapons = { right: gear.right.weapon, left: gear.left.weapon };
+      this.#options.held?.(fighter.reference, 'first', made, weapons);
+    }
   }
 
   /** One frame of a fighter: its models, its graph's flags, bleeding out, its AI. */
