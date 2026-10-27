@@ -3314,8 +3314,11 @@ export class ActorCombat implements CombatBridge {
    * An attack of an actor whose idle tree has none for the action (creatures: the wolf's graph
    * has no ActionRightAttack idles): one of its attack data (its race's ATKD / ATKE) of the
    * action's kind (power or not; bashes for a bash) whose event its graph has (the canine race's
-   * data serves wolves and dogs: attackStart_AttackRight1 is a dog's), picked as the engine
-   * picks its melee attacks (chooseAttackData: by attack chance and the style's mults, past its
+   * data serves wolves and dogs: attackStart_AttackRight1 is a dog's) and would take now (as the
+   * engine's graph notify answers: a sword-and-shield bandit's graph refuses the race's H2H
+   * combo; chosen, the attack waited for the refusal and the fight went on without a blow; the
+   * pick turned on the dice, so the animation rate LOD's other order of rolls showed it), picked
+   * as the engine picks its melee attacks (chooseAttackData: by attack chance and the style's mults, past its
    * recovery time, the target within its strike angle about its attack angle), its event sent
    * to the graph. TODO(M13): the engine also measures the attack's reach with the lunge of its
    * clip (the animation set's root motion); the combat AI's reach check stands for it here.
@@ -3332,7 +3335,7 @@ export class ActorCombat implements CombatBridge {
         kind?.power === power &&
         kind.bash === bash &&
         !fighter.deadAttacks.has(attack.event.toLowerCase()) &&
-        graphs.some((graph) => graph.declares(attack.event))
+        graphs.some((graph) => graph.declares(attack.event) && graph.wouldHandle(attack.event))
       );
     });
     const target = fighter.target === undefined ? undefined : this.#fighters.get(fighter.target);

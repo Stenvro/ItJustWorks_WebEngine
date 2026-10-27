@@ -938,6 +938,7 @@ export class SimWorld {
     this.stage.attachPlay(undefined);
     this.#play?.dispose();
     this.#play = undefined;
+    if (this.session.render instanceof HeadlessRender) this.session.render.view = undefined;
     this.#place = undefined;
     this.#regionCell = undefined;
   }
@@ -1011,6 +1012,8 @@ export class SimWorld {
       },
     });
     this.#play = play;
+    // The view is the player's eyes, as the page's renderer looks through play.view.
+    if (session.render instanceof HeadlessRender) session.render.view = { camera: play.view };
     this.stage.attachPlay(play);
     // Rivers carry what floats along their cells' flow maps.
     const flows = new FlowMaps((path) =>
