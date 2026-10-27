@@ -10,7 +10,7 @@
 import {
   attacksOnSight,
   COMBAT_AI_DEFAULTS,
-  fleeHealth,
+  fleeRatio,
   readCombatAiSettings,
 } from '../src/ai/combat-ai.ts';
 import { CombatProfiles } from '../src/ai/combat-profile.ts';
@@ -47,7 +47,7 @@ if (newGame) {
 }
 const gameSettings = await GameSettings.read(db);
 const settings = readCombatAiSettings((name) => gameSettings.number(name));
-if (settings.fleeHealthAverage === COMBAT_AI_DEFAULTS.fleeHealthAverage) {
+if (settings.fleeRatioAverage === COMBAT_AI_DEFAULTS.fleeRatioAverage) {
   console.log('(fConfidenceAverage as the engine has it)');
 }
 
@@ -88,8 +88,8 @@ for (const { name, reference: actor } of actors) {
   console.log(`\n${name} [${hex(actor)}]`);
   console.log(
     `  ${AGGRESSION[profile.aggression] ?? String(profile.aggression)}, ` +
-      `${CONFIDENCE[profile.confidence] ?? String(profile.confidence)} (flees below ` +
-      `${(fleeHealth(profile.confidence, settings) * 100).toFixed(1)}% health), ` +
+      `${CONFIDENCE[profile.confidence] ?? String(profile.confidence)} (flees below a strength ratio of ` +
+      `${fleeRatio(profile.confidence, settings).toFixed(3)}), ` +
       (ASSISTANCE[profile.assistance] ?? String(profile.assistance)) +
       (profile.guard ? ', a guard' : '') +
       (profile.aggroRadius ? `; aggro radius ${profile.aggroRadius.join(' / ')}` : ''),
