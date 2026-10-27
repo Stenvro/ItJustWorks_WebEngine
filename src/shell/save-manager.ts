@@ -15,6 +15,9 @@ import type { Terminal } from './terminal.ts';
 /** How many autosaves the game keeps in turn ([SaveGame] iAutoSaveCount's default). */
 const AUTOSAVE_COUNT = 3;
 
+/** How often a script's save request looks again whether the game may save (ms). */
+const REQUEST_RETRY_MS = 500;
+
 export type AutosaveReason = 'travel' | 'wait' | 'rest' | 'pause';
 
 export class SaveManager {
@@ -24,6 +27,8 @@ export class SaveManager {
   /** Real time (ms) of the last save made or loaded (Save on Pause waits fAutosaveEveryXMins). */
   #lastSave = performance.now();
   #saving = false;
+  /** The kinds of save scripts asked for that are not made yet (Game.RequestSave). */
+  readonly #requests = new Set<'save' | 'autosave'>();
 
   constructor(session: GameSession, terminal: Terminal) {
     this.#session = session;
@@ -122,6 +127,36 @@ export class SaveManager {
         `the autosave failed: ${error instanceof Error ? error.message : String(error)}`,
         'error',
       );
+    }
+  }
+
+  /**
+   * Game.RequestSave / RequestAutoSave: the save manager keeps the request (one of each kind)
+   * and makes the save once the game may save (menus that forbid saving closed, no place
+   * loading, chargen's no-saving over), as the original queues it for its save manager. A game
+   * replaced meanwhile drops it.
+   */
+  async requested(kind: 'save' | 'autosave'): Promise<void> {
+    if (this.#requests.has(kind)) return;
+    this.#requests.add(kind);
+    const runtime = this.#session.scriptsReady;
+    try {
+      while (this.#session.scriptsReady === runtime && runtime && !runtime.retired) {
+        await this.#session.menuStack.whenSavingAllowed();
+        if (this.canSave) {
+          await this.save(kind);
+          return;
+        }
+        await new Promise((resume) => setTimeout(resume, REQUEST_RETRY_MS));
+      }
+    } catch (error) {
+      this.#terminal.log(
+        'save',
+        `the requested ${kind} failed: ${error instanceof Error ? error.message : String(error)}`,
+        'error',
+      );
+    } finally {
+      this.#requests.delete(kind);
     }
   }
 

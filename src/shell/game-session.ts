@@ -435,6 +435,7 @@ export class GameSession {
     this.lines = new WorldLines(this, terminal);
     this.sceneLines = new SceneLines(this, terminal);
     this.scriptWorld.sceneLine = (speech) => this.sceneLines.speak(speech);
+    this.scriptWorld.gamepadRumble = () => this.ini.bool('Controls', 'bGamePadRumble');
     this.scriptWorld.say = (speaker, topic, speakAs, inHead) => {
       if (topic === undefined) return;
       this.lines.say(speaker, topic, speakAs, inHead).catch((error: unknown) => {
@@ -1112,9 +1113,17 @@ export class GameSession {
       } else await runtime.newGame(progress, opening);
       // A new game asked for meanwhile replaced this one.
       if (runtime.retired) return runtime;
-      // From now on threads share each frame's budget ([Papyrus] fUpdateBudgetMS).
-      runtime.vm.scheduler.framed = true;
-      runtime.vm.scheduler.yieldTask = nextTask;
+      // From now on threads share each frame's budget ([Papyrus] fUpdateBudgetMS and
+      // fExtraTaskletBudgetMS); a loaded game's VM first runs on its own for
+      // fPostLoadUpdateTimeMS (src/scripting/scheduler.ts).
+      const scheduler = runtime.vm.scheduler;
+      scheduler.configure(
+        this.ini.number('Papyrus', 'fUpdateBudgetMS'),
+        this.ini.number('Papyrus', 'fExtraTaskletBudgetMS'),
+      );
+      scheduler.framed = true;
+      scheduler.yieldTask = nextTask;
+      if (load) scheduler.postLoad(this.ini.number('Papyrus', 'fPostLoadUpdateTimeMS'));
       // A new game's clock: the plugins' day and hour.
       this.gameDaysPassed = Math.floor(runtime.state.gameDaysPassed);
       this.gameHour = (runtime.state.gameDaysPassed % 1) * 24;

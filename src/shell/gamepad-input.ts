@@ -164,3 +164,20 @@ export function attachGamepad(sink: GamepadSink): () => void {
     sink.player.stick = [0, 0];
   };
 }
+
+/**
+ * Game.ShakeController: the connected gamepad's motors rumble for `seconds`, the small (high
+ * frequency) and the big (low frequency) one at their strengths (0..1), through the Gamepad
+ * API's dual-rumble effect where the browser has it.
+ */
+export function rumbleGamepad(small: number, big: number, seconds: number): void {
+  const actuator = connectedPad()?.vibrationActuator;
+  if (!actuator || !(seconds > 0)) return;
+  actuator
+    .playEffect('dual-rumble', {
+      duration: seconds * 1000,
+      weakMagnitude: Math.min(1, Math.max(0, small)),
+      strongMagnitude: Math.min(1, Math.max(0, big)),
+    })
+    .catch(() => undefined);
+}

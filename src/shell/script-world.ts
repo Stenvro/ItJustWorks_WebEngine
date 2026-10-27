@@ -32,6 +32,7 @@ import { SkyMode, type SkyWeather } from '../world/sky-weather.ts';
 import type { Terminal } from './terminal.ts';
 import type { HudSignals } from './hud-signals.ts';
 import type { Talking } from './world-lines.ts';
+import { rumbleGamepad } from './gamepad-input.ts';
 import { LookRequests, type HeadTrackKind } from '../ai/head-tracking.ts';
 import { bodyOfNode, type PhysicsWorld, type PlacedCollision } from '../physics/physics-world.ts';
 
@@ -185,6 +186,8 @@ export interface ScriptView {
   shakeCamera?(strength: number, seconds: number, source: number | undefined): void;
   /** Splatters of blood on the screen: Game.TriggerScreenBlood. */
   screenBlood?(count: number): void;
+  /** Game.ClearTempEffects: the view's temporary effects go (its hits' decals). */
+  clearTempEffects?(): void;
   /** Where an actor would use a furniture of the view (its marker), if the view holds it. */
   interactionLocation?(
     furniture: number,
@@ -321,6 +324,9 @@ export class ScriptWorld implements WorldBridge {
 
   /** A response of a scene's line (src/shell/scene-lines.ts answers). */
   sceneLine: ((speech: SceneSpeech) => Promise<void> | undefined) | undefined;
+
+  /** Whether the gamepad may rumble (the Vibration setting: [Controls] bGamePadRumble). */
+  gamepadRumble: () => boolean = () => true;
 
   constructor(terminal: Terminal, hud: HudSignals) {
     this.#terminal = terminal;
@@ -693,6 +699,25 @@ export class ScriptWorld implements WorldBridge {
 
   screenBlood(count: number): void {
     for (const view of this.#views) view.screenBlood?.(count);
+  }
+
+  clearTempEffects(): void {
+    for (const view of this.#views) view.clearTempEffects?.();
+  }
+
+  /** Game.RequestSave / RequestAutoSave: Play saves as soon as it may; elsewhere only noted. */
+  requestSave(kind: 'save' | 'autosave'): void {
+    if (this.hud.menus?.requestSave) this.hud.menus.requestSave(kind);
+    else
+      this.#terminal.log(
+        'papyrus',
+        `a script asks for a${kind === 'save' ? '' : 'n'} ${kind}: saves are made only in Play`,
+      );
+  }
+
+  /** Game.ShakeController: the player's gamepad rumbles (src/shell/gamepad-input.ts). */
+  shakeController(small: number, big: number, seconds: number): void {
+    if (this.gamepadRumble()) rumbleGamepad(small, big, seconds);
   }
 
   playIdle(actor: number, idle: number, target: number | undefined): boolean {
