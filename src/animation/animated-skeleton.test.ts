@@ -92,6 +92,39 @@ describe('object skeletons', () => {
     expect(pose.worlds[2 * 16 + 12]).toBeCloseTo(3);
   });
 
+  it('raises a clip annotation on time while its graph updates at the slow rate', () => {
+    // A strike's HitFrame at 0.3 s: behind the camera the graph updates every 0.25 s, yet the
+    // event comes once and on its frame (combat's strike hangs on it, not on the pose).
+    const struck: AnimationBinding = {
+      ...swing,
+      animation: { ...swing.animation, annotations: [{ time: 0.3, text: 'HitFrame' }] },
+    };
+    const object = startObjectSkeleton(
+      nodes,
+      {
+        ...graph,
+        root: { ...graph.root, events: ['HitFrame'] },
+        host: { clip: () => struck, behavior: () => undefined },
+      },
+      () => 0.5,
+    );
+    if (!object) throw new Error('no skeleton');
+    const { skeleton } = object;
+    const raised: number[] = [];
+    let clock = 0;
+    skeleton.onEvents = (events) => {
+      for (const event of events) if (event.name === 'HitFrame') raised.push(clock);
+    };
+    const rate = (): AnimationRate => ({ interval: 0.25, interpolate: false, slop: 0.25 });
+    for (let frame = 0; frame <= 60; frame++) {
+      clock = frame / 60;
+      animateSkeletons([skeleton], clock, rate);
+    }
+    expect(raised).toHaveLength(1);
+    expect(raised[0]).toBeGreaterThan(0.27);
+    expect(raised[0]).toBeLessThan(0.33);
+  });
+
   it('steps unseen graphs without interpolating', () => {
     const object = startObjectSkeleton(nodes, graph, () => 0.5);
     if (!object) throw new Error('no skeleton');
