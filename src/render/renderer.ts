@@ -58,6 +58,7 @@ import { TreeLodRenderer, type TreeLodFrame } from './tree-lod.ts';
 import { SnowScattering } from './snow-sss.ts';
 import { Sao } from './sao.ts';
 import { Composite } from './composite.ts';
+import { ScreenBloodRenderer, type ScreenBloodFrame } from './screen-blood.ts';
 import { SunEffects, type SunEffectsFrame } from './sun-effects.ts';
 import { TemporalAA } from './taa.ts';
 import { jitterPixels, jitterProjection, reprojection } from './taa-data.ts';
@@ -115,6 +116,8 @@ export interface SceneView {
   readonly imageSpace?: () => ImageSpace | undefined;
   /** The sun's god rays and lens flare this frame (exteriors). */
   readonly sunEffects?: () => SunEffectsFrame | undefined;
+  /** Blood on the screen (the player hit: screen-blood-data.ts), over the finished image. */
+  readonly screenBlood?: () => ScreenBloodFrame | undefined;
   readonly camera: Camera;
   /** Called every frame (lighting may depend on the camera, e.g. a studio light). */
   readonly lighting: (camera: Camera) => SceneLighting;
@@ -203,6 +206,7 @@ export class Renderer {
   /** What an open menu shows in 3D over the world (none: nothing). */
   overlay: OverlayView | undefined;
   readonly #menu: MenuOverlay;
+  readonly #screenBlood: ScreenBloodRenderer;
   readonly #gpu: GpuContext;
   readonly #backdrop: GPURenderPipeline;
   readonly #backdropBuffer: GPUBuffer;
@@ -248,6 +252,7 @@ export class Renderer {
     this.sunEffects = new SunEffects(device);
     this.#taa = new TemporalAA(device);
     this.#menu = new MenuOverlay(device, format, this.scene, this.terrain);
+    this.#screenBlood = new ScreenBloodRenderer(device, format);
 
     const module = device.createShaderModule({ label: 'backdrop', code: backdropShader });
     this.#backdrop = device.createRenderPipeline({
@@ -616,6 +621,8 @@ export class Renderer {
       delta,
       depthOfField ? { view: targets.sceneDepthView, near: view.camera.near } : undefined,
     );
+    const blood = view?.screenBlood?.();
+    if (blood) this.#screenBlood.draw(encoder, canvasView, targets.width, targets.height, blood);
     if (overlay) {
       this.#menu.draw(encoder, overlay, overlayScenes, targets, canvasView, this.post.gamma);
     }

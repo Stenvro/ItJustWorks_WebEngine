@@ -186,7 +186,11 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
   });
   n('game.shakecontroller', () => null);
   n('game.setcameratarget', () => null);
-  n('game.triggerscreenblood', () => null);
+  // TriggerScreenBlood(aiValue): that many splatters of blood on the screen.
+  n('game.triggerscreenblood', ({ args }) => {
+    world.screenBlood?.(Math.max(0, Math.floor(num(args[0], 0))));
+    return null;
+  });
   n('game.setsungazeimagespacemodifier', () => null);
   n('game.isplayersungazing', () => false);
   for (const axis of ['x', 'y', 'z'] as const)
