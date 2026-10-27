@@ -684,23 +684,50 @@ const sandboxing: ProcedureRunner = async (run) => {
   const energy = Math.min(100, Math.max(0, numberIn(run, 8) ?? (await energyOf(run))));
   const least = numberIn(run, 10) ?? settings.wanderDefaultMinDist;
   // Its place's radius, at least fAIDistanceRadiusMinLocation (a sit package's chair, radius 0).
-  // TODO(M13): observed in the original, the engine's scan takes fSandBoxSearchRadius for a place whose
-  // radius it gets as 0; which places it gets so (not a reference's radius 0) is not read yet.
-  const radius = Math.max(place.radius, atPlace(run));
+  // A place that is no reference and has no radius (near itself, near its start, radius 0) is
+  // searched fSandBoxSearchRadius round (observed in the original: the scan takes it for a radius of 0).
+  // TODO(M13): which places the engine gives no radius beyond these.
+  const radius =
+    place.radius <= 0 && place.reference === undefined
+      ? settings.sandboxSearchRadius
+      : Math.max(place.radius, atPlace(run));
   const plan = new SandboxPlan();
   const random = (): number => run.random();
   // Where it is now (the spot it uses) and what it does there.
   let at: SandboxChoice | undefined;
   // Where its last walk led (its wandering goes on across the place from there).
   let lastWalk: Vec3 | undefined;
-  while (!run.stopped()) {
-    const here = run.body.position();
-    const spots = (await run.mind.around(place.position, radius, run.actor)).filter((spot) => {
+  const scan = async (): Promise<SandboxSpot[]> =>
+    (await run.mind.around(place.position, radius, run.actor)).filter((spot) => {
       if (!allows[spot.kind] && !(spot.kind === 'sit' && eats)) return false;
       // Within the place's height (fSandboxCylinderBottom..Top of it).
       const rise = spot.position[2] - place.position[2];
       return rise <= settings.sandboxCylinderTop && rise >= settings.sandboxCylinderBottom;
     });
+  // It scans its place every fMin..fMaxSandboxRescanSeconds (real seconds, at random), not as
+  // each activity ends: a pick takes the last scan's list.
+  let spots = await scan();
+  void (async () => {
+    while (!run.stopped()) {
+      await run.wait(
+        between(run, settings.minSandboxRescanSeconds, settings.maxSandboxRescanSeconds),
+      );
+      if (!run.stopped()) spots = await scan();
+    }
+  })();
+  while (!run.stopped()) {
+    const here = run.body.position();
+    // Outside its place by more than fSandBoxRadiusHysteresis (and in no furniture there): it
+    // goes back in first. Within the band it stays where it is.
+    if (
+      here &&
+      at?.reference === undefined &&
+      place.radius > 0 &&
+      horizontal(here, place.position) > radius + settings.sandboxRadiusHysteresis
+    ) {
+      await goTo(run, place);
+      if (run.stopped()) break;
+    }
     const candidates: SandboxChoice[] = [];
     for (const spot of spots) {
       if (allows[spot.kind])
@@ -708,6 +735,19 @@ const sandboxing: ProcedureRunner = async (run) => {
       if (spot.kind === 'sit' && eats) {
         candidates.push({ kind: SandboxKind.eatSitting, reference: spot.reference, spot });
       }
+    }
+    // The chair it sits on is no free spot of the scan, but it may eat at it: the one candidate
+    // at the spot it is at.
+    if (
+      eats &&
+      at?.kind === SandboxKind.sitting &&
+      at.reference !== undefined &&
+      !candidates.some(
+        (candidate) =>
+          candidate.kind === SandboxKind.eatSitting && candidate.reference === at?.reference,
+      )
+    ) {
+      candidates.push({ kind: SandboxKind.eatSitting, reference: at.reference, spot: at.spot });
     }
     if (eats) candidates.push({ kind: SandboxKind.eatStanding });
     if (wanders && place.radius > 0) candidates.push({ kind: SandboxKind.wandering });
@@ -750,14 +790,15 @@ const sandboxing: ProcedureRunner = async (run) => {
     plan.began(pick.kind);
     const hours = sandboxDuration(pick.kind, energy, settings, random);
     // Up from what it uses first, unless it stays in it (to eat at the chair it sits on).
-    if (at?.reference !== undefined && pick.reference !== at.reference)
-      await run.body.leaveFurniture();
+    const seated = at?.reference !== undefined && pick.reference === at.reference;
+    if (at?.reference !== undefined && !seated) await run.body.leaveFurniture();
     at = pick;
     const began = gameHours(run);
     switch (pick.kind) {
       case SandboxKind.eatStanding:
       case SandboxKind.eatSitting: {
-        if (pick.kind === SandboxKind.eatSitting && pick.reference !== undefined) {
+        // At the chair it sits on already, it stays seated to eat.
+        if (pick.kind === SandboxKind.eatSitting && pick.reference !== undefined && !seated) {
           if (!(await run.body.useFurniture(pick.reference, SIT))) {
             at = undefined;
             await run.wait(IDLE_SECONDS);

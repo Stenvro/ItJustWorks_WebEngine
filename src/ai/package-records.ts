@@ -13,11 +13,14 @@ type RecordSource = Pick<GameRecord, 'formId' | 'editorId' | 'fields' | 'formIdA
 
 /** PKDT misc flags. */
 export const PackageFlag = {
+  offersServices: 0x1,
   mustComplete: 0x4,
   maintainSpeedAtGoal: 0x8,
   unlockDoorsAtStart: 0x40,
   unlockDoorsOnChange: 0x80,
+  continueIfPcNear: 0x200,
   oncePerDay: 0x400,
+  skipFalloutBehavior: 0x1000,
   preferredSpeed: 0x2000,
   alwaysSneak: 0x20000,
   allowSwimming: 0x40000,
