@@ -21,6 +21,8 @@ const SHOUT = 0x300;
 const WORDS = [0x310, 0x311, 0x312];
 const SPELLS = [0x320, 0x321, 0x322];
 const NPC = 0x5000;
+/** The default object Magic Fail Sound (MFSN). */
+const FAIL_SOUND = 0x9001;
 
 const spell = (
   formId: number,
@@ -94,10 +96,17 @@ function world() {
   const hits: number[] = [];
   const used: number[] = [];
   const wardsHeld: number[] = [];
+  const sounds: number[] = [];
+  const endedHeld: number[] = [];
   const wordsLearned = new Map<number, boolean>();
   const runtime = {
     state,
-    world: {},
+    world: {
+      playSound: (sound: number) => {
+        sounds.push(sound);
+        return 0;
+      },
+    },
     incrementStat: () => 0,
     wordsLearned,
     // The perk system: no perk changes a value; the actors may dual cast (the schools' Dual
@@ -142,7 +151,10 @@ function world() {
       holdWards: (actor: number) => {
         wardsHeld.push(actor);
       },
-      defaultObject: () => Promise.resolve(undefined),
+      defaultObject: (use: string) => Promise.resolve(use === 'MFSN' ? FAIL_SOUND : undefined),
+      endHeld: (_caster: number, item: number) => {
+        endedHeld.push(item);
+      },
       hostile: (item: MagicItemRecord) =>
         Promise.resolve(item.effects.some((entry) => entry.effect === FIRE)),
       extendHeld: () => new Set<number>(),
@@ -239,6 +251,8 @@ function world() {
     hits,
     used,
     wardsHeld,
+    sounds,
+    endedHeld,
     events,
     wordsLearned,
     castMagic,
@@ -286,6 +300,8 @@ describe('casting a spell', () => {
     w.set(PLAYER_REF, ActorValue.magicka, 10);
     expect(await w.engine.begin(PLAYER_REF, CastingSource.right)).toBe('magicka');
     expect(w.blinks).toEqual([PLAYER_REF]);
+    // The player hears the magic system's failure sound (DOBJ Magic Fail Sound).
+    expect(w.sounds).toEqual([FAIL_SOUND]);
     // A refused cast is no Cast Magic.
     expect(w.castMagic).toEqual([]);
     w.set(PLAYER_REF, ActorValue.magicka, 100);
@@ -305,16 +321,34 @@ describe('casting a spell', () => {
     w.engine.update(1);
     await settle();
     expect(w.value(PLAYER_REF, ActorValue.magicka)).toBeCloseTo(15, 6);
-    // A spray's hit carries its share of the spell.
+    // A spray's hit puts the spell on while it is held (its effects act each frame: not scaled
+    // by the hit's share); its skill trains by the seconds.
     const held = w.engine.held(PLAYER_REF, CastingSource.left);
     await w.engine.deliver(need(held), NPC, { seconds: 0.25 });
-    expect(w.applied.at(-1)?.scale).toBe(0.25);
+    expect(w.applied.at(-1)?.scale).toBeUndefined();
     expect(w.applied.at(-1)).toMatchObject({ trains: true, seconds: 0.25 });
     w.engine.update(2);
     await settle();
     expect(w.value(PLAYER_REF, ActorValue.magicka)).toBe(0);
     expect(w.events.at(-1)).toMatchObject({ kind: 'stop', reason: 'magicka' });
     expect(w.engine.isCasting(PLAYER_REF)).toBe(false);
+    // Out of magicka: the failure sound, and what it held ends with it.
+    expect(w.sounds).toEqual([FAIL_SOUND]);
+    expect(w.endedHeld).toEqual([FLAMES]);
+  });
+
+  it('counts a charge from the graph’s BeginCast (the engine’s SpellCast handlers), once', async () => {
+    const w = world();
+    w.loadouts.set(PLAYER_REF, { right: FIREBOLT });
+    w.set(PLAYER_REF, ActorValue.magicka, 100);
+    expect(await w.engine.begin(PLAYER_REF, CastingSource.right)).toBe('started');
+    w.engine.update(0.2);
+    w.engine.graphBegan(PLAYER_REF, CastingSource.right);
+    const cast = need(w.engine.casting(PLAYER_REF, CastingSource.right));
+    expect(cast.hand.elapsed).toBe(0);
+    w.engine.update(0.1);
+    w.engine.graphBegan(PLAYER_REF, CastingSource.right);
+    expect(cast.hand.elapsed).toBeCloseTo(0.1, 9);
   });
 
   it('dual casts at fMagicDualCastingCostMult times the cost', async () => {

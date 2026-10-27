@@ -13,6 +13,7 @@ import {
   magickaCost,
   powerReady,
   regeneratesWhileCasting,
+  touchReach,
   releaseCast,
   skillCostFactor,
   staffCastsLeft,
@@ -171,7 +172,15 @@ describe("lesser powers' cooldown and magicka while casting", () => {
   it('names each setting with its fallback', () => {
     expect(CASTING_SETTING_NAMES.npcSkillCostBase).toBe('fMagicCasterSkillCostBase');
     expect(CASTING_DEFAULTS.npcSkillCostBase).toBe(0.005);
-    expect(CASTING_SETTING_NAMES.touchDistance).toBe('fMagicDefaultTouchDistance');
-    expect(CASTING_DEFAULTS.touchDistance).toBe(256);
+    expect(CASTING_SETTING_NAMES.objectTouchReach).toBe('fCombatDistance');
+  });
+
+  it("reaches a Touch spell as far as its caster's race reaches unarmed, by its scale", () => {
+    // Observed in the original: the race's unarmed reach × the actor's scale; an object
+    // caster's fCombatDistance.
+    expect(touchReach({ unarmedReach: 96, scale: 1 })).toBe(96);
+    expect(touchReach({ unarmedReach: 96, scale: 1.5 })).toBe(144);
+    expect(touchReach(undefined)).toBe(128);
+    expect(touchReach(undefined, { objectTouchReach: 141 })).toBe(141);
   });
 });

@@ -445,10 +445,12 @@ and shader) on an object covers its model's shapes, its particles come off its r
 model places them, its art stands at its origin. An enchanted item glows
 (`src/gameplay/magic/enchantment-glow.ts`): its enchantment's costliest effect's Enchant Shader
 and Enchant Art (MGEF DATA), on a weapon in the hand (third and first person; the particles off
-the blade where its hand node holds it) and on weapons and armour lying in a loaded cell (hidden
-with them when taken). 2,903 of 3,018 enchanted vanilla weapons and 2,819 of 2,847 enchanted
-armours have a shader (`node tools/effect-audit.ts --glow`). TODO(M13): worn armour shows none
-(as remembered of the game, unchecked); items dropped or created at run time do not glow yet.
+the blade where its hand node holds it) and on weapons and armour lying in a loaded cell, exterior
+or interior (hidden with them when taken), the ones the game made too: dropped, placed by a
+script, an enchanted copy made at the enchanting table (a created form with its EITM; the shell's
+world and interior viewers glow them as `CreatedObjects` shows them). 2,903 of 3,018 enchanted
+vanilla weapons and 2,819 of 2,847 enchanted armours have a shader (`node tools/effect-audit.ts
+--glow`). TODO(M13): worn armour shows none (as remembered of the game, unchecked).
 
 ### Rooms' lighting
 

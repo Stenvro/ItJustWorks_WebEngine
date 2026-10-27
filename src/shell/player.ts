@@ -685,7 +685,12 @@ export class Player implements Camera {
     return this.#setup.movement;
   }
 
-  /** Jumps now, if on the ground (the avatar's jump animation pushes off). */
+  /**
+   * Jumps now, if on the ground: the avatar's graph's JumpBegin (the engine's
+   * JumpAnimEventHandler, observed in the original: the character controller jumps fJumpHeightMin high).
+   * TODO(M13): the actor's jump height mult and fJumpSwimmingMult in water (we do not jump
+   * while swimming).
+   */
   launchJump(): void {
     if (!this.character.grounded || this.character.swimming) return;
     this.onAction?.('JUMP');
@@ -1272,6 +1277,20 @@ export class Player implements Camera {
    * does with it is not known; nothing reads it yet.
    */
   pitchOverride = false;
+
+  /**
+   * CameraOverrideStart / CameraOverrideStop (the player's graph): observed in the
+   * original, a flag of the camera's third-person state set and cleared. TODO(M13): what the
+   * third-person camera does with it is not read; nothing reads it yet.
+   */
+  cameraOverride = false;
+
+  /**
+   * The bow's zoom as the player's graph has it (BowZoomStart / BowZoomStop: observed in the
+   * original, the zoom starts and stops on these events); undefined until the graph raised
+   * either (the input's block alone then: src/shell/player-combat.ts).
+   */
+  graphBowZoom: boolean | undefined;
 
   setPitchOverride(on: boolean): void {
     if (this.pov === 'third') this.pitchOverride = on;
