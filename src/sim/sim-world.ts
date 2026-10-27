@@ -49,7 +49,12 @@ import { configurePhysics, Player } from '../shell/player.ts';
 import { PlayerAvatar } from '../shell/player-avatar.ts';
 import { PlayerFurniture } from '../shell/player-furniture.ts';
 import type { PlayerView } from '../shell/race-menu.ts';
-import { instanceNodeWorld, MOTION_KEYFRAMED, type ScriptView } from '../shell/script-world.ts';
+import {
+  instanceNodeWorld,
+  MOTION_KEYFRAMED,
+  scriptConstraints,
+  type ScriptView,
+} from '../shell/script-world.ts';
 import { connectPlayerTime } from '../shell/time-flow.ts';
 import { FlyCamera } from '../render/fly-camera.ts';
 import type { Vfs } from '../vfs/vfs.ts';
@@ -1423,6 +1428,13 @@ export class SimWorld {
     fireWeapon: (weapon, source, ammo) => {
       void this.stage.combat.fire(weapon, source, ammo);
     },
+    ...scriptConstraints(
+      () => this.#play?.physics,
+      (reference) => [
+        ...(this.#play?.placementsOf(reference) ?? []),
+        ...this.stage.bodies.placements(reference),
+      ],
+    ),
     impulse: (reference, direction, magnitude, share) => {
       for (const placed of this.#play?.placementsOf(reference) ?? []) {
         this.#play?.physics.impulse(placed, direction, magnitude, share);

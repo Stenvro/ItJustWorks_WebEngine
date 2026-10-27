@@ -99,7 +99,12 @@ import type { NavmeshSet } from '../ai/pathfinding.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement } from '../scripting/runtime/runtime.ts';
 import { noteMoved, placedAsMoved } from './moved-objects.ts';
-import { instanceNodeWorld, MOTION_KEYFRAMED, type ScriptView } from './script-world.ts';
+import {
+  instanceNodeWorld,
+  MOTION_KEYFRAMED,
+  scriptConstraints,
+  type ScriptView,
+} from './script-world.ts';
 import { actorScriptGraph, placedScriptGraph } from '../animation/script-graphs.ts';
 import { CreatedObjects } from './created-objects.ts';
 import { FloraLooks } from './flora-looks.ts';
@@ -740,6 +745,13 @@ export class WorldViewer {
     fireWeapon: (weapon, source, ammo) => {
       void this.#stage?.combat.fire(weapon, source, ammo);
     },
+    ...scriptConstraints(
+      () => this.#play?.physics,
+      (reference) => [
+        ...(this.#play?.placementsOf(reference) ?? []),
+        ...(this.#stage?.bodies.placements(reference) ?? []),
+      ],
+    ),
     impulse: (reference, direction, magnitude, share) => {
       for (const placed of this.#play?.placementsOf(reference) ?? []) {
         this.#play?.physics.impulse(placed, direction, magnitude, share);

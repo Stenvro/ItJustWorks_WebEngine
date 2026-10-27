@@ -94,7 +94,12 @@ import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { matches, renderResults } from './finder.ts';
 import type { Placement } from '../scripting/runtime/runtime.ts';
 import { placedAsMoved } from './moved-objects.ts';
-import { instanceNodeWorld, MOTION_KEYFRAMED, type ScriptView } from './script-world.ts';
+import {
+  instanceNodeWorld,
+  MOTION_KEYFRAMED,
+  scriptConstraints,
+  type ScriptView,
+} from './script-world.ts';
 import { actorScriptGraph, placedScriptGraph } from '../animation/script-graphs.ts';
 import { placeObject } from '../sim/placed-objects.ts';
 import { CreatedObjects } from './created-objects.ts';
@@ -460,6 +465,13 @@ export class ModelViewer {
     fireWeapon: (weapon, source, ammo) => {
       void this.#stage?.combat.fire(weapon, source, ammo);
     },
+    ...scriptConstraints(
+      () => this.#play?.physics,
+      (reference) => [
+        ...(this.#play?.placementsOf(reference) ?? []),
+        ...(this.#stage?.bodies.placements(reference) ?? []),
+      ],
+    ),
     impulse: (reference, direction, magnitude, share) => {
       for (const placed of this.#play?.placementsOf(reference) ?? []) {
         this.#play?.physics.impulse(placed, direction, magnitude, share);

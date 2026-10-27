@@ -428,6 +428,20 @@ export interface WorldBridge {
   particleGeometry?(geometry: number, apply: boolean, fade: number): void;
   fireWeapon?(weapon: number, source: number, ammo: number | undefined): void;
   /**
+   * Game.AddHavokBallAndSocketConstraint: a ball and socket between two references' bodies by
+   * their nodes ('': the root's), at local offsets (game units); false if either is not there.
+   */
+  ballAndSocket?(
+    a: number,
+    nodeA: string,
+    b: number,
+    nodeB: string,
+    offsetA: readonly [number, number, number],
+    offsetB: readonly [number, number, number],
+  ): boolean;
+  /** Game.RemoveHavokConstraints: the script-made joints between two references' nodes go. */
+  removeConstraints?(a: number, nodeA: string, b: number, nodeB: string): boolean;
+  /**
    * ObjectReference.PlayImpactEffect: an impact data set's impact where a ray from a node of a
    * reference (none: its origin) along a direction meets a surface; false if none is met.
    */
