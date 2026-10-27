@@ -75,6 +75,23 @@ import {
   type MovementTarget,
 } from '../ai/combat-movement.ts';
 import { CombatSearch } from '../ai/combat-search.ts';
+import type { NavmeshSet } from '../ai/pathfinding.ts';
+import {
+  COMBAT_SUBTREE_DEFAULTS,
+  coverSpots,
+  coverTimes,
+  doorSpots,
+  dualCastHold,
+  exitWaterPoint,
+  lowCombatBlow,
+  pickCover,
+  pickFleeDoor,
+  pickWeapon,
+  readCombatSubtreeSettings,
+  searchRadius,
+  type CombatSubtreeSettings,
+  type LooseWeapon,
+} from '../ai/combat-subtrees.ts';
 import { readDetectionSettings } from '../ai/detection.ts';
 import {
   advanceRadii,
@@ -382,6 +399,30 @@ interface Mind {
   /** Its chase over the navmeshes towards a far target, and when it may look for a way again. */
   chase: Vec3 | undefined;
   chaseRetry: number;
+  /** A target its way could not reach, until it looks again (Check Unreachable Target). */
+  unreachable: { readonly target: number; readonly until: number } | undefined;
+  /** Use Cover: the cover it holds and what it does there; when it may look for cover again. */
+  cover: { readonly at: Vec3; phase: 'going' | 'wait' | 'attack'; until: number } | undefined;
+  coverRetry: number;
+  /** Flee: where it flees to (a door, cover), and when it last fled through a door. */
+  fleeGoal: Vec3 | undefined;
+  fleeDoorAt: number;
+  /** Exit Water: the shore it makes for. */
+  shore: Vec3 | undefined;
+  /** Acquire Weapon: the weapon it goes for, the step under way, when it may look again. */
+  acquire:
+    | {
+        readonly reference: number;
+        readonly at: Vec3;
+        step: 'find' | 'move' | 'take' | 'taking' | 'done';
+      }
+    | { step: 'find' | 'none' }
+    | undefined;
+  acquireRetry: number;
+  /** Prepare Dual Cast: the dual cast under way has been loosed. */
+  dualCastDone: boolean;
+  /** The low process's tree (Low Combat) while it is out of the high process. */
+  lowTree: TreeInstance<CombatFrame> | undefined;
   sheatheAt: number | undefined;
   /** Where its targets were last known, by target. */
   readonly lastKnown: Map<number, Vec3>;
@@ -461,9 +502,10 @@ const STRIKE_ANGLE = Math.PI / 6;
  */
 const SUPPORT_SECONDS = 1;
 const SUPPORT_CAST_SECONDS = 1.5;
-/** A fighter left without a weapon picks one up lying this near, reached this near (units). */
-const PICK_UP_REACH = 1024;
+/** Acquire Weapon: it bends to a weapon from this near (with fCombatAcquireWeaponReachDistance). */
 const PICK_UP_ARRIVE = 64;
+/** Use Cover, Flee To Cover: at its cover within this (units). */
+const COVER_ARRIVE = 48;
 /** An offensive bash raises its block this long at most before the bash (seconds; TODO(M13)). */
 const OFFENSIVE_BASH_RAISE = 0.5;
 /** Its target's retreat speed is sampled this often while it blocks (seconds). */
@@ -533,6 +575,10 @@ export class ActorCombatAi {
   readonly #locations = new TargetLocations();
   /** The combat behaviour tree every fighter runs (src/ai/combat-tree.ts). */
   readonly #tree: BehaviourTree<CombatFrame>;
+  /** The same tree from its Low Combat root: a fighter out of the high process runs it. */
+  readonly #lowTree: BehaviourTree<CombatFrame>;
+  /** The subtrees' settings (combat-subtrees.ts). */
+  #subtrees: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS;
   #settingsRead = false;
   /** The running game its reactions were valued in. */
   #runtime: ScriptRuntime | undefined;
@@ -544,7 +590,8 @@ export class ActorCombatAi {
 
   constructor(options: ActorCombatAiOptions) {
     this.#options = options;
-    this.#tree = this.#makeTree();
+    this.#tree = this.#makeTree('Combat');
+    this.#lowTree = this.#makeTree('LowCombat');
   }
 
   // --- What combat and the scripts ask -----------------------------------------------------------
@@ -963,6 +1010,16 @@ export class ActorCombatAi {
         leash: undefined,
         chase: undefined,
         chaseRetry: 0,
+        unreachable: undefined,
+        cover: undefined,
+        coverRetry: 0,
+        fleeGoal: undefined,
+        fleeDoorAt: -Infinity,
+        shore: undefined,
+        acquire: undefined,
+        acquireRetry: 0,
+        dualCastDone: false,
+        lowTree: undefined,
         sheatheAt: undefined,
         lastKnown: new Map(),
         packageStyle: undefined,
@@ -1198,6 +1255,11 @@ export class ActorCombatAi {
         threat: combatStrength(this.#dps(other.gear), health, this.#reduction(mind.reference)),
         player: reference === PLAYER_REF,
         crowd: this.#alliesOn(mind, reference),
+        // Unreachable by its way, and nothing in its hands that reaches from afar.
+        unreachable:
+          mind.unreachable?.target === reference &&
+          this.#clock < mind.unreachable.until &&
+          !profile.options.some((option) => option.kind !== 'melee' && option.kind !== 'unarmed'),
       });
     }
     return candidates;
@@ -1554,7 +1616,14 @@ export class ActorCombatAi {
       this.#end(mind, 'lost');
       return;
     }
-    const settings = this.#options.senses?.()?.settings ?? readDetectionSettings();
+    const s = this.#subtrees;
+    const settings = {
+      ...(this.#options.senses?.()?.settings ?? readDetectionSettings()),
+      searchStartWaitTime: s.searchStartWaitTime,
+      searchRadius: searchRadius(this.#options.interior?.() === true, this.#random, s),
+      searchWanderDistance: s.searchWanderDistance,
+      searchLookTime: s.searchLookTime,
+    };
     mind.search?.cancel();
     mind.search = new CombatSearch(
       at,
@@ -1606,6 +1675,12 @@ export class ActorCombatAi {
     mind.runTravel = undefined;
     mind.aim = undefined;
     mind.tree = undefined;
+    mind.lowTree = undefined;
+    mind.cover = undefined;
+    mind.fleeGoal = undefined;
+    mind.shore = undefined;
+    mind.acquire = undefined;
+    mind.unreachable = undefined;
     this.#locations.release(reference);
     mind.search?.cancel();
     mind.search = undefined;
@@ -1810,6 +1885,16 @@ export class ActorCombatAi {
       range: view.gear?.bow === true || option === undefined ? bowRange : option.range,
       close: undefined,
     };
+    // Its AI not run by the movers (out of the high process, not walking on its own), the Low
+    // Combat root runs instead (TODO(M13): ours keeps nearly every fighter in the loaded area in
+    // the high process, so this is rare).
+    const movers = this.#options.movers;
+    if (!movers.aiDisabled(mind.reference) && !movers.runsAi(mind.reference)) {
+      mind.lowTree ??= this.#lowTree.instance(this.#random);
+      mind.lowTree.tick(frame, Math.max(0, this.#clock - mind.lowTree.clock));
+      return;
+    }
+    mind.lowTree = undefined;
     mind.tree ??= this.#tree.instance(this.#random);
     mind.tree.tick(frame, Math.max(0, this.#clock - mind.tree.clock));
   }
@@ -1829,7 +1914,15 @@ export class ActorCombatAi {
     void this.#options.movers.travel(mind.reference, to, gait, arrive).then((arrived) => {
       if (mind.chase !== to) return;
       mind.chase = undefined;
-      if (!arrived) mind.chaseRetry = this.#clock + CHASE_RETRY;
+      if (arrived) return;
+      mind.chaseRetry = this.#clock + CHASE_RETRY;
+      // Check Unreachable Target: no way to it; so it stays fCombatUnreachableTargetCheckTime.
+      if (mind.target !== undefined) {
+        mind.unreachable = {
+          target: mind.target,
+          until: this.#clock + this.#subtrees.unreachableTargetCheckTime,
+        };
+      }
     });
   }
 
@@ -2477,7 +2570,7 @@ export class ActorCombatAi {
   }
 
   /** The combat tree with this AI's values and actions (combat-tree.ts names them). */
-  #makeTree(): BehaviourTree<CombatFrame> {
+  #makeTree(root: 'Combat' | 'LowCombat'): BehaviourTree<CombatFrame> {
     const host = this.#options.host;
     const movers = this.#options.movers;
     const settings = (): CombatAiSettings => this.#settings;
@@ -2533,10 +2626,33 @@ export class ActorCombatAi {
               flat(f.there, leash.center) > leash.radius + f.reach
             );
           },
-          // TODO(M13): Exit Water's and Low Combat's conditions (the fighters' swimming and their
-          // process level are not read here: every fighter runs the high process's combat).
-          inWater: () => false,
-          lowCombat: () => false,
+          // Exit Water (observed in the original): the water stands above its feet and its navmesh triangle
+          // is water; and it is not of a race at home there (TODO(M13): the engine's second
+          // test, inferred: its movers swimming it while its race does not swim by nature).
+          inWater: (f) =>
+            movers.motion(f.mind.reference)?.swimming === true &&
+            this.#navmeshes()?.locate(f.feet) !== undefined,
+          // Essential Down: an essential actor bleeding out stands out the fight.
+          essentialDown: (f) => bleedingOut(f.view.state),
+          // Acquire Weapon: left with its fists after it held a weapon (disarmed).
+          mayAcquireWeapon: (f) => {
+            const step = f.mind.acquire?.step;
+            if (step === 'find' || step === 'move' || step === 'take' || step === 'taking') {
+              return true;
+            }
+            return (
+              f.mind.armed &&
+              f.option?.kind === 'unarmed' &&
+              f.view.gear?.weapon === undefined &&
+              this.#clock >= f.mind.acquireRetry
+            );
+          },
+          mayUseCover: (f) =>
+            f.mind.cover !== undefined ||
+            (this.#clock >= f.mind.coverRetry && this.#navmeshes() !== undefined),
+          // Low Combat.
+          lowInReach: (f) => f.distance <= this.#subtrees.lowMaxAttackDistance,
+          groupSearching: (f) => this.#groups.searching(f.mind.reference),
           // Hide: sneaking, unseen by its target (TODO(M13): the engine's hiding rule).
           unseen: (f) => {
             const senses = this.#options.senses?.();
@@ -2546,11 +2662,17 @@ export class ActorCombatAi {
               !senses.detects(f.target.reference, f.mind.reference)
             );
           },
-          // No way found to it lately (its chase waits to look again).
-          unreachable: (f) => this.#clock < f.mind.chaseRetry,
+          // No way found to it lately (Check Unreachable Target: fCombatUnreachableTargetCheckTime
+          // before it looks again).
+          unreachable: (f) =>
+            this.#clock < f.mind.chaseRetry ||
+            (f.mind.unreachable?.target === f.target.reference &&
+              this.#clock < f.mind.unreachable.until),
           hasRangedOption: (f) =>
             f.profile.options.some((option) => option.kind === 'ranged' || option.kind === 'staff'),
-          rangedMovement: ranged,
+          // Observed in the original: its inventory's range beyond fCombatRangedDistance (a short-range
+          // spell closes in as a melee fighter does).
+          rangedMovement: (f) => ranged(f) && f.range > this.#subtrees.rangedDistance,
           flanking: (f) => (style(f).flags & CombatStyleFlag.flanking) !== 0,
           farAway: (f) => f.distance > f.reach + CHASE_BEYOND,
           beyondRange: (f) => f.distance > f.range,
@@ -2579,7 +2701,9 @@ export class ActorCombatAi {
           shotOverheld: (f) => f.view.state.drawnFor > this.#settings.rangedAttackMaximumHoldTime,
           shotInArc: (f) =>
             this.#off(f) <= (this.#settings.rangedProjectileFiringArc * Math.PI) / 180,
+          // Behind its cover (and on its way there) it does not draw.
           mayDraw: (f) =>
+            (f.mind.cover === undefined || f.mind.cover.phase === 'attack') &&
             !bowState(f) &&
             this.#off(f) <= STRIKE_ANGLE &&
             !attacking(f.view.state) &&
@@ -2683,17 +2807,170 @@ export class ActorCombatAi {
             return 'running';
           },
           holdPosition: (f) => this.#hold(f),
-          // TODO(M13): Exit Water's way to the shore and Low Combat's attacks (their conditions
-          // do not hold here yet).
-          exitWater: () => 'failure',
-          attackLow: () => 'failure',
+          // Exit Water: to the nearest dry ground of the navmeshes, running.
+          exitWater: (f) => {
+            const mind = f.mind;
+            if (!mind.shore) {
+              const set = this.#navmeshes();
+              const shore = set && exitWaterPoint(set, f.feet);
+              if (!shore) return 'failure';
+              mind.shore = shore;
+              this.#stopRun(mind);
+              void movers.travel(mind.reference, shore, 'run', 64).then(() => {
+                if (mind.shore === shore) mind.shore = undefined;
+              });
+            }
+            return 'running';
+          },
+          // Low Combat: after its target, and blows without their animations.
+          pursue: (f) => {
+            this.#chase(f.mind, f.there, f.reach * 0.8, f.distance);
+            return 'running';
+          },
+          attackLow: (f, run) => {
+            if (this.#clock < f.mind.nextAttack) return 'running';
+            f.mind.nextAttack = this.#clock + ATTACK_DECISION_SECONDS * 4;
+            const fleeing = this.#minds.get(f.target.reference)?.mode === 'flee';
+            const lands = lowCombatBlow(f.distance, fleeing, this.#random, this.#subtrees);
+            if (lands === undefined) return 'failure';
+            // TODO(M13): the low process's blow lands without a swing (its damage); ours swings.
+            if (lands && run.elapsed >= 0) this.#strike(f, 'ActionRightAttack');
+            return 'running';
+          },
+          search: (f) => {
+            const search = f.mind.search;
+            if (!search) return 'failure';
+            return search.update(0) === 'gave-up' ? 'success' : 'running';
+          },
           hide: (f) => this.#hold(f),
           // It stands while its equipment choice takes up its ranged weapon (scored by range).
           // TODO(M13): the engine's back-off to fCombatRangedDistance meanwhile.
           fallbackToRanged: (f) => this.#hold(f),
-          // TODO(M13): Use Cover's cover search (Find Cover, Attack From Cover, Wait Behind
-          // Cover); none is found yet, so ranged movement runs.
-          findCover: () => 'failure',
+          // Use Cover: Find Cover (the navmeshes' cover edges between it and its target, at
+          // least fCombatCoverMinimumRange off it, within its range × fCombatCoverMaxRangeMult),
+          // runs there; none found, it looks again fCombatCoverSearchFailedDelay later.
+          findCover: (f) => {
+            const mind = f.mind;
+            if (mind.cover) {
+              if (mind.cover.phase !== 'going') return 'success';
+              return flat(f.feet, mind.cover.at) <= COVER_ARRIVE
+                ? this.#coverReached(f)
+                : 'running';
+            }
+            const s = this.#subtrees;
+            const set = this.#navmeshes();
+            const radius = Math.min(
+              s.coverSearchDistanceMax,
+              Math.max(s.coverSearchDistanceMin, f.distance),
+            );
+            const spot =
+              set &&
+              pickCover(coverSpots(set, f.feet, radius), f.feet, {
+                threat: f.there,
+                minRange: s.coverMinimumRange,
+                maxRange: f.range * s.coverMaxRangeMult,
+                height: s.coverCheckHeightMin,
+                avoid: s.coverAvoidTargetRadius,
+              });
+            if (!spot) {
+              mind.coverRetry = this.#clock + s.coverSearchFailedDelay;
+              return 'failure';
+            }
+            const cover = { at: spot.at, phase: 'going' as const, until: Infinity };
+            mind.cover = cover;
+            this.#stopRun(mind);
+            void movers.travel(mind.reference, spot.at, 'run', COVER_ARRIVE / 2).then((there) => {
+              if (mind.cover !== cover) return;
+              if (!there) {
+                mind.cover = undefined;
+                mind.coverRetry = this.#clock + s.coverSearchFailedDelay;
+              }
+            });
+            return 'running';
+          },
+          // Wait Behind Cover: crouched behind it its wait time (no shot meanwhile).
+          waitBehindCover: (f) => {
+            const cover = f.mind.cover;
+            if (!cover) return 'failure';
+            if (cover.phase !== 'wait') return 'success';
+            this.#hold(f);
+            if (this.#clock < cover.until) return 'running';
+            cover.phase = 'attack';
+            cover.until = this.#clock + coverTimes(style(f).general, this.#subtrees).attack;
+            movers.sneak(f.mind.reference, false);
+            return 'success';
+          },
+          // Attack From Cover: up out of it its attack time, its Ranged subtree shooting; then
+          // behind it again (the target come within its minimum range, it leaves the cover).
+          attackFromCover: (f) => {
+            const mind = f.mind;
+            const cover = mind.cover;
+            if (!cover) return 'failure';
+            if (f.distance < this.#subtrees.coverMinimumRange * 0.5) {
+              mind.cover = undefined;
+              return 'failure';
+            }
+            this.#hold(f);
+            if (this.#clock < cover.until) return 'running';
+            cover.phase = 'wait';
+            cover.until = this.#clock + coverTimes(style(f).general, this.#subtrees).wait;
+            movers.sneak(mind.reference, true);
+            return 'success';
+          },
+          // Acquire Weapon: Find Weapon (pickWeapon over the weapons lying near), Move to
+          // Weapon, then the pick-up (fCombatAcquirePickupAnimationDelay), its hand taking it.
+          findWeapon: (f) => {
+            const mind = f.mind;
+            const acquire = mind.acquire;
+            if (acquire?.step === 'find') return 'running';
+            if (acquire && acquire.step !== 'none') return 'success';
+            mind.acquire = { step: 'find' };
+            void this.#findWeapon(f).then((weapon) => {
+              if (mind.acquire?.step !== 'find') return;
+              if (!weapon) {
+                mind.acquire = { step: 'none' };
+                mind.acquireRetry = this.#clock + this.#subtrees.acquireSearchFailedDelay;
+                return;
+              }
+              mind.acquire = { reference: weapon.reference, at: weapon.at, step: 'move' };
+            });
+            return 'running';
+          },
+          moveToWeapon: (f) => {
+            const acquire = f.mind.acquire;
+            if (!acquire || !('at' in acquire)) return 'failure';
+            if (acquire.step !== 'move') return 'success';
+            if (flat(f.feet, acquire.at) <= PICK_UP_ARRIVE + this.#subtrees.acquireReachDistance) {
+              movers.stop(f.mind.reference);
+              acquire.step = 'take';
+              return 'success';
+            }
+            if (!f.mind.chase) {
+              f.mind.chase = acquire.at;
+              void movers.travel(f.mind.reference, acquire.at, 'run', PICK_UP_ARRIVE).then(() => {
+                if (f.mind.chase === acquire.at) f.mind.chase = undefined;
+              });
+            }
+            return 'running';
+          },
+          pickUpWeapon: (f, run) => {
+            const mind = f.mind;
+            const acquire = mind.acquire;
+            if (!acquire || !('at' in acquire)) return 'failure';
+            if (acquire.step === 'done') return 'success';
+            this.#hold(f);
+            // Bent to it fCombatAcquirePickupAnimationDelay, then it has it.
+            if (run.elapsed < this.#subtrees.acquirePickupAnimationDelay) return 'running';
+            if (acquire.step === 'take') {
+              acquire.step = 'taking';
+              void this.#takeWeapon(mind, acquire.reference).finally(() => {
+                acquire.step = 'done';
+                mind.acquire = undefined;
+                mind.acquireRetry = this.#clock + this.#subtrees.acquireSearchSuccessDelay;
+              });
+            }
+            return 'running';
+          },
           // Far: over the navmeshes, running, its way taken again as the target moves.
           chase: (f) => {
             this.#stopRun(f.mind);
@@ -2889,9 +3166,29 @@ export class ActorCombatAi {
           castRight: (f) => this.#castWith(f, 'right'),
           castConcentration: (f) => this.#castWith(f, 'right'),
           castLeft: (f) => this.#castWith(f, 'left', this.#leftOption(f)),
-          // Dual casting: its spell from both hands (the casting engine's dual cast, its perks
-          // allowing; TODO(M13): the engine's Prepare Dual Cast hold, fCombatMagicDualCastInterruptTime).
-          prepareDualCast: (f) => this.#castWith(f, 'both'),
+          // Prepare Dual Cast: both hands charge the spell (the casting engine's dual cast, its
+          // perks allowing); the node holds while it charges, and is broken off once the charge
+          // takes longer than fCombatMagicDualCastInterruptTime.
+          prepareDualCast: (f, run) => {
+            const mind = f.mind;
+            if (run.first) {
+              const casting = this.#options.casting?.();
+              if (!casting || !f.option) return 'failure';
+              mind.lastAttack = this.#clock;
+              mind.dualCastDone = false;
+              void casting
+                .castAt(mind.reference, 'both', f.target.reference, f.option)
+                .finally(() => {
+                  mind.dualCastDone = true;
+                });
+            }
+            const hold = dualCastHold(
+              run.elapsed,
+              mind.dualCastDone ? 0 : Infinity,
+              this.#subtrees,
+            );
+            return hold === 'charging' ? 'running' : hold === 'release' ? 'success' : 'failure';
+          },
           castShout: (f) => this.#castWith(f, 'voice'),
           noteBlow: (f) => {
             f.mind.blockedSwing = this.#blowAt(f);
@@ -2931,6 +3228,51 @@ export class ActorCombatAi {
             this.#flee(f.mind, f.view, f.there, ally);
             return 'running';
           },
+          // Flee Through Door: by its chance, a door near that leads away from its enemy.
+          fleeThroughDoor: (f, run) => {
+            const mind = f.mind;
+            if (!run.first) return mind.fleeGoal ? 'running' : 'success';
+            const set = this.#navmeshes();
+            const s = this.#subtrees;
+            const door =
+              set &&
+              pickFleeDoor(
+                doorSpots(set, f.feet, s.fleeDoorDistanceMax),
+                f.feet,
+                f.there,
+                this.#clock - mind.fleeDoorAt,
+                this.#random,
+                s,
+              );
+            if (!door) return 'failure';
+            mind.fleeDoorAt = this.#clock;
+            this.#fleeTo(f, door.at);
+            return 'running';
+          },
+          // Flee To Cover: cover hidden from its enemy, at least fCombatFleeCoverMinDistance off
+          // it, within fCombatFleeCoverSearchRadius; there it stays, turned to the enemy.
+          fleeToCover: (f, run) => {
+            const mind = f.mind;
+            if (!run.first) {
+              if (mind.fleeGoal) return 'running';
+              this.#hold(f);
+              return 'running';
+            }
+            const set = this.#navmeshes();
+            const s = this.#subtrees;
+            const spot =
+              set &&
+              pickCover(coverSpots(set, f.feet, s.fleeCoverSearchRadius), f.feet, {
+                threat: f.there,
+                minRange: s.fleeCoverMinDistance,
+                maxRange: Infinity,
+                height: s.coverCheckHeightMin,
+                avoid: s.coverAvoidTargetRadius,
+              });
+            if (!spot) return 'failure';
+            this.#fleeTo(f, spot.at);
+            return 'running';
+          },
           fleeAway: (f) => {
             if (this.#clock < f.mind.fleeRetry) return 'failure';
             this.#flee(f.mind, f.view, f.there);
@@ -2959,7 +3301,7 @@ export class ActorCombatAi {
           },
         },
       ),
-      'Combat',
+      root,
     );
   }
 
@@ -3088,6 +3430,99 @@ export class ActorCombatAi {
     });
   }
 
+  /** Flees to a place (a door, cover): its flee goal until it gets there. */
+  #fleeTo(f: CombatFrame, to: Vec3): void {
+    const mind = f.mind;
+    this.#releaseBlock(mind, f.view);
+    const goal: Vec3 = [to[0], to[1], to[2]];
+    mind.fleeGoal = goal;
+    void this.#options.movers.travel(mind.reference, goal, 'run', COVER_ARRIVE).then(() => {
+      if (mind.fleeGoal === goal) mind.fleeGoal = undefined;
+    });
+  }
+
+  /** The navigation meshes of the loaded area (the movers' paths go over them). */
+  #navmeshes(): NavmeshSet | undefined {
+    return this.#options.movers.navmeshes();
+  }
+
+  /** At its cover: down behind it its wait time (Wait Behind Cover). */
+  #coverReached(f: CombatFrame): Status {
+    const cover = f.mind.cover;
+    if (!cover) return 'failure';
+    cover.phase = 'wait';
+    cover.until = this.#clock + coverTimes(f.profile.style.general, this.#subtrees).wait;
+    this.#options.movers.sneak(f.mind.reference, true);
+    return 'success';
+  }
+
+  /**
+   * Find Weapon: the weapons lying in the loaded cells and those made in the game (a disarmed
+   * weapon dropped) it could fight with (one-handed and two-handed weapons, bows), weighed by
+   * pickWeapon against its fists.
+   */
+  async #findWeapon(f: CombatFrame): Promise<LooseWeapon | undefined> {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime) return undefined;
+    const weapons: LooseWeapon[] = [];
+    const near = new Set([
+      ...(runtime.world.loadedReferences?.() ?? []),
+      ...runtime.state.created.keys(),
+    ]);
+    const s = this.#subtrees;
+    const radius = Math.max(s.acquireUnarmedDistanceMax, s.acquireDisarmedDistanceMax);
+    for (const reference of near) {
+      const at = runtime.world.livePlacement?.(reference)?.position;
+      if (!at || flat(f.feet, at) > radius) continue;
+      const state = runtime.state.references.get(reference);
+      if (state?.container || state?.deleted === true) continue;
+      const base = await runtime.baseOf(reference);
+      const item = base === undefined ? undefined : await runtime.equipment.item(base);
+      if (item?.type !== 'WEAP' || !item.weapon) continue;
+      const type = item.weapon.weaponType;
+      if (type > WeaponType.twoHandAxe && type !== WeaponType.bow) continue;
+      weapons.push({
+        reference,
+        at: [at[0], at[1], at[2]],
+        damage: item.weapon.damage,
+        ranged: type === WeaponType.bow,
+      });
+    }
+    const fists = f.profile.options.find((option) => option.kind === 'unarmed');
+    return pickWeapon(
+      weapons,
+      {
+        feet: f.feet,
+        target: f.there,
+        // TODO(M13): the engine's disarmed state (ours: it held a weapon this fight).
+        disarmed: f.mind.armed,
+        currentScore: fists?.damage ?? 0,
+      },
+      s,
+    );
+  }
+
+  /** The pick-up: the weapon taken (after the pick-up's delay) and into its hand. */
+  async #takeWeapon(mind: Mind, reference: number): Promise<void> {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime) return;
+    mind.equipping = true;
+    try {
+      const still = runtime.state.references.get(reference);
+      if (still?.container || still?.deleted === true) return;
+      const base = await runtime.baseOf(reference);
+      await runtime.pickUp(reference, mind.reference);
+      if (base !== undefined) {
+        await runtime.equipment.equip(mind.reference, base, { hand: 'right' });
+        await this.#equipAmmo(mind.reference, base, runtime);
+      }
+      mind.profileRead = -Infinity;
+      mind.nextEquip = this.#clock + this.#equipWait('melee');
+    } finally {
+      mind.equipping = false;
+    }
+  }
+
   /** Whether it would flee now, not cornered (as #decide weighs it). */
   #wouldFlee(mind: Mind, profile: Profile): boolean {
     if (this.#clock < mind.corneredUntil) return false;
@@ -3154,12 +3589,9 @@ export class ActorCombatAi {
     }));
     const best = chooseEquipment(options, distance, profile.style, this.#settings);
     if (!best) return;
-    // Left with its fists after it held a weapon (disarmed: its weapon on the ground), it picks
-    // up a weapon lying near.
+    // Left with its fists after it held a weapon (disarmed: its weapon on the ground), its
+    // combat tree's Acquire Weapon picks up a weapon lying near.
     if (current !== undefined) mind.armed = true;
-    if (mind.armed && best.kind === 'unarmed' && current === undefined) {
-      if (await this.#pickUpWeapon(mind, view, runtime)) return;
-    }
     // Not in the middle of an attack (a bow drawn, a swing): the weapon changes once it is
     // over. Changed under a drawn bow, the archer's hands held the sword while its graph stood
     // in the bow's drawn state, whose release and cancel idles ask for a bow: it held the bow
@@ -3196,61 +3628,6 @@ export class ActorCombatAi {
     } finally {
       mind.equipping = false;
     }
-  }
-
-  /**
-   * A weapon lying in the world within PICK_UP_REACH of a fighter left without one (disarmed:
-   * UESP "Skyrim:Disarm", the disarmed take their weapon back): it runs there and picks it up
-   * (equipped as its profile is read again). Whether it went for one. TODO(M13): the engine's
-   * reach and how it weighs the weapon against its fists.
-   */
-  async #pickUpWeapon(mind: Mind, view: FighterView, runtime: ScriptRuntime): Promise<boolean> {
-    const feet = view.feet;
-    if (!feet) return false;
-    let best: { reference: number; at: Vec3; distance: number } | undefined;
-    // The loaded cells' references and those made in the game (a disarmed weapon dropped).
-    const near = new Set([
-      ...(runtime.world.loadedReferences?.() ?? []),
-      ...runtime.state.created.keys(),
-    ]);
-    for (const reference of near) {
-      const at = runtime.world.livePlacement?.(reference)?.position;
-      if (!at) continue;
-      const distance = flat(feet, at);
-      if (distance > PICK_UP_REACH || (best && distance >= best.distance)) continue;
-      const state = runtime.state.references.get(reference);
-      if (state?.container || state?.deleted === true) continue;
-      const base = await runtime.baseOf(reference);
-      const item = base === undefined ? undefined : await runtime.equipment.item(base);
-      if (item?.type !== 'WEAP' || !item.weapon) continue;
-      if (
-        item.weapon.weaponType > WeaponType.twoHandAxe &&
-        item.weapon.weaponType !== WeaponType.bow
-      )
-        continue;
-      best = { reference, at: [at[0], at[1], at[2]], distance };
-    }
-    if (!best) return false;
-    mind.equipping = true;
-    try {
-      const movers = this.#options.movers;
-      if (best.distance > PICK_UP_ARRIVE)
-        await movers.travel(mind.reference, best.at, 'run', PICK_UP_ARRIVE);
-      const still = runtime.state.references.get(best.reference);
-      if (still?.container || still?.deleted === true) return true;
-      const base = await runtime.baseOf(best.reference);
-      await runtime.pickUp(best.reference, mind.reference);
-      // In its hand (it picked it up to fight with it), its profile read again.
-      if (base !== undefined) {
-        await runtime.equipment.equip(mind.reference, base, { hand: 'right' });
-        await this.#equipAmmo(mind.reference, base, runtime);
-      }
-      mind.profileRead = -Infinity;
-      mind.nextEquip = this.#clock + this.#equipWait('melee');
-    } finally {
-      mind.equipping = false;
-    }
-    return true;
   }
 
   /** Arrows for a bow, bolts for a crossbow: the best it carries. */
@@ -3423,6 +3800,7 @@ export class ActorCombatAi {
     void this.#options.session.settings().then((settings) => {
       this.#settings = readCombatAiSettings((name) => settings.number(name));
       this.#movement = readCombatMovementSettings((name) => settings.number(name));
+      this.#subtrees = readCombatSubtreeSettings((name) => settings.number(name));
       this.#sprints = this.#options.session.ini.bool('Combat', 'bCombatPathSprinting');
       this.#turning = combatTurning(this.#movement);
       this.#groups.settings = readCombatGroupSettings((name) => settings.number(name));

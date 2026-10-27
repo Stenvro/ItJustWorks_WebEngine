@@ -1088,6 +1088,11 @@ export class ActorMovers {
     if (mover) this.#free(mover);
   }
 
+  /** The navigation meshes of the loaded area its paths go over (the combat AI's places). */
+  navmeshes(): NavmeshSet | undefined {
+    return this.#options.navmeshes?.();
+  }
+
   /**
    * How far the navmeshes let an actor go straight from where it stands towards `to` (units;
    * the whole way where none is loaded): pathfinding.ts straightReach with its radius.

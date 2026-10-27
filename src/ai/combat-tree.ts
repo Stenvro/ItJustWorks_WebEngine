@@ -11,10 +11,11 @@
 //   parallel: the right hand (Melee, Ranged or Magic), the left hand (Magic, or a weapon's left
 //   attacks), shield and weapon (Block), spell and weapon (the left hand's Magic beside a
 //   weapon), dual (Prepare Dual Cast), the voice (Shout) and Use Potion.
-// - Movement, a priority list (the first whose condition holds runs, the higher ones stop the
-//   lower): Return To Combat Area, Check Unreachable Target, Exit Water, Low Combat, Hide,
-//   Fallback To Ranged, ranged movement (Use Cover, else Ranged Movement), else close movement
-//   (Flanking Movement, Find Attack Location, the Close Movement selector).
+// - Movement, a priority list in the engine's order (the first whose condition holds runs, the
+//   higher ones stop the lower): Essential Down, Hide, Return To Combat Area, Exit Water,
+//   Acquire Weapon, Check Unreachable Target, Ranged Movement (Use Cover first), Flanking
+//   Movement, Close Movement (Fallback To Ranged, the chase, the Close Movement selector).
+// - Low Combat, the low process's root: Flee, Attack Low, Pursue, Search.
 //
 // The leaves are names: the values (CombatValue) and actions (CombatAction) the AI gives
 // (src/shell/actor-combat-ai.ts), weighted by its combat style (CSTY) and the fCombat* settings.
@@ -39,11 +40,13 @@ export const COMBAT_VALUES = [
   'tethered',
   'targetBeyondLeash',
   'inWater',
-  'lowCombat',
+  'essentialDown',
+  'mayAcquireWeapon',
   'unseen',
   'unreachable',
   'hasRangedOption',
   'rangedMovement',
+  'mayUseCover',
   'flanking',
   'farAway',
   'beyondRange',
@@ -81,6 +84,9 @@ export const COMBAT_VALUES = [
   'cornered',
   'fleeSafe',
   'allyNear',
+  // Low Combat (the low process's tree).
+  'lowInReach',
+  'groupSearching',
   // Support.
   'maySupport',
   // The style's movement chances.
@@ -101,10 +107,20 @@ export const COMBAT_ACTIONS = [
   'returnToCombatArea',
   'holdPosition',
   'exitWater',
-  'attackLow',
   'hide',
   'fallbackToRanged',
+  // Use Cover.
   'findCover',
+  'waitBehindCover',
+  'attackFromCover',
+  // Acquire Weapon.
+  'findWeapon',
+  'moveToWeapon',
+  'pickUpWeapon',
+  // Low Combat, Search.
+  'pursue',
+  'attackLow',
+  'search',
   'chase',
   'trackRun',
   'decideRun',
@@ -153,6 +169,8 @@ export const COMBAT_ACTIONS = [
   'fightCornered',
   'stopFleeing',
   'fleeToAlly',
+  'fleeThroughDoor',
+  'fleeToCover',
   'fleeAway',
   'cower',
   // Support, voice.
@@ -371,66 +389,133 @@ export const COMBAT_TREES: Readonly<Record<string, NodeSpec>> = {
       seq(test(v('blowComing')), act('noteBlow'), chance(v('blockChance'), act('block'))),
     ),
   },
-  // Flee (CombatBehaviorContextFlee): back to the fight once cornered, done once safe; else to an
-  // ally fCombatFleeAllyDistanceMin .. Max away, else away from its enemy, else it cowers.
-  // TODO(M13): Flee To Cover (fCombatFleeCover*) and Flee Through Door (fCombatFleeUseDoorChance).
+  // Flee (observed in the original: Flee Context, Start Flee, the Flee Selector's Flee To Ally, Flee Through
+  // Door, Flee To Cover, Flee, Unrestricted Flee, Boost Confidence): back to the fight once
+  // cornered (Boost Confidence), done once safe; else to an ally fCombatFleeAllyDistanceMin ..
+  // Max away, through a door (fCombatFleeUseDoorChance), to cover hidden from its enemy
+  // (fCombatFleeCover*), away from its enemy, else it cowers.
   Flee: {
     node: 'context',
     context: 'flee',
     child: pick(
       watch(v('cornered'), act('fightCornered')),
       watch(v('fleeSafe'), act('stopFleeing')),
-      first(when(v('allyNear'), act('fleeToAlly')), act('fleeAway'), act('cower')),
+      first(
+        when(v('allyNear'), act('fleeToAlly')),
+        act('fleeThroughDoor'),
+        act('fleeToCover'),
+        act('fleeAway'),
+        act('cower'),
+      ),
     ),
   },
   UsePotion: seq(test(v('maySupport')), act('support')),
+  // Movement (observed in the original: the Movement Parallel runs Check Unreachable Target and Acquire
+  // Weapon beside the Movement Selector, a dynamic selector checked every 0.25 s whose entries,
+  // first to last, are Essential Down, Flight, Flee, Hide, Return To Combat Area, Exit Water,
+  // Search, Ranged Movement (its weapon's range beyond fCombatRangedDistance), Flanking Movement
+  // (the style's flanking flag) and Close Movement). Flight and Flee run from the root here
+  // (actor-flight.ts; the Flee subtree), Search in the search mode (combat-search.ts); Acquire
+  // Weapon and Check Unreachable Target take the movement over while they act, as their
+  // movement resource does in the engine.
   Movement: {
     node: 'dynamicSelector',
     children: [
-      watch(v('tethered'), link('ReturnToCombatArea')),
-      watch(v('targetBeyondLeash'), link('CheckUnreachableTarget')),
-      watch(v('inWater'), link('ExitWater')),
-      watch(v('lowCombat'), link('LowCombat')),
+      watch(v('essentialDown'), { node: 'idle', seconds: 10000 }),
       watch(and(v('unseen'), v('rangedMovement')), link('Hide')),
+      watch(v('tethered'), link('ReturnToCombatArea')),
+      watch(v('inWater'), link('ExitWater')),
+      watch(v('mayAcquireWeapon'), link('AcquireWeapon')),
       watch(
-        and(v('unreachable'), and(v('hasRangedOption'), not(v('rangedMovement')))),
-        link('FallbackToRanged'),
+        or(v('targetBeyondLeash'), and(v('unreachable'), not(v('hasRangedOption')))),
+        link('CheckUnreachableTarget'),
       ),
-      watch(v('rangedMovement'), first(link('UseCover'), link('RangedMovement'))),
+      watch(v('rangedMovement'), link('RangedMovement')),
+      watch(v('flanking'), link('FlankingMovement')),
       link('CloseMovement'),
     ],
   },
   ReturnToCombatArea: act('returnToCombatArea'),
   CheckUnreachableTarget: act('holdPosition'),
   ExitWater: act('exitWater'),
-  LowCombat: act('attackLow'),
+  // Acquire Weapon (Find Weapon Sequence, Move to Weapon, the pick-up).
+  AcquireWeapon: {
+    node: 'context',
+    context: 'acquireWeapon',
+    child: seq(act('findWeapon'), act('moveToWeapon'), act('pickUpWeapon')),
+  },
+  // Low Combat: the low process's root (observed in the original: the Low Combat Selector, checked every
+  // second: Flee while it flees, Attack (CombatBehaviorAttackLow) within
+  // fCombatLowMaxAttackDistance, else Pursue its target, Search once its group searches).
+  LowCombat: {
+    node: 'dynamicSelector',
+    children: [
+      watch(v('fleeing'), link('Flee')),
+      watch(and(v('lowInReach'), not(v('groupSearching'))), act('attackLow')),
+      watch(not(v('groupSearching')), act('pursue')),
+      link('Search'),
+    ],
+  },
+  // Search (Wait to Start Search, then the Search Selector and Investigate Selector): the search
+  // of combat-search.ts.
+  Search: { node: 'context', context: 'search', child: act('search') },
   Hide: act('hide'),
   FallbackToRanged: act('fallbackToRanged'),
-  UseCover: act('findCover'),
+  // Use Cover (Find Cover Sequence, then the Use Cover Repeat: Wait Behind Cover, Attack From
+  // Cover, with the cover flag up).
+  UseCover: {
+    node: 'context',
+    context: 'cover',
+    child: seq(act('findCover'), {
+      node: 'repeat',
+      child: seq(act('waitBehindCover'), act('attackFromCover')),
+    }),
+  },
+  // Ranged Movement (its selector's first entry Use Cover, then Maintain Optimal Range: in range
+  // strafing or circling, out of range closing in).
   RangedMovement: pick(
     watch(v('beyondRange'), act('chase')),
+    watch(v('mayUseCover'), link('UseCover')),
     seq(
       act('trackRun'),
       ok(seq(test(v('mayChooseRun')), act('decideRun'), act('maintainOptimalRange'))),
       act('driveRun'),
     ),
   ),
+  // Close Movement: Fallback To Ranged against a target it cannot reach, the chase, else the
+  // Close Movement selector.
   CloseMovement: pick(
+    watch(and(v('unreachable'), v('hasRangedOption')), link('FallbackToRanged')),
     watch(v('farAway'), act('chase')),
+    seq(
+      act('trackRun'),
+      ok(seq(test(v('mayChooseRun')), act('decideRun'), link('CloseMovementSelector'))),
+      act('driveRun'),
+    ),
+  ),
+  CloseMovementSelector: CLOSE_MOVEMENT_SELECTOR,
+  // Flanking Movement (observed in the original: Stalk, then the Flank Selector: Flank, Chase, Flank
+  // Distant, Watch Target): the chase when far, the maneuver (flank or stalk), Flank Distant
+  // out of range, else the close movement selector.
+  FlankingMovement: pick(
+    watch(and(v('farAway'), not(v('rangedMovement'))), act('chase')),
     seq(
       act('trackRun'),
       ok(
         seq(
           test(v('mayChooseRun')),
           act('decideRun'),
-          first(when(v('flanking'), link('FlankingMovement')), link('CloseMovementSelector')),
+          first(
+            link('FlankSequence'),
+            when(v('outOfRange'), act('circleDistant')),
+            link('CloseMovementSelector'),
+          ),
         ),
       ),
       act('driveRun'),
     ),
   ),
-  CloseMovementSelector: CLOSE_MOVEMENT_SELECTOR,
-  FlankingMovement: seq(act('flankingManeuver'), {
+  FlankSequence: seq(act('flankingManeuver'), {
     node: 'childSelector',
     choose: { data: 'maneuver' },
     children: [act('flank'), act('stalk')],
