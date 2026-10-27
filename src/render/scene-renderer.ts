@@ -38,6 +38,7 @@ import {
   writeRestPalette,
 } from './bone-palette.ts';
 import { frustumPlanes, invert, sphereVisible, type Plane } from './frustum.ts';
+import type { RoomCuller } from './room-culler.ts';
 import { identity, maxScale, multiply, transformPoint, type Mat4, type Vec3 } from './math.ts';
 import type {
   AlphaState,
@@ -231,6 +232,8 @@ const SLSF2_EFFECT_LIGHTING = 0x40000000;
 const DRAW_TREE_ANIM = 0x400000;
 /** A skinned part: model-space normals turn with its bones (common.wgsl). */
 const DRAW_SKINNED = 0x800000;
+/** Draw flag bits 24-31: the room its instance stands in (ModelInstance.room). */
+const DRAW_ROOM_SHIFT = 24;
 const SLSF2_TREE_ANIM = 0x20000000;
 /** The engine's directional material textures (BSGraphics default textures). */
 const PROJECTED_TEXTURES = {
@@ -433,6 +436,11 @@ export interface ModelInstance {
   readonly motion?: InstanceMotion;
   /** Shown or hidden (an enabled or disabled reference); always shown without. */
   readonly visibility?: InstanceVisibility;
+  /**
+   * The room the instance stands in (1-255; 0 or none: no room): portal-strict lights of
+   * another room leave it unlit (PointLight.room).
+   */
+  readonly room?: number;
   /** The sequence the instance plays (a door opening); its model's sequences. */
   readonly playback?: Playback;
   /** The instance's running behavior graph (over its model's graph and sequences). */
@@ -1251,11 +1259,15 @@ export interface SceneFrame {
   lodMask: LodMask | undefined;
   /** Cells whose large references are loaded this frame. */
   largeRefMask: LargeRefMask | undefined;
+  /** Rooms, portals and occluders culling this frame (room-culler.ts). */
+  rooms?: RoomCuller | undefined;
 }
 
 export class SceneRenderer {
   /** One of DebugView; 0 shows the normal image. */
   debugView = 0;
+  /** The last frame's room and occlusion culling: draws in view tested, and how many it hid. */
+  lastCulling: { readonly tested: number; readonly culled: number } = { tested: 0, culled: 0 };
   /** Water type for water surfaces whose placement names none (DefaultWater). */
   defaultWater: GpuWaterType | undefined;
   readonly #device: GPUDevice;
@@ -1835,14 +1847,23 @@ export class SceneRenderer {
    */
   createScene(
     instances: readonly ModelInstance[],
-    options: { readonly sky?: boolean; readonly lodSnow?: LodSnow } = {},
+    options: {
+      readonly sky?: boolean;
+      readonly lodSnow?: LodSnow;
+      /** The room an instance stands in (ModelInstance.room), where it has none of its own. */
+      readonly roomOf?: (instance: ModelInstance) => number | undefined;
+    } = {},
   ): GpuScene {
     const sky = options.sky === true;
     const lodSnow = options.lodSnow;
     const placed: ModelInstance[] = [];
     const movingAddons: MovingAddon[] = [];
-    const place = (instance: ModelInstance, depth: number): void => {
+    // Rooms by instance (an add-on stands in its parent's).
+    const rooms = new Map<ModelInstance, number>();
+    const place = (instance: ModelInstance, depth: number, parentRoom?: number): void => {
       placed.push(instance);
+      const room = instance.room ?? parentRoom ?? options.roomOf?.(instance);
+      if (room) rooms.set(instance, room);
       if (depth >= 2) return;
       for (const addon of instance.model.addons) {
         const world = multiply(instance.world, addon.world);
@@ -1867,6 +1888,7 @@ export class SceneRenderer {
             ...(visibility && { visibility }),
           },
           depth + 1,
+          room,
         );
       }
     };
@@ -2011,6 +2033,8 @@ export class SceneRenderer {
         writeMaterial(floats, uints, part.part);
         if (sky) uints[38] = (uints[38] ?? 0) | SKY_DRAW;
         if (part.part.skin) uints[38] = (uints[38] ?? 0) | DRAW_SKINNED;
+        const room = rooms.get(instance);
+        if (room) uints[38] = (uints[38] ?? 0) | ((room & 0xff) << DRAW_ROOM_SHIFT);
         const tints = instance.tints;
         const tinted = part.part.material;
         if (tints && tinted?.kind === 'lighting') {
@@ -2146,6 +2170,7 @@ export class SceneRenderer {
             directional.maxAngle,
             directional.snow,
           );
+          if (room) passUints[38] = (passUints[38] ?? 0) | ((room & 0xff) << DRAW_ROOM_SHIFT);
           const passDraw: Draw = {
             part: passPart,
             uniformOffset: passOffset,
@@ -2287,10 +2312,14 @@ export class SceneRenderer {
     shadows?: FrameShadows,
     screen?: { readonly width: number; readonly height: number; readonly near: number },
     largeRefMask?: LargeRefMask,
+    rooms?: RoomCuller,
   ): void {
     this.#frame.planes = frustumPlanes(viewProjection);
     this.#frame.lodMask = lodMask;
     this.#frame.largeRefMask = largeRefMask;
+    if (this.#frame.rooms) this.lastCulling = { ...this.#frame.rooms.counts };
+    rooms?.update(viewProjection, cameraPosition);
+    this.#frame.rooms = rooms;
     const data = this.#frameData;
     data.set(viewProjection, 0);
     data.set([...cameraPosition, 1], 16);
@@ -2361,7 +2390,8 @@ export class SceneRenderer {
             ...light.color,
             light.spot?.cosHalfAngle ?? NO_CONE,
             ...(light.spot?.direction ?? [0, 0, 1]),
-            0,
+            // A portal-strict light's room (0: every room).
+            light.room ?? 0,
           ],
           i * LIGHT_FLOATS,
         );
@@ -2959,7 +2989,9 @@ export class SceneRenderer {
 
   #visible(draw: Draw): boolean {
     if (draw.visibility?.hidden) return false;
-    return draw.sky || sphereVisible(this.#frame.planes, draw.center, draw.radius);
+    if (draw.sky) return true;
+    if (!sphereVisible(this.#frame.planes, draw.center, draw.radius)) return false;
+    return this.#frame.rooms?.visible(draw.center, draw.radius) ?? true;
   }
 
   /**

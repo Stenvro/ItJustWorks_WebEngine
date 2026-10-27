@@ -43,8 +43,15 @@ struct PointLight {
   // way) and its axis.
   coneCos: f32,
   coneAxis: vec3f,
-  _pad: f32,
+  // A portal-strict light's room (0: it lights every room).
+  room: f32,
 };
+
+// Whether a portal-strict light leaves a draw of another room unlit (`room`: the draw's room,
+// 0 none).
+fn lightOtherRoom(light: PointLight, room: u32) -> bool {
+  return light.room > 0.5 && room != 0u && u32(light.room + 0.5) != room;
+}
 
 // How much of a light reaches a point by its cone: a spot light (the engine's shadow
 // spotlights: sunbeams through a ceiling) lights only within its cone, its edge softened over

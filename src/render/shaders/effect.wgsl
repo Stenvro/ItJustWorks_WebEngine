@@ -45,7 +45,7 @@ fn effectLight(n: vec3f, worldPos: vec3f) -> vec3f {
   }
   for (var i = 0u; i < frame.counts.x; i++) {
     let point = pointLights[i];
-    if (point.coneCos >= -1.0) {
+    if (point.coneCos >= -1.0 || lightOtherRoom(point, draw.flags.z >> 24u)) {
       continue;
     }
     let offset = point.position - worldPos;

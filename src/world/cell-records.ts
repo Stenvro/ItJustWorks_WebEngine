@@ -424,6 +424,8 @@ export const LightFlag = {
   shadowSpotlight: 0x400,
   shadowHemisphere: 0x800,
   shadowOmnidirectional: 0x1000,
+  /** Lights only the room it stands in (xEdit: Portal-strict). */
+  portalStrict: 0x2000,
 } as const;
 
 const periodOf = (frequency: number): number => (frequency > 0 ? 1 / frequency : 0);
