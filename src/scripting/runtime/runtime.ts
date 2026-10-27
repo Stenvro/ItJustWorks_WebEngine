@@ -3331,12 +3331,13 @@ export class ScriptRuntime implements VmHost {
 
   /**
    * The scripts' side of a save: the game state, the runtime's switches and registrations, the
-   * script instances. `unsaved` hears what a save cannot hold (threads in flight: their stacks
-   * are JavaScript calls, TODO(M12) resumable frames; scenes playing; objects translating).
+   * script instances, the waiting Papyrus threads' frames. `unsaved` hears what a save cannot
+   * hold (threads in a native's promise; scenes playing; objects translating).
    */
   async saveData(unsaved: (what: string) => void = () => undefined): Promise<RuntimeSave> {
     const scheduler = this.vm.scheduler;
-    for (const thread of this.vm.unsavedThreads()) {
+    const threads = this.vm.saveThreads();
+    for (const thread of threads.unsaved) {
       unsaved(`Papyrus thread ${String(thread.id)} (${thread.state}) at ${thread.where}`);
     }
     for (const key of this.#updates.keys()) {
@@ -3379,6 +3380,7 @@ export class ScriptRuntime implements VmHost {
       dialogue: this.#dialogue?.saveData(),
       storyManager: this.storyManager.saveData(),
       instances: await this.vm.savedInstances(),
+      threads: threads.threads,
     };
   }
 
@@ -3447,6 +3449,8 @@ export class ScriptRuntime implements VmHost {
         update.left,
       );
     }
+    // The threads that waited go on where they were (their frames: papyrus-vm.ts).
+    problems.push(...(await this.vm.restoreThreads(save.threads ?? [])));
     // The player's abilities, diseases and worn enchantments act again (magic-engine.ts).
     await this.magic.prepare(PLAYER_REF);
     await this.vm.idle();
