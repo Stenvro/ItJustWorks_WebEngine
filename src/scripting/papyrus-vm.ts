@@ -7,11 +7,15 @@
 // unlocks it until the call returns, letting waiting threads in. Until a script's OnInit has
 // finished, its other events and other threads' calls into it wait. Threads that run past the
 // frame's budget go on in the next frame (scheduler.ts).
-// TODO(M12): save state (threads, variables, registrations).
+//
+// Each call frame is data (its function, pc, locals, self and instance): a save writes a
+// waiting thread's frames and its wait down, and a load resumes it from them, the innermost
+// frame first, each caller then taking its callee's result at its call instruction
+// (docs/formats/save.md, "Papyrus threads").
 
 import type { PexFunction, PexValue } from '../formats/pex/pex.ts';
 import { nativeWaitsForFrame } from './native-timing.ts';
-import { PapyrusScheduler } from './scheduler.ts';
+import { PapyrusScheduler, type ClockWait } from './scheduler.ts';
 import { chainOf, extendsScript, type LoadedScript, type ScriptLibrary } from './script-library.ts';
 import {
   defaultValue,
@@ -35,6 +39,72 @@ export interface SavedInstance {
   readonly vars: readonly (readonly [string, readonly (readonly [string, Value])[]])[];
 }
 
+/** What a thread runs: an event sent to one script instance, or an engine's call. */
+export interface ThreadOrigin {
+  readonly kind: 'event' | 'call';
+  /** For an event, the instance's object typed as its script. */
+  readonly target: ObjectHandle;
+  readonly name: string;
+  readonly args: readonly Value[];
+}
+
+/**
+ * Where a waiting thread can be resumed from: 'restart' runs its innermost frame's instruction
+ * at pc again (it had not begun: a frame's budget, a lock, a native handed to the next frame),
+ * or, with no frames, its origin from the start; 'clock' waits for a clock in a latent native
+ * that returns None then (Utility.Wait, WaitGameTime, WaitMenuMode).
+ */
+export type ThreadWait = { readonly kind: 'restart' } | ({ readonly kind: 'clock' } & ClockWait);
+
+/** One call frame of a saved thread. */
+export interface SavedFrame {
+  /** The script (level) the function belongs to, lowercase. */
+  readonly script: string;
+  /** The state it is in ('' the empty state), and its lowercase name there. */
+  readonly state: string;
+  readonly function: string;
+  /** For a property's Get or Set function: `function` is the property's lowercase name. */
+  readonly accessor: 'get' | 'set' | undefined;
+  /** Its instructions then (a changed script cannot resume it). */
+  readonly size: number;
+  /** The function's name as called. */
+  readonly name: string;
+  readonly self: ObjectHandle | null;
+  /** The script instance it runs in: an attached script, or a native type's. */
+  readonly instance: {
+    readonly target: ObjectHandle;
+    readonly script: string;
+    readonly native: boolean;
+  } | null;
+  readonly pc: number;
+  readonly depth: number;
+  readonly locals: readonly (readonly [string, Value])[];
+  readonly casts: readonly (readonly [string, string])[];
+  readonly engineNones: readonly string[];
+}
+
+/** A waiting thread in a save: its frames (outermost first) and its wait. */
+export interface SavedThread {
+  readonly origin: ThreadOrigin;
+  /** It runs an OnInit (the instance's other events wait for it again after a load). */
+  readonly initializing: boolean;
+  readonly frames: readonly SavedFrame[];
+  readonly wait: ThreadWait;
+  /** Where it was, for the log. */
+  readonly where: string;
+}
+
+const RESTART: ThreadWait = Object.freeze({ kind: 'restart' });
+/** Instructions whose callee's result a resumed caller takes, by the result's argument. */
+const RESULT_ARG: Readonly<Record<string, number>> = {
+  callmethod: 2,
+  callstatic: 2,
+  callparent: 1,
+  propget: 2,
+  propset: -1,
+};
+const NONE: PexValue = { kind: 'none' };
+
 /** A script attached to a form, with the values its properties were given in the plugin. */
 export interface AttachedScriptInfo {
   readonly name: string;
@@ -48,8 +118,12 @@ export interface NativeCall {
   readonly args: readonly Value[];
   /** Lowercase "script.function". */
   readonly name: string;
-  /** The calling thread waits for this (a latent function: Wait, PlayAnimationAndWait). */
-  readonly latent: <T>(promise: Promise<T>) => Promise<T>;
+  /**
+   * The calling thread waits for this (a latent function: Wait, PlayAnimationAndWait). With
+   * `clock`, the promise is that clock wait and the native returns None after it: a save
+   * keeps the thread waiting there. Without, a save cannot hold the thread meanwhile.
+   */
+  readonly latent: <T>(promise: Promise<T>, clock?: ClockWait) => Promise<T>;
   /** The calling Papyrus stack, for a native's log line (as the game's log gives it). */
   readonly where: () => string;
 }
@@ -106,11 +180,23 @@ class Thread {
   inNative = 0;
   /** Counts the natives it entered (which one the VM's patience is counting for). */
   natives = 0;
+  /** The native it is in ("script.function"), for the log of a save that cannot hold it. */
+  native: string | undefined;
+  /** What it runs (a save resumes it as that); undefined: a save cannot hold it. */
+  origin: ThreadOrigin | undefined;
+  /** While it waits where a save can hold it: how it resumes (ThreadWait). */
+  resume: ThreadWait | undefined;
 
-  constructor(id: number, initializing: boolean, changed: () => void) {
+  constructor(
+    id: number,
+    initializing: boolean,
+    changed: () => void,
+    origin: ThreadOrigin | undefined,
+  ) {
     this.id = id;
     this.initializing = initializing;
     this.#changed = changed;
+    this.origin = origin;
   }
 
   get state(): 'running' | 'waiting' | 'done' {
@@ -177,6 +263,8 @@ interface Frame {
   readonly instance: Instance | null;
   readonly locals: Map<string, Value>;
   readonly types: Map<string, string>;
+  /** The instruction it runs (in a call: the call's, until the callee returns). */
+  pc: number;
   readonly depth: number;
   readonly thread: Thread;
   /** Variables a cast of an object left None (variable → what failed), for the log. */
@@ -439,12 +527,228 @@ export class PapyrusVm {
   }
 
   /**
-   * The threads a save cannot hold: their stacks run as JavaScript calls, which cannot be
-   * written down (TODO(M12): resumable frames). Waits on clocks and registrations are saved by
-   * the runtime as registrations; these are logged as not saved.
+   * The threads that have not finished, as a save holds them: each one waiting where it can
+   * resume (a clock wait, a frame's budget, a lock, a native handed to the next frame) with
+   * its frames and wait; the others (in a native whose promise is in flight, between a
+   * callee's return and its caller) by where they are, for the log.
    */
-  unsavedThreads(): { readonly id: number; readonly state: string; readonly where: string }[] {
-    return this.pendingThreads().filter((thread) => thread.state !== 'done');
+  saveThreads(): {
+    threads: SavedThread[];
+    unsaved: { readonly id: number; readonly state: string; readonly where: string }[];
+  } {
+    const threads: SavedThread[] = [];
+    const unsaved: { id: number; state: string; where: string }[] = [];
+    for (const thread of this.#threads) {
+      if (thread.state === 'done') continue;
+      const saved = this.#saveThread(thread);
+      if (saved) threads.push(saved);
+      else {
+        const native = thread.native === undefined ? '' : ` in native ${thread.native}`;
+        unsaved.push({ id: thread.id, state: thread.state, where: this.#where(thread) + native });
+      }
+    }
+    return { threads, unsaved };
+  }
+
+  #saveThread(thread: Thread): SavedThread | undefined {
+    const { origin, resume } = thread;
+    if (!origin || !resume) return undefined;
+    const frames: SavedFrame[] = [];
+    for (const [i, frame] of thread.frames.entries()) {
+      const op = frame.fn.code[frame.pc]?.op ?? '';
+      // A caller waits at its call; a clock wait is a native's, called at a call too.
+      const innermost = i === thread.frames.length - 1;
+      if ((!innermost || resume.kind === 'clock') && RESULT_ARG[op] === undefined) return undefined;
+      const saved = this.#saveFrame(frame);
+      if (!saved) return undefined;
+      frames.push(saved);
+    }
+    return {
+      origin,
+      initializing: thread.initializing,
+      frames,
+      wait: resume,
+      where: this.#where(thread),
+    };
+  }
+
+  #saveFrame(frame: Frame): SavedFrame | undefined {
+    const located = locate(frame.level, frame.fn);
+    if (!located) return undefined;
+    const instance = frame.instance;
+    return {
+      script: frame.level.name,
+      ...located,
+      size: frame.fn.code.length,
+      name: frame.name,
+      self: frame.self,
+      instance: instance && {
+        target: instance.target,
+        script: instance.script.name,
+        native: this.#natives.get(`${instance.target.key}:${instance.script.name}`) === instance,
+      },
+      pc: frame.pc,
+      depth: frame.depth,
+      locals: [...frame.locals],
+      casts: [...frame.casts],
+      engineNones: [...frame.engineNones],
+    };
+  }
+
+  /**
+   * A save's threads resumed on this VM (after restoreInstances): each one's frames rebuilt
+   * from the save and run on from its wait. Returns the threads that could not be (a script
+   * or instance that is gone, a function that changed), for the log.
+   */
+  async restoreThreads(saved: readonly SavedThread[]): Promise<string[]> {
+    const problems: string[] = [];
+    for (const entry of saved) {
+      const plans: FramePlan[] = [];
+      let problem: string | undefined;
+      for (const frame of entry.frames) {
+        const plan = await this.#planFrame(frame);
+        if (typeof plan === 'string') {
+          problem = plan;
+          break;
+        }
+        plans.push(plan);
+      }
+      // The OnInit's instance: its other events wait for the resumed OnInit again.
+      const instance =
+        entry.origin.kind === 'event'
+          ? (await this.#attachedInstances(entry.origin.target)).find(
+              (i) => i.script.name === entry.origin.target.type,
+            )
+          : undefined;
+      if (entry.origin.kind === 'event' && !instance)
+        problem ??= `${entry.origin.target.type} on ${formatValue(entry.origin.target)} is no longer attached`;
+      if (problem !== undefined) {
+        problems.push(`Papyrus thread at ${entry.where} cannot resume: ${problem}`);
+        continue;
+      }
+      const { origin, wait } = entry;
+      let done: Promise<unknown>;
+      if (plans.length === 0 && wait.kind === 'restart') {
+        // It had not begun: it starts again.
+        done =
+          instance !== undefined
+            ? this.#dispatch(instance, origin.name, origin.args, entry.initializing)
+            : this.call(origin.target, origin.name, origin.args);
+      } else {
+        done = this.#spawn(
+          entry.initializing,
+          (thread) => this.#resumeFrame(thread, this.#buildFrames(plans, thread), 0, wait),
+          null,
+          origin,
+          false,
+        );
+      }
+      if (instance && entry.initializing) {
+        instance.initializing = done.then(() => {
+          instance.initializing = undefined;
+        });
+      }
+    }
+    return problems;
+  }
+
+  /** A saved frame's function and instance found again, or why they cannot be. */
+  async #planFrame(saved: SavedFrame): Promise<FramePlan | string> {
+    const level = await this.library.get(saved.script);
+    if (!level) return `script ${saved.script} is missing`;
+    const fn =
+      saved.accessor === undefined
+        ? level.states.get(saved.state)?.get(saved.function)
+        : level.properties.get(saved.function)?.[saved.accessor === 'get' ? 'getter' : 'setter'];
+    if (!fn) return `${level.displayName}.${saved.name} is gone`;
+    if (fn.code.length !== saved.size || saved.pc >= fn.code.length)
+      return `${level.displayName}.${saved.name} has changed`;
+    let instance: Instance | null = null;
+    if (saved.instance) {
+      const { target, script, native } = saved.instance;
+      if (native) {
+        const type = await this.library.get(script);
+        if (!type) return `script ${script} is missing`;
+        const key = `${target.key}:${type.name}`;
+        instance = this.#natives.get(key) ?? new Instance(target.as(type.name), type);
+        this.#natives.set(key, instance);
+      } else {
+        const found = (await this.#attachedInstances(target)).find((i) => i.script.name === script);
+        if (!found) return `${script} on ${formatValue(target)} is no longer attached`;
+        instance = found;
+      }
+    }
+    const names = new Set([...fn.params, ...fn.locals].map((v) => v.name.toLowerCase()));
+    for (const [name] of saved.locals) {
+      if (!names.has(name)) return `${level.displayName}.${saved.name}: local ${name} is gone`;
+    }
+    return { saved, level, fn, instance };
+  }
+
+  /** A resumed thread's frames, as #invoke makes them, with the save's pc and locals. */
+  #buildFrames(plans: readonly FramePlan[], thread: Thread): Frame[] {
+    return plans.map(({ saved, level, fn, instance }) => {
+      const frame = this.#frame(
+        level,
+        fn,
+        saved.name,
+        saved.self,
+        instance,
+        [],
+        saved.depth,
+        thread,
+      );
+      for (const [name, value] of saved.locals) frame.locals.set(name, value);
+      for (const [name, cast] of saved.casts) frame.casts.set(name, cast);
+      for (const name of saved.engineNones) frame.engineNones.add(name);
+      frame.pc = saved.pc;
+      return frame;
+    });
+  }
+
+  /**
+   * Runs a resumed thread's frame `index` on: its callee first (the next frame, or the wait
+   * itself for the innermost), whose result its call instruction then takes, as the call
+   * would have when it returned.
+   */
+  async #resumeFrame(
+    thread: Thread,
+    frames: readonly Frame[],
+    index: number,
+    wait: ThreadWait,
+  ): Promise<Value> {
+    const frame = frames[index];
+    if (!frame) {
+      // A clock wait the engine called directly (no frames): it waits, then ends.
+      if (wait.kind === 'clock') await this.#latent(thread, this.scheduler.waitUntil(wait), wait);
+      return null;
+    }
+    return this.#within(thread, frame.instance, async () => {
+      thread.frames.push(frame);
+      try {
+        if (index + 1 < frames.length) {
+          this.#complete(frame, await this.#resumeFrame(thread, frames, index + 1, wait));
+        } else if (wait.kind === 'clock') {
+          // The latent native's wait: it unlocks the script as Wait does, then returns None.
+          await this.#within(thread, null, () =>
+            this.#latent(thread, this.scheduler.waitUntil(wait), wait),
+          );
+          this.#complete(frame, null);
+        }
+        // (A restart runs the instruction at pc again.)
+        return await this.#execute(frame);
+      } finally {
+        thread.frames.pop();
+      }
+    });
+  }
+
+  /** A caller's call instruction (at its pc) takes its callee's result; it goes on after it. */
+  #complete(frame: Frame, value: Value): void {
+    const instruction = frame.fn.code[frame.pc];
+    const arg = instruction ? (RESULT_ARG[instruction.op] ?? -1) : -1;
+    if (instruction && arg >= 0) this.#write(frame, instruction.args[arg] ?? NONE, value);
+    frame.pc++;
   }
 
   /** Native type chain instance (e.g. ObjectReference → Form) for a handle. */
@@ -492,13 +796,23 @@ export class PapyrusVm {
     initializing: boolean,
     body: (thread: Thread) => Promise<T>,
     fallback: T,
+    origin?: ThreadOrigin,
+    fresh = true,
   ): Promise<T> {
-    const thread = new Thread(this.#nextThread++, initializing, () => {
-      this.#signal();
-    });
+    const thread = new Thread(
+      this.#nextThread++,
+      initializing,
+      () => {
+        this.#signal();
+      },
+      origin,
+    );
     this.#threads.add(thread);
     try {
+      // Waiting to begin, a fresh thread is saved as its origin (a resumed one is not yet).
+      if (fresh) thread.resume = RESTART;
       await this.#acquire(thread);
+      thread.resume = undefined;
       return await body(thread);
     } catch (error) {
       // A script error ends its thread with a warning, as in the game; so does a fault in a
@@ -584,19 +898,26 @@ export class PapyrusVm {
 
   /**
    * Gets a thread into an instance (its lock), first waiting for the instance's OnInit unless
-   * the thread runs an OnInit itself.
+   * the thread runs an OnInit itself. `entering`: into a call not begun (a save restarts the
+   * call), not back into the caller after it returned.
    */
-  async #lock(instance: Instance, thread: Thread): Promise<void> {
-    if (instance.initializing && !thread.initializing)
+  async #lock(instance: Instance, thread: Thread, entering: boolean): Promise<void> {
+    const resume = entering ? RESTART : undefined;
+    if (instance.initializing && !thread.initializing) {
+      thread.resume = resume;
       await this.#suspend(thread, instance.initializing);
+      thread.resume = undefined;
+    }
     while (instance.owner && instance.owner !== thread) {
       thread.state = 'waiting';
+      thread.resume = resume;
       await this.#suspend(
         thread,
         new Promise<void>((resume) => {
           instance.waiters.push(resume);
         }),
       );
+      thread.resume = undefined;
       thread.state = 'running';
     }
     instance.owner = thread;
@@ -615,7 +936,7 @@ export class PapyrusVm {
     const previous = thread.inside;
     if (previous === instance) return run();
     if (previous) this.#unlock(previous);
-    if (instance) await this.#lock(instance, thread);
+    if (instance) await this.#lock(instance, thread, true);
     thread.inside = instance;
     try {
       return await run();
@@ -623,7 +944,7 @@ export class PapyrusVm {
       if (instance) this.#unlock(instance);
       thread.inside = null;
       if (previous) {
-        await this.#lock(previous, thread);
+        await this.#lock(previous, thread, false);
         thread.inside = previous;
       }
     }
@@ -645,16 +966,22 @@ export class PapyrusVm {
     }
   }
 
-  /** Waits for a latent call on a thread (it counts as waiting meanwhile). */
-  async #latent<T>(thread: Thread, promise: Promise<T>): Promise<T> {
+  /**
+   * Waits for a latent call on a thread (it counts as waiting meanwhile); `resume`: how a save
+   * holds it meanwhile (none: it cannot).
+   */
+  async #latent<T>(thread: Thread, promise: Promise<T>, resume?: ThreadWait): Promise<T> {
     thread.state = 'waiting';
+    thread.resume = resume;
     this.#release(thread);
     try {
       return await promise;
     } finally {
       thread.state = 'running';
       thread.instructions = 0;
+      // Until it runs again, it is still where it waited.
       await this.#acquire(thread);
+      thread.resume = undefined;
     }
   }
 
@@ -676,6 +1003,7 @@ export class PapyrusVm {
           args.map((value) => value === null),
         ),
       null,
+      { kind: 'call', target, name, args: [...args] },
     );
   }
 
@@ -731,11 +1059,16 @@ export class PapyrusVm {
       async (thread) => {
         if (!initializing && instance.initializing) {
           thread.state = 'waiting';
+          thread.resume = RESTART;
           await this.#suspend(thread, instance.initializing);
+          thread.resume = undefined;
           thread.state = 'running';
         }
-        // The plugin's values for full properties go through their Set functions first.
-        if (initializing) {
+        // The plugin's values for full properties go through their Set functions first (a
+        // save does not hold the thread meanwhile: TODO(M13) the rest of them, then OnInit).
+        if (initializing && instance.bound.length > 0) {
+          const origin = thread.origin;
+          thread.origin = undefined;
           const bound = instance.bound;
           instance.bound = [];
           for (const { level, name, value } of bound) {
@@ -752,6 +1085,7 @@ export class PapyrusVm {
                 thread,
               );
           }
+          thread.origin = origin;
         }
         // The handler of the state the script is in when the event comes.
         const found = this.#findFunction(instance, instance.script, event);
@@ -770,6 +1104,7 @@ export class PapyrusVm {
         );
       },
       null,
+      { kind: 'event', target: instance.target, name: event, args: [...args] },
     );
   }
 
@@ -912,32 +1247,65 @@ export class PapyrusVm {
         args,
         name: key,
         // A latent wait unlocks the script the thread runs in, also for natives on self.
-        latent: (promise) => this.#within(thread, null, () => this.#latent(thread, promise)),
+        latent: (promise, clock) =>
+          this.#within(thread, null, () =>
+            this.#latent(
+              thread,
+              promise,
+              clock && { kind: 'clock', clock: clock.clock, at: clock.at },
+            ),
+          ),
         where: () => this.#where(thread),
       };
       // A native of the object the thread runs in keeps its lock; others' and globals do not.
       const own = self !== null && thread.inside?.target.sameObject(self) === true;
       thread.inNative++;
       thread.natives++;
+      thread.native = key;
       // Threads waiting meanwhile count the VM's patience with this native.
       this.#watchNative();
       // A native the game hands to its main thread runs in the next frame (native-timing.ts);
-      // the thread waits meanwhile, keeping the lock of its own object's script.
+      // the thread waits meanwhile, keeping the lock of its own object's script. It has not
+      // begun then: a save restarts its call.
       const run = nativeWaitsForFrame(level.name, name)
         ? async (): Promise<Value> => {
-            await this.#latent(thread, this.scheduler.nextFrame());
+            await this.#latent(thread, this.scheduler.nextFrame(), RESTART);
             return native(call);
           }
         : (): Promise<Value> => Promise.resolve(native(call));
       try {
         return await (own ? run() : this.#within(thread, null, run));
       } finally {
+        thread.native = undefined;
         thread.inNative--;
         // Let go while the native took long: the thread runs again when its turn comes.
         if (this.#runner !== thread) await this.#acquire(thread);
       }
     }
     if (depth >= MAX_DEPTH) throw new PapyrusError(`call depth over ${MAX_DEPTH} in ${name}`);
+    const frame = this.#frame(level, fn, name, self, instance, args, depth, thread, engineNones);
+    return this.#within(thread, instance, async () => {
+      thread.frames.push(frame);
+      try {
+        return await this.#execute(frame);
+      } finally {
+        thread.frames.pop();
+      }
+    });
+  }
+
+  /** A new call frame: its parameters from `args`, its locals at their defaults, at pc 0. */
+  #frame(
+    level: LoadedScript,
+    fn: PexFunction,
+    name: string,
+    self: ObjectHandle | null,
+    instance: Instance | null,
+    args: readonly Value[],
+    depth: number,
+    thread: Thread,
+    engineNones?: readonly boolean[],
+  ): Frame {
     const locals = new Map<string, Value>();
     const types = new Map<string, string>();
     const nones = new Set<string>();
@@ -952,27 +1320,20 @@ export class PapyrusVm {
       types.set(key, local.type);
       locals.set(key, defaultValue(local.type));
     }
-    return this.#within(thread, instance, async () => {
-      const frame: Frame = {
-        fn,
-        name,
-        level,
-        self,
-        instance,
-        locals,
-        types,
-        depth,
-        thread,
-        casts: new Map(),
-        engineNones: nones,
-      };
-      thread.frames.push(frame);
-      try {
-        return await this.#execute(frame);
-      } finally {
-        thread.frames.pop();
-      }
-    });
+    return {
+      fn,
+      name,
+      level,
+      self,
+      instance,
+      locals,
+      types,
+      pc: 0,
+      depth,
+      thread,
+      casts: new Map(),
+      engineNones: nones,
+    };
   }
 
   /**
@@ -1101,8 +1462,7 @@ export class PapyrusVm {
     }
     if (property.autoVariable) {
       // Reading another script's property waits for its OnInit like a call would.
-      if (instance.initializing && !thread.initializing)
-        await this.#suspend(thread, instance.initializing);
+      await this.#awaitInit(thread, instance);
       return instance.vars.get(level.name)?.get(property.autoVariable.toLowerCase()) ?? null;
     }
     if (!property.getter) return defaultValue(property.type);
@@ -1116,6 +1476,17 @@ export class PapyrusVm {
       depth + 1,
       thread,
     );
+  }
+
+  /** Waits for another script's OnInit before its property is read or set (not begun yet). */
+  async #awaitInit(thread: Thread, instance: Instance): Promise<void> {
+    if (!instance.initializing || thread.initializing) return;
+    thread.resume = RESTART;
+    try {
+      await this.#suspend(thread, instance.initializing);
+    } finally {
+      thread.resume = undefined;
+    }
   }
 
   async #propSet(
@@ -1138,8 +1509,7 @@ export class PapyrusVm {
       return;
     }
     if (property.autoVariable) {
-      if (instance.initializing && !thread.initializing)
-        await this.#suspend(thread, instance.initializing);
+      await this.#awaitInit(thread, instance);
       instance.vars
         .get(level.name)
         ?.set(property.autoVariable.toLowerCase(), retype(value, property.type));
@@ -1162,8 +1532,10 @@ export class PapyrusVm {
   async #execute(frame: Frame): Promise<Value> {
     const code = frame.fn.code;
     const thread = frame.thread;
-    let pc = 0;
+    // From where the frame is (0 for a call; a resumed frame's saved pc).
+    let pc = frame.pc;
     while (pc < code.length) {
+      frame.pc = pc;
       if (++thread.instructions > MAX_INSTRUCTIONS) {
         throw new PapyrusError(
           `${frame.level.displayName}: over ${MAX_INSTRUCTIONS} instructions without waiting (endless loop?)`,
@@ -1171,7 +1543,7 @@ export class PapyrusVm {
       }
       // Past the frame's budget, the thread goes on in the next frame (keeping its lock).
       if (thread.instructions % BUDGET_CHECK === 0 && this.scheduler.overBudget) {
-        await this.#latent(thread, this.scheduler.nextFrame());
+        await this.#latent(thread, this.scheduler.nextFrame(), RESTART);
       }
       const instruction = code[pc];
       if (!instruction) break;
@@ -1441,6 +1813,31 @@ export class PapyrusVm {
     }
     return defaultValue(frame.fn.returnType);
   }
+}
+
+/** A saved frame's function and instance, found again (before its thread is made). */
+interface FramePlan {
+  readonly saved: SavedFrame;
+  readonly level: LoadedScript;
+  readonly fn: PexFunction;
+  readonly instance: Instance | null;
+}
+
+/** Where a function is in its script: its state and name, or its property's accessor. */
+function locate(
+  level: LoadedScript,
+  fn: PexFunction,
+): Pick<SavedFrame, 'state' | 'function' | 'accessor'> | undefined {
+  for (const [state, functions] of level.states) {
+    for (const [name, candidate] of functions) {
+      if (candidate === fn) return { state, function: name, accessor: undefined };
+    }
+  }
+  for (const [name, property] of level.properties) {
+    if (property.getter === fn) return { state: '', function: name, accessor: 'get' };
+    if (property.setter === fn) return { state: '', function: name, accessor: 'set' };
+  }
+  return undefined;
 }
 
 function identifier(value: PexValue): string {
