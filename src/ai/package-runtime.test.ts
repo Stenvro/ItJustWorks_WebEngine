@@ -335,6 +335,45 @@ describe('ActorPackages', () => {
     expect(events).toEqual(['begin Pack1', 'end Pack1', 'begin Pack1', 'end Pack1']);
   });
 
+  it('takes a saved package up at the step it had reached, without beginning it again', async () => {
+    const ran: string[] = [];
+    const hold: (() => void)[] = [];
+    const step =
+      (name: string): ProcedureRunner =>
+      () => {
+        ran.push(name);
+        // Each step waits until it is let go (a travel under way).
+        return new Promise((resolve) =>
+          hold.push(() => {
+            resolve('success');
+          }),
+        );
+      };
+    const tree = (): PackageRecord =>
+      pack(1, branch('Sequence', [procedure('a'), procedure('b'), procedure('c')]));
+    const first = setup([tree()], { a: step('a'), b: step('b'), c: step('c') });
+    await tick(first.actor);
+    hold.shift()?.();
+    await tick(first.actor);
+    expect(ran).toEqual(['a', 'b']);
+    const saved = first.actor.saveState();
+    expect(saved?.path).toEqual([1]);
+    first.actor.stop();
+
+    ran.length = 0;
+    const second = setup([tree()], { a: step('a'), b: step('b'), c: step('c') });
+    if (saved) second.actor.resume(saved);
+    await tick(second.actor);
+    // It goes on at b (a was done), and its scripts do not hear it begin again.
+    expect(ran).toEqual(['b']);
+    expect(second.events).toEqual([]);
+    hold.splice(0).forEach((go) => {
+      go();
+    });
+    await tick(second.actor);
+    expect(ran).toEqual(['b', 'c']);
+  });
+
   it('completes the package with a procedure whose success completes it', async () => {
     const ran: string[] = [];
     const { actor } = setup([pack(1, branch('Sequence', [procedure('a', 0x1), procedure('b')]))], {

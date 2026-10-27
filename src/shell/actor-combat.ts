@@ -154,7 +154,7 @@ import {
   type FighterView,
 } from './actor-combat-ai.ts';
 import type { Threat } from '../ai/combat-tactics.ts';
-import { cellLight } from './magic-fx.ts';
+import { cellLight, type MagicFx } from './magic-fx.ts';
 import type { CellLight } from '../world/cell-loader.ts';
 import { parseLight, type LightRecord } from '../world/cell-records.ts';
 
@@ -397,6 +397,8 @@ export interface ActorCombatOptions {
   readonly casting?: () => CastingButtons | undefined;
   /** Their packages (the combat override packages' places; evaluated as combat ends). */
   readonly ai?: () => ActorAi | undefined;
+  /** Effect models shown for a while (impacts' models: src/shell/magic-fx.ts). */
+  readonly fx?: () => MagicFx | undefined;
   /** Inside a cell (how far the fleeing run). */
   readonly interior?: () => boolean;
   /** An actor gets off its horse to fight; a horse ridden is its rider's to move. */
@@ -485,7 +487,17 @@ export class ActorCombat implements CombatBridge {
     });
     // The wait menu asks whether someone fights the player.
     options.session.combatWatch = this;
-    this.#impacts = new CombatImpacts(options.session, options.renderer);
+    this.#impacts = new CombatImpacts(
+      options.session,
+      options.renderer,
+      undefined,
+      // Its own time: the IPCT duration is its decal's, not the model's.
+      (model, at, facing) =>
+        options.fx?.()?.show(model, undefined, at, {
+          kind: 'impact',
+          direction: facing,
+        }),
+    );
     this.#projectiles = new CombatProjectiles({
       session: options.session,
       renderer: options.renderer,
@@ -740,9 +752,15 @@ export class ActorCombat implements CombatBridge {
     return this.#fighters.get(actor)?.state.paired !== undefined;
   }
 
-  startCombat(actor: number, target: number): void {
+  /** `modifier`: a loaded save's fight keeps the confidence modifier it drew. */
+  startCombat(actor: number, target: number, modifier?: number): void {
     if (actor === target || !this.#fighters.has(actor)) return;
-    this.#brain.startCombat(actor, target);
+    this.#brain.startCombat(actor, target, modifier);
+  }
+
+  /** The confidence modifier an actor's fight drew (a save keeps it). */
+  confidenceModifier(actor: number): number | undefined {
+    return this.#brain.confidenceModifier(actor);
   }
 
   stopCombat(actor: number): void {
@@ -1403,7 +1421,13 @@ export class ActorCombat implements CombatBridge {
     const made = await HeldWeapons.create(
       this.#options.session,
       this.#options.renderer,
-      { pose: body.pose, world: placement.world, motion: placement.motion, visibility },
+      {
+        pose: body.pose,
+        world: placement.world,
+        motion: placement.motion,
+        visibility,
+        ...(!fighter.player && body.instances[0]?.fade && { fade: body.instances[0].fade }),
+      },
       held,
       blood,
       fighter.reference,

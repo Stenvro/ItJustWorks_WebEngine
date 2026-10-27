@@ -34,7 +34,7 @@ These run through every area and explain most of what breaks in play.
    the scripts, the story manager, the stats and the HUD at once. Ours calls each consumer from each
    producer, so many are never reached:
    - the hub (src/scripting/runtime/event-hub.ts) is in, and one activation path for every activator;
-     still not sent (2026-10-24): OnPlayerLoadGame, OnAnimationEventUnregistered (OnReset and OnTrapHit* are now);
+     still not sent (2026-10-27): OnAnimationEventUnregistered (OnPlayerLoadGame is now, after a load) (OnReset and OnTrapHit* are now);
      before the hub about 20 script events were never sent (OnCombatStateChanged, OnReset, OnTrigger, OnEnterBleedout,
      OnOpen/OnClose, OnTrapHit, OnSpellCast, OnGrab/OnRelease, OnAttachedToCell, …; about 400 vanilla
      scripts wait for them);
@@ -72,10 +72,10 @@ These run through every area and explain most of what breaks in play.
 | Cell loading                | partial   | no buffered cells, OnAttached/DetachedFromCell not checked, grid follows the camera (detach hours: done)                                                                            |
 | Respawn, cell reset         | partial   | enable state on reset, the actors' own respawn clock, dropped items (reset rule, zones, OnReset, corpses, zone levels: done; vendor restock: done)                                  |
 | Papyrus VM                  | different | natives not frame-synced; threads cannot be saved                                                                                                                                   |
-| Script events               | partial   | not produced: OnPlayerLoadGame (M12), OnAnimationEventUnregistered; 52 of 68 not yet checked in the simulation                                                                      |
+| Script events               | partial   | not produced: OnAnimationEventUnregistered; 52 of 68 not yet checked in the simulation                                                                                              |
 | Event sources               | partial   | hub kinds without a producer: active effects, perk entries, quest init, scenes, topic infos, loading; 7 sources without a kind; the stats' sources besides kills; resets/traps done |
 | Story manager               | partial   | not raised: Bribe, Flatter, Intimidate, Cure, Infection, Player Gets Favor, Quest Start; most raised types not yet checked in the simulation                                        |
-| Save and load               | partial   | own format (docs/formats/save.md); threads in flight, scenes, AI progress not saved; .ess import (M12)                                                                              |
+| Save and load               | partial   | own format (docs/formats/save.md); threads in a native's promise, translations, hazards, projectiles not saved; .ess import (M12)                                                   |
 | Stats, skills, actor values | complete  | tracked-stats event                                                                                                                                                                 |
 | Audio                       | partial   | the skills menu does not call setStatsMenu yet (SMSC mute) (pause categories by DOBJ, sounds held in menus and on the loading screen, Slow Time by DOBJ TSSC: done)                 |
 | Load order, settings        | partial   | plugins.txt and the user's INI files (M12)                                                                                                                                          |
@@ -148,7 +148,7 @@ These run through every area and explain most of what breaks in play.
 | Dismemberment        | partial | re-dressing a reloaded corpse from its recorded worn objects                                                                                    |
 | Actor build          | partial | first-person render pass, bone LOD                                                                                                              |
 | Faces                | partial | expression change rate                                                                                                                          |
-| Graph state in saves | missing | M12                                                                                                                                             |
+| Graph state in saves | partial | objects' graphs (sequences, skeletal machines) saved; actors' rebuilt from furniture and packages; behavior references                          |
 
 ### Physics
 
@@ -167,19 +167,19 @@ These run through every area and explain most of what breaks in play.
 
 ### Rendering and camera
 
-| System                                  | Status    | Main gaps                                                                           |
-| --------------------------------------- | --------- | ----------------------------------------------------------------------------------- |
-| Object shader                           | partial   | ambient specular, character light, eye reflections, sparkle snow, distance fades    |
-| Lights                                  | different | per-object light lists; portal-strict lights still reach actors of other rooms      |
-| Shadows                                 | partial   | shadow lights (interiors) done; no focus shadows, no shadow lights in exteriors     |
-| Fade, LOD                               | partial   | no distance fade of objects, items and actors                                       |
-| Rooms, portals, occlusion               | partial   | rooms' lighting templates and image spaces; LOD not culled by them                  |
-| Image space                             | partial   | god rays are a screen-space blur, not the froxel volume; TAA without motion vectors |
-| Water                                   | partial   | underwater view, ripples, reflections of what is off screen                         |
-| Decals                                  | partial   | skinned decals, impact effect models, screen blood                                  |
-| First person                            | partial   | own view and depth band done; engine near plane, first-person particles             |
-| Cameras                                 | partial   | states, shake, vanity, kill cams done; explosion shake, dragon lock-on, iron sights |
-| Sky, weather, particles, terrain, grass | complete  | small calibrations                                                                  |
+| System                                  | Status    | Main gaps                                                                              |
+| --------------------------------------- | --------- | -------------------------------------------------------------------------------------- |
+| Object shader                           | partial   | ambient specular, character light, eye reflections, sparkle snow (distance fade: done) |
+| Lights                                  | different | per-object light lists (moving actors take their room each frame: done)                |
+| Shadows                                 | partial   | shadow lights (interiors) done; no focus shadows, no shadow lights in exteriors        |
+| Fade, LOD                               | partial   | fade rule estimated (radius × fade setting, TODO(M13)); no fLODFadeOutMultSkyCell      |
+| Rooms, portals, occlusion               | partial   | rooms' lighting templates and image spaces; LOD not culled by them                     |
+| Image space                             | partial   | god rays are a screen-space blur, not the froxel volume; TAA without motion vectors    |
+| Water                                   | partial   | underwater fog, ripple rings, edge reflections done; engine displacement sim, colour   |
+| Decals                                  | partial   | skinned decals, screen blood (impact effect models: done)                              |
+| First person                            | partial   | own view and depth band done; engine near plane, first-person particles                |
+| Cameras                                 | partial   | states, shake, vanity, kill cams done; explosion shake, dragon lock-on, iron sights    |
+| Sky, weather, particles, terrain, grass | complete  | small calibrations                                                                     |
 
 ### UI
 

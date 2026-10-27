@@ -31,6 +31,8 @@ import { parseGrass, placeGrass, type GrassType } from '../world/grass.ts';
 import type { AmbientState } from '../audio/ambience.ts';
 import { waterAreaHeight } from '../audio/water-audio.ts';
 import { cellWater, DEFAULT_WATER } from '../world/water.ts';
+import { UnderwaterView } from '../world/underwater.ts';
+import type { SceneFog } from '../render/scene-lighting.ts';
 import { FlowMaps, waterPlugin } from '../world/flow-map.ts';
 import { surfaceOver, waterVolumes, type WaterVolume } from '../world/water-volumes.ts';
 import type { GpuTerrainCell, TerrainLodBlock, TerrainTexturePaths } from '../render/terrain.ts';
@@ -787,6 +789,7 @@ export class WorldViewer {
     randomSceneStarts: (scene, first, second) =>
       this.#stage?.talk.randomSceneStarts(scene, first, second),
     facesForLine: (speaker, target) => this.#stage?.talk.faces(speaker, target),
+    saveActors: () => this.#stage?.saveActors() ?? [],
     impactAt: (impactDataSet, from, direction, length) =>
       this.#stage?.combat.impactAt(impactDataSet, from, direction, length) ?? false,
     pathTo: (actor, target, walkRun) => {
@@ -2521,6 +2524,8 @@ export class WorldViewer {
       upper: state.skyUpper,
       multiplier: state.waterMultiplier,
       profile: frame.sky.profile,
+      // Rings from splashes and wakes (water-ripples.ts).
+      ...(this.#play && { ripples: this.#play.ripples.active(performance.now() / 1000) }),
     };
   }
 
@@ -2617,7 +2622,21 @@ export class WorldViewer {
     const sky = this.#sky?.lighting() ?? NO_SKY;
     // A menu's lights (the race menu's) first: they light what it shows.
     const extra = this.#play?.extraLights ?? [];
-    return { ...sky, lights: [...extra, ...lights].slice(0, MAX_LIGHTS) };
+    const under = this.#underwaterFog(camera, sky);
+    return {
+      ...sky,
+      ...(under && { fog: under }),
+      lights: [...extra, ...lights].slice(0, MAX_LIGHTS),
+    };
+  }
+
+  /** The view below water surfaces: the water type's underwater fog (underwater.ts). */
+  readonly #underwater = new UnderwaterView((formId) =>
+    this.#session?.waterType(formId).then((gpu) => gpu?.type),
+  );
+
+  #underwaterFog(camera: Vec3, sky: Omit<SceneLighting, 'lights'>): SceneFog | undefined {
+    return this.#underwater.fog(camera[2], this.#waterAt(camera[0], camera[1], camera[2]), sky);
   }
 
   // --- UI -------------------------------------------------------------------------------

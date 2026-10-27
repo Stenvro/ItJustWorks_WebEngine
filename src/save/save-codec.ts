@@ -4,7 +4,7 @@
 // non-finite numbers and the Papyrus values (object handles, arrays).
 // Platform-independent but for CompressionStream (browsers and Node alike).
 
-import { ObjectHandle, PapyrusArray } from '../scripting/values.ts';
+import { ObjectHandle, PapyrusArray, type Value } from '../scripting/values.ts';
 
 /** "IJWS": the file's magic. */
 const MAGIC = 0x53574a49;
@@ -81,6 +81,16 @@ function fromBase64(text: string): Uint8Array {
  * error (state the save would silently lose): `where` names the path for the message.
  */
 export function encodeValue(value: unknown, where = '$'): Json {
+  return encodeTagged(value, where, new Map());
+}
+
+/**
+ * `arrays`: the Papyrus arrays met so far, numbered. Each is written once, with its number
+ * (`$i`), and after that as a reference to it (`$r`): two variables that held one array hold
+ * one array again after a load, as in the original's save.
+ */
+function encodeTagged(value: unknown, where: string, arrays: Map<PapyrusArray, number>): Json {
+  const encode = (item: unknown, path: string): Json => encodeTagged(item, path, arrays);
   if (value === null) return null;
   if (value === undefined) return { $u: 1 };
   if (typeof value === 'boolean' || typeof value === 'string') return value;
@@ -89,22 +99,25 @@ export function encodeValue(value: unknown, where = '$'): Json {
     return { $n: String(value) };
   }
   if (typeof value === 'bigint') return { $b: value.toString() };
-  if (Array.isArray(value))
-    return value.map((item, i) => encodeValue(item, `${where}[${String(i)}]`));
+  if (Array.isArray(value)) return value.map((item, i) => encode(item, `${where}[${String(i)}]`));
   if (value instanceof Map) {
     return {
       $m: [...value].map(([key, item], i) => [
-        encodeValue(key, `${where}<key ${String(i)}>`),
-        encodeValue(item, `${where}<${String(key)}>`),
+        encode(key, `${where}<key ${String(i)}>`),
+        encode(item, `${where}<${String(key)}>`),
       ]),
     };
   }
   if (value instanceof Set) {
-    return { $s: [...value].map((item, i) => encodeValue(item, `${where}{${String(i)}}`)) };
+    return { $s: [...value].map((item, i) => encode(item, `${where}{${String(i)}}`)) };
   }
   if (value instanceof ObjectHandle) return { $h: [value.formId, value.type, value.alias] };
   if (value instanceof PapyrusArray) {
-    return { $a: value.items.map((item, i) => encodeValue(item, `${where}[${String(i)}]`)) };
+    const known = arrays.get(value);
+    if (known !== undefined) return { $r: known };
+    const id = arrays.size;
+    arrays.set(value, id);
+    return { $a: value.items.map((item, i) => encode(item, `${where}[${String(i)}]`)), $i: id };
   }
   if (ArrayBuffer.isView(value)) {
     const name = typedName(value);
@@ -119,7 +132,7 @@ export function encodeValue(value: unknown, where = '$'): Json {
     }
     const out: Record<string, Json> = {};
     for (const [key, item] of Object.entries(value)) {
-      out[key] = encodeValue(item, `${where}.${key}`);
+      out[key] = encode(item, `${where}.${key}`);
     }
     // A plain object whose own keys could read as a tag is wrapped.
     return Object.keys(out).some((key) => key.startsWith('$')) ? { $o: out } : out;
@@ -128,24 +141,37 @@ export function encodeValue(value: unknown, where = '$'): Json {
 }
 
 export function decodeValue(json: unknown): unknown {
+  return decodeTagged(json, new Map());
+}
+
+/** `arrays`: the Papyrus arrays read so far, by their numbers (`$i`; `$r` refers to one). */
+function decodeTagged(json: unknown, arrays: Map<number, PapyrusArray>): unknown {
+  const decode = (item: unknown): unknown => decodeTagged(item, arrays);
   if (json === null || typeof json !== 'object') return json;
-  if (Array.isArray(json)) return json.map(decodeValue);
+  if (Array.isArray(json)) return json.map(decode);
   const tagged = json as Record<string, unknown>;
   if ('$u' in tagged) return undefined;
   if ('$n' in tagged) return Number(tagged.$n);
   if ('$b' in tagged) return BigInt(String(tagged.$b));
   if ('$m' in tagged) {
-    return new Map(
-      (tagged.$m as unknown[][]).map(([key, item]) => [decodeValue(key), decodeValue(item)]),
-    );
+    return new Map((tagged.$m as unknown[][]).map(([key, item]) => [decode(key), decode(item)]));
   }
-  if ('$s' in tagged) return new Set((tagged.$s as unknown[]).map(decodeValue));
+  if ('$s' in tagged) return new Set((tagged.$s as unknown[]).map(decode));
   if ('$h' in tagged) {
     const [formId, type, alias] = tagged.$h as [number, string, number];
     return new ObjectHandle(formId, type, alias);
   }
+  if ('$r' in tagged) {
+    const array = arrays.get(Number(tagged.$r));
+    if (!array) throw new Error(`save: array ${String(tagged.$r)} is read before it is written`);
+    return array;
+  }
   if ('$a' in tagged) {
-    return new PapyrusArray((tagged.$a as unknown[]).map(decodeValue) as PapyrusArray['items']);
+    // Numbered before its items are read (saves before array identity have no number).
+    const array = new PapyrusArray([]);
+    if (typeof tagged.$i === 'number') arrays.set(tagged.$i, array);
+    for (const item of tagged.$a as unknown[]) array.items.push(decode(item) as Value);
+    return array;
   }
   if ('$t' in tagged) {
     const bytes = fromBase64(String(tagged.d));
@@ -155,7 +181,7 @@ export function decodeValue(json: unknown): unknown {
   }
   const plain = '$o' in tagged ? (tagged.$o as Record<string, unknown>) : tagged;
   const out: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(plain)) out[key] = decodeValue(item);
+  for (const [key, item] of Object.entries(plain)) out[key] = decode(item);
   return out;
 }
 
