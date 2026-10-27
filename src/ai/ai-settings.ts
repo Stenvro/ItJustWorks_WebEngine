@@ -144,6 +144,12 @@ export interface AiSettings {
    */
   readonly stealWarnings: number;
   readonly warningTimer: number;
+  /**
+   * An NPC's breath under water (the Surface package's start): fActorSwimBreathBase plus
+   * fActorSwimBreathMult times 50 seconds.
+   */
+  readonly swimBreathBase: number;
+  readonly swimBreathMult: number;
   /** The process lists' update budget (ms a frame) by frame rate ([General] INI settings). */
   readonly processListsUpdateTimeMin: number;
   readonly processListsUpdateTimeMax: number;
@@ -233,6 +239,8 @@ const SETTINGS: readonly (readonly [keyof AiSettings, string, number])[] = [
   ['avoidPlayerDistance', 'fAvoidPlayerDistance', 100],
   ['stealWarnings', 'iStealWarnings', 2],
   ['warningTimer', 'fWarningTimer', 5],
+  ['swimBreathBase', 'fActorSwimBreathBase', 10],
+  ['swimBreathMult', 'fActorSwimBreathMult', 0.5],
   ['processListsUpdateTimeMin', 'fProcessListsUpdateTimeMin:General', 0.5],
   ['processListsUpdateTimeMax', 'fProcessListsUpdateTimeMax:General', 5],
   ['processListsUpdateLowFrameRate', 'fProcessListsUpdateLowFrameRate:General', 10],

@@ -315,7 +315,10 @@ describe('findPath round an actor in the way (avoid nodes)', () => {
       const [bx = 0, by = 0] = points[i] ?? [];
       const dx = bx - ax;
       const dy = by - ay;
-      const t = Math.max(0, Math.min(1, ((at[0] - ax) * dx + (at[1] - ay) * dy) / (dx * dx + dy * dy)));
+      const t = Math.max(
+        0,
+        Math.min(1, ((at[0] - ax) * dx + (at[1] - ay) * dy) / (dx * dx + dy * dy)),
+      );
       least = Math.min(least, Math.hypot(ax + dx * t - at[0], ay + dy * t - at[1]));
     }
     return least;

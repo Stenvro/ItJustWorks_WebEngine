@@ -501,9 +501,7 @@ function entersCircle(a: Vec3, b: Vec3, circle: AvoidNode): boolean {
   const dy = b[1] - a[1];
   const length2 = dx * dx + dy * dy;
   const t =
-    length2 > 1e-9
-      ? Math.max(0, Math.min(1, ((cx - a[0]) * dx + (cy - a[1]) * dy) / length2))
-      : 0;
+    length2 > 1e-9 ? Math.max(0, Math.min(1, ((cx - a[0]) * dx + (cy - a[1]) * dy) / length2)) : 0;
   const closest = Math.hypot(a[0] + dx * t - cx, a[1] + dy * t - cy);
   const start = Math.hypot(a[0] - cx, a[1] - cy);
   return closest < circle.radius - 1e-3 && closest < start - 1e-3;
@@ -593,7 +591,8 @@ function goRound(
   for (const width of radius > 0 ? [radius, 0] : [0]) {
     let best: { points: Vec3[]; length: number } | undefined;
     for (const side of [1, -1]) {
-      const sweep = (((side * (toAngle - fromAngle)) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+      const sweep =
+        (((side * (toAngle - fromAngle)) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
       if (sweep < 1e-6) continue;
       // A polygon round the circle, its sides touching it.
       const arcs = Math.max(1, Math.ceil(sweep / ROUND_ARC));
@@ -611,7 +610,7 @@ function goRound(
       const list = [...corners, b];
       const kept: Vec3[] = [];
       let from = a;
-      for (let next = 0; next < list.length; ) {
+      for (let next = 0; next < list.length;) {
         let j = list.length - 1;
         while (j > next) {
           const to = list[j];

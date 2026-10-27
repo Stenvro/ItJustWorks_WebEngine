@@ -147,6 +147,18 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
 - **The way** is pulled tight through the edges the triangles' chain crosses (the simple stupid
   funnel), each edge narrowed by the actor's radius at both ends (its controller's), so it turns
   round corners an actor's width off them.
+- **Path idles**: the idle tree's ActionPathStart (189 idles over 24 graphs) and ActionPathEnd
+  are the engine's. The human graph's (0_master) path start, standing (GetMovementSpeed under
+  24), turns by the way the path goes against its facing (GetPathingTargetAngleOffset): asked to
+  go (GetPathingTargetSpeed over 24) a turn into a walk (NPC_TurnToWalkRight90, ...Left180;
+  not sneaking, the path more than 22.5° off), else a turn on the spot (NPC_TurnRight90 for 45°
+  to 135°, ...Right180, ...Left180, ...Left90); its path end turns so too. Ours performs
+  ActionPathStart once a travel as its first request is made (`ActorMovers`; not for a straight
+  way, nor while the graph is animation-driven); its tree picks the turn (none while it moves:
+  a patrol's next point). The case: tests/path-idles.int.test.ts. TODO(M13): when the engine
+  performs it (each new path or once); ActionPathEnd (the heading it arrives with is not kept
+  as its pathing target); our target speed is its controller's velocity, nought as it sets out,
+  so it turns on the spot where the engine may turn into a walk.
 - **Following it** (`src/ai/path-follower.ts`): the actor goes to the next point; a point is
   passed within 24 units or once the actor is beyond it towards the next; it arrives within its
   arrival radius of the last. With less than 8 units of headway towards the next point in 1.5
@@ -168,8 +180,8 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   it is blocked, whose MovementBlocked handler would put it in an engine-made "movement blocked"
   package (procedure 36; bUseMovementBlockedPackage, off, is read in the actor's update, its role
   not read).
-  TODO(M13): ours searches wider instead of laying avoid nodes (findPath keeps off places, it has
-  no costs).
+  TODO(M13): ours searches wider instead of laying a static avoid node (findPath's avoid nodes
+  are laid only on actors, below).
 - **Against a wall** (observed in the original): its graph is told what the actor wants,
   not what its controller made of it, whenever the two disagree (motion feedback:
   [animation.md](animation.md#driving-the-graphs)), and the player's graph always
@@ -201,13 +213,28 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   in its way is first asked to move (its ActorCollidewithActor line, once a travel); it goes
   round them once it is kept another fMaxTimeBlockedByActors. TODO(M13): how the engine's own
   avoidance turns the way is not read yet.
-  TODO(M10), a deadlock seen in Whiterun's market (Mila Valentia stood 216 units short of her
-  scene travel for 36 s, pressed against a standing scene actor): the search keeps off the
-  blocker only by closing the triangles whose middle lies within its circle, and in an
-  exterior's large triangles none does, so each search finds the same way through the one
-  standing there, and the actor is blocked again a second later. The search should close the
-  steps that pass within the circle (as an obstacle's cut does) and the path should keep its
-  width off it.
+- **Round one standing in its way** (observed in the original): the path request the engine
+  makes then lays an avoid node on each actor it records near the way, where it stands, its
+  radius plus fAvoidNodeRadiusAdd (11) wide, at cost fAvoidNodeCost (24); one moving faster than
+  5 units a second gets none (for the actors the request asks that of). Ours lays one on the
+  actor that blocked it (`PathOptions.avoid`, src/ai/pathfinding.ts), its own radius added (the
+  circle its middle keeps out of): a search step through it costs its length inside, times the
+  cost; the triangles whose middle lies in it are closed (the goal's not); and the way pulled
+  tight is bent round it, on the shorter side where the navmesh has room for the actor's width
+  (else its middle), as tight as the circle lets it (a polygon whose sides touch the circle). Before,
+  only the triangles whose middle lay in its circle were closed, and an exterior's triangles are
+  large: Mila Valentia stood 216 units short of her scene travel in Whiterun's market at 9:00
+  for 36 s, the same way through the scene actor standing there found every second.
+  TODO(M13): what the engine's cost weighs (ours: per unit inside), which actors besides the
+  blocker it records.
+- **Two on their way into each other** (a narrow way, neither able to go round: going round a
+  moving one does not part them, the engine lays no avoid node for it): kept from going on by
+  the other, one of the two gives way (`givesWay`, src/ai/avoidance.ts: the slower gait, else
+  the lower reference, the same one whichever asks). It steps off the other's way as a bumped
+  actor steps off the player's (fBumpReactionIdealMoveDist, at least fBumpReactionMinMoveDist,
+  to the side it stands on, else the other), waits fBumpReactionSmallWaitTimer while the other
+  passes, and searches its way again (logged "gives way"); no room beside the way, the other
+  gives way. TODO(M13): the engine's own rule for who yields was not read.
 - **Bumped** (`src/shell/actor-movers.ts`): the player walking into an actor's controller (at
   40 units a second or more, towards it) is a bump: where the player came from, clockwise from
   the actor's facing (GetLastBumpDirection), and whether it was small (IsSmallBump; observed in
@@ -550,10 +577,22 @@ had ended falls out again). One at a time (TODO(M13): which may replace which).
 - **Movement Blocked**: made only while bUseMovementBlockedPackage:General is on (its built-in
   value is 0, so never in vanilla): an actor kept from going on fMaxTimeBlockedByActors stands
   that long, then searches its way again.
-- **Get Up From Chair Or Bed** (`getUpFromChairBed`: it leaves its furniture) and **Surface**
-  (`surfaceTo`: a swimmer under water rises to the surface) are built; TODO(M10): what makes
-  them (the engine's starts are not read: ours has its packages leave furniture themselves,
-  and NPCs do not drown).
+- **Get Up From Chair Or Bed** (`getUpFromChairBed`: it leaves its furniture): an engine package
+  put on an actor in furniture gets it up first unless it may run there (`upFirst`: React To
+  Destroyed Object looks from the seat), as the engine puts a created package with a flag
+  allowing it from furniture (Actor::PutCreatedPackage). Its own packages get it up as their
+  procedures start, combat as it starts to fight ([Combat](#combat)); one knocked down or
+  bleeding out is out of its furniture already. TODO(M13): no maker of the Get Up package
+  itself was found among the engine's package factory's callers (observed in the original), nor which
+  created packages it allows from furniture.
+- **Surface** (`surfaceTo`: a swimmer under water rises to the surface; its start observed in the
+  original): an NPC with its head under water (at least 0.875 of it submerged) that does
+  not breathe water (WaterBreathing) uses up its breath, fActorSwimBreathBase (10) +
+  fActorSwimBreathMult (0.5) × 50 seconds at the most; each update, once the breath left is
+  less than one and a half times its rise to the surface at its speed (its depth over its feet)
+  plus a second, it is given Surface, unless it runs that already (`Breath`; ours asks every
+  physics step, `ActorMovers` with its run's speed). Only the player drowns. TODO(M13): its
+  breath refills at once with its head out (the engine sets it elsewhere).
 - The player standing in a mover's way: [Movement](#movement) (its ActorCollidewithActor line
   before it goes round them).
 
