@@ -8,7 +8,9 @@ struct Frame {
   // Direction towards the directional light (normalized) and its colour.
   sunDir: vec4f,
   sunColor: vec4f,
-  // Directional ambient: light arriving from +X, -X, +Y, -Y, +Z, -Z.
+  // Directional ambient: light arriving from +X, -X, +Y, -Y, +Z, -Z (rgb). In w: the ambient
+  // specular colour (+X, -X, +Y), its fresnel power (-Y), the character light's primary and
+  // secondary intensity (+Z, -Z).
   ambient: array<vec4f, 6>,
   fogNearColor: vec4f,
   fogFarColor: vec4f,
@@ -16,7 +18,7 @@ struct Frame {
   fogParams: vec4f,
   // Point light count, fog enabled, debug view, unused.
   counts: vec4u,
-  // Time in seconds, wind strength (0..1), unused.
+  // Time in seconds, wind strength (0..1), the character light's luminance scale and maximum.
   time: vec4f,
   // Distant LOD is hidden in loaded cells: south-west cell of a 7x7 grid (xy) and one bit per
   // cell, row by row from the south-west (zw: bits 0-31, 32-48).
