@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { RecordDatabase } from '../../../world/record-db.ts';
 import type { NativeCall } from '../../papyrus-vm.ts';
 import { ScriptLibrary } from '../../script-library.ts';
-import type { Value } from '../../values.ts';
+import { ObjectHandle, type Value } from '../../values.ts';
 import { ScriptRuntime, type WorldBridge } from '../runtime.ts';
 
 /** A runtime without plugins, its world the given hooks. */
@@ -49,5 +49,18 @@ describe('Game natives that ask the shell', () => {
       [0.5, 1, 2],
       [0, 0.25, 0],
     ]);
+  });
+
+  it('clears temporary effects and keeps the sun gaze modifier', async () => {
+    let cleared = 0;
+    const scripts = runtime({ clearTempEffects: () => (cleared += 1) });
+    await call(scripts, 'cleartempeffects');
+    expect(cleared).toBe(1);
+    const imod = new ObjectHandle(0x1234, 'imagespacemodifier');
+    await call(scripts, 'setsungazeimagespacemodifier', [imod]);
+    expect(scripts.sunGazeModifier).toBe(0x1234);
+    await call(scripts, 'setsungazeimagespacemodifier', [null]);
+    expect(scripts.sunGazeModifier).toBeUndefined();
+    expect(await call(scripts, 'isplayersungazing')).toBe(false);
   });
 });
