@@ -82,21 +82,21 @@ These run through every area and explain most of what breaks in play.
 
 ### AI
 
-| System                       | Status  | Main gaps                                                                                                                                      |
-| ---------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Process levels, budget       | partial | the high-process distance is ours (no setting names it); how the engine shares the budget between its lists                                    |
-| Package evaluation           | partial | ours: Continue If PC Near's reach, the fallout's radius and options (all PKDT flags honoured: src/ai/package-flags.test.ts)                    |
-| Procedures                   | partial | engine-only packages (avoid player, react to destroyed object, warnings, get up, surface); Wear Sleep Outfit has no sim case                   |
-| Sandbox                      | partial | which places the engine gives no radius; extra dialogue range; delay on arrival (rescan, search radius, hysteresis, eating at its chair: done) |
-| Movement, paths              | partial | navmesh obstacles cut approximately (no re-triangulation: M13), no path idles                                                                  |
-| Avoidance                    | partial | the engine's way round (who is avoided and re-planning are its)                                                                                |
-| Detection                    | partial | the light's sum ours (walls keep lights off: done); an Ambush package's own target (Ambush packages: done)                                     |
-| Crime                        | partial | NPC crimes beyond assault; guards that only hear an NPC's alarm; fCrimeAlarmRespMult (NPC assault alarms, guards fight: done)                  |
-| Dialogue                     | partial | Say Once with Reset Hours (61 infos: comes back after them, TODO(M13)); walking off a greeting outside the menu                                |
-| Scenes                       | partial | repeat pause (Repeat Conditions While True restarts at once); facing wait limit (3 s ours)                                                     |
-| Actors away                  | partial | who keeps a schedule away (ours: persistent actors and those near) and its pace are ours; the place between doors                              |
-| Followers, horses, furniture | partial | follow offset and walk zone's built-in value ours; mount from the right; enter by graph event; horse turns to camera                           |
-| Head tracking                | partial | candidates' scores and look-ahead ours (player, speaker, mover; along the path: done); package target's look                                   |
+| System                       | Status  | Main gaps                                                                                                                                                                                      |
+| ---------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Process levels, budget       | partial | the high-process distance is ours (no setting names it); how the engine shares the budget between its lists                                                                                    |
+| Package evaluation           | partial | ours: Continue If PC Near's reach, the fallout's radius and options (all PKDT flags honoured, the fallout saved: src/ai/package-flags.test.ts)                                                 |
+| Procedures                   | partial | engine packages: react to destroyed object, steal and pickpocket warnings, get up, surface, movement blocked (in front of the stack, avoid player: done); Wear Sleep Outfit has no sim case    |
+| Sandbox                      | partial | which places the engine gives no radius; extra dialogue range; delay on arrival; its pick with nothing open (rescan, search radius, hysteresis, eating at its chair, on its idle marker: done) |
+| Movement, paths              | partial | navmesh obstacles cut approximately (no re-triangulation: M13), no path idles                                                                                                                  |
+| Avoidance                    | partial | the engine's way round (who is avoided and re-planning are its)                                                                                                                                |
+| Detection                    | partial | the light's sum ours (walls keep lights off: done); an Ambush package's own target (Ambush packages: done)                                                                                     |
+| Crime                        | partial | NPC crimes beyond assault; guards that only hear an NPC's alarm; fCrimeAlarmRespMult (NPC assault alarms, guards fight: done)                                                                  |
+| Dialogue                     | partial | Say Once with Reset Hours (61 infos: comes back after them, TODO(M13)); walking off a greeting outside the menu                                                                                |
+| Scenes                       | partial | repeat pause (Repeat Conditions While True restarts at once); facing wait limit (3 s ours)                                                                                                     |
+| Actors away                  | partial | who keeps a schedule away (ours: persistent actors and those near) and its pace are ours; the place between doors                                                                              |
+| Followers, horses, furniture | partial | follow offset and walk zone's built-in value ours; mount from the right; enter by graph event; horse turns to camera                                                                           |
+| Head tracking                | partial | candidates' scores and look-ahead ours (player, speaker, mover; along the path: done); package target's look                                                                                   |
 
 ### Combat
 

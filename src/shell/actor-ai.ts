@@ -7,6 +7,8 @@
 
 import {
   ActorPackages,
+  type EnginePackage,
+  type EngineRunner,
   type PackageBody,
   type PackageMind,
   type PackagePlace,
@@ -329,6 +331,19 @@ export class ActorAi {
       this.#talking.add(reference);
       this.#movers.stop(reference);
     }
+  }
+
+  /**
+   * Puts an engine package in front of an actor's own (src/ai/engine-packages.ts): false if it
+   * has no AI here or runs another.
+   */
+  pushEngine(
+    reference: number,
+    kind: EnginePackage,
+    runner: EngineRunner,
+    target?: number,
+  ): boolean {
+    return this.#actors.get(reference)?.packages.push(kind, runner, target) ?? false;
   }
 
   /** The actor's package goes on (chosen again). */

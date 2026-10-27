@@ -6,6 +6,8 @@
 // scenes' (src/ai/scene-runtime.ts), and how a line is said (voice, lips, emotion, subtitle)
 // src/shell/world-lines.ts's.
 
+import { aiSettingsOf } from '../ai/ai-settings.ts';
+import { AVOID_PLAYER_ACTIONS, avoidPlayer, avoidsPlayer } from '../ai/engine-packages.ts';
 import { InterruptFlag } from '../ai/package-records.ts';
 import type { SayOptions } from '../ai/package-runtime.ts';
 import {
@@ -614,7 +616,33 @@ export class ActorTalk {
   async playerAction(subtype: string): Promise<boolean> {
     const planner = this.#planner;
     const commenter = planner?.commenter(this.#seen, this.#scene, subtype === 'KNOO');
-    return commenter === undefined ? false : this.bark(commenter, subtype);
+    if (commenter === undefined) return false;
+    if (AVOID_PLAYER_ACTIONS.has(subtype)) this.#avoidPlayer(commenter);
+    return this.bark(commenter, subtype);
+  }
+
+  /**
+   * The player swung a weapon, shot a bow or cast a projectile spell: the one picked to comment
+   * on it (the nearest that may) also avoids them, if it is within fTriggerAvoidPlayerDistance,
+   * sees them and fights no one (observed in the original: the engine's Avoid Player
+   * package, src/ai/engine-packages.ts).
+   */
+  #avoidPlayer(commenter: number): void {
+    const player = this.#scene.player;
+    if (!player) return;
+    const trigger = aiSettingsOf(this.#options.session).triggerAvoidPlayerDistance;
+    for (const actor of this.#seen) {
+      if (actor.reference !== commenter || actor.inScene) continue;
+      const distance = Math.hypot(
+        actor.position[0] - player[0],
+        actor.position[1] - player[1],
+        actor.position[2] - player[2],
+      );
+      const fighting = this.#options.engaged?.(actor.reference) === true;
+      if (avoidsPlayer(distance, actor.seesPlayer, fighting, trigger)) {
+        this.#options.ai.pushEngine(actor.reference, 'avoidPlayer', avoidPlayer, PLAYER_REF);
+      }
+    }
   }
 
   /** An actor left the stage or died: it stops its line. */

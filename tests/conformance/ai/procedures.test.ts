@@ -99,8 +99,10 @@ describe.skipIf(!hasGamedata())('the procedures across the load order (data)', (
 });
 
 describe('the engine’s own packages (no record holds them)', () => {
+  // Avoid Player (CommonLibSSE kAvoidPlayer): src/ai/engine-packages.test.ts.
   it.todo(
-    'Avoid Player: an actor the player walks into steps out of the way (CommonLibSSE kAvoidPlayer)',
+    'Avoid Player for an actor the standing player blocks: it asks them to move (its line; ' +
+      'today it searches its way round them after fMaxTimeBlockedByActors)',
   );
   it.todo(
     'React To Destroyed Object: an actor near an object destroyed reacts (CommonLibSSE ' +
