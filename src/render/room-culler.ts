@@ -177,13 +177,9 @@ export function occlusionVolumes(box: OrientedBox, camera: Vec3): Plane[][] {
   return volumes;
 }
 
-/** Whether a sphere lies wholly on the inner side of every plane. */
-function sphereInside(planes: readonly Plane[], center: Vec3, radius: number): boolean {
-  for (const [nx, ny, nz, d] of planes) {
-    if (nx * center[0] + ny * center[1] + nz * center[2] + d < radius) return false;
-  }
-  return true;
-}
+/** The planes of an occlusion volume (occlusionVolumes: the face's and its four edges'). */
+const OCCLUDER_PLANES = 5;
+const OCCLUDER_STRIDE = OCCLUDER_PLANES * 4;
 
 export class RoomCuller {
   readonly #sets: readonly CellRooms[];
@@ -195,7 +191,13 @@ export class RoomCuller {
   /** Per room this frame: the planes of each rectangle it is seen through. */
   #seen: Plane[][][] = [];
   #rects: ScreenRect[][] = [];
-  #occluders: Plane[][] = [];
+  /**
+   * The occlusion volumes turned to the camera this frame, packed: OCCLUDER_PLANES planes of
+   * four numbers each per volume (every draw is tested against all of them: a typed array read
+   * by index is several times faster than arrays of plane tuples). Kept from frame to frame.
+   */
+  #occluderPlanes = new Float64Array(OCCLUDER_STRIDE * 16);
+  #occluderCount = 0;
   #active = false;
   /** The rooms holding a draw's centre (cached by the centre's array: static draws keep it). */
   #membership = new WeakMap<Vec3, readonly number[]>();
@@ -291,14 +293,14 @@ export class RoomCuller {
     this.#seen = this.#boxes.map(() => []);
     this.#rects = this.#boxes.map(() => []);
     const frustum = frustumPlanes(viewProj);
-    this.#occluders = [];
+    this.#occluderCount = 0;
     for (const set of this.#sets) {
       for (const occluder of set.occluders) {
         const box = occluder.box;
         if (boxContains(box, camera, 1)) continue;
         const radius = Math.hypot(...box.half);
         if (!sphereVisible(frustum, box.center, radius)) continue;
-        this.#occluders.push(...occlusionVolumes(box, camera));
+        for (const volume of occlusionVolumes(box, camera)) this.#addOccluder(volume);
       }
     }
 
@@ -368,6 +370,52 @@ export class RoomCuller {
     this.#seen = this.#rects.map((rects) => rects.map((rect) => rectPlanes(viewProj, rect)));
   }
 
+  /** Packs an occlusion volume (its planes padded to OCCLUDER_PLANES with ones nothing leaves). */
+  #addOccluder(planes: readonly Plane[]): void {
+    const at = this.#occluderCount * OCCLUDER_STRIDE;
+    if (at + OCCLUDER_STRIDE > this.#occluderPlanes.length) {
+      const grown = new Float64Array(this.#occluderPlanes.length * 2);
+      grown.set(this.#occluderPlanes);
+      this.#occluderPlanes = grown;
+    }
+    const packed = this.#occluderPlanes;
+    for (let i = 0; i < OCCLUDER_PLANES; i++) {
+      const plane = planes[i];
+      const o = at + i * 4;
+      packed[o] = plane?.[0] ?? 0;
+      packed[o + 1] = plane?.[1] ?? 0;
+      packed[o + 2] = plane?.[2] ?? 0;
+      packed[o + 3] = plane ? plane[3] : Infinity;
+    }
+    this.#occluderCount++;
+  }
+
+  /** Whether a sphere lies wholly inside one of this frame's occlusion volumes. */
+  #occluded(center: Vec3, radius: number): boolean {
+    const packed = this.#occluderPlanes;
+    const end = this.#occluderCount * OCCLUDER_STRIDE;
+    const x = center[0];
+    const y = center[1];
+    const z = center[2];
+    for (let at = 0; at < end; at += OCCLUDER_STRIDE) {
+      let inside = true;
+      for (let o = at; o < at + OCCLUDER_STRIDE; o += 4) {
+        if (
+          (packed[o] ?? 0) * x +
+            (packed[o + 1] ?? 0) * y +
+            (packed[o + 2] ?? 0) * z +
+            (packed[o + 3] ?? 0) <
+          radius
+        ) {
+          inside = false;
+          break;
+        }
+      }
+      if (inside) return true;
+    }
+    return false;
+  }
+
   /**
    * Whether a point stands in a room seen this frame (or in no room, or rooms do not cull):
    * shadow lights and their casters outside the rooms seen are left out, wherever on the
@@ -387,11 +435,9 @@ export class RoomCuller {
   /** Whether a draw's bounding sphere may be seen this frame (rooms and occluders). */
   visible(center: Vec3, radius: number): boolean {
     this.tested++;
-    for (const volume of this.#occluders) {
-      if (sphereInside(volume, center, radius)) {
-        this.culled++;
-        return false;
-      }
+    if (this.#occluderCount > 0 && this.#occluded(center, radius)) {
+      this.culled++;
+      return false;
     }
     if (!this.#active) return true;
     let rooms = this.#membership.get(center);
