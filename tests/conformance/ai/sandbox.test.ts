@@ -17,7 +17,7 @@
 //   (`node tools/gmst-info.ts --prefix fSandbox`).
 // - The data: `node tools/package-census.ts` (2,874 packages run a Sandbox).
 
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { AI_DEFAULTS, readAiSettings } from '../../../src/ai/ai-settings.ts';
 import type { PackageInput } from '../../../src/ai/package-records.ts';
 import type { SandboxSpot } from '../../../src/ai/package-runtime.ts';
@@ -31,6 +31,7 @@ import {
   SandboxPlan,
 } from '../../../src/ai/sandbox.ts';
 import { pack, packageActor, procedure, tick } from '../../helpers/packages.ts';
+import { hasGamedata, openSim } from '../../helpers/sim.ts';
 
 /** Skyrim.esm's values of the sandbox's settings (the rest keep the engine's). */
 const ESM: Readonly<Record<string, number>> = {
@@ -358,6 +359,67 @@ describe('sandbox: scans, radius and the chair it sits on', () => {
     // 540: within the band (500 + 50): only the walk there as it starts.
     expect(await travels(540)).toBe(1);
     expect(await travels(600)).toBeGreaterThan(1);
+  });
+});
+
+/** The Bannered Mare (Whiterun), interior. */
+const BANNERED_MARE = 0x1605e;
+
+describe.skipIf(!hasGamedata())('sandbox: an inn’s evening (headless simulation)', () => {
+  // The sandboxers' tracks (horizontal), every 2 s for 120 s; and of the times one stood still
+  // near an idle marker of the inn, those on it (within 16) and those short of it (16..60).
+  // (Before: they stood 50 units short of their markers, fAIMarkerDestinationRadius, and stayed
+  // on the last after leaving it; the next to come stopped beside them: 0 on, 63 short.)
+  const tracks = new Map<number, [number, number][]>();
+  let onMarker = 0;
+  let shortOfMarker = 0;
+
+  beforeAll(async () => {
+    const sim = await openSim({ interior: BANNERED_MARE, hour: 20, seed: 1 });
+    try {
+      const markers: [number, number][] = [];
+      for (const reference of sim.db.cellReferences(BANNERED_MARE)) {
+        const base = (await sim.db.get(reference))?.formIdField('NAME');
+        if (base === undefined || (await sim.db.get(base))?.type !== 'IDLM') continue;
+        const at = await sim.position(reference);
+        if (at) markers.push([at[0], at[1]]);
+      }
+      for (let sample = 0; sample < 60; sample++) {
+        for (const actor of sim.actors()) {
+          if (sim.package(actor.reference)?.procedure?.toLowerCase() !== 'sandbox') continue;
+          const at = await sim.position(actor.reference);
+          if (!at) continue;
+          const track = tracks.get(actor.reference) ?? [];
+          const [lastX, lastY] = track[track.length - 1] ?? [Infinity, Infinity];
+          track.push([at[0], at[1]]);
+          tracks.set(actor.reference, track);
+          if (Math.hypot(at[0] - lastX, at[1] - lastY) > 4) continue;
+          const marker = Math.min(...markers.map(([x, y]) => Math.hypot(at[0] - x, at[1] - y)));
+          if (marker < 16) onMarker++;
+          else if (marker < 60) shortOfMarker++;
+        }
+        await sim.step(2);
+      }
+    } finally {
+      await sim.close();
+    }
+  }, 300_000);
+
+  it('keeps its sandboxers going between spots (none stands at one place throughout)', () => {
+    // Those of the browser's report: SaadiaRef (WITavernServerSandbox), Brenuin
+    // (WhiterunBrenuinBanneredMarePackage), SinmirRef (WhiterunSinmirBanneredMareSandbox).
+    for (const actor of [0xd7505, 0x2c90f, 0x813ba]) {
+      const track = tracks.get(actor) ?? [];
+      expect(track.length).toBeGreaterThanOrEqual(20);
+      const [x, y] = track[0] ?? [0, 0];
+      const farthest = Math.max(...track.map(([px, py]) => Math.hypot(px - x, py - y)));
+      expect(farthest).toBeGreaterThan(100);
+    }
+  });
+
+  it('stands on the idle marker it uses, not beside it in the next one’s way', () => {
+    expect(onMarker).toBeGreaterThanOrEqual(20);
+    expect(shortOfMarker).toBeLessThan(onMarker / 2);
   });
 });
 

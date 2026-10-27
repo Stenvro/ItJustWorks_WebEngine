@@ -58,6 +58,8 @@ const SAY_SECONDS = 3;
 const TIME_TO_GO = 'TITG';
 /** At an idle marker, an idle at least this long apart (its timer when longer; seconds). */
 const MARKER_PAUSE = 4;
+/** On an idle marker: this near its point (units; ours). */
+const ON_MARKER = 8;
 /**
  * A patrol point not reached (blocked) is tried again this many times before the patrol goes on
  * to the next. TODO(M13): the engine's own (not documented); one given up at once left MQ101's
@@ -588,6 +590,16 @@ async function atIdleMarker(
       ))
     )
       return false;
+    // Within fAIMarkerDestinationRadius (Skyrim.esm: 50) its path is done; it then steps onto
+    // the marker itself, straight, to play its idles there (stood 50 units short, the actors of
+    // an inn's markers stood in each other's way: the next to come to a marker stopped beside
+    // the last). TODO(M13): how the engine sets an actor on its marker is not read (inferred:
+    // a short straight walk; one that cannot get there plays where it stands).
+    const here = run.body.position();
+    if (here && horizontal(here, at.position) > ON_MARKER) {
+      await run.body.travel(at.position, 'walk', ON_MARKER, undefined, { direct: true });
+      if (run.stopped()) return false;
+    }
     run.body.face(at.heading);
     await run.wait(1);
     run.body.face(undefined);
@@ -777,7 +789,12 @@ const sandboxing: ProcedureRunner = async (run) => {
       settings,
       random,
     );
-    const pick = pickSandbox(open, weights, random);
+    // Nothing else open, it keeps its idle marker: it plays its idles there again (it left it
+    // as each stay ended, and stood on it unreserved, in the way of the next to take it).
+    // TODO(M13): what the engine does when its pick finds nothing is not read (inferred: it
+    // goes on with what it does; in a seat it stays seated, below).
+    const pick =
+      pickSandbox(open, weights, random) ?? (at?.kind === SandboxKind.idleMarker ? at : undefined);
     if (run.stopped()) break;
     if (!pick) {
       // Nothing to do here: it stands a while and looks again (fMin..MaxSandboxRescanSeconds).
