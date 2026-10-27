@@ -728,6 +728,22 @@ the speeds of its quadrant.
   occlusion planes (no collision); activators' primitives are triggers, whose scripts hear
   the player come and go (OnTriggerEnter, OnTriggerLeave; [scripting.md](../scripting.md)).
 
+## Rooms, portals and occluders
+
+Culling markers are references of hard-coded STAT bases (`src/world/cell-rooms.ts`):
+
+- **RoomMarker (0x1F)**: the room's box is XPRM's half extents (XMBO repeats them), placed by
+  the reference (rotation and scale). **XRMR**: u8 linked room count, u8 flags (0x40 has
+  image space INAM, 0x80 has lighting template LNAM), u16 unused; then one **XLRM** (form id)
+  per linked room. Dragonsreach has 9 rooms, Bleak Falls Barrow 34; rooms overlap at doorways.
+- **PortalMarker (0x20)**: a rectangle in the reference's local XZ plane, XPRM x and z its half
+  width and height (y is 1). **XPOD**: two form ids, the rooms it joins. Every vanilla portal
+  checked joins two room markers of its own cell.
+- **PlaneMarker (0x17)**: an occluder. In Tamriel round Whiterun they are occlusion boxes
+  (XPRM type 1, e.g. 128 × 1126 × 725 half extents): thin walls hiding what is behind them.
+- **MultiBoundMarker (0x15)**: XMBO half extents, the box of the references grouped on it.
+- LIGH DATA flag **0x2000** is Portal-strict: the light lights only the room it stands in.
+
 ## Navigation meshes
 
 **NAVM** (`src/world/navmesh.ts`): where actors walk, a child record of a cell (19,201 in the
