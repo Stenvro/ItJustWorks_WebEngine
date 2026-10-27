@@ -74,6 +74,7 @@ import { scriptEvent, StoryManager, type StoryEventData } from './story-manager.
 import { StoryEvents } from './story-events.ts';
 import { ActorLocations, type PlacementSnapshot } from './actor-locations.ts';
 import { SceneDirector } from '../../ai/scene-runtime.ts';
+import type { WorldSave } from '../../save/world-save.ts';
 import { RuntimeSceneHost, type SceneSpeech } from './scene-host.ts';
 import {
   gameStateData,
@@ -469,6 +470,11 @@ export interface WorldBridge {
    * (a scene's line waits for it). Undefined: not loaded.
    */
   facesForLine?(speaker: number, target: number): boolean | undefined;
+  /**
+   * What a save keeps of the loaded world (src/save/world-save.ts): the actors' places,
+   * furniture, packages and fights, the graphs of objects moved from their start.
+   */
+  saveWorld?(): WorldSave;
 }
 
 /** A quest's update as the HUD announces it. */
@@ -3381,6 +3387,7 @@ export class ScriptRuntime implements VmHost {
       storyManager: this.storyManager.saveData(),
       instances: await this.vm.savedInstances(),
       threads: threads.threads,
+      scenes: this.scenes.saveData(),
     };
   }
 
@@ -3451,6 +3458,8 @@ export class ScriptRuntime implements VmHost {
     }
     // The threads that waited go on where they were (their frames: papyrus-vm.ts).
     problems.push(...(await this.vm.restoreThreads(save.threads ?? [])));
+    // The scenes that played go on in their phases (src/ai/scene-runtime.ts).
+    this.scenes.restore(save.scenes);
     // The player's abilities, diseases and worn enchantments act again (magic-engine.ts).
     await this.magic.prepare(PLAYER_REF);
     await this.vm.idle();
