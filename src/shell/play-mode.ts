@@ -936,9 +936,9 @@ export class PlayMode {
             this.#renderer.showGrass = !this.#renderer.showGrass;
             return this.#renderer.showGrass;
           },
-          setFov: (world) => {
-            // TODO(M13): first person's own field of view (fDefault1stPersonFOV).
-            this.#world.player()?.play.player.setFov(world);
+          // The world's and first person's own (src/render/first-person-view.ts).
+          setFov: (world, firstPerson) => {
+            this.#world.player()?.play.player.setFov(world, firstPerson);
           },
           gameSettings: () => session.settings(),
           questTargets: () => questTargets(runtime),

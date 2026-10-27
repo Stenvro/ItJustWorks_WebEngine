@@ -8,9 +8,9 @@
 // view as the player looks up and down. What it wears there: the pieces in its race's
 // first-person slots, a piece without a first-person model in its world model (docs/
 // animation.md, "First person"). Game.ShowFirstPersonGeometry hides it (the beast
-// forms, the carriage ride: src/shell/world-viewer.ts draws it only in first person).
-// TODO(M13): the engine draws first-person geometry in a pass of its own (its own near plane
-// and field of view, over the world); here it shares the view's camera.
+// forms, the carriage ride: src/shell/world-viewer.ts draws it only in first person). It is
+// drawn as the engine's first-person pass draws it: with first person's own field of view and
+// near plane, over the world (ModelInstance.firstPerson: src/render/first-person-view.ts).
 
 import type { AnimatedSkeleton } from '../animation/animated-skeleton.ts';
 import type { GraphEvent } from '../animation/graph-events.ts';
@@ -147,6 +147,7 @@ export class FirstPersonBody {
       model,
       world: this.world,
       motion: this.motion,
+      firstPerson: true,
       pose,
       ...(dressed.nodeMaps[i] && { poseNodes: dressed.nodeMaps[i] }),
       tints,
