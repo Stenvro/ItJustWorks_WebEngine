@@ -15,6 +15,7 @@ const entry = (effectId: number, magnitude: number, duration = 1) => ({
   magnitude,
   duration,
   area: 0,
+  conditions: [],
 });
 
 describe('enchantmentGlow', () => {
