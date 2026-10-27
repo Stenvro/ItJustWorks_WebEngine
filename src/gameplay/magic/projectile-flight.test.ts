@@ -2,13 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { ProjectileFlag, ProjectileType } from '../../world/projectile-data.ts';
 import {
   aimDirection,
+  bounceLobber,
   explosionFalloff,
   flightKind,
   inCone,
   inRadius,
+  launchCone,
   launchFlight,
   pathHitsActor,
   stepFlight,
+  sweepCone,
   withinProximity,
   WORLD_GRAVITY,
   type FlightData,
@@ -108,12 +111,60 @@ describe('cones, areas and explosions', () => {
 
   it('fly by their type', () => {
     expect(flightKind(missile)).toBe('flying');
-    expect(flightKind({ type: ProjectileType.lobber, flags: 0 })).toBe('flying');
+    expect(flightKind({ type: ProjectileType.lobber, flags: 0 })).toBe('lobber');
     expect(flightKind({ type: ProjectileType.beam, flags: 0 })).toBe('instant');
     expect(flightKind({ type: ProjectileType.missile, flags: ProjectileFlag.hitscan })).toBe(
       'instant',
     );
     expect(flightKind({ type: ProjectileType.flame, flags: 0 })).toBe('spray');
     expect(flightKind({ type: ProjectileType.cone, flags: 0 })).toBe('cone');
+  });
+});
+
+describe('a cone’s wave', () => {
+  it('reaches an actor as its front passes it, at its speed, each once', () => {
+    const wave = launchCone([0, 0, 64], [0, 1, 0], 1000, 15, 2000);
+    const shapes = [
+      [1, human(0, 600)] as const,
+      [2, human(0, 200)] as const,
+      [3, human(500, 300)] as const,
+    ];
+    expect(sweepCone(wave, 0, shapes)).toEqual([]);
+    expect(sweepCone(wave, 0.1, shapes)).toEqual([2]);
+    expect(sweepCone(wave, 0.1, shapes)).toEqual([]);
+    expect(sweepCone(wave, 0.1, shapes)).toEqual([1]);
+    // Out of its spread: never.
+    expect(sweepCone(wave, 1, shapes)).toEqual([]);
+    expect(wave.front).toBe(1000);
+  });
+});
+
+describe('a lobber', () => {
+  const rune: FlightData = {
+    ...missile,
+    type: ProjectileType.lobber,
+    flags: ProjectileFlag.explosion | ProjectileFlag.altTrigger,
+    speed: 1000,
+    proximity: 150,
+  };
+
+  it('rests where it lands (fGrenadeRestitution 0) and waits for its trigger', () => {
+    const flight = launchFlight(rune, [0, 0, 100], [0, 1, -1]);
+    expect(bounceLobber(flight, [0, 70, 0], [0, 0, 1])).toBe(true);
+    expect(flight.resting).toBe(true);
+    const step = stepFlight(flight, 30);
+    expect(step.to).toEqual([0, 70, 0]);
+    expect(flight.spent).toBe(false);
+  });
+
+  it('bounces back by its restitution, losing its friction’s share along the surface', () => {
+    const flight = launchFlight({ ...rune, speed: 1000 }, [0, 0, 100], [0, 1, -1]);
+    const resting = bounceLobber(flight, [0, 70, 0], [0, 0, 1], {
+      restitution: 0.5,
+      friction: 0.5,
+    });
+    expect(resting).toBe(false);
+    expect(flight.velocity[2]).toBeCloseTo(1000 * Math.SQRT1_2 * 0.5, 6);
+    expect(flight.velocity[1]).toBeCloseTo(1000 * Math.SQRT1_2 * 0.5, 6);
   });
 });

@@ -113,14 +113,74 @@ describe.skipIf(!hasGamedata())('a ward against a fireball’s burst (sim)', () 
     expect(applied()).toBeGreaterThan(told);
     runtime.actors.modifyTemporary(target.reference, WARD_POWER, -200);
   }, 120_000);
+
+  it('lets an explosion’s own damage meet the ward it faces (dunHighGate’s 60-point fireball)', async () => {
+    const runtime = sim.runtime;
+    const [target, caster] = sim.actors();
+    const placement = target && runtime.world.livePlacement?.(target.reference);
+    expect(placement && caster).toBeTruthy();
+    if (!target || !caster || !placement) return;
+    const explosion = await sim.formId('EXPL', 'dunHighGateFlamingThrallFireBallExp01');
+    const [x, y, z] = placement.position;
+    const heading = placement.rotation?.[2] ?? 0;
+    const at = (sign: number): [number, number, number] => [
+      x + sign * Math.sin(heading) * 40,
+      y + sign * Math.cos(heading) * 40,
+      z + 60,
+    ];
+    const health = async (): Promise<number> =>
+      (await runtime.actors.value(target.reference, ActorValue.health)).current;
+    runtime.actors.modifyTemporary(target.reference, WARD_POWER, 200);
+    const before = await health();
+    await runtime.casting.explode(caster.reference, explosion, at(1));
+    expect(await health()).toBe(before);
+    runtime.actors.modifyTemporary(target.reference, WARD_POWER, -200);
+    runtime.actors.restore(target.reference, ActorValue.health, 1000);
+    const whole = await health();
+    await runtime.casting.explode(caster.reference, explosion, at(-1));
+    expect(whole - (await health())).toBeGreaterThan(30);
+    runtime.actors.restore(target.reference, ActorValue.health, 1000);
+  }, 120_000);
+
+  it('reaches only those an area’s point sees, unless the spell ignores line of sight', async () => {
+    const runtime = sim.runtime;
+    const [target, caster] = sim.actors();
+    const record = await sim.db.get(await sim.formId('SPEL', 'Fireball'));
+    const item = record ? parseMagicItem(record) : undefined;
+    const placement = target && runtime.world.livePlacement?.(target.reference);
+    expect(item && placement && caster).toBeTruthy();
+    if (!target || !caster || !item || !placement) return;
+    const point: [number, number, number] = [
+      placement.position[0] + 50,
+      placement.position[1],
+      placement.position[2] + 60,
+    ];
+    const world = runtime.world;
+    const sight = world.explosionReaches;
+    world.explosionReaches = () => false;
+    const delivered = (flags: number) => ({
+      caster: caster.reference,
+      item: { ...item, flags },
+      via: 'spell' as const,
+      dual: false,
+      cost: { base: 0, magicka: 0, charge: 0, school: undefined, chargeTime: 0 },
+    });
+    try {
+      expect(await runtime.casting.area(delivered(item.flags & ~0x80000), point)).not.toContain(
+        target.reference,
+      );
+      expect(await runtime.casting.area(delivered(item.flags | 0x80000), point)).toContain(
+        target.reference,
+      );
+    } finally {
+      world.explosionReaches = sight;
+      runtime.actors.restore(target.reference, ActorValue.health, 1000);
+    }
+  }, 120_000);
 });
 
 describe('what the original’s projectiles and explosions do that ours do not yet', () => {
-  it.todo('a projectile’s impact pushes what it hits (PROJ impact force, fProjectileKnockMult*)');
-  it.todo('a cone (Unrelenting Force, Fire Breath) sweeps out at its speed, reaching as it goes');
-  it.todo('a lobber bounces as its PROJ says (Bounce Multiplier) before it bursts');
-  it.todo('an area’s effects need a line of sight from the point (unless SPIT 0x80000)');
-  it.todo(
-    'an explosion’s own damage meets a ward that faces it (original: the explosion’s damage path)',
-  );
+  // A projectile's impact force on what it hits: tests/conformance/physics/gameplay-impulses.test.ts.
+  it.todo('a cone’s force pushes the bodies as its front passes them (all at once in ours)');
+  it.todo('a lobber slides along a slope by fGrenadeFriction (ours rests where it lands)');
 });

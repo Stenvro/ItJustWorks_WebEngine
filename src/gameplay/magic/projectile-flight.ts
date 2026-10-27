@@ -11,8 +11,10 @@
 //   actor along it.
 // - Flames are sprays: a concentration spell sends one every relaunch interval while held,
 //   each flying a short range.
-// - Cones (Unrelenting Force) sweep everything within their range and cone spread (degrees
-//   either side of the aim) at once.
+// - Cones (Unrelenting Force) sweep out at their speed to their range, reaching everything
+//   within their cone spread (degrees either side of the aim) as their front passes it.
+// - Lobbers (runes) bounce off a surface by fGrenadeRestitution or rest there; with an
+//   alternative trigger they wait at rest for an actor within their proximity or their timer.
 // - Where one ends it may burst (its explosion, or the effect's: EXPL radius), and an effect
 //   with an area (feet) reaches every actor within it of that point.
 //
@@ -49,16 +51,19 @@ export interface Flight {
   age: number;
   /** It reached its range, lifetime or timer: it ends where it is. */
   spent: boolean;
+  /** A lobber come to rest on a surface: it waits there for its trigger (restLobber). */
+  resting?: boolean;
 }
 
 /** How a projectile reaches what it hits. */
-export type FlightKind = 'flying' | 'instant' | 'spray' | 'cone';
+export type FlightKind = 'flying' | 'lobber' | 'instant' | 'spray' | 'cone';
 
 export function flightKind(data: Pick<FlightData, 'type' | 'flags'>): FlightKind {
   if (data.type === ProjectileType.cone) return 'cone';
   if (data.type === ProjectileType.beam || (data.flags & ProjectileFlag.hitscan) !== 0)
     return 'instant';
   if (data.type === ProjectileType.flame) return 'spray';
+  if (data.type === ProjectileType.lobber) return 'lobber';
   // Missiles, lobbers, arrows; barriers (none in the vanilla records) fly as missiles.
   // TODO(M13): barrier projectiles' walls.
   return 'flying';
@@ -99,6 +104,18 @@ export function stepFlight(flight: Flight, seconds: number): { from: Vec3; to: V
   const from = flight.position;
   if (flight.spent || seconds <= 0) return { from, to: from };
   const data = flight.data;
+  if (flight.resting) {
+    // At rest it only ages (its lifetime, its alternative trigger's timer).
+    flight.age += seconds;
+    if (data.lifetime > 0 && flight.age >= data.lifetime) flight.spent = true;
+    if (
+      (data.flags & ProjectileFlag.altTrigger) !== 0 &&
+      data.timer > 0 &&
+      flight.age >= data.timer
+    )
+      flight.spent = true;
+    return { from, to: from };
+  }
   const fall = data.gravity * WORLD_GRAVITY;
   const [vx, vy, vz] = flight.velocity;
   let to: Vec3 = [
@@ -126,6 +143,116 @@ export function stepFlight(flight: Flight, seconds: number): { from: Vec3; to: V
     flight.spent = true;
   flight.position = to;
   return { from, to };
+}
+
+/** The lobbers' surface settings (GMSTs; the engine's defaults, Skyrim.esm keeps them). */
+export interface LobberSettings {
+  /** fGrenadeRestitution: the share of its speed into the surface it bounces back with. */
+  readonly restitution: number;
+  /** fGrenadeFriction: the share of its speed along the surface the bounce takes away. */
+  readonly friction: number;
+}
+
+export const LOBBER_DEFAULTS: LobberSettings = { restitution: 0, friction: 0 };
+
+/** Below this speed (units a second) off a surface a lobber stops bouncing and lies still. */
+const LOBBER_REST_SPEED = 20;
+
+/**
+ * A lobber (runes, thrown things: CommonLibSSE GrenadeProjectile) meets a surface: it bounces
+ * off it (its speed into the surface back by fGrenadeRestitution, along it less by
+ * fGrenadeFriction) or, too slow to bounce, comes to rest where it met it. Without an
+ * alternative trigger a lobber bursts where it meets a surface (the caller ends it); with one it
+ * waits, at rest, for an actor within its proximity or its timer. Returns whether it rests.
+ * Vanilla's lobbers (the runes) keep both settings at 0: they stop where they land.
+ * TODO(M13): a lobber's slide along a slope with friction below 1 (it rests at once here).
+ */
+export function bounceLobber(
+  flight: Flight,
+  point: Vec3,
+  normal: Vec3 | undefined,
+  settings: LobberSettings = LOBBER_DEFAULTS,
+): boolean {
+  flight.position = [...point];
+  const n = normalize(normal ?? [0, 0, 1]);
+  const [vx, vy, vz] = flight.velocity;
+  const into = vx * n[0] + vy * n[1] + vz * n[2];
+  const along: Vec3 = [vx - into * n[0], vy - into * n[1], vz - into * n[2]];
+  const back = -into * Math.max(0, settings.restitution);
+  const keep = 1 - Math.min(1, Math.max(0, settings.friction));
+  if (back < LOBBER_REST_SPEED) {
+    flight.velocity = [0, 0, 0];
+    flight.resting = true;
+    return true;
+  }
+  flight.velocity = [
+    along[0] * keep + n[0] * back,
+    along[1] * keep + n[1] * back,
+    along[2] * keep + n[2] * back,
+  ];
+  return false;
+}
+
+/**
+ * A cone's wave (Unrelenting Force, Fire Breath; CommonLibSSE ConeProjectile): it sweeps out
+ * from its apex at its projectile's speed to its range, reaching each actor or object as its
+ * front passes it (within its spread either side of its direction).
+ */
+export interface ConeWave {
+  readonly apex: Vec3;
+  readonly direction: Vec3;
+  readonly range: number;
+  /** Degrees either side of its direction. */
+  readonly spread: number;
+  /** Units a second its front moves out (its range at once without a speed). */
+  readonly speed: number;
+  /** How far its front has come. */
+  front: number;
+  /** What it has reached (each once). */
+  readonly reached: Set<number>;
+}
+
+export function launchCone(
+  apex: Vec3,
+  direction: Vec3,
+  range: number,
+  spread: number,
+  speed: number,
+): ConeWave {
+  return {
+    apex: [...apex],
+    direction: normalize(direction),
+    range,
+    spread,
+    speed: speed > 0 ? speed : Infinity,
+    front: 0,
+    reached: new Set(),
+  };
+}
+
+/** Whether the wave has reached its range (it is done). */
+export function coneDone(wave: ConeWave): boolean {
+  return wave.front >= wave.range;
+}
+
+/**
+ * The wave moves out for `seconds`: the shapes it newly reaches (keyed), each once. Call with 0
+ * as it leaves (those at its apex).
+ */
+export function sweepCone<K extends number>(
+  wave: ConeWave,
+  seconds: number,
+  shapes: Iterable<readonly [K, ActorShape]>,
+): K[] {
+  wave.front = Math.min(wave.range, wave.front + wave.speed * Math.max(0, seconds));
+  const reached: K[] = [];
+  for (const [key, shape] of shapes) {
+    if (wave.reached.has(key)) continue;
+    if (!inCone(wave.apex, wave.direction, wave.front, wave.spread, shape)) continue;
+    wave.reached.add(key);
+    reached.push(key);
+  }
+  return reached;
 }
 
 /** An actor as projectiles meet it: an upright capsule from its feet. */

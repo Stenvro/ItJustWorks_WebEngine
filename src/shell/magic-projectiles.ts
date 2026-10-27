@@ -4,7 +4,9 @@
 // lobbers and arrow-like bolts fly through the physics steps, drawn as their model, sounding
 // their flight sound, until they meet a surface (the physics world, the spell layer), an actor
 // (its ragdoll bodies' owner, or its capsule) or their range; beams reach at once; flames are a
-// concentration spell's sprays; cones sweep every actor within their spread at once. Where one
+// concentration spell's sprays; cones' waves sweep out at their speed, reaching every actor within
+// their spread as they pass it; a lobber with an alternative trigger (a rune) rests where it
+// lands until an actor comes within its proximity. Where one
 // ends: the actor hit takes the spell (the casting engine's deliver: wards, absorption, OnHit,
 // skill), a Target Location spell takes effect there (summons, runes), the explosion bursts (its
 // sound, the casting engine's explode), the area reaches those near (area), the effect's impact
@@ -22,16 +24,22 @@
 // hop each here; the engine's limit is not read).
 
 import {
+  bounceLobber,
+  coneDone,
   flightKind,
-  inCone,
+  launchCone,
   launchFlight,
+  LOBBER_DEFAULTS,
   normalize,
   pathHitsActor,
   pointAt,
   stepFlight,
+  sweepCone,
   withinProximity,
   type ActorShape,
+  type ConeWave,
   type Flight,
+  type LobberSettings,
 } from '../gameplay/magic/projectile-flight.ts';
 import { chainEffectiveness } from '../gameplay/magic/explosions.ts';
 import { ImpactPlacements } from '../gameplay/magic/impact-placement.ts';
@@ -161,10 +169,23 @@ export class MagicProjectiles {
   readonly #placements = new ImpactPlacements();
   /** The gameplay impulses' settings (src/gameplay/impulses.ts), once read. */
   readonly #impulses: ReturnType<typeof loadImpulseSettings>;
+  /** The lobbers' surface settings (fGrenadeRestitution, fGrenadeFriction), once read. */
+  readonly #lobbers: { current: LobberSettings } = { current: LOBBER_DEFAULTS };
+  /** The cones' waves sweeping out. */
+  readonly #waves = new Set<Wave>();
 
   constructor(options: MagicProjectilesOptions) {
     this.#options = options;
     this.#impulses = loadImpulseSettings(() => options.session.settings());
+    void options.session
+      .settings()
+      .then((read) => {
+        this.#lobbers.current = {
+          restitution: read.number('fGrenadeRestitution') ?? LOBBER_DEFAULTS.restitution,
+          friction: read.number('fGrenadeFriction') ?? LOBBER_DEFAULTS.friction,
+        };
+      })
+      .catch(() => undefined);
     this.#beams = new MagicBeams({
       session: options.session,
       renderer: options.renderer,
@@ -421,9 +442,11 @@ export class MagicProjectiles {
   }
 
   /**
-   * A cone (Unrelenting Force, Fire Breath): every actor within its range and spread that it
-   * can see from its apex takes the spell at once, and so does every object whose collision it
-   * meets there (L_CONEPROJECTILE: a web burnt, a destructible broken, an object's OnHit).
+   * A cone (Unrelenting Force, Fire Breath): its wave sweeps out from its apex at its speed to
+   * its range (projectile-flight.ts ConeWave); every actor within its spread that its front
+   * passes and that it can see from its apex takes the spell then, and so does every object
+   * whose collision it meets (L_CONEPROJECTILE: a web burnt, a destructible broken, an object's
+   * OnHit).
    */
   async #cone(
     runtime: ScriptRuntime,
@@ -434,45 +457,18 @@ export class MagicProjectiles {
     seconds: number | undefined,
   ): Promise<void> {
     const range = projectile.range > 0 ? projectile.range : 1000;
-    for (const target of [...this.#options.targets()]) {
-      if (target.reference === delivered.caster) continue;
-      if (!inCone(origin, aim, range, projectile.coneSpread, target.shape)) continue;
-      const middle: Vec3 = [
-        target.shape.feet[0],
-        target.shape.feet[1],
-        target.shape.feet[2] + target.shape.height / 2,
-      ];
-      if (this.#blocked(delivered.caster, origin, middle)) continue;
-      await this.#reach(runtime, delivered, target.reference, {
-        facing: facing(target, origin),
-        ...(seconds !== undefined && { seconds }),
-      });
-    }
+    const wave: Wave = {
+      wave: launchCone(origin, aim, range, projectile.coneSpread, projectile.speed),
+      delivered,
+      projectile,
+      seconds,
+    };
+    wave.wave.reached.add(delivered.caster);
+    this.#waves.add(wave);
+    await this.#sweepWave(runtime, wave, 0);
+    // Its force pushes the moving bodies it sweeps (clutter flies, corpses tumble). TODO(M13):
+    // pushed as the front passes them (all at once here).
     const physics = this.#physics;
-    const objects =
-      physics?.objectsNear(origin, range, Layer.coneProjectile) ?? new Map<number, Vec3>();
-    for (const [reference, middle] of objects) {
-      if (reference === delivered.caster) continue;
-      if (
-        !inCone(origin, aim, range, projectile.coneSpread, { feet: middle, height: 0, radius: 0 })
-      )
-        continue;
-      // Seen from its apex: nothing else first on the way to the object's body.
-      const way: Vec3 = [middle[0] - origin[0], middle[1] - origin[1], middle[2] - origin[2]];
-      const first = physics?.raycast(origin, way, Math.hypot(...way), Layer.coneProjectile);
-      if (
-        first &&
-        first.owner?.reference !== reference &&
-        first.owner?.reference !== delivered.caster
-      )
-        continue;
-      await runtime.casting.deliver(delivered, reference, {
-        facing: false,
-        projectile: projectile.formId,
-        ...(seconds !== undefined && { seconds }),
-      });
-    }
-    // Its force pushes the moving bodies it sweeps (clutter flies, corpses tumble).
     const force = projectile.impactForce;
     if (force > 0)
       physics?.pushCone(
@@ -496,6 +492,59 @@ export class MagicProjectiles {
       range,
       duration: range / speed + 0.25,
     });
+  }
+
+  /** A cone's wave moves out for `seconds`: what its front newly passes takes the spell. */
+  async #sweepWave(runtime: ScriptRuntime, entry: Wave, step: number): Promise<void> {
+    const { wave, delivered, projectile, seconds } = entry;
+    const origin = wave.apex;
+    const targets = new Map<number, ProjectileTarget>();
+    for (const target of this.#options.targets()) targets.set(target.reference, target);
+    const physics = this.#physics;
+    const front = Math.min(wave.range, wave.front + wave.speed * step);
+    const objects =
+      physics?.objectsNear(origin, front, Layer.coneProjectile) ?? new Map<number, Vec3>();
+    const shapes: [number, ActorShape][] = [
+      ...[...targets].map(([reference, target]): [number, ActorShape] => [reference, target.shape]),
+      ...[...objects]
+        .filter(([reference]) => !targets.has(reference))
+        .map(([reference, middle]): [number, ActorShape] => [
+          reference,
+          { feet: middle, height: 0, radius: 0 },
+        ]),
+    ];
+    for (const reference of sweepCone(wave, step, shapes)) {
+      const target = targets.get(reference);
+      if (target) {
+        const middle: Vec3 = [
+          target.shape.feet[0],
+          target.shape.feet[1],
+          target.shape.feet[2] + target.shape.height / 2,
+        ];
+        if (this.#blocked(delivered.caster, origin, middle)) continue;
+        await this.#reach(runtime, delivered, reference, {
+          facing: facing(target, origin),
+          ...(seconds !== undefined && { seconds }),
+        });
+        continue;
+      }
+      const middle = objects.get(reference);
+      if (!middle) continue;
+      // Seen from its apex: nothing else first on the way to the object's body.
+      const way: Vec3 = [middle[0] - origin[0], middle[1] - origin[1], middle[2] - origin[2]];
+      const first = physics?.raycast(origin, way, Math.hypot(...way), Layer.coneProjectile);
+      if (
+        first &&
+        first.owner?.reference !== reference &&
+        first.owner?.reference !== delivered.caster
+      )
+        continue;
+      await runtime.casting.deliver(delivered, reference, {
+        facing: false,
+        projectile: projectile.formId,
+        ...(seconds !== undefined && { seconds }),
+      });
+    }
   }
 
   /** A projectile's impact force pushes the moving body it met (src/gameplay/impulses.ts). */
@@ -635,8 +684,18 @@ export class MagicProjectiles {
       this.#beams.frame(seconds);
       this.#flames.frame(seconds);
     }
-    if (seconds <= 0 || this.#flying.size === 0) return;
     const runtime = this.#options.session.scriptsReady;
+    if (seconds > 0 && runtime)
+      for (const wave of [...this.#waves]) {
+        if (coneDone(wave.wave)) {
+          this.#waves.delete(wave);
+          continue;
+        }
+        void this.#sweepWave(runtime, wave, seconds).catch((error: unknown) => {
+          this.#options.terminal.log('magic', `cone: ${describe(error)}`, 'warn');
+        });
+      }
+    if (seconds <= 0 || this.#flying.size === 0) return;
     for (const flying of [...this.#flying]) {
       if (flying.done) continue;
       const { from, to } = stepFlight(flying.flight, seconds);
@@ -650,6 +709,21 @@ export class MagicProjectiles {
             target.reference !== flying.delivered.caster &&
             withinProximity(flying.projectile, to, target.shape),
         );
+      // A lobber with an alternative trigger that meets a surface bounces or rests there,
+      // waiting for an actor within its proximity or its timer (a rune on the floor).
+      if (
+        hit &&
+        hit.kind !== 'actor' &&
+        flightKind(flying.projectile) === 'lobber' &&
+        (flying.projectile.flags & ProjectileFlag.altTrigger) !== 0
+      ) {
+        bounceLobber(flying.flight, pointAt(from, to, hit.t), hit.normal, this.#lobbers.current);
+        if (flying.instance) {
+          flying.instance.world.set(placementOf(flying.flight));
+          flying.motion.version++;
+        }
+        continue;
+      }
       if (hit || near || flying.flight.spent) {
         const point = hit ? pointAt(from, to, hit.t) : to;
         flying.flight.position = point;
@@ -778,6 +852,7 @@ export class MagicProjectiles {
     if (reached) {
       await casting.area(delivered, point, {
         ...(actor && { exclude: actor.reference }),
+        direction: hit?.normal ?? [-aim[0], -aim[1], -aim[2]],
         ...(seconds !== undefined && { seconds }),
       });
     }
@@ -965,15 +1040,28 @@ export class MagicProjectiles {
   /** Every projectile goes (the play ended, the view changed). */
   clear(): void {
     for (const flying of [...this.#flying]) this.#end(flying);
+    this.#waves.clear();
     this.#placements.clear();
     this.#beams.clear();
     this.#flames.clear();
   }
 }
 
-/** A flying projectile's world matrix: at its position, along its velocity. */
+/** A cone's wave on its way: what it carries. */
+interface Wave {
+  readonly wave: ConeWave;
+  readonly delivered: Delivered;
+  readonly projectile: ProjectileRecord;
+  readonly seconds: number | undefined;
+}
+
+/** A flying projectile's world matrix: at its position, along its velocity (at rest: as it lay). */
 function placementOf(flight: Flight): Float32Array {
-  return alongMatrix(flight.position, normalize(flight.velocity));
+  const [vx, vy, vz] = flight.velocity;
+  return alongMatrix(
+    flight.position,
+    vx === 0 && vy === 0 && vz === 0 ? [0, 1, 0] : normalize(flight.velocity),
+  );
 }
 
 /** Whether a target faces a point (within 90° of its heading: a ward meets it). */
