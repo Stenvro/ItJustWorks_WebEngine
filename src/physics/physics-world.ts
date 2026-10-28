@@ -2439,11 +2439,19 @@ export class PhysicsWorld {
    * the triggers its colliders overlap whose layer collides with its own (the layer matrix:
    * L_TRIGGER meets clutter, weapons, projectiles, dead bodies, ...). Sleeping bodies are not
    * looked at (they stay where they were). The player's character is not among them.
+   *
+   * Nor are bodies settling after their cell placed them (the warm start): the game's placed
+   * clutter lies inactive until something disturbs it (an object left floating in the editor
+   * floats until touched), and its trigger volumes (hkpTriggerVolume) hear of a body only from
+   * the contacts the simulation of an active one makes, so what a cell places inside a trigger
+   * does not enter it as the cell loads (Whiterun's clutter told
+   * CWDisableHoldPositionMarkerTrigger, whose script takes what enters for an actor). Disturbed
+   * later, it enters as it moves.
    */
   movingInTriggers(): Map<number, Set<number>> {
     const found = new Map<number, Set<number>>();
     this.world.forEachActiveRigidBody((body) => {
-      if (!body.isDynamic()) return;
+      if (!body.isDynamic() || this.#settling.has(body.handle)) return;
       for (let i = 0; i < body.numColliders(); i++) {
         const collider = body.collider(i);
         const owner = this.ownerOf(collider);
