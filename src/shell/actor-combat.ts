@@ -34,6 +34,7 @@ import type { ActorGraphSource } from './actor-graph-events.ts';
 import { ActorValue } from '../world/actor-values.ts';
 import { DefaultObjectUse } from '../world/default-objects.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import { referenceName } from '../scripting/runtime/quest-text.ts';
 import {
   CombatMusic,
   readCombatMusicSettings,
@@ -174,6 +175,9 @@ const CHEST = 0.75;
  * often the engine values ShouldAttackKill is not known.
  */
 const ESTIMATED_ARMOR_SECONDS = 2;
+
+/** A combat notice is not shown again within this long (the engine's notices: 5 s). */
+const NOTICE_REPEAT_MS = 5000;
 /**
  * The graphs' BSDirectAtModifier kinds (userInfo) the engine gives an actor's aim: 2 bows and
  * spells, 3 the dragon rider's (observed in the original: both get the same point); and how
@@ -470,6 +474,8 @@ export class ActorCombat implements CombatBridge {
   /** Whether a reference has the location reference type Boss (XLRT: DOBJ LRTB), once read. */
   readonly #bosses = new Map<number, boolean>();
   #equipListening: ScriptRuntime | undefined;
+  /** The combat notices shown lately and when (performance.now). */
+  readonly #notices = new Map<string, number>();
   #camera: KillmoveCamera | undefined;
   /** The kill camera's image-space modifier shown now. */
   #killCamImod: number | undefined;
@@ -1197,7 +1203,7 @@ export class ActorCombat implements CombatBridge {
       }
     }
     this.#enemyBar();
-    this.#setMusic(this.#combatMusic.update(seconds, this.#musicInput(runtime)));
+    this.#setMusic(this.#combatMusic.update(seconds, () => this.#musicInput(runtime)));
   }
 
   /**
@@ -2012,6 +2018,68 @@ export class ActorCombat implements CombatBridge {
    * A hit of an attacker on a target (a strike, a shot): its damage, the block, stagger or
    * recoil, its impact, the target's scripts told, the skills used, its health taken.
    */
+  /**
+   * The player's critical hit or sneak attack on a living actor (observed in the original):
+   * a critical is told "sCriticalStrike <target>", a sneak attack "sSuccessfulSneakAttackMain
+   * <multiplier>sSuccessfulSneakAttackEnd" ("Sneak attack for 3.0X damage!"), each with
+   * UISneakAttack and not again within 5 s; a sneak attack uses Sneak
+   * (fSneakAttackSkillUsageMelee, fSneakAttackSkillUsageRanged for a bow or crossbow); each is a
+   * CriticalHit event (the misc stats). `sneakMult` 0: no sneak attack.
+   */
+  async #playerStrike(
+    runtime: ScriptRuntime,
+    targetRef: number,
+    stats: WeaponStats | undefined,
+    critical: boolean,
+    sneakMult: number,
+  ): Promise<void> {
+    const text = async (setting: string): Promise<string> => {
+      const value = await runtime.gameSetting(setting);
+      return typeof value === 'string' ? value : '';
+    };
+    if (critical) {
+      this.#notice(`${await text('sCriticalStrike')} ${await referenceName(runtime, targetRef)}`);
+      runtime.events.emit('criticalHit', {
+        aggressor: PLAYER_REF,
+        weapon: stats?.weapon,
+        sneakHit: false,
+      });
+    }
+    if (sneakMult <= 0) return;
+    const ranged =
+      stats?.weaponType === WeaponType.bow || stats?.weaponType === WeaponType.crossbow;
+    void runtime.progression.useSkill(
+      PLAYER_REF,
+      ActorValue.firstSkill + 9,
+      ranged
+        ? this.#settings.sneakAttackSkillUsageRanged
+        : this.#settings.sneakAttackSkillUsageMelee,
+    );
+    const [main, end] = await Promise.all([
+      text('sSuccessfulSneakAttackMain'),
+      text('sSuccessfulSneakAttackEnd'),
+    ]);
+    this.#notice(`${main}${sneakMult.toFixed(1)}${end}`);
+    runtime.events.emit('criticalHit', {
+      aggressor: PLAYER_REF,
+      weapon: stats?.weapon,
+      sneakHit: true,
+    });
+  }
+
+  /** A combat notice with UISneakAttack, unless the same text was shown within 5 s. */
+  #notice(text: string): void {
+    const now = performance.now();
+    for (const [shown, at] of this.#notices)
+      if (now - at > NOTICE_REPEAT_MS) this.#notices.delete(shown);
+    if (this.#notices.has(text)) return;
+    this.#notices.set(text, now);
+    this.#options.session.scriptsReady?.world.notification?.(text);
+    void this.#options.session
+      .sounds()
+      .then((sounds) => sounds.playNamed('UISneakAttack', undefined));
+  }
+
   async #hit(
     attackerRef: number,
     targetRef: number,
@@ -2146,6 +2214,8 @@ export class ActorCombat implements CombatBridge {
           context,
         )
       : 1;
+    if (attacker.player && targetRef !== PLAYER_REF)
+      void this.#playerStrike(runtime, targetRef, stats, critical > 0, sneak ? sneakMult : 0);
     // The block: the target blocks and faces the blow (fCombatHitConeAngle).
     const targetFeet = this.#feet(target) ?? hit.point;
     const attackerFeet = this.#feet(attacker) ?? hit.point;
@@ -2346,12 +2416,11 @@ export class ActorCombat implements CombatBridge {
         this.#warn(`a hit's impact: ${describe(error)}`);
       });
     // The skills: the weapon's by its base damage (UESP: experience follows the base damage
-    // dealt), Sneak for a sneak attack (fSneakAttackSkillUsageMelee).
+    // dealt); Sneak for the player's sneak attack: #playerStrike.
     const skill = hit.bash ? ActorValue.firstSkill + 3 : (stats?.skill ?? -1);
     if (skill >= 0 && !blocks) {
       void runtime.progression.useSkill(attackerRef, skill, stats?.baseDamage ?? 0);
     }
-    if (sneak) void runtime.progression.useSkill(attackerRef, ActorValue.firstSkill + 9, 30);
     // The one hit uses the armour skills of what it wears (Light, Heavy Armor) by the blow's
     // damage before its armour (UESP "Skyrim:Light Armor": the incoming base damage), unblocked.
     if (!blocks && physical > 0) void this.#armourSkills(targetRef, physical);
@@ -3786,6 +3855,7 @@ export class ActorCombat implements CombatBridge {
   #musicInput(runtime: ScriptRuntime): CombatMusicInput {
     const feet = this.#play?.player.feet;
     const threats: CombatMusicThreat[] = [];
+    const senses = this.#options.senses?.();
     for (const fighter of this.#fighters.values()) {
       if (fighter.player || fighter.state.life !== LifeState.alive) continue;
       const reference = fighter.reference;
@@ -3800,13 +3870,11 @@ export class ActorCombat implements CombatBridge {
         distance:
           feet && at ? Math.hypot(at[0] - feet[0], at[1] - feet[1], at[2] - feet[2]) : Infinity,
         strength: this.#brain.strength(reference),
+        detected: senses ? senses.detects(PLAYER_REF, reference) : true,
         boss: this.#boss(reference, runtime),
       });
     }
-    const side = [PLAYER_REF, ...this.#brain.allies(PLAYER_REF)].map((reference) =>
-      this.#brain.strength(reference),
-    );
-    return { threats, side };
+    return { threats, player: this.#brain.strength(PLAYER_REF) };
   }
 
   /** Whether a reference is a boss (location reference type DOBJ LRTB); false until read. */

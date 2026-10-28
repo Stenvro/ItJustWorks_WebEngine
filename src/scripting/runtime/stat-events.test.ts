@@ -112,3 +112,44 @@ describe('stat events', () => {
     expect(stats.get('days as a vampire')).toBeUndefined();
   });
 });
+
+describe('combat and magic stats', () => {
+  it('counts critical hits, sneak attacks, backstabs and the magic events', async () => {
+    const DAGGER = 0x139b5;
+    const BOW = 0x139a5;
+    const dnam: Record<number, number> = { [DAGGER]: 2, [BOW]: 7 };
+    const runtime = {
+      ...fakeRuntime({}, { count: 0 }),
+      forms: {
+        record: (formId: number) =>
+          Promise.resolve({ fields: { first: () => new Uint8Array([dnam[formId] ?? 0]) } }),
+      },
+      perks: { hasEntryPoint: () => Promise.resolve(true) },
+    };
+    const stop = relayStatEvents(runtime as unknown as ScriptRuntime);
+    const { events, stats } = runtime;
+    // A sneak critical with a dagger: both events, each a backstab.
+    await events.emitted('criticalHit', { aggressor: PLAYER_REF, weapon: DAGGER, sneakHit: false });
+    await events.emitted('criticalHit', { aggressor: PLAYER_REF, weapon: DAGGER, sneakHit: true });
+    // A sneak shot: no backstab.
+    await events.emitted('criticalHit', { aggressor: PLAYER_REF, weapon: BOW, sneakHit: true });
+    await events.emitted('disarmed', { source: PLAYER_REF, target: 0x50 });
+    await events.emitted('disarmed', { source: 0x50, target: PLAYER_REF });
+    await events.emitted('dragonSoulGained', { souls: 1 });
+    await events.emitted('shoutMastered', { shout: 0x13e07 });
+    await events.emitted('soulGemsUsed', { actor: PLAYER_REF, gem: 0x2e4e3 });
+    await events.emitted('poisonedWeapon', { actor: PLAYER_REF, poison: 0x3a5a4 });
+    await events.emitted('poisonedWeapon', { actor: 0x50, poison: 0x3a5a4 });
+    await events.emitted('contractedDisease', { actor: PLAYER_REF, disease: 0xb3ffb });
+    stop();
+    expect(stats.get('critical strikes')).toBe(3);
+    expect(stats.get('sneak attacks')).toBe(2);
+    expect(stats.get('backstabs')).toBe(2);
+    expect(stats.get('weapons disarmed')).toBe(1);
+    expect(stats.get('dragon souls collected')).toBe(1);
+    expect(stats.get('shouts mastered')).toBe(1);
+    expect(stats.get('soul gems used')).toBe(1);
+    expect(stats.get('poisons used')).toBe(1);
+    expect(stats.get('diseases contracted')).toBe(1);
+  });
+});

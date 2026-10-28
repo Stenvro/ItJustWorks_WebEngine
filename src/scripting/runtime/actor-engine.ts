@@ -390,6 +390,10 @@ export class ActorEngine {
   /** ModActorValue: a permanent modifier. */
   modify(reference: number, index: number, amount: number): void {
     this.#own(reference, index).modifier += amount;
+    // The player's dragon souls rising (a dragon's soul absorbed: its script adds one) is the
+    // engine's DragonSoulGained (Dragon Souls Collected).
+    if (reference === PLAYER_REF && index === ActorValue.dragonSouls && amount > 0)
+      this.#runtime.events.emit('dragonSoulGained', { souls: amount });
   }
 
   /**

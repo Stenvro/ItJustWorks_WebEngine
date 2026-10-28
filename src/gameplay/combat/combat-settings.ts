@@ -40,6 +40,9 @@ export interface CombatSettings {
     /** UESP "Sneak": bows ×2 (its setting is not in the plugins). */
     readonly bow: number;
   };
+  /** fSneakAttackSkillUsageMelee, fSneakAttackSkillUsageRanged: Sneak used by a sneak attack. */
+  readonly sneakAttackSkillUsageMelee: number;
+  readonly sneakAttackSkillUsageRanged: number;
   /** fCombatUnarmedCritDamageMult. */
   readonly unarmedCritDamageMult: number;
   /** fDiffMultHPByPC<VE..L>: damage the player deals, by difficulty (UESP "Difficulty"). */
@@ -173,6 +176,8 @@ export const COMBAT_DEFAULTS: CombatSettings = {
     twoHandAxe: 2,
     bow: 2,
   },
+  sneakAttackSkillUsageMelee: 20,
+  sneakAttackSkillUsageRanged: 2.5,
   unarmedCritDamageMult: 1,
   damageByPlayer: [2, 1.5, 1, 0.75, 0.5, 0.25],
   damageToPlayer: [0.5, 0.75, 1, 1.5, 2, 3],
@@ -249,6 +254,8 @@ const SETTING_NAMES: Readonly<Partial<Record<keyof CombatSettings, string>>> = {
   combatBashReach: 'fCombatBashReach',
   combatHitConeAngle: 'fCombatHitConeAngle',
   damageSneakAttackMult: 'fDamageSneakAttackMult',
+  sneakAttackSkillUsageMelee: 'fSneakAttackSkillUsageMelee',
+  sneakAttackSkillUsageRanged: 'fSneakAttackSkillUsageRanged',
   unarmedCritDamageMult: 'fCombatUnarmedCritDamageMult',
   blockWeaponBase: 'fBlockWeaponBase',
   blockWeaponScaling: 'fBlockWeaponScaling',

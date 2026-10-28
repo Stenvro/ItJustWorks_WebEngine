@@ -42,7 +42,19 @@
 // (ActorEngine.addSpell), Words of Power Unlocked (CastingEngine.unlockWord), Ingredients
 // Harvested (HarvestEngine), Locations Discovered (src/shell/compass.ts), the crimes' (the crime
 // engine), the crafts' (the crafting engine), Locks Picked (the lockpicking menu).
+//
+// The combat and magic counts (observed in the original: CriticalHitToMiscStatHandler,
+// DisarmedToMiscStatHandler and the incrementers of DragonSoulGained, ShoutMastered,
+// SoulGemsUsed, PoisonedWeapon and ContractedDisease). The engine tells a critical hit and a
+// sneak attack the player lands on a living actor as one CriticalHit event each (a sneak
+// critical sends both); each counts in Critical Strikes, the sneak attack's in Sneak Attacks too,
+// and either in Backstabs when the aggressor holds any Mod Sneak Attack Mult perk entry (its
+// conditions not asked) and its weapon is fists, one-handed or a staff (WEAP animation type
+// below 5, or 8). Weapons Disarmed: a disarm whose source is the player. Dragon Souls Collected,
+// Shouts Mastered, Soul Gems Used, Poisons Used and Diseases Contracted: one each event (the
+// player's only: the engine sends them for the player).
 
+import { EntryPoint } from '../../gameplay/perk-entry-points.ts';
 import { BookFlag, parseItem, PotionFlag, type ItemRecord } from '../../world/item-records.ts';
 import { globalValue } from './condition-values.ts';
 import { PLAYER_REF } from './forms.ts';
@@ -145,9 +157,25 @@ export function consumedStat(item: Pick<ItemRecord, 'type' | 'potionFlags'>): st
   if (item.type === 'INGR') return 'Ingredients Eaten';
   if (item.type !== 'ALCH') return undefined;
   const flags = item.potionFlags ?? 0;
-  // A poison is put on a weapon, not taken (Poisons Used: TODO(M13), the weapon's poisoning).
+  // A poison is put on a weapon, not taken (Poisons Used: the PoisonedWeapon event).
   if ((flags & PotionFlag.poison) !== 0) return undefined;
   return (flags & PotionFlag.food) !== 0 ? 'Food Eaten' : 'Potions Used';
+}
+
+/** The WEAP animation type of a staff (one of the weapons a backstab counts with). */
+const STAFF = 8;
+
+/** Whether a critical hit or sneak attack with a weapon of an animation type is a backstab's. */
+export function backstabWeapon(animationType: number): boolean {
+  return animationType < 5 || animationType === STAFF;
+}
+
+/** The stats one CriticalHit event counts in. */
+export function criticalHitStats(sneakHit: boolean, backstab: boolean): string[] {
+  const stats = ['Critical Strikes'];
+  if (sneakHit) stats.push('Sneak Attacks');
+  if (backstab) stats.push('Backstabs');
+  return stats;
 }
 
 /** The whole hours of a sleep from its start to its end (game days passed). */
@@ -220,6 +248,33 @@ export function relayStatEvents(runtime: ScriptRuntime): () => void {
       const item = record ? parseItem(record) : undefined;
       const stat = item && consumedStat(item);
       if (stat) runtime.incrementStat(stat);
+    }),
+    runtime.events.on('criticalHit', async (event) => {
+      const weapon =
+        event.weapon === undefined ? undefined : await runtime.forms.record(event.weapon);
+      const type = weapon?.fields.first('DNAM')?.[0] ?? 0;
+      const backstab =
+        backstabWeapon(type) &&
+        (await runtime.perks.hasEntryPoint(event.aggressor, EntryPoint.modSneakAttackMult));
+      for (const stat of criticalHitStats(event.sneakHit, backstab)) runtime.incrementStat(stat);
+    }),
+    runtime.events.on('disarmed', (event) => {
+      if (event.source === PLAYER_REF) runtime.incrementStat('Weapons Disarmed');
+    }),
+    runtime.events.on('dragonSoulGained', () => {
+      runtime.incrementStat('Dragon Souls Collected');
+    }),
+    runtime.events.on('shoutMastered', () => {
+      runtime.incrementStat('Shouts Mastered');
+    }),
+    runtime.events.on('soulGemsUsed', (event) => {
+      if (event.actor === PLAYER_REF) runtime.incrementStat('Soul Gems Used');
+    }),
+    runtime.events.on('poisonedWeapon', (event) => {
+      if (event.actor === PLAYER_REF) runtime.incrementStat('Poisons Used');
+    }),
+    runtime.events.on('contractedDisease', (event) => {
+      if (event.actor === PLAYER_REF) runtime.incrementStat('Diseases Contracted');
     }),
     runtime.events.on('containerChanged', async (event) => {
       if (event.item !== GOLD || event.to !== PLAYER_REF || event.from === PLAYER_REF) return;
