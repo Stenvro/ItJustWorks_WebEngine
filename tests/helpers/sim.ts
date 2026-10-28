@@ -326,6 +326,73 @@ export class Sim {
     }
   }
 
+  /**
+   * The player talks to an actor as the dialogue menu has it (src/shell/dialogue-menu.ts), the
+   * lines said at once: its greeting, then for each pattern the listed topic whose text matches
+   * it, each info's begin and end fragments run, Invisible Continue followed. `opening`: the
+   * conversation begins with that topic's line (a ForceGreet's: menus()). Returns the topics
+   * listed last (their texts); a pattern that matches none ends the talk there.
+   */
+  async converse(
+    actor: number,
+    choose: readonly RegExp[] = [],
+    opening?: number,
+  ): Promise<string[]> {
+    const engine = this.runtime.dialogue;
+    const say = async (spoken: SpokenInfo): Promise<void> => {
+      await this.#stepUntil(engine.runFragment(spoken.info, 'begin', actor));
+      engine.said(spoken.info);
+      await this.#stepUntil(engine.runFragment(spoken.info, 'end', actor));
+    };
+    // An info, then the infos Invisible Continue says after it; the choices it leaves.
+    const goOn = async (first: SpokenInfo | undefined): Promise<readonly number[] | undefined> => {
+      let current = first;
+      for (let step = 0; current && step < 16; step++) {
+        await say(current);
+        if (afterInfo(current.info) !== 'continue') return current.info.choices;
+        current = await engine.continueAfter(current, actor);
+      }
+      return undefined;
+    };
+    this.runtime.state.actor(actor).talkedToPlayer = true;
+    this.runtime.dialogueSpeaker = actor;
+    try {
+      let offered = await goOn(
+        opening === undefined
+          ? await engine.greeting(actor)
+          : await engine.topicLine(opening, actor),
+      );
+      let listed = (await engine.topics(actor, offered)).filter((choice) => !choice.hidden);
+      for (const pattern of choose) {
+        const choice = listed.find((topic) => pattern.test(topic.text));
+        if (!choice) break;
+        offered = await goOn(await engine.choose(choice, actor));
+        listed = (await engine.topics(actor, offered)).filter((topic) => !topic.hidden);
+      }
+      return listed.map((choice) => choice.text);
+    } finally {
+      this.runtime.dialogueSpeaker = undefined;
+    }
+  }
+
+  /**
+   * Steps the world until work is done (a fragment may wait for frames: Utility.Wait), at most
+   * `seconds`.
+   */
+  async #stepUntil(work: Promise<unknown>, seconds = 30): Promise<void> {
+    let done = false;
+    const settled = work.then(
+      () => {
+        done = true;
+      },
+      () => {
+        done = true;
+      },
+    );
+    if (await this.world.until(() => done, seconds)) await settled;
+    await this.world.settle();
+  }
+
   /** The player equips an item (Actor.EquipItem). */
   async equip(item: number): Promise<boolean> {
     const done = await this.runtime.equipment.equip(PLAYER_REF, item);

@@ -1119,6 +1119,12 @@ with their cells: they are put where their packages have them as their cells loa
   place along the way between). On a cell that is loaded it comes onto the
   stage there and walks on with its package (it comes out of a load door into the loaded area,
   or walks into it).
+- **A flier** (its race flies, RACE DATA Flies: the dragons) whose place is in its own space
+  flies there straight through the air at its flying speed (its race's flying movement type,
+  FLMV, running forward), with no road or navmesh under it, and comes onto the stage where it
+  flies into the loaded area. MQ104's dragon, enabled 23,000 units south of the Western
+  Watchtower, comes to circle the fort (a trip from the sky along the navmesh at walking speed
+  never got there). TODO(M13): the engine's own rule for fliers in the low processes.
 - **When the game's time jumps** (waiting, sleeping, fast travel, a console `set gamehour`: more
   than 10 game minutes beyond what the clock ran) trips end at once and every actor asked, of
   both processes, is put where its package has it. When the player comes into another
