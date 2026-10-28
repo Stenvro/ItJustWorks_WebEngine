@@ -40,6 +40,13 @@ import {
 } from './bone-palette.ts';
 import { frustumPlanes, invert, sphereVisible, type Plane } from './frustum.ts';
 import type { RoomCuller } from './room-culler.ts';
+import { VELOCITY_FORMAT } from './taa-data.ts';
+import {
+  LIGHT_KEY_FLOATS,
+  LIGHT_LIST_WORDS,
+  packLightKey,
+  selectObjectLights,
+} from './light-lists.ts';
 import { identity, maxScale, multiply, transformPoint, type Mat4, type Vec3 } from './math.ts';
 import { fadeOut, fadeRange, type FadeKind, type FadeSettings } from './object-fade.ts';
 import { MAX_RIPPLES, type Ripple } from './water-ripples.ts';
@@ -72,6 +79,7 @@ import particleShader from './shaders/particle.wgsl?raw';
 import skinningShader from './shaders/skinning.wgsl?raw';
 import refractionShader from './shaders/refraction.wgsl?raw';
 import shadowShader from './shaders/shadow.wgsl?raw';
+import velocityShader from './shaders/velocity.wgsl?raw';
 import {
   LIGHT_SHADOW_FACES,
   LIGHT_SHADOW_MAP_SIZE,
@@ -296,6 +304,12 @@ function markFirstPerson(uints: Uint32Array, firstPerson: boolean): void {
 }
 /** Draw flag bits 24-31: the room its instance stands in (ModelInstance.room). */
 const DRAW_ROOM_SHIFT = 24;
+/** A draw slot past what flags.w can name (bits 8-23): its shaders take every light. */
+const NO_LIGHT_LIST = 0xffff;
+/** How far beyond the view a light's sphere still counts for the light lists (world units). */
+const LIGHT_VIEW_MARGIN = 1024;
+/** The velocity pass's uniforms: six matrices (shaders/velocity.wgsl). */
+const VELOCITY_FLOATS = 6 * 16;
 const SLSF2_TREE_ANIM = 0x20000000;
 /** The engine's directional material textures (BSGraphics default textures). */
 const PROJECTED_TEXTURES = {
@@ -967,6 +981,73 @@ interface SceneBones {
   readonly data: Float32Array;
 }
 
+/**
+ * A scene's per-object light lists (light-lists.ts): LIGHT_LIST_WORDS per draw slot, chosen once
+ * per frame for the draws drawn and uploaded in one range.
+ */
+class SceneLightLists {
+  readonly buffer: GPUBuffer;
+  readonly data: Uint32Array;
+  /** The light frame each slot's list was chosen in (SceneRenderer's light frame counter). */
+  readonly chosen: Uint32Array;
+  /** The scene's draw uniforms as words (each draw's room: flags.z bits 24-31). */
+  readonly uniformUints: Uint32Array;
+  #dirtyFrom = Infinity;
+  #dirtyTo = -1;
+
+  constructor(device: GPUDevice, slots: number, uniforms: ArrayBuffer) {
+    this.uniformUints = new Uint32Array(uniforms);
+    this.data = new Uint32Array(slots * LIGHT_LIST_WORDS);
+    this.chosen = new Uint32Array(slots);
+    this.buffer = device.createBuffer({
+      label: 'draw-lights',
+      size: this.data.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+  }
+
+  markDirty(slot: number): void {
+    if (slot < this.#dirtyFrom) this.#dirtyFrom = slot;
+    if (slot > this.#dirtyTo) this.#dirtyTo = slot;
+  }
+
+  flush(device: GPUDevice): void {
+    if (this.#dirtyTo < this.#dirtyFrom) return;
+    const from = this.#dirtyFrom * LIGHT_LIST_WORDS;
+    const to = (this.#dirtyTo + 1) * LIGHT_LIST_WORDS;
+    device.queue.writeBuffer(this.buffer, from * 4, this.data, from, to - from);
+    this.#dirtyFrom = Infinity;
+    this.#dirtyTo = -1;
+  }
+}
+
+/**
+ * A scene's moving draws (moving instances, animated parts) with their world matrices of the
+ * last velocity pass, by draw slot: the TAA's motion vectors (SceneRenderer.drawVelocity).
+ */
+interface SceneMotion {
+  readonly draws: readonly Draw[];
+  readonly buffer: GPUBuffer;
+  readonly bindGroup: GPUBindGroup;
+  /** Last world matrix per slot (16 floats). */
+  readonly previous: Float32Array;
+  /** The velocity pass each slot was last drawn in. */
+  readonly seen: Uint32Array;
+}
+
+/** The view-projections a velocity pass draws with (SceneRenderer.drawVelocity). */
+export interface VelocityMatrices {
+  /** This frame's, as drawn (jittered), and without the jitter. */
+  readonly viewProj: Mat4;
+  readonly current: Mat4;
+  /** The last frame's, without the jitter. */
+  readonly previous: Mat4;
+  /** First person's own (the player's arms), the same three. */
+  readonly firstPersonViewProj?: Mat4 | undefined;
+  readonly firstPersonCurrent?: Mat4 | undefined;
+  readonly firstPersonPrevious?: Mat4 | undefined;
+}
+
 /** Placed model instances with their per-draw uniforms. Does not own the models. */
 export class GpuScene {
   readonly draws: readonly Draw[];
@@ -987,6 +1068,13 @@ export class GpuScene {
   readonly weaponBlood: readonly WeaponBloodDraw[];
   /** Instances that fade out with distance (ModelInstance.fade). */
   fades: readonly FadeGroup[] = [];
+  /** Each draw's lights this frame (light-lists.ts), by its uniform slot. */
+  lightLists: SceneLightLists | undefined;
+  /**
+   * Its moving draws' last world matrices for the TAA's motion vectors (made when first drawn;
+   * null: nothing in it moves).
+   */
+  motion: SceneMotion | null | undefined;
   /** The models it draws (held while it exists). */
   readonly #models: readonly GpuModel[];
 
@@ -1023,6 +1111,8 @@ export class GpuScene {
 
   destroy(): void {
     this.uniforms.destroy();
+    this.lightLists?.buffer.destroy();
+    this.motion?.buffer.destroy();
     this.bones?.buffer.destroy();
     for (const model of this.#models) model.release();
   }
@@ -1391,6 +1481,11 @@ export class SceneRenderer {
   readonly #frameData = new Float32Array(FRAME_FLOATS);
   readonly #frameUints = new Uint32Array(this.#frameData.buffer);
   readonly #lightData = new Float32Array(MAX_LIGHTS * LIGHT_FLOATS);
+  /** The frame's lights as selection keys (light-lists.ts), and how many. */
+  readonly #lightKeys = new Float32Array(MAX_LIGHTS * LIGHT_KEY_FLOATS);
+  #lightKeyCount = 0;
+  /** Counts the frames' light uploads: a draw's list is chosen once per light frame. */
+  #lightFrame = 1;
   /** The world's view, and the view being drawn now (a menu's 3D: SceneFrame). */
   readonly #main: SceneFrame;
   #frame: SceneFrame;
@@ -1439,6 +1534,18 @@ export class SceneRenderer {
   readonly #cascadeBuffer: GPUBuffer;
   readonly #cascadeBindGroup: GPUBindGroup;
   readonly #shadowModule: GPUShaderModule;
+  /** Motion vectors of moving draws for the TAA (drawVelocity). */
+  readonly #velocityModule: GPUShaderModule;
+  readonly #velocityFrameLayout: GPUBindGroupLayout;
+  readonly #previousWorldLayout: GPUBindGroupLayout;
+  readonly #velocityLayout: GPUPipelineLayout;
+  readonly #skinnedVelocityLayout: GPUPipelineLayout;
+  readonly #velocityUniforms: GPUBuffer;
+  readonly #velocityData = new Float32Array(VELOCITY_FLOATS);
+  #velocityGroup: { readonly depth: GPUTexture; readonly group: GPUBindGroup } | undefined;
+  /** Counts velocity passes: a draw unseen in the last one has no last world matrix. */
+  #velocityFrame = 1;
+  readonly #velocityPipelines = new WeakMap<GpuPart, GPURenderPipeline>();
   readonly #shadowSampler: GPUSampler;
   /** The shadow lights' maps (light-shadows.ts), their uniforms and this frame's slots. */
   readonly #lightShadowMap: GPUTexture;
@@ -1522,6 +1629,12 @@ export class SceneRenderer {
           visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
           buffer: { hasDynamicOffset: true, minBindingSize: DRAW_SIZE },
         },
+        // The scene's per-object light lists (light-lists.ts).
+        {
+          binding: 1,
+          visibility: GPUShaderStage.FRAGMENT,
+          buffer: { type: 'read-only-storage' },
+        },
       ],
     });
     const texture2d = (binding: number): GPUBindGroupLayoutEntry => ({
@@ -1586,6 +1699,45 @@ export class SceneRenderer {
         this.#materialLayout,
         this.#boneLayout,
       ],
+    });
+    this.#velocityModule = device.createShaderModule({
+      label: 'velocity',
+      code: shadowShader + velocityShader,
+    });
+    this.#velocityFrameLayout = device.createBindGroupLayout({
+      label: 'velocity-frame',
+      entries: [
+        { binding: 5, visibility: GPUShaderStage.VERTEX, buffer: {} },
+        {
+          binding: 6,
+          visibility: GPUShaderStage.FRAGMENT,
+          texture: { sampleType: 'unfilterable-float' },
+        },
+      ],
+    });
+    this.#previousWorldLayout = device.createBindGroupLayout({
+      label: 'previous-world',
+      entries: [
+        { binding: 5, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+      ],
+    });
+    this.#velocityLayout = device.createPipelineLayout({
+      label: 'velocity',
+      bindGroupLayouts: [this.#velocityFrameLayout, this.#drawLayout, this.#previousWorldLayout],
+    });
+    this.#skinnedVelocityLayout = device.createPipelineLayout({
+      label: 'velocity-skinned',
+      bindGroupLayouts: [
+        this.#velocityFrameLayout,
+        this.#drawLayout,
+        this.#previousWorldLayout,
+        this.#boneLayout,
+      ],
+    });
+    this.#velocityUniforms = device.createBuffer({
+      label: 'velocity-uniforms',
+      size: VELOCITY_FLOATS * 4,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.#waterTypeLayout = device.createBindGroupLayout({
       label: 'water-type',
@@ -2404,16 +2556,34 @@ export class SceneRenderer {
         });
       });
     }
+    // Each lit draw names its slot in the scene's light lists (flags.w bits 8-23).
+    const drawUints = new Uint32Array(uniforms);
+    for (const draw of draws) {
+      if (draw.part.pass === 'water') continue;
+      const at = draw.uniformOffset / 4 + 39;
+      const slot = Math.min(draw.uniformOffset / DRAW_STRIDE, NO_LIGHT_LIST);
+      drawUints[at] = ((drawUints[at] ?? 0) & ~0xffff00) | (slot << 8);
+    }
+    // Particle systems take every light of the frame. TODO(M13): the engine gives a particle
+    // geometry its own list too (by the system's bound).
+    for (const system of particles) {
+      const at = system.uniformOffset / 4 + 39;
+      drawUints[at] = ((drawUints[at] ?? 0) & ~0xffff00) | (NO_LIGHT_LIST << 8);
+    }
     const buffer = createBuffer(
       this.#device,
       new Uint8Array(uniforms),
       GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       'draw-uniforms',
     );
+    const lightLists = new SceneLightLists(this.#device, Math.max(1, drawCount), uniforms);
     const bindGroup = this.#device.createBindGroup({
       label: 'draw',
       layout: this.#drawLayout,
-      entries: [{ binding: 0, resource: { buffer, size: DRAW_SIZE } }],
+      entries: [
+        { binding: 0, resource: { buffer, size: DRAW_SIZE } },
+        { binding: 1, resource: { buffer: lightLists.buffer } },
+      ],
     });
     const models = [...new Set(placed.map((instance) => instance.model))];
     const scene = new GpuScene(
@@ -2434,6 +2604,7 @@ export class SceneRenderer {
         ),
       weaponBlood,
     );
+    scene.lightLists = lightLists;
     scene.fades = [...new Set(fades.values())].filter((group) => group.draws.length > 0);
     return scene;
   }
@@ -2567,10 +2738,19 @@ export class SceneRenderer {
     data.set(firstPersonViewProjection ?? viewProjection, 176);
     this.#device.queue.writeBuffer(this.#frame.buffer, 0, data);
 
+    // A new light frame: each draw drawn chooses its lights again (#chooseLights).
+    this.#lightFrame = (this.#lightFrame + 1) >>> 0 || 1;
+    // Only lights that can reach what is in view are candidates (their sphere, grown by
+    // LIGHT_VIEW_MARGIN for objects straddling the view's edges).
+    this.#lightKeyCount = 0;
     if (lightCount > 0) {
       for (let i = 0; i < lightCount; i++) {
         const light = lighting.lights[i];
         if (!light) continue;
+        if (sphereVisible(this.#frame.planes, light.position, light.radius + LIGHT_VIEW_MARGIN)) {
+          const shadowed = this.#lightShadowOf(light)[0] >= 0;
+          packLightKey(this.#lightKeys, this.#lightKeyCount++, light, shadowed, i);
+        }
         this.#lightData.set(
           [
             ...light.position,
@@ -3089,6 +3269,150 @@ export class SceneRenderer {
         }
       }
     }
+    this.#flushLights(scenes);
+  }
+
+  /**
+   * The TAA's motion vectors (shaders/velocity.wgsl): the opaque draws that move (moving
+   * instances, animated parts) write, where they are what the opaque pass kept (`depth`: its
+   * resolved depth), the offset from this frame's uv to the last frame's. The rest of the image
+   * is reprojected by its depth and the camera's move (taa.ts).
+   */
+  drawVelocity(
+    pass: GPURenderPassEncoder,
+    scenes: readonly GpuScene[],
+    matrices: VelocityMatrices,
+    depth: GPUTexture,
+  ): void {
+    const data = this.#velocityData;
+    data.set(matrices.viewProj, 0);
+    data.set(matrices.current, 16);
+    data.set(matrices.previous, 32);
+    data.set(matrices.firstPersonViewProj ?? matrices.viewProj, 48);
+    data.set(matrices.firstPersonCurrent ?? matrices.current, 64);
+    data.set(matrices.firstPersonPrevious ?? matrices.firstPersonCurrent ?? matrices.current, 80);
+    this.#device.queue.writeBuffer(this.#velocityUniforms, 0, data);
+    if (this.#velocityGroup?.depth !== depth) {
+      this.#velocityGroup = {
+        depth,
+        group: this.#device.createBindGroup({
+          label: 'velocity-frame',
+          layout: this.#velocityFrameLayout,
+          entries: [
+            { binding: 5, resource: { buffer: this.#velocityUniforms } },
+            { binding: 6, resource: depth.createView() },
+          ],
+        }),
+      };
+    }
+    const frame = this.#velocityFrame;
+    this.#velocityFrame = (frame + 1) >>> 0 || 1;
+    pass.setBindGroup(0, this.#velocityGroup.group);
+    pass.setVertexBuffer(1, this.#fallbackVertices);
+    for (const scene of scenes) {
+      // null: the scene has nothing that moves (looked at once).
+      if (scene.motion === undefined) scene.motion = this.#sceneMotion(scene) ?? null;
+      const motion = scene.motion;
+      if (!motion) continue;
+      const uniforms = new Float32Array(scene.uniformData);
+      const worldOf = (draw: Draw): Float32Array =>
+        uniforms.subarray(draw.uniformOffset / 4, draw.uniformOffset / 4 + 16);
+      const drawn: Draw[] = [];
+      let first = Infinity;
+      let last = -1;
+      for (const draw of motion.draws) {
+        if (draw.part.pass !== 'opaque' || !this.#visible(draw)) continue;
+        const slot = draw.uniformOffset / DRAW_STRIDE;
+        // Unseen in the last pass: no last matrix, so it has not moved.
+        if (motion.seen[slot] !== frame - 1) motion.previous.set(worldOf(draw), slot * 16);
+        motion.seen[slot] = frame;
+        first = Math.min(first, slot);
+        last = Math.max(last, slot);
+        drawn.push(draw);
+      }
+      if (drawn.length === 0) continue;
+      // The upload takes the last matrices; this frame's become the next pass's last ones.
+      const from = first * 16;
+      const to = (last + 1) * 16;
+      this.#device.queue.writeBuffer(motion.buffer, from * 4, motion.previous, from, to - from);
+      pass.setBindGroup(2, motion.bindGroup);
+      for (const draw of drawn) {
+        pass.setPipeline(this.#velocityPipeline(draw.part));
+        pass.setBindGroup(1, scene.drawBindGroup, [draw.uniformOffset]);
+        this.#bindBones(pass, scene, draw);
+        pass.setVertexBuffer(0, draw.part.vertexBuffer);
+        pass.setIndexBuffer(draw.part.indexBuffer, 'uint16');
+        if (draw.ranges) {
+          for (const range of draw.ranges) pass.drawIndexed(range.count, 1, range.first);
+        } else {
+          pass.drawIndexed(draw.part.indexCount);
+        }
+        motion.previous.set(worldOf(draw), (draw.uniformOffset / DRAW_STRIDE) * 16);
+      }
+    }
+  }
+
+  /** A scene's moving draws and their last-world buffer (none: nothing in it moves). */
+  #sceneMotion(scene: GpuScene): SceneMotion | undefined {
+    const offsets = new Set<number>([
+      ...scene.moving.map(({ draw }) => draw.uniformOffset),
+      ...scene.animated.map((animated) => animated.offset),
+    ]);
+    const draws = scene.draws.filter(
+      (draw) =>
+        offsets.has(draw.uniformOffset) &&
+        !draw.sky &&
+        draw.uniformOffset / DRAW_STRIDE < NO_LIGHT_LIST,
+    );
+    if (draws.length === 0) return undefined;
+    const slots = scene.uniformData.byteLength / DRAW_STRIDE;
+    const previous = new Float32Array(slots * 16);
+    const buffer = this.#device.createBuffer({
+      label: 'previous-world',
+      size: previous.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+    const bindGroup = this.#device.createBindGroup({
+      label: 'previous-world',
+      layout: this.#previousWorldLayout,
+      entries: [{ binding: 5, resource: { buffer } }],
+    });
+    return { draws, buffer, bindGroup, previous, seen: new Uint32Array(slots) };
+  }
+
+  #velocityPipeline(gpuPart: GpuPart): GPURenderPipeline {
+    const cached = this.#velocityPipelines.get(gpuPart);
+    if (cached) return cached;
+    const part = gpuPart.part;
+    const layout = part.layout;
+    const doubleSided = ((part.material?.flags2 ?? 0) & SLSF2_DOUBLE_SIDED) !== 0;
+    const skinning = part.skin ? (layout.skinning ?? -1) : -1;
+    const key = ['velocity', layout.stride, doubleSided, skinning].join('|');
+    let pipeline = this.#pipelines.get(key);
+    if (!pipeline) {
+      const attributes: GPUVertexAttribute[] = [
+        { shaderLocation: 0, format: 'float32x3', offset: 0 },
+      ];
+      if (skinning >= 0) attributes.push(...skinAttributes(skinning));
+      pipeline = this.#device.createRenderPipeline({
+        label: key,
+        layout: skinning >= 0 ? this.#skinnedVelocityLayout : this.#velocityLayout,
+        vertex: {
+          module: this.#velocityModule,
+          entryPoint: skinning >= 0 ? 'vs_velocity_skinned' : 'vs_velocity',
+          buffers: [{ arrayStride: layout.stride, attributes }],
+        },
+        fragment: {
+          module: this.#velocityModule,
+          entryPoint: 'fs_velocity',
+          targets: [{ format: VELOCITY_FORMAT }],
+        },
+        primitive: { topology: 'triangle-list', cullMode: doubleSided ? 'none' : 'back' },
+      });
+      this.#pipelines.set(key, pipeline);
+    }
+    this.#velocityPipelines.set(gpuPart, pipeline);
+    return pipeline;
   }
 
   /** Whether any scene has water surfaces (they need copies of the opaque scene). */
@@ -3153,6 +3477,7 @@ export class SceneRenderer {
     }
     shapes.sort((a, b) => b.distance - a.distance);
     for (const { scene, draw } of shapes) this.#drawPart(pass, scene, draw);
+    this.#flushLights(scenes);
   }
 
   /** Draws the blended parts and particle systems of all scenes back to front. */
@@ -3198,6 +3523,7 @@ export class SceneRenderer {
       pass.setVertexBuffer(0, this.#particleBuffer);
       pass.draw(6, count, 0, first);
     }
+    this.#flushLights(scenes);
   }
 
   /**
@@ -3499,6 +3825,49 @@ export class SceneRenderer {
     };
   }
 
+  /**
+   * A draw's lights for this frame (light-lists.ts), chosen the first time it is drawn in it by
+   * its bound and its room; uploaded with the scene's lists (#flushLights) before the frame is
+   * submitted.
+   */
+  #chooseLights(scene: GpuScene, draw: Draw): void {
+    const lists = scene.lightLists;
+    if (!lists || draw.sky) return;
+    const slot = draw.uniformOffset / DRAW_STRIDE;
+    if (slot >= NO_LIGHT_LIST || lists.chosen[slot] === this.#lightFrame) return;
+    lists.chosen[slot] = this.#lightFrame;
+    const room =
+      ((lists.uniformUints[draw.uniformOffset / 4 + 38] ?? 0) >>> DRAW_ROOM_SHIFT) & 0xff;
+    const at = slot * LIGHT_LIST_WORDS;
+    const data = lists.data;
+    const before0 = data[at];
+    const before1 = data[at + 1];
+    const before2 = data[at + 2];
+    const before3 = data[at + 3];
+    selectObjectLights(
+      this.#lightKeys,
+      this.#lightKeyCount,
+      draw.center,
+      draw.radius,
+      room,
+      data,
+      at,
+    );
+    if (
+      data[at] !== before0 ||
+      data[at + 1] !== before1 ||
+      data[at + 2] !== before2 ||
+      data[at + 3] !== before3
+    ) {
+      lists.markDirty(slot);
+    }
+  }
+
+  /** Uploads the light lists the draws of these scenes chose (#chooseLights). */
+  #flushLights(scenes: Iterable<GpuScene>): void {
+    for (const scene of scenes) scene.lightLists?.flush(this.#device);
+  }
+
   #drawPart(
     pass: GPURenderPassEncoder,
     scene: GpuScene,
@@ -3506,6 +3875,7 @@ export class SceneRenderer {
     state: PassState = passState(),
   ): void {
     const { part } = draw;
+    this.#chooseLights(scene, draw);
     bindPart(pass, state, part.pipeline, part);
     pass.setBindGroup(1, scene.drawBindGroup, [draw.uniformOffset]);
     this.#bindBones(pass, scene, draw);

@@ -87,6 +87,7 @@ fn fs_grass(input: GrassOut) -> GrassPixel {
     discard;
   }
   let shadow = sunShadow(input.worldPos, input.normal);
-  let light = lightAt(input.normal, input.worldPos, toCamera, 1.0, false, shadow);
+  // No point lights on grass: [Grass] bGrassPointLighting, off by default.
+  let light = sunLightAt(input.normal, toCamera, 1.0, false, shadow);
   return GrassPixel(vec4f(texel.rgb * input.color * light.diffuse, 1.0), gbufferValue(face, 0.0, 0.0));
 }

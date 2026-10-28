@@ -30,6 +30,37 @@ struct Draw {
 };
 
 @group(1) @binding(0) var<uniform> draw: Draw;
+// The scene's per-object light lists (light-lists.ts): per draw slot a count and up to seven
+// indices into pointLights, 16 bits each (the count first). A draw's slot is in flags.w bits
+// 8-23; 0xffff names no list (every light of the frame).
+@group(1) @binding(1) var<storage, read> drawLights: array<vec4u>;
+
+struct LightList {
+  all: bool,
+  count: u32,
+  words: vec4u,
+};
+
+// The lights of this draw: its own list (the engine's lights of the geometry: shadow lights
+// first, at most seven), or every light of the frame.
+fn drawLightList() -> LightList {
+  let slot = (draw.flags.w >> 8u) & 0xffffu;
+  if (slot == 0xffffu) {
+    return LightList(true, frame.counts.x, vec4u(0u));
+  }
+  let words = drawLights[slot];
+  return LightList(false, words.x & 0xffffu, words);
+}
+
+// The i-th light of a list, as an index into pointLights.
+fn lightListIndex(list: LightList, i: u32) -> u32 {
+  if (list.all) {
+    return i;
+  }
+  let half = i + 1u;
+  let word = list.words[half >> 1u];
+  return select(word >> 16u, word & 0xffffu, (half & 1u) == 0u);
+}
 @group(2) @binding(0) var linearSampler: sampler;
 // Lighting: diffuse. Effect: source texture.
 @group(2) @binding(1) var diffuseMap: texture_2d<f32>;
