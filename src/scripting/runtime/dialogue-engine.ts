@@ -409,9 +409,18 @@ export class DialogueEngine {
     };
   }
 
+  /**
+   * The branches a conversation starts from: the top-level ones and the blocking ones. The
+   * Creation Kit's branch type is one of Normal, Top-Level or Blocking (DLBR DNAM 0, 0x1, 0x2),
+   * so a blocking branch is not flagged top-level: 996 of the load order's (MQ102IrilethForcegreet,
+   * Irileth's "What's the meaning of this interruption?") were never offered. TODO(M13): whether
+   * the engine says a blocking topic at once in place of the greeting (ours offers it alone).
+   */
   async #topLevelBranches(): Promise<readonly BranchRecord[]> {
     await this.index.build();
-    return this.index.branches.filter((branch) => (branch.flags & BranchFlag.topLevel) !== 0);
+    return this.index.branches.filter(
+      (branch) => (branch.flags & (BranchFlag.topLevel | BranchFlag.blocking)) !== 0,
+    );
   }
 
   // --- Lines outside the dialogue menu (docs/ai.md, "Talking") ------------------------------

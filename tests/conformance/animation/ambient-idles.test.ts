@@ -220,8 +220,12 @@ describe.skipIf(!hasGamedata())('the Bannered Mare in the evening (headless simu
 });
 
 describe('ambient idles (todo)', () => {
-  it.todo('a specific idle played over a playing one skips the PickNewIdle its stop raises  [original]');
-  it.todo('in a complex scene the next try waits fAIIdleWaitTimeComplexScene after an idle  [original]');
+  it.todo(
+    'a specific idle played over a playing one skips the PickNewIdle its stop raises  [original]',
+  );
+  it.todo(
+    'in a complex scene the next try waits fAIIdleWaitTimeComplexScene after an idle  [original]',
+  );
   it.todo('the frame’s idle time budget: tries stop when it is spent  [original]');
   it.todo('an Eat package’s eating step picks none  [original]');
   it.todo('the player picks ActionIdle in the camera states that allow it  [original]');

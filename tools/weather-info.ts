@@ -98,6 +98,9 @@ if (query === '--regions') {
   console.log(
     `  sun ${rgb(sky.sunColor)} sunlight ${rgb(sky.sunlight)} glare ${sky.sunGlare.toFixed(2)}`,
   );
+  console.log(
+    `  sky statics ${rgb(sky.skyStatics)} (${String(weather.skyStatics.length)} statics)`,
+  );
   console.log(`  sun direction ${sky.sunDirection.map((v) => v.toFixed(2)).join(' ')}`);
   console.log(
     `  fog ${rgb(sky.fogNear)} → ${rgb(sky.fogFar)}, ${sky.fogNearDistance.toFixed(0)}..${sky.fogFarDistance.toFixed(0)} pow ${sky.fogPower.toFixed(2)} max ${sky.fogMax.toFixed(2)}`,

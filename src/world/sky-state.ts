@@ -210,6 +210,11 @@ export interface SkyState {
   readonly fogPower: number;
   readonly fogMax: number;
   readonly waterMultiplier: Rgb;
+  /**
+   * The weather's sky statics colour (NAM0 Sky Statics): the light of its distant cloud banks,
+   * whose shapes take it as their External_Emittance (shell/sky-objects.ts).
+   */
+  readonly skyStatics: Rgb;
   /** The lightning flash this moment: its colour times its brightness (added to the sky). */
   readonly lightning: Rgb;
   /** Wind speed 0..1. */
@@ -540,6 +545,7 @@ export function skyState(input: SkyInput): SkyState {
     fogPower: scalar((l) => l.fogPower),
     fogMax: scalar((l) => l.fogMax),
     waterMultiplier: color(WeatherColor.waterMultiplier),
+    skyStatics: color(WeatherColor.skyStatics),
     lightning,
     windSpeed: input.previous
       ? input.previous.windSpeed + (input.weather.windSpeed - input.previous.windSpeed) * transition

@@ -13,6 +13,7 @@ import {
   addonModel,
   addonsForRace,
   firstSlot,
+  hairTint,
   inFirstPerson,
   partitionVisible,
   pickLeveled,
@@ -400,5 +401,13 @@ describe('actor looks', () => {
     expect(made.hairColor).toBe(0x200);
     expect(made.skinTone).toEqual([0.5, 0.4, 0.3]);
     expect(withOverrides(made, { female: false }).flags & 0x1).toBe(0);
+  });
+
+  it('tints hair by twice its colour (128 leaves the texture as it is)', () => {
+    // HairColor16AlbinoWhite 130,130,130: about the texture's own colour.
+    const albino = hairTint([130 / 255, 130 / 255, 130 / 255]);
+    for (const channel of albino) expect(channel).toBeCloseTo(1.02, 2);
+    // HairColor11Black 26,28,28 stays dark but not black.
+    expect(hairTint([26 / 255, 28 / 255, 28 / 255])[0]).toBeCloseTo(0.204, 3);
   });
 });

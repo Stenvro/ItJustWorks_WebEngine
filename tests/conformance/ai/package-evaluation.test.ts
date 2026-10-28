@@ -104,7 +104,7 @@ describe('package evaluation: when a package is chosen again', () => {
   });
 
   it.todo(
-    'evaluates a running procedure again every fEvaluateProcedureTimer (3 s) (the engine's defaults; ' +
+    'evaluates a running procedure again every fEvaluateProcedureTimer (3 s) (the engine’s defaults; ' +
       'what it re-checks is to be observed in the original)',
   );
   it.todo(

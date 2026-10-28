@@ -6,6 +6,7 @@ import { writeSwf } from '../formats/swf/swf-writer.ts';
 import {
   BRIDGE_CALL,
   BRIDGE_GET,
+  BRIDGE_READY,
   BRIDGE_INVOKE,
   BRIDGE_SET,
   bridgeActions,
@@ -56,6 +57,11 @@ describe('the menu bridge', () => {
       expect(lines).toContain(`Push null, "${name}", 3`);
     }
     expect(lines).toContain('"gfxExtensions", true');
+  });
+
+  it('tells the engine once its callbacks are registered, after the last of them', () => {
+    const ready = lines.indexOf(`Push "${BRIDGE_READY}", 1`);
+    expect(ready).toBeGreaterThan(lines.indexOf(`Push null, "${BRIDGE_GET}", 3`));
   });
 
   it("gives the menus Scaleform's focus groups, which CLIK's focused and TextInput walk", () => {

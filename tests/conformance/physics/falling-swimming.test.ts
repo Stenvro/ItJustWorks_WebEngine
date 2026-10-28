@@ -118,7 +118,9 @@ describe('breath and drowning (the engine’s rule)', () => {
     expect(long.step(0.1, 0).gasped).toBe(true);
   });
 
-  it.todo('plays NPCHumanDrowning on the player while they drown  [original] (sim: a deep-water place)');
+  it.todo(
+    'plays NPCHumanDrowning on the player while they drown  [original] (sim: a deep-water place)',
+  );
   it.todo(
     'says the Leave Water Breath line (LWBS) on coming up after 4 s under water  [original] (sim)',
   );

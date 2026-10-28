@@ -1064,8 +1064,13 @@ export class PlaySession {
         this.#setTarget(target, true);
         if (this.player.takePressed('Activate')) target?.activate();
       } else {
+        // Activation switched off (DisablePlayerControls' abActivate): no prompt either.
         this.#setTarget(
-          this.#grab ? undefined : actorFirst ? actor.target : this.#activatableAt(hit),
+          this.#grab || !this.player.allows('Activate')
+            ? undefined
+            : actorFirst
+              ? actor.target
+              : this.#activatableAt(hit),
         );
         // A corpse the pick met (its ragdoll): held, Activate drags it; tapped, it is searched.
         const corpse =
@@ -1742,6 +1747,21 @@ export class PlaySession {
         if (placed.owner.reference === reference) found.push(placed);
     }
     return found;
+  }
+
+  /**
+   * A dead actor of a cell was made again (what it wears changed: looted, dressed): its cell's
+   * ragdoll moves the new pose from now on, from where it lies. Whether one moved `from`.
+   */
+  ragdollPoseReplaced(from: ActorPose, to: ActorPose): boolean {
+    for (const group of this.#groups) {
+      const index = group.articulated.findIndex((entry) => entry.pose === from);
+      const entry = group.articulated[index];
+      if (!entry) continue;
+      group.articulated[index] = entry.movedTo(to);
+      return true;
+    }
+    return false;
   }
 
   /** A script enabled or disabled a reference: its collision comes back or leaves. */

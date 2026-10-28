@@ -147,6 +147,16 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   its length to those that do not swim, preferred triangles (roads) half. A goal that cannot be
   reached (another island, past 20,000 triangles) gives the path to where the search came
   nearest to it.
+- **Off the navmesh** (`ActorMovers`): a travel from a point off the navmeshes begins at their
+  nearest point within 512 units. One to a point off them (the player by a door stands a few
+  units past the navmesh's edge) ends at their nearest point if that is within the travel's
+  arrival radius of the point, and is arrived at that much nearer, so the actor ends within its
+  radius of the point itself. Searched to the point itself, the path ended short of it, never
+  complete, and the travel was given up: Alvor's force greet in his house (MQ102A) never reached
+  the player by his door. Arrived within its radius of the navmesh's point only, Irileth's force
+  greet stopped 320 units from the player, past the 300 its ForceGreet branch asks, and her
+  package ended without a word (tests/sim-before-the-storm.int.test.ts). TODO(M13): how the
+  engine's search takes a goal off the navmesh.
 - **The way** is pulled tight through the edges the triangles' chain crosses (the simple stupid
   funnel), each edge narrowed by the actor's radius at both ends (its controller's), so it turns
   round corners an actor's width off them.
@@ -309,7 +319,13 @@ The rules (observed in the original):
 - **The heights it cuts.** A navmesh triangle counts as under it when its height lies between
   the box's bottom minus fMaxHeightFromNavmeshToObstacleBoxBottom (128) and the box's top plus
   fMaxHeightFromObstacleBoxToToNavmesh (−16): a box on the floor above leaves the hall below it
-  open.
+  open. (Observed in the original: the triangle search under a box filters by height with these two, the
+  box's height plus −16 above and 128 below.) Ours takes the box's bottom and top straight
+  below and above each point, its own faces rather than its upright bounds: a tilted box under
+  a ramp's navmesh reaches above the navmesh lying on it only at its high end (Helgen Keep's
+  collapsed hall, the dunCG CollisionMarkers under the rubble on the way to the caves, whose
+  upright bounds shut the only way on). TODO(M13): whether the engine's box there is the
+  reference's own or its upright bounds was not read; the data needs its own.
 - **When it cuts.** While the reference is enabled and, for a door or an activator, shut: open
   (GetOpenState 1 after a script's SetOpen, or its last animation event an open one: a
   portcullis's `Open`/`Opened`) it cuts nothing; its close animation (`Close`/`Closed`) cuts
@@ -318,8 +334,13 @@ The rules (observed in the original):
 Ours: the actor stage (`src/shell/actor-stage.ts`, `refreshObstacles`) keeps a per-cell set of
 active footprints (`NavmeshObstacleField`), replaced as the views apply enable states, a script
 opens or shuts a door, or an obstacle activator's open or close animation plays. `findPath`
-takes them as `obstacles`: the triangles whose middle lies under one and the path steps that
-cross one are closed (a step that starts inside one does not count: an actor in a box walks out).
+takes them as `obstacles`: the triangles wholly under one and the path steps that cross one are
+closed (a step that starts inside one does not count: an actor in a box walks out). A triangle
+only partly under one keeps its free part: a step crosses into it at the point of the edge
+nearest its middle whose step stays clear, and a path pulled tight that would cut across a
+footprint goes by the search's own steps instead (Helgen Keep: a cart wheel, HandCart01Wheel,
+lying by the doorway to the stairs covered the middle of the doorway's triangles and shut
+Ralof's way down when a triangle under a footprint's middle was closed whole).
 A mover whose way on an obstacle came across, or whose path stopped short while one went, searches
 again (`ActorMovers`). A wander's random point (`randomReachablePoint`) keeps off them too.
 The cases: tests/conformance/ai/movement-paths.test.ts (Korvanjund's MQ103BanditDisabler box
@@ -327,7 +348,7 @@ across the hall stops a walking NPC, disabled it lets her through; Saarthal's po
 it shuts) and src/ai/pathfinding.test.ts.
 
 TODO(M13): the engine re-triangulates the navmesh under an obstacle (a triangle partly covered is
-split, its free part stays open), and redoes an animated obstacle's cut from its collision body
+split, its free part stays open; ours approximates that by the crossing points above), and redoes an animated obstacle's cut from its collision body
 where it comes to rest (bhkObstacleDeactivationListener), not from its animation events; an
 activator's collision in its current animation state, not its OBND, is the box then.
 
@@ -820,7 +841,14 @@ one actor, `--audit` for cells):
   that do not start with the game are at stage 0 with no stage done. Those that do (QUST DNAM
   0x01) have their start-up stage done. Where a script fragment runs on that stage, its effects
   are not known, nor are quest aliases' packages (ALPC; they run before the actor's own) until
-  the Papyrus VM runs the quests (M8).
+  the Papyrus VM runs the quests (M8). GetWithinPackageLocation is valued for the actor (where
+  it is placed) and, run on package data, for the player a data input names (where the running
+  game has them), against a location input near a reference. GetDetected and
+  IsPlayerMovingIntoNewSpace are 0: an actor the start places is not on the stage, where its
+  senses run. So the ForceGreet template (Whiterun's gate guard: to the player once detected or
+  once the player is in its trigger, else to its wait location) sends the actor to its wait
+  location while the player is away, and greets where it is once they are in its trigger
+  (`src/ai/package-start.test.ts`). TODO(M13): the low process's own values for these.
 - **Not decided** where a condition is not known (random chance, the player's state, package
   data, alias references), a Random branch chooses, a linked reference is missing (the Civil
   War scripts link guards to their posts during sieges) or the place is found by searching

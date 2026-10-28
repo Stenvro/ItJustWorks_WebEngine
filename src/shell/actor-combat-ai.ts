@@ -505,6 +505,8 @@ const CHASE_BEYOND = 512;
  * no way was found (seconds). */
 const CHASE_SLACK = 192;
 const CHASE_RETRY = 1;
+/** Exit Water: it arrives at the shore it makes for within this (units). */
+const SHORE_ARRIVE = 16;
 /** It strikes when its target is within this of its facing (radians). */
 const STRIKE_ANGLE = Math.PI / 6;
 /**
@@ -1868,6 +1870,17 @@ export class ActorCombatAi {
       });
     }
     if (mind.equipping) return;
+    // Swimming, its graph takes no draw (Swim_State): its weapon away, it makes for the shore
+    // first (Exit Water, which its tree runs only with the weapon out). Waiting for the draw,
+    // Hadvar, swimming by Riverwood's river bank as a bandit came at him, stood there for good.
+    if (
+      state.weapon !== WeaponState.drawn &&
+      this.#options.movers.motion(reference)?.swimming === true &&
+      this.#navmeshes()?.locate(feet) !== undefined &&
+      this.#exitWater(mind, feet) === 'running'
+    ) {
+      return;
+    }
     // One that would flee at once (a coward, uncornered) does not take up its weapon to fight:
     // its next decision has it flee or yield.
     if (state.weapon === WeaponState.sheathed && this.#wouldFlee(mind, profile)) return;
@@ -1993,6 +2006,33 @@ export class ActorCombatAi {
         : there,
       isPlayer: target.player,
     };
+  }
+
+  /**
+   * Exit Water: to the nearest dry ground of the navmeshes where it no longer swims, running,
+   * until it is there (arrived farther off, it could still be in the water and go for the same
+   * shore again and again).
+   */
+  #exitWater(mind: Mind, feet: Vec3): 'running' | 'failure' {
+    if (!mind.shore) {
+      const movers = this.#options.movers;
+      const set = this.#navmeshes();
+      const shore =
+        set &&
+        exitWaterPoint(
+          set,
+          feet,
+          undefined,
+          (point) => movers.swimsAt(mind.reference, point) === true,
+        );
+      if (!shore) return 'failure';
+      mind.shore = shore;
+      this.#stopRun(mind);
+      void movers.travel(mind.reference, shore, 'run', SHORE_ARRIVE).then(() => {
+        if (mind.shore === shore) mind.shore = undefined;
+      });
+    }
+    return 'running';
   }
 
   /** Its movement behaviour ends (and its travel to it, if it went round something). */
@@ -2913,21 +2953,7 @@ export class ActorCombatAi {
             return 'running';
           },
           holdPosition: (f) => this.#hold(f),
-          // Exit Water: to the nearest dry ground of the navmeshes, running.
-          exitWater: (f) => {
-            const mind = f.mind;
-            if (!mind.shore) {
-              const set = this.#navmeshes();
-              const shore = set && exitWaterPoint(set, f.feet);
-              if (!shore) return 'failure';
-              mind.shore = shore;
-              this.#stopRun(mind);
-              void movers.travel(mind.reference, shore, 'run', 64).then(() => {
-                if (mind.shore === shore) mind.shore = undefined;
-              });
-            }
-            return 'running';
-          },
+          exitWater: (f) => this.#exitWater(f.mind, f.feet),
           // Low Combat: after its target, and blows without their animations.
           pursue: (f) => {
             this.#chase(f.mind, f.there, f.reach * 0.8, f.distance);

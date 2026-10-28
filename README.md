@@ -46,22 +46,22 @@ the engine only, and needs a legitimately owned copy of Skyrim Special Edition. 
 
 ## Milestones
 
-| Milestone | What                                                                      | State |
-| --------- | ------------------------------------------------------------------------- | ----- |
-| M0        | Vite, TypeScript and WebGPU; picking the game folder                      | done  |
-| M1        | Virtual file system, BSA reader (LZ4), load order                         | done  |
-| M2        | NIF and DDS: models with materials and alpha                              | done  |
-| M3        | ESM records; interior cells                                               | done  |
-| M4        | Tamriel's exterior: terrain, streaming, LOD, water, sky, weather          | done  |
-| M5        | The player: first and third person, collision, physics                    | done  |
-| M6        | Audio: xWMA, 3D sound, the music system                                   | done  |
-| M7        | Actors: skinning, Havok animations and behavior graphs, faces, lip sync   | done  |
-| M8        | The Papyrus virtual machine: quests and scripts as in the original        | done  |
-| M9        | The game's own menus (Scaleform through Ruffle)                           | done  |
-| M10       | AI: packages, navigation meshes, combat, detection, schedules             | next  |
-| M11       | Gameplay: skills, perks, magic, shouts, crafting, crime, factions         |       |
-| M12       | Savegames (own format, then importing `.ess` saves), mod load order       |       |
-| M13       | Polish: performance, memory, edge cases, the main quest from start to end |       |
+| Milestone | What                                                                      | State  |
+| --------- | ------------------------------------------------------------------------- | ------ |
+| M0        | Vite, TypeScript and WebGPU; picking the game folder                      | done   |
+| M1        | Virtual file system, BSA reader (LZ4), load order                         | done   |
+| M2        | NIF and DDS: models with materials and alpha                              | done   |
+| M3        | ESM records; interior cells                                               | done   |
+| M4        | Tamriel's exterior: terrain, streaming, LOD, water, sky, weather          | done   |
+| M5        | The player: first and third person, collision, physics                    | done   |
+| M6        | Audio: xWMA, 3D sound, the music system                                   | done   |
+| M7        | Actors: skinning, Havok animations and behavior graphs, faces, lip sync   | done   |
+| M8        | The Papyrus virtual machine: quests and scripts as in the original        | done   |
+| M9        | The game's own menus (Scaleform through Ruffle)                           | done   |
+| M10       | AI: packages, navigation meshes, combat, detection, schedules             | mostly |
+| M11       | Gameplay: skills, perks, magic, shouts, crafting, crime, factions         | mostly |
+| M12       | Savegames (own format, then importing `.ess` saves), mod load order       | mostly |
+| M13       | Polish: performance, memory, edge cases, the main quest from start to end |        |
 
 How the engine reads each format and why it behaves as it does is written down in
 [`docs/`](docs): [file formats](docs/formats), [rendering](docs/rendering.md),
@@ -89,10 +89,10 @@ folder also works, without Creation Club content). The browser keeps access to t
 the next visit.
 
 - **Play** is the game itself: its launcher (Options: windowed or full screen), the intro and
-  the game's main menu. **New** starts the opening, which waits for AI (M10): the cart does not
-  drive yet. To play freely, open the console at the main menu (`~`) and type
-  `coc Riverwood` (or any cell): as in the original, a new game starts there without the
-  opening. The brand in the top left corner leaves the game.
+  the game's main menu. **New** starts the opening in the cart to Helgen; **Load** lists the
+  saves and imports an original save (`.ess`). The main quest is being brought up quest by
+  quest. To play freely, open the console at the main menu (`~`) and type `coc Riverwood`
+  (or any cell): as in the original, a new game starts there without the opening. The brand in the top left corner leaves the game.
 - **Sandbox** opens any model, interior cell or worldspace, with a developer panel (time,
   weather, quest and scene states). Click the scene to play; H hides the panels.
 
