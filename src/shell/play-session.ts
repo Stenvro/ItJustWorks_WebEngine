@@ -59,7 +59,13 @@ import { attachPlayerInput } from './player-input.ts';
 import { attachGamepad } from './gamepad-input.ts';
 import type { HudSignals } from './hud-signals.ts';
 import type { ActorTarget } from './actors.ts';
-import { bodyOnPose, poseRagdoll, type RagdollData } from '../world/ragdoll-data.ts';
+import {
+  bodyOnPose,
+  poseRagdoll,
+  type RagdollData,
+  type RagdollPoseLocals,
+} from '../world/ragdoll-data.ts';
+import { placeCorpsePose, type CorpsePose } from '../animation/corpse-pose.ts';
 
 /**
  * How long the sandbox's notice stays (it has no HUD); also how long a notification repeated
@@ -583,6 +589,25 @@ export interface CellCollision {
   readonly isEnabled?: (reference: number) => boolean;
 }
 
+/**
+ * Poses an articulated object's nodes (its pose in its rest pose) and its bodies by its placed
+ * ragdoll pose. What the walk applied (undefined: it has none, or nothing matched).
+ */
+function poseObjectRagdoll(
+  physics: PhysicsWorld,
+  placed: PlacedCollision,
+  pose: ActorPose,
+  collision: CollisionData,
+  object: { readonly world: Mat4; readonly ragdoll?: RagdollData },
+): RagdollPoseLocals | undefined {
+  if (!object.ragdoll) return undefined;
+  const rest = pose.worlds.slice();
+  const posed = poseRagdoll(pose, collision, { bones: object.ragdoll.bones });
+  if (!posed || posed.locals.size === 0) return undefined;
+  physics.poseBodies(placed, object.world, ({ data }) => bodyOnPose(pose, rest, data));
+  return posed;
+}
+
 /** A dead actor's ragdoll: its skeleton's bodies (skeleton.nif) moving its pose's nodes. */
 export interface CellRagdoll {
   readonly reference: number;
@@ -597,6 +622,8 @@ export interface CellRagdoll {
   readonly severed?: ReadonlySet<string>;
   /** Where the Creation Kit left its bodies (XRGD: src/world/ragdoll-data.ts). */
   readonly ragdoll?: RagdollData;
+  /** Where its ragdoll laid it in the running game (src/animation/corpse-pose.ts): before XRGD. */
+  readonly corpse?: CorpsePose;
   /** "Don't Havok Settle": without a ragdoll pose, it lies as placed until touched. */
   readonly dontHavokSettle?: boolean;
 }
@@ -1588,7 +1615,16 @@ export class PlaySession {
         );
         group.collision.push(placed);
         if (cell.isEnabled?.(object.reference) === false) physics.setEnabled(placed, false);
-        if (settlesWhenPlaced(object) && placed.dynamic) group.settle.push(placed);
+        // An articulated object's placed ragdoll pose (XRGD: armour on the floor, an open book),
+        // walked as a dead actor's is (src/world/ragdoll-data.ts; XRGB turns only an actor's
+        // biped): its nodes and bodies lie so; complete, it stays at rest until touched, else it
+        // falls from the pose so far.
+        const posed =
+          articulated && object.ragdoll
+            ? poseObjectRagdoll(physics, placed, articulated, collision, object)
+            : undefined;
+        const settles = posed ? !posed.complete : settlesWhenPlaced(object);
+        if (settles && placed.dynamic) group.settle.push(placed);
         if (instance?.motion) group.moving.push({ placed, instance, motion: instance.motion });
         if (articulated && instance) {
           group.articulated.push(new Articulation(placed, articulated, instance.world));
@@ -1615,18 +1651,23 @@ export class PlaySession {
       const collision = ragdoll.collision;
       if (!collision?.bodies.some((body) => body.motion === 'dynamic' && !body.phantom)) continue;
       tasks.push(() => {
-        // Its bodies start in its placed ragdoll pose (XRGD), else the skeleton's rest pose, as
-        // its nodes do.
+        // Its bodies start where the running game's ragdoll laid it (its cell unloaded, or a
+        // save), else in its placed ragdoll pose (XRGD), else the skeleton's rest pose, as its
+        // nodes do.
         ragdoll.pose.update(undefined);
         const rest = ragdoll.pose.worlds.slice();
-        const posed = poseRagdoll(ragdoll.pose, collision, ragdoll.ragdoll);
+        const corpse =
+          ragdoll.corpse && placeCorpsePose(ragdoll.pose, ragdoll.world, ragdoll.corpse)
+            ? ragdoll.corpse
+            : undefined;
+        const posed = corpse ? undefined : poseRagdoll(ragdoll.pose, collision, ragdoll.ragdoll);
         const placed = physics.addObject(
           collision,
           ragdoll.world,
           { reference: ragdoll.reference, kind: 'actor' },
           false,
         );
-        if (posed && posed.locals.size > 0) {
+        if (corpse || (posed && posed.locals.size > 0)) {
           physics.poseBodies(placed, ragdoll.world, ({ data }) =>
             bodyOnPose(ragdoll.pose, rest, data),
           );
@@ -1642,8 +1683,13 @@ export class PlaySession {
         // Observed in the original: a complete placed pose leaves the bodies where they
         // are (simulated and at rest: here held until something touches them); one that
         // stopped at a mismatch sets them going; without one they are set falling (but those
-        // flagged "Don't Havok Settle").
-        const settles = posed ? !posed.complete : ragdoll.dontHavokSettle !== true;
+        // flagged "Don't Havok Settle"). A corpse the running game laid down lies so if it lay
+        // at rest, else falls on.
+        const settles = corpse
+          ? !corpse.resting
+          : posed
+            ? !posed.complete
+            : ragdoll.dontHavokSettle !== true;
         if (placed.dynamic && settles) group.settle.push(placed);
         group.articulated.push(new Articulation(placed, ragdoll.pose, ragdoll.world));
         group.penetrations.push(new RagdollPenetration(physics, placed, ragdoll.reference));

@@ -64,6 +64,8 @@ interface ActorBody {
   penetration: RagdollPenetration | undefined;
   /** Its bodies find their contacts with fixed bodies while keyframed (touching). */
   fixedContacts: boolean;
+  /** Its ragdoll's joints are powered toward its graph's pose (#power). */
+  powered: boolean;
 }
 
 export class ActorBodies {
@@ -157,7 +159,9 @@ export class ActorBodies {
       if (entry?.articulation && staged.placed !== entry.actor) entry = this.#rehome(entry, staged);
       if (entry?.articulation) {
         if (entry.penetration && !entry.penetration.update(seconds)) entry.penetration = undefined;
-        // A knocked-down actor's graph animated its pose meanwhile: the ragdoll's again.
+        // A knocked-down actor's graph animated its pose meanwhile: its motors pull the ragdoll
+        // toward that pose (as far as the graph powers it), then the pose is the ragdoll's again.
+        if (entry.knocked) this.#power(entry, physics);
         entry.articulation.update(entry.knocked);
         continue;
       }
@@ -195,8 +199,9 @@ export class ActorBodies {
       return;
     }
     this.#waiting.delete(staged.reference);
-    // Knocked down as it died: it lies on as the dead do.
+    // Knocked down as it died: it lies on as the dead do, limp.
     entry.knocked = false;
+    this.#unpower(entry, physics);
     // Observed in the original: a dead actor's ragdoll lies on the dead bodies' layer
     // (L_DEADBIP: it meets clutter, weapons, projectiles and other corpses, no character
     // controller), and its limbs through the world are brought back for a while.
@@ -266,8 +271,49 @@ export class ActorBodies {
     if (!entry?.knocked) return;
     entry.knocked = false;
     entry.articulation = undefined;
+    if (this.#physics) this.#unpower(entry, this.#physics);
     this.#physics?.keyframe(entry.placed);
     entry.poseVersion = -1;
+  }
+
+  /**
+   * Whether a knocked-down actor's ragdoll is powered now (its graph's powered ragdoll controls
+   * pull it toward its pose: matching its get-up).
+   */
+  powered(reference: number): boolean {
+    return this.#bodies.get(reference)?.powered === true;
+  }
+
+  /**
+   * The graph's powered ragdoll controls on a knocked-down actor's ragdoll (the engine's powered
+   * ragdoll controller, as hkbPoweredRagdollControlsModifier asks): with force, each joint's
+   * motor pulls its body's turn toward the graph's pose of this update (FullyRagdoll's 0:
+   * limp; matching the get-up's first pose, 200), only the bones the modifier names if it
+   * names any. TODO(M13): which bodies Havok's controller powers when the modifier names none
+   * (here all), and its world-from-model mode (the ragdoll's root is not driven here).
+   */
+  #power(entry: ActorBody, physics: PhysicsWorld): void {
+    const control = entry.staged.placed.behavior?.poweredRagdoll();
+    if (!control || control.maxForce <= 0) {
+      this.#unpower(entry, physics);
+      return;
+    }
+    const named = new Set(control.bones.map((bone) => bone.toLowerCase()));
+    const poses = new Map<PlacedBody, Mat4>();
+    const only = new Set<PlacedBody>();
+    const worlds = entry.pose.worlds;
+    for (const { body, node, offset } of entry.bodies) {
+      poses.set(body, multiply(worlds.subarray(node * 16, node * 16 + 16), offset));
+      if (named.size === 0 || named.has(body.data.node.toLowerCase())) only.add(body);
+    }
+    physics.power(entry.placed, poses, entry.world, control, only);
+    entry.powered = true;
+  }
+
+  #unpower(entry: ActorBody, physics: PhysicsWorld): void {
+    if (!entry.powered) return;
+    entry.powered = false;
+    physics.power(entry.placed, new Map(), entry.world, undefined);
   }
 
   /**
@@ -375,6 +421,7 @@ export class ActorBodies {
       knocked: false,
       penetration: undefined,
       fixedContacts: false,
+      powered: false,
     };
     this.#bodies.set(reference, entry);
     this.#disableSevered(entry);

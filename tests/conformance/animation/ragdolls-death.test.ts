@@ -153,13 +153,11 @@ describe.skipIf(!hasGamedata())('Hulda killed at the bar counter (headless simul
     expect(held).toBe(false);
   });
 
-  // TODO(M13): killed still (a script's Kill: no blow pushes her), her ragdoll is let go from the
-  // lean pose and comes to rest on its feet at once, its knees and hips held by the joints'
-  // friction (constraint-solver.ts), the head at 98 units: the maintainer's "asleep upright".
-  // Killed as she entered (moving), the same ragdoll falls to the floor. What the engine does
-  // that ours does not (a push for a still death, the friction's size, the graph driving the
-  // ragdoll's fall) is not read yet.
-  it.fails('her body slumps: the head falls below the counter’s height', () => {
+  // Killed still (a script's Kill: no blow pushes her), her ragdoll is let go from the lean pose.
+  // Held by Rapier's box of swing limits alone, her joints lay within it but past Havok's cone
+  // on its diagonals, and her friction kept her on her feet, asleep upright (head at 98 units);
+  // with the cone (constraint-solver.ts) her joints are turned back into it and she slumps.
+  it('her body slumps: the head falls below the counter’s height', () => {
     expect(headBefore).toBeGreaterThan(100);
     expect(headAfter).toBeLessThan(60);
   });
@@ -168,7 +166,6 @@ describe.skipIf(!hasGamedata())('Hulda killed at the bar counter (headless simul
 describe('ragdolls and death (todo)', () => {
   it.todo('powered ragdoll motors: the graph’s powered bones by the RagdollAnim gains  [INI]');
   it.todo('fDyingTimer (2): how long an actor dies before it is dead  [settings, original]');
-  it.todo('objects’ placed ragdoll poses (XRGD) and the constraints’ cone limits  [nif.xml]');
   it.todo('[Animation] bAlwaysDriveRagdoll (0): a ragdoll driven while alive  [INI]');
   it.todo('iDeathDropWeaponChance (0): the weapon dropped at death  [settings]');
   it.todo('a death in a lean marker (type 4): Ragdoll half the time, else DeathAnim  [data]');

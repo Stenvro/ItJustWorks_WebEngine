@@ -4,6 +4,7 @@
 // scripts created. Plain data, all of it saved (docs/formats/save.md). Platform-independent.
 // Notes: docs/scripting.md ("Game state").
 
+import type { CorpsePose } from '../../animation/corpse-pose.ts';
 import type { SavedGraph } from '../../animation/script-graphs.ts';
 import type { PlayerAppearance } from '../../gameplay/chargen.ts';
 import type { DismemberedLimb } from '../../gameplay/combat/dismemberment.ts';
@@ -115,6 +116,11 @@ export interface ActorState {
    * what it wore then: a dismembered corpse stays so (src/shell/actor-dismemberment.ts).
    */
   dismembered?: DismemberedLimb[];
+  /**
+   * Dead: where its ragdoll laid its corpse as its cell unloaded or the game was saved (it lies
+   * there again: src/animation/corpse-pose.ts).
+   */
+  corpse?: CorpsePose;
   /** AllowPCDialogue: false, the player cannot talk to it. */
   allowPlayerDialogue?: boolean;
   /** AllowBleedoutDialogue: the player may talk to it while it bleeds out. */

@@ -31,6 +31,7 @@ import { parseTextureSet, placeDecal, type PlacedDecal, type TextureSet } from '
 import { BookFlag, parseItem } from './item-records.ts';
 import { parseStaticDirectional, type StaticDirectional } from './material-object.ts';
 import { parseRagdollData, type RagdollData } from './ragdoll-data.ts';
+import type { CorpsePose } from '../animation/corpse-pose.ts';
 import {
   addCullingMarker,
   roomIndexAt,
@@ -67,6 +68,11 @@ export interface CellObject {
    * something touches it, instead of settling when its cell loads.
    */
   readonly dontHavokSettle?: boolean;
+  /**
+   * Where the Creation Kit left its ragdoll's bodies (XRGD: armour on the floor, an open book,
+   * a hanging pheasant): its articulated model lies so (src/world/ragdoll-data.ts).
+   */
+  readonly ragdoll?: RagdollData;
   /** Which fade setting it fades out by with distance; never fades without (object-fade.ts). */
   readonly fade?: FadeKind;
   /** XTEL:a load door's destination (the door it leads to and where the player arrives). */
@@ -160,6 +166,11 @@ export interface CellActor {
   readonly startsDead: boolean;
   /** Where the Creation Kit left its ragdoll's bodies, dead (XRGD: src/world/ragdoll-data.ts). */
   readonly ragdoll?: RagdollData;
+  /**
+   * Where its ragdoll laid it in the running game (its cell unloaded, or a save): it lies so
+   * again, rather than in its placed pose or falling from its rest pose.
+   */
+  readonly corpse?: CorpsePose;
   /** "Don't Havok Settle" (flag 0x20000000): its ragdoll lies as placed until touched. */
   readonly dontHavokSettle?: boolean;
 }
@@ -262,6 +273,12 @@ export function ragdollOf(
     ...((record.flags & DONT_HAVOK_SETTLE) !== 0 && { dontHavokSettle: true }),
   };
 }
+/** A placed object's ragdoll pose (its record's XRGD and XRGB), if it has one. */
+function objectRagdollOf(record: Pick<GameRecord, 'fields'>): Pick<CellObject, 'ragdoll'> {
+  const ragdoll = parseRagdollData(record.fields);
+  return ragdoll ? { ragdoll } : {};
+}
+
 /** The engine's collision primitive marker (STAT). */
 const COLLISION_MARKER = 0x21;
 /** SkyrimLayer L_TRIGGER: the layer of triggers' primitives without XTRI. */
@@ -886,6 +903,7 @@ export async function loadCellData(
       ...leafAnimationOf(base),
       ...emittanceOf(record),
       ...((record.flags & DONT_HAVOK_SETTLE) !== 0 && { dontHavokSettle: true }),
+      ...objectRagdollOf(record),
       // Distance fade by its kind, unless it has distant LOD or is full LOD (object-fade.ts).
       ...(!neverFades(base.type, base.flags, record.flags) && {
         fade: fadeKind(

@@ -119,9 +119,17 @@ describe.skipIf(!hasGamedata())('knock-downs on the local game data', () => {
       const c = Math.cos(yaw / 2);
       pose.set([c * qx - s * qy, c * qy + s * qx, c * qz + s * qw, c * qw - s * qz], o + 3);
     }
+    // Limp while it lies: no motor powers the ragdoll.
+    expect(runtime.poweredRagdoll()?.maxForce ?? 0).toBe(0);
     runtime.setRagdollPose(pose);
     runtime.sendEvent('GetUpBegin');
-    await step(1);
+    // Matching, its motors pull the ragdoll toward the get-up's first pose (the graph's
+    // hkbPoweredRagdollControlData: ActorBodies powers the joints with it).
+    await step(0.2);
+    const powered = runtime.poweredRagdoll();
+    expect(powered?.maxForce).toBe(200);
+    expect(powered?.tau).toBeGreaterThan(0);
+    await step(0.8);
     expect(raised).toContain('GetUpStart');
     expect(master()).toBe('GetUpFromRagdoll');
     const match = runtime.poseMatch();
