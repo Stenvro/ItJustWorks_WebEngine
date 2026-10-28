@@ -10,6 +10,8 @@ import { hasGamedata, loadSim, openSim, PLAYER_REF, type Sim } from './helpers/s
 
 const MQ103 = 0xd0800;
 const MQ104 = 0x2610c;
+/** MQ105 "The Way of the Voice" (the Greybeards' call starts it). */
+const MQ105 = 0x242ba;
 /** WhiterunDragonsreach, and BleakFallsSanctum01 (where the Dragonstone lies). */
 const DRAGONSREACH = 0x165a3;
 const BLEAK_FALLS_SANCTUM = 0x371dd;
@@ -28,6 +30,10 @@ const BALGRUUF = 5;
 const IRILETH = 34;
 const DRAGON = 24;
 const FORT_CENTER = 38;
+/** The guards' lines after the absorption: "You... must be Dragonborn!", "But the old tales
+ * tell of the Dragonborn..." (MQ104DragonDeathScene). */
+const MUST_BE_DRAGONBORN = 0xbcf16;
+const OLD_TALES = 0xa3f80;
 
 /** A scene's phase now (-1: not playing). */
 function phase(sim: Sim, scene: number): number {
@@ -60,6 +66,12 @@ let afterJarl: Uint8Array | undefined;
 let afterCourtyard: Uint8Array | undefined;
 /** The game with the dragon circling the watchtower (stage 60, the scene's last phase). */
 let afterDragon: Uint8Array | undefined;
+/** The game with the dragon's soul absorbed (stage 90). */
+let afterAbsorb: Uint8Array | undefined;
+/** The game after the guards' talk and the player's first Shout (108). */
+let afterGuards: Uint8Array | undefined;
+/** The game with the Jarl's outro talk done (150). */
+let afterJarlOutro: Uint8Array | undefined;
 
 describe.skipIf(!hasGamedata())('MQ104 Dragon Rising', () => {
   // The way in is the game's: MQ103's stages as the player made them, the Dragonstone taken from
@@ -120,7 +132,7 @@ describe.skipIf(!hasGamedata())('MQ104 Dragon Rising', () => {
     } finally {
       await sim.close();
     }
-  }, 300_000);
+  }, 600_000);
 
   // Found 2026-10-28: the courtyard scene, started by stage 40 and saved before the scene
   // system's next update, was gone from the loaded game (a save kept only begun scenes).
@@ -139,7 +151,7 @@ describe.skipIf(!hasGamedata())('MQ104 Dragon Rising', () => {
     } finally {
       await sim.close();
     }
-  }, 300_000);
+  }, 600_000);
 
   // Found 2026-10-28: stage 60 enabled the dragon (MQ104BDragonRef) 23,000 units south of the
   // watchtower, outside the loaded area, and it never came: the low process sent it along the
@@ -171,7 +183,7 @@ describe.skipIf(!hasGamedata())('MQ104 Dragon Rising', () => {
     } finally {
       await sim.close();
     }
-  }, 300_000);
+  }, 600_000);
 
   // Found 2026-10-28: the dragon circled the fort 7,500 units off and never fought (stage 65,
   // MQ104DragonScript's OnCombatStateChanged, never came). It was beyond the high process's
@@ -180,7 +192,7 @@ describe.skipIf(!hasGamedata())('MQ104 Dragon Rising', () => {
   // units outside (Skyrim.esm's fSneak* settings); and in the air, with no controller, it
   // counted as standing still. Now the guards see it, it sees them, and the fight is the
   // combat tree's Flight subtree: orbits, dive bombs, hovers and ground attacks.
-  it('fights the dragon down and the player comes to its body (65-85)', async () => {
+  it('fights the dragon down, the player comes to its body and absorbs its soul (65-90)', async () => {
     if (!afterDragon) return;
     const sim = await loadSim(afterDragon);
     try {
@@ -214,17 +226,117 @@ describe.skipIf(!hasGamedata())('MQ104 Dragon Rising', () => {
       const at = await sim.position(dragon);
       if (at) await sim.moveTo([at[0] + 500, at[1], at[2] + 50]);
       expect(await sim.until(() => sim.stageDone(MQ104, 85), 30)).toBe(true);
+      // Found 2026-10-28: the absorption never came (90). The dragon's DragonActorScript comes
+      // from its base's template (MQ104Dragon's), and a persistent actor whose scripts are not
+      // its base's own never ran OnInit, so the script stayed in its empty state, which has no
+      // OnDeath. Now its scripts start as its cell attaches, OnDeath goes to deadAndWaiting,
+      // and with the player in deathFXrange MQKillDragonScript.DeathSequence plays: the skin
+      // burns away, the soul goes to the player (DragonSouls, DragonsAbsorbed), 90.
+      const actorScript = new ObjectHandle(dragon, 'dragonactorscript');
+      expect(await sim.until(() => sim.stageDone(MQ104, 90), 40)).toBe(true);
+      expect(await sim.runtime.vm.stateOf(actorScript)).toBe('deaddisintegrated');
+      expect(await sim.runtime.actors.isGhost(dragon)).toBe(true);
+      expect(sim.events('dragonSoulGained')).toEqual([{ souls: 1 }]);
+      expect(await sim.runtime.globalNamed('DragonsAbsorbed')).toBe(1);
+      // Stage 90 spends that soul on Fus (TeachWord, UnlockWord) and lets the player shout.
+      const fus = await sim.formId('WOOP', 'WordFus');
+      expect(fus).not.toBe(0);
+      expect(await sim.until(() => sim.runtime.wordsLearned.get(fus) === true, 5)).toBe(true);
+      expect((await sim.runtime.actors.value(PLAYER_REF, ActorValue.dragonSouls)).current).toBe(0);
+      afterAbsorb = await sim.save('MQ104 90');
     } finally {
       await sim.close();
     }
-  }, 300_000);
+  }, 600_000);
 
-  // Stalls 2026-10-28 at stage 85: the absorption never sets 90. DragonActorScript's OnDeath
-  // (delivered) goes to its deadAndWaiting state, whose OnBeginState waits for the player within
-  // deathFXrange and calls MQKillDragonScript.DeathSequence, which sets 90 at its end (after
-  // DragonsAbsorbed and the DragonSouls); 60 s on, no thread of either script is pending and 90
-  // is not set, with no script warning. Next: trace the dragon's script state after its death
-  // (GetState, IsGhost, the player's DragonSouls) to find where the sequence stops, then the
-  // guards' "Dovahkiin" (DragonDeathScene), the Jarl (100-160), the Greybeards (110: MQ105).
-  it.todo('absorbs its soul, hears the guards call them Dovahkiin, reports to the Jarl (90-200)');
+  // The guards' talk after the absorption (MQ104DragonDeathScene) plays by itself: the old
+  // tales of the Dragonborn, "Dovahkiin", until its first line asks whether the player tried
+  // to Shout (95); the player equips Unrelenting Force (92) and shouts (100), and the scene
+  // ends (105, 108).
+  it('has the guards call the player Dragonborn, and the player shout (90-108)', async () => {
+    if (!afterAbsorb) return;
+    const sim = await loadSim(afterAbsorb);
+    try {
+      expect(await sim.until(() => sim.stageDone(MQ104, 95), 300)).toBe(true);
+      // The first guard: "You... must be Dragonborn!"; then the old tales of the Dragonborn
+      // ("Dovahkiin") among them.
+      const said = (info: number): boolean =>
+        sim.events('topicInfo').some((line) => line.topicInfo === info && line.type === 'begin');
+      expect(said(MUST_BE_DRAGONBORN)).toBe(true);
+      expect(said(OLD_TALES)).toBe(true);
+      // Stage 92's help: "Use [Shout] to Shout." (MQ104Shout).
+      const help = (): string[] =>
+        sim
+          .records()
+          .flatMap((record) =>
+            record.kind === 'hud' && record.type === 'helpMessage' ? [record.text] : [],
+          );
+      expect(await sim.equip(await sim.formId('SHOU', 'UnrelentingForceShout'))).toBe(true);
+      await sim.step(1);
+      expect(sim.stageDone(MQ104, 92)).toBe(true);
+      expect(help().some((text) => text.includes('Shout'))).toBe(true);
+      sim.press('Shout', true);
+      await sim.step(0.3);
+      sim.press('Shout', false);
+      expect(await sim.until(() => sim.stageDone(MQ104, 100), 5)).toBe(true);
+      expect(await sim.until(() => sim.stageDone(MQ104, 108), 120)).toBe(true);
+      afterGuards = await sim.save('MQ104 108');
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+
+  // Back in Whiterun (MQ104PlayerScript's OnLocationChange into its HQLocation, Whiterun) the
+  // Greybeards' call is heard 6 s on (110: MQ105 starts at 5). In Dragonsreach the Jarl's
+  // outro scene plays and he comes to the player (his ForceGreet): told of the Dragonborn and
+  // the Greybeards, he sends them to High Hrothgar (150: MQ105 at 10).
+  it('has the Greybeards call and the Jarl send the player to High Hrothgar (110-150)', async () => {
+    if (!afterGuards) return;
+    const sim = await loadSim(afterGuards);
+    try {
+      await sim.world.openExterior(WHITERUN_WORLD, { arrival: COURTYARD });
+      expect(await sim.until(() => sim.stageDone(MQ104, 110), 15)).toBe(true);
+      expect(await sim.until(() => sim.stage(MQ105) >= 5, 5)).toBe(true);
+      await sim.openInterior(DRAGONSREACH);
+      const quest = sim.runtime.state.quest(MQ104);
+      const balgruuf = quest.aliases.get(BALGRUUF) ?? 0;
+      const at = await sim.position(balgruuf);
+      if (at) await sim.moveTo([at[0] + 120, at[1], at[2] + 10]);
+      const greeting = (): number | undefined =>
+        sim.menus().find((menu) => menu.menu === 'Dialogue Menu' && menu.reference === balgruuf)
+          ?.opening;
+      expect(await sim.until(() => greeting() !== undefined, 120)).toBe(true);
+      await sim.converse(
+        balgruuf,
+        [/called "Dragonborn/, /absorbed|called me/, /^The Greybeards/, /want with me/],
+        greeting(),
+      );
+      expect(await sim.until(() => sim.stageDone(MQ104, 150), 10)).toBe(true);
+      expect(sim.stage(MQ105)).toBeGreaterThanOrEqual(10);
+      afterJarlOutro = await sim.save('MQ104 150');
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+
+  // The scene goes on (Hrongar, Proventus) and the Jarl comes up again to reward the player:
+  // his line makes them Thane-to-be (160: the quest completes) and the quest stops (200).
+  it('has the Jarl reward the player and the quest complete (160-200)', async () => {
+    if (!afterJarlOutro) return;
+    const sim = await loadSim(afterJarlOutro);
+    try {
+      const quest = sim.runtime.state.quest(MQ104);
+      const balgruuf = quest.aliases.get(BALGRUUF) ?? 0;
+      const reward = (): number | undefined =>
+        sim.menus().find((menu) => menu.menu === 'Dialogue Menu' && menu.reference === balgruuf)
+          ?.opening;
+      expect(await sim.until(() => reward() !== undefined, 240)).toBe(true);
+      await sim.converse(balgruuf, [], reward());
+      expect(await sim.until(() => sim.stageDone(MQ104, 160), 10)).toBe(true);
+      expect(quest.completed).toBe(true);
+      expect(await sim.until(() => sim.stageDone(MQ104, 200), 30)).toBe(true);
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
 });

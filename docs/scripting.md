@@ -334,7 +334,12 @@ worldspaces on screen:
 
 - **Cells**: as a cell's references load, those with scripts get OnInit the first time (a
   non-persistent reference's scripts start with its cell), then OnCellAttach, OnLoad and
-  OnCellLoad; leaving, OnUnload and OnCellDetach.
+  OnCellLoad; leaving, OnUnload and OnCellDetach. An actor runs the scripts of the NPC_ it
+  takes them from (its leveled list's pick, a template's with the script flag), which is only
+  known once it is resolved: a persistent actor whose base has no scripts of its own but whose
+  script base has (MQ104's dragon: DragonActorScript from MQ104Dragon's template) starts them
+  as its cell attaches, not with the new game. TODO(M13): when the original starts them for
+  such an actor that never comes into a loaded cell.
 - **Enable state**: what scripts enable and disable shows and hides at once, collision
   included, without loading the cell again; enable parents follow. Observed in the
   original: a reference with an enable parent (its XESP naming a reference that exists) only
