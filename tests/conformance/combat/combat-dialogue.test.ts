@@ -66,7 +66,9 @@ describe('combat dialogue', () => {
   });
 
   it.todo('Bleedout lines every 1 .. 5 s (no Bleedout line is said yet)  [settings]');
-  it.todo('the first taunt drawn as the fight begins (original: the controller’s taunt timer)  [original]');
+  it.todo(
+    'the first taunt drawn as the fight begins (original: the controller’s taunt timer)  [original]',
+  );
   it.todo('Hit and Death lines at once, PowerAttack and Bash as they start  [xEdit DIAL]');
   it.todo('GroupStrategy: the group’s leader calls the strategy  [xEdit DIAL]');
 });

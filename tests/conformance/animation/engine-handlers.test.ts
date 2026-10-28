@@ -162,6 +162,8 @@ describe.skipIf(!hasGamedata())('the handler classes of the response files (data
 });
 
 describe('graph events (todo)', () => {
-  it.todo('the player’s first-person graph’s events reach the same handlers as its body’s  [original]');
+  it.todo(
+    'the player’s first-person graph’s events reach the same handlers as its body’s  [original]',
+  );
   it.todo('a handler run off the main thread is queued to the task queue (flight)  [original]');
 });

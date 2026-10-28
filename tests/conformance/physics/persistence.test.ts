@@ -150,5 +150,7 @@ describe('what keeps a moved place', () => {
     'moves an object into the cell it was pushed into outside (exterior cells), its new cell ' +
       'loading it  [original]',
   );
-  it.todo('puts it back at its editor place as its cell resets unless persistent  [original] (sim)');
+  it.todo(
+    'puts it back at its editor place as its cell resets unless persistent  [original] (sim)',
+  );
 });

@@ -64,7 +64,9 @@ describe('the attack decision (formula)', () => {
     );
   });
 
-  it.todo('the attack from the attack data while closing in (ATKD chance, recovery time)  [original]');
+  it.todo(
+    'the attack from the attack data while closing in (ATKD chance, recovery time)  [original]',
+  );
   it('the strike angle × fCombatAttackStrikeAngleMult (0.67), per attack’s angle', () => {
     // An attack's ATKD strike angle of 60°: 40.2° standing, × 1.5 moving.
     const standing = attackStrikeAngle(60, false, settings);

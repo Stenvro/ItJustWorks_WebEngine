@@ -253,7 +253,9 @@ describe('what a reset restores', () => {
     'puts an object that is not persistent back at its editor place; a persistent one keeps ' +
       'its moved place  [original] (sim)',
   );
-  it.todo('closes and locks doors and containers again as the plugin placed them  [original] (sim)');
+  it.todo(
+    'closes and locks doors and containers again as the plugin placed them  [original] (sim)',
+  );
   it.todo('lets harvested flora grow again with its cell (FLOR, TREE)  [original] (sim)');
   it.todo(
     'levels the encounter zone anew as it is next met after a reset (ECZN; Match PC Below ' +

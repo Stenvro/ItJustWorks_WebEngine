@@ -163,7 +163,9 @@ describe('clearing and its signs', () => {
     'plays Music - Dungeon Cleared (DCMS) as a clearable location is cleared  [original] (sim: the ' +
       'headless simulation records no music)',
   );
-  it.todo('does not count a boss’s death away from the player (another location)  [original] (sim)');
+  it.todo(
+    'does not count a boss’s death away from the player (another location)  [original] (sim)',
+  );
   it.todo('ignores disabled bosses when counting  [original] (sim)');
   it.todo(
     'counts a location’s bosses once a game hour as a quest’s location alias asks whether it ' +

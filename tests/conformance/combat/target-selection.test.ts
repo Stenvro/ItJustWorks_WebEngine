@@ -58,9 +58,7 @@ describe('target selection', () => {
     expect(maySwitchTarget(3, settings)).toBe(true);
   });
   it.todo('the selectors’ weights (CombatTargetSelectorStandard / Fixed / Preferred)  [RTTI]');
-  it.todo(
-    'a target engaged and not seen for fCombatTargetEngagedLastSeenTime (3 s)  [settings]',
-  );
+  it.todo('a target engaged and not seen for fCombatTargetEngagedLastSeenTime (3 s)  [settings]');
   it.todo('crowding: how many already fight a target  [original]');
   it.todo('reachability: an unreachable target is passed over (Check Unreachable Target)  [RTTI]');
   it.todo('a scripted target (StartCombat) is kept  [CK StartCombat]');

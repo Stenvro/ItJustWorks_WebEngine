@@ -59,8 +59,12 @@ describe('falling and sliding', () => {
     'falls under gravity × fInAirFallingCharGravityMult (1.35) in the air, × fUnsupportedGravMult ' +
       '(4) on what is too steep to stand on  [settings; original] (sim)',
   );
-  it.todo('warps an actor further than √fCharControllerWarpDistSqr from where it should be  [original]');
-  it.todo('checks a good position fGoodPosCheckDepth (0.1) deep before setting one down  [original]');
+  it.todo(
+    'warps an actor further than √fCharControllerWarpDistSqr from where it should be  [original]',
+  );
+  it.todo(
+    'checks a good position fGoodPosCheckDepth (0.1) deep before setting one down  [original]',
+  );
 });
 
 describe('jumping', () => {
@@ -76,6 +80,10 @@ describe('what carries and pushes characters', () => {
     'carries an actor standing on a moving platform (a keyframed body: a lift, a ship’s deck) ' +
       'with it  [original] (sim)',
   );
-  it.todo('pushes an actor a moving body runs into (a rolling log, a swinging trap)  [original] (sim)');
-  it.todo('lets two characters push one another (bAllowCharacterBumper)  [settings; original] (sim)');
+  it.todo(
+    'pushes an actor a moving body runs into (a rolling log, a swinging trap)  [original] (sim)',
+  );
+  it.todo(
+    'lets two characters push one another (bAllowCharacterBumper)  [settings; original] (sim)',
+  );
 });
