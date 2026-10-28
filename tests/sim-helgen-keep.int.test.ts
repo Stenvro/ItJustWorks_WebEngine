@@ -3,7 +3,7 @@
 // routes and one per FactionPath, and the route's entry starts its scene. Skipped without game
 // data.
 
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { ObjectHandle } from '../src/scripting/values.ts';
 import { hasGamedata, openSim, PLAYER_REF, type Sim } from './helpers/sim.ts';
 
@@ -24,6 +24,28 @@ const BARRACKS_OFFICER = 173;
 const BARRACKS_SOLDIER = 174;
 /** MQ101KeepDoorKey. */
 const KEEP_DOOR_KEY = 0xb5178;
+
+/** MQ101KeepScene2B (down the stairs to the torture room), 4B (to the bridge), 5B (the caves). */
+const KEEP_SCENE_2B = 0xb622c;
+const KEEP_SCENE_4B = 0x5b2cd;
+const KEEP_SCENE_5B = 0x5b3f0;
+/** MQ101SetStage292 and MQ101SetStage305, where the player walks in (as placed). */
+const SCENE_TRIGGERS_300: readonly (readonly [number, Vec3])[] = [
+  [292, [-955, 4723, 530]],
+  [305, [124, 4128, 206]],
+];
+/** The caves' set-stage triggers, in the route's order (MQ101SetStage550 ... 800). */
+const CAVE_TRIGGERS: readonly (readonly [number, Vec3])[] = [
+  [550, [-6061, -8009, -1616]],
+  [560, [-6697, -9619, -1659]],
+  [650, [-5646, -12703, -2239]],
+  [700, [-4416, -13552, -2570]],
+  [720, [-3816, -16191, -2383]],
+  [760, [-4510, -18097, -2684]],
+  [800, [-4497, -20198, -3110]],
+];
+
+type Vec3 = [number, number, number];
 
 /** The player keeps by Ralof (within the 100 units his "wait for the player" phases ask). */
 async function keepBy(sim: Sim, ralof: number): Promise<void> {
@@ -188,23 +210,134 @@ describe.skipIf(!hasGamedata())('MQ101 in Helgen Keep', () => {
       await sim.close();
     }
   }, 300_000);
-  // Ralof's route, found 2026-10-28: past stage 300 the player keeps by Ralof and steps into
-  // MQ101SetStage292 (-955, 4723, 520: KeepIntroSceneB phase 37 waits for it) and
-  // MQ101SetStage305 (124, 4128, 196). MQ101KeepScene2B's phase 3 then waits for Ralof's
-  // MQ101FriendToKeepMarker3 (MQ101KeepFriendMarker3, 898, 4178, -128, down the stairs), and
-  // he stands for good at (507, 4476, 384), the head of the stairs: the navmesh alone has a
-  // whole way there (27 points), but with the stage's navmesh obstacles (src/ai/navmesh-
-  // obstacles.ts) the search ends at once by (550, 4456, 384): an enabled obstacle reference
-  // (base flag bit 25) cuts the stairs, so each path search fails and no warp follows. Next:
-  // which obstacle that is (its box may be placed well away from the stairs; maybe the
-  // collapsing hall's, HelgenHallCollapseScript at MQ101KeepCollapseTriggerRef) and the rule
-  // that should leave the stairs open then (its enable state or parent, its box, the cut's
-  // height band). Also 310 (KeepScene2B phase 1) is set by none of the keep's triggers.
-  // Further on the keep's set-stage triggers lead 350/360 → 400 → 450 → 460 → 480/485 → 500
-  // (Ralof and the player both in it) → 550/560 → 650 → 700 → 720/725 → 760 → 800; the torture
-  // room's and the caves' fights are not reached yet. Hadvar's route (KeepIntroSceneA) is not
-  // driven yet.
-  it.todo(
-    'runs both routes through the torture room, the caves (spiders, bear) and out (stage 900)',
-  );
+  // Ralof's route on from stage 300: one sim, segment by segment (each case goes on from where
+  // the one before left it). The player keeps by Ralof, fights where the route has a fight,
+  // and walks into the set-stage triggers a scene waits for.
+  describe('Ralof’s route past the key', () => {
+    let sim: Sim | undefined;
+    const killed = new Set<number>();
+    afterAll(async () => {
+      await sim?.close();
+    });
+    /** Ralof's scene phases now (−1: not playing). */
+    const phase = (scene: number): number =>
+      sim?.runtime.scenes.snapshot().find((playing) => playing.scene === scene)?.phase ?? -1;
+    /** The player kills the route's enemies (MQ101's aliases) once. */
+    async function fight(open: Sim, aliases: readonly number[]): Promise<void> {
+      for (const alias of aliases) {
+        const actor = open.runtime.state.quest(MQ101).aliases.get(alias);
+        if (actor === undefined || killed.has(actor)) continue;
+        killed.add(actor);
+        await open.kill(actor, PLAYER_REF);
+      }
+    }
+
+    // Found 2026-10-28: MQ101KeepScene2B's first phase escorts the player down the stairs
+    // (MQ101FriendEscortPlayerToKeepMarker3) and waits for 310, which the collapsing hall's
+    // trigger sets as the player follows (MQ101KeepCollapseTriggerRef). Ralof never set out: a
+    // cart wheel (HandCart01Wheel, a navmesh obstacle) lying by the doorway covered the middle
+    // of the doorway's triangles, and an obstacle closed every triangle whose middle it
+    // covered. It cuts only what lies under it. Then MQ101SetStage500 (defaultSetStageOnEnter,
+    // Ralof and the player both inside) never fired: the script has no auto state of its own,
+    // so it sat in the empty state, not its parent's "waiting" where the handlers are.
+    it('follows Ralof through the storeroom, the torture room and over the bridge (stage 500)', async () => {
+      const open = await openSim({ opening: true });
+      sim = open;
+      await open.step(1);
+      for (const playing of open.runtime.scenes.snapshot()) open.runtime.scenes.stop(playing.scene);
+      void open.runtime.quests.setStage(MQ101, 220);
+      await open.step(0.5);
+      await open.openInterior(KEEP);
+      for (const playing of open.runtime.scenes.snapshot()) {
+        if (playing.scene !== INTRO_RALOF) open.runtime.scenes.stop(playing.scene);
+      }
+      const quest = open.runtime.state.quest(MQ101);
+      const ralof = quest.aliases.get(12) ?? 0;
+      let looted = false;
+      for (let second = 0; second < 150 && !open.stageDone(MQ101, 272); second++) {
+        await open.step(1);
+        await keepBy(open, ralof);
+        if (!looted && open.stageDone(MQ101, 255)) {
+          const [x, y, z] = open.actor(GUNJAR)?.position ?? [0, 0, 0];
+          await open.moveTo([x + 80, y, z + 10]);
+          await open.step(0.5);
+          looted = open.activate(GUNJAR);
+        }
+      }
+      await fight(open, [BARRACKS_OFFICER, BARRACKS_SOLDIER]);
+      for (let second = 0; second < 60 && !open.stageDone(MQ101, 300); second++) {
+        await open.step(1);
+        await keepBy(open, ralof);
+      }
+      // Into MQ101SetStage292 and MQ101SetStage305.
+      for (const [stage, at] of SCENE_TRIGGERS_300) {
+        for (let second = 0; second < 40 && !open.stageDone(MQ101, stage); second++) {
+          await open.step(1);
+          await keepBy(open, ralof);
+          if (second > 5) await open.moveTo(at);
+        }
+      }
+      expect(open.stageDone(MQ101, 305)).toBe(true);
+      for (let second = 0; second < 300 && !open.stageDone(MQ101, 500); second++) {
+        await open.step(1);
+        await keepBy(open, ralof);
+        // The storeroom's Imperials (340), the torturer and his assistant (380), the pool
+        // room's Imperials (470).
+        if (open.stageDone(MQ101, 320) && !open.stageDone(MQ101, 340)) {
+          await fight(open, [134, 135]);
+        }
+        if (phase(KEEP_SCENE_2B) >= 17 && !open.stageDone(MQ101, 380)) await fight(open, [71, 70]);
+        if (phase(KEEP_SCENE_4B) >= 4 && open.stage(MQ101) < 470) {
+          await fight(open, [105, 106, 107, 108, 109]);
+        }
+      }
+      // Ralof led the player down the stairs (the hall collapsed behind them: 310), on through
+      // the torture room (400) and lowered the bridge (490); both crossed it (500).
+      for (const stage of [310, 340, 380, 400, 470, 490, 500]) {
+        expect(open.stageDone(MQ101, stage)).toBe(true);
+      }
+    }, 600_000);
+
+    // Found 2026-10-28: past the bridge Ralof stopped for good on his way to
+    // MQ101KeepFriendMarker7a: the only way runs over tilted collision boxes under the
+    // rubble's navmesh (CollisionMarkers, navmesh obstacles), whose upright bounds reached
+    // above the navmesh lying on them. A box cuts the navmesh between its own faces straight
+    // above and below each point.
+    it('goes on with Ralof through the caves past the spiders to the exit (stage 800)', async () => {
+      const open = sim;
+      expect(open?.stageDone(MQ101, 500)).toBe(true);
+      if (!open) return;
+      const ralof = open.runtime.state.quest(MQ101).aliases.get(12) ?? 0;
+      let last = '';
+      let stalled = 0;
+      for (let second = 0; second < 300 && !open.stageDone(MQ101, 800); second++) {
+        await open.step(1);
+        await keepBy(open, ralof);
+        // The spiders (630).
+        if (phase(KEEP_SCENE_5B) >= 12 && !open.stageDone(MQ101, 630)) {
+          await fight(open, [127, 128, 129, 130, 131]);
+        }
+        // A scene waiting for the player to walk on: into the next set-stage trigger.
+        const now = `${String(open.stage(MQ101))} ${String(phase(KEEP_SCENE_5B))}`;
+        stalled = now === last ? stalled + 1 : 0;
+        last = now;
+        const next = CAVE_TRIGGERS.find(([stage]) => !open.stageDone(MQ101, stage));
+        if (stalled >= 6 && next) {
+          await open.moveTo(next[1]);
+          stalled = 0;
+        }
+      }
+      // Ralof waited at the marker past the rubble (550 as the player came by), and the scene
+      // went on through the spiders' cave (630).
+      for (const stage of [550, 560, 630, 650, 800])
+        expect(open.stageDone(MQ101, stage)).toBe(true);
+    }, 600_000);
+
+    // Ralof's route, found 2026-10-28: past 800 MQ102 (5) and MQ102B (5) run, and Ralof holds
+    // (MQ101HoldCurrentPositionWeapons). MQ102's fragments set MQ101's 900 (stage 10, Ralof's
+    // talk outside the cave): the player has to take the cave's exit into Tamriel and the
+    // scene outside has to play. The bear (MQ101BearRef) was passed by the triggers, not
+    // fought or sneaked by. Hadvar's route (KeepIntroSceneA) is not driven yet.
+    it.todo('leaves the caves with Ralof for MQ102 (stage 900), and Hadvar’s route');
+  });
 });
