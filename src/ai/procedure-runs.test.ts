@@ -9,6 +9,7 @@ import {
 } from './package-records.ts';
 import type { FlightRequest } from './flight.ts';
 import type {
+  FoundObject,
   MagicCast,
   PackageBody,
   PackageMind,
@@ -59,7 +60,7 @@ const STEAL: PackageInput = { id: 3, type: 'Bool', value: { kind: 'bool', value:
  * `waits`, its waits are recorded too, and it is stopped after that many.
  */
 function harness(
-  found = new Map<number, readonly number[]>(),
+  found = new Map<number, readonly FoundObject[]>(),
   waits?: number,
   travel: (to: readonly number[]) => Promise<boolean> = () => Promise.resolve(true),
   /** What its barrages answer, one each (then true): false, one that could not be made. */
@@ -142,6 +143,10 @@ function harness(
     attack: (target: number) => {
       done.push(`attack ${target.toString(16)}`);
     },
+    takeFrom: (holder: number, item: number) => {
+      done.push(`take ${item.toString(16)} from ${holder.toString(16)}`);
+      return Promise.resolve(true);
+    },
   } satisfies PackageBody;
   const mind = {
     placement: () => Promise.resolve({ position: [0, 0, 0] as const, heading: 0 }),
@@ -189,9 +194,16 @@ function harness(
       pack: {} as PackageRecord,
       context: {},
       gait: 'walk',
-      found: (slot) => found.get(procedureBranch.inputs[slot] ?? -1) ?? [],
-      keep: (slot, references) => {
-        found.set(procedureBranch.inputs[slot] ?? -1, references);
+      found: (slot) =>
+        (found.get(procedureBranch.inputs[slot] ?? -1) ?? []).filter(
+          (entry) => typeof entry === 'number',
+        ),
+      held: (slot) =>
+        (found.get(procedureBranch.inputs[slot] ?? -1) ?? []).filter(
+          (entry) => typeof entry !== 'number',
+        ),
+      keep: (slot, objects) => {
+        found.set(procedureBranch.inputs[slot] ?? -1, objects);
       },
       stopped: () => stopped,
       wait: (seconds) => {
@@ -278,6 +290,27 @@ describe('procedures', () => {
     ).toBe('success');
     expect(done).toEqual(['search 1', 'search 2', 'search 3']);
     expect(found.get(FOUND_BED.id)).toEqual([0x601]);
+  });
+
+  // MQ101's Ralof (MQ101RalofGetDoorKey, the Acquire template): the key he is to fetch is in the
+  // dead officer's inventory, not a placed reference.
+  it('find finds items in inventories; acquire loots a corpse but leaves the living', async () => {
+    const { run, done, found } = harness();
+    const mind = {
+      search: () => Promise.resolve([]),
+      searchHeld: () => Promise.resolve([{ holder: 0x777, item: 0x888 }]),
+    };
+    expect(await run('Find', [0, 1, 2, 255, 3], [NEAR_HOME, BEDS, FOUND_BED, STEAL], mind)).toBe(
+      'success',
+    );
+    expect(found.get(FOUND_BED.id)).toEqual([{ holder: 0x777, item: 0x888 }]);
+    const dead = { alive: () => Promise.resolve(false) };
+    expect(await run('Acquire', [2], [FOUND_BED], dead)).toBe('success');
+    expect(done).toEqual(['take 888 from 777']);
+    done.length = 0;
+    const living = { alive: () => Promise.resolve(true) };
+    expect(await run('Acquire', [2], [FOUND_BED], living)).toBe('failure');
+    expect(done).toEqual([]);
   });
 
   it('find gives up when its package stops', async () => {

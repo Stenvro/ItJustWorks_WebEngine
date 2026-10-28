@@ -1157,15 +1157,21 @@ export class ActorStage {
     return user;
   }
 
-  /** The enabled living actors as searches see them. */
-  *#searchActors(): Iterable<{ reference: number; bases: readonly number[]; position: Vec3 }> {
+  /** The enabled actors as searches see them (the dead too: their inventories are searched). */
+  *#searchActors(): Iterable<{
+    reference: number;
+    bases: readonly number[];
+    position: Vec3;
+    dead: boolean;
+  }> {
     for (const staged of this.#actors.values()) {
-      if (staged.visibility.hidden || staged.dead) continue;
+      if (staged.visibility.hidden) continue;
       const { actor, look } = staged.placed;
       yield {
         reference: staged.reference,
         bases: [actor.base, look.npc],
         position: staged.position,
+        dead: staged.dead,
       };
     }
   }

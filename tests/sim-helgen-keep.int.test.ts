@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { ObjectHandle } from '../src/scripting/values.ts';
-import { hasGamedata, openSim, PLAYER_REF } from './helpers/sim.ts';
+import { hasGamedata, openSim, PLAYER_REF, type Sim } from './helpers/sim.ts';
 
 const MQ101 = 0x3372b;
 /** HelgenKeep01. */
@@ -19,6 +19,22 @@ const GUNJAR = 0xb1694;
 /** MQ101KeepGate2Ref (the portcullis between Ralof and the Imperials) and its lever. */
 const KEEP_GATE_2 = 0xb35af;
 const KEEP_LEVER_2 = 0x47cc0;
+/** MQ101's BarracksRoomSoldier01 (the officer, who carries the key) and BarracksRoomSoldier02. */
+const BARRACKS_OFFICER = 173;
+const BARRACKS_SOLDIER = 174;
+/** MQ101KeepDoorKey. */
+const KEEP_DOOR_KEY = 0xb5178;
+
+/** The player keeps by Ralof (within the 100 units his "wait for the player" phases ask). */
+async function keepBy(sim: Sim, ralof: number): Promise<void> {
+  const near = await sim.distance(ralof, PLAYER_REF);
+  const at = await sim.position(ralof);
+  const me = await sim.position(PLAYER_REF);
+  if (near !== undefined && near > 95 && at && me) {
+    const k = 80 / near;
+    await sim.moveTo([at[0] + (me[0] - at[0]) * k, at[1] + (me[1] - at[1]) * k, at[2] + 10]);
+  }
+}
 
 describe.skipIf(!hasGamedata())('MQ101 in Helgen Keep', () => {
   it('starts the route’s keep scene as the player enters with Ralof (stage 220, then 250)', async () => {
@@ -123,13 +139,71 @@ describe.skipIf(!hasGamedata())('MQ101 in Helgen Keep', () => {
       await sim.close();
     }
   }, 300_000);
-  // Ralof's route, found 2026-10-28: with both Imperials killed (stage 280) the scene reaches
-  // phase 30 ("Ralof goes to get key": stage 260 or MQ101RalofGetDoorKey done) and stalls.
-  // That package is an Acquire (Travel, then Find the MQ101KeepDoorKey within 101 units of the
-  // dead officer beside a Wander, then Acquire): Find searches only placed references, the key
-  // is not one there (it is carried), so Ralof wanders by the body for ever. Next: Find over
-  // the inventories of the dead (and Acquire taking from them); or the player loots the key
-  // first (stage 260). Hadvar's route (KeepIntroSceneA) is not driven yet.
+  // Found 2026-10-28: with both Imperials killed (stage 280) the scene reached phase 30 ("Ralof
+  // goes to get key": stage 260 or MQ101RalofGetDoorKey done) and stalled. That package is an
+  // Acquire (Travel, then Find the MQ101KeepDoorKey within 101 units of the dead officer beside
+  // a Wander, then Acquire): Find searched only placed references, and the key is carried, so
+  // Ralof wandered by the body for ever. The engine's search looks into inventories too (a
+  // corpse's among them), and Acquire takes the key from the body.
+  it('has Ralof take the key from the dead officer and open the door (stages 285, 300)', async () => {
+    const sim = await openSim({ opening: true });
+    try {
+      await sim.step(1);
+      for (const playing of sim.runtime.scenes.snapshot()) sim.runtime.scenes.stop(playing.scene);
+      void sim.runtime.quests.setStage(MQ101, 220);
+      await sim.step(0.5);
+      await sim.openInterior(KEEP);
+      for (const playing of sim.runtime.scenes.snapshot()) {
+        if (playing.scene !== INTRO_RALOF) sim.runtime.scenes.stop(playing.scene);
+      }
+      const quest = sim.runtime.state.quest(MQ101);
+      const ralof = quest.aliases.get(12) ?? 0;
+      let looted = false;
+      for (let second = 0; second < 150 && !sim.stageDone(MQ101, 272); second++) {
+        await sim.step(1);
+        await keepBy(sim, ralof);
+        if (!looted && sim.stageDone(MQ101, 255)) {
+          const [x, y, z] = sim.actor(GUNJAR)?.position ?? [0, 0, 0];
+          await sim.moveTo([x + 80, y, z + 10]);
+          await sim.step(0.5);
+          looted = sim.activate(GUNJAR);
+        }
+      }
+      // The player fights the two Imperials (stage 280 once both are dead).
+      const officer = quest.aliases.get(BARRACKS_OFFICER) ?? 0;
+      await sim.kill(officer, PLAYER_REF);
+      await sim.kill(quest.aliases.get(BARRACKS_SOLDIER) ?? 0, PLAYER_REF);
+      expect(await sim.runtime.itemCount(officer, KEEP_DOOR_KEY)).toBe(1);
+      for (let second = 0; second < 60 && !sim.stageDone(MQ101, 300); second++) {
+        await sim.step(1);
+        await keepBy(sim, ralof);
+      }
+      // Ralof took the key from the body (not the player: no stage 260) and opened the door.
+      expect(sim.stageDone(MQ101, 260)).toBe(false);
+      expect(await sim.runtime.itemCount(officer, KEEP_DOOR_KEY)).toBe(0);
+      expect(await sim.runtime.itemCount(ralof, KEEP_DOOR_KEY)).toBe(1);
+      expect(sim.stageDone(MQ101, 285)).toBe(true);
+      expect(sim.stageDone(MQ101, 300)).toBe(true);
+    } finally {
+      await sim.close();
+    }
+  }, 300_000);
+  // Ralof's route, found 2026-10-28: past stage 300 the player keeps by Ralof and steps into
+  // MQ101SetStage292 (-955, 4723, 520: KeepIntroSceneB phase 37 waits for it) and
+  // MQ101SetStage305 (124, 4128, 196). MQ101KeepScene2B's phase 3 then waits for Ralof's
+  // MQ101FriendToKeepMarker3 (MQ101KeepFriendMarker3, 898, 4178, -128, down the stairs), and
+  // he stands for good at (507, 4476, 384), the head of the stairs: the navmesh alone has a
+  // whole way there (27 points), but with the stage's navmesh obstacles (src/ai/navmesh-
+  // obstacles.ts) the search ends at once by (550, 4456, 384): an enabled obstacle reference
+  // (base flag bit 25) cuts the stairs, so each path search fails and no warp follows. Next:
+  // which obstacle that is (its box may be placed well away from the stairs; maybe the
+  // collapsing hall's, HelgenHallCollapseScript at MQ101KeepCollapseTriggerRef) and the rule
+  // that should leave the stairs open then (its enable state or parent, its box, the cut's
+  // height band). Also 310 (KeepScene2B phase 1) is set by none of the keep's triggers.
+  // Further on the keep's set-stage triggers lead 350/360 → 400 → 450 → 460 → 480/485 → 500
+  // (Ralof and the player both in it) → 550/560 → 650 → 700 → 720/725 → 760 → 800; the torture
+  // room's and the caves' fights are not reached yet. Hadvar's route (KeepIntroSceneA) is not
+  // driven yet.
   it.todo(
     'runs both routes through the torture room, the caves (spiders, bear) and out (stage 900)',
   );

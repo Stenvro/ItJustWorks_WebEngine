@@ -7,7 +7,8 @@ import { RecordDatabase } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
 
-describe.skipIf(!hasGamedata())('coc spots on the local game data', () => {
+// The cases read cells from the archives: 30 s each, as the default 5 s runs out when the machine is busy.
+describe.skipIf(!hasGamedata())('coc spots on the local game data', { timeout: 30_000 }, () => {
   let vfs: Vfs;
   let db: RecordDatabase;
   let cells: Map<string, number>;
