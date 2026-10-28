@@ -274,17 +274,9 @@ struct Lighting {
   specular: vec3f,
 };
 
-// Ambient, the directional light (times `shadow`: 1 lit, 0 in shadow) and point lights
-// (brightness falls off as 1 - d^2/r^2).
-// TODO(M13): the engine's per-object light limit.
-fn lightAt(
-  n: vec3f,
-  worldPos: vec3f,
-  toCamera: vec3f,
-  glossiness: f32,
-  specular: bool,
-  shadow: f32,
-) -> Lighting {
+// Ambient and the directional light (times `shadow`: 1 lit, 0 in shadow), without point lights
+// (the engine's grass: [Grass] bGrassPointLighting is off by default).
+fn sunLightAt(n: vec3f, toCamera: vec3f, glossiness: f32, specular: bool, shadow: f32) -> Lighting {
   var result: Lighting;
   let toSun = frame.sunDir.xyz;
   let sunNDotL = max(dot(n, toSun), 0.0) * shadow;
@@ -294,6 +286,22 @@ fn lightAt(
     let halfway = safeNormalize(toSun + toCamera);
     result.specular += frame.sunColor.rgb * pow(max(dot(n, halfway), 0.0), glossiness) * shadow;
   }
+  return result;
+}
+
+// Ambient, the directional light and point lights (brightness falls off as 1 - d^2/r^2): land,
+// tree LOD and decals, which take every light of the frame. Objects light by their own lists
+// (lighting.wgsl, light-lists.ts). TODO(M13): the engine's land gets per-quad lists too (and
+// only lights flagged to affect land reach it).
+fn lightAt(
+  n: vec3f,
+  worldPos: vec3f,
+  toCamera: vec3f,
+  glossiness: f32,
+  specular: bool,
+  shadow: f32,
+) -> Lighting {
+  var result = sunLightAt(n, toCamera, glossiness, specular, shadow);
   for (var i = 0u; i < frame.counts.x; i++) {
     let light = pointLights[i];
     let offset = light.position - worldPos;

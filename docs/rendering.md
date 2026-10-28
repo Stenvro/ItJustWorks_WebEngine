@@ -63,14 +63,37 @@ How a frame is put together (`src/render/renderer.ts`). Everything is drawn in H
    grading into the canvas (see [formats/esm.md](formats/esm.md#imagespaces)), then its depth
    of field and the image-space modifiers' screen effects (below).
 
-**Not yet:** the engine's volumetric lighting (bVolumetricLightingEnable: per-weather VOLI
-records, froxel shaders ISVolumetricLighting*) and its image-based lens flare of the sun and
-bright lights (bIBLFEnable, ISIBLensFlare; vanilla SSE has no LENS records, so this is its
-only lens flare): TODO(M13). Their shaders are known (Community Shaders), but the values the
-engine feeds them (the froxel depth distribution and its range factor, intensity and colour,
-wind, the flare's ghosts and halo) are computed in the executable and documented nowhere;
-they need reverse engineering, not guesses. Anti-aliasing is 4×
-MSAA instead of the engine's TAA (bUseTAA).
+**Temporal anti-aliasing** ([Display] bUseTAA, `taa.ts`): the projection moves by a Halton
+(2, 3) sub-pixel offset each frame and the HDR scene is blended with its history (90 %),
+clamped to this frame's 3×3 neighbourhood, before the sun's effects and post-processing. The
+history is found again per pixel by a **motion vector** where a moving draw shows (moving
+instances and animated parts: `SceneRenderer.drawVelocity`, `shaders/velocity.wgsl`), else by
+the pixel's depth and the camera's move. The velocity pass draws the moving opaque draws into
+an `rgba16float` target (the uv offset to the last frame, and a written mark) under this
+frame's and the last frame's world matrix (each scene keeps its moving draws' last matrices by
+draw slot; a draw unseen in the last pass has not moved), with no depth attachment: a fragment
+writes only where its depth matches the opaque pass's resolved depth (1 % relative tolerance:
+that depth is one MSAA sample of four), so only the surface kept there. First-person draws use
+first person's own view-projections, this frame's and the last. Skinned draws take this frame's
+pose under both world matrices: the instance's move is followed, a limb's swing within it is
+not (TODO(M13): the last frame's bone palettes). Opaque draws only; blended parts and particles
+are reprojected by the depth behind them.
+
+**God rays** (`sun-effects.ts`, bVolumetricLightingEnable): the weather's volumetric lighting
+(VOLI by time of day: intensity × [Display] fVolumetricLightingIntensity × phase contribution,
+the sun's colour mixed with its custom colour, `world/volumetric-lighting.ts`) gathered at a
+quarter of the resolution by a radial blur of the sky's light towards the light's place on the
+screen (reach: the range factor / 40), weighted by the VOLI's phase function: Henyey-Greenstein
+with g = the phase scattering (0..0.95) between each pixel's view ray and the light, relative to
+looking straight at it (`godRayPhase`). TODO(M13): the engine scatters through a froxel volume
+lit by the shadow maps (ISVolumetricLighting*: density noise by size, wind and falling speed,
+the depth distribution by the range factor); the volume, the density noise and the shafts
+through openings in front of the camera (not only towards the sky) are not built.
+
+**Not yet:** the engine's image-based lens flare of bright lights (bIBLFEnable,
+ISIBLensFlare; vanilla SSE has no LENS records, so this is its only lens flare of lights other
+than the sun): TODO(M13). Its shader is known (Community Shaders), but the values the engine
+feeds it (the flare's ghosts and halo) are computed in the executable and documented nowhere.
 
 **Encoding cost:** each draw is a handful of calls into the browser's WebGPU, and Helgen's
 opening has some 4,400 draws a frame (its shadow cascades and opaque pass). The opaque and
@@ -451,6 +474,33 @@ script, an enchanted copy made at the enchanting table (a created form with its 
 world and interior viewers glow them as `CreatedObjects` shows them). 2,903 of 3,018 enchanted
 vanilla weapons and 2,819 of 2,847 enchanted armours have a shader (`node tools/effect-audit.ts
 --glow`). TODO(M13): worn armour shows none (as remembered of the game, unchecked).
+
+### Per-object light lists
+
+Observed in the original (behaviour only; `src/render/light-lists.ts`). A geometry is not
+lit by every light near it: it keeps its own list of the lights that reach it, and when its
+lighting pass is built the engine names, after the directional light, first the shadow lights
+that touch it (those of the frame's shadow lights its active-light mask allows, skipping
+effect-only geometry for lights not flagged to light it), then the other lights of its list
+(culled and hidden lights left out), into an array of sixteen. The lighting technique's light
+count then holds at most seven point lights (three bits: the count minus the directional
+light, clamped to 7) and at most four shadow lights (three bits, clamped to 4): the shader
+loops over that many and drops the rest. So an object among many candles is lit by seven of
+them, the shadowed ones first.
+
+Here every lit draw has a slot in its scene's light-list buffer (`flags.w` bits 8–23 name it;
+the shader type keeps bits 0–7, the distance fade bits 24–31): a count and seven indices into
+the frame's lights, 16 bits each. A draw's list is chosen the first time it is drawn in a
+frame (`SceneRenderer.#chooseLights`, by its bounding sphere and room) and uploaded in one
+range per scene; the lighting and effect shaders loop over it (`drawLightList`,
+`lightListIndex` in `common.wgsl`). A light is in a list when its sphere touches the draw's
+bound and it is not a portal-strict light of another room; shadow lights (casting this frame)
+come first, at most four, then the others, seven in all, the strongest at the bound winning:
+luminance × (1 − (d/r)²) at the bound's nearest point. TODO(M13): the order of a geometry's own
+list (the order lights reach it) is unread; strongest first is ours. Particle systems take every
+light of the frame (TODO(M13): their own lists by the system's bound); land, tree LOD and
+decals too (TODO(M13): the engine's land lists, and only lights flagged to light land). Grass
+takes no point lights: [Grass] bGrassPointLighting is off by default.
 
 ### Rooms' lighting
 

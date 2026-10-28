@@ -5,6 +5,7 @@
 import taaShader from './shaders/taa.wgsl?raw';
 import { HDR_FORMAT } from './post.ts';
 import type { Mat4 } from './math.ts';
+import { VELOCITY_FORMAT } from './taa-data.ts';
 
 /** The history's share of each frame (higher: smoother, slower to follow). */
 const HISTORY_SHARE = 0.9;
@@ -14,6 +15,8 @@ interface Targets {
   readonly width: number;
   readonly height: number;
   history: [GPUTexture, GPUTexture];
+  /** Motion vectors of moving draws (SceneRenderer.drawVelocity). */
+  readonly velocity: GPUTexture;
   valid: boolean;
   readonly groups: Map<string, GPUBindGroup>;
 }
@@ -50,6 +53,14 @@ export class TemporalAA {
     });
   }
 
+  /**
+   * The motion vectors' target of a frame of this size (cleared, then written by the moving
+   * draws before resolve).
+   */
+  velocityTarget(width: number, height: number): GPUTexture {
+    return this.#ensure(width, height).velocity;
+  }
+
   /** Forgets the history (a new view, a cut). */
   reset(): void {
     if (this.#targets) this.#targets.valid = false;
@@ -83,6 +94,7 @@ export class TemporalAA {
           { binding: 2, resource: hdr.createView() },
           { binding: 3, resource: previous.createView() },
           { binding: 4, resource: depth.createView() },
+          { binding: 5, resource: targets.velocity.createView() },
         ],
       });
       targets.groups.set(key, group);
@@ -104,6 +116,7 @@ export class TemporalAA {
     const old = this.#targets;
     if (old?.width === width && old.height === height) return old;
     for (const texture of old?.history ?? []) texture.destroy();
+    old?.velocity.destroy();
     const texture = (label: string): GPUTexture =>
       this.#device.createTexture({
         label,
@@ -118,6 +131,12 @@ export class TemporalAA {
       width,
       height,
       history: [texture('taa-history-a'), texture('taa-history-b')],
+      velocity: this.#device.createTexture({
+        label: 'taa-velocity',
+        size: [width, height],
+        format: VELOCITY_FORMAT,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+      }),
       valid: false,
       groups: new Map(),
     };
