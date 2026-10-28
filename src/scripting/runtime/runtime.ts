@@ -7,7 +7,7 @@
 
 import { EventHub } from './event-hub.ts';
 import { relayScriptEvents } from './script-events.ts';
-import { relayStatEvents } from './stat-events.ts';
+import { countDaysPassed, relayStatEvents } from './stat-events.ts';
 import { TriggerVolumes } from './trigger-volumes.ts';
 import { CellResets } from './cell-reset.ts';
 import { LocationClearing } from './location-clearing.ts';
@@ -184,6 +184,8 @@ export interface WorldBridge {
   paralyze?(actor: number, on: boolean): void;
   /** Grab Actor begins or ends: the target hangs as its ragdoll before its caster meanwhile. */
   grabActor?(caster: number | undefined, target: number, on: boolean): void;
+  /** Actor.ClearExtraArrows: the arrows stuck in an actor's body go. */
+  clearExtraArrows?(actor: number): void;
   hasNode?(reference: number, node: string): boolean;
   /** Where a named node of a loaded reference's model is (MoveToNode). */
   nodePlacement?(reference: number, node: string): { position: Vec3; rotation: Vec3 } | undefined;
@@ -3077,7 +3079,11 @@ export class ScriptRuntime implements VmHost {
   /** Every frame: the clocks move on (real seconds outside menus, game days). */
   update(realSeconds: number, gameDays: number): void {
     this.state.realTime += realSeconds;
+    const day = Math.floor(this.state.gameDaysPassed);
     this.state.gameDaysPassed += gameDays;
+    // A new day counts in the beast forms' days (DaysPassed: stat-events.ts).
+    const days = Math.floor(this.state.gameDaysPassed) - day;
+    if (days > 0) this.detach(countDaysPassed(this, days));
     this.vm.scheduler.advance(realSeconds, gameDays);
     // Health, magicka and stamina regenerate (and the player's stamina drains sprinting).
     if (!this.retired) this.progression.update(realSeconds);

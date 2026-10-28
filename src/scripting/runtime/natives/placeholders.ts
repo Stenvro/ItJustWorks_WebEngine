@@ -9,7 +9,6 @@ export const PLACEHOLDER_NATIVES: ReadonlyMap<string, string> = new Map([
   // Effects, physics and controllers the engine does not show yet.
   ['game.setsittingrotation', "TODO(M13): the seated player's camera turn"],
   ['game.setcameratarget', "TODO(M13): the camera's target other than the player"],
-  ['actor.clearextraarrows', 'TODO(M13): arrows stuck in bodies (not shown yet)'],
   ['objectreference.forceaddragdolltoworld', 'TODO(M13): ragdolls a script adds and removes'],
   ['objectreference.forceremoveragdollfromworld', 'TODO(M13): ragdolls a script adds and removes'],
   ['objectreference.playterraineffect', "TODO(M13): the terrain's effects at a node"],
