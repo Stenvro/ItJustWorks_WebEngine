@@ -59,6 +59,7 @@ import { MagicEngine, type MagicEffectShown } from './magic-engine.ts';
 import { CraftingEngine } from './crafting-engine.ts';
 import { CrimeEngine } from './crime-engine.ts';
 import { PerkEngine } from './perk-engine.ts';
+import { actorActivation } from './actor-activation.ts';
 import { HarvestEngine } from './harvest-engine.ts';
 import { HazardEngine } from './hazard-engine.ts';
 import { DestructionEngine } from './destruction-engine.ts';
@@ -1285,7 +1286,8 @@ export class ScriptRuntime implements VmHost {
    *    unless only the default processing is asked for (ObjectReference.Activate's
    *    abDefaultProcessingOnly: no event, and the block is ignored).
    * 2. Unless its activation is blocked, the default processing: what activating it does (a
-   *    door opens, an item is taken: `action`, else the world's), then its activate children
+   *    door opens, an item is taken: `action`, else the world's; an actor's own defaults for
+   *    an actor other than the player: actor-activation.ts), then its activate children
    *    (the references whose Activate Parents name it) in turn, each after its delay, with it
    *    as their activator. Inferred from the scripts: a blocked reference does not pass its
    *    activation on (TrapTriggerBase, the traps' triggers, unblocks itself, activates itself
@@ -1314,12 +1316,28 @@ export class ScriptRuntime implements VmHost {
       return false;
     }
     if (options.action) options.action();
-    else this.world.activate?.(reference, activator);
+    else if (activator === undefined || activator === PLAYER_REF) {
+      this.world.activate?.(reference, activator);
+    } else {
+      void this.#activatedByOther(reference, activator).catch((error: unknown) => {
+        this.#warn(`activating ${reference.toString(16)}: ${String(error)}`);
+      });
+    }
     const through = new Set([...(options.chain ?? []), reference]);
     void this.#activateChildrenOf(reference, through).catch((error: unknown) => {
       this.#warn(`activating the children of ${reference.toString(16)}: ${String(error)}`);
     });
     return true;
+  }
+
+  /**
+   * The default processing for an activator that is not the player: an actor's own (it picks
+   * up an item, harvests flora, goes through a load door: actor-activation.ts), else (an
+   * activate parent) what activating does to the object itself.
+   */
+  async #activatedByOther(reference: number, activator: number): Promise<void> {
+    if (await this.actors.isActor(activator)) await actorActivation(this, reference, activator);
+    else this.world.activate?.(reference, activator);
   }
 
   /** A reference's activate children activated, by it, each after its delay. */
