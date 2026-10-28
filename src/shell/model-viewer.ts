@@ -87,7 +87,7 @@ import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-s
 import { talkTargets, type PlacedActor } from './actors.ts';
 import { ActorStage, type StageObstacleCell } from './actor-stage.ts';
 import type { DoorObject } from './actor-doors.ts';
-import { PlayerFurniture } from './player-furniture.ts';
+import { PlayerFurniture, sittingAngleLimit } from './player-furniture.ts';
 import { stageObject, type StageObject } from './actor-furniture.ts';
 import type { NavmeshSet } from '../ai/pathfinding.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -577,6 +577,8 @@ export class ModelViewer {
       return motion && { ...motion, water: water && at[2] < water.height ? water.type : undefined };
     },
     furnitureInUse: (reference, marker) => this.#stage?.furniture.inUse(reference, marker) ?? false,
+    addRagdoll: (reference) => this.#stage?.addRagdoll(reference) ?? Promise.resolve(),
+    sittingRotation: (radians) => this.#seat?.setSittingRotation(radians),
     evaluatePackage: (reference, restart) => {
       this.#stage?.evaluatePackage(reference, restart);
     },
@@ -818,6 +820,7 @@ export class ModelViewer {
       hasKeyword: async (reference, keyword) =>
         (await this.#session?.scriptsReady?.hasKeyword(reference, keyword)) ?? false,
       menuOpen: () => this.#session?.menuMode === true,
+      sittingAngleLimit: () => sittingAngleLimit(this.#session?.scriptsReady),
     });
   }
 

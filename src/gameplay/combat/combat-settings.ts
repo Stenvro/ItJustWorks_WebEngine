@@ -127,6 +127,8 @@ export interface CombatSettings {
   readonly arrowInventoryChance: number;
   /** fAttachedArrowAgeMax: seconds an arrow stays stuck in an actor. */
   readonly attachedArrowAgeMax: number;
+  /** iMaxAttachedArrows: arrows stuck in one actor at once (the oldest goes). */
+  readonly maxAttachedArrows: number;
   /** fCombatMissileStickDepth: how deep an arrow sticks (game units). */
   readonly missileStickDepth: number;
   /** fProjectileKnockMultBiped: the push of an arrow on a ragdoll. */
@@ -222,7 +224,8 @@ export const COMBAT_DEFAULTS: CombatSettings = {
   vatsSafetyMaxTime: 20,
   vatsSafetyMaxTimeRanged: 6,
   arrowInventoryChance: 33,
-  attachedArrowAgeMax: 10,
+  attachedArrowAgeMax: 30,
+  maxAttachedArrows: 3,
   missileStickDepth: 20,
   projectileKnockMultBiped: 0.25,
   deathForceDamageMin: 1,
@@ -297,6 +300,7 @@ const SETTING_NAMES: Readonly<Partial<Record<keyof CombatSettings, string>>> = {
   vatsSafetyMaxTimeRanged: 'fVATSSafetyMaxTimeRanged',
   arrowInventoryChance: 'iArrowInventoryChance',
   attachedArrowAgeMax: 'fAttachedArrowAgeMax',
+  maxAttachedArrows: 'iMaxAttachedArrows',
   missileStickDepth: 'fCombatMissileStickDepth',
   projectileKnockMultBiped: 'fProjectileKnockMultBiped',
   deathForceDamageMin: 'fDeathForceDamageMin',

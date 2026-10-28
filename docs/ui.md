@@ -555,7 +555,10 @@ stamina that has filled is faded at once (`FadeOutStamina`). A drawn bow or cros
 ammo (`ShowArrowCount(count, hide, name)`: the movie writes "name (count)"). The floating quest
 marker (`FloatingQuestMarkerInstance`) stands over the nearest quest target (or the load door
 toward it) within fFloatQuestMarkerMaxDistance (2000), fully shown up to
-fFloatQuestMarkerMinDistance (1000), fFloatQuestMarkerFloatHeight above it, while [GamePlay]
+fFloatQuestMarkerMinDistance (1000), fFloatQuestMarkerFloatHeight above the top of its bound (the
+base's OBND top at the reference's scale: over an actor's head, not its feet; a human's height,
+128, for an NPC whose template gives its bounds; TODO(M13): the engine reads the loaded 3D's
+bound), while [GamePlay]
 bShowFloatingQuestMarkers is on. A word of power learned (Game.TeachWord, the hub's
 `wordLearned`) is `ShowNotification`'s `SHOUT_UPDATE` (3): sShoutAdded with the word in the
 dragon letters (`aDragonText`); a dragon soul absorbed (the player's DragonSouls rising) shows
@@ -700,6 +703,24 @@ School and Shout are names: what the player used most (`src/scripting/runtime/us
 each swing of a melee weapon or shot of a bow, each spell cast (a concentration spell each time
 it is let go) and its school (its cost's skill, named by its AVIF), each shout; the first to reach
 the most on a tie; TODO(M13): what the engine counts as a use), read as the journal opens.
+Who counts each stat (observed in the original: its misc stat handlers and incrementers,
+`src/scripting/runtime/stat-events.ts`): Gold Found is every rise of the player's gold (loot,
+sales, rewards); Chests Looted the first item taken from a container that is not an actor in one
+opening of the container menu; Barters each buy or sale; Quests Completed every completed quest
+but a miscellaneous one (type 6), with its type's own stat (Main, College, Thieves' Guild, Dark
+Brotherhood, Companions, Daedric, Civil War, Dawnguard, Dragonborn; a completed quest reset takes
+them back); Misc Objectives Completed a shown objective of a miscellaneous quest completed; Hours
+Waiting each hour waited; Days as a Vampire / Werewolf each day passing while the PlayerIsVampire /
+PlayerIsWerewolf globals (default objects PIVV, PIWV) are set; Bunnies Slaughtered a kill in the
+Bunny Faction (AWWW); Mauls a kill in beast form. The vanilla scripts count the rest themselves
+(Game.IncrementStat): Side Quests and Questlines Completed, Werewolf Transformations, Necks
+Bitten, Horses and Houses Owned, Stores Invested In, Persuasions, Bribes, Intimidations, Standing
+Stones Found, Brawls Won, Nirnroots Found, Wings Plucked. Souls Trapped counts each soul the
+player traps (SoulsTrapped). TODO(M13): the engine's other combat and magic counts are not wired
+yet: Critical Strikes (CriticalHit), Sneak Attacks and Backstabs, Weapons Disarmed (Disarmed),
+Dragon Souls Collected (DragonSoulGained), Shouts Mastered (ShoutMastered), Soul Gems Used,
+Poisons Used (PoisonedWeapon) and Diseases Contracted (ContractedDisease; Survival's script
+counts its own).
 
 System: the menu lists Quicksave, Save, Load, Installed Content, Settings, Controls, Help and
 Quit. Quit to the main menu ends the game and opens its main menu; quit to the desktop leaves
@@ -898,6 +919,16 @@ one hand of which the player has another goes to the other hand, and held in bot
 hotkey never takes anything off; each use plays UIFavorite. The handler ignores them in menus,
 while the player is getting into a seat and at a workbench (TODO(M13): the seat and workbench
 gates; menus and death gate them here).
+
+Seated in first person (observed in the original; `src/shell/player-furniture.ts`): the view
+turns from the seat at most the SittingAngleLimit default object's global (SALT, 0 in the data)
+when above 0, else [Camera] fFirstPersonSittingAngleLimit (π/2). Game.SetSittingRotation(degrees)
+sets that turn (MQ101's cart, −55°). TODO(M13): the engine brings the turn back toward the seat at
+fFirstPersonDisablePOVLerpDPS while a control flag of the player is off, and turns it by the look
+input × fFirstPersonSittingRotationSpeed while on; the flag is not identified, so the look stays
+free within the limit. With a gamepad, the left stick alone sets the pace by its deflection
+(running: from the walk to the run; walking: up to the walk; inferred, TODO(M13): the engine's
+curve).
 
 The controls (the original `interfacecontrolspccontrolmap.txt`, `tools/controlmap-info.ts`):
 

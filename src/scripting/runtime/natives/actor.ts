@@ -597,7 +597,8 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     state.actor(actor).eyeTexture = formOf(call.args[0]);
     world.equipmentChanged?.(actor);
   });
-  act('clearextraarrows', () => undefined);
+  // ClearExtraArrows: the arrows stuck in its body go (src/shell/combat-projectiles.ts).
+  act('clearextraarrows', (actor) => world.clearExtraArrows?.(actor));
 
   // --- Menus ----------------------------------------------------------------------------------
   // OpenInventory(abForceOpen): a teammate's inventory to trade with (the container menu in NPC

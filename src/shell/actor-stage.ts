@@ -1214,6 +1214,17 @@ export class ActorStage {
    * process: src/shell/actors-away.ts). `restart`: a scene's package action started (its
    * package starts anew though the actor ran and completed it already).
    */
+  /**
+   * ObjectReference.ForceAddRagdollToWorld (a hanged corpse's OnLoad, before its constraints):
+   * a dead actor's ragdoll is in the world at once, not waiting for the ground under it. A
+   * living one near has its bodies already (keyframed on its pose: ActorBodies).
+   */
+  async addRagdoll(reference: number): Promise<void> {
+    const staged = this.#actors.get(reference);
+    if (staged && (staged.dead || staged.placed.actor.startsDead))
+      await this.bodies.kill(staged, true);
+  }
+
   evaluatePackage(reference: number, restart = false): void {
     if (this.#actors.has(reference)) this.ai.evaluate(reference, restart);
     // Each view's stage hears it: only the one that holds the loaded area (its actors) asks the

@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { EventHub } from './event-hub.ts';
 import { PLAYER_REF } from './forms.ts';
 import type { ScriptRuntime } from './runtime.ts';
-import { consumedStat, relayStatEvents, sleptHours } from './stat-events.ts';
+import {
+  consumedStat,
+  countDaysPassed,
+  questTypeStats,
+  relayStatEvents,
+  sleptHours,
+} from './stat-events.ts';
 
 /** A runtime with what the relay reads: the hub, the stats, the forms' types and the gold. */
 function fakeRuntime(types: Record<number, string>, gold: { count: number }) {
@@ -69,5 +75,40 @@ describe('stat events', () => {
     expect(runtime.stats.get('words of power learned')).toBe(1);
     expect(runtime.stats.get('hours slept')).toBe(6);
     expect(runtime.stats.get('most gold carried')).toBe(120);
+    expect(runtime.stats.get('gold found')).toBe(21);
+  });
+
+  it('counts quests by type, waits, bunnies, mauls and the beast forms’ days', async () => {
+    expect(questTypeStats(1)).toEqual(['Quests Completed', 'Main Quests Completed']);
+    expect(questTypeStats(8)).toEqual(['Quests Completed']);
+    expect(questTypeStats(6)).toEqual([]);
+    const defaults: Record<string, number> = { AWWW: 0xa3087, RIWR: 0xcdd84, PIWV: 0xed06c };
+    const runtime = {
+      ...fakeRuntime({}, { count: 0 }),
+      magic: { defaultObject: (use: string) => Promise.resolve(defaults[use]) },
+      raceKeywords: () => Promise.resolve([]),
+      actors: {
+        factionRank: (actor: number) => Promise.resolve(actor === 0x50 ? 0 : -2),
+        raceOf: () => Promise.resolve(0xcdd84),
+      },
+      clockGlobal: () => undefined,
+      pluginGlobal: () => Promise.resolve(undefined),
+    };
+    const state = { gameDaysPassed: 3, globals: new Map([[0xed06c, 1]]) };
+    const live = { ...runtime, state } as unknown as ScriptRuntime;
+    const stop = relayStatEvents(live);
+    const { events, stats } = runtime;
+    await events.emitted('death', { actor: 0x50, killer: PLAYER_REF, dead: true });
+    await events.emitted('wait', { started: true, interrupted: false });
+    state.gameDaysPassed += 5 / 24;
+    await events.emitted('wait', { started: false, interrupted: false });
+    await countDaysPassed(live, 2);
+    stop();
+    expect(stats.get('bunnies slaughtered')).toBe(1);
+    expect(stats.get('mauls')).toBe(1);
+    expect(stats.get('creatures killed')).toBe(1);
+    expect(stats.get('hours waiting')).toBe(5);
+    expect(stats.get('days as a werewolf')).toBe(2);
+    expect(stats.get('days as a vampire')).toBeUndefined();
   });
 });
