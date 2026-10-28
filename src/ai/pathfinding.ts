@@ -399,6 +399,9 @@ export function findPath(
   };
 }
 
+/** A way kept off the obstacles is pulled tight over at most this many of its steps at once. */
+const SMOOTH_AHEAD = 12;
+
 /** Where along an edge a step may cross it, from its middle outwards (shares of its length). */
 const CROSSINGS = [0.5, 0.375, 0.625, 0.25, 0.75, 0.125, 0.875];
 
@@ -443,7 +446,7 @@ function offObstacles(
   const way: Vec3[] = [first];
   for (let i = 0; i < steps.length - 1;) {
     const from = steps[i];
-    let j = steps.length - 1;
+    let j = Math.min(steps.length - 1, i + SMOOTH_AHEAD);
     while (j > i + 1) {
       const to = steps[j];
       if (from && to && clear(from, to)) break;
