@@ -1,79 +1,48 @@
 import { describe, expect, it } from 'vitest';
-import { GpuScene } from './scene-renderer.ts';
+import { boundOf, orderByBindings, type BoundedDraw } from './scene-bound.ts';
 
-// GpuScene's whole-scene culling bound and its shadow casters' order, with stand-ins for the
-// GPU objects (only their identity matters here).
-type Draws = ConstructorParameters<typeof GpuScene>[0];
-
-const pipeline = (): object => ({ kind: 'pipeline' });
-const buffer = (): object => ({ kind: 'buffer' });
-
-function draw(
-  center: [number, number, number],
-  radius: number,
-  options: { sky?: boolean; shadow?: object; vertices?: object } = {},
-): Draws[number] {
-  return {
-    part: {
-      shadowPipeline: options.shadow,
-      vertexBuffer: options.vertices ?? buffer(),
-      bindGroup: {},
-    },
-    uniformOffset: 0,
-    center,
-    radius,
-    sky: options.sky ?? false,
-  } as unknown as Draws[number];
-}
-
-function scene(draws: Draws[number][]): GpuScene {
-  // Its bind group and uniform buffer: plain objects (no GPU in the tests).
-  const args: unknown[] = [draws, {}, {}, new ArrayBuffer(0), [], [], []];
-  return Reflect.construct<unknown[], GpuScene>(GpuScene, args);
-}
-
-describe('GpuScene.bound', () => {
-  it('holds every draw, and follows a draw that moved', () => {
-    const moved = draw([0, 0, 0], 10);
-    const s = scene([moved, draw([100, 0, 0], 20)]);
-    const check = (): void => {
-      const bound = s.bound;
-      expect(bound).not.toBeNull();
-      for (const d of s.draws) {
-        const distance = Math.hypot(
-          d.center[0] - (bound?.center[0] ?? 0),
-          d.center[1] - (bound?.center[1] ?? 0),
-          d.center[2] - (bound?.center[2] ?? 0),
-        );
-        expect(distance + d.radius).toBeLessThanOrEqual((bound?.radius ?? 0) + 1e-9);
-      }
-    };
-    check();
-    moved.center = [0, 500, 0];
-    s.boundChanged();
-    check();
+describe('boundOf', () => {
+  it('holds every draw', () => {
+    const draws: BoundedDraw[] = [
+      { center: [0, 0, 0], radius: 10 },
+      { center: [100, 0, 0], radius: 20 },
+      { center: [0, 500, -40], radius: 5 },
+    ];
+    const bound = boundOf(draws);
+    expect(bound).not.toBeNull();
+    for (const draw of draws) {
+      const distance = Math.hypot(
+        draw.center[0] - (bound?.center[0] ?? 0),
+        draw.center[1] - (bound?.center[1] ?? 0),
+        draw.center[2] - (bound?.center[2] ?? 0),
+      );
+      expect(distance + draw.radius).toBeLessThanOrEqual((bound?.radius ?? 0) + 1e-9);
+    }
   });
 
-  it('is null when a draw is never culled (the sky)', () => {
-    expect(scene([draw([0, 0, 0], 1), draw([0, 0, 0], 1, { sky: true })]).bound).toBeNull();
+  it('is null without draws, or when a draw is never culled (the sky, first person)', () => {
+    expect(boundOf([])).toBeNull();
+    expect(boundOf([{ center: [0, 0, 0], radius: 1, sky: true }])).toBeNull();
+    expect(
+      boundOf([
+        { center: [0, 0, 0], radius: 1 },
+        { center: [0, 0, 0], radius: 1, firstPerson: true },
+      ]),
+    ).toBeNull();
   });
 });
 
-describe('GpuScene.shadowCasters', () => {
-  it('keeps only casters, instances of one mesh next to each other', () => {
-    const shadow = pipeline();
-    const rock = buffer();
-    const tree = buffer();
-    const draws = [
-      draw([0, 0, 0], 1, { shadow, vertices: rock }),
-      draw([0, 0, 0], 1, { shadow, vertices: tree }),
-      draw([0, 0, 0], 1),
-      draw([0, 0, 0], 1, { shadow, vertices: rock }),
+describe('orderByBindings', () => {
+  it('puts items binding the same things next to each other, keeping their order otherwise', () => {
+    const pipeline = {};
+    const rock = {};
+    const tree = {};
+    const items = [
+      { name: 'rock 1', mesh: rock },
+      { name: 'tree', mesh: tree },
+      { name: 'rock 2', mesh: rock },
     ];
-    const casters = scene(draws).shadowCasters;
-    expect(casters).toHaveLength(3);
-    // The two rocks (draws 0 and 3) next to each other.
-    const order = casters.map((d) => draws.indexOf(d));
-    expect(Math.abs(order.indexOf(0) - order.indexOf(3))).toBe(1);
+    const order = orderByBindings(items, (item) => [pipeline, item.mesh]).map((i) => i.name);
+    expect(order).toEqual(['rock 1', 'rock 2', 'tree']);
   });
 });
