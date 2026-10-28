@@ -188,11 +188,22 @@ describe.skipIf(!hasGamedata())('MQ101 in Helgen Keep', () => {
       await sim.close();
     }
   }, 300_000);
-  // Ralof's route, found 2026-10-28: past stage 305 (the player at MQ101SetStage305) the
-  // storeroom scene (MQ101KeepScene2B) waits in phase 3 for Ralof's MQ101FriendToKeepMarker3,
-  // and he stands still at (507, 4476, 384), at the head of the stairs down, for good. Not
-  // looked into yet: why his travel to the marker does not go on (the way down, the collapsing
-  // hall's trigger, the door at the foot). Hadvar's route (KeepIntroSceneA) is not driven yet.
+  // Ralof's route, found 2026-10-28: past stage 300 the player keeps by Ralof and steps into
+  // MQ101SetStage292 (-955, 4723, 520: KeepIntroSceneB phase 37 waits for it) and
+  // MQ101SetStage305 (124, 4128, 196). MQ101KeepScene2B's phase 3 then waits for Ralof's
+  // MQ101FriendToKeepMarker3 (MQ101KeepFriendMarker3, 898, 4178, -128, down the stairs), and
+  // he stands for good at (507, 4476, 384), the head of the stairs: the navmesh alone has a
+  // whole way there (27 points), but with the stage's navmesh obstacles (src/ai/navmesh-
+  // obstacles.ts) the search ends at once by (550, 4456, 384): an enabled obstacle reference
+  // (base flag bit 25) cuts the stairs, so each path search fails and no warp follows. Next:
+  // which obstacle that is (its box may be placed well away from the stairs; maybe the
+  // collapsing hall's, HelgenHallCollapseScript at MQ101KeepCollapseTriggerRef) and the rule
+  // that should leave the stairs open then (its enable state or parent, its box, the cut's
+  // height band). Also 310 (KeepScene2B phase 1) is set by none of the keep's triggers.
+  // Further on the keep's set-stage triggers lead 350/360 → 400 → 450 → 460 → 480/485 → 500
+  // (Ralof and the player both in it) → 550/560 → 650 → 700 → 720/725 → 760 → 800; the torture
+  // room's and the caves' fights are not reached yet. Hadvar's route (KeepIntroSceneA) is not
+  // driven yet.
   it.todo(
     'runs both routes through the torture room, the caves (spiders, bear) and out (stage 900)',
   );
