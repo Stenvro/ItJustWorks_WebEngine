@@ -18,10 +18,12 @@ const RAYS_DIVISOR = 4;
 /** At most this many flare sprites are drawn. */
 const MAX_SPRITES = 16;
 /**
- * The rays' strength per unit of the weather's (VOLI intensity × fVolumetricLightingIntensity ×
- * phase). TODO(M13): calibrated by eye against the original's froxel scattering.
+ * The rays' light per unit of the weather's strength (VOLI intensity ×
+ * fVolumetricLightingIntensity) and phase: a dawn's 4 × 2 adds about a tenth of the light's
+ * colour to open air towards the sun, a day's less (the original's scattering is a faint haze
+ * with shafts, never a glare). TODO(M13): the original's scale of its scattered light.
  */
-const RAY_SCALE = 0.25;
+const RAY_SCALE = 0.05;
 /** The rays' uniforms: light, colour, params, phase (4 floats each), clip to world (16). */
 const RAYS_UNIFORM_FLOATS = 32;
 
@@ -35,8 +37,10 @@ export interface SunEffectsFrame {
     readonly decay: number;
     /** Share of the way to the light the samples reach (0..1). */
     readonly reach: number;
-    /** The phase function's asymmetry (VOLI phase scattering as Henyey-Greenstein g). */
+    /** The phase function's asymmetry g (VOLI phase scattering). */
     readonly scattering?: number;
+    /** The phase function's share against even scattering (VOLI phase contribution). */
+    readonly phaseContribution?: number;
   };
   /** The sun's lens flare, with its sprites' textures by path (missing ones are not drawn). */
   readonly flare?: {
@@ -75,7 +79,9 @@ export class SunEffects {
   readonly #sampler: GPUSampler;
   readonly #raysUniforms: GPUBuffer;
   readonly #spriteUniforms: GPUBuffer[];
-  #target: { texture: GPUTexture; groups: Map<string, GPUBindGroup> } | undefined;
+  #target: SunTarget | undefined;
+  readonly #textureIds = new WeakMap<GPUTexture, number>();
+  #nextTextureId = 0;
 
   constructor(device: GPUDevice) {
     this.#device = device;
@@ -174,7 +180,7 @@ export class SunEffects {
     const { uv, front } = projectDirection(viewProj, frame.lightDirection);
     const fade = front ? edgeFade(uv) : 0;
     if (fade <= 0) return;
-    const target = this.#ensureTarget(hdr);
+    const target = this.#ensureTarget(hdr, depth);
     const aspect = hdr.width / Math.max(1, hdr.height);
     const [lx, ly, lz] = frame.lightDirection;
     const length = Math.hypot(lx, ly, lz) || 1;
@@ -192,7 +198,7 @@ export class SunEffects {
         1 / depth.width,
         aspect,
         fade,
-        0,
+        Math.max(0, Math.min(1, rays.phaseContribution ?? 0)),
       ],
       0,
     );
@@ -220,10 +226,8 @@ export class SunEffects {
     gather.setPipeline(this.#raysPipeline);
     gather.setBindGroup(
       0,
-      group(`rays:${depth.label}`, this.#raysPipeline, [
+      group('rays', this.#raysPipeline, [
         { binding: 0, resource: { buffer: this.#raysUniforms } },
-        { binding: 1, resource: this.#sampler },
-        { binding: 2, resource: hdr.createView() },
         { binding: 3, resource: depth.createView() },
       ]),
     );
@@ -269,7 +273,7 @@ export class SunEffects {
       flare.intensity,
     ).slice(0, MAX_SPRITES);
     if (placed.length === 0) return;
-    const target = this.#ensureTarget(hdr);
+    const target = this.#ensureTarget(hdr, depth);
     const pass = encoder.beginRenderPass({
       label: 'lens-flare',
       colorAttachments: [{ view: hdr.createView(), loadOp: 'load', storeOp: 'store' }],
@@ -293,7 +297,7 @@ export class SunEffects {
           ...uv,
         ]),
       );
-      const key = `sprite:${String(i)}:${texture.label}:${depth.label}`;
+      const key = `sprite:${String(i)}:${String(this.#textureId(texture))}`;
       let group = target.groups.get(key);
       if (!group) {
         group = this.#device.createBindGroup({
@@ -314,11 +318,23 @@ export class SunEffects {
     pass.end();
   }
 
-  #ensureTarget(hdr: GPUTexture): { texture: GPUTexture; groups: Map<string, GPUBindGroup> } {
+  /**
+   * The rays' target for a frame of `hdr`'s size, and the bind groups made for it. The groups
+   * hold views of the frame's depth: when the renderer makes its targets anew (a resize) they
+   * are made again, also where the quarter size stays the same (bound to a destroyed texture,
+   * a group fails the frame's submit).
+   */
+  #ensureTarget(hdr: GPUTexture, depth: GPUTexture): SunTarget {
     const width = Math.max(1, Math.ceil(hdr.width / RAYS_DIVISOR));
     const height = Math.max(1, Math.ceil(hdr.height / RAYS_DIVISOR));
     const old = this.#target;
-    if (old?.texture.width === width && old.texture.height === height) return old;
+    if (old?.texture.width === width && old.texture.height === height) {
+      if (old.depth !== depth) {
+        old.groups.clear();
+        old.depth = depth;
+      }
+      return old;
+    }
     old?.texture.destroy();
     this.#target = {
       texture: this.#device.createTexture({
@@ -327,10 +343,28 @@ export class SunEffects {
         format: HDR_FORMAT,
         usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
       }),
+      depth,
       groups: new Map(),
     };
     return this.#target;
   }
+
+  /** A texture's number for bind group keys (a texture made anew gets a new one). */
+  #textureId(texture: GPUTexture): number {
+    let id = this.#textureIds.get(texture);
+    if (id === undefined) {
+      id = this.#nextTextureId++;
+      this.#textureIds.set(texture, id);
+    }
+    return id;
+  }
+}
+
+interface SunTarget {
+  readonly texture: GPUTexture;
+  /** The depth texture the groups were made with. */
+  depth: GPUTexture;
+  readonly groups: Map<string, GPUBindGroup>;
 }
 
 const dot = (a: Vec3, b: Vec3): number => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];

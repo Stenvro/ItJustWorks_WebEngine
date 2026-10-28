@@ -377,7 +377,11 @@ inferred: TODO(M13) compare with the original. Thunder sounds follow the flashes
 
 **Sky statics and aurora:** TNAM (87 weathers) lists STATs drawn in the sky — mostly the
 distant cloud banks `skyinv_clouddistant*.nif` (effect meshes about 11600 units across with
-scrolling cloud sheets, lit by the weather), also Sovngarde's sky; MODL (38 weathers, the
+scrolling cloud sheets: base colour scale 1.5, a palette, External_Emittance and
+Effect_Lighting), also Sovngarde's sky. Their light is the weather's sky statics colour
+(NAM0 13, by the hour: SkyrimCloudy 152,154,153 at 7:30, 218,215,236 at 13:00, 64,91,107 at
+20:00), not the sun and ambient light: lit by the sun (× the imagespace's sunlight scale) the
+96 overlapping sheets of a cloudy weather turned the whole sky a flat white of about 2.2; MODL (38 weathers, the
 `_A` variants among them) is the aurora, `skyskyrimaurora.nif`: three skinned effect
 shapes (rest pose) whose UV and alpha controllers make it ripple. Both follow the camera and
 fade with weather changes; the aurora also fades in from `fAuroraFadeInStart` to

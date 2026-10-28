@@ -68,7 +68,11 @@ How a frame is put together (`src/render/renderer.ts`). Everything is drawn in H
 clamped to this frame's 3×3 neighbourhood, before the sun's effects and post-processing. The
 history is found again per pixel by a **motion vector** where a moving draw shows (moving
 instances and animated parts: `SceneRenderer.drawVelocity`, `shaders/velocity.wgsl`), else by
-the pixel's depth and the camera's move. The velocity pass draws the moving opaque draws into
+the pixel's depth and the camera's move, between the unjittered view-projections of both
+frames (the history holds the steady image: through this frame's jittered matrix every still
+pixel fetched its history a jitter step away, a sub-pixel resample each frame that blurred
+the whole image). The history is read through a Catmull-Rom filter (five bilinear taps), so a
+moving view does not soften it frame by frame. The velocity pass draws the moving opaque draws into
 an `rgba16float` target (the uv offset to the last frame, and a written mark) under this
 frame's and the last frame's world matrix (each scene keeps its moving draws' last matrices by
 draw slot; a draw unseen in the last pass has not moved), with no depth attachment: a fragment
@@ -80,12 +84,17 @@ not (TODO(M13): the last frame's bone palettes). Opaque draws only; blended part
 are reprojected by the depth behind them.
 
 **God rays** (`sun-effects.ts`, bVolumetricLightingEnable): the weather's volumetric lighting
-(VOLI by time of day: intensity × [Display] fVolumetricLightingIntensity × phase contribution,
-the sun's colour mixed with its custom colour, `world/volumetric-lighting.ts`) gathered at a
-quarter of the resolution by a radial blur of the sky's light towards the light's place on the
-screen (reach: the range factor / 40), weighted by the VOLI's phase function: Henyey-Greenstein
-with g = the phase scattering (0..0.95) between each pixel's view ray and the light, relative to
-looking straight at it (`godRayPhase`). TODO(M13): the engine scatters through a froxel volume
+(VOLI by time of day: intensity × [Display] fVolumetricLightingIntensity, the sun's colour
+mixed with its custom colour, `world/volumetric-lighting.ts`) gathered at a quarter of the
+resolution: each pixel takes the share of open sky (the opaque depth) along its line to the
+light's place on the screen, fading along the way (reach: the range factor / 40), so what
+stands before the sky cuts the light into shafts; times the share of air in front of the pixel
+(its distance over 8000 units, the shadow distance; 1 for the sky) and the original's phase
+function, `(1 − g²) / (4π (1 − g cos))` with g = the phase scattering, mixed with 1 by the phase
+contribution (`godRayPhase`; the phase contribution weighs the function, it is no strength).
+With the vanilla values that weight stays between about 0.15 and 0.3: an even haze, a little
+stronger towards the sun. The light does not depend on the sky's brightness (gathering the
+sky's colour, a bright sky made white streaks across it). TODO(M13): the engine scatters through a froxel volume
 lit by the shadow maps (ISVolumetricLighting*: density noise by size, wind and falling speed,
 the depth distribution by the range factor); the volume, the density noise and the shafts
 through openings in front of the camera (not only towards the sky) are not built.
@@ -128,7 +137,9 @@ flags, clothes, sacks, some plants).
 
 **Actors** (`ModelInstance.pose`, `tints`, `partitionVisible`): an actor's palettes follow its
 skeleton's pose (animation.md, Actors); its skin tone (NPC QNAM) replaces the tint of skin
-shapes (skin tint, type 5) and its hair colour (CLFM) that of hair shapes (hair tint, type 6);
+shapes (skin tint, type 5) and its hair colour (CLFM) times 2 that of hair shapes (hair tint,
+type 6: `hairTint`; the vanilla hair colours are all below 100 of 255, Albino White is 130, so
+128 is the texture's own colour);
 partitions its equipment hides are left out of the draw (only the visible index ranges are
 drawn, also into the shadow map). Model-space normal maps of skinned shapes (FaceGen heads)
 turn with the vertex's bones: the vertex stage passes the blended rotation as the vertex's
