@@ -53,7 +53,12 @@ import type { Vfs } from '../vfs/vfs.ts';
 import type { GameSettings } from '../world/game-settings.ts';
 import { IniSettings, type IniOverrides } from '../world/ini-settings.ts';
 import { MaterialFlag, materialId, parseMaterialType } from '../world/material-type.ts';
-import { directionalSpeed, parseMovementType, type MovementType } from '../world/movement.ts';
+import {
+  directionalSpeed,
+  parseMovementType,
+  stickPace,
+  type MovementType,
+} from '../world/movement.ts';
 import { readPlayerBody, type PlayerBody } from '../world/player-body.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
 import { parseWaterBody } from '../world/water.ts';
@@ -960,6 +965,8 @@ export class Player implements Camera {
     if (this.#event('Back')) y -= 1;
     if (this.#event('Strafe Right')) x += 1;
     if (this.#event('Strafe Left')) x -= 1;
+    // Moved by the stick alone, its deflection sets the pace (stickPace).
+    const deflection = x === 0 && y === 0 ? Math.min(1, Math.hypot(...this.stick)) : 1;
     // The left stick adds to the keys (a gamepad's Move).
     x = Math.max(-1, Math.min(1, x + this.stick[0]));
     y = Math.max(-1, Math.min(1, y + this.stick[1]));
@@ -1012,7 +1019,14 @@ export class Player implements Camera {
     // In slowed time the player keeps their own pace against the world's clock (Slow Time:
     // GameSession.playerPace).
     const pace = this.pace?.() ?? 1;
-    const speed = moving ? directionalSpeed(running ? type.run : type.walk, x, y) * pace : 0;
+    const speed = moving
+      ? stickPace(
+          directionalSpeed(type.walk, x, y),
+          directionalSpeed(type.run, x, y),
+          running,
+          deflection,
+        ) * pace
+      : 0;
     this.motion = { inputX: x, inputY: y, moving, running, sprinting };
     const length = Math.hypot(x, y) || 1;
     const sin = Math.sin(this.yaw);
@@ -1444,7 +1458,7 @@ export class Player implements Camera {
 
   /**
    * The left stick (Move): x right, y forward, past its dead zone (src/shell/gamepad-input.ts).
-   * TODO(M13): walking at a part deflection (the stick's own speed between walk and run).
+   * Moved by it alone, its deflection sets the pace (src/world/movement.ts stickPace).
    */
   stick: readonly [number, number] = [0, 0];
 

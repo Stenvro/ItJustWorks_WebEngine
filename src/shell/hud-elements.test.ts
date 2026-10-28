@@ -64,6 +64,17 @@ describe('floating quest marker', () => {
     expect(floatingMarker([[2500, 0, 0]], [0, 0, 0], ahead)).toBeUndefined();
   });
 
+  it('floats over the top of the target’s bound, or a human’s height without one', () => {
+    const heights: number[] = [];
+    const up = (point: readonly [number, number, number]): readonly [number, number] => {
+      heights.push(point[2]);
+      return [0.5, 0.5];
+    };
+    floatingMarker([[500, 0, 10, 60]], [0, 0, 0], up);
+    floatingMarker([[500, 0, 10]], [0, 0, 0], up);
+    expect(heights).toEqual([10 + 60 + 20, 10 + 128 + 20]);
+  });
+
   it('shows nothing for a target behind the camera or off the screen', () => {
     expect(floatingMarker([[500, 0, 0]], [0, 0, 0], () => undefined)).toBeUndefined();
     expect(floatingMarker([[500, 0, 0]], [0, 0, 0], () => [1.2, 0.5])).toBeUndefined();

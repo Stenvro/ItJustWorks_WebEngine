@@ -112,8 +112,10 @@ export const FLOATING_MARKER: FloatingMarkerSettings = {
 };
 
 /**
- * The height of a target the marker floats over. TODO(M13): the target's own bound (its 3D's
- * top); an actor's height for now.
+ * The height of a target the marker floats over when its bound gives none (a target's fourth
+ * number: its base's OBND top at its scale, compass.ts boundTop; an NPC_ whose template gives
+ * its bounds has none of its own): a human's height. TODO(M13): the engine reads the target's
+ * loaded 3D's bound; the base's bounds stand in for it.
  */
 const TARGET_HEIGHT = 128;
 
@@ -143,7 +145,8 @@ export function floatingMarker(
     const z = target[2] ?? 0;
     const far = Math.hypot(x - (player[0] ?? 0), y - (player[1] ?? 0), z - (player[2] ?? 0));
     if (far > settings.maxDistance || (best && best.far <= far)) continue;
-    best = { point: [x, y, z + TARGET_HEIGHT + settings.floatHeight], far };
+    const height = target[3] ?? TARGET_HEIGHT;
+    best = { point: [x, y, z + height + settings.floatHeight], far };
   }
   if (!best) return undefined;
   const screen = project(best.point);
