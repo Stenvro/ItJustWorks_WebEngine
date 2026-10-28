@@ -8,7 +8,9 @@
 
 import { isOfObjectType, ObjectType } from '../ai/object-types.ts';
 import { TargetType, type PackageTarget } from '../ai/package-records.ts';
+import type { FoundItem } from '../ai/package-runtime.ts';
 import type { Vec3 } from '../render/math.ts';
+import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { GameRecord } from '../world/record-db.ts';
 import type { StageObject } from './actor-furniture.ts';
 import type { GameSession } from './game-session.ts';
@@ -17,11 +19,15 @@ export interface ActorSearchOptions {
   readonly session: GameSession;
   /** The enabled objects and markers of the loaded area. */
   readonly objects: () => Iterable<StageObject>;
-  /** The actors of the loaded area (their bases: placed and, for leveled ones, chosen). */
+  /**
+   * The actors of the loaded area (their bases: placed and, for leveled ones, chosen); the dead
+   * are searched only for what they carry.
+   */
   readonly actors: () => Iterable<{
     readonly reference: number;
     readonly bases: readonly number[];
     readonly position: Vec3;
+    readonly dead?: boolean;
   }>;
 }
 
@@ -44,6 +50,7 @@ interface Candidate {
   readonly bases: readonly number[];
   readonly position: Vec3;
   readonly actor: boolean;
+  readonly dead?: boolean | undefined;
 }
 
 export class ActorSearch {
@@ -67,7 +74,7 @@ export class ActorSearch {
     const radius = request.radius > 0 ? request.radius : NO_RADIUS;
     const found: { reference: number; distance: number }[] = [];
     for (const candidate of this.#candidates()) {
-      if (candidate.reference === request.actor) continue;
+      if (candidate.reference === request.actor || candidate.dead === true) continue;
       const [x, y, z] = candidate.position;
       const [cx, cy, cz] = request.center;
       if (Math.hypot(x - cx, y - cy, z - cz) > radius) continue;
@@ -79,6 +86,43 @@ export class ActorSearch {
       found.push({ reference: candidate.reference, distance: Math.hypot(x - fx, y - fy, z - fz) });
     }
     return found.sort((a, b) => a.distance - b.distance).map((entry) => entry.reference);
+  }
+
+  /**
+   * The items a criterion names in the inventories within a request's place (observed in the
+   * original: its search looks into each actor's inventory but the player's, living or
+   * dead, and each container's), nearest holder first. Unless the actor may steal, a container
+   * it may not use is passed over (what an actor carries Acquire weighs: a corpse is looted, a
+   * living one's pocket picked).
+   */
+  async findHeld(criteria: PackageTarget, request: SearchRequest): Promise<FoundItem[]> {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime) return [];
+    const matches = await this.#matcher(criteria);
+    if (!matches) return [];
+    const radius = request.radius > 0 ? request.radius : NO_RADIUS;
+    const found: { entry: FoundItem; distance: number }[] = [];
+    for (const candidate of this.#candidates()) {
+      const holder = candidate.reference;
+      if (holder === request.actor || holder === PLAYER_REF) continue;
+      const [x, y, z] = candidate.position;
+      const [cx, cy, cz] = request.center;
+      if (Math.hypot(x - cx, y - cy, z - cz) > radius) continue;
+      if (!candidate.actor) {
+        const base = candidate.bases[0];
+        if (base === undefined || (await this.#record(base))?.type !== 'CONT') continue;
+        if (!request.steal && !(await runtime.mayUse(request.actor, holder))) continue;
+      }
+      const [fx, fy, fz] = request.from;
+      const distance = Math.hypot(x - fx, y - fy, z - fz);
+      for (const [item, count] of await runtime.inventory(holder)) {
+        if (count <= 0) continue;
+        const asItem = { reference: item, bases: [item], position: candidate.position };
+        if (await matches({ ...asItem, actor: false }))
+          found.push({ entry: { holder, item }, distance });
+      }
+    }
+    return found.sort((a, b) => a.distance - b.distance).map(({ entry }) => entry);
   }
 
   *#candidates(): Iterable<Candidate> {
