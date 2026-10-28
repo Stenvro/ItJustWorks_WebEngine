@@ -736,6 +736,12 @@ export class ActorAi {
         await scripts.removeItem(holder, scripts.formHandle(base), 1, true, reference);
         return true;
       },
+      takeFrom: async (holder, item) => {
+        const scripts = this.#session.scriptsReady;
+        if (!scripts || (await scripts.itemCount(holder, item)) <= 0) return false;
+        await scripts.removeItem(holder, scripts.formHandle(item), 1, true, reference);
+        return true;
+      },
       ride: (allowed) => {
         this.#rides.set(reference, allowed);
         // Allowed to ride, it gets on its horse now, also where it need not go anywhere: MQ101's
@@ -1166,6 +1172,20 @@ export class ActorAi {
           radius: place.radius,
           steal,
         });
+      },
+      searchHeld: (criteria, place, actor, steal) => {
+        const self = staged(actor);
+        return this.#search.findHeld(criteria, {
+          actor,
+          from: self?.position ?? place.position,
+          center: place.position,
+          radius: place.radius,
+          steal,
+        });
+      },
+      alive: async (reference) => {
+        const scripts = runtime();
+        return scripts !== undefined && !(await scripts.actors.isDead(reference));
       },
       placement: placementOf,
       linked: async (reference, keyword) => runtime()?.linkedReference(reference, keyword),

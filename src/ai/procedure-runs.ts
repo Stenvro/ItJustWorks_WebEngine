@@ -18,6 +18,7 @@ import { TargetType } from './package-records.ts';
 import { ObjectType } from './object-types.ts';
 import { ORBIT_PROCEDURE } from './flight.ts';
 import type {
+  FoundObject,
   PackagePlace,
   ProcedureResult,
   ProcedureRun,
@@ -973,8 +974,12 @@ async function playerWithin(run: ProcedureRun, place: PackagePlace): Promise<boo
  * Find: the references its search criteria name within its place, nearest first, kept in its
  * object list for the procedures after it (Sit and Sleep use the first free one, Acquire picks
  * them up); succeeds if it found any. Criteria that name one reference (specific, linked, an
- * alias) find that one. Without Allow Stealing only what the actor may use. TODO(M13): Allow
- * Already Held (items others carry).
+ * alias) find that one. Without Allow Stealing only what the actor may use. Criteria by object
+ * or object type also find items in the inventories within the place (observed in the
+ * original: its search looks into each actor's but the player's, living or dead, and each
+ * container's), kept after the references (Acquire takes them from their holder). TODO(M13):
+ * whether the engine sorts the two together by distance; Allow Already Held (the searcher's own
+ * items).
  */
 const find: ProcedureRunner = async (run) => {
   const place = await placeIn(run, 0);
@@ -987,9 +992,13 @@ const find: ProcedureRunner = async (run) => {
   // Ivarstead and IvarsteadSSScene never ended. TODO(M13): the engine's Find procedure's update
   // was not read (how often it searches again, whether it ever gives up).
   for (;;) {
-    let found: readonly number[];
+    let found: readonly FoundObject[];
     if (criteria.type === TargetType.objectId || criteria.type === TargetType.objectType) {
-      found = await run.mind.search(criteria, place, run.actor, run.inputs.bool(4));
+      const steal = run.inputs.bool(4);
+      found = [
+        ...(await run.mind.search(criteria, place, run.actor, steal)),
+        ...((await run.mind.searchHeld?.(criteria, place, run.actor, steal)) ?? []),
+      ];
     } else {
       const one = await run.mind.target(criteria, run.actor, run.context);
       found = one === undefined ? [] : [one];
@@ -1006,7 +1015,10 @@ const find: ProcedureRunner = async (run) => {
  * Acquire: picks up what its object list holds, nearest first, until it has as many as it was
  * to. One a living actor holds it does not take: with Allow Pickpocketing it goes to them and
  * takes it from them, with Allow Killing it fights them for it (its body's attack: a StartCombat).
- * TODO(M13): whether those who see an actor's pickpocketing report it (the player's is crime's).
+ * Items its Find found in an inventory it takes from their holder, standing by it: a corpse's
+ * and a container's at once, a living actor's as one it holds above. TODO(M13): whether those
+ * who see an actor's pickpocketing report it (the player's is crime's), and whether looting
+ * plays an animation.
  */
 const acquire: ProcedureRunner = async (run) => {
   const wanted = Math.max(1, run.inputs.number(1, 1));
@@ -1028,6 +1040,16 @@ const acquire: ProcedureRunner = async (run) => {
     }
     if (!(await goToReference(run, reference, REACH))) continue;
     if (await run.body.take(reference)) taken++;
+  }
+  for (const { holder, item } of run.held(0)) {
+    if (run.stopped() || taken >= wanted) break;
+    if (holder === run.actor || !run.body.takeFrom) continue;
+    if ((await run.mind.alive?.(holder)) === true && !pickpocketing) {
+      if (killing) run.body.attack?.(holder);
+      continue;
+    }
+    if (!(await goToReference(run, holder, REACH))) continue;
+    if (await run.body.takeFrom(holder, item)) taken++;
   }
   return taken > 0 ? 'success' : 'failure';
 };
