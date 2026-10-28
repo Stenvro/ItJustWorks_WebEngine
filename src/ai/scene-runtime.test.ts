@@ -525,6 +525,21 @@ describe('scene phases and actions', () => {
 });
 
 describe('scene starts, stops and behaviour', () => {
+  // Found 2026-10-28: MQ104's courtyard scene, started by stage 40's fragment and saved before
+  // the scene system's next update, was gone from the loaded game.
+  it('keeps a scene started but not begun yet in a save; loaded, it begins', async () => {
+    const records = [scene(0x10, { actors: [actor(0)], phases: [phase([], [truth(9)])] })];
+    const first = setup(records);
+    first.director.start(0x10, true);
+    const saved = first.director.saveData();
+    expect(saved.playing).toEqual([]);
+    expect(saved.waiting).toEqual([[0x10, true]]);
+    const loaded = setup(records);
+    loaded.director.restore(saved);
+    await loaded.tick();
+    expect(loaded.director.sceneOf(0x64)).toBe(0x10);
+  });
+
   it('waits for actors playing in another scene; a forced start takes them', async () => {
     const test = setup([
       scene(0x10, {

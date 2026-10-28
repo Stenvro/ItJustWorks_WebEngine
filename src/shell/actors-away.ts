@@ -16,7 +16,9 @@
 // TODO(M13): the engine's own rules for the low process (how often, its speed between doors).
 
 import type { PackageStart, Space } from '../ai/package-start.ts';
+import { fliesByRace } from '../ai/flight.ts';
 import { MovementCatalog } from '../ai/movement-types.ts';
+import { parseRaceCombat, type RaceCombat } from '../ai/race-combat-records.ts';
 import { LOW_PROCESSING_MS } from '../ai/process-levels.ts';
 import { aiSettingsOf } from '../ai/ai-settings.ts';
 import {
@@ -143,6 +145,9 @@ export class ActorsAway {
   /** The plugins' actor references of each cell asked about (#candidates). */
   readonly #cellActors = new Map<number, readonly number[]>();
   #walkSpeed: number | undefined;
+  #catalog: Promise<MovementCatalog | undefined> | undefined;
+  /** The races' data read (whether they fly, their movement types), by race. */
+  readonly #races = new Map<number, Promise<RaceCombat | undefined>>();
   #hour: number | undefined;
   #playerSpace: string | undefined;
   #gameSeconds: number | undefined;
@@ -181,6 +186,56 @@ export class ActorsAway {
     };
     this.#trips.set(actor, trip);
     void this.#plan(actor, trip, from);
+  }
+
+  /**
+   * A flier (its race flies: the dragons) away in the space of its place flies there straight
+   * through the air at its flying speed, with no road or navmesh under it (an unseen trip of
+   * one leg); it shows where it comes into the loaded area. TODO(M13): the engine's own rule
+   * for a flier in the middle-low and low processes (read nowhere yet).
+   */
+  #fly(
+    actor: number,
+    from: AwayPlace,
+    destination: AwayPlace,
+    speed: number,
+    walk: AwayPackage | undefined,
+  ): void {
+    const points = [from.position, destination.position];
+    this.#trips.set(actor, {
+      destination,
+      package: walk,
+      speed,
+      legs: [{ space: from.space, points, length: polylineLength(points), door: undefined }],
+      leg: 0,
+      along: 0,
+      busy: false,
+    });
+  }
+
+  /**
+   * An actor's flying speed if its race flies (RACE DATA Flies): its race's flying movement
+   * type's (FLMV) running speed forward, else undefined.
+   */
+  async #flyingSpeed(runtime: ScriptRuntime, actor: number): Promise<number | undefined> {
+    const race = await runtime.actors.raceOf(actor);
+    const catalog = await this.#catalog;
+    if (race === undefined || !catalog) return undefined;
+    let read = this.#races.get(race);
+    if (!read) {
+      read = runtime.forms.db
+        .get(race)
+        .then((record) => (record?.type === 'RACE' ? parseRaceCombat(record) : undefined))
+        .catch(() => undefined);
+      this.#races.set(race, read);
+    }
+    const movement = await read;
+    if (!movement || !fliesByRace(movement.flags)) return undefined;
+    const fly = movement.movementTypes.fly;
+    const type = fly === undefined ? undefined : catalog.byId(fly);
+    if (!type) return undefined;
+    const override = movement.movementOverrides.find((entry) => entry.movementType === fly);
+    return (override ? { ...type, ...override.speeds } : type).run.forward;
   }
 
   /** Whether schedules are being asked now, and the last run (development checks). */
@@ -340,10 +395,8 @@ export class ActorsAway {
       session.actors(),
       session.db,
     ]);
-    this.#walkSpeed ??= await MovementCatalog.read(db).then(
-      (catalog) => catalog.default('walk')?.walk.forward ?? WALK_SPEED,
-      () => WALK_SPEED,
-    );
+    this.#catalog ??= MovementCatalog.read(db).catch(() => undefined);
+    this.#walkSpeed ??= (await this.#catalog)?.default('walk')?.walk.forward ?? WALK_SPEED;
     const player = await runtime.placement(PLAYER_REF);
     if (!player) return;
     const here = spaceOf(player);
@@ -417,7 +470,12 @@ export class ActorsAway {
       ) {
         return false;
       }
-      this.depart(actor, current, destination, walk);
+      const flies = await this.#flyingSpeed(runtime, actor);
+      if (flies !== undefined && sameSpace(current.space, destination.space)) {
+        this.#fly(actor, current, destination, flies, walk);
+      } else {
+        this.depart(actor, current, destination, walk);
+      }
     }
     return true;
   }
