@@ -1164,6 +1164,7 @@ export class WorldViewer {
       obstacles: () => this.#stageObstacles(),
       light: (at) => this.#lightProbe(at),
       objectBody: (reference) => this.#objectBody(reference),
+      ragdollPoseReplaced: (from, to) => this.#play?.ragdollPoseReplaced(from, to),
       focus: () => this.#play?.player.feet,
       // Actors walking into trigger volumes tell their scripts.
       onTrigger: (trigger, actor, entered) => {

@@ -49,5 +49,19 @@ describe.skipIf(!hasGamedata())('a corpse across a save (headless simulation)', 
     expect(lies).toBeDefined();
     if (!lay || !lies) return;
     expect(Math.hypot(lies[0] - lay[0], lies[1] - lay[1], lies[2] - lay[2])).toBeLessThan(8);
+
+    // Found 2026-10-28: a corpse placed dead (its cell's ragdoll) stood up in its bind pose as it
+    // was looted: made again in what it wore then, its new pose was moved by nothing. Its cell's
+    // ragdoll now moves the new pose (src/physics/articulation.ts, movedTo).
+    const body = after.actor(HULDA)?.placed;
+    for (const form of await after.runtime.equipment.worn(HULDA)) {
+      await after.runtime.equipment.unequip(HULDA, form);
+    }
+    await after.step(1);
+    expect(after.actor(HULDA)?.placed).not.toBe(body);
+    const looted = head(after, HULDA);
+    expect(looted).toBeDefined();
+    if (!looted) return;
+    expect(Math.hypot(looted[0] - lay[0], looted[1] - lay[1], looted[2] - lay[2])).toBeLessThan(8);
   }, 600_000);
 });
