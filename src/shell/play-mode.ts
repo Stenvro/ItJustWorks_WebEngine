@@ -1079,6 +1079,8 @@ export class PlayMode {
       .catch((error: unknown) => {
         this.#talking = false;
         camera?.close();
+        // A conversation that failed after its menu opened leaves the HUD's DialogueMode too.
+        session.menuStack.close(MenuName.dialogue);
         this.#terminal.log(
           'ui',
           `the conversation does not start: ${error instanceof Error ? error.message : String(error)}`,

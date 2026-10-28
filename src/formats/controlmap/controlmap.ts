@@ -44,6 +44,31 @@ export const InputContext = {
   favor: 17,
 } as const;
 
+/**
+ * The user event groups of the control map's last column (CommonLib UserEvents::USER_EVENT_FLAG):
+ * an event works only while every group it names is enabled (Forward is 0x801: movement and
+ * the VATS group; Jump 0xc01: movement and jumping as well).
+ */
+export const UserEventFlag = {
+  movement: 0x1,
+  looking: 0x2,
+  activate: 0x4,
+  menu: 0x8,
+  console: 0x10,
+  povSwitch: 0x20,
+  fighting: 0x40,
+  sneaking: 0x80,
+  mainFour: 0x100,
+  wheelZoom: 0x200,
+  jumping: 0x400,
+  vats: 0x800,
+} as const;
+
+/** Whether an event of these flags works while the groups of `disabled` are off. */
+export function eventEnabled(flags: number, disabled: number): boolean {
+  return (flags & disabled) === 0;
+}
+
 export interface ControlMap {
   /** The events of each input context, by InputContext index. */
   readonly contexts: readonly (readonly UserEvent[])[];
