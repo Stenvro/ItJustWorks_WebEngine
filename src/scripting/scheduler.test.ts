@@ -61,6 +61,35 @@ describe('PapyrusScheduler', () => {
     expect(begun).toEqual(['a', 'b', 'c']);
   });
 
+  it('resumes a wait with nothing left to wait for (Wait(0)) later, never at once', async () => {
+    let now = 0;
+    const scheduler = new PapyrusScheduler(1, () => now);
+    let yields = 0;
+    scheduler.yieldTask = () => {
+      yields++;
+      return Promise.resolve();
+    };
+    // Before frames come (a game loading) and while the VM runs on its own after a load: the
+    // host's next task.
+    await scheduler.waitUntil(scheduler.clockWait('real', 0));
+    expect(yields).toBe(1);
+    scheduler.framed = true;
+    scheduler.postLoad(500);
+    await scheduler.waitUntil(scheduler.clockWait('real', 0));
+    expect(yields).toBe(2);
+    // With frames: the next frame.
+    now = 501;
+    let waited = false;
+    void scheduler.waitUntil(scheduler.clockWait('real', 0)).then(() => (waited = true));
+    await Promise.resolve();
+    expect(waited).toBe(false);
+    expect(scheduler.waiting.frame).toBe(1);
+    scheduler.advance(1 / 60, 0);
+    await Promise.resolve();
+    expect(waited).toBe(true);
+    expect(yields).toBe(2);
+  });
+
   it('runs the VM on its own for fPostLoadUpdateTimeMS after a load', async () => {
     let now = 0;
     const scheduler = new PapyrusScheduler(1, () => now);
