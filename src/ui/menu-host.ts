@@ -27,7 +27,7 @@ import type { Translations } from '../formats/swf/translation.ts';
 import { loadRuffle, type RuffleApi, type RufflePlayerElement } from './ruffle.ts';
 import { readSwf } from '../formats/swf/swf.ts';
 import { flashKeyCode } from './key-codes.ts';
-import { inputPlatform, onInputPlatform } from './input-platform.ts';
+import { followPlatform } from './input-platform.ts';
 import { DEFAULT_MENU_KEYS } from './menu-keys.ts';
 import { SAFE_ZONE, safeRect, scaleMode, visibleRect, type SafeZone } from './stage-rects.ts';
 
@@ -457,12 +457,8 @@ export class Menu {
    * platform while the menu is open (a gamepad picked up, or put down for the keyboard).
    */
   tellPlatform(path: string, args: readonly unknown[] = [false]): void {
-    this.invoke(path, inputPlatform(), ...args);
-    const stop = onInputPlatform((platform) => {
-      if (this.#closed) stop();
-      else this.invoke(path, platform, ...args);
-    });
-    this.#onClose.push(stop);
+    if (this.#closed) return;
+    this.#onClose.push(followPlatform((...call) => this.invoke(...call), path, args));
   }
 
   close(): void {

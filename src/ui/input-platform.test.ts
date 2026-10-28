@@ -1,20 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { Platform, setInputPlatform } from './input-platform.ts';
-import { Menu } from './menu-host.ts';
-
-/** A menu that records its calls instead of playing a movie. */
-class RecordingMenu extends Menu {
-  readonly calls: unknown[][] = [];
-
-  constructor() {
-    super('test', 'test.swf', {}, () => undefined, { width: 1280, height: 720 });
-  }
-
-  override invoke(path: string, ...args: unknown[]): unknown {
-    this.calls.push([path, ...args]);
-    return undefined;
-  }
-}
+import { followPlatform, Platform, setInputPlatform } from './input-platform.ts';
 
 describe('input platform', () => {
   afterEach(() => {
@@ -22,13 +7,13 @@ describe('input platform', () => {
   });
 
   it('tells an open menu the new platform as the device changes, until it closes', () => {
-    const menu = new RecordingMenu();
-    menu.tellPlatform('_root.SetPlatform');
+    const calls: unknown[][] = [];
+    const stop = followPlatform((...call) => calls.push(call), '_root.SetPlatform');
     setInputPlatform(Platform.pcGamepad);
     setInputPlatform(Platform.pcKeyboardMouse);
-    menu.close();
+    stop();
     setInputPlatform(Platform.pcGamepad);
-    expect(menu.calls).toEqual([
+    expect(calls).toEqual([
       ['_root.SetPlatform', 0, false],
       ['_root.SetPlatform', 1, false],
       ['_root.SetPlatform', 0, false],

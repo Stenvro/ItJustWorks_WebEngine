@@ -9,6 +9,15 @@
 // fWorldMapFocalDepth times fWorldMapDepthBlurScale, up to fWorldMapMaximumDepthBlur pixels,
 // times fWorldMapNearDepthBlurScale nearer than the focus (the clouds), the sky too unless
 // bWorldMapNoSkyDepthBlur. Notes: docs/ui.md ("The map").
+//
+// TODO(M13): the relief overlay. The engine lays a tiling normal map over the map's LOD land
+// for its relief: [MapMenu] sWorldMapOverlayNormalTexture (textures\terrain\
+// worldmapoverlay_n.dds) at fMapMenuOverlayScale (0.000035) per world unit and strength
+// fMapMenuOverlayNormalStrength (1.1), on snow sWorldMapOverlayNormalSnowTexture
+// (worldmapoverlaysnow_n.dds) at fMapMenuOverlaySnowScale (0.000045), strength
+// fMapMenuOverlayNormalSnowStrength (0.4). Not drawn yet: the LOD land's material
+// (lighting.wgsl, LOD landscape) needs the two textures bound and a map mode; how the shader
+// tells snow and blends the two normals is not read yet (the lighting shader's world-map path).
 
 import { identity } from '../render/math.ts';
 import type { SceneView } from '../render/renderer.ts';
