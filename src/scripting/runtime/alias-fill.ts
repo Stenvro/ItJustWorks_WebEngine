@@ -92,6 +92,24 @@ export class AliasFiller {
     return (this.#reserved.get(value)?.size ?? 0) > 0;
   }
 
+  /**
+   * A loaded save's quest holds its aliases again (their fills are in its state): the
+   * reservations of those that reserve what they hold are made again.
+   */
+  restored(record: QuestRecord, filled: ReadonlyMap<number, number>): void {
+    for (const alias of record.aliases) {
+      const value = filled.get(alias.id);
+      if (value !== undefined && (alias.flags & AliasFlag.reserves) !== 0)
+        this.#reserve(value, record.formId, alias.id);
+    }
+  }
+
+  #reserve(value: number, quest: number, alias: number): void {
+    const by = this.#reserved.get(value) ?? new Set<string>();
+    by.add(key(quest, alias));
+    this.#reserved.set(value, by);
+  }
+
   /** An alias let go of what filled it (its reservation ends). */
   released(quest: number, alias: number, filled: number): void {
     this.#reserved.get(filled)?.delete(key(quest, alias));
@@ -115,11 +133,7 @@ export class AliasFiller {
       }
       this.#set(record.formId, alias.id, value);
       if (alias.forcedInto !== undefined) this.#set(record.formId, alias.forcedInto, value);
-      if ((alias.flags & AliasFlag.reserves) !== 0) {
-        const by = this.#reserved.get(value) ?? new Set<string>();
-        by.add(key(record.formId, alias.id));
-        this.#reserved.set(value, by);
-      }
+      if ((alias.flags & AliasFlag.reserves) !== 0) this.#reserve(value, record.formId, alias.id);
       if (!alias.location) {
         if ((alias.flags & AliasFlag.initiallyDisabled) !== 0)
           await runtime.setEnabled(value, false);
