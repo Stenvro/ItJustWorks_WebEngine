@@ -73,6 +73,8 @@ export interface TalkSettings {
    * fAIMinAngleRangeToStartSceneDialogue): two actors brought together face each other so.
    */
   readonly sceneDialogueAngle: number;
+  /** The same for a speaker moving at 5 units a second or more (degrees; fAIMaxAngleRangeMovingToStartSceneDialogue). */
+  readonly sceneDialogueAngleMoving: number;
   /**
    * Seconds before the next random scene may begin, drawn as one begins
    * (fRandomSceneAgainMinTime .. MaxTime).
@@ -110,6 +112,7 @@ export const VANILLA_TALK: TalkSettings = {
   waitForEvent: 20,
   dialogueDistance: 170,
   sceneDialogueAngle: 20,
+  sceneDialogueAngleMoving: 80,
   randomSceneAgainMin: 10,
   randomSceneAgainMax: 30,
   playerActionTimer: 20,
@@ -141,6 +144,8 @@ export function talkSettings(setting: (name: string) => number | undefined): Tal
     waitForEvent: setting('fAISocialTimerToWaitForEvent') ?? v.waitForEvent,
     dialogueDistance: setting('fAIDialogueDistance') ?? v.dialogueDistance,
     sceneDialogueAngle: setting('fAIMinAngleRangeToStartSceneDialogue') ?? v.sceneDialogueAngle,
+    sceneDialogueAngleMoving:
+      setting('fAIMaxAngleRangeMovingToStartSceneDialogue') ?? v.sceneDialogueAngleMoving,
     randomSceneAgainMin: setting('fRandomSceneAgainMinTime') ?? v.randomSceneAgainMin,
     randomSceneAgainMax: setting('fRandomSceneAgainMaxTime') ?? v.randomSceneAgainMax,
     playerActionTimer: setting('fCommentOnPlayerActionsTimer') ?? v.playerActionTimer,
@@ -526,4 +531,27 @@ export function greetingHolds(
   settings: Pick<TalkSettings, 'greetingHoldDistance'>,
 ): boolean {
   return player !== undefined && distance(actor, player) <= settings.greetingHoldDistance;
+}
+
+/** The speed (units a second) from which a scene's speaker counts as moving (observed in the original). */
+const SCENE_SPEAKER_MOVING = 5;
+
+/**
+ * Whether a scene's line may begin as far as its speaker's facing goes (observed in the
+ * original): it waits only while the speaker turns to face whom it speaks to (one that does not
+ * turn: held in furniture, blocked, not moved by its AI, says it as it stands); the angle it
+ * must come within is fAIMinAngleRangeToStartSceneDialogue, or
+ * fAIMaxAngleRangeMovingToStartSceneDialogue while it moves at 5 units a second or more. The
+ * engine has no time limit on the wait.
+ */
+export function sceneLineFaces(
+  speaker: { readonly offDegrees: number; readonly speed: number; readonly turning: boolean },
+  settings: Pick<TalkSettings, 'sceneDialogueAngle' | 'sceneDialogueAngleMoving'>,
+): boolean {
+  if (!speaker.turning) return true;
+  const limit =
+    speaker.speed >= SCENE_SPEAKER_MOVING
+      ? settings.sceneDialogueAngleMoving
+      : settings.sceneDialogueAngle;
+  return Math.abs(speaker.offDegrees) <= limit;
 }

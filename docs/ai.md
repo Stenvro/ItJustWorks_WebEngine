@@ -1450,7 +1450,12 @@ after `--package-seconds`).
   [animation.md](animation.md#head-tracking), the actor's head track target and its graph's
   BSLookAtModifier);
   with Face Target the actor turns to its target while it stands (`src/shell/actor-scenes.ts`),
-  its package's own facing coming back after.
+  its package's own facing coming back after. Its line waits while it turns (observed in the
+  original; `sceneLineFaces` in `src/ai/talk.ts`): until it faces its target within
+  fAIMinAngleRangeToStartSceneDialogue (20°), or fAIMaxAngleRangeMovingToStartSceneDialogue
+  (80°) while it moves at 5 units a second or more. One that does not turn (in furniture, not
+  moved by its controller, its turn stopped short: blocked) says it as it stands. No time limit
+  (ours had 3 s); a stopped turn counts once it had half a second to begin (ours).
 - **Packages:** while a package action runs, its actor's package stack is that action's
   packages alone (`ActorAi`'s stack asks the scene first). Observed in the original
   (BGSSceneActionPackage): as the action starts, its actor takes the first of its packages
@@ -1499,9 +1504,13 @@ after `--package-seconds`).
 - **Ending:** Scene.Stop, its quest stopping, its last phase completing, an actor's behaviour.
   Its actions end (looks and packages let go), its actors leave it, its end fragment runs; then
   its quest stops if the scene stops it on its end (851 scenes: MS13LucanCamillaScene ends with
-  Lucan's "Oh, a customer"), or, having played to its end, it starts again while its conditions
-  hold (Repeat Conditions While True: Heimskr's sermon). TODO(M13): a pause before the repeat
-  (not fRandomSceneAgainMinTime / MaxTime: those space random scenes).
+  Lucan's "Oh, a customer").
+- **Past its last phase** (observed in the original): a random scene lingers
+  fAIWalkAwayTimerForConversation (2 s) first; any other goes on in the same update. Then a
+  scene with Repeat Conditions While True whose conditions hold (Heimskr's sermon) plays again
+  from its first phase without ending: its actions start over, no end or begin fragment runs,
+  no end or begin event is sent, its actors stay in it. There is no other pause before a
+  repeat (fRandomSceneAgainMinTime / MaxTime space random scenes' starts).
 - **Random scenes** (those of quests the Actor Dialogue event started) play one at a time and
   hold while their two actors come together: [Conversations between
   actors](#conversations-between-actors).
