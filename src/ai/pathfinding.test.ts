@@ -5,7 +5,12 @@ import {
   type Navmesh,
   type NavmeshTriangle,
 } from '../world/navmesh.ts';
-import { NavmeshObstacleField, obstacleCut, obstaclesTouch } from './navmesh-obstacles.ts';
+import {
+  crossesObstacle,
+  NavmeshObstacleField,
+  obstacleCut,
+  obstaclesTouch,
+} from './navmesh-obstacles.ts';
 import {
   findPath,
   inwardOnNavmesh,
@@ -254,6 +259,68 @@ describe('findPath with navmesh obstacles', () => {
     expect(path?.complete).toBe(true);
     // It goes north of the box.
     expect(Math.max(...(path?.points ?? []).map((point) => point[1]))).toBeGreaterThan(200);
+  });
+
+  // Found 2026-10-28 in Helgen Keep: a cart wheel (HandCart01Wheel, an obstacle) lying by a
+  // doorway covered the middle of the doorway's triangles and closed the way down to the
+  // storeroom. Only the part of a triangle under a box is cut.
+  it('keeps the free part of triangles a box only partly covers', () => {
+    // A corridor 100 wide; a box 50 across over the middle of its third square.
+    const set = setOf([
+      gridMesh(
+        1,
+        [0, 1, 2, 3, 4].map((x) => [x, 0] as [number, number]),
+      ),
+    ]);
+    const wheel = box(9, [250, 50, 64], [25, 25, 64]);
+    expect(wheel).toBeDefined();
+    const obstacles = wheel ? [wheel] : [];
+    const path = findPath(set, [50, 50, 0], [450, 50, 0], { radius: 10, obstacles });
+    expect(path?.complete).toBe(true);
+    // Its way goes by the box, never across it.
+    const points = path?.points ?? [];
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1];
+      const b = points[i];
+      if (a && b && wheel) expect(crossesObstacle(wheel, a, b)).toBe(false);
+    }
+  });
+
+  // Found 2026-10-28 in Helgen Keep's collapsed hall: tilted collision boxes under the rubble's
+  // navmesh (dunCG's CollisionMarkers) reach above it at their high end, so their upright
+  // bounds took in the navmesh lying on them and shut the only way to the caves.
+  it('leaves the navmesh on a tilted box’s upper face uncut', () => {
+    const set = setOf([gridMesh(1, HALL)]);
+    // A slab 300 by 400, 40 thick, tilted 0.3 rad about x (rising to the north) across the
+    // whole hall: its upper face is under the south side's floor, over the north side's.
+    const tilt = 0.3;
+    const [cos, sin] = [Math.cos(tilt), Math.sin(tilt)];
+    const slab = obstacleCut({
+      reference: 9,
+      world: [1, 0, 0, 0, 0, cos, sin, 0, 0, -sin, cos, 0, 250, 150, -30, 1],
+      min: [-150, -200, -20],
+      max: [150, 200, 20],
+    });
+    expect(slab).toBeDefined();
+    // Its upright bounds take in the floor all across the hall ...
+    expect(slab?.high).toBeGreaterThan(0);
+    expect((slab?.minY ?? 0) < 0 && (slab?.maxY ?? 0) > 300).toBe(true);
+    const obstacles = slab ? [slab] : [];
+    // ... but the way along the south side runs over its face.
+    expect(findPath(set, [50, 50, 0], [450, 50, 0], { radius: 10, obstacles })?.complete).toBe(
+      true,
+    );
+    // The same slab raised through the floor all across cuts it.
+    const raised = obstacleCut({
+      reference: 10,
+      world: [1, 0, 0, 0, 0, cos, sin, 0, 0, -sin, cos, 0, 250, 150, 60, 1],
+      min: [-150, -200, -20],
+      max: [150, 200, 20],
+    });
+    expect(
+      findPath(set, [50, 50, 0], [450, 50, 0], { radius: 10, obstacles: raised ? [raised] : [] })
+        ?.complete,
+    ).toBe(false);
   });
 
   it('stops short of an obstacle across the whole way, and finds it open once it is gone', () => {

@@ -99,6 +99,16 @@ export interface PackageWorld {
    * no scene holds it (src/ai/scene-runtime.ts packagesOf).
    */
   scenePackages?(actor: PackageActor): readonly number[] | undefined;
+  /** Where the player is now (undefined where it is not known: no game running). */
+  player?():
+    { readonly space: Space; readonly position: readonly [number, number, number] } | undefined;
+}
+
+/** A place a package's location input names, where it is known (GetWithinPackageLocation). */
+interface InputPlace {
+  readonly space: Space;
+  readonly position: readonly [number, number, number];
+  readonly radius: number;
 }
 
 export type PackageStart =
@@ -155,6 +165,7 @@ const Fn = {
   getQuestRunning: 56,
   getStage: 58,
   getStageDone: 59,
+  getDetected: 45,
   getIsRace: 69,
   getIsSex: 70,
   getInFaction: 71,
@@ -163,10 +174,15 @@ const Fn = {
   getGlobalValue: 74,
   getDayOfWeek: 170,
   isInInterior: 300,
+  getWithinPackageLocation: 325,
+  isPlayerMovingIntoNewSpace: 358,
   hasLinkedRef: 362,
   getQuestCompleted: 543,
   getNumericPackageData: 612,
 } as const;
+
+/** The player's reference. */
+const PLAYER = 0x14;
 
 /** Variable01..Variable10: actor values no record sets (0 until a script does). */
 const VARIABLE_01 = 68;
@@ -271,12 +287,30 @@ function conditionValue(
   world: PackageWorld,
   time: GameTime,
   inputs: ReadonlyMap<number, PackageInput>,
+  places: ReadonlyMap<number, InputPlace>,
 ): number | undefined {
-  if (condition.runOn !== ConditionRunOn.subject) return undefined;
   const flag = (value: boolean | undefined): number | undefined =>
     value === undefined ? undefined : value ? 1 : 0;
   const form = condition.form;
+  // Within the place a location input names: the actor, or (run on package data) the
+  // reference a data input names, where the start knows where that is (the player).
+  if (condition.function === Fn.getWithinPackageLocation) {
+    const place = places.get(form);
+    const at = whereRunsOn(condition, actor, world, inputs);
+    if (!place || !at) return undefined;
+    if (!sameSpace(place.space, at.space)) return 0;
+    const [x, y, z] = at.position;
+    const [px, py, pz] = place.position;
+    return flag(Math.hypot(x - px, y - py, z - pz) <= Math.max(place.radius, 1));
+  }
+  if (condition.runOn !== ConditionRunOn.subject) return undefined;
   switch (condition.function) {
+    // An actor the start places is not in the loaded area: its senses have detected no one
+    // (they run on the stage), and the player is not between spaces as it is asked (the low
+    // process asks between loads). TODO(M13): the engine's low process's own values for these.
+    case Fn.getDetected:
+    case Fn.isPlayerMovingIntoNewSpace:
+      return 0;
     case Fn.getIsId:
       return flag(form === actor.base || form === actor.npc);
     case Fn.getInFaction:
@@ -322,6 +356,59 @@ function conditionValue(
   }
 }
 
+/** Where a condition runs (the actor, or the player a data input names), if known. */
+function whereRunsOn(
+  condition: Condition,
+  actor: PackageActor,
+  world: PackageWorld,
+  inputs: ReadonlyMap<number, PackageInput>,
+): { readonly space: Space; readonly position: readonly [number, number, number] } | undefined {
+  if (condition.runOn === ConditionRunOn.subject) {
+    return actor.position && { space: actor.space, position: actor.position };
+  }
+  if (condition.runOn !== ConditionRunOn.packageData) return undefined;
+  // The data input by its index (param 3), naming a reference.
+  const value = inputs.get(condition.param3)?.value;
+  const named =
+    value?.kind === 'singleRef' && value.target.type === TargetType.specificReference
+      ? value.target.value
+      : undefined;
+  return named === PLAYER ? world.player?.() : undefined;
+}
+
+/**
+ * The places the location inputs of a package's GetWithinPackageLocation conditions name
+ * (near a reference: where the reference is placed, its radius round it).
+ */
+async function inputPlaces(
+  pack: PackageRecord,
+  template: PackageRecord | undefined,
+  inputs: ReadonlyMap<number, PackageInput>,
+  world: PackageWorld,
+): Promise<Map<number, InputPlace>> {
+  const wanted = new Set<number>();
+  const add = (conditions: readonly Condition[]): void => {
+    for (const condition of conditions) {
+      if (condition.function === Fn.getWithinPackageLocation) wanted.add(condition.form);
+    }
+  };
+  const walk = (branch: ProcedureBranch | undefined): void => {
+    if (!branch) return;
+    add(branch.conditions);
+    branch.children.forEach(walk);
+  };
+  add(pack.conditions);
+  walk(template?.tree ?? pack.tree);
+  const places = new Map<number, InputPlace>();
+  for (const input of wanted) {
+    const value = inputs.get(input)?.value;
+    if (value?.kind !== 'location' || value.location.type !== LocationType.nearReference) continue;
+    const placed = await world.reference(value.location.form);
+    if (placed) places.set(input, { ...placed, radius: value.location.radius });
+  }
+  return places;
+}
+
 /** Where the actor's package has it when its cell loads. */
 export async function packageStart(
   actor: PackageActor,
@@ -329,11 +416,11 @@ export async function packageStart(
   time: GameTime,
 ): Promise<PackageStart> {
   const holdsWith =
-    (inputs: ReadonlyMap<number, PackageInput>) =>
+    (inputs: ReadonlyMap<number, PackageInput>, places: ReadonlyMap<number, InputPlace>) =>
     (conditions: readonly Condition[]): boolean | undefined =>
       conditionsHold(
         conditions,
-        (condition) => conditionValue(condition, actor, world, time, inputs),
+        (condition) => conditionValue(condition, actor, world, time, inputs, places),
         (formId) => world.global(formId),
       );
   // A scene's package action: its packages alone (the low process runs it as the high does).
@@ -347,7 +434,7 @@ export async function packageStart(
     const template = pack.template === undefined ? pack : await world.package(pack.template);
     await world.readGlobals(globalsOf(pack, template));
     const inputs = mergedInputs(pack, template);
-    const holds = holdsWith(inputs);
+    const holds = holdsWith(inputs, await inputPlaces(pack, template, inputs, world));
     const runs = holds(pack.conditions);
     if (runs === false) continue;
     if (runs === undefined) {

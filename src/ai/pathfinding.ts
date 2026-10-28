@@ -60,8 +60,8 @@ export interface PathOptions {
    */
   readonly blocked?: readonly { readonly at: Vec3; readonly radius: number }[];
   /**
-   * The active navmesh obstacles (src/ai/navmesh-obstacles.ts): the triangles whose middle lies
-   * under one and the steps that cross one are closed.
+   * The active navmesh obstacles (src/ai/navmesh-obstacles.ts): the triangles wholly under one
+   * and the steps that cross one are closed.
    */
   readonly obstacles?: ObstacleIndex | readonly NavmeshObstacle[];
   /**
@@ -110,8 +110,11 @@ interface Node {
   /** Cost from the start and the estimate to the goal. */
   g: number;
   f: number;
-  /** Where it was entered (the middle of the edge crossed), and from which node over which edge. */
-  readonly at: Vec3;
+  /**
+   * Where it was entered (the middle of the edge crossed, or the nearest point of it clear of
+   * the obstacles), and from which node over which edge.
+   */
+  at: Vec3;
   parent: Node | undefined;
   /** The edge of the parent's triangle crossed into it. */
   edge: number;
@@ -339,13 +342,14 @@ export function findPath(
       const existing = nodes.get(neighbourKey);
       if (existing?.closed) continue;
       const [a, b] = edgeCorners(node.navmesh, node.triangle, edge);
-      const at = middle(a, b);
-      // An obstacle's cut closes the triangles under it and the steps across it.
-      if (
-        obstacles &&
-        (obstacles.covers(triangleCentre(navmesh, triangle)) || obstacles.crosses(node.at, at))
-      ) {
-        continue;
+      let at = middle(a, b);
+      // An obstacle's cut closes the triangles wholly under it and the steps across it (a
+      // triangle partly under it keeps its free part: a cart wheel lying by a doorway).
+      if (obstacles) {
+        if (obstacles.coversTriangle(...navmeshTriangle(navmesh, triangle))) continue;
+        const clear = clearCrossing(obstacles, node.at, a, b);
+        if (!clear) continue;
+        at = clear;
       }
       // A step through an avoid node costs its length inside it, many times over.
       const avoided = options.avoid?.length ? avoidCost(node.at, at, options.avoid) : 0;
@@ -354,7 +358,8 @@ export function findPath(
       if (existing) {
         if (g >= existing.g) continue;
         existing.g = g;
-        existing.f = g + distance(existing.at, to);
+        existing.at = at;
+        existing.f = g + distance(at, to);
         existing.parent = node;
         existing.edge = edge;
         if (existing.heap >= 0) open.update(existing);
@@ -381,7 +386,10 @@ export function findPath(
   for (let node: Node | undefined = end; node; node = node.parent) chain.push(node);
   chain.reverse();
   const goalPoint = reached ? to : end.at;
-  const tight = pullTight(chain, from, goalPoint, options.radius);
+  const pulled = pullTight(chain, from, goalPoint, options.radius);
+  const tight = obstacles
+    ? offObstacles(set, pulled, chain, goalPoint, options.radius, obstacles)
+    : pulled;
   return {
     points: options.avoid?.length
       ? goRoundAll(set, tight, options.avoid, options.radius, obstacles)
@@ -389,6 +397,66 @@ export function findPath(
     doors: doorsOn(chain),
     complete: reached !== undefined,
   };
+}
+
+/** A way kept off the obstacles is pulled tight over at most this many of its steps at once. */
+const SMOOTH_AHEAD = 12;
+
+/** Where along an edge a step may cross it, from its middle outwards (shares of its length). */
+const CROSSINGS = [0.5, 0.375, 0.625, 0.25, 0.75, 0.125, 0.875];
+
+/**
+ * Where a step from `from` crosses the edge from `a` to `b` clear of the obstacles: its middle,
+ * else the point nearest the middle whose step stays out of every footprint (an edge partly
+ * under one keeps its free part); undefined when there is none.
+ */
+function clearCrossing(obstacles: ObstacleIndex, from: Vec3, a: Vec3, b: Vec3): Vec3 | undefined {
+  for (const t of CROSSINGS) {
+    const at: Vec3 = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+    if (!obstacles.crosses(from, at)) return at;
+  }
+  return undefined;
+}
+
+/**
+ * A path pulled tight through triangles an obstacle partly covers may cut across its footprint
+ * (the funnel knows only the triangles). Then the way goes by the search's own steps (each clear
+ * of the obstacles), pulled tight only where a straight line stays on the navmeshes and clear.
+ */
+function offObstacles(
+  set: NavmeshSet,
+  tight: Vec3[],
+  chain: readonly Node[],
+  goal: Vec3,
+  radius: number,
+  obstacles: ObstacleIndex,
+): Vec3[] {
+  let crossing = false;
+  for (let i = 1; i < tight.length && !crossing; i++) {
+    const a = tight[i - 1];
+    const b = tight[i];
+    crossing = a !== undefined && b !== undefined && obstacles.crosses(a, b);
+  }
+  if (!crossing) return tight;
+  const steps = [...chain.map((node) => node.at), goal];
+  const clear = (p: Vec3, q: Vec3): boolean =>
+    !obstacles.crosses(p, q) && straightReach(set, p, q, radius) >= across(p, q) - 1;
+  const first = steps[0];
+  if (!first) return tight;
+  const way: Vec3[] = [first];
+  for (let i = 0; i < steps.length - 1;) {
+    const from = steps[i];
+    let j = Math.min(steps.length - 1, i + SMOOTH_AHEAD);
+    while (j > i + 1) {
+      const to = steps[j];
+      if (from && to && clear(from, to)) break;
+      j--;
+    }
+    const to = steps[j];
+    if (to) way.push(to);
+    i = j;
+  }
+  return way;
 }
 
 /** The doors of the triangles a path crosses, each where the path comes into its triangles. */

@@ -340,6 +340,36 @@ describe('Papyrus VM', () => {
     expect(await vm.call(house, 'Report')).toBe('working');
   });
 
+  // Found 2026-10-28: MQ101SetStage500 (defaultSetStageOnEnter, with no auto state of its own)
+  // stayed in the empty state, so defaultOnEnter's handlers in "waiting" never ran.
+  it("starts a script without an auto state of its own in its parent's", async () => {
+    const scripts: BuildScript[] = [
+      { name: 'ObjectReference' },
+      {
+        name: 'OnEnter',
+        parent: 'ObjectReference',
+        autoState: 'Waiting',
+        states: [
+          {
+            name: 'Waiting',
+            functions: [
+              { name: 'Report', returnType: 'String', code: [['return', str('waiting')]] },
+            ],
+          },
+        ],
+      },
+      { name: 'SetStageOnEnter', parent: 'OnEnter' },
+    ];
+    const byName = new Map(scripts.map((s) => [s.name.toLowerCase(), parsePex(buildPex(s))]));
+    const host = new TestHost();
+    host.attachedScripts = () =>
+      Promise.resolve([{ name: 'SetStageOnEnter', properties: new Map() }]);
+    const vm = new PapyrusVm(new ScriptLibrary((name) => Promise.resolve(byName.get(name))), host);
+    const trigger = new ObjectHandle(0x40, 'SetStageOnEnter');
+    expect(await vm.call(trigger, 'Report')).toBe('waiting');
+    expect(await vm.stateOf(trigger)).toBe('waiting');
+  });
+
   it('does integer and float arithmetic, casts and arrays like Papyrus', async () => {
     const { vm, house } = setup();
     expect(await vm.call(house, 'Math')).toBe(13);

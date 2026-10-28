@@ -350,6 +350,11 @@ export class ActorFurniture {
     return true;
   }
 
+  /** The idle marker an actor has taken, if any. */
+  markerOf(actor: number): number | undefined {
+    return this.#markers.get(actor);
+  }
+
   /** An actor leaves the idle marker it took: its idle ends. */
   leaveMarker(user: FurnitureUser): void {
     if (!this.#markers.delete(user.reference)) return;

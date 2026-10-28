@@ -367,9 +367,11 @@ const BANNERED_MARE = 0x1605e;
 
 describe.skipIf(!hasGamedata())('sandbox: an inn’s evening (headless simulation)', () => {
   // The sandboxers' tracks (horizontal), every 2 s for 120 s; and of the times one stood still
-  // near an idle marker of the inn, those on it (within 16) and those short of it (16..60).
+  // with an idle marker taken, those on it (within 16) and those short of it (16..60).
   // (Before: they stood 50 units short of their markers, fAIMarkerDestinationRadius, and stayed
-  // on the last after leaving it; the next to come stopped beside them: 0 on, 63 short.)
+  // on the last after leaving it; the next to come stopped beside them: 0 on, 63 short. Counted
+  // by the nearest marker of the inn rather than the one taken, an actor seated in furniture or
+  // standing at its sandbox point beside a marker counted as short of it.)
   const tracks = new Map<number, [number, number][]>();
   let onMarker = 0;
   let shortOfMarker = 0;
@@ -377,12 +379,12 @@ describe.skipIf(!hasGamedata())('sandbox: an inn’s evening (headless simulatio
   beforeAll(async () => {
     const sim = await openSim({ interior: BANNERED_MARE, hour: 20, seed: 1 });
     try {
-      const markers: [number, number][] = [];
+      const markers = new Map<number, readonly [number, number]>();
       for (const reference of sim.db.cellReferences(BANNERED_MARE)) {
         const base = (await sim.db.get(reference))?.formIdField('NAME');
         if (base === undefined || (await sim.db.get(base))?.type !== 'IDLM') continue;
         const at = await sim.position(reference);
-        if (at) markers.push([at[0], at[1]]);
+        if (at) markers.set(reference, [at[0], at[1]]);
       }
       for (let sample = 0; sample < 60; sample++) {
         for (const actor of sim.actors()) {
@@ -394,7 +396,10 @@ describe.skipIf(!hasGamedata())('sandbox: an inn’s evening (headless simulatio
           track.push([at[0], at[1]]);
           tracks.set(actor.reference, track);
           if (Math.hypot(at[0] - lastX, at[1] - lastY) > 4) continue;
-          const marker = Math.min(...markers.map(([x, y]) => Math.hypot(at[0] - x, at[1] - y)));
+          const taken = sim.world.stage.furniture.markerOf(actor.reference);
+          const spot = taken === undefined ? undefined : markers.get(taken);
+          if (!spot) continue;
+          const marker = Math.hypot(at[0] - spot[0], at[1] - spot[1]);
           if (marker < 16) onMarker++;
           else if (marker < 60) shortOfMarker++;
         }

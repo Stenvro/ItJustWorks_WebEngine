@@ -191,6 +191,11 @@ export interface ActorStageOptions {
   readonly adoptVehicle?: (reference: number) => AdoptedVehicle | undefined;
   /** An object of the loaded area as effects cover it (a script's shader on a static, an item). */
   readonly objectBody?: (reference: number) => EffectBody | undefined;
+  /**
+   * A dead actor lying in its cell's ragdoll was made again: that ragdoll moves the new pose
+   * (src/shell/play-session.ts, ragdollPoseReplaced).
+   */
+  readonly ragdollPoseReplaced?: (from: PlacedActor['pose'], to: PlacedActor['pose']) => void;
 }
 
 /** A loaded cell's navmesh obstacles and its enable state. */
@@ -1945,8 +1950,8 @@ export class ActorStage {
   }
 
   /**
-   * An actor's look changed (Actor.SetRace): it is made again in its new race where it
-   * stands, its scene built again. TODO(M13): a dead actor's ragdoll keeps its old bodies.
+   * An actor's look changed (Actor.SetRace, what it wears): it is made again where it
+   * stands, its scene built again; a dead one lies on as its ragdoll has it.
    */
   async lookChanged(reference: number): Promise<void> {
     const staged = this.#actors.get(reference);
@@ -1991,6 +1996,10 @@ export class ActorStage {
       if (instance.motion) instance.motion.version++;
     }
     staged.placed = placed;
+    // A corpse looted or dressed keeps lying as its ragdoll has it: one that died here moves
+    // its new pose by the stage's bodies (src/shell/actor-bodies.ts), one placed dead by its
+    // cell's ragdoll (else it stood up in its bind pose).
+    if (!this.bodies.has(reference)) this.#options.ragdollPoseReplaced?.(old.pose, placed.pose);
     this.graphEvents.attach(staged);
     // Its controller is made again for its new body (its size, its graph).
     this.movers.release(reference);

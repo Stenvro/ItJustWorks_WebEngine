@@ -299,6 +299,7 @@ export class SimWorld {
         navmeshes: () => this.#navmeshes,
         objects: () => this.#stageObjects(),
         obstacles: () => this.#stageObstacles(),
+        ragdollPoseReplaced: (from, to) => this.#play?.ragdollPoseReplaced(from, to),
         door: (reference) => this.#doorOf(reference),
         interior: kind === 'interior',
         light: (at) => this.#lightProbe(at),

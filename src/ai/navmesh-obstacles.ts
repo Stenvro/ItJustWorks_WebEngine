@@ -3,13 +3,15 @@
 // box, a portcullis, a retractable bridge). An obstacle's box is its reference's collision bounds
 // (a collision marker's primitive, else the base's OBND), scaled and rotated by the reference;
 // its footprint is the box's outline seen from above, and it cuts only when the box is tall
-// enough. A navmesh triangle counts as under it when its height lies within a band from below
-// the box's bottom to just under its top. Platform-independent.
+// enough. A navmesh point counts as under it when its height lies within a band from below the
+// box's bottom to just under its top, both taken straight above or below the point (a tilted
+// box's faces, not its upright bounds). Platform-independent.
 //
 // The engine re-triangulates the cut navmesh (BSNavmeshObstacleData per triangle, undone by
-// BSNavmeshObstacleUndoData). Ours closes the triangles whose middle lies in a footprint and the
-// path steps that cross one. TODO(M13): the engine's exact re-triangulation (a triangle partly
-// covered is split, its free part stays open).
+// BSNavmeshObstacleUndoData): a triangle partly covered is split and its free part stays open.
+// Ours closes the triangles wholly in a footprint and the path steps that cross one, and keeps a
+// path pulled tight off the footprints. TODO(M13): the engine's exact re-triangulation (a path
+// step between two edge middles under a footprint closes a partly covered triangle's free part).
 
 type Vec3 = readonly [number, number, number];
 type Vec2 = readonly [number, number];
@@ -37,7 +39,7 @@ export interface NavmeshObstacle {
   readonly reference: number;
   /** The footprint: a convex outline, counter-clockwise. */
   readonly outline: readonly Vec2[];
-  /** The navmesh between these heights under the footprint is cut. */
+  /** The navmesh between these heights under the footprint is cut (the most it can be). */
   readonly low: number;
   readonly high: number;
   /** The footprint's bounds. */
@@ -45,6 +47,17 @@ export interface NavmeshObstacle {
   readonly minY: number;
   readonly maxX: number;
   readonly maxY: number;
+  /**
+   * The box itself: from world to its own frame (a 3×3 row by row, then the frame's origin in
+   * the world) and its bounds there. Each point of the footprint has its own band: the box's
+   * bottom and top straight above or below it (a tilted slab under a ramp's navmesh).
+   */
+  readonly box: {
+    readonly toLocal: readonly number[];
+    readonly origin: Vec3;
+    readonly min: Vec3;
+    readonly max: Vec3;
+  };
 }
 
 /** The convex hull of points (Andrew's monotone chain), counter-clockwise. */
@@ -125,6 +138,31 @@ export function obstacleCut(box: ObstacleBox): NavmeshObstacle | undefined {
   if (!tall) return undefined;
   const xs = outline.map((point) => point[0]);
   const ys = outline.map((point) => point[1]);
+  // The placement's 3×3 (with its scale) inverted: world to the box's own frame.
+  const [a, b, c, d, e, f, g, h, k] = [
+    at(0),
+    at(4),
+    at(8),
+    at(1),
+    at(5),
+    at(9),
+    at(2),
+    at(6),
+    at(10),
+  ];
+  const det = a * (e * k - f * h) - b * (d * k - f * g) + c * (d * h - e * g);
+  if (Math.abs(det) < 1e-9) return undefined;
+  const toLocal = [
+    (e * k - f * h) / det,
+    (c * h - b * k) / det,
+    (b * f - c * e) / det,
+    (f * g - d * k) / det,
+    (a * k - c * g) / det,
+    (c * d - a * f) / det,
+    (d * h - e * g) / det,
+    (b * g - a * h) / det,
+    (a * e - b * d) / det,
+  ];
   return {
     reference: box.reference,
     outline,
@@ -134,13 +172,53 @@ export function obstacleCut(box: ObstacleBox): NavmeshObstacle | undefined {
     minY: Math.min(...ys),
     maxX: Math.max(...xs),
     maxY: Math.max(...ys),
+    box: { toLocal, origin: [at(12), at(13), at(14)], min: box.min, max: box.max },
   };
 }
 
-/** Whether a point lies in an obstacle's footprint (seen from above), at a height it cuts. */
+/**
+ * The heights the box spans straight above or below a point of its footprint (undefined: the
+ * vertical line there misses it): each of its own axes keeps the line within its bounds.
+ */
+function columnOf(obstacle: NavmeshObstacle, x: number, y: number): [number, number] | undefined {
+  const { toLocal, origin, min, max } = obstacle.box;
+  let bottom = -Infinity;
+  let top = Infinity;
+  for (let i = 0; i < 3; i++) {
+    // Along the axis, the line is at `from + rate · z`.
+    const rate = toLocal[i * 3 + 2] ?? 0;
+    const from =
+      (toLocal[i * 3] ?? 0) * (x - origin[0]) +
+      (toLocal[i * 3 + 1] ?? 0) * (y - origin[1]) -
+      rate * origin[2];
+    const lo = min[i] ?? 0;
+    const hi = max[i] ?? 0;
+    if (Math.abs(rate) < 1e-9) {
+      if (from < lo || from > hi) return undefined;
+      continue;
+    }
+    const z0 = (lo - from) / rate;
+    const z1 = (hi - from) / rate;
+    bottom = Math.max(bottom, Math.min(z0, z1));
+    top = Math.min(top, Math.max(z0, z1));
+  }
+  return bottom <= top ? [bottom, top] : undefined;
+}
+
+/**
+ * Whether a point lies under an obstacle: in its footprint (seen from above), at a height it
+ * cuts there (from below the box's bottom straight under it to just under its top straight over
+ * it: a navmesh on a tilted slab's upper face is not under it).
+ */
 export function underObstacle(obstacle: NavmeshObstacle, point: Vec3): boolean {
   if (point[2] < obstacle.low || point[2] > obstacle.high) return false;
-  return insideOutline(obstacle, point[0], point[1]);
+  if (!insideOutline(obstacle, point[0], point[1])) return false;
+  const column = columnOf(obstacle, point[0], point[1]);
+  return (
+    column !== undefined &&
+    point[2] >= column[0] - NAVMESH_BELOW_OBSTACLE &&
+    point[2] <= column[1] + NAVMESH_ABOVE_OBSTACLE
+  );
 }
 
 function insideOutline(obstacle: NavmeshObstacle, x: number, y: number): boolean {
@@ -162,12 +240,10 @@ function insideOutline(obstacle: NavmeshObstacle, x: number, y: number): boolean
  * that begins inside one does not count (an actor standing in a box walks out of it).
  */
 export function crossesObstacle(obstacle: NavmeshObstacle, a: Vec3, b: Vec3): boolean {
-  const z = (a[2] + b[2]) / 2;
-  if (z < obstacle.low || z > obstacle.high) return false;
+  if (Math.max(a[2], b[2]) < obstacle.low || Math.min(a[2], b[2]) > obstacle.high) return false;
   if (Math.max(a[0], b[0]) < obstacle.minX || Math.min(a[0], b[0]) > obstacle.maxX) return false;
   if (Math.max(a[1], b[1]) < obstacle.minY || Math.min(a[1], b[1]) > obstacle.maxY) return false;
   if (insideOutline(obstacle, a[0], a[1])) return false;
-  if (insideOutline(obstacle, b[0], b[1])) return true;
   // Clipped against each edge's half-plane (Cyrus–Beck): what is left lies inside.
   let enter = 0;
   let leave = 1;
@@ -192,8 +268,19 @@ export function crossesObstacle(obstacle: NavmeshObstacle, a: Vec3, b: Vec3): bo
     else leave = Math.min(leave, t);
     if (enter > leave) return false;
   }
-  return enter <= leave;
+  // Over the footprint, it is under the box somewhere: its height against the box's band there,
+  // from where it comes over the footprint to where it leaves (or ends).
+  for (let k = 0; k <= CROSSING_SAMPLES; k++) {
+    const t = enter + ((leave - enter) * k) / CROSSING_SAMPLES;
+    if (underObstacle(obstacle, [a[0] + dx * t, a[1] + dy * t, a[2] + (b[2] - a[2]) * t])) {
+      return true;
+    }
+  }
+  return false;
 }
+
+/** A step's stretch over a footprint is tested at this many points and one. */
+const CROSSING_SAMPLES = 4;
 
 /** Obstacles bucketed on a grid (a path search asks only those near each step). */
 export class ObstacleIndex {
@@ -253,6 +340,27 @@ export class ObstacleIndex {
   covers(point: Vec3): boolean {
     for (const obstacle of this.near(point[0], point[1], point[0], point[1])) {
       if (underObstacle(obstacle, point)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Whether a triangle lies wholly under one obstacle (its three corners in the footprint, at
+   * heights it cuts). One only partly covered keeps its free part: the steps into the footprint
+   * are closed instead (`crosses`).
+   */
+  coversTriangle(a: Vec3, b: Vec3, c: Vec3): boolean {
+    const x0 = Math.min(a[0], b[0], c[0]);
+    const y0 = Math.min(a[1], b[1], c[1]);
+    for (const obstacle of this.near(
+      x0,
+      y0,
+      Math.max(a[0], b[0], c[0]),
+      Math.max(a[1], b[1], c[1]),
+    )) {
+      if (underObstacle(obstacle, a) && underObstacle(obstacle, b) && underObstacle(obstacle, c)) {
+        return true;
+      }
     }
     return false;
   }

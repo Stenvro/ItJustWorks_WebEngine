@@ -14,6 +14,8 @@ export interface BuildFunction {
 export interface BuildScript {
   readonly name: string;
   readonly parent?: string;
+  /** The state it starts in (`auto state`). */
+  readonly autoState?: string;
   readonly variables?: readonly (readonly [string, string, PexValue])[];
   /** Auto properties: name, type, backing variable. */
   readonly properties?: readonly (readonly [string, string, string])[];
@@ -134,7 +136,7 @@ export function buildPex(script: BuildScript): Uint8Array {
   data.u16(index(script.parent ?? ''));
   data.u16(index(''));
   data.u32(0);
-  data.u16(index(''));
+  data.u16(index(script.autoState ?? ''));
   data.u16(script.variables?.length ?? 0);
   for (const [name, type, initial] of script.variables ?? []) {
     data.u16(index(name));
