@@ -189,11 +189,13 @@ export interface ObjectUses {
  * static), whose default only a script's Activate runs.
  *
  * Another activator (an actor a script's Activate names, an activate parent) gets only what
- * activating does to the object itself (a door swings): the player's menus, seat, inventory and
- * load screen are the player's alone (MQ101's stage 275 has its Imperial activate the keep's
- * lever, which walked the player off to sit in it). TODO(M13): the engine's defaults for an
- * actor activator (furniture it uses, a load door it goes through, a locked one it opens with
- * its key, an item it takes) are not read; they do nothing here.
+ * activating does to the object itself (a door swings, a load door's sound): the player's
+ * menus, seat, inventory and load screen are the player's alone (MQ101's stage 275 has its
+ * Imperial activate the keep's lever, which walked the player off to sit in it). Its lock does
+ * not hold it: observed in the original, the engine checks a lock only against an actor activator, which
+ * the runtime has done before (src/scripting/runtime/actor-activation.ts: whether the actor
+ * may open it, and what an actor's activation does besides: an item taken, a load door gone
+ * through); an activate parent swings a locked door.
  */
 export function objectActivation(
   object: CellObject,
@@ -230,8 +232,7 @@ export function objectActivation(
       ? { ...promptTexts(prompt, uses), shown: true }
       : { verb: uses?.text(fallback) ?? fallback, name: object.name, shown: false };
   // A locked door or container: picked (the lockpicking menu), or opened with its key.
-  if (lock && !byPlayer) return undefined;
-  if (uses && lock) {
+  if (uses && lock && byPlayer) {
     return {
       ...shown('sUnlock'),
       ...(teleport && !prompt && { name: travel.name(teleport) }),
@@ -243,7 +244,15 @@ export function objectActivation(
     };
   }
   if (teleport) {
-    if (!byPlayer) return undefined;
+    // Another's: its sound (an actor goes through by the runtime's move).
+    if (!byPlayer) {
+      return {
+        ...shown('sOpen'),
+        activate: () => {
+          play(object.sounds?.open);
+        },
+      };
+    }
     return {
       ...shown('sOpen'),
       ...(!prompt && { name: travel.name(teleport) }),

@@ -371,12 +371,33 @@ worldspaces on screen:
   (`objectActivation`). Before, any activator's default was the player's: MQ101's stage 275
   has its Imperial activate the keep's outer lever (KeepLever1.Activate(soldier)), which walked
   the player off to sit in it, through the shut inner gate and into MQ101SetStage270RalofMarker,
-  so the scene skipped its gate phases. TODO(M13): the engine's defaults for an actor activator
-  (furniture it uses, a load door it goes through, a locked one it opens with its key, an item
-  it takes) are not read; they do nothing here.
+  so the scene skipped its gate phases. **An actor activator's defaults** (an actor other than
+  the player: a script's Activate naming it, a package's Activate procedure;
+  `src/scripting/runtime/actor-activation.ts`), observed in the original, each base type's
+  own activation: an item (and a book that can be taken) is picked up into the actor's
+  inventory; flora is harvested into it (as the player's harvest, without message or sound;
+  TREE inferred to do as FLOR); furniture does nothing (only the player's activation seats:
+  KeepLever1.Activate(soldier) is its OnActivate alone, the lever pulled by the Imperial's own
+  package); a container does nothing of its own (the engine moves an item into the actor only
+  when the activation names one, which a script's Activate never does). A door checks its lock
+  against an actor activator only: it opens for one that may unlock it (its key, an owner:
+  `mayUnlock`), else for one carrying a lockpick below a key-only lock (picked: crime-engine's
+  lockPicked), and stays shut to any other; an activate parent swings a locked door. A load door
+  then takes the actor to its other side (the XTEL marker, in the cell of the door it leads to;
+  the door's open sound plays). TODO(M13): the engine refuses a load door to an actor in some
+  states (in furniture; a further check not read) and hands a near actor's passage to its AI
+  process (the door's use played first); whether a picked lock stays locked and the pick is
+  used is not read. `tests/sim-actor-activation.int.test.ts`.
 - **Triggers**: trigger volumes (activators' primitives and trigger-layer collision) tell
   their scripts when the player enters and leaves (OnTriggerEnter, OnTriggerLeave,
-  GetTriggerObjectCount).
+  GetTriggerObjectCount). Moving objects enter them too, but not the clutter a cell places
+  inside one as it loads: the game's placed clutter lies inactive until disturbed (an object
+  left floating in the editor floats until touched), and its trigger volumes (hkpTriggerVolume,
+  by the RTTI) hear of a body only from the contacts an active one's simulation makes; ours
+  settle at load (the warm start), and a body settling is not looked at
+  (`PhysicsWorld.movingInTriggers`). Disturbed later, it enters as it moves. Before, Whiterun's
+  clutter entered CWDisableHoldPositionMarkerTrigger at every load, whose script took each for
+  an actor and failed on None.
 - **Created references** (PlaceAtMe, an alias's Create Reference) are drawn, collide and
   light like placed ones, and go and come back with their cell.
 - **Moves**: MoveTo, SetPosition, SetAngle, MoveToNode move what is shown; keyframed

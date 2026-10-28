@@ -68,7 +68,7 @@ These run through every area and explain most of what breaks in play.
 | System                      | Status   | Main gaps                                                                                                                                                                                                                            |
 | --------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Form types                  | complete |                                                                                                                                                                                                                                      |
-| Per-reference state         | partial  | partial souls listed one entry per gem base; corpses' poses on reload (animated state kept across unload, partial souls, alias display names: done 2026-10-27; activate children: done)                                              |
+| Per-reference state         | partial  | partial souls listed one entry per gem base; corpses' poses on reload (animated state kept across unload, partial souls, alias display names: done 2026-10-27; activate children, an actor activator's defaults: done)               |
 | Cell loading                | partial  | a buffered cell keeps its data, not its 3D; OnAttached/DetachedFromCell no sim case (cell buffers, grid on the player, detach hours: done)                                                                                           |
 | Respawn, cell reset         | partial  | whether reset sets the initial enable state; what else sets an actor's respawn clock (enable state, the actor's clock from its death, dropped items: done 2026-10-27)                                                                |
 | Papyrus VM                  | partial  | its own scheduling of stacks (inferred), the handed calls' share of the update budget, latent calls' render-safe / post-render queues, stack memory (iMaxAllocatedMemoryBytes) (frame sync, budgets, post-load run: done 2026-10-27) |
@@ -152,18 +152,18 @@ These run through every area and explain most of what breaks in play.
 
 ### Physics
 
-| System               | Status  | Main gaps                                                                       |
-| -------------------- | ------- | ------------------------------------------------------------------------------- |
-| World, time step     | partial | objects placed into what they lie on fall through it                            |
-| Triggers             | partial | projectiles in flight do not enter triggers (rays, no reference yet)            |
-| Constraints          | partial | script-made joints across a cell reload; a census of types                      |
-| Character controller | partial | leaving a moving platform keeps no velocity; Havok's proxy push response        |
-| Falling, swimming    | partial | the drowning sound and gasp (NPCs swim where their package allows: done)        |
-| Water physics        | partial | the splash model; Havok's own buoyancy and drag rule (ours from the data)       |
-| Physics damage       | partial | the listener's damage to destructibles (no vanilla impact reaches it)           |
-| Traps                | partial | hits on actors: done; material, initial flag, cloud traps unchecked             |
-| Gameplay impulses    | partial | the rules from settings, not read from the engine (TODO(M13)); ragdoll hit time |
-| Persistence          | partial | animated objects (corpses: done); pushes without a script unchecked             |
+| System               | Status  | Main gaps                                                                                                         |
+| -------------------- | ------- | ----------------------------------------------------------------------------------------------------------------- |
+| World, time step     | partial | objects placed into what they lie on fall through it                                                              |
+| Triggers             | partial | projectiles in flight do not enter triggers (rays, no reference yet) (clutter settling at load enters none: done) |
+| Constraints          | partial | script-made joints across a cell reload; a census of types                                                        |
+| Character controller | partial | leaving a moving platform keeps no velocity; Havok's proxy push response                                          |
+| Falling, swimming    | partial | the drowning sound and gasp (NPCs swim where their package allows: done)                                          |
+| Water physics        | partial | the splash model; Havok's own buoyancy and drag rule (ours from the data)                                         |
+| Physics damage       | partial | the listener's damage to destructibles (no vanilla impact reaches it)                                             |
+| Traps                | partial | hits on actors: done; material, initial flag, cloud traps unchecked                                               |
+| Gameplay impulses    | partial | the rules from settings, not read from the engine (TODO(M13)); ragdoll hit time                                   |
+| Persistence          | partial | animated objects (corpses: done); pushes without a script unchecked                                               |
 
 ### Rendering and camera
 
