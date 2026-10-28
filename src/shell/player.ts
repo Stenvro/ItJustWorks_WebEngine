@@ -20,9 +20,11 @@ import type { MoveRequest } from '../ai/locomotion.ts';
 import { lookAt, multiply, perspectiveReversedZ, type Mat4, type Vec3 } from '../render/math.ts';
 import { firstPersonViewProjection, verticalFov } from '../render/first-person-view.ts';
 import {
+  eventEnabled,
   InputContext,
   parseControlMap,
   SCAN_CODES,
+  UserEventFlag,
   type ControlMap,
 } from '../formats/controlmap/controlmap.ts';
 import { padEvents } from '../formats/controlmap/gamepad.ts';
@@ -393,6 +395,14 @@ export class Player implements Camera {
   readonly #pressed = new Set<string>();
   readonly #keyEvents = new Map<string, string[]>();
   readonly #mouseEvents = new Map<number, string[]>();
+  /** The gameplay events' user event groups (the control map's flags), by name. */
+  readonly #eventFlags = new Map<string, number>();
+  /**
+   * The user event groups switched off now (UserEventFlag bits: Game.DisablePlayerControls);
+   * an event of one of them is neither held nor pressed, and looking, the wheel's zoom and the
+   * stick follow their groups. Undefined: none.
+   */
+  disabledControls: (() => number) | undefined;
   /** Compass heading in radians: 0 looks along +Y (north), π/2 along +X (east). */
   yaw = 0;
   pitch = 0;
@@ -603,7 +613,9 @@ export class Player implements Camera {
     this.#bound = controls;
     this.#keyEvents.clear();
     this.#mouseEvents.clear();
+    this.#eventFlags.clear();
     for (const event of controls.contexts[0] ?? []) {
+      this.#eventFlags.set(event.name, event.flags);
       for (const binding of event.keys) {
         if (binding.length !== 1) continue; // combinations: screenshots
         const code = SCAN_CODES.get(binding[0] ?? 0);
@@ -780,7 +792,18 @@ export class Player implements Camera {
   }
 
   #event(name: string): boolean {
-    return this.#held.has(name);
+    return this.#held.has(name) && this.allows(name);
+  }
+
+  /**
+   * Whether a gameplay user event works now: none of its groups is switched off (`ignore`: groups
+   * left out of the question).
+   */
+  allows(name: string, ignore = 0): boolean {
+    const disabled = (this.disabledControls?.() ?? 0) & ~ignore;
+    if (disabled === 0) return true;
+    this.#current();
+    return eventEnabled(this.#eventFlags.get(name) ?? 0, disabled);
   }
 
   /** The key a user event is bound to, as printed on the keyboard ("E", "Space"). */
@@ -794,7 +817,7 @@ export class Player implements Camera {
 
   /** Whether a user event is held down. */
   isHeld(name: string): boolean {
-    return this.#held.has(name);
+    return this.#event(name);
   }
 
   /** Whether a user event was pressed since it was last taken (then forgets the press). */
@@ -805,7 +828,8 @@ export class Player implements Camera {
   #take(name: string): boolean {
     const pressed = this.#pressed.has(name);
     this.#pressed.delete(name);
-    return pressed;
+    // A press while its group is off is lost (it does not wait for the controls to come back).
+    return pressed && this.allows(name);
   }
 
   /** Every frame; `held`: the ground is not there yet, the player stays where they are. */
@@ -891,7 +915,7 @@ export class Player implements Camera {
   #togglePov(deltaSeconds: number): void {
     const { ini } = this.#setup;
     const pressed = this.#take('Toggle POV');
-    const held = this.#held.has('Toggle POV');
+    const held = this.#event('Toggle POV');
     if (pressed || (held && !this.#povHeld)) this.#povHeld = { seconds: 0, switched: false };
     const hold = this.#povHeld;
     if (!hold) return;
@@ -960,16 +984,20 @@ export class Player implements Camera {
     const character = this.character;
     // Input direction in the player's frame: x right, y forward.
     let x = 0;
+    // Movement switched off (DisablePlayerControls' abMovement): auto-move and the stick stop.
+    const moves = this.allows('Move');
+    if (!moves) this.#autoMove = false;
     let y = this.#autoMove ? 1 : 0;
     if (this.#event('Forward')) y += 1;
     if (this.#event('Back')) y -= 1;
     if (this.#event('Strafe Right')) x += 1;
     if (this.#event('Strafe Left')) x -= 1;
     // Moved by the stick alone, its deflection sets the pace (stickPace).
-    const deflection = x === 0 && y === 0 ? Math.min(1, Math.hypot(...this.stick)) : 1;
+    const stick: readonly [number, number] = moves ? this.stick : [0, 0];
+    const deflection = x === 0 && y === 0 ? Math.min(1, Math.hypot(...stick)) : 1;
     // The left stick adds to the keys (a gamepad's Move).
-    x = Math.max(-1, Math.min(1, x + this.stick[0]));
-    y = Math.max(-1, Math.min(1, y + this.stick[1]));
+    x = Math.max(-1, Math.min(1, x + stick[0]));
+    y = Math.max(-1, Math.min(1, y + stick[1]));
     if (this.#event('Back') || this.#event('Forward')) this.#autoMove = false;
     const pilot = this.pilot;
     if (pilot) [x, y] = this.#piloted(pilot, seconds);
@@ -1424,7 +1452,8 @@ export class Player implements Camera {
       this.#input = true;
       if (!this.#held.has(name)) {
         this.#pressed.add(name);
-        this.onPress?.(name);
+        // The menus' keys are the menus' to refuse (the journal opens while the menus are off).
+        if (this.allows(name, UserEventFlag.menu)) this.onPress?.(name);
       }
       this.#held.add(name);
     } else {
@@ -1467,7 +1496,7 @@ export class Player implements Camera {
    * second at full deflection. TODO(M13): the engine's own look rate and its acceleration.
    */
   lookStick(x: number, y: number, seconds: number): void {
-    if (x === 0 && y === 0) return;
+    if ((x === 0 && y === 0) || !this.allows('Look')) return;
     const { ini } = this.#setup;
     const rate = Math.PI * (ini.number('Controls', 'fGamepadHeadingSensitivity') || 0.6667);
     const invert = ini.bool('Controls', 'bInvertYValues') ? -1 : 1;
@@ -1490,6 +1519,8 @@ export class Player implements Camera {
    * count; vertically also × fMouseHeadingYScale.
    */
   look(countsX: number, countsY: number): void {
+    // Looking switched off (DisablePlayerControls' abLooking): the view stays.
+    if (!this.allows('Look')) return;
     const { ini } = this.#setup;
     if (countsX !== 0 || countsY !== 0) this.#input = true;
     const perCount =
@@ -1513,6 +1544,8 @@ export class Player implements Camera {
    * and further in to first person; out of first person to the closest third-person view.
    */
   zoom(zoomIn: boolean): void {
+    // The camera switch off (DisablePlayerControls' abCamSwitch): the wheel's zoom with it.
+    if (!this.allows(zoomIn ? 'Zoom In' : 'Zoom Out')) return;
     const { ini } = this.#setup;
     this.#input = true;
     const step = ini.number('Camera', 'fMouseWheelZoomIncrement');

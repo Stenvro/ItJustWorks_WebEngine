@@ -4,6 +4,7 @@
 // Beyond the loaded cells: the worldspace's distant LOD (terrain, water, objects, trees).
 
 import { FlyCamera } from '../render/fly-camera.ts';
+import { disabledControlFlags } from '../scripting/runtime/natives/game.ts';
 import { identity } from '../render/math.ts';
 import type { Mat4, Vec3 } from '../render/math.ts';
 import type { Camera, FocusBody, Renderer } from '../render/renderer.ts';
@@ -1164,6 +1165,7 @@ export class WorldViewer {
       obstacles: () => this.#stageObstacles(),
       light: (at) => this.#lightProbe(at),
       objectBody: (reference) => this.#objectBody(reference),
+      ragdollPoseReplaced: (from, to) => this.#play?.ragdollPoseReplaced(from, to),
       focus: () => this.#play?.player.feet,
       // Actors walking into trigger volumes tell their scripts.
       onTrigger: (trigger, actor, entered) => {
@@ -1281,8 +1283,15 @@ export class WorldViewer {
       feet,
       comeIn?.heading ?? 0,
     );
-    // Game.DisablePlayerControls' abCamSwitch keeps the camera as it is.
-    player.povSwitchAllowed = () => this.#session?.scriptsReady?.controls.camSwitch !== false;
+    // Game.DisablePlayerControls' abCamSwitch keeps the camera as it is, as does an animation
+    // object the player holds; the controls the scripts switch off do nothing meanwhile.
+    player.povSwitchAllowed = () =>
+      this.#session?.scriptsReady?.controls.camSwitch !== false &&
+      this.#stage?.animObjects.playerHolds !== true;
+    player.disabledControls = () => {
+      const runtime = this.#session?.scriptsReady;
+      return runtime ? disabledControlFlags(runtime.controls) : 0;
+    };
     player.character.walkable = (px, py, pz) =>
       this.#cells
         .get(cellKey(Math.floor(px / CELL_SIZE), Math.floor(py / CELL_SIZE)))

@@ -224,6 +224,8 @@ export class GameMenus {
       const runtime = this.#session.scriptsReady;
       if (this.#open || this.#session.menuMode || this.#session.loading || !runtime) return;
       if (runtime.state.actors.get(PLAYER_REF)?.dead === true) return;
+      // The hotkeys are of the menus' group (the control map's flags): off with the menus.
+      if (!runtime.controls.menu) return;
       this.#favorites.useHotkey(hotkey).catch((error: unknown) => {
         this.#terminal.log(
           'ui',

@@ -25,7 +25,11 @@ export class ScreenBloodRenderer {
   readonly #layout: GPUBindGroupLayout;
   readonly #quads: GPUBuffer;
   readonly #data = new Float32Array(MAX_QUADS * QUAD_FLOATS);
-  readonly #groups = new WeakMap<GPUTexture, { key: string; group: GPUBindGroup }>();
+  /** Bind groups by shape texture, with the colour and flare textures they were made for. */
+  readonly #groups = new WeakMap<
+    GPUTexture,
+    { color: GPUTexture; flare: GPUTexture; group: GPUBindGroup }
+  >();
 
   constructor(device: GPUDevice, format: GPUTextureFormat) {
     this.#device = device;
@@ -117,9 +121,10 @@ export class ScreenBloodRenderer {
 
   #group(frame: ScreenBloodFrame): GPUBindGroup {
     const flare = frame.flare ?? frame.color;
-    const key = `${frame.color.label}|${flare.label}`;
+    // By the textures themselves: one loaded again (after the cache freed it) has the same
+    // label, and a group bound to the freed one would fail the frame's submit.
     const cached = this.#groups.get(frame.shape);
-    if (cached?.key === key) return cached.group;
+    if (cached?.color === frame.color && cached.flare === flare) return cached.group;
     const group = this.#device.createBindGroup({
       label: 'screen-blood',
       layout: this.#layout,
@@ -130,7 +135,7 @@ export class ScreenBloodRenderer {
         { binding: 3, resource: flare.createView() },
       ],
     });
-    this.#groups.set(frame.shape, { key, group });
+    this.#groups.set(frame.shape, { color: frame.color, flare, group });
     return group;
   }
 }

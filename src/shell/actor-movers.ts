@@ -79,7 +79,7 @@ import type { StagedActor } from './actor-stage.ts';
 import type { GameSession } from './game-session.ts';
 import { controllerSettings, controllerShape } from './player.ts';
 import { actorFell, waterHarmed } from './time-flow.ts';
-import { floatSpeed, swims } from '../gameplay/swimming.ts';
+import { floatSpeed, submersion, swims } from '../gameplay/swimming.ts';
 import { WaterHazard } from '../gameplay/water-hazard.ts';
 import type { WaterPhysics } from '../physics/water-physics.ts';
 import { materialId } from '../world/material-type.ts';
@@ -315,8 +315,32 @@ interface Travel {
 
 /** A travel ended by skipped hours sets the actor on the navmesh within this of its place. */
 const SKIP_REACH = 256;
+/** A path to a point off the navmeshes is arrived at within at least this of its end (units). */
+const NAVMESH_ARRIVE = 8;
 /** Off the navmeshes, a path begins at their nearest point within this (game units). */
 const NAVMESH_REACH = 512;
+/**
+ * Where a path to a destination ends, and within what of that end the actor arrives: the
+ * destination itself; or, off the navmeshes (the player by a door, a few units past the
+ * navmesh's edge), their nearest point if that is within the arrival radius of it, arrived
+ * at that much nearer, so that the actor still ends within its radius of the destination
+ * itself. Not so, the search ran to the triangle nearest the destination by its edges' middles
+ * and ended short of it, never complete: Alvor's force greet (MQ102A) gave up its travel to the
+ * player standing by his door once a second and never reached them. Farther off, the path ends
+ * where the search came nearest (as near as it can get).
+ */
+function navGoal(
+  set: NavmeshSet,
+  destination: Vec3,
+  arrive: number,
+): { readonly goal: Vec3; readonly arrive: number } {
+  if (set.locate(destination)) return { goal: destination, arrive };
+  const on = set.nearest?.(destination, arrive);
+  if (!on) return { goal: destination, arrive };
+  const off = Math.hypot(on[0] - destination[0], on[1] - destination[1]);
+  return { goal: on, arrive: Math.max(arrive - off, NAVMESH_ARRIVE) };
+}
+
 /** A stuck actor searches its way again this many times before it gives up. */
 const SEARCHES = 3;
 /** An actor beyond the high process walks its paths this wide (units; a human's radius). */
@@ -602,9 +626,10 @@ export class ActorMovers {
       const position = mover.staged.position;
       const on = set.locate(position) !== undefined;
       const start = on ? position : set.nearest?.(position, NAVMESH_REACH);
+      const end = navGoal(set, travel.destination, travel.arrive);
       const found =
         start &&
-        findPath(set, start, travel.destination, {
+        findPath(set, start, end.goal, {
           // Stuck on its way (a corner its path grazed): wider of the edges each time it searches
           // again. TODO(M13): the engine's own way out (not documented).
           radius: mover.character.shape.radius * travel.searches,
@@ -624,7 +649,7 @@ export class ActorMovers {
         this.#giveUp(reference, travel);
         return;
       }
-      travel.follower = new PathFollower(path, { gait: travel.gait, arrive: travel.arrive });
+      travel.follower = new PathFollower(path, { gait: travel.gait, arrive: end.arrive });
       this.#newPath(mover.staged);
     }
     // A door in its way (the navmesh marks only load doors): it opens it and waits, or the door
@@ -1076,6 +1101,21 @@ export class ActorMovers {
    */
   turnRate(reference: number): number | undefined {
     return this.#movers.get(reference)?.turned.rate;
+  }
+
+  /**
+   * Whether a moved actor would swim standing at a point (its feet there): the water's surface
+   * over the point that deep for its height (`#atWater`'s rule). Undefined: not a mover, or no
+   * water physics.
+   */
+  swimsAt(reference: number, feet: Vec3): boolean | undefined {
+    const mover = this.#movers.get(reference);
+    const water = this.#world?.water;
+    if (!mover || !water) return undefined;
+    if ((mover.staged.placed.look.raceFlags & RaceFlag.swims) === 0) return false;
+    const surface = water.surface(feet[0], feet[1], feet[2])?.height;
+    const height = mover.character.shape.height;
+    return surface !== undefined && swims(submersion(feet[2], height, surface), false);
   }
 
   /** How a moved actor moves now (its conditions and natives read it). */
@@ -1760,7 +1800,8 @@ export class ActorMovers {
       const set = this.#options.navmeshes?.();
       if (!set) return true;
       travel.searches++;
-      const path = findPath(set, staged.position, travel.destination, {
+      const end = navGoal(set, travel.destination, travel.arrive);
+      const path = findPath(set, staged.position, end.goal, {
         radius: WALKER_RADIUS * travel.searches,
         large: (walker.race?.size ?? RaceSize.medium) >= RaceSize.large,
         swims:
@@ -1775,7 +1816,7 @@ export class ActorMovers {
         this.#giveUp(reference, travel);
         return false;
       }
-      travel.follower = new PathFollower(path, { gait: travel.gait, arrive: travel.arrive });
+      travel.follower = new PathFollower(path, { gait: travel.gait, arrive: end.arrive });
       this.#newPath(staged);
     }
     const step = travel.follower.step(staged.position, seconds, (door) =>

@@ -1,6 +1,7 @@
 // Viewer for the game's content: single meshes (orbit camera, studio light) and complete
 // interior cells (free camera, the cell's own lighting).
 
+import { disabledControlFlags } from '../scripting/runtime/natives/game.ts';
 import { OrbitCamera, type OrbitView } from '../render/camera.ts';
 import type { Rgb } from '../world/cell-records.ts';
 import { cellStatesElement, checkboxRow } from './cell-states.ts';
@@ -878,6 +879,10 @@ export class ModelViewer {
     );
     // Game.DisablePlayerControls' abCamSwitch keeps the camera as it is.
     player.povSwitchAllowed = () => this.#session?.scriptsReady?.controls.camSwitch !== false;
+    player.disabledControls = () => {
+      const runtime = this.#session?.scriptsReady;
+      return runtime ? disabledControlFlags(runtime.controls) : 0;
+    };
     player.character.walkable = (x, y, z) =>
       this.#cell?.navmesh.heightNear(x, y, z, NAVMESH_TOLERANCE) !== undefined;
     player.overEncumbered = () => this.#session?.overEncumbered === true;
@@ -1071,6 +1076,7 @@ export class ModelViewer {
       navmeshes: () => this.#navmeshes,
       objects: () => this.#stageObjects(),
       obstacles: () => this.#stageObstacles(),
+      ragdollPoseReplaced: (from, to) => this.#play?.ragdollPoseReplaced(from, to),
       door: (reference) => this.#doorOf(reference),
       interior: true,
       light: (at) => this.#lightProbe(at),
