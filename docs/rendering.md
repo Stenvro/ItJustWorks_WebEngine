@@ -862,3 +862,31 @@ was followed by a frame of 600–870 ms with the main thread idle (no script, no
 headless browser's GPU process presenting late, as it did every 3 s for a while in another run
 (`DXGISwapChainImageBacking::Present` blocking 450 ms in a trace). It did not come back under a
 trace: TODO(M13): check on the maintainer's GPU whether the first line's frame stalls there.
+
+### Draw submission
+
+The frame is bound by the main thread, not the GPU: in the QA scenes (headless Chrome, a CPU
+profile over 20 s) the page is idle about 1 % of the time, and of the rest about a third is the
+renderer handing draws to WebGPU. Each draw costs a few calls (pipeline, material, mesh, the
+draw's uniforms by dynamic offset, bones), and the per-object light lists, the TAA's velocity
+pass and the focus shadows each added a walk over the draws or more calls per draw. In
+Riverwood at 13:00 (`tools/qa-run.ts riverwood`, 60 s) that took the page from about 100 fps to
+about 90. What keeps it down (`scene-renderer.ts`):
+
+- Dynamic offsets go to `setBindGroup` as a `Uint32Array` with a start and a length. Handed a
+  new JS array per draw, the browser converts a sequence each time: `setBindGroup` was 10 % of
+  the main thread, 6 % after.
+- A scene keeps a bound round its draws (`GpuScene.bound`, worked out again only after one of
+  them moved): every pass leaves a scene outside its view without testing its draws. The focus
+  maps and the near cascades see few of the loaded cells.
+- Shadow passes walk only a scene's casters (`GpuScene.shadowCasters`), ordered by pipeline,
+  material and mesh so that instances of one model follow each other (a depth-only pass ends the
+  same in any order), and rebind the material only for alpha-tested casters: the others never
+  read it, and every caster's material group has the same layout.
+- The focus maps sort their casters out in one walk over the draws, not one per map.
+- The velocity pass draws only the moving draws that moved since the last frame: the motion of
+  one that did not is the camera's, which the TAA finds again through the depth. First person's
+  geometry has its own view and is always drawn.
+- An animated draw's uniforms go up only when its matrix, its hidden state or its animated
+  material changed (an actor standing still keeps its parts' matrices; its pose goes to the
+  bone palette).

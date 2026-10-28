@@ -89,6 +89,7 @@ import {
   type ShadowSlot,
 } from './light-shadows.ts';
 import { MAX_FOCUS_SHADOWS, type FocusShadow } from './focus-shadows.ts';
+import { boundOf, orderByBindings, type SceneBound } from './scene-bound.ts';
 import waterShader from './shaders/water.wgsl?raw';
 import type { TextureCache } from './texture-cache.ts';
 import { CELL_SIZE } from '../world/land.ts';
@@ -503,19 +504,6 @@ function bindPart(
     pass.setIndexBuffer(part.indexBuffer, 'uint16');
     state.indices = part.indexBuffer;
   }
-}
-
-/** Small ids for GPU objects (ordering draws by what they bind). */
-const objectIds = new WeakMap<object, number>();
-let nextObjectId = 1;
-
-function objectId(object: object): number {
-  let id = objectIds.get(object);
-  if (id === undefined) {
-    id = nextObjectId++;
-    objectIds.set(object, id);
-  }
-  return id;
 }
 
 /** Shadow pipelines that test the diffuse map's alpha (the others never read the material). */
@@ -1156,12 +1144,6 @@ export interface VelocityMatrices {
   readonly firstPersonPrevious?: Mat4 | undefined;
 }
 
-/** A bounding sphere round a scene's draws (GpuScene.bound). */
-interface SceneBound {
-  readonly center: readonly [number, number, number];
-  readonly radius: number;
-}
-
 const NO_DRAWS: readonly Draw[] = [];
 
 /** Whether any of a scene may be inside `planes` (its bound, when it has one). */
@@ -1242,39 +1224,11 @@ export class GpuScene {
    * (the sky's, first person's) or none.
    */
   get bound(): SceneBound | null {
-    if (!this.#boundStale) return this.#bound;
-    this.#boundStale = false;
-    let minX = Infinity;
-    let minY = Infinity;
-    let minZ = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    let maxZ = -Infinity;
-    for (const draw of this.draws) {
-      if (draw.sky || draw.firstPerson) return (this.#bound = null);
-      const [x, y, z] = draw.center;
-      const r = draw.radius;
-      minX = Math.min(minX, x - r);
-      minY = Math.min(minY, y - r);
-      minZ = Math.min(minZ, z - r);
-      maxX = Math.max(maxX, x + r);
-      maxY = Math.max(maxY, y + r);
-      maxZ = Math.max(maxZ, z + r);
+    if (this.#boundStale) {
+      this.#boundStale = false;
+      this.#bound = boundOf(this.draws);
     }
-    if (this.draws.length === 0) return (this.#bound = null);
-    const center: [number, number, number] = [
-      (minX + maxX) / 2,
-      (minY + maxY) / 2,
-      (minZ + maxZ) / 2,
-    ];
-    let radius = 0;
-    for (const draw of this.draws) {
-      const dx = draw.center[0] - center[0];
-      const dy = draw.center[1] - center[1];
-      const dz = draw.center[2] - center[2];
-      radius = Math.max(radius, Math.sqrt(dx * dx + dy * dy + dz * dz) + draw.radius);
-    }
-    return (this.#bound = { center, radius });
+    return this.#bound;
   }
 
   /**
@@ -1284,26 +1238,16 @@ export class GpuScene {
    */
   get shadowCasters(): readonly Draw[] {
     if (this.#shadowCasters) return this.#shadowCasters;
-    const casters = this.draws.filter((draw) => draw.part.shadowPipeline !== undefined);
-    const key = (draw: Draw): readonly number[] => {
-      const { part } = draw;
-      const pipeline = part.shadowPipeline;
-      return [
-        pipeline ? objectId(pipeline) : 0,
-        pipeline && alphaTestedShadows.has(pipeline) ? objectId(part.bindGroup) : 0,
-        objectId(part.vertexBuffer),
-      ];
-    };
-    const keys = new Map(casters.map((draw) => [draw, key(draw)]));
-    casters.sort((a, b) => {
-      const ka = keys.get(a) ?? [];
-      const kb = keys.get(b) ?? [];
-      for (let i = 0; i < 3; i++) {
-        const d = (ka[i] ?? 0) - (kb[i] ?? 0);
-        if (d !== 0) return d;
-      }
-      return 0;
-    });
+    const casters = orderByBindings(
+      this.draws.filter((draw) => draw.part.shadowPipeline !== undefined),
+      ({ part }) => [
+        part.shadowPipeline,
+        part.shadowPipeline && alphaTestedShadows.has(part.shadowPipeline)
+          ? part.bindGroup
+          : undefined,
+        part.vertexBuffer,
+      ],
+    );
     this.#shadowCasters = casters;
     return casters;
   }
