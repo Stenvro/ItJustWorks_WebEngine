@@ -141,6 +141,10 @@ editorId)`;
 - references and actors: `actor`, `actors`, `position`, `distance`, `package`, `place` (PlaceAtMe),
   `kill`;
 - the player: `activate` (as through the crosshair), `moveTo`, `walkTo`, `equip`, `cast`, `press`;
+- conversations (the dialogue menu's rules, headless): `talk(actor)` activates the actor and hears
+  its greeting, `listen(actor?)` waits for one the actor starts (a force greet, with its opening
+  topic), `choose(text)` says a listed topic (its fragments run as the world steps), `topics`,
+  `goodbye()`;
 - what happened: `records`, `scriptEvents({ event, target, since })`, `events(kind)`, `stagesSet`,
   `questsStarted`, `packages`, `deaths`, `notices`, `sounds`, `itemsMoved`, `storyEvents(type)`, `menus`,
   `problems`;
