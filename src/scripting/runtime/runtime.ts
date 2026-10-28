@@ -336,8 +336,6 @@ export interface WorldBridge {
   ): void;
   /** StartSneaking: the actor sneaks. */
   startSneaking?(actor: number): void;
-  /** SetNotShowOnStealthMeter: the actor does not open the stealth eye. */
-  hideFromStealthMeter?(actor: number, hidden: boolean): void;
   /** What an actor is using now (a chair, a bed, a lean): src/shell/actor-furniture.ts. */
   interaction?(actor: number): ActorInteraction | undefined;
   /** How an actor moves now (the player's input, an actor's controller), if it is loaded. */
