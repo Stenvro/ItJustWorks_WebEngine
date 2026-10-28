@@ -24,6 +24,7 @@ import {
   FURNITURE_EXIT_HANDLERS,
   type FurnitureUser,
 } from './actor-furniture.ts';
+import { explosionShake, type ShakingExplosion } from './camera-shake.ts';
 import type { ActorStage, StagedActor } from './actor-stage.ts';
 import type { GameSession } from './game-session.ts';
 import type { PlayerAvatar } from './player-avatar.ts';
@@ -458,6 +459,12 @@ export class ActorGraphEvents {
     if (!camera) return;
     const [x, y, z] = camera.position;
     camera.shake.start(strength, Math.hypot(at[0] - x, at[1] - y, at[2] - z), seconds);
+  }
+
+  /** An explosion bursts at a place: the camera shakes by its radius (camera-shake.ts). */
+  shakeForExplosion(explosion: ShakingExplosion, at: Vec3): void {
+    const camera = this.#camera();
+    if (camera) this.shakeCamera(explosionShake(explosion, camera.shake.settings), at);
   }
 
   /** Game.ShakeCamera's source (none: the player). */

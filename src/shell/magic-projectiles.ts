@@ -99,6 +99,8 @@ export interface MagicProjectilesOptions {
   readonly fx?: MagicFx;
   /** An impact on a surface: its sound and decal; the impact (IPCT) it was. */
   readonly impact?: (hit: HitImpact) => Promise<Impact | undefined>;
+  /** An explosion bursts: the camera shakes by its radius (src/shell/camera-shake.ts). */
+  readonly shake?: (explosion: ExplosionRecord, at: Vec3) => void;
 }
 
 /** One projectile on its way. */
@@ -1044,7 +1046,8 @@ export class MagicProjectiles {
     struck: number | undefined,
     from?: ProjectileRecord,
   ): Promise<void> {
-    const { fx, session } = this.#options;
+    const { fx, session, shake } = this.#options;
+    shake?.(explosion, point);
     const upright = (explosion.flags & ExplosionFlag.alwaysUsesWorldOrientation) !== 0;
     fx?.show(explosion.model, explosion.light, point, {
       kind: 'explosion',

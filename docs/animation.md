@@ -708,8 +708,10 @@ fCameraShakeMultMin and 1, for the time asked (else fCameraShakeTime, 1.25 s), f
 last fCameraShakeFadeTime. Each frame the view turns by the rotation
 `meshes\actors\character\camerashake.nif`'s animation has then against its first key (Euler
 angles about x, y, z: pitch, roll, yaw), times the strength. A new shake replaces the one under
-way. Explosions shake it too in the engine (fCameraShakeExplosionDistMult × the explosion's
-size): TODO(M13), not wired.
+way. An explosion shakes it from where it bursts (observed in the original): its radius
+times fCameraShakeExplosionDistMult (0.001), for fCameraShakeTime, faded by its distance as
+above; only one with a sound does (the engine starts it with the explosion's sounds): a spell's,
+a destruction stage's.
 
 Verified in the browser: an NPC's shout (Unrelenting Force) launched its projectile at its
 graph's Voice_SpellFire_Event (1.2 s after shoutStart, MT_BreathExhaleShort's exhale); a
