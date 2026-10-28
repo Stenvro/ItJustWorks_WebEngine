@@ -127,7 +127,11 @@ ends with the cast), nor a cone's wave or a Magelight stuck to a wall (TODO(M13)
 
 The world is rebuilt from the plugins as for a new game, except that no quest starts and no
 OnInit runs: the quests' records are read, the save's state is put into the fresh `GameState`
-(Maps and Sets filled in place), the script instances are made as the plugins attach them and
+(Maps and Sets filled in place), the quests' aliases hold their references again (the
+runtime's index of the aliases holding each reference, from which an alias script hears its
+reference's events, OnDeath among them, and by which aliases give their packages, factions and
+names; and the reservations of the aliases that reserve what they hold: nothing of either is in
+the save, both follow from the quests' alias fills), the script instances are made as the plugins attach them and
 take the save's variables and states (their property setters do not run again), the update
 registrations are re-armed, and the player's lasting effects are prepared. Play then loads the
 player's cell or worldspace behind the loading screen (as a new game does) and sets the saved

@@ -3602,6 +3602,13 @@ export class ScriptRuntime implements VmHost {
     await this.persistentIndex();
     progress?.('restoring the game state');
     restoreGameState(this.state, save.state);
+    // The aliases hold their references again: their events (an alias script's OnDeath), the
+    // packages, factions and names they give, and their reservations go by these.
+    for (const [quest, { aliases }] of this.state.quests) {
+      for (const [alias, reference] of aliases) this.aliasFilled(quest, alias, reference);
+      const record = aliases.size > 0 ? await this.forms.quest(quest) : undefined;
+      if (record) this.quests.filler.restored(record, aliases);
+    }
     const scheduler = this.vm.scheduler;
     scheduler.realTime = save.clocks.realTime;
     scheduler.gameTime = save.clocks.gameTime;
