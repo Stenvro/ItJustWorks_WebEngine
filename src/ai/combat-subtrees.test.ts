@@ -52,6 +52,13 @@ describe('the combat subtrees', () => {
     expect(shore?.[1]).toBeCloseTo(33.3, 1);
   });
 
+  it('Exit Water: not a triangle without the water flag where it would still swim', () => {
+    // The dry triangle lies deep under the cell's water (a river bank the navmesh leaves
+    // unflagged): no shore within reach.
+    expect(exitWaterPoint(set, swimmer, undefined, () => true)).toBeUndefined();
+    expect(exitWaterPoint(set, swimmer, undefined, () => false)?.[0]).toBeCloseTo(133.3, 1);
+  });
+
   it('Find Cover: a cover edge between it and the threat, within its range', () => {
     const spots = coverSpots(set, swimmer, 1000);
     expect(spots).toHaveLength(1);

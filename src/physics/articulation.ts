@@ -65,6 +65,8 @@ interface Link {
 /** Keeps an articulated object's pose on its simulated bodies. */
 export class Articulation {
   readonly pose: ActorPose;
+  readonly #placed: PlacedCollision;
+  readonly #world: Mat4;
   readonly #links: readonly Link[];
   readonly #fromWorld: Mat4;
   readonly #driven = new Map<number, Float32Array>();
@@ -74,6 +76,8 @@ export class Articulation {
   /** `placed` as placed at `world` (its bodies still in their rest pose). */
   constructor(placed: PlacedCollision, pose: ActorPose, world: Mat4) {
     this.pose = pose;
+    this.#placed = placed;
+    this.#world = world;
     this.#fromWorld = invert(world) ?? new Float32Array(16);
     const links: Link[] = [];
     for (const body of placed.bodies) {
@@ -101,6 +105,21 @@ export class Articulation {
     }
     this.pose.place(this.#driven);
     this.#synced = !awake;
+  }
+
+  /**
+   * The same bodies moving another pose from now on (a corpse made again as what it wears
+   * changed: looted, dressed): the new pose first takes this one's nodes by name, where the
+   * bodies hold them now (else it stood in its bind pose over the bodies).
+   */
+  movedTo(pose: ActorPose): Articulation {
+    const nodes = new Map<number, Float32Array>();
+    pose.skeleton.rig.names.forEach((name, node) => {
+      const from = this.pose.skeleton.nodeByName.get(name.toLowerCase());
+      if (from !== undefined) nodes.set(node, this.pose.worlds.slice(from * 16, from * 16 + 16));
+    });
+    pose.place(nodes);
+    return new Articulation(this.#placed, pose, this.#world);
   }
 
   /** Whether every body sleeps, or moves slower than `speed` (game units a second). */

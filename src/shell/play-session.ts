@@ -1749,6 +1749,21 @@ export class PlaySession {
     return found;
   }
 
+  /**
+   * A dead actor of a cell was made again (what it wears changed: looted, dressed): its cell's
+   * ragdoll moves the new pose from now on, from where it lies. Whether one moved `from`.
+   */
+  ragdollPoseReplaced(from: ActorPose, to: ActorPose): boolean {
+    for (const group of this.#groups) {
+      const index = group.articulated.findIndex((entry) => entry.pose === from);
+      const entry = group.articulated[index];
+      if (!entry) continue;
+      group.articulated[index] = entry.movedTo(to);
+      return true;
+    }
+    return false;
+  }
+
   /** A script enabled or disabled a reference: its collision comes back or leaves. */
   setReferenceEnabled(reference: number, enabled: boolean): void {
     for (const placed of this.placementsOf(reference)) this.physics.setEnabled(placed, enabled);

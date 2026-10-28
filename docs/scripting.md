@@ -20,7 +20,11 @@ OnContainerChanged, OnCellAttach.
 As the Creation Kit wiki's "Threading Notes (Papyrus)" describe them (`papyrus-vm.ts`):
 
 - Every event an object gets runs on a thread of its own, one per script attached to it,
-  in the handler of the state the script is in when the event comes.
+  in the handler of the state the script is in when the event comes. A script starts in its
+  `auto state`; one that declares none starts in the nearest parent's (defaultSetStageOnEnter
+  has none and waits in defaultOnEnter's `waiting`, where its OnTriggerEnter is: MQ101SetStage500
+  never fired while it started in the empty state). Inferred from the data: the vanilla
+  triggers built so only work this way.
 - **One thread runs at a time** (the VM's run token, `#runner`), as the game's VM runs one
   stack at a time: a thread keeps running until it waits (a latent call, a lock another thread
   holds, another script's OnInit, the frame's budget) or ends, and the threads waiting to run

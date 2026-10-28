@@ -105,4 +105,35 @@ describe('articulated objects', () => {
     expect(at(3, 12)).toBeCloseTo(at(2, 12));
     physics.free();
   });
+
+  it('move a pose made again where the bodies lie, not its bind pose (a looted corpse)', () => {
+    const articulated = articulatedPose(nodes, collision);
+    // The same skeleton with a node more (what it wears now adds one under the weight).
+    const dressed = articulatedPose(
+      [...nodes, { name: 'Strap', parent: 2, local: identity() }],
+      collision,
+    );
+    if (!articulated || !dressed) throw new Error('not articulated');
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    const world = identity();
+    const placed = physics.addObject(collision, world, { reference: 1, kind: 'object' }, false);
+    for (const { body } of placed.bodies) physics.release(body);
+    const swing = new Articulation(placed, articulated.pose, world);
+    physics.step(1 / 60);
+    placed.bodies[1]?.body.applyImpulse({ x: 0.5, y: 0, z: 0 }, true);
+    for (let i = 0; i < 20; i++) physics.step(1 / 60);
+    swing.update();
+    const moved = swing.movedTo(dressed.pose);
+    const x = (pose: typeof dressed.pose, node: number): number => pose.worlds[node * 16 + 12] ?? 0;
+    // At once where the old pose had it (swung off its bind place), and the new node with it.
+    expect(x(dressed.pose, 2)).toBeGreaterThan(1);
+    expect(x(dressed.pose, 2)).toBeCloseTo(x(articulated.pose, 2));
+    expect(x(dressed.pose, 4)).toBeCloseTo(x(dressed.pose, 2));
+    // And on with the bodies from then on.
+    for (let i = 0; i < 20; i++) physics.step(1 / 60);
+    swing.update();
+    moved.update();
+    expect(x(dressed.pose, 2)).toBeCloseTo(x(articulated.pose, 2));
+    physics.free();
+  });
 });

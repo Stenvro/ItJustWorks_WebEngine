@@ -215,15 +215,25 @@ function reachable(set: NavmeshSet, from: Vec3, radius: number): Visit[] | undef
 
 /**
  * Exit Water: the nearest place of the navmeshes it reaches that is not water (triangles without
- * the water flag), within `radius`. Undefined: none, or off the navmeshes. TODO(M13): the
- * engine's choice of the shore (ours: the nearest dry triangle's middle).
+ * the water flag), within `radius`, and where it would not swim (`swimsAt`: the water's surface
+ * stands that high over it). A triangle the navmesh leaves unflagged can lie deep under its
+ * cell's water: Riverwood's river bank by Alvor's forge, 90 units under the cell's plane; taken
+ * as the shore, a fighter swimming there stayed in the water for good, where it cannot draw.
+ * Undefined: none, or off the navmeshes. TODO(M13): the engine's choice of the shore (ours: the
+ * nearest dry triangle's middle).
  */
-export function exitWaterPoint(set: NavmeshSet, from: Vec3, radius = 4096): Vec3 | undefined {
+export function exitWaterPoint(
+  set: NavmeshSet,
+  from: Vec3,
+  radius = 4096,
+  swimsAt?: (point: Vec3) => boolean,
+): Vec3 | undefined {
   let best: Vec3 | undefined;
   let bestDistance = Infinity;
   for (const visit of reachable(set, from, radius) ?? []) {
     const t = visit.navmesh.triangles[visit.triangle];
     if (!t || (t.flags & NavmeshFlag.water) !== 0) continue;
+    if (swimsAt?.(visit.middle) === true) continue;
     const distance = flat(visit.middle, from);
     if (distance < bestDistance) {
       best = visit.middle;
