@@ -51,6 +51,17 @@ export function parseMovementType(record: RecordSource): MovementType {
 }
 
 /**
+ * The player's pace moved by a gamepad's stick: at full deflection the walk or the run, and in
+ * between as far as the stick is pushed (`deflection` 0..1; keys: 1): running, from the walk up
+ * to the run; walking, up to the walk. TODO(M13): inferred from the game (a partly pushed stick
+ * walks slower than the full walk); the engine's own curve is not read.
+ */
+export function stickPace(walk: number, run: number, running: boolean, deflection: number): number {
+  const share = Math.max(0, Math.min(1, deflection));
+  return running ? walk + (run - walk) * share : walk * share;
+}
+
+/**
  * Speed along a direction in the actor's frame (`x` right, `y` forward; any length): the
  * direction's point on the ellipse through the four directional speeds of its quadrant.
  */

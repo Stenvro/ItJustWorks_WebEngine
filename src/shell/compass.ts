@@ -68,6 +68,25 @@ export function discoveryMusic(markerType: number): number {
 interface CompassMarker {
   readonly position: readonly number[];
   readonly frame: number;
+  /** A quest target's reference (or the load door's toward it): the floating marker's bound. */
+  readonly reference?: number;
+}
+
+/**
+ * The top of a reference's bound above its origin: its base's OBND top at its scale (the
+ * floating quest marker stands over it: an actor's head, a chest's lid); undefined without one.
+ */
+export async function boundTop(
+  runtime: ScriptRuntime,
+  reference: number,
+): Promise<number | undefined> {
+  const base = await runtime.baseOf(reference);
+  const obnd =
+    base === undefined ? undefined : (await runtime.forms.record(base))?.fields.first('OBND');
+  if (!obnd || obnd.length < 12) return undefined;
+  const top = new DataView(obnd.buffer, obnd.byteOffset, obnd.byteLength).getInt16(10, true);
+  const scale = (await runtime.placement(reference))?.scale ?? 1;
+  return top > 0 ? top * scale : undefined;
 }
 
 export class Compass {
@@ -82,7 +101,8 @@ export class Compass {
 
   /**
    * Where the quest targets in the player's space were at the last reading (a target elsewhere:
-   * the load door toward it): the floating quest marker's (hud-elements.ts).
+   * the load door toward it), with the top of each one's bound as a fourth number when it has
+   * one: the floating quest marker's (hud-elements.ts).
    */
   questPositions: readonly (readonly number[])[] = [];
 
@@ -104,7 +124,13 @@ export class Compass {
     const number = (name: string, fallback: number): number => settings.number(name) ?? fallback;
     const look = markerLookSettings((name) => settings.number(name));
     const markers: CompassMarker[] = [...(await this.#questTargets(runtime, at))];
-    this.questPositions = markers.map((marker) => marker.position);
+    // Each with the top of its bound (the floating marker's height over it), when it has one.
+    this.questPositions = await Promise.all(
+      markers.map(async ({ position, reference }) => {
+        const top = reference === undefined ? undefined : await boundTop(runtime, reference);
+        return top === undefined ? position : [...position.slice(0, 3), top];
+      }),
+    );
     const data = (): number[] =>
       markers.slice(0, MAX_COMPASS_MARKERS).flatMap(({ position, frame }) => {
         const quest = frame === CompassFrame.quest || frame === CompassFrame.questDoor;
@@ -184,14 +210,18 @@ export class Compass {
           ? placement.world === at.world
           : placement.cell !== undefined && placement.cell === at.cell;
       if (here) {
-        data.push({ position: placement.position, frame: CompassFrame.quest });
+        data.push({
+          position: placement.position,
+          frame: CompassFrame.quest,
+          reference: target.reference,
+        });
         continue;
       }
       // Elsewhere: the load door of this space the way there goes through (QuestDoor), once.
       const door = await this.#doorToward(at, target.reference, placement);
       if (!door || doors.has(door.door)) continue;
       doors.add(door.door);
-      data.push({ position: door.position, frame: CompassFrame.questDoor });
+      data.push({ position: door.position, frame: CompassFrame.questDoor, reference: door.door });
     }
     return data;
   }
