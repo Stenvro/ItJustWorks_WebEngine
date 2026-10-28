@@ -1,5 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { fly, homeOn, launch, WORLD_GRAVITY } from './projectile.ts';
+import { expiredArrows, fly, homeOn, launch, WORLD_GRAVITY } from './projectile.ts';
+
+describe('arrows stuck in actors', () => {
+  it('go when old, when their actor is gone, and past each actor’s most', () => {
+    const arrows = [
+      { target: 1, until: 5 },
+      { target: 1, until: 40 },
+      { target: 1, until: 41 },
+      { target: 1, until: 42 },
+      { target: 2, until: 43 },
+      { target: 3, until: 44 },
+    ];
+    const gone = expiredArrows(arrows, 10, 3, (target) => target !== 3);
+    expect(gone.map((arrow) => arrow.until)).toEqual([44, 5]);
+    expect(expiredArrows(arrows.slice(1, 5), 10, 2, () => true)).toEqual([arrows[1]]);
+  });
+});
 
 describe('arrows in flight', () => {
   it('falls under gravity from where it was loosed', () => {

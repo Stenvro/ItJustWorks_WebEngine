@@ -99,3 +99,33 @@ export function pointing(velocity: Vec3): { readonly heading: number; readonly p
 export function chance(percent: number, roll: number): boolean {
   return roll * 100 < percent;
 }
+
+/** An arrow stuck in an actor's body (its ExtraAttachedArrows3D). */
+export interface AttachedArrow {
+  readonly target: number;
+  /** When it goes (the clock's seconds): fAttachedArrowAgeMax after it struck. */
+  readonly until: number;
+}
+
+/**
+ * Which of the arrows stuck in actors go now (oldest first in `arrows`): those older than
+ * fAttachedArrowAgeMax, those of an actor gone (`present` false), and each actor's oldest over
+ * iMaxAttachedArrows.
+ */
+export function expiredArrows<A extends AttachedArrow>(
+  arrows: readonly A[],
+  now: number,
+  max: number,
+  present: (target: number) => boolean,
+): A[] {
+  const gone: A[] = [];
+  const kept = new Map<number, number>();
+  for (let i = arrows.length - 1; i >= 0; i--) {
+    const arrow = arrows[i];
+    if (!arrow) continue;
+    const count = kept.get(arrow.target) ?? 0;
+    if (arrow.until <= now || count >= max || !present(arrow.target)) gone.push(arrow);
+    else kept.set(arrow.target, count + 1);
+  }
+  return gone;
+}

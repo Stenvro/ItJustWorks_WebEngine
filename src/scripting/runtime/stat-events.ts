@@ -7,12 +7,30 @@
 // NPC (NPCK) People Killed, Keyword - Animal (ANML) Animals Killed, Keyword - Undead (UNDK)
 // Undead Killed, Keyword - Daedra (DAED) Daedra Killed, Keyword - Robot (BEEP) Automatons
 // Killed; one with none of them is Creatures Killed. The engine's own counts are tracked stats
-// (TESTrackedStatsEvent: ScriptRuntime.incrementStat). TODO(M13): two more counts the handler
-// makes after these (one for a victim with another default object's keyword, one on a flag of
-// the player) are not identified yet.
+// (TESTrackedStatsEvent: ScriptRuntime.incrementStat). After these the same handler counts a
+// victim in the Bunny Faction default object (AWWW: HareFaction) in Bunnies Slaughtered, and a
+// kill the player makes in beast form in Mauls (the engine reads a flag of the player there;
+// taken here as the player's race being the werewolf beast race, RIWR: TODO(M13) whether a
+// Vampire Lord's kills count too).
 //
 // The engine's misc stat incrementers (observed in the original: one per event source,
-// MiscStatIncrementer<…>): a location cleared (LocationCleared) counts in Dungeons Cleared.
+// MiscStatIncrementer<…>): a location cleared (LocationCleared) counts in Dungeons Cleared; a
+// trade in the barter menu, each buy or sale (TimesBartered), in Barters (barter-menu.ts); the
+// first item the player takes from a container that is not an actor in one opening of the
+// container menu (ChestsLooted), in Chests Looted (container-menu.ts).
+//
+// Its other handlers (observed in the original), counted here: the player's gold going up
+// (InventoryToMiscStat) adds the rise to Gold Found, whatever brings it (loot, a sale, a
+// reward); a quest completed (QuestStatus) counts in Quests Completed and in its type's stat
+// (questTypeStats), a completed quest reset takes both back, a miscellaneous quest (type 6)
+// counts in neither; a shown objective of a miscellaneous quest completed (ObjectiveState: to
+// completed-and-shown) counts in Misc Objectives Completed; each hour waited counts in Hours
+// Waiting (HoursPassed, as each hour slept counts in Hours Slept); each day passing
+// (DaysPassed) counts in Days as a Vampire and Days as a Werewolf while the default objects'
+// globals PlayerIsVampire (PIVV) and PlayerIsWerewolf (PIWV) are not 0. Side quests (type 8)
+// count only in Quests Completed: their own stat is the scripts' (AchievementsScript), as are
+// Questlines Completed, Werewolf Transformations, Necks Bitten, Horses and Houses Owned, Stores
+// Invested In, Persuasions, Bribes, Intimidations, Standing Stones Found and Brawls Won.
 //
 // The others this relay counts, each from the hub event that causes it (the stats' names as the
 // journal lists them): a book the player reads (Books Read; one that teaches a skill, Skill Books
@@ -26,6 +44,7 @@
 // engine), the crafts' (the crafting engine), Locks Picked (the lockpicking menu).
 
 import { BookFlag, parseItem, PotionFlag, type ItemRecord } from '../../world/item-records.ts';
+import { globalValue } from './condition-values.ts';
 import { PLAYER_REF } from './forms.ts';
 import type { ScriptRuntime } from './runtime.ts';
 
@@ -60,6 +79,67 @@ export async function killStats(
 /** Gold (Skyrim.esm Gold001). */
 const GOLD = 0xf;
 
+/** The stat a quest of a type counts in as it completes, besides Quests Completed. */
+const QUEST_TYPE_STATS: ReadonlyMap<number, string> = new Map([
+  [1, 'Main Quests Completed'],
+  [2, 'College of Winterhold Quests Completed'],
+  [3, "Thieves' Guild Quests Completed"],
+  [4, 'The Dark Brotherhood Quests Completed'],
+  [5, 'The Companions Quests Completed'],
+  [7, 'Daedric Quests Completed'],
+  [9, 'Civil War Quests Completed'],
+  [10, 'Dawnguard Quests Completed'],
+  [11, 'Dragonborn Quests Completed'],
+]);
+
+/** A miscellaneous quest's type (QUST DNAM): its objectives count, the quest itself does not. */
+const MISC_QUEST = 6;
+
+/** The stats a quest of a type counts in as it completes (none for a miscellaneous quest). */
+export function questTypeStats(type: number): string[] {
+  if (type === MISC_QUEST) return [];
+  const own = QUEST_TYPE_STATS.get(type);
+  return own ? ['Quests Completed', own] : ['Quests Completed'];
+}
+
+/** A quest completed (`by` 1) or, completed, reset (`by` −1): its stats follow (QuestStatus). */
+export async function countQuestStatus(
+  runtime: ScriptRuntime,
+  quest: number,
+  by: 1 | -1,
+): Promise<void> {
+  const record = await runtime.forms.quest(quest);
+  if (!record) return;
+  for (const stat of questTypeStats(record.type)) {
+    if (by > 0 || (runtime.stats.get(stat.toLowerCase()) ?? 0) > 0) runtime.incrementStat(stat, by);
+  }
+}
+
+/** A shown objective was completed (ObjectiveState): a miscellaneous quest's count. */
+export async function countObjectiveCompleted(
+  runtime: ScriptRuntime,
+  quest: number,
+): Promise<void> {
+  if ((await runtime.forms.quest(quest))?.type === MISC_QUEST)
+    runtime.incrementStat('Misc Objectives Completed');
+}
+
+/** The beast forms' days (DaysPassed), by the default object of the global that tells them. */
+const BEAST_DAYS: readonly (readonly [use: string, stat: string])[] = [
+  ['PIVV', 'Days as a Vampire'],
+  ['PIWV', 'Days as a Werewolf'],
+];
+
+/** Whole days passed (DaysPassed): the beast forms' days, while the player is one. */
+export async function countDaysPassed(runtime: ScriptRuntime, days: number): Promise<void> {
+  if (days <= 0) return;
+  for (const [use, stat] of BEAST_DAYS) {
+    const global = await runtime.magic.defaultObject(use);
+    if (global !== undefined && (await globalValue(runtime, global)) !== 0)
+      runtime.incrementStat(stat, days);
+  }
+}
+
 /** The stat an item the player takes (equips) counts in: food, a potion, an ingredient. */
 export function consumedStat(item: Pick<ItemRecord, 'type' | 'potionFlags'>): string | undefined {
   if (item.type === 'INGR') return 'Ingredients Eaten';
@@ -79,6 +159,8 @@ export function sleptHours(start: number, end: number): number {
 export function relayStatEvents(runtime: ScriptRuntime): () => void {
   /** When the player's sleep now began (game days passed). */
   let sleepStart: number | undefined;
+  /** When the player's wait now began (game days passed). */
+  let waitStart: number | undefined;
   const stops = [
     runtime.events.on('death', async (event) => {
       if (!event.dead || event.killer !== PLAYER_REF || event.actor === PLAYER_REF) return;
@@ -86,6 +168,12 @@ export function relayStatEvents(runtime: ScriptRuntime): () => void {
       for (const stat of await killStats(keywords, (use) => runtime.magic.defaultObject(use))) {
         runtime.incrementStat(stat);
       }
+      const bunnies = await runtime.magic.defaultObject('AWWW');
+      if (bunnies !== undefined && (await runtime.actors.factionRank(event.actor, bunnies)) >= 0)
+        runtime.incrementStat('Bunnies Slaughtered');
+      const beast = await runtime.magic.defaultObject('RIWR');
+      if (beast !== undefined && (await runtime.actors.raceOf(PLAYER_REF)) === beast)
+        runtime.incrementStat('Mauls');
     }),
     runtime.events.on('locationCleared', () => {
       runtime.incrementStat(DUNGEONS_CLEARED);
@@ -116,6 +204,16 @@ export function relayStatEvents(runtime: ScriptRuntime): () => void {
       sleepStart = undefined;
       if (hours > 0) runtime.incrementStat('Hours Slept', hours);
     }),
+    runtime.events.on('wait', (event) => {
+      if (event.started) {
+        waitStart = runtime.state.gameDaysPassed;
+        return;
+      }
+      if (waitStart === undefined) return;
+      const hours = sleptHours(waitStart, runtime.state.gameDaysPassed);
+      waitStart = undefined;
+      if (hours > 0) runtime.incrementStat('Hours Waiting', hours);
+    }),
     runtime.events.on('equip', async (event) => {
       if (event.actor !== PLAYER_REF || !event.equipped) return;
       const record = await runtime.forms.record(event.item);
@@ -124,7 +222,8 @@ export function relayStatEvents(runtime: ScriptRuntime): () => void {
       if (stat) runtime.incrementStat(stat);
     }),
     runtime.events.on('containerChanged', async (event) => {
-      if (event.item !== GOLD || event.to !== PLAYER_REF) return;
+      if (event.item !== GOLD || event.to !== PLAYER_REF || event.from === PLAYER_REF) return;
+      if (event.count > 0) runtime.incrementStat('Gold Found', event.count);
       const gold = await runtime.itemCount(PLAYER_REF, GOLD);
       if (gold > (runtime.stats.get('most gold carried') ?? 0))
         runtime.setStat('Most Gold Carried', gold);

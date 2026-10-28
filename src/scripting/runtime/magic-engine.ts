@@ -1610,6 +1610,8 @@ export class MagicEngine {
     }
     const sound = await this.defaultObject('SCSD');
     if (sound !== undefined) runtime.world.playSound?.(sound, trapper);
+    // The player's catch counts in Souls Trapped (the engine's SoulsTrapped incrementer).
+    if (trapper === PLAYER_REF) runtime.incrementStat('Souls Trapped');
     return true;
   }
 

@@ -139,6 +139,8 @@ export async function barterModel(
         }
         await shelf.move(GOLD, total, PLAYER_REF, chest, false);
         await shelf.move(entry.formId, amount, chest, PLAYER_REF, true, entryStack(entry));
+        // Each trade counts in Barters (the engine's TimesBartered incrementer).
+        game.incrementStat('Barters');
         // Bought: the story manager's Player Add Item (no owner, no container: the engine's).
         game.detach(
           game.storyEvents.addToPlayer(entry.formId, AcquireType.buy, undefined, undefined),
@@ -156,6 +158,7 @@ export async function barterModel(
       const reference = game.heldReference(PLAYER_REF, entry.formId);
       await shelf.move(entry.formId, amount, PLAYER_REF, chest, true, entryStack(entry));
       game.crime.clearStolen(chest, entry.formId);
+      game.incrementStat('Barters');
       await speechUse(entry.formId);
       // The sale is told (TESSellEvent: the sold reference's OnSell with the one who sold it).
       game.events.emit('sell', {

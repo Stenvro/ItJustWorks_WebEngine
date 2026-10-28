@@ -7,6 +7,7 @@ import { parseScene } from '../../../ai/scene-records.ts';
 import { GroupType } from '../../../formats/esm/record.ts';
 import { ObjectHandle } from '../../values.ts';
 import type { ScriptRuntime } from '../runtime.ts';
+import { countObjectiveCompleted } from '../stat-events.ts';
 import { bool, formOf, int, num, object, str, type Register } from './args.ts';
 
 export function registerQuest(n: Register, runtime: ScriptRuntime): void {
@@ -95,10 +96,14 @@ export function registerQuest(n: Register, runtime: ScriptRuntime): void {
     entry.displayed = displayed;
     return null;
   });
-  // A shown objective's completion and failure are announced too.
+  // A shown objective's completion and failure are announced too; a completion is counted in
+  // the stats (ObjectiveState: Misc Objectives Completed, stat-events.ts).
   const finish = (quest: number, index: number, status: 'completed' | 'failed', on: boolean) => {
     const entry = objective(quest, index);
-    if (on && !entry[status] && entry.displayed) runtime.questUpdated(quest, status, index);
+    if (on && !entry[status] && entry.displayed) {
+      runtime.questUpdated(quest, status, index);
+      if (status === 'completed') runtime.detach(countObjectiveCompleted(runtime, quest));
+    }
     entry[status] = on;
   };
   n('quest.setobjectivecompleted', ({ self, args }) => {

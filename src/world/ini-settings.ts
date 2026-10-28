@@ -127,6 +127,9 @@ export const INI_DEFAULTS = {
     fPitchZoomOutMaxDist: 100,
     // How fast the third-person camera moves to its shoulder offsets (a share a second).
     fShoulderDollySpeed: 3,
+    // Seated in first person the view turns at most this far from the seat (radians; the
+    // engine's built-in value: src/shell/player-furniture.ts).
+    fFirstPersonSittingAngleLimit: Math.PI / 2,
     // The tween menu's camera (STEP's SSE default values; src/shell/tween-camera.ts).
     fTweenCamRotAngle: 0.05,
     fTweenCamRotClosingSpeed: 10,

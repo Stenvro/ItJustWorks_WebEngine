@@ -174,6 +174,10 @@ export interface ScriptView {
   pathTo?(actor: number, target: number, walkRun: number): Promise<boolean> | undefined;
   /** EvaluatePackage: the actor chooses its package again (`restart`: anew, as ScriptWorld). */
   evaluatePackage?(reference: number, restart?: boolean): void;
+  /** ForceAddRagdollToWorld: a dead actor's ragdoll in the world now (ActorStage.addRagdoll). */
+  addRagdoll?(reference: number): Promise<void>;
+  /** Game.SetSittingRotation: the seated player's view turned from the seat (radians). */
+  sittingRotation?(radians: number): void;
   /** What an actor of the view uses now (its furniture), if anything. */
   interaction?(reference: number): ActorInteraction | undefined;
   /** How an actor of the view (the player too) moves now. */
@@ -243,6 +247,8 @@ export interface CombatBridge {
   paralyze(actor: number, on: boolean): void;
   /** Grab Actor: the target hangs as its ragdoll before its caster while it lasts. */
   grabActor(caster: number | undefined, target: number, on: boolean): void;
+  /** Actor.ClearExtraArrows: the arrows stuck in an actor's body go. */
+  clearExtraArrows(actor: number): void;
 }
 
 /**
@@ -666,6 +672,14 @@ export class ScriptWorld implements WorldBridge {
     for (const view of this.#views) view.evaluatePackage?.(actor, restart);
   }
 
+  sittingRotation(radians: number): void {
+    for (const view of this.#views) view.sittingRotation?.(radians);
+  }
+
+  async addRagdoll(actor: number): Promise<void> {
+    for (const view of this.#views) await view.addRagdoll?.(actor);
+  }
+
   interaction(actor: number): ActorInteraction | undefined {
     for (const view of this.#views) {
       const using = view.interaction?.(actor);
@@ -929,6 +943,10 @@ export class ScriptWorld implements WorldBridge {
 
   grabActor(caster: number | undefined, target: number, on: boolean): void {
     for (const fights of this.#fights()) fights.grabActor(caster, target, on);
+  }
+
+  clearExtraArrows(actor: number): void {
+    for (const fights of this.#fights()) fights.clearExtraArrows(actor);
   }
 
   furnitureInUse(furniture: number, marker?: number): boolean {

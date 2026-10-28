@@ -152,6 +152,8 @@ export function containerModel(
 ): ItemMenuModel {
   const shelf = new ItemShelf(session);
   let close: (() => void) | undefined;
+  /** Something was taken from it in this opening (Chests Looted counts once). */
+  let looted = false;
   /** Taking from it is stealing: an owned container (not an actor's: a corpse, a follower). */
   let owned: Promise<boolean> | undefined;
   const stealing = (): Promise<boolean> => {
@@ -229,6 +231,12 @@ export function containerModel(
       return;
     }
     await shelf.move(formId, amount, container, PLAYER_REF, audible, stack);
+    // The first take from a container that is not an actor (a corpse) in this opening counts in
+    // Chests Looted (the engine's ChestsLooted incrementer); trading (npcMode) never does.
+    if (!looted && !npcMode && !(await shelf.runtime.actors.isActor(container))) {
+      looted = true;
+      shelf.runtime.incrementStat('Chests Looted');
+    }
     if (await stealing()) await crime.steal(PLAYER_REF, formId, amount, container);
     shelf.runtime.detach(shelf.runtime.storyEvents.takenFrom(formId, container, false));
   };
