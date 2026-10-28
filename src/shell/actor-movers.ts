@@ -1424,7 +1424,7 @@ export class ActorMovers {
     const hit = physics.raycast(
       [x, y, z + above],
       [0, 0, -1],
-      above + this.#checkFallDistance(),
+      above + this.checkFallDistance(),
       Layer.charController,
       character.collider,
     );
@@ -1493,7 +1493,7 @@ export class ActorMovers {
   #fallDistance: number | undefined;
 
   /** fCheckPositionFallDistance, from the game settings once read (its default until then). */
-  #checkFallDistance(): number {
+  checkFallDistance(): number {
     if (this.#fallDistance === undefined) {
       this.#fallDistance = CHECK_FALL_DISTANCE;
       void this.#options.session.settings().then((settings) => {
@@ -1914,7 +1914,7 @@ export class ActorMovers {
         const hit = world.physics.raycast(
           [x, y, z + above],
           [0, 0, -1],
-          above + this.#checkFallDistance(),
+          above + this.checkFallDistance(),
           Layer.charController,
         );
         if (hit) staged.position = [x, y, hit.point[2]];
