@@ -23,14 +23,14 @@ describe.skipIf(!hasGamedata())('the opening’s cart ride (simulation)', () => 
       expect(await sim.until(() => sim.stageDone(MQ101, 15), 20)).toBe(true);
       let gliding = 0;
       let behind = 0;
-      const last = new Map<number, readonly number[]>();
+      const last = new Map<number, readonly [number, number, number]>();
       for (let second = 0; second < 300 && !sim.stageDone(MQ101, 20); second++) {
         await sim.step(1);
         for (const horse of HORSES) {
           const actor = sim.actor(horse);
           const at = actor?.position;
           const before = last.get(horse);
-          if (at) last.set(horse, [...at]);
+          if (at) last.set(horse, [at[0], at[1], at[2]]);
           // A horse that goes plays its walk (its graph's Speed), it does not glide.
           const moved = at && before ? Math.hypot(at[0] - before[0], at[1] - before[1]) : 0;
           if (moved > 40 && (actor?.placed.behavior?.variable('Speed') ?? 0) < 1) gliding++;
