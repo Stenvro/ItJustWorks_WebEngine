@@ -23,6 +23,7 @@ import type { ModelPart } from '../render/model-data.ts';
 import type { GpuModel, GpuMorphs, InstanceFade, ModelInstance } from '../render/scene-renderer.ts';
 import {
   ActorResolver,
+  hairTint,
   inFirstPerson,
   meshPath,
   partitionVisible,
@@ -977,7 +978,7 @@ export class ActorPlacer {
     });
     const tints = {
       ...(look.skinTone && { skin: look.skinTone }),
-      ...(look.hairColor && { hair: look.hairColor }),
+      ...(look.hairColor && { hair: hairTint(look.hairColor) }),
     };
     // Every actor can move (its feet set on the ground, a script's MoveTo, its AI); the
     // dead's ragdolls pose them where they lie (ragdollsOf).

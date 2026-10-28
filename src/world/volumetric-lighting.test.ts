@@ -18,25 +18,29 @@ const lighting: VolumetricLighting = {
 };
 
 describe('god rays from VOLI', () => {
-  it('scale the weather intensity by the settings and the phase contribution', () => {
+  it('scale the weather intensity by the settings', () => {
     const rays = godRays(lighting, { enabled: true, intensity: 1.5 }, [0, 0, 1], 0.5);
-    expect(rays.strength).toBeCloseTo(2 * 1.5 * 0.5);
+    expect(rays.strength).toBeCloseTo(2 * 1.5);
     expect(rays.color).toEqual([0.5, 0, 0.5]);
     expect(rays.scattering).toBeCloseTo(0.6);
+    expect(rays.phaseContribution).toBeCloseTo(0.5);
     expect(godRays(lighting, { enabled: false, intensity: 1 }, [1, 1, 1], 0.5).strength).toBe(0);
     // Below the horizon the rays fade out.
     expect(godRays(lighting, { enabled: true, intensity: 1 }, [1, 1, 1], -0.1).strength).toBe(0);
   });
 
-  it('gather round the light by the phase function (Henyey-Greenstein)', () => {
-    expect(godRayPhase(1, 0.6)).toBeCloseTo(1);
-    // Evenly scattered without asymmetry.
-    expect(godRayPhase(0, 0)).toBeCloseTo(1);
-    expect(godRayPhase(-1, 0)).toBeCloseTo(1);
-    // Falls off away from the light, faster for higher g.
-    expect(godRayPhase(0.9, 0.6)).toBeLessThan(1);
-    expect(godRayPhase(0.9, 0.8)).toBeLessThan(godRayPhase(0.9, 0.6));
-    expect(godRayPhase(0, 0.6)).toBeCloseTo(Math.pow(0.16 / 1.36, 1.5));
+  it('weigh the phase function against even scattering by the phase contribution', () => {
+    // Without a contribution every direction scatters alike.
+    expect(godRayPhase(1, 0.85, 0)).toBeCloseTo(1);
+    expect(godRayPhase(-1, 0.85, 0)).toBeCloseTo(1);
+    // The full phase function at the light: (1 - g^2) / (4 pi (1 - g)).
+    expect(godRayPhase(1, 0.6, 1)).toBeCloseTo(0.64 / (4 * Math.PI * 0.4));
+    // Vanilla values: a haze slightly stronger towards the sun, never a glare.
+    const atSun = godRayPhase(1, 0.85, 0.85);
+    const across = godRayPhase(0, 0.85, 0.85);
+    expect(atSun).toBeGreaterThan(across);
+    expect(atSun).toBeLessThan(0.3);
+    expect(across).toBeGreaterThan(0.15);
     expect(phaseAsymmetry(3)).toBe(0.95);
     expect(phaseAsymmetry(-1)).toBe(0);
   });

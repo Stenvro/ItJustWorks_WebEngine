@@ -33,6 +33,31 @@ fn untoneMap(c: vec3f) -> vec3f {
   return c / max(1.0 - max(c.r, max(c.g, c.b)), 1e-4);
 }
 
+// The history at a uv through a Catmull-Rom filter (five bilinear taps): a moving view
+// fetches its history between texels every frame, and a bilinear fetch would soften the image
+// a little more each time.
+fn historyAt(uv: vec2f) -> vec3f {
+  let size = vec2f(textureDimensions(history));
+  let at = uv * size;
+  let centre = floor(at - 0.5) + 0.5;
+  let f = at - centre;
+  let w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+  let w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+  let w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+  let w3 = f * f * (-0.5 + 0.5 * f);
+  let w12 = w1 + w2;
+  let p0 = (centre - 1.0) / size;
+  let p3 = (centre + 2.0) / size;
+  let p12 = (centre + w2 / w12) / size;
+  var sum = textureSampleLevel(history, linearSampler, vec2f(p12.x, p0.y), 0.0).rgb * (w12.x * w0.y);
+  sum += textureSampleLevel(history, linearSampler, vec2f(p0.x, p12.y), 0.0).rgb * (w0.x * w12.y);
+  sum += textureSampleLevel(history, linearSampler, p12, 0.0).rgb * (w12.x * w12.y);
+  sum += textureSampleLevel(history, linearSampler, vec2f(p3.x, p12.y), 0.0).rgb * (w3.x * w12.y);
+  sum += textureSampleLevel(history, linearSampler, vec2f(p12.x, p3.y), 0.0).rgb * (w12.x * w3.y);
+  let total = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
+  return max(sum / total, vec3f(0.0));
+}
+
 @fragment
 fn fs_resolve(@builtin(position) position: vec4f) -> @location(0) vec4f {
   let size = vec2i(textureDimensions(current));
@@ -70,6 +95,6 @@ fn fs_resolve(@builtin(position) position: vec4f) -> @location(0) vec4f {
   if (any(previous < vec2f(0.0)) || any(previous > vec2f(1.0))) {
     return vec4f(untoneMap(here), 1.0);
   }
-  let past = clamp(toneMap(textureSampleLevel(history, linearSampler, previous, 0.0).rgb), low, high);
+  let past = clamp(toneMap(historyAt(previous)), low, high);
   return vec4f(untoneMap(mix(here, past, taa.params.x)), 1.0);
 }

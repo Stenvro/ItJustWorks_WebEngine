@@ -89,10 +89,12 @@ export interface VolumetricSettings {
 }
 
 /**
- * The god rays' strength and colour this frame: the weather's lighting scaled by the settings,
+ * The god rays' strength and colour this frame: the weather's intensity scaled by the settings,
  * the sun's colour mixed with its custom colour, faded as the sun sets below the horizon
- * (`sunHeight`: the sun direction's up component). TODO(M13): the original scatters through a
- * froxel volume lit by the shadow map; we blur the sky's light radially from the sun.
+ * (`sunHeight`: the sun direction's up component). The phase contribution is not a strength:
+ * it weighs the phase function against even scattering (godRayPhase). TODO(M13): the original
+ * scatters through a froxel volume lit by the shadow map; we gather the light's way through
+ * the sky radially from the sun.
  */
 export function godRays(
   lighting: VolumetricLighting,
@@ -103,33 +105,41 @@ export function godRays(
   readonly strength: number;
   readonly color: Rgb;
   readonly decay: number;
-  /** The phase function's asymmetry (Henyey-Greenstein g, 0..0.95): godRayPhase. */
+  /** The phase function's asymmetry g (0..0.95): godRayPhase. */
   readonly scattering: number;
+  /** The phase function's share against even scattering (0..1): godRayPhase. */
+  readonly phaseContribution: number;
 } {
   const above = Math.max(0, Math.min(1, (sunHeight + 0.02) / 0.1));
-  const strength = settings.enabled
-    ? lighting.intensity * settings.intensity * lighting.phaseContribution * above
-    : 0;
+  const strength = settings.enabled ? lighting.intensity * settings.intensity * above : 0;
   const custom = Math.max(0, Math.min(1, lighting.customColorContribution));
   const channel = (i: 0 | 1 | 2): number => sunColor[i] * (1 - custom) + lighting.color[i] * custom;
   const color: Rgb = [channel(0), channel(1), channel(2)];
   // Tighter scattering keeps the rays near the sun: the samples fade faster along the blur.
   const decay = 0.9 + 0.09 * Math.max(0, Math.min(1, lighting.phaseScattering));
-  return { strength, color, decay, scattering: phaseAsymmetry(lighting.phaseScattering) };
+  return {
+    strength,
+    color,
+    decay,
+    scattering: phaseAsymmetry(lighting.phaseScattering),
+    phaseContribution: Math.max(0, Math.min(1, lighting.phaseContribution)),
+  };
 }
 
-/** VOLI's phase scattering as the Henyey-Greenstein asymmetry g (forward only, below 1). */
+/** VOLI's phase scattering as the phase function's asymmetry g (forward only, below 1). */
 export function phaseAsymmetry(scattering: number): number {
   return Math.max(0, Math.min(0.95, scattering));
 }
 
 /**
- * The phase function of the god rays (shaders/sun-effects.wgsl rayPhase): Henyey-Greenstein's
- * share of the light scattered towards the eye at `cosAngle` between the view ray and the
- * light, relative to looking straight at the light (1 there): ((1 - g)^2 / (1 + g^2 -
- * 2 g cos))^1.5. g = 0 scatters evenly; higher g gathers the light round the sun.
+ * The phase function of the god rays (shaders/sun-effects.wgsl rayPhase), as the original's
+ * volumetric lighting weighs each sample: (1 - g^2) / (4 pi (1 - g cos)) at `cosAngle` between
+ * the view ray and the light, mixed with 1 (even scattering) by the phase contribution. With
+ * the vanilla values (g 0.7..0.85, contribution 0.7..0.85) it stays between about 0.15 and 0.3:
+ * the light is mostly an even haze, a little stronger towards the sun.
  */
-export function godRayPhase(cosAngle: number, g: number): number {
-  const denominator = 1 + g * g - 2 * g * Math.max(-1, Math.min(1, cosAngle));
-  return Math.pow(((1 - g) * (1 - g)) / Math.max(denominator, 1e-6), 1.5);
+export function godRayPhase(cosAngle: number, g: number, contribution: number): number {
+  const denominator = 4 * Math.PI * (1 - g * Math.max(-1, Math.min(1, cosAngle)));
+  const phase = (1 - g * g) / Math.max(denominator, 1e-6);
+  return 1 + (phase - 1) * contribution;
 }

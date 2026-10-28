@@ -1,11 +1,13 @@
 // The weather's objects in the sky: its sky statics (WTHR TNAM: distant cloud banks on the
 // horizon, Sovngarde's sky) and its aurora (WTHR MODL). They are drawn around the camera,
 // scaled up so they lie behind everything (same angular size), without fog, and fade with
-// changes of weather and, for the aurora, with the time of day.
+// changes of weather and, for the aurora, with the time of day. The statics' cloud shapes are
+// effects with External_Emittance and Effect_Lighting: they are lit by the weather's sky
+// statics colour (NAM0 Sky Statics, by the hour), not by the sun and ambient light.
 // Notes: docs/formats/esm.md ("Climate and weather").
 
 import type { Vec3 } from '../render/math.ts';
-import type { GpuScene, SceneRenderer } from '../render/scene-renderer.ts';
+import type { EmittanceColor, GpuScene, SceneRenderer } from '../render/scene-renderer.ts';
 import { baseModelPath } from '../world/cell-records.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
 import type { SkyState } from '../world/sky-state.ts';
@@ -32,6 +34,11 @@ export class SkyObjects {
   /** Sky scenes by key (statics of a weather, an aurora model); undefined while loading. */
   readonly #scenes = new Map<string, SkyScene | undefined>();
   #active: GpuScene[] = [];
+  /** The statics' emittance: the sky statics colour of this frame's sky (shared by all). */
+  readonly #emittance: { rgb: readonly [number, number, number]; version: number } = {
+    rgb: [0, 0, 0],
+    version: 0,
+  };
 
   constructor(session: GameSession, db: RecordDatabase, renderer: SceneRenderer) {
     this.#session = session;
@@ -48,6 +55,11 @@ export class SkyObjects {
     camera: Vec3,
   ): void {
     const active: GpuScene[] = [];
+    const light = state.skyStatics;
+    if (light.some((value, i) => Math.abs(value - (this.#emittance.rgb[i] ?? 0)) > 1 / 1024)) {
+      this.#emittance.rgb = [light[0], light[1], light[2]];
+      this.#emittance.version++;
+    }
     const show = (
       key: string,
       load: () => Promise<SkyScene | undefined>,
@@ -112,14 +124,20 @@ export class SkyObjects {
       const path = record && baseModelPath(record);
       if (path) paths.push(path);
     }
-    return this.#loadModels(paths, STATICS_SCALE);
+    return this.#loadModels(paths, STATICS_SCALE, this.#emittance);
   }
 
-  async #loadModels(paths: readonly string[], scale: number): Promise<SkyScene | undefined> {
+  async #loadModels(
+    paths: readonly string[],
+    scale: number,
+    emittance?: EmittanceColor,
+  ): Promise<SkyScene | undefined> {
     const models = await Promise.all(paths.map((path) => this.#session.model(path)));
     // Placed at the camera every frame; the scale sizes the parts' bounds (draw order).
     const world = new Float32Array([scale, 0, 0, 0, 0, scale, 0, 0, 0, 0, scale, 0, 0, 0, 0, 1]);
-    const instances = models.flatMap((model) => (model ? [{ model, world }] : []));
+    const instances = models.flatMap((model) =>
+      model ? [{ model, world, ...(emittance && { emittance }) }] : [],
+    );
     if (instances.length === 0) return undefined;
     return { scene: this.#renderer.createScene(instances, { sky: true }), world };
   }
