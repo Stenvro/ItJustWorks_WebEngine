@@ -677,7 +677,7 @@ export class ScriptWorld implements WorldBridge {
   }
 
   async addRagdoll(actor: number): Promise<void> {
-    await Promise.all([...this.#views].map((view) => view.addRagdoll?.(actor)));
+    for (const view of this.#views) await view.addRagdoll?.(actor);
   }
 
   interaction(actor: number): ActorInteraction | undefined {

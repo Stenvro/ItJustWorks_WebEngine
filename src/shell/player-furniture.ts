@@ -221,7 +221,7 @@ export class PlayerFurniture {
     const player = this.#play.player;
     const global = this.#angleLimit;
     const limit =
-      global > 0 ? global : (player.ini.number('Camera', 'fFirstPersonSittingAngleLimit') ?? 0);
+      global > 0 ? global : player.ini.number('Camera', 'fFirstPersonSittingAngleLimit');
     if (limit <= 0) return;
     const seat = this.#avatar.bodyYaw;
     const off = Math.atan2(Math.sin(player.yaw - seat), Math.cos(player.yaw - seat));
