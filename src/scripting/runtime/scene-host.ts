@@ -28,6 +28,8 @@ const DEFAULT_SPEECH_MULT = 0.15;
 
 /** The engine's built-in fRandomSceneAgainMinTime / MaxTime (seconds; observed in the original). */
 const RANDOM_SCENE_AGAIN: readonly [number, number] = [5, 10];
+/** fAIWalkAwayTimerForConversation's built-in value (observed in the original). */
+const RANDOM_SCENE_LINGER = 2;
 
 export class RuntimeSceneHost implements SceneHost {
   readonly #runtime: ScriptRuntime;
@@ -38,6 +40,7 @@ export class RuntimeSceneHost implements SceneHost {
   #speechMult: Promise<number> | undefined;
   #again: readonly [number, number] | undefined;
   #againRead: Promise<void> | undefined;
+  #linger: number | undefined;
   /** What the scenes do, for tools (tools/scene-info.ts --play). */
   trace: ((text: string) => void) | undefined;
 
@@ -227,6 +230,11 @@ export class RuntimeSceneHost implements SceneHost {
     return min + (Math.max(min, max) - min) * Math.random();
   }
 
+  /** Seconds a random scene lingers past its last phase (fAIWalkAwayTimerForConversation). */
+  randomSceneLinger(): number {
+    return this.#linger ?? RANDOM_SCENE_LINGER;
+  }
+
   /** fRandomSceneAgainMinTime / MaxTime of the load order (read as the first random scene asks). */
   #againTimes(): Promise<void> {
     this.#againRead ??= (async () => {
@@ -238,6 +246,7 @@ export class RuntimeSceneHost implements SceneHost {
         await setting('fRandomSceneAgainMinTime', RANDOM_SCENE_AGAIN[0]),
         await setting('fRandomSceneAgainMaxTime', RANDOM_SCENE_AGAIN[1]),
       ];
+      this.#linger = await setting('fAIWalkAwayTimerForConversation', RANDOM_SCENE_LINGER);
     })();
     return this.#againRead;
   }

@@ -708,8 +708,10 @@ fCameraShakeMultMin and 1, for the time asked (else fCameraShakeTime, 1.25 s), f
 last fCameraShakeFadeTime. Each frame the view turns by the rotation
 `meshes\actors\character\camerashake.nif`'s animation has then against its first key (Euler
 angles about x, y, z: pitch, roll, yaw), times the strength. A new shake replaces the one under
-way. Explosions shake it too in the engine (fCameraShakeExplosionDistMult × the explosion's
-size): TODO(M13), not wired.
+way. An explosion shakes it from where it bursts (observed in the original): its radius
+times fCameraShakeExplosionDistMult (0.001), for fCameraShakeTime, faded by its distance as
+above; only one with a sound does (the engine starts it with the explosion's sounds): a spell's,
+a destruction stage's.
 
 Verified in the browser: an NPC's shout (Unrelenting Force) launched its projectile at its
 graph's Voice_SpellFire_Event (1.2 s after shoutStart, MT_BreathExhaleShort's exhale); a
@@ -803,10 +805,14 @@ fVATSSmartCameraCheckHeight (96) toward that side of its facing runs before it m
 but the reference itself (10000 units if nothing); GetVATS*TargetVisible from points
 fVATSSmartCameraCheckStepDistance (128) apart toward that side (fVATSSmartCameraCheckStepCount,
 5), whether a ray to the other of the kill gets there (blocked by anything within 85% of the way,
-another actor only within 256 units). TODO(M13): the camera's radial blur as it moves between
-shots (fVATSCamTransRB*: strength fVATSCamTransRBStrengthCap × a triangle of the transition's
-progress, whose source was not read); which distance TargetVisible returns (inferred: the last
-clear step's); the magic kill camera ([gameplay.md](gameplay.md#killmoves)). The ranged kill camera
+another actor only within 256 units). Between shots (observed in the original): where the
+next shot's camera sits more than fVATSCameraDollyMin (256) from where the last ended, the
+camera dollies there in a straight line over fVATSCameraDollyTime (1 s) instead of cutting,
+under a radial blur of fVATSCamTransRBStrengthCap (0.5) × a triangle of the move's progress
+(`transitionBlur`). TODO(M13): the engine cuts some shots and dollies others over the shot's own
+time by a start mode not yet tied to a CAMS field (ours dollies every shot after the first); the
+blur's strength is computed but the image-space stack takes no free radial blur yet; which
+distance TargetVisible returns (inferred: the last clear step's); the magic kill camera ([gameplay.md](gameplay.md#killmoves)). The ranged kill camera
 plays the same tree on the player's bow and crossbow shots (its rules: gameplay.md).
 
 Verified in the browser (Riverwood, spawned bandits, wolves and bears at low health, the player's

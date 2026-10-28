@@ -3,6 +3,7 @@ import {
   CAMERA_SHAKE_DEFAULTS as D,
   CameraShake,
   eulerXyz,
+  explosionShake,
   fadedStrength,
   readCameraShakeSettings,
   shakeStrength,
@@ -20,6 +21,15 @@ describe('the camera shake', () => {
     expect(shakeStrength(3, 0, D)).toBe(1);
     expect(shakeStrength(0, 0, D)).toBeUndefined();
     expect(shakeStrength(0.2, 300, { ...D, multMin: 0.3 })).toBe(0.3);
+  });
+
+  it('shakes for an explosion by its radius, only one with a sound', () => {
+    // A 256-unit burst: 0.256, full within 512 units, gone past 512 + 640.
+    const strength = explosionShake({ radius: 256, sound: 0x10, sound2: undefined }, D);
+    expect(strength).toBeCloseTo(0.256);
+    expect(shakeStrength(strength, 400, D)).toBeCloseTo(0.256);
+    expect(shakeStrength(strength, 1200, D)).toBeUndefined();
+    expect(explosionShake({ radius: 256, sound: undefined, sound2: undefined }, D)).toBe(0);
   });
 
   it('fades out over its last fCameraShakeFadeTime', () => {

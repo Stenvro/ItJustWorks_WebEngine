@@ -21,11 +21,14 @@ export interface TalkSettings {
   readonly greetingTimer: number;
   /** Seconds after a greeting before another actor greets the player (fAIExclusiveGreetingTimer). */
   readonly exclusiveGreetingTimer: number;
-  /**
-   * An actor greets the player as they come this near (units). No game setting of the load
-   * order gives it (TODO(M13): the engine's built-in distance).
-   */
+  /** An actor greets the player as they come this near (units; fAIMinGreetingDistance). */
   readonly greetingDistance: number;
+  /**
+   * A greeting holds its actor (stopped, facing the player) while the player stays this near
+   * (units; fAIInDialogueModeWithPlayerDistance); walking off past it lets the actor go on
+   * with its package while the line plays out.
+   */
+  readonly greetingHoldDistance: number;
   /** Seconds between an actor's lines of idle chatter (fIdleChatterCommentTimer .. Max). */
   readonly idleChatterMin: number;
   readonly idleChatterMax: number;
@@ -70,6 +73,8 @@ export interface TalkSettings {
    * fAIMinAngleRangeToStartSceneDialogue): two actors brought together face each other so.
    */
   readonly sceneDialogueAngle: number;
+  /** The same for a speaker moving at 5 units a second or more (degrees; fAIMaxAngleRangeMovingToStartSceneDialogue). */
+  readonly sceneDialogueAngleMoving: number;
   /**
    * Seconds before the next random scene may begin, drawn as one begins
    * (fRandomSceneAgainMinTime .. MaxTime).
@@ -86,13 +91,13 @@ export interface TalkSettings {
 
 /**
  * The values of the vanilla load order: Skyrim.esm's game settings, and for those it does not
- * set the engine's built-in values (observed in the original); the greeting and chatter distances are
- * this file's own.
+ * set the engine's built-in values (observed in the original); the chatter distance is this file's own.
  */
 export const VANILLA_TALK: TalkSettings = {
   greetingTimer: 5,
   exclusiveGreetingTimer: 2.5,
   greetingDistance: 150,
+  greetingHoldDistance: 500,
   idleChatterMin: 10,
   idleChatterMax: 20,
   chatterDistance: 1024,
@@ -107,6 +112,7 @@ export const VANILLA_TALK: TalkSettings = {
   waitForEvent: 20,
   dialogueDistance: 170,
   sceneDialogueAngle: 20,
+  sceneDialogueAngleMoving: 80,
   randomSceneAgainMin: 10,
   randomSceneAgainMax: 30,
   playerActionTimer: 20,
@@ -119,6 +125,8 @@ export function talkSettings(setting: (name: string) => number | undefined): Tal
   return {
     ...v,
     greetingTimer: setting('fAIGreetingTimer') ?? v.greetingTimer,
+    greetingDistance: setting('fAIMinGreetingDistance') ?? v.greetingDistance,
+    greetingHoldDistance: setting('fAIInDialogueModeWithPlayerDistance') ?? v.greetingHoldDistance,
     exclusiveGreetingTimer: setting('fAIExclusiveGreetingTimer') ?? v.exclusiveGreetingTimer,
     idleChatterMin: setting('fIdleChatterCommentTimer') ?? v.idleChatterMin,
     idleChatterMax: setting('fIdleChatterCommentTimerMax') ?? v.idleChatterMax,
@@ -136,6 +144,8 @@ export function talkSettings(setting: (name: string) => number | undefined): Tal
     waitForEvent: setting('fAISocialTimerToWaitForEvent') ?? v.waitForEvent,
     dialogueDistance: setting('fAIDialogueDistance') ?? v.dialogueDistance,
     sceneDialogueAngle: setting('fAIMinAngleRangeToStartSceneDialogue') ?? v.sceneDialogueAngle,
+    sceneDialogueAngleMoving:
+      setting('fAIMaxAngleRangeMovingToStartSceneDialogue') ?? v.sceneDialogueAngleMoving,
     randomSceneAgainMin: setting('fRandomSceneAgainMinTime') ?? v.randomSceneAgainMin,
     randomSceneAgainMax: setting('fRandomSceneAgainMaxTime') ?? v.randomSceneAgainMax,
     playerActionTimer: setting('fCommentOnPlayerActionsTimer') ?? v.playerActionTimer,
@@ -506,4 +516,42 @@ export function triggerDistance(
       ? settings.conversationDistanceMax
       : settings.conversationDistance;
   return starter === 'sitting' ? reach + 20 : reach;
+}
+
+/**
+ * Whether a greeting still holds its actor: the player has not walked off past the greeting's
+ * hold distance. Past it the actor goes on with its package; the line itself plays out (the
+ * engine does not cut a greeting the player walks away from).
+ * TODO(M13): the hold distance is fAIInDialogueModeWithPlayerDistance by its name; where the
+ * engine reads it was not found.
+ */
+export function greetingHolds(
+  actor: Vec3,
+  player: Vec3 | undefined,
+  settings: Pick<TalkSettings, 'greetingHoldDistance'>,
+): boolean {
+  return player !== undefined && distance(actor, player) <= settings.greetingHoldDistance;
+}
+
+/** The speed (units a second) from which a scene's speaker counts as moving (observed in the original). */
+const SCENE_SPEAKER_MOVING = 5;
+
+/**
+ * Whether a scene's line may begin as far as its speaker's facing goes (observed in the
+ * original): it waits only while the speaker turns to face whom it speaks to (one that does not
+ * turn: held in furniture, blocked, not moved by its AI, says it as it stands); the angle it
+ * must come within is fAIMinAngleRangeToStartSceneDialogue, or
+ * fAIMaxAngleRangeMovingToStartSceneDialogue while it moves at 5 units a second or more. The
+ * engine has no time limit on the wait.
+ */
+export function sceneLineFaces(
+  speaker: { readonly offDegrees: number; readonly speed: number; readonly turning: boolean },
+  settings: Pick<TalkSettings, 'sceneDialogueAngle' | 'sceneDialogueAngleMoving'>,
+): boolean {
+  if (!speaker.turning) return true;
+  const limit =
+    speaker.speed >= SCENE_SPEAKER_MOVING
+      ? settings.sceneDialogueAngleMoving
+      : settings.sceneDialogueAngle;
+  return Math.abs(speaker.offDegrees) <= limit;
 }

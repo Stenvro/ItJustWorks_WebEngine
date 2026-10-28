@@ -1453,7 +1453,12 @@ after `--package-seconds`).
   [animation.md](animation.md#head-tracking), the actor's head track target and its graph's
   BSLookAtModifier);
   with Face Target the actor turns to its target while it stands (`src/shell/actor-scenes.ts`),
-  its package's own facing coming back after.
+  its package's own facing coming back after. Its line waits while it turns (observed in the
+  original; `sceneLineFaces` in `src/ai/talk.ts`): until it faces its target within
+  fAIMinAngleRangeToStartSceneDialogue (20°), or fAIMaxAngleRangeMovingToStartSceneDialogue
+  (80°) while it moves at 5 units a second or more. One that does not turn (in furniture, not
+  moved by its controller, its turn stopped short: blocked) says it as it stands. No time limit
+  (ours had 3 s); a stopped turn counts once it had half a second to begin (ours).
 - **Packages:** while a package action runs, its actor's package stack is that action's
   packages alone (`ActorAi`'s stack asks the scene first). Observed in the original
   (BGSSceneActionPackage): as the action starts, its actor takes the first of its packages
@@ -1502,9 +1507,13 @@ after `--package-seconds`).
 - **Ending:** Scene.Stop, its quest stopping, its last phase completing, an actor's behaviour.
   Its actions end (looks and packages let go), its actors leave it, its end fragment runs; then
   its quest stops if the scene stops it on its end (851 scenes: MS13LucanCamillaScene ends with
-  Lucan's "Oh, a customer"), or, having played to its end, it starts again while its conditions
-  hold (Repeat Conditions While True: Heimskr's sermon). TODO(M13): a pause before the repeat
-  (not fRandomSceneAgainMinTime / MaxTime: those space random scenes).
+  Lucan's "Oh, a customer").
+- **Past its last phase** (observed in the original): a random scene lingers
+  fAIWalkAwayTimerForConversation (2 s) first; any other goes on in the same update. Then a
+  scene with Repeat Conditions While True whose conditions hold (Heimskr's sermon) plays again
+  from its first phase without ending: its actions start over, no end or begin fragment runs,
+  no end or begin event is sent, its actors stay in it. There is no other pause before a
+  repeat (fRandomSceneAgainMinTime / MaxTime space random scenes' starts).
 - **Random scenes** (those of quests the Actor Dialogue event started) play one at a time and
   hold while their two actors come together: [Conversations between
   actors](#conversations-between-actors).
@@ -1778,12 +1787,15 @@ package may do all.
   is within the voice's reach (the 3D dialogue output model, DOBJ DOP2 SOMDialogue3DDefault:
   3000 units). One line at a time: a new one ends the one it says; talking with the player ends
   it. IsTalking, IsGreetingPlayer, GetDialogueEmotion and GetDialogueEmotionValue answer from it.
-- **Greetings:** as the player comes within 150 units of an actor that detects them
-  (TODO(M13): no game setting of the load order gives the distance), whose package allows
+- **Greetings:** as the player comes within fAIMinGreetingDistance (150 units; the engine's
+  greeting check reads it, original) of an actor that detects them, whose package allows
   hellos, it says its Hello line to them, the nearest first; one greets at a time
   (fAIExclusiveGreetingTimer, 2.5 s), and it greets again only after the player left (1.25 times
   the distance) and fAIGreetingTimer (5 s) passed. Unless the info lets it move while greeting
   (INFO 0x400) it stops and faces them meanwhile. Not while the player talks with someone.
+  Walking off: once the player is farther than fAIInDialogueModeWithPlayerDistance (500) the
+  actor is let go to its package while its line plays out; the greeting is not cut short
+  (TODO(M13): the setting is chosen by its name, its reader in the engine was not found).
 - **Idle chatter:** every fIdleChatterCommentTimer to fIdleChatterCommentTimerMax (10–20 s) an
   actor whose package allows chatter, within 1,024 units of the player and detecting them,
   says its Idle line to them; one line of chatter at a time (TODO(M13)). The Idle infos weigh

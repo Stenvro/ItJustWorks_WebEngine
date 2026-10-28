@@ -419,7 +419,7 @@ describe('scene phases and actions', () => {
     expect(test.only('say')).toEqual(['say 64 900']);
   });
 
-  it('says a Face Target line all the same once its speaker cannot turn for 3 seconds', async () => {
+  it('waits for a Face Target line with no time limit while its speaker turns', async () => {
     const test = setup(
       [
         scene(0x10, {
@@ -433,10 +433,10 @@ describe('scene phases and actions', () => {
       () => ({ faces: () => false }),
     );
     test.director.start(0x10);
-    for (let i = 0; i < 20; i++) await test.tick();
+    // The engine waits as long as the speaker turns (the host's faces says when it no longer
+    // does: src/ai/talk.ts sceneLineFaces).
+    for (let i = 0; i < 60; i++) await test.tick();
     expect(test.only('say')).toEqual([]);
-    for (let i = 0; i < 12; i++) await test.tick();
-    expect(test.only('say')).toEqual(['say 64 900']);
   });
 
   it('says a looping line again until its phase ends', async () => {
@@ -642,6 +642,8 @@ describe('scene starts, stops and behaviour', () => {
     await test.tick();
     await test.tick();
     expect(test.only('say').length).toBeGreaterThanOrEqual(2);
+    // It plays again without ending (read from the engine): no end or second begin between.
+    expect(test.told.filter((told) => told.endsWith(' 11'))).toEqual(['begin 11']);
     test.truths.delete(8);
     await test.tick();
     await test.tick();
@@ -673,6 +675,7 @@ describe('random scenes (the Actor Dialogue event)', () => {
         return true;
       },
       randomSceneAgain: () => 3,
+      randomSceneLinger: () => 0,
     }));
     test.running.add(OTHER_QUEST);
     test.slow.add(0x720);
@@ -691,6 +694,20 @@ describe('random scenes (the Actor Dialogue event)', () => {
     await test.tick();
     // The pause drawn as the first began is cleared as it ends (read from the engine).
     expect(test.director.randomScene).toBe(0x21);
+  });
+
+  it('lingers fAIWalkAwayTimerForConversation past its last phase before it ends', async () => {
+    const test = setup([talk(0x20, QUEST)], () => ({
+      randomScene: () => true,
+      randomSceneStarts: () => true,
+      randomSceneLinger: () => 2,
+    }));
+    test.director.start(0x20);
+    for (let i = 0; i < 5; i++) await test.tick();
+    expect(test.only('say')).toEqual(['say 64 720']);
+    expect(test.director.isPlaying(0x20)).toBe(true);
+    for (let i = 0; i < 20; i++) await test.tick();
+    expect(test.director.isPlaying(0x20)).toBe(false);
   });
 
   it('waits a second when an actor of it plays in another scene', async () => {
