@@ -122,7 +122,7 @@ describe('the engine’s own packages (no record holds them)', () => {
   );
   it.todo(
     'Movement Blocked: off while bUseMovementBlockedPackage:General is 0, its built-in value ' +
-      '(the engine's defaults); what it does when on is to be observed in the original',
+      '(the engine’s defaults); what it does when on is to be observed in the original',
   );
 });
 

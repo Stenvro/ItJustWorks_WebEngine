@@ -114,22 +114,16 @@ describe('weapon damage (formula)', () => {
   });
 
   it.todo('weapon damage = (base + tempering) × (1 + skill / 200) × perks (UESP Damage)  [UESP]');
-  it.todo(
-    'unarmed: the race’s unarmed damage + gauntlets, × fDamageUnarmedPenalty?  [settings]',
-  );
+  it.todo('unarmed: the race’s unarmed damage + gauntlets, × fDamageUnarmedPenalty?  [settings]');
   it.todo(
     'the attacker’s Attack Damage Mult actor value (154) multiplies the damage  [CommonLibSSE]',
   );
   it.todo('NPC sneak attacks on the player and on NPCs (the attacker undetected)  [UESP Sneak]');
-  it.todo(
-    'fCombatSneakAttackBonusMult (Skyrim.esm 100) and the sneak attack messages  [settings]',
-  );
+  it.todo('fCombatSneakAttackBonusMult (Skyrim.esm 100) and the sneak attack messages  [settings]');
   it.todo(
     'armour: rating × fArmorScalingFactor%, at most fMaxArmorRating (80 with Skyrim.esm)  [UESP]',
   );
-  it.todo(
-    'fDamageToArmorPercentage and weapon and armour condition (fDamage*Cond*)  [settings]',
-  );
+  it.todo('fDamageToArmorPercentage and weapon and armour condition (fDamage*Cond*)  [settings]');
 });
 
 describe('critical hits (formula)', () => {
@@ -193,7 +187,9 @@ describe('blocks (formula)', () => {
     expect(result.blockedDamage).toBeCloseTo(9.8);
   });
 
-  it.todo('the skill’s factor on a block (ours: fArmorRatingMax − Base) is the engine’s  [original]');
+  it.todo(
+    'the skill’s factor on a block (ours: fArmorRatingMax − Base) is the engine’s  [original]',
+  );
   it.todo('the block cap (ours 0.85; fBlockMax 0.75 has no reader in the engine)  [original]');
 });
 
@@ -266,7 +262,9 @@ describe('staggers (formula, read from the engine)', () => {
     expect(blockStagger(true, 30, settings)).toBeCloseTo(0.001 + 30 * 0.005);
   });
 
-  it.todo('the blocked-hit stagger’s other terms (fStaggerBlockAttack*, the mass offset)  [original]');
+  it.todo(
+    'the blocked-hit stagger’s other terms (fStaggerBlockAttack*, the mass offset)  [original]',
+  );
   it.todo('fStaggerMaxDuration (3 s): a stagger lasts at most this  [settings]');
   it.todo('fStaggerDaggerAR, fStagger1WeapAR, fStagger2WeapAR, fStaggerBowAR  [settings]');
   it.todo('a Stagger effect weighed by the Mass actor value as a hit is  [original]');

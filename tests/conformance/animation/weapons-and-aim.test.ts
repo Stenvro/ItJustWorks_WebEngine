@@ -49,5 +49,7 @@ describe.skipIf(!hasGamedata())('the weapons’ graph events (data)', () => {
 describe('weapons and aim (todo)', () => {
   it.todo('the player’s casting pitch: the aim reads the camera’s PitchOverride flag  [original]');
   it.todo('a crossbow’s bolt leaves from its launch node (the weapon model’s node)  [original]');
-  it.todo('the arms aim along an aimed cast (BSDirectAtModifier) by the engine’s target  [original]');
+  it.todo(
+    'the arms aim along an aimed cast (BSDirectAtModifier) by the engine’s target  [original]',
+  );
 });

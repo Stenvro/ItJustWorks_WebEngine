@@ -54,7 +54,9 @@ describe('yielding (formula)', () => {
 });
 
 describe('the controller (todo)', () => {
-  it.todo('a fight draws its confidence modifier in fCombatConfidenceModifierMin .. Max  [original]');
+  it.todo(
+    'a fight draws its confidence modifier in fCombatConfidenceModifierMin .. Max  [original]',
+  );
   it.todo('the first taunt after fCombatDialogueTauntMin .. MaxElapsedTime  [original]');
   it.todo('per-behaviour timers (fCombat*UpdateTime) instead of every frame  [settings]');
   it.todo('the fight ends when no target is left: the search, then the stand-down  [original]');
