@@ -18,6 +18,13 @@ const ALVOR = 0x13482;
 const CHARGEN_EXIT = 0xd19aa;
 /** MQ102HadvarAlvorScene (stage 35 starts it). */
 const ALVOR_SCENE = 0x2bfac;
+/** Where the player waits inside Alvor's door (his house). */
+const BY_ALVORS_DOOR: [number, number, number] = [-537, -231, 241];
+/** WhiterunWorld and Dragonsreach (WhiterunDragonsreach). */
+const WHITERUN = 0x1a26f;
+const DRAGONSREACH = 0x165a3;
+/** Irileth (her force greet in MQ102DragonsreachScene). */
+const IRILETH = 0x1a67f;
 /** Alvor's MQ102A topic that sets stage 50. */
 const SUPPLIES = 'Do you have any supplies I could take?';
 
@@ -35,6 +42,8 @@ async function keepBy(sim: Sim, actor: number, reach: number): Promise<void> {
 describe.skipIf(!hasGamedata())('MQ102 Before the Storm (Hadvar’s route)', () => {
   /** The game as the first segment left it, in Riverwood (MQ102A 35). */
   let inRiverwood: Uint8Array | undefined;
+  /** The game as the second left it: sent to the Jarl (MQ102 30). */
+  let toWhiterun: Uint8Array | undefined;
 
   it('leaves Helgen with Hadvar and walks with him to Riverwood (MQ102 15, 10; MQ102A 35)', async () => {
     const sim = await openSim({ opening: true });
@@ -74,7 +83,11 @@ describe.skipIf(!hasGamedata())('MQ102 Before the Storm (Hadvar’s route)', () 
   // Found 2026-10-28: stage 35 started MQ102HadvarAlvorScene, which waited for ever for Dorthe:
   // the Riverwood kids' play scene holds her in its first phase (no action) until she and
   // Frodnar meet. A scene now takes an actor whose other scene has nothing running on it.
-  it('plays Hadvar and Alvor’s scene into the house; Alvor sends the player to Whiterun (MQ102 30)', async () => {
+  // Found 2026-10-28: in phase 26 Alvor's force greet gave up its travel to the player by the
+  // door once a second: the player stood a few units off the navmesh, and a path to a point off
+  // it ended short, never complete. Such a path now ends at the navmesh's nearest point within
+  // the arrival radius (src/shell/actor-movers.ts, navGoal).
+  it('plays Hadvar and Alvor’s scene into the house; Alvor comes to the player by the door and sends them to Whiterun (MQ102 30)', async () => {
     expect(inRiverwood).toBeDefined();
     if (!inRiverwood) return;
     const sim = await loadSim(inRiverwood);
@@ -86,38 +99,81 @@ describe.skipIf(!hasGamedata())('MQ102 Before the Storm (Hadvar’s route)', () 
         const hadvar = await sim.runtime.placement(HADVAR);
         if (!inside && hadvar && hadvar.world === undefined && hadvar.cell !== undefined) {
           await sim.openInterior(hadvar.cell);
+          await sim.moveTo(BY_ALVORS_DOOR);
           inside = true;
         } else if (!inside) await keepBy(sim, HADVAR, 300);
       }
       expect(sim.stageDone(MQ102A, 45)).toBe(true);
       expect(sim.stageDone(MQ102A, 47)).toBe(true);
       expect(sim.runtime.scenes.isPlaying(ALVOR_SCENE)).toBe(true);
-      // The player walks up to Alvor and talks to him: his quest topic sets MQ102A 50, and that
-      // MQ102 30 (the Jarl's objective).
-      const at = await sim.position(ALVOR);
-      if (at) await sim.moveTo([at[0] + 90, at[1], at[2] + 10]);
-      expect(await sim.talk(ALVOR)).toContain(SUPPLIES);
+      // The player waits by the door; in phase 26 Alvor comes to them (MQ102AlvorForceGreet) and
+      // talks: his quest topic sets MQ102A 50, and that MQ102 30 (the Jarl's objective).
+      expect(await sim.listen(ALVOR, 120)).toContain(SUPPLIES);
       await sim.choose(SUPPLIES);
       sim.goodbye();
       await sim.step(1);
       expect(sim.stageDone(MQ102A, 50)).toBe(true);
       expect(sim.stageDone(MQ102, 30)).toBe(true);
       expect(sim.runtime.state.quest(MQ102).objectives.get(30)?.displayed).toBe(true);
+      await sim.step(1);
+      toWhiterun = await sim.save();
     } finally {
       await sim.close();
     }
   }, 600_000);
 
-  // Found 2026-10-28, still open: in phase 26 of MQ102HadvarAlvorScene Alvor runs
-  // MQ102AlvorForceGreet (ForceGreet: to the player, then the conversation with its topic), but
-  // never reaches the player standing by the door (-537, -231, 241 in his house; Alvor at -580,
-  // -42): its travel ends false about once a second (not stuck, not replaced or stopped, the
-  // space check holds), so the procedure only waits and asks again. Next: which of the movers'
-  // ends gives that travel up (the walker's path search in src/shell/actor-movers.ts, or a start
-  // off the navmesh). The case above has the player walk up to him instead.
-  // Further on, not driven yet: Whiterun's gate guards (MQ102 75..100), Irileth and Balgruuf in
-  // Dragonsreach (110, 150: MQ103 8), Farengar (MQ102 160, MQ103 10), then MQ103 in Bleak Falls
-  // Barrow (the bandits, Arvel in the web, the pillar puzzles, the claw door, the Dragonstone),
-  // and Ralof's route (MQ102B).
-  it.todo('has Alvor force-greet the player in his house (phase 26), then Whiterun and MQ103');
+  // Found 2026-10-28: Irileth's force greet (MQ102IrilethForcegreetPlayer) ended its travel with
+  // the player 320 units off, past the 300 its ForceGreet branch asks (the path had ended at the
+  // navmesh point nearest the player, and she arrived within 300 of that), so the branch was
+  // skipped and the package done. And her blocking branch (MQ102IrilethForcegreet, "I need to
+  // speak to the Jarl...") was never offered: conversations started only from top-level
+  // branches, and the Creation Kit's Blocking type is not flagged top-level (996 branches).
+  it('goes into Dragonsreach, where Irileth stops the player before the Jarl (MQ102 75, 80, 90, 100)', async () => {
+    expect(toWhiterun).toBeDefined();
+    if (!toWhiterun) return;
+    const sim = await loadSim(toWhiterun);
+    try {
+      // Into the city by its gate (as one who opened it: see the todo below for the gate
+      // guard), then into Dragonsreach, whose cell sets MQ102 75 (MQ102DragonsreachScene).
+      await sim.world.openExterior(WHITERUN, {
+        arrival: { position: [19567, -7233, -3540], heading: Math.PI / 4 },
+      });
+      await sim.step(1);
+      await sim.openInterior(DRAGONSREACH);
+      await sim.step(1);
+      expect(sim.stageDone(MQ102, 75)).toBe(true);
+      // Up the hall to the throne, through MQ102SetStage80 (the scene's phase 0 waits for it).
+      await sim.moveTo([-374, 1450, 100]);
+      await sim.walkTo([-383, 2600, 10], 8, 150);
+      expect(sim.stageDone(MQ102, 80)).toBe(true);
+      // Irileth comes and stops them; the player tells her of Helgen (MQ102 90, 100).
+      expect(await sim.listen(IRILETH, 30)).toEqual(['I need to speak to the Jarl...']);
+      expect(await sim.choose('speak to the Jarl')).toContain(
+        'I have news from Helgen. About the dragon attack.',
+      );
+      await sim.choose('news from Helgen');
+      sim.goodbye();
+      await sim.step(1);
+      expect(sim.stageDone(MQ102, 90)).toBe(true);
+      expect(sim.stageDone(MQ102, 100)).toBe(true);
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+
+  // Still open (2026-10-28): Whiterun's gate guard (GuardWhiterunImperialGate1REF, 0xdc9e4) is a
+  // temporary actor of a WhiterunWorld cell (26748, 1606, the Cloud District), where
+  // WhiterunGateGuardTravel sits him. His WhiterunGateGuardForcegreet (while
+  // DialogueWhiterunGuardGateStop 10 is not done) waits at WhiterunGateGuard (0xd1986) in Tamriel,
+  // outside the gate, and greets the player in its 2,000-unit trigger. With the player outside
+  // the gate he never comes: his cell is not loaded and he is not persistent, so the actors away
+  // (src/shell/actors-away.ts) never ask where his package has him (the package start would now
+  // know: src/ai/package-start.ts). UESP has him outside the gate. Next: how the engine brings a
+  // temporary actor whose package lies in another worldspace there (original); then the case: "Halt!",
+  // "Riverwood calls for the Jarl's aid" (82, which sets MQ102 100), the gate unlocked.
+  // Further on, not driven yet: Balgruuf (MQ102 110, 150: MQ103 8; MQ102DragonsreachScene was in
+  // its phase 2 after Irileth), Farengar (MQ102 160, MQ103 10), then MQ103 in Bleak Falls Barrow
+  // (the bandits, Arvel in the web, the pillar puzzles, the claw door, the Dragonstone), and
+  // Ralof's route (MQ102B).
+  it.todo('has the gate guard stop the player outside Whiterun (MQ102 82, 100)');
 });
