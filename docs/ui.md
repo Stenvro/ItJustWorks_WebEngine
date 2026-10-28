@@ -158,7 +158,9 @@ button's onPress): a call into another menu then answers undefined and does noth
 mode). The host runs such calls once that call has returned (a microtask), in order; calls into
 the menu whose call runs work at once.
 
-The engine tells each menu its platform (`SetPlatform(0, false)`: PC with keyboard and mouse);
+The engine tells each menu its platform (`SetPlatform(0, false)`: PC with keyboard and mouse;
+1 with a gamepad, `src/ui/input-platform.ts`), and every open menu again as the device last used
+changes the platform (`Menu.tellPlatform`);
 the start menu then shows the mouse version of its buttons, and `ShowDeleteButtonHelp(false)`
 hides the delete-save hint while there is no save. PRESS ANY BUTTON (property 3) is not shown:
 the menu opens on its list.
@@ -716,11 +718,21 @@ Bunny Faction (AWWW); Mauls a kill in beast form. The vanilla scripts count the 
 (Game.IncrementStat): Side Quests and Questlines Completed, Werewolf Transformations, Necks
 Bitten, Horses and Houses Owned, Stores Invested In, Persuasions, Bribes, Intimidations, Standing
 Stones Found, Brawls Won, Nirnroots Found, Wings Plucked. Souls Trapped counts each soul the
-player traps (SoulsTrapped). TODO(M13): the engine's other combat and magic counts are not wired
-yet: Critical Strikes (CriticalHit), Sneak Attacks and Backstabs, Weapons Disarmed (Disarmed),
-Dragon Souls Collected (DragonSoulGained), Shouts Mastered (ShoutMastered), Soul Gems Used,
-Poisons Used (PoisonedWeapon) and Diseases Contracted (ContractedDisease; Survival's script
-counts its own).
+player traps (SoulsTrapped). The combat and magic counts come from the hub's events of the
+engine's sources (observed in the original): the engine sends a CriticalHit for each critical hit and each
+sneak attack the player lands on a living actor (a sneak critical sends both); each counts in
+Critical Strikes, a sneak attack's in Sneak Attacks too, and either in Backstabs when the player
+holds any Mod Sneak Attack Mult perk entry and strikes with fists, a one-handed weapon or a staff.
+The player's critical is told "sCriticalStrike <target>", a sneak attack "Sneak attack for 3.0X
+damage!" (sSuccessfulSneakAttackMain/End), both with UISneakAttack and not again within 5 s
+(`src/shell/actor-combat.ts`); a sneak attack uses Sneak by fSneakAttackSkillUsageMelee (20) or,
+with a bow or crossbow, fSneakAttackSkillUsageRanged (2.5). Weapons Disarmed: a disarm the
+player causes (DisarmedEvent); Dragon Souls Collected: each rise of the player's DragonSouls
+(the absorption's ModActorValue; DragonSoulGained); Shouts Mastered: a word unlocked (the magic
+menu, Game.UnlockWord) that completes a shout (ShoutMastered); Soul Gems Used: a gem used up
+recharging or enchanting; Poisons Used: a poison put on the player's weapon (PoisonedWeapon);
+Diseases Contracted: a disease the player catches (ContractedDisease; Survival's script counts
+its own).
 
 System: the menu lists Quicksave, Save, Load, Installed Content, Settings, Controls, Help and
 Quit. Quit to the main menu ends the game and opens its main menu; quit to the desktop leaves
@@ -1276,6 +1288,13 @@ engine's.
   unless bWorldMapNoSkyDepthBlur. The clouds are the map world's WRLD MODL
   (Solstheim: `DLC02\Sky\DLC2WorldMapCloudBank_Low.nif`). Tamriel has none and gets
   `meshes\sky\skyrimworldmapcloudbank.nif`, which no record names.
+- **The relief overlay** (TODO(M13), not drawn yet). The engine lays a tiling normal map over
+  the map's LOD land: [MapMenu] sWorldMapOverlayNormalTexture
+  (`textures\terrain\worldmapoverlay_n.dds`) at fMapMenuOverlayScale (0.000035) a world unit,
+  strength fMapMenuOverlayNormalStrength (1.1); on snow sWorldMapOverlayNormalSnowTexture
+  (`worldmapoverlaysnow_n.dds`) at fMapMenuOverlaySnowScale (0.000045), strength
+  fMapMenuOverlayNormalSnowStrength (0.4). Still to read: how the lighting shader's world-map
+  path tells snow and blends the two normals into the LOD land's.
 - **Which map.** A world shows its map world's map: its parent's when it uses the parent's map
   data (WRLD PNAM 0x4, as Whiterun's world uses Tamriel's), else its own (WRLD MNAM). Its places
   are moved onto that map by WRLD ONAM: position × scale + offset. Blackreach is scaled 2.5 under

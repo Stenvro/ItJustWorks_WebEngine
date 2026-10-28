@@ -21,6 +21,19 @@ export function setInputPlatform(platform: number): void {
   for (const listener of listeners) listener(platform);
 }
 
+/**
+ * Tells a movie its platform by its SetPlatform at `path` (iPlatform, then `args`), now and
+ * again whenever the platform changes; returns a function that stops it (the menu closed).
+ */
+export function followPlatform(
+  invoke: (path: string, ...args: unknown[]) => unknown,
+  path: string,
+  args: readonly unknown[] = [false],
+): () => void {
+  invoke(path, current, ...args);
+  return onInputPlatform((platform) => invoke(path, platform, ...args));
+}
+
 /** Told when the platform changes; returns a function that stops it. */
 export function onInputPlatform(listener: (platform: number) => void): () => void {
   listeners.add(listener);
