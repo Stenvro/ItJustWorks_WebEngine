@@ -243,6 +243,8 @@ export interface CombatBridge {
   paralyze(actor: number, on: boolean): void;
   /** Grab Actor: the target hangs as its ragdoll before its caster while it lasts. */
   grabActor(caster: number | undefined, target: number, on: boolean): void;
+  /** Actor.ClearExtraArrows: the arrows stuck in an actor's body go. */
+  clearExtraArrows(actor: number): void;
 }
 
 /**
@@ -929,6 +931,10 @@ export class ScriptWorld implements WorldBridge {
 
   grabActor(caster: number | undefined, target: number, on: boolean): void {
     for (const fights of this.#fights()) fights.grabActor(caster, target, on);
+  }
+
+  clearExtraArrows(actor: number): void {
+    for (const fights of this.#fights()) fights.clearExtraArrows(actor);
   }
 
   furnitureInUse(furniture: number, marker?: number): boolean {

@@ -7,14 +7,21 @@
 // sticks fCombatMissileStickDepth deep where it hit if the surface's material lets arrows stick
 // (MATT "Arrows Stick": wood, earth, snow, cloth, flesh; not stone, metal or glass), else it
 // drops there: either way an arrow lying there to pick up (a reference of the ammunition), at
-// most 15 of them (the oldest goes).
+// most 15 of them (the oldest goes). One that hits an actor stays stuck in its body (the
+// engine's ExtraAttachedArrows3D: drawn only, no reference): its model where it struck, as deep
+// as one in the world, on the body's node nearest the hit and moving with it, for
+// fAttachedArrowAgeMax seconds, at most iMaxAttachedArrows in one actor (the oldest goes);
+// Actor.ClearExtraArrows takes an actor's away at once (clearAttached).
 
 import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
+import { invert } from '../render/frustum.ts';
 import type { RenderPort } from '../render/render-port.ts';
 import type { GpuModel, GpuScene, InstanceMotion } from '../render/scene-renderer.ts';
-import type { Vec3 } from '../render/math.ts';
+import { multiply, type Mat4, type Vec3 } from '../render/math.ts';
+import { nearestNode, type BleedingBody } from './combat-impacts.ts';
 import {
+  expiredArrows,
   fly,
   homeOn,
   launch,
@@ -39,10 +46,24 @@ interface Shot {
   readonly world: Float32Array;
   readonly motion: InstanceMotion;
   scene: GpuScene | undefined;
+  /** Its model, once loaded (an arrow stuck in an actor draws it too). */
+  model: GpuModel | undefined;
   /** Whatever the shot carries for its hit (its damage, its draw). */
   readonly payload: unknown;
   /** An Always Hit shot's target point now (it flies onto it), while there is one. */
   readonly homing: (() => Vec3 | undefined) | undefined;
+}
+
+/** An arrow stuck in an actor's body, kept on the node nearest where it struck. */
+interface StuckInActor {
+  readonly target: number;
+  readonly until: number;
+  readonly node: number;
+  /** Its place in the node's space. */
+  readonly local: Mat4;
+  readonly world: Float32Array;
+  readonly motion: InstanceMotion;
+  readonly scene: GpuScene;
 }
 
 /** An actor a shot may hit (the player's shape is tested apart: it has no bodies). */
@@ -77,6 +98,10 @@ export interface ProjectileOptions {
   ) => void;
   /** fCombatMissileStickDepth: how deep an arrow sticks (game units). */
   readonly stickDepth: () => number;
+  /** An actor's posed body now (an arrow stuck in it follows its nodes), if it has one shown. */
+  readonly body?: (reference: number) => BleedingBody | undefined;
+  /** fAttachedArrowAgeMax (seconds) and iMaxAttachedArrows: arrows stuck in actors. */
+  readonly attachedArrows?: () => { readonly ageMax: number; readonly max: number };
   /** Shapes tested as such (the player), with their reference. */
   readonly shapes: () => Iterable<ShotTarget>;
 }
@@ -93,6 +118,10 @@ export class CombatProjectiles {
   readonly #shots: Shot[] = [];
   /** The arrows lying where they hit (references made for them), oldest first. */
   readonly #stuck: number[] = [];
+  /** The arrows stuck in actors, oldest first. */
+  #attached: StuckInActor[] = [];
+  /** Seconds of frames so far (when stuck arrows go). */
+  #clock = 0;
   readonly #models = new Map<string, Promise<GpuModel | undefined>>();
   /** The gameplay impulses' settings (src/gameplay/impulses.ts), once read. */
   readonly #impulses: ReturnType<typeof loadImpulseSettings>;
@@ -105,6 +134,7 @@ export class CombatProjectiles {
   /** The shots' scenes. */
   *scenes(): Iterable<GpuScene> {
     for (const shot of this.#shots) if (shot.scene) yield shot.scene;
+    for (const arrow of this.#attached) yield arrow.scene;
   }
 
   /** Looses a shot from a point along an aim (unit), at its projectile's speed × the draw. */
@@ -128,6 +158,7 @@ export class CombatProjectiles {
       world: new Float32Array(16),
       motion: { version: 0 },
       scene: undefined,
+      model: undefined,
       payload: shot.payload,
       homing: shot.homing,
     };
@@ -136,6 +167,7 @@ export class CombatProjectiles {
     const path = shot.projectile.model;
     const model = path === undefined ? undefined : await this.#model(meshPath(path));
     if (model && this.#shots.includes(entry)) {
+      entry.model = model;
       entry.scene = this.#options.renderer.scene.createScene([
         { model, world: entry.world, motion: entry.motion },
       ]);
@@ -172,6 +204,8 @@ export class CombatProjectiles {
 
   frame(seconds: number, physics: PhysicsWorld | undefined): void {
     if (seconds <= 0) return;
+    this.#clock += seconds;
+    this.#follow();
     for (const shot of [...this.#shots]) {
       let left = seconds;
       while (left > 0) {
@@ -249,6 +283,73 @@ export class CombatProjectiles {
       direction,
       payload: shot.payload,
     });
+    this.#attach(shot, target, from, direction, along);
+  }
+
+  /** The arrow stays stuck in the actor it hit, on the body's node nearest the hit. */
+  #attach(shot: Shot, target: number, from: Vec3, direction: Vec3, along: number): void {
+    const body = this.#options.body?.(target);
+    const limits = this.#options.attachedArrows?.();
+    if (!shot.model || !body || !limits || limits.max <= 0) return;
+    const point: Vec3 = [
+      from[0] + direction[0] * along,
+      from[1] + direction[1] * along,
+      from[2] + direction[2] * along,
+    ];
+    const node = nearestNode(body, point);
+    const nodeWorld = attachedNode(body, node);
+    const inverse = nodeWorld && invert(nodeWorld);
+    if (!inverse) return;
+    // As deep as one stuck in the world (#stick), along its flight.
+    const depth = this.#options.stickDepth() * 0.5;
+    const at = new Float32Array(16);
+    orient(at, direction, [
+      point[0] - direction[0] * depth,
+      point[1] - direction[1] * depth,
+      point[2] - direction[2] * depth,
+    ]);
+    const world = new Float32Array(at);
+    const motion: InstanceMotion = { version: 0 };
+    const scene = this.#options.renderer.scene.createScene([{ model: shot.model, world, motion }]);
+    if (!scene) return;
+    this.#attached.push({
+      target,
+      until: this.#clock + limits.ageMax,
+      node,
+      local: multiply(inverse, at),
+      world,
+      motion,
+      scene,
+    });
+    this.#follow();
+  }
+
+  /** The arrows stuck in actors follow their nodes; the old, the extra and the orphaned go. */
+  #follow(): void {
+    if (this.#attached.length === 0) return;
+    const limits = this.#options.attachedArrows?.() ?? { ageMax: 0, max: 0 };
+    const gone = new Set(
+      expiredArrows(this.#attached, this.#clock, limits.max, (target) =>
+        Boolean(this.#options.body?.(target)),
+      ),
+    );
+    for (const arrow of gone) arrow.scene.destroy();
+    if (gone.size > 0) this.#attached = this.#attached.filter((arrow) => !gone.has(arrow));
+    for (const arrow of this.#attached) {
+      const body = this.#options.body?.(arrow.target);
+      const nodeWorld = body && attachedNode(body, arrow.node);
+      if (!nodeWorld) continue;
+      arrow.world.set(multiply(nodeWorld, arrow.local));
+      arrow.motion.version++;
+    }
+  }
+
+  /** Actor.ClearExtraArrows: the arrows stuck in an actor go (every actor's, without one). */
+  clearAttached(target?: number): void {
+    for (const arrow of this.#attached)
+      if (target === undefined || arrow.target === target) arrow.scene.destroy();
+    this.#attached =
+      target === undefined ? [] : this.#attached.filter((arrow) => arrow.target !== target);
   }
 
   /**
@@ -297,12 +398,25 @@ export class CombatProjectiles {
 
   clear(): void {
     for (const shot of [...this.#shots]) this.#end(shot);
+    this.clearAttached();
   }
 }
 
 /** A shot's model along its flight (its +Y forward). */
 function place(shot: Shot): void {
-  const { heading, pitch } = pointing(shot.flight.velocity);
+  orient(shot.world, shot.flight.velocity, shot.flight.position);
+  shot.motion.version++;
+}
+
+/** A body's node in the world (its pose's node in its model's world), if it has that node. */
+function attachedNode(body: BleedingBody, node: number): Mat4 | undefined {
+  if (node < 0 || node * 16 + 16 > body.pose.worlds.length) return undefined;
+  return multiply(body.world, body.pose.worlds.subarray(node * 16, node * 16 + 16));
+}
+
+/** An arrow's model at a point, its +Y along a direction. */
+function orient(out: Float32Array, direction: Vec3, position: Vec3): void {
+  const { heading, pitch } = pointing(direction);
   const ch = Math.cos(heading);
   const sh = Math.sin(heading);
   const cp = Math.cos(pitch);
@@ -311,8 +425,8 @@ function place(shot: Shot): void {
   const forward = [sh * cp, ch * cp, sp];
   const right = [ch, -sh, 0];
   const up = [-sh * sp, -ch * sp, cp];
-  const [x, y, z] = shot.flight.position;
-  shot.world.set([
+  const [x, y, z] = position;
+  out.set([
     right[0] ?? 0,
     right[1] ?? 0,
     right[2] ?? 0,
@@ -330,7 +444,6 @@ function place(shot: Shot): void {
     z,
     1,
   ]);
-  shot.motion.version++;
 }
 
 /** Where along a segment (0..length) it enters an upright cylinder, or undefined. */

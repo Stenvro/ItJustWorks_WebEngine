@@ -513,6 +513,15 @@ export class ActorCombat implements CombatBridge {
       session: options.session,
       renderer: options.renderer,
       stickDepth: () => this.#settings.missileStickDepth,
+      body: (reference) => {
+        const body = this.#fighters.get(reference)?.body;
+        const first = body?.instances[0];
+        return body && first && { world: first.world, pose: body.pose };
+      },
+      attachedArrows: () => ({
+        ageMax: this.#settings.attachedArrowAgeMax,
+        max: this.#settings.maxAttachedArrows,
+      }),
       shapes: () => this.#playerShape(),
       onActorHit: (shot) => {
         const payload = shot.payload as ShotPayload;
@@ -4152,6 +4161,11 @@ export class ActorCombat implements CombatBridge {
    * (as an explosion's knock-down pushes), falls and gets up. TODO(M13): the engine holds it
    * before the camera (the player's grab); an NPC caster's hold is taken as before its chest.
    */
+  /** Actor.ClearExtraArrows: the arrows stuck in its body go (combat-projectiles.ts). */
+  clearExtraArrows(actor: number): void {
+    this.#projectiles.clearAttached(actor);
+  }
+
   grabActor(caster: number | undefined, target: number, on: boolean): void {
     const knockdowns = this.#options.knockdowns?.();
     if (!knockdowns || target === PLAYER_REF) return;
