@@ -147,6 +147,16 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   its length to those that do not swim, preferred triangles (roads) half. A goal that cannot be
   reached (another island, past 20,000 triangles) gives the path to where the search came
   nearest to it.
+- **Off the navmesh** (`ActorMovers`): a travel from a point off the navmeshes begins at their
+  nearest point within 512 units. One to a point off them (the player by a door stands a few
+  units past the navmesh's edge) ends at their nearest point if that is within the travel's
+  arrival radius of the point, and is arrived at that much nearer, so the actor ends within its
+  radius of the point itself. Searched to the point itself, the path ended short of it, never
+  complete, and the travel was given up: Alvor's force greet in his house (MQ102A) never reached
+  the player by his door. Arrived within its radius of the navmesh's point only, Irileth's force
+  greet stopped 320 units from the player, past the 300 its ForceGreet branch asks, and her
+  package ended without a word (tests/sim-before-the-storm.int.test.ts). TODO(M13): how the
+  engine's search takes a goal off the navmesh.
 - **The way** is pulled tight through the edges the triangles' chain crosses (the simple stupid
   funnel), each edge narrowed by the actor's radius at both ends (its controller's), so it turns
   round corners an actor's width off them.
@@ -831,7 +841,14 @@ one actor, `--audit` for cells):
   that do not start with the game are at stage 0 with no stage done. Those that do (QUST DNAM
   0x01) have their start-up stage done. Where a script fragment runs on that stage, its effects
   are not known, nor are quest aliases' packages (ALPC; they run before the actor's own) until
-  the Papyrus VM runs the quests (M8).
+  the Papyrus VM runs the quests (M8). GetWithinPackageLocation is valued for the actor (where
+  it is placed) and, run on package data, for the player a data input names (where the running
+  game has them), against a location input near a reference. GetDetected and
+  IsPlayerMovingIntoNewSpace are 0: an actor the start places is not on the stage, where its
+  senses run. So the ForceGreet template (Whiterun's gate guard: to the player once detected or
+  once the player is in its trigger, else to its wait location) sends the actor to its wait
+  location while the player is away, and greets where it is once they are in its trigger
+  (`src/ai/package-start.test.ts`). TODO(M13): the low process's own values for these.
 - **Not decided** where a condition is not known (random chance, the player's state, package
   data, alias references), a Random branch chooses, a linked reference is missing (the Civil
   War scripts link guards to their posts during sieges) or the place is found by searching
