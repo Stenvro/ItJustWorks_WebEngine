@@ -102,6 +102,8 @@ export type SimRecord =
       readonly text?: string;
       readonly buttons?: readonly string[];
       readonly reference?: number;
+      /** A conversation's opening topic (a package's ForceGreet). */
+      readonly topic?: number;
     };
 
 export type SimRecordKind = SimRecord['kind'];
@@ -325,12 +327,13 @@ export class SimLog {
       return Promise.resolve(this.answers.shift() ?? 0);
     },
     userEvent: () => undefined,
-    talk: (speaker: PlacedActor) => {
+    talk: (speaker: PlacedActor, opening?: number) => {
       this.#push({
         kind: 'menu',
         at: this.clock(),
         menu: 'Dialogue Menu',
         reference: speaker.actor.reference,
+        ...(opening !== undefined && { topic: opening }),
       });
     },
     container: (reference, closed) => {

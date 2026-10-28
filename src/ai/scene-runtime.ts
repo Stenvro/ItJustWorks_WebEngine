@@ -165,7 +165,7 @@ export interface SavedScene {
 
 export interface SavedScenes {
   readonly playing: readonly SavedScene[];
-  /** Starts waiting for their actors: [scene, forced]. */
+  /** Starts not begun yet, or waiting for their actors: [scene, forced]. */
   readonly waiting: readonly (readonly [number, boolean])[];
 }
 
@@ -534,7 +534,11 @@ export class SceneDirector {
    */
   saveData(): SavedScenes {
     const playing: SavedScene[] = [];
+    // A scene started but not begun yet (Scene.Start marks it active; it begins in the scene
+    // system's next update) is kept as a start: loaded, it begins then.
+    const starting: (readonly [number, boolean])[] = [];
     for (const scene of this.#playing.values()) {
+      if (scene.state === 'starting') starting.push([scene.formId, scene.force]);
       if (!live(scene)) continue;
       playing.push({
         scene: scene.formId,
@@ -553,7 +557,10 @@ export class SceneDirector {
     }
     return {
       playing,
-      waiting: [...this.#waiting].map(([scene, waiting]) => [scene, waiting.force] as const),
+      waiting: [
+        ...starting,
+        ...[...this.#waiting].map(([scene, waiting]) => [scene, waiting.force] as const),
+      ],
     };
   }
 

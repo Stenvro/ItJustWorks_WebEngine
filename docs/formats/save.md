@@ -78,7 +78,9 @@ the world loads again, as the original's change forms hold it (nothing of the re
   references.
 
 `RuntimeSave.scenes` (`SceneDirector.saveData`): each playing scene's phase, cast, clock and
-actions (status, done, a timer's seconds left), and the starts waiting for their actors. On load
+actions (status, done, a timer's seconds left), and the starts waiting for their actors or not
+begun yet (Scene.Start marks a scene active; it begins in the scene system's next update: a save
+taken between keeps it as a start, and the loaded game begins it). On load
 a scene plays on in its phase (IsPlaying is true at once): its begin and that phase's start
 fragments do not run again, its actions not done start again (a line is said again, a package
 action gives its package again, a timer runs on), those done that still run keep their looks.

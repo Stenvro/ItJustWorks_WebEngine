@@ -26,6 +26,7 @@ export type DefaultMovement = keyof typeof DefaultMovementUse;
 /** What a race says about how it moves (RACE, parseRaceCombat). */
 export type RaceMovement = Pick<
   RaceCombat,
+  | 'flags'
   | 'movementTypes'
   | 'movementOverrides'
   | 'accelerationRate'
