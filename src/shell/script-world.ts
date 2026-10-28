@@ -201,6 +201,8 @@ export interface ScriptView {
   >;
   /** AddDependentAnimatedObjectReference and its Remove (false: the view does not hold it). */
   dependentAnimated?(reference: number, dependent: number, added: boolean): boolean;
+  /** SetAlpha on an actor of the view (its alpha is the game state's): with a fade or at once. */
+  alphaSet?(actor: number, fade: boolean): void;
   /** Vehicles and mounts of the view (src/shell/actor-vehicles.ts, actor-mounts.ts). */
   vehicleChanged?(actor: number): void;
   tether?(cart: number, horse: number): void;
@@ -267,7 +269,6 @@ export type ScriptSenses = Required<
     | 'detectionEvent'
     | 'alarm'
     | 'startSneaking'
-    | 'hideFromStealthMeter'
   >
 >;
 
@@ -761,6 +762,10 @@ export class ScriptWorld implements WorldBridge {
     return took;
   }
 
+  setAlpha(actor: number, _alpha: number, fade: boolean): void {
+    for (const view of this.#views) view.alphaSet?.(actor, fade);
+  }
+
   vehicleChanged(actor: number): void {
     for (const view of this.#views) view.vehicleChanged?.(actor);
   }
@@ -858,10 +863,6 @@ export class ScriptWorld implements WorldBridge {
 
   startSneaking(actor: number): void {
     this.senses?.startSneaking(actor);
-  }
-
-  hideFromStealthMeter(actor: number, hidden: boolean): void {
-    this.senses?.hideFromStealthMeter(actor, hidden);
   }
 
   /** The fights of the views (their combat). */

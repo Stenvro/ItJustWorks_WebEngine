@@ -177,6 +177,14 @@ export interface ActorState {
   allowFlyingSearch?: boolean;
   /** SetVehicle: what it rides along on. */
   vehicle?: number;
+  /** SetAlpha: how opaque it is drawn (0..1; none: 1). */
+  alpha?: number;
+  /** SetHeadTracking(false): its head tracks nothing. */
+  headTrackingOff?: boolean;
+  /** SetLookAt: what scripts have it look at, until ClearLookAt. */
+  lookAt?: number;
+  /** SetNotShowOnStealthMeter: it does not open the stealth eye. */
+  hiddenOnStealthMeter?: boolean;
 }
 
 /**

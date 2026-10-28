@@ -114,6 +114,13 @@ export async function loadGameScripts(
     if (!loaded.has(plugin.toLowerCase())) problems.push(`the save's plugin ${plugin} is missing`);
   }
   problems.push(...(await runtime.loadGame(save.runtime, progress)));
+  // What scripts set on actors that the world holds apart from the game state (head tracking:
+  // src/ai/head-tracking.ts) is told to it again, as the original's actors keep it in their
+  // saved process; alpha and the stealth eye's flag the world reads from the state itself.
+  for (const [actor, state] of runtime.state.actors) {
+    if (state.headTrackingOff === true) runtime.world.headTracking?.(actor, false);
+    if (state.lookAt !== undefined) runtime.world.lookAt?.(actor, state.lookAt, 'script');
+  }
   await runtime.hazards.restore(save.hazards ?? []);
   for (const [container, items] of save.inventoryDeltas ?? []) {
     const inventory = await runtime.inventory(container);
