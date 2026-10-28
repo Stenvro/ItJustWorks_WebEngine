@@ -694,7 +694,7 @@ export class SceneDirector {
     for (const [alias, reference] of [...cast]) {
       const other = this.#actors.get(reference);
       if (!other || other === playing) continue;
-      if (mayTake(playing.force, other, reference)) continue;
+      if (mayTake(playing.force, other)) continue;
       const actor = record.actors.find((entry) => entry.alias === alias);
       if (actor && (actor.flags & SceneActorFlag.optional) !== 0) {
         cast.delete(alias);
@@ -807,7 +807,7 @@ export class SceneDirector {
           if ((actor.flags & SceneActorFlag.optional) !== 0) return true;
           const reference = this.#host.aliasReference(quest, actor.alias);
           const other = reference === undefined ? undefined : this.#actors.get(reference);
-          return !other || reference === undefined || mayTake(waiting.force, other, reference);
+          return !other || reference === undefined || mayTake(waiting.force, other);
         });
       if (free) this.start(scene, waiting.force);
     }
@@ -1376,21 +1376,22 @@ export class SceneDirector {
 
 /**
  * Whether a scene starting may take an actor that plays in another scene: a forced start
- * (ForceStart) takes it, an interruptible scene gives it up, and so does a scene that has no
- * action running on it now (one that has begun and whose phases have nothing for it yet, or
- * any more). Found in the data: the Riverwood kids' play scene (RiverwoodDortheFrodnarPlay-
- * Scene, Begin on Quest Start) waits in its first phase, with no action, until Dorthe and
- * Frodnar meet; MQ102HadvarAlvorScene, which Dorthe joins much later, would wait for it for
- * ever. Observed in the original: Scene.Start only marks the scene active, its actors are
- * looked at as it begins. TODO(M13): the engine's own test there (an action running on the
- * actor is inferred).
+ * (ForceStart) takes it, an interruptible scene gives it up, and so does a scene that has
+ * begun and has no action running now (its phase only waits for its conditions). Found in
+ * the data: the Riverwood kids' play scene (RiverwoodDortheFrodnarPlayScene, Begin on Quest
+ * Start) waits in its first phase, with no action, until Dorthe and Frodnar meet;
+ * MQ102HadvarAlvorScene, which Dorthe joins much later, would wait for it for ever. A scene
+ * whose actions run keeps the actors it has nothing for now: MQ102HadvarAlvorScene's phases
+ * that take Hadvar and Alvor into the house have none for his household, and WIGreetingScene
+ * (a greeting as the player comes into the house) took one of them and ended it, before
+ * Alvor's force greet (MQ102A 47). Observed in the original: Scene.Start only marks the scene active, its
+ * actors are looked at as it begins. TODO(M13): the engine's own test there (the scene's
+ * actions running is inferred; the quests' priorities, 30 < 80 and 40 < 80 here, would tell
+ * the same).
  */
-function mayTake(force: boolean, other: Playing, actor: number): boolean {
+function mayTake(force: boolean, other: Playing): boolean {
   if (force || ((other.record?.flags ?? 0) & SceneFlag.interruptible) !== 0) return true;
-  return (
-    other.phase >= 0 &&
-    !other.actions.some((run) => run.actor === actor && run.status === 'running')
-  );
+  return other.phase >= 0 && !other.actions.some((run) => run.status === 'running');
 }
 
 const hex = (formId: number): string => formId.toString(16).padStart(8, '0');

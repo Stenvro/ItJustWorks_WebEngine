@@ -295,7 +295,10 @@ export class SimWorld {
           this.runtime.triggered(trigger, actor, entered);
         },
         cellOf: (at) => this.#stageCellOf(at),
-        collided: (key) => this.#cells.get(key)?.collided,
+        // A cell still being read has no collision in place yet (as the page's world viewer
+        // holds it from the start of its load): an actor near it waits for it.
+        collided: (key) =>
+          this.#cells.get(key)?.collided ?? (this.#loading.has(key) ? false : undefined),
         navmeshes: () => this.#navmeshes,
         objects: () => this.#stageObjects(),
         obstacles: () => this.#stageObstacles(),

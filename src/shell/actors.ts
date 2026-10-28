@@ -193,13 +193,15 @@ export function groundActor(
 
 /**
  * A script moved an actor (MoveTo, SetPosition): it stands at the new place, turned to the
- * new heading, on the ground there (if the physics world has some under it).
+ * new heading, on the ground there (if the physics world has some under it, within `reach`
+ * of a ray from GROUND_ABOVE over it).
  */
 export function moveActor(
   placed: PlacedActor,
   position: Vec3,
   heading: number,
   physics: PhysicsWorld | undefined,
+  reach = GROUND_ABOVE + GROUND_BELOW,
 ): void {
   const instance = placed.instances[0];
   if (!instance?.motion) return;
@@ -214,12 +216,7 @@ export function moveActor(
     !placed.inFurniture &&
     !placed.actor.startsDead &&
     standsOnGround(placed.look.raceFlags)
-      ? physics.raycast(
-          [x, y, z + GROUND_ABOVE],
-          [0, 0, -1],
-          GROUND_ABOVE + GROUND_BELOW,
-          Layer.charController,
-        )
+      ? physics.raycast([x, y, z + GROUND_ABOVE], [0, 0, -1], reach, Layer.charController)
       : undefined;
   instance.world.set(
     hit

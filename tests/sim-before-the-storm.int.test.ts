@@ -82,7 +82,15 @@ describe.skipIf(!hasGamedata())('MQ102 Before the Storm (Hadvar’s route)', () 
 
   // Found 2026-10-28: stage 35 started MQ102HadvarAlvorScene, which waited for ever for Dorthe:
   // the Riverwood kids' play scene holds her in its first phase (no action) until she and
-  // Frodnar meet. A scene now takes an actor whose other scene has nothing running on it.
+  // Frodnar meet. A scene now takes an actor from a begun scene with no action running.
+  // Found 2026-10-28 (failing on a busy machine): with the player coming from Helgen, Alvor's
+  // forge (cell 4,-12) was the loaded grid's edge, and his smithy's floor is placed in the cell
+  // beyond (5,-11): set down, he fell through to the slope 142 units below, off the navmesh, and
+  // his walk to Hadvar failed. Near a cell not held, an actor is now set down only by the
+  // position check, and a cell being read keeps it waiting (src/shell/actor-stage.ts, #settle).
+  // Found 2026-10-28: on time, as the player came into the house, WIGreetingScene took one of
+  // Alvor's household (no action for them in the phases that take Hadvar and Alvor in) and ended
+  // MQ102HadvarAlvorScene (MQ102A 52): a scene whose actions run now keeps its idle actors.
   // Found 2026-10-28: in phase 26 Alvor's force greet gave up its travel to the player by the
   // door once a second: the player stood a few units off the navmesh, and a path to a point off
   // it ended short, never complete. Such a path now ends at the navmesh's nearest point within
