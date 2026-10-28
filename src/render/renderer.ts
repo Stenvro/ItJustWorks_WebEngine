@@ -56,6 +56,7 @@ import {
   focusCascadeSlot,
   type FrameShadows,
   type LargeRefMask,
+  type ShadowCasters,
   type LodMask,
   type PointLight,
   type SceneLighting,
@@ -259,6 +260,8 @@ export class Renderer {
   focusShadowDistance = FOCUS_SHADOW_DISTANCE;
   /** Focus shadow maps rendered in the last frame (the terminal's stats). */
   focusShadowPasses = 0;
+  /** The focus maps' casters of the frame (kept to spare arrays each frame). */
+  readonly #focusCasters: ShadowCasters[] = [];
   readonly #lightShadowStates: (LightShadowState | undefined)[] = [];
   /** The precipitation occlusion map: its view, where it was centred and when. */
   #occlusion: { viewProj: Mat4; center: Vec3; frame: number } | undefined;
@@ -857,12 +860,19 @@ export class Renderer {
         depthStoreOp: 'store',
       },
     });
-    focus.forEach((shadow, i) => {
+    // One walk over the scenes' draws sorts the casters out for every focus map.
+    const views = focus.map((shadow) => ({
+      planes: frustumPlanes(shadow.viewProj),
+      minRadius: shadow.texelSize * MIN_CASTER_TEXELS,
+    }));
+    this.scene.collectShadowCasters(scenes, views, this.#focusCasters);
+    views.forEach(({ planes }, i) => {
+      const casters = this.#focusCasters[i];
+      if (!casters) return;
       const x = (i % 2) * FOCUS_MAP_SIZE;
       const y = Math.floor(i / 2) * FOCUS_MAP_SIZE;
       pass.setViewport(x, y, FOCUS_MAP_SIZE, FOCUS_MAP_SIZE, 0, 1);
       pass.setScissorRect(x, y, FOCUS_MAP_SIZE, FOCUS_MAP_SIZE);
-      const planes = frustumPlanes(shadow.viewProj);
       const slot = focusCascadeSlot(i);
       this.terrain.drawShadows(
         pass,
@@ -871,9 +881,14 @@ export class Renderer {
         terrain,
         planes,
       );
-      this.scene.drawShadows(pass, scenes, slot, planes, shadow.texelSize * MIN_CASTER_TEXELS);
+      this.scene.drawShadowCasters(pass, casters, slot);
     });
     pass.end();
+    // Let go of the frame's draws (scenes may be unloaded before the next).
+    for (const casters of this.#focusCasters) {
+      casters.scenes.length = 0;
+      casters.draws.length = 0;
+    }
   }
 
   /** Renders shadow casters (terrain and scene parts) into a layer of the shadow map. */

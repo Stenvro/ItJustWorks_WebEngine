@@ -426,6 +426,48 @@ class UniformRuns {
 const RUN_GAP = 4 * DRAW_SIZE;
 
 /** Binds a part's pipeline, material and buffers where they differ from what is bound. */
+/**
+ * Dynamic offsets for setBindGroup. Handed over as a typed array with a start and a length,
+ * not as a new JS array per call: the browser then reads the words directly instead of
+ * converting a sequence, which costs per draw (thousands of draws a frame).
+ */
+const dynamicOffsets = new Uint32Array(2);
+
+/** Binds a group with one dynamic offset. */
+function bindAt(
+  pass: GPURenderPassEncoder,
+  index: number,
+  group: GPUBindGroup,
+  offset: number,
+): void {
+  dynamicOffsets[0] = offset;
+  pass.setBindGroup(index, group, dynamicOffsets, 0, 1);
+}
+
+/** Binds a group with two dynamic offsets. */
+function bindAt2(
+  pass: GPURenderPassEncoder,
+  index: number,
+  group: GPUBindGroup,
+  first: number,
+  second: number,
+): void {
+  dynamicOffsets[0] = first;
+  dynamicOffsets[1] = second;
+  pass.setBindGroup(index, group, dynamicOffsets, 0, 2);
+}
+
+/** Copies the 16 floats of a matrix from `source[from..]` to `target[to..]`. */
+function copyMatrix(source: Float32Array, from: number, target: Float32Array, to: number): void {
+  for (let i = 0; i < 16; i++) target[to + i] = source[from + i] ?? 0;
+}
+
+/** Whether the matrices at `a[from..]` and `b[to..]` are the same. */
+function sameMatrix(a: Float32Array, from: number, b: Float32Array, to: number): boolean {
+  for (let i = 0; i < 16; i++) if (a[from + i] !== b[to + i]) return false;
+  return true;
+}
+
 function bindPart(
   pass: GPURenderPassEncoder,
   state: PassState,
@@ -437,6 +479,53 @@ function bindPart(
     state.pipeline = pipeline;
   }
   if (state.material !== part.bindGroup) {
+    pass.setBindGroup(2, part.bindGroup);
+    state.material = part.bindGroup;
+  }
+  if (state.vertices !== part.vertexBuffer) {
+    pass.setVertexBuffer(0, part.vertexBuffer);
+    state.vertices = part.vertexBuffer;
+  }
+  if (state.indices !== part.indexBuffer) {
+    pass.setIndexBuffer(part.indexBuffer, 'uint16');
+    state.indices = part.indexBuffer;
+  }
+}
+
+/** Small ids for GPU objects (ordering draws by what they bind). */
+const objectIds = new WeakMap<object, number>();
+let nextObjectId = 1;
+
+function objectId(object: object): number {
+  let id = objectIds.get(object);
+  if (id === undefined) {
+    id = nextObjectId++;
+    objectIds.set(object, id);
+  }
+  return id;
+}
+
+/** Shadow pipelines that test the diffuse map's alpha (the others never read the material). */
+const alphaTestedShadows = new WeakSet<GPURenderPipeline>();
+
+/**
+ * bindPart for a shadow pass: every caster's material group has the same layout, and only
+ * alpha-tested casters read theirs, so the others keep whichever one is bound.
+ */
+function bindShadowPart(
+  pass: GPURenderPassEncoder,
+  state: PassState,
+  pipeline: GPURenderPipeline,
+  part: GpuPart,
+): void {
+  if (state.pipeline !== pipeline) {
+    pass.setPipeline(pipeline);
+    state.pipeline = pipeline;
+  }
+  if (
+    state.material === undefined ||
+    (state.material !== part.bindGroup && alphaTestedShadows.has(pipeline))
+  ) {
     pass.setBindGroup(2, part.bindGroup);
     state.material = part.bindGroup;
   }
@@ -1035,6 +1124,12 @@ interface SceneMotion {
   readonly seen: Uint32Array;
 }
 
+/** One shadow view's casters (SceneRenderer.collectShadowCasters): draw i of scene i. */
+export interface ShadowCasters {
+  readonly scenes: GpuScene[];
+  readonly draws: Draw[];
+}
+
 /** The view-projections a velocity pass draws with (SceneRenderer.drawVelocity). */
 export interface VelocityMatrices {
   /** This frame's, as drawn (jittered), and without the jitter. */
@@ -1046,6 +1141,20 @@ export interface VelocityMatrices {
   readonly firstPersonViewProj?: Mat4 | undefined;
   readonly firstPersonCurrent?: Mat4 | undefined;
   readonly firstPersonPrevious?: Mat4 | undefined;
+}
+
+/** A bounding sphere round a scene's draws (GpuScene.bound). */
+interface SceneBound {
+  readonly center: readonly [number, number, number];
+  readonly radius: number;
+}
+
+const NO_DRAWS: readonly Draw[] = [];
+
+/** Whether any of a scene may be inside `planes` (its bound, when it has one). */
+function sceneInside(planes: readonly Plane[], scene: GpuScene): boolean {
+  const bound = scene.bound;
+  return !bound || sphereVisible(planes, bound.center, bound.radius);
 }
 
 /** Placed model instances with their per-draw uniforms. Does not own the models. */
@@ -1077,6 +1186,10 @@ export class GpuScene {
   motion: SceneMotion | null | undefined;
   /** The models it draws (held while it exists). */
   readonly #models: readonly GpuModel[];
+  /** A sphere round all its draws (see bound); null: never culled whole. */
+  #bound: SceneBound | null = null;
+  #boundStale = true;
+  #shadowCasters: Draw[] | undefined;
 
   constructor(
     draws: readonly Draw[],
@@ -1107,6 +1220,84 @@ export class GpuScene {
     this.bones = bones;
     this.#models = models;
     for (const model of models) model.acquire();
+  }
+
+  /**
+   * A sphere round the bounds of all its draws, so a pass can leave a whole scene out (a cell
+   * behind the camera, or outside a small shadow view) without testing each draw. Worked out
+   * when asked after a draw moved (boundChanged). Null when it has draws that are never culled
+   * (the sky's, first person's) or none.
+   */
+  get bound(): SceneBound | null {
+    if (!this.#boundStale) return this.#bound;
+    this.#boundStale = false;
+    let minX = Infinity;
+    let minY = Infinity;
+    let minZ = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let maxZ = -Infinity;
+    for (const draw of this.draws) {
+      if (draw.sky || draw.firstPerson) return (this.#bound = null);
+      const [x, y, z] = draw.center;
+      const r = draw.radius;
+      minX = Math.min(minX, x - r);
+      minY = Math.min(minY, y - r);
+      minZ = Math.min(minZ, z - r);
+      maxX = Math.max(maxX, x + r);
+      maxY = Math.max(maxY, y + r);
+      maxZ = Math.max(maxZ, z + r);
+    }
+    if (this.draws.length === 0) return (this.#bound = null);
+    const center: [number, number, number] = [
+      (minX + maxX) / 2,
+      (minY + maxY) / 2,
+      (minZ + maxZ) / 2,
+    ];
+    let radius = 0;
+    for (const draw of this.draws) {
+      const dx = draw.center[0] - center[0];
+      const dy = draw.center[1] - center[1];
+      const dz = draw.center[2] - center[2];
+      radius = Math.max(radius, Math.sqrt(dx * dx + dy * dy + dz * dz) + draw.radius);
+    }
+    return (this.#bound = { center, radius });
+  }
+
+  /**
+   * Its draws that cast shadows, ordered so that draws sharing a pipeline, material and mesh
+   * follow each other (instances of one model): a shadow pass then changes less state between
+   * draws. A depth-only pass ends the same in any order.
+   */
+  get shadowCasters(): readonly Draw[] {
+    if (this.#shadowCasters) return this.#shadowCasters;
+    const casters = this.draws.filter((draw) => draw.part.shadowPipeline !== undefined);
+    const key = (draw: Draw): readonly number[] => {
+      const { part } = draw;
+      const pipeline = part.shadowPipeline;
+      return [
+        pipeline ? objectId(pipeline) : 0,
+        pipeline && alphaTestedShadows.has(pipeline) ? objectId(part.bindGroup) : 0,
+        objectId(part.vertexBuffer),
+      ];
+    };
+    const keys = new Map(casters.map((draw) => [draw, key(draw)]));
+    casters.sort((a, b) => {
+      const ka = keys.get(a) ?? [];
+      const kb = keys.get(b) ?? [];
+      for (let i = 0; i < 3; i++) {
+        const d = (ka[i] ?? 0) - (kb[i] ?? 0);
+        if (d !== 0) return d;
+      }
+      return 0;
+    });
+    this.#shadowCasters = casters;
+    return casters;
+  }
+
+  /** A draw's bounding sphere moved: the scene's bound is worked out again when next asked. */
+  boundChanged(): void {
+    this.#boundStale = true;
   }
 
   destroy(): void {
@@ -1545,6 +1736,10 @@ export class SceneRenderer {
   #velocityGroup: { readonly depth: GPUTexture; readonly group: GPUBindGroup } | undefined;
   /** Counts velocity passes: a draw unseen in the last one has no last world matrix. */
   #velocityFrame = 1;
+  /** The draws of one scene a velocity pass draws (kept to spare an array per scene). */
+  readonly #velocityDrawn: Draw[] = [];
+  /** Per shadow view of collectShadowCasters: whether the scene at hand may reach it. */
+  readonly #viewsInside: boolean[] = [];
   readonly #velocityPipelines = new WeakMap<GpuPart, GPURenderPipeline>();
   readonly #shadowSampler: GPUSampler;
   /** The shadow lights' maps (light-shadows.ts), their uniforms and this frame's slots. */
@@ -2642,9 +2837,9 @@ export class SceneRenderer {
     const face = draw.face;
     const group = face ? bones.faces.get(face.morphs) : undefined;
     if (face && group) {
-      pass.setBindGroup(3, group, [draw.bones, face.offset]);
+      bindAt2(pass, 3, group, draw.bones, face.offset);
     } else {
-      pass.setBindGroup(3, bones.bindGroup, [draw.bones, bones.noMorphs]);
+      bindAt2(pass, 3, bones.bindGroup, draw.bones, bones.noMorphs);
     }
   }
 
@@ -2927,14 +3122,14 @@ export class SceneRenderer {
         depthStoreOp: 'store',
       },
     });
-    pass.setBindGroup(0, this.#cascadeBindGroup, [this.cascadeOffset(slot)]);
+    bindAt(pass, 0, this.#cascadeBindGroup, this.cascadeOffset(slot));
     pass.setVertexBuffer(1, this.#fallbackVertices);
     const state = passState();
     for (const { scene, draw } of casters) {
       const pipeline = draw.part.shadowPipeline;
       if (!pipeline || !sphereVisible(planes, draw.center, draw.radius)) continue;
-      bindPart(pass, state, pipeline, draw.part);
-      pass.setBindGroup(1, scene.drawBindGroup, [draw.uniformOffset]);
+      bindShadowPart(pass, state, pipeline, draw.part);
+      bindAt(pass, 1, scene.drawBindGroup, draw.uniformOffset);
       this.#bindBones(pass, scene, draw);
       if (draw.ranges) {
         for (const range of draw.ranges) pass.drawIndexed(range.count, 1, range.first);
@@ -3028,6 +3223,7 @@ export class SceneRenderer {
         if (entry.version === entry.motion.version) continue;
         entry.version = entry.motion.version;
         entry.draw.center = transformPoint(entry.instanceWorld, entry.part.center);
+        scene.boundChanged();
         if (entry.animated) continue;
         const floats = new Float32Array(scene.uniformData, entry.draw.uniformOffset, 16);
         multiply(entry.instanceWorld, entry.part.world, world);
@@ -3069,7 +3265,10 @@ export class SceneRenderer {
           floats.set(world, 0);
         }
         if (frame) writeAnimatedMaterial(floats, draw.part, frame);
-        if (draw.follows) followBound(draw, draw.follows, world);
+        if (draw.follows) {
+          followBound(draw, draw.follows, world);
+          scene.boundChanged();
+        }
         const skin = draw.part.skin;
         const bones = scene.bones;
         const face = draw.face;
@@ -3263,6 +3462,7 @@ export class SceneRenderer {
     pass.setVertexBuffer(1, this.#fallbackVertices);
     const state = passState();
     for (const scene of scenes) {
+      if (!sceneInside(this.#frame.planes, scene)) continue;
       for (const draw of scene.draws) {
         if (draw.part.pass === 'opaque' && this.#visible(draw)) {
           this.#drawPart(pass, scene, draw, state);
@@ -3313,19 +3513,28 @@ export class SceneRenderer {
       // null: the scene has nothing that moves (looked at once).
       if (scene.motion === undefined) scene.motion = this.#sceneMotion(scene) ?? null;
       const motion = scene.motion;
-      if (!motion) continue;
+      if (!motion || !sceneInside(this.#frame.planes, scene)) continue;
       const uniforms = new Float32Array(scene.uniformData);
-      const worldOf = (draw: Draw): Float32Array =>
-        uniforms.subarray(draw.uniformOffset / 4, draw.uniformOffset / 4 + 16);
-      const drawn: Draw[] = [];
+      const previous = motion.previous;
+      const drawn = this.#velocityDrawn;
+      drawn.length = 0;
       let first = Infinity;
       let last = -1;
       for (const draw of motion.draws) {
         if (draw.part.pass !== 'opaque' || !this.#visible(draw)) continue;
         const slot = draw.uniformOffset / DRAW_STRIDE;
-        // Unseen in the last pass: no last matrix, so it has not moved.
-        if (motion.seen[slot] !== frame - 1) motion.previous.set(worldOf(draw), slot * 16);
+        const world = draw.uniformOffset / 4;
+        const seenLast = motion.seen[slot] === frame - 1;
         motion.seen[slot] = frame;
+        if (!seenLast) {
+          // Unseen in the last pass: no last matrix, so it has not moved.
+          copyMatrix(uniforms, world, previous, slot * 16);
+        } else if (!draw.firstPerson && sameMatrix(uniforms, world, previous, slot * 16)) {
+          // Not moved since the last pass (an actor idling in place): its motion is the
+          // camera's, which the TAA finds again through the depth, as for what does not move.
+          // First person's geometry has its own view, so it is always drawn.
+          continue;
+        }
         first = Math.min(first, slot);
         last = Math.max(last, slot);
         drawn.push(draw);
@@ -3334,21 +3543,35 @@ export class SceneRenderer {
       // The upload takes the last matrices; this frame's become the next pass's last ones.
       const from = first * 16;
       const to = (last + 1) * 16;
-      this.#device.queue.writeBuffer(motion.buffer, from * 4, motion.previous, from, to - from);
+      this.#device.queue.writeBuffer(motion.buffer, from * 4, previous, from, to - from);
       pass.setBindGroup(2, motion.bindGroup);
+      const state = passState();
       for (const draw of drawn) {
-        pass.setPipeline(this.#velocityPipeline(draw.part));
-        pass.setBindGroup(1, scene.drawBindGroup, [draw.uniformOffset]);
+        const { part } = draw;
+        const pipeline = this.#velocityPipeline(part);
+        if (state.pipeline !== pipeline) {
+          pass.setPipeline(pipeline);
+          state.pipeline = pipeline;
+        }
+        bindAt(pass, 1, scene.drawBindGroup, draw.uniformOffset);
         this.#bindBones(pass, scene, draw);
-        pass.setVertexBuffer(0, draw.part.vertexBuffer);
-        pass.setIndexBuffer(draw.part.indexBuffer, 'uint16');
+        if (state.vertices !== part.vertexBuffer) {
+          pass.setVertexBuffer(0, part.vertexBuffer);
+          state.vertices = part.vertexBuffer;
+        }
+        if (state.indices !== part.indexBuffer) {
+          pass.setIndexBuffer(part.indexBuffer, 'uint16');
+          state.indices = part.indexBuffer;
+        }
         if (draw.ranges) {
           for (const range of draw.ranges) pass.drawIndexed(range.count, 1, range.first);
         } else {
-          pass.drawIndexed(draw.part.indexCount);
+          pass.drawIndexed(part.indexCount);
         }
-        motion.previous.set(worldOf(draw), (draw.uniformOffset / DRAW_STRIDE) * 16);
+        const slot = draw.uniformOffset / DRAW_STRIDE;
+        copyMatrix(uniforms, draw.uniformOffset / 4, previous, slot * 16);
       }
+      drawn.length = 0;
     }
   }
 
@@ -3435,7 +3658,7 @@ export class SceneRenderer {
         if (!type) continue;
         const { part } = draw;
         pass.setPipeline(part.pipeline);
-        pass.setBindGroup(1, scene.drawBindGroup, [draw.uniformOffset]);
+        bindAt(pass, 1, scene.drawBindGroup, draw.uniformOffset);
         pass.setBindGroup(2, type.bindGroup);
         pass.setVertexBuffer(0, part.vertexBuffer);
         pass.setIndexBuffer(part.indexBuffer, 'uint16');
@@ -3498,7 +3721,8 @@ export class SceneRenderer {
       return dx * dx + dy * dy + dz * dz;
     };
     for (const scene of scenes) {
-      for (const draw of scene.draws) {
+      const draws = sceneInside(this.#frame.planes, scene) ? scene.draws : NO_DRAWS;
+      for (const draw of draws) {
         if (draw.part.pass !== 'transparent' || !this.#visible(draw)) continue;
         // Sky objects behind everything, the largest (farthest) first.
         const behind = draw.sky ? SKY_DISTANCE + draw.radius : distance(draw.center);
@@ -3518,7 +3742,7 @@ export class SceneRenderer {
       }
       const { system, uniformOffset, first, count } = item.particles;
       pass.setPipeline(system.pipeline);
-      pass.setBindGroup(1, item.scene.drawBindGroup, [uniformOffset]);
+      bindAt(pass, 1, item.scene.drawBindGroup, uniformOffset);
       pass.setBindGroup(2, system.bindGroup);
       pass.setVertexBuffer(0, this.#particleBuffer);
       pass.draw(6, count, 0, first);
@@ -3652,6 +3876,68 @@ export class SceneRenderer {
    * Draws the shadow casters of scenes into one cascade: culled by its box, and without
    * objects too small to show at its resolution (`minRadius`).
    */
+  /**
+   * The casters of several small shadow views of one pass (the focus maps), sorted out in one
+   * walk over the draws instead of one walk per view: `maps[i]` gets the draws inside view
+   * `i`'s planes that are at least its minimum radius. Draw them with drawShadowCasters.
+   */
+  collectShadowCasters(
+    scenes: Iterable<GpuScene>,
+    views: readonly { readonly planes: readonly Plane[]; readonly minRadius: number }[],
+    maps: ShadowCasters[],
+  ): void {
+    for (let i = 0; i < views.length; i++) {
+      const map = (maps[i] ??= { scenes: [], draws: [] });
+      map.scenes.length = 0;
+      map.draws.length = 0;
+    }
+    const inside = this.#viewsInside;
+    for (const scene of scenes) {
+      // The views the scene may reach (most scenes reach none of these small views).
+      let any = false;
+      for (let i = 0; i < views.length; i++) {
+        const view = views[i];
+        inside[i] = view !== undefined && sceneInside(view.planes, scene);
+        any ||= inside[i] === true;
+      }
+      if (!any) continue;
+      for (const draw of scene.shadowCasters) {
+        if (!draw.part.shadowPipeline || draw.visibility?.hidden) continue;
+        if (draw.fade && draw.fade.level >= 255) continue;
+        for (let i = 0; i < views.length; i++) {
+          const view = views[i];
+          const map = maps[i];
+          if (!inside[i] || !view || !map || draw.radius < view.minRadius) continue;
+          if (!sphereVisible(view.planes, draw.center, draw.radius)) continue;
+          map.scenes.push(scene);
+          map.draws.push(draw);
+        }
+      }
+    }
+  }
+
+  /** Draws casters collected by collectShadowCasters into the cascade slot `cascade`. */
+  drawShadowCasters(pass: GPURenderPassEncoder, casters: ShadowCasters, cascade: number): void {
+    bindAt(pass, 0, this.#cascadeBindGroup, this.cascadeOffset(cascade));
+    pass.setVertexBuffer(1, this.#fallbackVertices);
+    const state = passState();
+    const { scenes, draws } = casters;
+    for (let i = 0; i < draws.length; i++) {
+      const draw = draws[i];
+      const scene = scenes[i];
+      const pipeline = draw?.part.shadowPipeline;
+      if (!draw || !scene || !pipeline) continue;
+      bindShadowPart(pass, state, pipeline, draw.part);
+      bindAt(pass, 1, scene.drawBindGroup, draw.uniformOffset);
+      this.#bindBones(pass, scene, draw);
+      if (draw.ranges) {
+        for (const range of draw.ranges) pass.drawIndexed(range.count, 1, range.first);
+      } else {
+        pass.drawIndexed(draw.part.indexCount);
+      }
+    }
+  }
+
   drawShadows(
     pass: GPURenderPassEncoder,
     scenes: Iterable<GpuScene>,
@@ -3659,17 +3945,18 @@ export class SceneRenderer {
     planes: readonly Plane[],
     minRadius: number,
   ): void {
-    pass.setBindGroup(0, this.#cascadeBindGroup, [this.cascadeOffset(cascade)]);
+    bindAt(pass, 0, this.#cascadeBindGroup, this.cascadeOffset(cascade));
     pass.setVertexBuffer(1, this.#fallbackVertices);
     const state = passState();
     for (const scene of scenes) {
-      for (const draw of scene.draws) {
+      if (!sceneInside(planes, scene)) continue;
+      for (const draw of scene.shadowCasters) {
         const { part } = draw;
         if (!part.shadowPipeline || draw.radius < minRadius || draw.visibility?.hidden) continue;
         if (draw.fade && draw.fade.level >= 255) continue;
         if (!sphereVisible(planes, draw.center, draw.radius)) continue;
-        bindPart(pass, state, part.shadowPipeline, part);
-        pass.setBindGroup(1, scene.drawBindGroup, [draw.uniformOffset]);
+        bindShadowPart(pass, state, part.shadowPipeline, part);
+        bindAt(pass, 1, scene.drawBindGroup, draw.uniformOffset);
         this.#bindBones(pass, scene, draw);
         if (draw.ranges) {
           for (const range of draw.ranges) pass.drawIndexed(range.count, 1, range.first);
@@ -3692,11 +3979,11 @@ export class SceneRenderer {
       const center = group.draws[0]?.center;
       if (!center) continue;
       const { start, end } = fadeRange(group.kind, group.radius, this.objectFade);
-      const distance = Math.hypot(
-        center[0] - camera[0],
-        center[1] - camera[1],
-        center[2] - camera[2],
-      );
+      // Not Math.hypot: this runs for every placed reference each frame, and hypot is slow.
+      const dx = center[0] - camera[0];
+      const dy = center[1] - camera[1];
+      const dz = center[2] - camera[2];
+      const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
       const away = group.of?.byDistance === false ? 0 : fadeOut(distance, start, end);
       const level = Math.round(Math.max(away, Math.min(1, group.of?.veil ?? 0)) * 255);
       if (level === group.level) continue;
@@ -3877,7 +4164,7 @@ export class SceneRenderer {
     const { part } = draw;
     this.#chooseLights(scene, draw);
     bindPart(pass, state, part.pipeline, part);
-    pass.setBindGroup(1, scene.drawBindGroup, [draw.uniformOffset]);
+    bindAt(pass, 1, scene.drawBindGroup, draw.uniformOffset);
     this.#bindBones(pass, scene, draw);
     if (draw.ranges) {
       for (const range of draw.ranges) pass.drawIndexed(range.count, 1, range.first);
@@ -4058,6 +4345,7 @@ export class SceneRenderer {
           depthBiasSlopeScale: 1.5,
         },
       });
+      if (withUv) alphaTestedShadows.add(pipeline);
       this.#pipelines.set(key, pipeline);
     }
     return pipeline;
