@@ -27,6 +27,22 @@ export interface NavmeshSet {
   nearest?(point: Vec3, reach: number): Vec3 | undefined;
 }
 
+/**
+ * Where an actor put at an off-navmesh point (a package's marker in a hearth's fire) stands: the
+ * navmesh's point nearest it (`on`, found by the caller), moved on away from the point by the
+ * actor's radius where the navmesh still covers that, so its body stands on the navmesh rather
+ * than astride its border (round a hearth the border runs along the fire pit's rim stones).
+ * Kept at `on` where the navmesh does not reach so far (a narrow strip).
+ */
+export function inwardOnNavmesh(set: NavmeshSet, from: Vec3, on: Vec3, radius: number): Vec3 {
+  const dx = on[0] - from[0];
+  const dy = on[1] - from[1];
+  const away = Math.hypot(dx, dy);
+  if (away < 1e-3) return [on[0], on[1], on[2]];
+  const inward: Vec3 = [on[0] + (dx / away) * radius, on[1] + (dy / away) * radius, on[2]];
+  return set.locate(inward) ? inward : [on[0], on[1], on[2]];
+}
+
 export interface PathOptions {
   /** The actor's radius: the path keeps this far from the ends of the edges it crosses. */
   readonly radius: number;
