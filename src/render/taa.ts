@@ -15,10 +15,15 @@ interface Targets {
   readonly width: number;
   readonly height: number;
   history: [GPUTexture, GPUTexture];
+  /** The two history textures in a fixed order (history swaps them each frame). */
+  readonly pair: readonly [GPUTexture, GPUTexture];
   /** Motion vectors of moving draws (SceneRenderer.drawVelocity). */
   readonly velocity: GPUTexture;
   valid: boolean;
-  readonly groups: Map<string, GPUBindGroup>;
+  /** Bind groups by history side, made for `hdr` and `depth` (made again when they change). */
+  readonly groups: Map<number, GPUBindGroup>;
+  hdr: GPUTexture | undefined;
+  depth: GPUTexture | undefined;
 }
 
 export class TemporalAA {
@@ -82,7 +87,14 @@ export class TemporalAA {
     if (reproject) this.#data.set(reproject, 0);
     this.#data.set([HISTORY_SHARE, valid ? 1 : 0, 1 / hdr.width, 1 / hdr.height], 16);
     this.#device.queue.writeBuffer(this.#uniforms, 0, this.#data);
-    const key = `${hdr.label}:${previous.label}:${depth.label}`;
+    // The renderer's targets made anew (a resize, also one back to this size) are other
+    // textures under the same labels: groups bound to the old ones would fail the submit.
+    if (targets.hdr !== hdr || targets.depth !== depth) {
+      targets.groups.clear();
+      targets.hdr = hdr;
+      targets.depth = depth;
+    }
+    const key = previous === targets.pair[0] ? 0 : 1;
     let group = targets.groups.get(key);
     if (!group) {
       group = this.#device.createBindGroup({
@@ -115,7 +127,7 @@ export class TemporalAA {
   #ensure(width: number, height: number): Targets {
     const old = this.#targets;
     if (old?.width === width && old.height === height) return old;
-    for (const texture of old?.history ?? []) texture.destroy();
+    for (const texture of old?.pair ?? []) texture.destroy();
     old?.velocity.destroy();
     const texture = (label: string): GPUTexture =>
       this.#device.createTexture({
@@ -127,10 +139,12 @@ export class TemporalAA {
           GPUTextureUsage.TEXTURE_BINDING |
           GPUTextureUsage.COPY_SRC,
       });
+    const pair: [GPUTexture, GPUTexture] = [texture('taa-history-a'), texture('taa-history-b')];
     this.#targets = {
       width,
       height,
-      history: [texture('taa-history-a'), texture('taa-history-b')],
+      history: [pair[0], pair[1]],
+      pair,
       velocity: this.#device.createTexture({
         label: 'taa-velocity',
         size: [width, height],
@@ -139,6 +153,8 @@ export class TemporalAA {
       }),
       valid: false,
       groups: new Map(),
+      hdr: undefined,
+      depth: undefined,
     };
     return this.#targets;
   }

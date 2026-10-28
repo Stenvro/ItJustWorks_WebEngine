@@ -641,7 +641,11 @@ export class Renderer {
       // rays and flare over the steady image.
       if (this.antiAliasing && !view.backdrop) {
         const previous = this.#previousUnjittered;
-        const reproject = previous && reprojection(previous, this.#viewProjection);
+        // Unjittered both ways: a pixel's history lies where its point was in the last frame's
+        // steady image (the history holds no jitter). Through this frame's jittered matrix
+        // every still pixel would fetch its history a jitter step away, a sub-pixel resample
+        // each frame that blurred the image.
+        const reproject = previous && reprojection(previous, this.#unjittered);
         // Moving draws' motion vectors (the rest follows the depth and the camera).
         const velocity = this.#taa.velocityTarget(hdrTexture.width, hdrTexture.height);
         const motion = encoder.beginRenderPass({
