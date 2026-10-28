@@ -552,12 +552,12 @@ export class ActorStage {
       activationDone: (actor) => this.graphEvents.activationDone(actor),
       transport: {
         ready: async (staged, ride) => {
-          this.vehicles.release(staged.reference);
+          await this.vehicles.alight(staged.reference);
           return this.mounts.ready(staged, ride);
         },
         mover: (actor) => this.mounts.horseOf(actor) ?? actor,
         alight: async (staged) => {
-          this.vehicles.release(staged.reference);
+          await this.vehicles.alight(staged.reference);
           await this.mounts.getOff(staged.reference);
         },
         paused: (actor) => this.mounts.ridden(actor),
@@ -574,9 +574,7 @@ export class ActorStage {
       furniture: this.furniture,
       player: () => options.player?.()?.play.player,
       seat: () => options.seat?.(),
-      alight: () => {
-        this.vehicles.release(PLAYER_REF);
-      },
+      alight: () => this.vehicles.alight(PLAYER_REF),
       ...(options.navmeshes && { navmeshes: options.navmeshes }),
       door: (door) => this.doors.passage(door, PLAYER_REF),
     });

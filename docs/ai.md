@@ -1091,7 +1091,12 @@ graph alone, the first-person one stayed on the exit clip's last frame, and the 
 slid all the way to the chopping block without a step or a bob (MQ101's "Follow the Captain",
 measured: its graph in CartPrisonerCExit for the whole walk). The player rides so too, carried in the
 physics steps (their shape out of the world meanwhile); an actor's AI that goes somewhere lets it
-off. The player's CartExit goes to both their graphs, as every event the engine sends the player
+off: sitting, at once; with its exit under way (ExitCartBegin seen), as the exit ends (ExitCartEnd;
+at most 30 s, TODO(M13): the engine's limit), as a package waits for an animation-driven idle. Let
+off at once, the exit's root motion no longer carried the rider, its controller took it on its
+way, and the bound-standing event that ends the exit found no ride: no CartExit, its graph stayed
+in Cart_State, and MQ101's prisoners and the player slid to the block without a step. CartExit now
+follows that event whether or not the ride is still held. The player's CartExit goes to both their graphs, as every event the engine sends the player
 (their first-person graph played the exit too): sent to the body's alone, the first-person graph
 stayed in Cart_State and its Camera1st, which is the camera, at the seat's height: after the ride
 the camera stood 40 units over the body's head (the player "still a giant"; the QA monitor

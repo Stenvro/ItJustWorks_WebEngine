@@ -1000,7 +1000,10 @@ export class Player implements Camera {
     y = Math.max(-1, Math.min(1, y + stick[1]));
     if (this.#event('Back') || this.#event('Forward')) this.#autoMove = false;
     const pilot = this.pilot;
+    // Piloted, the package's gait sets the pace, not the stick: without this the stick's
+    // deflection (none) left a walk at no speed and a run at walking speed.
     if (pilot) [x, y] = this.#piloted(pilot, seconds);
+    const share = pilot ? 1 : deflection;
     const moving = x !== 0 || y !== 0;
     if (this.noClip) {
       this.#fly(x, y, seconds);
@@ -1052,7 +1055,7 @@ export class Player implements Camera {
           directionalSpeed(type.walk, x, y),
           directionalSpeed(type.run, x, y),
           running,
-          deflection,
+          share,
         ) * pace
       : 0;
     this.motion = { inputX: x, inputY: y, moving, running, sprinting };
