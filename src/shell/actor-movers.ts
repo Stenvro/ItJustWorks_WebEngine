@@ -274,6 +274,11 @@ const STALL_SECONDS = 0.5;
 const IDLE_STOP_INSTANT = 'ActionIdleStopInstant';
 /** The action an actor's path starts with (its idles: the turns it sets out with). */
 const PATH_START = 'ActionPathStart';
+/**
+ * A moving destination that moved less than this (units) from where its path led has not moved
+ * on: one standing beyond the navmesh's reach is not searched for again and again (ours).
+ */
+const MOVED_ON = 8;
 
 /** An actor on its way to a place. */
 interface Travel {
@@ -644,6 +649,7 @@ export class ActorMovers {
     );
     if (step.state === 'arrived') {
       // Where the path ends short of the place (another island), it got as near as it can.
+      if (travel.follower.path.complete && this.#movedOn(mover.staged.position, travel)) return;
       travel.done(travel.follower.path.complete);
       return;
     }
@@ -729,6 +735,26 @@ export class ActorMovers {
     travel.destination = [now[0], now[1], now[2]];
     travel.follower = undefined;
     travel.searches = 0;
+  }
+
+  /**
+   * A travel to a destination that moves ends within its reach of where that destination is
+   * now, not of where its path led: at its path's end, an actor whose target moved on (by less
+   * than the recalc distance, which leaves the path as it was) goes on after it. So a Travel
+   * begun again after a load, its target placed where the save had it and walking on, ends
+   * where the original's continuing one would. Whether it went on.
+   */
+  #movedOn(position: Vec3, travel: Travel): boolean {
+    const now = travel.moving?.position();
+    if (!now || Math.hypot(now[0] - position[0], now[1] - position[1]) <= travel.arrive) {
+      return false;
+    }
+    const [x, y, z] = travel.destination;
+    if (Math.hypot(now[0] - x, now[1] - y, now[2] - z) <= MOVED_ON) return false;
+    travel.destination = [now[0], now[1], now[2]];
+    travel.follower = undefined;
+    travel.searches = 0;
+    return true;
   }
 
   /** The INI's avoidance settings ([Pathfinding]). */
@@ -1751,6 +1777,7 @@ export class ActorMovers {
       this.#options.openDoor?.(door, reference),
     );
     if (step.state === 'arrived') {
+      if (travel.follower.path.complete && this.#movedOn(staged.position, travel)) return true;
       travel.done(travel.follower.path.complete);
       return false;
     }

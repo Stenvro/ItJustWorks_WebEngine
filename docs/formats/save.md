@@ -62,7 +62,8 @@ the world loads again, as the original's change forms hold it (nothing of the re
   branch's index among its parent's children, its Finds' results, the once-a-day packages' days,
   whether it ended and the actor sandboxed where it stood, its fallout: it does so again after the
   load, where before it stood done and could take its tree again from the root);
-  its combat target and the confidence modifier its fight drew. As its cell loads it is placed there instead of where its package would
+  its combat target and the confidence modifier its fight drew; whether a script set it sneaking
+  (StartSneaking) and whether its weapon was out (below, "What actors keep"). As its cell loads it is placed there instead of where its package would
   put it, in its furniture at once; when its AI starts and chooses the saved package first, the
   package goes on without beginning again (no OnPackageStart, no begin fragment), its sequences
   from the child they had reached (a Simultaneous branch's children run anew); its fight (with that modifier) starts
@@ -188,8 +189,41 @@ the nodes its ragdoll placed, in the world, and whether it lay at rest; kept as 
 cell unloads and as the game is saved, before the state is written: the save's state holds the
 live maps). A corpse lies again where it lay.
 
+## What actors keep
+
+The original saves with each actor (observed in the original) its actor state (the movement
+bits with sneaking, sitting and sleeping, flying, life, knock and attack states; head tracking on
+or off, the weapon's state, forced running and sneaking), its flags (among them the stealth eye's
+"do not show", attack on sight, no bleedout recovery, favors, bribed) and, while it has one, its
+process: the middle process's alpha among much else, the high process's head track target of
+each kind. Ours:
+
+- Kept in the game state (`ActorState`), so they hold as cells unload too: SetAlpha's alpha
+  (`alpha`; the stage draws it as a veil, reached over fActorAlphaFadeSeconds when asked to fade,
+  at once as an actor is placed), SetHeadTracking (`headTrackingOff`), SetLookAt and ClearLookAt
+  (`lookAt`: the script kind of head track target; the others, dialogue, combat and procedure,
+  are asked again by the systems that hold them as those go on after the load),
+  SetNotShowOnStealthMeter (`hiddenOnStealthMeter`), and as before ghost, restrained, don't move,
+  AI enabled, alerted, unconscious, attack on sight, vehicle; a reference's activation blocked and
+  motion type. As a save loads, the head tracking and look targets are told to the world again
+  (`loadGameScripts`).
+- Kept with the loaded actors (`SavedActor`): `sneaking` (StartSneaking: it sneaks again while
+  the package it was set in, resumed, runs) and `weaponDrawn` (its weapon out, as DrawWeapon
+  leaves it outside a fight: drawn again as it is loaded; TODO(M13): the original's save keeps
+  its graph with the weapon out, so it does not draw again).
+- Not kept, as in the original: SetExpressionOverride's expression (the face's animation data
+  belongs to its 3D, which the save does not hold; neither the actor's nor its process's save
+  writes it).
+
+A procedure's step after a load begins again (no progress inside a step is saved). A Travel to a
+reference that moves aims where the reference is as it begins; to end where the original's
+continuing travel would, a travel to a moving destination ends within reach of where the
+destination is now, not of where its path led: an actor at its path's end whose target moved on
+goes on after it (src/shell/actor-movers.ts).
+
 ## Not saved yet
 
+- The player's sneaking and drawn weapon (the actor state's, as the NPCs' above): TODO(M12).
 - The procedures' own progress inside a step (a patrol's next marker, a sandbox's activity: they choose again), actors' graphs
   beyond their furniture, the sky's transition; the actors of cells not loaded when saving
   (their packages place them, as before).
