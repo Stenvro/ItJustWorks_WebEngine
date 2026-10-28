@@ -20,6 +20,8 @@ import type { PackageActor, PackageReference, PackageWorld, Space } from './pack
 const START_GAME_ENABLED = 0x01;
 /** QUST INDX flag: the stage set when the quest starts. */
 const START_UP_STAGE = 0x02;
+/** The player's reference. */
+const PLAYER = 0x14;
 /** CELL DATA flag: an interior. */
 const CELL_INTERIOR = 0x01;
 
@@ -163,6 +165,18 @@ export class PackageData implements PackageWorld {
 
   scenePackages(actor: PackageActor): readonly number[] | undefined {
     return this.#scripts()?.scenes.packagesOf(actor.reference);
+  }
+
+  player(): { space: Space; position: readonly [number, number, number] } | undefined {
+    const shown = this.#scripts()?.world.livePlacement?.(PLAYER);
+    if (!shown) return undefined;
+    const space: Space | undefined =
+      shown.world !== undefined
+        ? { kind: 'world', world: shown.world }
+        : shown.cell !== undefined
+          ? { kind: 'interior', cell: shown.cell }
+          : undefined;
+    return space && { space, position: shown.position };
   }
 
   async aliasPackages(actor: PackageActor): Promise<readonly number[] | undefined> {

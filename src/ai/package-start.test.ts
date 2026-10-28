@@ -390,4 +390,59 @@ describe('where packages put actors', () => {
       kind: 'undecided',
     });
   });
+
+  it('sends a force greet to wait for the player outside its trigger, its senses idle', async () => {
+    // As the ForceGreet template (WhiterunGateGuardForcegreet): to the player once detected
+    // or once the player is in the trigger (run on the Player data input), else to its wait
+    // location. The wait marker is outside the gate, in another world than the guard's cell.
+    const WAIT = 0xd1986;
+    const WHITERUN: Space = { kind: 'world', world: 0x1a26f };
+    const near = (id: number, form: number, radius: number): PackageInput => ({
+      id,
+      type: 'Location',
+      value: { kind: 'location', location: { type: LocationType.nearReference, form, radius } },
+    });
+    const player: PackageInput = {
+      id: 17,
+      type: 'SingleRef',
+      value: {
+        kind: 'singleRef',
+        target: { type: TargetType.specificReference, value: 0x14, count: 0 },
+      },
+    };
+    const inTrigger = condition(325, 62, 1, { runOn: 6, param3: 17 });
+    const tree: ProcedureBranch = {
+      ...sequence(
+        { ...sequence(procedure('ForceGreet', [7])), conditions: [condition(45, 17, 1)] },
+        { ...sequence(procedure('ForceGreet', [7])), conditions: [inTrigger] },
+        procedure('Travel', [8]),
+      ),
+      type: 'Stacked',
+    };
+    const greet = pack(0x107, {
+      tree,
+      inputs: [near(8, WAIT, 0), near(62, WAIT, 2000), player],
+    });
+    const data = (position: [number, number, number]): PackageWorld => ({
+      ...world([greet]),
+      reference: (formId) =>
+        Promise.resolve(
+          formId === WAIT
+            ? { space: TAMRIEL, baseType: 'STAT', position: [19138, -7147, -3584] }
+            : REFERENCES.get(formId),
+        ),
+      player: () => ({ space: TAMRIEL, position }),
+    });
+    const guard = { ...actor([0x107]), space: WHITERUN, position: [26748, 1606, -1462] as const };
+    // The player far off: it goes to its wait location in the other world.
+    expect(await packageStart(guard, data([16590, -7615, -3900]), at(10))).toMatchObject({
+      kind: 'elsewhere',
+      reference: WAIT,
+    });
+    // The player in the trigger: it greets them (where it is).
+    expect(await packageStart(guard, data([18500, -7300, -3700]), at(10))).toMatchObject({
+      kind: 'here',
+      procedure: 'ForceGreet',
+    });
+  });
 });
