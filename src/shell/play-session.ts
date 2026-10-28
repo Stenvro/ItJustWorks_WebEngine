@@ -187,6 +187,13 @@ export interface ObjectUses {
  * Search a container, Unlock with its lock's level under the name, Sit, Use a workbench, Take a
  * stack "(n)", ...); `shown` is false where the crosshair offers nothing (an unnamed door, a
  * static), whose default only a script's Activate runs.
+ *
+ * Another activator (an actor a script's Activate names, an activate parent) gets only what
+ * activating does to the object itself (a door swings): the player's menus, seat, inventory and
+ * load screen are the player's alone (MQ101's stage 275 has its Imperial activate the keep's
+ * lever, which walked the player off to sit in it). TODO(M13): the engine's defaults for an
+ * actor activator (furniture it uses, a load door it goes through, a locked one it opens with
+ * its key, an item it takes) are not read; they do nothing here.
  */
 export function objectActivation(
   object: CellObject,
@@ -206,6 +213,7 @@ export function objectActivation(
   activator = PLAYER_REF,
 ): Activatable | undefined {
   const at: Vec3 = [object.world[12] ?? 0, object.world[13] ?? 0, object.world[14] ?? 0];
+  const byPlayer = activator === PLAYER_REF;
   const play = (descriptor: number | undefined): void => {
     if (descriptor !== undefined) sound?.(descriptor, at);
   };
@@ -222,6 +230,7 @@ export function objectActivation(
       ? { ...promptTexts(prompt, uses), shown: true }
       : { verb: uses?.text(fallback) ?? fallback, name: object.name, shown: false };
   // A locked door or container: picked (the lockpicking menu), or opened with its key.
+  if (lock && !byPlayer) return undefined;
   if (uses && lock) {
     return {
       ...shown('sUnlock'),
@@ -234,6 +243,7 @@ export function objectActivation(
     };
   }
   if (teleport) {
+    if (!byPlayer) return undefined;
     return {
       ...shown('sOpen'),
       ...(!prompt && { name: travel.name(teleport) }),
@@ -251,7 +261,7 @@ export function objectActivation(
     playback.start = clock();
     uses?.swung?.(object, instance, activator);
   };
-  if (uses && object.baseType === 'CONT') {
+  if (uses && byPlayer && object.baseType === 'CONT') {
     return {
       ...shown('sSearch'),
       activate: () => {
@@ -265,7 +275,7 @@ export function objectActivation(
     };
   }
   // Flora with an ingredient is harvested; harvested, it offers nothing until it grows again.
-  if (uses?.harvest && object.harvestable) {
+  if (uses?.harvest && byPlayer && object.harvestable) {
     if (uses.harvested?.(object) === true) return undefined;
     return {
       ...shown('sHarvest'),
@@ -274,7 +284,7 @@ export function objectActivation(
       },
     };
   }
-  if (uses && object.item && object.readable) {
+  if (uses && byPlayer && object.item && object.readable) {
     return {
       ...shown('sRead'),
       item: object.item,
@@ -283,7 +293,7 @@ export function objectActivation(
       },
     };
   }
-  if (uses && object.item) {
+  if (uses && byPlayer && object.item) {
     return {
       ...shown('sTake'),
       item: object.item,
@@ -292,7 +302,7 @@ export function objectActivation(
       },
     };
   }
-  if (uses && object.furniture && object.furniture.workbench !== 0) {
+  if (uses && byPlayer && object.furniture && object.furniture.workbench !== 0) {
     return {
       ...shown('sUse'),
       activate: () => {
@@ -307,7 +317,7 @@ export function objectActivation(
       },
     };
   }
-  if (uses && object.furniture?.sleep) {
+  if (uses && byPlayer && object.furniture?.sleep) {
     return {
       ...shown('sFurnitureSleep'),
       activate: () => {
@@ -315,7 +325,7 @@ export function objectActivation(
       },
     };
   }
-  if (seat && object.furniture?.sit) {
+  if (seat && byPlayer && object.furniture?.sit) {
     return {
       ...shown('sSit'),
       activate: () => {
