@@ -161,6 +161,11 @@ const SPOT_HEIGHT = 160;
  * furniture's own height (game units); higher ones put the root at the marker.
  */
 const SEAT_HEIGHT_MAX = 64;
+/**
+ * The ground where an enter begins is looked for from this far over its marker's height (units):
+ * over a lean's floor-level marker, under the top of a table in front of a chair.
+ */
+const START_LIFT = 16;
 /** The event that ends an idle and returns the graph to its default state. */
 const FORCE_DEFAULT_STATE = 'IdleForceDefaultState';
 
@@ -572,11 +577,17 @@ export class ActorFurniture {
       const heading = marker.heading + (motion?.yaw ?? 0);
       const sin = Math.sin(heading);
       const cos = Math.cos(heading);
-      const start: Vec3 = [
-        marker.position[0] - (tx * cos + ty * sin),
-        marker.position[1] - (-tx * sin + ty * cos),
-        user.position[2],
-      ];
+      // On the user's floor if the furniture is on it; on another floor, on the ground there
+      // (else at its marker's height): one sent to furniture far off and lower down (a guard's
+      // Sit across Whiterun) was sent to a point in the air there, and warped to it (#giveUp).
+      const sx = marker.position[0] - (tx * cos + ty * sin);
+      const sy = marker.position[1] - (-tx * sin + ty * cos);
+      const sz = marker.position[2];
+      const floor =
+        Math.abs(user.position[2] - sz) <= SPOT_HEIGHT
+          ? user.position[2]
+          : (this.#options.ground?.([sx, sy, sz + START_LIFT]) ?? sz);
+      const start: Vec3 = [sx, sy, floor];
       const arrived = await walk(start, 16);
       if (this.#uses.get(actor) !== use) return false;
       if (!arrived) {
