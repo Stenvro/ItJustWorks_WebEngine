@@ -11,6 +11,8 @@
 //   sim.close();
 
 import { readGameSave, saveGame } from '../../src/save/game-save.ts';
+import type { SpokenInfo, TopicChoice } from '../../src/scripting/runtime/dialogue-engine.ts';
+import { afterInfo } from '../../src/scripting/runtime/dialogue-rules.ts';
 import type { GameEvents } from '../../src/scripting/runtime/event-hub.ts';
 import { PLAYER_REF } from '../../src/scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../../src/scripting/runtime/runtime.ts';
@@ -19,6 +21,7 @@ import type { SimRecord } from '../../src/sim/sim-log.ts';
 import { SIM_STEP, SimWorld } from '../../src/sim/sim-world.ts';
 import { Vfs } from '../../src/vfs/vfs.ts';
 import type { RecordDatabase } from '../../src/world/record-db.ts';
+import { InfoFlag } from '../../src/world/dialogue-records.ts';
 import type { Arrival } from '../../src/world/worldspace.ts';
 import { openGameFolder } from '../../tools/gamedata-path.ts';
 
@@ -52,6 +55,11 @@ export interface RunningPackage {
   readonly id: number;
   readonly procedure: string | undefined;
 }
+
+/** Invisible Continue infos said one after another at most (as the dialogue menu). */
+const MAX_CONTINUES = 32;
+/** The longest a conversation's step (a line's fragments) is waited for, in seconds. */
+const LINE_SECONDS = 30;
 
 /** The global GameHour (Skyrim.esm): the clock, as scripts set it. */
 const GAME_HOUR = 0x38;
@@ -123,6 +131,10 @@ export class Sim {
   readonly #vfs: Vfs;
   /** Editor ids by record type, read once per type (lookups by name). */
   readonly #editorIds = new Map<string, Map<string, number>>();
+  /** The conversation the player holds: its speaker and the topics listed now. */
+  #conversation: { readonly speaker: number; choices: TopicChoice[] } | undefined;
+  /** The dialogue menus answered so far (index into the menu records). */
+  #menusSeen = 0;
 
   constructor(world: SimWorld, vfs: Vfs, db: RecordDatabase) {
     this.world = world;
@@ -326,6 +338,121 @@ export class Sim {
     const cast = this.world.stage.launchSpell(spell, PLAYER_REF, target, PLAYER_REF);
     await this.world.settle();
     return cast;
+  }
+
+  // --- Conversations (the dialogue menu's rules, src/shell/dialogue-menu.ts, headless) -------
+
+  /**
+   * The player talks to an actor: activates it (as through the crosshair), and once its
+   * dialogue menu opens hears the greeting; the topics listed (their texts), or undefined if no
+   * conversation opened within the seconds (blocked activation, a greeting said in passing).
+   */
+  async talk(actor: number, seconds = 5): Promise<string[] | undefined> {
+    if (!this.activate(actor)) return undefined;
+    return this.listen(actor, seconds);
+  }
+
+  /**
+   * Waits for a conversation an actor starts (a force greet, a scene's, or the player's
+   * activation): its greeting (or opening topic) is heard; the topics listed, or undefined.
+   */
+  async listen(actor?: number, seconds = 30): Promise<string[] | undefined> {
+    let opened: Extract<SimRecord, { readonly kind: 'menu' }> | undefined;
+    await this.until(() => {
+      const menus = this.menus();
+      for (; this.#menusSeen < menus.length && !opened; this.#menusSeen++) {
+        const menu = menus[this.#menusSeen];
+        if (menu?.menu === 'Dialogue Menu' && (actor === undefined || menu.reference === actor))
+          opened = menu;
+      }
+      return opened !== undefined;
+    }, seconds);
+    const speaker = opened?.reference;
+    if (speaker === undefined) return undefined;
+    const engine = this.runtime.dialogue;
+    const greeting = await this.#drive(
+      opened?.opening === undefined
+        ? engine.greeting(speaker)
+        : engine.topicLine(opened.opening, speaker),
+    );
+    this.runtime.dialogueSpeaker = speaker;
+    this.runtime.state.actor(speaker).talkedToPlayer = true;
+    this.#conversation = { speaker, choices: [] };
+    if (greeting) await this.#say(greeting, speaker);
+    return this.#goOn(greeting, speaker);
+  }
+
+  /** The topics listed in the conversation now (their texts). */
+  get topics(): string[] {
+    return this.#conversation?.choices.map((choice) => choice.text) ?? [];
+  }
+
+  /**
+   * The player chooses a listed topic (the first whose text matches): the actor says its
+   * info, then the topics show again; the topics listed (none: the conversation ended).
+   */
+  async choose(topic: string | RegExp): Promise<string[]> {
+    const conversation = this.#conversation;
+    if (!conversation) throw new Error('No conversation');
+    const choice = conversation.choices.find((each) =>
+      typeof topic === 'string' ? each.text.includes(topic) : topic.test(each.text),
+    );
+    if (!choice) {
+      throw new Error(`No topic ${String(topic)} among: ${this.topics.join(' | ')}`);
+    }
+    const spoken = await this.#drive(this.runtime.dialogue.choose(choice, conversation.speaker));
+    if (!spoken) return this.goodbye();
+    await this.#say(spoken, conversation.speaker);
+    return this.#goOn(spoken, conversation.speaker);
+  }
+
+  /** The player leaves the conversation (Tab). */
+  goodbye(): [] {
+    this.#conversation = undefined;
+    this.runtime.dialogueSpeaker = undefined;
+    return [];
+  }
+
+  /** Waits for a conversation's step while the world runs (its fragments may wait for it). */
+  async #drive<T>(work: Promise<T>): Promise<T> {
+    let done = false;
+    const result = work.finally(() => {
+      done = true;
+    });
+    await this.until(() => done, LINE_SECONDS);
+    return result;
+  }
+
+  /** The actor says an info: its begin fragment, its responses, its end fragment. */
+  async #say(spoken: SpokenInfo, speaker: number): Promise<void> {
+    const engine = this.runtime.dialogue;
+    await this.#drive(engine.runFragment(spoken.info, 'begin', speaker));
+    engine.said(spoken.info);
+    await this.#drive(engine.runFragment(spoken.info, 'end', speaker));
+  }
+
+  /** After an info: its Invisible Continues, then Goodbye ends it, else the topics show. */
+  async #goOn(spoken: SpokenInfo | undefined, speaker: number): Promise<string[]> {
+    const engine = this.runtime.dialogue;
+    let current = spoken;
+    let offered = spoken?.info.choices;
+    for (let step = 0; current && step < MAX_CONTINUES; step++) {
+      if (afterInfo(current.info) !== 'continue') break;
+      const next = await this.#drive(engine.continueAfter(current, speaker));
+      if (!next) {
+        offered = undefined;
+        break;
+      }
+      await this.#say(next, speaker);
+      current = next;
+      offered = next.info.choices;
+    }
+    if (current && (current.info.flags & InfoFlag.goodbye) !== 0) return this.goodbye();
+    const choices = await this.#drive(engine.topics(speaker, offered));
+    const listed = choices.filter((choice) => choice.hidden !== true);
+    if (listed.length === 0 || !this.#conversation) return this.goodbye();
+    this.#conversation.choices = listed;
+    return this.topics;
   }
 
   /** Presses or lets go of one of the player's user events ("Activate", "Jump", ...). */

@@ -1,9 +1,11 @@
 // Quests (QUST) against the real files: one quest's stages, objectives and aliases, or every
 // quest parsed with a summary of how their aliases are filled.
 //
-//   node tools/quest-info.ts MQ101          one quest (editor id or hex form id)
+//   node tools/quest-info.ts MQ101          one quest (editor id or hex form id), with the
+//                                           fragment each stage's log entry runs
 //   node tools/quest-info.ts --parse        every quest: counts, alias fills, start events
 
+import { parseVmad } from '../src/formats/esm/vmad.ts';
 import { parseQuest, QuestFlag, type QuestRecord } from '../src/world/quest-records.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
@@ -40,6 +42,14 @@ async function show(quest: QuestRecord): Promise<void> {
     console.log(
       `  stage ${String(stage.index)}${stage.flags & 2 ? ' (start-up)' : ''}${stage.flags & 4 ? ' (shut-down)' : ''}: ${entries.join(' | ')}`,
     );
+  }
+  const vmad = (await db.get(quest.formId))?.fields.first('VMAD');
+  if (vmad) {
+    for (const fragment of parseVmad(vmad, 'QUST').fragments) {
+      console.log(
+        `  stage ${String(fragment.stage)} entry ${String(fragment.logEntry)} runs ${fragment.script}.${fragment.function}`,
+      );
+    }
   }
   for (const objective of quest.objectives) {
     console.log(

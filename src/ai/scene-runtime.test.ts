@@ -527,7 +527,11 @@ describe('scene phases and actions', () => {
 describe('scene starts, stops and behaviour', () => {
   it('waits for actors playing in another scene; a forced start takes them', async () => {
     const test = setup([
-      scene(0x10, { actors: [actor(0)], phases: [phase([], [truth(9)])] }),
+      scene(0x10, {
+        actors: [actor(0)],
+        phases: [phase([], [truth(9)])],
+        actions: [packages(1, 0, 0, 0, [0x900])],
+      }),
       scene(0x11, { actors: [actor(0)], phases: [phase([], [truth(9)])] }),
       scene(0x12, { actors: [actor(0)], phases: [phase([], [truth(9)])] }),
     ]);
@@ -546,6 +550,22 @@ describe('scene starts, stops and behaviour', () => {
     await test.tick();
     expect(test.director.sceneOf(0x64)).toBe(0x12);
     expect(test.director.isPlaying(0x11)).toBe(false);
+  });
+
+  // RiverwoodDortheFrodnarPlayScene holds Dorthe in a first phase with no action for her, and
+  // MQ102HadvarAlvorScene (which she joins much later) must not wait for it.
+  it('takes an actor whose other scene has no action running on it now (that scene ends)', async () => {
+    const test = setup([
+      scene(0x10, { actors: [actor(0)], phases: [phase([], [truth(9)])] }),
+      scene(0x11, { actors: [actor(0)], phases: [phase([], [truth(9)])] }),
+    ]);
+    test.director.start(0x10);
+    await test.tick();
+    expect(test.director.sceneOf(0x64)).toBe(0x10);
+    test.director.start(0x11);
+    await test.tick();
+    expect(test.director.sceneOf(0x64)).toBe(0x11);
+    expect(test.director.isPlaying(0x10)).toBe(false);
   });
 
   it('does not start without its quest or a required actor; an optional one may be missing', async () => {
