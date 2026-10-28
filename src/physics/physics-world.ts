@@ -1987,12 +1987,15 @@ export class PhysicsWorld {
   /**
    * Sets the velocity of a placement's simulated bodies: `linear` in game units a second (made
    * Havok's here), `angular` in radians a second (a cut head flung off: src/shell/actor-
-   * dismemberment.ts).
+   * dismemberment.ts). A body placed a moment ago is launched, no longer settling: its warm
+   * start took the speed every step (DEPENETRATE_SECONDS), so a cut head hung at the neck for
+   * half a second and then dropped straight down, never flung (off the block, past the basket).
    */
   setVelocity(placed: PlacedCollision, linear: Vec3, angular: Vec3): void {
     for (const { body, data } of placed.bodies) {
       if (!dynamicBody(data)) continue;
       this.release(body);
+      this.#depenetrating.delete(body.handle);
       body.setLinvel({ x: toHavok(linear[0]), y: toHavok(linear[1]), z: toHavok(linear[2]) }, true);
       body.setAngvel({ x: angular[0], y: angular[1], z: angular[2] }, true);
     }
