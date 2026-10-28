@@ -101,7 +101,10 @@ How actors move (`src/ai/locomotion.ts`, `src/ai/movement-types.ts`, `src/shell/
   leaves on moveStart only while not both bBlendOutSlow and bForceIdleStop are set, which such
   an idle sets: told moveStart alone, Lokir never moved, stood in the line, and the execution
   waited for the archers to kill him (measured in the browser: after IdleStop he ran his
-  patrol). An idle that is not animation-driven holds it as well where its graph does not leave
+  patrol). One on its way to furniture is not in it yet: its idle stops so too (furniture
+  holds an actor only entering, in or leaving it; MQ101's Imperial, in a dialogue idle as his
+  package sent him to the keep's inner lever, stood there for ever and the gate stayed shut).
+  An idle that is not animation-driven holds it as well where its graph does not leave
   the idle on moveStart (the human graph's NonOffsetIdles: MT_Idle_Nervous and the other idles
   a scene or package plays, which only IdleStop and IdleForceDefaultState end): its controller
   took it on its way while its graph stood (QA: Ralof glided at 360 units a second through the
