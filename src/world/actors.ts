@@ -301,6 +301,15 @@ export function partitionVisible(
   return owner === undefined || owner === addon;
 }
 
+/**
+ * The hair shader's tint of a hair colour (CLFM): twice the colour, so that 128 leaves the
+ * hair texture as it is. The vanilla hair colours are all dark (Platinum Blond 92,88,80, Black
+ * 26,28,28) and Albino White is 130,130,130: taken as they are, every hair came out near black.
+ */
+export function hairTint(color: readonly [number, number, number]): [number, number, number] {
+  return [color[0] * 2, color[1] * 2, color[2] * 2];
+}
+
 /** The lowest biped slot of a set of slot flags (61 for none). */
 export function firstSlot(slots: number): number {
   for (let slot = 30; slot < 62; slot++) if ((slots & (2 ** (slot - 30))) !== 0) return slot;
