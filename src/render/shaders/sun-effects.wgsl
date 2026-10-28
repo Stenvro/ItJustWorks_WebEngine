@@ -12,6 +12,10 @@ struct Rays {
   color: vec4f,
   // 1 / the depth texture's size, the screen's aspect, a visibility fade (0..1).
   params: vec4f,
+  // Towards the light (xyz), the phase function's asymmetry g (w).
+  phase: vec4f,
+  // Clip space back to world space (the view ray of a pixel).
+  inverseViewProj: mat4x4f,
 };
 
 const RAY_SAMPLES: i32 = 32;
@@ -49,6 +53,23 @@ fn skyLight(uv: vec2f) -> vec3f {
   return min(textureSampleLevel(scene, linearSampler, uv, 0.0).rgb, vec3f(SKY_CLAMP));
 }
 
+// The view ray through a uv (two points of it: at the near plane and at twice its distance,
+// reversed Z).
+fn viewRay(uv: vec2f) -> vec3f {
+  let ndc = vec2f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+  let near = rays.inverseViewProj * vec4f(ndc, 1.0, 1.0);
+  let far = rays.inverseViewProj * vec4f(ndc, 0.5, 1.0);
+  return normalize(far.xyz / far.w - near.xyz / near.w);
+}
+
+// Henyey-Greenstein's share towards the eye relative to looking at the light (volumetric-
+// lighting.ts godRayPhase).
+fn rayPhase(uv: vec2f) -> f32 {
+  let g = rays.phase.w;
+  let cosAngle = clamp(dot(viewRay(uv), rays.phase.xyz), -1.0, 1.0);
+  return pow((1.0 - g) * (1.0 - g) / max(1.0 + g * g - 2.0 * g * cosAngle, 1e-6), 1.5);
+}
+
 @fragment
 fn fs_rays(in: FullscreenOut) -> @location(0) vec4f {
   let toLight = rays.light.xy - in.uv;
@@ -65,10 +86,9 @@ fn fs_rays(in: FullscreenOut) -> @location(0) vec4f {
     weight *= rays.color.w;
     uv += step;
   }
-  // Brighter towards the light (the phase function's forward scattering).
-  let offset = toLight * vec2f(rays.params.y, 1.0);
-  let near = 1.0 / (1.0 + dot(offset, offset) * 8.0);
-  let light = sum / max(total, 1e-4) * near * rays.light.w * rays.params.z;
+  // Brighter towards the light by the angle between the pixel's view ray and the light: the
+  // weather's phase function (VOLI phase scattering).
+  let light = sum / max(total, 1e-4) * rayPhase(in.uv) * rays.light.w * rays.params.z;
   return vec4f(light * rays.color.rgb, 1.0);
 }
 

@@ -99,7 +99,13 @@ export function godRays(
   settings: VolumetricSettings,
   sunColor: Rgb,
   sunHeight: number,
-): { readonly strength: number; readonly color: Rgb; readonly decay: number } {
+): {
+  readonly strength: number;
+  readonly color: Rgb;
+  readonly decay: number;
+  /** The phase function's asymmetry (Henyey-Greenstein g, 0..0.95): godRayPhase. */
+  readonly scattering: number;
+} {
   const above = Math.max(0, Math.min(1, (sunHeight + 0.02) / 0.1));
   const strength = settings.enabled
     ? lighting.intensity * settings.intensity * lighting.phaseContribution * above
@@ -109,5 +115,21 @@ export function godRays(
   const color: Rgb = [channel(0), channel(1), channel(2)];
   // Tighter scattering keeps the rays near the sun: the samples fade faster along the blur.
   const decay = 0.9 + 0.09 * Math.max(0, Math.min(1, lighting.phaseScattering));
-  return { strength, color, decay };
+  return { strength, color, decay, scattering: phaseAsymmetry(lighting.phaseScattering) };
+}
+
+/** VOLI's phase scattering as the Henyey-Greenstein asymmetry g (forward only, below 1). */
+export function phaseAsymmetry(scattering: number): number {
+  return Math.max(0, Math.min(0.95, scattering));
+}
+
+/**
+ * The phase function of the god rays (shaders/sun-effects.wgsl rayPhase): Henyey-Greenstein's
+ * share of the light scattered towards the eye at `cosAngle` between the view ray and the
+ * light, relative to looking straight at the light (1 there): ((1 - g)^2 / (1 + g^2 -
+ * 2 g cos))^1.5. g = 0 scatters evenly; higher g gathers the light round the sun.
+ */
+export function godRayPhase(cosAngle: number, g: number): number {
+  const denominator = 1 + g * g - 2 * g * Math.max(-1, Math.min(1, cosAngle));
+  return Math.pow(((1 - g) * (1 - g)) / Math.max(denominator, 1e-6), 1.5);
 }

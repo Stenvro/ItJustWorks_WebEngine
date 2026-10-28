@@ -43,8 +43,9 @@ fn effectLight(n: vec3f, worldPos: vec3f) -> vec3f {
   if (draw.effect.w > 0.5) {
     light = draw.effect.rgb;
   }
-  for (var i = 0u; i < frame.counts.x; i++) {
-    let point = pointLights[i];
+  let list = drawLightList();
+  for (var i = 0u; i < list.count; i++) {
+    let point = pointLights[lightListIndex(list, i)];
     if (point.coneCos >= -1.0 || lightOtherRoom(point, draw.flags.z >> 24u)) {
       continue;
     }

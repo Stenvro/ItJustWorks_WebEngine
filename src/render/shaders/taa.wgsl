@@ -1,6 +1,6 @@
 // Temporal anti-aliasing (taa.ts): this frame (rendered with a sub-pixel jitter) blended with
-// the history of the last frames, found again through the opaque scene's depth and the camera's
-// move; the history is clamped to this frame's 3×3 neighbourhood so moved or new things do not
+// the history of the last frames, found again through the motion vectors of moving draws
+// (velocity.wgsl) or else the opaque scene's depth and the camera's move; the history is clamped to this frame's 3×3 neighbourhood so moved or new things do not
 // leave ghosts. Blended in a tone-mapped space so bright highlights do not flicker.
 
 struct Taa {
@@ -15,6 +15,8 @@ struct Taa {
 @group(0) @binding(2) var current: texture_2d<f32>;
 @group(0) @binding(3) var history: texture_2d<f32>;
 @group(0) @binding(4) var depth: texture_2d<f32>;
+// Moving draws' motion vectors: the uv offset to the last frame (rg), written (b).
+@group(0) @binding(5) var velocity: texture_2d<f32>;
 
 @vertex
 fn vs_fullscreen(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {
@@ -47,13 +49,24 @@ fn fs_resolve(@builtin(position) position: vec4f) -> @location(0) vec4f {
     }
   }
   let uv = position.xy * taa.params.zw;
-  let d = textureLoad(depth, pixel, 0).r;
-  let clip = taa.reproject * vec4f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, d, 1.0);
-  if (taa.params.y < 0.5 || clip.w <= 1e-6) {
+  if (taa.params.y < 0.5) {
     return vec4f(untoneMap(here), 1.0);
   }
-  let ndc = clip.xy / clip.w;
-  let previous = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+  var previous: vec2f;
+  let motion = textureLoad(velocity, pixel, 0);
+  if (motion.b > 0.5) {
+    // A moving draw: where its surface was.
+    previous = uv + motion.rg;
+  } else {
+    // Still: where the camera saw this point.
+    let d = textureLoad(depth, pixel, 0).r;
+    let clip = taa.reproject * vec4f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, d, 1.0);
+    if (clip.w <= 1e-6) {
+      return vec4f(untoneMap(here), 1.0);
+    }
+    let ndc = clip.xy / clip.w;
+    previous = vec2f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+  }
   if (any(previous < vec2f(0.0)) || any(previous > vec2f(1.0))) {
     return vec4f(untoneMap(here), 1.0);
   }

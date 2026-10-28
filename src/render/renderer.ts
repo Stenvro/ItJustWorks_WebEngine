@@ -240,6 +240,10 @@ export class Renderer {
   readonly #depthResolve: GPURenderPipeline;
   readonly #viewProjection = new Float32Array(16);
   readonly #firstPersonViewProjection = new Float32Array(16);
+  /** First person's view-projection without the jitter, this frame's (if any) and the last. */
+  readonly #firstPersonUnjittered = new Float32Array(16);
+  #hasFirstPerson = false;
+  #previousFirstPerson: Float32Array | undefined;
   #targets: RenderTargets | undefined;
   #view: SceneView | undefined;
   /** The cascades as last rendered into the shadow map, and a frame counter for updates. */
@@ -389,6 +393,8 @@ export class Renderer {
         this.#firstPersonViewProjection,
       );
       // The TAA moves the image by a sub-pixel offset each frame.
+      this.#hasFirstPerson = firstPerson !== undefined;
+      if (firstPerson) this.#firstPersonUnjittered.set(firstPerson);
       if (this.antiAliasing && !view.backdrop) {
         const pixels = jitterPixels(this.#taaFrame++);
         jitterProjection(this.#viewProjection, pixels, targets.width, targets.height);
@@ -633,10 +639,47 @@ export class Renderer {
       if (this.antiAliasing && !view.backdrop) {
         const previous = this.#previousUnjittered;
         const reproject = previous && reprojection(previous, this.#viewProjection);
+        // Moving draws' motion vectors (the rest follows the depth and the camera).
+        const velocity = this.#taa.velocityTarget(hdrTexture.width, hdrTexture.height);
+        const motion = encoder.beginRenderPass({
+          label: 'velocity',
+          colorAttachments: [
+            {
+              view: velocity.createView(),
+              clearValue: { r: 0, g: 0, b: 0, a: 0 },
+              loadOp: 'clear',
+              storeOp: 'store',
+            },
+          ],
+        });
+        if (previous) {
+          const firstPerson = this.#hasFirstPerson ? this.#firstPersonUnjittered : undefined;
+          this.scene.drawVelocity(
+            motion,
+            scenes,
+            {
+              viewProj: this.#viewProjection,
+              current: this.#unjittered,
+              previous,
+              firstPersonViewProj: firstPerson && this.#firstPersonViewProjection,
+              firstPersonCurrent: firstPerson,
+              firstPersonPrevious: firstPerson && (this.#previousFirstPerson ?? firstPerson),
+            },
+            targets.sceneDepth,
+          );
+        }
+        motion.end();
         this.#taa.resolve(encoder, hdrTexture, targets.sceneDepth, reproject);
         this.#previousUnjittered ??= new Float32Array(16);
         this.#previousUnjittered.set(this.#unjittered);
+        if (this.#hasFirstPerson) {
+          this.#previousFirstPerson ??= new Float32Array(16);
+          this.#previousFirstPerson.set(this.#firstPersonUnjittered);
+        } else {
+          this.#previousFirstPerson = undefined;
+        }
       } else {
+        this.#previousFirstPerson = undefined;
         this.#previousUnjittered = undefined;
         this.#taa.reset();
       }

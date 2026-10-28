@@ -157,9 +157,12 @@ fn objectLighting(
   if (wantSpecular) {
     result.specular += lightSpecular(toSun, sunColor * shadow, s);
   }
+  // The draw's own lights (common.wgsl drawLightList): portal-strict lights of other rooms
+  // are already left out of a list, not of every light.
   let room = draw.flags.z >> 24u;
-  for (var i = 0u; i < frame.counts.x; i++) {
-    let light = pointLights[i];
+  let list = drawLightList();
+  for (var i = 0u; i < list.count; i++) {
+    let light = pointLights[lightListIndex(list, i)];
     if (lightOtherRoom(light, room)) {
       continue;
     }
@@ -226,8 +229,9 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
   let flags1 = draw.flags.x;
   let flags2 = draw.flags.y;
   let drawFlags = draw.flags.z;
-  // The top byte holds the distance fade (common.wgsl fadeDiscarded).
-  let shaderType = draw.flags.w & 0xffffffu;
+  // The top byte holds the distance fade (common.wgsl fadeDiscarded), bits 8-23 the draw's
+  // light list.
+  let shaderType = draw.flags.w & 0xffu;
   if (fadeDiscarded(in.position.xy)) {
     discard;
   }
