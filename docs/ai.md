@@ -309,7 +309,13 @@ The rules (read from the engine):
 - **The heights it cuts.** A navmesh triangle counts as under it when its height lies between
   the box's bottom minus fMaxHeightFromNavmeshToObstacleBoxBottom (128) and the box's top plus
   fMaxHeightFromObstacleBoxToToNavmesh (−16): a box on the floor above leaves the hall below it
-  open.
+  open. (Observed in the original: the triangle search under a box filters by height with these two, the
+  box's height plus −16 above and 128 below.) Ours takes the box's bottom and top straight
+  below and above each point, its own faces rather than its upright bounds: a tilted box under
+  a ramp's navmesh reaches above the navmesh lying on it only at its high end (Helgen Keep's
+  collapsed hall, the dunCG CollisionMarkers under the rubble on the way to the caves, whose
+  upright bounds shut the only way on). TODO(M13): whether the engine's box there is the
+  reference's own or its upright bounds was not read; the data needs its own.
 - **When it cuts.** While the reference is enabled and, for a door or an activator, shut: open
   (GetOpenState 1 after a script's SetOpen, or its last animation event an open one: a
   portcullis's `Open`/`Opened`) it cuts nothing; its close animation (`Close`/`Closed`) cuts
@@ -318,8 +324,13 @@ The rules (read from the engine):
 Ours: the actor stage (`src/shell/actor-stage.ts`, `refreshObstacles`) keeps a per-cell set of
 active footprints (`NavmeshObstacleField`), replaced as the views apply enable states, a script
 opens or shuts a door, or an obstacle activator's open or close animation plays. `findPath`
-takes them as `obstacles`: the triangles whose middle lies under one and the path steps that
-cross one are closed (a step that starts inside one does not count: an actor in a box walks out).
+takes them as `obstacles`: the triangles wholly under one and the path steps that cross one are
+closed (a step that starts inside one does not count: an actor in a box walks out). A triangle
+only partly under one keeps its free part: a step crosses into it at the point of the edge
+nearest its middle whose step stays clear, and a path pulled tight that would cut across a
+footprint goes by the search's own steps instead (Helgen Keep: a cart wheel, HandCart01Wheel,
+lying by the doorway to the stairs covered the middle of the doorway's triangles and shut
+Ralof's way down when a triangle under a footprint's middle was closed whole).
 A mover whose way on an obstacle came across, or whose path stopped short while one went, searches
 again (`ActorMovers`). A wander's random point (`randomReachablePoint`) keeps off them too.
 The cases: tests/conformance/ai/movement-paths.test.ts (Korvanjund's MQ103BanditDisabler box
@@ -327,7 +338,7 @@ across the hall stops a walking NPC, disabled it lets her through; Saarthal's po
 it shuts) and src/ai/pathfinding.test.ts.
 
 TODO(M13): the engine re-triangulates the navmesh under an obstacle (a triangle partly covered is
-split, its free part stays open), and redoes an animated obstacle's cut from its collision body
+split, its free part stays open; ours approximates that by the crossing points above), and redoes an animated obstacle's cut from its collision body
 where it comes to rest (bhkObstacleDeactivationListener), not from its animation events; an
 activator's collision in its current animation state, not its OBND, is the box then.
 
