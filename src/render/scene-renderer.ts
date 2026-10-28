@@ -306,6 +306,8 @@ function markFirstPerson(uints: Uint32Array, firstPerson: boolean): void {
 const DRAW_ROOM_SHIFT = 24;
 /** A draw slot past what flags.w can name (bits 8-23): its shaders take every light. */
 const NO_LIGHT_LIST = 0xffff;
+/** How far beyond the view a light's sphere still counts for the light lists (world units). */
+const LIGHT_VIEW_MARGIN = 1024;
 /** The velocity pass's uniforms: six matrices (shaders/velocity.wgsl). */
 const VELOCITY_FLOATS = 6 * 16;
 const SLSF2_TREE_ANIM = 0x20000000;
@@ -1068,8 +1070,11 @@ export class GpuScene {
   fades: readonly FadeGroup[] = [];
   /** Each draw's lights this frame (light-lists.ts), by its uniform slot. */
   lightLists: SceneLightLists | undefined;
-  /** Its moving draws' last world matrices for the TAA's motion vectors (made when first drawn). */
-  motion: SceneMotion | undefined;
+  /**
+   * Its moving draws' last world matrices for the TAA's motion vectors (made when first drawn;
+   * null: nothing in it moves).
+   */
+  motion: SceneMotion | null | undefined;
   /** The models it draws (held while it exists). */
   readonly #models: readonly GpuModel[];
 
@@ -2735,12 +2740,17 @@ export class SceneRenderer {
 
     // A new light frame: each draw drawn chooses its lights again (#chooseLights).
     this.#lightFrame = (this.#lightFrame + 1) >>> 0 || 1;
-    this.#lightKeyCount = lightCount;
+    // Only lights that can reach what is in view are candidates (their sphere, grown by
+    // LIGHT_VIEW_MARGIN for objects straddling the view's edges).
+    this.#lightKeyCount = 0;
     if (lightCount > 0) {
       for (let i = 0; i < lightCount; i++) {
         const light = lighting.lights[i];
         if (!light) continue;
-        packLightKey(this.#lightKeys, i, light, this.#lightShadowOf(light)[0] >= 0);
+        if (sphereVisible(this.#frame.planes, light.position, light.radius + LIGHT_VIEW_MARGIN)) {
+          const shadowed = this.#lightShadowOf(light)[0] >= 0;
+          packLightKey(this.#lightKeys, this.#lightKeyCount++, light, shadowed, i);
+        }
         this.#lightData.set(
           [
             ...light.position,
@@ -3300,7 +3310,9 @@ export class SceneRenderer {
     pass.setBindGroup(0, this.#velocityGroup.group);
     pass.setVertexBuffer(1, this.#fallbackVertices);
     for (const scene of scenes) {
-      const motion = (scene.motion ??= this.#sceneMotion(scene));
+      // null: the scene has nothing that moves (looked at once).
+      if (scene.motion === undefined) scene.motion = this.#sceneMotion(scene) ?? null;
+      const motion = scene.motion;
       if (!motion) continue;
       const uniforms = new Float32Array(scene.uniformData);
       const worldOf = (draw: Draw): Float32Array =>
