@@ -1,7 +1,11 @@
 // The sun's screen effects over the HDR scene (sun-effects.ts):
-// - god rays (the weather's volumetric lighting): at a low resolution each pixel gathers the
-//   sky's light seen between it and the light's place on the screen (the opaque scene's depth
-//   tells sky from ground), fading along the way; then added to the scene;
+// - god rays (the weather's volumetric lighting): at a low resolution each pixel gathers how
+//   much open sky lies between it and the light's place on the screen (the opaque scene's
+//   depth tells sky from ground), fading along the way: the light's way through the air, cut
+//   into shafts by what stands in front of the sky. That share, times the air in front of the
+//   pixel and the phase function, lights the air in the light's colour; then added to the
+//   scene. It does not depend on how bright the sky is (the original's scattering is lit by
+//   the light, not by the sky);
 // - the lens flare's sprites, added along the sun's screen line, faded by how much of the sun
 //   the scene covers (the depth around it, read in the vertex shader).
 
@@ -10,7 +14,8 @@ struct Rays {
   light: vec4f,
   // Colour (rgb) and the decay per sample.
   color: vec4f,
-  // 1 / the depth texture's size, the screen's aspect, a visibility fade (0..1).
+  // 1 / the depth texture's size, the screen's aspect, a visibility fade (0..1), the phase
+  // function's share against even scattering (VOLI phase contribution).
   params: vec4f,
   // Towards the light (xyz), the phase function's asymmetry g (w).
   phase: vec4f,
@@ -19,8 +24,12 @@ struct Rays {
 };
 
 const RAY_SAMPLES: i32 = 32;
-/** The brightest the sky counts with (keeps the sun's disc from swamping the rays). */
-const SKY_CLAMP: f32 = 4.0;
+/**
+ * The depth of air that lights fully: nearer surfaces have less air in front of them. The
+ * shadow distance ([Display] fShadowDistance), as far as the original's volume is lit by the
+ * shadow map. TODO(M13): the original's depth distribution of its volume (range factor).
+ */
+const AIR_DISTANCE: f32 = 8000.0;
 
 @group(0) @binding(0) var<uniform> rays: Rays;
 @group(0) @binding(1) var linearSampler: sampler;
@@ -42,32 +51,47 @@ fn vs_fullscreen(@builtin(vertex_index) index: u32) -> FullscreenOut {
   return out;
 }
 
-/** The sky's light at a uv: the scene's colour where nothing opaque is in front (depth 0). */
-fn skyLight(uv: vec2f) -> vec3f {
+/** The opaque scene's depth at a uv (reversed Z: 0 is the sky). */
+fn depthAt(uv: vec2f) -> f32 {
   let size = vec2f(textureDimensions(depth));
   let texel = vec2i(clamp(uv, vec2f(0.0), vec2f(0.999999)) * size);
-  let d = textureLoad(depth, texel, 0).r;
-  if (d > 0.0) {
-    return vec3f(0.0);
-  }
-  return min(textureSampleLevel(scene, linearSampler, uv, 0.0).rgb, vec3f(SKY_CLAMP));
+  return textureLoad(depth, texel, 0).r;
+}
+
+/** 1 where the sky is seen at a uv (nothing opaque in front), else 0. */
+fn skyOpen(uv: vec2f) -> f32 {
+  return select(0.0, 1.0, depthAt(uv) <= 0.0);
+}
+
+fn worldAt(ndc: vec2f, d: f32) -> vec3f {
+  let p = rays.inverseViewProj * vec4f(ndc, d, 1.0);
+  return p.xyz / p.w;
 }
 
 // The view ray through a uv (two points of it: at the near plane and at twice its distance,
 // reversed Z).
 fn viewRay(uv: vec2f) -> vec3f {
   let ndc = vec2f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
-  let near = rays.inverseViewProj * vec4f(ndc, 1.0, 1.0);
-  let far = rays.inverseViewProj * vec4f(ndc, 0.5, 1.0);
-  return normalize(far.xyz / far.w - near.xyz / near.w);
+  return normalize(worldAt(ndc, 0.5) - worldAt(ndc, 1.0));
 }
 
-// Henyey-Greenstein's share towards the eye relative to looking at the light (volumetric-
-// lighting.ts godRayPhase).
+/** The share of a full depth of air in front of a uv's surface (1 for the sky). */
+fn airShare(uv: vec2f) -> f32 {
+  let d = depthAt(uv);
+  if (d <= 0.0) {
+    return 1.0;
+  }
+  let ndc = vec2f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+  return clamp(distance(worldAt(ndc, d), worldAt(ndc, 1.0)) / AIR_DISTANCE, 0.0, 1.0);
+}
+
+// The original's phase function mixed with even scattering by the phase contribution
+// (volumetric-lighting.ts godRayPhase).
 fn rayPhase(uv: vec2f) -> f32 {
   let g = rays.phase.w;
   let cosAngle = clamp(dot(viewRay(uv), rays.phase.xyz), -1.0, 1.0);
-  return pow((1.0 - g) * (1.0 - g) / max(1.0 + g * g - 2.0 * g * cosAngle, 1e-6), 1.5);
+  let phase = (1.0 - g * g) / max(4.0 * 3.14159265 * (1.0 - g * cosAngle), 1e-6);
+  return mix(1.0, phase, rays.params.w);
 }
 
 @fragment
@@ -78,17 +102,18 @@ fn fs_rays(in: FullscreenOut) -> @location(0) vec4f {
   let jitter = fract(52.9829189 * fract(dot(in.position.xy, vec2f(0.06711056, 0.00583715))));
   var uv = in.uv + step * jitter;
   var weight = 1.0;
-  var sum = vec3f(0.0);
+  var sum = 0.0;
   var total = 0.0;
   for (var i = 0; i < RAY_SAMPLES; i++) {
-    sum += skyLight(uv) * weight;
+    sum += skyOpen(uv) * weight;
     total += weight;
     weight *= rays.color.w;
     uv += step;
   }
-  // Brighter towards the light by the angle between the pixel's view ray and the light: the
-  // weather's phase function (VOLI phase scattering).
-  let light = sum / max(total, 1e-4) * rayPhase(in.uv) * rays.light.w * rays.params.z;
+  // How much light reaches the air in front of the pixel, scattered towards the eye by the
+  // weather's phase function (VOLI phase scattering and contribution).
+  let shafts = sum / max(total, 1e-4);
+  let light = shafts * airShare(in.uv) * rayPhase(in.uv) * rays.light.w * rays.params.z;
   return vec4f(light * rays.color.rgb, 1.0);
 }
 

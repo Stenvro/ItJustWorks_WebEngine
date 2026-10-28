@@ -120,7 +120,8 @@ describe('VOLI', () => {
     ]);
     expect(blended.intensity).toBeCloseTo(2.5);
     const rays = godRays(blended, { enabled: true, intensity: 2 }, [1, 1, 1], 0.5);
-    expect(rays.strength).toBeCloseTo(2.5 * 2 * 0.85);
+    expect(rays.strength).toBeCloseTo(2.5 * 2);
+    expect(rays.phaseContribution).toBeCloseTo(0.85);
     expect(rays.color).toEqual([1, 0.75, 0.5]);
     expect(godRays(blended, { enabled: false, intensity: 2 }, [1, 1, 1], 0.5).strength).toBe(0);
     expect(godRays(blended, { enabled: true, intensity: 2 }, [1, 1, 1], -0.5).strength).toBe(0);
