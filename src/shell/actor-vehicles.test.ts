@@ -21,8 +21,7 @@ function riding(): { vehicles: ActorVehicles; sent: string[] } {
   return { vehicles, sent: [] };
 }
 
-const events = (...names: string[]): GraphEvent[] =>
-  names.map((name) => ({ name, text: name }));
+const events = (...names: string[]): GraphEvent[] => names.map((name) => ({ name, text: name }));
 
 describe('ActorVehicles', () => {
   it('lets a rider whose exit began get off only as its exit ends', async () => {
