@@ -144,9 +144,16 @@ export class PapyrusScheduler {
     return { clock, at: this.clockTime(clock) + span };
   }
 
-  /** Resolves once a clock has passed a time (at once if it has). */
+  /**
+   * Resolves once a clock has passed a time. One it has passed already (Wait(0), a saved wait
+   * whose time went by) still gives way: the engine resumes a waiting thread in a later VM
+   * update, never at once, so a script looping on Wait(0) runs once a frame. At once, a trap's
+   * loop (TrapBase's fireTrap: PlayAnimationAndWait, which fails while its graph is not loaded,
+   * then Wait(0)) ran on in promise callbacks without end and the load it began in never went
+   * on (its instruction count starts again after each wait).
+   */
   waitUntil(wait: ClockWait): Promise<void> {
-    if (!(wait.at > this.clockTime(wait.clock))) return Promise.resolve();
+    if (!(wait.at > this.clockTime(wait.clock))) return this.#givingWay();
     const waiters =
       wait.clock === 'real'
         ? this.#realWaiters
@@ -183,6 +190,15 @@ export class PapyrusScheduler {
     if (this.#now() - since < sliceMs) return since;
     await this.yieldTask();
     return this.#now();
+  }
+
+  /**
+   * A wait with nothing left to wait for: the next frame; before frames come (a game loading)
+   * and while the VM runs on its own after a load, the host's next task, so the loading goes on
+   * beside it (Node tools without a host: at once).
+   */
+  #givingWay(): Promise<void> {
+    return this.framed && !this.#postLoading ? this.nextFrame() : this.yieldTask();
   }
 
   /** Resolves in the next frame (after a load, at once while the VM runs on its own). */

@@ -1088,6 +1088,9 @@ export class GameSession {
         },
       });
       this.scriptsStarting = runtime;
+      // Threads give way to the host from the start: one looping on Wait(0) as a save's
+      // threads go on runs once a task until frames come (src/scripting/scheduler.ts).
+      runtime.vm.scheduler.yieldTask = nextTask;
       // Skill increases and blinking meters go to the HUD.
       runtime.progression.listener = this.hud;
       // The INI's settings the events read: OnTrigger's repeat, the attached area.
