@@ -18,6 +18,7 @@
 import type { PackageStart, Space } from '../ai/package-start.ts';
 import { fliesByRace } from '../ai/flight.ts';
 import { MovementCatalog } from '../ai/movement-types.ts';
+import { parseRaceCombat, type RaceCombat } from '../ai/race-combat-records.ts';
 import { LOW_PROCESSING_MS } from '../ai/process-levels.ts';
 import { aiSettingsOf } from '../ai/ai-settings.ts';
 import {
@@ -145,6 +146,8 @@ export class ActorsAway {
   readonly #cellActors = new Map<number, readonly number[]>();
   #walkSpeed: number | undefined;
   #catalog: Promise<MovementCatalog | undefined> | undefined;
+  /** The races' data read (whether they fly, their movement types), by race. */
+  readonly #races = new Map<number, Promise<RaceCombat | undefined>>();
   #hour: number | undefined;
   #playerSpace: string | undefined;
   #gameSeconds: number | undefined;
@@ -218,7 +221,15 @@ export class ActorsAway {
     const race = await runtime.actors.raceOf(actor);
     const catalog = await this.#catalog;
     if (race === undefined || !catalog) return undefined;
-    const movement = await catalog.race(runtime.forms.db, race);
+    let read = this.#races.get(race);
+    if (!read) {
+      read = runtime.forms.db
+        .get(race)
+        .then((record) => (record?.type === 'RACE' ? parseRaceCombat(record) : undefined))
+        .catch(() => undefined);
+      this.#races.set(race, read);
+    }
+    const movement = await read;
     if (!movement || !fliesByRace(movement.flags)) return undefined;
     const fly = movement.movementTypes.fly;
     const type = fly === undefined ? undefined : catalog.byId(fly);
