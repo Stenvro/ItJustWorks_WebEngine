@@ -14,6 +14,7 @@ import {
   NO_PACKAGE_INTERRUPTS,
   TalkPlanner,
   talkSettings,
+  greetingHolds,
   triggerDistance,
   type TalkActor,
   type TalkIntent,
@@ -105,6 +106,8 @@ export class ActorTalk {
   readonly #inScene = new Map<number, number>();
   /** Those whose sandbox lets them talk with others (Allow Conversation). */
   readonly #sociable = new Set<number>();
+  /** Those a greeting holds (stopped, facing the player) until it ends or the player walks off. */
+  readonly #greetingHeld = new Set<number>();
   /** Who says a line of idle chatter now. */
   #chatter: number | undefined;
   /** Those whose next line is being found (they are not free meanwhile). */
@@ -163,6 +166,13 @@ export class ActorTalk {
       });
     }
     this.#seen = seen;
+    // A greeting the player walks off from lets its actor go on; its line plays out.
+    for (const reference of this.#greetingHeld) {
+      const at = this.#staged.get(reference)?.position;
+      if (at && this.#settings && greetingHolds(at, player, this.#settings)) continue;
+      this.#greetingHeld.delete(reference);
+      ai.releaseFromTalk(reference);
+    }
     this.#scene = {
       player,
       playerBusy: speaker !== undefined,
@@ -271,11 +281,14 @@ export class ActorTalk {
     );
     if (!spoken || !this.#free(reference)) return;
     const stops = (spoken.info.flags & InfoFlag.canMoveWhileGreeting) === 0;
-    if (stops) this.#options.ai.holdToTalk(reference, () => this.#scene.player);
+    if (stops) {
+      this.#options.ai.holdToTalk(reference, () => this.#scene.player);
+      this.#greetingHeld.add(reference);
+    }
     try {
       await this.#speak(reference, spoken, PLAYER_REF);
     } finally {
-      if (stops) this.#options.ai.releaseFromTalk(reference);
+      if (this.#greetingHeld.delete(reference)) this.#options.ai.releaseFromTalk(reference);
     }
   }
 

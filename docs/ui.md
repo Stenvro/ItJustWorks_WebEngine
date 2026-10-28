@@ -795,8 +795,10 @@ The info's flags and timers (`src/scripting/runtime/dialogue-rules.ts`, UESP and
 
 - **Reset Hours** (ENAM's second half, 65535 a day: xEdit divides by 2730.625): once said, the
   info is not said again until that many game hours have passed (6,999 vanilla infos: 4,021
-  Hello infos, most half an hour). Say Once without them is never said again; with them (61
-  infos) it comes back after them (TODO(M13): the engine's choice). Both are in the save.
+  Hello infos, most half an hour). The rest is one list for the whole game, by the info (not
+  per speaker), and ends by the game calendar. Every info said, except an Info Refusal, is
+  marked said; a Say Once info marked said is never said again, with Reset Hours as well (61
+  infos: their rest ends, the mark stays; observed in the original). Both are in the save.
 - **Invisible Continue** (1,534 infos): once said, the first of its choices whose info is
   valid is said at once, unlisted and unchosen by the player, then the next one's choices show;
   where none is valid the actor's topics show. An Invisible Continue greeting opens the menu

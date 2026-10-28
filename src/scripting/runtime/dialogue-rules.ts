@@ -18,30 +18,36 @@ export function resetHours(info: Pick<InfoRecord, 'resetHours'>): number {
 }
 
 /**
- * What the game remembers of the infos said: those said once (Say Once), and for those with
- * Reset Hours the game time they were last said. An info with Reset Hours is not said again
- * until its hours have passed; Say Once without them is never said again, with them it comes
- * back after them (61 vanilla infos have both; TODO(M13): whether the engine resets Say Once
- * so or keeps it said for good).
+ * What the game remembers of the infos said (observed in the original): every info said,
+ * except an Info Refusal, is marked said (kept in the save), and a Say Once info marked said is
+ * never said again: its Reset Hours do not bring it back (61 vanilla infos have both; their
+ * rest ends, the mark stays). An info with Reset Hours rests from the moment it is said, for
+ * every speaker alike (one list for the whole game, by the info), until that many game hours
+ * have passed. A Say Once Info Refusal is never marked, so it is said each time it is valid.
  */
 export class InfoMemory {
-  /** Infos said with Say Once and no Reset Hours. */
+  /** Say Once infos marked said (the mark matters to those alone). */
   readonly saidOnce = new Set<number>();
-  /** Infos with Reset Hours: the game days passed as each was last said. */
+  /** Infos resting under their Reset Hours: the game days passed as each was last said. */
   readonly saidAt = new Map<number, number>();
 
   /** An info is said at a game time (game days passed). */
   said(info: Pick<InfoRecord, 'formId' | 'flags' | 'resetHours'>, days: number): void {
     if (info.resetHours > 0) this.saidAt.set(info.formId, days);
-    else if ((info.flags & InfoFlag.sayOnce) !== 0) this.saidOnce.add(info.formId);
+    if ((info.flags & InfoFlag.sayOnce) !== 0 && (info.flags & InfoFlag.infoRefusal) === 0) {
+      this.saidOnce.add(info.formId);
+    }
   }
 
   /** Whether an info may be said at a game time (its flags and timers alone). */
-  maySay(info: Pick<InfoRecord, 'formId' | 'resetHours'>, days: number): boolean {
-    if (this.saidOnce.has(info.formId)) return false;
+  maySay(info: Pick<InfoRecord, 'formId' | 'flags' | 'resetHours'>, days: number): boolean {
+    if ((info.flags & InfoFlag.sayOnce) !== 0 && this.saidOnce.has(info.formId)) return false;
     const at = this.saidAt.get(info.formId);
     if (at === undefined) return true;
-    return (days - at) * 24 >= resetHours(info);
+    if ((days - at) * 24 < resetHours(info)) return false;
+    // Its rest is over: it leaves the list, as the engine's update drops it.
+    this.saidAt.delete(info.formId);
+    return true;
   }
 }
 

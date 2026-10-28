@@ -3,6 +3,7 @@ import { InterruptFlag } from './package-records.ts';
 import {
   NO_PACKAGE_INTERRUPTS,
   TalkPlanner,
+  greetingHolds,
   talkSettings,
   triggerDistance,
   VANILLA_TALK,
@@ -238,5 +239,19 @@ describe('settings', () => {
     // Not in the vanilla load order: the engine's built-in values.
     expect(settings.dialogueDistance).toBe(170);
     expect(settings.talkedWithTimer).toBe(120);
+  });
+
+  it('greets from fAIMinGreetingDistance and lets go when the player walks off', () => {
+    const settings = talkSettings((name) =>
+      name === 'fAIMinGreetingDistance'
+        ? 200
+        : name === 'fAIInDialogueModeWithPlayerDistance'
+          ? 400
+          : undefined,
+    );
+    expect(settings.greetingDistance).toBe(200);
+    expect(greetingHolds([0, 0, 0], [399, 0, 0], settings)).toBe(true);
+    expect(greetingHolds([0, 0, 0], [401, 0, 0], settings)).toBe(false);
+    expect(greetingHolds([0, 0, 0], undefined, VANILLA_TALK)).toBe(false);
   });
 });
