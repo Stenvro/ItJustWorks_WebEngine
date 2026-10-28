@@ -9,7 +9,9 @@
 // FurnitureForce1stPerson keyword sets the camera while it is used.
 
 import type { Vec3 } from '../render/math.ts';
+import { globalValue } from '../scripting/runtime/condition-values.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { CellObject } from '../world/cell-loader.ts';
 import type { ActorFurniture, FurnitureUser } from './actor-furniture.ts';
 import type { PlaySession } from './play-session.ts';
@@ -42,6 +44,14 @@ export interface PlayerFurnitureOptions {
   readonly hasKeyword: (reference: number, keyword: number) => Promise<boolean>;
   /** Whether a menu is open (its keys are its own). */
   readonly menuOpen: () => boolean;
+  /** The SittingAngleLimit default object's global (SALT; 0: the camera setting's), as seated. */
+  readonly sittingAngleLimit?: () => Promise<number>;
+}
+
+/** The SittingAngleLimit default object's global (SALT) now: 0 without one. */
+export async function sittingAngleLimit(runtime: ScriptRuntime | undefined): Promise<number> {
+  const global = await runtime?.magic.defaultObject('SALT');
+  return runtime && global !== undefined ? globalValue(runtime, global) : 0;
 }
 
 export class PlayerFurniture {
@@ -59,6 +69,8 @@ export class PlayerFurniture {
   #leaving: Promise<void> | undefined;
   /** In the furniture (their use got in), until they stand. */
   #inside = false;
+  /** The SittingAngleLimit global as they sat (0: the camera setting's limit). */
+  #angleLimit = 0;
 
   constructor(options: PlayerFurnitureOptions) {
     const { furniture, play, avatar } = options;
@@ -186,6 +198,7 @@ export class PlayerFurniture {
       if (Math.abs(delta) <= step) this.#turnTo = undefined;
     }
     this.#furniture.animated(this.user, seconds);
+    if (player.pov === 'first') this.#keepLook();
     const using = this.#furniture.interaction(PLAYER_REF);
     if (this.#inside && !this.#leaving && !using) {
       // Their graph got them up by itself: they move again, no key needed.
@@ -196,6 +209,30 @@ export class PlayerFurniture {
     if (using?.state === 3 && !menuOpen && GET_UP.some((name) => player.isHeld(name))) {
       void this.leave();
     }
+  }
+
+  /**
+   * Seated in first person, the view turns from the seat at most the SittingAngleLimit default
+   * object's global (SALT), if above 0, else [Camera] fFirstPersonSittingAngleLimit (observed in
+   * the original). TODO(M13): the engine also brings the view back toward the seat at
+   * fFirstPersonDisablePOVLerpDPS while a control flag of the player is off (not identified).
+   */
+  #keepLook(): void {
+    const player = this.#play.player;
+    const global = this.#angleLimit;
+    const limit =
+      global > 0 ? global : (player.ini.number('Camera', 'fFirstPersonSittingAngleLimit') ?? 0);
+    if (limit <= 0) return;
+    const seat = this.#avatar.bodyYaw;
+    const off = Math.atan2(Math.sin(player.yaw - seat), Math.cos(player.yaw - seat));
+    if (Math.abs(off) > limit) player.yaw = seat + Math.sign(off) * limit;
+  }
+
+  /** Game.SetSittingRotation: the seated player's view turned from the seat (radians). */
+  setSittingRotation(radians: number): void {
+    if (!this.#seated) return;
+    this.#play.player.yaw = this.#avatar.bodyYaw + radians;
+    if (this.#play.player.pov === 'first') this.#keepLook();
   }
 
   /** The player moves again (the furniture let go of them, or they never got in). */
@@ -213,6 +250,11 @@ export class PlayerFurniture {
   }
 
   #hold(held: boolean): void {
+    if (held && !this.#seated) {
+      void this.#options.sittingAngleLimit?.().then((limit) => {
+        this.#angleLimit = limit;
+      });
+    }
     this.#seated = held;
     this.#play.seated = held;
     this.#avatar.seated = held;

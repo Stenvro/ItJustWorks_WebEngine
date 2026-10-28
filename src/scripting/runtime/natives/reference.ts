@@ -613,7 +613,13 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
     if (reference !== undefined) runtime.stopTranslation(reference);
     return null;
   });
-  n('objectreference.forceaddragdolltoworld', () => null);
+  // ForceAddRagdollToWorld: a dead actor's ragdoll goes into the world at once (a hanged
+  // corpse's OnLoad, before AddHavokBallAndSocketConstraint hangs it by its hands and feet).
+  n('objectreference.forceaddragdolltoworld', async (call) => {
+    const reference = self(call);
+    if (reference !== undefined) await world.addRagdoll?.(reference);
+    return null;
+  });
   n('objectreference.forceremoveragdollfromworld', () => null);
   for (const [name, added] of [
     ['objectreference.adddependentanimatedobjectreference', true],

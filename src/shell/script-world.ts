@@ -174,6 +174,10 @@ export interface ScriptView {
   pathTo?(actor: number, target: number, walkRun: number): Promise<boolean> | undefined;
   /** EvaluatePackage: the actor chooses its package again (`restart`: anew, as ScriptWorld). */
   evaluatePackage?(reference: number, restart?: boolean): void;
+  /** ForceAddRagdollToWorld: a dead actor's ragdoll in the world now (ActorStage.addRagdoll). */
+  addRagdoll?(reference: number): Promise<void>;
+  /** Game.SetSittingRotation: the seated player's view turned from the seat (radians). */
+  sittingRotation?(radians: number): void;
   /** What an actor of the view uses now (its furniture), if anything. */
   interaction?(reference: number): ActorInteraction | undefined;
   /** How an actor of the view (the player too) moves now. */
@@ -666,6 +670,14 @@ export class ScriptWorld implements WorldBridge {
 
   evaluatePackage(actor: number, restart = false): void {
     for (const view of this.#views) view.evaluatePackage?.(actor, restart);
+  }
+
+  sittingRotation(radians: number): void {
+    for (const view of this.#views) view.sittingRotation?.(radians);
+  }
+
+  async addRagdoll(actor: number): Promise<void> {
+    await Promise.all([...this.#views].map((view) => view.addRagdoll?.(actor)));
   }
 
   interaction(actor: number): ActorInteraction | undefined {
