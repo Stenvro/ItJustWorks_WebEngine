@@ -1117,7 +1117,14 @@ units behind the cart (Ulfric "hovering above the next horse").
 
 The cart's travel is its horse's packages (the opening's PatrolStaticPathing along 58 markers to
 Helgen); `ActorVehicles.startTravel` has the horse choose its package again, as the opening's
-stage 15 and a scene's package action do.
+stage 15 and a scene's package action do. A view gives its cart up to the vehicles (out of its
+cell's draws and collision) once the cart is tethered; the headless simulation does so too
+(`tests/sim-opening-ride.int.test.ts` rides from a new game to Helgen's gate, stage 20, in about
+165 simulated seconds at the horses' walk). Before, the simulation kept its carts: they stood
+where they were placed with the player and the prisoners on them while the horses walked off
+alone, turned back to their first patrol point about 5,100 units from the player (where they
+leave the high process, `LEAVE_HIGH_DISTANCE`; TODO(M13): whether a package left so begins
+again in the original), and MQ101 never left stage 15.
 
 **SetMotionType** reaches a cart its horse pulls (its collision is the vehicles' once its cell
 gave it up, so the cell's placements no longer hold it): keyframed, its bodies stay where they
