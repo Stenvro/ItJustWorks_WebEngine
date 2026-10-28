@@ -152,14 +152,17 @@ export function isReferencePose(
 
 /**
  * The first broken bone of a model-space pose (16 floats per node, column-major): a NaN or
- * infinite value, or a translation farther than `limit`. Undefined: none.
+ * infinite value, or a translation farther than `limit`. Undefined: none. Nodes in `bare` carry
+ * nothing now and are not judged.
  */
 export function brokenBone(
   worlds: ArrayLike<number>,
   limit: number,
+  bare?: ReadonlySet<number>,
 ): { readonly node: number; readonly value: number } | undefined {
   const nodes = Math.floor(worlds.length / 16);
   for (let node = 0; node < nodes; node++) {
+    if (bare?.has(node)) continue;
     const at = node * 16;
     for (let i = 0; i < 16; i++) {
       const v = worlds[at + i] ?? 0;

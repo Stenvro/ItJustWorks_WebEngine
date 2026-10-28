@@ -86,6 +86,8 @@ describe('poses', () => {
     expect(brokenBone(worlds, 20000)).toBeUndefined();
     worlds[16 + 13] = 1e6;
     expect(brokenBone(worlds, 20000)?.node).toBe(1);
+    // A bare anim-object node (vanilla turn clips leave junk in AnimObjectR) is not judged.
+    expect(brokenBone(worlds, 20000, new Set([1]))).toBeUndefined();
     worlds[3] = Number.NaN;
     expect(brokenBone(worlds, 20000)?.node).toBe(0);
   });
