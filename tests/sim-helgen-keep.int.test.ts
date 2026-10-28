@@ -335,8 +335,10 @@ describe.skipIf(!hasGamedata())('MQ101 in Helgen Keep', () => {
 
     // Ralof's route, found 2026-10-28: past 800 MQ102 (5) and MQ102B (5) run, and Ralof holds
     // (MQ101HoldCurrentPositionWeapons). MQ102's fragments set MQ101's 900 (stage 10, Ralof's
-    // talk outside the cave): the player has to take the cave's exit into Tamriel and the
-    // scene outside has to play. The bear (MQ101BearRef) was passed by the triggers, not
+    // talk outside the cave): the player has to take the cave's exit into Tamriel
+    // (HelgenKeep01toExteriorExitREF, an AutoLoadDoor01 at -4547, -20651, -3277, past
+    // MQ101SetStage800) with Ralof following, and the scene outside has to play; not driven
+    // yet (whether Ralof should leave his hold package at 800 is not checked). The bear (MQ101BearRef) was passed by the triggers, not
     // fought or sneaked by. Hadvar's route (KeepIntroSceneA) is not driven yet.
     it.todo('leaves the caves with Ralof for MQ102 (stage 900), and Hadvar’s route');
   });
