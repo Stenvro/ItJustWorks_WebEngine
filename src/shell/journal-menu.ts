@@ -240,14 +240,29 @@ export class JournalMenu {
           close(menu);
           this.saves?.load(name);
         },
+        // The movie asked "Delete this save?" itself (X, or the bottom bar's Delete) and, the
+        // player having said yes, sends the save's index among the saves (on Save past its
+        // [NEW SAVE], which it has already counted off) and takes the entry out of its list.
+        // The list is filled again once the save has gone (the import entry, left out of the
+        // saves' indices, stays last).
         DeleteSave: (menu, args) => {
           const listed = this.#listed;
           const index = typeof args[0] === 'number' ? args[0] : -1;
-          const name = listed?.headers[listed.saving ? index - 1 : index]?.name;
+          const name = listed?.headers[index]?.name;
           if (!listed || name === undefined) return;
-          void this.saves
-            ?.delete(name)
-            .then(() => this.#listSaves(menu, listed.list, listed.saving));
+          const saves = this.saves;
+          if (!saves) return;
+          saves
+            .delete(name)
+            .catch((error: unknown) => {
+              this.#terminal.log(
+                'save',
+                `${name} could not be deleted: ${error instanceof Error ? error.message : String(error)}`,
+                'error',
+              );
+            })
+            .then(() => this.#listSaves(menu, listed.list, listed.saving))
+            .catch(() => undefined);
         },
         QuickSave: (menu) => {
           close(menu);

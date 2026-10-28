@@ -14,6 +14,7 @@
 // carry their own copy of the rest of this glue (the script view, activation, streaming): they
 // are to run on this world and only draw it.
 
+import { disabledControlFlags } from '../scripting/runtime/natives/game.ts';
 import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
 import { actorScriptGraph, placedScriptGraph } from '../animation/script-graphs.ts';
 import type { LightProbe } from '../ai/light-level.ts';
@@ -978,6 +979,7 @@ export class SimWorld {
       yaw,
     );
     player.povSwitchAllowed = () => this.runtime.controls.camSwitch;
+    player.disabledControls = () => disabledControlFlags(this.runtime.controls);
     // No auto vanity camera headless: a long wait would turn the cases' first person into third.
     player.vanityAllowed = () => false;
     player.character.walkable = (x, y, z) =>

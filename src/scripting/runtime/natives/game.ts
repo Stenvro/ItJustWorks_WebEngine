@@ -3,7 +3,8 @@
 // camera, menus) goes through the WorldBridge. Platform-independent.
 // Notes: docs/scripting.md ("Natives").
 
-import type { ScriptRuntime } from '../runtime.ts';
+import type { Controls, ScriptRuntime } from '../runtime.ts';
+import { UserEventFlag } from '../../../formats/controlmap/controlmap.ts';
 import { PLAYER_REF } from '../forms.ts';
 import { bool, formOf, int, num, object, str, type Register } from './args.ts';
 import { ObjectHandle, type Value } from '../../values.ts';
@@ -19,6 +20,33 @@ export const CONTROLS = [
   'activate',
   'journalTabs',
 ] as const;
+
+/**
+ * The control map's user event groups (UserEventFlag) each control of
+ * Game.DisablePlayerControls switches: movement (jumping with it: Jump names both), fighting,
+ * the camera switch (Toggle POV and the wheel's zoom, which leaves first person), looking,
+ * sneaking, the menus and activation. The journal's tabs are the journal's own (its other pages
+ * shut), no group of the control map. TODO(M13): whether the engine's abMenu also switches the
+ * main four (the tween menu's and the quick keys' group) on its own; every event of that group
+ * names the menu group too, so it is off with it either way.
+ */
+const CONTROL_FLAGS: Readonly<Record<(typeof CONTROLS)[number], number>> = {
+  movement: UserEventFlag.movement | UserEventFlag.jumping,
+  fighting: UserEventFlag.fighting,
+  camSwitch: UserEventFlag.povSwitch | UserEventFlag.wheelZoom,
+  looking: UserEventFlag.looking,
+  sneaking: UserEventFlag.sneaking,
+  menu: UserEventFlag.menu,
+  activate: UserEventFlag.activate,
+  journalTabs: 0,
+};
+
+/** The user event groups the scripts have switched off (UserEventFlag bits). */
+export function disabledControlFlags(controls: Controls): number {
+  let disabled = 0;
+  for (const control of CONTROLS) if (!controls[control]) disabled |= CONTROL_FLAGS[control];
+  return disabled;
+}
 
 export function registerGame(n: Register, runtime: ScriptRuntime): void {
   const { state, world } = runtime;

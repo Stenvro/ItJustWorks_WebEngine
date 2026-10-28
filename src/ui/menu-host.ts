@@ -17,6 +17,7 @@ import {
   BRIDGE_INVOKE,
   BRIDGE_NATIVE,
   BRIDGE_REFERENCE,
+  BRIDGE_READY,
   BRIDGE_REFERENCES,
   BRIDGE_SET,
   BRIDGE_TRANSLATE,
@@ -98,6 +99,20 @@ function whenFree(menu: string, action: () => void): boolean {
   return true;
 }
 
+/**
+ * Runs an action once no menu's call into the engine runs any more (at once if none does): what
+ * ends a player (its element taken out of the page, paused) must not run inside a call, its
+ * own menu's included (Ruffle: "Unable to lock Ruffle core").
+ */
+function afterCalls(action: () => void): void {
+  if (calling === undefined) {
+    action();
+    return;
+  }
+  if (waiting.length === 0) queueMicrotask(runWaiting);
+  waiting.push(action);
+}
+
 function runWaiting(): void {
   for (let action = waiting.shift(); action; action = waiting.shift()) action();
 }
@@ -167,6 +182,11 @@ export class Menu {
   readonly #unanswered: Set<string>;
   readonly #log: (message: string) => void;
   #closed = false;
+  /**
+   * The bridge in the player now has registered its callbacks (BRIDGE_READY): nothing is called
+   * in the movie before.
+   */
+  #bridged = false;
   /** What stops as the menu closes (its platform's listener). */
   readonly #onClose: (() => void)[] = [];
 
@@ -217,6 +237,7 @@ export class Menu {
     this.#inputDelegate = undefined;
     this.#element = element;
     this.#api = element.ruffle();
+    this.#bridged = false;
     this.#lastSelection = undefined;
     // What the movie had focused as its player loses the page's focus (before Ruffle clears
     // it: the capture phase runs first), given back as it is focused again.
@@ -246,6 +267,10 @@ export class Menu {
 
   /** A call from the menu (through the bridge). */
   received(name: string, args: readonly unknown[]): unknown {
+    if (name === BRIDGE_READY) {
+      this.#bridged = true;
+      return undefined;
+    }
     const handler = this.#handlers.get(name) ?? this.#common.get(name);
     if (handler) {
       const outer = calling;
@@ -475,13 +500,16 @@ export class Menu {
     this.#api = undefined;
     element?.removeEventListener('focusout', this.#rememberSelection, { capture: true });
     // Out of the page first: Ruffle ends a player that leaves the document. Pausing it as well
-    // may fail on a player Ruffle has ended; that is no fault of the menu.
-    element?.remove();
-    try {
-      api?.pause();
-    } catch {
-      // Ended already.
-    }
+    // may fail on a player Ruffle has ended; that is no fault of the menu. Not inside a menu's
+    // call (a fader closing as its fade is done): once the call has returned.
+    afterCalls(() => {
+      element?.remove();
+      try {
+        api?.pause();
+      } catch {
+        // Ended already.
+      }
+    });
   }
 
   #external(name: string, ...args: unknown[]): unknown {
@@ -489,7 +517,8 @@ export class Menu {
     // the engine's calls then reads one).
     if (whenFree(this.id, () => this.#external(name, ...args))) return undefined;
     const api = this.#api;
-    if (this.#closed || !api) return undefined;
+    // Not before the bridge has registered its callbacks (a waitFor polling a starting movie).
+    if (this.#closed || !api || !this.#bridged) return undefined;
     try {
       return api.callExternalInterface(name, ...args);
     } catch (error) {

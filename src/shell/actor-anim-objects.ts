@@ -266,7 +266,7 @@ export class ActorAnimObjects {
       return;
     }
     // The player holding one cannot switch the camera (the engine turns the control off).
-    if (attached && entry.actor === PLAYER_REF) this.#cameraSwitch(false);
+    if (attached && entry.actor === PLAYER_REF) this.#playerHolds = true;
   }
 
   /** The texture sets of an object's alternate textures (MODS), by shape. */
@@ -301,15 +301,20 @@ export class ActorAnimObjects {
       if (entry.actor === PLAYER_REF && entry.attached) player = true;
     }
     if (player && this.#list.of(PLAYER_REF).every((entry) => !entry.attached)) {
-      this.#cameraSwitch(true);
+      this.#playerHolds = false;
     }
   }
 
-  /** Game.DisablePlayerControls' camera switch, which the engine turns as the player holds one. */
-  #cameraSwitch(enabled: boolean): void {
-    const runtime = this.#options.session.scriptsReady;
-    if (runtime) runtime.controls.camSwitch = enabled;
+  /**
+   * Whether the player holds an animation object: the camera switch is off meanwhile, as the
+   * engine has it. Kept apart from the scripts' own switch (Game.DisablePlayerControls'
+   * abCamSwitch), which letting go of the object must not turn back on.
+   */
+  get playerHolds(): boolean {
+    return this.#playerHolds;
   }
+
+  #playerHolds = false;
 
   /** An actor's 3D as shown now (the player's body or first-person arms). */
   #body(reference: number, side: Side): HolderBody | undefined {
