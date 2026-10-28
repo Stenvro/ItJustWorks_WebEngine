@@ -27,6 +27,7 @@ import type { Translations } from '../formats/swf/translation.ts';
 import { loadRuffle, type RuffleApi, type RufflePlayerElement } from './ruffle.ts';
 import { readSwf } from '../formats/swf/swf.ts';
 import { flashKeyCode } from './key-codes.ts';
+import { inputPlatform, onInputPlatform } from './input-platform.ts';
 import { DEFAULT_MENU_KEYS } from './menu-keys.ts';
 import { SAFE_ZONE, safeRect, scaleMode, visibleRect, type SafeZone } from './stage-rects.ts';
 
@@ -166,6 +167,8 @@ export class Menu {
   readonly #unanswered: Set<string>;
   readonly #log: (message: string) => void;
   #closed = false;
+  /** What stops as the menu closes (its platform's listener). */
+  readonly #onClose: (() => void)[] = [];
 
   constructor(
     id: string,
@@ -448,9 +451,24 @@ export class Menu {
     if (typeof now === 'string') this.#watched = now;
   }
 
+  /**
+   * Tells the movie its platform by its SetPlatform at `path` (iPlatform, then bPS3Switch false
+   * unless `args` says otherwise), now and again whenever the device last used changes the
+   * platform while the menu is open (a gamepad picked up, or put down for the keyboard).
+   */
+  tellPlatform(path: string, args: readonly unknown[] = [false]): void {
+    this.invoke(path, inputPlatform(), ...args);
+    const stop = onInputPlatform((platform) => {
+      if (this.#closed) stop();
+      else this.invoke(path, platform, ...args);
+    });
+    this.#onClose.push(stop);
+  }
+
   close(): void {
     if (this.#closed) return;
     this.#closed = true;
+    for (const stop of this.#onClose.splice(0)) stop();
     this.#detachPlayer();
   }
 
