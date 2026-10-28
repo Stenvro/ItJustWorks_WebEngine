@@ -239,7 +239,12 @@ class Instance {
       }
       this.vars.set(level.name, vars);
     }
-    this.state = script.object.autoState.toLowerCase();
+    // A script without an auto state of its own starts in its parent's (defaultSetStageOnEnter
+    // waits in defaultOnEnter's "waiting" state, where its trigger handlers are).
+    this.state =
+      chainOf(script)
+        .find((level) => level.object.autoState !== '')
+        ?.object.autoState.toLowerCase() ?? '';
   }
 
   /** Takes a fresh instance's variables and state (a reset in place). */
