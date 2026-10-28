@@ -718,6 +718,8 @@ export class MenuHost {
     this.#cursor = undefined;
     window.removeEventListener('keydown', this.#keyed, { capture: true });
     window.removeEventListener('keyup', this.#keyed, { capture: true });
+    window.removeEventListener('blur', this.#keysLost);
+    document.removeEventListener('visibilitychange', this.#visibility);
     if (this.#resizeTimer !== undefined) clearTimeout(this.#resizeTimer);
     if (window[BRIDGE_GLOBAL] === this.#dispatch) window[BRIDGE_GLOBAL] = undefined;
   }
@@ -812,6 +814,8 @@ export class MenuHost {
     window.addEventListener('pointermove', this.#pointerMoved, { capture: true, passive: true });
     window.addEventListener('keydown', this.#keyed, { capture: true });
     window.addEventListener('keyup', this.#keyed, { capture: true });
+    window.addEventListener('blur', this.#keysLost);
+    document.addEventListener('visibilitychange', this.#visibility);
     window[BRIDGE_GLOBAL] = this.#dispatch;
   }
 
@@ -851,8 +855,32 @@ export class MenuHost {
    * fMenuKeyRepeatShort 0.1; the shell sets them from the INI), not at the browser's pace.
    */
   keyRepeat: { readonly long: number; readonly short: number } = { long: 0.5, short: 0.1 };
-  /** The direction key repeating now. */
-  #repeat: { readonly code: string; timer: ReturnType<typeof setTimeout> } | undefined;
+  /** The direction key repeating now (and the menu and Flash key it repeats into). */
+  #repeat:
+    | {
+        readonly code: string;
+        readonly menu: Menu;
+        readonly flash: number;
+        timer: ReturnType<typeof setTimeout>;
+      }
+    | undefined;
+
+  /**
+   * The page lost the keyboard (another window or tab, the tab hidden): its keys' releases go
+   * elsewhere, so the keys held are let go here. A direction key held as the focus went would
+   * else repeat on into the menu (the race menu's categories turning on to Body, its camera
+   * zooming out to the body, while the player is away).
+   */
+  readonly #keysLost = (): void => {
+    const repeat = this.#repeat;
+    this.#stopRepeat();
+    this.#taken.clear();
+    if (repeat && !repeat.menu.closed) repeat.menu.pressKey('keyUp', repeat.flash);
+  };
+
+  readonly #visibility = (): void => {
+    if (document.visibilityState === 'hidden') this.#keysLost();
+  };
 
   #stopRepeat(): void {
     if (this.#repeat) clearTimeout(this.#repeat.timer);
@@ -874,7 +902,7 @@ export class MenuHost {
         },
         Math.max(0.01, seconds) * 1000,
       );
-    this.#repeat = { code: key, timer: next(this.keyRepeat.long) };
+    this.#repeat = { code: key, menu, flash: code, timer: next(this.keyRepeat.long) };
   }
 
   /**
