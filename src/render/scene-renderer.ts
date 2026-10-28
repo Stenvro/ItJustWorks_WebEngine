@@ -462,6 +462,19 @@ function copyMatrix(source: Float32Array, from: number, target: Float32Array, to
   for (let i = 0; i < 16; i++) target[to + i] = source[from + i] ?? 0;
 }
 
+/** Writes a matrix at the start of `target`; whether that changed it. */
+function writeMatrix(target: Float32Array, matrix: Float32Array): boolean {
+  let changed = false;
+  for (let i = 0; i < 16; i++) {
+    const value = matrix[i] ?? 0;
+    if (target[i] !== value) {
+      target[i] = value;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 /** Whether the matrices at `a[from..]` and `b[to..]` are the same. */
 function sameMatrix(a: Float32Array, from: number, b: Float32Array, to: number): boolean {
   for (let i = 0; i < 16; i++) if (a[from + i] !== b[to + i]) return false;
@@ -3235,8 +3248,12 @@ export class SceneRenderer {
           playedFrame(draw.playback) ?? graphFrame(draw.graph) ?? frameOf(draw.animation);
         const floats = new Float32Array(scene.uniformData, draw.offset, DRAW_SIZE / 4);
         const billboard = draw.part.billboard;
+        // Uploaded only when something in it changed: an actor standing still keeps its
+        // parts' matrices (its pose goes to the bone palette), and so does a door at rest.
+        let changed = frame !== undefined;
         if (frame?.hidden.has(draw.part.block)) {
           floats.fill(0, 0, 16);
+          changed = true;
         } else if (billboard) {
           const node = multiply(draw.instanceWorld, billboard.node);
           // Animated under its billboard node (a perk star's size in its states): the animated
@@ -3245,7 +3262,7 @@ export class SceneRenderer {
           const inverse = animated && invert(billboard.node);
           const local = animated && inverse ? multiply(inverse, animated) : billboard.local;
           multiply(billboardWorld(node, billboard.mode, camera), local, world);
-          floats.set(world, 0);
+          changed = writeMatrix(floats, world) || changed;
         } else if (draw.hung) {
           // On a skeleton: the node's pose, then the part under it.
           const { pose, node } = draw.hung;
@@ -3255,14 +3272,14 @@ export class SceneRenderer {
             world,
           );
           multiply(draw.instanceWorld, world, world);
-          floats.set(world, 0);
+          changed = writeMatrix(floats, world) || changed;
         } else {
           // A skinned shape is placed by its bones, never by its own node.
           const local = draw.part.skin
             ? draw.part.world
             : (frame?.worlds.get(draw.part.block) ?? draw.part.world);
           multiply(draw.instanceWorld, local, world);
-          floats.set(world, 0);
+          changed = writeMatrix(floats, world) || changed;
         }
         if (frame) writeAnimatedMaterial(floats, draw.part, frame);
         if (draw.follows) {
@@ -3310,7 +3327,7 @@ export class SceneRenderer {
             skin.bones.length * PALETTE_BONE_FLOATS,
           );
         }
-        uniforms.add(draw.offset, DRAW_SIZE);
+        if (changed) uniforms.add(draw.offset, DRAW_SIZE);
       }
       uniforms.flush();
       // Emittance colours change with the hour (windows lit at night, sunbeams by day).
