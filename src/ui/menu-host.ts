@@ -17,6 +17,7 @@ import {
   BRIDGE_INVOKE,
   BRIDGE_NATIVE,
   BRIDGE_REFERENCE,
+  BRIDGE_READY,
   BRIDGE_REFERENCES,
   BRIDGE_SET,
   BRIDGE_TRANSLATE,
@@ -98,6 +99,20 @@ function whenFree(menu: string, action: () => void): boolean {
   return true;
 }
 
+/**
+ * Runs an action once no menu's call into the engine runs any more (at once if none does): what
+ * ends a player (its element taken out of the page, paused) must not run inside a call, its
+ * own menu's included (Ruffle: "Unable to lock Ruffle core").
+ */
+function afterCalls(action: () => void): void {
+  if (calling === undefined) {
+    action();
+    return;
+  }
+  if (waiting.length === 0) queueMicrotask(runWaiting);
+  waiting.push(action);
+}
+
 function runWaiting(): void {
   for (let action = waiting.shift(); action; action = waiting.shift()) action();
 }
@@ -167,6 +182,11 @@ export class Menu {
   readonly #unanswered: Set<string>;
   readonly #log: (message: string) => void;
   #closed = false;
+  /**
+   * The bridge in the player now has registered its callbacks (BRIDGE_READY): nothing is called
+   * in the movie before.
+   */
+  #bridged = false;
   /** What stops as the menu closes (its platform's listener). */
   readonly #onClose: (() => void)[] = [];
 
@@ -217,6 +237,7 @@ export class Menu {
     this.#inputDelegate = undefined;
     this.#element = element;
     this.#api = element.ruffle();
+    this.#bridged = false;
     this.#lastSelection = undefined;
     // What the movie had focused as its player loses the page's focus (before Ruffle clears
     // it: the capture phase runs first), given back as it is focused again.
@@ -246,6 +267,10 @@ export class Menu {
 
   /** A call from the menu (through the bridge). */
   received(name: string, args: readonly unknown[]): unknown {
+    if (name === BRIDGE_READY) {
+      this.#bridged = true;
+      return undefined;
+    }
     const handler = this.#handlers.get(name) ?? this.#common.get(name);
     if (handler) {
       const outer = calling;
@@ -475,13 +500,16 @@ export class Menu {
     this.#api = undefined;
     element?.removeEventListener('focusout', this.#rememberSelection, { capture: true });
     // Out of the page first: Ruffle ends a player that leaves the document. Pausing it as well
-    // may fail on a player Ruffle has ended; that is no fault of the menu.
-    element?.remove();
-    try {
-      api?.pause();
-    } catch {
-      // Ended already.
-    }
+    // may fail on a player Ruffle has ended; that is no fault of the menu. Not inside a menu's
+    // call (a fader closing as its fade is done): once the call has returned.
+    afterCalls(() => {
+      element?.remove();
+      try {
+        api?.pause();
+      } catch {
+        // Ended already.
+      }
+    });
   }
 
   #external(name: string, ...args: unknown[]): unknown {
@@ -489,7 +517,8 @@ export class Menu {
     // the engine's calls then reads one).
     if (whenFree(this.id, () => this.#external(name, ...args))) return undefined;
     const api = this.#api;
-    if (this.#closed || !api) return undefined;
+    // Not before the bridge has registered its callbacks (a waitFor polling a starting movie).
+    if (this.#closed || !api || !this.#bridged) return undefined;
     try {
       return api.callExternalInterface(name, ...args);
     } catch (error) {
@@ -689,6 +718,8 @@ export class MenuHost {
     this.#cursor = undefined;
     window.removeEventListener('keydown', this.#keyed, { capture: true });
     window.removeEventListener('keyup', this.#keyed, { capture: true });
+    window.removeEventListener('blur', this.#keysLost);
+    document.removeEventListener('visibilitychange', this.#visibility);
     if (this.#resizeTimer !== undefined) clearTimeout(this.#resizeTimer);
     if (window[BRIDGE_GLOBAL] === this.#dispatch) window[BRIDGE_GLOBAL] = undefined;
   }
@@ -783,6 +814,8 @@ export class MenuHost {
     window.addEventListener('pointermove', this.#pointerMoved, { capture: true, passive: true });
     window.addEventListener('keydown', this.#keyed, { capture: true });
     window.addEventListener('keyup', this.#keyed, { capture: true });
+    window.addEventListener('blur', this.#keysLost);
+    document.addEventListener('visibilitychange', this.#visibility);
     window[BRIDGE_GLOBAL] = this.#dispatch;
   }
 
@@ -822,8 +855,32 @@ export class MenuHost {
    * fMenuKeyRepeatShort 0.1; the shell sets them from the INI), not at the browser's pace.
    */
   keyRepeat: { readonly long: number; readonly short: number } = { long: 0.5, short: 0.1 };
-  /** The direction key repeating now. */
-  #repeat: { readonly code: string; timer: ReturnType<typeof setTimeout> } | undefined;
+  /** The direction key repeating now (and the menu and Flash key it repeats into). */
+  #repeat:
+    | {
+        readonly code: string;
+        readonly menu: Menu;
+        readonly flash: number;
+        timer: ReturnType<typeof setTimeout>;
+      }
+    | undefined;
+
+  /**
+   * The page lost the keyboard (another window or tab, the tab hidden): its keys' releases go
+   * elsewhere, so the keys held are let go here. A direction key held as the focus went would
+   * else repeat on into the menu (the race menu's categories turning on to Body, its camera
+   * zooming out to the body, while the player is away).
+   */
+  readonly #keysLost = (): void => {
+    const repeat = this.#repeat;
+    this.#stopRepeat();
+    this.#taken.clear();
+    if (repeat && !repeat.menu.closed) repeat.menu.pressKey('keyUp', repeat.flash);
+  };
+
+  readonly #visibility = (): void => {
+    if (document.visibilityState === 'hidden') this.#keysLost();
+  };
 
   #stopRepeat(): void {
     if (this.#repeat) clearTimeout(this.#repeat.timer);
@@ -845,7 +902,7 @@ export class MenuHost {
         },
         Math.max(0.01, seconds) * 1000,
       );
-    this.#repeat = { code: key, timer: next(this.keyRepeat.long) };
+    this.#repeat = { code: key, menu, flash: code, timer: next(this.keyRepeat.long) };
   }
 
   /**

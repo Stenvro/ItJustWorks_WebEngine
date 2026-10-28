@@ -1064,8 +1064,13 @@ export class PlaySession {
         this.#setTarget(target, true);
         if (this.player.takePressed('Activate')) target?.activate();
       } else {
+        // Activation switched off (DisablePlayerControls' abActivate): no prompt either.
         this.#setTarget(
-          this.#grab ? undefined : actorFirst ? actor.target : this.#activatableAt(hit),
+          this.#grab || !this.player.allows('Activate')
+            ? undefined
+            : actorFirst
+              ? actor.target
+              : this.#activatableAt(hit),
         );
         // A corpse the pick met (its ragdoll): held, Activate drags it; tapped, it is searched.
         const corpse =
