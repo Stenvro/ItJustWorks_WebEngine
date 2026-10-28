@@ -124,9 +124,11 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
     if (word !== undefined) await runtime.casting.teachWord(word);
     return null;
   });
-  n('game.unlockword', ({ args }) => {
+  n('game.unlockword', async ({ args }) => {
     const word = formOf(args[0]);
-    if (word !== undefined) runtime.wordsLearned.set(word, true);
+    if (word === undefined || runtime.wordsLearned.get(word) === true) return null;
+    runtime.wordsLearned.set(word, true);
+    await runtime.casting.wordUnlocked(word);
     return null;
   });
   n('game.iswordunlocked', ({ args }) => {

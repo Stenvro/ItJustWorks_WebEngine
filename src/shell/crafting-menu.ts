@@ -27,7 +27,6 @@
 // Sources: the movie's ActionScript, CommonLibSSE-NG (CraftingSubMenus), SkyUI 5, UESP.
 // Notes: docs/ui.md ("Crafting").
 
-import { inputPlatform } from '../ui/input-platform.ts';
 import {
   alchemyCategories,
   alchemyCategoryList,
@@ -360,7 +359,7 @@ export class CraftingMenu {
         await opened.waitFor(`${MENU}.Initialize`);
         opened.invoke(`${MENU}.gotoAndStop`, type.frame);
         opened.invoke(`${MENU}.Initialize`);
-        opened.invoke('_root.SetPlatform', inputPlatform(), false);
+        opened.tellPlatform('_root.SetPlatform');
         opened.set(`${MENU}.MenuName.text`, model.name);
         opened.set(`${MENU}.MenuDescription.text`, settings.string(type.description) ?? '');
         // The line under the card shows nothing until an entry is highlighted (the movie's own

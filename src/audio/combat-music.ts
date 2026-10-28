@@ -1,46 +1,56 @@
-// When combat music plays (CommonLibSSE CombatManager: its music start time, stop timer and
-// update timer). The music type is the default object BTMS (MUSCombat), or the boss music
-// against a boss: an actor whose reference has the location reference type Boss (DOBJ LRTB).
-// Which tracks of it play is the music system's (their conditions ask the combat target's
-// keywords: the dragon pieces of MUSCombat).
+// When combat music plays (observed in the original: its combat manager weighs the fights
+// every fCombatMusicUpdateTime). The music type is the default object BTMS (MUSCombat), or the
+// boss music against a boss: an actor whose reference has the location reference type Boss
+// (DOBJ LRTB). Which tracks of it play is the music system's (their conditions ask the combat
+// target's keywords: the dragon pieces of MUSCombat).
 //
-// - **Start:** the fights that count are those against the player and those within the near-
-//   combat radius of them (a follower's fight, a dragon over the town). Music starts only if
-//   they are worth it: their strength against the player's side (the player and their allies,
-//   the combat AI's GetThreatRatio) at least fCombatMusicPlayerTargetedThreatRatio (1 in
-//   Skyrim.esm). A mudcrab does not start it for a strong player.
-// - **On:** once it plays, it plays as long as a fight counts (the odds may turn).
-// - **Stop:** once no fight counts, it plays on for the stop delay, then ends (with its finale:
-//   music.ts); a fight in the meantime keeps it.
+// - **Strength** (the engine's measure for the odds, also GetThreatRatio's: actorStrength in
+//   src/ai/combat-ai.ts): an actor's damage × its health / (1 − its armour's reduction).
+// - **Start**, a fight against the player: the strength of its fighters the player detects,
+//   against the player's own: the player's strength over theirs below
+//   fCombatMusicPlayerTargetedThreatRatio. A mudcrab or a lone wolf does not start it for a
+//   player much stronger. A fight not against the player (a follower's, a dragon over the town)
+//   with a fighter within fCombatMusicNearCombatInnerRadius: when the player detects one of
+//   them and their strength is above the player's × fCombatMusicPlayerNearStrengthMult.
+// - **On:** once it plays, a fight against the player keeps it, as does one with a fighter
+//   within fCombatMusicNearCombatOuterRadius (the odds are not weighed again).
+// - **Stop:** once no fight keeps it, it plays on for fCombatMusicStopTime, then ends (with its
+//   finale: music.ts); a fight in the meantime keeps it.
 //
-// Settings no plugin names (the near-combat radius, the stop delay) keep our values:
-// TODO(M13): the engine's built-in names and values. Pure: src/shell/actor-combat.ts feeds it.
-
-import { threatRatio } from '../ai/combat-ai.ts';
+// The engine weighs each combat group; ours takes the fighters hostile to the player as one
+// group for each side of the rule (TODO(M13): a second group's fight near the player counted
+// apart, and a check of the group the engine makes before the odds, not identified). Pure:
+// src/shell/actor-combat.ts feeds it.
 
 export interface CombatMusicSettings {
-  /** fCombatMusicPlayerTargetedThreatRatio: the odds a fight must reach to start the music. */
+  /** fCombatMusicPlayerTargetedThreatRatio: the player's strength over the fight's, below it starts. */
   readonly playerTargetedThreatRatio: number;
-  /** A fight not against the player counts within this distance of them (game units). */
-  readonly nearCombatRadius: number;
-  /** Seconds the music plays on once no fight counts. */
-  readonly stopDelay: number;
+  /** fCombatMusicNearCombatInnerRadius: a fight not against the player starts it within this. */
+  readonly nearCombatInnerRadius: number;
+  /** fCombatMusicNearCombatOuterRadius: it keeps playing while such a fight is within this. */
+  readonly nearCombatOuterRadius: number;
+  /** fCombatMusicPlayerNearStrengthMult: the player's strength a near fight must pass. */
+  readonly playerNearStrengthMult: number;
+  /** fCombatMusicStopTime: seconds it plays on once no fight keeps it. */
+  readonly stopTime: number;
+  /** fCombatMusicUpdateTime: the fights are weighed this often (seconds). */
+  readonly updateTime: number;
 }
 
-const SETTINGS: readonly (readonly [keyof CombatMusicSettings, string | undefined, number])[] = [
-  ['playerTargetedThreatRatio', 'fCombatMusicPlayerTargetedThreatRatio', 1],
-  ['nearCombatRadius', undefined, 2048],
-  ['stopDelay', undefined, 4],
+const SETTINGS: readonly (readonly [keyof CombatMusicSettings, string, number])[] = [
+  ['playerTargetedThreatRatio', 'fCombatMusicPlayerTargetedThreatRatio', 2],
+  ['nearCombatInnerRadius', 'fCombatMusicNearCombatInnerRadius', 2500],
+  ['nearCombatOuterRadius', 'fCombatMusicNearCombatOuterRadius', 3500],
+  ['playerNearStrengthMult', 'fCombatMusicPlayerNearStrengthMult', 1],
+  ['stopTime', 'fCombatMusicStopTime', 5],
+  ['updateTime', 'fCombatMusicUpdateTime', 1],
 ];
 
 export function readCombatMusicSettings(
   number: (editorId: string) => number | undefined = () => undefined,
 ): CombatMusicSettings {
   return Object.fromEntries(
-    SETTINGS.map(([key, name, fallback]) => [
-      key,
-      (name === undefined ? undefined : number(name)) ?? fallback,
-    ]),
+    SETTINGS.map(([key, name, fallback]) => [key, number(name) ?? fallback]),
   ) as unknown as CombatMusicSettings;
 }
 
@@ -54,49 +64,60 @@ export interface CombatMusicThreat {
   readonly distance: number;
   /** How strong it is (actorStrength). */
   readonly strength: number;
+  /** The player detects it. */
+  readonly detected: boolean;
   /** Its reference has the location reference type Boss. */
   readonly boss: boolean;
 }
 
 export interface CombatMusicInput {
   readonly threats: readonly CombatMusicThreat[];
-  /** The strengths of the player and their allies. */
-  readonly side: readonly number[];
+  /** The player's strength (actorStrength). */
+  readonly player: number;
 }
 
 export type CombatMusicChoice = 'none' | 'combat' | 'boss';
 
-/** The fights that count: against the player, or near them. */
-function counted(input: CombatMusicInput, settings: CombatMusicSettings): CombatMusicThreat[] {
-  return input.threats.filter(
-    (threat) => threat.targetsPlayer || threat.distance <= settings.nearCombatRadius,
-  );
+function total(threats: readonly CombatMusicThreat[]): number {
+  return threats.reduce((sum, threat) => sum + threat.strength, 0);
 }
 
-/** Which music the fights call for, before the stop delay: none, combat, or the boss music. */
+/** Which music the fights call for, before the stop time: none, combat, or the boss music. */
 export function combatMusicWanted(
   input: CombatMusicInput,
   settings: CombatMusicSettings,
   playing: boolean,
 ): CombatMusicChoice {
-  const threats = counted(input, settings);
-  if (threats.length === 0) return 'none';
-  if (!playing) {
-    const ratio = threatRatio(
-      threats.map((threat) => threat.strength),
-      input.side,
-    );
-    if (ratio < settings.playerTargetedThreatRatio) return 'none';
+  const targeting = input.threats.filter((threat) => threat.targetsPlayer);
+  const near = input.threats.filter(
+    (threat) => !threat.targetsPlayer && threat.distance <= settings.nearCombatOuterRadius,
+  );
+  let counted: CombatMusicThreat[] = [];
+  if (playing) {
+    counted = [...targeting, ...near];
+  } else {
+    const detected = total(targeting.filter((threat) => threat.detected));
+    if (detected > 0 && input.player / detected < settings.playerTargetedThreatRatio)
+      counted = targeting;
+    const inner = near.filter((threat) => threat.distance <= settings.nearCombatInnerRadius);
+    if (
+      inner.some((threat) => threat.detected) &&
+      total(inner) > settings.playerNearStrengthMult * input.player
+    )
+      counted = [...counted, ...inner];
   }
-  return threats.some((threat) => threat.boss) ? 'boss' : 'combat';
+  if (counted.length === 0) return 'none';
+  return counted.some((threat) => threat.boss) ? 'boss' : 'combat';
 }
 
 /** The combat music's state from frame to frame. */
 export class CombatMusic {
   /** What plays now. */
   playing: CombatMusicChoice = 'none';
-  /** Seconds since no fight counted (while it still plays). */
+  /** Seconds since no fight kept it (while it still plays). */
   #quiet = 0;
+  /** Seconds until the fights are weighed again. */
+  #due = 0;
 
   settings: CombatMusicSettings;
 
@@ -105,17 +126,31 @@ export class CombatMusic {
   }
 
   /** One frame (`seconds` of the world's time): what should play now. */
-  update(seconds: number, input: CombatMusicInput): CombatMusicChoice {
-    const wanted = combatMusicWanted(input, this.settings, this.playing !== 'none');
+  update(seconds: number, input: CombatMusicInput | (() => CombatMusicInput)): CombatMusicChoice {
+    if (this.playing !== 'none' && this.#quiet > 0) this.#quiet += seconds;
+    this.#due -= seconds;
+    if (this.#due > 0) return this.#stopping();
+    this.#due = this.settings.updateTime;
+    const wanted = combatMusicWanted(
+      typeof input === 'function' ? input() : input,
+      this.settings,
+      this.playing !== 'none',
+    );
     if (wanted !== 'none') {
       this.#quiet = 0;
       this.playing = wanted;
-    } else if (this.playing !== 'none') {
-      this.#quiet += seconds;
-      if (this.#quiet >= this.settings.stopDelay) {
-        this.playing = 'none';
-        this.#quiet = 0;
-      }
+    } else if (this.playing !== 'none' && this.#quiet === 0) {
+      // The stop time starts (the smallest step so it counts as begun).
+      this.#quiet = Number.MIN_VALUE;
+    }
+    return this.#stopping();
+  }
+
+  /** It ends once the stop time has passed. */
+  #stopping(): CombatMusicChoice {
+    if (this.playing !== 'none' && this.#quiet > this.settings.stopTime) {
+      this.playing = 'none';
+      this.#quiet = 0;
     }
     return this.playing;
   }
@@ -124,5 +159,6 @@ export class CombatMusic {
   reset(): void {
     this.playing = 'none';
     this.#quiet = 0;
+    this.#due = 0;
   }
 }

@@ -544,8 +544,10 @@ export interface TargetCandidate {
 /**
  * The damage actorStrength weighs for an actor: its weapon's blow; without a weapon (a wolf's
  * teeth, a bear's claws, fists) its race's unarmed damage times the damage mult of the
- * strongest of its attack data's blows (ATKD; bashes left out), as those attacks deal it.
- * TODO(M13): the engine's own measure for GetThreatRatio.
+ * strongest of its attack data's blows (ATKD; bashes left out), as those attacks deal it. The
+ * engine (observed in the original) adds up the damage of what its hands hold, else takes its unarmed
+ * damage, and keeps the more of that and its combat inventory's best; TODO(M13): the per-item
+ * damage it adds (the function was not followed further).
  */
 export function strengthDamage(
   blow: number,
@@ -558,9 +560,17 @@ export function strengthDamage(
   return blow * mult;
 }
 
-/** How strong an actor is in a fight: its health now times the damage it deals. */
-export function actorStrength(health: number, damage: number): number {
-  return Math.max(0, health) * Math.max(1, damage);
+/** The most of a blow an actor's armour takes in actorStrength (the engine's cap there). */
+const STRENGTH_REDUCTION_CAP = 0.99;
+
+/**
+ * How strong an actor is in a fight (observed in the original: the measure the combat
+ * music's odds and GetThreatRatio weigh): the damage it deals × its health now / (1 − its
+ * armour's damage reduction, at most 0.99), so armour counts as more health.
+ */
+export function actorStrength(health: number, damage: number, reduction = 0): number {
+  const kept = 1 - Math.min(STRENGTH_REDUCTION_CAP, Math.max(0, reduction));
+  return (Math.max(0, health) * Math.max(0, damage)) / kept;
 }
 
 /**

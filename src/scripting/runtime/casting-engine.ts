@@ -1414,7 +1414,23 @@ export class CastingEngine {
     runtime.actors.modify(PLAYER_REF, DRAGON_SOULS, -1);
     learned.set(word, true);
     runtime.incrementStat('Words of Power Unlocked');
+    await this.wordUnlocked(word);
     return 'unlocked';
+  }
+
+  /**
+   * A word of power the player just unlocked (the magic menu, Game.UnlockWord): each shout of
+   * it whose words are now all unlocked is mastered (ShoutMastered).
+   */
+  async wordUnlocked(word: number): Promise<void> {
+    const runtime = this.#runtime;
+    const learned = runtime.wordsLearned;
+    for (const formId of runtime.forms.db.formIdsOfType('SHOU')) {
+      const shout = await this.shout(formId);
+      if (!shout?.words.some((entry) => entry.word === word)) continue;
+      if (shout.words.every((entry) => learned.get(entry.word) === true))
+        runtime.events.emit('shoutMastered', { shout: formId });
+    }
   }
 
   /**

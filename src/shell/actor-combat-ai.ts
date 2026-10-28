@@ -628,7 +628,11 @@ export class ActorCombatAi {
 
   /** How strong an actor is in a fight (actorStrength; combat music weighs the odds so). */
   strength(reference: number): number {
-    return actorStrength(this.#health.get(reference)?.points ?? 100, this.#damageOf(reference));
+    return actorStrength(
+      this.#health.get(reference)?.points ?? 100,
+      this.#damageOf(reference),
+      this.#reduction(reference),
+    );
   }
 
   /** The actors fighting beside one (its combat group). */
@@ -1403,12 +1407,20 @@ export class ActorCombatAi {
     if (own === undefined || theirs === undefined) return false;
     const dares = daresHelp(
       profile.confidence,
-      { level: own, strength: actorStrength(mind.healthPoints, this.#damageOf(mind.reference)) },
+      {
+        level: own,
+        strength: actorStrength(
+          mind.healthPoints,
+          this.#damageOf(mind.reference),
+          this.#reduction(mind.reference),
+        ),
+      },
       {
         level: theirs,
         strength: actorStrength(
           this.#health.get(foe.reference)?.points ?? 100,
           foe.gear?.strengthDamage ?? 1,
+          this.#reduction(foe.reference),
         ),
       },
     );

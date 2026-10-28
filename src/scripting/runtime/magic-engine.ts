@@ -1333,6 +1333,7 @@ export class MagicEngine {
           if (hand === 'right') await this.#dropWeapon(target, weapon);
         }
         if (dropped) {
+          runtime.events.emit('disarmed', { source: entry.caster, target });
           if (target === PLAYER_REF) {
             const text = await runtime.gameSetting('sPlayerDisarmedMessage');
             if (typeof text === 'string') runtime.world.notification?.(text);
@@ -1793,6 +1794,7 @@ export class MagicEngine {
       ),
     );
     magic.poison = { weapon, poison, charges };
+    runtime.events.emit('poisonedWeapon', { actor, poison });
     runtime.state.actorMagic.set(actor, magic);
     return true;
   }
@@ -1854,6 +1856,7 @@ export class MagicEngine {
       return false;
     await runtime.actors.addSpell(target, disease);
     await this.syncLasting(target);
+    runtime.events.emit('contractedDisease', { actor: target, disease });
     if (target === PLAYER_REF) runtime.detach(runtime.storyEvents.infection(carrier, disease));
     return true;
   }
