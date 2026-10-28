@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { halton, JITTER_FRAMES, jitterPixels, jitterProjection, reprojection } from './taa-data.ts';
+import { identity, lookAt, multiply, perspectiveReversedZ } from './math.ts';
+import {
+  halton,
+  JITTER_FRAMES,
+  jitterPixels,
+  jitterProjection,
+  motionVector,
+  reprojection,
+} from './taa-data.ts';
 
 /** A simple perspective-like matrix (column-major) with w = -z. */
 const matrix = (): Float32Array =>
@@ -47,5 +55,32 @@ describe('TAA', () => {
     [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1].forEach((value, i) => {
       expect(m?.[i]).toBeCloseTo(value);
     });
+  });
+
+  it('gives a moving draw the uv offset back to where it was', () => {
+    const camera = (): Float32Array =>
+      multiply(
+        perspectiveReversedZ(1.2, 16 / 9, 5),
+        lookAt([0, -500, 100], [0, 0, 100], [0, 0, 1]),
+      );
+    const still = identity();
+    // Nothing moves: no offset.
+    const zero = motionVector([10, 20, 30], still, still, camera(), camera());
+    expect(zero[0]).toBeCloseTo(0, 6);
+    expect(zero[1]).toBeCloseTo(0, 6);
+    // The draw walked 20 units towards +X (screen right): its last place lies to the left.
+    const walked = identity();
+    walked[12] = 20;
+    const [du, dv] = motionVector([0, 0, 100], walked, still, camera(), camera());
+    expect(du).toBeLessThan(0);
+    expect(dv).toBeCloseTo(0, 6);
+    // Moving with the camera (first person's arms): no offset either.
+    const turned = (): Float32Array =>
+      multiply(
+        perspectiveReversedZ(1.2, 16 / 9, 5),
+        lookAt([20, -500, 100], [20, 0, 100], [0, 0, 1]),
+      );
+    const carried = motionVector([0, 0, 100], walked, still, turned(), camera());
+    expect(carried[0]).toBeCloseTo(0, 6);
   });
 });

@@ -6,8 +6,10 @@
 import sunShader from './shaders/sun-effects.wgsl?raw';
 import { HDR_FORMAT } from './post.ts';
 import type { Mat4 } from './math.ts';
+import { invert } from './frustum.ts';
 import { placeLensFlare, LensFlareSpriteFlag, type LensFlare } from '../world/lens-flare.ts';
 import type { Rgb } from '../world/weather.ts';
+import { phaseAsymmetry } from '../world/volumetric-lighting.ts';
 
 type Vec3 = readonly [number, number, number];
 
@@ -20,6 +22,8 @@ const MAX_SPRITES = 16;
  * phase). TODO(M13): calibrated by eye against the original's froxel scattering.
  */
 const RAY_SCALE = 0.25;
+/** The rays' uniforms: light, colour, params, phase (4 floats each), clip to world (16). */
+const RAYS_UNIFORM_FLOATS = 32;
 
 export interface SunEffectsFrame {
   /** Towards the directional light (the sun by day, the night light by night). */
@@ -31,6 +35,8 @@ export interface SunEffectsFrame {
     readonly decay: number;
     /** Share of the way to the light the samples reach (0..1). */
     readonly reach: number;
+    /** The phase function's asymmetry (VOLI phase scattering as Henyey-Greenstein g). */
+    readonly scattering?: number;
   };
   /** The sun's lens flare, with its sprites' textures by path (missing ones are not drawn). */
   readonly flare?: {
@@ -130,7 +136,11 @@ export class SunEffects {
         size: 48,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       });
-    this.#raysUniforms = uniforms('god-rays');
+    this.#raysUniforms = device.createBuffer({
+      label: 'god-rays',
+      size: RAYS_UNIFORM_FLOATS * 4,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
     this.#spriteUniforms = Array.from({ length: MAX_SPRITES }, (_, i) =>
       uniforms(`lens-flare-${String(i)}`),
     );
@@ -166,10 +176,13 @@ export class SunEffects {
     if (fade <= 0) return;
     const target = this.#ensureTarget(hdr);
     const aspect = hdr.width / Math.max(1, hdr.height);
-    this.#device.queue.writeBuffer(
-      this.#raysUniforms,
-      0,
-      new Float32Array([
+    const [lx, ly, lz] = frame.lightDirection;
+    const length = Math.hypot(lx, ly, lz) || 1;
+    const data = new Float32Array(RAYS_UNIFORM_FLOATS);
+    data.set([lx / length, ly / length, lz / length, phaseAsymmetry(rays.scattering ?? 0)], 12);
+    data.set(invert(viewProj) ?? viewProj, 16);
+    data.set(
+      [
         uv[0],
         uv[1],
         Math.max(0.05, Math.min(1, rays.reach)),
@@ -180,8 +193,10 @@ export class SunEffects {
         aspect,
         fade,
         0,
-      ]),
+      ],
+      0,
     );
+    this.#device.queue.writeBuffer(this.#raysUniforms, 0, data);
     const group = (
       key: string,
       pipeline: GPURenderPipeline,

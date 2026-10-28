@@ -4,6 +4,12 @@
 import { multiply, type Mat4 } from './math.ts';
 import { invert } from './frustum.ts';
 
+/**
+ * The motion vectors' texture format (SceneRenderer.drawVelocity): the uv offset from this
+ * frame to the last (rg), 1 where a moving draw wrote it (b).
+ */
+export const VELOCITY_FORMAT = 'rgba16float';
+
 /** Frames of the jitter's cycle (Halton 2, 3). */
 export const JITTER_FRAMES = 8;
 
@@ -52,4 +58,41 @@ export function jitterProjection(
 export function reprojection(previous: Mat4, current: Mat4): Mat4 | undefined {
   const inverse = invert(current);
   return inverse && multiply(previous, inverse);
+}
+
+/** A point (x, y, z, 1) through a column-major matrix: clip space. */
+function transform(matrix: Mat4, point: readonly number[]): [number, number, number, number] {
+  const out: [number, number, number, number] = [0, 0, 0, 0];
+  for (let row = 0; row < 4; row++) {
+    out[row] =
+      (matrix[row] ?? 0) * (point[0] ?? 0) +
+      (matrix[4 + row] ?? 0) * (point[1] ?? 0) +
+      (matrix[8 + row] ?? 0) * (point[2] ?? 0) +
+      (matrix[12 + row] ?? 0) * (point[3] ?? 1);
+  }
+  return out;
+}
+
+/** Clip space to uv (0..1, y down), as the TAA samples. */
+export function clipToUv(clip: readonly [number, number, number, number]): [number, number] {
+  const w = Math.max(clip[3], 1e-6);
+  return [(clip[0] / w) * 0.5 + 0.5, 0.5 - (clip[1] / w) * 0.5];
+}
+
+/**
+ * A moving draw's motion vector at one of its points (shaders/velocity.wgsl): the uv offset
+ * from where the point is this frame (`world`, `current`: unjittered view-projection) to where
+ * it was in the last (`previousWorld`, `previous`).
+ */
+export function motionVector(
+  local: readonly [number, number, number],
+  world: Mat4,
+  previousWorld: Mat4,
+  current: Mat4,
+  previous: Mat4,
+): [number, number] {
+  const point = [...local, 1];
+  const now = clipToUv(transform(current, transform(world, point)));
+  const before = clipToUv(transform(previous, transform(previousWorld, point)));
+  return [before[0] - now[0], before[1] - now[1]];
 }
