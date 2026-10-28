@@ -425,7 +425,7 @@ describe.skipIf(!hasGamedata())('sandbox: an inn’s evening (headless simulatio
 
 describe('sandbox: the rest of the engine’s rule (not built yet)', () => {
   it.todo(
-    'talks with others within fSandBoxExtraDialogueRange (384) beyond its place (the engine's defaults)',
+    'talks with others within fSandBoxExtraDialogueRange (384) beyond its place (the engine’s defaults)',
   );
   it.todo(
     'waits fSandBoxDelayEvalSeconds (5 s) before it is evaluated again on arrival (observed in the original: ' +
