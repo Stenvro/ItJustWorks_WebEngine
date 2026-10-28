@@ -28,6 +28,10 @@ export interface SavedActor {
   readonly combatTarget?: number | undefined;
   /** The confidence modifier its fight drew (fCombatConfidenceModifier*), kept for the fight. */
   readonly confidenceModifier?: number | undefined;
+  /** A script set it sneaking (StartSneaking) in the package it runs. */
+  readonly sneaking?: boolean | undefined;
+  /** Its weapon drawn (or being drawn): drawn outside a fight too (DrawWeapon). */
+  readonly weaponDrawn?: boolean | undefined;
 }
 
 /**

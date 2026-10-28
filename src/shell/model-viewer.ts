@@ -553,6 +553,9 @@ export class ModelViewer {
     dependentAnimated: (reference, dependent, added) =>
       this.#stage?.dependentAnimated(reference, dependent, added) ?? false,
     // Carts and their riders, horses and theirs (src/shell/actor-vehicles.ts, actor-mounts.ts).
+    alphaSet: (actor, fade) => {
+      this.#stage?.alphaSet(actor, fade);
+    },
     vehicleChanged: (actor) => {
       this.#stage?.vehicles.changed(actor);
     },

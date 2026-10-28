@@ -206,6 +206,10 @@ const obstacleCuts = new WeakMap<CellObstacle, NavmeshObstacle | null>();
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+/** A weapon out or coming out (what a save keeps as drawn). */
+const weaponOut = (state: number): boolean =>
+  state === WeaponState.drawn || state === WeaponState.drawing || state === WeaponState.wantToDraw;
+
 /**
  * After hours skipped, the travels that start within this (real ms) end at once: the packages
  * are chosen again within a frame or two. TODO(M13): the engine moves them as the hours pass.
@@ -1022,8 +1026,49 @@ export class ActorStage {
   /** Invisibility's settings (GMSTs), once read. */
   #invisibility: InvisibilitySettings | undefined;
 
-  /** Invisible actors are drawn veiled, the player faintly (src/gameplay/magic/invisibility.ts). */
-  #veil(): void {
+  /**
+   * The alpha each actor is drawn with now (SetAlpha's, the game state's, as it fades there),
+   * by actor; one not here takes its alpha at once (just placed, or SetAlpha without a fade).
+   */
+  readonly #alphas = new Map<number, number>();
+  /** fActorAlphaFadeSeconds, once read. */
+  #alphaFadeSeconds: number | undefined;
+
+  /** SetAlpha: without a fade the actor takes its alpha at once. */
+  alphaSet(actor: number, fade: boolean): void {
+    if (!fade) this.#alphas.delete(actor);
+  }
+
+  /**
+   * An actor's alpha this frame: its game state's (SetAlpha), reached over
+   * fActorAlphaFadeSeconds where SetAlpha asked for a fade. TODO(M13): whether the engine fades
+   * the whole range or each change in that time is not read; the whole range here.
+   */
+  #alpha(runtime: ScriptRuntime, reference: number, frame: number): number {
+    if (this.#alphaFadeSeconds === undefined) {
+      this.#alphaFadeSeconds = 1;
+      void runtime.gameSetting('fActorAlphaFadeSeconds').then((value) => {
+        if (typeof value === 'number') this.#alphaFadeSeconds = value;
+      });
+    }
+    const wanted = runtime.state.actors.get(reference)?.alpha ?? 1;
+    const was = this.#alphas.get(reference);
+    const step = this.#alphaFadeSeconds > 0 ? frame / this.#alphaFadeSeconds : 1;
+    const now =
+      was === undefined
+        ? wanted
+        : was < wanted
+          ? Math.min(wanted, was + step)
+          : Math.max(wanted, was - step);
+    this.#alphas.set(reference, now);
+    return now;
+  }
+
+  /**
+   * Invisible actors are drawn veiled, the player faintly (src/gameplay/magic/invisibility.ts);
+   * SetAlpha's alpha veils them too.
+   */
+  #veil(frame: number): void {
     const runtime = this.#options.session.scriptsReady;
     if (!runtime) return;
     if (!this.#invisibility) {
@@ -1042,11 +1087,12 @@ export class ActorStage {
     for (const staged of this.#actors.values()) {
       const fade = staged.placed.instances[0]?.fade;
       if (!fade) continue;
-      fade.veil = invisibilityVeil(
+      const invisible = invisibilityVeil(
         runtime.magic.aiState(staged.reference).invisible,
         staged.reference === PLAYER_REF,
         this.#invisibility,
       );
+      fade.veil = 1 - (1 - invisible) * this.#alpha(runtime, staged.reference, frame);
     }
   }
 
@@ -1504,7 +1550,9 @@ export class ActorStage {
 
   /**
    * What a save keeps of the actors on the stage (src/save/world-save.ts): where each stands,
-   * the furniture it is in, its package and how far it got, whom it fights.
+   * the furniture it is in, its package and how far it got, whom it fights, whether a script
+   * set it sneaking and whether its weapon is out (the original saves both with its actor
+   * state: docs/formats/save.md, "What actors keep").
    */
   saveActors(): SavedActor[] {
     const saved: SavedActor[] = [];
@@ -1524,6 +1572,8 @@ export class ActorStage {
         package: this.ai.savedPackage(reference),
         combatTarget: this.combat.targetOf(reference),
         confidenceModifier: this.combat.confidenceModifier(reference),
+        ...(this.senses.scriptSneaking(reference) && { sneaking: true }),
+        ...(weaponOut(this.combat.weaponState(reference)) && { weaponDrawn: true }),
       });
     }
     return saved;
@@ -1531,9 +1581,18 @@ export class ActorStage {
 
   /**
    * A loaded save's fights start again (the original re-forms its combat groups as it loads):
-   * each as soon as its fighter and its target are on the stage, given a few seconds.
+   * each as soon as its fighter and its target are on the stage, given a few seconds. Weapons
+   * that were out are drawn again as their actors join the fights' bookkeeping.
    */
   #restoreCombat(seconds: number): void {
+    for (const [actor, pending] of this.#restoredDraws) {
+      pending.left -= seconds;
+      if (weaponOut(this.combat.weaponState(actor)) || pending.left <= 0) {
+        this.#restoredDraws.delete(actor);
+        continue;
+      }
+      void this.combat.draw(actor);
+    }
     for (const [actor, pending] of this.#restoredCombat) {
       pending.left -= seconds;
       if (this.combat.targetOf(actor) === pending.target || pending.left <= 0) {
@@ -1546,6 +1605,9 @@ export class ActorStage {
       }
     }
   }
+
+  /** A loaded save's actors whose weapons were out: seconds left to draw them again. */
+  readonly #restoredDraws = new Map<number, { left: number }>();
 
   readonly #restoredCombat = new Map<
     number,
@@ -2056,7 +2118,7 @@ export class ActorStage {
     this.casting.frame(frame);
     this.projectiles.frame(frame);
     this.effects.frame(frame);
-    this.#veil();
+    this.#veil(frame);
     this.fx.frame(frame);
     for (const [key, guide] of this.#guides) {
       guide.wait -= frame;
@@ -2222,6 +2284,11 @@ export class ActorStage {
         if (saved) {
           session.restoring?.drop(reference);
           if (saved.package) this.ai.resume(reference, saved.package);
+          // Sneaking as a script set it, in the package it set it in.
+          if (saved.sneaking === true) this.senses.sneakAgain(reference, saved.package?.id);
+          // TODO(M13): the original's save keeps the graph with the weapon out; here it is
+          // drawn again as the actor is loaded.
+          if (saved.weaponDrawn === true) this.#restoredDraws.set(reference, { left: 5 });
           if (saved.combatTarget !== undefined) {
             this.#restoredCombat.set(reference, {
               target: saved.combatTarget,
@@ -2272,6 +2339,7 @@ export class ActorStage {
     this.ambientIdles.remove(staged.reference);
     this.looks.remove(staged.reference);
     this.moods.forget(staged.reference);
+    this.#alphas.delete(staged.reference);
     this.#options.session.scriptsReady?.magic.unloaded(staged.reference);
     this.combat.remove(staged.reference);
     this.ai.remove(staged.reference);

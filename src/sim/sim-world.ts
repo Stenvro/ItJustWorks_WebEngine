@@ -1530,6 +1530,9 @@ export class SimWorld {
       this.stage.furniture.interactionLocation(furniture, from),
     dependentAnimated: (reference, dependent, added) =>
       this.stage.dependentAnimated(reference, dependent, added),
+    alphaSet: (actor, fade) => {
+      this.stage.alphaSet(actor, fade);
+    },
     vehicleChanged: (actor) => {
       this.stage.vehicles.changed(actor);
     },

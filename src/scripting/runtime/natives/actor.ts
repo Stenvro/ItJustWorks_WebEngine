@@ -65,7 +65,8 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
       | 'noBleedoutRecovery'
       | 'attackOnSight'
       | 'allowPlayerDialogue'
-      | 'allowBleedoutDialogue',
+      | 'allowBleedoutDialogue'
+      | 'hiddenOnStealthMeter',
   ): void => {
     act(name, (actor, call) => {
       state.actor(actor)[key] = bool(call.args[0], true);
@@ -493,9 +494,8 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   act('sendtrespassalarm', (actor, call) => world.alarm?.(actor, ref(call.args[0]), 'trespass'));
   // Others attack this one on sight (src/ai/combat-reactions.ts: everyone's enemy).
   flag('setattackactoronsight', 'attackOnSight');
-  act('setnotshowonstealthmeter', (actor, call) =>
-    world.hideFromStealthMeter?.(actor, bool(call.args[0], true)),
-  );
+  // An actor flag in the original (kept in its save): the stealth eye reads it.
+  flag('setnotshowonstealthmeter', 'hiddenOnStealthMeter');
   // Whether the player may talk to it (src/shell/actors.ts: Talk).
   flag('allowpcdialogue', 'allowPlayerDialogue');
   // Whom it talks with: the player in conversation with it (and the other way round), else
@@ -584,10 +584,27 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   act('setsubgraphfloatvariable', (actor, call) => {
     world.setAnimationVariable?.(actor, str(call.args[0]), num(call.args[1]));
   });
-  act('setalpha', (actor, call) => world.setAlpha?.(actor, num(call.args[0]), bool(call.args[1])));
-  act('setheadtracking', (actor, call) => world.headTracking?.(actor, bool(call.args[0])));
-  act('setlookat', (actor, call) => world.lookAt?.(actor, ref(call.args[0]), 'script'));
-  act('clearlookat', (actor) => world.lookAt?.(actor, undefined, 'script'));
+  // Kept on the actor as the original keeps them in its save (its process's alpha and head
+  // track targets, its head tracking flag: docs/formats/save.md); the world reads them.
+  act('setalpha', (actor, call) => {
+    const alpha = Math.min(1, Math.max(0, num(call.args[0])));
+    state.actor(actor).alpha = alpha;
+    world.setAlpha?.(actor, alpha, bool(call.args[1]));
+  });
+  act('setheadtracking', (actor, call) => {
+    const on = bool(call.args[0]);
+    state.actor(actor).headTrackingOff = !on;
+    world.headTracking?.(actor, on);
+  });
+  act('setlookat', (actor, call) => {
+    const target = ref(call.args[0]);
+    state.actor(actor).lookAt = target;
+    world.lookAt?.(actor, target, 'script');
+  });
+  act('clearlookat', (actor) => {
+    delete state.actor(actor).lookAt;
+    world.lookAt?.(actor, undefined, 'script');
+  });
   act('setexpressionoverride', (actor, call) =>
     world.expression?.(actor, int(call.args[0]), int(call.args[1])),
   );

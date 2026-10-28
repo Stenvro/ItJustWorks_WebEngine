@@ -250,8 +250,6 @@ export class ActorSenses implements ScriptSenses {
   readonly #sneaking = new Set<number>();
   /** Actors seen sneaking (the start of sneaking casts the perks' spell). */
   readonly #wasSneaking = new Set<number>();
-  /** Actors that do not open the stealth eye (SetNotShowOnStealthMeter). */
-  readonly #unseenOnMeter = new Set<number>();
   #detectedCount = 0;
   #hiddenCount = 0;
   #aware = false;
@@ -308,6 +306,7 @@ export class ActorSenses implements ScriptSenses {
     this.#profiles.delete(reference);
     this.#lights.delete(reference);
     this.#sneakers.delete(reference);
+    this.#sneakResumes.delete(reference);
     this.#sneaking.delete(reference);
     this.#seenCorpses.delete(reference);
     this.#corpses.delete(reference);
@@ -1060,10 +1059,22 @@ export class ActorSenses implements ScriptSenses {
     this.#sneakers.set(actor, this.#options.ai.current(actor)?.id);
   }
 
-  hideFromStealthMeter(actor: number, hidden: boolean): void {
-    if (hidden) this.#unseenOnMeter.add(actor);
-    else this.#unseenOnMeter.delete(actor);
+  /** Whether a script set an actor sneaking (StartSneaking) and it still does (a save keeps it). */
+  scriptSneaking(actor: number): boolean {
+    return this.#sneakers.has(actor);
   }
+
+  /**
+   * A loaded save's actor a script had set sneaking: it sneaks again while the package it was
+   * set in (resumed by its AI) runs.
+   */
+  sneakAgain(actor: number, packageId: number | undefined): void {
+    this.#sneakers.set(actor, packageId);
+    if (packageId !== undefined) this.#sneakResumes.add(actor);
+  }
+
+  /** Loaded sneakers whose packages have not been resumed yet. */
+  readonly #sneakResumes = new Set<number>();
 
   // --- The API of combat (5.2) and crime (M11) ----------------------------------------------
 
@@ -1439,7 +1450,13 @@ export class ActorSenses implements ScriptSenses {
       const actor = body.reference;
       if (actor === PLAYER_REF) continue;
       const running = ai.current(actor);
-      if (this.#sneakers.has(actor) && this.#sneakers.get(actor) !== running?.id) {
+      // A loaded save's sneaker waits for its package to be resumed.
+      if (this.#sneakResumes.has(actor) && running !== undefined) this.#sneakResumes.delete(actor);
+      if (
+        this.#sneakers.has(actor) &&
+        this.#sneakers.get(actor) !== running?.id &&
+        !this.#sneakResumes.has(actor)
+      ) {
         this.#sneakers.delete(actor);
       }
       const wanted =
@@ -1455,7 +1472,9 @@ export class ActorSenses implements ScriptSenses {
 
   /** Whether an observer counts for the stealth eye: alive, not a teammate, not hidden from it. */
   #onMeter(observer: number): boolean {
-    if (this.#unseenOnMeter.has(observer)) return false;
+    // SetNotShowOnStealthMeter: an actor flag, kept in the game state.
+    const runtime = this.#options.session.scriptsReady;
+    if (runtime?.state.actors.get(observer)?.hiddenOnStealthMeter === true) return false;
     return this.#profiles.get(observer)?.profile.teammate !== true;
   }
 
