@@ -1469,19 +1469,20 @@ after `--package-seconds`).
   before it, and must play for Alduin to come; TODO(M13): the engine's rule). Its actors are
   in it until it ends
   (IsInScene, GetCurrentScene). An actor that plays in another scene leaves that one for a
-  forced start, for a start against an interruptible scene, or for any start when its scene
-  has begun and has no action running now, on any of its actors (that scene ends, unless the
-  actor was optional there); otherwise the start waits until its actors are free: MQ101's
-  stage fragment starts Scene4, the execution, before it stops Scene1, the cart ride, whose
-  actors Scene4 needs. The idle scene's case is from the data: RiverwoodDortheFrodnarPlayScene
-  holds Dorthe in a first phase without actions until she and Frodnar meet, and
-  MQ102HadvarAlvorScene (MQ102A stage 35) would wait for it for ever. A scene whose actions run
-  keeps the actors it has nothing for yet: in MQ102HadvarAlvorScene's phases that take Hadvar
-  and Alvor into the house, WIGreetingScene (as the player came in) took one of Alvor's
-  household, idle there, and ended it (MQ102A 52) before Alvor's force greet (47). Observed in the original:
-  Scene.Start only marks the scene active; its actors are looked at as it begins. TODO(M13):
-  whether the engine queues such a start, and its own test for an actor busy in another scene
-  (the quests' priorities, 30 and 40 against MQ102A's 80, would tell the same here).
+  forced start, for a start against an interruptible scene, or for a scene of a quest of
+  higher priority when its scene has begun and has no action running on it now (that scene
+  ends, unless the actor was optional there); otherwise the start waits until its actors are
+  free: MQ101's stage fragment starts Scene4, the execution, before it stops Scene1, the cart
+  ride, whose actors Scene4 needs. The idle actor's case is from the data:
+  RiverwoodDortheFrodnarPlayScene (priority 30) holds Dorthe in a first phase without actions
+  until she and Frodnar meet, and MQ102HadvarAlvorScene (MQ102A, 80; stage 35) would wait for
+  it for ever; the bard's next song (BardSongsInstrumental, 45) takes Mikael from the Bannered
+  Mare's talk (30) while Hulda speaks. The priorities come from the data too: in
+  MQ102HadvarAlvorScene's phases that take Hadvar and Alvor into the house, WIGreetingScene
+  (WIGreeting, 40; as the player came in) took one of Alvor's household, idle there, and ended
+  it (MQ102A 52) before Alvor's force greet (47). Observed in the original: Scene.Start only
+  marks the scene active; its actors are looked at as it begins. TODO(M13): whether the engine
+  queues such a start, and its own test for an actor busy in another scene.
 - **Phases** run in order. One whose start conditions do not hold is skipped (the actions that
   start in it do not run). A phase that runs starts its actions, then completes when its
   completion conditions hold, whether or not its actions are done: 907 vanilla completion
