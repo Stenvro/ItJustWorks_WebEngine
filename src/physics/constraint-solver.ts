@@ -12,6 +12,12 @@
 //   the solver's tau (× the limit's tau factor) of the way each step, not within one step
 //   (Rapier's limits are stiff: a body flew off at 2,000 units a second): easedLimits.
 // - Solver deactivation: a slow body is slowed down further (slowBodyFactor).
+// - The cone: a ragdoll joint's twist axis stays within its cone about the first body's (Havok's
+//   cone limit; Rapier's limits are a box of two swings, wider on its diagonals).
+// - Motors: a powered ragdoll's joints pull their second body's turn toward a target relative to
+//   the first (Havok's position motors, as the behavior graph's powered ragdoll controls drive
+//   them: a knocked-down actor matching its get-up pose); a joint's motor takes the place of its
+//   friction while it runs.
 //
 // Platform-independent (Rapier bodies, no browser).
 
@@ -76,6 +82,25 @@ export interface SolverConstraint {
   readonly b: SolverFrame;
   /** Havok units (kg·m²/s²). */
   readonly maxFriction: number;
+  /** A ragdoll's cone (radians): its second twist axis within this of its first's. */
+  readonly cone?: number;
+}
+
+/**
+ * A joint's motor (Havok's hkpPositionConstraintMotor, as the graph's
+ * hkbPoweredRagdollControlData sets it): it pulls the second body's turn relative to the first
+ * toward `target` at tau of the error a step, no faster than proportionalRecoveryVelocity × the
+ * error + constantRecoveryVelocity (radians a second), damping that share of the speed's error
+ * off a step, with at most maxForce (Havok's torque units) × the step about each axis.
+ */
+export interface JointMotor {
+  /** The second body's rotation relative to the first's (qA⁻¹ qB) to pull toward. */
+  readonly target: Quat;
+  readonly maxForce: number;
+  readonly tau: number;
+  readonly damping: number;
+  readonly proportionalRecoveryVelocity: number;
+  readonly constantRecoveryVelocity: number;
 }
 
 /** A constraint between two bodies the solver keeps. */
@@ -83,6 +108,8 @@ export interface SolverJoint {
   readonly a: RAPIER.RigidBody;
   readonly b: RAPIER.RigidBody;
   readonly constraint: SolverConstraint;
+  /** Its motor while its ragdoll is powered (none: limp, its friction holds it). */
+  motor?: JointMotor | undefined;
 }
 
 // --- Vectors ------------------------------------------------------------------------------------
@@ -93,7 +120,7 @@ interface V {
   z: number;
 }
 
-interface Quat {
+export interface Quat {
   readonly x: number;
   readonly y: number;
   readonly z: number;
@@ -120,6 +147,26 @@ function rotate(q: Quat, v: Vec3): V {
     v[1] + q.w * ty + (q.z * tx - q.x * tz),
     v[2] + q.w * tz + (q.x * ty - q.y * tx),
   );
+}
+
+function multiplyQuat(p: Quat, q: Quat): Quat {
+  return {
+    x: p.w * q.x + p.x * q.w + p.y * q.z - p.z * q.y,
+    y: p.w * q.y - p.x * q.z + p.y * q.w + p.z * q.x,
+    z: p.w * q.z + p.x * q.y - p.y * q.x + p.z * q.w,
+    w: p.w * q.w - p.x * q.x - p.y * q.y - p.z * q.z,
+  };
+}
+
+/** The turn (a rotation vector, world: its axis × its angle) that takes `from` to `to`. */
+function turnBetween(from: Quat, to: Quat): V {
+  // to × from⁻¹, the shorter way round.
+  const d = multiplyQuat(to, { x: -from.x, y: -from.y, z: -from.z, w: from.w });
+  const sine = Math.hypot(d.x, d.y, d.z);
+  if (sine < 1e-9) return v3();
+  const sign = d.w < 0 ? -1 : 1;
+  const k = (sign * 2 * Math.atan2(sine, Math.abs(d.w))) / sine;
+  return v3(d.x * k, d.y * k, d.z * k);
 }
 
 /** A symmetric 3×3 matrix (a world inverse inertia). */
@@ -156,7 +203,10 @@ interface BodyState {
   changed: boolean;
 }
 
-/** One friction axis of a joint: its effective mass, its bound and its impulse so far. */
+/**
+ * One angular axis of a joint (friction, a motor, the cone): its effective mass, the bounds of
+ * its impulse over the step, the relative speed it drives toward and its impulse so far.
+ */
 interface Row {
   readonly a: BodyState;
   readonly b: BodyState;
@@ -166,8 +216,13 @@ interface Row {
   readonly ia: V;
   readonly ib: V;
   readonly mass: number;
-  /** |impulse| ≤ limit. */
-  readonly limit: number;
+  /** lo ≤ impulse ≤ hi. */
+  readonly lo: number;
+  readonly hi: number;
+  /** The speed it drives toward (friction: none; a motor: its recovery; the cone: back in). */
+  readonly bias: number;
+  /** The share of the speed's error taken off (a motor's damping; else all of it). */
+  readonly gain: number;
   impulse: number;
 }
 
@@ -276,18 +331,47 @@ export function solveJoints(
     const qa = bodyA.rotation();
     const qb = bodyB.rotation();
     const rows: Row[] = [];
-    // Friction about the first body's frame axes (a ragdoll's three, a hinge's axle).
-    const limit = c.maxFriction * step;
-    if (limit > 0) {
-      const twist = rotate(qa, c.a.axes[0]);
-      const plane = rotate(qa, c.a.axes[1]);
-      const axes = c.type === 'ragdoll' ? [twist, plane, unit(cross(twist, plane))] : [twist];
-      for (const n of axes) {
-        if (!n) continue;
-        const ia = symTimes(a.invInertia, n);
-        const ib = symTimes(b.invInertia, n);
-        const k = dot(n, ia) + dot(n, ib);
-        if (k > 1e-12) rows.push({ a, b, n, ia, ib, mass: 1 / k, limit, impulse: 0 });
+    const row = (n: V | undefined, lo: number, hi: number, bias = 0, gain = 1): void => {
+      if (!n) return;
+      const ia = symTimes(a.invInertia, n);
+      const ib = symTimes(b.invInertia, n);
+      const k = dot(n, ia) + dot(n, ib);
+      if (k > 1e-12) rows.push({ a, b, n, ia, ib, mass: 1 / k, lo, hi, bias, gain, impulse: 0 });
+    };
+    const motor = joint.motor;
+    if (motor && motor.maxForce > 0 && step > 0) {
+      // Its motor, about the world's axes: the turn left to the target, recovered at tau of it
+      // a step, no faster than its recovery velocities allow.
+      const error = turnBetween(qb, multiplyQuat(qa, motor.target));
+      const angle = Math.hypot(error.x, error.y, error.z);
+      const most = motor.proportionalRecoveryVelocity * angle + motor.constantRecoveryVelocity;
+      const speed = angle > 1e-9 ? Math.min((motor.tau * angle) / step, Math.max(0, most)) : 0;
+      const along = angle > 1e-9 ? speed / angle : 0;
+      const force = motor.maxForce * step;
+      const gain = Math.min(1, Math.max(0, motor.damping));
+      row(v3(1, 0, 0), -force, force, error.x * along, gain);
+      row(v3(0, 1, 0), -force, force, error.y * along, gain);
+      row(v3(0, 0, 1), -force, force, error.z * along, gain);
+    } else {
+      // Friction about the first body's frame axes (a ragdoll's three, a hinge's axle).
+      const limit = c.maxFriction * step;
+      if (limit > 0) {
+        const twist = rotate(qa, c.a.axes[0]);
+        const plane = rotate(qa, c.a.axes[1]);
+        const axes = c.type === 'ragdoll' ? [twist, plane, unit(cross(twist, plane))] : [twist];
+        for (const n of axes) row(n, -limit, limit);
+      }
+    }
+    // The cone: a second twist axis past it turns back toward the first's, by tau × the
+    // ragdoll limits' tau factor of the excess a step (pushed back only, never held in).
+    if (c.cone !== undefined && step > 0) {
+      const ta = rotate(qa, c.a.axes[0]);
+      const tb = rotate(qb, c.b.axes[0]);
+      const swing = Math.acos(Math.max(-1, Math.min(1, dot(ta, tb))));
+      const excess = swing - Math.abs(c.cone);
+      if (excess > 0) {
+        const back = (settings.tau * RAGDOLL_LIMIT_TAU_FACTOR * excess) / step;
+        row(unit(cross(ta, tb)), -Infinity, 0, -back);
       }
     }
     // The pivot: its two points' velocities kept together.
@@ -319,12 +403,13 @@ export function solveJoints(
   }
 }
 
-/** Holds a friction axis still, within its bound. */
+/** Drives an angular axis toward its speed (friction: still), within its bounds. */
 function solveRow(row: Row): void {
   const { a, b, n } = row;
   const speed = n.x * (b.w.x - a.w.x) + n.y * (b.w.y - a.w.y) + n.z * (b.w.z - a.w.z);
   const before = row.impulse;
-  const after = Math.max(-row.limit, Math.min(row.limit, before - row.mass * speed));
+  const wanted = before - row.mass * (speed - row.bias) * row.gain;
+  const after = Math.max(row.lo, Math.min(row.hi, wanted));
   row.impulse = after;
   const impulse = after - before;
   if (impulse === 0) return;

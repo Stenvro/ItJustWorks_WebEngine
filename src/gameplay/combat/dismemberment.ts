@@ -22,6 +22,25 @@ export function limbGone(limbs: readonly DismemberedLimb[] | undefined, limb: nu
   return limbs?.some((entry) => entry.limb === limb) === true;
 }
 
+/**
+ * How a dismembered actor is dressed again as its 3D loads (docs/animation.md, Dismemberment:
+ * Persistence): the engine compares what it wears with what its last cut limb's record says it
+ * wore then and, if they differ, dresses it as the record says: what the record has and it does
+ * not wear is put on (the decapitation armor its outfit lost; the stage only what it still
+ * has, not what was looted), what it wears beyond the record is taken off. Undefined: nothing to do (no limb gone, or dressed as recorded). TODO(M13): the
+ * engine's helper's exact rule (which limb's record wins, whether it takes off) is not read.
+ */
+export function redressing(
+  limbs: readonly DismemberedLimb[] | undefined,
+  worn: readonly number[],
+): { readonly equip: readonly number[]; readonly unequip: readonly number[] } | undefined {
+  const recorded = limbs?.at(-1)?.worn;
+  if (!recorded) return undefined;
+  const equip = recorded.filter((form) => !worn.includes(form));
+  const unequip = worn.filter((form) => !recorded.includes(form));
+  return equip.length > 0 || unequip.length > 0 ? { equip, unequip } : undefined;
+}
+
 // --- The cut piece -------------------------------------------------------------------------
 
 /**

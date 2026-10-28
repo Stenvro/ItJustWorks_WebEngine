@@ -135,20 +135,20 @@ These run through every area and explain most of what breaks in play.
 
 ### Animation and bodies
 
-| System               | Status  | Main gaps                                                                                                                                       |
-| -------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Graph runtime        | partial | bDisableInterp's setter; an event no node takes reported as not handled                                                                         |
-| Clips                | partial | mirrored additive clips by our own rule                                                                                                         |
-| Engine handlers      | partial | all 91 classes answered; what reads the camera override's and MTState's flags (unread); NPCs' JumpBegin (their controllers do not jump)         |
-| Weapons and aim      | partial | the player's casting pitch (PitchOverride), a crossbow's launch node (the bow zoom by the graph's BowZoomStart / Stop: done)                    |
-| Ambient idles        | partial | which specific idles skip the next PickNewIdle; the complex scene's wait; the frame's budget; the meal gate                                     |
-| Animation objects    | partial | the female hands' scale; the POV switch while the player holds one; saves                                                                       |
-| Paired animations    | partial | the support's mark from the clip (engine's, set once), its side kept to the clip's end, death limp at the end: done; events not routed per side |
-| Ragdolls, death      | partial | no powered ragdoll motors; objects' placed ragdoll poses; the cone limit; a still death in a lean comes to rest standing (joint friction)       |
-| Dismemberment        | partial | re-dressing a reloaded corpse from its recorded worn objects                                                                                    |
-| Actor build          | partial | first-person render pass, bone LOD                                                                                                              |
-| Faces                | partial | expression change rate                                                                                                                          |
-| Graph state in saves | partial | objects' graphs (sequences, skeletal machines) saved; actors' rebuilt from furniture and packages; behavior references                          |
+| System               | Status  | Main gaps                                                                                                                                                                                       |
+| -------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Graph runtime        | partial | bDisableInterp's setter; an event no node takes reported as not handled                                                                                                                         |
+| Clips                | partial | mirrored additive clips by our own rule                                                                                                                                                         |
+| Engine handlers      | partial | all 91 classes answered; what reads the camera override's and MTState's flags (unread); NPCs' JumpBegin (their controllers do not jump)                                                         |
+| Weapons and aim      | partial | the player's casting pitch (PitchOverride), a crossbow's launch node (the bow zoom by the graph's BowZoomStart / Stop: done)                                                                    |
+| Ambient idles        | partial | which specific idles skip the next PickNewIdle; the complex scene's wait; the frame's budget; the meal gate                                                                                     |
+| Animation objects    | partial | the female hands' scale; the POV switch while the player holds one; saves                                                                                                                       |
+| Paired animations    | partial | the support's mark from the clip (engine's, set once), its side kept to the clip's end, death limp at the end: done; events not routed per side                                                 |
+| Ragdolls, death      | partial | the paralysed's stiff fall; the powered ragdoll's root (world-from-model mode); a corpse's kept Havok state beyond its pose (motors, cone, placed poses of objects, corpses across loads: done) |
+| Dismemberment        | partial | the engine's re-dressing rule (which limb's record, whether it takes off) not read (re-dressing a reloaded corpse: done)                                                                        |
+| Actor build          | partial | first-person render pass, bone LOD                                                                                                                                                              |
+| Faces                | partial | expression change rate                                                                                                                                                                          |
+| Graph state in saves | partial | objects' graphs (sequences, skeletal machines) saved; actors' rebuilt from furniture and packages; behavior references                                                                          |
 
 ### Physics
 
@@ -163,7 +163,7 @@ These run through every area and explain most of what breaks in play.
 | Physics damage       | partial | the listener's damage to destructibles (no vanilla impact reaches it)           |
 | Traps                | partial | hits on actors: done; material, initial flag, cloud traps unchecked             |
 | Gameplay impulses    | partial | the rules from settings, not read from the engine (TODO(M13)); ragdoll hit time |
-| Persistence          | partial | animated objects and corpses; pushes without a script unchecked                 |
+| Persistence          | partial | animated objects (corpses: done); pushes without a script unchecked             |
 
 ### Rendering and camera
 

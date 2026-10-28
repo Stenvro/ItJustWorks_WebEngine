@@ -921,9 +921,13 @@ then cuts again without the flight (the head drops from the neck, pushed away fr
 root at fCombatDismemberedLimbVelocity) and bleeds again. Ours: the
 game state keeps the limbs (`ActorState.dismembered`, saved with it in M12); an actor placed
 again (its cell loaded again) is drawn without its head and a new piece drops from its neck; one
-made again where it stands (a look change) keeps the piece that lies in the world. TODO(M13):
-the engine's re-dressing from the recorded worn objects (its helper's exact rule is not read).
-IsLimbGone (condition 397) asks the record.
+made again where it stands (a look change) keeps the piece that lies in the world. As its body
+is made, one whose head is gone is dressed again as its last cut limb's record says if it wears
+otherwise (`redressing`: what the record has and it does not wear is put on if it still has it,
+the decapitation armor its outfit lost among them, not what was looted from it; what it wears
+beyond the record is taken off; it is then made
+again in that and cut again). TODO(M13): the engine's helper's exact rule (which limb's record
+wins, whether it takes anything off) is not read. IsLimbGone (condition 397) asks the record.
 
 | Setting                                       | Default | Use                                              |
 | --------------------------------------------- | ------- | ------------------------------------------------ |
@@ -1477,9 +1481,11 @@ Tool's 30 Hz, made frame-rate independent (1 − (1 − g)^(30 dt); TODO(M13)).
   GetUpBegin) it plays that clip. hkbGetUpModifier, as it becomes active, takes the matched
   ragdoll pose and blends from it into the animation over its duration (1 s; the ground under
   the engine's placement is level: groundNormal and alignWithGroundDuration add nothing).
-  hkbPoweredRagdollControlsModifier's maxForce is told (poweredRagdollForce: 0 limp in
-  FullyRagdoll, 200 matching; TODO(M13): the ragdoll's joint motors, the paralysed's stiff
-  fall). BSRagdollContactListenerModifier raises its event once a body of its bones touches
+  hkbPoweredRagdollControlsModifier's control data is told (poweredRagdoll: maxForce 0 limp in
+  FullyRagdoll, 200 matching; its tau, damping, recovery velocities and bones): a knocked-down
+  actor's ragdoll joints' motors pull it toward the graph's pose with it (physics.md,
+  Constraints and ragdolls: Motors). TODO(M13): the paralysed's stiff fall.
+  BSRagdollContactListenerModifier raises its event once a body of its bones touches
   something (the engine's ragdollContact: ActorBodies.touching), as AnimateToRagdoll's death
   animation goes limp. `tests/knockdown.int.test.ts` runs the human graph through it on the game
   data.

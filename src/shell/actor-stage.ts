@@ -34,6 +34,7 @@ import { RecordFlag } from '../formats/esm/record.ts';
 import type { GaitMotion, SoundingWorld } from './actor-sounds.ts';
 import { ActorGraphEvents } from './actor-graph-events.ts';
 import { actorOnRay, groundActor, moveActor, ragdollsOf, type PlacedActor } from './actors.ts';
+import { corpsePose } from '../animation/corpse-pose.ts';
 import { createdEnabled } from './created-objects.ts';
 import type { GameSession } from './game-session.ts';
 import type { SavedActor } from '../save/world-save.ts';
@@ -218,6 +219,8 @@ const MARKER_GROUND_REACH = 4096;
 const GUIDE_AHEAD = 6144;
 /** The collision this near an actor (its cell and the neighbours there) must be in place to set it down (units). */
 const GROUND_REACH = 1024;
+/** A corpse kept slower than this (units a second) lies at rest as it is placed again. */
+const CORPSE_REST_SPEED = 5;
 
 /** A loaded cell as the stage knows it. */
 interface StageCell {
@@ -1485,6 +1488,9 @@ export class ActorStage {
     const saved: SavedActor[] = [];
     for (const staged of this.#actors.values()) {
       const reference = staged.reference;
+      // The corpses' ragdoll poses go into the game state, which the save writes after the
+      // world (its maps are the live ones: src/save/game-save.ts).
+      this.#keepCorpse(staged);
       const use = this.furniture.interaction(reference);
       const seated = use !== undefined && this.furniture.holds(reference);
       saved.push({
@@ -2233,6 +2239,8 @@ export class ActorStage {
   }
 
   #remove(staged: StagedActor): void {
+    // A corpse leaving (its cell unloading) is kept where its ragdoll laid it.
+    this.#keepCorpse(staged);
     this.graphEvents.remove(staged.reference);
     this.animObjects.remove(staged.reference);
     this.ambientIdles.remove(staged.reference);
@@ -2336,9 +2344,39 @@ export class ActorStage {
     );
   }
 
-  /** The dead stay dead: an actor the running game killed lies as a ragdoll. */
+  /**
+   * The dead stay dead: an actor the running game killed lies as a ragdoll, and a corpse lies
+   * where its ragdoll laid it as its cell unloaded or the game was saved (#keepCorpse).
+   */
   #dead(actor: CellActor, runtime: ScriptRuntime | undefined): CellActor {
-    const dead = runtime?.state.actors.get(actor.reference)?.dead === true;
-    return dead && !actor.startsDead ? { ...actor, startsDead: true } : actor;
+    const state = runtime?.state.actors.get(actor.reference);
+    const dead = state?.dead === true;
+    const corpse = dead || actor.startsDead ? state?.corpse : undefined;
+    if ((!dead || actor.startsDead) && !corpse) return actor;
+    return { ...actor, startsDead: true, ...(corpse && { corpse }) };
+  }
+
+  /**
+   * Keeps a corpse's ragdoll pose in the game state (its ActorState's corpse: saved with it), so
+   * that it lies there again as its cell loads: as it leaves the stage, and as the game is saved
+   * (saveActors). One still dying, or whose ragdoll still moves, is kept falling: it falls on
+   * from there.
+   */
+  #keepCorpse(staged: StagedActor): void {
+    const runtime = this.#options.session.scriptsReady;
+    const reference = staged.reference;
+    const state = runtime?.state.actors.get(reference);
+    const dead = state?.dead === true || staged.placed.actor.startsDead;
+    const world = staged.placed.instances[0]?.world;
+    if (!runtime || !dead || !world || staged.placed.look.skeleton === undefined) return;
+    // Its bodies lie as its pose has them only once its ragdoll moves it (not while its graph
+    // still plays its death).
+    if (this.graphEvents.dying(reference)) return;
+    // Its ragdoll is the stage's (it died here) or its cell's (placed dead); one that has none
+    // yet (waiting for the ground under it) falls on from its pose.
+    const resting = this.bodies.has(reference)
+      ? this.bodies.resting(reference, CORPSE_REST_SPEED)
+      : staged.placed.actor.startsDead;
+    runtime.state.actor(reference).corpse = corpsePose(staged.placed.pose, world, resting);
   }
 }

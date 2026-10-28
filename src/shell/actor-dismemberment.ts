@@ -21,6 +21,7 @@ import {
   HEAD_LIMB,
   limbGone,
   pieceShowsPartition,
+  redressing,
 } from '../gameplay/combat/dismemberment.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import { HAVOK_SCALE, type CollisionData } from '../physics/collision-data.ts';
@@ -104,6 +105,8 @@ export class ActorDismemberment {
   readonly #dressing = new Map<number, Promise<readonly number[] | undefined>>();
   /** Actors whose Decapitate is being answered. */
   readonly #deciding = new Set<number>();
+  /** Dismembered actors being dressed again as their cut limb's record says. */
+  readonly #redressing = new Set<number>();
   #clock = 0;
   readonly #placement = new Float32Array(16);
 
@@ -201,10 +204,44 @@ export class ActorDismemberment {
     const runtime = this.#options.session.scriptsReady;
     const limbs = runtime?.state.actors.get(reference)?.dismembered;
     if (!limbGone(limbs, HEAD_LIMB)) return;
+    // Dressed again as its cut limb's record says, if it wears otherwise (it is made again in
+    // what it wears then, and cut again).
+    if (!this.#dressing.has(reference)) void this.#redress(reference);
     const cut = this.#sever(reference, placed);
     if (!cut) return;
     if (!this.#pieces.has(reference) && !this.#queue.some((entry) => entry.reference === reference))
       this.#queue.push({ reference, launch: false, weapon: undefined });
+  }
+
+  /**
+   * Observed in the original: as a dismembered actor's 3D loads, what it wears is compared
+   * with what its cut limb's record says it wore, and it is dressed so again where they differ
+   * (redressing): a reloaded corpse whose outfit came back whole wears its decapitation armor
+   * again.
+   */
+  async #redress(reference: number): Promise<void> {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime || this.#redressing.has(reference)) return;
+    this.#redressing.add(reference);
+    try {
+      const limbs = runtime.state.actors.get(reference)?.dismembered;
+      const plan = redressing(limbs, await runtime.equipment.worn(reference));
+      if (!plan) return;
+      for (const form of plan.unequip) await runtime.equipment.unequip(reference, form);
+      // Only what it still has: what was taken off it (looted) is not given back.
+      for (const form of plan.equip) {
+        if ((await runtime.itemCount(reference, form)) <= 0) continue;
+        await runtime.equipment.equip(reference, form, { silent: true });
+      }
+    } catch (error: unknown) {
+      this.#options.terminal.log(
+        'actor',
+        `a dismembered actor dressed again: ${describe(error)}`,
+        'warn',
+      );
+    } finally {
+      this.#redressing.delete(reference);
+    }
   }
 
   // --- Every frame ---------------------------------------------------------------------------
