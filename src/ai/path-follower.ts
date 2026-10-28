@@ -93,10 +93,13 @@ export class PathFollower {
     }
     // Points passed: near them, or beyond them towards the one after.
     while (this.#next < points.length - 1) {
+      const before = points[this.#next - 1];
       const point = points[this.#next];
       const after = points[this.#next + 1];
-      if (!point || !after) break;
-      if (horizontal(position, point) > PASS_RADIUS && !beyond(position, point, after)) break;
+      if (!before || !point || !after) break;
+      if (horizontal(position, point) > PASS_RADIUS && !beyond(position, before, point, after)) {
+        break;
+      }
       this.#next++;
       this.#closest = Infinity;
       this.#since = 0;
@@ -151,9 +154,20 @@ export class PathFollower {
 
 const horizontal = (a: Vec3, b: Vec3): number => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
-/** Whether `position` is past `point` on the way from it to `after`. */
-function beyond(position: Vec3, point: Vec3, after: Vec3): boolean {
-  const dx = after[0] - point[0];
-  const dy = after[1] - point[1];
-  return (position[0] - point[0]) * dx + (position[1] - point[1]) * dy > 0;
+/**
+ * Whether `position` is past the corner `point` of the way from `before` to `after`: over the
+ * line through the corner square to the bisector of the way in and the way out (for a straight
+ * way, the line square to it). Only the way out counted, a corner that turns back (the way
+ * leaves its first triangle backwards, round a navmesh border) was passed where the actor
+ * started, and it made for the point after straight across the border: a walker beyond the
+ * high process kept to the navmesh stood there, its graph walking, until it gave up.
+ */
+function beyond(position: Vec3, before: Vec3, point: Vec3, after: Vec3): boolean {
+  const unit = (x: number, y: number): [number, number] => {
+    const length = Math.hypot(x, y);
+    return length > 1e-6 ? [x / length, y / length] : [0, 0];
+  };
+  const [inX, inY] = unit(point[0] - before[0], point[1] - before[1]);
+  const [outX, outY] = unit(after[0] - point[0], after[1] - point[1]);
+  return (position[0] - point[0]) * (inX + outX) + (position[1] - point[1]) * (inY + outY) > 0;
 }

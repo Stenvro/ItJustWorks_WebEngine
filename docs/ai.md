@@ -160,7 +160,9 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   as its pathing target); our target speed is its controller's velocity, nought as it sets out,
   so it turns on the spot where the engine may turn into a walk.
 - **Following it** (`src/ai/path-follower.ts`): the actor goes to the next point; a point is
-  passed within 24 units or once the actor is beyond it towards the next; it arrives within its
+  passed within 24 units or once the actor is beyond it: over the line through the point square
+  to the bisector of the way in and the way out (a way that leaves its first triangle backwards,
+  round a navmesh border, is not cut short across the border); it arrives within its
   arrival radius of the last. With less than 8 units of headway towards the next point in 1.5
   seconds it is stuck and searches again, three times at most, each time farther from the
   edges (its radius times the search's number).
@@ -797,7 +799,10 @@ one actor, `--audit` for cells):
   - A reference: the actor is on it (its position and heading) if it is in the actor's cell or
     worldspace, else in another (not in this cell). Near a reference with a radius (a sandbox's
     area) an actor placed within the radius stays where it was placed; else it stands on the
-    navmesh nearest the reference (a sandbox's marker may lie in a hearth's fire). A Sit, Sleep
+    navmesh nearest the reference (a sandbox's marker may lie in a hearth's fire), moved on in
+    by its controller's radius where the navmesh reaches so far, so that its body is on the
+    navmesh and not astride its border (the Bannered Mare's hearth: the border runs over the
+    fire pit's stones, and Carlotta's Eat marker lies in the fire). A Sit, Sleep
     or UseIdleMarker on furniture puts it in the furniture, which holds it (no character
     controller), at the furniture's first active marker
     ([nif.md](formats/nif.md#furniture-markers)), facing its heading, by the instant idle
