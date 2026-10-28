@@ -81,15 +81,11 @@ describe('who flees (formula)', () => {
     expect(JSON.stringify(COMBAT_TREES.Combat)).toContain('"tree":"Flee"');
   });
   it.todo('the threat ratio weighed every fCombatThreatRatioUpdateTime (5 s)  [settings]');
-  it.todo(
-    'flee to an ally within fCombatFleeAllyDistanceMin .. Max (1536 .. 4096)  [settings]',
-  );
+  it.todo('flee to an ally within fCombatFleeAllyDistanceMin .. Max (1536 .. 4096)  [settings]');
   it.todo(
     'flee through a door: fCombatFleeUseDoorChance 0.33, fCombatFleeDoorDistanceMax 1024  [settings]',
   );
   it.todo('flee to cover: fCombatFleeCoverMinDistance 1024, …SearchRadius 3072  [settings]');
-  it.todo(
-    'safe after fFleeIsSafeTimer (30 s) beyond fFleeDoneDistance* (2500, 600)  [settings]',
-  );
+  it.todo('safe after fFleeIsSafeTimer (30 s) beyond fFleeDoneDistance* (2500, 600)  [settings]');
   it.todo('a cornered actor fights again  [original]');
 });
