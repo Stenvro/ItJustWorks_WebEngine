@@ -32,6 +32,8 @@ export interface SavedActor {
   readonly sneaking?: boolean | undefined;
   /** Its weapon drawn (or being drawn): drawn outside a fight too (DrawWeapon). */
   readonly weaponDrawn?: boolean | undefined;
+  /** A flier in the air: it is not set on the ground as it loads, and flies on from there. */
+  readonly flying?: boolean | undefined;
 }
 
 /**
