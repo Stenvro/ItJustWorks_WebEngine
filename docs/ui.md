@@ -156,7 +156,12 @@ Ruffle enters no other player while one runs a call into the engine (a GameDeleg
 button's onPress): a call into another menu then answers undefined and does nothing (the HUD's
 `ShowElements("TweenMode", false)` as the tween menu closes was lost, leaving the HUD in tween
 mode). The host runs such calls once that call has returned (a microtask), in order; calls into
-the menu whose call runs work at once.
+the menu whose call runs work at once. A player is never ended inside a call either, its own
+menu's included (the fader closing as its `FadeDone` comes: Ruffle's "Unable to lock Ruffle
+core"): its element leaves the page once the call has returned. And nothing is called in a
+movie before its bridge has registered its callbacks: the bridge's last action is
+`ExternalInterface.call("__itjwReady")`, and until it comes the host's reads answer undefined
+without asking the player (Ruffle's "Calling unknown internal interface").
 
 The engine tells each menu its platform (`SetPlatform(0, false)`: PC with keyboard and mouse;
 1 with a gamepad, `src/ui/input-platform.ts`), and every open menu again as the device last used
@@ -606,6 +611,17 @@ While scripts keep the menus from the player (`Game.DisablePlayerControls`' abMe
 opening does) only the journal opens, and with abJournalTabs its system page alone
 (`RestoreSavedSettings(tab, abTabsDisabled)`).
 
+The other controls the scripts switch off go by the control map's user event groups (its last
+column, CommonLib's USER_EVENT_FLAG: movement 0x1, looking 0x2, activate 0x4, menu 0x8, POV
+switch 0x20, fighting 0x40, sneaking 0x80, wheel zoom 0x200, jumping 0x400): an event works
+only while none of its groups is off (`src/shell/player.ts` `allows`). abMovement takes movement
+and jumping (auto-move and the stick stop too), abCamSwitch the POV switch and the wheel's zoom,
+abLooking the mouse and the right stick, abActivate activation and its prompt on the HUD,
+abMenu the menus' keys and the hotkeys (the journal still opens), abFighting the attacks, the
+weapon, shouts and casting, abSneaking sneaking. A press while its group is off is lost.
+Holding an animation object keeps the camera switch off as well, apart from the scripts' own
+switch (letting go of the object does not give back a camera switch a script took).
+
 ## Waiting and sleeping
 
 `sleepwaitmenu.swf` (`src/shell/sleep-wait-menu.ts`; T, or a bed's Sleep): the engine calls
@@ -740,6 +756,10 @@ Play. Help: `PopulateHelpTopics(list)` gets the topics of HelpManualPC (FLST 0x1
 its messages, by their titles) as `{text, index}`; `RequestHelpText(index, titleField,
 textField)` sets the message's title and text, and the menu turns its "[Event]"s into key art
 (`GetButtonFromUserEvent`, answered for every menu in Play). Saving and loading: docs/formats/save.md.
+Deleting a save: X (or the bottom bar's Delete) on Save or Load makes the movie ask "Delete this
+save?" itself; Yes calls `DeleteSave(index)` with the save's index among the saves (on Save the
+movie has already counted off its [NEW SAVE]) and takes the entry out of its list; the engine
+deletes the save and fills the list again.
 Show on Map: an objective with a target on the map gets the `questTargetID` of its first
 target (its reference); the movie closes the journal and calls `ShowTargetOnMap(id)`, and the
 map opens over that target (`src/shell/game-menus.ts`: the map of the target's world, without

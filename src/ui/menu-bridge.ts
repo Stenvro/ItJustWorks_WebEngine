@@ -37,6 +37,11 @@ export const BRIDGE_GET = '__itjwGetVariable';
 export const BRIDGE_NATIVE = '__itjwNative';
 /** _global's maker of such methods (one name each). */
 const NATIVE_MAKER = '__itjwMakeNative';
+/**
+ * The bridge tells the engine its callbacks are registered: none is called before (Ruffle
+ * warns of a call to a name not yet registered, and answers nothing).
+ */
+export const BRIDGE_READY = '__itjwReady';
 /** A menu asks the engine to translate a key it sets at run time (GFx's translator). */
 export const BRIDGE_TRANSLATE = '__itjwTranslate';
 /**
@@ -306,6 +311,8 @@ export function bridgeActions(menu: string, stage?: StageRects): Uint8Array {
   addCallback(w, BRIDGE_GET, ['path'], 2, (body) => {
     body.push({ register: 1 }).op(Op.getVariable).op(Op.return);
   });
+  // ExternalInterface.call(BRIDGE_READY): the callbacks are there (the wrapper tags the menu).
+  w.push(BRIDGE_READY, 1).getPath(EXTERNAL_INTERFACE).push('call').op(Op.callMethod).op(Op.pop);
   return w.bytes();
 }
 
