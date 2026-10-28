@@ -4,6 +4,7 @@ import {
   NO_PACKAGE_INTERRUPTS,
   TalkPlanner,
   greetingHolds,
+  sceneLineFaces,
   talkSettings,
   triggerDistance,
   VANILLA_TALK,
@@ -253,5 +254,14 @@ describe('settings', () => {
     expect(greetingHolds([0, 0, 0], [399, 0, 0], settings)).toBe(true);
     expect(greetingHolds([0, 0, 0], [401, 0, 0], settings)).toBe(false);
     expect(greetingHolds([0, 0, 0], undefined, VANILLA_TALK)).toBe(false);
+  });
+
+  it('starts a scene line by the speaker turning, 80 degrees while it moves', () => {
+    const s = VANILLA_TALK;
+    expect(sceneLineFaces({ offDegrees: 30, speed: 0, turning: true }, s)).toBe(false);
+    expect(sceneLineFaces({ offDegrees: 15, speed: 0, turning: true }, s)).toBe(true);
+    expect(sceneLineFaces({ offDegrees: 60, speed: 120, turning: true }, s)).toBe(true);
+    // One that does not turn (furniture, blocked) says it as it stands.
+    expect(sceneLineFaces({ offDegrees: 170, speed: 0, turning: false }, s)).toBe(true);
   });
 });
