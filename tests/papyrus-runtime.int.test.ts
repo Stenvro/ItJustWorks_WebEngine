@@ -158,6 +158,24 @@ describe.skipIf(!hasGamedata())('the script runtime on the local game data', () 
     }
   });
 
+  it("starts a persistent actor's scripts taken from its template as its cell attaches", async () => {
+    // MQ104BDragonRef: MQ104Dragon has no scripts of its own; its template's
+    // DragonActorScript goes to its "alive" state in OnInit (with it, OnDeath).
+    const DRAGON = 0x0005a6ca;
+    const script = new ObjectHandle(DRAGON, 'dragonactorscript');
+    const names = (await runtime.attachedScripts(runtime.referenceHandle(DRAGON))).map((s) =>
+      s.name.toLowerCase(),
+    );
+    expect(names).toContain('dragonactorscript');
+    expect(await runtime.vm.stateOf(script)).toBe('');
+    await runtime.cellAttached([DRAGON], () => false);
+    for (let t = 0; t < 1; t += 0.1) {
+      runtime.update(0.1, 0);
+      await runtime.vm.idle();
+    }
+    expect(await runtime.vm.stateOf(script)).toBe('alive');
+  });
+
   it("gives the player the race's starting attributes", async () => {
     const health = await runtime.actors.value(PLAYER, ActorValue.health);
     expect(health.max).toBeGreaterThan(0);
