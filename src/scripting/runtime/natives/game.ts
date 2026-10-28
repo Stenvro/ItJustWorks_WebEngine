@@ -285,7 +285,12 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
     runtime.flyingMountLandingAllowed = bool(args[0], true);
     return null;
   });
-  n('game.setsittingrotation', () => null);
+  // SetSittingRotation(degrees): the seated player's view turned that far from the seat
+  // (observed in the original: an offset of the first-person view, in radians).
+  n('game.setsittingrotation', ({ args }) => {
+    runtime.world.sittingRotation?.((num(args[0]) * Math.PI) / 180);
+    return null;
+  });
   // ClearPrison: the player is no longer held in jail.
   n('game.clearprison', () => {
     delete runtime.state.crime.jail;

@@ -183,9 +183,10 @@ export class ActorBodies {
   /**
    * An actor died: its bodies are let go from where its pose has them (they fall), and its
    * pose follows them from now on. Without bodies yet (far, or just placed) they are made
-   * first, in its pose now.
+   * first, in its pose now. `force` (ForceAddRagdollToWorld): let go now, without waiting for
+   * the ground under it (a hanged corpse hangs from its constraints).
    */
-  async kill(staged: BodyHolder): Promise<void> {
+  async kill(staged: BodyHolder, force = false): Promise<void> {
     let entry = this.#bodies.get(staged.reference);
     // Twice: bodies being made for it living as it died are not made (it no longer lives).
     for (let i = 0; i < 2 && !entry; i++) {
@@ -194,7 +195,7 @@ export class ActorBodies {
     }
     const physics = this.#physics;
     if (!entry || !physics) return;
-    if (!this.#groundReady(staged.reference)) {
+    if (!force && !this.#groundReady(staged.reference)) {
       this.#waiting.set(staged.reference, staged);
       return;
     }

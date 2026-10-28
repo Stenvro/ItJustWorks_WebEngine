@@ -51,6 +51,37 @@ describe('Game natives that ask the shell', () => {
     ]);
   });
 
+  it('turns the seated player’s view by degrees, told in radians (SetSittingRotation)', async () => {
+    const turns: number[] = [];
+    const scripts = runtime({ sittingRotation: (radians) => turns.push(radians) });
+    await call(scripts, 'setsittingrotation', [-55]);
+    expect(turns[0]).toBeCloseTo((-55 * Math.PI) / 180);
+  });
+
+  it('adds a corpse’s ragdoll and clears an actor’s stuck arrows', async () => {
+    const asked: string[] = [];
+    const scripts = runtime({
+      addRagdoll: (actor) => {
+        asked.push(`ragdoll ${actor.toString(16)}`);
+        return Promise.resolve();
+      },
+      clearExtraArrows: (actor) => asked.push(`arrows ${actor.toString(16)}`),
+    });
+    for (const [script, name, type] of [
+      ['objectreference', 'forceaddragdolltoworld', 'objectreference'],
+      ['actor', 'clearextraarrows', 'actor'],
+    ] as const) {
+      const native = scripts.native(script, name);
+      await native?.({
+        vm: scripts.vm,
+        self: new ObjectHandle(0x1234, type),
+        args: [],
+        name: `${script}.${name}`,
+      } as unknown as NativeCall);
+    }
+    expect(asked).toEqual(['ragdoll 1234', 'arrows 1234']);
+  });
+
   it('clears temporary effects and keeps the sun gaze modifier', async () => {
     let cleared = 0;
     const scripts = runtime({ clearTempEffects: () => (cleared += 1) });

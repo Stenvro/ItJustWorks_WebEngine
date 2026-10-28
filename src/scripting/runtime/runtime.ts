@@ -277,6 +277,13 @@ export interface WorldBridge {
    * it ran it already and it completed.
    */
   evaluatePackage?(actor: number, restart?: boolean): void;
+  /**
+   * ObjectReference.ForceAddRagdollToWorld: a dead actor's ragdoll is in the physics world at
+   * once (not waiting for the ground under it); resolves once it is.
+   */
+  addRagdoll?(actor: number): Promise<void>;
+  /** Game.SetSittingRotation: the seated player's view turned from the seat (radians). */
+  sittingRotation?(radians: number): void;
   currentPackage?(actor: number): number | undefined;
   /** The procedure its package runs now, by name ("Travel", "Sandbox": GetCurrentAIProcedure). */
   currentProcedure?(actor: number): string | undefined;
