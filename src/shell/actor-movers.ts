@@ -78,7 +78,7 @@ import type { StagedActor } from './actor-stage.ts';
 import type { GameSession } from './game-session.ts';
 import { controllerSettings, controllerShape } from './player.ts';
 import { actorFell, waterHarmed } from './time-flow.ts';
-import { floatSpeed, swims } from '../gameplay/swimming.ts';
+import { floatSpeed, submersion, swims } from '../gameplay/swimming.ts';
 import { WaterHazard } from '../gameplay/water-hazard.ts';
 import type { WaterPhysics } from '../physics/water-physics.ts';
 import { materialId } from '../world/material-type.ts';
@@ -1100,6 +1100,21 @@ export class ActorMovers {
    */
   turnRate(reference: number): number | undefined {
     return this.#movers.get(reference)?.turned.rate;
+  }
+
+  /**
+   * Whether a moved actor would swim standing at a point (its feet there): the water's surface
+   * over the point that deep for its height (`#atWater`'s rule). Undefined: not a mover, or no
+   * water physics.
+   */
+  swimsAt(reference: number, feet: Vec3): boolean | undefined {
+    const mover = this.#movers.get(reference);
+    const water = this.#world?.water;
+    if (!mover || !water) return undefined;
+    if ((mover.staged.placed.look.raceFlags & RaceFlag.swims) === 0) return false;
+    const surface = water.surface(feet[0], feet[1], feet[2])?.height;
+    const height = mover.character.shape.height;
+    return surface !== undefined && swims(submersion(feet[2], height, surface), false);
   }
 
   /** How a moved actor moves now (its conditions and natives read it). */

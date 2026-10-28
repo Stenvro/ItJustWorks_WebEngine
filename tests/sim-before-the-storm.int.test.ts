@@ -87,6 +87,11 @@ describe.skipIf(!hasGamedata())('MQ102 Before the Storm (Hadvar’s route)', () 
   // door once a second: the player stood a few units off the navmesh, and a path to a point off
   // it ended short, never complete. Such a path now ends at the navmesh's nearest point within
   // the arrival radius (src/shell/actor-movers.ts, navGoal).
+  // Found 2026-10-28: a bandit (0xb6ce1) that followed Hadvar from the cave caught him by Riverwood's river bank,
+  // where he swam (the bank lies under the cell's water, its navmesh unflagged): his graph took
+  // no draw, his combat tree (and its Exit Water) waited for one, and the scene stayed paused for
+  // the fight. A swimming fighter now makes for the shore first, to ground where it no longer
+  // swims (src/shell/actor-combat-ai.ts, exitWater).
   it('plays Hadvar and Alvor’s scene into the house; Alvor comes to the player by the door and sends them to Whiterun (MQ102 30)', async () => {
     expect(inRiverwood).toBeDefined();
     if (!inRiverwood) return;
