@@ -418,7 +418,9 @@ export class ActorFurniture {
    * As playAction: the event of the idle its graph took (undefined: none played). Asked of
    * nothing, conditions run on the target fail (a flier's landing without a perch). An actor in
    * furniture plays none, unless `inFurniture` (its death: the death idles ask whether it sits,
-   * IsInFurnitureState, and Nurelion's MS12BedDeath plays in his bed).
+   * IsInFurnitureState, and Nurelion's MS12BedDeath plays in his bed). One still on its way to
+   * the furniture is not in it: its idle stops for its walk there (MQ101's Imperial, held in a
+   * dialogue idle, never set out for the keep's lever).
    */
   async actionEvent(
     user: FurnitureUser,
@@ -434,7 +436,7 @@ export class ActorFurniture {
       !runtime ||
       !parent ||
       graph === undefined ||
-      (!inFurniture && this.#uses.has(user.reference))
+      (!inFurniture && this.#takenBy(user.reference, action))
     ) {
       return undefined;
     }
@@ -443,7 +445,17 @@ export class ActorFurniture {
     const idle = await tree.resolveAsync(parent.formId, graph, (candidate) =>
       runtime.conditionsHold(candidate.conditions, subject, undefined, context),
     );
+    // Entering it meanwhile (the idle was asked for on the way): the furniture has it now.
+    if (!inFurniture && this.#takenBy(user.reference, action)) return undefined;
     return idle?.event !== undefined && user.send(idle.event) ? idle.event : undefined;
+  }
+
+  /**
+   * Whether furniture keeps an actor from an action's idle: any use of it does, but its idle
+   * stops (ActionIdleStop) while it is only on its way there.
+   */
+  #takenBy(actor: number, action: string): boolean {
+    return action === 'ActionIdleStop' ? this.holds(actor) : this.#uses.has(actor);
   }
 
   /** What sandboxing makes of a base object, read once per base. */

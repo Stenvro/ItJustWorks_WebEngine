@@ -365,7 +365,15 @@ worldspaces on screen:
   runtime finds a parent's children in its own cell, its worldspace's persistent cell and the
   exterior cells round its place (6,369 of the 6,527; the other 158 lie farther off).
   Bleak Falls Barrow's frostbite spider drops from its ceiling hole so as the player walks into
-  the trigger by Arvel the Swift.
+  the trigger by Arvel the Swift. **Another activator's default** (an actor a script's
+  Activate names, an activate parent) is only what activating does to the object itself (a
+  door swings); the player's menus, seat, inventory and load screen are the player's alone
+  (`objectActivation`). Before, any activator's default was the player's: MQ101's stage 275
+  has its Imperial activate the keep's outer lever (KeepLever1.Activate(soldier)), which walked
+  the player off to sit in it, through the shut inner gate and into MQ101SetStage270RalofMarker,
+  so the scene skipped its gate phases. TODO(M13): the engine's defaults for an actor activator
+  (furniture it uses, a load door it goes through, a locked one it opens with its key, an item
+  it takes) are not read; they do nothing here.
 - **Triggers**: trigger volumes (activators' primitives and trigger-layer collision) tell
   their scripts when the player enters and leaves (OnTriggerEnter, OnTriggerLeave,
   GetTriggerObjectCount).
