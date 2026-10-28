@@ -202,17 +202,24 @@ describe('what enters a trigger', () => {
           skipped: [],
         };
       };
-      // Both thrown down through it from above.
-      const clutter = physics.addObject(box(Layer.clutter), at(0, 0, 150), {
-        reference: 0x10,
-        kind: 'object',
-      });
-      const prop = physics.addObject(box(Layer.props), at(30, 0, 150), {
-        reference: 0x11,
-        kind: 'object',
-      });
-      // They fall through it (past their settling once placed).
+      // Both thrown down through it from above (thrown, not placed by a cell: no settling).
+      const clutter = physics.addObject(
+        box(Layer.clutter),
+        at(0, 0, 150),
+        { reference: 0x10, kind: 'object' },
+        false,
+      );
+      const prop = physics.addObject(
+        box(Layer.props),
+        at(30, 0, 150),
+        { reference: 0x11, kind: 'object' },
+        false,
+      );
       expect(clutter.dynamic && prop.dynamic).toBe(true);
+      for (const { body } of [...clutter.bodies, ...prop.bodies]) {
+        physics.release(body);
+        body.wakeUp();
+      }
       const entered = new Map<number, Set<number>>();
       for (let i = 0; i < 300; i++) {
         physics.step(1 / 60);
@@ -223,6 +230,31 @@ describe('what enters a trigger', () => {
       expect([...(entered.get(0x10) ?? [])]).toEqual([0x77]);
       expect(entered.get(0x11)).toBeUndefined();
       physics.free();
+      // A clutter object a cell placed in the volume (it settles, the warm start) is not told
+      // as its cell loads: the game's placed clutter lies inactive until disturbed [original]. (No
+      // gravity here: it stays in the volume without a floor.)
+      const still = new PhysicsWorld(matrix, 0);
+      still.addPrimitive('box', [100, 100, 100], at(0, 0, 0), Layer.trigger, {
+        reference: 0x77,
+        kind: 'object',
+      });
+      const placed = still.addObject(box(Layer.clutter), at(0, 0, 0), {
+        reference: 0x12,
+        kind: 'object',
+      });
+      const seen = (): boolean => still.movingInTriggers().has(0x12);
+      let told = false;
+      for (let i = 0; i < 30; i++) {
+        still.step(1 / 60);
+        told ||= seen();
+      }
+      expect(told).toBe(false);
+      // Settled, then disturbed: it enters as it moves.
+      for (let i = 0; i < 60 * still.settleSeconds; i++) still.step(1 / 60);
+      placed.bodies[0]?.body.applyImpulse({ x: 0.05, y: 0, z: 0 }, true);
+      still.step(1 / 60);
+      expect(seen()).toBe(true);
+      still.free();
     },
   );
   it.todo('tells a trigger an arrow or spell flying through it (L_PROJECTILE)  [COLL] (sim)');
