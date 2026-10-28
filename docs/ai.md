@@ -18,7 +18,18 @@ the stage with the cell it stands in. A cell that loads brings the actors that a
   GameState), when their cell loads again.
 
 Actors are set on the ground where they stand once their cell's collision is in place (a moved
-one where it was moved to, never back at its editor place). A script's MoveTo of a staged actor
+one where it was moved to, never back at its editor place), and that of the loaded cells within
+1,024 units of it: one of them still being loaded keeps it waiting, standing (an object of the
+cell next door may be its floor). Observed in the original: an actor is simulated only over
+collision that is in place. So its fall onto whatever is under it (its controller's) is not
+taken near a cell the view does not hold at all (beyond the loaded area): there only the
+position check sets it down, within fCheckPositionFallDistance (72) under it, else it keeps
+the height it has, as one beyond the high process walks on its navmesh. Alvor's place on his
+smithy's floor (z −82) lies in the cell south-west of the one the smithy is placed in; with the
+player coming from Helgen that cell is the loaded grid's edge, and the stage dropped him through
+the missing floor to the slope 142 units below, where no navmesh is (his walks failed, and he
+was warped). Loose objects wait the same way for their warm start
+([physics.md](physics.md)). A script's MoveTo of a staged actor
 moves it on the stage, to another loaded cell, or off the stage if the place is not loaded; one
 moved into a loaded cell from elsewhere comes onto the stage at once, as does an actor a script
 creates there. Its enable state is its cell's (enable parents, quest states) or, for created
@@ -1463,15 +1474,20 @@ after `--package-seconds`).
   before it, and must play for Alduin to come; TODO(M13): the engine's rule). Its actors are
   in it until it ends
   (IsInScene, GetCurrentScene). An actor that plays in another scene leaves that one for a
-  forced start, for a start against an interruptible scene, or for any start when its scene
-  has begun and has no action running on it now (that scene ends, unless the actor was optional
-  there); otherwise the start waits until its actors are free: MQ101's stage fragment starts
-  Scene4, the execution, before it stops Scene1, the cart ride, whose actors Scene4 needs. The
-  idle actor's case is from the data: RiverwoodDortheFrodnarPlayScene holds Dorthe in a first
-  phase without actions until she and Frodnar meet, and MQ102HadvarAlvorScene (MQ102A stage 35)
-  would wait for it for ever. Observed in the original: Scene.Start only marks the scene
-  active; its actors are looked at as it begins. TODO(M13): whether the engine queues such a
-  start, and its own test for an actor busy in another scene.
+  forced start, for a start against an interruptible scene, or for a scene of a quest of
+  higher priority when its scene has begun and has no action running on it now (that scene
+  ends, unless the actor was optional there); otherwise the start waits until its actors are
+  free: MQ101's stage fragment starts Scene4, the execution, before it stops Scene1, the cart
+  ride, whose actors Scene4 needs. The idle actor's case is from the data:
+  RiverwoodDortheFrodnarPlayScene (priority 30) holds Dorthe in a first phase without actions
+  until she and Frodnar meet, and MQ102HadvarAlvorScene (MQ102A, 80; stage 35) would wait for
+  it for ever; the bard's next song (BardSongsInstrumental, 45) takes Mikael from the Bannered
+  Mare's talk (30) while Hulda speaks. The priorities come from the data too: in
+  MQ102HadvarAlvorScene's phases that take Hadvar and Alvor into the house, WIGreetingScene
+  (WIGreeting, 40; as the player came in) took one of Alvor's household, idle there, and ended
+  it (MQ102A 52) before Alvor's force greet (47). Observed in the original: Scene.Start only
+  marks the scene active; its actors are looked at as it begins. TODO(M13): whether the engine
+  queues such a start, and its own test for an actor busy in another scene.
 - **Phases** run in order. One whose start conditions do not hold is skipped (the actions that
   start in it do not run). A phase that runs starts its actions, then completes when its
   completion conditions hold, whether or not its actions are done: 907 vanilla completion
