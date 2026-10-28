@@ -1071,6 +1071,7 @@ export class ModelViewer {
       navmeshes: () => this.#navmeshes,
       objects: () => this.#stageObjects(),
       obstacles: () => this.#stageObstacles(),
+      ragdollPoseReplaced: (from, to) => this.#play?.ragdollPoseReplaced(from, to),
       door: (reference) => this.#doorOf(reference),
       interior: true,
       light: (at) => this.#lightProbe(at),
