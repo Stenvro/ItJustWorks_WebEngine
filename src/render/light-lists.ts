@@ -14,8 +14,11 @@ export const MAX_OBJECT_LIGHTS = 7;
 export const MAX_OBJECT_SHADOW_LIGHTS = 4;
 /** Words of one draw's list: the count and seven light indices, 16 bits each. */
 export const LIGHT_LIST_WORDS = 4;
-/** Floats per light key: position, radius, luminance, shadow (1: casts this frame), room. */
-export const LIGHT_KEY_FLOATS = 7;
+/**
+ * Floats per light key: position, radius, luminance, shadow (1: casts this frame), room, and
+ * the light's index among the frame's lights (what a list names).
+ */
+export const LIGHT_KEY_FLOATS = 8;
 
 /** What selection needs of one light (packLightKey). */
 export interface LightKeySource {
@@ -26,12 +29,16 @@ export interface LightKeySource {
   readonly room?: number | undefined;
 }
 
-/** Writes a light's key at `index` (`shadowed`: it casts a shadow this frame). */
+/**
+ * Writes a light's key at `index` (`shadowed`: it casts a shadow this frame; `lightIndex`: its
+ * index among the frame's lights, by default `index`).
+ */
 export function packLightKey(
   keys: Float32Array,
   index: number,
   light: LightKeySource,
   shadowed: boolean,
+  lightIndex = index,
 ): void {
   const at = index * LIGHT_KEY_FLOATS;
   const [r, g, b] = light.color;
@@ -42,6 +49,7 @@ export function packLightKey(
   keys[at + 4] = 0.2125 * r + 0.7154 * g + 0.0721 * b;
   keys[at + 5] = shadowed ? 1 : 0;
   keys[at + 6] = light.room ?? 0;
+  keys[at + 7] = lightIndex;
 }
 
 const shadowIndex = new Int32Array(MAX_OBJECT_SHADOW_LIGHTS);
@@ -115,8 +123,9 @@ export function selectObjectLights(
   const total = Math.min(MAX_OBJECT_LIGHTS, shadows + plain);
   let word = total;
   for (let n = 0; n < MAX_OBJECT_LIGHTS; n++) {
-    const index =
-      n >= total ? 0 : n < shadows ? (shadowIndex[n] ?? 0) : (plainIndex[n - shadows] ?? 0);
+    const key =
+      n >= total ? -1 : n < shadows ? (shadowIndex[n] ?? 0) : (plainIndex[n - shadows] ?? 0);
+    const index = key < 0 ? 0 : (keys[key * LIGHT_KEY_FLOATS + 7] ?? 0);
     // Slot n + 1 of the eight 16-bit halves (the count is slot 0).
     const half = n + 1;
     if (half % 2 === 0) {

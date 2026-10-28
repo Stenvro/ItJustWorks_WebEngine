@@ -63,6 +63,15 @@ describe('selectObjectLights', () => {
     expect(select([...many, candle(0)], [0, 0, 0], 10)).toEqual([0, 1, 2, 3, 6]);
   });
 
+  it("names the frame's light indices of keys packed from a subset", () => {
+    const keys = new Float32Array(2 * LIGHT_KEY_FLOATS);
+    packLightKey(keys, 0, candle(0), false, 40);
+    packLightKey(keys, 1, candle(5), false, 7);
+    const out = new Uint32Array(LIGHT_LIST_WORDS);
+    selectObjectLights(keys, 2, [0, 0, 0], 10, 0, out, 0);
+    expect(unpackObjectLights(out)).toEqual([40, 7]);
+  });
+
   it('leaves out portal-strict lights of another room', () => {
     const lights = [{ ...candle(0), room: 2 }, { ...candle(0), room: 3 }, candle(0)];
     expect(select(lights, [0, 0, 0], 10, 3)).toEqual([1, 2]);
