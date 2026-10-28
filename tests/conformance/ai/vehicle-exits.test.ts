@@ -1,6 +1,9 @@
+// A rider getting out of its vehicle (docs/ai.md, the riders of a vehicle): what wants it
+// elsewhere waits for its exit to end, and its graph leaves Cart_State as the exit ends.
+
 import { describe, expect, it } from 'vitest';
-import type { GraphEvent } from '../animation/graph-events.ts';
-import { ActorVehicles, type ActorVehiclesOptions } from './actor-vehicles.ts';
+import type { GraphEvent } from '../../../src/animation/graph-events.ts';
+import { ActorVehicles, type ActorVehiclesOptions } from '../../../src/shell/actor-vehicles.ts';
 
 const RIDER = 0x1234;
 const CART = 0x5678;
