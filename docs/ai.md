@@ -1179,7 +1179,11 @@ from the original game's behaviour only (in our words):
   cursor per list), as many as their measured cost (an estimate per actor, updated by each
   turn) fits in the budget, at least one a frame. A turn runs the packages and the walk with
   all the time owed since the actor's last. An actor in combat, a scene, dialogue or asked-for
-  head tracking stays in the high process. At Whiterun's busiest cell (tools/sim-speed.ts
+  head tracking stays in the high process, as far as the loaded area reaches: its senses test
+  and it is tested ([Detection](#detection)), and it is a fighter, wherever it is (its
+  controller is still only near the player). Found in MQ104: its dragon, a scene actor
+  circling the Western Watchtower 7,500 units off, was neither seen nor saw, and never fought.
+  At Whiterun's busiest cell (tools/sim-speed.ts
   --budget: 5 high, 40 middle-high) a round of all forty costs 0.15 ms of the 5, so each has its
   turn every frame and the step time is the same as without (about 10–11 ms either way, run to
   run); the budget bounds the frame where many more actors are beyond the high process (a
@@ -2954,6 +2958,11 @@ original (behaviour, in our words), unless marked ours.
 The combat tree's movement selector (checked every 0.25 s) takes its Flight branch, second after
 Essential Down, for a flier that can fly or is not on the ground (src/shell/actor-combat-ai.ts
 asks `ActorFlight.fight`). A flier on the ground that cannot fly fights with the ground movement.
+The subtree is the fight's, not its target's: a new target (the combat AI's choice among the
+guards) leaves its phase, its maneuver and its combat area as they are; only what it saw of its
+target is new (before, MQ104's dragon, landed for a ground attack, took off again as it turned
+to the next guard). In the air it has no controller: detection takes its motion from its flight
+(it moves as it flies, running at its running speed); before, it counted as standing still.
 
 - **Takeoff** first: one on the ground or perched that can fly takes off.
 - Then a selector checked every second: **able to fly**, the attack loop; **perched and unable**,

@@ -104,6 +104,8 @@ export interface ActorSensesOptions {
     { readonly position: Vec3; readonly forward?: Vec3; readonly fovY?: number } | undefined;
   /** Whether an actor flies now (noticed fSneakFlyingDistanceMult times as far). */
   readonly flying?: (actor: number) => boolean;
+  /** How a flier in the air moves (it has no controller there). */
+  readonly flightMotion?: (actor: number) => ActorMotion | undefined;
 }
 
 /** What detection weighs of an actor that is read now and then (its values, gear, race). */
@@ -460,7 +462,8 @@ export class ActorSenses implements ScriptSenses {
         chest: [x, y, z + height * CHEST[posture]],
         height: (height * EYES[posture]) / EYES.standing,
         sleeping: posture === 'lying',
-        motion: movers.motion(reference),
+        // A flier in the air has no controller: its flight tells how it moves.
+        motion: movers.motion(reference) ?? this.#options.flightMotion?.(reference),
       });
     }
     return bodies;
