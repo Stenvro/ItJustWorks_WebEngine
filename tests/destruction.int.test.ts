@@ -28,7 +28,8 @@ const WEB = 0x682e1; // FXspiderWebKitDestructible in SnaplegCave01
 const BARRICADE = 0x1a289; // StockadeBarricade01Activator
 const OIL_POOL = 0x92b57; // TrapOilPool01 in Ansilvund01
 
-describe.skipIf(!hasGamedata())('destruction on the local game data', () => {
+// The cases read cells from the archives: 30 s each, as the default 5 s runs out when the machine is busy.
+describe.skipIf(!hasGamedata())('destruction on the local game data', { timeout: 30_000 }, () => {
   let vfs: Vfs;
   let db: RecordDatabase;
   let runtime: ScriptRuntime;

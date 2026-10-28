@@ -454,7 +454,7 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   [The AI's game settings](#the-ais-game-settings): the radii places are reached within, the
   patrol's stay at its points, Wander's distances and pauses, Follow's radii and speed, Escort's
   waiting. Find keeps what its criteria name within its place in its object list (nearest first;
-  without Allow Stealing only what the actor may use: below); Acquire picks those up; Activate
+  without Allow Stealing only what the actor may use: below); Acquire picks those up (and takes those it found in inventories from their holder: [Searches](#the-ais-game-settings)); Activate
   goes to its target and activates it (furniture: uses it); Eat plays its eating idle with food
   it carries (one used up) or, with Create Fake Food, food made for the meal (ActionIdle's
   EatingRoot or DrinkingRoot by GetIsUsedItemType); LockDoors and UnlockDoors lock and unlock
@@ -1187,7 +1187,15 @@ from the original game's behaviour only (in our words):
   radius).
 - **Searches:** an object or a type of object a package names (its place, its target) is the
   nearest within fAIAcquireObjectDistance (4000); furniture an empty object list asks for within
-  fAIFindBedChairsDistance (8000).
+  fAIFindBedChairsDistance (8000). Find's search by object or object type also looks into the
+  inventories in its place (observed in the original): each actor's but the player's, living
+  or dead, and each container's, for item types (a specific object, armor, books, ingredients,
+  lights, misc items, weapons, ammo, keys, potions, food, wearables); not for furniture, doors,
+  activators, actors or spells. What it finds there is kept as the item with its holder, after the
+  references (TODO(M13): whether the engine sorts the two together); Acquire then takes it from a
+  corpse or a container at once, and from a living actor only as one it holds (Allow
+  Pickpocketing, Allow Killing). MQ101's Ralof fetches the keep's key from the dead officer so
+  (MQ101RalofGetDoorKey).
 - **Patrol:** at a point with an idle time (REFR XPRD) it waits that long; furniture it uses for
   at least fAIPatrolMinSecondsAtNormalFurniture (30 s).
 - **Wander:** each walk at least its Min Wander Distance (its slot 3, a number the engine reads;

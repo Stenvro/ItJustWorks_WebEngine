@@ -105,6 +105,18 @@ export interface PackageData {
   readonly context?: PackageContext;
 }
 
+/**
+ * An item a Find found in an inventory (docs/ai.md, "Searches"): the actor or container that
+ * holds it and the item's base object.
+ */
+export interface FoundItem {
+  readonly holder: number;
+  readonly item: number;
+}
+
+/** What an object list holds: references, and items in inventories (FoundItem). */
+export type FoundObject = number | FoundItem;
+
 /** What packages ask of the game: its time, records and scripts, and where things are. */
 export interface PackageMind {
   /** The game's date and time now, and the days passed (a package that runs once a day). */
@@ -159,6 +171,19 @@ export interface PackageMind {
     actor: number,
     steal: boolean,
   ): Promise<readonly number[]>;
+  /**
+   * The items a criterion names in the inventories within a place (Find): those of the actors
+   * there but the player and the searcher, and of its containers; nearest holder first. Without
+   * `steal`, only those of containers the actor may use.
+   */
+  searchHeld?(
+    criteria: PackageTarget,
+    place: PackagePlace,
+    actor: number,
+    steal: boolean,
+  ): Promise<readonly FoundItem[]>;
+  /** Whether an actor lives (a holder Acquire takes from: a corpse is looted). */
+  alive?(reference: number): Promise<boolean>;
   /** An item the actor carries that a criterion names (food it eats), if any. */
   carried(actor: number, criteria: PackageTarget): Promise<number | undefined>;
   /** A food to eat where the package makes one (Eat's Create Fake Food). */
@@ -340,6 +365,11 @@ export interface PackageBody {
    * them; whether it got it.
    */
   pickpocket?(holder: number, item: number): Promise<boolean>;
+  /**
+   * Takes one of an item (its base object) from what an actor or container holds, standing by
+   * it (Acquire: a corpse looted, a container emptied, a pocket picked); whether it got it.
+   */
+  takeFrom?(holder: number, item: number): Promise<boolean>;
 }
 
 /** One UseWeapon barrage (the procedure's parameters). */
@@ -382,8 +412,10 @@ export interface ProcedureRun {
   readonly gait: Gait;
   /** The references an object list input holds (what a Find found), by slot. */
   found(slot: number): readonly number[];
+  /** The items in inventories an object list input holds (what a Find found there), by slot. */
+  held(slot: number): readonly FoundItem[];
   /** Fills an object list input (Find), by slot. */
-  keep(slot: number, references: readonly number[]): void;
+  keep(slot: number, found: readonly FoundObject[]): void;
   /** Whether the package was left: a procedure ends at once. */
   stopped(): boolean;
   /** Waits real seconds (shorter if the package is left meanwhile). */
@@ -501,7 +533,7 @@ export interface SavedPackage {
   readonly start?: Vec3 | undefined;
   /** The branch it ran: each branch's index among its parent's children, from the root down. */
   readonly path: readonly number[];
-  readonly found: readonly (readonly [number, readonly number[]])[];
+  readonly found: readonly (readonly [number, readonly FoundObject[]])[];
   /** Packages that run once a day: the day each last ran. */
   readonly ranOn: readonly (readonly [number, number])[];
   /**
@@ -525,7 +557,7 @@ interface Running {
   /** Where the actor was as it began, the quest whose aliases it names. */
   readonly context: PackageContext;
   /** Its object lists (what a Find found), by input id. */
-  readonly found: Map<number, readonly number[]>;
+  readonly found: Map<number, readonly FoundObject[]>;
   /** A scene's package action gave it (not the actor's own choice). */
   readonly fromScene: boolean;
   /** Set when it is left: its tree stops. */
@@ -1224,11 +1256,17 @@ export class ActorPackages {
       gait: gaitOf(packageFlags(running.pack, running.overrides)),
       found: (slot) => {
         const input = inputOf(slot);
-        return input === undefined ? [] : (running.found.get(input) ?? []);
+        const list = input === undefined ? undefined : running.found.get(input);
+        return (list ?? []).filter((entry) => typeof entry === 'number');
       },
-      keep: (slot, references) => {
+      held: (slot) => {
         const input = inputOf(slot);
-        if (input !== undefined) running.found.set(input, references);
+        const list = input === undefined ? undefined : running.found.get(input);
+        return (list ?? []).filter((entry) => typeof entry !== 'number');
+      },
+      keep: (slot, found) => {
+        const input = inputOf(slot);
+        if (input !== undefined) running.found.set(input, found);
       },
       stopped: () => this.#looping(running) || isStopped(running),
       wait: (seconds) => this.#wait(running, seconds),
