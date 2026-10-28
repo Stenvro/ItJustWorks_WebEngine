@@ -14,6 +14,8 @@ import {
   NO_PACKAGE_INTERRUPTS,
   TalkPlanner,
   talkSettings,
+  greetingHolds,
+  sceneLineFaces,
   triggerDistance,
   type TalkActor,
   type TalkIntent,
@@ -87,6 +89,12 @@ interface Ask {
   quests: readonly number[];
 }
 
+/**
+ * Seconds a scene speaker's turn toward its target has to begin before standing still counts as
+ * not turning (the Face Target hold starts it within a frame or two). Ours.
+ */
+const TURN_START = 0.5;
+
 export class ActorTalk {
   readonly #options: ActorTalkOptions;
   #settings: TalkSettings | undefined;
@@ -105,6 +113,10 @@ export class ActorTalk {
   readonly #inScene = new Map<number, number>();
   /** Those whose sandbox lets them talk with others (Allow Conversation). */
   readonly #sociable = new Set<number>();
+  /** Those a greeting holds (stopped, facing the player) until it ends or the player walks off. */
+  readonly #greetingHeld = new Set<number>();
+  /** When a scene line's speaker began to wait to face its target (clock), by speaker:target. */
+  readonly #facingSince = new Map<string, number>();
   /** Who says a line of idle chatter now. */
   #chatter: number | undefined;
   /** Those whose next line is being found (they are not free meanwhile). */
@@ -163,6 +175,13 @@ export class ActorTalk {
       });
     }
     this.#seen = seen;
+    // A greeting the player walks off from lets its actor go on; its line plays out.
+    for (const reference of this.#greetingHeld) {
+      const at = this.#staged.get(reference)?.position;
+      if (at && this.#settings && greetingHolds(at, player, this.#settings)) continue;
+      this.#greetingHeld.delete(reference);
+      ai.releaseFromTalk(reference);
+    }
     this.#scene = {
       player,
       playerBusy: speaker !== undefined,
@@ -271,11 +290,14 @@ export class ActorTalk {
     );
     if (!spoken || !this.#free(reference)) return;
     const stops = (spoken.info.flags & InfoFlag.canMoveWhileGreeting) === 0;
-    if (stops) this.#options.ai.holdToTalk(reference, () => this.#scene.player);
+    if (stops) {
+      this.#options.ai.holdToTalk(reference, () => this.#scene.player);
+      this.#greetingHeld.add(reference);
+    }
     try {
       await this.#speak(reference, spoken, PLAYER_REF);
     } finally {
-      if (stops) this.#options.ai.releaseFromTalk(reference);
+      if (this.#greetingHeld.delete(reference)) this.#options.ai.releaseFromTalk(reference);
     }
   }
 
@@ -387,17 +409,36 @@ export class ActorTalk {
    * package on both). Undefined: not actors of this stage.
    */
   /**
-   * Whether a staged speaker faces whom it speaks to (an actor of the stage, the player) within
-   * fAIMinAngleRangeToStartSceneDialogue: a scene's Face Target line waits for it. One held in
-   * furniture faces as it sits. Undefined: either is not on this stage.
+   * Whether a staged speaker faces whom it speaks to (an actor of the stage, the player) as a
+   * scene's Face Target line needs (src/ai/talk.ts sceneLineFaces): the line waits only while
+   * the speaker turns toward them. One held in furniture or not moved by its controller does not
+   * turn; one whose turn has stopped short (blocked) no longer turns, once the turn had
+   * TURN_START seconds to begin. Undefined: either is not on this stage.
    */
   faces(speaker: number, target: number): boolean | undefined {
     const self = this.#staged.get(speaker);
     const at = target === PLAYER_REF ? this.#scene.player : this.#staged.get(target)?.position;
     const settings = this.#settings;
     if (!self || !at || !settings) return undefined;
-    if (this.#options.furniture.holds(speaker)) return true;
-    return facingWithin(self, at, settings.sceneDialogueAngle);
+    const { movers, furniture } = this.#options;
+    const key = `${speaker}:${target}`;
+    const since = this.#facingSince.get(key) ?? this.#clock;
+    this.#facingSince.set(key, since);
+    const turnRate = movers.turnRate(speaker) ?? 0;
+    const turning =
+      !furniture.holds(speaker) &&
+      movers.moves(speaker) &&
+      (turnRate !== 0 || this.#clock - since < TURN_START);
+    const faces = sceneLineFaces(
+      {
+        offDegrees: (offFacing(self, at) * 180) / Math.PI,
+        speed: movers.motion(speaker)?.speed ?? 0,
+        turning,
+      },
+      settings,
+    );
+    if (faces) this.#facingSince.delete(key);
+    return faces;
   }
 
   randomSceneStarts(scene: number, first: number, second: number): boolean | undefined {
@@ -655,8 +696,12 @@ export class ActorTalk {
 
 /** Whether an actor faces a point within an angle (degrees; its heading about z from +y). */
 function facingWithin(actor: StagedActor, at: Vec3, degrees: number): boolean {
+  return offFacing(actor, at) <= (degrees * Math.PI) / 180;
+}
+
+/** How far an actor's heading is off the way to a place (radians, 0 to pi). */
+function offFacing(actor: StagedActor, at: Vec3): number {
   const toward = Math.atan2(at[0] - actor.position[0], at[1] - actor.position[1]);
-  let off = Math.abs(toward - actor.heading) % (2 * Math.PI);
-  if (off > Math.PI) off = 2 * Math.PI - off;
-  return off <= (degrees * Math.PI) / 180;
+  const off = Math.abs(toward - actor.heading) % (2 * Math.PI);
+  return off > Math.PI ? 2 * Math.PI - off : off;
 }

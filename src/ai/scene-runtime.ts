@@ -112,6 +112,11 @@ export interface SceneHost {
   /** Seconds before the next random scene may begin (fRandomSceneAgainMinTime .. MaxTime). */
   randomSceneAgain?(): number;
   /**
+   * Seconds a random scene lingers past its last phase before it ends or repeats
+   * (fAIWalkAwayTimerForConversation, 2 s).
+   */
+  randomSceneLinger?(): number;
+  /**
    * Whether a speaker faces whom it speaks to closely enough to begin a line
    * (fAIMinAngleRangeToStartSceneDialogue). Undefined: the world does not show them (the line
    * does not wait).
@@ -138,13 +143,6 @@ export interface SceneHost {
  * the scene. TODO(M13): the engine queues fragments to the Papyrus VM and goes on.
  */
 const FRAGMENT_PATIENCE = 0.5;
-
-/**
- * Seconds of the scene's clock a line waits for its speaker to face whom it speaks to before
- * it is said all the same (one that cannot turn: held in furniture, blocked). TODO(M13): the
- * engine's own limit, if it has one.
- */
-const FACING_PATIENCE = 3;
 
 type ActionStatus = 'waiting' | 'running' | 'ended';
 
@@ -820,45 +818,78 @@ export class SceneDirector {
       this.#host.sceneEvent?.(playing.formId, 'begin');
       await this.#fragment(playing, 'begin');
     }
-    for (let index = resumed ?? 0; index < record.phases.length; index++) {
-      if (!live(playing)) return;
-      const phase = record.phases[index];
-      if (!phase) continue;
-      const goesOn = index === resumed;
-      // A phase whose start conditions do not hold is skipped: the actions that start in it do
-      // not run, those that end in it end.
-      if (
-        !goesOn &&
-        phase.startConditions.length > 0 &&
-        !(await this.#holds(playing, phase.startConditions))
-      ) {
+    for (;;) {
+      for (let index = resumed ?? 0; index < record.phases.length; index++) {
         if (!live(playing)) return;
-        this.#trace(playing, `phase ${String(index)} skipped`);
+        const phase = record.phases[index];
+        if (!phase) continue;
+        const goesOn = index === resumed;
+        // A phase whose start conditions do not hold is skipped: the actions that start in it do
+        // not run, those that end in it end.
+        if (
+          !goesOn &&
+          phase.startConditions.length > 0 &&
+          !(await this.#holds(playing, phase.startConditions))
+        ) {
+          if (!live(playing)) return;
+          this.#trace(playing, `phase ${String(index)} skipped`);
+          this.#endActions(playing, index);
+          continue;
+        }
+        if (!live(playing)) return;
+        playing.phase = index;
+        this.#trace(
+          playing,
+          `phase ${String(index)}${phase.name ? ` "${phase.name}"` : ''}${goesOn ? ' (loaded)' : ''}`,
+        );
+        if (goesOn) this.#resumeActions(playing);
+        else {
+          this.#host.sceneEvent?.(playing.formId, 'phaseBegin', index);
+          await this.#phaseFragment(playing, index, PhaseFragmentFlag.onStart);
+        }
+        if (!live(playing)) return;
+        this.#startActions(playing, index);
+        await this.#phaseDone(playing, index);
+        if (!live(playing)) return;
+        this.#trace(playing, `phase ${String(index)} completes`);
+        this.#host.sceneEvent?.(playing.formId, 'phaseEnd', index);
+        await this.#phaseFragment(playing, index, PhaseFragmentFlag.onCompletion);
+        if (!live(playing)) return;
         this.#endActions(playing, index);
-        continue;
       }
-      if (!live(playing)) return;
-      playing.phase = index;
-      this.#trace(
-        playing,
-        `phase ${String(index)}${phase.name ? ` "${phase.name}"` : ''}${goesOn ? ' (loaded)' : ''}`,
-      );
-      if (goesOn) this.#resumeActions(playing);
-      else {
-        this.#host.sceneEvent?.(playing.formId, 'phaseBegin', index);
-        await this.#phaseFragment(playing, index, PhaseFragmentFlag.onStart);
-      }
-      if (!live(playing)) return;
-      this.#startActions(playing, index);
-      await this.#phaseDone(playing, index);
-      if (!live(playing)) return;
-      this.#trace(playing, `phase ${String(index)} completes`);
-      this.#host.sceneEvent?.(playing.formId, 'phaseEnd', index);
-      await this.#phaseFragment(playing, index, PhaseFragmentFlag.onCompletion);
-      if (!live(playing)) return;
-      this.#endActions(playing, index);
+      if (!(await this.#repeats(playing, record))) break;
+      resumed = undefined;
     }
     this.#end(playing, 'done');
+  }
+
+  /**
+   * Past its last phase (observed in the original): a random scene lingers
+   * fAIWalkAwayTimerForConversation first (other scenes go on at once); then a scene with
+   * Repeat Conditions While True whose conditions hold plays again from its first phase,
+   * without ending: its actions start over, no end or begin fragment runs, its actors stay.
+   */
+  async #repeats(playing: Playing, record: SceneRecord): Promise<boolean> {
+    const linger = playing.random ? (this.#host.randomSceneLinger?.() ?? 2) : 0;
+    if (linger > 0) await this.#wait(playing, linger);
+    const quest = record.quest;
+    if (
+      !live(playing) ||
+      (record.flags & SceneFlag.repeatConditionsWhileTrue) === 0 ||
+      quest === undefined ||
+      !this.#host.questRunning(quest) ||
+      !(await this.#host.conditionsHold(record.conditions, PLAYER_REF, quest)) ||
+      !live(playing)
+    ) {
+      return false;
+    }
+    this.#trace(playing, 'repeats');
+    for (const run of playing.actions) {
+      run.status = 'waiting';
+      run.complete = false;
+      run.left = 0;
+    }
+    return true;
   }
 
   /**
@@ -1053,9 +1084,9 @@ export class SceneDirector {
 
   /**
    * A line whose action has its actor face its target (Face Target: it turns while the action
-   * runs) begins once the speaker faces whom it speaks to (the host's measure:
-   * fAIMinAngleRangeToStartSceneDialogue), or after FACING_PATIENCE seconds of the scene.
-   * False: the scene or the action ended meanwhile.
+   * runs) begins once the speaker faces whom it speaks to (the host's measure, src/ai/talk.ts
+   * sceneLineFaces: one that does not turn says it as it stands). The engine sets no time
+   * limit. False: the scene or the action ended meanwhile.
    */
   async #faceFirst(
     playing: Playing,
@@ -1066,8 +1097,7 @@ export class SceneDirector {
     const host = this.#host;
     const goesOn = (): boolean => live(playing) && run.status === 'running';
     if (!host.faces) return true;
-    const until = playing.clock + FACING_PATIENCE;
-    while (goesOn() && playing.clock < until && host.faces(speaker, target) === false) {
+    while (goesOn() && host.faces(speaker, target) === false) {
       await this.#nextUpdate();
     }
     return goesOn();
@@ -1077,10 +1107,8 @@ export class SceneDirector {
 
   /**
    * A scene ends: its actions end (looks and packages let go), its actors leave it, its end
-   * fragment runs; then its quest stops (Stop Quest on End), or, having played to its end, it
-   * starts again while its conditions hold (Repeat Conditions While True: Heimskr's sermon).
-   * TODO(M13): the engine's pause before a repeat (fRandomSceneAgainMinTime / MaxTime is not
-   * it: observed in the original, that spaces random scenes).
+   * fragment runs; then its quest stops (Stop Quest on End). (Repeat Conditions While True
+   * plays it again before it ends: #repeats.)
    */
   #end(playing: Playing, reason: EndReason): void {
     if (over(playing)) return;
@@ -1114,14 +1142,6 @@ export class SceneDirector {
       if ((record.flags & SceneFlag.stopQuestOnEnd) !== 0) {
         this.#host.stopQuest(quest);
         return;
-      }
-      if (
-        reason === 'done' &&
-        (record.flags & SceneFlag.repeatConditionsWhileTrue) !== 0 &&
-        !this.#playing.has(playing.formId) &&
-        (await this.#host.conditionsHold(record.conditions, PLAYER_REF, quest))
-      ) {
-        this.start(playing.formId);
       }
     })().catch((error: unknown) => {
       this.#host.warn(`scene ${hex(playing.formId)}: ${describe(error)}`);

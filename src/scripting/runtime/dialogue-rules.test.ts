@@ -35,15 +35,19 @@ describe('dialogue info rules', () => {
     expect(memory.maySay(greeting, start + 0.5 * HOUR)).toBe(true);
   });
 
-  it('never says a Say Once info again; with Reset Hours it comes back after them', () => {
+  it('never says a Say Once info again, Reset Hours or not; a Say Once refusal repeats', () => {
     const memory = new InfoMemory();
     const once = info(InfoFlag.sayOnce);
     memory.said(once, 1);
     expect(memory.maySay(once, 100)).toBe(false);
+    // The rest ends after a day, the Say Once mark stays.
     const daily = { ...info(InfoFlag.sayOnce, 65535), formId: 0x99 };
     memory.said(daily, 1);
     expect(memory.maySay(daily, 1 + 23 * HOUR)).toBe(false);
-    expect(memory.maySay(daily, 2)).toBe(true);
+    expect(memory.maySay(daily, 3)).toBe(false);
+    const refusal = { ...info(InfoFlag.sayOnce | InfoFlag.infoRefusal), formId: 0x77 };
+    memory.said(refusal, 1);
+    expect(memory.maySay(refusal, 1)).toBe(true);
   });
 
   it('goes on past an Invisible Continue info to its choice without the menu; Goodbye closes', () => {

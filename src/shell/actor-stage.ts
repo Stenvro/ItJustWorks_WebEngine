@@ -690,6 +690,9 @@ export class ActorStage {
       terminal: options.terminal,
       fx: this.fx,
       impact: (hit) => this.combat.surfaceImpact(hit),
+      shake: (explosion, at) => {
+        this.graphEvents.shakeForExplosion(explosion, at);
+      },
       targets: () => this.#projectileTargets(),
       noise: (at, owner, soundLevel) => {
         this.senses.noise(at, owner, soundLevel);
