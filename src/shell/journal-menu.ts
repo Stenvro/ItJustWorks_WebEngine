@@ -5,7 +5,6 @@
 // the system page. What it asks of the engine (GameDelegate calls) is answered here.
 // Notes: docs/ui.md ("The journal").
 
-import { inputPlatform } from '../ui/input-platform.ts';
 import { MISC_STATS, StatCategory } from '../gameplay/misc-stats.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { journalQuests, MISC_QUEST_TYPE, type JournalQuest } from '../scripting/runtime/journal.ts';
@@ -272,7 +271,7 @@ export class JournalMenu {
       setup: async (menu) => {
         await menu.waitFor('_root.InitExtensions');
         menu.invoke('_root.InitExtensions');
-        menu.invoke('_root.SetPlatform', inputPlatform(), false);
+        menu.tellPlatform('_root.SetPlatform');
         menu.call('RestoreSavedSettings', tab, tabsDisabled);
       },
     });

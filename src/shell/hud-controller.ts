@@ -25,7 +25,6 @@
 // power learned (sShoutAdded over the word in the dragon letters), a dragon soul absorbed
 // (sDragonSoulAcquired), a location cleared (its name, sCleared).
 
-import { inputPlatform, onInputPlatform } from '../ui/input-platform.ts';
 import type { CastEvent } from '../scripting/runtime/casting-engine.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { SkillIncrease } from '../scripting/runtime/progression-engine.ts';
@@ -176,11 +175,8 @@ export class HudController implements HudSink {
       setup: async (menu) => {
         await menu.waitFor(`${BASE}.InitExtensions`);
         menu.invoke(`${BASE}.InitExtensions`);
-        menu.invoke(`${BASE}.SetPlatform`, inputPlatform(), false);
         // The button prompts follow the device last used (a gamepad picked up mid-game).
-        onInputPlatform((platform) => {
-          if (!menu.closed) menu.invoke(`${BASE}.SetPlatform`, platform, false);
-        });
+        menu.tellPlatform(`${BASE}.SetPlatform`);
         // The engine's HUD reset (observed in the original): the subtitle is set to a blank (" ") before
         // subtitles are enabled, so the movie's placeholder ("Dialogue Line 1 / 2", which its
         // own constructor fails to clear) never shows; only spoken lines replace it.

@@ -19,7 +19,6 @@
 // picked where someone sees it is trespassing (crime-engine.ts lockPicked).
 // Notes: docs/ui.md ("Lockpicking").
 
-import { inputPlatform } from '../ui/input-platform.ts';
 import {
   BROKEN_PICK_SKILL_USE,
   lockDifficulty,
@@ -292,7 +291,7 @@ class Picking {
       setup: async (menu) => {
         if (!(await menu.waitFor('_root.InitExtensions'))) return;
         menu.invoke('_root.InitExtensions');
-        menu.invoke('_root.SetPlatform', inputPlatform(), false);
+        menu.tellPlatform('_root.SetPlatform');
         await this.#showInfo(menu);
       },
     });
