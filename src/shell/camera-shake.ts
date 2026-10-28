@@ -1,5 +1,5 @@
 // The camera's shake (docs/animation.md, "Graph events"): a giant's stomp (its graph's
-// CameraShake event, payload the strength), Game.ShakeCamera, a shout. Observed in the
+// CameraShake event, payload the strength), Game.ShakeCamera, a shout, an explosion. Observed in the
 // original, in our words: a shake starts at a strength (above 0) from a place. Within
 // fCameraShakeDistFadeStart × strength of the camera (at least fCameraShakeDistMin) it keeps its
 // strength; beyond, it fades over fCameraShakeDistFadeDelta × strength, and past that it does
@@ -44,6 +44,8 @@ export interface CameraShakeSettings {
   readonly distFadeStart: number;
   /** fCameraShakeDistFadeDelta: times the strength, the distance it fades over. */
   readonly distFadeDelta: number;
+  /** fCameraShakeExplosionDistMult: an explosion's shake strength per unit of its radius. */
+  readonly explosionDistMult: number;
 }
 
 export const CAMERA_SHAKE_DEFAULTS: CameraShakeSettings = {
@@ -53,6 +55,7 @@ export const CAMERA_SHAKE_DEFAULTS: CameraShakeSettings = {
   distMin: 300,
   distFadeStart: 2000,
   distFadeDelta: 2500,
+  explosionDistMult: 0.001,
 };
 
 /** The shake's settings: the load order's GMSTs, else the engine's values. */
@@ -71,6 +74,7 @@ export async function readCameraShakeSettings(
     distMin: await number('fCameraShakeDistMin', d.distMin),
     distFadeStart: await number('fCameraShakeDistFadeStart', d.distFadeStart),
     distFadeDelta: await number('fCameraShakeDistFadeDelta', d.distFadeDelta),
+    explosionDistMult: await number('fCameraShakeExplosionDistMult', d.explosionDistMult),
   };
 }
 
@@ -91,6 +95,27 @@ export function shakeStrength(
   if (distance > fadeStart) at *= 1 - (distance - fadeStart) / fadeDelta;
   if (at > 1) return 1;
   return at < settings.multMin ? settings.multMin : at;
+}
+
+/** What an explosion's shake reads of it (EXPL DATA). */
+export interface ShakingExplosion {
+  readonly radius: number;
+  readonly sound: number | undefined;
+  readonly sound2: number | undefined;
+}
+
+/**
+ * The shake an explosion starts where it bursts (observed in the original): its radius
+ * times fCameraShakeExplosionDistMult (a 200-unit fireball: 0.2), for fCameraShakeTime, faded by
+ * its distance as every shake; only an explosion with a sound shakes the camera (the engine
+ * starts it with the explosion's sounds).
+ */
+export function explosionShake(
+  explosion: ShakingExplosion,
+  settings: Pick<CameraShakeSettings, 'explosionDistMult'>,
+): number {
+  if (explosion.sound === undefined && explosion.sound2 === undefined) return 0;
+  return settings.explosionDistMult * explosion.radius;
 }
 
 /** A shake's strength with `left` seconds of it to go: it fades over its last fadeTime. */
