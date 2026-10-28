@@ -851,10 +851,14 @@ export class ActorMovers {
       away > 1e-3
         ? [x + ((here[0] - x) / away) * offset, y + ((here[1] - y) / away) * offset, z]
         : [x, y, z];
+    // Only onto the navmesh: a point off it (one in the air, over a floor far below) is no place
+    // to stand, and an actor set there fell to its death (a Whiterun guard warped to a chair's
+    // approach at its own height, 1,500 units over the Plains District).
     const ground = this.#options.navmeshes?.()?.nearest?.(point, SKIP_REACH);
+    if (!ground) return;
     this.#warps.set(reference, {
       staged,
-      to: ground ? [ground[0], ground[1], ground[2]] : point,
+      to: [ground[0], ground[1], ground[2]],
       left: ini.number('Pathfinding', 'fWarpMaxTime'),
     });
   }
@@ -1635,8 +1639,8 @@ export class ActorMovers {
         staged.heading -= root.turn * seconds;
         const [x, y, z] = staged.position;
         const next: Vec3 = [x + root.velocity[0] * seconds, y + root.velocity[1] * seconds, z];
-        const on = this.#options.navmeshes?.()?.nearest?.(next, WALKER_GROUND);
-        if (on) staged.position = [on[0], on[1], on[2]];
+        const on = this.#walkerGround(staged.position, next);
+        if (on) staged.position = on;
       }
     } else if (request && types && seconds > 0) {
       const steering = steer(request, staged.heading, types, seconds);
@@ -1646,8 +1650,8 @@ export class ActorMovers {
       const [x, y, z] = staged.position;
       const next: Vec3 = [x + velocity[0] * seconds, y + velocity[1] * seconds, z];
       // On the navmesh: its height there (it does not step off it).
-      const on = this.#options.navmeshes?.()?.nearest?.(next, WALKER_GROUND);
-      if (on) staged.position = [on[0], on[1], on[2]];
+      const on = this.#walkerGround(staged.position, next);
+      if (on) staged.position = on;
     }
     const moving = Math.hypot(velocity[0], velocity[1]) > 1;
     // Driven at least once as a walker: what it was told as a moved actor goes on (a deer that
@@ -1678,6 +1682,41 @@ export class ActorMovers {
     }
     walker.moving = moving;
     walker.held = held;
+  }
+
+  /**
+   * Where a walker's step from `from` towards `next` puts it: the navmesh's nearest point, its
+   * height there. Neighbouring cells' navmeshes need not meet (Whiterun's 6,0 and 6,-1 leave a
+   * strip 5 units wide between them, crossed by their edge links): a step into such a strip, a
+   * unit or two long, came back to the edge it left, and a walker stood there for good, its
+   * patrol given up and searched again every few seconds. A step that so gains less than half its
+   * length is taken WALKER_RADIUS further, onto the mesh across at about the same height (a
+   * controller's body spans the strip; not down a ledge). No way on there either: it stays where
+   * the navmesh has it.
+   */
+  #walkerGround(from: Vec3, next: Vec3): Vec3 | undefined {
+    const set = this.#options.navmeshes?.();
+    const on = set?.nearest?.(next, WALKER_GROUND);
+    if (!set || !on) return undefined;
+    const dx = next[0] - from[0];
+    const dy = next[1] - from[1];
+    const length = Math.hypot(dx, dy);
+    const gained = (point: Vec3): number =>
+      length > 0 ? ((point[0] - from[0]) * dx + (point[1] - from[1]) * dy) / length : 0;
+    if (length < 1e-3 || gained(on) >= length / 2) return [on[0], on[1], on[2]];
+    const across = set.nearest?.(
+      [next[0] + (dx / length) * WALKER_RADIUS, next[1] + (dy / length) * WALKER_RADIUS, next[2]],
+      WALKER_GROUND,
+    );
+    if (
+      across &&
+      gained(across) >= length &&
+      gained(across) <= length + WALKER_RADIUS + 1 &&
+      Math.abs(across[2] - on[2]) <= WALKER_RADIUS
+    ) {
+      return [across[0], across[1], across[2]];
+    }
+    return [on[0], on[1], on[2]];
   }
 
   /** A walker's travel: its path searched and followed (false: it ended). */
