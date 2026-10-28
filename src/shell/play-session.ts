@@ -671,6 +671,8 @@ export class PlaySession {
   /** Callbacks of cells whose collision is complete, run once queries see it. */
   readonly #completed: (() => void)[] = [];
   readonly #groups = new Set<CollisionGroup>();
+  /** Loose objects of complete cells waiting for the collision around them (#settleReady). */
+  #settleWaiting = 0;
   #spawnPending = true;
   /** When the player started waiting for the ground (seconds). */
   #spawnSince: number | undefined;
@@ -1095,7 +1097,9 @@ export class PlaySession {
       for (const wake of this.water.drainWakes()) this.ripples.wake(wake.key, wake.position, now);
     }
     this.#watchTriggers();
-    // What waited for cells' collision, once queries see it.
+    // What waited for cells' collision, once queries see it; a neighbour with nothing to place
+    // (no cell record there) is in place once loaded.
+    if (this.#settleWaiting > 0) this.#settleReady();
     if (this.#completed.length > 0 && this.physics.queriesCurrent) {
       for (const run of this.#completed.splice(0)) run();
     }
@@ -1569,8 +1573,32 @@ export class PlaySession {
   /** A cell's collision is complete: the warm start lets its loose objects settle. */
   #complete(group: CollisionGroup): void {
     group.ready = true;
-    for (const placed of group.settle.splice(0)) this.physics.settle(placed);
+    this.#settleReady();
     this.#completed.push(...group.whenComplete.splice(0));
+  }
+
+  /**
+   * The warm start of the complete cells' loose objects whose ground is all in place: the
+   * collision of the cells around where each lies, as for an actor (src/shell/actor-stage.ts,
+   * groundReady). One lying on what a neighbour cell still being loaded places (a shelf over
+   * the border) stays asleep where it was placed until that cell's collision is in, rather than
+   * falling through to the ground under it.
+   */
+  #settleReady(): void {
+    this.#settleWaiting = 0;
+    for (const group of this.#groups) {
+      if (!group.ready) continue;
+      let kept = 0;
+      for (const placed of group.settle) {
+        const at = placed.bodies[0]?.body.translation();
+        const ground =
+          !at || this.#groundReady([at.x * HAVOK_SCALE, at.y * HAVOK_SCALE, at.z * HAVOK_SCALE]);
+        if (ground) this.physics.settle(placed);
+        else group.settle[kept++] = placed;
+      }
+      group.settle.length = kept;
+      this.#settleWaiting += kept;
+    }
   }
 
   #trySpawn(): void {

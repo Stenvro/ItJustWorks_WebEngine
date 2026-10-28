@@ -567,13 +567,28 @@ describe('scene starts, stops and behaviour', () => {
     expect(test.director.isPlaying(0x11)).toBe(false);
   });
 
-  // RiverwoodDortheFrodnarPlayScene holds Dorthe in a first phase with no action for her, and
-  // MQ102HadvarAlvorScene (which she joins much later) must not wait for it.
-  it('takes an actor whose other scene has no action running on it now (that scene ends)', async () => {
-    const test = setup([
-      scene(0x10, { actors: [actor(0)], phases: [phase([], [truth(9)])] }),
-      scene(0x11, { actors: [actor(0)], phases: [phase([], [truth(9)])] }),
-    ]);
+  /** Two scenes of quests of priority 30 (QUEST) and 80; 0x10 runs a package on its alias 1. */
+  const contest = (first: number, second: number) => {
+    const test = setup(
+      [
+        scene(0x10, {
+          actors: [actor(0), actor(1)],
+          phases: [phase([], [truth(9)])],
+          actions: [packages(1, 1, 0, 0, [0x900])],
+          quest: first,
+        }),
+        scene(0x11, { actors: [actor(0)], phases: [phase([], [truth(9)])], quest: second }),
+      ],
+      () => ({ questPriority: (quest) => Promise.resolve(quest === QUEST ? 30 : 80) }),
+    );
+    test.running.add(0x501);
+    return test;
+  };
+
+  // RiverwoodDortheFrodnarPlayScene (30) holds Dorthe in a first phase with no action for her,
+  // and MQ102HadvarAlvorScene (80; she joins it much later) must not wait for it.
+  it('gives an actor it has no action running on to a scene of a higher-priority quest (it ends)', async () => {
+    const test = contest(QUEST, 0x501);
     test.director.start(0x10);
     await test.tick();
     expect(test.director.sceneOf(0x64)).toBe(0x10);
@@ -581,6 +596,20 @@ describe('scene starts, stops and behaviour', () => {
     await test.tick();
     expect(test.director.sceneOf(0x64)).toBe(0x11);
     expect(test.director.isPlaying(0x10)).toBe(false);
+  });
+
+  // MQ102HadvarAlvorScene (80) takes Hadvar and Alvor into the house with nothing for his
+  // household in those phases; WIGreetingScene (40) must not take one of them (it ended the
+  // scene before MQ102A 47).
+  it('keeps an idle actor from a scene of a lower-priority quest', async () => {
+    const test = contest(0x501, QUEST);
+    test.director.start(0x10);
+    await test.tick();
+    test.director.start(0x11);
+    await test.tick();
+    expect(test.director.sceneOf(0x64)).toBe(0x10);
+    expect(test.director.isPlaying(0x10)).toBe(true);
+    expect(test.director.waiting).toEqual([0x11]);
   });
 
   it('does not start without its quest or a required actor; an optional one may be missing', async () => {
