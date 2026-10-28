@@ -28,7 +28,6 @@
 // maximum.
 // Notes: docs/ui.md ("The skills menu").
 
-import { inputPlatform } from '../ui/input-platform.ts';
 import type { ObjectGraph } from '../animation/object-graph.ts';
 import { SKILL_CAP } from '../gameplay/actor-leveling.ts';
 import {
@@ -376,7 +375,7 @@ class Viewing {
       setup: async (menu) => {
         if (!(await menu.waitFor('_root.InitExtensions'))) return;
         menu.invoke('_root.InitExtensions');
-        menu.invoke('_root.SetPlatform', inputPlatform(), false);
+        menu.tellPlatform('_root.SetPlatform');
         await this.#showAll(menu);
         // Its root timeline fades it in (and calls SetFadedIn at the end).
         menu.invoke('_root.gotoAndPlay', 'FadeIn');

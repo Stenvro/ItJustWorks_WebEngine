@@ -10,7 +10,6 @@
 // favorite as the menu would (GameMenus: the control map's Hotkey1..8). Notes: docs/ui.md
 // ("The item menus").
 
-import { inputPlatform } from '../ui/input-platform.ts';
 import { assignHotkey, hotkeyOfKey, hotkeyUse } from '../gameplay/hotkeys.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
@@ -148,7 +147,7 @@ export class FavoritesMenu {
       setup: async (menu) => {
         await menu.waitFor('_root.InitExtensions');
         menu.invoke('_root.InitExtensions');
-        menu.invoke('_root.SetPlatform', inputPlatform(), false);
+        menu.tellPlatform('_root.SetPlatform');
         menu.set(`${LIST}.entryList`, entries);
         menu.invoke(`${LIST}.InvalidateData`);
       },

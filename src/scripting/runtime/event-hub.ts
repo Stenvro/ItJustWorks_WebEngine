@@ -60,8 +60,23 @@ export interface GameEvents {
     /** The reference of the item itself, when it was or became one. */
     readonly reference: number | undefined;
   };
+  /** An actor caught a disease (ContractedDisease). */
+  contractedDisease: { readonly actor: number; readonly disease: number };
+  /**
+   * The player landed a critical hit or a sneak attack on a living actor (CriticalHit: one
+   * event for each; `sneakHit` the sneak attack's). `weapon` undefined: fists.
+   */
+  criticalHit: {
+    readonly aggressor: number;
+    readonly weapon: number | undefined;
+    readonly sneakHit: boolean;
+  };
   /** An actor is dying (`dead` false) or dead (`dead` true) (TESDeathEvent). */
   death: { readonly actor: number; readonly killer: number | undefined; readonly dead: boolean };
+  /** An actor's weapon was knocked from its hands by `source`'s disarm (DisarmedEvent). */
+  disarmed: { readonly source: number | undefined; readonly target: number };
+  /** The player's dragon souls rose by `souls` (DragonSoulGained). */
+  dragonSoulGained: { readonly souls: number };
   /** A destructible object went to another stage (TESDestructionStageChangedEvent). */
   destructionStageChanged: {
     readonly reference: number;
@@ -155,6 +170,8 @@ export interface GameEvents {
     readonly power: number;
     readonly sunGazing: boolean;
   };
+  /** An actor put a poison on its weapon (PoisonedWeapon). */
+  poisonedWeapon: { readonly actor: number; readonly poison: number };
   /** A quest's scripts were initialised (TESQuestInitEvent). */
   questInit: { readonly quest: number };
   /** A quest's stage was set (TESQuestStageEvent). */
@@ -179,6 +196,8 @@ export interface GameEvents {
     readonly count: number;
     readonly reference: number | undefined;
   };
+  /** Every word of a shout became the player's, the last unlocked now (ShoutMastered). */
+  shoutMastered: { readonly shout: number };
   /**
    * The player's sleep started or stopped (TESSleepStartEvent, TESSleepStopEvent): at the start
    * when it began and when it is to end (game days passed), at the stop whether it was broken.
@@ -191,6 +210,8 @@ export interface GameEvents {
   };
   /** A spell, power, scroll or shout was cast (TESSpellCastEvent). */
   spellCast: { readonly caster: number; readonly spell: number };
+  /** An actor used up a soul gem: recharging or enchanting (SoulGemsUsed). */
+  soulGemsUsed: { readonly actor: number; readonly gem: number };
   /** An actor's race switch ended (TESSwitchRaceCompleteEvent). */
   switchRaceComplete: { readonly actor: number };
   /** A topic info's line began or ended (TESTopicInfoEvent). */

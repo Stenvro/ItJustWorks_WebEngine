@@ -11,7 +11,6 @@
 // once in a game, and only with [Interface] bShowTutorials. TODO(M12): which were shown, in the
 // save. Notes: docs/ui.md ("Tutorials").
 
-import { inputPlatform } from '../ui/input-platform.ts';
 import { withKeyLabels } from '../ui/button-art.ts';
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import type { GameSession } from './game-session.ts';
@@ -99,7 +98,7 @@ export class TutorialMenu {
           setup: async (menu) => {
             if (!(await menu.waitFor('_root.InitExtensions'))) return;
             menu.invoke('_root.InitExtensions');
-            menu.invoke('_root.SetPlatform', inputPlatform(), false);
+            menu.tellPlatform('_root.SetPlatform');
             menu.set(`${ROOT}.HelpTitle.text`, title);
             // The keys as text (the movie's ApplyButtonArt puts in pictures Ruffle cannot draw).
             const controls = (await this.#session.playerData()).controls;

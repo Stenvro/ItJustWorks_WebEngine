@@ -145,9 +145,16 @@ or not, and the last lightning flash.
 `music.ts` decides what plays, `music-output.ts` plays it. Music types are in play: the
 location's and those game events add (combat: the default object BTMS, MUSCombat, or
 MUSCombatBoss against an actor with the location reference type Boss, as `combat-music.ts`
-decides: fights against the player or within the near-combat radius of them, started only when
-their strength against the player's side reaches fCombatMusicPlayerTargetedThreatRatio, ending
-a stop delay after the last fight with its finale; `src/shell/actor-combat.ts` feeds it; its
+decides, observed in the original: weighed every fCombatMusicUpdateTime; a fight against
+the player starts it when the player's strength over the strength of its fighters the player
+detects is below fCombatMusicPlayerTargetedThreatRatio (Skyrim.esm 1, the engine's own 2), a
+fight not against the player when one of its fighters is within
+fCombatMusicNearCombatInnerRadius, the player detects one of them and their strength passes the
+player's × fCombatMusicPlayerNearStrengthMult; playing, a fight against the player or within
+fCombatMusicNearCombatOuterRadius keeps it, the odds not weighed again; it ends
+fCombatMusicStopTime after the last fight with its finale. Strength (the engine's, also its
+GetThreatRatio's): damage × health / (1 − the armour's reduction, at most 0.99), so a lone
+wolf does not start it for a new player but a pack does; `src/shell/actor-combat.ts` feeds it; its
 conditions' GetCombatTargetHasKeyword asking the player's foes, the boss music against dragons;
 discoveries, quest moments
 and the rest through Papyrus MusicType.Add / Remove, from the script runtime). The location's is the cell's

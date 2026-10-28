@@ -15,7 +15,6 @@
 // ItemSelect without a hand as well; that one is dropped when the click's own equip follows.
 // Notes: docs/ui.md ("The item menus").
 
-import { inputPlatform } from '../ui/input-platform.ts';
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import type { Terminal } from './terminal.ts';
 import { Item3D, type Item3DSide } from './item-3d.ts';
@@ -358,7 +357,7 @@ export class ItemMenu {
       setup: async (menu) => {
         await menu.waitFor('_root.InitExtensions');
         menu.invoke('_root.InitExtensions');
-        menu.invoke('_root.SetPlatform', inputPlatform(), false);
+        menu.tellPlatform('_root.SetPlatform');
         for (const [name, value] of Object.entries(model.menuProperties ?? {})) {
           menu.set(`_root.Menu_mc.${name}`, value);
         }
