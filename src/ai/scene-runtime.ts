@@ -263,8 +263,9 @@ export class SceneDirector {
    * Scene.Start (force: ForceStart). A scene that plays goes on. It starts if its quest runs,
    * its conditions hold (run on the player) and every actor that is not optional is there
    * (its alias filled; alive, or dead without its death ending the scene). An actor that plays
-   * in another scene leaves that one for a forced start or an interruptible scene's; otherwise
-   * the scene waits until it is free (MQ101's stage fragment starts Scene4, the execution, before it stops Scene1, the cart
+   * in another scene leaves that one for a forced start, an interruptible scene's, or one that
+   * has nothing for it to do now (see #mayTake); otherwise the scene waits until it is free
+   * (MQ101's stage fragment starts Scene4, the execution, before it stops Scene1, the cart
    * ride, whose actors Scene4 needs). IsPlaying answers true from the call on (false while it
    * waits). TODO(M13): whether the engine queues such a start.
    */
@@ -686,7 +687,7 @@ export class SceneDirector {
     for (const [alias, reference] of [...cast]) {
       const other = this.#actors.get(reference);
       if (!other || other === playing) continue;
-      if (playing.force || ((other.record?.flags ?? 0) & SceneFlag.interruptible) !== 0) continue;
+      if (mayTake(playing.force, other, reference)) continue;
       const actor = record.actors.find((entry) => entry.alias === alias);
       if (actor && (actor.flags & SceneActorFlag.optional) !== 0) {
         cast.delete(alias);
@@ -799,7 +800,7 @@ export class SceneDirector {
           if ((actor.flags & SceneActorFlag.optional) !== 0) return true;
           const reference = this.#host.aliasReference(quest, actor.alias);
           const other = reference === undefined ? undefined : this.#actors.get(reference);
-          return !other || ((other.record?.flags ?? 0) & SceneFlag.interruptible) !== 0;
+          return !other || reference === undefined || mayTake(waiting.force, other, reference);
         });
       if (free) this.start(scene, waiting.force);
     }
@@ -1364,6 +1365,25 @@ export class SceneDirector {
     this.#host.trace?.(line);
     this.#listener?.(line);
   }
+}
+
+/**
+ * Whether a scene starting may take an actor that plays in another scene: a forced start
+ * (ForceStart) takes it, an interruptible scene gives it up, and so does a scene that has no
+ * action running on it now (one that has begun and whose phases have nothing for it yet, or
+ * any more). Found in the data: the Riverwood kids' play scene (RiverwoodDortheFrodnarPlay-
+ * Scene, Begin on Quest Start) waits in its first phase, with no action, until Dorthe and
+ * Frodnar meet; MQ102HadvarAlvorScene, which Dorthe joins much later, would wait for it for
+ * ever. Observed in the original: Scene.Start only marks the scene active, its actors are
+ * looked at as it begins. TODO(M13): the engine's own test there (an action running on the
+ * actor is inferred).
+ */
+function mayTake(force: boolean, other: Playing, actor: number): boolean {
+  if (force || ((other.record?.flags ?? 0) & SceneFlag.interruptible) !== 0) return true;
+  return (
+    other.phase >= 0 &&
+    !other.actions.some((run) => run.actor === actor && run.status === 'running')
+  );
 }
 
 const hex = (formId: number): string => formId.toString(16).padStart(8, '0');

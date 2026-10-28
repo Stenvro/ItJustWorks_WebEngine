@@ -102,6 +102,8 @@ export type SimRecord =
       readonly text?: string;
       readonly buttons?: readonly string[];
       readonly reference?: number;
+      /** A conversation's opening topic (a force greet's, a scene's), if it starts with one. */
+      readonly opening?: number;
     };
 
 export type SimRecordKind = SimRecord['kind'];
@@ -315,9 +317,10 @@ export class SimLog {
 
   /**
    * The recording menus: a message box answers with the next of `answers` (else its first
-   * button); the others are logged and close at once. TODO(sim): the dialogue, container,
-   * barter, gift and training menus have no headless runner yet: a conversation or a trade a
-   * test needs is driven through the runtime's dialogue and inventory directly.
+   * button); the others are logged and close at once. TODO(sim): the container, barter, gift
+   * and training menus have no headless runner yet: a trade a test needs is driven
+   * through the runtime's inventory directly; a conversation through the simulation's talk
+   * (tests/helpers/sim.ts), which holds it by the dialogue menu's rules.
    */
   readonly menus: MenuSink = {
     messageBox: (text, buttons) => {
@@ -325,12 +328,13 @@ export class SimLog {
       return Promise.resolve(this.answers.shift() ?? 0);
     },
     userEvent: () => undefined,
-    talk: (speaker: PlacedActor) => {
+    talk: (speaker: PlacedActor, opening?: number) => {
       this.#push({
         kind: 'menu',
         at: this.clock(),
         menu: 'Dialogue Menu',
         reference: speaker.actor.reference,
+        ...(opening !== undefined && { opening }),
       });
     },
     container: (reference, closed) => {
