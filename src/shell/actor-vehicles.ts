@@ -82,6 +82,12 @@ const DOOR_RAY_HEIGHT = 100;
 const SPINE_JUMP = 100;
 /** The events a prisoner's exit clip ends with (it stands bound): see riderEvents. */
 const BOUND_STANDING = new Set(['offsetboundstandingcartstart', 'offsetboundstandingstart']);
+/**
+ * An exit under way is waited for at most this long by what wants its rider elsewhere (seconds;
+ * the longest vanilla exit clip, a prisoner's, runs 15.7 s). TODO(M13): the engine's own limit,
+ * if it has one, is not known.
+ */
+const EXIT_WAIT_SECONDS = 30;
 
 /** A [Cart] setting's key. */
 type CartKey = keyof (typeof INI_DEFAULTS)['Cart'];
@@ -143,6 +149,8 @@ interface Passenger {
   detached: { readonly pose: VehiclePose; offset: VehicleOffset } | undefined;
   /** The player's feet at the last step (carried between steps). */
   feet: Vec3 | undefined;
+  /** What waits for its exit to end (alight): called as the ride ends. */
+  readonly alighting: (() => void)[];
 }
 
 export interface ActorVehiclesOptions {
@@ -386,6 +394,7 @@ export class ActorVehicles {
       still: undefined,
       detached: undefined,
       feet: undefined,
+      alighting: [],
     };
     this.#passengers.set(actor, passenger);
     if (!this.#carts.has(vehicle) && runtime) {
@@ -426,8 +435,6 @@ export class ActorVehicles {
     graph: { sendEvent(name: string): boolean },
     events: readonly GraphEvent[],
   ): void {
-    const passenger = this.#passengers.get(actor);
-    if (!passenger) return;
     // The player's CartExit goes to both their graphs, as every event the engine sends an actor
     // goes to each graph of its manager: sent to the body's alone, the first-person graph stayed
     // in Cart_State on the exit clip's last frame, and the camera it carries slid along all the
@@ -435,10 +442,15 @@ export class ActorVehicles {
     // body's head after the ride (the player "still a giant"; QA monitor player-camera).
     const avatar = actor === PLAYER_REF ? this.#options.player?.()?.avatar : undefined;
     for (const { name: event } of events) {
+      // Also for a rider whose ride ended before its exit clip did: kept in Cart_State on the
+      // clip's last frame, it slid wherever it was sent without a step. CartExit leaves nothing
+      // but Cart_State.
       if (BOUND_STANDING.has(event.toLowerCase())) {
         if (avatar) avatar.send('CartExit');
         else graph.sendEvent('CartExit');
       }
+      const passenger = this.#passengers.get(actor);
+      if (!passenger) continue;
       const effect = riderEvent(event);
       if (effect === 'detach' && !passenger.detached) {
         const pose = this.#poseOf(passenger.vehicle, 1) ?? passenger.still;
@@ -450,9 +462,37 @@ export class ActorVehicles {
     }
   }
 
+  /**
+   * An actor's AI wants it off its vehicle (a package takes it somewhere; the player's AI-driven
+   * travel): sitting, it gets off where it is now; already getting out (its exit idle began), it
+   * gets off as the exit ends (ExitCartEnd), as an actor's package waits while an
+   * animation-driven idle moves it. Ended at once, the exit's root motion no longer carried it:
+   * its controller took it on its way while its graph still played the exit (MQ101's prisoners
+   * and the player slid from the carts without a step).
+   */
+  alight(actor: number): Promise<void> {
+    const passenger = this.#passengers.get(actor);
+    if (!passenger?.detached) {
+      this.release(actor);
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.release(actor);
+      }, EXIT_WAIT_SECONDS * 1000);
+      passenger.alighting.push(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+  }
+
   /** An actor gets off its vehicle where it is now (its exit ended, its AI goes somewhere). */
   release(actor: number): void {
-    if (!this.#passengers.delete(actor)) return;
+    const passenger = this.#passengers.get(actor);
+    if (!passenger) return;
+    this.#passengers.delete(actor);
+    for (const done of passenger.alighting.splice(0)) done();
     const state = this.#options.session.scriptsReady?.state.actors.get(actor);
     if (state) delete state.vehicle;
     if (actor === PLAYER_REF) {
