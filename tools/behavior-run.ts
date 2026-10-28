@@ -22,6 +22,8 @@
 //       the character moves by its graph (its clips' root motion from the project's animation
 //       data, the tweeners): where it is and which way it faces, at each printed step;
 //       --vector sets a vector variable at the start, --vector-at at a time (t:Name=x,y,z,w)
+//   node tools/behavior-run.ts <project> --event NPC_TurnRight180 --far 500 --every 3
+//       bones farther than 500 units from the model's origin at each printed step
 
 import { BehaviorRuntime, type BehaviorHost } from '../src/animation/behavior-runtime.ts';
 import { ModelSpace } from '../src/animation/procedural.ts';
@@ -418,6 +420,18 @@ for (let time = 0, frame = 0; time <= total; time += step, frame++) {
       console.log(`  ragdoll powered ${force.toFixed(0)}, keyframed bones ${String(keyframed)}`);
     const shown = procedural();
     if (shown) console.log(`  ${shown}`);
+    // Bones farther than --far units from the model's origin (a pose that flies apart).
+    const far = Number(option('--far')[0] ?? 0);
+    if (far > 0) {
+      space.update(runtime.pose);
+      for (let bone = 0; bone < skeleton.bones.length; bone++) {
+        const distance = Math.hypot(...space.position(bone));
+        if (distance <= far) continue;
+        console.log(
+          `  bone ${String(bone)} ${skeleton.bones[bone]?.name ?? ''} ${distance.toFixed(0)} out`,
+        );
+      }
+    }
     // Variables asked for (--show Speed --show SpeedSampled).
     const shownVariables = option('--show').map(
       (name) => `${name} ${runtime.variable(name)?.toFixed(2) ?? '-'}`,

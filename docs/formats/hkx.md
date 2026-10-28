@@ -249,6 +249,16 @@ a clip with 8-bit float curves, if one exists outside the vanilla data).
 always an unused bone (AnimObjectR in `dialogueangryhips.hkx`). Such a track is not written
 for that block, so the bone keeps the pose below it (the reference pose).
 
+Finite junk is kept as the file has it: a few clips put AnimObjectR's x far out with a tight
+curve range of its own (`male\npc_turnright180.hkx` [−55 399.57, −55 399.5],
+`male\npc_turntowalkright180.hkx` 55 101, `male\idlechairbook_onepage.hkx` 59 257,
+`idlewarmhands_crouched_d3.hkx` up to 909 543, `mag_runstraferight.hkx` 4 621). Nothing hangs on
+that node while they play, so nothing shows it; the QA harness judges anim-object nodes only
+while an object hangs on them. (Every character bone from the pelvis on is marked
+lockTranslation in skeleton.hkx, yet ~1 400 character clips move such bones off their reference
+translation, pauldrons, weapon and anim-object nodes most: the engine evidently plays those
+translations, so the lock is not applied.)
+
 **Fast turns are data:** about a third of the clips turn a track faster than 0.6 rad between
 two frames at 30 fps: sword swings, fingers that clench, weapon bones that snap into the hand.
 The decoding was checked where it could go wrong: consecutive control points whose largest

@@ -41,7 +41,7 @@ import type { SavedActor } from '../save/world-save.ts';
 import type { CellRagdoll } from './play-session.ts';
 import type { Terminal } from './terminal.ts';
 import { Layer } from '../physics/collision-layers.ts';
-import type { NavmeshSet } from '../ai/pathfinding.ts';
+import { inwardOnNavmesh, type NavmeshSet } from '../ai/pathfinding.ts';
 import { aiSettingsOf } from '../ai/ai-settings.ts';
 import {
   processLevel,
@@ -213,6 +213,8 @@ const describe = (error: unknown): string =>
 const TIME_SKIP_MS = 1500;
 /** An actor put at a reference off the navmesh moves this far at most to stand on it. */
 const SNAP_REACH = 512;
+/** A human's controller radius (HUMAN_BOUND's narrow half extent), for one with no controller yet. */
+const HUMAN_RADIUS = 14;
 /** How far below a furniture marker its ground is looked for (units). */
 const MARKER_GROUND_REACH = 4096;
 /** Clairvoyance towards a target beyond the loaded area: this far along the way (units). */
@@ -1790,8 +1792,12 @@ export class ActorStage {
   #settle(staged: StagedActor, physics: PhysicsWorld, snap?: number): void {
     if (snap !== undefined) {
       const reach = Math.max(snap, SNAP_REACH);
-      const on = this.#options.navmeshes?.()?.nearest?.(staged.position, reach);
-      if (on) staged.position = [...on];
+      const navmeshes = this.#options.navmeshes?.();
+      const on = navmeshes?.nearest?.(staged.position, reach);
+      if (navmeshes && on) {
+        const radius = this.movers.radius(staged.reference) ?? HUMAN_RADIUS;
+        staged.position = inwardOnNavmesh(navmeshes, staged.position, on, radius);
+      }
     }
     groundActor(staged.placed, staged.position, staged.heading, (from, length) => {
       const hit = physics.raycast(from, [0, 0, -1], length, Layer.charController);

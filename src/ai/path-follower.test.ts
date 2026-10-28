@@ -31,6 +31,24 @@ describe('PathFollower', () => {
     expect(step.request?.direction).toEqual([-40, 50]);
   });
 
+  it('does not pass a corner its way turns back at before it got there', () => {
+    // From a navmesh border corner the way goes 60 back west, then on south-east: the actor
+    // starts "beyond" the corner as the way out goes, yet must go there first.
+    const back = new PathFollower(
+      {
+        points: [
+          [0, 0, 0],
+          [-60, -1, 0],
+          [49, -215, 0],
+        ],
+        doors: [],
+        complete: true,
+      },
+      { gait: 'walk', arrive: 10 },
+    );
+    expect(back.step([0, 0, 0], 0.1).request?.direction).toEqual([-60, -1]);
+  });
+
   it('asks for the door on the way while it comes near, until it is through', () => {
     const doors: number[] = [];
     const ask = (door: number): 'open' => {

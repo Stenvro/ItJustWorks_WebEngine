@@ -8,6 +8,7 @@ import {
 import { NavmeshObstacleField, obstacleCut, obstaclesTouch } from './navmesh-obstacles.ts';
 import {
   findPath,
+  inwardOnNavmesh,
   onNavmeshColumn,
   randomReachablePoint,
   straightReach,
@@ -439,5 +440,15 @@ describe('summonPlace', () => {
   it('finds no place off the navmeshes', () => {
     const set = setOf([gridMesh(1, L_SQUARES)]);
     expect(summonPlace(set, [-500, -500, 0], [-500, 0, 0], 10)).toBeUndefined();
+  });
+});
+
+describe('inwardOnNavmesh', () => {
+  it("moves a point put at the navmesh's border in by the actor's radius, off the hearth", () => {
+    const set = setOf([gridMesh(1, L_SQUARES)]);
+    // A marker in a fire pit west of the mesh: its nearest navmesh point is on the border.
+    expect(inwardOnNavmesh(set, [-50, 50, 0], [0, 50, 0], 14)).toEqual([14, 50, 0]);
+    // Where the navmesh does not reach that far in, the border point stays.
+    expect(inwardOnNavmesh(set, [-50, 50, 0], [0, 50, 0], 400)).toEqual([0, 50, 0]);
   });
 });

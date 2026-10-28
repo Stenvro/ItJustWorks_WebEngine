@@ -134,11 +134,20 @@ export class ActorAnimObjects {
     this.#unloaded(this.#list.clear());
   }
 
-  /** What an actor holds now: each object's editor id, and whether it is shown. */
-  held(reference: number): { readonly editorId: string; readonly shown: boolean }[] {
-    return this.#list
-      .of(reference)
-      .map((entry) => ({ editorId: entry.form.editorId, shown: entry.shown }));
+  /**
+   * What an actor holds now: each object's editor id, whether it is shown, and the node it hangs
+   * on (lower case; undefined: none, or not hung yet).
+   */
+  held(reference: number): {
+    readonly editorId: string;
+    readonly shown: boolean;
+    readonly node: string | undefined;
+  }[] {
+    return this.#list.of(reference).map((entry) => ({
+      editorId: entry.form.editorId,
+      shown: entry.shown,
+      node: entry.attached?.node,
+    }));
   }
 
   /** Their scenes. */

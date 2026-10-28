@@ -9,7 +9,7 @@ import type { BehaviorRuntime } from '../../animation/behavior-runtime.ts';
 import { HAVOK_SCALE } from '../../physics/collision-data.ts';
 import { Layer } from '../../physics/collision-layers.ts';
 import { AttackState, WeaponState } from '../../gameplay/combat/combat-state.ts';
-import { ActorPose } from '../../animation/skeleton.ts';
+import { ActorPose, type ActorSkeleton } from '../../animation/skeleton.ts';
 import { FlyCamera } from '../../render/fly-camera.ts';
 import type { Vec3 } from '../../render/math.ts';
 import type { Renderer } from '../../render/renderer.ts';
@@ -155,6 +155,28 @@ function headHeight(worlds: Float32Array, node: number, world: ArrayLike<number>
   return (world[2] ?? 0) * x + (world[6] ?? 0) * y + (world[10] ?? 0) * z + (world[14] ?? 0);
 }
 
+/**
+ * The anim-object nodes of a skeleton (AnimObjectR, AnimObjectL, ...) with no shown object on
+ * them. Vanilla clips leave junk in those tracks (NPC_TurnRight180 puts AnimObjectR 55 000 units
+ * out, idlewarmhands_crouched_d3 900 000: the file's own curve ranges, docs/formats/hkx.md); the
+ * original shows nothing there, so such a node is judged only while an object hangs on it.
+ */
+function bareAnimObjectNodes(
+  skeleton: ActorSkeleton,
+  held: readonly { readonly shown: boolean; readonly node: string | undefined }[],
+): Set<number> {
+  const bare = new Set<number>();
+  for (const [name, node] of skeleton.nodeByName) {
+    if (name.startsWith('animobject')) bare.add(node);
+  }
+  for (const object of held) {
+    if (!object.shown || object.node === undefined) continue;
+    const node = skeleton.nodeByName.get(object.node);
+    if (node !== undefined) bare.delete(node);
+  }
+  return bare;
+}
+
 /** Seconds between the slower checks (poses, ground, travels, scenes). */
 const SLOW_EVERY = 0.25;
 /** How often the open menus' texts are read (seconds). */
@@ -228,6 +250,8 @@ interface ActorNow {
   readonly behavior: BehaviorRuntime | undefined;
   readonly graphTime: number | undefined;
   readonly worlds: Float32Array | undefined;
+  /** Nodes of its pose that carry nothing now (bareAnimObjectNodes): not judged. */
+  readonly bare: ReadonlySet<number> | undefined;
   /** How its drawn body leans (pitch nose up, roll left side up; degrees), if it is drawn so. */
   readonly lean: readonly [number, number] | undefined;
   /** Its scale (its root motion is in its skeleton's units). */
@@ -598,6 +622,7 @@ export class QaHarness {
         behavior: body.behavior,
         graphTime: body.time,
         worlds: body.pose.worlds,
+        bare: bareAnimObjectNodes(body.pose.skeleton, stage?.animObjects.held(PLAYER_REF) ?? []),
         lean: undefined,
         scale: body.look.scale * body.actor.scale,
         exempt: riding ? 'riding' : knocked ? 'ragdoll' : undefined,
@@ -649,6 +674,10 @@ export class QaHarness {
       behavior: staged.placed.behavior,
       graphTime: staged.placed.time,
       worlds: staged.placed.pose.worlds,
+      bare: bareAnimObjectNodes(
+        staged.placed.pose.skeleton,
+        stage?.animObjects.held(reference) ?? [],
+      ),
       lean: leanOf(staged.placed.instances[0]?.world),
       scale: staged.placed.look.scale * staged.placed.actor.scale,
       exempt,
@@ -1001,7 +1030,7 @@ export class QaHarness {
         severity: 1,
         ...describe(),
       }));
-      const broken = now.worlds ? brokenBone(now.worlds, t.boneLimit) : undefined;
+      const broken = now.worlds ? brokenBone(now.worlds, t.boneLimit, now.bare) : undefined;
       this.#episode(
         watched,
         'bad-bone',
