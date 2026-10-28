@@ -167,6 +167,18 @@ export class Sim {
     return this.world.openExterior(world, { cell });
   }
 
+  /**
+   * Opens the place the scripts put the player in, as Play does after a new game: the opening
+   * (MQ101's stage 10) moves the player onto the cart before any place is open.
+   */
+  async openAtPlayer(): Promise<void> {
+    const at = await this.runtime.placement(PLAYER_REF);
+    if (!at) throw new Error('The player has no place');
+    const arrival: Arrival = { position: at.position, heading: at.rotation[2] };
+    if (at.world !== undefined) await this.world.openExterior(at.world, { arrival });
+    else if (at.cell !== undefined) await this.world.openInterior(at.cell, arrival);
+  }
+
   /** Sets the game hour as a script does (GameHour.SetValue): the clock jumps there. */
   setHour(hour: number): void {
     this.runtime.setClockGlobal(GAME_HOUR, hour);
