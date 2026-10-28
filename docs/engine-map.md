@@ -117,7 +117,7 @@ These run through every area and explain most of what breaks in play.
 | Damage, stagger   | partial  | sneak attacks by the player only, attack damage mult, the blocked hit's stagger terms (stagger by the Mass actor value and the critical chance actor value: done)                                                                                                                          |
 | Combat dialogue   | partial  | the range the distance mults scale is ours; Bleedout, Death, AllyKilled, GroupStrategy lines (per-subtype cooldowns, distance gates, speak chances: done)                                                                                                                                  |
 | Combat music      | partial  | the near-combat radius and the stop delay are our values (no plugin names them); the odds use our actorStrength (threat-ratio gate, boss music, stop delay: done)                                                                                                                          |
-| Kill moves        | partial  | the magic kill cam (rules read: docs/gameplay.md), the kill camera's radial blur between shots                                                                                                                                                                                             |
+| Kill moves        | partial  | the magic kill cam (rules read: docs/gameplay.md); the dolly's blur into the image space, which shots cut (the dolly between shots and its blur's strength: done 2026-10-28)                                                                                                               |
 
 ### Magic, effects, perks
 
@@ -167,19 +167,19 @@ These run through every area and explain most of what breaks in play.
 
 ### Rendering and camera
 
-| System                                  | Status   | Main gaps                                                                            |
-| --------------------------------------- | -------- | ------------------------------------------------------------------------------------ |
-| Object shader                           | partial  | character light luminance source, eye reflection centres, sparkle snow (type 14)     |
-| Lights                                  | partial  | per-object lists (7, 4 shadowed: done); list order estimated; land, particle lists   |
-| Shadows                                 | partial  | shadow lights (all cells), focus shadows done; focus maps draw every caster          |
-| Fade, LOD                               | partial  | fade rule estimated (radius × fade setting, TODO(M13)); no fLODFadeOutMultSkyCell    |
-| Rooms, portals, occlusion               | partial  | LOD not culled by them (rooms' lighting templates and image spaces: done)            |
-| Image space                             | partial  | god rays screen-space (VOLI phase: done), no froxel volume; motion vectors not limbs |
-| Water                                   | partial  | underwater fog, ripple rings, edge reflections done; engine displacement sim, colour |
-| Decals                                  | partial  | skinned decals, screen blood (impact effect models: done)                            |
-| First person                            | partial  | own view and depth band done; engine near plane, first-person particles              |
-| Cameras                                 | partial  | states, shake, vanity, kill cams done; explosion shake, dragon lock-on, iron sights  |
-| Sky, weather, particles, terrain, grass | complete | small calibrations                                                                   |
+| System                                  | Status   | Main gaps                                                                                                                                                                                                                           |
+| --------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Object shader                           | partial  | character light luminance source, eye reflection centres, sparkle snow (type 14)                                                                                                                                                    |
+| Lights                                  | partial  | per-object lists (7, 4 shadowed: done); list order estimated; land, particle lists                                                                                                                                                  |
+| Shadows                                 | partial  | shadow lights (all cells), focus shadows done; focus maps draw every caster                                                                                                                                                         |
+| Fade, LOD                               | partial  | fade rule estimated (radius × fade setting, TODO(M13)); no fLODFadeOutMultSkyCell                                                                                                                                                   |
+| Rooms, portals, occlusion               | partial  | LOD not culled by them (rooms' lighting templates and image spaces: done)                                                                                                                                                           |
+| Image space                             | partial  | god rays screen-space (VOLI phase: done), no froxel volume; motion vectors not limbs                                                                                                                                                |
+| Water                                   | partial  | underwater fog, ripple rings, edge reflections done; engine displacement sim, colour                                                                                                                                                |
+| Decals                                  | partial  | skinned decals, screen blood (impact effect models: done)                                                                                                                                                                           |
+| First person                            | partial  | own view and depth band done; engine near plane, first-person particles                                                                                                                                                             |
+| Cameras                                 | partial  | the dragon-riding camera (Dragonborn: DragonCameraState, bDragonCameraTargetPlayer); vanilla has no iron sights for bows (Eagle Eye zoom: done) and no lock-on to a flying dragon outside riding (explosion shake: done 2026-10-28) |
+| Sky, weather, particles, terrain, grass | complete | small calibrations                                                                                                                                                                                                                  |
 
 ### UI
 

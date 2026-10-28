@@ -10,6 +10,11 @@
 // space beside one of them; ...TargetVisible: how far out to that side the other is still seen).
 
 import {
+  SHOT_TRANSITION_DEFAULTS,
+  transitionBlur,
+  type ShotTransition,
+} from '../gameplay/combat/kill-camera-transition.ts';
+import {
   CameraSubject,
   parseCameraPath,
   parseCameraShot,
@@ -52,6 +57,8 @@ export interface KillmoveSubjects {
   readonly projectileType?: number;
   /** The camera ends after this long whatever its shots (fVATSSafetyMaxTime{Ranged}, seconds). */
   readonly maxSeconds?: number;
+  /** The move between shots' settings (none: the engine's values). */
+  readonly transition?: ShotTransition;
   /** Whether the kill is predicted to kill (GetVATSValue's fatal; a killmove always is). */
   readonly fatal?: boolean;
   readonly attackerRef: number;
@@ -78,6 +85,13 @@ export class KillmoveCamera implements Camera {
   #time = 0;
   /** Seconds since it began (its safety time). */
   #elapsed = 0;
+  /** The move into the current shot: where the last shot ended, the seconds of it so far. */
+  #dolly: { readonly from: Vec3; seconds: number } | undefined;
+  /**
+   * The radial blur's strength now (the move between shots), 0 when none. TODO(M13): the
+   * image-space stack takes no free radial blur yet (it needs a neutral modifier frame).
+   */
+  radialBlur = 0;
   /** Where its projectile was last (a shot that hit is gone). */
   #projectile: { readonly position: Vec3; readonly heading: number } | undefined;
   done = false;
@@ -180,9 +194,11 @@ export class KillmoveCamera implements Camera {
       this.done = true;
       return;
     }
+    if (this.#dolly) this.#dolly.seconds += deltaSeconds;
     if (this.#time > Math.max(0.1, shot.record.maxTime)) {
       this.#shot++;
       this.#time = 0;
+      this.#dolly = { from: this.position, seconds: 0 };
       if (this.#shot >= this.#shots.length) {
         this.done = true;
         return;
@@ -213,11 +229,31 @@ export class KillmoveCamera implements Camera {
     // The offset in the location's frame (x right, y forward), turned to its heading.
     const cos = Math.cos(heading);
     const sin = Math.sin(heading);
-    this.position = [
+    const to: Vec3 = [
       location[0] + ox * cos + oy * sin,
       location[1] - ox * sin + oy * cos,
       location[2] + oz,
     ];
+    this.position = to;
+    this.radialBlur = 0;
+    // Into a new shot far from the last one: the dolly there (ShotTransition).
+    const dolly = this.#dolly;
+    const settings = subjects.transition ?? SHOT_TRANSITION_DEFAULTS;
+    if (dolly) {
+      const from = dolly.from;
+      const way: Vec3 = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
+      const progress = dolly.seconds / settings.dollyTime;
+      if (Math.hypot(way[0], way[1], way[2]) <= settings.dollyMin || !(progress < 1)) {
+        this.#dolly = undefined;
+      } else {
+        this.position = [
+          from[0] + way[0] * progress,
+          from[1] + way[1] * progress,
+          from[2] + way[2] * progress,
+        ];
+        this.radialBlur = transitionBlur(progress, settings.blurCap);
+      }
+    }
     const onProjectile = current.record.target === CameraSubject.projectile && projectile;
     const look = onProjectile
       ? projectile.position
