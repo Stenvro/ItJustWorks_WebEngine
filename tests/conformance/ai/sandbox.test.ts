@@ -397,8 +397,9 @@ describe.skipIf(!hasGamedata())('sandbox: an inn’s evening (headless simulatio
           tracks.set(actor.reference, track);
           if (Math.hypot(at[0] - lastX, at[1] - lastY) > 4) continue;
           const taken = sim.world.stage.furniture.markerOf(actor.reference);
-          const [x, y] = (taken !== undefined && markers.get(taken)) || [Infinity, Infinity];
-          const marker = Math.hypot(at[0] - x, at[1] - y);
+          const spot = taken === undefined ? undefined : markers.get(taken);
+          if (!spot) continue;
+          const marker = Math.hypot(at[0] - spot[0], at[1] - spot[1]);
           if (marker < 16) onMarker++;
           else if (marker < 60) shortOfMarker++;
         }
