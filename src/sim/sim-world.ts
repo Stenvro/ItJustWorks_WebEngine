@@ -16,7 +16,11 @@
 
 import { disabledControlFlags } from '../scripting/runtime/natives/game.ts';
 import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
-import { actorScriptGraph, placedScriptGraph } from '../animation/script-graphs.ts';
+import {
+  actorScriptGraph,
+  placedScriptGraph,
+  playerScriptGraph,
+} from '../animation/script-graphs.ts';
 import type { LightProbe } from '../ai/light-level.ts';
 import { summonPlace, type NavmeshSet } from '../ai/pathfinding.ts';
 import type { CollisionData } from '../physics/collision-data.ts';
@@ -1657,6 +1661,9 @@ export class SimWorld {
         );
         if (graph) return graph;
       }
+      // The player's body and first-person graphs (their avatar's).
+      if (reference === PLAYER_REF && this.#avatar)
+        return playerScriptGraph(this.#avatar.body.behavior, this.#avatar.firstPerson?.behavior);
       return actorScriptGraph(this.stage.get(reference)?.placed.behavior);
     },
     motionTypeChanged: (reference, motionType) => {

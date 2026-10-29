@@ -11,6 +11,7 @@
 //   sim.close();
 
 import { findPath } from '../../src/ai/pathfinding.ts';
+import { WeaponState } from '../../src/gameplay/combat/combat-state.ts';
 import { Layer } from '../../src/physics/collision-layers.ts';
 import { fastTravelHours } from '../../src/gameplay/fast-travel.ts';
 import { readGameSave, saveGame } from '../../src/save/game-save.ts';
@@ -82,9 +83,20 @@ const JUMP_OUT = 16;
 /** What holds the player up is looked for this far ahead, this high above the feet. */
 const WAY_REACH = 150;
 const WAY_HEIGHT = 40;
-/** Blows at most at a destructible object in the way, and the seconds between them. */
-const BREAK_BLOWS = 4;
-const BREAK_PAUSE = 0.5;
+/**
+ * Blows at most at a destructible object in the way: the attack button held this long (a
+ * weapon's power attack, a concentration spell's stream), then let go this long.
+ */
+const BREAK_BLOWS = 10;
+const BLOW_HOLD = 1;
+const BREAK_PAUSE = 0.8;
+/** The player's eyes above their feet, as they aim a blow (units; ours). */
+const EYE_HEIGHT = 110;
+/** Seconds a weapon or spell takes to be drawn. */
+const DRAW_WAIT = 1.5;
+/** The user events of the player's right hand and of drawing it. */
+const RIGHT_ATTACK = 'Right Attack/Block';
+const READY_WEAPON = 'Ready Weapon';
 /** Seconds a pulled chain or lever is given to open what it works (a portcullis rising). */
 const PULL_WAIT = 3;
 
@@ -459,9 +471,9 @@ export class Sim {
 
   /**
    * What stands in the way, as a player deals with it: a destructible object (a spider web
-   * across a passage) is hacked through, blow after blow of its whole health (the strikes not
-   * under test), until its stage changes; one its activate parents open (a portcullis) has its
-   * nearest parent pulled (a chain, a lever), once a walk. True if something was done.
+   * across a passage) is struck, blow after blow, until its stage changes (#hackThrough); one
+   * its activate parents open (a portcullis) has its nearest parent pulled (a chain, a lever),
+   * once (a walk cut into pieces does not pull it shut again). True if something was done.
    */
   async #clearWay(feet: Vec3, toward: readonly number[], pulled: Set<number>): Promise<boolean> {
     const character = this.world.player.character;
@@ -478,7 +490,8 @@ export class Sim {
     if (struck === 0) return false;
     const destruction = this.runtime.destruction;
     if (!destruction.isDestroyed(struck) && (await destruction.of(struck))) {
-      return this.#hackThrough(struck);
+      const point = hit?.point ?? feet;
+      return this.#hackThrough(struck, [point[0], point[1], point[2]]);
     }
     if (pulled.has(struck)) return false;
     let parent: number | undefined;
@@ -497,15 +510,34 @@ export class Sim {
     return true;
   }
 
-  /** Blows at a destructible object until its stage changes (true) or none do. */
-  async #hackThrough(struck: number): Promise<boolean> {
+  /**
+   * Strikes a destructible object in the way as the player does, until its stage changes
+   * (true) or no blow changes it: facing the point of it that holds them up, with what is in
+   * their right hand drawn (fists, a weapon, a spell: Flames' stream burns a web), the attack
+   * button held BLOW_HOLD and let go. The blow's hit on the object (actor-combat's strike, the
+   * spell's projectile) takes its destruction health.
+   */
+  async #hackThrough(struck: number, at: Vec3): Promise<boolean> {
     const destruction = this.runtime.destruction;
     const stage = destruction.stage(struck);
-    const health = (await destruction.of(struck))?.health ?? 0;
+    if (this.world.stage.combat.weaponState(PLAYER_REF) !== WeaponState.drawn) {
+      this.press(READY_WEAPON, true);
+      await this.step(SIM_STEP);
+      this.press(READY_WEAPON, false);
+      await this.step(DRAW_WAIT);
+    }
     for (let blow = 0; blow < BREAK_BLOWS && destruction.stage(struck) === stage; blow++) {
-      await destruction.damage(struck, health, { external: true, source: PLAYER_REF });
+      const [x, y, z] = this.world.player.feet;
+      const dx = at[0] - x;
+      const dy = at[1] - y;
+      const across = Math.hypot(dx, dy);
+      this.world.look(Math.atan2(dx, dy), Math.atan2(at[2] - (z + EYE_HEIGHT), across));
+      this.press(RIGHT_ATTACK, true);
+      await this.step(BLOW_HOLD);
+      this.press(RIGHT_ATTACK, false);
       await this.step(BREAK_PAUSE);
     }
+    this.world.look(this.world.player.yaw);
     return destruction.stage(struck) !== stage;
   }
 

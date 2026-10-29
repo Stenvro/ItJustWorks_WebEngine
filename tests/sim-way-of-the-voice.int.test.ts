@@ -46,6 +46,24 @@ const GATE_STONE_1 = 0x3b2e3;
 const LAST_GATE = 0x3b2e7;
 /** The word wall's look target (the word the player walks up to). */
 const WORD_WALL_LOOK = 0x70b4e;
+/** The two spider webs across the way to the tomb (FXspiderWebKitDestructible). */
+const WEB_1 = 0x38457;
+const WEB_2 = 0x38458;
+/** MQ105SetStage180 (the tomb's hall), the tomb (MQ105TombActivator) and the note on it. */
+const SET_STAGE_180 = 0x7a507;
+const TOMB = 0xc65ad;
+const TOMB_NOTE = 0xc65ae;
+/** A Blade in the Dark, its Delphine alias, and the inn's room trigger (InnRoomTrigger). */
+const MQ106 = 0x32926;
+const DELPHINE = 44;
+const ROOM_TRIGGER = 0x3fb03;
+/** RiverwoodMapMarker, the Sleeping Giant Inn's door from the street and the inn. */
+const RIVERWOOD_MARKER = 0x162a4;
+const INN_DOOR = 0x13424;
+const SLEEPING_GIANT = 0x133c6;
+/** MQ105's OutroTrigger (the hall's middle) and WulfgarWord aliases. */
+const OUTRO_TRIGGER = 53;
+const WULFGAR_WORD = 52;
 
 /** The player kills the living actors within reach hostile to them (the fight not under test). */
 async function fight(sim: Sim, reach: number): Promise<void> {
@@ -77,11 +95,18 @@ async function fightTo(
 }
 
 /** The player turns to face a reference. */
-async function face(sim: Sim, reference: number): Promise<void> {
+async function face(sim: Sim, reference: number, pitched = false): Promise<void> {
   const at = await sim.position(reference);
   const me = await sim.position(PLAYER_REF);
-  if (at && me) sim.world.look(Math.atan2(at[0] - me[0], at[1] - me[1]));
+  if (!at || !me) return;
+  const across = Math.hypot(at[0] - me[0], at[1] - me[1]);
+  // Pitched: looking down (or up) at it from the eyes.
+  const pitch = pitched ? Math.atan2(at[2] - (me[2] + EYE_HEIGHT), across) : 0;
+  sim.world.look(Math.atan2(at[0] - me[0], at[1] - me[1]), pitch);
 }
+
+/** The player's eyes above their feet (units). */
+const EYE_HEIGHT = 110;
 
 /** The topic an actor's ForceGreet opened the dialogue menu with (undefined: none yet). */
 function greeting(sim: Sim, actor: number): number | undefined {
@@ -118,6 +143,14 @@ let inUstengrav: Uint8Array | undefined;
 let inDepths: Uint8Array | undefined;
 /** The game with the Whirlwind Sprint gates passed (dunUstengravQST 50). */
 let afterGates: Uint8Array | undefined;
+/** The game with Feim learned at the word wall. */
+let afterWall: Uint8Array | undefined;
+/** The game with the player in at the tomb's hall (MQ105 180). */
+let afterHall: Uint8Array | undefined;
+/** The game with the note taken from the Horn's tomb (MQ105 200, the Horn's 20). */
+let afterNote: Uint8Array | undefined;
+/** The game with Delphine met and the Horn given back to the player (MQ105 220, MQ106 30). */
+let afterDelphine: Uint8Array | undefined;
 
 describe.skipIf(!hasGamedata())('MQ105 The Way of the Voice', () => {
   // MQ105's own start for a game that skips ahead (stage 1) plays MQ103 and MQ104 to their ends
@@ -265,6 +298,14 @@ describe.skipIf(!hasGamedata())('MQ105 The Way of the Voice', () => {
     }
   }, 600_000);
 
+  // TODO(M13): with fast travel passing its hours (the chain at hour 15.7), the masters come out
+  // of the courtyard door together, their character controllers inside each other at its one
+  // arrival point; standing still (no movement asked), the controller's sweep moves Arngeir
+  // out of the others' shapes by the overlap's depth every step (30 units: 1,900 units a
+  // second), they move on together, and he slides off the ledge, so 105 never comes. Leaving
+  // the overlapped actors out of a still actor's sweep stopped the slide but broke fights and
+  // idle markers elsewhere; the engine's rule for character proxies placed into each other is
+  // still to be found.
   // Arngeir leads the masters out to the courtyard and the player follows; by the word Borri
   // will teach (they wait for the player within 700 units) it appears (105), standing on it
   // teaches Wuld (110), Borri's power unlocks it (115, 120).
@@ -455,23 +496,132 @@ describe.skipIf(!hasGamedata())('MQ105 The Horn of Jurgen Windcaller', () => {
       expect(wall && (await fightTo(sim, wall, 300, 64))).toBe(true);
       const feim = await sim.formId('WOOP', 'WordFeim');
       expect(await sim.until(() => sim.runtime.wordsLearned.has(feim), 20)).toBe(true);
+      afterWall = await sim.save('Horn wall');
     } finally {
       await sim.close();
     }
   }, 600_000);
 
-  // On to the Horn's tomb: in at its hall (MQ105SetStage180), the tomb in sight (190), the note
-  // left in the Horn's place taken (200: the Horn quest's 20, Delphine's MQ106 begun). Found
-  // 2026-10-29: two spider webs across the way to the tomb never let the player through once
-  // broken: the headless world never brought destructible objects' looks (and their collision)
-  // up to date. Reached 2026-10-29 by walks chained over saves (the way back through the gates,
-  // a dip by the cave rocks jumped out of, the webs, the portcullis's pull chain), but one walk
-  // of 400 s from the word wall did not reach the hall in time. TODO(M13): the walk in one case
-  // within its timeout; then Delphine in Riverwood (MQ106 10 by the attic room line, 20 by the
-  // room's trigger: both pass), whose intro scene (25) finds no info of MQ106DelphineIntroTopic
-  // that passes its conditions, so MQ106 30 and the Horn's 220 never come; and the return to
-  // Arngeir (240-300).
-  it.todo('finds the note in the tomb (MQ105 180-200, Horn 20)');
-  it.todo('has Delphine meet the player in the Sleeping Giant Inn (MQ106 10-30, Horn 220)');
-  it.todo('has the player return to Arngeir (Horn 240-300)');
+  // On to the Horn's tomb (the way back through the gates, a dip by the cave rocks jumped out
+  // of, the portcullis's pull chain): two spider webs hang across it, the first broken with the
+  // player's fists, the second burned with Flames (the walk strikes what holds it up). Found
+  // 2026-10-29: neither hurt a web. The first-person graph never left a jump (the landing idles
+  // read the player's graph variables, which no view gave: GetGraphVariableInt(bInJumpState)
+  // was 0, so ActionLand found no idle), and in first person only its strikes count; and a
+  // blow's ray from the chest met the striker's own body first. The walk from the word wall
+  // takes about 85 s now. In at the hall (MQ105SetStage180).
+  it("breaks the webs on the way to the Horn's tomb (MQ105 180)", async () => {
+    if (!afterWall) return;
+    const sim = await loadSim(afterWall);
+    try {
+      const destruction = sim.runtime.destruction;
+      const web = await sim.position(WEB_1);
+      expect(web && (await fightTo(sim, web, 200, 30))).toBe(true);
+      expect(destruction.stage(WEB_1)).toBeGreaterThan(0);
+      expect(await sim.equip(await sim.formId('SPEL', 'Flames'))).toBe(true);
+      await sim.step(0.5);
+      const hall = await sim.position(SET_STAGE_180);
+      expect(hall && (await fightTo(sim, hall, 200, 64))).toBe(true);
+      expect(destruction.stage(WEB_2)).toBeGreaterThan(0);
+      expect(await sim.until(() => sim.stageDone(MQ105, 180), 10)).toBe(true);
+      afterHall = await sim.save('Horn hall');
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+
+  // The tomb in sight (190: 180's RegisterForLOS(player, tomb), OnGainLOS), the note in the
+  // Horn's place taken (200: the Horn quest's 20, Delphine's MQ106 begun). TODO(M13): 190 does
+  // not come here (reached 2026-10-29 by an earlier walk chained over saves): the player's
+  // line of sight to the tomb (actor-senses' camera check and ray) is not yet looked into. The
+  // three cases after it wait for this one.
+  it.skip('finds the note in the tomb (MQ105 190-200, Horn 20)', async () => {
+    if (!afterHall) return;
+    const sim = await loadSim(afterHall);
+    try {
+      const tomb = await sim.position(TOMB);
+      expect(tomb && (await fightTo(sim, tomb, 120, 200))).toBe(true);
+      await face(sim, TOMB, true);
+      expect(await sim.until(() => sim.stageDone(MQ105, 190), 10)).toBe(true);
+      expect(sim.activate(TOMB_NOTE)).toBe(true);
+      expect(await sim.until(() => sim.stageDone(MQ105, 200), 10)).toBe(true);
+      expect(sim.stage(HORN_QUEST)).toBe(20);
+      afterNote = await sim.save('Horn note');
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+
+  // To Riverwood and the Sleeping Giant Inn: asking Delphine for the attic room (MQ106 10), in
+  // at the room (20); she follows (25) and her scene's ForceGreet opens MQ106DelphineIntroTopic,
+  // whose greeting asks for that package (GetIsCurrentPackage): 30, the Horn given back (MQ105
+  // 220, the Horn's 30). TODO(M13): no greeting passes. The info's GetIsCurrentPackage
+  // (MQ106DelphineIntroGreet, her scene's package action) fails: the ForceGreet procedure
+  // succeeds as it opens the conversation, so the package (and the scene action) is done before
+  // the line is chosen. Holding the ForceGreet on until its conversation ended gave MQ106 30
+  // and MQ105 220 here, but stopped Gerdur's greeting in MQ102B; when the engine ends a
+  // ForceGreet is still to be found.
+  it.skip('has Delphine meet the player in the Sleeping Giant Inn (MQ106 10-30, MQ105 220)', async () => {
+    if (!afterNote) return;
+    const sim = await loadSim(afterNote);
+    try {
+      expect(sim.stageDone(MQ106, 5)).toBe(true);
+      await sim.fastTravel(RIVERWOOD_MARKER);
+      const door = await sim.position(INN_DOOR);
+      expect(door && (await sim.walkPath(door, 60, 120))).toBe(true);
+      expect(sim.activate(INN_DOOR)).toBe(true);
+      await sim.world.settle();
+      expect((await sim.runtime.placement(PLAYER_REF))?.cell).toBe(SLEEPING_GIANT);
+      const delphine = sim.runtime.state.quest(MQ106).aliases.get(DELPHINE) ?? 0;
+      const at = await sim.position(delphine);
+      expect(at && (await sim.walkPath(at, 30, 120))).toBe(true);
+      await sim.converse(delphine, [/attic/]);
+      expect(await sim.until(() => sim.stageDone(MQ106, 10), 10)).toBe(true);
+      const room = await sim.position(ROOM_TRIGGER);
+      expect(room && (await sim.walkPath(room, 40, 30))).toBe(true);
+      expect(await sim.until(() => sim.stageDone(MQ106, 20), 10)).toBe(true);
+      expect(await sim.until(() => greeting(sim, delphine) !== undefined, 90)).toBe(true);
+      await sim.converse(delphine, [], greeting(sim, delphine));
+      expect(await sim.until(() => sim.stageDone(MQ106, 30), 10)).toBe(true);
+      expect(sim.stageDone(MQ105, 220)).toBe(true);
+      expect(sim.stage(HORN_QUEST)).toBe(30);
+      afterDelphine = await sim.save('MQ106 30');
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+
+  // Back up to High Hrothgar with the Horn: Arngeir takes it (240) and the masters gather; the
+  // player stands in the hall's middle (242), the Greybeards greet them, Wulfgar's word appears
+  // and teaches Dah (255-265), and the greeting ends the quest (300, the Horn's 60).
+  it.skip('has the player return the Horn to Arngeir (MQ105 240-300)', async () => {
+    if (!afterDelphine) return;
+    const sim = await loadSim(afterDelphine);
+    try {
+      await sim.fastTravel(HIGH_HROTHGAR_MARKER);
+      const door = await sim.position(FRONT_DOOR);
+      if (door) await sim.moveTo([door[0] - 150, door[1], door[2]]);
+      expect(sim.activate(FRONT_DOOR)).toBe(true);
+      await sim.world.settle();
+      expect((await sim.runtime.placement(PLAYER_REF))?.cell).toBe(HIGH_HROTHGAR);
+      const quest = sim.runtime.state.quest(MQ105);
+      const arngeir = quest.aliases.get(ARNGEIR) ?? 0;
+      const at = await sim.position(arngeir);
+      expect(at && (await sim.walkPath(at, 60, 150))).toBe(true);
+      await sim.converse(arngeir, [/Horn of Jurgen/]);
+      expect(await sim.until(() => sim.stageDone(MQ105, 240), 10)).toBe(true);
+      const middle = await sim.position(quest.aliases.get(OUTRO_TRIGGER) ?? 0);
+      expect(middle && (await sim.walkPath(middle, 30, 30))).toBe(true);
+      expect(await sim.until(() => sim.stageDone(MQ105, 242), 30)).toBe(true);
+      expect(await sim.until(() => sim.stageDone(MQ105, 250), 180)).toBe(true);
+      const word = await sim.position(quest.aliases.get(WULFGAR_WORD) ?? 0);
+      if (word) await sim.walkTo(word, 20, 40);
+      expect(await sim.until(() => sim.stageDone(MQ105, 300), 240)).toBe(true);
+      const dah = await sim.formId('WOOP', 'WordDah');
+      expect(sim.runtime.wordsLearned.get(dah)).toBe(true);
+      expect(sim.stage(HORN_QUEST)).toBe(60);
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
 });
