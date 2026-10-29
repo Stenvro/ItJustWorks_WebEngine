@@ -91,7 +91,7 @@ describe('lightCone', () => {
 
 describe('objectModelKey', () => {
   it('tells the same model with other alternate textures apart', () => {
-    const model = 'meshes\architecture\rock.nif';
+    const model = 'meshes\\architecture\\rock.nif';
     const snowy = { model, alternateTextures: [{ shape: 'Rock01', textureSet: 0x1234, index: 0 }] };
     const mossy = { model, alternateTextures: [{ shape: 'Rock01', textureSet: 0x5678, index: 0 }] };
     expect(objectModelKey({ model })).toBe(model);

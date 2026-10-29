@@ -599,7 +599,9 @@ function alternateTexturesOf(base: GameRecord): { alternateTextures?: AlternateT
 export function objectModelKey(object: Pick<CellObject, 'model' | 'alternateTextures'>): string {
   const swaps = object.alternateTextures;
   if (!swaps || swaps.length === 0) return object.model;
-  const sets = swaps.map((swap) => `${swap.shape}:${String(swap.index)}:${String(swap.textureSet)}`);
+  const sets = swaps.map(
+    (swap) => `${swap.shape}:${String(swap.index)}:${String(swap.textureSet)}`,
+  );
   return `${object.model}|${sets.join(',')}`;
 }
 
