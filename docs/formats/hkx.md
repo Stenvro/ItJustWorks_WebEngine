@@ -87,6 +87,51 @@ meshes name, 363 load; the other 3 are errors in the data (a mesh names
 `dragonbloodwingl\dragonbloodheadwingr.hkx`, which lies in `dragonbloodwingr\`; the scorpion
 trap's folder is empty; `magic\shoutimod.hkx` names no character).
 
+## Class members
+
+The original carries Havok's class reflection: for every class its name, parent, object size
+and each declared member's name, type, C array size, flags and byte offset (and the enums with
+their values). Read from there, the 64-bit layouts of all 99 classes the files hold, with the
+structs they embed, are in `layouts.ts`: 753 serialized members (members flagged as not
+serialized are runtime state the files never carry). Corrections this brought: the foot IK
+driver info (`hkbFootIkDriverInfo`) has no `useTrackData` in this version (its flags are
+lockFeetWhenPlanted at 64, useCharacterUpVector at 65, isQuadrupedNarrow at 66; the modifier
+keeps useTrackData), and five object sizes (the skeleton mapper 144, its data 128, the default
+animated reference frame 80, BSIStateManagerModifier 128, BSRagdollContactListenerModifier 136).
+
+`node tools/format-census.ts hkx-members` runs every reader over every Havok file with every
+read recorded, then looks up each serialized member of each object: 653 of the 753 are read.
+Of the other 100, 40 are zero or null in every file (runtime caches such as a clip's binding
+index, the damping modifier's error sums, null pointers) and 60 are set somewhere: the objects
+found by class rather than through the root and animation containers' arrays, the spline
+clips' per-block offsets (the decoder walks the blocks itself), the skeleton mappers' chain
+mappings and the character and project files' other names, the events' flags and variables'
+roles, binding bit indices, a blender child's world-from-model weight, the powered ragdoll's
+world-from-model mode.
+
+## Ragdoll physics
+
+The 48 skeleton files with a ragdoll (`character assets\skeleton.hkx` and the draugr's variants)
+hold, besides the animation and ragdoll skeletons and their mappers, an `hkaRagdollInstance`
+(rigid bodies, constraints, the ragdoll skeleton and each bone's body) and an `hkpPhysicsData`
+whose one system holds the same bodies, the scene's other bodies (the character bumper) and
+its own copies of the constraints. An `hkMemoryResourceContainer` tree mirrors the exported
+scene's nodes, with the bumper's body and shape info as resources. `physics.ts` reads all of
+it: 1,040 bodies (1,009 of the ragdolls), 1,922 constraint instances (ragdoll and limited hinge
+constraints, position motors), the shapes (924 capsules, 105 translated boxes, convex hulls, a
+box, two MOPP trees over list shapes) with every serialized member (`tools/hkx-physics.ts`:
+0 problems; each ragdoll has as many bodies as skeleton.nif's bhk bodies beside it). A motion's
+damping, gravity and time factors are hkHalf (a float's high 16 bits); its maximum velocities are
+Havok's 8-bit logarithmic floats, kept as their codes.
+
+Which the original simulates (observed in the original): the character's ragdoll is built from
+the bhk bodies and constraints of the loaded skeleton.nif: the bodies found on the model's nodes
+are matched to the ragdoll skeleton's bones by name, and the bhk constraints between them
+replace the ragdoll instance's constraints. So the HKX ragdoll gives the ragdoll skeleton and
+the mapping onto the animation skeleton (what `readRagdollMapping` reads), and skeleton.nif's
+bhk blocks give the physics, which is what our ragdolls are built from. Whether any value of
+the HKX bodies (masses, shapes, motors) is used as well is not known (TODO(M13)).
+
 ## Behavior graphs of objects
 
 A mesh names its graph on the root node: **BSBehaviorGraphExtraData** (name, graph file

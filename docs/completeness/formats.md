@@ -8,23 +8,25 @@ is **done** only when a sweep over the whole data shows it; **open** items say w
 
 ## How it is measured
 
-| Sweep                                 | What it covers                                                    |
-| ------------------------------------- | ----------------------------------------------------------------- |
-| `node tools/format-census.ts files`   | every file of the VFS by extension, with its reader               |
-| `node tools/format-census.ts bsa`     | every archive in Data: names against hashes, every file read      |
-| `node tools/format-census.ts esm`     | every subrecord of every record decoded by its layout             |
-| `node tools/format-census.ts strings` | every string table of every language; FULL ids resolve            |
-| `node tools/format-census.ts hkx`     | every Havok file by class; every animation sampled                |
-| `node tools/nif-stats.ts --parse`     | every block of every mesh consumed exactly                        |
-| `node tools/dds-stats.ts`             | every texture's format                                            |
-| `node tools/pex-dump.ts --verify`     | every script                                                      |
-| `node tools/audio-info.ts --audit`    | every .wav, .xwm and .fuz                                         |
-| `node tools/lip-info.ts --all`        | the lip data of every voice line                                  |
-| `node tools/tri-info.ts --all`        | every FaceGen morph file                                          |
-| `node tools/lod-info.ts --meshes`     | lodsettings, tree lists and blocks, every terrain/object LOD mesh |
-| `node tools/seq-info.ts`              | every SEQ file against its plugin's quests                        |
-| `node tools/animdata-info.ts --parse` | the animation, animation set and speed data files                 |
-| `node tools/swf-info.ts --all`        | every interface movie                                             |
+| Sweep                                     | What it covers                                                    |
+| ----------------------------------------- | ----------------------------------------------------------------- |
+| `node tools/format-census.ts files`       | every file of the VFS by extension, with its reader               |
+| `node tools/format-census.ts bsa`         | every archive in Data: names against hashes, every file read      |
+| `node tools/format-census.ts esm`         | every subrecord of every record decoded by its layout             |
+| `node tools/format-census.ts strings`     | every string table of every language; FULL ids resolve            |
+| `node tools/format-census.ts hkx`         | every Havok file by class; every animation sampled                |
+| `node tools/format-census.ts hkx-members` | every serialized member of every Havok object: read or not        |
+| `node tools/hkx-physics.ts`               | the ragdoll physics of every skeleton file                        |
+| `node tools/nif-stats.ts --parse`         | every block of every mesh consumed exactly                        |
+| `node tools/dds-stats.ts`                 | every texture's format                                            |
+| `node tools/pex-dump.ts --verify`         | every script                                                      |
+| `node tools/audio-info.ts --audit`        | every .wav, .xwm and .fuz                                         |
+| `node tools/lip-info.ts --all`            | the lip data of every voice line                                  |
+| `node tools/tri-info.ts --all`            | every FaceGen morph file                                          |
+| `node tools/lod-info.ts --meshes`         | lodsettings, tree lists and blocks, every terrain/object LOD mesh |
+| `node tools/seq-info.ts`                  | every SEQ file against its plugin's quests                        |
+| `node tools/animdata-info.ts --parse`     | the animation, animation set and speed data files                 |
+| `node tools/swf-info.ts --all`            | every interface movie                                             |
 
 The ESM sweep decodes every subrecord of every record of the load order by its layout
 (`src/formats/esm/record-layouts.ts`, after xEdit's TES5 definitions; VMAD by `vmad.ts`): a
@@ -33,15 +35,21 @@ a master or the plugin and its string ids resolve. Nothing depends on names in s
 Beside it the census lists, per record type, the subrecords no engine code outside
 `src/formats` names (by source text): parsed, used by: open, which is the other areas' work.
 
-## Summary (2026-10-29, round 2)
+## Summary (2026-10-29, round 3)
 
-The checklist has **155 items**: 35 format items below (one new: the whole-plugin decode) and
-the 120 record types of the load order (the table at the end). **150 are done** (30 format
-items, all 120 record types). Open: the ragdoll physics of the skeleton files, the member
-coverage of the Havok classes, the save game's change forms and global data (no save is in the
-installation to build them against) and SEQ use (M12).
+The checklist has **156 items**: 36 format items below (one new: the Havok class item is split
+into layouts and members read) and the 120 record types of the load order (the table at the
+end). **152 are done** (32 format items, all 120 record types). Open:
+the 60 Havok members set in the data that no reader reads yet, the save game's global data
+(every type has a reader now: built, waiting on a real save) and change forms (no save is in the
+installation to build them against), and SEQ use (M12).
 
-Done this round: every (record type, subrecord) pair parsed exactly (1,414 pairs; the 18 record
+Done this round: the ragdoll physics of the 48 skeleton files (every serialized member of the
+20 classes), every Havok class laid out as the original's class reflection says (which fixed the
+foot IK driver info's flags and five object sizes), the member census (`format-census
+hkx-members`), and readers for the 17 global data types that had none.
+
+Round 2: every (record type, subrecord) pair parsed exactly (1,414 pairs; the 18 record
 types with subrecords no code read among them), every VMAD of the load order (24,631) read to
 its end, every localized field's string id resolved (105,535), and the NIF fields read past
 reviewed: the ones the engine can use are kept, the rest are named below.
@@ -121,13 +129,25 @@ rod's clips), SEQ files, the marketplace's archive and the census tool.
       `src/formats/hkx/animation.ts`, `format-census hkx`.
 - [x] Behavior graphs: 363 of the 366 graphs meshes name load; the other 3 are faults of the
       data (two missing files, one project without a character). `hkx-info --audit`.
-- [ ] The ragdoll physics of the 48 skeleton files (hkaRagdollInstance, hkpPhysicsData and 18
-      more hkp classes in hkMemoryResourceContainer/Handle): not read. Needs the 2010.2 64-bit
-      member layouts of the hkp classes (hkpRigidBody and its motion, the shapes, the constraint
-      data), which no source at hand lists; our ragdolls are built from skeleton.nif's bhk
-      blocks. Which the original builds its bodies from: TODO(M13).
-- [ ] Class members: packfile objects are read by member offset; no check yet that every
-      serialized member of the 78 read classes is used.
+- [x] The ragdoll physics of the 48 skeleton files (hkaRagdollInstance, hkpPhysicsData and the
+      18 other classes: bodies, motions, shapes, constraints, motors, the resource container
+      tree): 1,040 bodies, 1,922 constraint instances, 0 problems, every serialized member.
+      `src/formats/hkx/physics.ts`, `hkx-physics`, `tests/hkx-physics.int.test.ts`. Which the
+      original simulates: skeleton.nif's bhk bodies and constraints, matched by name to the HKX
+      ragdoll skeleton's bones, as ours do (docs/formats/hkx.md, "Ragdoll physics").
+- [x] Class layouts: the 99 classes the files hold (753 serialized members, the embedded
+      structs with them) match the original's class reflection member for member
+      (`layouts.ts`). Fixed: hkbFootIkDriverInfo's flags (no useTrackData; lockFeetWhenPlanted
+      at 64, which our reader took from 65), five object sizes, the mapper's chain mappings.
+- [ ] Class members read: 653 of 753 (`format-census hkx-members`). 40 of the others are zero
+      or null in every file (runtime caches); 60 are set but no reader reads them: the
+      character files' controller capsule, model axes, scale, LOD and skin names, mirrored sync
+      point names; the projects' paths; events' flags and variables' roles and word ranges;
+      binding bit indices and the binding to enable; the blender child's world-from-model
+      weight; the powered ragdoll's world-from-model mode; the mappers' chain mappings,
+      unmapped bones and extracted motion; skeleton local frames; the spline clips' per-block
+      offsets (the decoder finds the blocks itself); the containers' arrays (objects are found
+      by class); hkbNode user data.
 
 ## Scripts (PEX)
 
@@ -170,12 +190,14 @@ saves measures them (`tests/sim-ess-import.int.test.ts` reads one).
       their form flags (and factions' flags). `src/formats/ess/change-forms.ts`. xEdit's save
       definitions keep these as bytes too; UESP's are partial. Open until a real save is at
       hand to build them against.
-- [ ] Global data: 13 of 30 types read (Misc Stats, Player Location, TES, Global Variables,
-      Created Objects, Effects, Weather, Audio, Sky Cells, Papyrus, Anim Objects, Timer,
-      Synchronized Animations); open: Process Lists, Combat, Interface, Actor Causes, 104,
-      Detection Manager, Location MetaData, Quest Static Data, StoryTeller, Magic Favorites,
-      PlayerControls, Story Event Manager, Ingredient Shared, MenuControls, MenuTopicManager,
-      Temp Effects, Main. `src/formats/ess/global-data.ts`.
+- [ ] Global data: every one of the 30 types has a reader (`GLOBAL_DATA_READERS`, run by
+      `ess-info`). The 17 new ones (process lists with their crimes, combat, interface, actor
+      causes, detection manager, location metadata, quest static data, story teller, magic
+      favourites, player controls, story event manager, ingredient pairs, menu controls, menu
+      topic manager, temp effects, 104, main) are **built, waiting on a real save**: written
+      from UESP's layouts and tested by round trip (`global-data-tables.ts` and its test). Where
+      UESP stops, the rest is kept as bytes: 104, the story event manager's entries, temp
+      effects of an undocumented type (2). The weather's tail (partly unknown) stays bytes too.
 
 ## Files the original does not load
 
