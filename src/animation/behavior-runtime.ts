@@ -82,6 +82,11 @@ export interface ActorGraphState {
   readonly variables: readonly (readonly [string, number])[];
   /** The vector variables set (TargetLocation). */
   readonly vectors?: readonly (readonly [string, number, number, number, number])[];
+  /**
+   * The events raised or sent and not handled yet, by name (with their payloads): the graph
+   * handles them as it next runs (saves made before kept none).
+   */
+  readonly events?: readonly (readonly [string] | readonly [string, string])[];
 }
 
 /** One behavior file's active nodes, as ActorGraphState keeps them. */
@@ -877,9 +882,9 @@ export class BehaviorRuntime {
    * What a save keeps of an actor's graph, as the original keeps its behavior graph's internal
    * state (docs/formats/save.md, "Animation graphs"): each active state machine's state and the
    * seconds it has been in it, each playing clip's local time, and the variables (those moved
-   * from their initial values: put back over a graph that starts at them, the same). Not kept,
-   * as there: the events queued, a transition's blend (the machine goes on in the state it
-   * blends to), the pose.
+   * from their initial values: put back over a graph that starts at them, the same), and the
+   * events not handled yet. Not kept, as there: a transition's blend (the machine goes on in
+   * the state it blends to), the pose.
    */
   saveActorState(): ActorGraphState {
     type Places = (readonly [number, number, number])[];
@@ -925,10 +930,18 @@ export class BehaviorRuntime {
       const name = this.#variableNames[index];
       if (name !== undefined) vectors.push([name, x, y, z, w]);
     }
+    // The events not handled yet: one a clip raised as it ended (a shout's shoutStop as its
+    // release clip reaches its end) is handled at the next update; lost, the graph stayed in
+    // the state it would have left (the shout's, animation-driven, for ever).
+    const events = this.#queue.map(({ id, payload }) => {
+      const name = this.#eventNames[id] ?? '';
+      return payload === undefined ? ([name] as const) : ([name, payload] as const);
+    });
     return {
       files: [...files].map(([file, { machines, clips }]) => ({ file, machines, clips })),
       variables,
       ...(vectors.length > 0 && { vectors }),
+      ...(events.length > 0 && { events }),
     };
   }
 
@@ -964,6 +977,12 @@ export class BehaviorRuntime {
       files.delete(file);
     }
     for (const [file, entry] of files) this.#resumeFiles.set(file, entry);
+    // The events it had not handled yet, handled as it first runs (the machines they reach
+    // start in their saved states then). Not raised to the engine again.
+    for (const [name, payload] of saved.events ?? []) {
+      const id = this.#event(name);
+      this.#queue.push(payload === undefined ? { id } : { id, payload });
+    }
     this.#told = true;
   }
 
