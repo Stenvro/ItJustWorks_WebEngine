@@ -93,6 +93,10 @@ export class RuntimeSceneHost implements SceneHost {
     return this.#runtime.quests.isRunning(quest);
   }
 
+  async questPriority(quest: number): Promise<number> {
+    return (await this.#runtime.forms.quest(quest))?.priority ?? 0;
+  }
+
   aliasReference(quest: number, alias: number): number | undefined {
     return this.#runtime.state.quests.get(quest)?.aliases.get(alias);
   }

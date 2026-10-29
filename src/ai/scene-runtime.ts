@@ -67,6 +67,8 @@ export interface SceneHost {
   /** The scenes of a quest (those that begin as it starts, end as it stops). */
   scenesOf(quest: number): Promise<readonly number[]>;
   questRunning(quest: number): boolean;
+  /** A quest's priority (QUST DNAM); without it, every quest's is the same. */
+  questPriority?(quest: number): Promise<number>;
   /** The reference an alias of a quest holds now. */
   aliasReference(quest: number, alias: number): number | undefined;
   /** Whether a quest's alias is optional (it may stay empty: QUST alias flag Optional). */
@@ -206,6 +208,8 @@ interface Playing {
   /** When its package actions were last looked at again (its clock). */
   rechecked: number;
   waiters: { readonly until: number; readonly resolve: () => void }[];
+  /** Its quest's priority (known once its record is: mayTake). */
+  priority: number;
 }
 
 /**
@@ -235,7 +239,12 @@ export class SceneDirector {
   /** Scenes started while their actors play in other scenes: they start once those are free. */
   readonly #waiting = new Map<
     number,
-    { readonly force: boolean; readonly record: SceneRecord; readonly random: boolean }
+    {
+      readonly force: boolean;
+      readonly record: SceneRecord;
+      readonly random: boolean;
+      readonly priority: number;
+    }
   >();
   /** The random scene playing (one at a time) and the seconds before the next may begin. */
   #randomPlaying: Playing | undefined;
@@ -286,6 +295,7 @@ export class SceneDirector {
       clock: 0,
       rechecked: 0,
       waiters: [],
+      priority: 0,
     };
     this.#playing.set(scene, playing);
     void this.#begin(playing).catch((error: unknown) => {
@@ -586,6 +596,7 @@ export class SceneDirector {
         clock: entry.clock,
         rechecked: entry.clock,
         waiters: [],
+        priority: 0,
       };
       this.#playing.set(entry.scene, playing);
       for (const reference of playing.cast.values()) this.#actors.set(reference, playing);
@@ -608,6 +619,8 @@ export class SceneDirector {
       return;
     }
     playing.record = record;
+    playing.priority = await this.#questPriority(record);
+    if (!live(playing)) return;
     const runs = new Map(saved.actions.map((run) => [run.index, run]));
     for (const action of record.actions) {
       const run = runs.get(action.index);
@@ -656,6 +669,8 @@ export class SceneDirector {
       this.#drop(playing, 'its quest does not run');
       return;
     }
+    playing.priority = await this.#questPriority(record);
+    if (over(playing)) return;
     if (
       record.conditions.length > 0 &&
       !(await host.conditionsHold(record.conditions, PLAYER_REF, quest))
@@ -694,7 +709,7 @@ export class SceneDirector {
     for (const [alias, reference] of [...cast]) {
       const other = this.#actors.get(reference);
       if (!other || other === playing) continue;
-      if (mayTake(playing.force, other, reference)) continue;
+      if (mayTake(playing.force, playing.priority, other, reference)) continue;
       const actor = record.actors.find((entry) => entry.alias === alias);
       if (actor && (actor.flags & SceneActorFlag.optional) !== 0) {
         cast.delete(alias);
@@ -728,11 +743,22 @@ export class SceneDirector {
     await this.#play(playing);
   }
 
+  /** The priority of a scene's quest (0 without one, or without the host's answer). */
+  async #questPriority(record: SceneRecord): Promise<number> {
+    if (record.quest === undefined) return 0;
+    return (await this.#host.questPriority?.(record.quest)) ?? 0;
+  }
+
   /** A start that waits (for its actors, for its turn): it starts again once it may. */
   #waitToStart(playing: Playing, record: SceneRecord, why: string): void {
     this.#playing.delete(playing.formId);
     playing.state = 'ended';
-    this.#waiting.set(playing.formId, { force: playing.force, record, random: playing.random });
+    this.#waiting.set(playing.formId, {
+      force: playing.force,
+      record,
+      random: playing.random,
+      priority: playing.priority,
+    });
     this.#trace(playing, why);
   }
 
@@ -807,7 +833,11 @@ export class SceneDirector {
           if ((actor.flags & SceneActorFlag.optional) !== 0) return true;
           const reference = this.#host.aliasReference(quest, actor.alias);
           const other = reference === undefined ? undefined : this.#actors.get(reference);
-          return !other || reference === undefined || mayTake(waiting.force, other, reference);
+          return (
+            !other ||
+            reference === undefined ||
+            mayTake(waiting.force, waiting.priority, other, reference)
+          );
         });
       if (free) this.start(scene, waiting.force);
     }
@@ -1376,19 +1406,25 @@ export class SceneDirector {
 
 /**
  * Whether a scene starting may take an actor that plays in another scene: a forced start
- * (ForceStart) takes it, an interruptible scene gives it up, and so does a scene that has no
- * action running on it now (one that has begun and whose phases have nothing for it yet, or
- * any more). Found in the data: the Riverwood kids' play scene (RiverwoodDortheFrodnarPlay-
- * Scene, Begin on Quest Start) waits in its first phase, with no action, until Dorthe and
- * Frodnar meet; MQ102HadvarAlvorScene, which Dorthe joins much later, would wait for it for
- * ever. Observed in the original: Scene.Start only marks the scene active, its actors are
- * looked at as it begins. TODO(M13): the engine's own test there (an action running on the
- * actor is inferred).
+ * (ForceStart) takes it, an interruptible scene gives it up, and a scene of a quest of higher
+ * priority takes it from one that has begun and has no action running on it now (whose
+ * phases have nothing for it yet, or any more). Found in the data: the Riverwood kids' play
+ * scene (RiverwoodDortheFrodnarPlayScene, priority 30, Begin on Quest Start) waits in its
+ * first phase, with no action, until Dorthe and Frodnar meet, and MQ102HadvarAlvorScene
+ * (MQ102A, 80), which Dorthe joins much later, would wait for it for ever; the bard's next
+ * song (BardSongsInstrumental, 45) takes Mikael from the Bannered Mare's talk
+ * (DialogueWhiterunBanneredMareScene1, 30) while Hulda speaks. But WIGreetingScene (WIGreeting,
+ * 40), a greeting as the player comes into Alvor's house, took one of his household from
+ * MQ102HadvarAlvorScene, idle in the phases that take Hadvar and Alvor in, and ended it before
+ * Alvor's force greet (MQ102A 47). Observed in the original: Scene.Start only marks the scene
+ * active, its actors are looked at as it begins. TODO(M13): the engine's own test there (the
+ * idle actor and the quests' priorities are inferred from these cases).
  */
-function mayTake(force: boolean, other: Playing, actor: number): boolean {
+function mayTake(force: boolean, priority: number, other: Playing, actor: number): boolean {
   if (force || ((other.record?.flags ?? 0) & SceneFlag.interruptible) !== 0) return true;
   return (
     other.phase >= 0 &&
+    priority > other.priority &&
     !other.actions.some((run) => run.actor === actor && run.status === 'running')
   );
 }

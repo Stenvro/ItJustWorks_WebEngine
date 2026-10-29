@@ -49,8 +49,11 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
 - **What is placed:** the collision of every enabled object in the loaded cells, the
   landscape of each cell (its 33×33 heights as triangles, split like the drawn landscape, on
   L_GROUND), and collision primitives. It goes in a few per frame (3 ms) so loading does not
-  stutter. Simulated objects stay asleep until their cell's collision is complete, then
-  settle (the warm start) unless "Don't Havok Settle"; their drawn model follows the body.
+  stutter. Simulated objects stay asleep until their cell's collision is complete, and that
+  of the cells around where they lie (any of the eight being loaded: a shelf of the cell next
+  door may hold them), then settle (the warm start) unless "Don't Havok Settle"; their drawn
+  model follows the body. A body is simulated only over collision that is in place, as an
+  actor is ([ai.md](ai.md#the-actors-of-the-loaded-area)): before, it fell through to the ground under it.
   Large references beyond the loaded grid and distant LOD have no collision, as in the game.
 - **What waits:** simulated bodies that do not settle (not yet: until their cell's collision
   is complete; for good: "Don't Havok Settle", and statics) stay where they were placed until

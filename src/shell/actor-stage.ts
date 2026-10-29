@@ -34,6 +34,7 @@ import { RecordFlag } from '../formats/esm/record.ts';
 import type { GaitMotion, SoundingWorld } from './actor-sounds.ts';
 import { ActorGraphEvents } from './actor-graph-events.ts';
 import { actorOnRay, groundActor, moveActor, ragdollsOf, type PlacedActor } from './actors.ts';
+import { GROUND_ABOVE, GROUND_BELOW } from '../world/actor-ground.ts';
 import { corpsePose } from '../animation/corpse-pose.ts';
 import { createdEnabled } from './created-objects.ts';
 import type { GameSession } from './game-session.ts';
@@ -552,12 +553,12 @@ export class ActorStage {
       activationDone: (actor) => this.graphEvents.activationDone(actor),
       transport: {
         ready: async (staged, ride) => {
-          this.vehicles.release(staged.reference);
+          await this.vehicles.alight(staged.reference);
           return this.mounts.ready(staged, ride);
         },
         mover: (actor) => this.mounts.horseOf(actor) ?? actor,
         alight: async (staged) => {
-          this.vehicles.release(staged.reference);
+          await this.vehicles.alight(staged.reference);
           await this.mounts.getOff(staged.reference);
         },
         paused: (actor) => this.mounts.ridden(actor),
@@ -574,9 +575,7 @@ export class ActorStage {
       furniture: this.furniture,
       player: () => options.player?.()?.play.player,
       seat: () => options.seat?.(),
-      alight: () => {
-        this.vehicles.release(PLAYER_REF);
-      },
+      alight: () => this.vehicles.alight(PLAYER_REF),
       ...(options.navmeshes && { navmeshes: options.navmeshes }),
       door: (door) => this.doors.passage(door, PLAYER_REF),
     });
@@ -1875,6 +1874,31 @@ export class ActorStage {
   }
 
   /**
+   * How far under a point (from GROUND_ABOVE over it) an actor set down there looks for its
+   * ground. Its fall onto whatever is under it is its controller's; near a cell whose collision
+   * the view does not hold (beyond the loaded area: an object of that cell, a floor reaching
+   * over the border, may be its ground) no controller falls (observed in the original: an
+   * actor is simulated only over collision that is in place), and only the position check
+   * sets it down: within fCheckPositionFallDistance under it, else it keeps the height it has
+   * (Alvor on his smithy's floor, whose building is placed in the cell north-east of the
+   * forge's; set down, he fell through to the slope 142 units below, off the navmesh).
+   */
+  #groundReach([x, y, z]: Vec3): number {
+    const collided = this.#options.collided;
+    if (collided) {
+      for (const dx of [-GROUND_REACH, 0, GROUND_REACH]) {
+        for (const dy of [-GROUND_REACH, 0, GROUND_REACH]) {
+          const key = this.#options.cellOf({ position: [x + dx, y + dy, z] });
+          if (key !== undefined && collided(key) !== true) {
+            return GROUND_ABOVE + this.movers.checkFallDistance();
+          }
+        }
+      }
+    }
+    return GROUND_ABOVE + GROUND_BELOW;
+  }
+
+  /**
    * An actor set down: on the navmesh near where it is (within `snap`, if given), then on the
    * ground under it.
    */
@@ -1888,8 +1912,9 @@ export class ActorStage {
         staged.position = inwardOnNavmesh(navmeshes, staged.position, on, radius);
       }
     }
+    const reach = this.#groundReach(staged.position);
     groundActor(staged.placed, staged.position, staged.heading, (from, length) => {
-      const hit = physics.raycast(from, [0, 0, -1], length, Layer.charController);
+      const hit = physics.raycast(from, [0, 0, -1], Math.min(length, reach), Layer.charController);
       return hit && { point: hit.point, normal: hit.normal };
     });
     const world = staged.placed.instances[0]?.world;
@@ -1919,7 +1944,13 @@ export class ActorStage {
       staged.heading = now.rotation[2];
       // Set on the ground there once the collision there is in place (else ground does it).
       const ready = this.#groundReady(staged);
-      moveActor(staged.placed, staged.position, staged.heading, ready ? physics : undefined);
+      moveActor(
+        staged.placed,
+        staged.position,
+        staged.heading,
+        ready ? physics : undefined,
+        this.#groundReach(staged.position),
+      );
       this.movers.teleport(staged);
       const world = staged.placed.instances[0]?.world;
       if (world && ready) staged.position = [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0];

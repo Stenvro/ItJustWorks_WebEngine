@@ -10,7 +10,12 @@
 
 import { HeadTracker, VANILLA_HEAD_TRACK, type Vec3 as LookPoint } from '../ai/head-tracking.ts';
 import { isEvent, type GraphEvent } from '../animation/graph-events.ts';
-import { Locomotion, taggedMovementType, type LocomotionGraph } from '../ai/locomotion.ts';
+import {
+  Locomotion,
+  taggedMovementType,
+  type LocomotionActions,
+  type LocomotionGraph,
+} from '../ai/locomotion.ts';
 import { MovementCatalog } from '../ai/movement-types.ts';
 import type { MovementType } from '../world/movement.ts';
 import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
@@ -78,7 +83,18 @@ export class PlayerAvatar {
   #clock = 0;
   #last: { readonly seconds: number; readonly real: number } | undefined;
   /** Its movement, as the graphs' variables and events (shared with the NPCs). */
-  readonly #locomotion = new Locomotion();
+  #locomotion = new Locomotion();
+
+  /**
+   * The player's falls and landings go through their idle tree (ActionFall, ActionLand), as an
+   * actor's do: the engine performs the actions for every character, and 0_master's JumpFall
+   * idle takes a fall only faster than 350 units a second. Sent JumpFall and JumpLand directly,
+   * every step down a roof's shingles or off a ridge played a fall and a landing.
+   */
+  useActions(actions: LocomotionActions): void {
+    this.#locomotion.release();
+    this.#locomotion = new Locomotion(actions);
+  }
   /** A jump's animation started: the graph's JumpUp pushes off. */
   #jumping = false;
   /** An idle the body holds (the race menu's pose): sent again to a body made again. */

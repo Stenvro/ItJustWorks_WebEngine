@@ -48,8 +48,11 @@ export interface PlayerPilotOptions {
   readonly player: () => Player | undefined;
   /** The player in furniture. */
   readonly seat: () => PlayerFurniture | undefined;
-  /** The player gets off the vehicle they ride, where they are (MQ101's cart, as its riders). */
-  readonly alight?: () => void;
+  /**
+   * The player gets off the vehicle they ride, where they are (MQ101's cart, as its riders); an
+   * exit under way first ends.
+   */
+  readonly alight?: () => Promise<void> | void;
   /** The navigation meshes of the loaded area. */
   readonly navmeshes?: () => NavmeshSet | undefined;
   /** A door on the way as the player comes to it (opened for them). */
@@ -196,7 +199,7 @@ export class PlayerPilot {
     const { session, furniture, seat } = this.#options;
     // Out of furniture and off their vehicle before they go anywhere.
     const leaveSeat = async (): Promise<void> => {
-      this.#options.alight?.();
+      await this.#options.alight?.();
       const held = seat();
       if (held?.seated) await held.leave();
     };

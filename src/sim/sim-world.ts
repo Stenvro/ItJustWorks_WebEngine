@@ -26,6 +26,7 @@ import type { InstanceVisibility } from '../render/scene-renderer.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { ActorStage, type StageObstacleCell, type StagePlace } from '../shell/actor-stage.ts';
+import type { AdoptedVehicle } from '../shell/actor-vehicles.ts';
 import type { DoorObject } from '../shell/actor-doors.ts';
 import { stageObject, type StageObject } from '../shell/actor-furniture.ts';
 import { groundUnder, type SoundingWorld } from '../shell/actor-sounds.ts';
@@ -151,14 +152,14 @@ interface SimCell {
   readonly grid: readonly [number, number] | undefined;
   readonly data: CellData;
   /** Its objects (a cart its horse pulls is the vehicles') and their collision. */
-  readonly objects: readonly {
+  objects: readonly {
     readonly object: CellObject;
     readonly collision: CollisionData | undefined;
   }[];
   readonly toggles: readonly CellToggle[];
   isEnabled: (reference: number) => boolean;
-  readonly placed: readonly PlacedObject[];
-  readonly byReference: ReadonlyMap<number, PlacedObject>;
+  placed: readonly PlacedObject[];
+  readonly byReference: Map<number, PlacedObject>;
   readonly visibility: Map<number, InstanceVisibility>;
   readonly enabledNow: Map<number, boolean>;
   readonly collision: CollisionGroup;
@@ -295,7 +296,10 @@ export class SimWorld {
           this.runtime.triggered(trigger, actor, entered);
         },
         cellOf: (at) => this.#stageCellOf(at),
-        collided: (key) => this.#cells.get(key)?.collided,
+        // A cell still being read has no collision in place yet (as the page's world viewer
+        // holds it from the start of its load): an actor near it waits for it.
+        collided: (key) =>
+          this.#cells.get(key)?.collided ?? (this.#loading.has(key) ? false : undefined),
         navmeshes: () => this.#navmeshes,
         objects: () => this.#stageObjects(),
         obstacles: () => this.#stageObstacles(),
@@ -304,6 +308,7 @@ export class SimWorld {
         interior: kind === 'interior',
         light: (at) => this.#lightProbe(at),
         player: () => this.playerView,
+        adoptVehicle: (reference) => this.#adoptVehicle(reference),
       });
       this.#stages[kind] = stage;
     }
@@ -388,6 +393,33 @@ export class SimWorld {
     for (const cell of this.#cells.values()) {
       const placed = cell.byReference.get(reference);
       if (placed) return placed;
+    }
+    return undefined;
+  }
+
+  /**
+   * A cart its horse pulls (src/shell/actor-vehicles.ts), as the viewers give it up: out of its
+   * cell, its collision with it (the vehicles collide it wherever it goes). Without this the
+   * headless carts stayed where they were placed, their riders and the player with them, while
+   * the horses walked off alone.
+   */
+  #adoptVehicle(reference: number): AdoptedVehicle | undefined {
+    for (const cell of this.#cells.values()) {
+      const entry = cell.byReference.get(reference);
+      if (!entry) continue;
+      cell.placed = cell.placed.filter((placed) => placed !== entry);
+      cell.byReference.delete(reference);
+      // The cell's collision put in again (a physics world made anew) leaves it out too.
+      cell.objects = cell.objects.filter(({ object }) => object.reference !== reference);
+      const group = cell.collision;
+      const pose = entry.instance.pose;
+      for (let i = group.articulated.length - 1; i >= 0; i--) {
+        if (pose && group.articulated[i]?.pose === pose) group.articulated.splice(i, 1);
+      }
+      for (const placed of this.#play?.placementsOf(reference) ?? []) {
+        this.#play?.removePlacement(group, placed);
+      }
+      return { object: entry.object, instance: entry.instance };
     }
     return undefined;
   }
