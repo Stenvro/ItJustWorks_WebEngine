@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { floatingMarker, HudModes, METER_KEEP_MS, MeterFade } from './hud-elements.ts';
+import { floatingMarker, HudModes, METER_KEEP_MS, MeterFade, rideModes } from './hud-elements.ts';
+
+describe('HUD riding modes', () => {
+  it('holds CartMode while a script has it so, and the horse’s modes while riding', () => {
+    const off = { cartMode: false, riding: false, drawn: false };
+    expect(rideModes({ ...off, cartMode: true })).toEqual({ cart: true, horse: undefined });
+    expect(rideModes(off)).toEqual({ cart: false, horse: undefined });
+    expect(rideModes({ ...off, riding: true })).toEqual({ cart: false, horse: 'HorseMode' });
+    expect(rideModes({ ...off, riding: true, drawn: true }).horse).toBe('WarHorseMode');
+  });
+});
 
 describe('HUD modes', () => {
   it('keeps the movie’s mode stack: the last one on shows', () => {
