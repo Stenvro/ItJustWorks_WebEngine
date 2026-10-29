@@ -30,6 +30,10 @@ const SAFE_ZONE = "the consoles' safe-zone setting: the PC's display page has no
 
 /** Names the PC game never sends or answers, and why. */
 const NOT_ON_PC: ReadonlyMap<string, string> = new Map([
+  [
+    'HideMenu',
+    'observed in the original: the engine calls HideMenu in the tween menu only (the journal is never hidden so)',
+  ],
   ['ORBISDeleteSave', CONSOLE],
   ['OpenKinectTuner', CONSOLE],
   ['ActivateJoyConStrapInstruction', CONSOLE],
@@ -105,7 +109,7 @@ for (const folder of ['src/ui', 'src/shell', 'src/gameplay']) {
 /** The files that answer every menu (play-mode.ts's common handlers, the host itself). */
 const COMMON = ['src/shell/play-mode.ts', 'src/ui/menu-host.ts', 'src/ui/menu-bridge.ts'];
 
-/** Menu files a file imports (one level): the shared item menu, the save list, src/ui. */
+/** Menu files a file imports: the shared item menu, the save list, src/ui. */
 function menuImports(file: string): string[] {
   const text = sources.get(file) ?? '';
   const found: string[] = [];
@@ -133,7 +137,16 @@ function filesFor(movie: string, importers: readonly string[]): string[] {
   }
   // A component movie (Inventory Components\ItemCard.swf) is answered by the menus loading it.
   for (const importer of importers) for (const file of filesFor(importer, [])) files.add(file);
-  for (const file of [...files]) for (const target of menuImports(file)) files.add(target);
+  // The menu files they import, and the shell's menu files those import in turn (the item
+  // menus' shared 3D); src/ui's helpers are followed one level only.
+  const queue = [...files];
+  for (let file = queue.pop(); file !== undefined; file = queue.pop()) {
+    for (const target of menuImports(file)) {
+      if (files.has(target)) continue;
+      files.add(target);
+      if (!target.startsWith('src/ui/')) queue.push(target);
+    }
+  }
   return [...files].sort();
 }
 
