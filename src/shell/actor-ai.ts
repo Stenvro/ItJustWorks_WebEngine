@@ -50,7 +50,13 @@ import { RaceSize } from '../ai/race-combat-records.ts';
 import type { Gait } from '../ai/locomotion.ts';
 import type { FlightRequest } from '../ai/flight.ts';
 import { followDistance, followerRanks } from '../ai/followers.ts';
-import { mergedInputs, sameSpace, scheduleFits, type Space } from '../ai/package-start.ts';
+import {
+  mergedInputs,
+  sameSpace,
+  scheduleFits,
+  withinPlace,
+  type Space,
+} from '../ai/package-start.ts';
 import type { ActorDoors } from './actor-doors.ts';
 import type { ActorMovers } from './actor-movers.ts';
 import type { ActorTalk } from './actor-talk.ts';
@@ -908,6 +914,16 @@ export class ActorAi {
       return at && { position: [...at.position], heading: at.rotation[2], space: spaceOf(at) };
     };
     const staged = (actor: number): StagedActor | undefined => this.#actors.get(actor)?.staged;
+    /** What a destination is: its least radius (a marker's, furniture's, anything else's). */
+    const destinationKind = async (
+      reference: number,
+    ): Promise<'marker' | 'furniture' | 'other'> => {
+      const scripts = runtime();
+      const base = await scripts?.baseOf(reference);
+      if (base === XMARKER || base === XMARKER_HEADING) return 'marker';
+      const record = base === undefined ? undefined : await scripts?.forms.record(base);
+      return record?.type === 'FURN' ? 'furniture' : 'other';
+    };
     /** The reference an alias of a quest holds now. */
     const aliasReference = (quest: number | undefined, alias: number): number | undefined =>
       quest === undefined ? undefined : runtime()?.state.quests.get(quest)?.aliases.get(alias);
@@ -964,7 +980,7 @@ export class ActorAi {
               : undefined;
           },
           // Within the place a location input names (GetWithinPackageLocation): its radius
-          // round it, in its space.
+          // round it across, its height above and below, in its space (withinPlace).
           withinPackageLocation: async (input, reference) => {
             const value = data.inputs.get(input)?.value;
             if (value?.kind !== 'location') return undefined;
@@ -972,13 +988,18 @@ export class ActorAi {
             const at = await placementOf(reference);
             if (!place || !at) return false;
             if (place.space && !sameSpace(place.space, at.space)) return false;
-            return (
-              Math.hypot(
-                at.position[0] - place.position[0],
-                at.position[1] - place.position[1],
-                at.position[2] - place.position[2],
-              ) <= Math.max(place.radius, 1)
-            );
+            const settings = aiSettingsOf(session);
+            const kind =
+              place.reference === undefined ? 'other' : await destinationKind(place.reference);
+            return withinPlace(at.position, place.position, place.radius, {
+              least:
+                kind === 'marker'
+                  ? settings.markerDestinationRadius
+                  : kind === 'furniture'
+                    ? settings.furnitureDestinationRadius
+                    : settings.distanceRadiusMinLocation,
+              height: settings.minLocationHeight,
+            });
           },
         });
       },
@@ -1224,13 +1245,7 @@ export class ActorAi {
           furniture: baseRecord?.type === 'FURN',
         };
       },
-      destinationKind: async (reference) => {
-        const scripts = runtime();
-        const base = await scripts?.baseOf(reference);
-        if (base === XMARKER || base === XMARKER_HEADING) return 'marker';
-        const record = base === undefined ? undefined : await scripts?.forms.record(base);
-        return record?.type === 'FURN' ? 'furniture' : 'other';
-      },
+      destinationKind,
       packageEvent: (actor, event, pack) => {
         // A scene's package action is done when its package completes.
         if (event === 'end') runtime()?.scenes.packageEnded(actor, pack.formId);

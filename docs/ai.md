@@ -1278,7 +1278,13 @@ from the original game's behaviour only (in our words):
   fAIFurnitureDestinationRadius at furniture (Skyrim.esm 150), fAIDistanceRadiusMinLocation
   (100) elsewhere: Travel, HoldPosition, Patrol's points, Sandbox's place, FollowTo's and
   Escort's destinations, an idle marker (the marker radius), furniture gone to (the furniture
-  radius).
+  radius). GetWithinPackageLocation measures a place the same way (observed in the original): across
+  only, on the ground's plane, within that radius, and no farther above or below than the
+  larger of the place's radius and fAIMinLocationHeight (100). So an actor whose travel to a
+  place arrived is within it: the ForceGreet templates travel to within their Forcegreet
+  Distance of the player, then greet only within it (measured in three dimensions, Gerdur's
+  force greet in Riverwood stopped 299.9 across, 300.04 apart on the slope, skipped the
+  greeting and was done).
 - **Searches:** an object or a type of object a package names (its place, its target) is the
   nearest within fAIAcquireObjectDistance (4000); furniture an empty object list asks for within
   fAIFindBedChairsDistance (8000). Find's search by object or object type also looks into the
