@@ -1265,6 +1265,10 @@ export class SimWorld {
       ...cell.data.markers
         .map((marker) => marker.reference)
         .filter((reference) => cell.isEnabled(reference)),
+      // A trigger's 3D is its box: it loads (OnLoad) as the other objects do.
+      ...cell.data.primitives
+        .map((primitive) => primitive.reference)
+        .filter((reference) => cell.isEnabled(reference)),
       ...this.stage.shownIn(cell.key).map((actor) => actor.actor.reference),
       ...[...this.#created.all]
         .filter(
@@ -1282,7 +1286,8 @@ export class SimWorld {
     for (const cell of this.#cells.values()) {
       if (
         (cell.byReference.has(reference) ||
-          cell.data.markers.some((marker) => marker.reference === reference)) &&
+          cell.data.markers.some((marker) => marker.reference === reference) ||
+          cell.data.primitives.some((primitive) => primitive.reference === reference)) &&
         cell.isEnabled(reference)
       ) {
         return true;
