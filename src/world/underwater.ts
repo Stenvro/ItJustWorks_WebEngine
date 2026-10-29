@@ -3,11 +3,18 @@
 // plane), coloured by the water's shallow colour near the camera and its deep colour far away,
 // lit by the scene's light (dark water at night). Platform-independent.
 //
-// TODO(M13): the engine's exact underwater colour (how it lights the water's colours, and the
-// image space it adds below the surface) is not observed in the original yet.
+// Below the surface the view also takes the water type's own imagespace (WATR INAM) in place of
+// the weather's or the cell's: its desaturation, tint, dimmer sun and sky, and depth of field.
+//
+// TODO(M13): the engine's exact underwater colour (how it lights the water's colours) is not
+// observed in the original yet.
 
 import type { SceneFog, SceneLighting } from '../render/scene-lighting.ts';
-import { NEUTRAL_IMAGE_SPACE, type ImageSpace } from './image-space.ts';
+import { NEUTRAL_IMAGE_SPACE, parseImageSpace, type ImageSpace } from './image-space.ts';
+import type { GameRecord } from './record-db.ts';
+
+/** A record as the underwater view reads an imagespace from it. */
+type ImageSpaceSource = Pick<GameRecord, 'type' | 'fields'>;
 import type { Vec3 } from '../render/math.ts';
 import type { WaterType } from './water.ts';
 
@@ -32,9 +39,34 @@ export function underwaterLight(lighting: Pick<SceneLighting, 'sunColor' | 'ambi
 export class UnderwaterView {
   readonly #types = new Map<number, WaterType | undefined>();
   readonly #lookup: (formId: number) => Promise<WaterType | undefined> | undefined;
+  readonly #records:
+    ((formId: number) => Promise<ImageSpaceSource | undefined> | undefined) | undefined;
+  readonly #imageSpaces = new Map<number, ImageSpace | undefined>();
+  /** The water type the camera was under at the last fog() call. */
+  #under: WaterType | undefined;
 
-  constructor(lookup: (formId: number) => Promise<WaterType | undefined> | undefined) {
+  constructor(
+    lookup: (formId: number) => Promise<WaterType | undefined> | undefined,
+    records?: (formId: number) => Promise<ImageSpaceSource | undefined> | undefined,
+  ) {
     this.#lookup = lookup;
+    this.#records = records;
+  }
+
+  /**
+   * The imagespace of the water the camera was last found under (WATR INAM), once loaded;
+   * undefined above water or for a water type without one.
+   */
+  imageSpace(): ImageSpace | undefined {
+    const formId = this.#under?.imageSpace;
+    if (formId === undefined) return undefined;
+    if (!this.#imageSpaces.has(formId)) {
+      this.#imageSpaces.set(formId, undefined);
+      void this.#records?.(formId)?.then((record) => {
+        if (record?.type === 'IMGS') this.#imageSpaces.set(formId, parseImageSpace(record));
+      });
+    }
+    return this.#imageSpaces.get(formId);
   }
 
   /** The fog below the surface; undefined above it (or while its water type loads). */
@@ -43,6 +75,7 @@ export class UnderwaterView {
     water: { readonly height: number; readonly type: number } | undefined,
     lighting: Pick<SceneLighting, 'sunColor' | 'ambient'>,
   ): SceneFog | undefined {
+    this.#under = undefined;
     if (!water || !isUnderwater(cameraZ, water.height)) return undefined;
     if (!this.#types.has(water.type)) {
       this.#types.set(water.type, undefined);
@@ -51,6 +84,7 @@ export class UnderwaterView {
       });
     }
     const type = this.#types.get(water.type);
+    this.#under = type;
     return type && underwaterFog(type, lighting);
   }
 }

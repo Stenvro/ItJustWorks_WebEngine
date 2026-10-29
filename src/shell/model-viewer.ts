@@ -44,9 +44,11 @@ import {
   cellArrival,
   doorDestination,
   loadCellData,
+  objectModelKey,
   referenceMatrix,
   type CellData,
   type CellLight,
+  type CellObject,
   type CellWaterArea,
   type DoorDestination,
   type Teleport,
@@ -1228,9 +1230,12 @@ export class ModelViewer {
     this.#stageCell = formId;
     const [models, collisions, directionals, actions, imageSpace, waterTypes, ragdolls] =
       await Promise.all([
-        Promise.all(paths.map(async (path) => [path, await this.#cellModel(path)] as const)).then(
-          (entries) => new Map(entries),
-        ),
+        // By path and alternate textures (objectModelKey).
+        Promise.all(
+          [...new Map(data.objects.map((object) => [objectModelKey(object), object]))].map(
+            async ([key, object]) => [key, await this.#cellModel(object)] as const,
+          ),
+        ).then((entries) => new Map(entries)),
         Promise.all(
           paths.map(async (path) => [path, await session?.collision(path)] as const),
         ).then((entries) => new Map(entries)),
@@ -1272,7 +1277,7 @@ export class ModelViewer {
     // the cell opens).
     const opening = enabledReferences(data, toggles, gameStartSelection(toggles), scripted);
     const placed = data.objects.flatMap((object) => {
-      const model = opening(object.reference) ? models.get(object.model) : undefined;
+      const model = opening(object.reference) ? models.get(objectModelKey(object)) : undefined;
       return model ? [{ model, world: object.world }] : [];
     });
     const decals =
@@ -1455,7 +1460,7 @@ export class ModelViewer {
         });
       }
       if (this.#hidden?.test(object.model)) continue;
-      const model = cell.models.get(object.model);
+      const model = cell.models.get(objectModelKey(object));
       const water = object.water === undefined ? undefined : cell.waterTypes.get(object.water);
       const directional = cell.directionals.get(object.reference);
       if (model && session) {
@@ -1530,7 +1535,11 @@ export class ModelViewer {
     this.#roomImageSpaces = new Map();
     this.#loadRoomImageSpaces(cellRooms);
     const imageSpace = (): ImageSpace | undefined => {
-      const own = this.#roomImageSpaces.get(cameraRoom()) ?? cell.imageSpace;
+      // Under the cell's water: the water's own imagespace (WATR INAM).
+      const own =
+        this.#underwaterView.imageSpace() ??
+        this.#roomImageSpaces.get(cameraRoom()) ??
+        cell.imageSpace;
       return this.#session?.imageSpaceModifiers.imageSpace(own) ?? own;
     };
     this.#present(scene, undefined, {
@@ -1875,7 +1884,7 @@ export class ModelViewer {
         reference: hex(o.reference),
         model: o.model,
         enabled: isEnabled(o.reference),
-        loaded: cell.models.get(o.model) !== undefined,
+        loaded: cell.models.get(objectModelKey(o)) !== undefined,
       }));
   }
 
@@ -1907,8 +1916,10 @@ export class ModelViewer {
   }
 
   /** A cell model from the session's cache; undefined for editor markers and broken files. */
-  #cellModel(path: string): Promise<GpuModel | undefined> {
-    return this.#session?.model(path) ?? Promise.resolve(undefined);
+  #cellModel(object: CellObject): Promise<GpuModel | undefined> {
+    return (
+      this.#session?.model(object.model, object.alternateTextures) ?? Promise.resolve(undefined)
+    );
   }
 
   #present(
@@ -2044,8 +2055,9 @@ export class ModelViewer {
 
   /** Whether the camera is under the interior's water. */
   /** The view below water surfaces: the water type's underwater fog (underwater.ts). */
-  readonly #underwaterView = new UnderwaterView((formId) =>
-    this.#session?.waterType(formId).then((gpu) => gpu?.type),
+  readonly #underwaterView = new UnderwaterView(
+    (formId) => this.#session?.waterType(formId).then((gpu) => gpu?.type),
+    (formId) => this.#session?.db.then((db) => db.get(formId)),
   );
 
   /** A cell's lighting, with the water type's underwater fog when the camera is under water. */

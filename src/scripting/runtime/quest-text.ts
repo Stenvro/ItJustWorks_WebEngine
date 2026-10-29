@@ -78,7 +78,10 @@ async function globalText(
   for (const formId of quest.textGlobals) {
     const record = await runtime.forms.record(formId);
     if (record?.editorId?.toLowerCase() !== wanted) continue;
-    const value = runtime.state.globals.get(formId) ?? record.fields.f32('FLTV') ?? 0;
+    // The value the quest's run holds (UpdateCurrentInstanceGlobal), else the current one.
+    // TODO(M13): inferred: what the text shows for a global the run does not hold.
+    const held = runtime.state.quests.get(quest.formId)?.instanceGlobals?.get(formId);
+    const value = held ?? runtime.state.globals.get(formId) ?? record.fields.f32('FLTV') ?? 0;
     return String(Math.trunc(value));
   }
   return undefined;

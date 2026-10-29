@@ -40,6 +40,8 @@ import type {
 import { TextureCache } from '../render/texture-cache.ts';
 import type { Vfs } from '../vfs/vfs.ts';
 import { parseAddonNode, parseLight } from '../world/cell-records.ts';
+import type { AlternateTexture } from '../world/actor-records.ts';
+import { parseTextureSet } from '../world/decal.ts';
 import { emittanceColor, emittanceWeather, type EmittanceSource } from '../world/emittance.ts';
 import {
   HD_LOD_SNOW_THRESHOLD_ANGLE,
@@ -278,6 +280,7 @@ export class GameSession {
   readonly #models = new Map<string, Promise<GpuModel | undefined>>();
   /** The loaded ones by the same key (memory and eviction). */
   readonly #loadedModels = new Map<string, GpuModel>();
+  readonly #textureSets = new Map<number, Promise<readonly string[] | undefined>>();
   readonly #borders = new Map<number, Promise<WorldBorder>>();
   readonly #worldspaces = new Map<number, Promise<Worldspace>>();
   #defaultObjects: Promise<DefaultObjects> | undefined;
@@ -576,8 +579,40 @@ export class GameSession {
    * A model for placing in scenes, with the models of its AddOnNodes attached; undefined
    * for editor markers, empty and broken files.
    */
-  model(path: string): Promise<GpuModel | undefined> {
-    return this.#model(path, true);
+  model(
+    path: string,
+    alternateTextures?: readonly AlternateTexture[],
+  ): Promise<GpuModel | undefined> {
+    if (!alternateTextures || alternateTextures.length === 0) return this.#model(path, true);
+    return this.#alternateSwaps(alternateTextures).then((swaps) =>
+      this.#model(path, true, undefined, 0, swaps),
+    );
+  }
+
+  /** Alternate textures (MODS) as texture sets by shape; sets that do not resolve are left out. */
+  async #alternateSwaps(
+    alternateTextures: readonly AlternateTexture[],
+  ): Promise<ModelTextureSwaps | undefined> {
+    const shapes = await Promise.all(
+      alternateTextures.map(async (swap) => {
+        const textures = await this.textureSet(swap.textureSet);
+        return textures ? [{ shape: swap.shape, textures }] : [];
+      }),
+    );
+    const flat = shapes.flat();
+    return flat.length > 0 ? { shapes: flat } : undefined;
+  }
+
+  /** A texture set's textures (TXST TX00..TX07), read once. */
+  textureSet(formId: number): Promise<readonly string[] | undefined> {
+    let pending = this.#textureSets.get(formId);
+    if (!pending) {
+      pending = this.db
+        .then((db) => db.get(formId))
+        .then((record) => (record?.type === 'TXST' ? parseTextureSet(record).textures : undefined));
+      this.#textureSets.set(formId, pending);
+    }
+    return pending;
   }
 
   /**

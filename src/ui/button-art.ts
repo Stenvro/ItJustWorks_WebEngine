@@ -6,6 +6,7 @@
 // map, else its first mouse binding. Platform-independent.
 
 import {
+  InputContext,
   MouseInput,
   SCAN_CODES,
   type ControlMap,
@@ -149,4 +150,38 @@ export function withKeyLabels(text: string, controls: ControlMap | undefined): s
     const event = userEvent(controls, name);
     return event ? keyLabel(buttonArt(event)) : whole;
   });
+}
+
+/** A remappable event's binding as the menus' button hints take it (SetButtonMapping). */
+export interface ButtonMapping {
+  /** The user event ("Activate"). */
+  readonly mapName: string;
+  /** The art of the key or button it is bound to ("E", "Mouse1"). */
+  readonly buttonName: string;
+}
+
+/**
+ * What every movie that registers SetButtonMapping gets as it loads, observed in the original:
+ * each gameplay event the player may remap on the mouse, then on the keyboard, with the art of
+ * its binding there (bindings without art left out). The movies' Shared.ButtonMapping turns the
+ * default art their button hints name ("E" for Activate) into the art bound now.
+ * TODO(M13): with a gamepad the original sends the gamepad's bindings (their art names).
+ */
+export function buttonMappings(controls: ControlMap | undefined): ButtonMapping[] {
+  const events = controls?.contexts[InputContext.gameplay] ?? [];
+  const mappings: ButtonMapping[] = [];
+  for (const event of events) {
+    const button = event.mouse[0];
+    if (!event.remappable[1] || button === undefined) continue;
+    const art = mouseArt(button);
+    if (art !== UNKNOWN_KEY) mappings.push({ mapName: event.name, buttonName: art });
+  }
+  for (const event of events) {
+    const key = event.keys[0];
+    const scanCode = key?.[key.length - 1];
+    if (!event.remappable[0] || scanCode === undefined) continue;
+    const art = keyArt(scanCode);
+    if (art !== UNKNOWN_KEY) mappings.push({ mapName: event.name, buttonName: art });
+  }
+  return mappings;
 }

@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { UserEvent } from '../formats/controlmap/controlmap.ts';
-import { buttonArt, keyArt, keyLabel, mouseArt, UNKNOWN_KEY, withKeyLabels } from './button-art.ts';
+import {
+  buttonArt,
+  buttonMappings,
+  keyArt,
+  keyLabel,
+  mouseArt,
+  UNKNOWN_KEY,
+  withKeyLabels,
+} from './button-art.ts';
 
 const event = (keys: number[][], mouse: number[] = []): UserEvent => ({
   name: 'Test',
@@ -64,5 +72,38 @@ describe('key labels', () => {
     expect(withKeyLabels('Press [Activate] to take, [jump] to jump [here].', controls)).toBe(
       'Press E to take, Space to jump [here].',
     );
+  });
+});
+
+describe('button mappings (SetButtonMapping)', () => {
+  it('sends the remappable gameplay events, the mouse bindings first, then the keys', () => {
+    const named = (
+      name: string,
+      keys: number[][],
+      mouse: number[],
+      remappable = true,
+    ): UserEvent => ({
+      ...event(keys, mouse),
+      name,
+      remappable: [remappable, remappable, remappable],
+    });
+    const controls = {
+      contexts: [
+        [
+          named('Right Attack/Block', [], [0]),
+          named('Activate', [[0x22]], []),
+          named('Forward', [[0x11]], []),
+          named('Console', [[0x29]], [], false),
+          named('Unbound', [[0xfe]], []),
+        ],
+        [named('Accept', [[0x1c]], [])],
+      ],
+    };
+    expect(buttonMappings(controls)).toEqual([
+      { mapName: 'Right Attack/Block', buttonName: 'Mouse1' },
+      { mapName: 'Activate', buttonName: 'G' },
+      { mapName: 'Forward', buttonName: 'W' },
+    ]);
+    expect(buttonMappings(undefined)).toEqual([]);
   });
 });
