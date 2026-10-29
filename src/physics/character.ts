@@ -128,6 +128,8 @@ const STEP_AWAY = 0.03;
 const STEP_AWAY_TRIES = 3;
 /** Held on an edge of the ground, the way is swept again from this much higher (Havok units). */
 const EDGE_LIFT = 0.02;
+/** Held on an edge: the sweep got less than this share of the way (it stuck there for good). */
+const EDGE_STUCK = 0.05;
 /**
  * A blocked actor tries these turns of its way (radians, nearest first, right and left) and
  * takes the first that gets it on: wedged in a crease between a wall and a slope (where the
@@ -922,7 +924,7 @@ export class CharacterBody {
       !rising &&
       !this.swimming &&
       wanted > 0 &&
-      moved.x * desired.x + moved.y * desired.y < wanted * STEP_BLOCKED &&
+      moved.x * desired.x + moved.y * desired.y < wanted * EDGE_STUCK &&
       this.#onlyGround()
     ) {
       const lifted = this.#fromAbove(desired, predicate);

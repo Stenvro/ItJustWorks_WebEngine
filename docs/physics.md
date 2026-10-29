@@ -267,7 +267,7 @@ angle); stairs are now climbed at about walking speed (the courtyard's 244-unit 
 0.8 s). TODO(M13): compare with how the engine uses the stairs material.
 
 Off an edge of the ground: held by nothing but walkable ground (every contact of the sweep faces
-up within the walkable slope) and getting less than 60 % of the way, the movement is swept
+up within the walkable slope) and getting nowhere (under 5 % of the way), the movement is swept
 again from 0.02 Havok units (1.4 game units) higher, the snap to the ground bringing it down.
 Ustengrav's safe fire plates are slabs 5 units high sunk a unit into the floor, their bevel
 steeper than walkable; standing on one's edge, Rapier's sweep met that edge at once on every
