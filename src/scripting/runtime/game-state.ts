@@ -42,6 +42,11 @@ export interface QuestState {
   updated: number;
   /** The story manager event that started it (its conditions and aliases read its data). */
   event?: StoryEventData;
+  /**
+   * The text display globals' values this run of the quest holds (Quest.UpdateCurrentInstanceGlobal,
+   * by global form id): its texts show these; a global not held shows its current value.
+   */
+  instanceGlobals?: Map<number, number>;
 }
 
 export interface ReferenceState {
