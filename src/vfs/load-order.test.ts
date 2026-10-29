@@ -167,6 +167,16 @@ describe('archives', () => {
     expect(order).toEqual(['Skyrim - Misc.bsa', 'Mod.bsa', 'MOD - textures.bsa']);
   });
 
+  it("mounts the marketplace's own archive below the others", () => {
+    const order = computeArchiveOrder(
+      ['Skyrim - Misc.bsa'],
+      [],
+      ['Skyrim - Misc.bsa', 'marketplacetextures.bsa'],
+    );
+    expect(order).toEqual(['marketplacetextures.bsa', 'Skyrim - Misc.bsa']);
+    expect(gameContentArchives([], []).has('marketplacetextures.bsa')).toBe(true);
+  });
+
   it("counts the INI's and the game's own plugins' archives as its content, not mods'", () => {
     const { entries } = computeLoadOrder({
       plugins: [...vanilla, plugin('ccFish.esm', { master: true }), plugin('Mod.esp')],

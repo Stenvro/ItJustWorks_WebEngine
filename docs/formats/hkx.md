@@ -199,6 +199,12 @@ clip). Reader: `src/formats/hkx/animation.ts`; check against every clip of the l
 Vanilla clips carry no extracted motion: root motion comes from the behavior projects'
 animation data ([Animation data](#animation-data)).
 
+Every vanilla clip is spline-compressed; the Creation Club fishing rod's cast and ready clips
+are **hkaInterleavedUncompressedAnimation**: after hkaAnimation's members, `transforms` at 56
+(hkArray of hkQsTransform, frame after frame, one per track) and `floats` at 72 (one per float
+track per frame). The frames are evenly spaced over the duration; between two frames we blend
+linearly (rotations the shorter way, normalized), as Havok samples uncompressed tracks.
+
 The float slots of the human skeleton are `hkFade:AnimObjectA/B/L/R` (an anim object's fade)
 and `hkVis:Shield`, `hkVis:… MagicNode`, `hkVis:Weapon` (whether the object in that node is
 drawn); a book clip fades its page in through one.

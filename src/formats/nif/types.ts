@@ -327,6 +327,60 @@ export interface NiSkinPartitionBlock {
   readonly partitions: readonly SkinPartition[];
 }
 
+/**
+ * The extra data blocks that carry one plain value or list: NiBooleanExtraData,
+ * NiFloatExtraData, NiStringsExtraData and NiBinaryExtraData (nif.xml).
+ */
+export interface ValueExtraDataBlock {
+  readonly kind: 'value-extra-data';
+  readonly type: string;
+  readonly name: string;
+  readonly value: boolean | number | readonly string[] | Uint8Array;
+}
+
+/**
+ * BSInvMarker ("INV" on a model's root): how the inventory menu shows the item: its turn about
+ * x, y and z (thousandths of a radian) and its zoom.
+ */
+export interface InvMarkerBlock {
+  readonly kind: 'inv-marker';
+  readonly name: string;
+  readonly rotation: readonly [number, number, number];
+  readonly zoom: number;
+}
+
+/** BSDecalPlacementVectorExtraData: points and normals where blood decals are placed. */
+export interface DecalPlacementBlock {
+  readonly kind: 'decal-placement';
+  readonly name: string;
+  readonly value: number;
+  readonly blocks: readonly { readonly points: Float32Array; readonly normals: Float32Array }[];
+}
+
+/** BSBoneLODExtraData: from which distance each listed bone is animated. */
+export interface BoneLodExtraDataBlock {
+  readonly kind: 'bone-lod-extra-data';
+  readonly name: string;
+  readonly levels: readonly { readonly distance: number; readonly bone: string }[];
+}
+
+/** BSMultiBound: the room bound of a BSMultiBoundNode (its data block). */
+export interface MultiBoundBlock {
+  readonly kind: 'multi-bound';
+  readonly data: Ref;
+}
+
+/** BSMultiBoundOBB and BSMultiBoundAABB: an oriented box, or an axis-aligned one. */
+export interface MultiBoundDataBlock {
+  readonly kind: 'multi-bound-data';
+  readonly type: string;
+  readonly center: Vec3;
+  /** Half extents (OBB size, AABB extent). */
+  readonly extent: Vec3;
+  /** OBB: rotation, row-major 3×3; identity for an AABB. */
+  readonly rotation: readonly number[];
+}
+
 /** Block type that is not parsed (yet); skipped using the block size. */
 export interface UnknownBlock {
   readonly kind: 'unknown';
@@ -362,6 +416,14 @@ export interface ParticleDataBlock {
     readonly startCapSize: number;
     readonly endCapSize: number;
     readonly zPrepass: boolean;
+  };
+  /** NiMeshPSysData: particles that are copies of meshes. */
+  readonly meshes?: {
+    readonly defaultPoolSize: number;
+    readonly fillPoolsOnLoad: boolean;
+    readonly generations: readonly number[];
+    /** The NiNode whose children are the particle meshes. */
+    readonly particleMeshes: Ref;
   };
 }
 
@@ -504,6 +566,53 @@ export interface FloatInterpolatorBlock {
   readonly kind: 'float-interpolator';
   readonly value: number;
   readonly data: Ref;
+}
+
+/**
+ * NiPathInterpolator: moves along a NiPosData path by a NiFloatData percentage, banking and
+ * following an axis as its flags say (nif.xml PathFlags).
+ */
+export interface PathInterpolatorBlock {
+  readonly kind: 'path-interpolator';
+  readonly flags: number;
+  readonly bankDirection: number;
+  readonly maxBankAngle: number;
+  readonly smoothing: number;
+  readonly followAxis: number;
+  readonly pathData: Ref;
+  readonly percentData: Ref;
+}
+
+/** NiLookAtInterpolator: turns toward a node, with its own translation, roll and scale. */
+export interface LookAtInterpolatorBlock {
+  readonly kind: 'look-at-interpolator';
+  /** LookAtFlags: 1 flip, 2 y axis, 4 z axis. */
+  readonly flags: number;
+  readonly lookAt: Ref;
+  readonly lookAtName: string;
+  readonly translation: Vec3;
+  readonly rotation: Quaternion;
+  readonly scale: number;
+  readonly translationInterpolator: Ref;
+  readonly rollInterpolator: Ref;
+  readonly scaleInterpolator: Ref;
+}
+
+/** BSLagBoneController: a bone that trails its parent's motion (tails, chains). */
+export interface LagBoneControllerBlock extends TimeControllerFields {
+  readonly kind: 'lag-bone-controller';
+  readonly linearVelocity: number;
+  readonly linearRotation: number;
+  readonly maximumDistance: number;
+}
+
+/** NiBSBoneLODController: the bones animated at each level of detail. */
+export interface BoneLodControllerBlock extends TimeControllerFields {
+  readonly kind: 'bone-lod-controller';
+  readonly lod: number;
+  readonly nodeGroupCount: number;
+  /** Per level: its bones. */
+  readonly nodeGroups: readonly (readonly Ref[])[];
 }
 
 export interface TransformInterpolatorBlock {
@@ -921,4 +1030,14 @@ export type NifBlock =
   | PosDataBlock
   | BoolDataBlock
   | TransformDataBlock
+  | ValueExtraDataBlock
+  | InvMarkerBlock
+  | DecalPlacementBlock
+  | BoneLodExtraDataBlock
+  | MultiBoundBlock
+  | MultiBoundDataBlock
+  | PathInterpolatorBlock
+  | LookAtInterpolatorBlock
+  | LagBoneControllerBlock
+  | BoneLodControllerBlock
   | UnknownBlock;

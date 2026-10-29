@@ -36,6 +36,11 @@ describe.skipIf(!hasGamedata())('assets in the local game data', () => {
       const nif = parseNif(await vfs.read(path));
       expect(nif.problems, path).toEqual([]);
       expect(nif.roots.length, path).toBeGreaterThan(0);
+      // Every block type the game's meshes use has a parser (nif-stats --parse: all of them).
+      const unread = nif.blocks.flatMap((block, i) =>
+        block.kind === 'unknown' ? [nif.blockTypes[i]] : [],
+      );
+      expect(unread, path).toEqual([]);
       for (const block of nif.blocks) {
         if (block.kind === 'tri-shape' && block.vertexData.length > 0) {
           expect(block.vertexData.length).toBe(block.vertexCount * block.vertexDesc.stride);

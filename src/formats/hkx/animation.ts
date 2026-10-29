@@ -1,6 +1,7 @@
 // Havok animations of a packfile's hkaAnimationContainer: skeletons, spline-compressed
-// animations (the form every vanilla clip has) with their annotations and extracted root
-// motion, and the bindings of animations to skeletons. Layout and decompression:
+// animations (the form every vanilla clip has) and uncompressed ones (the Creation Club fishing
+// rod's), with their annotations and extracted root motion, and the bindings of animations to
+// skeletons. Layout and decompression:
 // docs/formats/hkx.md ("Animations"). Platform-independent.
 
 import { FormatError } from '../binary-reader.ts';
@@ -238,6 +239,9 @@ function readBinding(pack: Packfile, object: HkxObject): AnimationBinding {
 
 export function readAnimation(pack: Packfile, object: HkxObject): HkxAnimation {
   const at = object.offset;
+  if (object.className === 'hkaInterleavedUncompressedAnimation') {
+    return readInterleavedAnimation(pack, object);
+  }
   if (object.className !== 'hkaSplineCompressedAnimation') {
     throw new FormatError(`Animations of class ${object.className} are not read`, at);
   }
@@ -281,6 +285,138 @@ export function readAnimation(pack: Packfile, object: HkxObject): HkxAnimation {
       : undefined,
     readTrackNames(pack, at + ANIMATION.annotationTracks, header.trackCount),
   );
+}
+
+/** hkaInterleavedUncompressedAnimation: every frame's transforms, then its floats. */
+const INTERLEAVED = { transforms: 56, floats: 72 } as const;
+
+/**
+ * An uncompressed animation (hkaInterleavedUncompressedAnimation, the Creation Club fishing
+ * rod's clips): one hkQsTransform per track per frame, frame after frame, and one float per
+ * float track per frame. Frames are evenly spaced over the duration.
+ */
+function readInterleavedAnimation(pack: Packfile, object: HkxObject): HkxAnimation {
+  const at = object.offset;
+  const trackCount = pack.i32(at + ANIMATION.transformTracks);
+  const floatTrackCount = pack.i32(at + ANIMATION.floatTracks);
+  const transforms = pack.array(at + INTERLEAVED.transforms);
+  const floatValues = pack.array(at + INTERLEAVED.floats);
+  const frames = trackCount > 0 ? transforms.size / trackCount : 0;
+  if (!Number.isInteger(frames) || (trackCount > 0 && frames < 1)) {
+    throw new FormatError(
+      `hkaInterleavedUncompressedAnimation: ${String(transforms.size)} transforms for ${String(trackCount)} tracks`,
+      at,
+    );
+  }
+  // Per frame and track: translation xyz, rotation xyzw, scale xyz (each hkVector4's w dropped
+  // but the quaternion's).
+  const poses = new Float32Array(transforms.size * TRANSFORM_FLOATS);
+  for (let i = 0; i < transforms.size; i++) {
+    const t = transforms.data + i * QS_TRANSFORM_SIZE;
+    const o = i * TRANSFORM_FLOATS;
+    for (let c = 0; c < 3; c++) poses[o + c] = pack.f32(t + c * 4);
+    for (let c = 0; c < 4; c++) poses[o + 3 + c] = pack.f32(t + 16 + c * 4);
+    for (let c = 0; c < 3; c++) poses[o + 7 + c] = pack.f32(t + 32 + c * 4);
+  }
+  const floats = Float32Array.from({ length: floatValues.size }, (_, i) =>
+    pack.f32(floatValues.data + i * 4),
+  );
+  const motionObject = pack.object(at + ANIMATION.extractedMotion);
+  return new InterleavedAnimation(
+    pack.f32(at + ANIMATION.duration),
+    trackCount,
+    floatTrackCount,
+    Math.max(frames, floatTrackCount > 0 ? floats.length / floatTrackCount : 0),
+    poses,
+    floats,
+    readAnnotations(pack, at + ANIMATION.annotationTracks),
+    motionObject?.className === 'hkaDefaultAnimatedReferenceFrame'
+      ? readMotion(pack, motionObject)
+      : undefined,
+    readTrackNames(pack, at + ANIMATION.annotationTracks, trackCount),
+  );
+}
+
+class InterleavedAnimation implements HkxAnimation {
+  readonly duration: number;
+  readonly trackCount: number;
+  readonly floatTrackCount: number;
+  readonly annotations: readonly AnimationAnnotation[];
+  readonly trackNames: readonly string[] | undefined;
+  readonly motion: ExtractedMotion | undefined;
+  readonly #frames: number;
+  readonly #poses: Float32Array;
+  readonly #floats: Float32Array;
+
+  constructor(
+    duration: number,
+    trackCount: number,
+    floatTrackCount: number,
+    frames: number,
+    poses: Float32Array,
+    floats: Float32Array,
+    annotations: readonly AnimationAnnotation[],
+    motion: ExtractedMotion | undefined,
+    trackNames: readonly string[] | undefined,
+  ) {
+    this.duration = duration;
+    this.trackCount = trackCount;
+    this.floatTrackCount = floatTrackCount;
+    this.#frames = frames;
+    this.#poses = poses;
+    this.#floats = floats;
+    this.annotations = annotations;
+    this.motion = motion;
+    this.trackNames = trackNames;
+  }
+
+  /**
+   * Linear between the two frames around `time`; the rotations take the shorter way and are
+   * normalized after the blend.
+   */
+  sample(time: number, out: Float32Array, floats?: Float32Array): void {
+    if (this.#frames < 1) return;
+    const last = this.#frames - 1;
+    const position =
+      last === 0 || this.duration <= 0
+        ? 0
+        : (Math.min(Math.max(time, 0), this.duration) / this.duration) * last;
+    const a = Math.min(Math.floor(position), last);
+    const b = Math.min(a + 1, last);
+    const w = position - a;
+    const poses = this.#poses;
+    const stride = this.trackCount * TRANSFORM_FLOATS;
+    for (let track = 0; track < this.trackCount; track++) {
+      const o = track * TRANSFORM_FLOATS;
+      const pa = a * stride + o;
+      const pb = b * stride + o;
+      for (let c = 0; c < 3; c++) {
+        const from = poses[pa + c] ?? 0;
+        out[o + c] = from + ((poses[pb + c] ?? 0) - from) * w;
+        const fromScale = poses[pa + 7 + c] ?? 1;
+        out[o + 7 + c] = fromScale + ((poses[pb + 7 + c] ?? 1) - fromScale) * w;
+      }
+      let dot = 0;
+      for (let c = 3; c < 7; c++) dot += (poses[pa + c] ?? 0) * (poses[pb + c] ?? 0);
+      const sign = dot < 0 ? -1 : 1;
+      let length = 0;
+      for (let c = 3; c < 7; c++) {
+        const from = poses[pa + c] ?? 0;
+        const value = from + ((poses[pb + c] ?? 0) * sign - from) * w;
+        out[o + c] = value;
+        length += value * value;
+      }
+      length = Math.sqrt(length) || 1;
+      for (let c = 3; c < 7; c++) out[o + c] = (out[o + c] ?? 0) / length;
+    }
+    if (!floats) return;
+    const values = this.#floats;
+    const count = this.floatTrackCount;
+    for (let i = 0; i < count; i++) {
+      const from = values[a * count + i] ?? 0;
+      floats[i] = from + ((values[b * count + i] ?? from) - from) * w;
+    }
+  }
 }
 
 /**

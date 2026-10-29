@@ -81,6 +81,19 @@ Encoding: SSE's English tables are **mostly UTF-8**, but some DL/IL strings cont
 are not valid UTF-8. Strings are therefore decoded as UTF-8 where valid and as Windows-1252
 otherwise.
 
+## SEQ files
+
+`seq\<plugin>.seq` (in Skyrim - Misc.bsa and the Creation Club archives): nothing but u32 form
+ids, the plugin's start-game-enabled quests that the Creation Kit lists for the engine to start
+with the game (330 in Skyrim.esm's, 51 Dawnguard, 30 Dragonborn, 7 HearthFires, 3 Update; the
+Fish and Saints & Seducers Creations have theirs, the other Creations none). The ids are in the
+plugin's own form id space. HearthFires.esm's file predates its Update.esm master: its own
+quests carry index 01 rather than 02 (found by their object index under the plugin's own).
+Not every start-game-enabled quest is listed (Update.esm lists 3 of 25), and Fish lists one
+quest without the flag (ccBGSSSE001_Start_MQ1). TODO(M12): what the original does with them
+(starting a plugin's quests in a save that did not have it). Reader: `src/formats/esm/seq.ts`,
+`node tools/seq-info.ts`.
+
 ## Cells
 
 **CELL:** DATA flag `0x1` = interior. XCLL (92 bytes): ambient, directional and fog-near colours

@@ -99,6 +99,33 @@ bounding sphere, vertex colors (RGBA floats), **one** UV set if data flags & 1,
 consistency flags, additional data ref, triangle count, triangle point count, triangles,
 match groups.
 
+## Extra data and room bounds
+
+`src/formats/nif/extra-blocks.ts` (every block type the vanilla meshes use is parsed:
+`nif-stats --parse`, docs/completeness/formats.md):
+
+- NiBooleanExtraData (u8), NiFloatExtraData (f32), NiBinaryExtraData (u32 size + bytes) after
+  their name. NiStringsExtraData: u32 count, then **sized strings** (u32 length + text), not
+  header string indices.
+- BSInvMarker ("INV"): u16 rotation x, y, z (thousandths of a radian), f32 zoom: how the
+  inventory menu turns and frames the item.
+- BSDecalPlacementVectorExtraData: NiFloatExtraData's value, then u16 blocks of (u16 count,
+  count points, count normals): where blood decals go.
+- BSBoneLODExtraData: u32 count of (u32 distance, bone name).
+- BSMultiBound: a ref to its data. BSMultiBoundOBB: centre, size (half extents), 3×3 rotation;
+  BSMultiBoundAABB: position, extent.
+- BSLagBoneController (after NiTimeController): linear velocity, linear rotation, maximum
+  distance. NiBSBoneLODController: current LOD, level count, node group count, then one node
+  set (u32 count, node pointers) per level; the shape groups nif.xml lists end before 20.2.0.7.
+- NiPathInterpolator: u16 flags, i32 bank direction, f32 max bank angle, f32 smoothing, i16
+  follow axis, refs to NiPosData (the path) and NiFloatData (the percentage).
+  NiLookAtInterpolator: u16 flags, the look-at pointer and its name, its own transform
+  (translation, quaternion w first, scale: kept until 20.4.0.12), then translation, roll and
+  scale interpolators.
+- NiMeshParticleSystem reads as NiParticleSystem; NiMeshPSysData adds u32 default pool size,
+  bool fill pools on load, u32 count + generations, and the NiNode of the particle meshes.
+  BSPSysHavokUpdateModifier: the modifier's base, u32 count + node refs, the modifier it feeds.
+
 ## Hidden objects
 
 - Objects whose name contains `EditorMarker`, `LRTMarker`, `AnimInteractionMarker` or

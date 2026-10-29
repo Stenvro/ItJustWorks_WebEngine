@@ -56,12 +56,13 @@ describe.skipIf(!hasGamedata())('VFS on the local game data', () => {
 
   it('loads the INI archives first, then the plugin archives', () => {
     const names = vfs.archives.map((a) => a.name);
-    expect(names[0]).toBe('Skyrim - Misc.bsa');
+    // The marketplace opens its own archive (the Creation Club menu's images), below the rest.
+    expect(names[0]).toBe('MarketplaceTextures.bsa');
+    expect(names[1]).toBe('Skyrim - Misc.bsa');
     expect(names).toContain('Skyrim - Textures8.bsa');
     expect(names.indexOf('Skyrim - Textures8.bsa')).toBeLessThan(
       names.indexOf('ccBGSSSE001-Fish.bsa'),
     );
-    expect(names).not.toContain('MarketplaceTextures.bsa');
   });
 
   it('reads files from different archives', async () => {

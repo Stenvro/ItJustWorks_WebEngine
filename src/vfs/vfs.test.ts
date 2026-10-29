@@ -42,6 +42,7 @@ describe('Vfs', () => {
     const vfs = await Vfs.mount(new MemoryGameFolder(installation(), root));
     expect(vfs.loadOrder.map((e) => e.name)).toEqual(['Skyrim.esm', 'Update.esm', 'ccFish.esm']);
     expect(vfs.archives.map((a) => a.name)).toEqual([
+      'MarketplaceTextures.bsa',
       'Skyrim - Misc.bsa',
       'Skyrim - Textures0.bsa',
       'ccFish.bsa',
@@ -168,6 +169,7 @@ describe('Vfs', () => {
     expect(iniValue(vfs.ini, 'General', 'uGridsToLoad')).toBe('7');
     expect(vfs.pluginInis).toEqual(['Mod.ini']);
     expect(vfs.archives.map((a) => a.name)).toEqual([
+      'MarketplaceTextures.bsa',
       'Skyrim - Misc.bsa',
       'Skyrim - Textures0.bsa',
       'Extra.bsa',

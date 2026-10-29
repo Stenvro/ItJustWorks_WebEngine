@@ -192,6 +192,22 @@ These run through every area and explain most of what breaks in play.
 | Console                        | partial | about 115 commands, tfc 1 (world held still), tdetect (no variants: a toggle that clears what actors detected): done; near trees under tt                                                                                                                                         |
 | Tutorials, loading, map, stats | partial | low-stat tutorials, map relief overlay (its settings and textures named: docs/ui.md), beast perk trees, Survival HUD                                                                                                                                                              |
 
+### File formats
+
+The checklist is docs/completeness/formats.md (`node tools/format-census.ts` and the per-format
+sweeps): 154 items, 53 done (2026-10-29).
+
+| System                    | Status   | Main gaps                                                                                                                                         |
+| ------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Archives, load order, INI | complete | (every archive and file read; the marketplace's archive mounted: 2026-10-29)                                                                      |
+| Plugin structure, strings | complete | localized fields besides FULL not swept; VMAD not swept                                                                                           |
+| Record subrecords         | partial  | 27 of 120 record types read completely; 640 pairs read only where the type is not named (to check), 74 pairs no code reads (REFR XNDP, XPWR, ...) |
+| NIF                       | partial  | every block type parsed (2026-10-29); 107 fields read past but not kept                                                                           |
+| DDS, PEX, audio, TRI, LOD | complete |                                                                                                                                                   |
+| HKX                       | partial  | the skeletons' ragdoll physics (hkp classes) not read; member coverage of the read classes unchecked (uncompressed clips: done)                   |
+| ESS                       | partial  | 13 of 30 global data types; change forms partly (actor data, base objects)                                                                        |
+| SEQ                       | partial  | read (2026-10-29); its use when a plugin is new to a save (M12)                                                                                   |
+
 ## Order of work
 
 Systems that everything uses come first; each phase makes the next cheaper.
