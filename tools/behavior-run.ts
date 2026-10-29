@@ -24,6 +24,8 @@
 //       --vector sets a vector variable at the start, --vector-at at a time (t:Name=x,y,z,w)
 //   node tools/behavior-run.ts <project> --event NPC_TurnRight180 --far 500 --every 3
 //       bones farther than 500 units from the model's origin at each printed step
+//   node tools/behavior-run.ts <project> --restore game.sav --time 1
+//       the graph goes on from the player's body graph a save of ours keeps
 
 import { BehaviorRuntime, type BehaviorHost } from '../src/animation/behavior-runtime.ts';
 import { ModelSpace } from '../src/animation/procedural.ts';
@@ -40,6 +42,8 @@ import {
 import { Packfile } from '../src/formats/hkx/packfile.ts';
 import { AnimationDataLibrary } from '../src/animation/animation-data-library.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
+import { readGameSave } from '../src/save/game-save.ts';
+import { readFile } from 'node:fs/promises';
 import { openGameFolder } from './gamedata-path.ts';
 
 const args = process.argv.slice(2);
@@ -277,6 +281,18 @@ const setVector = (assignment: string): string => {
   return name;
 };
 for (const assignment of option('--vector')) setVector(assignment);
+// --restore <save file>: the graph goes on from the player's body graph as the save keeps it
+// (--actor <hex reference>: that actor's).
+for (const path of option('--restore')) {
+  const { save } = await readGameSave(new Uint8Array(await readFile(path)));
+  const actor = option('--actor')[0];
+  const body =
+    actor === undefined
+      ? save.world?.playerGraphs?.body
+      : save.world?.actors.find((saved) => saved.reference === parseInt(actor, 16))?.graph;
+  if (body && 'files' in body) runtime.restoreActorState(body);
+  else console.log(`  ${path} keeps no such actor graph`);
+}
 
 // The world the procedural modifiers see: the character at the origin facing +y, a look
 // target, the ground (flat at --ground, rising to the right at --slope degrees).

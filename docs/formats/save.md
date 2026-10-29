@@ -274,6 +274,12 @@ direction). Ours
 - The variables by name, those whose values moved from their files' initial ones (put back over
   a graph that starts at the initial values, the same as keeping them all), and the vector
   variables (TargetLocation).
+- The events it has not handled yet, by name with their payloads (an event a node raises is
+  handled at the graph's next update): put back, they are handled as it first runs, not raised
+  to the engine again. Lost, the graph stayed in the state the event would have taken it from:
+  the player saved the frame the Whirlwind Sprint's release clip reached its end (raising
+  shoutStop) loaded with their graph held in the shout for ever, animation-driven and unable to
+  move.
 
 As an actor is placed (the player as their body is there), its graph is put back before it first
 runs: its variables, each machine starts in its saved state as long in it as it was (its enter
@@ -291,7 +297,7 @@ active, and kept so, the player saved just up from the opening's block stayed an
 (bAnimationDriven) and could not walk.
 
 Not kept (TODO(M13)): a transition's blend (the machine goes on in the state it blends to), a
-syncing blender's phase, the modifiers' own states (a timer's seconds), the events queued; the
+syncing blender's phase, the modifiers' own states (a timer's seconds); the
 engine's own side of a bleedout and of a paired animation (who holds whom: their graphs go on in
 those states, the systems' bookkeeping is not saved yet). Machines inside behavior references of
 the placed objects' graphs (`graphs`, above) are not kept either.
