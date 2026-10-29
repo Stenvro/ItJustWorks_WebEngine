@@ -1463,7 +1463,10 @@ HasBeenEaten, IsPoison.
   (Skyrim.esm: 0.1, 1.45) health, through Mod Falling Damage (UESP "Skyrim:Damage"; none in
   water); every other actor, horses too, by the NPCs' settings (fJumpFallHeightMinNPC 450,
   exponent 1.65), and one getting up from a ragdoll against a quarter of the minimum height (the
-  engine's landing and ragdoll end, observed in the original; docs/physics.md). TODO(M13): difficulty.
+  engine's landing and ragdoll end, observed in the original; docs/physics.md). A fall that
+  takes the player's health to 0 kills them as a blow does (docs/ai.md, "The player's death").
+  fJumpFallRiderMult and fJumpFallSkillBase / fJumpFallSkillMult are settings the engine still
+  has but reads nowhere (observed in the original). TODO(M13): difficulty.
 
 No vanilla perk uses and no system asks Calculate Mine Explode Chance,
 Adjust Limb Damage, Get Should Attack, Mod Addiction Chance / Duration, Mod Positive Chem
