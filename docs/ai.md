@@ -2231,12 +2231,27 @@ meanwhile.
   fDefaultAutoVanityZoom (300) and slowly going round it, kept out of walls by a sphere of
   fCameraCasterBleedOutSize (5) on L_CAMERA that passes the body itself. TODO(M13): the
   bleedout camera's pitch, turn speed and zoom are not documented (its state keeps a zoom, a
-  pitch, a yaw and a random heading). fPlayerDeathReloadTime (5 s) of game time after the death
-  (a menu holds it) the game loads its most recent save; TODO(M12): savegames: until then it
-  ends as the system page's Quit to main menu does. The sandbox, with no saves, leaves the
-  body lying. TODO(M13): Resurrect on the player; GMST sMiscPlayerDead\* (a message box the
-  data still has: "Reloading the most recent save game", Reload / Main Menu) is not known to
-  show.
+  pitch, a yaw and a random heading). The engine has no fDeathCamera\* settings; the death
+  camera is this bleedout camera. fPlayerDeathReloadTime (5 s) of game time after the death (a
+  menu holds it; observed in the original: the wait begins as the player starts dying) the
+  Play mode loads the most recent save, or, without one, goes back to the main menu as the
+  system page's Quit does. A fPlayerDeathReloadTime of 0 or less (a mod's) waits for nothing and
+  asks instead: a message box with sMiscPlayerDeadMessage ("Reloading the most recent save
+  game") and the buttons sMiscPlayerDeadLoadOption (Reload) and sMiscPlayerDeadMenuOption (Main
+  Menu). The sandbox and the simulation, with no saves, leave the body lying
+  (PlayerDeath.reloadDue tells the cases). The death is the runtime's, not the play's: a play
+  begun while the player is dead (a load door, fast travel, a script's move into another place)
+  shows them dead again, their keys doing nothing (found in the simulation: a player who fell to
+  their death walked on after a load door). Their health is not regenerated (the progression
+  engine skips the dead) and further falls and blows do nothing to them.
+  An essential player (a script's alias: the brawls' DGIntimidateQuest and C03Rampage, and
+  DLC2BookDungeonController; SetEssential on the player's base) bleeds out instead: their keys
+  do nothing (PlaySession.bleedingOut: no movement, activation, attacks or casts), the same
+  bleedout camera looks at them, their graph kneels (ActionBleedoutStart), OnEnterBleedout goes
+  out, and once recovered (as an NPC's bleedout above) they get up (ActionBleedoutStop; their
+  graph's get-up holds them a moment) with their keys and camera back. Tests:
+  tests/sim-player-death.int.test.ts. TODO(M13): Resurrect on the player (the stage does not
+  stand the dead player up again).
 - **Killmoves**: an attack whose idle is a paired one ("pa_<name>" for the attacker, "<name>"
   for the target) plays only if the target's graph takes its side; the target goes to its mark
   in the paired clip and dies at its KillActor or KillMoveEnd; the player's play in the kill

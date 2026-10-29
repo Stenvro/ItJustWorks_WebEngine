@@ -396,6 +396,11 @@ export interface ActorCombatOptions {
   readonly get: (reference: number) => StagedActor | undefined;
   /** The dead player's body (src/shell/player-death.ts): the killing blow pushes it. */
   readonly playerBody?: () => BodyHolder | undefined;
+  /**
+   * The player began (true) or ended (false) bleeding out (src/shell/player-death.ts): their
+   * controls stop and the bleedout camera looks at them meanwhile.
+   */
+  readonly playerBleedout?: (on: boolean) => void;
   /** What the actors say (their combat lines: Attack, Hit, Block, BleedOut, Death, ...). */
   readonly talk?: () => ActorTalk | undefined;
   /** What they notice (an attack heard, the attacked searching, sneak attacks' awareness). */
@@ -602,7 +607,7 @@ export class ActorCombat implements CombatBridge {
       this.#input = new PlayerCombat(
         this,
         play.player,
-        () => !play.seated && !play.dead && !play.knocked && !this.#options.session.menuMode,
+        () => !play.seated && !play.held && !this.#options.session.menuMode,
         () => this.#options.casting?.(),
         // A bow zoomed (Eagle Eye): the view's factor (src/shell/time-flow.ts).
         (wanted, weapon) => this.#options.session.time.bowZoom(wanted, weapon),
@@ -829,6 +834,7 @@ export class ActorCombat implements CombatBridge {
       if (other.target === actor) other.target = undefined;
     }
     if (fighter.target === source) fighter.target = undefined;
+    if (fighter.player) this.#options.playerBleedout?.(true);
     void this.#act(fighter, 'ActionBleedoutStart');
     this.#bark(fighter.reference, 'BleedOut', source);
     // The hub tells it (TESEnterBleedoutEvent: OnEnterBleedout), as the engine does when an
@@ -1643,6 +1649,7 @@ export class ActorCombat implements CombatBridge {
     ) {
       fighter.state.life = LifeState.alive;
       fighter.down = 0;
+      if (fighter.player) this.#options.playerBleedout?.(false);
       await this.#act(fighter, 'ActionBleedoutStop');
     }
   }

@@ -491,6 +491,9 @@ export class ActorStage {
       actors: () => this.#actors.values(),
       get: (reference) => this.#actors.get(reference),
       playerBody: () => this.playerDeath.body,
+      playerBleedout: (on) => {
+        this.playerDeath.bleedout(on);
+      },
       talk: () => this.talk,
       senses: () => this.senses,
       casting: () => this.playerCasting,
@@ -2263,6 +2266,15 @@ export class ActorStage {
     // The knocked down that begin to get up are stood where their get-up was matched.
     this.knockdowns.afterAnimate();
     this.bodies.frame(this.#withPlayerBody(), this.#options.focus?.(), frame);
+    // The death is the runtime's: a play begun while the player is dead (a load door, a
+    // script's move, fast travel) shows them dead again, their keys doing nothing (once their
+    // avatar is made: its body is what falls).
+    if (
+      !this.playerDeath.dead &&
+      this.#options.player?.()?.avatar !== undefined &&
+      this.#options.session.scriptsReady?.state.actors.get(PLAYER_REF)?.dead === true
+    )
+      this.#playerDied();
     this.playerDeath.frame(frame);
     // Heads come off (the cuts queued), and those cut off follow their bodies.
     this.dismemberment.frame(frame);

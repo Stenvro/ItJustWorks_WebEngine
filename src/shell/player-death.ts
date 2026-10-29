@@ -7,7 +7,12 @@
 // the camera goes to the bleedout camera on the body (src/shell/death-camera.ts); enemies leave
 // the dead (src/shell/actor-combat.ts). fPlayerDeathReloadTime later the game loads its most
 // recent save: the Play mode's to do (HudSignals.menus.reloadAfterDeath); the sandbox, which
-// has no saves, leaves the body lying.
+// has no saves, leaves the body lying. The death is the runtime's: a play begun while the player
+// is dead (a load door, a script's move, fast travel) shows them dead again (ActorStage frame).
+//
+// An essential player (a script's alias: a brawl) bleeds out instead (actor-combat.ts): their
+// keys do nothing (PlaySession.bleedingOut) and the same bleedout camera looks at them until they
+// get up.
 
 import {
   PLAYER_DEATH_DEFAULTS,
@@ -44,6 +49,9 @@ export class PlayerDeath {
   #settings: PlayerDeathSettings = PLAYER_DEATH_DEFAULTS;
   #settingsRead = false;
   #dying: Dying | undefined;
+  /** The bleedout camera while the player bleeds out, and the seconds it has looked. */
+  #bleeding:
+    { readonly view: PlayerView; readonly camera: DeathCamera; elapsed: number } | undefined;
 
   constructor(options: PlayerDeathOptions) {
     this.#options = options;
@@ -57,6 +65,11 @@ export class PlayerDeath {
   /** The dead player's body, as ActorBodies keeps it (the killing blow pushes it). */
   get body(): BodyHolder | undefined {
     return this.#dying?.holder;
+  }
+
+  /** Whether the reload has come due (fPlayerDeathReloadTime after the death). */
+  get reloadDue(): boolean {
+    return this.#dying?.timer.due === true;
   }
 
   /** The death's settings (the knocked-down player's camera is the same bleedout camera). */
@@ -134,6 +147,7 @@ export class PlayerDeath {
       turn: Math.random() < 0.5 ? -1 : 1,
     });
     play.cameraOverride = camera;
+    this.#endBleedout();
     this.#dying = { view, holder, camera, timer: new PlayerDeathTimer(this.#settings) };
     // Its menus close (a conversation, a container), as dying ends them in the game.
     this.#options.session.hud.menus?.playerDied?.();
@@ -141,10 +155,63 @@ export class PlayerDeath {
   }
 
   /**
+   * The player began (true) or ended (false) bleeding out: their keys stop, the camera goes to
+   * the bleedout camera on their body (kneeling, as their graph's bleedout idle has them).
+   */
+  bleedout(on: boolean): void {
+    if (!on) {
+      this.#endBleedout();
+      return;
+    }
+    const view = this.#options.player();
+    if (!view || this.#dying || this.#bleeding) return;
+    this.prepare();
+    const { play, avatar } = view;
+    const player = play.player;
+    play.bleedingOut = true;
+    player.releaseAll();
+    player.sneaking = false;
+    player.character.velocity = [0, 0];
+    const current = play.view;
+    const camera = new DeathCamera({
+      from: {
+        position: [...current.position],
+        forward: current.forward ? [...current.forward] : [...player.forward],
+      },
+      body: avatar?.body,
+      world: avatar?.placement.world ?? feetWorld(player.feet),
+      physics: play.physics,
+      settings: this.#settings,
+      lens: player,
+      turn: Math.random() < 0.5 ? -1 : 1,
+    });
+    play.cameraOverride = camera;
+    this.#bleeding = { view, camera, elapsed: 0 };
+  }
+
+  /** The bleedout ends (got up, died, the play ended): the keys and the camera are theirs again. */
+  #endBleedout(): void {
+    const bleeding = this.#bleeding;
+    this.#bleeding = undefined;
+    if (!bleeding) return;
+    const { play } = bleeding.view;
+    play.bleedingOut = false;
+    if (play.cameraOverride === bleeding.camera) play.cameraOverride = undefined;
+  }
+
+  /**
    * Every frame (the game's seconds: a menu holds them): the camera on the body; the reload
    * once fPlayerDeathReloadTime has passed.
    */
   frame(seconds: number): void {
+    const bleeding = this.#bleeding;
+    if (bleeding) {
+      bleeding.elapsed += seconds;
+      bleeding.camera.elapsed = bleeding.elapsed;
+      // A killmove's camera gives way to it, as to the death camera.
+      const { play } = bleeding.view;
+      if (play.cameraOverride !== bleeding.camera) play.cameraOverride = bleeding.camera;
+    }
     const dying = this.#dying;
     if (!dying) return;
     const { play } = dying.view;
@@ -158,8 +225,10 @@ export class PlayerDeath {
     const menus = this.#options.session.hud.menus;
     // After this frame: the reload ends the world this frame is drawing.
     if (menus?.reloadAfterDeath) {
+      // fPlayerDeathReloadTime 0 or less: the game asks first (Reload or Main Menu).
+      const ask = dying.timer.asks;
       setTimeout(() => {
-        if (this.#dying === dying) menus.reloadAfterDeath?.();
+        if (this.#dying === dying) menus.reloadAfterDeath?.(ask);
       }, 0);
     } else {
       this.#options.terminal.log(
@@ -172,6 +241,7 @@ export class PlayerDeath {
 
   /** The play ended (the stage lets go of it): the death with it. */
   clear(): void {
+    this.#endBleedout();
     const dying = this.#dying;
     this.#dying = undefined;
     if (dying && dying.view.play.cameraOverride === dying.camera) {
