@@ -266,6 +266,15 @@ at about 40 % of walking speed (its controller moves along the edge's slope at c
 angle); stairs are now climbed at about walking speed (the courtyard's 244-unit stairs in
 0.8 s). TODO(M13): compare with how the engine uses the stairs material.
 
+Off an edge of the ground: held by nothing but walkable ground (every contact of the sweep faces
+up within the walkable slope) and getting less than 60 % of the way, the movement is swept
+again from 0.02 Havok units (1.4 game units) higher, the snap to the ground bringing it down.
+Ustengrav's safe fire plates are slabs 5 units high sunk a unit into the floor, their bevel
+steeper than walkable; standing on one's edge, Rapier's sweep met that edge at once on every
+slide, whichever way the player went, and they stuck there for good (the stairs past the fire
+plates in Ustengrav02). Havok's character proxy walks off such an edge (TODO(M13): its own
+handling of edges was not read).
+
 Off the stairs the same step is tried — the engine's controller has a TryStep (CommonLibSSE:
 `bhkCharacterController` flags kTryStep beside kOnStairs) — but only onto ground actors walk:
 the cells' navigation meshes (`NavmeshSurface`, within 24 units of the mesh). Rubble piles,
