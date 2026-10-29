@@ -173,6 +173,8 @@ export class WorldSky {
     { lens: LensFlare; textures: Map<string, GPUTexture> } | undefined
   >();
   #imageSpace: ImageSpace | undefined;
+  /** The imagespace of the water the camera is under (WATR INAM); undefined above water. */
+  #underwaterImageSpace: ImageSpace | undefined;
   readonly #detach: () => void;
   /** The sky's current and outgoing weather of the last frame, and the change between. */
   #weather: WeatherRecord | undefined;
@@ -422,8 +424,9 @@ export class WorldSky {
     }
     // The image-space modifiers on the screen change the weather's imagespace (also the
     // Sunlight Scale the directional light takes from it).
+    // Under water, the water's own imagespace takes the weather's place.
     this.#imageSpace = this.#session.imageSpaceModifiers.imageSpace(
-      spaces.length > 0 ? blendImageSpaces(spaces) : undefined,
+      this.#underwaterImageSpace ?? (spaces.length > 0 ? blendImageSpaces(spaces) : undefined),
       now,
     );
     this.#falling = [];
@@ -489,6 +492,11 @@ export class WorldSky {
   /** The weather's imagespace of the last frame (blended by time of day, with modifiers). */
   imageSpace(): ImageSpace | undefined {
     return this.#imageSpace;
+  }
+
+  /** The imagespace of the water the camera is under, in the weather's place (or undefined). */
+  setUnderwaterImageSpace(space: ImageSpace | undefined): void {
+    this.#underwaterImageSpace = space;
   }
 
   /** Directional light, ambient and fog of the last frame. */
