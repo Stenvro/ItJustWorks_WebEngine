@@ -972,6 +972,8 @@ export class ScriptRuntime implements VmHost {
   #persistent: Promise<PersistentIndex> | undefined;
   /** References whose scripts have started (OnInit): persistent ones at the game's start. */
   readonly #initialized = new Set<number>();
+  /** The references with scripts in the loaded area's cells (cellAttached to cellDetached). */
+  readonly #attached = new Set<number>();
   readonly #clockGlobals = new Map<number, ClockGlobal>();
   #globalsByName: Promise<Map<string, { formId: number; value: number | undefined }>> | undefined;
   #globalsById: Promise<Map<number, number | undefined>> | undefined;
@@ -1222,6 +1224,7 @@ export class ScriptRuntime implements VmHost {
     for (const reference of references) {
       if (await this.#hasScripts(reference)) scripted.push(reference);
     }
+    for (const reference of scripted) this.#attached.add(reference);
     for (const reference of scripted) {
       if (this.#initialized.has(reference)) continue;
       this.#initialized.add(reference);
@@ -1255,6 +1258,7 @@ export class ScriptRuntime implements VmHost {
       this.animationGraphUnloaded(reference);
     }
     for (const reference of references) {
+      this.#attached.delete(reference);
       if (!(await this.#hasScripts(reference))) continue;
       if (loaded(reference)) this.events.emit('objectLoaded', { reference, loaded: false });
       this.events.emit('cellAttachDetach', { reference, attached: false });
@@ -1922,6 +1926,12 @@ export class ScriptRuntime implements VmHost {
     if ((await this.isEnabled(reference)) === enabled) return;
     this.state.reference(reference).enabled = enabled;
     this.world.enableChanged?.(reference, enabled);
+    // In the loaded area its 3D comes and goes with it (the Creation Kit's OnLoad and OnUnload):
+    // a trigger a quest enables mid-scene (MQ101DragonAttack's square trigger) sets itself up
+    // in its OnLoad as one in a cell that attaches does.
+    if (this.#attached.has(reference)) {
+      this.events.emit('objectLoaded', { reference, loaded: enabled });
+    }
   }
 
   async linkedReference(reference: number, keyword: number): Promise<number | undefined> {

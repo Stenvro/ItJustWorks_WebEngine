@@ -645,6 +645,10 @@ export class ModelViewer {
       ...cell.data.markers
         .map((marker) => marker.reference)
         .filter((reference) => this.#isEnabled(reference)),
+      // A trigger's 3D is its box: it loads (OnLoad) as the other objects do.
+      ...cell.data.primitives
+        .map((primitive) => primitive.reference)
+        .filter((reference) => this.#isEnabled(reference)),
       ...[...(this.#stage?.shown() ?? [])].map((actor) => actor.actor.reference),
       ...[...(this.#created?.all ?? [])]
         .filter((entry) => !entry.visibility.hidden)
