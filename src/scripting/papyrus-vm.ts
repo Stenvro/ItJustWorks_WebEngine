@@ -20,6 +20,7 @@ import { chainOf, extendsScript, type LoadedScript, type ScriptLibrary } from '.
 import {
   defaultValue,
   elementType,
+  floatText,
   formatValue,
   isArrayType,
   isObjectType,
@@ -151,6 +152,8 @@ export class PapyrusError extends Error {
 }
 
 const MAX_DEPTH = 64;
+/** The most elements an array may have (observed in the original). */
+const MAX_ARRAY_SIZE = 128;
 /** Instructions a thread may run without waiting at all (an endless loop where no frames come). */
 const MAX_INSTRUCTIONS = 2_000_000;
 /**
@@ -1382,6 +1385,41 @@ export class PapyrusVm {
    * Where a thread is, for the log as the game's Papyrus log gives a stack: the innermost
    * functions first ("Script.Function [object]"), at most three.
    */
+  /**
+   * An error of the script itself, which the original logs with the thread's stack (in its
+   * wording) and which does not stop the thread.
+   */
+  #scriptError(thread: Thread, message: string): void {
+    this.gameLog(`${this.#where(thread)}: ${message}`);
+  }
+
+  /** Whether an array access is in range; if not, the script's error (observed in the original). */
+  #element(thread: Thread, array: Value, index: number): array is PapyrusArray {
+    if (!(array instanceof PapyrusArray)) {
+      this.#scriptError(
+        thread,
+        array === null
+          ? 'Cannot access an element of a None array'
+          : 'Cannot access an element of a non-array variable',
+      );
+      return false;
+    }
+    if (Number.isInteger(index) && index >= 0 && index < array.items.length) return true;
+    // The upper bound is the last index as an unsigned number (an empty array's wraps).
+    const last = (array.items.length - 1) >>> 0;
+    this.#scriptError(thread, `Array index ${String(index)} is out of range (0-${String(last)})`);
+    return false;
+  }
+
+  /**
+   * A value as a string (a cast to string, a concatenation): a float as the original prints it
+   * (six decimals), by the type of the variable or literal it comes from.
+   */
+  #text(frame: Frame, source: PexValue, value: Value): string {
+    const float = source.kind === 'float' || this.#typeOf(frame, source).toLowerCase() === 'float';
+    return float && typeof value === 'number' ? floatText(value) : formatValue(value);
+  }
+
   #where(thread: Thread): string {
     const frames = thread.frames.slice(-3).reverse();
     if (frames.length === 0) return 'the engine';
@@ -1639,19 +1677,24 @@ export class PapyrusVm {
         case 'fmul':
           set(0, num(get(1)) * num(get(2)));
           break;
+        // A division by zero is the script's error and leaves the result as it was (observed
+        // in the original, for the integer and the float division and the modulo).
         case 'idiv': {
           const divisor = num(get(2));
-          set(0, divisor === 0 ? 0 : Math.trunc(num(get(1)) / divisor) | 0);
+          if (divisor === 0) this.#scriptError(thread, 'Cannot divide by zero');
+          else set(0, Math.trunc(num(get(1)) / divisor) | 0);
           break;
         }
         case 'fdiv': {
           const divisor = num(get(2));
-          set(0, divisor === 0 ? 0 : num(get(1)) / divisor);
+          if (divisor === 0) this.#scriptError(thread, 'Cannot divide by zero');
+          else set(0, num(get(1)) / divisor);
           break;
         }
         case 'imod': {
           const divisor = num(get(2));
-          set(0, divisor === 0 ? 0 : (num(get(1)) % divisor) | 0);
+          if (divisor === 0) this.#scriptError(thread, 'Cannot divide by zero');
+          else set(0, (num(get(1)) % divisor) | 0);
           break;
         }
         case 'not':
@@ -1680,7 +1723,10 @@ export class PapyrusVm {
         case 'cast': {
           const value = get(1);
           const type = this.#typeOf(frame, arg(0));
-          const cast = await this.#cast(value, type);
+          const cast =
+            type.toLowerCase() === 'string'
+              ? this.#text(frame, arg(1), value)
+              : await this.#cast(value, type);
           set(0, cast);
           // A failed cast of an object, for the log line of a call on the None it gave.
           const name = identifier(arg(0)).toLowerCase();
@@ -1789,7 +1835,7 @@ export class PapyrusVm {
         case 'return':
           return get(0);
         case 'strcat':
-          set(0, formatValue(get(1)) + formatValue(get(2)));
+          set(0, this.#text(frame, arg(1), get(1)) + this.#text(frame, arg(2), get(2)));
           break;
         case 'propget':
           set(2, await this.#propGet(get(1), identifier(arg(0)), frame.depth, thread));
@@ -1798,9 +1844,20 @@ export class PapyrusVm {
           await this.#propSet(get(1), identifier(arg(0)), get(2), frame.depth, thread);
           break;
         case 'array_create': {
-          const size = Math.max(0, num(get(1)));
-          const item = elementType(this.#typeOf(frame, arg(0)));
-          set(0, new PapyrusArray(Array.from({ length: size }, () => defaultValue(item))));
+          // Observed in the original: an array has 1 to 128 elements; any other size is the
+          // script's error, and no array is made.
+          const size = Math.trunc(num(get(1)));
+          if (size < 1) {
+            this.#scriptError(thread, `Array size of ${String(size)} must be greater then 0`);
+          } else if (size > MAX_ARRAY_SIZE) {
+            this.#scriptError(
+              thread,
+              `Array size of ${String(size)} is too large, must be ${String(MAX_ARRAY_SIZE)} or smaller`,
+            );
+          } else {
+            const item = elementType(this.#typeOf(frame, arg(0)));
+            set(0, new PapyrusArray(Array.from({ length: size }, () => defaultValue(item))));
+          }
           break;
         }
         case 'array_length': {
@@ -1811,20 +1868,14 @@ export class PapyrusVm {
         case 'array_getelement': {
           const array = get(1);
           const index = num(get(2));
-          if (array instanceof PapyrusArray && index >= 0 && index < array.items.length) {
-            set(0, array.items[index] ?? null);
-          } else {
-            this.warn(`${frame.level.displayName}: array index ${index} out of range`);
-            set(0, defaultValue(elementType(this.#typeOf(frame, arg(1)))));
-          }
+          if (this.#element(thread, array, index)) set(0, array.items[index] ?? null);
+          else set(0, defaultValue(elementType(this.#typeOf(frame, arg(1)))));
           break;
         }
         case 'array_setelement': {
           const array = get(0);
           const index = num(get(1));
-          if (array instanceof PapyrusArray && index >= 0 && index < array.items.length) {
-            array.items[index] = get(2);
-          }
+          if (this.#element(thread, array, index)) array.items[index] = get(2);
           break;
         }
         case 'array_findelement':
