@@ -496,6 +496,12 @@ export class BehaviorRuntime {
   /** ... of variables of files not reached yet, by name (lower case). */
   readonly #resumeVariables = new Map<string, number>();
   readonly #resumeVectors = new Map<string, Vec4>();
+  /**
+   * The machines and clips a loaded save put back, until the update that reaches them: those it
+   * does not reach start anew when they are reached later (a walk the actor takes up later
+   * begins at its start, not where the save had it).
+   */
+  readonly #resuming = new Set<object>();
   readonly #eventIndex = new Map<string, number>();
   readonly #eventNames: string[] = [];
   /** The events its graphs' files name (lower case). */
@@ -964,10 +970,13 @@ export class BehaviorRuntime {
         received: new Map(),
         pending: undefined,
       });
+      this.#resuming.add(node);
     }
     for (const [place, time, backward] of saved.clips) {
       const node = nodes.clips[place];
-      if (node) this.#resumeClips.set(node, { time, backward: backward === 1 });
+      if (!node) continue;
+      this.#resumeClips.set(node, { time, backward: backward === 1 });
+      this.#resuming.add(node);
     }
   }
 
@@ -1244,6 +1253,13 @@ export class BehaviorRuntime {
       if (!active.has(node)) this.#deactivate(node);
     }
     this.#active = active;
+    // A loaded save's machines and clips this update did not reach start anew when reached.
+    for (const node of this.#resuming) {
+      if (active.has(node)) continue;
+      this.#resumeClips.delete(node);
+      if (this.#machines.get(node)?.current === undefined) this.#machines.delete(node);
+    }
+    this.#resuming.clear();
     this.#motion = this.#tween(this.#host.rootMotion ? this.#rootMotion() : NO_MOTION);
     if (!pose) return;
     this.#footIkControls = undefined;
