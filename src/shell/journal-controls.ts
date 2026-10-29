@@ -23,7 +23,11 @@ const SCAN_CODE_OF: ReadonlyMap<string, number> = new Map(
 /** A browser mouse button (0 left, 1 middle, 2 right, ...) as the control map counts them. */
 const MOUSE_BUTTON = [0, 2, 1, 3, 4, 5, 6, 7];
 
-export function controlsHandlers(session: GameSession): Record<string, MenuCallHandler> {
+export function controlsHandlers(
+  session: GameSession,
+  /** The bindings changed (the open menus' button hints follow). */
+  changed?: () => void,
+): Record<string, MenuCallHandler> {
   /** The list being shown, refilled as bindings change. */
   let shown: string | undefined;
   // The player's data, read long before (the menu's calls are answered at once).
@@ -103,14 +107,17 @@ export function controlsHandlers(session: GameSession): Record<string, MenuCallH
           data !== undefined &&
           session.controlSettings.remap(data.baseControls, name, input);
         if (ok && list) refresh(menu, list);
+        if (ok) changed?.();
         menu.call('FinishRemapMode', ok);
       });
     },
     ResetControlsToDefaults: () => {
       session.controlSettings.reset();
+      changed?.();
     },
     ResetControlsToDefaults_Ounce: () => {
       session.controlSettings.reset();
+      changed?.();
     },
     SaveControls: (menu) => {
       session.controlSettings.save();
