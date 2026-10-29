@@ -35,6 +35,8 @@ import type { GameSettings } from '../world/game-settings.ts';
 import type { IniSettings } from '../world/ini-settings.ts';
 import {
   HudModes,
+  rideModes,
+  rideState,
   METER_PAUSE_FRAME,
   MeterFade,
   type FloatingMarker,
@@ -456,18 +458,12 @@ export class HudController implements HudSink {
         menu.call('SetCompassAngle', degrees, degrees, compass);
       }
     }
-    // Game.SetHudCartMode (the opening's cart): the HUD's CartMode (only the compass's frame).
-    const cart = this.#source.runtime()?.hudCartMode === true;
+    // The cart's and the horse's modes (hud-elements.ts rideModes).
+    const { cart, horse } = rideModes(rideState(this.#source.runtime()));
     if (cart !== this.#cartMode) {
       this.#cartMode = cart;
       this.mode('CartMode', cart);
     }
-    // On a horse: HorseMode (the meters, the compass, messages: no crosshair, no stamina), with
-    // the weapon drawn WarHorseMode (the crosshair, stamina, the charge and arrow info too).
-    const world = this.#source.runtime()?.world;
-    const riding = world?.mountOf?.(PLAYER_REF) !== undefined;
-    const drawn = riding && (world.combat?.(PLAYER_REF)?.weaponState ?? 0) !== 0;
-    const horse = !riding ? undefined : drawn ? 'WarHorseMode' : 'HorseMode';
     if (horse !== this.#horseMode) {
       if (this.#horseMode) this.mode(this.#horseMode, false);
       this.#horseMode = horse;
