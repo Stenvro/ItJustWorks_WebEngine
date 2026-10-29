@@ -3,6 +3,9 @@
 // lists below are the movie's own), when the health, magicka and stamina meters are sent, kept
 // or faded, and where the floating quest marker stands. Platform-independent. Notes: docs/ui.md.
 
+import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
+
 /**
  * The modes in which the movie's quest notices show (QuestUpdateBaseInstance's own list: the
  * quest updates, skill increases, discoveries, a dungeon cleared, words of power). Not in
@@ -22,6 +25,39 @@ const NOTICE_MODES = new Set([
   'HorseMode',
   'WarHorseMode',
 ]);
+
+/** What the player rides, as the HUD reads it each frame. */
+export interface RideState {
+  /** Game.SetHudCartMode (the opening's cart ride). */
+  readonly cartMode: boolean;
+  /** The player sits on a horse. */
+  readonly riding: boolean;
+  /** Their weapon is drawn. */
+  readonly drawn: boolean;
+}
+
+/** The player's riding as the scripts and the world have it now (none without a runtime). */
+export function rideState(runtime: ScriptRuntime | undefined): RideState {
+  const world = runtime?.world;
+  const riding = world?.mountOf?.(PLAYER_REF) !== undefined;
+  const drawn = riding && (world.combat?.(PLAYER_REF)?.weaponState ?? 0) !== 0;
+  return { cartMode: runtime?.hudCartMode === true, riding, drawn };
+}
+
+/**
+ * The HUD's riding modes: CartMode while a script has it so (only the compass's frame shows: no
+ * meters, no crosshair or activation prompt); on a horse HorseMode (the meters, the compass,
+ * messages: no crosshair, no stamina), with the weapon drawn WarHorseMode (the crosshair,
+ * stamina, the charge and arrow info too). Off the cart and the horse, neither: the HUD's other
+ * modes show (MQ101's stage 160 leaves CartMode as the player gets up at the block).
+ */
+export function rideModes(state: RideState): {
+  readonly cart: boolean;
+  readonly horse: 'HorseMode' | 'WarHorseMode' | undefined;
+} {
+  const horse = !state.riding ? undefined : state.drawn ? 'WarHorseMode' : 'HorseMode';
+  return { cart: state.cartMode, horse };
+}
 
 /**
  * The movie's mode stack as ShowElements keeps it: a mode shown goes on top (once), one hidden
