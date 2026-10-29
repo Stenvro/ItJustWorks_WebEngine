@@ -10,7 +10,7 @@
 import { BinaryReader } from '../formats/binary-reader.ts';
 import { decodeGameText, encodeUtf8 } from '../formats/text.ts';
 import { styleIsBold, styleIsItalic, type FontConfig } from '../formats/swf/fontconfig.ts';
-import { SwfTagCode, swfExports, tagBody, type SwfMovie } from '../formats/swf/swf.ts';
+import { SwfTagCode, swfExports, swfFonts, tagBody, type SwfMovie } from '../formats/swf/swf.ts';
 import {
   concatBytes,
   encodeSwfString,
@@ -87,6 +87,26 @@ export interface FontLibraryReport {
   readonly fonts: ReadonlyMap<string, string>;
   /** Mapped names whose font no library has. */
   readonly missing: readonly string[];
+}
+
+/**
+ * The font names the library answers (lower case), as a device font is looked up in it: the
+ * names fontconfig maps and the fonts its libraries (and the shipped gfxfontlib.swf) define.
+ */
+export function libraryFontNames(
+  config: FontConfig,
+  libraries: readonly SwfMovie[],
+  shipped: SwfMovie | undefined,
+): Set<string> {
+  const names = new Set<string>();
+  for (const mapping of config.mappings) {
+    names.add(mapping.name.toLowerCase());
+    names.add(mapping.font.toLowerCase());
+  }
+  for (const movie of [...libraries, ...(shipped ? [shipped] : [])]) {
+    for (const font of swfFonts(movie)) names.add(font.name.toLowerCase());
+  }
+  return names;
 }
 
 /**

@@ -27,6 +27,9 @@ import {
 /** HelpManualPC: the help topics of the PC game (Skyrim.esm's FLST 0x163). */
 const HELP_MANUAL_PC = 0x163;
 
+/** How long a hidden journal waits for its movie's CloseMenu before it is closed anyway. */
+const HIDE_WAIT_MS = 1000;
+
 /** The journal's pages (its tabs). */
 export const JournalPage = { quests: 0, stats: 1, system: 2 } as const;
 
@@ -141,6 +144,17 @@ export class JournalMenu {
       closed();
     };
     this.#close = close;
+    // The engine hiding the journal (a save made from it): as the original, it asks the movie
+    // to close (StartCloseMenu(true): forced, without the closing sound), and the movie's
+    // CloseMenu (with the page and quest to remember) closes it. A movie that does not answer is
+    // closed anyway.
+    const hide = (menu: Menu): void => {
+      if (done) return;
+      menu.call('StartCloseMenu', true);
+      setTimeout(() => {
+        close(menu);
+      }, HIDE_WAIT_MS);
+    };
     void this.#playSound('UIJournalOpen');
     return this.#host.open('quest_journal.swf', {
       depth,
@@ -235,11 +249,11 @@ export class JournalMenu {
           const index = typeof args[0] === 'number' ? args[0] : 0;
           // The first entry is the new save; the others are saved over.
           const over = index > 0 ? this.#saveList.listed?.headers[index - 1]?.name : undefined;
-          close(menu);
+          hide(menu);
           void this.saves?.save(over);
         },
         QuickSave: (menu) => {
-          close(menu);
+          hide(menu);
           this.saves?.quicksave();
         },
         SetSaveDisabled: () => undefined,

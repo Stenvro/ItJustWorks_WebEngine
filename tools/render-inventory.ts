@@ -294,6 +294,7 @@ const BLOCKS: Record<string, readonly [Status, string]> = {
   BSBehaviorGraphExtraData: ['done', 'behavior graphs on objects'],
   BSXFlags: ['done', 'model-data.ts'],
   NiStringExtraData: ['done', 'model-data.ts'],
+  BSInvMarker: ['done', 'item-3d-view.ts'],
   BSBound: ['done', 'bounds'],
   BSMultiBound: ['done', 'culling by bounding spheres draws the same image'],
   BSMultiBoundOBB: ['done', 'culling by bounding spheres draws the same image'],
@@ -306,7 +307,6 @@ const BLOCKS: Record<string, readonly [Status, string]> = {
   NiBinaryExtraData: ['n/a', 'gameplay data'],
   NiTriStripsData: ['n/a', 'collision geometry only (bhkNiTriStripsShape)'],
   // Open.
-  BSInvMarker: ['open', 'the inventory 3D view of an item (its rotation and zoom) unread'],
   NiFloatExtraData: ['open', 'parsed; what reads it (FOV, scale) unchecked'],
   NiFloatExtraDataController: ['open', 'parsed; not animated'],
   BSLagBoneController: [

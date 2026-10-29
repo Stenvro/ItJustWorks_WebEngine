@@ -8,7 +8,7 @@ import { parseFontConfig } from '../formats/swf/fontconfig.ts';
 import { readSwf } from '../formats/swf/swf.ts';
 import { decodeWindows1252 } from '../formats/text.ts';
 import type { Vfs } from '../vfs/vfs.ts';
-import { buildFontLibrary } from './font-library.ts';
+import { buildFontLibrary, libraryFontNames } from './font-library.ts';
 import { parseTranslations, type Translations } from '../formats/swf/translation.ts';
 import { decodeUtf16le } from '../formats/text.ts';
 import { translateMovie } from './translate-movie.ts';
@@ -24,7 +24,7 @@ const FONT_LIBRARY_URL = /gfxfontlib\.swf$/i;
 
 export class InterfaceFiles {
   readonly #vfs: Vfs;
-  #fontLibrary: Promise<Uint8Array> | undefined;
+  #fontLibrary: Promise<{ movie: Uint8Array; names: ReadonlySet<string> }> | undefined;
   #translations: Promise<Translations> | undefined;
   /** Movies as they play: translated (by path). */
   readonly #movies = new Map<string, Promise<Uint8Array>>();
@@ -46,9 +46,9 @@ export class InterfaceFiles {
     if (!/\.(swf|gfx)$/.test(path) || path.startsWith('fonts_')) return this.#vfs.read(full);
     let movie = this.#movies.get(path);
     if (!movie) {
-      movie = Promise.all([this.#vfs.read(full), this.translations()]).then(
-        async ([bytes, table]) => {
-          const translated = translateMovie(patchMovie(path, bytes), (text) =>
+      movie = Promise.all([this.#vfs.read(full), this.translations(), this.#fonts()]).then(
+        async ([bytes, table, fonts]) => {
+          const translated = translateMovie(patchMovie(path, bytes, fonts.names), (text) =>
             table.translate(text),
           );
           // Movies it imports symbols from become part of it: a Flash player loads imports
@@ -87,7 +87,15 @@ export class InterfaceFiles {
   }
 
   /** The menus' font library (built once). */
-  fontLibrary(): Promise<Uint8Array> {
+  async fontLibrary(): Promise<Uint8Array> {
+    return (await this.#fonts()).movie;
+  }
+
+  /**
+   * The font library and the names it answers (lower case): its fonts' own and the names
+   * fontconfig maps to them (a device font is looked up among them).
+   */
+  #fonts(): Promise<{ movie: Uint8Array; names: ReadonlySet<string> }> {
     this.#fontLibrary ??= (async () => {
       const config = parseFontConfig(
         decodeWindows1252(await this.#vfs.read('interface\\fontconfig.txt')),
@@ -105,7 +113,7 @@ export class InterfaceFiles {
       if (library.missing.length > 0) {
         this.#warn(`fonts without a font in the libraries: ${library.missing.join(', ')}`);
       }
-      return library.movie;
+      return { movie: library.movie, names: libraryFontNames(config, libraries, shipped) };
     })();
     return this.#fontLibrary;
   }
