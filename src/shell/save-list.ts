@@ -100,8 +100,13 @@ export interface SaveListOptions<M extends SaveListMenu> {
   /** Load's last entry: the import of an original save (its text), when there is one. */
   readonly importText?: () => string | undefined;
   readonly load: (menu: M, name: string) => void;
-  /** The import entry was chosen. */
+  /** The import entry was loaded (LoadGame). */
   readonly importSave?: (menu: M) => void;
+  /**
+   * The import entry was pressed (IsOKtoLoad): when set, it is asked instead of the movie's
+   * "Load this game?" (the file is picked first; the menu then asks LoadGame itself).
+   */
+  readonly pickImport?: (menu: M, index: number) => void;
   /** Gives the movie its screenshot picture (img://BGSSaveLoadHeader_Screenshot). */
   readonly screenshotImage?: (png: Uint8Array | undefined) => void;
   readonly log: (message: string) => void;
@@ -155,7 +160,14 @@ export class SaveList<M extends SaveListMenu = SaveListMenu> {
       ForceStopSaveListLoading: () => undefined,
       // The journal's Save keeps to the character playing (always so here).
       UseCurrentCharacterFilter: () => undefined,
-      IsOKtoLoad: (menu) => {
+      IsOKtoLoad: (menu, args) => {
+        const index = typeof args[0] === 'number' ? args[0] : -1;
+        const listed = this.#listed;
+        const pick = this.#options.pickImport;
+        if (pick && listed && !listed.saving && index === listed.headers.length) {
+          pick(menu, index);
+          return;
+        }
         menu.call('ConfirmOKToLoad');
       },
       LoadGame: (menu, args) => {
