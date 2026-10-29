@@ -10,6 +10,7 @@
 //   expect(sim.scriptEvents({ event: 'OnActivate', target: lever })).toHaveLength(1);
 //   sim.close();
 
+import { findPath } from '../../src/ai/pathfinding.ts';
 import { readGameSave, saveGame } from '../../src/save/game-save.ts';
 import type { SpokenInfo, TopicChoice } from '../../src/scripting/runtime/dialogue-engine.ts';
 import { afterInfo } from '../../src/scripting/runtime/dialogue-rules.ts';
@@ -65,6 +66,15 @@ export interface RunningPackage {
 const MAX_CONTINUES = 32;
 /** The longest a conversation's step (a line's fragments) is waited for, in seconds. */
 const LINE_SECONDS = 30;
+
+/** The player's radius on the navmeshes (a human's collision capsule). */
+const PLAYER_RADIUS = 20;
+/** How far across a walked-to point may lie from the navmesh under it. */
+const PATH_GOAL_REACH = 256;
+/** A door the player is held up by is within this of their feet (across). */
+const DOOR_REACH = 160;
+/** How far the player steps aside round someone standing in their way (doubling each time). */
+const SIDESTEP = 48;
 
 /** The global GameHour (Skyrim.esm): the clock, as scripts set it. */
 const GAME_HOUR = 0x38;
@@ -343,6 +353,68 @@ export class Sim {
     } finally {
       this.world.press('Forward', false);
     }
+  }
+
+  /**
+   * The player walks a way over the navmeshes to a point (as one who knows the way: around
+   * walls, up stairs), each of its points in turn by walkTo; at most `seconds` in all. False if
+   * there is no way (off the navmeshes) or the point was not reached in time.
+   */
+  async walkPath(target: Vec3, seconds: number, reach = 64): Promise<boolean> {
+    const navmeshes = this.world.navmeshes;
+    // A point above the navmesh (a trigger's middle) is walked to where the navmesh is under it.
+    const goal = navmeshes.locate(target)
+      ? target
+      : (navmeshes.nearest?.(target, PATH_GOAL_REACH) ?? target);
+    // Off the navmesh (a floor it leaves out), the way starts where it is nearest.
+    const feet = this.world.player.feet;
+    const from = navmeshes.locate(feet) ? feet : navmeshes.nearest?.(feet, PATH_GOAL_REACH);
+    const path = from && findPath(navmeshes, from, goal, { radius: PLAYER_RADIUS });
+    if (!path) return false;
+    const until = this.time + seconds;
+    for (const point of path.points.slice(from === feet ? 1 : 0)) {
+      const last = point === path.points.at(-1);
+      const near = last ? reach : 24;
+      let side = 1;
+      for (;;) {
+        const left = until - this.time;
+        if (left <= 0) return false;
+        const [x0, y0] = this.world.player.feet;
+        if (await this.walkTo([point[0], point[1], point[2]], Math.min(left, 0.5), near)) break;
+        // Held up: a closed door in the way is opened, as a player does; someone standing in
+        // the way is stepped round (to one side, then the other).
+        const [x1, y1] = this.world.player.feet;
+        if (Math.hypot(x1 - x0, y1 - y0) >= 4 || this.#openDoorNear([x1, y1])) continue;
+        const dx = point[0] - x1;
+        const dy = point[1] - y1;
+        const length = Math.hypot(dx, dy) || 1;
+        const aside: Vec3 = [
+          x1 + (-dy / length) * SIDESTEP * side,
+          y1 + (dx / length) * SIDESTEP * side,
+          point[2],
+        ];
+        side = side > 0 ? -side : Math.min(-side * 2, 4);
+        await this.walkTo(aside, 0.5, 8);
+      }
+    }
+    const [x, y] = this.world.player.feet;
+    return Math.hypot(goal[0] - x, goal[1] - y) <= reach;
+  }
+
+  /** Activates the nearest closed door within reach of a point (true if there was one). */
+  #openDoorNear([x, y]: readonly [number, number]): boolean {
+    let door: number | undefined;
+    let nearest = DOOR_REACH;
+    for (const placed of this.world.placedObjects()) {
+      const { object } = placed;
+      if (object.baseType !== 'DOOR' || this.openState(object.reference) === 1) continue;
+      const away = Math.hypot((object.world[12] ?? 0) - x, (object.world[13] ?? 0) - y);
+      if (away < nearest) {
+        nearest = away;
+        door = object.reference;
+      }
+    }
+    return door !== undefined && this.activate(door);
   }
 
   /**
