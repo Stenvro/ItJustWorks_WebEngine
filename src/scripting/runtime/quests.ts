@@ -56,6 +56,21 @@ export class QuestEngine {
    * in the Story Manager").
    */
   async start(quest: number, event?: StoryEventData): Promise<boolean> {
+    // IsStarting holds while its aliases fill and its start-up runs (a start is not at once).
+    if (this.isRunning(quest) || this.starting.has(quest)) return this.#startNow(quest, event);
+    this.starting.add(quest);
+    try {
+      return await this.#startNow(quest, event);
+    } finally {
+      this.starting.delete(quest);
+    }
+  }
+
+  /** The quests in the middle of their start (IsStarting) and of their stop (IsStopping). */
+  readonly starting = new Set<number>();
+  readonly stopping = new Set<number>();
+
+  async #startNow(quest: number, event?: StoryEventData): Promise<boolean> {
     const runtime = this.#runtime;
     const record = await runtime.forms.quest(quest);
     if (!record) return false;
@@ -118,7 +133,18 @@ export class QuestEngine {
     const runtime = this.#runtime;
     const record = await runtime.forms.quest(quest);
     const state = runtime.state.quests.get(quest);
-    if (!record || !state?.running) return;
+    if (!record || !state?.running || this.stopping.has(quest)) return;
+    this.stopping.add(quest);
+    try {
+      await this.#stopNow(record, state);
+    } finally {
+      this.stopping.delete(quest);
+    }
+  }
+
+  async #stopNow(record: QuestRecord, state: { running: boolean }): Promise<void> {
+    const runtime = this.#runtime;
+    const quest = record.formId;
     const shutDown = record.stages.find((stage) => (stage.flags & StageFlag.shutDown) !== 0);
     if (shutDown) await this.#setStageRunning(record, shutDown.index);
     state.running = false;

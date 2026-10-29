@@ -8,14 +8,14 @@ The natives and events parts come from the sweep `node tools/papyrus-completenes
 for every item); the VM part is kept by hand against `src/scripting/papyrus-vm.ts` and
 docs/scripting.md ("Threads", "Properties", "The log").
 
-## Count (2026-10-29)
+## Count (2026-10-29, round 2)
 
 | Part    | Items | Done | Open |
 | ------- | ----: | ---: | ---: |
-| Natives |   686 |  662 |   24 |
-| Events  |    98 |   83 |   15 |
-| VM      |    30 |   18 |   12 |
-| Total   |   814 |  763 |   51 |
+| Natives |   686 |  666 |   20 |
+| Events  |    98 |   98 |    0 |
+| VM      |    30 |   24 |    6 |
+| Total   |   814 |  788 |   26 |
 
 ## Natives
 
@@ -26,8 +26,18 @@ The calls are the vanilla scripts' calls of a function by that name.
 
 Done this round: Quest.UpdateCurrentInstanceGlobal (77 calls; the quest's run holds its text
 globals' values), ObjectReference.CalculateEncounterLevel (19 calls; the encounter zone's level
-by the difficulty's fLeveledActorMult). Not yet swept: each native's answer to None and to
-arguments of the wrong type.
+by the difficulty's fLeveledActorMult). Round 2: Game.UsingGamepad (the device last used, as
+the shell switches the menus' platform), ObjectReference.GetItemHealthPercent (the reference's
+XHLT; a tempered stack dropped into the world: TODO(M13)), Quest.IsStarting and IsStopping (a
+quest's start, its aliases filling and its start-up stage, and its stop are in progress over
+awaits; a Stop inside the stop's own shut-down is not run twice).
+
+Not yet swept: each native's answer to None and to arguments of the wrong type. Read from the
+original: there is no one rule. A call on a None object is the VM's ("Cannot call X() on a
+None object, aborting function call", the function's default returned); a None argument is
+each native's own check, many with their own line ("Cannot play a visual effect on a None
+object", "Cannot cast a None form", "Cannot cast a spell from a None source"). Arguments of a
+wrong type cannot reach a native (the compiler types them; a failed cast gives None).
 
 Open (none of them called by more than one vanilla script):
 
@@ -43,49 +53,38 @@ Open (none of them called by more than one vanilla script):
 - [ ] objectreference.playsyncedanimationss, playsyncedanimationandwaitss (2; 0 calls): synced
       animations of two references.
 - [ ] objectreference.islockbroken (1 call): the original's rule is the lock's failed tries
-      against one or two (a perk entry point allows the second); the lockpicking menu counts no
-      tries yet.
-- [ ] game.usinggamepad (1 call): the shell does not tell which device gave the last input.
-- [ ] objectreference.getitemhealthpercent (0 calls): an item reference's health (tempering).
+      against one or two (a perk entry point allows the second); the lockpicking menu (another
+      area) counts no tries yet.
 - [ ] objectreference.setcontainerallowstolenitems (0 calls): the container's flag that it
-      takes stolen items.
-- [ ] quest.isstarting, quest.isstopping (0 calls): a quest's start and stop are not spread
-      over frames, so neither is ever seen in progress.
+      takes stolen items; what reads the flag is not read.
 
 ## Events
 
-An event is sent when an engine source names it (a story event: raises its type); it is
-checked when a test names it (a unit test or a simulation case; the conformance list of
-events still to write in the simulation, tests/conformance/scripting/script-events.test.ts
-TO_WRITE, does not count). The four story events the original never raises (Bribe, Flatter,
-Intimidate, Player Gets Favor) count as sent. Every one of the 98 is sent; open are those no
-test checks yet (handlers in the load order's scripts in brackets):
+An event is sent when an engine source names it (a story event: raises its type). It is
+checked when a test that runs the engine (the simulation, the runtime, the hub's relay, the
+VM, the story manager) names it in a string, not a comment: a case's title or the event it
+expects sent with its arguments. The conformance list of events still to write in the
+simulation (tests/conformance/scripting/script-events.test.ts TO_WRITE) does not count, only
+its COVERED list. The four story events the original never raises (Bribe, Flatter, Intimidate,
+Player Gets Favor) count as sent; the story manager's test sends each type's event to the
+quest it starts.
 
-- [ ] onBeginState (129): the compiled GotoState calls it; no test runs a state change's event.
-- [ ] OnEffectFinish (121): magic-engine.ts, as an effect stops on its target.
-- [ ] OnAnimationEvent (76): runtime.ts, to the forms registered for the graph's event.
-- [ ] OnUpdateGameTime (61): runtime.ts, the registrations in game hours.
-- [ ] OnRead (51): the book menu.
-- [ ] OnUnequipped (23): to an item with scripts that an actor unequips.
-- [ ] OnGainLOS (7), OnLostLOS (5): runtime.ts, the line of sight registrations.
-- [ ] OnRaceSwitchComplete (7): as SetRace's switch ends.
-- [ ] OnLockStateChanged (4): a lock locked or unlocked.
-- [ ] OnPackageChange (1), OnPackageEnd (0): TESPackageEvent's other two.
-- [ ] OnLycanthropyStateChanged (1), OnVampirismStateChanged (1), OnVampireFeed (1): the
-      natives that change them.
+All 98 are sent and checked by an engine-level test. Of them 27 are checked in the headless
+simulation (the sweep's count); the other 71 by the runtime's, the relay's, the VM's or the
+story manager's tests (src/scripting/runtime/engine-events.test.ts, script-events.test.ts,
+story-manager.test.ts, src/scripting/papyrus-vm-errors.test.ts, tests/effect-events.int.test.ts).
 
-Done (83): OnActivate, OnTriggerEnter, OnLoad, OnDeath, OnUpdate, OnEffectStart, OnHit,
-OnCellAttach, OnContainerChanged, OnTriggerLeave, OnUnload, OnDying, OnCellLoad,
-OnCombatStateChanged, OnLocationChange, OnCellDetach, OnReset, OnEquipped, OnItemAdded,
-OnMagicEffectApply, OnTrigger, OnItemRemoved, OnEnterBleedout, OnGetUp, onEndState, OnOpen,
-OnDestructionStageChanged, OnDetachedFromCell, OnPlayerLoadGame, OnObjectEquipped, OnSpellCast,
-OnTrapHit, OnGrab, OnSit, OnTranslationComplete, OnSleepStop, OnTranslationAlmostComplete,
-OnTrapHitStart, OnObjectUnequipped, OnSleepStart, OnAnimationEventUnregistered,
-OnAttachedToCell, OnClose, OnTranslationFailed, OnPackageStart, OnPlayerBowShot,
-OnPlayerFastTravelEnd, OnTrackedStatsEvent, OnWardHit, OnInit, OnRelease, OnSell,
-OnTrapHitStop, and the 30 OnStory events (OnStoryScript and the story manager's 29 types).
-A unit test that names an event is weaker evidence than a simulation case: of these, the
-simulation covers the 16 in the conformance list's COVERED and the story events.
+Round 2 (each with the moment and the arguments of the base scripts' declarations and the
+Creation Kit's pages): OnEffectFinish (the effect's end, akTarget and akCaster, on the data),
+OnAnimationEvent, OnUpdate, OnUpdateGameTime, OnGainLOS/OnLostLOS (a single registration
+ends with its event), OnLockStateChanged (only when the lock's state changes),
+OnRaceSwitchComplete (once SetRace's new 3D stands), OnPackageChange/OnPackageEnd (the
+package left), the vampirism, lycanthropy and feeding events, onBeginState/onEndState (the
+compiled GotoState), OnUnequipped, and the story manager's 30 events. Fixed: OnRead reaches a
+book read from an inventory when its base carries scripts (it reached only book references).
+
+- [ ] In the simulation: the 71 events with an engine-level test only (the conformance list's
+      TO_WRITE).
 
 ## VM
 
@@ -102,23 +101,37 @@ simulation covers the 16 in the conformance list's COVERED and the story events.
 - [ ] The handed calls' share of the update budget (all begin in the next frame: TODO(M13)).
 - [ ] The latent calls' render-safe and post-render queues (0.05 of fUpdateBudgetMS each).
 - [x] A loaded game's VM runs on its own for fPostLoadUpdateTimeMS.
-- [ ] The call stack's depth limit and its error (ours: 64 calls, our wording).
-- [ ] Stack memory (iMaxAllocatedMemoryBytes) and its error.
+- [x] No call-depth limit and no error for it (observed in the original: a stack grows page by
+      page while memory lasts). Ours keeps a guard of 4096 calls for the browser's memory.
+- [ ] Stack memory (iMaxAllocatedMemoryBytes, 153600): read from the original, there is no
+      error; a page (iMinMemoryPageSize to iMaxMemoryPageSize) that would take the VM's stacks
+      over the limit is refused and the stack waits for memory, unless the VM is overstressed
+      (then the limit is ignored). Not built: the frames' sizes in bytes are not read.
 - [x] Properties: plugin values bound by name, full properties through Set before OnInit, the
       original's line for a property the script no longer has.
 - [ ] A plugin value for a full property without a Set function (TODO(M13)).
 - [x] A script starts in its auto state, or its nearest parent's.
 - [x] Object casts by the plugins' attachments; a failed cast gives None (logged on use).
-- [ ] The original's "Cannot cast from X to Y" error for casts between unrelated types.
+- [x] The original's casts: to String and Bool from anything; to Int from a String (strtol),
+      a Float (truncated) or a Bool; to Float from a String, an Int or a Bool; to an object from
+      None or an object; an array only to its own type. Any other is "Cannot cast from X to Y"
+      and gives the type's default.
 - [x] Arrays of 1 to 128 elements; any other size is the original's error and makes none.
 - [x] Array access out of range or on None: the original's errors, the thread goes on.
-- [ ] Array find with a start index out of range ("Array start index ... is out of range").
+- [x] Array Find/RFind: a start index out of range is "Array start index N is out of range
+      (0-last)" (RFind: -1-last; -1 is its last element) and finds nothing; on None "Variable
+      isn't an array and cannot be searched".
 - [x] Division and modulo by zero: the original's error, the result left as it was.
 - [x] Floats as strings with six decimals ("1.500000"); ints, bools ("True"), None.
-- [ ] Objects as strings: the original prints "[Actor < (00000014)>]"; ours "[actor 00000014]".
-- [ ] Float arithmetic in single precision (ours: doubles; printing rounds to single).
-- [ ] A call on None: the original's line ("Cannot call X() on a None object, aborting function
-      call"); ours names the call in our words.
+- [x] Objects as strings: "[<script> <<what>>]": a form's editor ID where the original keeps
+      one at run time (actions, ANIO, cells, topics, globals, head parts, idles, imagespace
+      modifiers, keywords, location ref types, movable statics, music, quests, races, voice
+      types, worldspaces; references and other forms none) and its id ("[Actor < (00000014)>]"),
+      an alias "alias <name> on quest <quest> (<id>)", an active effect "Active effect <n> on
+      <actor> (<id>)" (our n is 0: TODO(M13)).
+- [x] Float arithmetic, negation and casts to Float in single precision.
+- [x] A call on None: "Cannot call X() on a None object, aborting function call"; a property on
+      None: 'Cannot get/set property "X" on a None object.'
 - [x] A missing function: "Method X not found on Y. Aborting call and returning None".
 - [x] Strings compare without case; bools and ints compare by value.
 - [x] Saves: threads with their frames, latent waits, OnInit waits and threads in a native's

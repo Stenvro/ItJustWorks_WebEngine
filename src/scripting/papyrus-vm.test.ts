@@ -382,17 +382,17 @@ describe('Papyrus VM', () => {
     expect(await vm.getProperty(gate, 'IsAlreadyOpen')).toBe(true);
     // A value for a property the script no longer has is the plugin's fault (the game logs it).
     expect(host.gameLogged).toEqual([
-      'Property triggertype on script Gate attached to [gate 00000030] cannot be initialized because the script no longer contains that property',
+      'Property triggertype on script Gate attached to [gate < (00000030)>] cannot be initialized because the script no longer contains that property',
     ]);
     // A call through an auto property the plugin left empty: None, as in the game.
     await vm.call(gate, 'Pull');
     expect(host.gameLogged[1]).toBe(
-      'Gate.Pull [gate 00000030]: call to Enable on None (property Lever is not set in the plugin)',
+      'Gate.Pull [gate < (00000030)>]: Cannot call Enable() on a None object, aborting function call (property Lever is not set in the plugin)',
     );
     // An event's None argument the script passes on unchecked: None in the game too.
     await vm.sendEvent(gate, 'OnHit', [null]);
     expect(host.gameLogged[2]).toBe(
-      'Gate.Check [gate 00000030] < Gate.OnHit [gate 00000030]: call to Enable on None (other: None as the engine gave it, unchecked)',
+      'Gate.Check [gate < (00000030)>] < Gate.OnHit [gate < (00000030)>]: Cannot call Enable() on a None object, aborting function call (other: None as the engine gave it, unchecked)',
     );
     expect(host.warnings).toEqual([]);
   });
