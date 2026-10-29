@@ -545,6 +545,8 @@ class Reading {
   close(): void {
     if (this.#closing || this.#finished) return;
     this.#closing = true;
+    // The movie's page set goes back to the pages open (PrepForClose), as the book closes on them.
+    this.#pages?.call('PrepForClose');
     this.#showTexts(false);
     if (this.#bar) this.#host.close(this.#bar);
     this.#bar = undefined;

@@ -25,6 +25,8 @@ const MARKDOWN = process.argv.includes('--markdown');
 const CONSOLE = 'consoles only (PlayStation, Xbox, Switch)';
 const ONLINE = 'an online service (Bethesda.net): never reached from localhost (hard rule 4)';
 const UNSENT = 'the original engine has no such name: it never sends it';
+const NO_MENU = 'no menu of the original is made under this name (it is only looked up)';
+const SAFE_ZONE = "the consoles' safe-zone setting: the PC's display page has none";
 
 /** Names the PC game never sends or answers, and why. */
 const NOT_ON_PC: ReadonlyMap<string, string> = new Map([
@@ -85,6 +87,7 @@ const MOVIES_NOT_ON_PC: ReadonlyMap<string, string> = new Map([
   ['creationclubmenu.swf', ONLINE],
   ['kinectmenu.swf', CONSOLE],
   ['streaminginstall.swf', CONSOLE],
+  ['safezone.swf', SAFE_ZONE],
 ]);
 
 /** Our menu code: src/ui and the shell's files (comments stripped). */
@@ -241,16 +244,16 @@ const ORIGINAL_MENUS: readonly (readonly [string, string?])[] = [
   ['MessageBoxMenu'],
   ['Mist Menu'],
   ['Mod Manager Menu', ONLINE],
-  ['Overlay Interaction Menu'],
-  ['Overlay Menu'],
-  ['Quantity Menu'],
+  ['Overlay Interaction Menu', NO_MENU],
+  ['Overlay Menu', NO_MENU],
+  ['Quantity Menu', NO_MENU],
   ['RaceSex Menu'],
-  ['SafeZoneMenu'],
+  ['SafeZoneMenu', SAFE_ZONE],
   ['Sleep/Wait Menu'],
   ['StatsMenu'],
   ['StreamingInstallMenu', CONSOLE],
   ['TitleSequence Menu'],
-  ['Top Menu'],
+  ['Top Menu', NO_MENU],
   ['Training Menu'],
   ['Tutorial Menu'],
   ['TweenMenu'],

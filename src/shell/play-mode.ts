@@ -57,7 +57,8 @@ import type { Terminal } from './terminal.ts';
 import { lockNow } from './object-locks.ts';
 import { tellSwing } from './open-close.ts';
 import { SaveManager } from './save-manager.ts';
-import { gameDaysText, SaveList } from './save-list.ts';
+import { LoadWaitSpinner } from './load-wait-spinner.ts';
+import { gameDaysText, IMPORT_ESS_TEXT, SAVE_SCREENSHOT_IMAGE, SaveList } from './save-list.ts';
 import type { GameSave } from '../save/game-save.ts';
 import { essWorld } from '../save/ess-import.ts';
 import type { SaveHeader } from '../save/save-codec.ts';
@@ -183,6 +184,8 @@ export class PlayMode {
   readonly #saves: SaveManager;
   /** The main menu's Load: its characters and their saves. */
   readonly #mainSaveList: SaveList<Menu>;
+  /** The original save picked from the main menu's Load, loaded once the menu has faded out. */
+  #pickedEss: Uint8Array | undefined;
   /** The player's data: its bindings (the menus show the keys of the events their texts name). */
   #playerData: PlayerData | undefined;
   /** The loading menu's text (the loading screen's, once chosen). */
@@ -239,7 +242,9 @@ export class PlayMode {
     this.#renderer = renderer;
     this.#world = world;
     this.#terminal = terminal;
-    this.#saves = new SaveManager(session, terminal);
+    this.#saves = new SaveManager(session, terminal, (width, height) =>
+      renderer.captureFrame(width, height),
+    );
     this.#mainSaveList = new SaveList<Menu>({
       source: () => this.#saves,
       // A game's date needs its start date; at the main menu, before any game ran, the days
@@ -249,8 +254,28 @@ export class PlayMode {
       load: (_menu, name) => {
         this.#loadSaved(name);
       },
+      // Load's last entry imports an original save. The picker opens as the entry is chosen
+      // (the player's press, which the page needs to open one); with a file picked the menu
+      // fades out and asks LoadGame for the entry as for a save, which loads the import.
+      importText: () => (window.showOpenFilePicker ? IMPORT_ESS_TEXT : undefined),
+      pickImport: (menu, index) => {
+        void this.#pickEss().then((bytes) => {
+          if (!bytes) return;
+          this.#pickedEss = bytes;
+          menu.invoke('_root.MenuHolder.Menu_mc.FadeOutAndCall', 'LoadGame', [index]);
+        });
+      },
+      importSave: (menu) => {
+        const bytes = this.#pickedEss;
+        this.#pickedEss = undefined;
+        if (bytes) this.#importPicked(bytes, menu);
+        else menu.call('FadeInMenu');
+      },
       log: (message) => {
         terminal.log('save', message, 'error');
+      },
+      screenshotImage: (png) => {
+        this.#host.files.setImage(SAVE_SCREENSHOT_IMAGE, png);
       },
     });
     const log = (message: string): void => {
@@ -296,7 +321,15 @@ export class PlayMode {
     };
     this.#console = new ConsoleMenu(this.#host, terminal, ini);
     this.#fader = new FaderMenu(this.#host, terminal, () => session.loading);
-    this.#titles = new TitleSequence(this.#host, terminal, () => session.loading);
+    this.#titles = new TitleSequence(
+      this.#host,
+      terminal,
+      () => session.loading,
+      session.menuStack,
+    );
+    // The save manager's spinner while a save is written.
+    const spinner = new LoadWaitSpinner(this.#host, session.menuStack, terminal);
+    this.#saves.busy = () => spinner.begin();
   }
 
   /** The main menu while it is open (dev checks). */
@@ -343,12 +376,43 @@ export class PlayMode {
         QuitToDesktop: () => {
           this.onQuit?.();
         },
-        CONTINUE: () => {
-          void this.#saves.latest().then((latest) => {
-            if (latest !== undefined) this.#loadSaved(latest);
+        // CONTINUE and NEW ask first (observed in the original): the engine sends the question
+        // (ConfirmContinue: sConfirmContinue, while no load is under way and there is a save;
+        // ConfirmNewGame: sConfirmNew, or sConfirmNewMods with plugins of the player's own
+        // loaded), the movie shows it, and on yes fades out and calls ContinueLastSavedGame
+        // or StartNewGame.
+        CONTINUE: (menu) => {
+          void Promise.all([this.#saves.latest(), this.#session.settings()]).then(
+            ([latest, settings]) => {
+              if (latest === undefined || this.#session.loading) return;
+              menu.call('ConfirmContinue', settings.string('sConfirmContinue') ?? '');
+            },
+          );
+        },
+        NEW: (menu) => {
+          void this.#session.settings().then((settings) => {
+            const mods = this.#session.vfs.loadOrder.some(
+              (entry) => entry.source === 'plugins.txt',
+            );
+            menu.call(
+              'ConfirmNewGame',
+              settings.string(mods ? 'sConfirmNewMods' : 'sConfirmNew') ?? '',
+            );
           });
         },
-        NEW: () => {
+        ContinueLastSavedGame: (menu) => {
+          void this.#saves.latest().then((latest) => {
+            if (latest !== undefined) this.#loadSaved(latest);
+            else menu.call('FadeInMenu');
+          });
+        },
+        // LOAD pressed while it is disabled (no saves): the original does nothing.
+        OnDisabledLoadPress: () => undefined,
+        // The PC menu shows no HELP (sendMenuProperties), and its quit panel's "main menu"
+        // has nowhere to go from the main menu: the original answers neither here.
+        HELP: () => undefined,
+        QuitToMainMenu: () => undefined,
+        StartNewGame: () => {
           this.#newGame().catch((error: unknown) => {
             this.#terminal.log(
               'ui',
@@ -370,8 +434,6 @@ export class PlayMode {
         StartState: () => undefined,
         EndPressStartState: () => undefined,
         currentState: () => undefined,
-        // TODO(M12): a save's screenshot (no screenshot is taken as a save is made yet).
-        PrepSaveGameScreenshot: () => undefined,
         // The menu tells as its fade out starts (before it calls what comes after it).
         fadeOutStarted: () => undefined,
         // CREDITS, once the menu has faded out: the credits, then the menu fades in again.
@@ -552,6 +614,7 @@ export class PlayMode {
       importEss: () => {
         this.#importEss();
       },
+      screenshot: (name) => this.#saves.screenshot(name),
     };
     menus.onPassed = (slept) => {
       void this.#saves.autosave(slept ? 'rest' : 'wait');
@@ -750,28 +813,53 @@ export class PlayMode {
    * Games\Skyrim Special Edition) and loads it: it is kept as one of our saves.
    */
   #importEss(): void {
-    void (async () => {
-      if (!window.showOpenFilePicker) {
-        this.#terminal.log('save', 'importing a save needs the File System Access API', 'warn');
-        return;
-      }
+    void this.#pickEss().then((bytes) => {
+      if (bytes) this.#importPicked(bytes);
+    });
+  }
+
+  /** The original save the player picks (its bytes), or undefined when they pick none. */
+  async #pickEss(): Promise<Uint8Array | undefined> {
+    if (!window.showOpenFilePicker) {
+      this.#terminal.log('save', 'importing a save needs the File System Access API', 'warn');
+      return undefined;
+    }
+    try {
       const [handle] = await window.showOpenFilePicker({
         id: 'ess-saves',
         startIn: 'documents',
         types: [{ description: 'Skyrim saves', accept: { 'application/octet-stream': ['.ess'] } }],
       });
-      if (!handle) return;
-      const bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
+      if (!handle) return undefined;
+      return new Uint8Array(await (await handle.getFile()).arrayBuffer());
+    } catch (error) {
+      // The picker closed without a choice.
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        this.#terminal.log(
+          'save',
+          `the save cannot be read: ${error instanceof Error ? error.message : String(error)}`,
+          'error',
+        );
+      }
+      return undefined;
+    }
+  }
+
+  /**
+   * Imports a picked original save as one of ours and loads it. The main menu (faded out to
+   * load it) fades in again when it does not import.
+   */
+  #importPicked(bytes: Uint8Array, mainMenu?: Menu): void {
+    void (async () => {
       const name = await this.#saves.importEss(bytes, essWorld(await this.#session.db));
       this.#loadSaved(name);
     })().catch((error: unknown) => {
-      // The picker closed without a choice.
-      if (error instanceof DOMException && error.name === 'AbortError') return;
       this.#terminal.log(
         'save',
         `the save does not import: ${error instanceof Error ? error.message : String(error)}`,
         'error',
       );
+      mainMenu?.call('FadeInMenu');
     });
   }
 

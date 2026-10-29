@@ -61,7 +61,7 @@ export interface MapWorld {
   noFastTravelReason(): Promise<string | undefined>;
   /** Fast travel to a map marker (the map has closed), `distance` away on the map. */
   fastTravel(marker: number, distance: number | undefined): Promise<void>;
-  /** The journal (the map has closed). */
+  /** The journal, opened over the map. */
   openJournal(): void;
 }
 
@@ -111,11 +111,7 @@ export class MapMenu {
    * Opens the map (on a reference: the journal's Show on Map; else on the player); `closed`
    * once it has closed. Undefined if there is no map here.
    */
-  async open(
-    depth: number,
-    closed: () => void,
-    focus?: number,
-  ): Promise<{ readonly menu: Menu; close(): void } | undefined> {
+  async open(depth: number, closed: () => void, focus?: number): Promise<OpenedMap | undefined> {
     const session = this.#session;
     const runtime = session.scriptsReady;
     if (!runtime) return undefined;
@@ -227,6 +223,17 @@ export class MapMenu {
   }
 }
 
+/** The map open: its movie, closing it, and the journal over it. */
+export interface OpenedMap {
+  readonly menu: Menu;
+  close(): void;
+  /**
+   * The journal opens over the map (true) or closes (false): the map stays open under it, the
+   * movie hears ShowJournal (its bottom bar hidden) and the map takes no input meanwhile.
+   */
+  showJournal(over: boolean): void;
+}
+
 /** The map while it is open. */
 class OpenMap {
   readonly #owner: MapMenu;
@@ -247,6 +254,8 @@ class OpenMap {
   #moving = false;
   /** A message box or a fast travel in progress: the map takes no clicks. */
   #busy = false;
+  /** The journal is open over the map: it takes no input. */
+  #underJournal = false;
   /** The local map, while it is shown (or fading out). */
   #local: LocalMap | undefined;
   #previousOverlay: OverlayView | undefined;
@@ -272,7 +281,7 @@ class OpenMap {
     this.#closed = closed;
   }
 
-  async start(): Promise<{ readonly menu: Menu; close(): void }> {
+  async start(): Promise<OpenedMap> {
     const owner = this.#owner;
     const session = owner.session;
     const renderer = session.renderer;
@@ -359,6 +368,13 @@ class OpenMap {
       menu,
       close: () => {
         this.#close();
+      },
+      showJournal: (over) => {
+        if (this.#done) return;
+        this.#underJournal = over;
+        this.#blurred();
+        this.#dragging = false;
+        menu.call('ShowJournal', over);
       },
     };
   }
@@ -528,7 +544,7 @@ class OpenMap {
   /** A click on the map (not on its bottom bar). */
   #click(): void {
     const menu = this.#menu;
-    if (!menu || this.#busy || this.#input.looking || this.#local) return;
+    if (!menu || this.#busy || this.#underJournal || this.#input.looking || this.#local) return;
     if (this.#moving) {
       this.#moving = false;
       void this.#placeMarker();
@@ -799,8 +815,9 @@ class OpenMap {
     if (at) this.#view.camera.glideTo(at[0], at[1]);
   }
 
+  /** J or the bar's button: the journal opens over the map (the map stays open under it). */
   #journal(): void {
-    this.#close();
+    if (this.#underJournal) return;
     this.#owner.world.openJournal();
   }
 
@@ -818,7 +835,7 @@ class OpenMap {
     const look: [number, number] = [input.look[0], input.look[1]];
     input.look = [0, 0];
     // While the local map is shown the keys and the cursor move it, not the world map.
-    const still = this.#busy || this.#local !== undefined;
+    const still = this.#busy || this.#underJournal || this.#local !== undefined;
     return {
       pan: still ? [0, 0] : pan,
       cursor: still || input.looking ? undefined : input.cursor,
@@ -828,7 +845,7 @@ class OpenMap {
 
   /** Keys the engine handles itself (the control map's map context). */
   #key(event: KeyboardEvent): boolean {
-    if (this.#busy) return false;
+    if (this.#busy || this.#underJournal) return false;
     switch (event.code) {
       case 'KeyW':
       case 'KeyA':
@@ -905,7 +922,7 @@ class OpenMap {
   };
 
   readonly #wheel = (event: WheelEvent): void => {
-    if (this.#busy || event.deltaY === 0) return;
+    if (this.#busy || this.#underJournal || event.deltaY === 0) return;
     const notches = event.deltaY < 0 ? 1 : -1;
     if (this.#local) this.#local.camera.zoom(notches);
     else this.#view.camera.zoom(notches);

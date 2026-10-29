@@ -125,6 +125,18 @@ export class InterfaceFiles {
   }
 
   /**
+   * A picture the engine made for the menus (a save's screenshot as img://<name>): PNG bytes,
+   * or none (an empty picture: the menu still loads one).
+   */
+  setImage(name: string, png: Uint8Array | undefined): void {
+    if (png && png.length > 0) this.#images.set(name.toLowerCase(), Promise.resolve(png));
+    else {
+      this.#images.delete(name.toLowerCase());
+      this.emptyImage(name);
+    }
+  }
+
+  /**
    * Answers the page's fetches of INTERFACE_URL from these files (Ruffle fetches through
    * window.fetch); other requests pass through. Returns the way back.
    */

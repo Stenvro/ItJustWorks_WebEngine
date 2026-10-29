@@ -7,10 +7,11 @@
 import { readEss } from '../formats/ess/ess.ts';
 import { importEss, type EssWorld } from '../save/ess-import.ts';
 import { readGameSave, saveGame, type GameSave } from '../save/game-save.ts';
-import { writeSave, type SaveHeader } from '../save/save-codec.ts';
+import { readSaveHeader, writeSave, type SaveHeader } from '../save/save-codec.ts';
 import { SaveStore } from '../save/save-store.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
+import { essScreenshot, takeScreenshot, type FrameSource } from './save-screenshot.ts';
 
 /** How many autosaves the game keeps in turn ([SaveGame] iAutoSaveCount's default). */
 const AUTOSAVE_COUNT = 3;
@@ -29,10 +30,25 @@ export class SaveManager {
   #saving = false;
   /** The kinds of save scripts asked for that are not made yet (Game.RequestSave). */
   readonly #requests = new Set<'save' | 'autosave'>();
+  /** The renderer's frames (a save's screenshot); none headless. */
+  readonly #frames: FrameSource | undefined;
+  /** Shown while a save is written (the LoadWaitSpinner); returns what ends it. */
+  busy: (() => () => void) | undefined;
 
-  constructor(session: GameSession, terminal: Terminal) {
+  constructor(session: GameSession, terminal: Terminal, frames?: FrameSource) {
     this.#session = session;
     this.#terminal = terminal;
+    this.#frames = frames;
+  }
+
+  /**
+   * A save's screenshot (PNG; empty when it has none), or with no name the frame drawn now
+   * (the journal's new save).
+   */
+  async screenshot(name: string | undefined): Promise<Uint8Array> {
+    if (name === undefined) return takeScreenshot(this.#frames, this.#session.ini);
+    const bytes = await (await this.#open()).read(name);
+    return bytes ? readSaveHeader(bytes).thumbnail : new Uint8Array();
   }
 
   #open(): Promise<SaveStore> {
@@ -69,6 +85,7 @@ export class SaveManager {
     const runtime = this.#session.scriptsReady;
     if (!runtime || !this.canSave) return undefined;
     this.#saving = true;
+    const done = this.busy?.();
     try {
       const store = await this.#open();
       const saves = await store.list();
@@ -83,7 +100,15 @@ export class SaveManager {
         ).find((candidate) => !autosaves.some((save) => save.name === candidate));
         name = free ?? autosaves.at(-1)?.name ?? 'Autosave 1';
       }
-      const { bytes, unsaved } = await saveGame(runtime, { name, kind, number, now: Date.now() });
+      // The frame as the save is made (the menus' movies are not on the renderer's canvas).
+      const thumbnail = await takeScreenshot(this.#frames, this.#session.ini);
+      const { bytes, unsaved } = await saveGame(runtime, {
+        name,
+        kind,
+        number,
+        now: Date.now(),
+        thumbnail,
+      });
       for (const what of unsaved) this.#terminal.log('save', `not saved: ${what}`, 'warn');
       const header = await store.write(bytes);
       this.#lastSave = performance.now();
@@ -91,6 +116,7 @@ export class SaveManager {
       return header;
     } finally {
       this.#saving = false;
+      done?.();
     }
   }
 
@@ -185,7 +211,7 @@ export class SaveManager {
     await store.write(
       await writeSave({
         header: imported.header,
-        thumbnail: new Uint8Array(),
+        thumbnail: await essScreenshot(ess).catch(() => new Uint8Array()),
         body: imported.save,
       }),
     );
