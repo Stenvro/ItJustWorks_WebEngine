@@ -22,12 +22,18 @@ export class ReadsInFlight {
   #holding = false;
   readonly #held: HeldRead[] = [];
   #onHeld: (() => void) | undefined;
+  /**
+   * Each read comes back up to this many turns of the event loop late, at random (0: none):
+   * a disk whose timing varies, for tests that it never changes what the simulation does.
+   */
+  scramble = 0;
 
   get pending(): number {
     return this.#count;
   }
 
-  track<T>(read: Promise<T>): Promise<T> {
+  track<T>(asked: Promise<T>): Promise<T> {
+    const read = this.scramble > 0 ? late(asked, this.scramble) : asked;
     this.#count++;
     const done = (): void => {
       this.#count--;
@@ -68,6 +74,24 @@ export class ReadsInFlight {
 }
 
 const noop = (): void => undefined;
+
+/** The real event loop and dice (the simulation replaces the page's timers and Math.random). */
+const realImmediate = setImmediate;
+const realRandom = Math.random.bind(Math);
+
+/** A read's result (or failure) given back up to `turns` real event-loop turns late. */
+async function late<T>(read: Promise<T>, turns: number): Promise<T> {
+  await read.then(noop, noop);
+  let left = Math.floor(realRandom() * (turns + 1));
+  await new Promise<void>((resolve) => {
+    const turn = (): void => {
+      if (left-- > 0) realImmediate(turn);
+      else resolve();
+    };
+    turn();
+  });
+  return read;
+}
 
 /** Reads a file at an offset, without loading it in full. */
 export class NodeFileSource implements ByteSource {
