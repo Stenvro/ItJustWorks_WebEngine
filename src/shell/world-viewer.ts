@@ -684,10 +684,11 @@ export class WorldViewer {
       [...this.#cells.values()].flatMap((cell) => this.#cellLoadedReferences(cell)),
     loaded: (reference) =>
       [...this.#cells.values()].some((cell) => this.#cellHasLoaded(cell, reference)),
-    created: (reference) => {
-      void this.#showCreated(reference);
-      void this.#stage?.created(reference, this.#play?.physics);
-    },
+    created: (reference) =>
+      Promise.allSettled([
+        this.#showCreated(reference),
+        this.#stage?.created(reference, this.#play?.physics),
+      ]).then(() => undefined),
     livePlacement: (reference) => {
       const player = this.#play?.player;
       if (reference === PLAYER_REF && player && this.#world) {

@@ -110,8 +110,8 @@ export interface WorldBridge {
   enableChanged?(reference: number, enabled: boolean): void;
   /** A reference was moved or scaled (MoveTo, SetPosition, SetScale, ...). */
   moved?(reference: number): void;
-  /** A reference was created (PlaceAtMe, an alias's Create Reference). */
-  created?(reference: number): void;
+  /** A reference was created (PlaceAtMe, an alias's Create Reference): resolves once shown. */
+  created?(reference: number): void | Promise<void>;
   /** Where a loaded reference is now (actors and simulated objects move; the player). */
   livePlacement?(reference: number): LivePlacement | undefined;
   /** Whether a reference's 3D is loaded (Is3DLoaded). */
@@ -1228,13 +1228,21 @@ export class ScriptRuntime implements VmHost {
       await this.vm.startInitialize(this.referenceHandle(reference));
     }
     // The hub tells it (the relay: OnCellAttach, OnLoad, OnCellLoad). TODO(M13): the engine
-    // tells every reference of the cell; ours those with scripts (no other consumer yet).
-    for (const reference of scripted)
+    // tells every reference of the cell; ours those with scripts, their own or those of an
+    // alias that holds them (no other consumer yet): a world encounter's actor in a
+    // WEAliasScript alias counts itself in as it loads and out as it unloads.
+    const hearing = [
+      ...scripted,
+      ...references.filter(
+        (reference) => !scripted.includes(reference) && this.#heldScripted(reference),
+      ),
+    ];
+    for (const reference of hearing)
       this.events.emit('cellAttachDetach', { reference, attached: true });
     // Those its cell reset as it came back are told so (OnReset), after they attached.
     for (const reference of this.cellResets.takeResets(references))
       this.events.emit('reset', { reference });
-    const shown = scripted.filter((reference) => loaded(reference));
+    const shown = hearing.filter((reference) => loaded(reference));
     for (const reference of shown) this.events.emit('objectLoaded', { reference, loaded: true });
     this.events.emit('cellFullyLoaded', { cell: undefined, references: shown });
     return scripted;
@@ -1247,7 +1255,7 @@ export class ScriptRuntime implements VmHost {
    * has once enabled (a model, an editor marker, a primitive, an actor).
    */
   async referenceShown(reference: number, shown: boolean): Promise<void> {
-    if (await this.#hasScripts(reference)) {
+    if (await this.#hearsEvents(reference)) {
       this.events.emit('objectLoaded', { reference, loaded: shown });
     }
   }
@@ -1267,13 +1275,15 @@ export class ScriptRuntime implements VmHost {
       this.animationGraphUnloaded(reference);
     }
     for (const reference of references) {
-      if (!(await this.#hasScripts(reference))) continue;
+      if (!(await this.#hearsEvents(reference))) continue;
       if (loaded(reference)) this.events.emit('objectLoaded', { reference, loaded: false });
       this.events.emit('cellAttachDetach', { reference, attached: false });
       // What it is no longer in: its trigger volumes are left behind, its traps' contacts end.
       this.triggerVolumes.forget(reference);
       this.trapHits.forget(reference);
     }
+    // Those waiting for DeleteWhenAble go with their cell.
+    for (const reference of references) this.#deleteIfAble(reference, false);
   }
 
   /**
@@ -1400,6 +1410,42 @@ export class ScriptRuntime implements VmHost {
     );
   }
 
+  /**
+   * ObjectReference.DeleteWhenAble: the reference is deleted as soon as nothing keeps it, at
+   * once if it is out of the loaded area and held by no alias, else once its cell detaches
+   * or the last alias lets it go (Creation Kit: "deleted when it is no longer in use"). A
+   * world encounter's shut-down stage deletes the actors it made this way.
+   */
+  deleteWhenAble(reference: number): void {
+    this.state.reference(reference).deleteWhenAble = true;
+    this.#deleteIfAble(reference, this.world.loaded?.(reference) === true);
+  }
+
+  /** Deletes a reference waiting for DeleteWhenAble if nothing keeps it now. */
+  #deleteIfAble(reference: number, loaded: boolean): void {
+    const state = this.state.references.get(reference);
+    if (state?.deleteWhenAble !== true || state.deleted === true) return;
+    if (loaded || this.#heldScripted(reference)) return;
+    delete state.deleteWhenAble;
+    this.deleteReference(reference);
+  }
+
+  /** ObjectReference.Delete: the reference leaves the world. */
+  deleteReference(reference: number): void {
+    this.state.reference(reference).deleted = true;
+    this.world.enableChanged?.(reference, false);
+  }
+
+  /** Whether an alias holds a reference (the alias's scripts hear its events). */
+  #heldScripted(reference: number): boolean {
+    return (this.#aliasesOf.get(reference)?.size ?? 0) > 0;
+  }
+
+  /** Whether a reference's events reach scripts: its own, or those of an alias holding it. */
+  async #hearsEvents(reference: number): Promise<boolean> {
+    return this.#heldScripted(reference) || (await this.#hasScripts(reference));
+  }
+
   aliasFilled(quest: number, alias: number, reference: number): void {
     const set = this.#aliasesOf.get(reference) ?? new Set();
     set.add(`${String(quest)}:${String(alias)}`);
@@ -1413,6 +1459,7 @@ export class ScriptRuntime implements VmHost {
     this.#holding.delete(reference);
     this.quests.filler.released(quest, alias, reference);
     this.detach(this.#nameByAliases(reference));
+    this.#deleteIfAble(reference, this.world.loaded?.(reference) === true);
   }
 
   /**
@@ -2462,6 +2509,27 @@ export class ScriptRuntime implements VmHost {
     return found;
   }
 
+  /**
+   * A created reference goes into the world: the view places it if it stands in the loaded
+   * area, and once its 3D is there it is attached to its cell and loaded (OnCellAttach,
+   * OnLoad), as a reference of a cell that attaches. A world encounter's actors, made at a
+   * marker as the quest starts, count themselves in this way (WEAliasScript), and those with
+   * KillOnLoad die as they load. TODO(M13): whether the engine tells OnCellAttach to a
+   * reference made in an attached cell (ours does; the scripts in the data accept either).
+   */
+  #createdInWorld(reference: number): void {
+    const shown = this.world.created?.(reference);
+    this.detach(
+      (async () => {
+        await shown;
+        if (!this.world.loaded?.(reference) || this.deleted(reference)) return;
+        if (!(await this.#hearsEvents(reference))) return;
+        this.events.emit('cellAttachDetach', { reference, attached: true });
+        this.events.emit('objectLoaded', { reference, loaded: true });
+      })(),
+    );
+  }
+
   /** A new reference (PlaceAtMe, an alias's Create Reference), at or in another one. */
   async createReference(base: number, at: number | undefined, inside: boolean): Promise<number> {
     const formId = this.state.create(base);
@@ -2482,7 +2550,7 @@ export class ScriptRuntime implements VmHost {
     }
     this.#initialized.add(formId);
     await this.vm.startInitialize(this.referenceHandle(formId));
-    this.world.created?.(formId);
+    this.#createdInWorld(formId);
     return formId;
   }
 
@@ -2499,7 +2567,7 @@ export class ScriptRuntime implements VmHost {
     }
     this.#initialized.add(formId);
     await this.vm.startInitialize(this.referenceHandle(formId));
-    this.world.created?.(formId);
+    this.#createdInWorld(formId);
     return formId;
   }
 

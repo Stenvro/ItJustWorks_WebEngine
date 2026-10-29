@@ -73,8 +73,8 @@ export interface ScriptView {
   loaded(reference: number): boolean;
   /** Where a loaded reference is now (moving objects, actors); undefined if not shown here. */
   livePlacement?(reference: number): LivePlacement | undefined;
-  /** A script created a reference (PlaceAtMe): the view shows it if it is there. */
-  created?(reference: number): void;
+  /** A script created a reference (PlaceAtMe): the view shows it if it is there (resolves then). */
+  created?(reference: number): Promise<void>;
   /** Scripts changed what is enabled: the view applies the new states. */
   enableStatesChanged(): void;
   /** A script moved or scaled a reference. */
@@ -359,8 +359,10 @@ export class ScriptWorld implements WorldBridge {
     });
   }
 
-  created(reference: number): void {
-    for (const view of this.#views) view.created?.(reference);
+  async created(reference: number): Promise<void> {
+    await Promise.all(
+      [...this.#views].map((view) => view.created?.(reference) ?? Promise.resolve()),
+    );
   }
 
   moved(reference: number): void {
