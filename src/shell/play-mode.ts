@@ -591,13 +591,10 @@ export class PlayMode {
         menus.close();
       },
       // fPlayerDeathReloadTime after the death the game loads its most recent save (without
-      // one, the game ends as Quit to main menu does).
-      reloadAfterDeath: () => {
-        void this.#saves.latest().then((latest) => {
-          if (latest !== undefined) {
-            this.#loadSaved(latest);
-            return;
-          }
+      // one, the game ends as Quit to main menu does). With a reload time of 0 or less it asks
+      // first (observed in the original): sMiscPlayerDeadMessage, Reload or Main Menu.
+      reloadAfterDeath: (ask) => {
+        const toMainMenu = (): void => {
           this.#quitToMainMenu().catch((error: unknown) => {
             this.#terminal.log(
               'ui',
@@ -605,6 +602,27 @@ export class PlayMode {
               'error',
             );
           });
+        };
+        void this.#saves.latest().then(async (latest) => {
+          if (latest === undefined) {
+            toMainMenu();
+            return;
+          }
+          if (ask) {
+            const settings = await session.settings();
+            const choice = await boxes.show(
+              settings.string('sMiscPlayerDeadMessage') ?? 'Reloading the most recent save game',
+              [
+                settings.string('sMiscPlayerDeadLoadOption') ?? 'Reload',
+                settings.string('sMiscPlayerDeadMenuOption') ?? 'Main Menu',
+              ],
+            );
+            if (choice !== 0) {
+              toMainMenu();
+              return;
+            }
+          }
+          this.#loadSaved(latest);
         });
       },
       tutorial: (use) => {

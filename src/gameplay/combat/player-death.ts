@@ -1,8 +1,12 @@
 // The player's death (docs/ai.md, "Combat"; UESP "Skyrim:Death"): their body goes limp as an
 // NPC's does, the camera goes to the bleedout camera (CommonLibSSE BleedoutCameraState: the
 // engine starts it for the dead player too) and stays on the body, and fPlayerDeathReloadTime
-// (5 s) after the death the game loads the most recent save. The wait runs on the game's clock
-// (a menu opened meanwhile, the journal's system page, holds it). The camera: in
+// (5 s) after the death the game loads the most recent save (observed in the original: the
+// wait begins as the player starts dying; without a save to load the game goes back to the main
+// menu). A fPlayerDeathReloadTime of 0 or less waits for nothing and asks instead
+// (sMiscPlayerDeadMessage, with sMiscPlayerDeadLoadOption and sMiscPlayerDeadMenuOption: reload,
+// or the main menu). The wait runs on the game's clock (a menu opened meanwhile, the journal's
+// system page, holds it). The camera: in
 // [Camera] iBleedoutTransitionMillis (500 ms) from where it was to its place behind the body,
 // looking down at it, pulled back from fVanityModeMinDist (155) to fDefaultAutoVanityZoom (300)
 // over the wait, slowly going round it. TODO(M13): the bleedout camera's pitch, the speed it
@@ -104,6 +108,14 @@ export class PlayerDeathTimer {
   /** Seconds since the death (the game's: not in menus). */
   get elapsed(): number {
     return this.#elapsed;
+  }
+
+  /**
+   * Whether the game asks before it reloads (fPlayerDeathReloadTime 0 or less: a message box
+   * offers the reload or the main menu) rather than reloading by itself.
+   */
+  get asks(): boolean {
+    return !(this.settings.reloadTime > 0);
   }
 
   /** Whether the reload has come due. */
