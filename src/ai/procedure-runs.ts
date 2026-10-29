@@ -277,7 +277,12 @@ const patrol: ProcedureRunner = async (run) => {
   let index = 0;
   // A flier whose patrol begins at a sky marker cruises from there at once.
   if (points[0] !== undefined) await run.body.patrolStart?.(points[0]);
-  if (run.inputs.bool(3)) {
+  // A loaded save's patrol goes on to the point it was going to (the original's patrol package
+  // data holds that point; before, a horse taken up from a save turned back to its first one).
+  const goal = run.resumedGoal?.();
+  const going = goal === undefined ? -1 : points.indexOf(goal);
+  if (going >= 0) index = going;
+  else if (run.inputs.bool(3)) {
     const here = run.body.position();
     let nearest = Infinity;
     for (let i = 0; i < points.length && here; i++) {
@@ -301,6 +306,7 @@ const patrol: ProcedureRunner = async (run) => {
       const at = point === undefined ? undefined : await run.mind.placement(point);
       if (!at) continue;
       const radius = await destinationRadius(run, point, pointRadius);
+      run.setGoal?.(point);
       const here = run.body.position();
       if (!here || horizontal(here, at.position) > radius) spent = true;
       const place = { position: at.position, radius, space: at.space, reference: point };
@@ -323,7 +329,10 @@ const patrol: ProcedureRunner = async (run) => {
       }
       if (await stayAtPatrolPoint(run, point)) spent = true;
     }
-    if (loop === undefined) return 'success';
+    if (loop === undefined) {
+      run.setGoal?.(undefined);
+      return 'success';
+    }
     if (!spent) await run.wait(IDLE_SECONDS);
     index = loop;
   }

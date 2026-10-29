@@ -69,6 +69,11 @@ export interface ReferenceState {
   ownerFaction?: number;
   /** Motion type set by script (SetMotionType): 1 dynamic, 2 sphere inertia, ..., 4 keyframed. */
   motionType?: number;
+  /**
+   * TetherToHorse: the horse that pulls this cart. Kept with the cart as its place is (a save
+   * loads it tethered, behind its horse: src/shell/actor-vehicles.ts).
+   */
+  horse?: number;
   scale?: number;
   /** Linked references a script changed (keyword 0: none). */
   links?: Map<number, number>;

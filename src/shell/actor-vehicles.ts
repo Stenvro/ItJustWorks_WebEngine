@@ -46,12 +46,13 @@ import {
 } from '../physics/physics-world.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ActorPose } from '../animation/skeleton.ts';
-import type { CellObject } from '../world/cell-loader.ts';
+import { matrixPlacement, type CellObject } from '../world/cell-loader.ts';
 import type { INI_DEFAULTS } from '../world/ini-settings.ts';
 import type { StagedActor } from './actor-stage.ts';
 import type { ActorMovers } from './actor-movers.ts';
 import type { GameSession } from './game-session.ts';
 import type { PlayerView } from './race-menu.ts';
+import { MOTION_KEYFRAMED } from './script-world.ts';
 import type { Terminal } from './terminal.ts';
 
 /** A cart a view gives up to the vehicles: its object and its drawn instance. */
@@ -96,8 +97,12 @@ type CartKey = keyof (typeof INI_DEFAULTS)['Cart'];
 interface Cart {
   readonly reference: number;
   readonly horse: number;
-  /** Where the tether put the horse (it is simulated once the horse stands there). */
-  readonly hitch: Vec3;
+  /**
+   * Where the tether put the horse (it is simulated once the horse stands there); undefined for
+   * a tether the game state kept (a loaded save, a view opened again): the horse stands in its
+   * shafts already.
+   */
+  readonly hitch: Vec3 | undefined;
   /** Its model drawn and collided here, once its view gave it up. */
   body: CartBody | undefined;
   adopting: boolean;
@@ -239,6 +244,8 @@ export class ActorVehicles {
   #physics: PhysicsWorld | undefined;
   #stepHooks: Set<(step: number) => void> | undefined;
   #settings: CartSettings | undefined;
+  /** The tethers the game state keeps were taken up for this physics world. */
+  #restored = false;
   readonly #step = (step: number): void => {
     this.#stepAll(step);
   };
@@ -290,6 +297,7 @@ export class ActorVehicles {
       for (const cart of this.#carts.values()) this.#drop(cart);
     }
     this.#stepHooks?.delete(this.#step);
+    if (this.#physics !== world?.physics) this.#restored = false;
     this.#physics = world?.physics;
     this.#stepHooks = world?.stepHooks;
     world?.stepHooks.add(this.#step);
@@ -378,6 +386,58 @@ export class ActorVehicles {
       if (keyframed) for (const link of body.links) link.previous = link.current;
     }
     return body !== undefined;
+  }
+
+  /**
+   * The tethers the game state keeps (the horse TetherToHorse gave a cart), taken up as a
+   * physics world starts: a loaded save's carts behind their horses again where they stood
+   * (their places are the game state's too: keepPlaces), and a cart's tether kept from one
+   * view to the next, as the original keeps the tether with the cart. The horse stands in its
+   * shafts already and is not moved; a cart a script keyframed stays so.
+   */
+  #restoreTethers(): void {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime || !this.#physics) return;
+    this.#restored = true;
+    for (const [reference, state] of runtime.state.references) {
+      const horse = state.horse;
+      if (horse === undefined || this.#carts.has(reference)) continue;
+      this.#carts.set(reference, {
+        reference,
+        horse,
+        hitch: undefined,
+        body: undefined,
+        adopting: false,
+        spine: new PoseEasing(),
+        lean: undefined,
+        keyframed: state.motionType === MOTION_KEYFRAMED,
+        lastSpine: undefined,
+      });
+    }
+  }
+
+  /**
+   * An actor the game state has riding a vehicle rides it here again (a loaded save's riders,
+   * the player among them, and one back on the stage after its cell unloaded): the game state
+   * keeps the vehicle (SetVehicle), the vehicles only those on this stage.
+   */
+  rideAgain(actor: number): void {
+    if (this.#passengers.has(actor)) return;
+    if (this.#options.session.scriptsReady?.state.actors.get(actor)?.vehicle === undefined) return;
+    if (actor === PLAYER_REF && !this.#options.player?.()) return;
+    this.changed(actor);
+  }
+
+  /**
+   * A loaded save's player riding again: their graphs go on in their riding idle (as the
+   * riders' do: src/shell/actor-stage.ts), once their body is there.
+   */
+  #seatPlayerAgain(): void {
+    const restoring = this.#options.session.restoring;
+    if (!restoring || !this.#passengers.has(PLAYER_REF)) return;
+    const avatar = this.#options.player?.()?.avatar;
+    const graphs = avatar && restoring.takePlayerGraphs();
+    if (graphs) avatar.restoreGraphs(graphs);
   }
 
   /** SetVehicle: an actor rides its vehicle now (the game state's), or no longer. */
@@ -587,6 +647,9 @@ export class ActorVehicles {
   #stepAll(step: number): void {
     const { get } = this.#options;
     const names = this.#names();
+    if (!this.#restored) this.#restoreTethers();
+    this.rideAgain(PLAYER_REF);
+    this.#seatPlayerAgain();
     for (const cart of this.#carts.values()) {
       if (!cart.body && !cart.adopting) void this.#adopt(cart);
       const body = cart.body;
@@ -660,7 +723,8 @@ export class ActorVehicles {
     const physics = this.#physics;
     if (!physics) return;
     const feet = this.#options.movers.state(horse.reference)?.feet ?? horse.position;
-    if (Math.hypot(feet[0] - cart.hitch[0], feet[1] - cart.hitch[1]) > HITCH_REACH) return;
+    const hitch = cart.hitch;
+    if (hitch && Math.hypot(feet[0] - hitch[0], feet[1] - hitch[1]) > HITCH_REACH) return;
     const root = body.root.current;
     if (!this.#groundUnder([root[12] ?? 0, root[13] ?? 0, root[14] ?? 0])) return;
     const skeleton = horse.placed.pose.skeleton;
@@ -1003,22 +1067,28 @@ export class ActorVehicles {
   }
 
   /**
+   * Where each cart pulled here stands goes to the game state (its place, as the reference's
+   * moved): a save keeps it there, and the next view places it there, still tethered.
+   */
+  keepPlaces(): void {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime) return;
+    for (const cart of this.#carts.values()) {
+      if (!cart.body) continue;
+      const { position, rotation } = matrixPlacement(this.#rootOf(cart.body, 1));
+      const state = runtime.state.reference(cart.reference);
+      state.position = position;
+      state.rotation = rotation;
+    }
+  }
+
+  /**
    * The view closes: the carts' draws and collision go, and where each stands goes to the game
-   * state. TODO(M13): a cart stays tethered across the views (here it stands where it was left,
-   * pulled again only by a new TetherToHorse).
+   * state (the next physics world takes their tethers up again: #restoreTethers).
    */
   clear(): void {
-    const runtime = this.#options.session.scriptsReady;
-    for (const cart of this.#carts.values()) {
-      const body = cart.body;
-      if (runtime && body) {
-        const pose = poseOf(this.#rootOf(body, 1));
-        const state = runtime.state.reference(cart.reference);
-        state.position = [...pose.position];
-        state.rotation = [0, 0, pose.heading];
-      }
-      this.#drop(cart);
-    }
+    this.keepPlaces();
+    for (const cart of this.#carts.values()) this.#drop(cart);
     this.#carts.clear();
     this.#passengers.clear();
   }

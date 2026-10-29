@@ -33,6 +33,7 @@ import { headPosition } from './actors.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import type { GameSession } from './game-session.ts';
 import type { Player } from './player.ts';
+import type { SavedGraphs } from '../save/world-save.ts';
 
 /** The Player reference (PlayerRef). */
 const PLAYER_REFERENCE = 0x14;
@@ -161,6 +162,20 @@ export class PlayerAvatar {
   /** The third-person body, drawn in third person. */
   get body(): PlacedActor {
     return this.#made.body;
+  }
+
+  /** What a save keeps of its graphs (src/save/world-save.ts SavedGraphs). */
+  saveGraphs(): SavedGraphs {
+    return {
+      body: this.#made.body.behavior?.saveState(),
+      firstPerson: this.#firstPerson?.skeleton.behavior?.saveState(),
+    };
+  }
+
+  /** A loaded save's graphs put back: each machine goes on in its saved state. */
+  restoreGraphs(saved: SavedGraphs): void {
+    if (saved.body) this.#made.body.behavior?.restoreState(saved.body);
+    if (saved.firstPerson) this.#firstPerson?.skeleton.behavior?.restoreState(saved.firstPerson);
   }
 
   /** The body's draws (none headless). */
