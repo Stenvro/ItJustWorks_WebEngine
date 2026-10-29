@@ -17,10 +17,11 @@ counts holds what a name sweep cannot see.
 
 | Part                             | Items | Done | Open | n/a |
 | -------------------------------- | ----: | ---: | ---: | --: |
-| Movies                           |    50 |   34 |    4 |  12 |
-| GameDelegate calls and callbacks |   425 |  349 |   38 |  38 |
-| Menu names the original opens    |    41 |   28 |    8 |   5 |
-| Behaviour items (below)          |    31 |   10 |   21 |   0 |
+| Movies                           |    50 |   35 |    2 |  13 |
+| GameDelegate calls and callbacks |   425 |  361 |   26 |  38 |
+| Menu names the original opens    |    41 |   30 |    1 |  10 |
+| Behaviour items (below)          |    37 |   18 |   16 |   3 |
+| All                              |   553 |  444 |   45 |  64 |
 
 Some behaviour items name calls the sweep also lists (they say what is still missing around
 them). The movies' `ExternalInterface.call("__handleEvent")` (CLIK's sound and focus events) is answered
@@ -44,24 +45,30 @@ path (GFx Invoke and SetVariable), keys and gamepad paths, and the player's own 
 | Menu stack with the original's IMenu flags, saving permission, UI.IsMenuOpen          | done   | src/ui/menu-stack.ts                                                                                                                                                           |
 | Gamepad: contexts, GFx gamepad keys, remap, live SetPlatform                          | done   | src/shell/gamepad-input.ts, src/ui/input-platform.ts                                                                                                                           |
 | SetButtonMapping with a gamepad (the gamepad's bindings, their art names)             | open   | the gamepad's art names are not built                                                                                                                                          |
-| Save screenshots (PrepSaveGameScreenshot, ScreenshotReady)                            | open   | saves keep no screenshot yet (the renderer's capture); TODO(M12)                                                                                                               |
-| The map's relief overlay                                                              | open   | its settings and textures are named in docs/ui.md ("The map")                                                                                                                  |
+| Save screenshots (PrepSaveGameScreenshot, ScreenshotReady)                            | done   | src/shell/save-screenshot.ts, src/shell/save-list.ts, src/render/renderer.ts (captureFrame)                                                                                    |
+| The map's relief overlay                                                              | open   | the map's LOD land shader: how the original tells snow and blends the two normals is not read (docs/ui.md, "The map")                                                          |
 | The lockpicking strings the maintainer saw                                            | open   | to check on screen which text; the bar's labels are translation keys ($Lock Level, $Lockpicks Left)                                                                            |
 | Lockpicking debug display (UpdatePickAngle, UpdateLockAngle, UpdateSweetSpot, ...)    | open   | the original sends them to a display hidden unless toggled; not sent                                                                                                           |
 | Controls page: the left/right swap the maintainer saw                                 | open   | the data path is as the original's: Left Attack/Block is the right mouse button (Mouse2), as the movie's own default table has it; to check on screen which side looks swapped |
 | Ruffle: scale9Grid not drawn                                                          | open   | Ruffle's stub (the movies' nine-slice frames stretch)                                                                                                                          |
 | Ruffle: the "Times New Roman" device font                                             | open   | Ruffle has no device fonts; a movie's text set in it is not drawn as the original's                                                                                            |
 | Item menus' ToggleMenuFade (the menu fades out and back)                              | open   | when the original fades the item menus is not read yet                                                                                                                         |
-| Map over the journal (ShowJournal: the map's bar hidden while the journal shows)      | open   | ours closes the map and opens the journal                                                                                                                                      |
-| Tween menu ShowMenu, HideMenu, ResetStatsButton                                       | open   | our tween movie is loaded anew each time; the original keeps it under the menus it opens                                                                                       |
-| Journal HideMenu, ShowMenu, StartCloseMenu, RefreshSystemButtons, BackOutFromLoadGame | open   | not sent                                                                                                                                                                       |
-| Main menu ConfirmNewGame, ConfirmContinue, HELP, OnDisabledLoadPress, QuitToMainMenu  | open   | not answered                                                                                                                                                                   |
-| Favorites StartFadeOut, SetSelectedItem; dialogue Cancel; book PrepForClose           | open   | not sent                                                                                                                                                                       |
+| Map over the journal (ShowJournal: the map's bar hidden while the journal shows)      | done   | src/shell/map-menu.ts (showJournal), src/shell/game-menus.ts: the map stays open under the journal                                                                             |
+| Tween menu HideMenu, ResetStatsButton, ShowMenu                                       | done   | src/shell/game-menus.ts: hidden under the menu chosen, shown again when an item menu goes back to it                                                                           |
+| Journal HideMenu, ShowMenu, StartCloseMenu, RefreshSystemButtons, BackOutFromLoadGame | open   | observed: ShowMenu on the engine's "Show Journal" message, RefreshSystemButtons on "RefreshMenu", StartCloseMenu as the engine hides it; who sends those is not read yet       |
+| Main menu ConfirmNewGame, ConfirmContinue, HELP, OnDisabledLoadPress, QuitToMainMenu  | done   | src/shell/play-mode.ts (the original answers the last three with nothing)                                                                                                      |
+| Main menu Load's import of an original save (.ess)                                    | done   | src/shell/play-mode.ts (pickImport), src/shell/save-list.ts: the picker opens as the entry is pressed                                                                          |
+| Favorites StartFadeOut, SetSelectedItem; dialogue Cancel                              | open   | not sent                                                                                                                                                                       |
+| Book PrepForClose                                                                     | done   | src/shell/book-menu.ts                                                                                                                                                         |
 | Message box setIsVertical; HUD FadeOutChargeMeters, ValidateCrosshair                 | open   | not sent                                                                                                                                                                       |
 | HUD SetCompassTemperature (Survival Mode)                                             | open   | the engine has no such name: Survival Mode's own scripts would drive it; not checked                                                                                           |
-| Quantity Menu as a menu of its own                                                    | open   | the item menus' quantity slider plays inside their movie                                                                                                                       |
-| Top Menu, Overlay Menu, Overlay Interaction Menu, Debug Text Menu, SafeZoneMenu       | open   | not in our menu stack                                                                                                                                                          |
-| TitleSequence Menu and LoadWaitSpinner in the menu stack                              | open   | titles.swf plays (src/shell/title-sequence.ts) but is not a stack entry; loadwaitspinner.swf is never opened                                                                   |
+| Quantity Menu as a menu of its own                                                    | n/a    | no menu of the original is made under the name: the item menus' quantity slider plays inside their movie                                                                       |
+| Top Menu, Overlay Menu, Overlay Interaction Menu                                      | n/a    | no menu of the original is made under these names (they are only looked up)                                                                                                    |
+| SafeZoneMenu                                                                          | n/a    | the consoles' safe-zone setting: the PC's display page has none                                                                                                                |
+| Debug Text Menu                                                                       | open   | its flags and when the original opens it are not read                                                                                                                          |
+| TitleSequence Menu and LoadWaitSpinner in the menu stack                              | done   | src/shell/title-sequence.ts, src/shell/load-wait-spinner.ts (shown while a save is written)                                                                                    |
+| The inventory 3D turned and zoomed by each model's BSInvMarker                        | open   | the parser reads it; the original's rotation order and zoom rule are not read yet                                                                                              |
+| Lockpicking: the failed tries on a lock (for IsLockBroken)                            | done   | src/shell/lockpicking-menu.ts (failedLockTries); the native itself is Papyrus's                                                                                                |
 | Beast perk trees, low-stat tutorials, Survival HUD                                    | open   | docs/engine-map.md ("UI")                                                                                                                                                      |
 | Creation Club menu, Mod Manager, Bethesda.net login                                   | open   | online services, never reached from localhost (hard rule 4); the installed Creations could be listed offline: not decided                                                      |
 
@@ -102,7 +109,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | kinectmenu.swf                                  | n/a    | consoles only (PlayStation, Xbox, Switch)                                        |
 | levelupmenu.swf                                 | done   | src/shell/level-up-menu.ts                                                       |
 | loadingmenu.swf                                 | done   | src/shell/play-mode.ts                                                           |
-| loadwaitspinner.swf                             | open   |                                                                                  |
+| loadwaitspinner.swf                             | done   | src/shell/load-wait-spinner.ts                                                   |
 | lockpickingmenu.swf                             | done   | src/shell/lockpicking-menu.ts                                                    |
 | logindialog.swf                                 | n/a    | an online service (Bethesda.net): never reached from localhost (hard rule 4)     |
 | magicmenu.swf                                   | done   | src/shell/magic-menu.ts                                                          |
@@ -111,7 +118,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | modmanager.swf                                  | n/a    | an online service (Bethesda.net): never reached from localhost (hard rule 4)     |
 | quest_journal.swf                               | done   | src/shell/journal-menu.ts                                                        |
 | racesex_menu.swf                                | done   | src/shell/race-menu.ts                                                           |
-| safezone.swf                                    | open   |                                                                                  |
+| safezone.swf                                    | n/a    | the consoles' safe-zone setting: the PC's display page has none                  |
 | sharedcomponents.swf                            | open   |                                                                                  |
 | sleepwaitmenu.swf                               | done   | src/shell/sleep-wait-menu.ts                                                     |
 | startmenu.swf                                   | done   | src/shell/play-mode.ts                                                           |
@@ -148,7 +155,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | Kinect Menu              | n/a    | consoles only (PlayStation, Xbox, Switch)                                    |
 | LevelUp Menu             | done   |                                                                              |
 | Loading Menu             | done   |                                                                              |
-| LoadWaitSpinner          | open   |                                                                              |
+| LoadWaitSpinner          | done   |                                                                              |
 | Lockpicking Menu         | done   |                                                                              |
 | MagicMenu                | done   |                                                                              |
 | Main Menu                | done   |                                                                              |
@@ -156,23 +163,21 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | MessageBoxMenu           | done   |                                                                              |
 | Mist Menu                | done   |                                                                              |
 | Mod Manager Menu         | n/a    | an online service (Bethesda.net): never reached from localhost (hard rule 4) |
-| Overlay Interaction Menu | open   |                                                                              |
-| Overlay Menu             | open   |                                                                              |
-| Quantity Menu            | open   |                                                                              |
+| Overlay Interaction Menu | n/a    | no menu of the original is made under this name (it is only looked up)       |
+| Overlay Menu             | n/a    | no menu of the original is made under this name (it is only looked up)       |
+| Quantity Menu            | n/a    | no menu of the original is made under this name (it is only looked up)       |
 | RaceSex Menu             | done   |                                                                              |
-| SafeZoneMenu             | open   |                                                                              |
+| SafeZoneMenu             | n/a    | the consoles' safe-zone setting: the PC's display page has none              |
 | Sleep/Wait Menu          | done   |                                                                              |
 | StatsMenu                | done   |                                                                              |
 | StreamingInstallMenu     | n/a    | consoles only (PlayStation, Xbox, Switch)                                    |
-| TitleSequence Menu       | open   |                                                                              |
-| Top Menu                 | open   |                                                                              |
+| TitleSequence Menu       | done   |                                                                              |
+| Top Menu                 | n/a    | no menu of the original is made under this name (it is only looked up)       |
 | Training Menu            | done   |                                                                              |
 | Tutorial Menu            | done   |                                                                              |
 | TweenMenu                | done   |                                                                              |
 
-### Calls and callbacks per movie
-
-#### bartermenu.swf
+### bartermenu.swf
 
 | Kind     | Name                    | Status | Where / reason           |
 | -------- | ----------------------- | ------ | ------------------------ |
@@ -198,15 +203,15 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | UpdateItemCardInfo      | done   | src/shell/item-menu.ts   |
 | callback | UpdatePlayerInfo        | done   | src/shell/item-menu.ts   |
 
-#### book.swf
+### book.swf
 
 | Kind     | Name         | Status | Where / reason         |
 | -------- | ------------ | ------ | ---------------------- |
-| callback | PrepForClose | open   |                        |
+| callback | PrepForClose | done   | src/shell/book-menu.ts |
 | callback | SetBookText  | done   | src/shell/book-menu.ts |
 | callback | TurnPage     | done   | src/shell/book-menu.ts |
 
-#### bookmenu.swf
+### bookmenu.swf
 
 | Kind     | Name                  | Status | Where / reason                                          |
 | -------- | --------------------- | ------ | ------------------------------------------------------- |
@@ -214,14 +219,14 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | ShowTakeButton        | done   | src/shell/book-menu.ts                                  |
 | callback | UpdateTurnPagesButton | n/a    | the original engine has no such name: it never sends it |
 
-#### console.swf
+### console.swf
 
 | Kind | Name           | Status | Where / reason            |
 | ---- | -------------- | ------ | ------------------------- |
 | call | ExecuteCommand | done   | src/shell/console-menu.ts |
 | call | HideComplete   | done   | src/shell/console-menu.ts |
 
-#### containermenu.swf
+### containermenu.swf
 
 | Kind     | Name                | Status | Where / reason         |
 | -------- | ------------------- | ------ | ---------------------- |
@@ -251,7 +256,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | UpdatePlayerInfo    | done   | src/shell/item-menu.ts |
 | callback | XButtonPress        | done   | src/shell/item-menu.ts |
 
-#### craftingmenu.swf
+### craftingmenu.swf
 
 | Kind     | Name                | Status | Where / reason             |
 | -------- | ------------------- | ------ | -------------------------- |
@@ -275,13 +280,13 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | SetButtonMapping    | done   | src/ui/menu-host.ts        |
 | callback | SetCategoriesList   | done   | src/shell/crafting-menu.ts |
 
-#### creditsmenu.swf
+### creditsmenu.swf
 
 | Kind | Name  | Status | Where / reason         |
 | ---- | ----- | ------ | ---------------------- |
 | call | myLog | done   | src/shell/play-mode.ts |
 
-#### dialoguemenu.swf
+### dialoguemenu.swf
 
 | Kind     | Name                 | Status | Where / reason                                          |
 | -------- | -------------------- | ------ | ------------------------------------------------------- |
@@ -301,7 +306,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | ShowDialogueText     | done   | src/shell/dialogue-menu.ts                              |
 | callback | StartHideMenu        | done   | src/shell/dialogue-menu.ts                              |
 
-#### fadermenu.swf
+### fadermenu.swf
 
 | Kind     | Name       | Status | Where / reason          |
 | -------- | ---------- | ------ | ----------------------- |
@@ -309,7 +314,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | InitFade   | done   | src/shell/fader-menu.ts |
 | callback | UpdateFade | done   | src/shell/fader-menu.ts |
 
-#### favoritesmenu.swf
+### favoritesmenu.swf
 
 | Kind     | Name            | Status | Where / reason                                          |
 | -------- | --------------- | ------ | ------------------------------------------------------- |
@@ -320,7 +325,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | SetSelectedItem | open   |                                                         |
 | callback | StartFadeOut    | open   |                                                         |
 
-#### giftmenu.swf
+### giftmenu.swf
 
 | Kind     | Name                | Status | Where / reason         |
 | -------- | ------------------- | ------ | ---------------------- |
@@ -345,7 +350,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | UpdateItemCardInfo  | done   | src/shell/item-menu.ts |
 | callback | UpdatePlayerInfo    | done   | src/shell/item-menu.ts |
 
-#### hudmenu.swf
+### hudmenu.swf
 
 | Kind     | Name                        | Status | Where / reason                                |
 | -------- | --------------------------- | ------ | --------------------------------------------- |
@@ -381,14 +386,14 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | StartStaminaMeterBlinking   | done   | src/shell/hud-controller.ts                   |
 | callback | ValidateCrosshair           | open   |                                               |
 
-#### inventory components\bottombar.swf
+### inventory components\bottombar.swf
 
 | Kind     | Name             | Status | Where / reason         |
 | -------- | ---------------- | ------ | ---------------------- |
 | call     | myLog            | done   | src/shell/play-mode.ts |
 | callback | SetButtonMapping | done   | src/ui/menu-host.ts    |
 
-#### inventory components\inventorylists.swf
+### inventory components\inventorylists.swf
 
 | Kind     | Name               | Status | Where / reason             |
 | -------- | ------------------ | ------ | -------------------------- |
@@ -397,7 +402,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | InvalidateListData | done   | src/shell/crafting-menu.ts |
 | callback | SetCategoriesList  | done   | src/shell/crafting-menu.ts |
 
-#### inventory components\invertedinventorylists.swf
+### inventory components\invertedinventorylists.swf
 
 | Kind     | Name               | Status | Where / reason         |
 | -------- | ------------------ | ------ | ---------------------- |
@@ -405,14 +410,14 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | InvalidateListData | done   | src/shell/item-menu.ts |
 | callback | SetCategoriesList  | done   | src/shell/item-menu.ts |
 
-#### inventory components\itemcard.swf
+### inventory components\itemcard.swf
 
 | Kind | Name      | Status | Where / reason         |
 | ---- | --------- | ------ | ---------------------- |
 | call | PlaySound | done   | src/shell/play-mode.ts |
 | call | myLog     | done   | src/shell/play-mode.ts |
 
-#### inventorymenu.swf
+### inventorymenu.swf
 
 | Kind     | Name                 | Status | Where / reason         |
 | -------- | -------------------- | ------ | ---------------------- |
@@ -446,7 +451,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | UpdateItemCardInfo   | done   | src/shell/item-menu.ts |
 | callback | UpdatePlayerInfo     | done   | src/shell/item-menu.ts |
 
-#### levelupmenu.swf
+### levelupmenu.swf
 
 | Kind | Name       | Status | Where / reason             |
 | ---- | ---------- | ------ | -------------------------- |
@@ -455,14 +460,14 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | call | addMagicka | done   | src/shell/level-up-menu.ts |
 | call | addStamina | done   | src/shell/level-up-menu.ts |
 
-#### loadingmenu.swf
+### loadingmenu.swf
 
 | Kind | Name               | Status | Where / reason         |
 | ---- | ------------------ | ------ | ---------------------- |
 | call | RequestLoadingText | done   | src/shell/play-mode.ts |
 | call | RequestPlayerInfo  | done   | src/shell/play-mode.ts |
 
-#### lockpickingmenu.swf
+### lockpickingmenu.swf
 
 | Kind     | Name                          | Status | Where / reason                                          |
 | -------- | ----------------------------- | ------ | ------------------------------------------------------- |
@@ -476,7 +481,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | UpdatePickHealth              | open   |                                                         |
 | callback | UpdateSweetSpot               | open   |                                                         |
 
-#### magicmenu.swf
+### magicmenu.swf
 
 | Kind     | Name                | Status | Where / reason         |
 | -------- | ------------------- | ------ | ---------------------- |
@@ -504,7 +509,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | UpdateItemCardInfo  | done   | src/shell/item-menu.ts |
 | callback | UpdatePlayerInfo    | done   | src/shell/item-menu.ts |
 
-#### map.swf
+### map.swf
 
 | Kind     | Name                            | Status | Where / reason                                   |
 | -------- | ------------------------------- | ------ | ------------------------------------------------ |
@@ -521,9 +526,9 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | RefreshMarkers                  | done   | src/shell/local-map.ts                           |
 | callback | SetDateString                   | done   | src/shell/map-menu.ts                            |
 | callback | SetSelectedMarker               | done   | src/shell/local-map.ts                           |
-| callback | ShowJournal                     | open   |                                                  |
+| callback | ShowJournal                     | done   | src/shell/map-menu.ts                            |
 
-#### messagebox.swf
+### messagebox.swf
 
 | Kind     | Name             | Status | Where / reason             |
 | -------- | ---------------- | ------ | -------------------------- |
@@ -534,7 +539,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | setIsVertical    | open   |                            |
 | callback | setMessageText   | done   | src/shell/message-boxes.ts |
 
-#### quest_journal.swf
+### quest_journal.swf
 
 | Kind     | Name                          | Status | Where / reason                                                               |
 | -------- | ----------------------------- | ------ | ---------------------------------------------------------------------------- |
@@ -554,7 +559,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | call     | PopulateCharacterList         | done   | src/shell/save-list.ts                                                       |
 | call     | PopulateCreationClubTopics    | n/a    | an online service (Bethesda.net): never reached from localhost (hard rule 4) |
 | call     | PopulateHelpTopics            | done   | src/shell/journal-menu.ts                                                    |
-| call     | PrepSaveGameScreenshot        | done   | src/shell/journal-menu.ts                                                    |
+| call     | PrepSaveGameScreenshot        | done   | src/shell/save-list.ts                                                       |
 | call     | QuickSave                     | done   | src/shell/journal-menu.ts                                                    |
 | call     | QuitToDesktop                 | done   | src/shell/journal-menu.ts                                                    |
 | call     | QuitToMainMenu                | done   | src/shell/journal-menu.ts                                                    |
@@ -595,7 +600,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | OnSaveDataEventSaveSUCCESS    | n/a    | consoles only (PlayStation, Xbox, Switch)                                    |
 | callback | RefreshSystemButtons          | open   |                                                                              |
 | callback | RestoreSavedSettings          | done   | src/shell/journal-menu.ts                                                    |
-| callback | ScreenshotReady               | open   |                                                                              |
+| callback | ScreenshotReady               | done   | src/shell/save-list.ts                                                       |
 | callback | SetButtonMapping              | done   | src/ui/menu-host.ts                                                          |
 | callback | SetRemoteDevice               | n/a    | consoles only (PlayStation, Xbox, Switch)                                    |
 | callback | SettingsSaved                 | done   | src/shell/journal-controls.ts                                                |
@@ -606,7 +611,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | onRightStickInput             | open   |                                                                              |
 | callback | onSaveLoadBatchComplete       | done   | src/shell/save-list.ts                                                       |
 
-#### racesex_menu.swf
+### racesex_menu.swf
 
 | Kind     | Name                  | Status | Where / reason                                          |
 | -------- | --------------------- | ------ | ------------------------------------------------------- |
@@ -637,7 +642,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | ShowTextEntryField    | done   | src/shell/race-menu.ts                                  |
 | callback | moveCategoriesUp      | n/a    | the original engine has no such name: it never sends it |
 
-#### sleepwaitmenu.swf
+### sleepwaitmenu.swf
 
 | Kind | Name      | Status | Where / reason               |
 | ---- | --------- | ------ | ---------------------------- |
@@ -646,7 +651,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | call | PlaySound | done   | src/shell/play-mode.ts       |
 | call | myLog     | done   | src/shell/play-mode.ts       |
 
-#### startmenu.swf
+### startmenu.swf
 
 | Kind     | Name                             | Status | Where / reason                                                               |
 | -------- | -------------------------------- | ------ | ---------------------------------------------------------------------------- |
@@ -662,28 +667,28 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | call     | EndPressStartState               | done   | src/shell/play-mode.ts                                                       |
 | call     | FirstTimeOunceDataTransferCheck  | n/a    | consoles only (PlayStation, Xbox, Switch)                                    |
 | call     | ForceStopSaveListLoading         | done   | src/shell/save-list.ts                                                       |
-| call     | HELP                             | open   |                                                                              |
+| call     | HELP                             | done   | src/shell/play-mode.ts                                                       |
 | call     | IsOKtoLoad                       | done   | src/shell/save-list.ts                                                       |
 | call     | LoadDLC                          | n/a    | an online service (Bethesda.net): never reached from localhost (hard rule 4) |
 | call     | MOD                              | n/a    | an online service (Bethesda.net): never reached from localhost (hard rule 4) |
 | call     | NEW                              | done   | src/shell/play-mode.ts                                                       |
 | call     | ORBISDeleteSave                  | n/a    | consoles only (PlayStation, Xbox, Switch)                                    |
-| call     | OnDisabledLoadPress              | open   |                                                                              |
+| call     | OnDisabledLoadPress              | done   | src/shell/play-mode.ts                                                       |
 | call     | OnOunceDataTransfer              | n/a    | consoles only (PlayStation, Xbox, Switch)                                    |
 | call     | OnPS5DataTransfer                | n/a    | consoles only (PlayStation, Xbox, Switch)                                    |
 | call     | OpenMarketplace                  | n/a    | an online service (Bethesda.net): never reached from localhost (hard rule 4) |
 | call     | PlaySound                        | done   | src/shell/play-mode.ts                                                       |
 | call     | PopulateCharacterList            | done   | src/shell/save-list.ts                                                       |
-| call     | PrepSaveGameScreenshot           | done   | src/shell/play-mode.ts                                                       |
+| call     | PrepSaveGameScreenshot           | done   | src/shell/save-list.ts                                                       |
 | call     | QuitToDesktop                    | done   | src/shell/play-mode.ts                                                       |
-| call     | QuitToMainMenu                   | open   |                                                                              |
+| call     | QuitToMainMenu                   | done   | src/shell/play-mode.ts                                                       |
 | call     | Sky10DLCPressed                  | n/a    | an online service (Bethesda.net): never reached from localhost (hard rule 4) |
 | call     | StartState                       | done   | src/shell/play-mode.ts                                                       |
 | call     | currentState                     | done   | src/shell/play-mode.ts                                                       |
 | call     | fadeOutStarted                   | done   | src/shell/play-mode.ts                                                       |
 | call     | myLog                            | done   | src/shell/play-mode.ts                                                       |
-| callback | ConfirmContinue                  | open   |                                                                              |
-| callback | ConfirmNewGame                   | open   |                                                                              |
+| callback | ConfirmContinue                  | done   | src/shell/play-mode.ts                                                       |
+| callback | ConfirmNewGame                   | done   | src/shell/play-mode.ts                                                       |
 | callback | ConfirmOKToLoad                  | done   | src/shell/save-list.ts                                                       |
 | callback | DoneLoadingDLC                   | n/a    | an online service (Bethesda.net): never reached from localhost (hard rule 4) |
 | callback | ExitJoyConStrapInstructionScreen | n/a    | consoles only (PlayStation, Xbox, Switch)                                    |
@@ -692,7 +697,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | OnDeleteSaveUISanityCheck        | done   | src/shell/play-mode.ts                                                       |
 | callback | OnSaveDataEventLoadCANCEL        | n/a    | consoles only (PlayStation, Xbox, Switch)                                    |
 | callback | OnSaveDataEventLoadSUCCESS       | n/a    | consoles only (PlayStation, Xbox, Switch)                                    |
-| callback | ScreenshotReady                  | open   |                                                                              |
+| callback | ScreenshotReady                  | done   | src/shell/save-list.ts                                                       |
 | callback | SetFirstExitedMenu               | open   |                                                                              |
 | callback | ShowGamerTagAndIcon              | n/a    | consoles only (PlayStation, Xbox, Switch)                                    |
 | callback | StartLoadingDLC                  | n/a    | an online service (Bethesda.net): never reached from localhost (hard rule 4) |
@@ -702,7 +707,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | onStartButtonProcessFinished     | open   |                                                                              |
 | callback | sendMenuProperties               | done   | src/shell/play-mode.ts                                                       |
 
-#### statsmenu.swf
+### statsmenu.swf
 
 | Kind     | Name                    | Status | Where / reason                                          |
 | -------- | ----------------------- | ------ | ------------------------------------------------------- |
@@ -718,13 +723,13 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | ShowLegendaryButtonHint | done   | src/shell/skills-menu.ts                                |
 | callback | UpdateSkillList         | done   | src/shell/skills-menu.ts                                |
 
-#### textentry.swf
+### textentry.swf
 
 | Kind | Name  | Status | Where / reason         |
 | ---- | ----- | ------ | ---------------------- |
 | call | myLog | done   | src/shell/play-mode.ts |
 
-#### trainingmenu.swf
+### trainingmenu.swf
 
 | Kind | Name  | Status | Where / reason             |
 | ---- | ----- | ------ | -------------------------- |
@@ -732,7 +737,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | call | Train | done   | src/shell/training-menu.ts |
 | call | myLog | done   | src/shell/play-mode.ts     |
 
-#### tutorialmenu.swf
+### tutorialmenu.swf
 
 | Kind     | Name                   | Status | Where / reason             |
 | -------- | ---------------------- | ------ | -------------------------- |
@@ -741,7 +746,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | call     | myLog                  | done   | src/shell/play-mode.ts     |
 | callback | SetButtonMapping       | done   | src/ui/menu-host.ts        |
 
-#### tweenmenu.swf
+### tweenmenu.swf
 
 | Kind     | Name                | Status | Where / reason             |
 | -------- | ------------------- | ------ | -------------------------- |
@@ -751,8 +756,8 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | call     | OpenHighlightedMenu | done   | src/shell/game-menus.ts    |
 | call     | StartCloseMenu      | done   | src/shell/game-menus.ts    |
 | call     | myLog               | done   | src/shell/play-mode.ts     |
-| callback | HideMenu            | open   |                            |
-| callback | ResetStatsButton    | open   |                            |
-| callback | ShowMenu            | open   |                            |
+| callback | HideMenu            | done   | src/shell/game-menus.ts    |
+| callback | ResetStatsButton    | done   | src/shell/game-menus.ts    |
+| callback | ShowMenu            | done   | src/shell/game-menus.ts    |
 | callback | StartCloseMenuAnim  | done   | src/shell/game-menus.ts    |
 | callback | StartOpenMenuAnim   | done   | src/shell/game-menus.ts    |

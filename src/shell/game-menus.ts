@@ -28,7 +28,7 @@ import { BookMenu, type BookToRead } from './book-menu.ts';
 import { LockpickingMenu } from './lockpicking-menu.ts';
 import { SkillsMenu } from './skills-menu.ts';
 import { BookFlag, parseItem } from '../world/item-records.ts';
-import { MapMenu } from './map-menu.ts';
+import { MapMenu, type OpenedMap } from './map-menu.ts';
 import { TutorialMenu } from './tutorial-menu.ts';
 import { CraftingMenu } from './crafting-menu.ts';
 import type { TweenCamera } from './tween-camera.ts';
@@ -46,6 +46,12 @@ const SCRIPTED_MENU_TELL_MS = 3_000;
 /** The tween menu's choices (its FrameToLabelMap: 1 up, 2 left, 3 right, 4 down). */
 const TWEEN_CHOICES = ['None', 'Skills', 'Magic', 'Inventory', 'Map'] as const;
 type TweenChoice = (typeof TWEEN_CHOICES)[number];
+
+/** A menu open: its movie (once loaded) and what ends it (its stack entry, menu mode). */
+interface OpenSlot {
+  menu: Menu | undefined;
+  leave: () => void;
+}
 
 /** The menus by the gameplay event that opens each. */
 const EVENT_MENUS: Readonly<Record<string, string>> = {
@@ -93,7 +99,23 @@ export class GameMenus {
    */
   readonly #enterMenuMode: (pauses?: boolean) => () => void;
   /** The menu open (or opening), if any. */
-  #open: { menu: Menu | undefined; leave: () => void } | undefined;
+  #open: OpenSlot | undefined;
+  /**
+   * A menu kept open under the one on top, as the original keeps it: the tween menu (hidden:
+   * HideMenu) under the menu chosen in it, the map under the journal opened from it. When the
+   * menu on top closes, `topClosed` says what becomes of it; `close` closes it.
+   */
+  #under:
+    | {
+        readonly slot: OpenSlot;
+        readonly topClosed: () => void;
+        readonly close: () => void;
+        /** The tween menu kept hidden: it shows again (an item menu's ShowTweenMenu). */
+        readonly reopen?: () => void;
+      }
+    | undefined;
+  /** The map open now (its slot), to keep under the journal. */
+  #openedMap: { readonly slot: OpenSlot; readonly map: OpenedMap } | undefined;
   readonly #missing = new Set<string>();
   readonly #journal: JournalMenu;
   readonly #items: ItemMenu;
@@ -203,7 +225,22 @@ export class GameMenus {
       left = true;
       unstack();
       leaveMenuMode();
+      // The menu on top has closed: the one kept under it is told (once the closing has run
+      // its course: an item menu going back to the tween menu shows it again first).
+      queueMicrotask(() => {
+        const under = this.#under;
+        if (!under || this.#open !== undefined) return;
+        this.#under = undefined;
+        under.topClosed();
+      });
     };
+  }
+
+  /** Closes a menu kept under the one on top. */
+  #closeUnder(): void {
+    const under = this.#under;
+    this.#under = undefined;
+    under?.close();
   }
 
   /** Whether one of these menus is open. */
@@ -547,6 +584,7 @@ export class GameMenus {
     }
     if (this.#open !== open) opened.close();
     else {
+      this.#openedMap = { slot: open, map: opened };
       this.#tutorial('HBMM');
       open.menu = opened.menu;
       // Closed from outside (Play ends): the map gives the world back.
@@ -781,6 +819,7 @@ export class GameMenus {
   close(): void {
     this.#reading?.close();
     this.#closeOpen();
+    this.#closeUnder();
   }
 
   #closeOpen(): void {
@@ -836,6 +875,25 @@ export class GameMenus {
 
   /** The journal: on the system page for Pause, else on the page it was left on. */
   async #openJournal(page: number | undefined): Promise<void> {
+    // Opened from the map, the journal opens over it: the map stays open (the original's map
+    // hears ShowJournal as the journal opens and closes) and is back as the journal closes.
+    const map = this.#openedMap;
+    if (map && this.#open === map.slot) {
+      // TODO(M13): the original keeps a tween menu under the map too; ours keeps one menu.
+      this.#closeUnder();
+      this.#open = undefined;
+      map.map.showJournal(true);
+      this.#under = {
+        slot: map.slot,
+        topClosed: () => {
+          this.#open = map.slot;
+          map.map.showJournal(false);
+        },
+        close: () => {
+          map.slot.leave();
+        },
+      };
+    }
     const open = { menu: undefined as Menu | undefined, leave: this.#held(MenuName.journal) };
     this.#open = open;
     open.menu = await this.#journal.open(
@@ -848,6 +906,8 @@ export class GameMenus {
         const focus = this.#mapFocus;
         this.#mapFocus = undefined;
         if (focus !== undefined) {
+          // Show on Map: a map kept under the journal gives way to the map on the target.
+          this.#closeUnder();
           this.#openMap(focus).catch((error: unknown) => {
             this.#terminal.log(
               'ui',
@@ -912,16 +972,32 @@ export class GameMenus {
    * Esc: its close animation, then CloseMenu).
    */
   async #openTween(): Promise<void> {
+    // Kept under the menu chosen in it (that menu went back to it): it shows again.
+    const kept = this.#under;
+    if (kept?.reopen) {
+      this.#under = undefined;
+      this.#open = kept.slot;
+      kept.reopen();
+      return;
+    }
     const leaveMenu = this.#held(MenuName.tween);
     // The view leans and zooms while it is open (the tween camera), and goes back as it closes.
     const camera = this.#world.tweenCamera();
     camera?.open();
-    const unblur = this.#blur();
-    const open = {
-      menu: undefined as Menu | undefined,
+    let unblur = this.#blur();
+    // The view's lean and blur go as a menu is chosen; the menu itself (its stack entry, menu
+    // mode) stays until it closes.
+    let leaned = true;
+    const unlean = (): void => {
+      if (!leaned) return;
+      leaned = false;
+      unblur();
+      camera?.close();
+    };
+    const open: OpenSlot = {
+      menu: undefined,
       leave: () => {
-        unblur();
-        camera?.close();
+        unlean();
         leaveMenu();
       },
     };
@@ -947,16 +1023,40 @@ export class GameMenus {
           camera?.highlight(typeof args[1] === 'number' ? args[1] : 0);
         },
         OpenAnimFinished: () => undefined,
-        OpenHighlightedMenu: (_menu, args) => {
+        OpenHighlightedMenu: (menu, args) => {
           chosen = TWEEN_CHOICES[typeof args[1] === 'number' ? args[1] : 0];
           if (chosen === 'None') chosen = undefined;
-          // The engine's choosing sound (UITweenSelectSD: silence in the vanilla data).
-          if (chosen) {
-            void session.sounds().then((sounds) => sounds.playNamed('UITweenSelectSD', undefined));
+          if (!chosen) {
+            this.#closeOpen();
+            return;
           }
-          // The tween goes at once; the menu chosen takes its place.
-          this.#closeOpen();
-          if (chosen) this.openMenu(chosen);
+          // The engine's choosing sound (UITweenSelectSD: silence in the vanilla data).
+          void session.sounds().then((sounds) => sounds.playNamed('UITweenSelectSD', undefined));
+          // As the original: the tween hides (HideMenu) and stays open under the menu chosen;
+          // Skills sets its button back from LEVEL UP (ResetStatsButton). When that menu
+          // closes the tween closes with it, unless the menu goes back to it (ShowMenu).
+          if (chosen === 'Skills') menu.call('ResetStatsButton');
+          menu.call('HideMenu');
+          unlean();
+          this.#open = undefined;
+          this.#under = {
+            slot: open,
+            topClosed: () => {
+              this.#host.close(menu);
+              open.leave();
+            },
+            close: () => {
+              this.#host.close(menu);
+              open.leave();
+            },
+            reopen: () => {
+              menu.call('ShowMenu');
+              unblur = this.#blur();
+              camera?.open();
+              leaned = true;
+            },
+          };
+          this.openMenu(chosen);
         },
         StartCloseMenu: (menu) => {
           camera?.close();
