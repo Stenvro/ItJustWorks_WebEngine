@@ -30,11 +30,13 @@ import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { SkillIncrease } from '../scripting/runtime/progression-engine.ts';
 import type { QuestUpdate, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
+import { MenuName } from '../ui/menu-stack.ts';
 import { ActorValue } from '../world/actor-values.ts';
 import type { GameSettings } from '../world/game-settings.ts';
 import type { IniSettings } from '../world/ini-settings.ts';
 import {
   HudModes,
+  movementDisabledStep,
   rideModes,
   rideState,
   METER_PAUSE_FRAME,
@@ -68,6 +70,8 @@ export interface HudSource {
   readonly keyLabels?: (text: string) => string;
   /** The floating quest marker now (hud-elements.ts' floatingMarker), if it shows. */
   readonly floating?: () => FloatingMarker | undefined;
+  /** Whether a menu is open by the original's name ("Dialogue Menu"). */
+  readonly menuOpen?: (name: string) => boolean;
 }
 
 /** The image the engine writes before a prompt's third line (InterfaceStrings). */
@@ -193,6 +197,7 @@ export class HudController implements HudSink {
         this.#chargeShown = {};
         this.#survivalShown = undefined;
         this.#cartMode = false;
+        this.#movementSeen = undefined;
         this.#stealth.reset();
         // (The HUD is not this.#menu yet as it first opens.)
         this.#applySettings(menu);
@@ -226,6 +231,8 @@ export class HudController implements HudSink {
   #cartMode = false;
   /** The riding mode shown (HorseMode, WarHorseMode), if any. */
   #horseMode: string | undefined;
+  /** The movement controls as last seen (MovementDisabled; undefined: not since the HUD loaded). */
+  #movementSeen: boolean | undefined;
 
   /** The compass's markers: read four times a second, sent when they changed. */
   #compassBusy = false;
@@ -469,7 +476,16 @@ export class HudController implements HudSink {
       this.#horseMode = horse;
       if (horse) this.mode(horse, true);
     }
-    this.#hear(this.#source.runtime());
+    // MovementDisabled as the movement controls go off and on (hud-elements.ts).
+    const runtime = this.#source.runtime();
+    if (runtime) {
+      const movement = runtime.controls.movement;
+      const dialogue = this.#source.menuOpen?.(MenuName.dialogue) === true;
+      const disabled = movementDisabledStep(this.#movementSeen, movement, dialogue);
+      this.#movementSeen = movement;
+      if (disabled !== undefined) this.mode('MovementDisabled', disabled);
+    }
+    this.#hear(runtime);
     this.#showNotice(menu);
     this.#updateFloating(menu);
     this.#updateCompass(menu);

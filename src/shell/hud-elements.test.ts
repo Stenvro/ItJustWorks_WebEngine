@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { floatingMarker, HudModes, METER_KEEP_MS, MeterFade, rideModes } from './hud-elements.ts';
+import {
+  floatingMarker,
+  HudModes,
+  METER_KEEP_MS,
+  MeterFade,
+  movementDisabledStep,
+  rideModes,
+} from './hud-elements.ts';
 
 describe('HUD riding modes', () => {
   it('holds CartMode while a script has it so, and the horse’s modes while riding', () => {
@@ -88,5 +95,20 @@ describe('floating quest marker', () => {
   it('shows nothing for a target behind the camera or off the screen', () => {
     expect(floatingMarker([[500, 0, 0]], [0, 0, 0], () => undefined)).toBeUndefined();
     expect(floatingMarker([[500, 0, 0]], [0, 0, 0], () => [1.2, 0.5])).toBeUndefined();
+  });
+});
+
+describe('HUD MovementDisabled mode', () => {
+  it('is on as the HUD loads with movement off, and follows the movement controls after', () => {
+    expect(movementDisabledStep(undefined, false, false)).toBe(true);
+    expect(movementDisabledStep(undefined, true, false)).toBeUndefined();
+    expect(movementDisabledStep(true, false, false)).toBe(true);
+    expect(movementDisabledStep(false, true, false)).toBe(false);
+    expect(movementDisabledStep(true, true, false)).toBeUndefined();
+  });
+
+  it('leaves the mode as it was when the controls change in dialogue', () => {
+    expect(movementDisabledStep(true, false, true)).toBeUndefined();
+    expect(movementDisabledStep(false, true, true)).toBeUndefined();
   });
 });

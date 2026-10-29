@@ -86,6 +86,23 @@ export class HudModes {
   }
 }
 
+/**
+ * The HUD's MovementDisabled mode, observed in the original: on as the HUD loads while the
+ * player's movement controls are off; afterwards switched as they go off (on) and on again
+ * (off), except while the dialogue menu is open (a change then leaves the mode as it was).
+ * Returns the mode to send now, or undefined to send nothing; `seen` is the movement flag last
+ * seen (undefined: the HUD has just loaded).
+ */
+export function movementDisabledStep(
+  seen: boolean | undefined,
+  movement: boolean,
+  dialogueOpen: boolean,
+): boolean | undefined {
+  if (seen === undefined) return movement ? undefined : true;
+  if (movement === seen || dialogueOpen) return undefined;
+  return !movement;
+}
+
 /** The frame the meters' fade-in ends on (the movie's METER_PAUSE_FRAME, its "Pause" label). */
 export const METER_PAUSE_FRAME = 40;
 /** How often a meter that is not full is shown again while it stands still (ms). */
