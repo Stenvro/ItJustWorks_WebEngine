@@ -113,9 +113,12 @@ export function relayScriptEvents(host: ScriptEventHost): () => void {
     hub.on('actorLocationChange', (e) =>
       send(e.actor, 'OnLocationChange', [form(e.from), form(e.to)]),
     ),
-    hub.on('bookRead', (e) =>
-      e.reference === undefined ? undefined : send(e.reference, 'OnRead'),
-    ),
+    // To the book's scripts: the reference read, or the book read from an inventory if its
+    // base carries scripts (as OnEquipped reaches an item in one).
+    hub.on('bookRead', async (e) => {
+      if (e.reference !== undefined) await send(e.reference, 'OnRead');
+      else if (await host.itemScripted(e.book)) await send(e.book, 'OnRead');
+    }),
     hub.on('cellAttachDetach', (e) =>
       send(e.reference, e.attached ? 'OnCellAttach' : 'OnCellDetach'),
     ),

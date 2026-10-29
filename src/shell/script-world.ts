@@ -33,6 +33,7 @@ import type { Terminal } from './terminal.ts';
 import type { HudSignals } from './hud-signals.ts';
 import type { Talking } from './world-lines.ts';
 import { rumbleGamepad } from './gamepad-input.ts';
+import { inputPlatform, Platform } from '../ui/input-platform.ts';
 import { LookRequests, type HeadTrackKind } from '../ai/head-tracking.ts';
 import { bodyOfNode, type PhysicsWorld, type PlacedCollision } from '../physics/physics-world.ts';
 
@@ -738,6 +739,11 @@ export class ScriptWorld implements WorldBridge {
         'papyrus',
         `a script asks for a${kind === 'save' ? '' : 'n'} ${kind}: saves are made only in Play`,
       );
+  }
+
+  /** Game.UsingGamepad: the device last used (src/ui/input-platform.ts). */
+  usingGamepad(): boolean {
+    return inputPlatform() === Platform.pcGamepad;
   }
 
   /** Game.ShakeController: the player's gamepad rumbles (src/shell/gamepad-input.ts). */

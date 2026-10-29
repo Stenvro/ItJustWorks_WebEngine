@@ -223,6 +223,8 @@ export interface WorldBridge {
    * as soon as the game may save.
    */
   requestSave?(kind: 'save' | 'autosave'): void;
+  /** Game.UsingGamepad: whether the device the player used last is a gamepad. */
+  usingGamepad?(): boolean;
   /**
    * Game.ClearTempEffects: the world's temporary effects go at once (the hits' decals).
    * TODO(M13): the engine's other temporary effects too (impact models, effect shaders and art
@@ -793,6 +795,30 @@ const RUN_ON = [
   'event data',
 ];
 
+/**
+ * The record types whose forms keep their editor IDs at run time, which an object's string
+ * shows (observed in the original: the form classes with their own editor ID).
+ */
+const KEEPS_EDITOR_ID = new Set([
+  'AACT',
+  'ANIO',
+  'CELL',
+  'DIAL',
+  'GLOB',
+  'HDPT',
+  'IDLE',
+  'IMAD',
+  'KYWD',
+  'LCRT',
+  'MSTT',
+  'MUSC',
+  'MUST',
+  'QUST',
+  'RACE',
+  'VTYP',
+  'WRLD',
+]);
+
 export class ScriptRuntime implements VmHost {
   readonly forms: FormIndex;
   readonly state = new GameState();
@@ -1058,6 +1084,28 @@ export class ScriptRuntime implements VmHost {
       return this.#index.actors.has(target.formId) ? 'actor' : 'objectreference';
     }
     return this.forms.scriptType(target);
+  }
+
+  /**
+   * What an object is in its string (observed in the original): a form's editor ID where the
+   * original keeps one at run time (KEEPS_EDITOR_ID; references and most forms keep none) and
+   * its id; an alias by its name on its quest; an active effect on its actor (the original's
+   * index of the effect on the actor: TODO(M13), ours counts none).
+   */
+  async describeObject(target: ObjectHandle): Promise<string> {
+    const hex = (formId: number): string => formId.toString(16).toUpperCase().padStart(8, '0');
+    const effect = this.magic.scriptEffect(target.key);
+    if (effect) return `Active effect 0 on  (${hex(effect.target)})`;
+    const editorId = async (formId: number): Promise<string> => {
+      const record = await this.forms.record(formId);
+      return record && KEEPS_EDITOR_ID.has(record.type) ? (record.editorId ?? '') : '';
+    };
+    if (target.alias >= 0) {
+      const quest = await this.forms.quest(target.formId);
+      const alias = quest?.aliases.find((entry) => entry.id === target.alias);
+      return `alias ${alias?.name ?? ''} on quest ${await editorId(target.formId)} (${hex(target.formId)})`;
+    }
+    return `${await editorId(target.formId)} (${hex(target.formId)})`;
   }
 
   async attachedScripts(target: ObjectHandle): Promise<readonly AttachedScriptInfo[]> {

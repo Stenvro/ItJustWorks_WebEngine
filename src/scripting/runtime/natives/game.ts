@@ -344,7 +344,8 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
   n('game.precachechargen', () => null);
   n('game.precachechargenclear', () => null);
   n('game.requestmodel', () => null);
-  n('game.usinggamepad', () => false);
+  // The device last used (the shell switches as a gamepad, a key or the mouse is used).
+  n('game.usinggamepad', () => runtime.world.usingGamepad?.() ?? false);
   // AddHavokBallAndSocketConstraint(arRefA, arRefANode, arRefB, arRefBNode, A's local offset
   // x y z, B's x y z): the world's physics joins the two (hanged corpses, hanging keys).
   n('game.addhavokballandsocketconstraint', ({ args }) => {

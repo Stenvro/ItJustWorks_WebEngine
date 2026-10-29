@@ -29,6 +29,8 @@ import {
   truthy,
   valuesEqual,
   type Value,
+  describeHandle,
+  displayType,
 } from './values.ts';
 
 /** One script instance in a save: its object, script, state and variables per script level. */
@@ -145,13 +147,25 @@ export interface VmHost {
    * as the game's; without it, as a warning).
    */
   gameLog?(message: string): void;
+  /**
+   * What an object is, inside its string's angle brackets (observed in the original): a form's
+   * editor ID, where the original keeps one at run time, and its id ("MQ101 (0003372B)",
+   * " (00000014)"); an alias "alias <name> on quest <quest's editor ID> (<quest's id>)".
+   */
+  describeObject?(target: ObjectHandle): Promise<string>;
 }
 
 export class PapyrusError extends Error {
   override readonly name = 'PapyrusError';
 }
 
-const MAX_DEPTH = 64;
+/**
+ * The original has no call-depth limit (observed in the original: its stacks grow page by page
+ * while the VM's stack memory lasts, iMaxAllocatedMemoryBytes, and a stack over it waits for
+ * memory). This guard only keeps an endless recursion from taking the browser's memory.
+ * TODO(M13): the stack memory's accounting and the wait of a stack over the limit.
+ */
+const MAX_DEPTH = 4096;
 /** The most elements an array may have (observed in the original). */
 const MAX_ARRAY_SIZE = 128;
 /** Instructions a thread may run without waiting at all (an endless loop where no frames come). */
@@ -302,6 +316,27 @@ function literal(value: PexValue, type = ''): Value {
       return null;
   }
 }
+
+/** A float to an int as the original's conversion does: truncated, out of range the lowest int. */
+const floatToInt = (value: number): number =>
+  Number.isFinite(value) && value > -2147483649 && value < 2147483648
+    ? Math.trunc(value) | 0
+    : -2147483648;
+/** A value's kind by its Papyrus type name, for the cast's error. */
+const kindOf = (value: Value): string =>
+  value === null
+    ? 'None'
+    : typeof value === 'boolean'
+      ? 'Bool'
+      : typeof value === 'number'
+        ? Number.isInteger(value)
+          ? 'Int'
+          : 'Float'
+        : typeof value === 'string'
+          ? 'String'
+          : value instanceof PapyrusArray
+            ? 'Array'
+            : displayType(value.type);
 
 const num = (value: Value): number => {
   if (typeof value === 'number') return value;
@@ -1202,7 +1237,8 @@ export class PapyrusVm {
       // The game logs this as an error of the calling script, with its stack; the call
       // returns None. Through an auto property the plugin left empty (and the script never
       // set), the game has None there too: the plugin's own fault.
-      const where = `${this.#where(thread)}: call to ${name} on ${formatValue(target)}`;
+      // The original's line (observed in the original), with what we know of the None.
+      const where = `${this.#where(thread)}: Cannot call ${name}() on a None object, aborting function call`;
       const unset = from && via !== undefined ? this.#unsetProperty(from, via) : undefined;
       const variable = via?.toLowerCase();
       const cast = variable === undefined ? undefined : from?.casts.get(variable);
@@ -1312,7 +1348,8 @@ export class PapyrusVm {
         if (this.#runner !== thread) await this.#acquire(thread);
       }
     }
-    if (depth >= MAX_DEPTH) throw new PapyrusError(`call depth over ${MAX_DEPTH} in ${name}`);
+    if (depth >= MAX_DEPTH)
+      throw new PapyrusError(`call depth over ${String(MAX_DEPTH)} in ${name}`);
     const frame = this.#frame(level, fn, name, self, instance, args, depth, thread, engineNones);
     return this.#within(thread, instance, async () => {
       thread.frames.push(frame);
@@ -1415,9 +1452,22 @@ export class PapyrusVm {
    * A value as a string (a cast to string, a concatenation): a float as the original prints it
    * (six decimals), by the type of the variable or literal it comes from.
    */
-  #text(frame: Frame, source: PexValue, value: Value): string {
+  async #text(frame: Frame, source: PexValue, value: Value): Promise<string> {
     const float = source.kind === 'float' || this.#typeOf(frame, source).toLowerCase() === 'float';
-    return float && typeof value === 'number' ? floatText(value) : formatValue(value);
+    if (float && typeof value === 'number') return floatText(value);
+    return value instanceof ObjectHandle ? this.objectText(value) : formatValue(value);
+  }
+
+  /**
+   * An object as a string, as the original prints it: "[<type> <<what it is>>]", the type the
+   * script's name as declared ("[Actor < (00000014)>]"), what it is from the host
+   * (describeObject: a form's editor ID where the original keeps one and its id, an alias on its
+   * quest); without the host's description, the form's id alone.
+   */
+  async objectText(handle: ObjectHandle): Promise<string> {
+    const type = (await this.library.get(handle.type))?.displayName ?? displayType(handle.type);
+    const what = (await this.host.describeObject?.(handle)) ?? describeHandle(handle);
+    return `[${type} <${what}>]`;
   }
 
   #where(thread: Thread): string {
@@ -1489,24 +1539,47 @@ export class PapyrusVm {
     return undefined;
   }
 
-  async #cast(value: Value, type: string): Promise<Value> {
+  /**
+   * A cast, by the original's rules (observed in the original): to a string or a bool from
+   * anything; to an int from a string (its leading digits), a float (truncated) or a bool; to a
+   * float from a string, an int or a bool; to an object from None or an object (None where the
+   * object is not of the type); an array only to its own type. Any other cast is the script's
+   * error "Cannot cast from <from> to <to>", the result its type's default.
+   */
+  async #cast(value: Value, type: string, thread?: Thread, from = ''): Promise<Value> {
     const lower = type.toLowerCase();
+    const fail = (): Value => {
+      if (thread) {
+        const source = from === '' ? kindOf(value) : from;
+        this.#scriptError(thread, `Cannot cast from ${source} to ${type}`);
+      }
+      return defaultValue(lower);
+    };
     switch (lower) {
       case 'int':
         if (typeof value === 'string') return Number.parseInt(value, 10) || 0;
-        return Math.trunc(num(value));
+        if (typeof value === 'number') return floatToInt(value);
+        if (typeof value === 'boolean') return value ? 1 : 0;
+        return fail();
       case 'float':
-        if (typeof value === 'string') return Number.parseFloat(value) || 0;
-        return num(value);
+        if (typeof value === 'string') return Math.fround(Number.parseFloat(value) || 0);
+        if (typeof value === 'number') return Math.fround(value);
+        if (typeof value === 'boolean') return value ? 1 : 0;
+        return fail();
       case 'bool':
         return truthy(value);
       case 'string':
-        return formatValue(value);
+        return value instanceof ObjectHandle ? this.objectText(value) : formatValue(value);
       case '':
         return value;
     }
-    if (isArrayType(lower)) return value instanceof PapyrusArray ? value : null;
-    if (!(value instanceof ObjectHandle)) return null;
+    if (isArrayType(lower)) {
+      if (value === null) return null;
+      if (!(value instanceof PapyrusArray)) return fail();
+      return from === '' || from.toLowerCase() === lower ? value : fail();
+    }
+    if (value === null) return null;
+    if (!(value instanceof ObjectHandle)) return fail();
     return (await this.canBe(value, lower)) ? value.as(lower) : null;
   }
 
@@ -1514,7 +1587,8 @@ export class PapyrusVm {
 
   async #propGet(target: Value, name: string, depth: number, thread: Thread): Promise<Value> {
     if (!(target instanceof ObjectHandle)) {
-      this.warn(`${this.#where(thread)}: property ${name} read on ${formatValue(target)}`);
+      // The original's line (observed in the original), the property's value None.
+      this.warn(`${this.#where(thread)}: Cannot get property "${name}" on a None object.`);
       return null;
     }
     const instance = await this.#resolve(target);
@@ -1581,7 +1655,7 @@ export class PapyrusVm {
     thread: Thread,
   ): Promise<void> {
     if (!(target instanceof ObjectHandle)) {
-      this.warn(`${this.#where(thread)}: property ${name} set on ${formatValue(target)}`);
+      this.warn(`${this.#where(thread)}: Cannot set property "${name}" on a None object.`);
       return;
     }
     const instance = await this.#resolve(target);
@@ -1662,20 +1736,21 @@ export class PapyrusVm {
         case 'iadd':
           set(0, (num(get(1)) + num(get(2))) | 0);
           break;
+        // Float arithmetic is single precision (observed in the original: its floats are 32-bit).
         case 'fadd':
-          set(0, num(get(1)) + num(get(2)));
+          set(0, Math.fround(num(get(1)) + num(get(2))));
           break;
         case 'isub':
           set(0, (num(get(1)) - num(get(2))) | 0);
           break;
         case 'fsub':
-          set(0, num(get(1)) - num(get(2)));
+          set(0, Math.fround(num(get(1)) - num(get(2))));
           break;
         case 'imul':
           set(0, Math.imul(num(get(1)), num(get(2))));
           break;
         case 'fmul':
-          set(0, num(get(1)) * num(get(2)));
+          set(0, Math.fround(num(get(1)) * num(get(2))));
           break;
         // A division by zero is the script's error and leaves the result as it was (observed
         // in the original, for the integer and the float division and the modulo).
@@ -1688,7 +1763,7 @@ export class PapyrusVm {
         case 'fdiv': {
           const divisor = num(get(2));
           if (divisor === 0) this.#scriptError(thread, 'Cannot divide by zero');
-          else set(0, num(get(1)) / divisor);
+          else set(0, Math.fround(num(get(1)) / divisor));
           break;
         }
         case 'imod': {
@@ -1704,7 +1779,7 @@ export class PapyrusVm {
           set(0, -num(get(1)) | 0);
           break;
         case 'fneg':
-          set(0, -num(get(1)));
+          set(0, Math.fround(-num(get(1))));
           break;
         case 'assign': {
           const value = get(1);
@@ -1725,8 +1800,8 @@ export class PapyrusVm {
           const type = this.#typeOf(frame, arg(0));
           const cast =
             type.toLowerCase() === 'string'
-              ? this.#text(frame, arg(1), value)
-              : await this.#cast(value, type);
+              ? await this.#text(frame, arg(1), value)
+              : await this.#cast(value, type, thread, this.#typeOf(frame, arg(1)));
           set(0, cast);
           // A failed cast of an object, for the log line of a call on the None it gave.
           const name = identifier(arg(0)).toLowerCase();
@@ -1835,7 +1910,10 @@ export class PapyrusVm {
         case 'return':
           return get(0);
         case 'strcat':
-          set(0, this.#text(frame, arg(1), get(1)) + this.#text(frame, arg(2), get(2)));
+          set(
+            0,
+            (await this.#text(frame, arg(1), get(1))) + (await this.#text(frame, arg(2), get(2))),
+          );
           break;
         case 'propget':
           set(2, await this.#propGet(get(1), identifier(arg(0)), frame.depth, thread));
@@ -1880,21 +1958,33 @@ export class PapyrusVm {
         }
         case 'array_findelement':
         case 'array_rfindelement': {
+          // Observed in the original: a start index out of range (Find: 0 to the last;
+          // RFind: -1, the last, to the last) is the script's error and finds nothing.
           const array = get(0);
           const wanted = get(2);
-          const start = num(get(3));
+          const backwards = instruction.op === 'array_rfindelement';
+          const last = array instanceof PapyrusArray ? array.items.length - 1 : -1;
+          let start = num(get(3));
+          if (backwards && start === -1) start = last;
           let found = -1;
-          if (array instanceof PapyrusArray) {
+          if (!(array instanceof PapyrusArray))
+            this.#scriptError(thread, "Variable isn't an array and cannot be searched");
+          else if (start < 0 || start > last)
+            this.#scriptError(
+              thread,
+              `Array start index ${String(start)} is out of range (${backwards ? '-1' : '0'}-${String(last >>> 0)})`,
+            );
+          else {
             const n = array.items.length;
-            if (instruction.op === 'array_findelement') {
-              for (let i = Math.max(0, start); i < n; i++) {
+            if (!backwards) {
+              for (let i = start; i < n; i++) {
                 if (valuesEqual(array.items[i] ?? null, wanted)) {
                   found = i;
                   break;
                 }
               }
             } else {
-              for (let i = start < 0 ? n - 1 : Math.min(start, n - 1); i >= 0; i--) {
+              for (let i = start; i >= 0; i--) {
                 if (valuesEqual(array.items[i] ?? null, wanted)) {
                   found = i;
                   break;

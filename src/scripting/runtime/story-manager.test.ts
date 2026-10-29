@@ -3,7 +3,12 @@ import { Fields } from '../../formats/esm/fields.ts';
 import type { Condition } from '../conditions.ts';
 import type { ScriptRuntime } from './runtime.ts';
 import { ObjectHandle } from '../values.ts';
-import { actorDialogueEvent, StoryManager, type StoryEventData } from './story-manager.ts';
+import {
+  actorDialogueEvent,
+  STORY_EVENTS,
+  StoryManager,
+  type StoryEventData,
+} from './story-manager.ts';
 
 /** A condition function the stub runtime treats as failing. */
 const FAILS = 999;
@@ -232,5 +237,74 @@ describe('the Actor Dialogue event (ADIA)', () => {
     const outside = actorDialogueEvent(undefined, 0x14a, 0x14b);
     expect(outside.forms.has('L1')).toBe(false);
     expect(outside.args[0]).toBeNull();
+  });
+});
+
+describe("the started quest's OnStory event", () => {
+  // Each story event type and the event its started quest gets (Quest.pex declares them all).
+  const EXPECTED: Readonly<Record<string, string>> = {
+    ADCR: 'OnStoryCrimeGold',
+    ADIA: 'OnStoryDialogue',
+    AFAV: 'OnStoryActivateActor',
+    AHEL: 'OnStoryHello',
+    AIPL: 'OnStoryAddToPlayer',
+    ARRT: 'OnStoryArrest',
+    ASSU: 'OnStoryAssaultActor',
+    BRIB: 'OnStoryBribeNPC',
+    CAST: 'OnStoryCastMagic',
+    CHRR: 'OnStoryRelationshipChange',
+    CLOC: 'OnStoryChangeLocation',
+    CRFT: 'OnStoryCraftItem',
+    CURE: 'OnStoryCure',
+    DEAD: 'OnStoryDiscoverDeadBody',
+    ESJA: 'OnStoryEscapeJail',
+    FLAT: 'OnStoryFlatterNPC',
+    INFC: 'OnStoryInfection',
+    INTM: 'OnStoryIntimidateNPC',
+    JAIL: 'OnStoryJail',
+    KILL: 'OnStoryKillActor',
+    LEVL: 'OnStoryIncreaseLevel',
+    LOCK: 'OnStoryPickLock',
+    NVPE: 'OnStoryNewVoicePower',
+    PFIN: 'OnStoryPayFine',
+    PRFV: 'OnStoryPlayerGetsFavor',
+    REMP: 'OnStoryRemoveFromPlayer',
+    SCPT: 'OnStoryScript',
+    SKIL: 'OnStoryIncreaseSkill',
+    STIJ: 'OnStoryServedTime',
+    TRES: 'OnStoryTrespass',
+  };
+
+  it('sends each type’s OnStory event, with the event’s arguments, to the quest it starts', async () => {
+    const sent: string[] = [];
+    for (const [i, type] of Object.keys(EXPECTED).entries()) {
+      // The stub's own event node (0x1) is the Script event's.
+      const eventNode = type === 'SCPT' ? 0x1 : 0x1000 + i;
+      const quest = 0x2000 + i;
+      const { runtime } = stubRuntime([
+        record('SMEN', eventNode, [['ENAM', new TextEncoder().encode(type)]]),
+        record('SMQN', 0x3000 + i, [
+          ['PNAM', u32s(eventNode)],
+          ['SNAM', u32s(0)],
+          ['DNAM', u32s(0)],
+          ['NNAM', u32s(quest)],
+          ['RNAM', f32(0)],
+        ]),
+      ]);
+      (runtime.vm as { sendEvent: unknown }).sendEvent = (
+        target: ObjectHandle,
+        name: string,
+        args: readonly unknown[],
+      ) => {
+        sent.push(`${name} ${target.formId.toString(16)} ${args.join(',')}`);
+        return Promise.resolve();
+      };
+      await new StoryManager(runtime).event({ ...event(type), args: [7, 'x'] });
+    }
+    expect(sent).toEqual(
+      Object.values(EXPECTED).map((name, i) => `${name} ${(0x2000 + i).toString(16)} 7,x`),
+    );
+    expect(Object.keys(EXPECTED).sort()).toEqual(Object.keys(STORY_EVENTS).sort());
+    for (const [type, name] of Object.entries(EXPECTED)) expect(STORY_EVENTS[type]).toBe(name);
   });
 });

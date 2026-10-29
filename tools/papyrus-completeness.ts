@@ -50,6 +50,22 @@ function sources(folder: string): string[] {
   walk(path.join(ROOT, folder));
   return out;
 }
+/**
+ * The string literals of a test file outside its comments and its todo cases (a todo names an
+ * event no case checks yet).
+ */
+const testStrings = (text: string): string[] => {
+  const code = text
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:'"`])\/\/.*$/gm, '$1')
+    .replace(/\b(?:it|test)\.todo\(\s*(['"`])[\s\S]*?\1\s*(?:\+\s*(['"`])[\s\S]*?\2\s*)*\)/g, '');
+  return [...code.matchAll(/(['"`])((?:\\.|(?!\1)[^\\\n])*)\1/g)].map((match) => match[2] ?? '');
+};
+/** Whether a test file runs the engine that sends the scripts' events. */
+const engineTest = (text: string): boolean =>
+  /from '[./]*(?:src\/scripting\/)?(?:runtime\/)?(?:runtime|script-events|papyrus-vm|magic-engine|story-manager|story-events|stat-events)\.ts'|helpers\/sim\.ts'/.test(
+    text,
+  );
 const rel = (file: string): string => path.relative(ROOT, file).replaceAll('\\', '/');
 const isTest = (file: string): boolean => file.endsWith('.test.ts');
 const engine = sources('src')
@@ -131,7 +147,13 @@ try {
   const events = new Map(usage.names);
   events.set('oninit', 'OnInit');
   const storyType = new Map(Object.entries(STORY_EVENTS).map(([type, name]) => [name, type]));
-  const eventRows: { name: string; handlers: number; sent: string; checked: string }[] = [];
+  const eventRows: {
+    name: string;
+    handlers: number;
+    sent: string;
+    checked: string;
+    sim: boolean;
+  }[] = [];
   for (const [lower, name] of [...events].sort()) {
     const type = storyType.get(name);
     const literal = type !== undefined ? `'${type}'` : `'${name}'`;
@@ -143,20 +165,29 @@ try {
     if (type !== undefined && NEVER_RAISED.has(type)) senders.push('(never by the original)');
     // The compiler's GotoState calls onEndState and onBeginState in the script's own code.
     if (lower === 'onbeginstate' || lower === 'onendstate') senders.push('(compiled GotoState)');
-    const word = new RegExp(`\\b${name}\\b`);
+    const word = new RegExp(`\\b${name}\\b`, 'i');
     const checkedBy = tests.filter((source) => {
-      if (!word.test(source.text)) return false;
       // The conformance list of events still to write names every event; only its COVERED
-      // list counts there.
-      if (!source.file.endsWith('conformance/scripting/script-events.test.ts')) return true;
-      const covered = /const COVERED = \[([\s\S]*?)\];/.exec(source.text)?.[1] ?? '';
-      return covered.includes(`'${name}'`);
+      // list (the simulation's cases) counts there.
+      if (source.file.endsWith('conformance/scripting/script-events.test.ts')) {
+        const covered = /const COVERED = \[([\s\S]*?)\];/.exec(source.text)?.[1] ?? '';
+        return covered.includes(`'${name}'`);
+      }
+      // Elsewhere a test that runs the engine (the simulation, the runtime, the relay, the VM)
+      // and names the event in a string, not a comment: a case's title or what it expects sent.
+      return engineTest(source.text) && testStrings(source.text).some((text) => word.test(text));
     });
     eventRows.push({
       name,
       handlers: usage.handlers.get(lower)?.length ?? 0,
       sent: senders.join(', '),
       checked: checkedBy.map((source) => source.file).join(', '),
+      // Checked in the headless simulation: the conformance list's COVERED, or a simulation case.
+      sim: checkedBy.some(
+        (source) =>
+          source.file.endsWith('conformance/scripting/script-events.test.ts') ||
+          source.text.includes("helpers/sim.ts'"),
+      ),
     });
   }
 
@@ -167,7 +198,8 @@ try {
   console.log(`natives: ${String(nativesDone)} of ${String(nativeRows.length)} done`);
   console.log(
     `events: ${String(eventsSent)} of ${String(eventRows.length)} sent, ` +
-      `${String(eventsDone)} sent and checked by a test`,
+      `${String(eventsDone)} sent and checked by a test, ` +
+      `${String(eventRows.filter((row) => row.sim).length)} of them in the simulation`,
   );
   console.log('\nOpen natives:');
   for (const row of nativeRows) {
