@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { flatAmbient } from '../render/scene-lighting.ts';
+import { Fields } from '../formats/esm/fields.ts';
 import { NEUTRAL_IMAGE_SPACE } from './image-space.ts';
 import {
   isUnderwater,
@@ -7,8 +8,10 @@ import {
   underwaterFog,
   underwaterLight,
   underwaterTint,
+  UnderwaterView,
   withUnderwaterTint,
 } from './underwater.ts';
+import { parseWater } from './water.ts';
 
 // DefaultWater (Skyrim.esm): underwater fog amount 0.9, near -500, far 1600.
 const DEFAULT_WATER = {
@@ -73,5 +76,34 @@ describe('underwater view', () => {
     const space = withUnderwaterTint(undefined, fog);
     expect(space?.underwater?.amount).toBeCloseTo(UNDERWATER_TINT * 0.9);
     expect(space?.saturation).toBe(NEUTRAL_IMAGE_SPACE.saturation);
+  });
+});
+
+describe('underwater imagespace', () => {
+  const IMAGE_SPACE = 0x1234;
+  const water = parseWater({
+    formId: 0x18,
+    editorId: 'DefaultWater',
+    fields: new Fields([]),
+    formIdField: (type) => (type === 'INAM' ? IMAGE_SPACE : undefined),
+  });
+  const view = new UnderwaterView(
+    () => Promise.resolve(water),
+    (formId) =>
+      Promise.resolve(formId === IMAGE_SPACE ? { type: 'IMGS', fields: new Fields([]) } : undefined),
+  );
+  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("takes the water's own imagespace (WATR INAM) only under its surface", async () => {
+    expect(water.imageSpace).toBe(IMAGE_SPACE);
+    const surface = { height: 0, type: 0x18 };
+    view.fog(-10, surface, DAY);
+    await settle();
+    view.fog(-10, surface, DAY);
+    expect(view.imageSpace()).toBeUndefined(); // still loading
+    await settle();
+    expect(view.imageSpace()).toBeDefined();
+    view.fog(10, surface, DAY);
+    expect(view.imageSpace()).toBeUndefined();
   });
 });
