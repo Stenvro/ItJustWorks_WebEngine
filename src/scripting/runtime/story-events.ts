@@ -54,6 +54,13 @@ export class StoryEvents {
     this.#runtime = runtime;
     runtime.events.on('actorLocationChange', (event) => this.#changeLocation(event));
     runtime.events.on('activate', (event) => this.#activateActor(event));
+    // TODO(M13): not the original's rule (it raises no event as a quest has started; see
+    // below), kept for now as a turn of the queue after each start: without it the timing of
+    // the events after a start changes and MQ105's courtyard lesson (stage 105) no longer
+    // comes in the simulation. Find what waits on it, then drop it.
+    runtime.events.on('questStartStop', (event) =>
+      event.started ? this.#raise('QSTR', [['Q1', event.quest]], []) : undefined,
+    );
   }
 
   // Observed in the original: Flatter (FLAT, R1 the actor), Bribe (BRIB, R1 the actor and V1 a

@@ -765,7 +765,9 @@ WIFlatterQuestNode, has no quests. Ours raises none of them either.
 script's Quest.Start, or SetStage on a quest that does not run, queues a Quest Start event (the
 script waits); the story teller, at its turn, starts the quest instead of running the event's
 nodes (it has none). A quest started otherwise (the console, a quest node) starts at once, and no
-event follows a start. Ours: `StoryManager.questStart` (natives/quest.ts). TODO(M13): ours waits
+event follows a start. Ours: `StoryManager.questStart` (natives/quest.ts). TODO(M13): ours still
+queues a Quest Start event (no node runs) after every start, which the original does not: the
+simulation's MQ105 courtyard lesson depends on that turn of the queue. TODO(M13): ours waits
 for a starting quest's start-up fragments, so a start asked while an event or a start is being
 processed (a fragment starting another quest) starts at once rather than queueing behind
 (it would wait for itself).
