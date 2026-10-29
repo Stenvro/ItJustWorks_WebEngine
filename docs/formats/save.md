@@ -85,6 +85,18 @@ a scene plays on in its phase (IsPlaying is true at once): its begin and that ph
 fragments do not run again, its actions not done start again (a line is said again, a package
 action gives its package again, a timer runs on), those done that still run keep their looks.
 
+A dialogue action keeps what the original's keeps of it (observed in the original): whether it
+runs, whether it is done, and a looping one's seconds before it speaks again. Not kept: that its
+line is being said. So a line in progress as the game is saved is said again from its start
+once the loaded scene goes on (a looping one said already, after what was left of its wait).
+Its speaker's graph is kept (below, "Animation graphs"): one saved in the line's dialogue idle
+stands in it from the load, and the line said again plays its idle again. Such an idle ends as
+it does in play: the actor's next path stops it at once where its graph set bForceIdleStop (the
+dialogue idles do), else its AI's IdleStop as it sets out (src/shell/actor-movers.ts).
+TODO(M13): whether the line's end itself ends a looping dialogue idle (here it does not).
+MQ101's Ralof, saved in his line's idle up at the block, stands in it until the line said again
+is over and his scene's next phase sends him to the tower, as he does in a game not saved there.
+
 After a load the scripts hear OnPlayerLoadGame (the player and its aliases). TODO(M13): the
 original sends it once the loaded world is up; here as the scripts are ready, before the
 player's cell loads.
