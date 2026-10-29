@@ -575,6 +575,17 @@ AllowSaving, ...). The stack answers what the flags say together: menu mode foll
 open (F5 in an item menu, a book or the map saves nothing), and scripts ask it through SKSE's
 `UI.IsMenuOpen`. A mod registers its own menus with their flags (`register`).
 
+The title cards are `TitleSequence Menu` while open. `LoadWaitSpinner` (always open, saving
+allowed; `src/shell/load-wait-spinner.ts`) shows while a save is written: the movie's icon turns
+in the bottom right corner (`InitExtensions` locks it there), with its `FadeInMenu` and
+`FadeOutMenu`. Quantity Menu, Top Menu, Overlay Menu and Overlay Interaction Menu are names no
+menu of the original is made under; SafeZoneMenu is the consoles' safe-zone screen.
+TODO(M13): the Debug Text Menu's flags and when it opens.
+
+Lockpicking keeps the failed tries on each lock (the picks broken on it, the count the original
+keeps with the lock: `failedLockTries` in `src/shell/lockpicking-menu.ts`) for the lock queries
+of the scripts and conditions.
+
 The HUD follows the stack: each menu has the mode it puts hudmenu.swf in, and the movie's own
 element lists say what shows then (read from its `SetModes`). `MessagesBlock` and
 `QuestUpdateBaseInstance` show in `BookMode`, `InventoryMode`, `BarterMode`, `TweenMode`,
@@ -626,7 +637,20 @@ no setting), the player's level and the progress to the next. The menu asks `Hig
 and `OpenHighlightedMenu(i)` (1 Skills, up; 2 Magic, left; 3 Inventory, right; 4 Map, down: its
 `FrameToLabelMap`), and on Tab or Esc `StartCloseMenu`; the engine answers
 `StartCloseMenuAnim()`, and the menu's `CloseMenu` once its animation is done closes it. A
-menu chosen takes the tween's place at once.
+menu chosen opens over the tween, which stays open under it, as in the original: the engine
+calls the tween's `HideMenu` (and for Skills `ResetStatsButton`, its LEVEL UP label back to
+SKILLS), the view's lean and blur go. When the menu chosen closes, the tween closes with it,
+unless the menu goes back to it (an item menu's ShowTweenMenu): then the tween hears
+`ShowMenu` and shows again (`src/shell/game-menus.ts`, the menu kept under).
+
+The map keeps the same way under the journal opened from it (J, its bar's button): the map's
+movie hears `ShowJournal(true)` as the journal opens (its bottom bar hidden) and
+`ShowJournal(false)` as it closes, takes no input meanwhile, and is back once the journal has
+closed; Show on Map from that journal closes it for the map on the target. Observed in the
+original's journal: `ShowMenu` answers the engine's "Show Journal" message,
+`RefreshSystemButtons` its "RefreshMenu", `SettingsSaved` its "Journal Settings Saved", and
+`StartCloseMenu` its hiding of the journal. TODO(M13): who sends the first two, and the tween
+kept under a map that has the journal over it (ours keeps one menu under).
 The movie plays no sounds; choosing plays the engine's UITweenSelectSD (silence in the vanilla
 data), highlighting nothing.
 

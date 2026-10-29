@@ -93,6 +93,15 @@ const SWEET_SPOTS = new Map<number, number>();
  */
 const BROKEN_PICKS = new Map<number, number>();
 
+/**
+ * The failed tries on a lock (the picks broken on it): the count the original keeps with the
+ * lock itself (its lock data's tries), for the scripts' and conditions' lock queries
+ * (ObjectReference.IsLockBroken, GetIsLockBroken).
+ */
+export function failedLockTries(reference: number): number {
+  return BROKEN_PICKS.get(reference) ?? 0;
+}
+
 type InterfaceKey = keyof (typeof INI_DEFAULTS)['Interface'];
 
 /** Keys of the RotateLock event: the movement keys. */
