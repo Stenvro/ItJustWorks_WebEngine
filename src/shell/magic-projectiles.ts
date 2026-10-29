@@ -89,6 +89,8 @@ export interface MagicProjectilesOptions {
   readonly session: GameSession;
   readonly renderer: RenderPort;
   readonly terminal: Terminal;
+  /** A projectile's way this step (one meeting the water stirs it: render/water-displacement.ts). */
+  readonly shotWay?: (from: Vec3, to: Vec3) => void;
   /** The living actors of the loaded area (the player too). */
   readonly targets: () => Iterable<ProjectileTarget>;
   /** A sound at a place is a noise the actors may hear (src/shell/actor-senses.ts). */
@@ -808,6 +810,7 @@ export class MagicProjectiles {
     for (const flying of [...this.#flying]) {
       if (flying.done) continue;
       const { from, to } = stepFlight(flying.flight, seconds);
+      this.#options.shotWay?.(from, to);
       const hit = this.#sweep(flying.delivered.caster, from, to, flying.projectile.collisionRadius);
       // Its alternative trigger: within its proximity of an actor it bursts.
       const near =

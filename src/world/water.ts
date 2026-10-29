@@ -55,6 +55,23 @@ export interface WaterType {
   readonly depthNormals: number;
   readonly depthSpecular: number;
   readonly flowmapScale: number;
+  /** The interactive displacement simulation (DNAM 19 to 23): render/water-displacement.ts. */
+  readonly displacement: SimulatorValues;
+  /** The rain simulator (DNAM 15 to 18 and 24): drops of rain falling on the water. */
+  readonly rain: SimulatorValues;
+}
+
+/**
+ * A water type's ripple simulator (WATR DNAM, xEdit's TES5 definition: Displacement Simulator and
+ * Rain Simulator): the size a disturbance starts with, the push it gives the surface, how fast
+ * its waves travel, how they fall off and how fast they die away.
+ */
+export interface SimulatorValues {
+  readonly startingSize: number;
+  readonly force: number;
+  readonly velocity: number;
+  readonly falloff: number;
+  readonly dampener: number;
 }
 
 /** DefaultWater (Skyrim.esm): the type of water meshes nothing else assigns one to. */
@@ -125,6 +142,14 @@ export function parseWater(record: Pick<GameRecord, 'formId' | 'editorId' | 'fie
     depthSpecular: f(55),
     sunSparklePower: f(56),
     flowmapScale: f(57, 1),
+    displacement: {
+      startingSize: f(18),
+      force: f(19),
+      velocity: f(20),
+      falloff: f(21),
+      dampener: f(22),
+    },
+    rain: { startingSize: f(23), force: f(14), velocity: f(15), falloff: f(16), dampener: f(17) },
   };
 }
 

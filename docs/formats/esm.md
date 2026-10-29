@@ -397,8 +397,9 @@ ANAM opacity (0–100), FNAM flags (`0x1` causes damage, `0x8` flow map, `0x10` 
 NAM2/NAM3/NAM4 the three noise layers' normal maps (SSE; older files use three NNAM; vanilla names
 `Data\Textures\Water\DefaultWater.dds`: the path is relative to Data), INAM imagespace modifier, DNAM 228 bytes (232 in SSE with the flow map scale). DNAM as 4-byte
 values (UESP numbering − 1): 4 sun specular power, 5 reflectivity, 6 fresnel, 8/9 above-water
-fog near/far, 10/11/12 shallow / deep / reflection colour (RGBA u8), 18–22 displacement,
-24 noise falloff, 25–27 wind direction (degrees) and 28–30 wind speed per layer, 33 fog
+fog near/far, 10/11/12 shallow / deep / reflection colour (RGBA u8), 14–17 rain simulator
+force / velocity / falloff / dampener, 18–22 displacement simulator starting size / force /
+velocity / falloff / dampener, 23 rain simulator starting size, 24 noise falloff, 25–27 wind direction (degrees) and 28–30 wind speed per layer, 33 fog
 amount, 35–37 underwater fog amount/near/far, 38 refraction magnitude, 39 specular power,
 41 specular radius, 42 specular brightness, 43–45 UV scale and 46–48 amplitude per layer,
 49 reflection magnitude, 50 sun sparkle magnitude, 51 sun specular magnitude, 52–55 depth
@@ -429,9 +430,11 @@ copies of its colour and depth: three noise layers scrolled by wind (rivers: alo
 map, two phases half a period apart), refraction of the scene below shifted by the waves,
 depth fog over the distance the view travels through the water towards the shallow/deep
 colours (times the weather's water multiplier), screen-space reflections of the scene with
-the sky dome as fallback, fresnel, and the sun's specular and sparkle. Approximated
-(TODO(M13)): the flow speed (160 units/s at full strength), how opacity and the depth
-properties enter, the engine's planar reflection pass, displacement and rain ripples.
+the sky dome as fallback, fresnel, and the sun's specular and sparkle; the depth properties
+take reflections, refraction, normals and specular back in shallow water, and the
+displacement field bends the normals ([rendering.md](../rendering.md#water)). Approximated
+(TODO(M13)): the flow speed (160 units/s at full strength), how opacity enters, the engine's
+planar reflection pass. `node tools/water-info.ts` lists the water types and a cell's water.
 
 ## Imagespaces
 

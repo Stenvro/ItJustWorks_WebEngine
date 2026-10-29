@@ -251,7 +251,7 @@ export class WaterPhysics {
   readonly #actors = new Map<number, Tracked>();
   readonly #props = new Map<number, BodyWater>();
   #splashes: WaterSplash[] = [];
-  /** Actors standing in or swimming through the water this step (their wakes: water-ripples.ts). */
+  /** Actors standing in or swimming through the water this step (render/water-displacement.ts). */
   #wakes: { readonly key: number; readonly position: Vec3 }[] = [];
   #time = 0;
 
