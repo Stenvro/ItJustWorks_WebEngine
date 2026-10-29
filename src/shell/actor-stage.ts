@@ -636,6 +636,7 @@ export class ActorStage {
       camera: () => options.renderer.view?.camera,
       bark: (actor, subtype, target) => this.talk.bark(actor, subtype, target),
       flying: (actor) => this.flight.isFlying(actor),
+      flightMotion: (actor) => this.flight.motion(actor),
       projectiles: () => [...this.combat.shots(), ...this.projectiles.threats()],
     });
     this.actorScenes = new ActorScenes({
@@ -1578,6 +1579,7 @@ export class ActorStage {
         confidenceModifier: this.combat.confidenceModifier(reference),
         ...(this.senses.scriptSneaking(reference) && { sneaking: true }),
         ...(weaponOut(this.combat.weaponState(reference)) && { weaponDrawn: true }),
+        ...(this.flight.isFlying(reference) && { flying: true }),
       });
     }
     return saved;
@@ -2323,6 +2325,13 @@ export class ActorStage {
         const saved = session.restoring?.actor(reference);
         if (saved) {
           session.restoring?.drop(reference);
+          // A flier saved in the air stays there (not set on the ground) and cruises on from
+          // where it was (before, MQ104's dragon circling the watchtower came down and took
+          // off again).
+          if (saved.flying === true && fliesByRace(actor.look.raceFlags)) {
+            entry.grounded = true;
+            this.flight.restoreAloft(reference);
+          }
           if (saved.package) this.ai.resume(reference, saved.package);
           // Sneaking as a script set it, in the package it set it in.
           if (saved.sneaking === true) this.senses.sneakAgain(reference, saved.package?.id);

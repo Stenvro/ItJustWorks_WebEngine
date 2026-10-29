@@ -48,7 +48,10 @@ As the Creation Kit wiki's "Threading Notes (Papyrus)" describe them (`papyrus-v
   a latent function (Utility.Wait). Calls on self keep the lock. Threads waiting for the lock
   get in in the order they came (the game's order is not guaranteed).
 - Until a script's **OnInit** has finished, its other events and other scripts' calls and
-  property access wait for it (calls from inside another OnInit do not).
+  property access wait for it (calls from inside another OnInit do not). Such a thread waits
+  (it does not run): the OnInit may itself wait for the next frame in a main-thread native, and
+  the offline frame comes only once no thread runs (a dragon's OnInit in IsDead while its
+  FXDragonBloodDamageScript effect's OnEffectStart reads its GetBaseAV).
 - **Latent** natives suspend their thread (`NativeCall.latent`), unlocking its script also
   for natives on self, until what they wait for has happened. Quest.SetStage waits so for the
   stage's fragments, each on a thread of its own (the wiki warns that setting a stage in
@@ -334,7 +337,12 @@ worldspaces on screen:
 
 - **Cells**: as a cell's references load, those with scripts get OnInit the first time (a
   non-persistent reference's scripts start with its cell), then OnCellAttach, OnLoad and
-  OnCellLoad; leaving, OnUnload and OnCellDetach.
+  OnCellLoad; leaving, OnUnload and OnCellDetach. An actor runs the scripts of the NPC_ it
+  takes them from (its leveled list's pick, a template's with the script flag), which is only
+  known once it is resolved: a persistent actor whose base has no scripts of its own but whose
+  script base has (MQ104's dragon: DragonActorScript from MQ104Dragon's template) starts them
+  as its cell attaches, not with the new game. TODO(M13): when the original starts them for
+  such an actor that never comes into a loaded cell.
 - **Enable state**: what scripts enable and disable shows and hides at once, collision
   included, without loading the cell again; enable parents follow. Observed in the
   original: a reference with an enable parent (its XESP naming a reference that exists) only
