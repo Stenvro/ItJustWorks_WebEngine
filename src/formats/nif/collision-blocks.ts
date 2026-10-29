@@ -58,7 +58,10 @@ const parseCollisionObject: BlockParser = (reader, _context, type): CollisionObj
   const target = reader.i32();
   const flags = reader.u16();
   const body = reader.i32();
-  if (type === 'bhkBlendCollisionObject') reader.skip(8); // heir gain, vel gain
+  if (type === 'bhkBlendCollisionObject') {
+    const blend = { heirGain: reader.f32(), velocityGain: reader.f32() };
+    return { kind: 'collision-object', type, target, flags, body, blend };
+  }
   return { kind: 'collision-object', type, target, flags, body };
 };
 
