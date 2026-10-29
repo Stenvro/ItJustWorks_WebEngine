@@ -126,6 +126,10 @@ const SLIDE_MIN = 0.2;
 /** Coming down onto a step, away from a wall at the shape's side by this much (Havok units). */
 const STEP_AWAY = 0.03;
 const STEP_AWAY_TRIES = 3;
+/** Held on an edge of the ground, the way is swept again from this much higher (Havok units). */
+const EDGE_LIFT = 0.02;
+/** Held on an edge: the sweep got less than this share of the way (it stuck there for good). */
+const EDGE_STUCK = 0.05;
 /**
  * A blocked actor tries these turns of its way (radians, nearest first, right and left) and
  * takes the first that gets it on: wedged in a crease between a wall and a slope (where the
@@ -688,6 +692,59 @@ export class CharacterBody {
     return { x: over.x - at.x, y: over.y - at.y, z: landed - at.z };
   }
 
+  /** Whether the controller's last sweep met walkable ground alone (no wall, no step). */
+  #onlyGround(): boolean {
+    const count = this.#controller.numComputedCollisions();
+    if (count === 0) return false;
+    const walkable = Math.cos((this.settings.maxSlope * Math.PI) / 180);
+    for (let i = 0; i < count; i++) {
+      const collision = this.#controller.computedCollision(i);
+      if (collision && collision.normal1.z < walkable) return false;
+    }
+    return true;
+  }
+
+  /**
+   * The movement swept again from EDGE_LIFT above where the shape stands (then down onto the
+   * ground by the controller's snap), or undefined if that gets no further along the way.
+   */
+  #fromAbove(
+    desired: RAPIER.Vector,
+    predicate: (collider: RAPIER.Collider) => boolean,
+  ): RAPIER.Vector | undefined {
+    const at = this.#body.translation();
+    const world = this.physics.world;
+    const up = world.castShape(
+      at,
+      NO_ROTATION,
+      { x: 0, y: 0, z: 1 },
+      this.#collider.shape,
+      SKIN,
+      EDGE_LIFT,
+      false,
+      RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+      undefined,
+      this.#collider,
+      undefined,
+      predicate,
+    );
+    if (up) return undefined;
+    const before = { x: at.x, y: at.y, z: at.z };
+    this.#collider.setTranslation({ x: at.x, y: at.y, z: at.z + EDGE_LIFT });
+    this.#controller.computeColliderMovement(
+      this.#collider,
+      { x: desired.x, y: desired.y, z: desired.z - EDGE_LIFT },
+      RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+      undefined,
+      predicate,
+    );
+    const moved = this.#controller.computedMovement();
+    this.#collider.setTranslation(before);
+    const wanted = desired.x * desired.x + desired.y * desired.y;
+    if (moved.x * desired.x + moved.y * desired.y < wanted * STEP_BLOCKED) return undefined;
+    return { x: moved.x, y: moved.y, z: moved.z + EDGE_LIFT };
+  }
+
   /** The first turn of a blocked way that gets on (SEEK_TURNS), its movement and grounding. */
   #seekAround(
     desired: RAPIER.Vector,
@@ -857,6 +914,21 @@ export class CharacterBody {
         moved = step;
         this.#grounded = true;
       }
+    }
+    // Held where it stands by nothing but ground: off an edge of what it stands on (a plate
+    // raised a few units off the floor, its bevel too steep to walk) the controller's sweep met
+    // that edge at once, and again on every slide, whichever way it went. The engine's character
+    // proxy walks off such an edge; the way is swept again from a little above it.
+    if (
+      wasGrounded &&
+      !rising &&
+      !this.swimming &&
+      wanted > 0 &&
+      moved.x * desired.x + moved.y * desired.y < wanted * EDGE_STUCK &&
+      this.#onlyGround()
+    ) {
+      const lifted = this.#fromAbove(desired, predicate);
+      if (lifted) moved = lifted;
     }
     // Touching something below that is not walkable ground: sliding off it.
     this.touched.length = 0;
