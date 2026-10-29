@@ -436,6 +436,10 @@ export class ActorsAway {
     again = false,
   ): Promise<boolean> {
     if (this.#options.staged(actor)) return false;
+    // A loaded save's actor of the loaded area stands where it stood as its cell loads (src/
+    // save/world-save.ts): the low process does not send it elsewhere before (it would be on
+    // the stage there while the game state had it at its package's place).
+    if (this.#options.session.restoring?.actor(actor)) return false;
     if (mode === 'walk' && !again && this.#trips.has(actor)) return false;
     const now = await runtime.placement(actor, false);
     const record = await runtime.forms.record(actor);
@@ -462,7 +466,9 @@ export class ActorsAway {
       return false;
     }
     // It came onto the stage meanwhile: the high process has it.
-    if (this.#options.staged(actor)) return false;
+    if (this.#options.staged(actor) || this.#options.session.restoring?.actor(actor)) {
+      return false;
+    }
     if (mode === 'jump') {
       this.#trips.delete(actor);
       await this.#moveTo(runtime, actor, destination);

@@ -407,6 +407,18 @@ L_ITEMPICKER. Load doors take the player to their XTEL (inside or out, see
 Open and Close sequences. The prompt is the HUD's crosshair text in Play (the shell's in the
 sandbox); load doors show the loading menu (play-mode.ts).
 
+**Automatic doors** (DOOR FNAM 0x02: AutoLoadDoor01, a marker with neither collision nor a
+crosshair prompt, at the ends of caves such as Helgen Keep's) are not activated by the crosshair.
+Observed in the original: as such a door's 3D loads it watches the player's distance; within
+fAutoDoorDisplayDistance (700) its destination is shown, and coming within
+fAutoDoorActivateDistance (350) the screen fades for fAutoDoorFadeSecs (INI General, 0.5) and the
+door is activated with the player as activator (its scripts first), unless they ride
+(sNotAllowedToUseAutoDoorsWhileonHorse instead). Here `PlaySession` watches the distance from
+the player's feet each frame (`autoDoors`, `walksThrough` in play-session.ts); a door the player
+arrives by (loaded already within the distance) does not send them back. TODO(M13): the display
+distance's text; the fade drawn (only its time passes); whether the distance is taken from the
+feet or the character's middle.
+
 **Arriving** through a door, the player waits (in place, behind the loading screen) until the
 collision of the cell and the eight around it is in place — a street, bridge or porch may
 belong to a neighbour — and ray casts see it: Rapier updates what queries search (its broad

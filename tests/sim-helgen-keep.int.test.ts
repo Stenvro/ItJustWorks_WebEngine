@@ -34,6 +34,9 @@ const SCENE_TRIGGERS_300: readonly (readonly [number, Vec3])[] = [
   [292, [-955, 4723, 530]],
   [305, [124, 4128, 206]],
 ];
+/** MQ101SetStage350 (by the torture room) and 400 (past it), as placed. */
+const SET_STAGE_350: Vec3 = [1133, 2682, -17];
+const SET_STAGE_400: Vec3 = [-1639, 2168, -676];
 /** The caves' set-stage triggers, in the route's order (MQ101SetStage550 ... 800). */
 const CAVE_TRIGGERS: readonly (readonly [number, Vec3])[] = [
   [550, [-6061, -8009, -1616]],
@@ -287,6 +290,16 @@ describe.skipIf(!hasGamedata())('MQ101 in Helgen Keep', () => {
           await fight(open, [134, 135]);
         }
         if (phase(KEEP_SCENE_2B) >= 17 && !open.stageDone(MQ101, 380)) await fight(open, [71, 70]);
+        // Phase 23 waits for the player in MQ101SetStage400 (after 350's trigger, its
+        // prerequisite), which keeping by Ralof (moves, not walks) may pass over: the player
+        // walks into them.
+        if (phase(KEEP_SCENE_2B) >= 23 && !open.stageDone(MQ101, 400)) {
+          if (!open.stageDone(MQ101, 350)) {
+            await open.moveTo(SET_STAGE_350);
+            await open.step(1);
+          }
+          await open.moveTo(SET_STAGE_400);
+        }
         if (phase(KEEP_SCENE_4B) >= 4 && open.stage(MQ101) < 470) {
           await fight(open, [105, 106, 107, 108, 109]);
         }
@@ -339,7 +352,8 @@ describe.skipIf(!hasGamedata())('MQ101 in Helgen Keep', () => {
     // (HelgenKeep01toExteriorExitREF, an AutoLoadDoor01 at -4547, -20651, -3277, past
     // MQ101SetStage800) with Ralof following, and the scene outside has to play; not driven
     // yet (whether Ralof should leave his hold package at 800 is not checked). The bear (MQ101BearRef) was passed by the triggers, not
-    // fought or sneaked by. Hadvar's route (KeepIntroSceneA) is not driven yet.
-    it.todo('leaves the caves with Ralof for MQ102 (stage 900), and Hadvar’s route');
+    // fought or sneaked by. Hadvar's route, out through the cave's automatic door to 900:
+    // tests/sim-helgen-keep-hadvar.int.test.ts.
+    it.todo('leaves the caves with Ralof for MQ102 (stage 900)');
   });
 });

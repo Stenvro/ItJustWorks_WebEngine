@@ -80,6 +80,11 @@ export interface CellObject {
   /** ONAM: a door placed open ("Open by Default"); scripts may shut it since (SetOpen). */
   readonly openByDefault?: boolean;
   /**
+   * DOOR FNAM 0x02 "Automatic": the player goes through it by walking into it, not by the
+   * crosshair (AutoLoadDoor01: the ends of caves without a door).
+   */
+  readonly automatic?: boolean;
+  /**
    * XAPD "Parent Activate Only" (with its Activate Parents, XAPR): only its activate parents
    * activate it; the player and actors cannot (Creation Kit, Reference > Activate Parents).
    */
@@ -262,6 +267,8 @@ export interface CellObstacle {
 
 /** REFR record flag: "Don't Havok Settle". */
 const DONT_HAVOK_SETTLE = 0x20000000;
+/** DOOR FNAM flag: "Automatic" (xEdit: Automatic Door). */
+const DOOR_AUTOMATIC = 0x02;
 
 /** A placed actor's ragdoll pose and settle flag (its record's XRGD and flags). */
 export function ragdollOf(
@@ -913,6 +920,8 @@ export async function loadCellData(
       }),
       ...(base.type === 'DOOR' && { teleport: parseTeleport(record) }),
       ...(base.type === 'DOOR' && record.fields.has('ONAM') && { openByDefault: true }),
+      ...(base.type === 'DOOR' &&
+        ((base.fields.first('FNAM')?.[0] ?? 0) & DOOR_AUTOMATIC) !== 0 && { automatic: true }),
       ...(((record.fields.first('XAPD')?.[0] ?? 0) & 1) !== 0 && { parentActivateOnly: true }),
       ...objectSoundsOf(base),
       ...(item && { item: { weight: item.weight, value: item.value } }),
