@@ -104,7 +104,7 @@ export async function openSim(options: OpenOptions = {}): Promise<Sim> {
  */
 export async function loadSim(
   bytes: Uint8Array,
-  options: { readonly seed?: number } = {},
+  options: { readonly seed?: number; readonly gridRadius?: number } = {},
 ): Promise<Sim> {
   const { header, save } = await readGameSave(bytes);
   const folder = openGameFolder();
@@ -114,6 +114,7 @@ export async function loadSim(
     reads: folder.reads,
     load: { save, header },
     ...(options.seed !== undefined && { seed: options.seed }),
+    ...(options.gridRadius !== undefined && { gridRadius: options.gridRadius }),
   });
   const sim = new Sim(world, vfs, await world.session.db);
   await world.step(0);

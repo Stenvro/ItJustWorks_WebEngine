@@ -6,6 +6,7 @@
 // Platform-independent.
 
 import type { SavedPackage } from '../ai/package-runtime.ts';
+import type { BehaviorGraphState } from '../animation/behavior-runtime.ts';
 import type { SavedGraph } from '../animation/script-graphs.ts';
 import type { CastVia } from '../scripting/runtime/casting-engine.ts';
 
@@ -34,6 +35,14 @@ export interface SavedActor {
   readonly weaponDrawn?: boolean | undefined;
   /** A flier in the air: it is not set on the ground as it loads, and flies on from there. */
   readonly flying?: boolean | undefined;
+  /** A rider's graph (its riding idle seats it in its vehicle): it starts there as it loads. */
+  readonly graph?: BehaviorGraphState | undefined;
+}
+
+/** The player's graphs as a save keeps them: the body's and the first-person one. */
+export interface SavedGraphs {
+  readonly body?: BehaviorGraphState | undefined;
+  readonly firstPerson?: BehaviorGraphState | undefined;
 }
 
 /**
@@ -64,6 +73,8 @@ export interface WorldSave {
   readonly graphs: readonly (readonly [number, SavedGraph])[];
   /** What flies (none in saves made before they were kept). */
   readonly projectiles?: readonly SavedProjectile[];
+  /** The player's graphs while they ride a vehicle (seated by their riding idle). */
+  readonly playerGraphs?: SavedGraphs;
 }
 
 /**
@@ -75,8 +86,10 @@ export class WorldRestore {
   readonly #actors = new Map<number, SavedActor>();
   readonly #graphs = new Map<number, SavedGraph>();
   #projectiles: readonly SavedProjectile[];
+  #playerGraphs: SavedGraphs | undefined;
 
   constructor(save: WorldSave) {
+    this.#playerGraphs = save.playerGraphs;
     for (const actor of save.actors) this.#actors.set(actor.reference, actor);
     for (const [reference, graph] of save.graphs) this.#graphs.set(reference, graph);
     this.#projectiles = save.projectiles ?? [];
@@ -87,6 +100,13 @@ export class WorldRestore {
     const projectiles = this.#projectiles;
     this.#projectiles = [];
     return projectiles;
+  }
+
+  /** The player's saved graphs, once (put back as their body rides again). */
+  takePlayerGraphs(): SavedGraphs | undefined {
+    const graphs = this.#playerGraphs;
+    this.#playerGraphs = undefined;
+    return graphs;
   }
 
   /** The saved actors not yet placed. */
