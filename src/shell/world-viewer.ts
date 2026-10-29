@@ -2226,7 +2226,9 @@ export class WorldViewer {
     simulated = false,
     visibility?: (reference: number) => InstanceVisibility,
   ): Promise<PlacedObject[]> {
-    const models = await Promise.all(objects.map((object) => session.model(object.model)));
+    const models = await Promise.all(
+      objects.map((object) => session.model(object.model, object.alternateTextures)),
+    );
     // In loaded cells, objects with simulated collision move: they get a matrix of their own.
     const collisions = simulated
       ? await Promise.all(objects.map(async (object) => session.collision(object.model)))
@@ -2843,6 +2845,8 @@ export class WorldViewer {
     const extra = this.#play?.extraLights ?? [];
     const under = this.#underwaterFog(camera, sky);
     this.#under = under;
+    // Under water the view takes the water's own imagespace (WATR INAM) from the next frame.
+    this.#sky?.setUnderwaterImageSpace(this.#underwater.imageSpace());
     return {
       ...sky,
       ...(under && { fog: under }),
@@ -2851,8 +2855,9 @@ export class WorldViewer {
   }
 
   /** The view below water surfaces: the water type's underwater fog (underwater.ts). */
-  readonly #underwater = new UnderwaterView((formId) =>
-    this.#session?.waterType(formId).then((gpu) => gpu?.type),
+  readonly #underwater = new UnderwaterView(
+    (formId) => this.#session?.waterType(formId).then((gpu) => gpu?.type),
+    (formId) => this.#session?.db.then((db) => db.get(formId)),
   );
 
   /** The underwater fog of the last frame (its full-screen tint goes on the imagespace). */

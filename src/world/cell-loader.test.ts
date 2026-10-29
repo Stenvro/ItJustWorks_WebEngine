@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { transformPoint } from '../render/math.ts';
-import { lightCone, matrixPlacement, referenceMatrix } from './cell-loader.ts';
+import { lightCone, matrixPlacement, objectModelKey, referenceMatrix } from './cell-loader.ts';
 import { LightFlag } from './cell-records.ts';
 import type { PlacedReference } from './cell-records.ts';
 
@@ -86,5 +86,18 @@ describe('lightCone', () => {
     const level = { rotation: [0, 0, 0] as const, lightFovOffset: 0 };
     expect(lightCone({ flags: 0, fov: 90 }, level)).toEqual({});
     expect(lightCone(spot, { ...level, lightFovOffset: 268 })).toEqual({});
+  });
+});
+
+describe('objectModelKey', () => {
+  it('tells the same model with other alternate textures apart', () => {
+    const model = 'meshes\architecture\rock.nif';
+    const snowy = { model, alternateTextures: [{ shape: 'Rock01', textureSet: 0x1234, index: 0 }] };
+    const mossy = { model, alternateTextures: [{ shape: 'Rock01', textureSet: 0x5678, index: 0 }] };
+    expect(objectModelKey({ model })).toBe(model);
+    expect(objectModelKey({ model, alternateTextures: [] })).toBe(model);
+    expect(objectModelKey(snowy)).not.toBe(model);
+    expect(objectModelKey(snowy)).not.toBe(objectModelKey(mossy));
+    expect(objectModelKey(snowy)).toBe(objectModelKey({ ...snowy }));
   });
 });
