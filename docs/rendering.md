@@ -406,7 +406,8 @@ constants of Nukem9's decompiled `BSLightingShader`:
    engine takes the luminance from a texture it binds (ours: the directional ambient's).
    Eyes (type 16, 3,320 vanilla shapes, `node tools/effect-audit.ts --shaders`) carry
    Eye_Environment_Mapping (SLSF1 `0x20000`), not Environment_Mapping, and reflect their cube
-   map (slot 4) by their eye cube map scale. TODO(M13): the engine reflects about the shader's
+   map (slot 4, with the mask of slot 5: both bound by that flag, `material-slots.ts`) by their
+   eye cube map scale. TODO(M13): the engine reflects about the shader's
    left / right eye reflection centres (by the vertex red); ours about the mesh normal.
 9. LOD landscape noise (type 18): diffuse × 0.8333 (p (0.37 − noise) + noise) + 0.37 with
    `textures\terrain\noise.dds` at 3 × UV and p from the colour's brightness.
@@ -766,6 +767,10 @@ TODO(M13) in the renderer; the state and its weather are as the engine's there.
 
 The water shader (`shaders/water.wgsl`; the WATR values it reads:
 [formats/esm.md](formats/esm.md#water)) and the water's displacement field.
+
+**Under water** the view takes the water type's own imagespace (WATR INAM: UnderwaterImageSpace,
+Dawnguard's DLC1_UnderwaterImageSpace, the Soul Cairn's DLC01UnderLava01) in place of the
+weather's or the cell's, the screen modifiers on top (`src/world/underwater.ts`).
 
 **Which water.** A cell's water is its XCWT type, else its world's water (NAM2, from the
 parent world when the world takes its water from it), at its XCLW height, else the world's

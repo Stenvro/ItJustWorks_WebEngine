@@ -90,7 +90,9 @@ describe('underwater imagespace', () => {
   const view = new UnderwaterView(
     () => Promise.resolve(water),
     (formId) =>
-      Promise.resolve(formId === IMAGE_SPACE ? { type: 'IMGS', fields: new Fields([]) } : undefined),
+      Promise.resolve(
+        formId === IMAGE_SPACE ? { type: 'IMGS', fields: new Fields([]) } : undefined,
+      ),
   );
   const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 

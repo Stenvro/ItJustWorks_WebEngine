@@ -39,7 +39,8 @@ export function underwaterLight(lighting: Pick<SceneLighting, 'sunColor' | 'ambi
 export class UnderwaterView {
   readonly #types = new Map<number, WaterType | undefined>();
   readonly #lookup: (formId: number) => Promise<WaterType | undefined> | undefined;
-  readonly #records: ((formId: number) => Promise<ImageSpaceSource | undefined> | undefined) | undefined;
+  readonly #records:
+    ((formId: number) => Promise<ImageSpaceSource | undefined> | undefined) | undefined;
   readonly #imageSpaces = new Map<number, ImageSpace | undefined>();
   /** The water type the camera was under at the last fog() call. */
   #under: WaterType | undefined;

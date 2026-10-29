@@ -39,8 +39,7 @@ export function lightingSlots(shaderType: number, flags1: number, flags2: number
   const rimSoft = (flags2 & (SLSF2_SOFT_LIGHTING | SLSF2_RIM_LIGHTING)) !== 0;
   const backLight = (flags2 & SLSF2_BACK_LIGHTING) !== 0;
   const facegen = shaderType === SHADER_FACEGEN;
-  const specularMap =
-    (flags1 & SLSF1_MODEL_SPACE_NORMALS) !== 0 && (flags1 & SLSF1_SPECULAR) !== 0;
+  const specularMap = (flags1 & SLSF1_MODEL_SPACE_NORMALS) !== 0 && (flags1 & SLSF1_SPECULAR) !== 0;
   return [
     0,
     1,
