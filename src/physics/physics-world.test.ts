@@ -538,6 +538,21 @@ describe('settling placed objects', () => {
     physics.free();
   });
 
+  it('flings a body given its speed as it is placed (a cut head), not settling it', () => {
+    const physics = new PhysicsWorld(clutterMatrix, GRAVITY);
+    const placed = physics.addObject(collision(clutter([-8, -8, -8], [8, 8, 8])), IDENTITY, {
+      reference: 2,
+      kind: 'object',
+    });
+    physics.setVelocity(placed, [250, 0, 0], [0, 0, 3.5]);
+    for (let i = 0; i < 12; i++) physics.step(1 / 60);
+    const at = placed.bodies[0]?.body.translation() ?? { x: 0, y: 0, z: 0 };
+    // A fifth of a second at 250 units a second, falling meanwhile.
+    expect(at.x * 69.99125).toBeGreaterThan(45);
+    expect(at.z * 69.99125).toBeLessThan(-5);
+    physics.free();
+  });
+
   it('pushes an object a script enables out of what it lies in without throwing it', () => {
     const physics = new PhysicsWorld(clutterMatrix, GRAVITY);
     physics.addObject(collision(body(box([-200, -200, -20], [200, 200, 0]))), IDENTITY, {

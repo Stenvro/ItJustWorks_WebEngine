@@ -473,7 +473,8 @@ while a clip moves it) an actor stands to its graph. Held by an animation-driven
 AI sends it away it is told moveStart (which ends such idles); as the graph lets go
 (bAnimationDriven back to 0) it is told again what it does (`Locomotion.resume`: the engine's
 re-performed action after an idle stop). Riders copy the horse's HorseSpeedSampled and
-iSyncIdleLocomotion (`src/shell/actor-mounts.ts`). An NPC's falls and landings are the
+iSyncIdleLocomotion (`src/shell/actor-mounts.ts`). An actor's falls and landings (the player's
+too: sent JumpFall and JumpLand directly, every step down a roof played both) are the
 engine's ActionFall and ActionLand through its idle tree (0_master's JumpFall only falling faster
 than 350 units a second, its landings only in its jump state: [ai.md](ai.md#combat-movement)),
 not a JumpFall for every step without ground; its turning is the engine's angle controller (the
@@ -908,7 +909,10 @@ up again.
   parent node (the neck) to the head, plus the direction the killer's weapon moves (its body's
   velocity; the killer the actor's myKiller), both as unit vectors, made one again, at
   [Combat] fDecapInitialSpeed (250 units a second), and spinning about that same axis at the
-  same number in Havok units (3.6 radians a second).
+  same number in Havok units (3.6 radians a second). Ours: given its speed, the piece leaves the
+  warm start's settling (which takes a body's speed every step for half a second after it is
+  placed): before, the head hung at the neck that long and then dropped straight down, past
+  MQ101's basket.
 - The race's blood art (NAM7) plays on the actor for fDecapitateBloodTime (5 s).
 
 Ours: the body's instances read the cut nodes as its scene is built again (`Severing`: the

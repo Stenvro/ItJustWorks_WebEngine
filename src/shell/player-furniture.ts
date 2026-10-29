@@ -96,6 +96,8 @@ export class PlayerFurniture {
       },
       send: (event) => avatar.send(event),
     };
+    // Their falls and landings go through their idle tree, as an actor's do.
+    avatar.useActions({ perform: (action) => furniture.playAction(this.user, action) });
     // Their graph's furniture enters and exits (PlayerChairEnterHandler, the
     // PlayerFurnitureExitHandler of idleChairGetUp, idleBedGetUp) come through the stage's
     // dispatch (src/shell/actor-graph-events.ts).
