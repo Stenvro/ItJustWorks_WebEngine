@@ -31,6 +31,7 @@ import {
   type VehiclePose,
 } from '../ai/vehicles.ts';
 import { CartTether } from '../ai/cart-tether.ts';
+import type { VehicleExit } from '../save/world-save.ts';
 import type { DoorPassage } from '../ai/path-follower.ts';
 import { invert } from '../render/frustum.ts';
 import { multiply, type Mat4, type Vec3 } from '../render/math.ts';
@@ -324,6 +325,28 @@ export class ActorVehicles {
   }
 
   /**
+   * A rider getting out (its exit idle began, it let go of its vehicle): where the vehicle was
+   * then and how far its exit has moved it, as a save keeps it.
+   */
+  exitOf(actor: number): VehicleExit | undefined {
+    const detached = this.#passengers.get(actor)?.detached;
+    return detached && { pose: detached.pose, offset: detached.offset };
+  }
+
+  /**
+   * A loaded save's rider that was getting out: as it rides again, it has let go already (its
+   * graph goes on with its exit idle, whose root motion takes it on out from there).
+   */
+  exitAgain(actor: number, exit: VehicleExit): void {
+    const passenger = this.#passengers.get(actor);
+    if (passenger) passenger.detached = { pose: exit.pose, offset: exit.offset };
+    else this.#exits.set(actor, exit);
+  }
+
+  /** Loaded riders getting out, until they ride again. */
+  readonly #exits = new Map<number, VehicleExit>();
+
+  /**
    * The cart's travel starts (or goes on): its horse chooses its package again (the opening's
    * stage 15 does so by EvaluatePackage; a scene's package action that drives the horse runs
    * the same way).
@@ -428,18 +451,6 @@ export class ActorVehicles {
     this.changed(actor);
   }
 
-  /**
-   * A loaded save's player riding again: their graphs go on in their riding idle (as the
-   * riders' do: src/shell/actor-stage.ts), once their body is there.
-   */
-  #seatPlayerAgain(): void {
-    const restoring = this.#options.session.restoring;
-    if (!restoring || !this.#passengers.has(PLAYER_REF)) return;
-    const avatar = this.#options.player?.()?.avatar;
-    const graphs = avatar && restoring.takePlayerGraphs();
-    if (graphs) avatar.restoreGraphs(graphs);
-  }
-
   /** SetVehicle: an actor rides its vehicle now (the game state's), or no longer. */
   changed(actor: number): void {
     const runtime = this.#options.session.scriptsReady;
@@ -448,11 +459,13 @@ export class ActorVehicles {
       this.release(actor);
       return;
     }
+    const exit = this.#exits.get(actor);
+    this.#exits.delete(actor);
     const passenger: Passenger = {
       actor,
       vehicle,
       still: undefined,
-      detached: undefined,
+      detached: exit && { pose: exit.pose, offset: exit.offset },
       feet: undefined,
       alighting: [],
     };
@@ -648,8 +661,9 @@ export class ActorVehicles {
     const { get } = this.#options;
     const names = this.#names();
     if (!this.#restored) this.#restoreTethers();
+    // (A loaded save's player rides again in their riding idle: the stage puts their graphs
+    // back as it does every actor's.)
     this.rideAgain(PLAYER_REF);
-    this.#seatPlayerAgain();
     for (const cart of this.#carts.values()) {
       if (!cart.body && !cart.adopting) void this.#adopt(cart);
       const body = cart.body;

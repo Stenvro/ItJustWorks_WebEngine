@@ -6,7 +6,8 @@
 // Platform-independent.
 
 import type { SavedPackage } from '../ai/package-runtime.ts';
-import type { BehaviorGraphState } from '../animation/behavior-runtime.ts';
+import type { ActorGraphState, BehaviorGraphState } from '../animation/behavior-runtime.ts';
+import type { VehicleOffset, VehiclePose } from '../ai/vehicles.ts';
 import type { SavedGraph } from '../animation/script-graphs.ts';
 import type { CastVia } from '../scripting/runtime/casting-engine.ts';
 
@@ -35,14 +36,37 @@ export interface SavedActor {
   readonly weaponDrawn?: boolean | undefined;
   /** A flier in the air: it is not set on the ground as it loads, and flies on from there. */
   readonly flying?: boolean | undefined;
-  /** A rider's graph (its riding idle seats it in its vehicle): it starts there as it loads. */
-  readonly graph?: BehaviorGraphState | undefined;
+  /**
+   * Its graph (the original keeps every actor's): it goes on from there as it loads, mid-idle,
+   * seated, sneaking, its weapon out. Saves made before kept riders' alone, in the older form.
+   */
+  readonly graph?: SavedActorGraph | undefined;
+  /** A rider getting out (its exit idle began): where its vehicle was then, how far it came. */
+  readonly vehicleExit?: VehicleExit | undefined;
+}
+
+/** An actor's graph as a save keeps it (older saves: the placed objects' form). */
+export type SavedActorGraph = ActorGraphState | BehaviorGraphState;
+
+/** A rider part-way out of its vehicle: the vehicle's pose as it let go, its exit's offset. */
+export interface VehicleExit {
+  readonly pose: VehiclePose;
+  readonly offset: VehicleOffset;
+}
+
+/** What the player's actor state keeps beside their graphs (as the NPCs' SavedActor). */
+export interface SavedPlayer {
+  readonly sneaking?: boolean | undefined;
+  /** Their weapon out (or being drawn). */
+  readonly weaponDrawn?: boolean | undefined;
+  /** Getting out of their vehicle. */
+  readonly vehicleExit?: VehicleExit | undefined;
 }
 
 /** The player's graphs as a save keeps them: the body's and the first-person one. */
 export interface SavedGraphs {
-  readonly body?: BehaviorGraphState | undefined;
-  readonly firstPerson?: BehaviorGraphState | undefined;
+  readonly body?: SavedActorGraph | undefined;
+  readonly firstPerson?: SavedActorGraph | undefined;
 }
 
 /**
@@ -73,8 +97,10 @@ export interface WorldSave {
   readonly graphs: readonly (readonly [number, SavedGraph])[];
   /** What flies (none in saves made before they were kept). */
   readonly projectiles?: readonly SavedProjectile[];
-  /** The player's graphs while they ride a vehicle (seated by their riding idle). */
+  /** The player's graphs (saves made before kept them only while the player rode a vehicle). */
   readonly playerGraphs?: SavedGraphs;
+  /** The player's sneaking, drawn weapon and vehicle exit. */
+  readonly player?: SavedPlayer;
 }
 
 /**
@@ -87,9 +113,11 @@ export class WorldRestore {
   readonly #graphs = new Map<number, SavedGraph>();
   #projectiles: readonly SavedProjectile[];
   #playerGraphs: SavedGraphs | undefined;
+  #player: SavedPlayer | undefined;
 
   constructor(save: WorldSave) {
     this.#playerGraphs = save.playerGraphs;
+    this.#player = save.player;
     for (const actor of save.actors) this.#actors.set(actor.reference, actor);
     for (const [reference, graph] of save.graphs) this.#graphs.set(reference, graph);
     this.#projectiles = save.projectiles ?? [];
@@ -107,6 +135,13 @@ export class WorldRestore {
     const graphs = this.#playerGraphs;
     this.#playerGraphs = undefined;
     return graphs;
+  }
+
+  /** The player's actor state beside their graphs, once (put back with them). */
+  takePlayer(): SavedPlayer | undefined {
+    const player = this.#player;
+    this.#player = undefined;
+    return player;
   }
 
   /** The saved actors not yet placed. */

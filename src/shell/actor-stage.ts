@@ -38,7 +38,7 @@ import { GROUND_ABOVE, GROUND_BELOW } from '../world/actor-ground.ts';
 import { corpsePose } from '../animation/corpse-pose.ts';
 import { createdEnabled } from './created-objects.ts';
 import type { GameSession } from './game-session.ts';
-import type { SavedActor, SavedGraphs } from '../save/world-save.ts';
+import type { SavedActor, SavedGraphs, SavedPlayer } from '../save/world-save.ts';
 import type { CellRagdoll } from './play-session.ts';
 import type { Terminal } from './terminal.ts';
 import { Layer } from '../physics/collision-layers.ts';
@@ -1589,6 +1589,7 @@ export class ActorStage {
       this.#keepCorpse(staged);
       const use = this.furniture.interaction(reference);
       const seated = use !== undefined && this.furniture.holds(reference);
+      const exit = this.vehicles.exitOf(reference);
       saved.push({
         reference,
         cell: staged.cell,
@@ -1601,18 +1602,54 @@ export class ActorStage {
         ...(this.senses.scriptSneaking(reference) && { sneaking: true }),
         ...(weaponOut(this.combat.weaponState(reference)) && { weaponDrawn: true }),
         ...(this.flight.isFlying(reference) && { flying: true }),
-        // A rider's graph: its riding idle seats it (TODO(M13): the original keeps every
-        // actor's graph; the others' are rebuilt from their furniture and packages).
-        ...(this.vehicles.holds(reference) && { graph: staged.placed.behavior?.saveState() }),
+        // Its graph, as the original keeps every actor's: it goes on mid-animation as it loads
+        // (seated, sneaking, its weapon out, in a scene's idle). A corpse lies by its pose.
+        ...(!staged.dead && { graph: staged.placed.behavior?.saveActorState() }),
+        ...(exit && { vehicleExit: exit }),
       });
     }
     return saved;
   }
 
-  /** The player's graphs while they ride a vehicle (their riding idle seats them). */
+  /** The player's graphs: the body's and the first-person one. */
   savePlayerGraphs(): SavedGraphs | undefined {
-    if (!this.vehicles.holds(PLAYER_REF)) return undefined;
     return this.#options.player?.()?.avatar?.saveGraphs();
+  }
+
+  /**
+   * The player's actor state beside their graphs: sneaking, their weapon out, getting out of
+   * their vehicle (the original saves the player's actor state as every actor's).
+   */
+  savePlayer(): SavedPlayer | undefined {
+    const view = this.#options.player?.();
+    if (!view) return undefined;
+    const exit = this.vehicles.exitOf(PLAYER_REF);
+    return {
+      ...(view.play.player.sneaking && { sneaking: true }),
+      ...(weaponOut(this.combat.weaponState(PLAYER_REF)) && { weaponDrawn: true }),
+      ...(exit && { vehicleExit: exit }),
+    };
+  }
+
+  /**
+   * A loaded save's player: their graphs go on where they were (as the actors' do, as they
+   * are placed), sneaking, their weapon out, getting out of their vehicle, once their body is
+   * there.
+   */
+  #restorePlayer(): void {
+    const restoring = this.#options.session.restoring;
+    const view = this.#options.player?.();
+    const avatar = view?.avatar;
+    if (!restoring || !view || !avatar) return;
+    const graphs = restoring.takePlayerGraphs();
+    if (graphs) avatar.restoreGraphs(graphs);
+    const player = restoring.takePlayer();
+    if (!player) return;
+    if (player.sneaking === true) view.play.player.sneaking = true;
+    if (player.weaponDrawn === true) {
+      this.#restoredDraws.set(PLAYER_REF, { left: 5, resumed: graphs?.body !== undefined });
+    }
+    if (player.vehicleExit) this.vehicles.exitAgain(PLAYER_REF, player.vehicleExit);
   }
 
   /**
@@ -1625,6 +1662,12 @@ export class ActorStage {
       pending.left -= seconds;
       if (weaponOut(this.combat.weaponState(actor)) || pending.left <= 0) {
         this.#restoredDraws.delete(actor);
+        continue;
+      }
+      // Its graph put back with the weapon out: out at once. A save of before (no graph): it
+      // draws again.
+      if (pending.resumed) {
+        if (this.combat.drawnAgain(actor)) this.#restoredDraws.delete(actor);
         continue;
       }
       void this.combat.draw(actor);
@@ -1642,8 +1685,11 @@ export class ActorStage {
     }
   }
 
-  /** A loaded save's actors whose weapons were out: seconds left to draw them again. */
-  readonly #restoredDraws = new Map<number, { left: number }>();
+  /**
+   * A loaded save's actors whose weapons were out: seconds left to draw them again (or, their
+   * graphs put back with the weapons out, to have them out at once).
+   */
+  readonly #restoredDraws = new Map<number, { left: number; readonly resumed: boolean }>();
 
   readonly #restoredCombat = new Map<
     number,
@@ -2215,6 +2261,7 @@ export class ActorStage {
       void this.#guide(key, guide.hazard);
     }
     this.away.frame(frame);
+    this.#restorePlayer();
     this.#restoreCombat(frame);
     this.combat.frame(frame, this.#options.focus?.());
     this.knockdowns.frame(frame);
@@ -2382,8 +2429,12 @@ export class ActorStage {
         const saved = session.restoring?.actor(reference);
         if (saved) {
           session.restoring?.drop(reference);
-          // A rider seated by its riding idle: its graph goes on there.
+          // Its graph goes on where it was (a rider in its riding idle; one getting out, from
+          // its exit, its vehicle let go of already). A save of before kept riders' graphs
+          // alone: the others' are rebuilt by their furniture, sneaking and weapons below.
+          const resumed = saved.graph !== undefined && 'files' in saved.graph;
           if (saved.graph) actor.behavior?.restoreState(saved.graph);
+          if (saved.vehicleExit) this.vehicles.exitAgain(reference, saved.vehicleExit);
           // A flier saved in the air stays there (not set on the ground) and cruises on from
           // where it was (before, MQ104's dragon circling the watchtower came down and took
           // off again).
@@ -2395,9 +2446,10 @@ export class ActorStage {
           if (saved.package) this.ai.resume(reference, saved.package, restart);
           // Sneaking as a script set it, in the package it set it in.
           if (saved.sneaking === true) this.senses.sneakAgain(reference, saved.package?.id);
-          // TODO(M13): the original's save keeps the graph with the weapon out; here it is
-          // drawn again as the actor is loaded.
-          if (saved.weaponDrawn === true) this.#restoredDraws.set(reference, { left: 5 });
+          // Its weapon out: its graph has it out already (a save of before: drawn again).
+          if (saved.weaponDrawn === true) {
+            this.#restoredDraws.set(reference, { left: 5, resumed });
+          }
           if (saved.combatTarget !== undefined) {
             this.#restoredCombat.set(reference, {
               target: saved.combatTarget,
@@ -2411,7 +2463,8 @@ export class ActorStage {
               saved.furniture,
               () => Promise.resolve(false),
               () => undefined,
-              { quick: true },
+              // Its graph is in the furniture's state already, part-way through its idle.
+              { quick: true, ...(resumed && { resumed: true }) },
             );
           }
         }

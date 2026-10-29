@@ -195,8 +195,8 @@ export class PlayerAvatar {
   /** What a save keeps of its graphs (src/save/world-save.ts SavedGraphs). */
   saveGraphs(): SavedGraphs {
     return {
-      body: this.#made.body.behavior?.saveState(),
-      firstPerson: this.#firstPerson?.skeleton.behavior?.saveState(),
+      body: this.#made.body.behavior?.saveActorState(),
+      firstPerson: this.#firstPerson?.skeleton.behavior?.saveActorState(),
     };
   }
 
