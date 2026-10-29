@@ -17,7 +17,12 @@ import { questTargets } from './compass.ts';
 import type { Terminal } from './terminal.ts';
 import { settingsHandlers } from './journal-settings.ts';
 import { controlsHandlers } from './journal-controls.ts';
-import { DEFAULT_PLAYER_NAME, IMPORT_ESS_TEXT, SaveList } from './save-list.ts';
+import {
+  DEFAULT_PLAYER_NAME,
+  IMPORT_ESS_TEXT,
+  SAVE_SCREENSHOT_IMAGE,
+  SaveList,
+} from './save-list.ts';
 
 /** HelpManualPC: the help topics of the PC game (Skyrim.esm's FLST 0x163). */
 const HELP_MANUAL_PC = 0x163;
@@ -100,6 +105,9 @@ export class JournalMenu {
       },
       log: (message) => {
         terminal.log('save', message, 'error');
+      },
+      screenshotImage: (png) => {
+        host.files.setImage(SAVE_SCREENSHOT_IMAGE, png);
       },
     });
   }
@@ -234,8 +242,6 @@ export class JournalMenu {
           close(menu);
           this.saves?.quicksave();
         },
-        // TODO(M13): the save's thumbnail shown (img://BGSSaveLoadHeader_Screenshot).
-        PrepSaveGameScreenshot: () => undefined,
         SetSaveDisabled: () => undefined,
         QuitToMainMenu: (menu) => {
           close(menu);
@@ -393,4 +399,6 @@ export interface JournalSaves {
   delete(name: string): Promise<void>;
   /** Picks an original save (.ess), imports it and loads it. */
   importEss?(): void;
+  /** A save's screenshot, or with no name the game playing now (PNG). */
+  screenshot?(name: string | undefined): Promise<Uint8Array | undefined>;
 }
