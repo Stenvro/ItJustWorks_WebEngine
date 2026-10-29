@@ -49,6 +49,12 @@ import {
 } from './light-lists.ts';
 import { identity, maxScale, multiply, transformPoint, type Mat4, type Vec3 } from './math.ts';
 import { fadeOut, fadeRange, type FadeKind, type FadeSettings } from './object-fade.ts';
+import {
+  DEFAULT_SHADER_FADES,
+  fadeKindIndex,
+  shaderFadeFrame,
+  type ShaderFadeSettings,
+} from './shader-fades.ts';
 import type { DisplacementFrame } from './water-displacement.ts';
 import { DisplacementSimulation } from './water-displacement-gpu.ts';
 import type {
@@ -115,8 +121,8 @@ const IDENTITY = identity();
 const PALETTE_BYTES = MAX_PALETTE_BONES * PALETTE_BONE_FLOATS * 4;
 /** Palettes start at storage buffer offset alignment. */
 const PALETTE_ALIGNMENT = 256;
-/** WGSL `Frame` struct: 192 floats. */
-const FRAME_FLOATS = 192;
+/** WGSL `Frame` struct: 204 floats. */
+const FRAME_FLOATS = 204;
 /** Sun shadow map: one layer per cascade. */
 export const SHADOW_MAP_SIZE = 2048;
 export const SHADOW_MAP_LAYERS = 4;
@@ -1572,6 +1578,8 @@ export class SceneRenderer {
   defaultWater: GpuWaterType | undefined;
   /** The settings Actor, Item and Object Fade (INI [LOD] fLODFadeOutMult*). */
   objectFade: FadeSettings = DEFAULT_FADE;
+  /** Where the lighting shader's features fade out with distance (shader-fades.ts). */
+  shaderFades: ShaderFadeSettings = DEFAULT_SHADER_FADES;
   /**
    * The room (1-255; 0: none) holding a point of the cell drawn, if it has rooms: the draws of
    * moving instances (actors walking from room to room) take the room they are in each frame,
@@ -2680,13 +2688,15 @@ export class SceneRenderer {
         });
       });
     }
-    // Each lit draw names its slot in the scene's light lists (flags.w bits 8-23).
+    // Each lit draw names its slot in the scene's light lists (flags.w bits 8-23), and its
+    // fade kind for the shaders' own distance fades (bits 5-6, shader-fades.ts).
     const drawUints = new Uint32Array(uniforms);
     for (const draw of draws) {
       if (draw.part.pass === 'water') continue;
       const at = draw.uniformOffset / 4 + 39;
       const slot = Math.min(draw.uniformOffset / DRAW_STRIDE, NO_LIGHT_LIST);
-      drawUints[at] = ((drawUints[at] ?? 0) & ~0xffff00) | (slot << 8);
+      const kind = fadeKindIndex(draw.fade?.kind);
+      drawUints[at] = ((drawUints[at] ?? 0) & ~0xffff60) | (slot << 8) | (kind << 5);
     }
     // Particle systems take every light of the frame. TODO(M13): the engine gives a particle
     // geometry its own list too (by the system's bound).
@@ -2890,6 +2900,7 @@ export class SceneRenderer {
     data.set(axis(1), 156);
     data.set(invert(viewProjection) ?? viewProjection, 160);
     data.set(firstPersonViewProjection ?? viewProjection, 176);
+    data.set(shaderFadeFrame(this.objectFade, this.shaderFades), 192);
     this.#device.queue.writeBuffer(this.#frame.buffer, 0, data);
 
     // A new light frame: each draw drawn chooses its lights again (#chooseLights).
