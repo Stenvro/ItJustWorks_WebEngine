@@ -941,7 +941,7 @@ async function main(): Promise<void> {
           inTime: ini.number('LOD', 'fFadeInTime'),
           outTime: ini.number('LOD', 'fFadeOutTime'),
         };
-        const shading =(key: Parameters<typeof ini.number<'LightingShader'>>[1]): number =>
+        const shading = (key: Parameters<typeof ini.number<'LightingShader'>>[1]): number =>
           ini.number('LightingShader', key);
         renderer.scene.shaderFades = {
           specularStart: shading('fSpecularLODFadeStart'),

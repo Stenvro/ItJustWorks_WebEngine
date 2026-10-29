@@ -989,19 +989,66 @@ fading without the stipple, takes none of it unless it carries Assume_Shadowmask
 up at the blended surface where the original reads the opaque scene's mask (TODO(M13)).
 
 Object fade (object-fade.ts): a reference's fade distance is ten bound radii (fLODBoundRadiusMult),
-capped at the loaded grid's edge less its radius and half a cell; it fades from 0.6 of that
-(fLODFadeOutPercent) to all of it, starting no nearer than 500 units (iFadeNodeMinNearDistance) and
-gone no nearer than 1000. The camera's distance is divided by the reference kind's multiplier
-(fLODFadeOutMult...) before it is compared, and a multiplier of 0 or less never fades.
+capped at the loaded grid's edge less its radius and half a cell; its fade range runs from 0.6 of
+that (fLODFadeOutPercent) to all of it, starting no nearer than 500 units (iFadeNodeMinNearDistance)
+and ending no nearer than 1000. The camera's distance is divided by the reference kind's multiplier
+(fLODFadeOutMult...) before it is compared, and a multiplier of 0 or less never fades. Over the
+range the reference's fade value goes from 1 to 0 (not clamped). The value does not set the alpha
+itself: a reference not shown fades in once the value is above fFadeInThreshold (0.7), by dt /
+fFadeInTime (1.2 s) a frame, at most 0.1 a frame, and counts as shown once whole; a shown one fades
+out once the value is below fFadeOutThreshold (0.3), by dt / fFadeOutTime (2 s), and is hidden at
+0; a fade under way goes on in while the value stays above 0.3. A reference that was not in view
+the frame before takes its end state at once. We dither by that alpha (stepFade). TODO(M13): the
+original's own fades toward a target alpha (scripts', the camera's) and its per-camera distance
+factor.
 
-The shaders' own distance fades: the geometry keeps that divided distance over 7200 as a value;
-specular and the environment map fade out as it goes from 0.09 to 0.1 (fSpecularLODFadeStart and
-End, fEnvmapLODFadeStart and End), decals fade from 0.05 to 0.06 (fDecalLODFade...), and
-refraction shapes are not drawn past 0.025 to 0.03 (fRefractionLODFade...). No_Fade spares decals
-and refraction these fades; it does not stop the object fade. TODO(M13): not built yet.
+The shaders' own distance fades (shader-fades.ts): the geometry keeps that divided distance over
+7200 as a value (a multiplier of 0 or less: a fifth of the distance); specular and the environment
+map fade out as it goes from 0.09 to 0.1 (fSpecularLODFadeStart and End, fEnvmapLODFadeStart and
+End), decals (Decal, Dynamic_Decal) from 0.05 to 0.06 (fDecalLODFade...; Skyrim_Default.ini sets
+0.45 and 0.5), refraction from 0.025 to 0.03 (fRefractionLODFade...). No_Fade spares decals and
+refraction these fades; it does not stop the object fade. The shaders take the value per draw from
+the distance of its origin and its fade kind (flags.w bits 5-6) and the frame's scales; blended
+decals fade their alpha, the others dissolve by the dither; refraction scales its mask.
+
+LOD between levels: the original switches a terrain or object LOD block to its children (and back)
+by showing and hiding the block nodes once the replacing blocks are loaded, without a fade; an
+object LOD block is split while the camera's horizontal distance to its nearest point is within the
+level's distance (fBlockLevel0Distance, fBlockLevel1Distance) times a camera factor (1 at the
+default view, as far as read). Ours does the same (formats/lod.md). Tree LOD is taken to switch the
+same way (not read).
+
+## Volumetric lighting (read from the original; not built)
+
+The original scatters the sun's light through a froxel volume over the view, in compute passes:
+
+- The volume: [Display] iVolumetricLightingQuality picks Low 160 × 96 × 50, Medium (1, the
+  default) 224 × 128 × 70, High 320 × 192 × 90 froxels (width, height, depth slices). A 32³ noise
+  volume (iVolumetricLightingNoiseTexture*) holds the density noise.
+- The depth repartition: a 4096-entry table maps the slice coordinate s (0..1) to the depth along
+  the view, s raised to the range factor (VOLI NNAM; 40 in vanilla), and its inverse (d to the power
+  1 / range factor) for the lookup; a second mode, (3^(s r) − 1) / (3^r − 1), exists for tests.
+  TODO(M13): what depth the table's output stands for (clip depth or a fraction of a distance).
+- Generate (one dispatch, 32 × 32 groups over the width and height, a group per slice): each
+  froxel's density and light, from the sun's direction, the first two shadow cascades' matrices
+  (relative to the camera) and their split depths, the noise scaled by 1 / the density size and
+  offset by its drift, the phase contribution and scattering, the density contribution, and the
+  frame index modulo 8 (a jitter). The noise drifts each frame by the frame time × the density size
+  × the wind's direction × the wind speed, and falls by the falling speed, each times a random
+  share of 0..1.
+- Raymarch: slice by slice from the second, each dispatch adding the slice before into the next
+  (two textures in turn), so each froxel holds the light gathered from the camera to it.
+- Then the blur (horizontal and vertical passes) and the composite, which reads the volume at a
+  pixel's place and its depth through the inverse table, times the intensity (VOLI CNAM ×
+  fVolumetricLightingIntensity) and the colour (the sun's mixed with the custom colour).
+  Temporal accumulation (bVolumetricLightingEnableTemporalAccumulation) blends with the last frame
+  by 0.75. Interiors have none (bVolumetricLightingDisableInterior).
+
+TODO(M13): build it in place of the screen-space god rays (sun-effects.ts); the generate shader's
+exact scattering terms are unread.
 
 Lag bones (lag-bone.ts): each update the bone covers linear velocity × dt of the way to where its
 parent would put it (at its rest translation), the part beyond the maximum distance at once; it
 keeps its last world rotation and turns back toward its rest rotation by linear rotation × dt.
-Skeletons (ActorPose) trail within the pose; effect and worn models and world-space trailing are
-TODO(M13).
+Skeletons (ActorPose) trail in world space when placed (ActorPose.space: the actor's instance
+world), so the actor's own walk and turns swing a tail; effect and worn models are TODO(M13).

@@ -107,7 +107,6 @@ export function fadeRange(
   return { start: start * multiplier, end: end * multiplier };
 }
 
-
 /**
  * A reference's fade value at a distance: 1 at the start of its fade range, 0 at its end, past 1
  * nearer and below 0 farther (not clamped). Kinds that never fade stay at 1.
