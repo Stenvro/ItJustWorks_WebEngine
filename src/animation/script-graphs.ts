@@ -55,6 +55,33 @@ export function actorScriptGraph(behavior: BehaviorRuntime | undefined): ScriptG
 }
 
 /**
+ * The player's graphs for the scripts and the conditions: their body's and their first-person
+ * one. An event reaches both (as the engine sends the player's actions to both); a variable is
+ * read from the body's (GetGraphVariableInt(bInJumpState) in the landing idles) and set on
+ * both. Without it the player's ActionLand found no idle (the body's variables read as 0), and
+ * the first-person graph, which only a JumpLand takes out of its jump, stayed in it: no attack
+ * it took then struck.
+ */
+export function playerScriptGraph(
+  body: BehaviorRuntime | undefined,
+  firstPerson: BehaviorRuntime | undefined,
+): ScriptGraph | undefined {
+  const graphs = [body, firstPerson].filter((graph): graph is BehaviorRuntime => !!graph);
+  if (graphs.length === 0) return undefined;
+  return {
+    send: (event) => {
+      let taken = false;
+      for (const graph of graphs) taken = graph.sendEvent(event) || taken;
+      return taken;
+    },
+    variable: (name) => graphs[0]?.variable(name),
+    setVariable: (name, value) => {
+      for (const graph of graphs) graph.setVariable(name, value);
+    },
+  };
+}
+
+/**
  * A placed object's graphs together: its model's one graph runs as the sequences it plays
  * (ObjectGraph) and, where it plays skeletal clips, as the skeleton's runtime; an event or a
  * variable reaches both, as it reaches the one graph in the game.
