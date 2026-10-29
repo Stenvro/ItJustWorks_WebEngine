@@ -1489,8 +1489,12 @@ export class SimWorld {
       [...this.#cells.values()].flatMap((cell) => this.#cellLoadedReferences(cell)),
     loaded: (reference) => this.#loaded(reference),
     created: (reference) => {
-      this.#track(this.#showCreated(reference));
-      this.#track(this.stage.created(reference, this.#play?.physics));
+      const shown = [
+        this.#showCreated(reference),
+        this.stage.created(reference, this.#play?.physics),
+      ];
+      for (const showing of shown) this.#track(showing);
+      return Promise.allSettled(shown).then(() => undefined);
     },
     livePlacement: (reference) => {
       const player = this.#play?.player;

@@ -309,7 +309,7 @@ export class Sim {
   /** Places a new reference of a base at a reference (PlaceAtMe); its form id. */
   async place(base: number, at: number): Promise<number> {
     const reference = await this.runtime.placeAt(base, at, 1);
-    this.runtime.world.created?.(reference);
+    void this.runtime.world.created?.(reference);
     await this.world.settle();
     return reference;
   }
