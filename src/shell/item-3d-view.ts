@@ -169,3 +169,21 @@ export function zoomStep(
   const next = progress + (inwards ? 1 : -1) * speed * seconds;
   return Math.min(1, Math.max(0, next));
 }
+
+/**
+ * Where a zoom toggled now goes (Item Zoom; Cancel while all the way in): in from all the way
+ * out, out from all the way in; undefined while one is under way.
+ */
+export function toggledZoom(progress: number, target: number): 0 | 1 | undefined {
+  if (progress !== target) return undefined;
+  return progress === 0 ? 1 : progress === 1 ? 0 : undefined;
+}
+
+/**
+ * Where the wheel's ZoomItemModel(delta) sends the zoom: 1 in from all the way out, −1 out from
+ * all the way in; anything else does nothing (undefined).
+ */
+export function wheelZoom(progress: number, target: number, delta: number): 0 | 1 | undefined {
+  const from = delta === 1 ? 0 : delta === -1 ? 1 : undefined;
+  return from === progress ? toggledZoom(progress, target) : undefined;
+}

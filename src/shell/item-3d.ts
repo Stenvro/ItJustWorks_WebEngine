@@ -27,7 +27,9 @@ import {
   markerRotation,
   mouseTurn,
   stickTurn,
+  toggledZoom,
   turned,
+  wheelZoom,
   zoomStep,
   type MouseTurnSettings,
   type Rotation3,
@@ -108,6 +110,10 @@ interface Shown {
   readonly scene: GpuScene;
   readonly motion: InstanceMotion;
   readonly world: Mat4;
+  /**
+   * A light (a torch): the original neither turns nor zooms it (it is shown as it loads).
+   */
+  readonly fixed: boolean;
   /** Its rotation: its marker's at first, then as the mouse or a stick turns it. */
   rotation: Rotation3;
   /** 0 at its place, 1 zoomed in. */
@@ -149,6 +155,7 @@ export class Item3D {
       this.#attach();
       return;
     }
+    const fixed = (await (await this.#session.db).get(form))?.type === 'LIGH';
     const path = await this.#modelPath(form);
     const model = path === undefined ? undefined : await this.#session.model(path);
     if (request !== this.#request) return;
@@ -166,6 +173,7 @@ export class Item3D {
       scene,
       motion,
       world,
+      fixed,
       rotation: markerRotation(model.inventoryMarker),
       zoom: 0,
       zoomTarget: 0,
@@ -192,17 +200,52 @@ export class Item3D {
     window.removeEventListener('pointermove', this.#moved);
   }
 
-  /** The menu's ZoomItemModel: in (positive) or back out (negative). */
+  /**
+   * The menu's ZoomItemModel: the wheel in (1) while the item is all the way out, or out (−1)
+   * while it is all the way in, starts a zoom and fades the menu (ToggleMenuFade), as the
+   * original does; other values, or a zoom under way, do nothing.
+   */
   zoom(delta: number): void {
     const shown = this.#shown;
-    if (!shown || delta === 0) return;
-    shown.zoomTarget = delta > 0 ? 1 : 0;
+    if (!shown || wheelZoom(shown.zoom, shown.zoomTarget, delta) === undefined) return;
+    this.itemZoom();
+  }
+
+  /**
+   * The item menus' user event Item Zoom (C, a gamepad's right stick pressed): zooms in or back
+   * out, the menu fading (ToggleMenuFade). Whether a zoom started.
+   */
+  itemZoom(): boolean {
+    if (!this.toggleZoom()) return false;
+    this.#menu?.call('ToggleMenuFade');
+    return true;
+  }
+
+  /**
+   * The item menus' Cancel (Tab, Escape) while the item is zoomed all the way in: it zooms back
+   * out (the menu fading back) instead of the menu closing. Whether it did.
+   */
+  cancelZoom(): boolean {
+    if (this.#shown?.zoom !== 1 || this.#shown.zoomTarget !== 1) return false;
+    return this.itemZoom();
+  }
+
+  /**
+   * Starts a zoom in (from all the way out) or out (from all the way in): not for a light, nor
+   * while one is under way. Whether one started.
+   */
+  toggleZoom(): boolean {
+    const shown = this.#shown;
+    const target = shown && !shown.fixed ? toggledZoom(shown.zoom, shown.zoomTarget) : undefined;
+    if (!shown || target === undefined) return false;
+    shown.zoomTarget = target;
+    return true;
   }
 
   /** A gamepad's right stick (x right, y up) held for `seconds` while the 3D shows. */
   stick(x: number, y: number, seconds: number): void {
     const shown = this.#shown;
-    if (!shown || (x === 0 && y === 0)) return;
+    if (!shown || shown.fixed || (x === 0 && y === 0)) return;
     const turn = stickTurn(x, y, seconds, this.#settings().stickSpeed);
     shown.rotation = turned(shown.rotation, turn.aboutUp, turn.aboutAcross);
     this.#place();
@@ -215,7 +258,7 @@ export class Item3D {
 
   readonly #moved = (event: PointerEvent): void => {
     const shown = this.#shown;
-    if (!shown || (event.movementX === 0 && event.movementY === 0)) return;
+    if (!shown || shown.fixed || (event.movementX === 0 && event.movementY === 0)) return;
     const settings = this.#settings();
     const turn = mouseTurn(event.movementX, event.movementY, this.#frameSeconds, settings.mouse);
     shown.rotation = turned(shown.rotation, turn.aboutUp, turn.aboutAcross);
