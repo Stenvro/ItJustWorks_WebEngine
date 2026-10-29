@@ -1992,6 +1992,12 @@ export class ModelViewer {
             ],
           }),
         imageSpace,
+        // No sky indoors; the water's displacement field follows the camera.
+        water: () => {
+          const at = this.#renderer.view?.camera.position;
+          const displacement = at && this.#play?.displacement.frame(at, performance.now() / 1000);
+          return displacement && { profile: undefined, displacement };
+        },
         // The cell's shadow lights cast shadows (interiors have no sun shadow).
         lightShadows: true,
         ...(rooms && { rooms: () => rooms }),

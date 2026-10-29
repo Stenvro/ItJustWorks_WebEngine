@@ -104,6 +104,8 @@ export interface ProjectileOptions {
   readonly attachedArrows?: () => { readonly ageMax: number; readonly max: number };
   /** Shapes tested as such (the player), with their reference. */
   readonly shapes: () => Iterable<ShotTarget>;
+  /** A shot's way this step (one meeting the water stirs it: render/water-displacement.ts). */
+  readonly shotWay?: (from: Vec3, to: Vec3) => void;
 }
 
 /** Steps a frame is cut into, at most this long (seconds). */
@@ -215,6 +217,7 @@ export class CombatProjectiles {
         if (target) homeOn(shot.flight, target);
         const gravity = target ? 0 : shot.projectile.gravity * WORLD_GRAVITY;
         const { from, to } = fly(shot.flight, dt, gravity);
+        this.#options.shotWay?.(from, to);
         if (this.#meets(shot, from, to, physics)) {
           this.#end(shot);
           break;

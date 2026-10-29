@@ -388,6 +388,8 @@ export interface ActorCombatOptions {
   readonly session: GameSession;
   readonly renderer: RenderPort;
   readonly terminal: Terminal;
+  /** A shot's way this step (one meeting the water stirs it: render/water-displacement.ts). */
+  readonly shotWay?: (from: Vec3, to: Vec3) => void;
   readonly movers: ActorMovers;
   readonly bodies: ActorBodies;
   readonly actors: () => Iterable<StagedActor>;
@@ -529,6 +531,7 @@ export class ActorCombat implements CombatBridge {
         max: this.#settings.maxAttachedArrows,
       }),
       shapes: () => this.#playerShape(),
+      ...(options.shotWay && { shotWay: options.shotWay }),
       onActorHit: (shot) => {
         const payload = shot.payload as ShotPayload;
         void this.#arrowKept(payload.attacker, shot.target, shot.ammo);

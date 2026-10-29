@@ -762,6 +762,70 @@ engine sets its fast-travel state (we set it for the map's fast travel). TODO(M1
 the dome in interiors with Show Sky (mode 2) and the sky objects in mode 2 worldspaces is
 TODO(M13) in the renderer; the state and its weather are as the engine's there.
 
+## Water
+
+The water shader (`shaders/water.wgsl`; the WATR values it reads:
+[formats/esm.md](formats/esm.md#water)) and the water's displacement field.
+
+**Which water.** A cell's water is its XCWT type, else its world's water (NAM2, from the
+parent world when the world takes its water from it), at its XCLW height, else the world's
+default; LOD water takes the world's NAM3; water meshes take their activator's WNAM, else
+DefaultWater. The weather's water multiplier (its colour 14, by time of day and through
+transitions) tints the water's body and reflection colour; interiors have none (white). On
+the data: Riverwood's river is RiverWaterFlow at −250 (cells 2..6, −13..−10, with flow maps),
+Lake Ilinalta RiverWaterFlow at 600 (cells −12..−1, −14..−12; a few cells DefaultWater), the
+sea at Solitude the world's DefaultWater at Tamriel's −14000 (DefaultWaterFlowBlend where the
+Karth meets it). All three share DefaultWater's colours: shallow 38,39,24, deep 5,14,18,
+reflection 119,140,157, fog −10..150 at 0.7, fresnel 0.1, reflectivity 0.8.
+
+**Colour** (`water-color.ts` is the shader's colour model, for tests). The distance the view
+ray travels through the water to the scene below gives its fog: 0 at the fog near distance,
+the fog amount at the far one. The scene below (shifted by the waves where that is still
+under water) sinks into the water's body, shallow towards deep colour by that fog. The
+reflection (the scene in screen space, else the sky, mixed with the reflection colour by the
+reflection magnitude) lays over it by Schlick's fresnel from the Fresnel Amount, times the
+reflectivity. The sun's specular and sparkle follow. The **depth properties** (WATR 52–55)
+are how much of the reflections, refraction, normals and specular shallow water loses: each
+is kept at `property × (deepness − 1) + 1`, deepness 0 at the fog near distance to 1 at the
+far one (DefaultWater at the shore: 70 % of its reflections, 5 % of its refraction's shift,
+90 % of its normals, 10 % of its specular). TODO(M13): the original's shader is not
+readable; these terms are our model of it (whether deepness includes the fog amount, how
+opacity enters).
+
+**Displacement** (`water-displacement.ts`, `water-displacement-gpu.ts`,
+`shaders/water-displacement.wgsl`): the surface's interactive ripples, as observed in the
+original.
+
+- A height field on a grid fWadingWaterQuadSize (2048) units across and
+  fWadingWaterTextureRes (512) texels a side ([Water] in the INI; Skyrim_Default.ini sets
+  neither), centred on the camera. The centre moves in whole 4-unit steps once the camera is
+  more than 4 units from it, and the field moves with it, so ripples stay where they are.
+- Every frame, each actor in the water (wading or swimming at the surface) stamps a ripple
+  along its way since the last frame. A splash (an actor or a body entering or leaving the
+  water) and a projectile (arrow or spell) passing through the surface stamp a small one
+  (scale 0.01) at its point, with bUseBulletWaterDisplacements, within fWadingWaterQuadSize of
+  the centre. bUseWaterDisplacements turns it all off.
+- The field steps at a fixed 0.025 seconds, as many steps as the frame's time holds (ours: at
+  most 8 a frame).
+- Two layers, wading and rain, run side by side with four values each: force, velocity,
+  falloff and starting size. The wading values are set every frame to 0.2, 1.7, 0.99 and 0.01;
+  the rain values are 0.1, 0.6, 0.985 and 0.01 — the vanilla water types' rain simulator
+  values. The water types' Displacement Simulator values do not drive the simulation.
+- After 10 seconds without a ripple the simulation stops; the next ripple starts it from a
+  still surface.
+
+Our reading of the values (TODO(M13): the simulation's shaders are not readable): a ripple
+pushes the surface down by its force along its way, with a soft round brush starting size ×
+half the grid wide (10 units); a step is the damped wave equation `next = ((2 − v)·h +
+(v / 4)·Σ neighbours − previous) · falloff` (stable for velocity v up to 2), heights kept
+within ±0.5 (an actor standing still stamps every frame). Rain drops fall
+at random over the grid, 4 a step at full rain (TODO(M13): the original's rain pattern). The
+field's slopes bend the water's normals, times 2 per texel (TODO(M13): the original's scale)
+and times the water type's Displacement Dampener (WATR 22: 0.98 for most water, 0 in the
+horse troughs: no ripples there; TODO(M13): how the original's material uses it), fading out
+at the grid's edge, and by the depth properties' share of the normals as the waves are.
+Interiors run the same field (no sky there: the water frame carries the field alone).
+
 ## Precipitation
 
 Rain and snow (`precipitation.ts`, `shaders/precipitation.wgsl`), as the engine's particle

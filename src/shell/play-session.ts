@@ -41,7 +41,7 @@ import { invert, project } from '../render/frustum.ts';
 import { multiply, type Mat4, type Vec3 } from '../render/math.ts';
 import type { Camera } from '../render/view-camera.ts';
 import type { InstanceMotion, ModelInstance, PointLight } from '../render/scene-renderer.ts';
-import { WaterRipples } from '../render/water-ripples.ts';
+import { displacementSettings, WaterDisplacement } from '../render/water-displacement.ts';
 import type { CellObject, CellPrimitive, ObjectLock, Teleport } from '../world/cell-loader.ts';
 import { lockDifficulty, lockLevelSetting } from '../gameplay/lockpicking.ts';
 import {
@@ -680,8 +680,8 @@ export class PlaySession {
   readonly water: WaterPhysics | undefined;
   /** A splash (its sound has been played): for the cases and the splash's model. */
   onSplash: ((splash: WaterSplash) => void) | undefined;
-  /** Rings on the water from splashes and wakes, for the water shader (renderer's seconds). */
-  readonly ripples = new WaterRipples();
+  /** The water's displacement field: what stirs it, and its turn each frame for the renderer. */
+  readonly displacement: WaterDisplacement;
   /** The free camera (tfc); also looks while the player waits for the ground to load. */
   readonly camera: FlyCamera;
   /** What the renderer looks through: the player's camera or the free camera. */
@@ -853,6 +853,7 @@ export class PlaySession {
   }) {
     this.physics = init.physics;
     this.player = init.player;
+    this.displacement = new WaterDisplacement(displacementSettings(init.player.ini));
     if (init.waterAt) {
       const waterAt = init.waterAt;
       const water = new WaterPhysics(init.physics, waterAt, init.waterRules);
@@ -957,6 +958,18 @@ export class PlaySession {
 
   get freeCamera(): boolean {
     return this.#freeCamera;
+  }
+
+  /** A projectile's way this step: where it goes into the water, it stirs the water there. */
+  shotThroughWater(from: Vec3, to: Vec3): void {
+    const surface = this.water?.surface(to[0], to[1], to[2]);
+    if (!surface || to[2] >= surface.height || from[2] < surface.height) return;
+    const t = (from[2] - surface.height) / Math.max(from[2] - to[2], 1e-6);
+    this.displacement.ripple([
+      from[0] + (to[0] - from[0]) * t,
+      from[1] + (to[1] - from[1]) * t,
+      surface.height,
+    ]);
   }
 
   /** How the player moves now (its conditions and natives read it). */
@@ -1110,15 +1123,14 @@ export class PlaySession {
     // Splashes sound as impacts against the water. TODO(M13): their model (sSplashParticles at
     // the splash's scale) is not shown yet.
     if (this.water) {
-      // Rings spread on the water from splashes and wakes (water-ripples.ts).
-      const now = performance.now() / 1000;
+      // Splashes and those wading stir the water's displacement field (water-displacement.ts).
       for (const splash of this.water.drainSplashes()) {
         this.#onImpact?.(splashImpact(splash, this.water.waterMaterial(splash.waterType)));
         this.onSplash?.(splash);
-        this.ripples.splash(splash.position, splash.speed / 400, now);
-        if (splash.leaving && splash.actor) this.ripples.leave(splash.key);
+        this.displacement.ripple(splash.position);
+        if (splash.leaving && splash.actor) this.displacement.leave(splash.key);
       }
-      for (const wake of this.water.drainWakes()) this.ripples.wake(wake.key, wake.position, now);
+      for (const wake of this.water.drainWakes()) this.displacement.wade(wake.key, wake.position);
     }
     this.#watchTriggers();
     // What waited for cells' collision, once queries see it; a neighbour with nothing to place

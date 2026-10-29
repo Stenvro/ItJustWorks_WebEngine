@@ -477,10 +477,15 @@ export class ActorStage {
         return width / Math.max(1, height);
       },
     });
+    // Shots and spells meeting the water stir its displacement field.
+    const shotWay = (from: Vec3, to: Vec3): void => {
+      options.player?.()?.play.shotThroughWater(from, to);
+    };
     this.combat = new ActorCombat({
       session: options.session,
       renderer: options.renderer,
       terminal: options.terminal,
+      shotWay,
       movers: this.movers,
       bodies: this.bodies,
       actors: () => this.#actors.values(),
@@ -697,6 +702,7 @@ export class ActorStage {
       session: options.session,
       renderer: options.renderer,
       terminal: options.terminal,
+      shotWay,
       fx: this.fx,
       impact: (hit) => this.combat.surfaceImpact(hit),
       shake: (explosion, at) => {
