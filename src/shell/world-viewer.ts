@@ -817,6 +817,7 @@ export class WorldViewer {
       this.#stage?.talk.randomSceneStarts(scene, first, second),
     facesForLine: (speaker, target) => this.#stage?.talk.faces(speaker, target),
     saveActors: () => this.#stage?.saveActors() ?? [],
+    savePlayerGraphs: () => this.#stage?.savePlayerGraphs(),
     saveProjectiles: () => this.#stage?.projectiles.save() ?? [],
     impactAt: (impactDataSet, from, direction, length) =>
       this.#stage?.combat.impactAt(impactDataSet, from, direction, length) ?? false,
@@ -2054,7 +2055,11 @@ export class WorldViewer {
         )
       : Promise.resolve(undefined);
 
-    const persistent = world.persistentReferences(cell.x, cell.y);
+    // Those standing in it now (an object moved here from its own cell: worldspace.ts).
+    const moved = session.scriptsReady?.state.references;
+    const persistent = moved
+      ? world.persistentReferencesNow(cell.x, cell.y, moved)
+      : world.persistentReferences(cell.x, cell.y);
     // It resets if its time has come, before its references load (cell-reset.ts).
     await session.scriptsReady?.cellResets.attaching(cellId, persistent);
     const data = await session.cellData(cellId, persistent);

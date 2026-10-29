@@ -38,7 +38,7 @@ import { GROUND_ABOVE, GROUND_BELOW } from '../world/actor-ground.ts';
 import { corpsePose } from '../animation/corpse-pose.ts';
 import { createdEnabled } from './created-objects.ts';
 import type { GameSession } from './game-session.ts';
-import type { SavedActor } from '../save/world-save.ts';
+import type { SavedActor, SavedGraphs } from '../save/world-save.ts';
 import type { CellRagdoll } from './play-session.ts';
 import type { Terminal } from './terminal.ts';
 import { Layer } from '../physics/collision-layers.ts';
@@ -1561,6 +1561,8 @@ export class ActorStage {
    */
   saveActors(): SavedActor[] {
     const saved: SavedActor[] = [];
+    // The carts' places go into the game state, as the corpses' poses below.
+    this.vehicles.keepPlaces();
     for (const staged of this.#actors.values()) {
       const reference = staged.reference;
       // The corpses' ragdoll poses go into the game state, which the save writes after the
@@ -1580,9 +1582,18 @@ export class ActorStage {
         ...(this.senses.scriptSneaking(reference) && { sneaking: true }),
         ...(weaponOut(this.combat.weaponState(reference)) && { weaponDrawn: true }),
         ...(this.flight.isFlying(reference) && { flying: true }),
+        // A rider's graph: its riding idle seats it (TODO(M13): the original keeps every
+        // actor's graph; the others' are rebuilt from their furniture and packages).
+        ...(this.vehicles.holds(reference) && { graph: staged.placed.behavior?.saveState() }),
       });
     }
     return saved;
+  }
+
+  /** The player's graphs while they ride a vehicle (their riding idle seats them). */
+  savePlayerGraphs(): SavedGraphs | undefined {
+    if (!this.vehicles.holds(PLAYER_REF)) return undefined;
+    return this.#options.player?.()?.avatar?.saveGraphs();
   }
 
   /**
@@ -2320,11 +2331,15 @@ export class ActorStage {
         // Its abilities, diseases and worn enchantments act while it is here.
         const scripts = session.scriptsReady;
         if (scripts) scripts.detach(scripts.magic.prepare(reference));
+        // Riding a vehicle (SetVehicle, kept in the game state): on it again.
+        this.vehicles.rideAgain(reference);
         // A loaded save's actor: in its furniture again at once, its package going on where
         // it was, fighting whom it fought.
         const saved = session.restoring?.actor(reference);
         if (saved) {
           session.restoring?.drop(reference);
+          // A rider seated by its riding idle: its graph goes on there.
+          if (saved.graph) actor.behavior?.restoreState(saved.graph);
           // A flier saved in the air stays there (not set on the ground) and cruises on from
           // where it was (before, MQ104's dragon circling the watchtower came down and took
           // off again).

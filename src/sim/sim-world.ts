@@ -743,7 +743,11 @@ export class SimWorld {
   ): Promise<SimCell> {
     const session = this.session;
     const db = await session.db;
-    const persistent = grid && world ? world.persistentReferences(grid[0], grid[1]) : [];
+    // Those standing in it now (an object moved here from its own cell: worldspace.ts).
+    const persistent =
+      grid && world
+        ? world.persistentReferencesNow(grid[0], grid[1], this.runtime.state.references)
+        : [];
     // It resets if its time has come, before its references load (cell-reset.ts).
     await this.runtime.cellResets.attaching(formId, persistent);
     const data = await session.cellData(formId, grid && world ? persistent : undefined);
@@ -1614,6 +1618,7 @@ export class SimWorld {
       this.stage.talk.randomSceneStarts(scene, first, second),
     facesForLine: (speaker, target) => this.stage.talk.faces(speaker, target),
     saveActors: () => this.stage.saveActors(),
+    savePlayerGraphs: () => this.stage.savePlayerGraphs(),
     saveProjectiles: () => this.stage.projectiles.save(),
     impactAt: (impactDataSet, from, direction, length) =>
       this.stage.combat.impactAt(impactDataSet, from, direction, length),

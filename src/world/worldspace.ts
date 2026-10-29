@@ -7,6 +7,13 @@ import { CELL_SIZE, parseLand, type LandData } from './land.ts';
 import { parseLargeReferences, type LargeReference } from './large-references.ts';
 import type { GameRecord, RecordDatabase } from './record-db.ts';
 
+/** Where the game moved a reference (GameState's ReferenceState, as far as it is read here). */
+export interface MovedReference {
+  readonly position?: readonly number[] | undefined;
+  readonly cell?: number | undefined;
+  readonly world?: number | undefined;
+}
+
 /** WRLD PNAM: what a child worldspace takes from its parent. */
 export const ParentUse = {
   land: 0x1,
@@ -157,6 +164,8 @@ export class Worldspace {
   readonly largeReferences: ReadonlyMap<string, readonly LargeReference[]>;
   /** Persistent references by cell "x,y". */
   readonly #persistent: Map<string, number[]>;
+  /** The persistent objects (REFR: not actors) and the cell "x,y" each was placed in. */
+  readonly #persistentObjects: ReadonlyMap<number, string>;
   /** Load doors in the world (persistent references with XTEL) and where they stand. */
   readonly #doors: readonly { readonly door: number; readonly x: number; readonly y: number }[];
   /** Map markers: where fast travel puts the player. */
@@ -171,8 +180,10 @@ export class Worldspace {
     largeReferences: ReadonlyMap<string, readonly LargeReference[]>,
     doors: readonly { readonly door: number; readonly x: number; readonly y: number }[],
     mapMarkers: readonly Arrival[],
+    persistentObjects: ReadonlyMap<number, string>,
   ) {
     this.db = db;
+    this.#persistentObjects = persistentObjects;
     this.record = record;
     this.largeReferences = largeReferences;
     const from = (bit: number): WorldspaceRecord =>
@@ -195,6 +206,7 @@ export class Worldspace {
     const persistent = new Map<string, number[]>();
     const doors: { door: number; x: number; y: number }[] = [];
     const mapMarkers: Arrival[] = [];
+    const objects = new Map<number, string>();
     const persistentCell = db.persistentCell(formId);
     if (persistentCell !== undefined) {
       for (const id of db.cellReferences(persistentCell)) {
@@ -213,6 +225,7 @@ export class Worldspace {
         );
         const list = persistent.get(key) ?? [];
         list.push(id);
+        if (ref.type === 'REFR') objects.set(id, key);
         persistent.set(key, list);
       }
     }
@@ -225,6 +238,7 @@ export class Worldspace {
       parseLargeReferences(versions),
       doors,
       mapMarkers,
+      objects,
     );
   }
 
@@ -281,6 +295,36 @@ export class Worldspace {
   /** Persistent references placed in a cell. */
   persistentReferences(x: number, y: number): readonly number[] {
     return this.#persistent.get(cellKey(x, y)) ?? [];
+  }
+
+  /**
+   * The persistent references standing in a cell now (`moved`: where the game moved references,
+   * as GameState.references keeps them): the original keeps a persistent reference with the cell
+   * it stands in, so an object moved out of the cell it was placed in (a cart its horse pulled
+   * away, saved on the road) loads with the cell it stands in now, and not with its own. Actors
+   * stay listed where they were placed: the actor stage places those that moved.
+   */
+  persistentReferencesNow(
+    x: number,
+    y: number,
+    moved: ReadonlyMap<number, MovedReference>,
+  ): number[] {
+    const world = this.record.formId;
+    const here = (at: MovedReference): boolean =>
+      at.position !== undefined &&
+      (at.world === undefined ? at.cell === undefined : at.world === world) &&
+      Math.floor((at.position[0] ?? 0) / CELL_SIZE) === x &&
+      Math.floor((at.position[1] ?? 0) / CELL_SIZE) === y;
+    const own = this.persistentReferences(x, y).filter((reference) => {
+      const at = this.#persistentObjects.has(reference) ? moved.get(reference) : undefined;
+      return at?.position === undefined || here(at);
+    });
+    const key = cellKey(x, y);
+    for (const [reference, at] of moved) {
+      const placed = this.#persistentObjects.get(reference);
+      if (placed !== undefined && placed !== key && here(at)) own.push(reference);
+    }
+    return own;
   }
 
   /** The landscape at a grid position (from the land world). */
