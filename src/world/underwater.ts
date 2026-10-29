@@ -5,12 +5,14 @@
 //
 // Below the surface the view also takes the water type's own imagespace (WATR INAM) in place of
 // the weather's or the cell's: its desaturation, tint, dimmer sun and sky, and depth of field.
+// That imagespace is the only colour over the whole image below the surface, as in the original:
+// no tint of the fog's colour is laid over it.
 //
 // TODO(M13): the engine's exact underwater colour (how it lights the water's colours) is not
 // observed in the original yet.
 
 import type { SceneFog, SceneLighting } from '../render/scene-lighting.ts';
-import { NEUTRAL_IMAGE_SPACE, parseImageSpace, type ImageSpace } from './image-space.ts';
+import { parseImageSpace, type ImageSpace } from './image-space.ts';
 import type { GameRecord } from './record-db.ts';
 
 /** A record as the underwater view reads an imagespace from it. */
@@ -87,32 +89,6 @@ export class UnderwaterView {
     this.#under = type;
     return type && underwaterFog(type, lighting);
   }
-}
-
-/**
- * How much of the water's colour lies over the whole image below the surface, at the water's full
- * fog amount. The fog colours only the geometry; the tint gives the sky, the grass and the water's
- * surface seen from below the water's colour too. TODO(M13): the engine's underwater image space
- * is not observed in the original; half of the fog's amount looks like the game.
- */
-export const UNDERWATER_TINT = 0.5;
-
-/** The full-screen tint of the underwater fog (its near colour); none above the surface. */
-export function underwaterTint(
-  fog: SceneFog | undefined,
-): { readonly color: Vec3; readonly amount: number } | undefined {
-  if (!fog) return undefined;
-  return { color: fog.nearColor, amount: UNDERWATER_TINT * Math.min(1, Math.max(0, fog.max)) };
-}
-
-/** An imagespace with the underwater tint (the neutral one where there is none). */
-export function withUnderwaterTint(
-  space: ImageSpace | undefined,
-  fog: SceneFog | undefined,
-): ImageSpace | undefined {
-  const underwater = underwaterTint(fog);
-  if (!underwater) return space;
-  return { ...(space ?? NEUTRAL_IMAGE_SPACE), underwater };
 }
 
 /** The fog seen from under the water of a type, in the scene's light. */

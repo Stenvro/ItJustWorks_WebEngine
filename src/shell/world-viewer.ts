@@ -33,7 +33,7 @@ import { parseGrass, placeGrass, type GrassType } from '../world/grass.ts';
 import type { AmbientState } from '../audio/ambience.ts';
 import { waterAreaHeight } from '../audio/water-audio.ts';
 import { cellWater, DEFAULT_WATER } from '../world/water.ts';
-import { UnderwaterView, withUnderwaterTint } from '../world/underwater.ts';
+import { UnderwaterView } from '../world/underwater.ts';
 import type { SceneFog } from '../render/scene-lighting.ts';
 import { FlowMaps, waterPlugin } from '../world/flow-map.ts';
 import { surfaceOver, waterVolumes, type WaterVolume } from '../world/water-volumes.ts';
@@ -1494,8 +1494,8 @@ export class WorldViewer {
       // stars or clouds; their weather still lights and fogs them.
       sky: () => (this.#noSky ? undefined : this.#sky?.skyFrame()),
       water: () => this.#waterFrame(),
-      // Under water the water's colour lies over everything (src/world/underwater.ts).
-      imageSpace: () => withUnderwaterTint(this.#sky?.imageSpace(), this.#under),
+      // Under water the sky state hands out the water's own imagespace (WATR INAM).
+      imageSpace: () => this.#sky?.imageSpace(),
       // No sun in a world without a sky: no rays or flare either.
       sunEffects: () => (this.#noSky ? undefined : this.#sky?.sunEffects()),
       screenBlood: () => this.#session?.screenBlood.frame(),
@@ -2851,7 +2851,6 @@ export class WorldViewer {
     // A menu's lights (the race menu's) first: they light what it shows.
     const extra = this.#play?.extraLights ?? [];
     const under = this.#underwaterFog(camera, sky);
-    this.#under = under;
     // Under water the view takes the water's own imagespace (WATR INAM) from the next frame.
     this.#sky?.setUnderwaterImageSpace(this.#underwater.imageSpace());
     return {
@@ -2866,9 +2865,6 @@ export class WorldViewer {
     (formId) => this.#session?.waterType(formId).then((gpu) => gpu?.type),
     (formId) => this.#session?.db.then((db) => db.get(formId)),
   );
-
-  /** The underwater fog of the last frame (its full-screen tint goes on the imagespace). */
-  #under: SceneFog | undefined;
 
   #underwaterFog(camera: Vec3, sky: Omit<SceneLighting, 'lights'>): SceneFog | undefined {
     return this.#underwater.fog(camera[2], this.#waterAt(camera[0], camera[1], camera[2]), sky);

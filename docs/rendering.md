@@ -966,7 +966,42 @@ about 90. What keeps it down (`scene-renderer.ts`):
 - The focus maps sort their casters out in one walk over the draws, not one per map.
 - The velocity pass draws only the moving draws that moved since the last frame: the motion of
   one that did not is the camera's, which the TAA finds again through the depth. First person's
-  geometry has its own view and is always drawn.
+  geometry has its own view and is always drawn. A skinned draw whose palette was rewritten is
+  drawn too: each palette keeps its last frame's copy (written once per frame, before the new
+  pose), and the velocity shader skins the vertex under both, so moving limbs show their motion.
 - An animated draw's uniforms go up only when its matrix, its hidden state or its animated
   material changed (an actor standing still keeps its parts' matrices; its pose goes to the
   bone palette).
+
+## The lighting technique's flags and the fades (observed in the original)
+
+The original picks a lighting shape's technique from its shader flags alone, the later ones
+winning: Environment_Mapping (environment map), Glow_Map, Parallax, Facegen_Detail_Map,
+FaceGen_RGB_Tint, Hair_Soft_Lighting (the hair technique: the actor's hair colour), Parallax
+Occlusion, Landscape, the LOD flags, Multi_Layer_Parallax, Tree_Anim, Multi_Index_Snow with
+Projected_UV, Eye_Environment_Mapping. Hair_Soft_Lighting is on all 11,070 hair tint shapes and on
+nothing else. EnvMap_Light_Fade and Remappable_Textures are not read by it.
+
+Shadows: Receive_Shadows, Assume_Shadowmask, Decal or Dynamic_Decal lets a shape take the screen
+shadow mask (the sun's and the shadow lights' shadows). A shape drawn with alpha blending, or one
+fading without the stipple, takes none of it unless it carries Assume_Shadowmask or a decal flag
+(the actors' hair, eyes, skin and beards do). lighting.wgsl follows this; it looks the shadow maps
+up at the blended surface where the original reads the opaque scene's mask (TODO(M13)).
+
+Object fade (object-fade.ts): a reference's fade distance is ten bound radii (fLODBoundRadiusMult),
+capped at the loaded grid's edge less its radius and half a cell; it fades from 0.6 of that
+(fLODFadeOutPercent) to all of it, starting no nearer than 500 units (iFadeNodeMinNearDistance) and
+gone no nearer than 1000. The camera's distance is divided by the reference kind's multiplier
+(fLODFadeOutMult...) before it is compared, and a multiplier of 0 or less never fades.
+
+The shaders' own distance fades: the geometry keeps that divided distance over 7200 as a value;
+specular and the environment map fade out as it goes from 0.09 to 0.1 (fSpecularLODFadeStart and
+End, fEnvmapLODFadeStart and End), decals fade from 0.05 to 0.06 (fDecalLODFade...), and
+refraction shapes are not drawn past 0.025 to 0.03 (fRefractionLODFade...). No_Fade spares decals
+and refraction these fades; it does not stop the object fade. TODO(M13): not built yet.
+
+Lag bones (lag-bone.ts): each update the bone covers linear velocity × dt of the way to where its
+parent would put it (at its rest translation), the part beyond the maximum distance at once; it
+keeps its last world rotation and turns back toward its rest rotation by linear rotation × dt.
+Skeletons (ActorPose) trail within the pose; effect and worn models and world-space trailing are
+TODO(M13).

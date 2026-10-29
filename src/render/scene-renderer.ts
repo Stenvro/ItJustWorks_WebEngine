@@ -1058,6 +1058,13 @@ interface SceneBones {
   /** Byte offset of the empty morph region. */
   readonly noMorphs: number;
   readonly data: Float32Array;
+  /** The palettes as the last frame drew them (the motion vectors of skinned limbs). */
+  readonly previous: GPUBuffer;
+  readonly previousData: Float32Array;
+  /** The velocity pass before which each palette (by byte offset) was last rewritten. */
+  readonly rewritten: Map<number, number>;
+  /** Palettes whose last-frame copy is the current palette (the limbs hold still). */
+  readonly settled: Set<number>;
 }
 
 /**
@@ -1618,6 +1625,8 @@ export class SceneRenderer {
   /** Second passes of multi-pass directional materials, per part and material. */
   readonly #passParts = new WeakMap<GpuPart, Map<GpuDirectionalMaterial, GpuPart>>();
   readonly #fallbackVertices: GPUBuffer;
+  /** The last frame's palettes of scenes without skinned draws (never read). */
+  readonly #noPreviousBones: GPUBuffer;
   /** Bound as the morph offsets of draws without morphs. */
   readonly #noMorphOffsets: GPUBuffer;
   /** Material samplers by texture clamp mode (bit 0 wraps U, bit 1 wraps V). */
@@ -1821,6 +1830,12 @@ export class SceneRenderer {
       label: 'previous-world',
       entries: [
         { binding: 5, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        // The draw's bone palette as the last frame drew it (at the draw's palette offset).
+        {
+          binding: 6,
+          visibility: GPUShaderStage.VERTEX,
+          buffer: { type: 'read-only-storage', hasDynamicOffset: true, minBindingSize: 48 },
+        },
       ],
     });
     this.#velocityLayout = device.createPipelineLayout({
@@ -1945,6 +1960,11 @@ export class SceneRenderer {
       GPUBufferUsage.VERTEX,
       'fallback-vertex',
     );
+    this.#noPreviousBones = device.createBuffer({
+      label: 'no-previous-bones',
+      size: PALETTE_BYTES,
+      usage: GPUBufferUsage.STORAGE,
+    });
     this.#noMorphOffsets = createBuffer(
       device,
       new Uint8Array(16),
@@ -2736,7 +2756,37 @@ export class SceneRenderer {
       });
     const faces = new Map<GpuMorphs, GPUBindGroup>();
     for (const entry of morphs) if (!faces.has(entry)) faces.set(entry, group(entry.buffer));
-    return { buffer, bindGroup: group(this.#noMorphOffsets), faces, noMorphs, data };
+    const previousData = data.slice();
+    const previous = createBuffer(
+      this.#device,
+      new Uint8Array(previousData.buffer),
+      GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      'previous-bone-palettes',
+    );
+    return {
+      buffer,
+      bindGroup: group(this.#noMorphOffsets),
+      faces,
+      noMorphs,
+      data,
+      previous,
+      previousData,
+      rewritten: new Map(),
+      settled: new Set(),
+    };
+  }
+
+  /**
+   * Keeps a palette as the last frame drew it before it is rewritten (once per frame, for
+   * placements sharing it too): the velocity pass moves its limbs from there.
+   */
+  #keepLastPalette(bones: SceneBones, offset: number, floats: number): void {
+    if (bones.rewritten.get(offset) === this.#velocityFrame) return;
+    const at = offset / 4;
+    bones.previousData.set(bones.data.subarray(at, at + floats), at);
+    this.#device.queue.writeBuffer(bones.previous, offset, bones.previousData, at, floats);
+    bones.rewritten.set(offset, this.#velocityFrame);
+    bones.settled.delete(offset);
   }
 
   /** Binds a skinned draw's palette and morphs. */
@@ -3199,6 +3249,7 @@ export class SceneRenderer {
         if (posed && skin && bones && draw.bones !== undefined) {
           if (posed.version !== posed.pose.version) {
             posed.version = posed.pose.version;
+            this.#keepLastPalette(bones, draw.bones, skin.bones.length * PALETTE_BONE_FLOATS);
             writePosePalette(skin, posed, bones.data, draw.bones / 4);
             this.#device.queue.writeBuffer(
               bones.buffer,
@@ -3209,6 +3260,7 @@ export class SceneRenderer {
             );
           }
         } else if (frame && skin && bones && draw.bones !== undefined) {
+          this.#keepLastPalette(bones, draw.bones, skin.bones.length * PALETTE_BONE_FLOATS);
           writePosedPalette(
             skin,
             (i) => frame.worlds.get(skin.bones[i] ?? -1),
@@ -3439,10 +3491,16 @@ export class SceneRenderer {
         const world = draw.uniformOffset / 4;
         const seenLast = motion.seen[slot] === frame - 1;
         motion.seen[slot] = frame;
+        // Skinned: whether its limbs moved since the last frame (its palette was rewritten).
+        const limbsMoved = this.#limbsMoved(scene.bones, draw, frame);
         if (!seenLast) {
           // Unseen in the last pass: no last matrix, so it has not moved.
           copyMatrix(uniforms, world, previous, slot * 16);
-        } else if (!draw.firstPerson && sameMatrix(uniforms, world, previous, slot * 16)) {
+        } else if (
+          !draw.firstPerson &&
+          !limbsMoved &&
+          sameMatrix(uniforms, world, previous, slot * 16)
+        ) {
           // Not moved since the last pass (an actor idling in place): its motion is the
           // camera's, which the TAA finds again through the depth, as for what does not move.
           // First person's geometry has its own view, so it is always drawn.
@@ -3457,7 +3515,6 @@ export class SceneRenderer {
       const from = first * 16;
       const to = (last + 1) * 16;
       this.#device.queue.writeBuffer(motion.buffer, from * 4, previous, from, to - from);
-      pass.setBindGroup(2, motion.bindGroup);
       const state = passState();
       for (const draw of drawn) {
         const { part } = draw;
@@ -3467,6 +3524,7 @@ export class SceneRenderer {
           state.pipeline = pipeline;
         }
         bindAt(pass, 1, scene.drawBindGroup, draw.uniformOffset);
+        bindAt(pass, 2, motion.bindGroup, draw.bones ?? 0);
         this.#bindBones(pass, scene, draw);
         if (state.vertices !== part.vertexBuffer) {
           pass.setVertexBuffer(0, part.vertexBuffer);
@@ -3486,6 +3544,25 @@ export class SceneRenderer {
       }
       drawn.length = 0;
     }
+  }
+
+  /**
+   * Whether a skinned draw's palette was rewritten for this velocity pass. A palette left as it
+   * was takes its current pose as the last frame's too (once), so still limbs show no motion.
+   */
+  #limbsMoved(bones: SceneBones | undefined, draw: Draw, frame: number): boolean {
+    const offset = draw.bones;
+    const count = draw.part.part.skin?.bones.length;
+    if (!bones || offset === undefined || count === undefined) return false;
+    if (bones.rewritten.get(offset) === frame) return true;
+    if (!bones.settled.has(offset)) {
+      const at = offset / 4;
+      const floats = count * PALETTE_BONE_FLOATS;
+      bones.previousData.set(bones.data.subarray(at, at + floats), at);
+      this.#device.queue.writeBuffer(bones.previous, offset, bones.previousData, at, floats);
+      bones.settled.add(offset);
+    }
+    return false;
   }
 
   /** A scene's moving draws and their last-world buffer (none: nothing in it moves). */
@@ -3511,7 +3588,13 @@ export class SceneRenderer {
     const bindGroup = this.#device.createBindGroup({
       label: 'previous-world',
       layout: this.#previousWorldLayout,
-      entries: [{ binding: 5, resource: { buffer } }],
+      entries: [
+        { binding: 5, resource: { buffer } },
+        {
+          binding: 6,
+          resource: { buffer: scene.bones?.previous ?? this.#noPreviousBones, size: PALETTE_BYTES },
+        },
+      ],
     });
     return { draws, buffer, bindGroup, previous, seen: new Uint32Array(slots) };
   }

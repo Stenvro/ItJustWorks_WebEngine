@@ -20,107 +20,108 @@ not sample, flags xEdit and nif.xml call unused).
 
 | Part       | Items | Done | Open | n/a |
 | ---------- | ----- | ---- | ---- | --- |
-| Systems    | 74    | 51   | 23   | 0   |
-| Data sweep | 462   | 402  | 31   | 29  |
-| **Total**  | 536   | 453  | 54   | 29  |
+| Systems    | 74    | 53   | 21   | 0   |
+| Data sweep | 462   | 404  | 27   | 31  |
+| **Total**  | 536   | 457  | 48   | 31  |
 
-Done this round: placed objects' alternate textures (MODS: 2,115 statics' swaps, 570
-activators', some 500 others'), the eyes' cube map and environment mask (3,339 eye shapes bound
-neither), the water's underwater imagespace (WATR INAM, 53 water types).
+Done this round: the lighting technique's flags as the original picks them (Hair_Soft_Lighting
+picks the hair technique; blended shapes take shadows only with Assume_Shadowmask or a decal flag;
+EnvMap_Light_Fade and Remappable_Textures are never read by it), the object distance fade by the
+original's rule, motion vectors of skinned limbs from the last frame's bone palettes, lag bones on
+skeletons, and one underwater colour path (the guessed tint over the water's imagespace is gone).
 
 ## Next biggest open items
 
-1. **Inventory 3D orientation** (BSInvMarker in 2,299 models): the item menus turn an item by a
-   flat-or-not guess; the original turns and zooms it by the model's own marker (rotation in
-   thousandths of a radian, a zoom). The rotation order and how zoom scales are unread.
+1. **Inventory 3D orientation** (BSInvMarker in 2,299 models; the menus' area).
 2. **Volumetric lighting** as the original's froxel volume (god rays are screen-space now).
-3. **Motion vectors of skinned limbs** (the last frame's bone palettes).
-4. **Shader flags with no known shader term**: Hair_Soft_Lighting (every hair shape),
-   Assume_Shadowmask (12,352), EnvMap_Light_Fade (72,788), Remappable_Textures (73,726),
-   No_Fade (1,423 with effects), Fire_Refraction (252). Each needs the engine's use read once.
-5. **Distance fade and LOD fade rules** (estimated: radius × fade setting).
-6. **Skinned decals** (blood on actors; BSDecalPlacementVectorExtraData in 61 models).
-7. **The dragon-riding camera**, **first-person particles and near plane**.
-8. **Lag bones** (BSLagBoneController, 221 in 108 models: tails and chains).
+3. **The shader features' distance fades** (read, not built): specular and environment maps fade
+   out between 0.09 and 0.1 of the geometry's fade distance value, decals between 0.05 and 0.06,
+   refraction is dropped past 0.025 to 0.03 (No_Fade spares decals and refraction).
+4. **Skinned decals** (blood on actors; BSDecalPlacementVectorExtraData in 61 models).
+5. **Lag bones on effect and worn models** (torches', spells' and armour's trailing emitters) and
+   in world space (an actor's own walk).
+6. **The dragon-riding camera**, **first-person particles and near plane**.
+7. **Light-list order** for land and particles; **IBLF lens flare**; **WATR NAM5**; **planar
+   water reflection**.
 
 ## Systems
 
-| #   | Item                                                             | Status | Where / why                                      |
-| --- | ---------------------------------------------------------------- | ------ | ------------------------------------------------ |
-| 1   | Per-object light lists (7 point lights, 4 shadow lights)         | done   | light-lists.ts                                   |
-| 2   | The order of a geometry's own light list                         | open   | strongest first is ours (TODO(M13))              |
-| 3   | Land's own light lists (lights flagged to light land)            | open   | land takes every light of the frame              |
-| 4   | Particle systems' own light lists                                | open   | particles take every light of the frame          |
-| 5   | Effect shaders' light list (shadow lights left out)              | open   | the engine's list unread                         |
-| 6   | Spot lights' cones (LIGH FOV, XLIG offsets)                      | done   | cell-loader lightCone                            |
-| 7   | Light flicker and pulse                                          | done   | light-flicker.ts                                 |
-| 8   | Sun shadow cascades                                              | done   | shadow-cascades.ts                               |
-| 9   | Focus shadows                                                    | done   | focus-shadows.ts                                 |
-| 10  | Whether focus maps draw only their actor                         | open   | ours draw every caster in their column           |
-| 11  | Shadow lights: omnidirectional, spot, hemisphere                 | done   | light-shadows.ts                                 |
-| 12  | Fog: weather, XCLL and LGTM (near, far, power, max)              | done   | frame.wgsl                                       |
-| 13  | Underwater fog                                                   | done   | underwater.ts                                    |
-| 14  | Underwater imagespace (WATR INAM)                                | done   | underwater.ts, world-sky.ts                      |
-| 15  | Underwater colour (how the water's colours are lit, the tint)    | open   | inferred (UNDERWATER_TINT)                       |
-| 16  | Terrain LOD                                                      | done   | terrain.ts                                       |
-| 17  | Object LOD (.bto, HD LOD)                                        | done   | scene-renderer LOD materials                     |
-| 18  | Tree LOD billboards                                              | done   | tree-lod.ts                                      |
-| 19  | LOD fade between levels                                          | open   | rule estimated                                   |
-| 20  | fLODFadeOutMultSkyCell                                           | open   | unread                                           |
-| 21  | LOD culled by rooms and portals                                  | open   | LOD is not culled by them                        |
-| 22  | Object distance fade                                             | open   | radius × fade setting estimated (object-fade.ts) |
-| 23  | Rooms and portals culling                                        | done   | room-culler.ts                                   |
-| 24  | Rooms' lighting templates and imagespaces                        | done   | model-viewer lightingInRoom                      |
-| 25  | Occlusion planes and boxes                                       | done   | cell-rooms.ts                                    |
-| 26  | Eye adaptation                                                   | done   | post.ts                                          |
-| 27  | Bloom                                                            | done   | post.ts                                          |
-| 28  | Tone curve and cinematic grading (saturation, contrast, tint)    | done   | post.wgsl                                        |
-| 29  | Depth of field (IMGS and IMAD)                                   | done   | dof.wgsl                                         |
-| 30  | IMAD screen effects: blur, double vision, radial and motion blur | done   | screen-effects.wgsl                              |
-| 31  | IMAD fade and tint, HDR and cinematic channels                   | done   | image-space-modifier.ts                          |
-| 32  | Sun lens flare (LENS)                                            | done   | lens-flare.ts                                    |
-| 33  | Image-based lens flare of bright lights (bIBLFEnable)            | open   | the values the engine feeds it are unread        |
-| 34  | Temporal anti-aliasing                                           | done   | taa.ts                                           |
-| 35  | Ambient occlusion                                                | done   | sao.ts                                           |
-| 36  | Refraction (heat haze, barriers)                                 | done   | refraction.ts                                    |
-| 37  | God rays (screen-space, the VOLI phase function)                 | done   | sun-effects.ts                                   |
-| 38  | Volumetric lighting as a froxel volume (density noise, shadows)  | open   | not built                                        |
-| 39  | Clouds (layers, speeds, colours, alphas)                         | done   | sky.ts                                           |
-| 40  | Sun, sun glare, sun damage                                       | done   | sky.ts, sun-effects.ts                           |
-| 41  | Moons and their phases, stars                                    | done   | sky.ts                                           |
-| 42  | Aurora                                                           | done   | sky.ts                                           |
-| 43  | Lightning: procedural bolts and the flash                        | done   | lightning.ts                                     |
-| 44  | Precipitation (SPGD rain and snow)                               | done   | precipitation.ts                                 |
-| 45  | Weather transitions                                              | done   | sky-state.ts                                     |
-| 46  | Water: the planar reflection pass                                | open   | not built                                        |
-| 47  | Water: displacement (wading, splashes, projectiles, rain)        | done   | water-displacement.ts                            |
-| 48  | Water: colours and depth properties                              | done   | water.wgsl                                       |
-| 49  | Water: river flow maps                                           | done   | flow-map.ts                                      |
-| 50  | Water: the original shader's exact terms                         | open   | ours by Community Shaders' reading               |
-| 51  | Static decals (TXST placed in cells)                             | done   | decals.ts                                        |
-| 52  | Impact decals (IPCT)                                             | done   | decal-projection.ts                              |
-| 53  | Skinned decals on actors                                         | open   | not built                                        |
-| 54  | Screen blood                                                     | done   | screen-blood.ts                                  |
-| 55  | Weapon blood                                                     | done   | effect.wgsl                                      |
-| 56  | Motion vectors of moving instances and animated parts            | done   | velocity.wgsl                                    |
-| 57  | Motion vectors of skinned limbs                                  | open   | the last frame's bone palettes are not kept      |
-| 58  | First person: its own view and depth band                        | done   | first-person-view.ts                             |
-| 59  | First person: the engine's near plane                            | open   | unread                                           |
-| 60  | First person: particles                                          | open   | not drawn in the first-person band               |
-| 61  | Eye reflection centres                                           | open   | ours reflect about the eye mesh's normal         |
-| 62  | Character light: its luminance source                            | open   | ours from the directional ambient                |
-| 63  | Default texture per slot for a missing file                      | open   | ours: white, flat normal, black                  |
-| 64  | Grass                                                            | done   | grass.ts                                         |
-| 65  | Terrain texture blending                                         | done   | terrain.wgsl                                     |
-| 66  | Directional materials (snow, moss, ice on statics)               | done   | material-object.ts                               |
-| 67  | Snow subsurface scattering                                       | done   | snow-sss.ts                                      |
-| 68  | Alternate textures on placed objects (MODS)                      | done   | cell-loader objectModelKey, GameSession.model    |
-| 69  | The map's world view                                             | done   | world-map-view.ts                                |
-| 70  | The race menu's 3D (lights, camera)                              | done   | race-menu.ts                                     |
-| 71  | Inventory 3D: placement, lights, turning, zoom                   | done   | item-3d.ts                                       |
-| 72  | Inventory 3D: the item's own orientation (BSInvMarker)           | open   | a flat-or-not guess (data sweep: BSInvMarker)    |
-| 73  | The dragon-riding camera                                         | open   | not built                                        |
-| 74  | Enchantment glow and effect shaders on references                | done   | actor-effects.ts                                 |
+| #   | Item                                                             | Status | Where / why                                                                                       |
+| --- | ---------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------- |
+| 1   | Per-object light lists (7 point lights, 4 shadow lights)         | done   | light-lists.ts                                                                                    |
+| 2   | The order of a geometry's own light list                         | open   | strongest first is ours (TODO(M13))                                                               |
+| 3   | Land's own light lists (lights flagged to light land)            | open   | land takes every light of the frame                                                               |
+| 4   | Particle systems' own light lists                                | open   | particles take every light of the frame                                                           |
+| 5   | Effect shaders' light list (shadow lights left out)              | open   | the engine's list unread                                                                          |
+| 6   | Spot lights' cones (LIGH FOV, XLIG offsets)                      | done   | cell-loader lightCone                                                                             |
+| 7   | Light flicker and pulse                                          | done   | light-flicker.ts                                                                                  |
+| 8   | Sun shadow cascades                                              | done   | shadow-cascades.ts                                                                                |
+| 9   | Focus shadows                                                    | done   | focus-shadows.ts                                                                                  |
+| 10  | Whether focus maps draw only their actor                         | open   | ours draw every caster in their column                                                            |
+| 11  | Shadow lights: omnidirectional, spot, hemisphere                 | done   | light-shadows.ts                                                                                  |
+| 12  | Fog: weather, XCLL and LGTM (near, far, power, max)              | done   | frame.wgsl                                                                                        |
+| 13  | Underwater fog                                                   | done   | underwater.ts                                                                                     |
+| 14  | Underwater imagespace (WATR INAM)                                | done   | underwater.ts, world-sky.ts                                                                       |
+| 15  | Underwater colour (how the water's colours are lit, the tint)    | open   | the water's imagespace is the one path (no tint over it); how the fog colours are lit is inferred |
+| 16  | Terrain LOD                                                      | done   | terrain.ts                                                                                        |
+| 17  | Object LOD (.bto, HD LOD)                                        | done   | scene-renderer LOD materials                                                                      |
+| 18  | Tree LOD billboards                                              | done   | tree-lod.ts                                                                                       |
+| 19  | LOD fade between levels                                          | open   | rule estimated; the shader features fade by distance (docs/rendering.md)                          |
+| 20  | fLODFadeOutMultSkyCell                                           | open   | unread                                                                                            |
+| 21  | LOD culled by rooms and portals                                  | open   | LOD is not culled by them                                                                         |
+| 22  | Object distance fade                                             | done   | object-fade.ts, the original's rule (fade-in time TODO(M13))                                      |
+| 23  | Rooms and portals culling                                        | done   | room-culler.ts                                                                                    |
+| 24  | Rooms' lighting templates and imagespaces                        | done   | model-viewer lightingInRoom                                                                       |
+| 25  | Occlusion planes and boxes                                       | done   | cell-rooms.ts                                                                                     |
+| 26  | Eye adaptation                                                   | done   | post.ts                                                                                           |
+| 27  | Bloom                                                            | done   | post.ts                                                                                           |
+| 28  | Tone curve and cinematic grading (saturation, contrast, tint)    | done   | post.wgsl                                                                                         |
+| 29  | Depth of field (IMGS and IMAD)                                   | done   | dof.wgsl                                                                                          |
+| 30  | IMAD screen effects: blur, double vision, radial and motion blur | done   | screen-effects.wgsl                                                                               |
+| 31  | IMAD fade and tint, HDR and cinematic channels                   | done   | image-space-modifier.ts                                                                           |
+| 32  | Sun lens flare (LENS)                                            | done   | lens-flare.ts                                                                                     |
+| 33  | Image-based lens flare of bright lights (bIBLFEnable)            | open   | the values the engine feeds it are unread                                                         |
+| 34  | Temporal anti-aliasing                                           | done   | taa.ts                                                                                            |
+| 35  | Ambient occlusion                                                | done   | sao.ts                                                                                            |
+| 36  | Refraction (heat haze, barriers)                                 | done   | refraction.ts                                                                                     |
+| 37  | God rays (screen-space, the VOLI phase function)                 | done   | sun-effects.ts                                                                                    |
+| 38  | Volumetric lighting as a froxel volume (density noise, shadows)  | open   | not built                                                                                         |
+| 39  | Clouds (layers, speeds, colours, alphas)                         | done   | sky.ts                                                                                            |
+| 40  | Sun, sun glare, sun damage                                       | done   | sky.ts, sun-effects.ts                                                                            |
+| 41  | Moons and their phases, stars                                    | done   | sky.ts                                                                                            |
+| 42  | Aurora                                                           | done   | sky.ts                                                                                            |
+| 43  | Lightning: procedural bolts and the flash                        | done   | lightning.ts                                                                                      |
+| 44  | Precipitation (SPGD rain and snow)                               | done   | precipitation.ts                                                                                  |
+| 45  | Weather transitions                                              | done   | sky-state.ts                                                                                      |
+| 46  | Water: the planar reflection pass                                | open   | not built                                                                                         |
+| 47  | Water: displacement (wading, splashes, projectiles, rain)        | done   | water-displacement.ts                                                                             |
+| 48  | Water: colours and depth properties                              | done   | water.wgsl                                                                                        |
+| 49  | Water: river flow maps                                           | done   | flow-map.ts                                                                                       |
+| 50  | Water: the original shader's exact terms                         | open   | ours by Community Shaders' reading                                                                |
+| 51  | Static decals (TXST placed in cells)                             | done   | decals.ts                                                                                         |
+| 52  | Impact decals (IPCT)                                             | done   | decal-projection.ts                                                                               |
+| 53  | Skinned decals on actors                                         | open   | not built                                                                                         |
+| 54  | Screen blood                                                     | done   | screen-blood.ts                                                                                   |
+| 55  | Weapon blood                                                     | done   | effect.wgsl                                                                                       |
+| 56  | Motion vectors of moving instances and animated parts            | done   | velocity.wgsl                                                                                     |
+| 57  | Motion vectors of skinned limbs                                  | done   | velocity.wgsl: the last frame's bone palettes                                                     |
+| 58  | First person: its own view and depth band                        | done   | first-person-view.ts                                                                              |
+| 59  | First person: the engine's near plane                            | open   | unread                                                                                            |
+| 60  | First person: particles                                          | open   | not drawn in the first-person band                                                                |
+| 61  | Eye reflection centres                                           | open   | ours reflect about the eye mesh's normal                                                          |
+| 62  | Character light: its luminance source                            | open   | ours from the directional ambient                                                                 |
+| 63  | Default texture per slot for a missing file                      | open   | ours: white, flat normal, black                                                                   |
+| 64  | Grass                                                            | done   | grass.ts                                                                                          |
+| 65  | Terrain texture blending                                         | done   | terrain.wgsl                                                                                      |
+| 66  | Directional materials (snow, moss, ice on statics)               | done   | material-object.ts                                                                                |
+| 67  | Snow subsurface scattering                                       | done   | snow-sss.ts                                                                                       |
+| 68  | Alternate textures on placed objects (MODS)                      | done   | cell-loader objectModelKey, GameSession.model                                                     |
+| 69  | The map's world view                                             | done   | world-map-view.ts                                                                                 |
+| 70  | The race menu's 3D (lights, camera)                              | done   | race-menu.ts                                                                                      |
+| 71  | Inventory 3D: placement, lights, turning, zoom                   | done   | item-3d.ts                                                                                        |
+| 72  | Inventory 3D: the item's own orientation (BSInvMarker)           | open   | a flat-or-not guess (data sweep: BSInvMarker)                                                     |
+| 73  | The dragon-riding camera                                         | open   | not built                                                                                         |
+| 74  | Enchantment glow and effect shaders on references                | done   | actor-effects.ts                                                                                  |
 
 ## Data sweep
 
@@ -147,65 +148,65 @@ entry's 3D index, is unread.
 
 ### Lighting shader flags
 
-| Item                                          | Uses  | Status | Where / why                                                                                |
-| --------------------------------------------- | ----- | ------ | ------------------------------------------------------------------------------------------ |
-| SLSF1 Specular (0x1)                          | 65953 | done   | lighting.wgsl                                                                              |
-| SLSF1 Skinned (0x2)                           | 27529 | done   | skinning.ts (the skin instance decides)                                                    |
-| SLSF1 Vertex_Alpha (0x8)                      | 10783 | done   | lighting.wgsl                                                                              |
-| SLSF1 Environment_Mapping (0x80)              | 7243  | done   | lighting.wgsl                                                                              |
-| SLSF1 Receive_Shadows (0x100)                 | 74457 | done   | lighting.wgsl                                                                              |
-| SLSF1 Cast_Shadows (0x200)                    | 73235 | done   | scene-renderer shadow casters                                                              |
-| SLSF1 Facegen_Detail_Map (0x400)              | 3239  | done   | lighting.wgsl FaceGen detail map                                                           |
-| SLSF1 Parallax (0x800)                        | 11    | done   | with shader type 3                                                                         |
-| SLSF1 Model_Space_Normals (0x1000)            | 4188  | done   | lighting.wgsl                                                                              |
-| SLSF1 Refraction (0x8000)                     | 362   | done   | refraction.ts                                                                              |
-| SLSF1 Fire_Refraction (0x10000)               | 252   | open   | unread: heat haze drawn as plain refraction                                                |
-| SLSF1 Eye_Environment_Mapping (0x20000)       | 3320  | done   | lighting.wgsl                                                                              |
-| SLSF1 Hair_Soft_Lighting (0x40000)            | 11070 | open   | on every hair shape; what the engine does with it is unread                                |
-| SLSF1 Screendoor_Alpha_Fade (0x80000)         | 10    | open   | unread (object-fade dithers every shape)                                                   |
-| SLSF1 FaceGen_RGB_Tint (0x200000)             | 1684  | done   | lighting.wgsl skin tint                                                                    |
-| SLSF1 Own_Emit (0x400000)                     | 74833 | done   | lighting.wgsl                                                                              |
-| SLSF1 Remappable_Textures (0x2000000)         | 73726 | open   | alternate textures swap into any named shape; whether the engine needs this flag is unread |
-| SLSF1 Decal (0x4000000)                       | 11394 | done   | depth bias, decal pipelines                                                                |
-| SLSF1 Dynamic_Decal (0x8000000)               | 11315 | done   | weapon blood, decal pipelines                                                              |
-| SLSF1 External_Emittance (0x20000000)         | 412   | done   | XEMI on references                                                                         |
-| SLSF1 ZBuffer_Test (0x80000000)               | 74845 | done   | pipeline depth test                                                                        |
-| SLSF2 ZBuffer_Write (0x1)                     | 66564 | done   | pipeline depth write                                                                       |
-| SLSF2 No_Fade (0x8)                           | 1242  | open   | unread: object-fade fades every shape                                                      |
-| SLSF2 Double_Sided (0x10)                     | 2345  | done   | cull mode                                                                                  |
-| SLSF2 Vertex_Colors (0x20)                    | 58096 | done   | lighting.wgsl                                                                              |
-| SLSF2 Glow_Map (0x40)                         | 1414  | done   | lighting.wgsl                                                                              |
-| SLSF2 Assume_Shadowmask (0x80)                | 12352 | open   | unread: no shader define names it                                                          |
-| SLSF2 EnvMap_Light_Fade (0x8000)              | 72788 | open   | unread: every environment map is lit by the diffuse light                                  |
-| SLSF2 Anisotropic_Lighting (0x200000)         | 5729  | done   | lighting.wgsl                                                                              |
-| SLSF2 Multi_Layer_Parallax (0x1000000)        | 662   | done   | with shader type 11                                                                        |
-| SLSF2 Soft_Lighting (0x2000000)               | 8264  | done   | lighting.wgsl                                                                              |
-| SLSF2 Rim_Lighting (0x4000000)                | 264   | done   | lighting.wgsl                                                                              |
-| SLSF2 Back_Lighting (0x8000000)               | 2184  | done   | lighting.wgsl                                                                              |
-| SLSF2 Snow (Unused02 in nif.xml) (0x10000000) | 30    | done   | snow.wgsl                                                                                  |
-| SLSF2 Tree_Anim (0x20000000)                  | 461   | done   | common.wgsl leafShift                                                                      |
+| Item                                          | Uses  | Status | Where / why                                                                          |
+| --------------------------------------------- | ----- | ------ | ------------------------------------------------------------------------------------ |
+| SLSF1 Specular (0x1)                          | 65953 | done   | lighting.wgsl                                                                        |
+| SLSF1 Skinned (0x2)                           | 27529 | done   | skinning.ts (the skin instance decides)                                              |
+| SLSF1 Vertex_Alpha (0x8)                      | 10783 | done   | lighting.wgsl                                                                        |
+| SLSF1 Environment_Mapping (0x80)              | 7243  | done   | lighting.wgsl                                                                        |
+| SLSF1 Receive_Shadows (0x100)                 | 74457 | done   | lighting.wgsl                                                                        |
+| SLSF1 Cast_Shadows (0x200)                    | 73235 | done   | scene-renderer shadow casters                                                        |
+| SLSF1 Facegen_Detail_Map (0x400)              | 3239  | done   | lighting.wgsl FaceGen detail map                                                     |
+| SLSF1 Parallax (0x800)                        | 11    | done   | with shader type 3                                                                   |
+| SLSF1 Model_Space_Normals (0x1000)            | 4188  | done   | lighting.wgsl                                                                        |
+| SLSF1 Refraction (0x8000)                     | 362   | done   | refraction.ts                                                                        |
+| SLSF1 Fire_Refraction (0x10000)               | 252   | open   | refraction falloff to the engine; its technique selection never reads it             |
+| SLSF1 Eye_Environment_Mapping (0x20000)       | 3320  | done   | lighting.wgsl                                                                        |
+| SLSF1 Hair_Soft_Lighting (0x40000)            | 11070 | done   | lighting.wgsl: picks the hair technique (the hair tint)                              |
+| SLSF1 Screendoor_Alpha_Fade (0x80000)         | 10    | open   | unread (object-fade dithers every shape)                                             |
+| SLSF1 FaceGen_RGB_Tint (0x200000)             | 1684  | done   | lighting.wgsl skin tint                                                              |
+| SLSF1 Own_Emit (0x400000)                     | 74833 | done   | lighting.wgsl                                                                        |
+| SLSF1 Remappable_Textures (0x2000000)         | 73726 | n/a    | the lighting technique never reads it                                                |
+| SLSF1 Decal (0x4000000)                       | 11394 | done   | depth bias, decal pipelines                                                          |
+| SLSF1 Dynamic_Decal (0x8000000)               | 11315 | done   | weapon blood, decal pipelines                                                        |
+| SLSF1 External_Emittance (0x20000000)         | 412   | done   | XEMI on references                                                                   |
+| SLSF1 ZBuffer_Test (0x80000000)               | 74845 | done   | pipeline depth test                                                                  |
+| SLSF2 ZBuffer_Write (0x1)                     | 66564 | done   | pipeline depth write                                                                 |
+| SLSF2 No_Fade (0x8)                           | 1242  | open   | read: spares decals and refraction their distance fades (not built), not object fade |
+| SLSF2 Double_Sided (0x10)                     | 2345  | done   | cull mode                                                                            |
+| SLSF2 Vertex_Colors (0x20)                    | 58096 | done   | lighting.wgsl                                                                        |
+| SLSF2 Glow_Map (0x40)                         | 1414  | done   | lighting.wgsl                                                                        |
+| SLSF2 Assume_Shadowmask (0x80)                | 12352 | done   | lighting.wgsl: shadows on blended shapes                                             |
+| SLSF2 EnvMap_Light_Fade (0x8000)              | 72788 | n/a    | the lighting technique never reads it                                                |
+| SLSF2 Anisotropic_Lighting (0x200000)         | 5729  | done   | lighting.wgsl                                                                        |
+| SLSF2 Multi_Layer_Parallax (0x1000000)        | 662   | done   | with shader type 11                                                                  |
+| SLSF2 Soft_Lighting (0x2000000)               | 8264  | done   | lighting.wgsl                                                                        |
+| SLSF2 Rim_Lighting (0x4000000)                | 264   | done   | lighting.wgsl                                                                        |
+| SLSF2 Back_Lighting (0x8000000)               | 2184  | done   | lighting.wgsl                                                                        |
+| SLSF2 Snow (Unused02 in nif.xml) (0x10000000) | 30    | done   | snow.wgsl                                                                            |
+| SLSF2 Tree_Anim (0x20000000)                  | 461   | done   | common.wgsl leafShift                                                                |
 
 ### Effect shader flags
 
-| Item                                   | Uses | Status | Where / why                                |
-| -------------------------------------- | ---- | ------ | ------------------------------------------ |
-| SLSF1 Skinned (0x2)                    | 242  | done   | skinning.ts                                |
-| SLSF1 Vertex_Alpha (0x8)               | 4168 | done   | effect.wgsl                                |
-| SLSF1 Greyscale_To_PaletteColor (0x10) | 3097 | done   | effect.wgsl                                |
-| SLSF1 Greyscale_To_PaletteAlpha (0x20) | 2626 | done   | effect.wgsl                                |
-| SLSF1 Use_Falloff (0x40)               | 2797 | done   | effect.wgsl                                |
-| SLSF1 Own_Emit (0x400000)              | 69   | open   | unread: the effect shader has no emit term |
-| SLSF1 Decal (0x4000000)                | 719  | done   | decal pipelines                            |
-| SLSF1 Dynamic_Decal (0x8000000)        | 719  | done   | decal pipelines                            |
-| SLSF1 External_Emittance (0x20000000)  | 1750 | done   | XEMI                                       |
-| SLSF1 Soft_Effect (0x40000000)         | 3796 | done   | effect.wgsl                                |
-| SLSF1 ZBuffer_Test (0x80000000)        | 8349 | done   | pipeline depth test                        |
-| SLSF2 ZBuffer_Write (0x1)              | 1621 | done   | pipeline depth write                       |
-| SLSF2 No_Fade (0x8)                    | 181  | open   | unread: object-fade fades every shape      |
-| SLSF2 Double_Sided (0x10)              | 2950 | done   | cull mode                                  |
-| SLSF2 Vertex_Colors (0x20)             | 7374 | done   | effect.wgsl                                |
-| SLSF2 Weapon_Blood (0x20000)           | 310  | done   | effect.wgsl                                |
-| SLSF2 Effect_Lighting (0x40000000)     | 1748 | done   | effect.wgsl                                |
+| Item                                   | Uses | Status | Where / why                                                                          |
+| -------------------------------------- | ---- | ------ | ------------------------------------------------------------------------------------ |
+| SLSF1 Skinned (0x2)                    | 242  | done   | skinning.ts                                                                          |
+| SLSF1 Vertex_Alpha (0x8)               | 4168 | done   | effect.wgsl                                                                          |
+| SLSF1 Greyscale_To_PaletteColor (0x10) | 3097 | done   | effect.wgsl                                                                          |
+| SLSF1 Greyscale_To_PaletteAlpha (0x20) | 2626 | done   | effect.wgsl                                                                          |
+| SLSF1 Use_Falloff (0x40)               | 2797 | done   | effect.wgsl                                                                          |
+| SLSF1 Own_Emit (0x400000)              | 69   | open   | unread: the effect shader has no emit term                                           |
+| SLSF1 Decal (0x4000000)                | 719  | done   | decal pipelines                                                                      |
+| SLSF1 Dynamic_Decal (0x8000000)        | 719  | done   | decal pipelines                                                                      |
+| SLSF1 External_Emittance (0x20000000)  | 1750 | done   | XEMI                                                                                 |
+| SLSF1 Soft_Effect (0x40000000)         | 3796 | done   | effect.wgsl                                                                          |
+| SLSF1 ZBuffer_Test (0x80000000)        | 8349 | done   | pipeline depth test                                                                  |
+| SLSF2 ZBuffer_Write (0x1)              | 1621 | done   | pipeline depth write                                                                 |
+| SLSF2 No_Fade (0x8)                    | 181  | open   | read: spares decals and refraction their distance fades (not built), not object fade |
+| SLSF2 Double_Sided (0x10)              | 2950 | done   | cull mode                                                                            |
+| SLSF2 Vertex_Colors (0x20)             | 7374 | done   | effect.wgsl                                                                          |
+| SLSF2 Weapon_Blood (0x20000)           | 310  | done   | effect.wgsl                                                                          |
+| SLSF2 Effect_Lighting (0x40000000)     | 1748 | done   | effect.wgsl                                                                          |
 
 ### Texture slots
 
@@ -414,7 +415,7 @@ entry's 3D index, is unread.
 | BSMultiBoundOBB (240 files)                         | 240    | done   | culling by bounding spheres draws the same image                |
 | NiPSysEmitterSpeedCtlr (133 files)                  | 234    | done   | particle-data.ts                                                |
 | NiPSysGravityStrengthCtlr (125 files)               | 230    | done   | particle-data.ts                                                |
-| BSLagBoneController (108 files)                     | 221    | open   | lagging bones (tails, chains) not simulated                     |
+| BSLagBoneController (108 files)                     | 221    | open   | skeletons trail (lag-bone.ts); effect and worn models not       |
 | NiFloatExtraDataController (71 files)               | 188    | open   | parsed; not animated                                            |
 | BSPSysInheritVelocityModifier (104 files)           | 188    | done   |                                                                 |
 | BSStripPSysData (151 files)                         | 179    | done   |                                                                 |

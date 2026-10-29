@@ -6,6 +6,7 @@
 
 import type { NifFile } from '../formats/nif/nif.ts';
 import { TRANSFORM_FLOATS, type HkxSkeleton } from '../formats/hkx/animation.ts';
+import { lagBone, LagBoneState, type LagBone } from '../render/lag-bone.ts';
 import { fromNifTransform } from '../render/math.ts';
 
 /** A skeleton model's node tree, parents before children. */
@@ -15,6 +16,8 @@ export interface RigData {
   readonly parents: Int16Array;
   /** Each node's transform under its parent, column-major (the root's is ignored). */
   readonly local: Float32Array;
+  /** The skeleton model's lag bones (BSLagBoneController), by node (src/render/lag-bone.ts). */
+  readonly lagBones?: readonly LagBone[];
 }
 
 /** The node tree of a skeleton model (the roots' own transforms are ignored, as for models). */
@@ -22,10 +25,12 @@ export function buildRig(file: NifFile): RigData {
   const names: string[] = [];
   const parents: number[] = [];
   const locals: Float32Array[] = [];
+  const nodeOfBlock = new Map<number, number>();
   const visit = (ref: number, parent: number, depth: number): void => {
     const block = file.blocks[ref];
     if (depth > 128 || block?.kind !== 'node') return;
     const index = names.length;
+    nodeOfBlock.set(ref, index);
     names.push(block.name);
     parents.push(parent);
     const { translation, rotation, scale } = block.transform;
@@ -41,7 +46,18 @@ export function buildRig(file: NifFile): RigData {
   locals.forEach((matrix, i) => {
     local.set(matrix, i * 16);
   });
-  return { names, parents: Int16Array.from(parents), local };
+  const lagBones: LagBone[] = [];
+  for (const block of file.blocks) {
+    if (block.kind !== 'lag-bone-controller') continue;
+    const node = nodeOfBlock.get(block.target);
+    if (node !== undefined && (parents[node] ?? -1) >= 0) lagBones.push(lagBone(block, node));
+  }
+  return {
+    names,
+    parents: Int16Array.from(parents),
+    local,
+    ...(lagBones.length > 0 && { lagBones }),
+  };
 }
 
 /** A model worn on a skeleton: its node tree and the skeleton node its root hangs on. */
@@ -103,7 +119,15 @@ export function wearOnRig(
   locals.forEach((matrix, i) => {
     local.set(matrix, (rig.names.length + i) * 16);
   });
-  return { rig: { names, parents: Int16Array.from(parents), local }, nodeMaps };
+  return {
+    rig: {
+      names,
+      parents: Int16Array.from(parents),
+      local,
+      ...(rig.lagBones && { lagBones: rig.lagBones }),
+    },
+    nodeMaps,
+  };
 }
 
 /** Writes an hkQsTransform (translation, quaternion xyzw, scale xyz) as a 4x4 matrix. */
@@ -202,11 +226,20 @@ export class ActorPose {
   readonly worlds: Float32Array;
   /** Bumped by every update (palettes are rewritten when it changes). */
   version = 0;
+  /**
+   * The clock (seconds) the lag bones trail by. TODO(M13): the original trails in world space
+   * (an actor's own walk and turns swing its tail); ours trails within the pose (model space).
+   */
+  clock: () => number = () => Date.now() / 1000;
   readonly #local = new Float32Array(16);
+  readonly #lag: LagBoneState | undefined;
+  #lastTime: number | undefined;
 
   constructor(skeleton: ActorSkeleton) {
     this.skeleton = skeleton;
     this.worlds = new Float32Array(skeleton.nodeCount * 16);
+    const lagBones = skeleton.rig.lagBones;
+    this.#lag = lagBones ? new LagBoneState(lagBones, skeleton.rig.local) : undefined;
     this.update(undefined);
   }
 
@@ -217,6 +250,13 @@ export class ActorPose {
   update(bones: Float32Array | undefined): void {
     const { rig, boneOfNode } = this.skeleton;
     const local = this.#local;
+    const lag = this.#lag;
+    let dt = 0;
+    if (lag) {
+      const now = this.clock();
+      dt = this.#lastTime === undefined ? 0 : Math.max(0, now - this.#lastTime);
+      this.#lastTime = now;
+    }
     for (let node = 0; node < rig.names.length; node++) {
       const bone = boneOfNode[node] ?? -1;
       let source: Float32Array = rig.local;
@@ -227,6 +267,11 @@ export class ActorPose {
         sourceAt = 0;
       }
       const parent = rig.parents[node] ?? -1;
+      if (lag?.bones.has(node) && parent >= 0) {
+        // A lag bone trails its parent (src/render/lag-bone.ts).
+        source = lag.solve(node, this.worlds, parent * 16, source, sourceAt, dt, local);
+        sourceAt = 0;
+      }
       if (parent < 0) {
         this.worlds.set(source.subarray(sourceAt, sourceAt + 16), node * 16);
       } else {
