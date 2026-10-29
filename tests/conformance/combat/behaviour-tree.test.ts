@@ -655,7 +655,9 @@ describe.skipIf(!hasGamedata())('the combat tree in a fight (headless simulation
     combat.startCombat(bandit, wolves[0] ?? 0);
     combat.startCombat(wolves[1] ?? 0, mage);
     combat.startCombat(mage, wolves[1] ?? 0);
-    for (let i = 0; i < 80; i++) {
+    // 30 s: with its weapon drawn at weaponDraw the tank blocks sooner, and the wolves' bites
+    // stagger it three times before its first swing (at 15 s, cut short by another).
+    for (let i = 0; i < 120; i++) {
       // Each wolf kept on its own opponent (the player stands near and would draw them).
       combat.startCombat(wolves[0] ?? 0, bandit);
       combat.startCombat(wolves[1] ?? 0, mage);
