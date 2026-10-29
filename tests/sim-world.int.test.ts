@@ -11,8 +11,11 @@ const BANNERED_MARE = 0x1605e;
 const HULDA = 0x1a66e;
 
 /** What a run observed, as text (its records, the actors' places). */
-async function run(seed: number): Promise<{ records: string[]; places: string[] }> {
-  const sim = await openSim({ interior: BANNERED_MARE, hour: 10, seed });
+async function run(
+  seed: number,
+  scrambleReads = 0,
+): Promise<{ records: string[]; places: string[] }> {
+  const sim = await openSim({ interior: BANNERED_MARE, hour: 10, seed, scrambleReads });
   try {
     await sim.step(5);
     const records = sim
@@ -46,9 +49,10 @@ describe.skipIf(!hasGamedata())('the headless simulation', () => {
     }
   }, 300_000);
 
+  // The second run's reads come back late at random: the disk's timing changes nothing.
   it('observes the same, step for step, from the same seed', async () => {
     const first = await run(7);
-    const second = await run(7);
+    const second = await run(7, 40);
     expect(second.places).toEqual(first.places);
     expect(second.records).toEqual(first.records);
   }, 300_000);

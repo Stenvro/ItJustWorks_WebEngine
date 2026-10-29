@@ -343,6 +343,17 @@ worldspaces on screen:
   script base has (MQ104's dragon: DragonActorScript from MQ104Dragon's template) starts them
   as its cell attaches, not with the new game. TODO(M13): when the original starts them for
   such an actor that never comes into a loaded cell.
+- **Loaded 3D** (OnLoad, OnUnload, OnCellLoad, Is3DLoaded, the loaded area's searches): an
+  enabled reference of an attached cell has 3D when it has a model, is an editor marker (its
+  marker model is there, hidden in game) or has a primitive (XPRM: the engine makes a node for
+  the box or sphere, so trigger boxes with no model have 3D), or is an actor. The data shows
+  it: WordWallTrigger02Script, on a trigger with no model, finds its partner script only in
+  OnLoad, and WETriggerScript starts its world encounter in OnCellLoad. A disabled reference
+  has none; enabling it while its cell is attached loads its 3D (OnLoad), disabling it unloads
+  it (OnUnload), its enable parent's change included (the boss's trigger in Bleak Falls
+  Sanctum, enabled as the word is learned). TODO(M13): lights and sound markers without a
+  model, and the exact order of OnLoad against OnCellAttach within one attach (ours: attach
+  first).
 - **Enable state**: what scripts enable and disable shows and hides at once, collision
   included, without loading the cell again; enable parents follow. Observed in the
   original: a reference with an enable parent (its XESP naming a reference that exists) only

@@ -56,6 +56,16 @@ const DRAGONSTONE = 0xdf202;
 /** The claw door's rings (large, medium, small: two turns each) and its keyhole. */
 const CLAW_RINGS = [0x4e2ba, 0x4e2bb, 0x4e2bc];
 const CLAW_KEYHOLE = 0x4e2b9;
+/** The sanctum's word wall trigger (WordWallTrigger) and the marker its scripts look at. */
+const WORD_WALL_TRIGGER = 0x709d2;
+const WORD_WALL_LOOK = 0x709d4;
+/** WordFus, UnrelentingForceShout and WWUnrelentingForce (the words learned of it). */
+const WORD_FUS = 0x13e22;
+const UNRELENTING_FORCE = 0x13e07;
+const WW_UNRELENTING_FORCE = 0x7096d;
+/** The boss's activate parent (defaultActivateSelfTRIG, initially disabled), and inside it. */
+const BOSS_TRIGGER = 0x493b7;
+const BOSS_TRIGGER_AT: [number, number, number] = [-7488, -107, 620];
 /** The sanctum's boss (its LvlDraugrAmbushBossMale in the coffin by the word wall). */
 const SANCTUM_BOSS = 0x9bcd6;
 /** Alvor's MQ102A topic that sets stage 50. */
@@ -69,6 +79,18 @@ async function keepBy(sim: Sim, actor: number, reach: number): Promise<void> {
   if (near !== undefined && near > reach && at && me) {
     const k = (reach * 0.6) / near;
     await sim.moveTo([at[0] + (me[0] - at[0]) * k, at[1] + (me[1] - at[1]) * k, at[2] + 30]);
+  }
+}
+
+/** The player fights back: whoever is in combat with them dies by their hand. */
+async function defend(sim: Sim): Promise<void> {
+  const fighting = new Map<number, boolean>();
+  for (const event of sim.events('combat')) {
+    if (event.target === PLAYER_REF) fighting.set(event.actor, event.state !== 0);
+    else fighting.delete(event.actor);
+  }
+  for (const [actor, now] of fighting) {
+    if (now && !(await sim.runtime.actors.isDead(actor))) await sim.kill(actor, PLAYER_REF);
   }
 }
 
@@ -143,21 +165,28 @@ describe.skipIf(!hasGamedata())('MQ102 Before the Storm (Hadvar’s route)', () 
   // no draw, his combat tree (and its Exit Water) waited for one, and the scene stayed paused for
   // the fight. A swimming fighter now makes for the shore first, to ground where it no longer
   // swims (src/shell/actor-combat-ai.ts, exitWater).
+  // Found 2026-10-29: with the river's WE trigger starting a world encounter as Riverwood loads
+  // (OnCellLoad), that fight went another way: the bandit killed the wolves and turned on the
+  // player, who stood by, and Hadvar's combat (and the scene's pause) lasted for ever. The
+  // player now fights back, and the scene then takes some 410 s to stage 47.
+  // TODO(M10): Hadvar stayed in combat with no target while the bandit fought the player.
   it('plays Hadvar and Alvor’s scene into the house; Alvor comes to the player by the door and sends them to Whiterun (MQ102 30)', async () => {
     expect(inRiverwood).toBeDefined();
     if (!inRiverwood) return;
     const sim = await loadSim(inRiverwood);
     try {
       let inside = false;
-      for (let second = 0; second < 400 && !sim.stageDone(MQ102A, 47); second++) {
+      for (let second = 0; second < 600 && !sim.stageDone(MQ102A, 47); second++) {
         await sim.step(1);
-        // The player follows Hadvar to Alvor and through his door (and waits inside by it).
+        // The player follows Hadvar to Alvor and through his door (and waits inside by it),
+        // fighting back what attacks them on the way (the wolves' and the bandit's fight).
         const hadvar = await sim.runtime.placement(HADVAR);
         if (!inside && hadvar && hadvar.world === undefined && hadvar.cell !== undefined) {
           await sim.openInterior(hadvar.cell);
           await sim.moveTo(BY_ALVORS_DOOR);
           inside = true;
         } else if (!inside) await keepBy(sim, HADVAR, 300);
+        await defend(sim);
       }
       expect(sim.stageDone(MQ102A, 45)).toBe(true);
       expect(sim.stageDone(MQ102A, 47)).toBe(true);
@@ -176,7 +205,7 @@ describe.skipIf(!hasGamedata())('MQ102 Before the Storm (Hadvar’s route)', () 
     } finally {
       await sim.close();
     }
-  }, 600_000);
+  }, 900_000);
 
   // Found 2026-10-28: Irileth's force greet (MQ102IrilethForcegreetPlayer) ended its travel with
   // the player 320 units off, past the 300 its ForceGreet branch asks (the path had ended at the
@@ -302,10 +331,7 @@ describe.skipIf(!hasGamedata())('MQ102 Before the Storm (Hadvar’s route)', () 
 
   // The walks between rooms are moves; the fights are kills by the player; looting is the
   // container menu's move to the player. Open (2026-10-29): freed from his web, Arvel stood
-  // in it some 20 s before his MS13ArvelRunsScene travel took him away; the word wall's
-  // trigger teaches no word and the boss sleeps on: WordWallTrigger02Script finds its
-  // WordWallTriggerScript in OnLoad, which triggers (no model, a primitive) are not sent;
-  // counting primitives as loaded 3D stalled MQ102A before stage 45 in Riverwood (to examine).
+  // in it some 20 s before his MS13ArvelRunsScene travel took him away.
   it('solves the temple’s pillar puzzle, frees Arvel and takes the Golden Claw (MS13 35)', async () => {
     expect(toBleakFalls).toBeDefined();
     if (!toBleakFalls) return;
@@ -400,4 +426,47 @@ describe.skipIf(!hasGamedata())('MQ102 Before the Storm (Hadvar’s route)', () 
       await sim.close();
     }
   }, 600_000);
+
+  // Found 2026-10-29: the word wall taught no word and the boss slept on. The wall's trigger is
+  // a primitive (no model), and its WordWallTrigger02Script finds its WordWallTriggerScript in
+  // OnLoad, which only references with a model or a marker were sent: a primitive's 3D now
+  // counts (src/sim/sim-world.ts and the viewers), and enabling a reference in an attached
+  // cell loads its 3D (OnLoad), as the boss's trigger the wall enables shows. Counting
+  // primitives stalled MQ102A in Riverwood once: the WE trigger by the river (WETriggerOnLoad)
+  // now hears OnCellLoad and starts a world encounter (WE100), which shifted the dice of the
+  // wolves' and the bandit's fight with Hadvar there (the case passes with other seeds).
+  it('learns the Bleak Falls Sanctum word wall’s word, and the boss wakes as the player turns from it', async () => {
+    const sim = await openSim({ interior: SANCTUM });
+    try {
+      await sim.step(2);
+      // The trigger's scripts heard its 3D load (OnLoad: WordWallTrigger02Script's mySelf).
+      expect(sim.scriptEvents({ event: 'OnLoad', target: WORD_WALL_TRIGGER })).toHaveLength(1);
+      const look = await sim.position(WORD_WALL_LOOK);
+      expect(look).toBeDefined();
+      if (!look) return;
+      // Into the trigger, within its innerRadius (300) of the wall, looking at it (HasLOS).
+      await sim.moveTo([look[0] + 150, look[1], look[2] - 110], -Math.PI / 2);
+      expect(await sim.until(() => sim.events('wordLearned').length > 0, 20)).toBe(true);
+      expect(sim.events('wordLearned')).toEqual([{ word: WORD_FUS }]);
+      expect(await sim.runtime.actors.hasSpell(PLAYER_REF, UNRELENTING_FORCE)).toBe(true);
+      expect(sim.runtime.state.globals.get(WW_UNRELENTING_FORCE)).toBe(1);
+      // The wall enables the boss's trigger (its myEnabler), which loads (OnLoad).
+      await sim.step(2);
+      expect(await sim.enabled(BOSS_TRIGGER)).toBe(true);
+      expect(sim.scriptEvents({ event: 'OnLoad', target: BOSS_TRIGGER })).toHaveLength(1);
+      // Walking back through it activates its activate parent, the boss (masterAmbushScript):
+      // he gets up from his sarcophagus and fights.
+      await sim.moveTo(BOSS_TRIGGER_AT);
+      expect(
+        await sim.until(
+          () => sim.events('combat').some((e) => e.actor === SANCTUM_BOSS && e.state === 1),
+          15,
+        ),
+      ).toBe(true);
+      expect(sim.scriptEvents({ event: 'OnActivate', target: SANCTUM_BOSS })).toHaveLength(1);
+      expect(sim.scriptEvents({ event: 'OnGetUp', target: SANCTUM_BOSS })).toHaveLength(1);
+    } finally {
+      await sim.close();
+    }
+  }, 300_000);
 });

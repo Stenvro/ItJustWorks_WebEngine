@@ -197,6 +197,30 @@ function nextTask(): Promise<void> {
   });
 }
 
+/**
+ * Waits for work that may wait on reads, handing the held reads out while it waits: each in a
+ * task of its own, once everything else has run, so the disk's timing never decides what runs
+ * before what.
+ */
+async function awaitReading<T>(reads: SimReads | undefined, work: Promise<T>): Promise<T> {
+  if (!reads) return work;
+  const done = work.then(
+    () => true,
+    () => true,
+  );
+  for (;;) {
+    if (await Promise.race([done, reads.whenHeld().then(() => false)])) return work;
+    await deliver(reads);
+  }
+}
+
+/** Hands out the earliest held read, then lets what waited on it run; false if none is held. */
+async function deliver(reads: SimReads): Promise<boolean> {
+  if (!(await reads.deliverNext())) return false;
+  await nextTask();
+  return true;
+}
+
 export class SimWorld {
   readonly session: GameSession;
   readonly runtime: ScriptRuntime;
@@ -210,6 +234,8 @@ export class SimWorld {
   #stage: ActorStage;
   readonly #gridRadius: number;
   readonly #reads: SimReads | undefined;
+  /** Whether a step, a place's opening or a settle is under way (it holds the reads). */
+  #driving = false;
   /** Seconds the simulation has run (the renderer's clock in the page). */
   #time = 0;
   #place: SimPlace | undefined;
@@ -323,6 +349,26 @@ export class SimWorld {
   static async create(options: SimOptions): Promise<SimWorld> {
     const clock = new VirtualClock(options.seed ?? 1);
     clock.install();
+    // The new game's reads are held and handed out in order too, and its scripts settle
+    // before the world is handed over: what a caller does next (a jump of the clock) never
+    // lands amid the new game's threads at a point the disk chose.
+    const reads = options.reads;
+    reads?.hold(true);
+    try {
+      const world = await SimWorld.#start(options, clock);
+      world.#driving = true;
+      try {
+        await world.#settleRounds();
+      } finally {
+        world.#driving = false;
+      }
+      return world;
+    } finally {
+      reads?.hold(false);
+    }
+  }
+
+  static async #start(options: SimOptions, clock: VirtualClock): Promise<SimWorld> {
     const terminal = new SimTerminal();
     const log = new SimLog();
     const voices = new HeadlessVoices(options.vfs);
@@ -337,9 +383,12 @@ export class SimWorld {
     });
     // The game's HUD and menus listen (as in Play): notifications go to the HUD.
     log.attachSession(session);
-    const runtime = options.load
-      ? await session.loadSaved(options.load.save, options.load.header)
-      : await session.runtime(options.opening ?? false);
+    const runtime = await awaitReading(
+      options.reads,
+      options.load
+        ? session.loadSaved(options.load.save, options.load.header)
+        : session.runtime(options.opening ?? false),
+    );
     log.attachRuntime(runtime);
     return new SimWorld(
       session,
@@ -427,7 +476,11 @@ export class SimWorld {
   // --- Opening places ---------------------------------------------------------------------
 
   /** Opens an interior cell, the player arriving as through its door (or at `arrival`). */
-  async openInterior(formId: number, arrival?: Arrival): Promise<void> {
+  openInterior(formId: number, arrival?: Arrival): Promise<void> {
+    return this.#drive(() => this.#openInterior(formId, arrival));
+  }
+
+  async #openInterior(formId: number, arrival?: Arrival): Promise<void> {
     this.#close();
     const db = await this.session.db;
     this.#place = { kind: 'interior', cell: formId };
@@ -447,7 +500,6 @@ export class SimWorld {
       region && { formId: region.formId, weathers: region.weather?.weathers ?? [] },
     );
     await this.#attachToScripts(cell);
-    await this.settle();
   }
 
   /**
@@ -457,7 +509,14 @@ export class SimWorld {
    * TODO(sim): the sky's light outdoors (src/shell/world-sky.ts makes it with the sky's draws and
    * panel): headless exteriors have no daylight for detection yet, nor player regions.
    */
-  async openExterior(
+  openExterior(
+    formId: number,
+    at: { readonly cell: readonly [number, number] } | { readonly arrival: Arrival },
+  ): Promise<void> {
+    return this.#drive(() => this.#openExterior(formId, at));
+  }
+
+  async #openExterior(
     formId: number,
     at: { readonly cell: readonly [number, number] } | { readonly arrival: Arrival },
   ): Promise<void> {
@@ -499,17 +558,20 @@ export class SimWorld {
     });
     await this.#startPlay(feet, comeIn?.heading ?? 0, comeIn !== undefined, comeIn ? 64 : 8192);
     await this.#stream();
-    await this.settle();
   }
 
   /** Goes through a load door to where it leads (as the player's activation of it does). */
-  async travel(teleport: Teleport): Promise<void> {
+  travel(teleport: Teleport): Promise<void> {
+    return this.#drive(() => this.#travelTo(teleport));
+  }
+
+  async #travelTo(teleport: Teleport): Promise<void> {
     const db = await this.session.db;
     const destination = await doorDestination(db, teleport);
     if (!destination) return;
     const arrival: Arrival = { position: teleport.position, heading: teleport.rotation[2] };
-    if (destination.world === undefined) await this.openInterior(destination.cell, arrival);
-    else await this.openExterior(destination.world, { arrival });
+    if (destination.world === undefined) await this.#openInterior(destination.cell, arrival);
+    else await this.#openExterior(destination.world, { arrival });
   }
 
   // --- Stepping ---------------------------------------------------------------------------
@@ -520,7 +582,11 @@ export class SimWorld {
    * graphs), the objects' graphs, then the scripts' clocks. Waits for the work the step
    * started (scripts run until they wait, cells and actors finish loading).
    */
-  async step(seconds = SIM_STEP): Promise<void> {
+  step(seconds = SIM_STEP): Promise<void> {
+    return this.#drive(() => this.#step(seconds));
+  }
+
+  async #step(seconds: number): Promise<void> {
     const session = this.session;
     const play = this.#play;
     // The game's clock stands still in menus; Slow Time runs it slower (main.ts's frame clock).
@@ -545,7 +611,6 @@ export class SimWorld {
       this.#travel = undefined;
       await travel;
     }
-    await this.settle();
   }
 
   /** Steps the world `seconds` at the fixed step. */
@@ -566,57 +631,60 @@ export class SimWorld {
 
   /**
    * Waits for what the world started: the scripts' running threads (until they wait), the
-   * story manager's events, the cells and objects being placed, and the tasks they queued.
+   * story manager's events, the cells and objects being placed, the journeys, and the tasks
+   * they queued.
    */
-  async settle(): Promise<void> {
-    const reads = this.#reads;
-    // Reads asked while settling come back one at a time, in the order asked (SimReads).
-    reads?.hold(true);
-    try {
-      for (let round = 0; round < SETTLE_ROUNDS; round++) {
-        // The timers the step's clock reached (waits that end now).
-        this.clock.runDue();
-        await nextTask();
-        await this.#awaitReading(this.runtime.vm.idle());
-        // The story manager works through the events raised (quests start, their aliases fill).
-        await this.#awaitReading(this.runtime.storyManager.idle());
-        await this.#awaitReading(this.runtime.vm.idle());
-        if (reads && (await this.#deliver(reads))) continue;
-        if (this.#pending.size > 0) {
-          await this.#awaitReading(Promise.all([...this.#pending]));
-          continue;
-        }
-        if ((reads?.pending ?? 0) === 0 && !this.clock.due) break;
-      }
-    } finally {
-      reads?.hold(false);
-    }
-    await nextTask();
+  settle(): Promise<void> {
+    return this.#drive(() => Promise.resolve());
   }
 
   /**
-   * Waits for work that may wait on reads, handing the held reads out while it waits: each in a
-   * task of its own, once everything else has run, so the disk's timing never decides what runs
-   * before what.
+   * Runs work with the reads held (SimReads: each handed out in the order asked, the world
+   * settled in between), then settles the world. The public steps, openings and settles are
+   * each one; one begun within another (a journey a script starts while a step settles) is part
+   * of it: it runs at once and the outer one settles it.
    */
-  async #awaitReading(work: Promise<unknown>): Promise<void> {
+  async #drive(work: () => Promise<void>): Promise<void> {
+    if (this.#driving) return work();
+    this.#driving = true;
     const reads = this.#reads;
-    if (!reads) {
-      await work;
-      return;
+    reads?.hold(true);
+    try {
+      await awaitReading(reads, work());
+      await this.#settleRounds();
+    } finally {
+      reads?.hold(false);
+      this.#driving = false;
     }
-    const done = work.then(() => true);
-    for (;;) {
-      if (await Promise.race([done, reads.whenHeld().then(() => false)])) return;
-      await this.#deliver(reads);
-    }
+    await nextTask();
   }
 
-  /** Hands out the earliest held read, then lets what waited on it run; false if none is held. */
-  async #deliver(reads: SimReads): Promise<boolean> {
-    if (!(await reads.deliverNext())) return false;
-    await nextTask();
-    return true;
+  /** Settles the world, the reads held (within a drive). */
+  async #settleRounds(): Promise<void> {
+    const reads = this.#reads;
+    for (let round = 0; round < SETTLE_ROUNDS; round++) {
+      // The timers the step's clock reached (waits that end now).
+      this.clock.runDue();
+      await nextTask();
+      await awaitReading(reads, this.runtime.vm.idle());
+      // The story manager works through the events raised (quests start, their aliases fill).
+      await awaitReading(reads, this.runtime.storyManager.idle());
+      await awaitReading(reads, this.runtime.vm.idle());
+      if (reads && (await deliver(reads))) continue;
+      if (this.#pending.size > 0) {
+        await awaitReading(reads, Promise.all([...this.#pending]));
+        continue;
+      }
+      // A journey begun meanwhile (a script's move of the player to another place) arrives
+      // within the drive, its reads held too: past it they would come back in the disk's order.
+      const travel = this.#travel;
+      if (travel) {
+        await awaitReading(reads, travel);
+        if (this.#travel === travel) this.#travel = undefined;
+        continue;
+      }
+      if ((reads?.pending ?? 0) === 0 && !this.clock.due) break;
+    }
   }
 
   #track(work: Promise<unknown>): void {
@@ -827,14 +895,18 @@ export class SimWorld {
     const references = [
       ...cell.data.objects.map((object) => object.reference),
       ...cell.data.primitives.map((primitive) => primitive.reference),
+      ...cell.data.markers.map((marker) => marker.reference),
       ...cell.data.actors.map((actor) => actor.reference),
     ];
     for (const reference of references) {
       const enabled = isEnabled(reference);
       const before = cell.enabledNow.get(reference);
       cell.enabledNow.set(reference, enabled);
-      if (before !== undefined && before !== enabled) {
-        this.#play?.setReferenceEnabled(reference, enabled);
+      if (before === undefined || before === enabled) continue;
+      this.#play?.setReferenceEnabled(reference, enabled);
+      // Its 3D comes or goes with it (OnLoad, OnUnload), if it has any once enabled.
+      if (cell.scriptsAttached && this.#has3D(cell, reference)) {
+        this.runtime.detach(this.runtime.referenceShown(reference, enabled));
       }
     }
     cell.skeletons = cell.objectSkeletons
@@ -954,6 +1026,7 @@ export class SimWorld {
       this.runtime.cellDetached(
         [
           ...cell.data.objects.map((object) => object.reference),
+          ...cell.data.primitives.map((primitive) => primitive.reference),
           ...this.stage.referencesIn(cell.key),
         ],
         (reference) => loaded.has(reference),
@@ -1265,6 +1338,10 @@ export class SimWorld {
       ...cell.data.markers
         .map((marker) => marker.reference)
         .filter((reference) => cell.isEnabled(reference)),
+      // Primitives (triggers, collision markers): their 3D is the engine's node for the shape.
+      ...cell.data.primitives
+        .map((primitive) => primitive.reference)
+        .filter((reference) => cell.isEnabled(reference)),
       ...this.stage.shownIn(cell.key).map((actor) => actor.actor.reference),
       ...[...this.#created.all]
         .filter(
@@ -1278,11 +1355,25 @@ export class SimWorld {
     return this.#cellAt([world[12] ?? 0, world[13] ?? 0, world[14] ?? 0]);
   }
 
+  /**
+   * Whether a cell's reference has 3D once enabled: a model placed, an editor marker (its
+   * marker hidden in game), a primitive (the engine's node for the shape), an actor.
+   */
+  #has3D(cell: SimCell, reference: number): boolean {
+    return (
+      cell.byReference.has(reference) ||
+      cell.data.markers.some((marker) => marker.reference === reference) ||
+      cell.data.primitives.some((primitive) => primitive.reference === reference) ||
+      cell.data.actors.some((actor) => actor.reference === reference)
+    );
+  }
+
   #loaded(reference: number): boolean {
     for (const cell of this.#cells.values()) {
       if (
         (cell.byReference.has(reference) ||
-          cell.data.markers.some((marker) => marker.reference === reference)) &&
+          cell.data.markers.some((marker) => marker.reference === reference) ||
+          cell.data.primitives.some((primitive) => primitive.reference === reference)) &&
         cell.isEnabled(reference)
       ) {
         return true;
@@ -1328,7 +1419,7 @@ export class SimWorld {
       {
         name: (teleport) => this.#destinations.get(teleport.door)?.name ?? '',
         go: (teleport) => {
-          this.#travel = this.travel(teleport);
+          this.#travel = this.#travelTo(teleport);
         },
       },
       (descriptor, at) => void this.session.playSound(descriptor, at),
@@ -1606,10 +1697,10 @@ export class SimWorld {
     if (!at) return;
     if (reference === PLAYER_REF) {
       // As Play: the player goes where the scripts send them, to another place through a journey.
-      // A journey goes as a load door's travel does, awaited by the next step: it is not the
-      // world's work that a settle waits for, as the place it opens settles itself (waiting
-      // for it there waited for itself: a script's MoveTo of the player to another cell, such
-      // as MQ101's stage 4 to the cart, hung the sim).
+      // A journey goes as a load door's travel does: the settle under way waits for it (the
+      // place it opens does not settle on its own within a drive, so it never waits for
+      // itself: a script's MoveTo of the player to another cell, such as MQ101's stage 4 to
+      // the cart, once hung the sim so), and the next step awaits it if it began outside one.
       if (!this.#sendPlayer(at)) {
         const before = this.#travel;
         this.#travel = (async () => {
@@ -1676,7 +1767,7 @@ export class SimWorld {
   /** The player is sent to another place: it opens with them there. */
   async #journey(at: Placement): Promise<void> {
     const arrival: Arrival = { position: at.position, heading: at.rotation[2] };
-    if (at.world !== undefined) await this.openExterior(at.world, { arrival });
-    else if (at.cell !== undefined) await this.openInterior(at.cell, arrival);
+    if (at.world !== undefined) await this.#openExterior(at.world, { arrival });
+    else if (at.cell !== undefined) await this.#openInterior(at.cell, arrival);
   }
 }

@@ -1240,6 +1240,18 @@ export class ScriptRuntime implements VmHost {
     return scripted;
   }
 
+  /**
+   * A reference of an attached cell was enabled or disabled (by a script, by its enable parent,
+   * by the engine): its 3D comes or goes with it, and its scripts hear that as they do when its
+   * cell attaches or detaches (OnLoad, OnUnload). The view tells only references whose 3D it
+   * has once enabled (a model, an editor marker, a primitive, an actor).
+   */
+  async referenceShown(reference: number, shown: boolean): Promise<void> {
+    if (await this.#hasScripts(reference)) {
+      this.events.emit('objectLoaded', { reference, loaded: shown });
+    }
+  }
+
   /** A cell left the loaded area: OnUnload for its loaded references, OnCellDetach for all. */
   async cellDetached(
     references: readonly number[],
