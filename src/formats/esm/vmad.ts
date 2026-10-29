@@ -61,6 +61,8 @@ export interface ScriptAttachments {
   readonly phaseFragments: readonly PhaseFragment[];
   /** Scripts on quest aliases (QUST only). */
   readonly aliases: readonly QuestAliasScripts[];
+  /** Bytes after the last section read (0 for every VMAD of the load order: format-census). */
+  readonly unread?: number;
 }
 
 export interface Fragment {
@@ -270,7 +272,15 @@ export function parseVmad(data: Uint8Array, recordType: string): ScriptAttachmen
     }
   }
   if (fragmentScript === '') fragmentScript = undefined;
-  return { version, scripts, fragmentScript, fragments, phaseFragments, aliases };
+  return {
+    version,
+    scripts,
+    fragmentScript,
+    fragments,
+    phaseFragments,
+    aliases,
+    unread: reader.remaining,
+  };
 }
 
 /** Every form id (as stored in the plugin) that a script's properties refer to. */
