@@ -827,14 +827,18 @@ export class SimWorld {
     const references = [
       ...cell.data.objects.map((object) => object.reference),
       ...cell.data.primitives.map((primitive) => primitive.reference),
+      ...cell.data.markers.map((marker) => marker.reference),
       ...cell.data.actors.map((actor) => actor.reference),
     ];
     for (const reference of references) {
       const enabled = isEnabled(reference);
       const before = cell.enabledNow.get(reference);
       cell.enabledNow.set(reference, enabled);
-      if (before !== undefined && before !== enabled) {
-        this.#play?.setReferenceEnabled(reference, enabled);
+      if (before === undefined || before === enabled) continue;
+      this.#play?.setReferenceEnabled(reference, enabled);
+      // Its 3D comes or goes with it (OnLoad, OnUnload), if it has any once enabled.
+      if (cell.scriptsAttached && this.#has3D(cell, reference)) {
+        this.runtime.detach(this.runtime.referenceShown(reference, enabled));
       }
     }
     cell.skeletons = cell.objectSkeletons
@@ -954,6 +958,7 @@ export class SimWorld {
       this.runtime.cellDetached(
         [
           ...cell.data.objects.map((object) => object.reference),
+          ...cell.data.primitives.map((primitive) => primitive.reference),
           ...this.stage.referencesIn(cell.key),
         ],
         (reference) => loaded.has(reference),
@@ -1265,6 +1270,10 @@ export class SimWorld {
       ...cell.data.markers
         .map((marker) => marker.reference)
         .filter((reference) => cell.isEnabled(reference)),
+      // Primitives (triggers, collision markers): their 3D is the engine's node for the shape.
+      ...cell.data.primitives
+        .map((primitive) => primitive.reference)
+        .filter((reference) => cell.isEnabled(reference)),
       ...this.stage.shownIn(cell.key).map((actor) => actor.actor.reference),
       ...[...this.#created.all]
         .filter(
@@ -1278,11 +1287,25 @@ export class SimWorld {
     return this.#cellAt([world[12] ?? 0, world[13] ?? 0, world[14] ?? 0]);
   }
 
+  /**
+   * Whether a cell's reference has 3D once enabled: a model placed, an editor marker (its
+   * marker hidden in game), a primitive (the engine's node for the shape), an actor.
+   */
+  #has3D(cell: SimCell, reference: number): boolean {
+    return (
+      cell.byReference.has(reference) ||
+      cell.data.markers.some((marker) => marker.reference === reference) ||
+      cell.data.primitives.some((primitive) => primitive.reference === reference) ||
+      cell.data.actors.some((actor) => actor.reference === reference)
+    );
+  }
+
   #loaded(reference: number): boolean {
     for (const cell of this.#cells.values()) {
       if (
         (cell.byReference.has(reference) ||
-          cell.data.markers.some((marker) => marker.reference === reference)) &&
+          cell.data.markers.some((marker) => marker.reference === reference) ||
+          cell.data.primitives.some((primitive) => primitive.reference === reference)) &&
         cell.isEnabled(reference)
       ) {
         return true;
