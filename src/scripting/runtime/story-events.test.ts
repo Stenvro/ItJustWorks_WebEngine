@@ -164,14 +164,16 @@ describe('the story events', () => {
     ]);
   });
 
-  it('raises Infection and Cure; a quest starting raises nothing (the original’s rule)', async () => {
+  it('raises Infection, Cure, and a queue turn as a quest starts', async () => {
     const { story, raised, events } = stubRuntime();
     await story.infection(DOG, SPELL);
     await story.cure(SPELL);
     await events.emitted('questStartStop', { quest: 0x9000, started: true });
+    await events.emitted('questStartStop', { quest: 0x9000, started: false });
     expect(raised.map((event) => [event.type, members(event)])).toEqual([
       ['INFC', { R1: DOG, F1: SPELL }],
       ['CURE', { F1: SPELL }],
+      ['QSTR', { Q1: 0x9000 }],
     ]);
     // OnStoryInfection(akTransmittingActor, akInfection).
     expect(raised[0]?.args).toEqual([
