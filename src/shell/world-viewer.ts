@@ -305,7 +305,7 @@ function placedByReference(cell: LoadedCell, reference: number): PlacedEntry | u
   return index.get(reference);
 }
 
-/** A cell's markers' references (made once per list, as placedByReference). */
+/** A cell's markers' (or primitives') references (made once per list, as placedByReference). */
 const markerIndexes = new WeakMap<readonly { readonly reference: number }[], ReadonlySet<number>>();
 
 function hasMarker(markers: readonly { readonly reference: number }[], reference: number): boolean {
@@ -1569,15 +1569,26 @@ export class WorldViewer {
     const references = [
       ...data.objects.map((object) => object.reference),
       ...data.primitives.map((primitive) => primitive.reference),
+      ...data.markers.map((marker) => marker.reference),
       // The dead's ragdolls.
       ...data.actors.map((actor) => actor.reference),
     ];
+    const runtime = cell.scriptsAttached ? session.scriptsReady : undefined;
     for (const reference of references) {
       const enabled = isEnabled(reference);
       const before = cell.enabledNow.get(reference);
       cell.enabledNow.set(reference, enabled);
-      if (before !== undefined && before !== enabled)
-        this.#play?.setReferenceEnabled(reference, enabled);
+      if (before === undefined || before === enabled) continue;
+      this.#play?.setReferenceEnabled(reference, enabled);
+      // Its 3D comes or goes with it (OnLoad, OnUnload), if it has any once enabled.
+      if (
+        runtime &&
+        (placedByReference(cell, reference) !== undefined ||
+          hasMarker(data.markers, reference) ||
+          hasMarker(data.primitives, reference) ||
+          hasMarker(data.actors, reference))
+      )
+        runtime.detach(runtime.referenceShown(reference, enabled));
     }
     const objects = data.objects.filter((object) => isEnabled(object.reference));
     cell.objects = new Map(objects.map((object) => [object.reference, object]));
@@ -1703,6 +1714,10 @@ export class WorldViewer {
       ...(cell.data?.markers ?? [])
         .map((marker) => marker.reference)
         .filter((reference) => cell.isEnabled(reference)),
+      // Primitives (triggers, collision markers): their 3D is the engine's node for the shape.
+      ...(cell.data?.primitives ?? [])
+        .map((primitive) => primitive.reference)
+        .filter((reference) => cell.isEnabled(reference)),
       ...(this.#stage?.shownIn(cellKey(cell.x, cell.y)).map((actor) => actor.actor.reference) ??
         []),
       ...[...(this.#created?.all ?? [])]
@@ -1718,7 +1733,8 @@ export class WorldViewer {
     if (!cell.ready) return false;
     if (
       (placedByReference(cell, reference) !== undefined ||
-        hasMarker(cell.data?.markers ?? [], reference)) &&
+        hasMarker(cell.data?.markers ?? [], reference) ||
+        hasMarker(cell.data?.primitives ?? [], reference)) &&
       cell.isEnabled(reference)
     ) {
       return true;
@@ -2490,6 +2506,7 @@ export class WorldViewer {
         runtime.cellDetached(
           [
             ...data.objects.map((object) => object.reference),
+            ...data.primitives.map((primitive) => primitive.reference),
             ...(this.#stage?.referencesIn(key) ?? []),
           ],
           (reference) => loaded.has(reference),

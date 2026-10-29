@@ -98,11 +98,18 @@ How a step runs (`SimWorld.step`, 1/60 s by default), in the page's frame order:
 physics, the game clock and the sky, the player's body, the actors, the objects' graphs, then the
 scripts' clocks. A step then settles: it waits until the Papyrus threads wait, the story manager has
 worked through its events, the cells and objects being placed are in and the game folder's reads are
-done. The engine's reads of the page's clock (`performance.now`), its timers (`setTimeout`) and its
-dice (`Math.random`) are replaced while a simulation runs (`virtual-clock.ts`): the clock moves only
-with the steps, a timer fires when the simulation's clock reaches it, the dice are seeded. So the same
-seed, place and steps observe the same records, step for step (`tests/sim-world.int.test.ts`), and a
-second waited is a second of the simulation however fast it runs.
+done. The engine's reads of the page's clock (`performance.now`, `Date.now`), its timers
+(`setTimeout`) and its dice (`Math.random`) are replaced while a simulation runs
+(`virtual-clock.ts`): the clock moves only with the steps, a timer fires when the simulation's clock
+reaches it, the dice are seeded. The game folder's reads are held for the whole of a step, a place's
+opening, a settle and the new game itself (`SimWorld.create` settles its scripts before it hands the
+world over): each read's result is handed out in the order the reads were asked, with the world
+settled in between, so the disk's timing never decides which thread goes on first. A journey a script
+begins (a MoveTo of the player to another place) is part of the step it began in. So the same seed,
+place and steps observe the same records, step for step, however late the reads come back
+(`tests/sim-world.int.test.ts` scrambles one run's reads: `scrambleReads`), and a second waited is a
+second of the simulation however fast it runs. An event sent to scripts that have no handler for it in
+any state runs no thread at all (`PapyrusVm`): it takes no turn from the threads that do run.
 
 What it observes (`SimLog`, typed): every event-hub event, every event sent to scripts with its
 arguments, every story manager event with the quests it started, the HUD's texts, the sounds asked

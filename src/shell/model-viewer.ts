@@ -645,6 +645,10 @@ export class ModelViewer {
       ...cell.data.markers
         .map((marker) => marker.reference)
         .filter((reference) => this.#isEnabled(reference)),
+      // Primitives (triggers, collision markers): their 3D is the engine's node for the shape.
+      ...cell.data.primitives
+        .map((primitive) => primitive.reference)
+        .filter((reference) => this.#isEnabled(reference)),
       ...[...(this.#stage?.shown() ?? [])].map((actor) => actor.actor.reference),
       ...[...(this.#created?.all ?? [])]
         .filter((entry) => !entry.visibility.hidden)
@@ -771,6 +775,10 @@ export class ModelViewer {
   #visibility = new Map<number, InstanceVisibility>();
   /** The enable state each reference with collision was last given. */
   #enabledNow = new Map<number, boolean>();
+  /** The enable state each reference with 3D was last given (its OnLoad and OnUnload). */
+  #shownNow = new Map<number, boolean>();
+  /** Whether the cell on screen has met the running game's scripts (#attachToScripts). */
+  #scriptsAttached = false;
   /** Every water activator's volumes; those of the enabled ones are #waterVolumes. */
   #allWaterVolumes: readonly { reference: number; volumes: WaterVolume[] }[] = [];
   /** Every object skeleton; those of the enabled objects animate. */
@@ -1404,6 +1412,7 @@ export class ModelViewer {
     const visibility = new Map<number, InstanceVisibility>();
     this.#visibility = visibility;
     this.#enabledNow = new Map();
+    this.#shownNow = new Map();
     const shownBy = (reference: number): InstanceVisibility => {
       let entry = visibility.get(reference);
       if (!entry) {
@@ -1585,6 +1594,24 @@ export class ModelViewer {
       const before = this.#enabledNow.get(reference);
       this.#enabledNow.set(reference, enabled);
       if (before !== undefined && before !== enabled) play?.setReferenceEnabled(reference, enabled);
+    }
+    // What has 3D once enabled (a model, an editor marker, a primitive, an actor): it comes or
+    // goes with the reference, and its scripts hear it (OnLoad, OnUnload).
+    const runtime = this.#scriptsAttached ? this.#session?.scriptsReady : undefined;
+    const shown = [
+      ...cell.data.objects
+        .map((object) => object.reference)
+        .filter((reference) => this.#instances.has(reference)),
+      ...cell.data.primitives.map((primitive) => primitive.reference),
+      ...cell.data.markers.map((marker) => marker.reference),
+      ...cell.data.actors.map((actor) => actor.reference),
+    ];
+    for (const reference of shown) {
+      const enabled = isEnabled(reference);
+      const before = this.#shownNow.get(reference);
+      this.#shownNow.set(reference, enabled);
+      if (runtime && before !== undefined && before !== enabled)
+        runtime.detach(runtime.referenceShown(reference, enabled));
     }
     this.#stage?.refresh();
     this.#objectSkeletons = this.#allObjectSkeletons
@@ -2088,6 +2115,7 @@ export class ModelViewer {
         ...(this.#stage?.referencesIn(String(cell.data.cell.formId)) ?? []),
       ];
       const loaded = new Set(this.#loadedReferences());
+      this.#scriptsAttached = true;
       await runtime.cellAttached(references, (reference) => loaded.has(reference));
       for (const [reference, state] of runtime.state.references) {
         if (runtime.state.created.has(reference) && state.cell === cell.data.cell.formId) {
@@ -2102,6 +2130,7 @@ export class ModelViewer {
   #releaseCell(): void {
     const cell = this.#cell;
     const runtime = this.#session?.scriptsReady;
+    this.#scriptsAttached = false;
     if (cell && runtime) {
       const loaded = new Set(this.#loadedReferences());
       // Its reset waits from now (cell-reset.ts). TODO(sim): its moved objects' places are noted
@@ -2111,6 +2140,7 @@ export class ModelViewer {
         runtime.cellDetached(
           [
             ...cell.data.objects.map((object) => object.reference),
+            ...cell.data.primitives.map((primitive) => primitive.reference),
             ...(this.#stage?.referencesIn(String(cell.data.cell.formId)) ?? []),
           ],
           (reference) => loaded.has(reference),

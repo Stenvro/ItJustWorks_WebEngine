@@ -48,6 +48,11 @@ export interface OpenOptions {
   readonly seed?: number;
   /** Exterior cells loaded on each side of the player's (default 2, uGridsToLoad 5). */
   readonly gridRadius?: number;
+  /**
+   * The game files' reads come back up to this many event-loop turns late, at random (a disk
+   * whose timing varies: what the simulation does must not change with it).
+   */
+  readonly scrambleReads?: number;
 }
 
 /** A package an actor runs now. */
@@ -69,6 +74,7 @@ const GAME_DAYS_PASSED = 0x39;
 /** Opens the simulation: a new game, then the place (if given). Close it when done. */
 export async function openSim(options: OpenOptions = {}): Promise<Sim> {
   const folder = openGameFolder();
+  folder.reads.scramble = options.scrambleReads ?? 0;
   const vfs = await Vfs.mount(folder);
   const world = await SimWorld.create({
     vfs,
