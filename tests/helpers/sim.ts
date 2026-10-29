@@ -11,6 +11,7 @@
 //   sim.close();
 
 import { findPath } from '../../src/ai/pathfinding.ts';
+import { Layer } from '../../src/physics/collision-layers.ts';
 import { fastTravelHours } from '../../src/gameplay/fast-travel.ts';
 import { readGameSave, saveGame } from '../../src/save/game-save.ts';
 import type { SpokenInfo, TopicChoice } from '../../src/scripting/runtime/dialogue-engine.ts';
@@ -76,6 +77,16 @@ const PATH_GOAL_REACH = 256;
 const DOOR_REACH = 160;
 /** How far the player steps aside round someone standing in their way (doubling each time). */
 const SIDESTEP = 48;
+/** Held up off the navmesh with the way on this much above the feet, the player jumps. */
+const JUMP_OUT = 16;
+/** What holds the player up is looked for this far ahead, this high above the feet. */
+const WAY_REACH = 150;
+const WAY_HEIGHT = 40;
+/** Blows at most at a destructible object in the way, and the seconds between them. */
+const BREAK_BLOWS = 4;
+const BREAK_PAUSE = 0.5;
+/** Seconds a pulled chain or lever is given to open what it works (a portcullis rising). */
+const PULL_WAIT = 3;
 
 /** The global GameHour (Skyrim.esm): the clock, as scripts set it. */
 const GAME_HOUR = 0x38;
@@ -404,19 +415,32 @@ export class Sim {
     const path = from && findPath(navmeshes, from, goal, { radius: PLAYER_RADIUS });
     if (!path) return false;
     const until = this.time + seconds;
+    // Blockers whose activate parent was pulled in this walk (not pulled shut again).
+    const pulled = new Set<number>();
     for (const point of path.points.slice(from === feet ? 1 : 0)) {
       const last = point === path.points.at(-1);
       const near = last ? reach : 24;
       let side = 1;
+      let jumped = false;
       for (;;) {
         const left = until - this.time;
         if (left <= 0) return false;
         const [x0, y0] = this.world.player.feet;
         if (await this.walkTo([point[0], point[1], point[2]], Math.min(left, 0.5), near)) break;
-        // Held up: a closed door in the way is opened, as a player does; someone standing in
-        // the way is stepped round (to one side, then the other).
-        const [x1, y1] = this.world.player.feet;
+        // Held up: a closed door in the way is opened, as a player does, and what else stands in
+        // the way is cleared (#clearWay); down in a dip off the navmesh (a gap between rocks under
+        // it), with the way on above, they jump out; someone in the way is stepped round.
+        const [x1, y1, z1] = this.world.player.feet;
         if (Math.hypot(x1 - x0, y1 - y0) >= 4 || this.#openDoorNear([x1, y1])) continue;
+        if (await this.#clearWay([x1, y1, z1], point, pulled)) continue;
+        if (!jumped && point[2] > z1 + JUMP_OUT && !navmeshes.locate([x1, y1, z1])) {
+          jumped = true;
+          this.press('Jump', true);
+          await this.step(SIM_STEP);
+          this.press('Jump', false);
+          await this.walkTo([point[0], point[1], point[2]], 0.5, near);
+          continue;
+        }
         const dx = point[0] - x1;
         const dy = point[1] - y1;
         const length = Math.hypot(dx, dy) || 1;
@@ -431,6 +455,58 @@ export class Sim {
     }
     const [x, y] = this.world.player.feet;
     return Math.hypot(goal[0] - x, goal[1] - y) <= reach;
+  }
+
+  /**
+   * What stands in the way, as a player deals with it: a destructible object (a spider web
+   * across a passage) is hacked through, blow after blow of its whole health (the strikes not
+   * under test), until its stage changes; one its activate parents open (a portcullis) has its
+   * nearest parent pulled (a chain, a lever), once a walk. True if something was done.
+   */
+  async #clearWay(feet: Vec3, toward: readonly number[], pulled: Set<number>): Promise<boolean> {
+    const character = this.world.player.character;
+    const direction: Vec3 = [(toward[0] ?? 0) - feet[0], (toward[1] ?? 0) - feet[1], 0];
+    const from: Vec3 = [feet[0], feet[1], feet[2] + WAY_HEIGHT];
+    const hit = character.physics.raycast(
+      from,
+      direction,
+      WAY_REACH,
+      Layer.charController,
+      character.collider,
+    );
+    const struck = hit?.owner?.kind === 'object' ? hit.owner.reference : 0;
+    if (struck === 0) return false;
+    const destruction = this.runtime.destruction;
+    if (!destruction.isDestroyed(struck) && (await destruction.of(struck))) {
+      return this.#hackThrough(struck);
+    }
+    if (pulled.has(struck)) return false;
+    let parent: number | undefined;
+    let nearest = Infinity;
+    for (const each of await this.runtime.activateParents(struck)) {
+      const at = await this.position(each);
+      const away = at ? Math.hypot(at[0] - feet[0], at[1] - feet[1]) : Infinity;
+      if (away < nearest) {
+        nearest = away;
+        parent = each;
+      }
+    }
+    if (parent === undefined || !this.activate(parent)) return false;
+    pulled.add(struck);
+    await this.step(PULL_WAIT);
+    return true;
+  }
+
+  /** Blows at a destructible object until its stage changes (true) or none do. */
+  async #hackThrough(struck: number): Promise<boolean> {
+    const destruction = this.runtime.destruction;
+    const stage = destruction.stage(struck);
+    const health = (await destruction.of(struck))?.health ?? 0;
+    for (let blow = 0; blow < BREAK_BLOWS && destruction.stage(struck) === stage; blow++) {
+      await destruction.damage(struck, health, { external: true, source: PLAYER_REF });
+      await this.step(BREAK_PAUSE);
+    }
+    return destruction.stage(struck) !== stage;
   }
 
   /** Activates the nearest closed door within reach of a point (true if there was one). */

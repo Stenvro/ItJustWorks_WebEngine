@@ -1593,7 +1593,9 @@ documented.
 Destructible objects (the records: docs/formats/esm.md, "Destructible objects"; the rules:
 `src/gameplay/destruction.ts`; the running game: `src/scripting/runtime/destruction-engine.ts`;
 the view: `src/shell/destruction-looks.ts`; check: `node tools/destruction-info.ts`,
-`tests/destruction.int.test.ts`).
+`tests/destruction.int.test.ts`). The view brings each object's look and collision up to date
+every frame, the headless sim's world every step as the page's renderer does (a burnt web's own
+collision steps aside there too: without it nothing broken in the sim let anyone through).
 
 ### Health and stages
 

@@ -970,7 +970,14 @@ While the body's graph is animation-driven (bAnimationDriven, bAllowRotation, re
 actor: `src/ai/movement-drive.ts`) its root motion moves the player instead of their input
 (`Player.animationMotion`): a Whirlwind Sprint's rush (ActionVoiceRelease picks
 ShoutSprintMediumStart, ShoutSprintLongStart or ShoutSprintLongestStart by the words shouted)
-carries them as far as its clip goes.
+carries them as far as its clip goes. The clips' root motion (the project's animation data) is
+the rush: WhirlwindSprint_Medium 1,000 units in 0.57 s for one word, _Long 1,500 for two,
+_Longest about 2,000 for three (the idle tree's VoiceWhirlwindSprintShort, Medium and Long pick
+them by GetCurrentShoutVariation); the graph's sprint state sets bAnimationDriven and
+IsSprinting while it plays. The shout's effects (VoiceSprintEffect1 to 3) are Script effects
+with no script, magnitude 10 at every level: no game setting or graph variable of the original names a voice
+sprint value, so the magnitude moves nothing (TODO(M13): confirm it is unused). With the sprint
+held after the rush, one word carries the player through Ustengrav's three timed gates.
 
 The player's body (`player-avatar.ts`) is the Player actor (NPC_ 0x7, reference 0x14) placed like
 any actor: its race's skeleton, its outfit (the iron set) and its head, in the player's

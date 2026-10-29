@@ -617,6 +617,10 @@ export class SimWorld {
     for (const cell of this.#cells.values()) {
       for (const placed of cell.byReference.values()) placed.instance.graph?.update(now);
     }
+    // Destructible objects take their stage's look and collision as the page's renderer brings
+    // them up to date each frame: a burnt web's own collision steps aside, its torn one stands
+    // in (without this, nothing that broke in the sim ever let anyone through).
+    Array.from(this.#destruction.scenes());
     session.tickScripts(seconds);
     if (this.#place?.kind === 'exterior') this.#track(this.#stream());
     if (this.#travel) {
