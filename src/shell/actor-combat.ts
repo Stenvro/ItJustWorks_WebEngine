@@ -1757,17 +1757,14 @@ export class ActorCombat implements CombatBridge {
       this.#effect(fighter, effect);
     }
     const lower = answer === undefined ? event.name.toLowerCase() : undefined;
-    // A creature's graph (the wolf's: combatStanceStart raises weaponDraw) has no equip clip
-    // that ends with WeapEquip_Out: its weapon (its teeth and claws) is drawn at weaponDraw,
-    // also unasked (the werewolf's graph starts in its combat stance once it has changed).
+    // The weapon is drawn at weaponDraw (graphEvent), also unasked (the werewolf's graph starts
+    // in its combat stance once it has changed); the draw's clip plays on to WeapEquip_Out. A
+    // creature's graph (the wolf's: combatStanceStart raises weaponDraw) has no equip clip that
+    // ends so: its draw ends at weaponDraw.
     if (
       answer === 'righthandweapondrawhandler' &&
-      (fighter.state.weapon === WeaponState.drawing ||
-        fighter.state.weapon === WeaponState.wantToDraw ||
-        fighter.state.weapon === WeaponState.sheathed) &&
       !(fighter.body?.behavior?.declares('WeapEquip_Out') ?? true)
     ) {
-      fighter.state.weapon = WeaponState.drawn;
       this.#setVariable(fighter, 'IsEquipping', 0);
     }
     if (lower === 'weapequip_out') this.#setVariable(fighter, 'IsEquipping', 0);
@@ -1775,14 +1772,11 @@ export class ActorCombat implements CombatBridge {
     // PlayerinIronSights), once a draw (the graph whose strikes count).
     if (fighter.player && strikes && answer === 'bowdrawnhandler')
       void this.#options.talk?.()?.playerAction('PIRN');
-    // So is its sheathing at weaponSheathe (no Unequip_Out follows).
+    // So does its sheathing at weaponSheathe (no Unequip_Out follows).
     if (
       answer === 'righthandweaponsheathehandler' &&
-      (fighter.state.weapon === WeaponState.sheathing ||
-        fighter.state.weapon === WeaponState.wantToSheathe) &&
       !(fighter.body?.behavior?.declares('Unequip_Out') ?? true)
     ) {
-      fighter.state.weapon = WeaponState.sheathed;
       this.#setVariable(fighter, 'IsUnequipping', 0);
     }
     if (lower === 'unequip_out') this.#setVariable(fighter, 'IsUnequipping', 0);
@@ -3498,8 +3492,11 @@ export class ActorCombat implements CombatBridge {
     if (answers.includes(false)) {
       fighter.attackSince = undefined;
       fighter.refusedAttacks++;
-      // One its graph refuses again and again and never took is not chosen again either.
-      const refusals = (fighter.refusals.get(event) ?? 0) + 1;
+      // One its graph refuses again and again and never took is not chosen again either. Not
+      // counted while its draw's clip plays on past the hand-off (the weapon is drawn at
+      // weaponDraw, the equip state takes no attack until WeapEquip_Out).
+      const equipping = (fighter.body?.behavior?.variable('IsEquipping') ?? 0) > 0;
+      const refusals = (fighter.refusals.get(event) ?? 0) + (equipping ? 0 : 1);
       fighter.refusals.set(event, refusals);
       if (!fighter.liveAttacks.has(event) && refusals >= DEAD_REFUSALS) {
         fighter.deadAttacks.add(event);
@@ -3548,6 +3545,16 @@ export class ActorCombat implements CombatBridge {
       fighter.weaponAsked = undefined;
       state.weapon = WeaponState.drawn;
       this.#setVariable(fighter, 'IsEquipping', 0);
+      return;
+    }
+    // A hit reaction (a stagger, a recoil) or a bleedout cuts the draw short; its graph plays the
+    // draw again once it is over (the stagger state leads back to the equip), and the weapon
+    // state stays as it was meanwhile, so the wait for the hand-off starts again after it.
+    // Timed from the ask, a draw a stagger cut ran out while the graph drew again, and the draw
+    // it then finished counted for nothing: Hadvar's graph stood readied and refused every draw
+    // after, his weapon "sheathed", as the bandit by Riverwood's river struck him again and again.
+    if (!refused && !canAct(state)) {
+      fighter.weaponAsked = { event: asked.event, since: this.#clock };
       return;
     }
     if (!refused && this.#clock - asked.since < WEAPON_ANSWER) return;
