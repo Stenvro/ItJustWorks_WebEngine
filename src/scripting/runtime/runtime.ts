@@ -1375,7 +1375,17 @@ export class ScriptRuntime implements VmHost {
     if (this.#index?.scripted.has(reference)) return true;
     const base = await this.baseOf(reference);
     if (base !== undefined && (await this.forms.attachments(base)) !== undefined) return true;
-    return (await this.forms.record(reference))?.fields.has('VMAD') === true;
+    if ((await this.forms.record(reference))?.fields.has('VMAD') === true) return true;
+    // An actor runs the scripts of the NPC_ it takes them from: its leveled list's pick, or a
+    // template's (MQ104's dragon takes DragonActorScript from its template's). That
+    // is known once the actor is resolved, so such a persistent actor's scripts start as its
+    // cell attaches, not with the new game (where nothing is picked yet).
+    const scriptBase = await this.#actorScriptBase(this.referenceHandle(reference));
+    return (
+      scriptBase !== undefined &&
+      scriptBase !== base &&
+      (await this.forms.attachments(scriptBase)) !== undefined
+    );
   }
 
   aliasFilled(quest: number, alias: number, reference: number): void {

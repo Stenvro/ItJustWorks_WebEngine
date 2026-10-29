@@ -213,6 +213,10 @@ each kind. Ours:
   the package it was set in, resumed, runs) and `weaponDrawn` (its weapon out, as DrawWeapon
   leaves it outside a fight: drawn again as it is loaded; TODO(M13): the original's save keeps
   its graph with the weapon out, so it does not draw again).
+- `flying` (a flier in the air: cruising, hovering, landing): as it loads it is not set on the
+  ground but stays where it was saved, and its flight, finding it high above the ground, has it
+  cruise on from there (before, MQ104's dragon circling the Western Watchtower came down at
+  once and took off again).
 - Not kept, as in the original: SetExpressionOverride's expression (the face's animation data
   belongs to its 3D, which the save does not hold; neither the actor's nor its process's save
   writes it).

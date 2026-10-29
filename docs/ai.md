@@ -1234,7 +1234,11 @@ from the original game's behaviour only (in our words):
   cursor per list), as many as their measured cost (an estimate per actor, updated by each
   turn) fits in the budget, at least one a frame. A turn runs the packages and the walk with
   all the time owed since the actor's last. An actor in combat, a scene, dialogue or asked-for
-  head tracking stays in the high process. At Whiterun's busiest cell (tools/sim-speed.ts
+  head tracking stays in the high process, as far as the loaded area reaches: its senses test
+  and it is tested ([Detection](#detection)), and it is a fighter, wherever it is (its
+  controller is still only near the player). Found in MQ104: its dragon, a scene actor
+  circling the Western Watchtower 7,500 units off, was neither seen nor saw, and never fought.
+  At Whiterun's busiest cell (tools/sim-speed.ts
   --budget: 5 high, 40 middle-high) a round of all forty costs 0.15 ms of the 5, so each has its
   turn every frame and the step time is the same as without (about 10–11 ms either way, run to
   run); the budget bounds the frame where many more actors are beyond the high process (a
@@ -2272,6 +2276,22 @@ runs the rules.
   chosen again (a creature's). A draw or sheathe its graph refuses goes back, and one that never
   reaches its end (4 s without the graph's weaponDraw or weaponSheathe) leaves the weapon away,
   so that the fighter draws again: a guard waited for good with its bow "sheathing".
+- **Draw and hit reactions** (observed in the original): the weapon state follows the clips'
+  hand-off annotations, not their ends. weaponDraw's handler (RightHandWeaponDraw) puts the
+  weapons in the hands and sets the state to drawn from any state but a sheathe asked for
+  meanwhile; weaponSheathe's sets it to sheathed but for a draw asked for meanwhile; the begin
+  handlers only sound the draw, and staggerStop's only clears the staggered flag. A plain hit
+  (attack stagger 0) staggers nothing (see Staggers) and so leaves a draw alone; a stagger
+  (power attacks, bashes) or a recoil cuts it, by the graph: the stagger state's way out leads back into Weap_Equip_State, which
+  plays the draw again from its start (`tools/behavior-run.ts ... --event WeapEquip --at
+0.3:staggerStart`), and its weaponDraw then draws. So nothing answers a cut draw but the graph
+  playing it again: the 4 s wait for the hand-off starts anew after the reaction (and a
+  bleedout), and attacks the equip state refuses after the hand-off (until WeapEquip_Out) do not
+  count toward an attack never taken. Found 2026-10-29: Hadvar, staggered mid-draw by the bandit
+  that followed him from Helgen, was timed out to "sheathed" while his graph drew again, and its
+  draw raised in a state that did not count it: from then on his graph stood readied and refused
+  every draw, and he never fought back. TODO(M13): whether the engine also times a draw out is
+  not known; the 4 s wait stays as the fallback.
 - **Arrows:** an NPC never runs out of arrows while it carries one (UESP "Skyrim:Arrows"); only
   the player's quiver empties. Before this, bandit archers turned to their fists after their
   quiver's dozen shots.
@@ -3014,6 +3034,11 @@ original (behaviour, in our words), unless marked ours.
 The combat tree's movement selector (checked every 0.25 s) takes its Flight branch, second after
 Essential Down, for a flier that can fly or is not on the ground (src/shell/actor-combat-ai.ts
 asks `ActorFlight.fight`). A flier on the ground that cannot fly fights with the ground movement.
+The subtree is the fight's, not its target's: a new target (the combat AI's choice among the
+guards) leaves its phase, its maneuver and its combat area as they are; only what it saw of its
+target is new (before, MQ104's dragon, landed for a ground attack, took off again as it turned
+to the next guard). In the air it has no controller: detection takes its motion from its flight
+(it moves as it flies, running at its running speed); before, it counted as standing still.
 
 - **Takeoff** first: one on the ground or perched that can fly takes off.
 - Then a selector checked every second: **able to fly**, the attack loop; **perched and unable**,

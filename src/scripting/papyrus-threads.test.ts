@@ -136,6 +136,23 @@ describe('Papyrus threads', () => {
     expect(await readLog()).toBe('init-start,init-end,activate,');
   });
 
+  it('counts a call that waits for the object’s OnInit as waiting, not running', async () => {
+    const { vm, target, scheduler, readLog } = setup();
+    const init = vm.initialize(target);
+    await settle();
+    // A call into the script from another thread (an effect's OnEffectStart reading its
+    // actor) waits for the OnInit; the VM is idle meanwhile, so the frame that ends the OnInit's
+    // wait can come.
+    const call = vm.call(target, 'OnQuick');
+    await settle();
+    expect(vm.threads).toEqual({ running: 0, waiting: 2 });
+    await vm.idle();
+    scheduler.advance(1, 0);
+    await Promise.all([init, call]);
+    expect(await readLog()).toBe('init-start,init-end,quick,');
+    expect(vm.threads).toEqual({ running: 0, waiting: 0 });
+  });
+
   it('lets another event in while a thread waits (a latent call unlocks the script)', async () => {
     const { vm, target, scheduler, readLog } = setup();
     const slow = vm.sendEvent(target, 'OnSlow');

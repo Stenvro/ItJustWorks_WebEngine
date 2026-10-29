@@ -49,16 +49,36 @@ const kinds = (events: string[], state = newCombatState()): string[] =>
   effectsOf(events, state).map((effect) => effect.kind);
 
 describe('the combat state', () => {
-  it('draws at weaponDraw and is drawn at WeapEquip_Out (1HM_Equip), sheathes back', () => {
+  it('is drawn at weaponDraw, before WeapEquip_Out ends the clip (1HM_Equip), sheathes back', () => {
     const state = newCombatState();
     state.weapon = WeaponState.drawing;
     expect(weaponOut(state)).toBe(true);
     expect(kinds(['weaponDraw'], state)).toEqual(['hand']);
-    expect(state.weapon).toBe(WeaponState.drawing);
+    expect(state.weapon).toBe(WeaponState.drawn);
     kinds(['WeapEquip_Out'], state);
     expect(state.weapon).toBe(WeaponState.drawn);
     state.weapon = WeaponState.sheathing;
-    expect(kinds(['weaponSheathe', 'Unequip_Out'], state)).toEqual(['sheath']);
+    expect(kinds(['weaponSheathe'], state)).toEqual(['sheath']);
+    expect(state.weapon).toBe(WeaponState.sheathed);
+    kinds(['Unequip_Out'], state);
+    expect(state.weapon).toBe(WeaponState.sheathed);
+  });
+
+  it("follows its graph's hand-off whatever it was asked, but for the opposite asked meanwhile", () => {
+    // A draw the AI had given up on (cut short by a stagger, the graph's equip played again
+    // after it): its weaponDraw still draws.
+    const state = newCombatState();
+    kinds(['weaponDraw'], state);
+    expect(state.weapon).toBe(WeaponState.drawn);
+    // A sheathe asked for before the draw's hand-off keeps it.
+    state.weapon = WeaponState.wantToSheathe;
+    kinds(['weaponDraw'], state);
+    expect(state.weapon).toBe(WeaponState.wantToSheathe);
+    state.weapon = WeaponState.wantToDraw;
+    kinds(['weaponSheathe'], state);
+    expect(state.weapon).toBe(WeaponState.wantToDraw);
+    state.weapon = WeaponState.drawn;
+    kinds(['weaponSheathe'], state);
     expect(state.weapon).toBe(WeaponState.sheathed);
   });
 

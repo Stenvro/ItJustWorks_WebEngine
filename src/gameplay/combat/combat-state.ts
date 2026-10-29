@@ -230,7 +230,12 @@ export function graphEvent(state: CombatState, event: string, handler?: string):
     switch (handler.toLowerCase()) {
       // Drawing and sheathing (1HM_Equip: BeginWeaponDraw, weaponDraw at 0.6 s, WeapEquip_Out
       // at its end). Observed in the original: the begin handlers sound the right hand's
-      // weapon's equip or unequip sound; weaponDraw's puts the weapons in the hands.
+      // weapon's equip or unequip sound; weaponDraw's puts the weapons in the hands and the
+      // weapon state to drawn (from any state but a sheathe asked for meanwhile), weaponSheathe's
+      // puts them away and the state to sheathed (but for a draw asked for meanwhile). So a draw
+      // is done at its hand-off, not at its clip's end: a hit reaction that cuts the clip's tail
+      // short leaves the weapon out, and one that cuts it before the hand-off leaves it drawing
+      // until the graph's draw plays again after it (the stagger state leads back to the equip).
       case 'weaponbegindrawrighthandler':
         effects.push({ kind: 'draw-begin' });
         break;
@@ -238,9 +243,11 @@ export function graphEvent(state: CombatState, event: string, handler?: string):
         effects.push({ kind: 'sheathe-begin' });
         break;
       case 'righthandweapondrawhandler':
+        if (state.weapon !== WeaponState.wantToSheathe) state.weapon = WeaponState.drawn;
         effects.push({ kind: 'hand' });
         break;
       case 'righthandweaponsheathehandler':
+        if (state.weapon !== WeaponState.wantToDraw) state.weapon = WeaponState.sheathed;
         effects.push({ kind: 'sheath' });
         break;
       // A melee attack: wind-up, swing, the hit, the window for the next, the follow-through.
@@ -335,7 +342,8 @@ export function graphEvent(state: CombatState, event: string, handler?: string):
     return effects;
   }
   switch (lower(event)) {
-    // Magic drawn: MRh_and_MLh_Equip raises weaponDraw, then Magic_Equip_Out (0_master.hkx).
+    // The draw's clip ends (weaponDraw has set the state already; this covers a clip without
+    // it). Magic: MRh_and_MLh_Equip raises weaponDraw, then Magic_Equip_Out (0_master.hkx).
     case 'weapequip_out':
     case 'magic_equip_out':
       if (state.weapon === WeaponState.drawing || state.weapon === WeaponState.wantToDraw) {

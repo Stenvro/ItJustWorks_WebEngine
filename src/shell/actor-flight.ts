@@ -76,7 +76,7 @@ import { ActorValue, actorValueIndex } from '../world/actor-values.ts';
 import { referenceMatrix } from '../world/cell-loader.ts';
 import { FurnitureMarkerFlag, parseFurniture } from '../world/furniture-records.ts';
 import { seededRandom } from '../world/actors.ts';
-import type { ActorFlightState, ScriptRuntime } from '../scripting/runtime/runtime.ts';
+import type { ActorFlightState, ActorMotion, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { ActorCasting } from './actor-casting.ts';
 import type { ActorFurniture, FurnitureUser, StageObject } from './actor-furniture.ts';
 import type { ActorMovers } from './actor-movers.ts';
@@ -258,6 +258,8 @@ interface Flier {
   deferred: { downSince: number | undefined } | undefined;
   /** Its breath's ranges (its shouts' smallest), once read. */
   ranges: { readonly optimal: number; readonly max: number } | undefined;
+  /** How it flew in its last steering step (its velocity, at a run or a walk): detection's. */
+  flown: { readonly velocity: Vec3; readonly running: boolean } | undefined;
 }
 
 /** A flier asks its graph again after this long without an answer (seconds). */
@@ -349,6 +351,8 @@ export class ActorFlight {
   #actors: readonly StagedActor[] = [];
   /** State changes and fight phases, a line each (the flight trace: engineDev.flightTrace). */
   readonly #trace: string[] = [];
+  /** Fliers a loaded save had in the air: they cruise on where they are placed. */
+  readonly #savedAloft = new Set<number>();
   #clock = 0;
 
   constructor(options: ActorFlightOptions) {
@@ -399,6 +403,35 @@ export class ActorFlight {
   /** IsFlying: in the air (taking off, cruising, hovering, landing, an action). */
   isFlying(reference: number): boolean {
     return airborne(this.state(reference));
+  }
+
+  /**
+   * How a flier in the air moves, as detection weighs it (its own controller's motion on the
+   * ground): flying is moving, at a run when it flies at its running speed (in combat, and
+   * when its package hurries it). Undefined on the ground or perched.
+   */
+  motion(reference: number): ActorMotion | undefined {
+    const flier = this.#fliers.get(reference);
+    if (!flier || !airborne(flier.state)) return undefined;
+    const [vx, vy, vz] = flier.flown?.velocity ?? [0, 0, 0];
+    const speed = Math.hypot(vx, vy);
+    const moving = Math.hypot(speed, vz) > 0;
+    return {
+      moving,
+      running: moving && flier.flown?.running === true,
+      sprinting: false,
+      sneaking: false,
+      swimming: false,
+      speed,
+      pathing: false,
+      heading: flier.staged.heading,
+      velocity: [vx, vy, vz],
+    };
+  }
+
+  /** A loaded save had this flier in the air: placed, it cruises on from there. */
+  restoreAloft(reference: number): void {
+    this.#savedAloft.add(reference);
   }
 
   /** Whether it sits on a perch now. */
@@ -696,7 +729,18 @@ export class ActorFlight {
     const here = flier.staged.position;
     const able = this.mayFly(reference);
     let combat = flier.combat;
-    if (combat?.target !== seen.reference) {
+    // Another target in the same fight: the Flight subtree goes on where it is (its phase, its
+    // maneuver, its combat area: the combat tree is the fight's, not the target's); only what
+    // it saw of its target is new (a dragon landed for a ground attack took off again at once
+    // as it turned to the next guard).
+    if (combat && combat.target !== seen.reference) {
+      combat.target = seen.reference;
+      combat.seen = undefined;
+      combat.grabbable = false;
+      combat.grabCheckAt = 0;
+      this.#log(flier, `fights ${hex(seen.reference)}`);
+    }
+    if (!combat) {
       combat = {
         target: seen.reference,
         phase: 'orbit',
@@ -1646,7 +1690,9 @@ export class ActorFlight {
       if (
         flier.state === FlyingState.none &&
         this.mayFly(reference) &&
-        ((start?.kind === 'at' && start.sky === true) || this.#highAboveGround(staged))
+        ((start?.kind === 'at' && start.sky === true) ||
+          this.#savedAloft.delete(reference) ||
+          this.#highAboveGround(staged))
       ) {
         this.startCruising(reference);
       }
@@ -1819,6 +1865,8 @@ export class ActorFlight {
       seconds,
     );
     flier.pitch = step.pitch;
+    const [dx, dy, dz] = step.direction;
+    flier.flown = { velocity: [dx * speed, dy * speed, dz * speed], running: gait === 'run' };
     let next = step.position;
     // Never into the ground under it.
     const below = this.#groundUnder(next);
@@ -2366,6 +2414,7 @@ export class ActorFlight {
       grounded: false,
       deferred: undefined,
       ranges: undefined,
+      flown: undefined,
     };
     this.#fliers.set(reference, flier);
     void this.#readRadius(flier).catch(() => undefined);
@@ -2489,6 +2538,7 @@ export class ActorFlight {
   // --- Leaving ----------------------------------------------------------------------------------
 
   remove(reference: number): void {
+    this.#savedAloft.delete(reference);
     const flier = this.#fliers.get(reference);
     if (!flier) return;
     flier.grab?.done(false);
@@ -2509,6 +2559,7 @@ export class ActorFlight {
   clear(): void {
     for (const reference of [...this.#fliers.keys()]) this.remove(reference);
     this.#shouts.clear();
+    this.#savedAloft.clear();
   }
 
   #warn(message: string): void {
