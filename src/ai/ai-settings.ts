@@ -42,6 +42,11 @@ export interface AiSettings {
   readonly markerDestinationRadius: number;
   readonly furnitureDestinationRadius: number;
   /**
+   * fAIMinLocationHeight: a reference is within a place this far above or below it at least
+   * (the place's radius if larger; GetWithinPackageLocation).
+   */
+  readonly minLocationHeight: number;
+  /**
    * fAIMoveDistanceToRecalcTravelPath, …TravelToActor, …FollowPath: a path to a moving
    * destination (an actor) is searched again once it moved this far from where the path led.
    */
@@ -188,6 +193,7 @@ const SETTINGS: readonly (readonly [keyof AiSettings, string, number])[] = [
   ['distanceRadiusMinLocation', 'fAIDistanceRadiusMinLocation', 100],
   ['markerDestinationRadius', 'fAIMarkerDestinationRadius', 25],
   ['furnitureDestinationRadius', 'fAIFurnitureDestinationRadius', 25],
+  ['minLocationHeight', 'fAIMinLocationHeight', 100],
   ['recalcTravelPath', 'fAIMoveDistanceToRecalcTravelPath', 300],
   ['recalcTravelToActor', 'fAIMoveDistanceToRecalcTravelToActor', 100],
   ['recalcFollowPath', 'fAIMoveDistanceToRecalcFollowPath', 300],
