@@ -468,7 +468,12 @@ MUSDiscoveryGeneric else; one selection, then the type ends). Skyrim gives no ex
 
 Riding a horse the HUD is in `ShowElements("HorseMode", true)` (the meters, the compass,
 messages; no crosshair), with the weapon drawn in `WarHorseMode` (the crosshair, stamina, the
-charge meter and arrow info too).
+charge meter and arrow info too). While a script has Game.SetHudCartMode(True) the HUD is in
+`CartMode` (only the compass's frame: no meters, no crosshair or activation prompt); MQ101's
+stage 160 turns it off as the player gets up at the block, with the movement and looking
+controls back (activation, fighting and the menus stay off until the keep, stage 240). One rule
+(`rideModes` in src/shell/hud-elements.ts) gives these modes to the HUD and to the headless
+simulation's checks (tests/sim-opening-ride.int.test.ts).
 
 The HUD also shows: speech around the player (`ShowSubtitle(text)`, `HideSubtitle()`; with
 General Subtitles, `SetSubtitlesEnabled`; observed in the original: only within
