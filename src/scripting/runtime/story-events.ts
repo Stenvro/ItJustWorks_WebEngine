@@ -54,30 +54,23 @@ export class StoryEvents {
     this.#runtime = runtime;
     runtime.events.on('actorLocationChange', (event) => this.#changeLocation(event));
     runtime.events.on('activate', (event) => this.#activateActor(event));
+    // TODO(M13): not the original's rule (it raises no event as a quest has started; see
+    // below), kept for now as a turn of the queue after each start: without it the timing of
+    // the events after a start changes and MQ105's courtyard lesson (stage 105) no longer
+    // comes in the simulation. Find what waits on it, then drop it.
     runtime.events.on('questStartStop', (event) =>
-      event.started ? this.questStart(event.quest) : undefined,
+      event.started ? this.#raise('QSTR', [['Q1', event.quest]], []) : undefined,
     );
   }
 
-  /**
-   * Flatter (FLAT), Bribe (BRIB), Intimidate (INTM): the player persuaded, bribed or
-   * intimidated an actor in dialogue (OnStoryFlatterNPC / BribeNPC / IntimidateNPC(akActor)).
-   * Member: R1 the actor. Raised by the dialogue as an info's outcome counts a persuasion, a
-   * bribe or an intimidation (FavorDialogueScript's Persuade, Bribe and Intimidate:
-   * dialogue-engine.ts).
-   */
-  persuaded(kind: 'FLAT' | 'BRIB' | 'INTM', actor: number): Promise<boolean> {
-    return this.#raise(kind, [['R1', actor]], [this.#runtime.referenceHandle(actor)]);
-  }
-
-  /**
-   * Player Gets Favor (PRFV): an actor starts doing the player a favor (Actor.SetDoingFavor:
-   * a follower's command). Member: R1 the actor (OnStoryPlayerGetsFavor(akActor)).
-   * TODO(M13): the engine's own raise site is not read; this is where the favor state begins.
-   */
-  playerGetsFavor(actor: number): Promise<boolean> {
-    return this.#raise('PRFV', [['R1', actor]], [this.#runtime.referenceHandle(actor)]);
-  }
+  // Observed in the original: Flatter (FLAT, R1 the actor), Bribe (BRIB, R1 the actor and V1 a
+  // gold value), Intimidate (INTM, R1) and Player Recieves Favor (PRFV, R1) are event types with
+  // their members and quest script events (OnStoryFlatterNPC, ...), but nothing in the engine
+  // raises them: persuasions, bribes, intimidations (FavorDialogueScript) and favors
+  // (Actor.SetDoingFavor) tell the story manager nothing. Vanilla's one node for them
+  // (WIFlatterQuestNode) has no quests. Quest Start (QSTR, Q1 the quest) is the story manager's
+  // own: a script's Quest.Start (or SetStage on a quest not running) queues it, and the story
+  // teller starts the quest at its turn instead of running the event's nodes (natives/quest.ts).
 
   /**
    * Player Infected (INFC): the player caught a disease. Members: R1 the actor that passed it
@@ -101,14 +94,6 @@ export class StoryEvents {
   /** Player Cured (CURE): a disease of the player's was cured. Member: F1 the disease. */
   cure(disease: number): Promise<boolean> {
     return this.#raise('CURE', [['F1', disease]], [this.#runtime.formHandle(disease)]);
-  }
-
-  /**
-   * Quest Start (QSTR): a quest started. Member: F1 the quest. TODO(M13): its members are not
-   * read (no vanilla node uses it; its quest script event is not in Quest.pex).
-   */
-  questStart(quest: number): Promise<boolean> {
-    return this.#raise('QSTR', [['F1', quest]], []);
   }
 
   /**

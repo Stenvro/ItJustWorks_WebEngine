@@ -1093,7 +1093,7 @@ async function conditionValue(
     case Fn.isBribedByPlayer:
       return reference === undefined
         ? undefined
-        : flag(state.actors.get(reference)?.bribed ?? false);
+        : flag(runtime.crime.persuaded(reference, 'bribed'));
     case Fn.isKiller:
       // The calling actor killed the one given.
       return flag(

@@ -196,7 +196,7 @@ const STORY_TYPES: Readonly<Record<string, { readonly event: string; readonly wh
     when: 'the player pays a fine (criminal, guard, crime faction, gold)',
   },
   PRFV: { event: 'OnStoryPlayerGetsFavor', when: 'an actor does the player a favor (actor)' },
-  QSTR: { event: '', when: 'a quest starts (the TES5 quest start event; no OnStory event)' },
+  QSTR: { event: '', when: 'a script starts a quest (queued; no node runs for it)' },
   REMP: {
     event: 'OnStoryRemoveFromPlayer',
     when: 'an item leaves the player (owner, item, location, base, how)',
@@ -224,7 +224,7 @@ const RAISED: Readonly<Record<string, string>> = {
   AIPL: 'the takes, the container and barter menus',
   ARRT: 'the guards’ arrest',
   ASSU: 'crime-engine.ts',
-  BRIB: 'dialogue-engine.ts (a bribe counted)',
+  BRIB: 'nothing: the original never raises it',
   CAST: 'casting-engine.ts',
   CHRR: 'crime-engine.ts',
   CRFT: 'crafting-menu.ts',
@@ -232,10 +232,10 @@ const RAISED: Readonly<Record<string, string>> = {
   DEAD: 'the senses',
   ESJA: 'crime-engine.ts',
   INFC: 'magic-engine.ts (contractDisease)',
-  INTM: 'dialogue-engine.ts (an intimidation counted)',
+  INTM: 'nothing: the original never raises it',
   JAIL: 'crime-engine.ts',
-  PRFV: 'Actor.SetDoingFavor',
-  QSTR: 'story-events.ts (the quest start event)',
+  PRFV: 'nothing: the original never raises it',
+  QSTR: 'StoryManager.questStart (Quest.Start, SetStage queue it)',
   KILL: 'crime-engine.ts (checked in event-sources.test.ts)',
   LEVL: 'progression-engine.ts',
   LOCK: 'crime-engine.ts',
@@ -344,7 +344,7 @@ describe.skipIf(!hasGamedata())('the story manager’s events (data, headless si
     ]);
   });
 
-  it('raises Flatter (FLAT: R1 the actor) as a persuasion succeeds in dialogue', async () => {
+  it('raises no Flatter as a persuasion succeeds in dialogue (the original never raises it)', async () => {
     expect(talkedTo).not.toBe(0);
     const record = await sim.db.get(GATE_PERSUADED_INFO);
     expect(record).toBeDefined();
@@ -357,11 +357,12 @@ describe.skipIf(!hasGamedata())('the story manager’s events (data, headless si
       await sim.runtime.dialogue.runFragment(info, 'begin', talkedTo);
       await sim.runtime.dialogue.runFragment(info, 'end', talkedTo);
     })();
-    for (let i = 0; i < 20 && sim.storyEvents('FLAT').length === 0; i++) await sim.step(0.5);
+    for (let i = 0; i < 20 && !(sim.runtime.stats.get('persuasions') ?? 0); i++) {
+      await sim.step(0.5);
+    }
     await sim.step(0.5);
     void said;
     expect(sim.runtime.stats.get('persuasions')).toBeGreaterThan(0);
-    const raised = sim.storyEvents('FLAT').filter((event) => event.at >= since);
-    expect(raised.map((event) => event.forms.R1)).toEqual([talkedTo]);
+    expect(sim.storyEvents('FLAT').filter((event) => event.at >= since)).toEqual([]);
   }, 60_000);
 });

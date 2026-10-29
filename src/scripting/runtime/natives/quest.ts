@@ -28,9 +28,12 @@ export function registerQuest(n: Register, runtime: ScriptRuntime): void {
     quests.notStarted.set(quest, `starts only from the story manager's ${record.event} event`);
     return true;
   };
+  // A quest not running starts through the story manager's queue (its Quest Start event).
+  const start = (quest: number): Promise<boolean> =>
+    quests.isRunning(quest) ? Promise.resolve(true) : runtime.storyManager.questStart(quest);
   n('quest.start', async ({ self, latent, where }) => {
     if (!self || (await outsideStoryManager(self.formId, where))) return false;
-    return latent(quests.start(self.formId));
+    return latent(start(self.formId));
   });
   n('quest.stop', async ({ self, latent }) => {
     if (self) await latent(quests.stop(self.formId));
@@ -43,7 +46,11 @@ export function registerQuest(n: Register, runtime: ScriptRuntime): void {
   // The caller waits for the stage's fragment (unlocked meanwhile).
   n('quest.setcurrentstageid', async ({ self, args, latent, where }) => {
     if (!self || (await outsideStoryManager(self.formId, where))) return false;
-    return latent(quests.setStage(self.formId, int(args[0])));
+    const quest = self.formId;
+    const stage = int(args[0]);
+    return latent(
+      start(quest).then((started) => (started ? quests.setStage(quest, stage) : false)),
+    );
   });
   n('quest.getcurrentstageid', ({ self }) =>
     self ? (state.quests.get(self.formId)?.stage ?? 0) : 0,

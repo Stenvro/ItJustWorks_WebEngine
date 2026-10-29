@@ -91,6 +91,17 @@ export interface CrimeSettings {
   readonly bribeCostCurve: number;
   readonly bribeScale: number;
   readonly bribeSpeechcraftMult: number;
+  readonly bribeNPCLevelMult: number;
+  readonly bribeMoralityMult: number;
+  readonly intimidateSpeechcraftCurve: number;
+  /** fIntimidateConfidenceMult* by Confidence: cowardly, cautious, average, brave, foolhardy. */
+  readonly intimidateConfidenceCowardly: number;
+  readonly intimidateConfidenceCautious: number;
+  readonly intimidateConfidenceAverage: number;
+  readonly intimidateConfidenceBrave: number;
+  readonly intimidateConfidenceFoolhardy: number;
+  readonly daysToStayBribed: number;
+  readonly daysToStayIntimidated: number;
   readonly favorFriend: number;
   readonly favorConfidant: number;
   readonly favorAlly: number;
@@ -100,8 +111,9 @@ export interface CrimeSettings {
 /**
  * Each setting's GMST and the engine's built-in value (used where the load order stores none:
  * BeermotorWB's "All Skyrim Game Settings"; Skyrim.esm stores iCrimeGoldWerewolf,
- * iCrimeGoldStealHorse, iGuardWarnings, fAITrespassWarningTimer, the fPickPocket*, fBribe* and
- * iFavor* settings).
+ * iCrimeGoldStealHorse, iGuardWarnings, fAITrespassWarningTimer, the fPickPocket*, iFavor* and
+ * three of the fBribe* settings: fBribeCostCurve 1.4, fBribeScale 0.5, fBribeSpeechcraftMult
+ * 0.1). The bribe and intimidation settings' built-in values are the original's.
  */
 const SETTINGS: readonly (readonly [keyof CrimeSettings, string, number])[] = [
   ['murder', 'iCrimeGoldMurder', 1000],
@@ -124,9 +136,19 @@ const SETTINGS: readonly (readonly [keyof CrimeSettings, string, number])[] = [
   ['pickpocketMinChance', 'fPickPocketMinChance', 0],
   ['pickpocketMaxChance', 'fPickPocketMaxChance', 90],
   ['pickpocketSkillUsesCurve', 'fPickpocketSkillUsesCurve', 0.8],
-  ['bribeCostCurve', 'fBribeCostCurve', 1.4],
-  ['bribeScale', 'fBribeScale', 0.5],
-  ['bribeSpeechcraftMult', 'fBribeSpeechcraftMult', 0.1],
+  ['bribeCostCurve', 'fBribeCostCurve', 1.5],
+  ['bribeScale', 'fBribeScale', 1],
+  ['bribeSpeechcraftMult', 'fBribeSpeechcraftMult', 0.03],
+  ['bribeNPCLevelMult', 'fBribeNPCLevelMult', 0.1],
+  ['bribeMoralityMult', 'fBribeMoralityMult', 1],
+  ['intimidateSpeechcraftCurve', 'fIntimidateSpeechcraftCurve', 1.5],
+  ['intimidateConfidenceCowardly', 'fIntimidateConfidenceMultCowardly', 0],
+  ['intimidateConfidenceCautious', 'fIntimidateConfidenceMultCautious', 0.5],
+  ['intimidateConfidenceAverage', 'fIntimidateConfidenceMultAverage', 1],
+  ['intimidateConfidenceBrave', 'fIntimidateConfidenceMultBrave', 1.5],
+  ['intimidateConfidenceFoolhardy', 'fIntimidateConfidenceMultFoolhardy', 100],
+  ['daysToStayBribed', 'iAINumberDaysToStayBribed', 1],
+  ['daysToStayIntimidated', 'iAINumberDaysToStayIntimidated', 1],
   ['favorFriend', 'iFavorFriendValue', 25],
   ['favorConfidant', 'iFavorConfidantValue', 50],
   ['favorAlly', 'iFavorAllyValue', 100],
@@ -387,49 +409,100 @@ export function guardResponse(situation: GuardSituation): GuardResponse {
   return values.attackOnSight ? 'attack' : 'none';
 }
 
-/**
- * The gold a bribe takes (GetBribeAmount): fBribeScale × 10 × level ^ fBribeCostCurve, less
- * fBribeSpeechcraftMult percent per Speech point, plus the bounty a guard is to overlook.
- * TODO(M13): the engine's formula is not documented; this uses its settings' names.
- */
-export function bribeAmount(
-  level: number,
-  speech: number,
-  bounty: number,
-  settings: Pick<CrimeSettings, 'bribeCostCurve' | 'bribeScale' | 'bribeSpeechcraftMult'>,
-): number {
-  const base = settings.bribeScale * 10 * Math.max(1, level) ** settings.bribeCostCurve;
-  const discount = Math.min(
-    0.9,
-    (Math.min(100, Math.max(0, speech)) * settings.bribeSpeechcraftMult) / 100,
-  );
-  return Math.max(1, Math.round(base * (1 - discount) + Math.max(0, bounty)));
+// --- Bribes and intimidation --------------------------------------------------------------
+
+/** The two sides of a bribe or an intimidation: the player and the actor spoken to. */
+export interface SpeechSides {
+  readonly player: { readonly level: number; readonly speech: number };
+  readonly target: {
+    readonly level: number;
+    readonly speech: number;
+    /** Morality (0 any crime ... 3 none): the moral cost more to bribe. */
+    readonly morality: number;
+    /** Confidence (0 cowardly, 1 cautious, 2 average, 3 brave, 4 foolhardy). */
+    readonly confidence: number;
+  };
 }
 
 /**
- * fIntimidateConfidenceMult by Confidence (0 cowardly, 1 cautious, 2 average, 3 brave, 4
- * foolhardy): the engine's defaults (no plugin sets them; the Unofficial Skyrim Patch's notes
- * give 0, 0.5, 1, 1.5, 100, the last making the foolhardy impossible to intimidate).
+ * The gold a bribe takes before the player's perks (GetBribeAmount, the dialogue's
+ * `<BribeCost>`). Observed in the original: (its level × fBribeNPCLevelMult + the player's
+ * level + (100 − (the player's Speech − its Speech)) × fBribeSpeechcraftMult) ^ fBribeCostCurve
+ * × fBribeScale × (1 + its Morality × fBribeMoralityMult). The perk entry point Mod Bribe Amount
+ * then changes it (crime-engine.ts), and the gold is that rounded down. No bounty is in it.
  */
-export const INTIMIDATE_CONFIDENCE_MULT = [0, 0.5, 1, 1.5, 100] as const;
+export function bribeCost(
+  sides: SpeechSides,
+  settings: Pick<
+    CrimeSettings,
+    | 'bribeCostCurve'
+    | 'bribeScale'
+    | 'bribeSpeechcraftMult'
+    | 'bribeNPCLevelMult'
+    | 'bribeMoralityMult'
+  >,
+): number {
+  const { player, target } = sides;
+  const base =
+    target.level * settings.bribeNPCLevelMult +
+    player.level +
+    (100 - (player.speech - target.speech)) * settings.bribeSpeechcraftMult;
+  return (
+    Math.max(0, base) ** settings.bribeCostCurve *
+    settings.bribeScale *
+    (1 + target.morality * settings.bribeMoralityMult)
+  );
+}
 
 /**
- * Whether the player intimidates an actor (GetIntimidateSuccess, WillIntimidateSucceed; UESP
- * "Skyrim:Bribe"): the player's level × (1 + max(−1, (their Speech − its Speech) / 100)) ^
- * fIntimidateSpeechcraftCurve is at least its level × fIntimidateConfidenceMult of its
- * Confidence. `playerBonus` multiplies the player's side (the perk entry point Mod Player
- * Intimidation).
+ * The player's side of an intimidation before their perks (GetIntimidateSuccess,
+ * WillIntimidateSucceed). Observed in the original: the player's level × (1 + max(−1, (their
+ * Speech − its Speech) / 100)) ^ fIntimidateSpeechcraftCurve. The perk entry point Mod Player
+ * Intimidation then changes it (Intimidation doubles it).
  */
-export function intimidates(
-  player: { readonly level: number; readonly speech: number },
-  target: { readonly level: number; readonly speech: number; readonly confidence: number },
-  speechcraftCurve: number,
-  playerBonus = 1,
+export function intimidation(
+  sides: SpeechSides,
+  settings: Pick<CrimeSettings, 'intimidateSpeechcraftCurve'>,
+): number {
+  const skill = Math.max(-1, (sides.player.speech - sides.target.speech) / 100);
+  return sides.player.level * (1 + skill) ** settings.intimidateSpeechcraftCurve;
+}
+
+/**
+ * Whether an intimidation of `scariness` (the player's side, perks applied) works on an actor.
+ * Observed in the original: it does if the actor's level × fIntimidateConfidenceMult of its
+ * Confidence is at most that (Cowardly 0: always; Foolhardy 100: as good as never). A Confidence
+ * outside the five takes its level alone.
+ */
+export function intimidated(
+  scariness: number,
+  target: SpeechSides['target'],
+  settings: Pick<
+    CrimeSettings,
+    | 'intimidateConfidenceCowardly'
+    | 'intimidateConfidenceCautious'
+    | 'intimidateConfidenceAverage'
+    | 'intimidateConfidenceBrave'
+    | 'intimidateConfidenceFoolhardy'
+  >,
 ): boolean {
-  const skill = Math.max(-1, (player.speech - target.speech) / 100);
-  const scariness = player.level * (1 + skill) ** speechcraftCurve * playerBonus;
-  const confidence = Math.min(4, Math.max(0, Math.round(target.confidence)));
-  return target.level * (INTIMIDATE_CONFIDENCE_MULT[confidence] ?? 1) <= scariness;
+  const mults = [
+    settings.intimidateConfidenceCowardly,
+    settings.intimidateConfidenceCautious,
+    settings.intimidateConfidenceAverage,
+    settings.intimidateConfidenceBrave,
+    settings.intimidateConfidenceFoolhardy,
+  ];
+  return target.level * (mults[target.confidence] ?? 1) <= scariness;
+}
+
+/**
+ * The last game day a bribe or an intimidation holds (Actor.SetBribed, SetIntimidated). Observed
+ * in the original: the actor keeps the day it was given plus iAINumberDaysToStayBribed (or
+ * ...Intimidated) days, and it holds until the date is past that day.
+ */
+export function persuadedUntil(gameDaysPassed: number, days: number): number {
+  return Math.floor(gameDaysPassed) + days;
 }
 
 // --- Trespassing --------------------------------------------------------------------------

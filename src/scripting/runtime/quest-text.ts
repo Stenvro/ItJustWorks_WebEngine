@@ -5,7 +5,8 @@
 // the quest's text display globals (QTGL) as a whole number; the pronouns of the actor that
 // fills an alias by its sex (`<Alias.Pronoun=Name>` he / she, `.PronounObj` him / her,
 // `.PronounPos` his / hers, `.PronounPosObj` his / her, `.PronounRef` and `.PronounInt` himself /
-// herself: the settings sPronoun*Male / *Female) and its race's name (`<Alias.Race=Name>`). A tag
+// herself: the settings sPronoun*Male / *Female) and its race's name (`<Alias.Race=Name>`); in a
+// dialogue topic's text `<BribeCost>` is the gold a bribe of the one spoken to takes. A tag
 // that cannot be filled (an empty alias, a global the quest does not list, a pronoun of what is
 // no actor) stays as it is, as it does in the game. Platform-independent.
 
@@ -29,12 +30,24 @@ const PRONOUNS: Readonly<Record<string, string>> = {
 /** How deep NPC templates are followed for a name (TPLT chains are short). */
 const TEMPLATE_DEPTH = 8;
 
-/** A quest's text with its tags filled in. */
+/** `<BribeCost>`: what a bribe of the one spoken to takes. */
+const BRIBE_COST = /<BribeCost>/gi;
+
+/**
+ * A quest's text with its tags filled in. `speaker`: the actor a dialogue line is said with,
+ * for `<BribeCost>` (observed in the original: its GetBribeAmount, a whole number).
+ */
 export async function questText(
   runtime: ScriptRuntime,
   quest: QuestRecord,
-  text: string,
+  original: string,
+  speaker?: number,
 ): Promise<string> {
+  let text = original;
+  if (speaker !== undefined && text.toLowerCase().includes('<bribecost>')) {
+    const cost = String(await runtime.crime.bribeAmount(speaker));
+    text = text.replace(BRIBE_COST, cost);
+  }
   const tags = [...text.matchAll(TAG)];
   if (tags.length === 0) return text;
   const filled = await Promise.all(

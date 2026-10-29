@@ -228,3 +228,25 @@ describe('stolen items', () => {
     expect(crime.stolenCount(CHEST, ARROW)).toBe(0);
   });
 });
+
+describe('bribes and intimidations', () => {
+  it('hold through the next day, one replacing the other (the original’s rule)', async () => {
+    const { crime, state } = engine();
+    state.gameDaysPassed = 3.4;
+    await crime.setPersuaded(CITIZEN, 'bribed', true);
+    expect(crime.persuaded(CITIZEN, 'bribed')).toBe(true);
+    expect(crime.persuaded(CITIZEN, 'intimidated')).toBe(false);
+    // Intimidated now: no longer bribed.
+    await crime.setPersuaded(CITIZEN, 'intimidated', true);
+    expect(crime.persuaded(CITIZEN, 'bribed')).toBe(false);
+    expect(crime.persuaded(CITIZEN, 'intimidated')).toBe(true);
+    state.gameDaysPassed = 4.9;
+    expect(crime.persuaded(CITIZEN, 'intimidated')).toBe(true);
+    // Day 5: past it.
+    state.gameDaysPassed = 5.01;
+    expect(crime.persuaded(CITIZEN, 'intimidated')).toBe(false);
+    await crime.setPersuaded(GUARD, 'bribed', true);
+    await crime.setPersuaded(GUARD, 'bribed', false);
+    expect(crime.persuaded(GUARD, 'bribed')).toBe(false);
+  });
+});

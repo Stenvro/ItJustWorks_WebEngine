@@ -753,6 +753,25 @@ raised by the crime, crafting and progression engines where the engine raises th
 as the actor is killed, with the crime it made: not from the death event, whose data has no
 crime). Actor Dialogue (ADIA) is the actors' conversations' own.
 
+**Never raised.** Observed in the original: Flatter (FLAT: R1 the actor), Bribe (BRIB: R1 the
+actor, V1 a gold value), Intimidate (INTM: R1) and Player Recieves Favor (PRFV: R1) are event
+types with their members and quest script events (OnStoryFlatterNPC, OnStoryBribeNPC,
+OnStoryIntimidateNPC, OnStoryPlayerGetsFavor), but no code raises them: a persuasion, a bribe or
+an intimidation (FavorDialogueScript: the counts, Actor.SetBribed, SetIntimidated) and a favor
+(Actor.SetDoingFavor) tell the story manager nothing. Vanilla's one node for them,
+WIFlatterQuestNode, has no quests. Ours raises none of them either.
+
+**Quest Start** (QSTR: Q1 the quest) is the story manager's own. Observed in the original: a
+script's Quest.Start, or SetStage on a quest that does not run, queues a Quest Start event (the
+script waits); the story teller, at its turn, starts the quest instead of running the event's
+nodes (it has none). A quest started otherwise (the console, a quest node) starts at once, and no
+event follows a start. Ours: `StoryManager.questStart` (natives/quest.ts). TODO(M13): ours still
+queues a Quest Start event (no node runs) after every start, which the original does not: the
+simulation's MQ105 courtyard lesson depends on that turn of the queue. TODO(M13): ours waits
+for a starting quest's start-up fragments, so a start asked while an event or a start is being
+processed (a fragment starting another quest) starts at once rather than queueing behind
+(it would wait for itself).
+
 Measured on the game data (a new game, a morning; `tests/story-events.int.test.ts`): walking
 into Riverwood starts DialogueRiverwoodIntroScene, DialogueRiverwoodKidsScene,
 FreeformRiverwood01, DLC1ScrollHandlingChangeLoc and CRHoldExpansion (MS13LucanCamillaScene runs
