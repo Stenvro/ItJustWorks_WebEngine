@@ -922,9 +922,7 @@ export class PapyrusVm {
   async #lock(instance: Instance, thread: Thread, entering: boolean): Promise<void> {
     const resume = entering ? RESTART : undefined;
     if (instance.initializing && !thread.initializing) {
-      thread.resume = resume;
-      await this.#suspend(thread, instance.initializing);
-      thread.resume = undefined;
+      await this.#waitForInit(thread, instance.initializing, resume);
     }
     while (instance.owner && instance.owner !== thread) {
       thread.state = 'waiting';
@@ -1500,10 +1498,29 @@ export class PapyrusVm {
   /** Waits for another script's OnInit before its property is read or set (not begun yet). */
   async #awaitInit(thread: Thread, instance: Instance): Promise<void> {
     if (!instance.initializing || thread.initializing) return;
-    thread.resume = RESTART;
+    await this.#waitForInit(thread, instance.initializing, RESTART);
+  }
+
+  /**
+   * Waits for another script's OnInit with the run token given up. The thread waits meanwhile
+   * (not runs): the OnInit may itself wait for the next frame (a main-thread native such as
+   * IsDead), and the frame comes only once no thread runs (a magic effect's OnEffectStart on a
+   * dragon whose OnInit is in IsDead, reading the dragon's GetBaseAV).
+   */
+  async #waitForInit(
+    thread: Thread,
+    initializing: Promise<void>,
+    resume: ThreadWait | undefined,
+  ): Promise<void> {
+    thread.state = 'waiting';
+    thread.resume = resume;
+    this.#release(thread);
     try {
-      await this.#suspend(thread, instance.initializing);
+      await initializing;
     } finally {
+      // As after a latent wait: it runs again (in line for the run token).
+      thread.state = 'running';
+      await this.#acquire(thread);
       thread.resume = undefined;
     }
   }
