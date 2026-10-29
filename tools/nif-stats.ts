@@ -9,6 +9,7 @@ import { parseArgs } from 'node:util';
 import { ANIMATION_PARSERS } from '../src/formats/nif/animation-blocks.ts';
 import { BLOCK_PARSERS } from '../src/formats/nif/blocks.ts';
 import { COLLISION_PARSERS } from '../src/formats/nif/collision-blocks.ts';
+import { EXTRA_PARSERS } from '../src/formats/nif/extra-blocks.ts';
 import { PARTICLE_PARSERS } from '../src/formats/nif/particle-blocks.ts';
 import { parseNifHeader } from '../src/formats/nif/header.ts';
 import { parseNif } from '../src/formats/nif/nif.ts';
@@ -65,9 +66,13 @@ console.log('\nVersions:');
 for (const [key, count] of versions) console.log(`  ${key}: ${count}`);
 console.log('\nBlock types (files · blocks · parsed):');
 for (const [type, files] of [...blockFiles].sort((a, b) => b[1] - a[1])) {
-  const parsed = [BLOCK_PARSERS, ANIMATION_PARSERS, PARTICLE_PARSERS, COLLISION_PARSERS].some(
-    (parsers) => parsers.has(type),
-  )
+  const parsed = [
+    BLOCK_PARSERS,
+    ANIMATION_PARSERS,
+    PARTICLE_PARSERS,
+    COLLISION_PARSERS,
+    EXTRA_PARSERS,
+  ].some((parsers) => parsers.has(type))
     ? 'yes'
     : '';
   console.log(

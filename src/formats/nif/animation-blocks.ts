@@ -15,6 +15,7 @@ import {
 import { readSizedString } from './header.ts';
 import type {
   BlendInterpolatorBlock,
+  BoneLodControllerBlock,
   BoolDataBlock,
   BoolInterpolatorBlock,
   ControlledBlock,
@@ -25,8 +26,11 @@ import type {
   FloatInterpolatorBlock,
   Key,
   KeyGroup,
+  LagBoneControllerBlock,
   LightningControllerBlock,
+  LookAtInterpolatorBlock,
   ObjectPaletteBlock,
+  PathInterpolatorBlock,
   Point3InterpolatorBlock,
   PosDataBlock,
   QuatKey,
@@ -172,6 +176,29 @@ const parseLightningController: BlockParser = (reader): LightningControllerBlock
   shaderProperty: reader.i32(),
 });
 
+/** BSLagBoneController: linear velocity, linear rotation, maximum distance. */
+const parseLagBoneController: BlockParser = (reader): LagBoneControllerBlock => ({
+  ...readTimeController(reader),
+  kind: 'lag-bone-controller',
+  linearVelocity: reader.f32(),
+  linearRotation: reader.f32(),
+  maximumDistance: reader.f32(),
+});
+
+/**
+ * NiBSBoneLODController (NiBoneLODController): the current LOD, the level count, the node
+ * group count, then one node set (u32 count, node pointers) per level. Its shape groups end
+ * before version 20.2.0.7 (nif.xml).
+ */
+const parseBoneLodController: BlockParser = (reader): BoneLodControllerBlock => {
+  const base = readTimeController(reader);
+  const lod = reader.u32();
+  const levels = reader.u32();
+  const nodeGroupCount = reader.u32();
+  const nodeGroups = Array.from({ length: levels }, () => readRefs(reader));
+  return { ...base, kind: 'bone-lod-controller', lod, nodeGroupCount, nodeGroups };
+};
+
 const parseControllerManager: BlockParser = (reader): ControllerManagerBlock => ({
   ...readTimeController(reader),
   kind: 'controller-manager',
@@ -263,6 +290,35 @@ const parsePoint3Interpolator: BlockParser = (reader): Point3InterpolatorBlock =
   kind: 'point3-interpolator',
   value: readVec3(reader),
   data: reader.i32(),
+});
+
+/** NiPathInterpolator: flags, bank direction, max bank angle, smoothing, follow axis, data. */
+const parsePathInterpolator: BlockParser = (reader): PathInterpolatorBlock => ({
+  kind: 'path-interpolator',
+  flags: reader.u16(),
+  bankDirection: reader.i32(),
+  maxBankAngle: reader.f32(),
+  smoothing: reader.f32(),
+  followAxis: reader.i16(),
+  pathData: reader.i32(),
+  percentData: reader.i32(),
+});
+
+/**
+ * NiLookAtInterpolator: flags, the node to look at (a pointer and its name), its own transform
+ * (kept until 20.4.0.12, so present here), then the translation, roll and scale interpolators.
+ */
+const parseLookAtInterpolator: BlockParser = (reader, context): LookAtInterpolatorBlock => ({
+  kind: 'look-at-interpolator',
+  flags: reader.u16(),
+  lookAt: reader.i32(),
+  lookAtName: readStringRef(reader, context),
+  translation: readVec3(reader),
+  rotation: readQuaternion(reader),
+  scale: reader.f32(),
+  translationInterpolator: reader.i32(),
+  rollInterpolator: reader.i32(),
+  scaleInterpolator: reader.i32(),
 });
 
 const parseBoolInterpolator: BlockParser = (reader): BoolInterpolatorBlock => ({
@@ -376,6 +432,10 @@ export const ANIMATION_PARSERS: ReadonlyMap<string, BlockParser> = new Map<strin
     'NiPSysEmitterPlanarAngleCtlr',
   ].map((type): [string, BlockParser] => [type, parseController]),
   ['BSProceduralLightningController', parseLightningController],
+  ['BSLagBoneController', parseLagBoneController],
+  ['NiBSBoneLODController', parseBoneLodController],
+  ['NiPathInterpolator', parsePathInterpolator],
+  ['NiLookAtInterpolator', parseLookAtInterpolator],
   ['NiControllerManager', parseControllerManager],
   ['NiControllerSequence', parseControllerSequence],
   ['NiDefaultAVObjectPalette', parseObjectPalette],

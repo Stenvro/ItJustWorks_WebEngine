@@ -98,6 +98,13 @@ const parseParticleData: BlockParser = (reader, _context, type): ParticleDataBlo
       zPrepass: readBool(reader),
     };
   }
+  let meshes: ParticleDataBlock['meshes'];
+  if (type === 'NiMeshPSysData') {
+    const defaultPoolSize = reader.u32();
+    const fillPoolsOnLoad = readBool(reader);
+    const generations = Array.from({ length: readCount(reader, 4) }, () => reader.u32());
+    meshes = { defaultPoolSize, fillPoolsOnLoad, generations, particleMeshes: reader.i32() };
+  }
   return {
     kind: 'particle-data',
     maxParticles,
@@ -105,6 +112,7 @@ const parseParticleData: BlockParser = (reader, _context, type): ParticleDataBlo
     aspectRatio,
     aspectFlags,
     ...(strip && { strip }),
+    ...(meshes && { meshes }),
   };
 };
 
@@ -289,6 +297,11 @@ const parseModifier: BlockParser = (reader, context, type): ParticleModifierBloc
     case 'BSPSysStripUpdateModifier':
       f('updateDeltaTime');
       break;
+    case 'BSPSysHavokUpdateModifier':
+      // The nodes whose Havok bodies the particles follow, and the modifier it hands them to.
+      values.nodes = readRefs(reader);
+      ref('modifier');
+      break;
     default:
       throw new FormatError(`${type}: unsupported particle modifier`, reader.offset);
   }
@@ -330,6 +343,8 @@ export const PARTICLE_PARSERS: ReadonlyMap<string, BlockParser> = new Map<string
   ['BSStripParticleSystem', parseParticleSystem],
   ['NiPSysData', parseParticleData],
   ['BSStripPSysData', parseParticleData],
+  ['NiMeshParticleSystem', parseParticleSystem],
+  ['NiMeshPSysData', parseParticleData],
   ...[
     'NiPSysBoxEmitter',
     'NiPSysCylinderEmitter',
@@ -352,6 +367,7 @@ export const PARTICLE_PARSERS: ReadonlyMap<string, BlockParser> = new Map<string
     'BSPSysRecycleBoundModifier',
     'BSWindModifier',
     'BSPSysStripUpdateModifier',
+    'BSPSysHavokUpdateModifier',
   ].map((type): [string, BlockParser] => [type, parseModifier]),
   ['NiPSysPlanarCollider', parseCollider],
   ['NiPSysSphericalCollider', parseCollider],

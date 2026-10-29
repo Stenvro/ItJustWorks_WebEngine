@@ -5,6 +5,7 @@ import { BLOCK_PARSERS } from './blocks.ts';
 import { ANIMATION_PARSERS } from './animation-blocks.ts';
 import { PARTICLE_PARSERS } from './particle-blocks.ts';
 import { COLLISION_PARSERS } from './collision-blocks.ts';
+import { EXTRA_PARSERS } from './extra-blocks.ts';
 import { parseNifHeader, type NifHeader } from './header.ts';
 import type { NifBlock, Ref } from './types.ts';
 
@@ -55,7 +56,8 @@ export function parseNif(bytes: Uint8Array): NifFile {
       BLOCK_PARSERS.get(type) ??
       ANIMATION_PARSERS.get(type) ??
       PARTICLE_PARSERS.get(type) ??
-      COLLISION_PARSERS.get(type);
+      COLLISION_PARSERS.get(type) ??
+      EXTRA_PARSERS.get(type);
     let block: NifBlock = { kind: 'unknown' };
     if (parser) {
       const reader = new BinaryReader(bytes.subarray(offset, offset + size));
