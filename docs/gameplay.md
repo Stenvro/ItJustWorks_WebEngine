@@ -219,6 +219,39 @@ Sources: UESP "Skyrim:Leveling", "Skyrim:Skills", the AVIF records.
   fLegendarySkillResetValue (15), its experience gone, the perks of its tree removed and given
   back as perk points; the character keeps its level and experience.
 
+### Speech checks: persuade, bribe, intimidate
+
+The dialogue's (Persuade), (Bribe) / `<BribeCost> gold` and (Intimidate) topics are the game's
+data: an info's conditions decide success, its fragment the outcome
+(`tests/sim-speech-checks.int.test.ts`):
+
+- **Persuade.** `GetActorValue Speechcraft` of the player (Run On: Target) `>=` one of the
+  globals SpeechVeryEasy .. SpeechVeryHard, OR the Amulet of Articulation equipped. The
+  Persuasion perk is a quest stage (PerksQuest 60) whose fragment multiplies those globals by
+  0.7. Some lines' conditions are all OR (Riften's north gate: persuading its guard always
+  works), as in the original.
+- **Bribe.** GetBribeSuccess: the player has the gold a bribe of the actor takes. Observed in the
+  original: (its level × fBribeNPCLevelMult + the player's level + (100 − (the player's Speech −
+  its Speech)) × fBribeSpeechcraftMult) ^ fBribeCostCurve × fBribeScale × (1 + its Morality ×
+  fBribeMoralityMult), then the perk entry point Mod Bribe Amount, rounded down (Skyrim.esm sets
+  1.4, 0.5 and 0.1; the engine's 0.1 and 1 stay). The same number is GetBribeAmount,
+  Actor.GetBribeAmount and the topic text's `<BribeCost>` for the one spoken to
+  (`quest-text.ts`). No bounty is in it. The Bribery perk is a HasPerk condition of the guards'
+  lines.
+- **Intimidate.** GetIntimidateSuccess, WillIntimidateSucceed. Observed in the original: the
+  player's level × (1 + max(−1, (their Speech − its Speech) / 100)) ^ fIntimidateSpeechcraftCurve
+  (1.5), then Mod Player Intimidation (the Intimidation perk doubles it), against its level ×
+  fIntimidateConfidenceMult of its base's Confidence (Cowardly 0, Cautious 0.5, Average 1,
+  Brave 1.5, Foolhardy 100: foolhardy guards are as good as never intimidated).
+- **The outcome** is FavorDialogueScript's (Persuade, Bribe, Intimidate, ArrestPersuade):
+  `Game.AdvanceSkill("Speechcraft", Speech × SpeechSkillMult)`, the misc stats Persuasions,
+  Bribes, Intimidations, the achievement once all three are non-zero, the gold, the mark.
+- **The mark** (Actor.SetBribed, SetIntimidated; IsBribed, IsIntimidated, IsBribedbyPlayer,
+  IsIntimidatedbyPlayer: `CrimeEngine.setPersuaded`). Observed in the original: one mark, bribed
+  or intimidated, with a last day: the day given plus iAINumberDaysToStayBribed (or
+  ...Intimidated, both 1); it holds until the date is past that day and goes when asked after.
+- No story manager event comes of any of them (docs/scripting.md, "Story events").
+
 ### The player's level
 
 - A skill reaching level n gives n × fXPPerSkillRank (1) character experience. The character

@@ -40,8 +40,8 @@ These run through every area and explain most of what breaks in play.
      scripts wait for them);
    - story manager events: Change Location (258 quest entries: favors, bounties, town scenes,
      Daedric starts, bards), Cast Magic, Add/Remove Item, Dead Body, Arrest, Actor Hello, New Voice
-     Power and Player Activate Actor are raised now; Bribe, Flatter, Intimidate, Cure, Infection,
-     Player Gets Favor and Quest Start are not (vanilla has no quests on them);
+     Power and Player Activate Actor are raised now, Cure and Infection too; Bribe, Flatter, Intimidate
+     and Player Gets Favor are never raised by the original either; Quest Start queues Quest.Start;
    - of the 93 graph event handler classes of the response files 91 are answered and 2 do not exist in
      the original (2026-10-27); the camera override's and MTState's flags are kept but nothing reads
      them yet (their use is unread); graph event payloads reach the handlers.
@@ -74,7 +74,7 @@ These run through every area and explain most of what breaks in play.
 | Papyrus VM                  | partial  | its own scheduling of stacks (inferred), the handed calls' share of the update budget, latent calls' render-safe / post-render queues, stack memory (iMaxAllocatedMemoryBytes) (frame sync, budgets, post-load run: done 2026-10-27) |
 | Script events               | partial  | 52 of 68 not yet checked in the simulation (OnAnimationEventUnregistered, OnMenuOpen/Close: done)                                                                                                                                    |
 | Event sources               | partial  | 7 sources without a kind; the stats' sources besides kills (every hub kind has a producer: 2026-10-27; resets/traps done)                                                                                                            |
-| Story manager               | partial  | most raised types not yet checked in the simulation; the engine's own raise sites of Bribe/Flatter/Intimidate (the counts), Player Gets Favor (SetDoingFavor) and Quest Start's members                                              |
+| Story manager               | partial  | most raised types not yet checked in the simulation; a start asked while an event is processed does not queue (TODO(M13))                                                                                                            |
 | Save and load               | partial  | own format (docs/formats/save.md); whether a native in flight is called again on load; .ess import (M12) (threads in a native's promise, translations, hazards, projectiles: done)                                                   |
 | Stats, skills, actor values | complete | tracked-stats event                                                                                                                                                                                                                  |
 | Audio                       | partial  | (the skills menu's SMSC mute, pause categories by DOBJ, sounds held in menus and on the loading screen, Slow Time by DOBJ TSSC: done)                                                                                                |
