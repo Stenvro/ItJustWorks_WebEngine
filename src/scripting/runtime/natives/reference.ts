@@ -5,13 +5,24 @@
 // Notes: docs/scripting.md ("Natives").
 
 import { gameplayImpulse } from '../../../gameplay/magic/explosions.ts';
+import { EntryPoint } from '../../../gameplay/perk-entry-points.ts';
 import { ActorValue } from '../../../world/actor-values.ts';
 import { ObjectHandle, type Value } from '../../values.ts';
+import { PLAYER_REF } from '../forms.ts';
 import type { ScriptRuntime } from '../runtime.ts';
 import { questItems } from '../quest-items.ts';
 import { bool, formOf, int, num, object, str, type Register } from './args.ts';
 
 const DEG = 180 / Math.PI;
+
+/**
+ * Whether a lock is broken (ObjectReference.IsLockBroken), as observed in the original: its
+ * failed tries reach one, or two when the player's Ignore Broken Lock entry point gives a value
+ * (`ignore`, 0 without one).
+ */
+export function lockBroken(tries: number, ignore: number): boolean {
+  return tries >= (Math.abs(ignore) > 0.0001 ? 2 : 1);
+}
 
 export function registerReference(n: Register, runtime: ScriptRuntime): void {
   const { state, world } = runtime;
@@ -406,7 +417,16 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
     const reference = self(call);
     return reference !== undefined && (await runtime.lock(reference)).locked;
   });
-  n('objectreference.islockbroken', () => false);
+  // The original's rule: the lock is broken once its failed tries reach one, or two while the
+  // player has an Ignore Broken Lock perk entry that gives a value.
+  n('objectreference.islockbroken', async (call) => {
+    const reference = self(call);
+    if (reference === undefined) return false;
+    const tries = state.references.get(reference)?.lockTries ?? 0;
+    if (tries === 0) return false;
+    const ignore = await runtime.perks.apply(EntryPoint.ignoreBrokenLock, PLAYER_REF, 0);
+    return lockBroken(tries, ignore);
+  });
   n('objectreference.getlocklevel', async (call) => {
     const reference = self(call);
     return reference === undefined ? 0 : (await runtime.lock(reference)).level;

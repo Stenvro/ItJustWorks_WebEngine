@@ -232,6 +232,7 @@ export class CellResets {
       delete entry.openState;
       delete entry.locked;
       delete entry.lockLevel;
+      delete entry.lockTries;
       delete entry.destroyed;
       delete entry.destructionStage;
       delete entry.destructionHealth;
