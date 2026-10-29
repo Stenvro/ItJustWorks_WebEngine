@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  FADE_MIN_RADIUS,
-  FADE_RADIUS_SCALE,
+  FADE_MIN_NEAR_DISTANCE,
   FADE_START_PERCENT,
   HAS_DISTANT_LOD,
   IS_FULL_LOD,
@@ -26,24 +25,26 @@ describe('object fade', () => {
     }
   });
 
-  it('fades each kind by its own multiplier times the bound radius', () => {
-    const radius = 50;
-    expect(fadeRange('actor', radius, SETTINGS).end).toBe(radius * 9 * FADE_RADIUS_SCALE);
-    expect(fadeRange('item', radius, SETTINGS).end).toBe(radius * 6 * FADE_RADIUS_SCALE);
-    expect(fadeRange('object', radius, SETTINGS).end).toBe(radius * 9 * FADE_RADIUS_SCALE);
-    // A larger bound stays longer; a higher setting too.
-    expect(fadeRange('object', 400, SETTINGS).end).toBeGreaterThan(
-      fadeRange('object', 40, SETTINGS).end,
-    );
-    expect(fadeRange('object', 40, { ...SETTINGS, objects: 30 }).end).toBeGreaterThan(
-      fadeRange('object', 40, SETTINGS).end,
-    );
-    // Tiny items fade as if they had the floor radius.
-    expect(fadeRange('item', 2, SETTINGS).end).toBe(FADE_MIN_RADIUS * 6 * FADE_RADIUS_SCALE);
+  it('fades at ten bound radii, stretched by the multiplier of each kind', () => {
+    // Radius 100: 1000 units, from 600; Object Fade 9 stretches that ninefold.
+    expect(fadeRange('object', 100, SETTINGS)).toEqual({ start: 600 * 9, end: 1000 * 9 });
+    expect(fadeRange('item', 100, SETTINGS)).toEqual({ start: 600 * 6, end: 1000 * 6 });
+    expect(fadeRange('actor', 100, SETTINGS).end).toBe(1000 * 9);
+    // Small bounds: never nearer than 500 units (and 1000 before they are gone).
+    expect(fadeRange('item', 2, SETTINGS)).toEqual({
+      start: FADE_MIN_NEAR_DISTANCE * 6,
+      end: 2 * FADE_MIN_NEAR_DISTANCE * 6,
+    });
+    // Large bounds: no farther than the loaded grid's edge less the radius and half a cell
+    // (5 cells: 10240 - (900 + 2048) = 7292).
+    expect(fadeRange('object', 900, SETTINGS).end).toBeCloseTo(7292 * 9);
+    expect(fadeRange('object', 900, SETTINGS, 3).end).toBeCloseTo((6144 - 2948) * 9);
+    // A multiplier of 0: the kind never fades.
+    expect(fadeRange('object', 100, { ...SETTINGS, objects: 0 }).end).toBe(Infinity);
   });
 
   it('dithers away over the last part of the distance instead of popping', () => {
-    const { start, end } = fadeRange('object', 40, SETTINGS);
+    const { start, end } = fadeRange('object', 200, SETTINGS);
     expect(start).toBeCloseTo(end * FADE_START_PERCENT);
     expect(fadeOut(start - 1, start, end)).toBe(0);
     expect(fadeOut((start + end) / 2, start, end)).toBeCloseTo(0.5);

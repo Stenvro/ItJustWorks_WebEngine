@@ -21,6 +21,8 @@ struct Velocity {
 @group(0) @binding(6) var sceneDepth: texture_2d<f32>;
 // The draws' world matrices of the last frame, by draw slot (flags.w bits 8-23).
 @group(2) @binding(5) var<storage, read> previousWorld: array<mat4x4f>;
+// A skinned draw's bone palette as the last frame drew it (at the draw's palette offset).
+@group(2) @binding(6) var<storage, read> previousBones: array<vec4f>;
 
 const DRAW_FIRST_PERSON_FLAG = 0x8000u;
 
@@ -30,11 +32,11 @@ struct VelocityOut {
   @location(1) previous: vec4f,
 };
 
-fn velocityVertex(local: vec3f) -> VelocityOut {
+// `local`: the vertex as drawn now; `last`: where it was in the last frame's pose.
+fn velocityVertex(local: vec3f, last: vec3f) -> VelocityOut {
   let slot = (draw.flags.w >> 8u) & 0xffffu;
-  let p = vec4f(local, 1.0);
-  let now = draw.world * p;
-  let before = previousWorld[slot] * p;
+  let now = draw.world * vec4f(local, 1.0);
+  let before = previousWorld[slot] * vec4f(last, 1.0);
   var out: VelocityOut;
   if ((draw.flags.z & DRAW_FIRST_PERSON_FLAG) != 0u) {
     out.position = velocity.firstPersonViewProj * now;
@@ -50,11 +52,34 @@ fn velocityVertex(local: vec3f) -> VelocityOut {
 
 @vertex
 fn vs_velocity(@location(0) position: vec3f) -> VelocityOut {
-  return velocityVertex(position);
+  return velocityVertex(position, position);
 }
 
-// Skinned draws: this frame's pose under both world matrices (the instance's own move; the
-// limbs' move within it is not followed).
+// The vertex under the last frame's palette (skinned() with previousBones).
+fn previousSkinned(position: vec3f, weights: vec4f, indices: vec4u) -> vec3f {
+  let p = vec4f(position, 1.0);
+  var sum = vec3f(0.0);
+  var total = 0.0;
+  for (var k = 0u; k < 4u; k++) {
+    let weight = weights[k];
+    if (weight > 0.0) {
+      let bone = indices[k] * 3u;
+      sum += vec3f(
+        dot(previousBones[bone], p),
+        dot(previousBones[bone + 1u], p),
+        dot(previousBones[bone + 2u], p),
+      ) * weight;
+      total += weight;
+    }
+  }
+  if (total <= 0.0) {
+    return vec3f(dot(previousBones[0], p), dot(previousBones[1], p), dot(previousBones[2], p));
+  }
+  return sum / total;
+}
+
+// Skinned draws: this frame's pose under this frame's world matrix, the last frame's pose
+// (its bone palette) under the last one: the instance's move and its limbs' move within it.
 @vertex
 fn vs_velocity_skinned(
   @location(0) position: vec3f,
@@ -62,7 +87,8 @@ fn vs_velocity_skinned(
   @location(7) indices: vec4u,
   @builtin(vertex_index) vertex: u32,
 ) -> VelocityOut {
-  return velocityVertex(skinned(morphed(position, vertex), weights, indices));
+  let local = morphed(position, vertex);
+  return velocityVertex(skinned(local, weights, indices), previousSkinned(local, weights, indices));
 }
 
 // Clip space to uv (0..1, y down).

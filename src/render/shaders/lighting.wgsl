@@ -20,11 +20,16 @@ const SLSF1_VERTEX_ALPHA = 0x8u;
 const SLSF1_ENVIRONMENT_MAPPING = 0x80u;
 const SLSF1_RECEIVE_SHADOWS = 0x100u;
 const SLSF1_EYE_ENVIRONMENT_MAPPING = 0x20000u;
+// nif.xml Hair_Soft_Lighting: the flag that picks the original's hair technique.
+const SLSF1_HAIR = 0x40000u;
+// Decal and Dynamic_Decal.
+const SLSF1_DECALS = 0xc000000u;
 const SLSF1_MODEL_SPACE_NORMALS = 0x1000u;
 const SLSF1_OWN_EMIT = 0x400000u;
 const SLSF1_EXTERNAL_EMITTANCE = 0x20000000u;
 const SLSF2_VERTEX_COLORS = 0x20u;
 const SLSF2_GLOW_MAP = 0x40u;
+const SLSF2_ASSUME_SHADOWMASK = 0x80u;
 const SLSF2_ANISOTROPIC_LIGHTING = 0x200000u;
 const SLSF2_SOFT_LIGHTING = 0x2000000u;
 const SLSF2_RIM_LIGHTING = 0x4000000u;
@@ -43,6 +48,8 @@ const SHADER_LOD_OBJECTS_HD = 15u;
 const SHADER_EYE_ENVIRONMENT_MAP = 16u;
 const SHADER_LOD_LANDSCAPE_NOISE = 18u;
 // Draw flags above the NiAlphaProperty bits (scene-renderer.ts).
+// NiAlphaProperty blending (the low bits are its flags).
+const DRAW_ALPHA_BLEND = 0x1u;
 const DRAW_SKY = 0x10000u;
 const DRAW_PROJECTED = 0x20000u;
 const DRAW_PROJECTED_TEXTURED = 0x40000u;
@@ -406,8 +413,14 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
     sparkles,
   );
 
-  // Receive_Shadows: the sun's cascaded shadow maps darken the surface.
-  let receivesShadows = (flags1 & SLSF1_RECEIVE_SHADOWS) != 0u;
+  // Shadows as the original's technique picks them: Receive_Shadows, Assume_Shadowmask or a decal
+  // flag lets a shape take the scene's shadow mask (the sun's and the shadow lights' shadows);
+  // an alpha-blended shape takes none of it unless it carries Assume_Shadowmask or is a decal.
+  // TODO(M13): the original reads the opaque scene's screen-space mask at the pixel; ours looks
+  // the shadow maps up at the blended surface itself.
+  let maskAssumed = (flags2 & SLSF2_ASSUME_SHADOWMASK) != 0u || (flags1 & SLSF1_DECALS) != 0u;
+  let receivesShadows = ((flags1 & SLSF1_RECEIVE_SHADOWS) != 0u || maskAssumed) &&
+    ((drawFlags & DRAW_ALPHA_BLEND) == 0u || maskAssumed);
   let shadow = select(1.0, sunShadow(in.worldPos, vertexNormal), receivesShadows);
   let lights = objectLighting(
     shadingNormal,
@@ -442,8 +455,10 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
   if (hasVertexColors) {
     vertexColor = in.color.rgb;
   }
-  if (shaderType == SHADER_HAIR_TINT) {
-    // Hair: the tint follows the vertex colours' green channel.
+  if ((flags1 & SLSF1_HAIR) != 0u && shaderType == SHADER_HAIR_TINT) {
+    // The hair technique (picked by Hair_Soft_Lighting, on the hair tint material that holds the
+    // actor's hair colour): the tint follows the vertex colours' green channel. A hair tint shape
+    // without the flag draws with the plain technique, untinted.
     color *= in.color.g * (draw.extra.rgb - 1.0) + 1.0;
   } else {
     color *= vertexColor;
