@@ -33,7 +33,7 @@ is read (docs/rendering.md), not built.
 
 ## Next biggest open items
 
-1. **Inventory 3D orientation** (BSInvMarker in 2,299 models; the menus' area).
+1. ~~Inventory 3D orientation~~ (done by the menus round 3: item-3d-view.ts).
 2. **Volumetric lighting** as the original's froxel volume: read (its size by quality, the depth
    repartition, the shader's constants and passes, docs/rendering.md), not built; god rays are
    screen-space now.
@@ -120,7 +120,7 @@ is read (docs/rendering.md), not built.
 | 69  | The map's world view                                             | done   | world-map-view.ts                                                                                   |
 | 70  | The race menu's 3D (lights, camera)                              | done   | race-menu.ts                                                                                        |
 | 71  | Inventory 3D: placement, lights, turning, zoom                   | done   | item-3d.ts                                                                                          |
-| 72  | Inventory 3D: the item's own orientation (BSInvMarker)           | open   | a flat-or-not guess (data sweep: BSInvMarker)                                                       |
+| 72  | Inventory 3D: the item's own orientation (BSInvMarker)           | done   | item-3d-view.ts (the marker's rotation and zoom)                                                    |
 | 73  | The dragon-riding camera                                         | open   | not built                                                                                           |
 | 74  | Enchantment glow and effect shaders on references                | done   | actor-effects.ts                                                                                    |
 
@@ -371,7 +371,7 @@ entry's 3D index, is unread.
 | NiPoint3Interpolator (516 files)                    | 3115   | done   |                                                                          |
 | NiStringExtraData (990 files)                       | 2798   | done   | model-data.ts                                                            |
 | NiPSysModifierActiveCtlr (606 files)                | 2793   | done   |                                                                          |
-| BSInvMarker (2299 files)                            | 2299   | open   | the inventory 3D view of an item (its rotation and zoom) unread          |
+| BSInvMarker (2299 files)                            | 2299   | done   | item-3d-view.ts                                                          |
 | NiPSysDragModifier (470 files)                      | 2293   | done   |                                                                          |
 | NiBillboardNode (805 files)                         | 2067   | done   | billboard.ts                                                             |
 | NiFloatExtraData (102 files)                        | 1786   | open   | parsed; what reads it (FOV, scale) unchecked                             |

@@ -13,15 +13,15 @@ tables below. The match is static: a name found in code counts as done. Rows mar
 names or movies the PC game never uses, with the reason. The behaviour checklist after the
 counts holds what a name sweep cannot see.
 
-## Counts (2026-10-29)
+## Counts (2026-10-30)
 
 | Part                             | Items | Done | Open | n/a |
 | -------------------------------- | ----: | ---: | ---: | --: |
 | Movies                           |    50 |   35 |    2 |  13 |
-| GameDelegate calls and callbacks |   425 |  361 |   26 |  38 |
+| GameDelegate calls and callbacks |   425 |  368 |   18 |  39 |
 | Menu names the original opens    |    41 |   30 |    1 |  10 |
-| Behaviour items (below)          |    37 |   18 |   16 |   3 |
-| All                              |   553 |  444 |   45 |  64 |
+| Behaviour items (below)          |    37 |   21 |   13 |   3 |
+| All                              |   553 |  454 |   34 |  65 |
 
 Some behaviour items name calls the sweep also lists (they say what is still missing around
 them). The movies' `ExternalInterface.call("__handleEvent")` (CLIK's sound and focus events) is answered
@@ -32,49 +32,49 @@ by the bridge for every movie and is not counted per movie.
 Things a name sweep cannot see: what the engine does around the calls, values it pushes by
 path (GFx Invoke and SetVariable), keys and gamepad paths, and the player's own reports.
 
-| Item                                                                                  | Status | Where / reason                                                                                                                                                                 |
-| ------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Main menu Load: characters, then their saves; load, delete                            | done   | src/shell/save-list.ts, src/shell/play-mode.ts                                                                                                                                 |
-| Journal Load's character list (PopulateCharacterList, CharacterSelected)              | done   | src/shell/save-list.ts, src/shell/journal-menu.ts                                                                                                                              |
-| Journal Save and Load list the character playing                                      | done   | src/shell/save-list.ts                                                                                                                                                         |
-| SetButtonMapping to every movie that registers it (keyboard and mouse)                | done   | src/ui/menu-host.ts, src/ui/button-art.ts (buttonMappings)                                                                                                                     |
-| SetButtonMapping sent again after a remap or a reset                                  | done   | src/shell/journal-controls.ts                                                                                                                                                  |
-| A menu's movie read from interface\exported\<name>.gfx when its .swf is missing       | done   | src/ui/movie-file.ts (movieFile)                                                                                                                                               |
-| HUD MovementDisabled mode                                                             | done   | src/shell/hud-elements.ts (movementDisabledStep), src/shell/hud-controller.ts                                                                                                  |
-| HUD CartMode, HorseMode, WarHorseMode                                                 | done   | src/shell/hud-elements.ts (rideModes)                                                                                                                                          |
-| Menu stack with the original's IMenu flags, saving permission, UI.IsMenuOpen          | done   | src/ui/menu-stack.ts                                                                                                                                                           |
-| Gamepad: contexts, GFx gamepad keys, remap, live SetPlatform                          | done   | src/shell/gamepad-input.ts, src/ui/input-platform.ts                                                                                                                           |
-| SetButtonMapping with a gamepad (the gamepad's bindings, their art names)             | open   | the gamepad's art names are not built                                                                                                                                          |
-| Save screenshots (PrepSaveGameScreenshot, ScreenshotReady)                            | done   | src/shell/save-screenshot.ts, src/shell/save-list.ts, src/render/renderer.ts (captureFrame)                                                                                    |
-| The map's relief overlay                                                              | open   | the map's LOD land shader: how the original tells snow and blends the two normals is not read (docs/ui.md, "The map")                                                          |
-| The lockpicking strings the maintainer saw                                            | open   | to check on screen which text; the bar's labels are translation keys ($Lock Level, $Lockpicks Left)                                                                            |
-| Lockpicking debug display (UpdatePickAngle, UpdateLockAngle, UpdateSweetSpot, ...)    | open   | the original sends them to a display hidden unless toggled; not sent                                                                                                           |
-| Controls page: the left/right swap the maintainer saw                                 | open   | the data path is as the original's: Left Attack/Block is the right mouse button (Mouse2), as the movie's own default table has it; to check on screen which side looks swapped |
-| Ruffle: scale9Grid not drawn                                                          | open   | Ruffle's stub (the movies' nine-slice frames stretch)                                                                                                                          |
-| Ruffle: the "Times New Roman" device font                                             | open   | Ruffle has no device fonts; a movie's text set in it is not drawn as the original's                                                                                            |
-| Item menus' ToggleMenuFade (the menu fades out and back)                              | open   | when the original fades the item menus is not read yet                                                                                                                         |
-| Map over the journal (ShowJournal: the map's bar hidden while the journal shows)      | done   | src/shell/map-menu.ts (showJournal), src/shell/game-menus.ts: the map stays open under the journal                                                                             |
-| Tween menu HideMenu, ResetStatsButton, ShowMenu                                       | done   | src/shell/game-menus.ts: hidden under the menu chosen, shown again when an item menu goes back to it                                                                           |
-| Journal HideMenu, ShowMenu, StartCloseMenu, RefreshSystemButtons, BackOutFromLoadGame | open   | observed: ShowMenu on the engine's "Show Journal" message, RefreshSystemButtons on "RefreshMenu", StartCloseMenu as the engine hides it; who sends those is not read yet       |
-| Main menu ConfirmNewGame, ConfirmContinue, HELP, OnDisabledLoadPress, QuitToMainMenu  | done   | src/shell/play-mode.ts (the original answers the last three with nothing)                                                                                                      |
-| Main menu Load's import of an original save (.ess)                                    | done   | src/shell/play-mode.ts (pickImport), src/shell/save-list.ts: the picker opens as the entry is pressed                                                                          |
-| Favorites StartFadeOut, SetSelectedItem; dialogue Cancel                              | open   | not sent                                                                                                                                                                       |
-| Book PrepForClose                                                                     | done   | src/shell/book-menu.ts                                                                                                                                                         |
-| Message box setIsVertical; HUD FadeOutChargeMeters, ValidateCrosshair                 | open   | not sent                                                                                                                                                                       |
-| HUD SetCompassTemperature (Survival Mode)                                             | open   | the engine has no such name: Survival Mode's own scripts would drive it; not checked                                                                                           |
-| Quantity Menu as a menu of its own                                                    | n/a    | no menu of the original is made under the name: the item menus' quantity slider plays inside their movie                                                                       |
-| Top Menu, Overlay Menu, Overlay Interaction Menu                                      | n/a    | no menu of the original is made under these names (they are only looked up)                                                                                                    |
-| SafeZoneMenu                                                                          | n/a    | the consoles' safe-zone setting: the PC's display page has none                                                                                                                |
-| Debug Text Menu                                                                       | open   | its flags and when the original opens it are not read                                                                                                                          |
-| TitleSequence Menu and LoadWaitSpinner in the menu stack                              | done   | src/shell/title-sequence.ts, src/shell/load-wait-spinner.ts (shown while a save is written)                                                                                    |
-| The inventory 3D turned and zoomed by each model's BSInvMarker                        | open   | the parser reads it; the original's rotation order and zoom rule are not read yet                                                                                              |
-| Lockpicking: the failed tries on a lock (for IsLockBroken)                            | done   | src/shell/lockpicking-menu.ts (failedLockTries); the native itself is Papyrus's                                                                                                |
-| Beast perk trees, low-stat tutorials, Survival HUD                                    | open   | docs/engine-map.md ("UI")                                                                                                                                                      |
-| Creation Club menu, Mod Manager, Bethesda.net login                                   | open   | online services, never reached from localhost (hard rule 4); the installed Creations could be listed offline: not decided                                                      |
+| Item                                                                                  | Status | Where / reason                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Main menu Load: characters, then their saves; load, delete                            | done   | src/shell/save-list.ts, src/shell/play-mode.ts                                                                                                                                                                                                                                                                                             |
+| Journal Load's character list (PopulateCharacterList, CharacterSelected)              | done   | src/shell/save-list.ts, src/shell/journal-menu.ts                                                                                                                                                                                                                                                                                          |
+| Journal Save and Load list the character playing                                      | done   | src/shell/save-list.ts                                                                                                                                                                                                                                                                                                                     |
+| SetButtonMapping to every movie that registers it (keyboard and mouse)                | done   | src/ui/menu-host.ts, src/ui/button-art.ts (buttonMappings)                                                                                                                                                                                                                                                                                 |
+| SetButtonMapping sent again after a remap or a reset                                  | done   | src/shell/journal-controls.ts                                                                                                                                                                                                                                                                                                              |
+| A menu's movie read from interface\exported\<name>.gfx when its .swf is missing       | done   | src/ui/movie-file.ts (movieFile)                                                                                                                                                                                                                                                                                                           |
+| HUD MovementDisabled mode                                                             | done   | src/shell/hud-elements.ts (movementDisabledStep), src/shell/hud-controller.ts                                                                                                                                                                                                                                                              |
+| HUD CartMode, HorseMode, WarHorseMode                                                 | done   | src/shell/hud-elements.ts (rideModes)                                                                                                                                                                                                                                                                                                      |
+| Menu stack with the original's IMenu flags, saving permission, UI.IsMenuOpen          | done   | src/ui/menu-stack.ts                                                                                                                                                                                                                                                                                                                       |
+| Gamepad: contexts, GFx gamepad keys, remap, live SetPlatform                          | done   | src/shell/gamepad-input.ts, src/ui/input-platform.ts                                                                                                                                                                                                                                                                                       |
+| SetButtonMapping with a gamepad (the gamepad's bindings, their art names)             | open   | the gamepad's art names are not built                                                                                                                                                                                                                                                                                                      |
+| Save screenshots (PrepSaveGameScreenshot, ScreenshotReady)                            | done   | src/shell/save-screenshot.ts, src/shell/save-list.ts, src/render/renderer.ts (captureFrame)                                                                                                                                                                                                                                                |
+| The map's relief overlay                                                              | open   | the map's LOD land shader: how the original tells snow and blends the two normals is not read (docs/ui.md, "The map")                                                                                                                                                                                                                      |
+| The lockpicking strings the maintainer saw                                            | open   | to check on screen which text; the bar's labels are translation keys ($Lock Level, $Lockpicks Left)                                                                                                                                                                                                                                        |
+| Lockpicking debug display (UpdatePickAngle, UpdateLockAngle, UpdateSweetSpot, ...)    | open   | the original sends them to a display hidden unless toggled; not sent                                                                                                                                                                                                                                                                       |
+| Controls page: the left/right swap the maintainer saw                                 | open   | the data path is as the original's: Left Attack/Block is the right mouse button (Mouse2), as the movie's own default table has it; to check on screen which side looks swapped                                                                                                                                                             |
+| Ruffle: scale9Grid not drawn                                                          | open   | about 100 sprites carry a DefineScalingGrid (68 in map.swf); whether Ruffle slices them is not checked on screen; slicing in the bridge (shapes cut along the grid, kept unscaled as the clip scales) is not built (docs/ui.md, "Ruffle's limits")                                                                                         |
+| Ruffle: the "Times New Roman" device font                                             | done   | src/ui/movie-patches.ts (patchDeviceFonts): a device font the font library lacks draws no text, as the original has no system font provider; hudmenu.swf's one empty field is the only one                                                                                                                                                 |
+| Item menus' ToggleMenuFade (the menu fades out and back)                              | done   | src/shell/item-3d.ts: as a zoom starts (ZoomItemModel from rest, Item Zoom, Cancel while zoomed in), as the original                                                                                                                                                                                                                       |
+| Map over the journal (ShowJournal: the map's bar hidden while the journal shows)      | done   | src/shell/map-menu.ts (showJournal), src/shell/game-menus.ts: the map stays open under the journal                                                                                                                                                                                                                                         |
+| Tween menu HideMenu, ResetStatsButton, ShowMenu                                       | done   | src/shell/game-menus.ts: hidden under the menu chosen, shown again when an item menu goes back to it                                                                                                                                                                                                                                       |
+| Journal HideMenu, ShowMenu, StartCloseMenu, RefreshSystemButtons, BackOutFromLoadGame | open   | StartCloseMenu(true) as the engine hides it (a save from the journal): src/shell/journal-menu.ts; HideMenu: the engine calls it in the tween menu only (n/a); ShowMenu ("Show Journal") and RefreshSystemButtons ("RefreshMenu"): their senders are not found (the strings sit in a table built at run time); BackOutFromLoadGame not read |
+| Main menu ConfirmNewGame, ConfirmContinue, HELP, OnDisabledLoadPress, QuitToMainMenu  | done   | src/shell/play-mode.ts (the original answers the last three with nothing)                                                                                                                                                                                                                                                                  |
+| Main menu Load's import of an original save (.ess)                                    | done   | src/shell/play-mode.ts (pickImport), src/shell/save-list.ts: the picker opens as the entry is pressed                                                                                                                                                                                                                                      |
+| Favorites StartFadeOut, SetSelectedItem; dialogue Cancel                              | open   | not sent                                                                                                                                                                                                                                                                                                                                   |
+| Book PrepForClose                                                                     | done   | src/shell/book-menu.ts                                                                                                                                                                                                                                                                                                                     |
+| Message box setIsVertical; HUD FadeOutChargeMeters, ValidateCrosshair                 | open   | not sent                                                                                                                                                                                                                                                                                                                                   |
+| HUD SetCompassTemperature (Survival Mode)                                             | open   | the engine has no such name: Survival Mode's own scripts would drive it; not checked                                                                                                                                                                                                                                                       |
+| Quantity Menu as a menu of its own                                                    | n/a    | no menu of the original is made under the name: the item menus' quantity slider plays inside their movie                                                                                                                                                                                                                                   |
+| Top Menu, Overlay Menu, Overlay Interaction Menu                                      | n/a    | no menu of the original is made under these names (they are only looked up)                                                                                                                                                                                                                                                                |
+| SafeZoneMenu                                                                          | n/a    | the consoles' safe-zone setting: the PC's display page has none                                                                                                                                                                                                                                                                            |
+| Debug Text Menu                                                                       | open   | its flags and when the original opens it are not read                                                                                                                                                                                                                                                                                      |
+| TitleSequence Menu and LoadWaitSpinner in the menu stack                              | done   | src/shell/title-sequence.ts, src/shell/load-wait-spinner.ts (shown while a save is written)                                                                                                                                                                                                                                                |
+| The inventory 3D turned and zoomed by each model's BSInvMarker                        | done   | src/shell/item-3d-view.ts, src/shell/item-3d.ts: the marker's rotation (x, y, z), its zoom, the bound radius, the 16:9 rule, the mouse and stick turns, the straight zoom                                                                                                                                                                  |
+| Lockpicking: the failed tries on a lock (for IsLockBroken)                            | done   | src/scripting/runtime/natives/reference.ts (lockBroken): the lock's own tries (game state lockTries) against one, or two with Ignore Broken Lock; broken picks are the menu's own count, not the lock's (src/shell/lockpicking-menu.ts); what adds to a lock's tries is not read (TODO(M13))                                               |
+| Beast perk trees, low-stat tutorials, Survival HUD                                    | open   | docs/engine-map.md ("UI")                                                                                                                                                                                                                                                                                                                  |
+| Creation Club menu, Mod Manager, Bethesda.net login                                   | open   | online services, never reached from localhost (hard rule 4); the installed Creations could be listed offline: not decided                                                                                                                                                                                                                  |
 
 ## Sweep tables
 
-Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
+Printed by `node tools/menu-inventory.ts --markdown` (2026-10-30).
 
 ### Movies
 
@@ -199,7 +199,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | SetBarterMultipliers    | done   | src/shell/barter-menu.ts |
 | callback | SetButtonMapping        | done   | src/ui/menu-host.ts      |
 | callback | SetCategoriesList       | done   | src/shell/item-menu.ts   |
-| callback | ToggleMenuFade          | open   |                          |
+| callback | ToggleMenuFade          | done   | src/shell/item-3d.ts     |
 | callback | UpdateItemCardInfo      | done   | src/shell/item-menu.ts   |
 | callback | UpdatePlayerInfo        | done   | src/shell/item-menu.ts   |
 
@@ -251,7 +251,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | RestoreIndices      | done   | src/shell/item-menu.ts |
 | callback | SetButtonMapping    | done   | src/ui/menu-host.ts    |
 | callback | SetCategoriesList   | done   | src/shell/item-menu.ts |
-| callback | ToggleMenuFade      | open   |                        |
+| callback | ToggleMenuFade      | done   | src/shell/item-3d.ts   |
 | callback | UpdateItemCardInfo  | done   | src/shell/item-menu.ts |
 | callback | UpdatePlayerInfo    | done   | src/shell/item-menu.ts |
 | callback | XButtonPress        | done   | src/shell/item-menu.ts |
@@ -346,7 +346,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | SetButtonMapping    | done   | src/ui/menu-host.ts    |
 | callback | SetCategoriesList   | done   | src/shell/item-menu.ts |
 | callback | SetMenuInfo         | done   | src/shell/gift-menu.ts |
-| callback | ToggleMenuFade      | open   |                        |
+| callback | ToggleMenuFade      | done   | src/shell/item-3d.ts   |
 | callback | UpdateItemCardInfo  | done   | src/shell/item-menu.ts |
 | callback | UpdatePlayerInfo    | done   | src/shell/item-menu.ts |
 
@@ -443,11 +443,11 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | AttemptEquip         | done   | src/shell/item-menu.ts |
 | callback | DropItem             | done   | src/shell/item-menu.ts |
 | callback | InvalidateListData   | done   | src/shell/item-menu.ts |
-| callback | ItemRotating         | open   |                        |
+| callback | ItemRotating         | done   | src/shell/item-3d.ts   |
 | callback | RestoreIndices       | done   | src/shell/item-menu.ts |
 | callback | SetButtonMapping     | done   | src/ui/menu-host.ts    |
 | callback | SetCategoriesList    | done   | src/shell/item-menu.ts |
-| callback | ToggleMenuFade       | open   |                        |
+| callback | ToggleMenuFade       | done   | src/shell/item-3d.ts   |
 | callback | UpdateItemCardInfo   | done   | src/shell/item-menu.ts |
 | callback | UpdatePlayerInfo     | done   | src/shell/item-menu.ts |
 
@@ -462,10 +462,10 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 
 ### loadingmenu.swf
 
-| Kind | Name               | Status | Where / reason         |
-| ---- | ------------------ | ------ | ---------------------- |
-| call | RequestLoadingText | done   | src/shell/play-mode.ts |
-| call | RequestPlayerInfo  | done   | src/shell/play-mode.ts |
+| Kind | Name               | Status | Where / reason            |
+| ---- | ------------------ | ------ | ------------------------- |
+| call | RequestLoadingText | done   | src/shell/play-mode.ts    |
+| call | RequestPlayerInfo  | done   | src/shell/journal-menu.ts |
 
 ### lockpickingmenu.swf
 
@@ -505,7 +505,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | callback | RestoreIndices      | done   | src/shell/item-menu.ts |
 | callback | SetButtonMapping    | done   | src/ui/menu-host.ts    |
 | callback | SetCategoriesList   | done   | src/shell/item-menu.ts |
-| callback | ToggleMenuFade      | open   |                        |
+| callback | ToggleMenuFade      | done   | src/shell/item-3d.ts   |
 | callback | UpdateItemCardInfo  | done   | src/shell/item-menu.ts |
 | callback | UpdatePlayerInfo    | done   | src/shell/item-menu.ts |
 
@@ -541,75 +541,75 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 
 ### quest_journal.swf
 
-| Kind     | Name                          | Status | Where / reason                                                               |
-| -------- | ----------------------------- | ------ | ---------------------------------------------------------------------------- |
-| call     | CharacterSelected             | done   | src/shell/save-list.ts                                                       |
-| call     | CloseMenu                     | done   | src/shell/journal-menu.ts                                                    |
-| call     | DeleteSave                    | done   | src/shell/save-list.ts                                                       |
-| call     | ForceStopSaveListLoading      | done   | src/shell/save-list.ts                                                       |
-| call     | GetButtonFromUserEvent        | done   | src/shell/play-mode.ts                                                       |
-| call     | IsOKtoLoad                    | done   | src/shell/save-list.ts                                                       |
-| call     | LOAD                          | done   | src/shell/save-list.ts                                                       |
-| call     | LoadGame                      | done   | src/shell/save-list.ts                                                       |
-| call     | ModManager                    | n/a    | an online service (Bethesda.net): never reached from localhost (hard rule 4) |
-| call     | ORBISDeleteSave               | n/a    | consoles only (PlayStation, Xbox, Switch)                                    |
-| call     | OpenKinectTuner               | n/a    | consoles only (PlayStation, Xbox, Switch)                                    |
-| call     | OptionChange                  | done   | src/shell/journal-settings.ts                                                |
-| call     | PlaySound                     | done   | src/shell/play-mode.ts                                                       |
-| call     | PopulateCharacterList         | done   | src/shell/save-list.ts                                                       |
-| call     | PopulateCreationClubTopics    | n/a    | an online service (Bethesda.net): never reached from localhost (hard rule 4) |
-| call     | PopulateHelpTopics            | done   | src/shell/journal-menu.ts                                                    |
-| call     | PrepSaveGameScreenshot        | done   | src/shell/save-list.ts                                                       |
-| call     | QuickSave                     | done   | src/shell/journal-menu.ts                                                    |
-| call     | QuitToDesktop                 | done   | src/shell/journal-menu.ts                                                    |
-| call     | QuitToMainMenu                | done   | src/shell/journal-menu.ts                                                    |
-| call     | RememberCurrentTabIndex       | done   | src/shell/journal-menu.ts                                                    |
-| call     | RequestAudioOptions           | done   | src/shell/journal-settings.ts                                                |
-| call     | RequestCreationClubText       | n/a    | an online service (Bethesda.net): never reached from localhost (hard rule 4) |
-| call     | RequestDisplayOptions         | done   | src/shell/journal-settings.ts                                                |
-| call     | RequestGameplayOptions        | done   | src/shell/journal-settings.ts                                                |
-| call     | RequestHelpText               | done   | src/shell/journal-menu.ts                                                    |
-| call     | RequestInputMappings          | done   | src/shell/journal-controls.ts                                                |
-| call     | RequestIsOnPC                 | done   | src/shell/journal-menu.ts                                                    |
-| call     | RequestObjectivesData         | done   | src/shell/journal-menu.ts                                                    |
-| call     | RequestPlayerInfo             | done   | src/shell/journal-menu.ts                                                    |
-| call     | RequestQuestsData             | done   | src/shell/journal-menu.ts                                                    |
-| call     | ResetControlsToDefaults       | done   | src/shell/journal-controls.ts                                                |
-| call     | ResetControlsToDefaults_Ounce | done   | src/shell/journal-controls.ts                                                |
-| call     | SAVE                          | done   | src/shell/save-list.ts                                                       |
-| call     | SaveControls                  | done   | src/shell/journal-controls.ts                                                |
-| call     | SaveGame                      | done   | src/shell/journal-menu.ts                                                    |
-| call     | SaveSettings                  | done   | src/shell/journal-settings.ts                                                |
-| call     | SetSaveDisabled               | done   | src/shell/journal-menu.ts                                                    |
-| call     | SetVersionText                | done   | src/shell/journal-menu.ts                                                    |
-| call     | ShouldShowKinectTunerOption   | done   | src/shell/journal-menu.ts                                                    |
-| call     | ShouldShowMod                 | done   | src/shell/journal-menu.ts                                                    |
-| call     | ShowTargetOnMap               | done   | src/shell/journal-menu.ts                                                    |
-| call     | StartRemapMode                | done   | src/shell/journal-controls.ts                                                |
-| call     | ToggleQuestActiveStatus       | done   | src/shell/journal-menu.ts                                                    |
-| call     | ToggleShowMiscObjectives      | done   | src/shell/journal-menu.ts                                                    |
-| call     | UseCurrentCharacterFilter     | done   | src/shell/save-list.ts                                                       |
-| call     | myLog                         | done   | src/shell/play-mode.ts                                                       |
-| call     | updateStats                   | done   | src/shell/journal-menu.ts                                                    |
-| callback | BackOutFromLoadGame           | open   |                                                                              |
-| callback | ConfirmOKToLoad               | done   | src/shell/save-list.ts                                                       |
-| callback | FinishRemapMode               | done   | src/shell/journal-controls.ts                                                |
-| callback | HideMenu                      | open   |                                                                              |
-| callback | OnSaveDataEventLoadCANCEL     | n/a    | consoles only (PlayStation, Xbox, Switch)                                    |
-| callback | OnSaveDataEventSaveCANCEL     | n/a    | consoles only (PlayStation, Xbox, Switch)                                    |
-| callback | OnSaveDataEventSaveSUCCESS    | n/a    | consoles only (PlayStation, Xbox, Switch)                                    |
-| callback | RefreshSystemButtons          | open   |                                                                              |
-| callback | RestoreSavedSettings          | done   | src/shell/journal-menu.ts                                                    |
-| callback | ScreenshotReady               | done   | src/shell/save-list.ts                                                       |
-| callback | SetButtonMapping              | done   | src/ui/menu-host.ts                                                          |
-| callback | SetRemoteDevice               | n/a    | consoles only (PlayStation, Xbox, Switch)                                    |
-| callback | SettingsSaved                 | done   | src/shell/journal-controls.ts                                                |
-| callback | ShowMenu                      | open   |                                                                              |
-| callback | StartCloseMenu                | open   |                                                                              |
-| callback | UpdatePermissions             | n/a    | consoles only (PlayStation, Xbox, Switch)                                    |
-| callback | onFillCharacterListComplete   | done   | src/shell/save-list.ts                                                       |
-| callback | onRightStickInput             | open   |                                                                              |
-| callback | onSaveLoadBatchComplete       | done   | src/shell/save-list.ts                                                       |
+| Kind     | Name                          | Status | Where / reason                                                                                              |
+| -------- | ----------------------------- | ------ | ----------------------------------------------------------------------------------------------------------- |
+| call     | CharacterSelected             | done   | src/shell/save-list.ts                                                                                      |
+| call     | CloseMenu                     | done   | src/shell/journal-menu.ts                                                                                   |
+| call     | DeleteSave                    | done   | src/shell/save-list.ts                                                                                      |
+| call     | ForceStopSaveListLoading      | done   | src/shell/save-list.ts                                                                                      |
+| call     | GetButtonFromUserEvent        | done   | src/shell/play-mode.ts                                                                                      |
+| call     | IsOKtoLoad                    | done   | src/shell/save-list.ts                                                                                      |
+| call     | LOAD                          | done   | src/shell/save-list.ts                                                                                      |
+| call     | LoadGame                      | done   | src/shell/save-list.ts                                                                                      |
+| call     | ModManager                    | n/a    | an online service (Bethesda.net): never reached from localhost (hard rule 4)                                |
+| call     | ORBISDeleteSave               | n/a    | consoles only (PlayStation, Xbox, Switch)                                                                   |
+| call     | OpenKinectTuner               | n/a    | consoles only (PlayStation, Xbox, Switch)                                                                   |
+| call     | OptionChange                  | done   | src/shell/journal-settings.ts                                                                               |
+| call     | PlaySound                     | done   | src/shell/play-mode.ts                                                                                      |
+| call     | PopulateCharacterList         | done   | src/shell/save-list.ts                                                                                      |
+| call     | PopulateCreationClubTopics    | n/a    | an online service (Bethesda.net): never reached from localhost (hard rule 4)                                |
+| call     | PopulateHelpTopics            | done   | src/shell/journal-menu.ts                                                                                   |
+| call     | PrepSaveGameScreenshot        | done   | src/shell/save-list.ts                                                                                      |
+| call     | QuickSave                     | done   | src/shell/journal-menu.ts                                                                                   |
+| call     | QuitToDesktop                 | done   | src/shell/journal-menu.ts                                                                                   |
+| call     | QuitToMainMenu                | done   | src/shell/journal-menu.ts                                                                                   |
+| call     | RememberCurrentTabIndex       | done   | src/shell/journal-menu.ts                                                                                   |
+| call     | RequestAudioOptions           | done   | src/shell/journal-settings.ts                                                                               |
+| call     | RequestCreationClubText       | n/a    | an online service (Bethesda.net): never reached from localhost (hard rule 4)                                |
+| call     | RequestDisplayOptions         | done   | src/shell/journal-settings.ts                                                                               |
+| call     | RequestGameplayOptions        | done   | src/shell/journal-settings.ts                                                                               |
+| call     | RequestHelpText               | done   | src/shell/journal-menu.ts                                                                                   |
+| call     | RequestInputMappings          | done   | src/shell/journal-controls.ts                                                                               |
+| call     | RequestIsOnPC                 | done   | src/shell/journal-menu.ts                                                                                   |
+| call     | RequestObjectivesData         | done   | src/shell/journal-menu.ts                                                                                   |
+| call     | RequestPlayerInfo             | done   | src/shell/journal-menu.ts                                                                                   |
+| call     | RequestQuestsData             | done   | src/shell/journal-menu.ts                                                                                   |
+| call     | ResetControlsToDefaults       | done   | src/shell/journal-controls.ts                                                                               |
+| call     | ResetControlsToDefaults_Ounce | done   | src/shell/journal-controls.ts                                                                               |
+| call     | SAVE                          | done   | src/shell/save-list.ts                                                                                      |
+| call     | SaveControls                  | done   | src/shell/journal-controls.ts                                                                               |
+| call     | SaveGame                      | done   | src/shell/journal-menu.ts                                                                                   |
+| call     | SaveSettings                  | done   | src/shell/journal-settings.ts                                                                               |
+| call     | SetSaveDisabled               | done   | src/shell/journal-menu.ts                                                                                   |
+| call     | SetVersionText                | done   | src/shell/journal-menu.ts                                                                                   |
+| call     | ShouldShowKinectTunerOption   | done   | src/shell/journal-menu.ts                                                                                   |
+| call     | ShouldShowMod                 | done   | src/shell/journal-menu.ts                                                                                   |
+| call     | ShowTargetOnMap               | done   | src/shell/journal-menu.ts                                                                                   |
+| call     | StartRemapMode                | done   | src/shell/journal-controls.ts                                                                               |
+| call     | ToggleQuestActiveStatus       | done   | src/shell/journal-menu.ts                                                                                   |
+| call     | ToggleShowMiscObjectives      | done   | src/shell/journal-menu.ts                                                                                   |
+| call     | UseCurrentCharacterFilter     | done   | src/shell/save-list.ts                                                                                      |
+| call     | myLog                         | done   | src/shell/play-mode.ts                                                                                      |
+| call     | updateStats                   | done   | src/shell/journal-menu.ts                                                                                   |
+| callback | BackOutFromLoadGame           | open   |                                                                                                             |
+| callback | ConfirmOKToLoad               | done   | src/shell/save-list.ts                                                                                      |
+| callback | FinishRemapMode               | done   | src/shell/journal-controls.ts                                                                               |
+| callback | HideMenu                      | n/a    | observed in the original: the engine calls HideMenu in the tween menu only (the journal is never hidden so) |
+| callback | OnSaveDataEventLoadCANCEL     | n/a    | consoles only (PlayStation, Xbox, Switch)                                                                   |
+| callback | OnSaveDataEventSaveCANCEL     | n/a    | consoles only (PlayStation, Xbox, Switch)                                                                   |
+| callback | OnSaveDataEventSaveSUCCESS    | n/a    | consoles only (PlayStation, Xbox, Switch)                                                                   |
+| callback | RefreshSystemButtons          | open   |                                                                                                             |
+| callback | RestoreSavedSettings          | done   | src/shell/journal-menu.ts                                                                                   |
+| callback | ScreenshotReady               | done   | src/shell/save-list.ts                                                                                      |
+| callback | SetButtonMapping              | done   | src/ui/menu-host.ts                                                                                         |
+| callback | SetRemoteDevice               | n/a    | consoles only (PlayStation, Xbox, Switch)                                                                   |
+| callback | SettingsSaved                 | done   | src/shell/journal-controls.ts                                                                               |
+| callback | ShowMenu                      | open   |                                                                                                             |
+| callback | StartCloseMenu                | done   | src/shell/journal-menu.ts                                                                                   |
+| callback | UpdatePermissions             | n/a    | consoles only (PlayStation, Xbox, Switch)                                                                   |
+| callback | onFillCharacterListComplete   | done   | src/shell/save-list.ts                                                                                      |
+| callback | onRightStickInput             | open   |                                                                                                             |
+| callback | onSaveLoadBatchComplete       | done   | src/shell/save-list.ts                                                                                      |
 
 ### racesex_menu.swf
 
@@ -680,8 +680,8 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-29).
 | call     | PlaySound                        | done   | src/shell/play-mode.ts                                                       |
 | call     | PopulateCharacterList            | done   | src/shell/save-list.ts                                                       |
 | call     | PrepSaveGameScreenshot           | done   | src/shell/save-list.ts                                                       |
-| call     | QuitToDesktop                    | done   | src/shell/play-mode.ts                                                       |
-| call     | QuitToMainMenu                   | done   | src/shell/play-mode.ts                                                       |
+| call     | QuitToDesktop                    | done   | src/shell/journal-menu.ts                                                    |
+| call     | QuitToMainMenu                   | done   | src/shell/journal-menu.ts                                                    |
 | call     | Sky10DLCPressed                  | n/a    | an online service (Bethesda.net): never reached from localhost (hard rule 4) |
 | call     | StartState                       | done   | src/shell/play-mode.ts                                                       |
 | call     | currentState                     | done   | src/shell/play-mode.ts                                                       |

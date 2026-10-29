@@ -4,14 +4,15 @@
 // inputContexts) decides: a menu gets each button as GFx gives it (menuPadKey), the d-pad and
 // the left stick repeating as held keys do ([Interface] fMenuKeyRepeatLong/Short); otherwise the
 // main gameplay context's events are pressed and let go (Activate on A, Jump on Y, the
-// triggers' attacks), the left stick moves (Move) and the right stick looks (Look). Using the
-// gamepad tells the menus the platform is PC with a gamepad; the keyboard or mouse switches
-// back (src/ui/input-platform.ts). A remap in the Controls page takes the next button
-// (nextPadButton).
+// triggers' attacks), the left stick moves (Move) and the right stick looks (Look; in a menu it
+// turns the item menus' 3D). Using the gamepad tells the menus the platform is PC with a
+// gamepad; the keyboard or mouse switches back (src/ui/input-platform.ts). A remap in the
+// Controls page takes the next button (nextPadButton).
 
 import {
   inputContexts,
   menuPadKey,
+  padEvents,
   PadInput,
   readPad,
   stickDirection,
@@ -19,6 +20,7 @@ import {
 } from '../formats/controlmap/gamepad.ts';
 import type { ControlMap } from '../formats/controlmap/controlmap.ts';
 import { Platform, setInputPlatform } from '../ui/input-platform.ts';
+import { Item3D } from './item-3d.ts';
 import type { Player } from './player.ts';
 
 export interface GamepadSink {
@@ -94,7 +96,15 @@ export function attachGamepad(sink: GamepadSink): () => void {
       return 'none';
     }
     if (sink.menuTakesKeys()) {
-      const code = menuPadKey(sink.controls(), input, inputContexts(sink.openMenus()));
+      const contexts = inputContexts(sink.openMenus());
+      // The item menus' Item Zoom (the right stick pressed) zooms their 3D, the menu fading;
+      // their Cancel while it is zoomed in zooms it back out instead of closing.
+      const map = sink.controls();
+      const events = map ? contexts.flatMap((context) => padEvents(map, context, input)) : [];
+      const item3d = Item3D.shown;
+      if (item3d && events.includes('Item Zoom') && item3d.itemZoom()) return 'none';
+      if (item3d && events.includes('Cancel') && item3d.cancelZoom()) return 'none';
+      const code = menuPadKey(map, input, contexts);
       if (code === undefined || !sink.menuKey('keyDown', code)) return 'none';
       if (DIRECTIONS.has(input)) {
         repeat = { input, code, at: now + (sink.keyRepeat?.().long ?? 0.5) * 1000 };
@@ -131,6 +141,7 @@ export function attachGamepad(sink: GamepadSink): () => void {
     if (moving || looking) setInputPlatform(Platform.pcGamepad);
     player.stick = inMenu ? [0, 0] : state.leftStick;
     if (!inMenu) player.lookStick(state.rightStick[0], state.rightStick[1], seconds);
+    else Item3D.shown?.stick(state.rightStick[0], state.rightStick[1], seconds);
   };
 
   const tick = (): void => {

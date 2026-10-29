@@ -2223,6 +2223,7 @@ export class SceneRenderer {
       particles,
       textures: { cache: textures, paths: [...texturePaths] },
       leafAnimation: data.leafAnimation === true,
+      inventoryMarker: data.inventoryMarker,
       nodes: data.nodes,
       nodeWorlds: data.nodeWorlds,
       attachTo: data.attachTo,

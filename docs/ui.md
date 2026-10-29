@@ -256,6 +256,23 @@ Still missing in Ruffle (0.7.1), and so in the menus: `<img>` in a text field's 
 help messages show their keys' art as `<img src='E.png'>`: the text shows, the key does not).
 TODO(M13), ruffle-rs/ruffle#16618.
 
+### Ruffle's limits
+
+- **Device fonts.** A text field set in a font with no glyphs of its own takes it from the font
+  library fontconfig.txt builds, by name (its mapped names, "$EverywhereFont", and its fonts'
+  own, "Futura Condensed"). The original installs no other font source: it carries no
+  rasterizer for the system's fonts (no system font provider), so a device font the library
+  lacks is found nowhere and its text is not drawn (inferred from that: Scaleform then uses an
+  empty font). Ruffle would draw it in a system font: such fields are set to use the movie's own
+  (empty) outlines as the movie loads (`patchDeviceFonts`, `src/ui/movie-patches.ts`). The
+  game's movies have one: hudmenu.swf's "Times New Roman", an unnamed, empty field on its root
+  (`tests/interface.int.test.ts` sweeps every movie).
+- **scale9Grid.** About 100 sprites carry a DefineScalingGrid (68 in map.swf; the
+  item menus' frames, the journal's, the message box's), and the journal's CLIK lists set
+  `scale9Grid` on their item containers in ActionScript. Whether Ruffle 0.7.1 slices them is not
+  checked on screen; slicing them in the bridge needs the sprite's shapes cut along the grid and
+  kept unscaled as the clip scales (a script each frame). TODO(M13).
+
 ## Videos
 
 Before the main menu the intro plays: [General] sIntroSequence (by default `BGS_LOGO.BIK`; a
@@ -1183,12 +1200,29 @@ The inventory, container, barter, gift and magic menus show the highlighted entr
 the list (`src/shell/item-3d.ts`): the movie calls `UpdateItem3D(true)` as the highlight changes
 and `UpdateItem3D(false)` as the list hides. An item shows its world model (armor the player's
 sex's, a book its inventory art, BOOK INAM), a spell its costliest effect's menu display object
-(MGEF MDOB), a shout its own (SHOU MDOB). It is scaled so its bound sphere's radius is
-fInventory3DBoundRadiusScale (12.5) times the place's scale (fInventory3DItemPosScale 1.87, Wide
-1.5; the magic menu's 1.87 / 1.75). Dragging it (`StartMouseRotation`, `StopMouseRotation`)
-turns it about its upright axis (the menu hears `ItemRotating` as it turns: the zoom button
-shows); the wheel over it (`ZoomItemModel(±1)`) brings it to fInventory3DItemZoom (0, −500, 0)
-at fInventory3DItemZoomScale (2.25) and back, at fInventory3DItemZoomSpeed.
+(MGEF MDOB), a shout its own (SHOU MDOB). Observed in the original (`src/shell/item-3d-view.ts`):
+
+- As the item loads, its root's rotation becomes its model's BSInvMarker's (the extra data named
+  "INV": x, y, z in thousandths of a radian, put together as Rx·Ry·Rz in the NIF's turn
+  convention), or none without one: the model then stands as modelled.
+- Its scale is fInventory3DBoundRadiusScale (12.5) over its bound radius, times the place's scale
+  (fInventory3DItemPosScale 1.87, Wide 1.5; the magic menu's 1.87 / 1.75), times the marker's
+  zoom; on a screen wider than 16:9 it is scaled by 16:9 over the screen's aspect. Its bound's
+  centre stands at the place.
+- Dragging it (`StartMouseRotation`, `StopMouseRotation`; the menu hears `ItemRotating`: the zoom
+  button shows) turns it about the menu's up axis by the mouse's across move and about the
+  across axis by its up and down move, each turn put before the item's rotation (about the
+  menu's axes, the bound's centre staying in place). The amounts are the mouse look's: across,
+  counts × fInventory3DItemRotMouseSpeed (50) × fMouseHeadingSensitivity × fMouseHeadingXScale
+  radians; up and down the same with fMouseHeadingYScale, times the frame's time
+  (bInvertYValues turns it round). A gamepad's right stick turns it by its stronger axis alone,
+  fInventory3DItemRotSpeed (3) radians a second at full tilt.
+- The wheel over it (`ZoomItemModel(±1)`) moves a progress towards 1 or 0 at
+  fInventory3DItemZoomSpeed (1.5) a second; the place goes in a straight line to
+  fInventory3DItemZoom (0, −500, 0) and the scale to fInventory3DItemZoomScale (2.25).
+- TODO(M13): the original replaces the root's whole transform (a root turned in its file loses
+  that turn); our models keep the root's transform in their parts. Which menus switch the
+  bound-radius scaling off (a flag of the 3D manager) is not read: every menu uses it.
 
 ## Books
 

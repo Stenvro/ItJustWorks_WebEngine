@@ -87,20 +87,6 @@ const LOCK_DEPTH = 6;
 
 /** Each lock's sweet spot, as placed this session (a lock keeps it until the game is loaded). */
 const SWEET_SPOTS = new Map<number, number>();
-/**
- * The picks broken on each lock this session (fLockpickBrokenPicksMult widens its sweet spot by
- * them as the menu opens). TODO(M12): kept with the lock in saves.
- */
-const BROKEN_PICKS = new Map<number, number>();
-
-/**
- * The failed tries on a lock (the picks broken on it): the count the original keeps with the
- * lock itself (its lock data's tries), for the scripts' and conditions' lock queries
- * (ObjectReference.IsLockBroken, GetIsLockBroken).
- */
-export function failedLockTries(reference: number): number {
-  return BROKEN_PICKS.get(reference) ?? 0;
-}
 
 type InterfaceKey = keyof (typeof INI_DEFAULTS)['Interface'];
 
@@ -160,7 +146,11 @@ export class LockpickingMenu {
       perk,
       random,
       settings: lockpickSettings((name) => settings.number(name)),
-      brokenPicks: BROKEN_PICKS.get(reference) ?? 0,
+      // The original counts the picks broken in the menu itself (a count of its own, not the
+      // lock's), from none as it opens, and sets the sweet spot (widened by
+      // fLockpickBrokenPicksMult per pick) as it shows: so with none. Breaking picks does not
+      // add to the lock's own failed tries (ObjectReference.IsLockBroken).
+      brokenPicks: 0,
     });
     const picking = new Picking(this.#host, session, runtime, {
       reference,
@@ -433,8 +423,6 @@ class Picking {
     this.#pickPlayback.sequence = 'pickbreak';
     this.#pickPlayback.start = clock();
     this.#sound('UILockpickingPickBreak');
-    const lock = this.#setup.reference;
-    BROKEN_PICKS.set(lock, (BROKEN_PICKS.get(lock) ?? 0) + 1);
     const runtime = this.#runtime;
     // GetPlayerAction: a lockpick broken (those near may react).
     runtime.playerActed(PlayerAction.lockpickBroken);

@@ -71,6 +71,11 @@ export interface ReferenceState {
   openState?: number;
   locked?: boolean;
   lockLevel?: number;
+  /**
+   * The failed tries on its lock (the lock data's tries), which ObjectReference.IsLockBroken
+   * reads. TODO(M13): what adds to them in the original is not read (broken lockpicks do not).
+   */
+  lockTries?: number;
   activationBlocked?: boolean;
   ownerActor?: number;
   ownerFaction?: number;
