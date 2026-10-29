@@ -374,6 +374,42 @@ describe('ActorPackages', () => {
     expect(ran).toEqual(['b', 'c']);
   });
 
+  it('runs a saved package that had ended again when a scene action started it before', async () => {
+    const ran: string[] = [];
+    const runners = {
+      a: (): Promise<'success'> => {
+        ran.push('a');
+        return Promise.resolve('success');
+      },
+    };
+    const tree = (): PackageRecord => pack(1, branch('Sequence', [procedure('a')]));
+    const first = setup([tree()], runners);
+    await tick(first.actor);
+    await tick(first.actor);
+    const saved = first.actor.saveState();
+    expect(saved?.ended).toBe(true);
+    first.actor.stop();
+
+    // Taken up as it was: it stays done.
+    ran.length = 0;
+    const kept = setup([tree()], runners);
+    if (saved) kept.actor.resume(saved);
+    await tick(kept.actor);
+    await tick(kept.actor);
+    expect(ran).toEqual([]);
+    expect(kept.events).toEqual([]);
+    kept.actor.stop();
+
+    // A scene's package action started it before the actor was placed: a new start.
+    const started = setup([tree()], runners);
+    if (saved) started.actor.resume(saved);
+    started.actor.evaluate(true);
+    await tick(started.actor);
+    await tick(started.actor);
+    expect(ran).toEqual(['a']);
+    expect(started.events).toEqual(['begin Pack1', 'end Pack1']);
+  });
+
   it('completes the package with a procedure whose success completes it', async () => {
     const ran: string[] = [];
     const { actor } = setup([pack(1, branch('Sequence', [procedure('a', 0x1), procedure('b')]))], {

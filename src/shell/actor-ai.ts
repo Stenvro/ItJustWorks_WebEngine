@@ -408,12 +408,15 @@ export class ActorAi {
     return this.#actors.get(reference)?.packages.saveState();
   }
 
-  /** A loaded save's package for an actor placed again: it goes on as its AI starts. */
-  resume(reference: number, saved: SavedPackage): void {
-    this.#resumes.set(reference, saved);
+  /**
+   * A loaded save's package for an actor placed again: it goes on as its AI starts. `restart`:
+   * a scene's package action started for it before it was placed (ActorStage.evaluatePackage).
+   */
+  resume(reference: number, saved: SavedPackage, restart = false): void {
+    this.#resumes.set(reference, { saved, restart });
   }
 
-  readonly #resumes = new Map<number, SavedPackage>();
+  readonly #resumes = new Map<number, { saved: SavedPackage; restart: boolean }>();
 
   /** The actor leaves its AI (it left the stage, died). */
   remove(reference: number): void {
@@ -460,7 +463,8 @@ export class ActorAi {
         const resumed = this.#resumes.get(staged.reference);
         if (resumed) {
           this.#resumes.delete(staged.reference);
-          entry.packages.resume(resumed);
+          entry.packages.resume(resumed.saved);
+          if (resumed.restart) entry.packages.evaluate(true);
         }
       }
       // Talking with the player (the engine's in-game dialogue package): its package waits; it
