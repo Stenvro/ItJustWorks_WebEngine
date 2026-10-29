@@ -48,7 +48,10 @@ As the Creation Kit wiki's "Threading Notes (Papyrus)" describe them (`papyrus-v
   a latent function (Utility.Wait). Calls on self keep the lock. Threads waiting for the lock
   get in in the order they came (the game's order is not guaranteed).
 - Until a script's **OnInit** has finished, its other events and other scripts' calls and
-  property access wait for it (calls from inside another OnInit do not).
+  property access wait for it (calls from inside another OnInit do not). Such a thread waits
+  (it does not run): the OnInit may itself wait for the next frame in a main-thread native, and
+  the offline frame comes only once no thread runs (a dragon's OnInit in IsDead while its
+  FXDragonBloodDamageScript effect's OnEffectStart reads its GetBaseAV).
 - **Latent** natives suspend their thread (`NativeCall.latent`), unlocking its script also
   for natives on self, until what they wait for has happened. Quest.SetStage waits so for the
   stage's fragments, each on a thread of its own (the wiki warns that setting a stage in
