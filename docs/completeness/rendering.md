@@ -119,7 +119,7 @@ skeletons, and one underwater colour path (the guessed tint over the water's ima
 | 69  | The map's world view                                             | done   | world-map-view.ts                                                                                 |
 | 70  | The race menu's 3D (lights, camera)                              | done   | race-menu.ts                                                                                      |
 | 71  | Inventory 3D: placement, lights, turning, zoom                   | done   | item-3d.ts                                                                                        |
-| 72  | Inventory 3D: the item's own orientation (BSInvMarker)           | done   | item-3d-view.ts (the original's rotation order and zoom rule)                                     |
+| 72  | Inventory 3D: the item's own orientation (BSInvMarker)           | done   | src/shell/item-3d-view.ts (the original's rotation order and zoom)                                |
 | 73  | The dragon-riding camera                                         | open   | not built                                                                                         |
 | 74  | Enchantment glow and effect shaders on references                | done   | actor-effects.ts                                                                                  |
 
@@ -370,7 +370,7 @@ entry's 3D index, is unread.
 | NiPoint3Interpolator (516 files)                    | 3115   | done   |                                                                 |
 | NiStringExtraData (990 files)                       | 2798   | done   | model-data.ts                                                   |
 | NiPSysModifierActiveCtlr (606 files)                | 2793   | done   |                                                                 |
-| BSInvMarker (2299 files)                            | 2299   | done   | item-3d-view.ts                                                 |
+| BSInvMarker (2299 files)                            | 2299   | done   | src/shell/item-3d-view.ts: its rotation (x, y, z) and its zoom. |
 | NiPSysDragModifier (470 files)                      | 2293   | done   |                                                                 |
 | NiBillboardNode (805 files)                         | 2067   | done   | billboard.ts                                                    |
 | NiFloatExtraData (102 files)                        | 1786   | open   | parsed; what reads it (FOV, scale) unchecked                    |
