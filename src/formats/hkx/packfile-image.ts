@@ -94,10 +94,31 @@ class ImageWriter {
     const owner = object.classes[0] ?? '?';
     for (const [name, value] of object.fields) {
       const member = layout ? findMember(layout, name) : undefined;
-      if (!member || !this.#member(at + member[0], member[1], value)) {
+      const written =
+        member !== undefined &&
+        (member[2] === undefined
+          ? this.#member(at + member[0], member[1], value)
+          : this.#fixed(at + member[0], member[1] as InlineType, member[2], value));
+      if (!written) {
         this.skipped.add(`${owner}.${name}`);
       }
     }
+  }
+
+  /** A fixed-size C array member: its elements back to back. */
+  #fixed(at: number, type: InlineType, count: number, value: TagValue): boolean {
+    if (value instanceof Uint8Array) {
+      for (let i = 0; i < Math.min(count, value.length); i++)
+        this.#inline(at + i, type, value[i] ?? 0);
+      return true;
+    }
+    if (!isList(value)) return false;
+    const stride = inlineSize(type);
+    let ok = true;
+    for (let i = 0; i < Math.min(count, value.length); i++) {
+      ok = this.#inline(at + i * stride, type, value[i] ?? null) && ok;
+    }
+    return ok;
   }
 
   /** Writes a member; false when the value is not of the member's kind. */
@@ -136,9 +157,11 @@ class ImageWriter {
         return true;
       }
       case 'vec4':
-      case 'qs': {
+      case 'qs':
+      case 'mat3':
+      case 'mat4': {
         if (!(value instanceof Float32Array)) return false;
-        const count = type === 'vec4' ? 4 : 12;
+        const count = type === 'vec4' ? 4 : type === 'mat4' ? 16 : 12;
         for (let i = 0; i < count; i++) this.view.setFloat32(at + i * 4, value[i] ?? 0, true);
         return true;
       }
@@ -146,6 +169,14 @@ class ImageWriter {
         if (typeof value !== 'number') return false;
         this.view.setFloat32(at, value, true);
         return true;
+      case 'half': {
+        // A tagfile stores an hkHalf as a real: keep its high 16 bits.
+        if (typeof value !== 'number') return false;
+        const word = new DataView(new ArrayBuffer(4));
+        word.setFloat32(0, value, true);
+        this.view.setUint16(at, word.getUint16(2, true), true);
+        return true;
+      }
       default:
         break;
     }
