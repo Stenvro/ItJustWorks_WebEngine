@@ -41,6 +41,15 @@ const USTENGRAV_01 = 0x270ab;
 const USTENGRAV_02 = 0x152aa;
 /** Ustengrav01's door down to Ustengrav02. */
 const USTENGRAV_DOWN = 0x2720c;
+/** The gate trial's first stone (dunUstenPuzTrigger01) and its last gate. */
+const GATE_STONE_1 = 0x3b2e3;
+const LAST_GATE = 0x3b2e7;
+/** The word wall's look target (the word the player walks up to). */
+const WORD_WALL_LOOK = 0x70b4e;
+/** MQ105SetStage180 (the tomb's hall), the tomb (MQ105TombActivator) and the note on it. */
+const SET_STAGE_180 = 0x7a507;
+const TOMB = 0xc65ad;
+const TOMB_NOTE = 0xc65ae;
 
 /** The player kills the living actors within reach hostile to them (the fight not under test). */
 async function fight(sim: Sim, reach: number): Promise<void> {
@@ -109,6 +118,10 @@ let afterSprint: Uint8Array | undefined;
 let afterVoice: Uint8Array | undefined;
 /** The game with the player in Ustengrav (the Horn's stage 10). */
 let inUstengrav: Uint8Array | undefined;
+/** The game with the player in Ustengrav02 (its depths). */
+let inDepths: Uint8Array | undefined;
+/** The game with the Whirlwind Sprint gates passed (dunUstengravQST 50). */
+let afterGates: Uint8Array | undefined;
 
 describe.skipIf(!hasGamedata())('MQ105 The Way of the Voice', () => {
   // MQ105's own start for a game that skips ahead (stage 1) plays MQ103 and MQ104 to their ends
@@ -383,10 +396,7 @@ describe.skipIf(!hasGamedata())('MQ105 The Horn of Jurgen Windcaller', () => {
 
   // Past the necromancers and the bandits they raise at the entrance (dunUstengravQST), and the
   // draugr of the crypts below, to the door down to Ustengrav02: the player walks the navmesh
-  // and the fights are won with the helpers' kill. TODO(M13): the way on to the Whirlwind Sprint
-  // gates (the player holds up at the stairs past the fire plates, -1700,-3240 in Ustengrav02),
-  // the gates themselves (one word's rush carries the player through the first gate but the
-  // second shuts 30 units short), the word wall and the tomb.
+  // and the fights are won with the helpers' kill.
   it('takes the player through Ustengrav to its depths', async () => {
     if (!inUstengrav) return;
     const sim = await loadSim(inUstengrav);
@@ -398,6 +408,75 @@ describe.skipIf(!hasGamedata())('MQ105 The Horn of Jurgen Windcaller', () => {
       await sim.world.settle();
       expect((await sim.runtime.placement(PLAYER_REF))?.cell).toBe(USTENGRAV_02);
       expect(sim.stage(USTENGRAV_QUEST)).toBeGreaterThanOrEqual(10);
+      await sim.step(1);
+      inDepths = await sim.save('Horn depths');
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+
+  // Down the stairs past the fire plates to the first stone of the gate trial; standing on it,
+  // facing the gates, the player shouts the one word of Whirlwind Sprint they know and sprints
+  // on: each gate shuts 1.5 s after its stone is left (dunUstenPuzGateSCRIPT), the rush and the
+  // sprint after it carry the player through all three, and past them the puzzle is done
+  // (dunUstengravQST 50). Found 2026-10-29: the player stuck at the stairs past the fire plates,
+  // held on the edge of a safe plate (a slab 4 units off the floor, its bevel too steep to walk):
+  // the controller's sweep met that edge at once whichever way it went.
+  it('passes the Whirlwind Sprint gates with one word (dunUstengravQST 50)', async () => {
+    if (!inDepths) return;
+    const sim = await loadSim(inDepths);
+    try {
+      const stone = await sim.position(GATE_STONE_1);
+      const last = await sim.position(LAST_GATE);
+      expect(stone && last && (await fightTo(sim, stone, 300, 64))).toBe(true);
+      if (!stone || !last) return;
+      await sim.walkTo(stone, 10, 10);
+      const yaw = Math.atan2(last[0] - stone[0], last[1] - stone[1]);
+      sim.world.look(yaw);
+      expect(await sim.equip(await sim.formId('SHOU', 'WhirlwindSprintShout'))).toBe(true);
+      await sim.step(3);
+      await shout(sim);
+      sim.press('Forward', true);
+      sim.press('Sprint', true);
+      try {
+        expect(await sim.until(() => sim.stageDone(USTENGRAV_QUEST, 50), 6)).toBe(true);
+      } finally {
+        sim.press('Forward', false);
+        sim.press('Sprint', false);
+      }
+      afterGates = await sim.save('Horn gates');
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+
+  // Down to the word wall (Become Ethereal's Feim: walking up to it teaches the word), then on
+  // to the Horn's tomb: in at its hall (MQ105SetStage180), the tomb in sight (190), the note
+  // left in the Horn's place taken (200: the Horn quest's 20, Delphine's MQ106 begun). Found
+  // 2026-10-29: two spider webs across the way to the tomb never let the player through once
+  // burnt: the headless world never brought destructible objects' looks (and their collision)
+  // up to date. TODO(M13): Delphine in Riverwood (MQ106 10 by the attic room line, 20 by the
+  // room's trigger: both pass) then begins her intro scene (25), but no info of
+  // MQ106DelphineIntroTopic passes its conditions, so MQ106 30 and the Horn's 220 never come;
+  // and the return to Arngeir (240-300).
+  it('learns the word wall and finds the note in the tomb (MQ105 180-200, Horn 20)', async () => {
+    if (!afterGates) return;
+    const sim = await loadSim(afterGates);
+    try {
+      const wall = await sim.position(WORD_WALL_LOOK);
+      expect(wall && (await fightTo(sim, wall, 300, 64))).toBe(true);
+      const feim = await sim.formId('WOOP', 'WordFeim');
+      expect(await sim.until(() => sim.runtime.wordsLearned.has(feim), 20)).toBe(true);
+      const hall = await sim.position(SET_STAGE_180);
+      expect(hall && (await fightTo(sim, hall, 400, 64))).toBe(true);
+      expect(await sim.until(() => sim.stageDone(MQ105, 180), 10)).toBe(true);
+      const tomb = await sim.position(TOMB);
+      expect(tomb && (await fightTo(sim, tomb, 120, 80))).toBe(true);
+      await face(sim, TOMB);
+      expect(await sim.until(() => sim.stageDone(MQ105, 190), 10)).toBe(true);
+      expect(sim.activate(TOMB_NOTE)).toBe(true);
+      expect(await sim.until(() => sim.stageDone(MQ105, 200), 10)).toBe(true);
+      expect(sim.stage(HORN_QUEST)).toBe(20);
     } finally {
       await sim.close();
     }
