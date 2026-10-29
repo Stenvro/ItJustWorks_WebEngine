@@ -199,6 +199,11 @@ export interface ModelData {
    * the wind (with the TREE record's leaf amplitude and frequency).
    */
   readonly leafAnimation?: boolean;
+  /**
+   * The root's BSInvMarker named "INV": how the item menus' 3D turns and frames the model
+   * (src/shell/item-3d.ts).
+   */
+  readonly inventoryMarker?: InventoryMarker;
   /** Controllers that play on their own (UV scrolling, turning parts, idle sequence). */
   readonly animation?: ModelAnimation;
   /** Sequences the game plays on demand (a door's "Open" and "Close") or the graph plays. */
@@ -483,6 +488,26 @@ export function packTriShapeData(data: NiTriShapeDataBlock): {
     vertices,
     vertexCount: count,
   };
+}
+
+/**
+ * A model's inventory view (BSInvMarker): its turn about x, y and z (thousandths of a radian)
+ * and its zoom (a factor on the item's scale).
+ */
+export interface InventoryMarker {
+  readonly rotation: readonly [number, number, number];
+  readonly zoom: number;
+}
+
+/** The root's BSInvMarker, looked up by its name "INV" as the item menus look it up. */
+function inventoryMarker(file: NifFile): InventoryMarker | undefined {
+  const root = file.blocks[file.roots[0] ?? -1];
+  if (!root || !('extraData' in root)) return undefined;
+  for (const ref of root.extraData) {
+    const extra = getBlock(file, ref, 'inv-marker');
+    if (extra?.name.toLowerCase() === 'inv') return { rotation: extra.rotation, zoom: extra.zoom };
+  }
+  return undefined;
 }
 
 /** The root's "Prn" (NiStringExtraData): the skeleton node a worn model hangs on. */
@@ -892,6 +917,7 @@ export function buildModel(file: NifFile, options: BuildOptions = {}): ModelData
   // move their nodes as a skeleton (src/shell/animation-assets.ts) and models whose bodies
   // move their nodes one by one (constraints, several bodies: src/shell/articulated.ts).
   const attachTo = attachmentNode(file);
+  const marker = inventoryMarker(file);
   const articulated =
     file.blocks.some((block) => block.kind === 'constraint' || block.kind === 'constraint-chain') ||
     file.blocks.filter((block) => block.kind === 'collision-object').length > 1;
@@ -910,6 +936,7 @@ export function buildModel(file: NifFile, options: BuildOptions = {}): ModelData
       const type = file.blockTypes[root];
       return type === 'BSLeafAnimNode' || type === 'BSTreeNode';
     }),
+    ...(marker && { inventoryMarker: marker }),
     ...(animation && { animation }),
     ...(sequences && { sequences }),
     ...(behaviorGraph !== undefined && { behaviorGraph }),

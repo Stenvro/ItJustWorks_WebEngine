@@ -6,7 +6,7 @@ import type { SkeletalGraph } from '../animation/behavior-runtime.ts';
 import type { BehaviorGraph } from '../formats/hkx/behavior.ts';
 import type { ModelAnimation, ModelSequences } from './animation.ts';
 import type { Mat4 } from './math.ts';
-import type { ModelData, ModelNode, ModelPart } from './model-data.ts';
+import type { InventoryMarker, ModelData, ModelNode, ModelPart } from './model-data.ts';
 import type { ParticleSystemData } from './particle-data.ts';
 import type { TextureCache } from './texture-cache.ts';
 
@@ -69,6 +69,8 @@ export class GpuModel {
   readonly bytes: number;
   /** The root is a leaf animation node: Tree_Anim parts flutter (ModelData.leafAnimation). */
   readonly leafAnimation: boolean;
+  /** Its inventory view (ModelData.inventoryMarker): the item menus' 3D. */
+  readonly inventoryMarker: InventoryMarker | undefined;
   /** Worn on a skeleton: the model's node tree and the node it hangs on (ModelData). */
   readonly nodes: readonly ModelNode[] | undefined;
   readonly attachTo: string | undefined;
@@ -93,12 +95,14 @@ export class GpuModel {
     particles: readonly GpuParticleSystem[];
     textures: { readonly cache: TextureCache; readonly paths: readonly string[] };
     leafAnimation: boolean;
+    inventoryMarker?: InventoryMarker | undefined;
     nodes?: readonly ModelNode[] | undefined;
     nodeWorlds?: ReadonlyMap<string, Mat4> | undefined;
     attachTo?: string | undefined;
     treeBones?: ModelData['treeBones'];
   }) {
     this.leafAnimation = init.leafAnimation;
+    this.inventoryMarker = init.inventoryMarker;
     this.nodes = init.nodes;
     this.nodeWorlds = init.nodeWorlds ?? new Map();
     this.attachTo = init.attachTo;

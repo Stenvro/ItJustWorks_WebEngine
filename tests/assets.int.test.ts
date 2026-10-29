@@ -167,4 +167,30 @@ describe.skipIf(!hasGamedata())('assets in the local game data', () => {
       expect(texture.levels.length, path).toBe(texture.mipCount * texture.layerCount);
     }
   }, 120_000);
+
+  it('carries each item model inventory marker (BSInvMarker "INV") into its model', async () => {
+    const paths = every(
+      vfs.list('meshes\\weapons').filter((p) => p.endsWith('.nif')),
+      10,
+    );
+    let marked = 0;
+    for (const path of paths) {
+      const nif = parseNif(await vfs.read(path));
+      const root = nif.blocks[nif.roots[0] ?? -1];
+      const marker =
+        root && 'extraData' in root
+          ? root.extraData
+              .map((ref) => nif.blocks[ref])
+              .find((block) => block?.kind === 'inv-marker' && block.name.toLowerCase() === 'inv')
+          : undefined;
+      const model = buildModel(nif);
+      expect(model.inventoryMarker !== undefined, path).toBe(marker !== undefined);
+      if (marker?.kind === 'inv-marker') {
+        marked++;
+        expect(model.inventoryMarker?.rotation).toEqual(marker.rotation);
+        expect(model.inventoryMarker?.zoom).toBe(marker.zoom);
+      }
+    }
+    expect(marked).toBeGreaterThan(20);
+  }, 120_000);
 });
