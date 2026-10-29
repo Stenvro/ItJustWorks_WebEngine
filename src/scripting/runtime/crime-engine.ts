@@ -8,7 +8,7 @@
 // up, the jail's journey) listens here (src/shell/actor-crime.ts). Platform-independent.
 
 import {
-  bribeAmount,
+  bribeCost,
   CrimeFlag,
   crimeSettingNames,
   CrimeLedger,
@@ -17,8 +17,10 @@ import {
   crimeValues,
   guardResponse,
   ignoresCrime,
-  intimidates,
+  intimidated,
+  intimidation,
   isViolent,
+  persuadedUntil,
   jailDays,
   jailSkillLosses,
   boundedPickpocketChance,
@@ -29,6 +31,7 @@ import {
   type CrimeSettings,
   type CrimeValues,
   type GuardResponse,
+  type SpeechSides,
 } from '../../gameplay/crime.ts';
 import {
   overlooksCrime,
@@ -1059,49 +1062,92 @@ export class CrimeEngine {
     delete this.#runtime.state.crime.arrestingGuard;
   }
 
-  /** The gold a bribe takes (GetBribeAmount): crime's bribeAmount for the actor. */
+  /** The player and an actor as a bribe or an intimidation weighs them (crime's SpeechSides). */
+  async #speechSides(actor: number): Promise<SpeechSides> {
+    const actors = this.#runtime.actors;
+    const value = async (reference: number, index: number): Promise<number> =>
+      (await actors.value(reference, index)).current;
+    return {
+      player: { level: await actors.level(PLAYER_REF), speech: await value(PLAYER_REF, SPEECH) },
+      target: {
+        level: await actors.level(actor),
+        speech: await value(actor, SPEECH),
+        morality: await value(actor, ActorValue.morality),
+        // The original reads its base's AI data.
+        confidence: (await actors.value(actor, ActorValue.confidence)).base,
+      },
+    };
+  }
+
+  /**
+   * The gold a bribe takes (GetBribeAmount, Actor.GetBribeAmount, the dialogue's `<BribeCost>`):
+   * crime's bribeCost, then the player's perks (Mod Bribe Amount, the actor its target; no
+   * vanilla perk has one), rounded down.
+   */
   async bribeAmount(actor: number): Promise<number> {
-    const runtime = this.#runtime;
-    const level = await runtime.actors.level(actor);
-    const speech = (await runtime.actors.value(PLAYER_REF, SPEECH)).current;
-    const faction = (await this.isGuard(actor))
-      ? await runtime.actors.crimeFaction(actor)
-      : undefined;
-    const owed = faction === undefined ? undefined : this.bounty(faction);
-    const amount = bribeAmount(
-      level,
-      speech,
-      owed === undefined ? 0 : owed.violent + owed.nonviolent,
-      await this.settings(),
-    );
-    // The player's perks change it (Mod Bribe Amount; no vanilla perk has one).
-    const perked = await runtime.perks.apply(EntryPoint.modBribeAmount, PLAYER_REF, amount, [
+    const cost = bribeCost(await this.#speechSides(actor), await this.settings());
+    const perked = await this.#runtime.perks.apply(EntryPoint.modBribeAmount, PLAYER_REF, cost, [
       actor,
     ]);
-    return Math.max(1, Math.round(perked));
+    return Math.max(0, Math.trunc(perked));
   }
 
   /**
    * Whether the player would intimidate an actor now (GetIntimidateSuccess,
-   * WillIntimidateSucceed: crime's intimidates), the perk entry point Mod Player Intimidation
-   * (Intimidation doubles it) on the player's side. fIntimidateSpeechcraftCurve: no plugin sets
-   * it and its default is not documented: 1. TODO(M13): the engine's default.
+   * WillIntimidateSucceed): crime's intimidation, the perk entry point Mod Player Intimidation
+   * (Intimidation doubles it) on the player's side, against its level and Confidence.
    */
   async intimidates(actor: number): Promise<boolean> {
-    const actors = this.#runtime.actors;
-    const value = async (reference: number, index: number): Promise<number> =>
-      (await actors.value(reference, index)).current;
-    const curve = await this.#runtime.gameSetting('fIntimidateSpeechcraftCurve');
-    return intimidates(
-      { level: await actors.level(PLAYER_REF), speech: await value(PLAYER_REF, SPEECH) },
-      {
-        level: await actors.level(actor),
-        speech: await value(actor, SPEECH),
-        confidence: await value(actor, ActorValue.confidence),
-      },
-      typeof curve === 'number' ? curve : 1,
-      await this.#runtime.perks.apply(EntryPoint.modPlayerIntimidation, PLAYER_REF, 1, [actor]),
+    const settings = await this.settings();
+    const sides = await this.#speechSides(actor);
+    const scariness = await this.#runtime.perks.apply(
+      EntryPoint.modPlayerIntimidation,
+      PLAYER_REF,
+      intimidation(sides, settings),
+      [actor],
     );
+    return intimidated(scariness, sides.target, settings);
+  }
+
+  /**
+   * Actor.SetBribed, SetIntimidated (FavorDialogueScript's Bribe, Persuade on an arrest,
+   * Intimidate). Observed in the original: one mark an actor keeps, bribed or intimidated, with
+   * the last day it holds (iAINumberDaysToStayBribed / ...Intimidated days after today); a bribe
+   * replaces an intimidation and the other way round. SetBribed(false) takes the bribe away,
+   * SetIntimidated(false) either mark.
+   */
+  async setPersuaded(actor: number, kind: 'bribed' | 'intimidated', on: boolean): Promise<void> {
+    const entry = this.#runtime.state.actor(actor);
+    if (!on) {
+      if (kind === 'intimidated' || entry.bribed === true) {
+        delete entry.bribed;
+        delete entry.intimidated;
+        delete entry.persuadedUntil;
+      }
+      return;
+    }
+    const settings = await this.settings();
+    const days = kind === 'bribed' ? settings.daysToStayBribed : settings.daysToStayIntimidated;
+    entry.bribed = kind === 'bribed';
+    entry.intimidated = kind === 'intimidated';
+    entry.persuadedUntil = persuadedUntil(this.#runtime.state.gameDaysPassed, days);
+  }
+
+  /**
+   * Whether an actor is bribed or intimidated now (Actor.IsBribed, IsIntimidated,
+   * IsBribedbyPlayer, IsIntimidatedbyPlayer): marked so and the date not past its last day (a
+   * mark past it goes, as the original clears it when asked).
+   */
+  persuaded(actor: number, kind: 'bribed' | 'intimidated'): boolean {
+    const entry = this.#runtime.state.actors.get(actor);
+    if (entry?.[kind] !== true) return false;
+    const until = entry.persuadedUntil;
+    // A mark from a save before the days were kept holds.
+    if (until === undefined || Math.floor(this.#runtime.state.gameDaysPassed) <= until) return true;
+    delete entry.bribed;
+    delete entry.intimidated;
+    delete entry.persuadedUntil;
+    return false;
   }
 
   // --- Paying, jail ---------------------------------------------------------------------------

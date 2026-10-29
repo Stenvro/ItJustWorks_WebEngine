@@ -59,8 +59,6 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
       | 'doingFavor'
       | 'alerted'
       | 'unconscious'
-      | 'bribed'
-      | 'intimidated'
       | 'dontMove'
       | 'noBleedoutRecovery'
       | 'attackOnSight'
@@ -368,20 +366,19 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     entry.canDoFavor = bool(call.args[1], true);
   });
   ask('isdoingfavor', false, (actor) => state.actors.get(actor)?.doingFavor ?? false);
-  // As one starts doing the player a favor: the story manager's Player Gets Favor (PRFV).
-  act('setdoingfavor', (actor, call) => {
-    const doing = bool(call.args[0], true);
-    const was = state.actors.get(actor)?.doingFavor === true;
-    state.actor(actor).doingFavor = doing;
-    if (doing && !was && actor !== PLAYER_REF)
-      runtime.detach(runtime.storyEvents.playerGetsFavor(actor));
-  });
+  // Observed in the original: no story manager event (Player Gets Favor is never raised).
+  flag('setdoingfavor', 'doingFavor');
   // Summoned, reanimated or commanded by an effect (magic-engine.ts).
   ask('iscommandedactor', false, (actor) => runtime.magic.commander(actor) !== undefined);
-  ask('isbribed', false, (actor) => state.actors.get(actor)?.bribed ?? false);
-  flag('setbribed', 'bribed');
-  ask('isintimidated', false, (actor) => state.actors.get(actor)?.intimidated ?? false);
-  flag('setintimidated', 'intimidated');
+  // Bribed or intimidated for a day or so (crime-engine.ts setPersuaded).
+  ask('isbribed', false, (actor) => runtime.crime.persuaded(actor, 'bribed'));
+  act('setbribed', (actor, call) =>
+    runtime.crime.setPersuaded(actor, 'bribed', bool(call.args[0], true)),
+  );
+  ask('isintimidated', false, (actor) => runtime.crime.persuaded(actor, 'intimidated'));
+  act('setintimidated', (actor, call) =>
+    runtime.crime.setPersuaded(actor, 'intimidated', bool(call.args[0], true)),
+  );
   ask('willintimidatesucceed', false, (actor) => runtime.crime.intimidates(actor));
   ask('getbribeamount', 0, (actor) => runtime.crime.bribeAmount(actor));
   flag('setrestrained', 'restrained');

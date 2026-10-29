@@ -193,13 +193,44 @@ export class StoryManager {
   /** An event, queued as `event`: the quests it started (none: no quest node answered). */
   quests(event: StoryEventData): Promise<readonly number[]> {
     const processed = this.#queue.then(async () => {
-      const started = await this.#run(event);
-      this.onProcessed?.(event, started);
-      return started;
+      this.#processing++;
+      try {
+        const started = await this.#run(event);
+        this.onProcessed?.(event, started);
+        return started;
+      } finally {
+        this.#processing--;
+      }
     });
     this.#queue = processed.catch(() => []);
     return processed;
   }
+
+  /**
+   * Quest Start (QSTR, Q1 the quest): a script's Quest.Start, or SetStage on a quest that does
+   * not run. Observed in the original: the start is queued as this event behind those raised
+   * before it, and the story teller starts the quest at its turn (no node runs for it); the
+   * script waits for that. Resolves whether it started.
+   * TODO(M13): ours waits for a quest's start-up fragments as it starts it, so a start asked
+   * while an event is processed (a started quest's fragment starting another) starts at once
+   * rather than after the queue (it would wait for itself).
+   */
+  questStart(quest: number): Promise<boolean> {
+    if (this.#processing > 0) return this.#runtime.quests.start(quest);
+    const started = this.#queue.then(async () => {
+      this.#processing++;
+      try {
+        return await this.#runtime.quests.start(quest);
+      } finally {
+        this.#processing--;
+      }
+    });
+    this.#queue = started.catch(() => false);
+    return started;
+  }
+
+  /** Events and quest starts being processed now (a start asked meanwhile does not queue). */
+  #processing = 0;
 
   /** Told of every event once processed, with the quests it started (the simulation records it). */
   onProcessed: ((event: StoryEventData, started: readonly number[]) => void) | undefined;

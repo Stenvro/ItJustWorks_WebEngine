@@ -59,12 +59,6 @@ export interface SpokenInfo {
 const HELLO = 'HELO';
 const GOODBYE = 'GBYE';
 const RUMORS = 'RUMO';
-/** The misc stats a persuasion's outcome counts, and the story manager event each raises. */
-const PERSUASION_STATS: readonly (readonly [string, 'FLAT' | 'BRIB' | 'INTM'])[] = [
-  ['persuasions', 'FLAT'],
-  ['bribes', 'BRIB'],
-  ['intimidations', 'INTM'],
-];
 
 export class DialogueEngine {
   readonly #runtime: ScriptRuntime;
@@ -173,8 +167,8 @@ export class DialogueEngine {
       const text = info.prompt ?? topic.text;
       choices.push({
         topic,
-        // Its tags filled in (<Global=RoomCost>: src/scripting/runtime/quest-text.ts).
-        text: record && text !== '' ? await questText(runtime, record, text) : text,
+        // Its tags filled in (<Global=RoomCost>, <BribeCost>: src/scripting/runtime/quest-text.ts).
+        text: record && text !== '' ? await questText(runtime, record, text, speaker) : text,
         isNew: !this.#chosen.has(topic.formId),
         quest,
         priority: (record?.priority ?? 0) * 1000 + topic.priority,
@@ -320,17 +314,12 @@ export class DialogueEngine {
     const attachments = await runtime.forms.attachments(info.formId);
     for (const fragment of attachments?.fragments ?? []) {
       if (fragment.stage !== when) continue;
-      const before = PERSUASION_STATS.map(([stat]) => runtime.stats.get(stat) ?? 0);
+      // A persuasion's outcome is the fragment's own (FavorDialogueScript's Persuade, Bribe and
+      // Intimidate: the skill use, the count, the mark). Observed in the original: no story
+      // manager event comes of it (Flatter, Bribe and Intimidate are never raised).
       await runtime.vm.call(new ObjectHandle(info.formId, fragment.script), fragment.function, [
         runtime.referenceHandle(speaker),
       ]);
-      // A persuasion's outcome (FavorDialogueScript's Persuade, Bribe, Intimidate count it):
-      // the story manager's Flatter, Bribe or Intimidate event, of the one spoken to.
-      // TODO(M13): the engine's own raise site is not read; the count is where it shows.
-      PERSUASION_STATS.forEach(([stat, event], i) => {
-        if ((runtime.stats.get(stat) ?? 0) > (before[i] ?? 0))
-          runtime.detach(runtime.storyEvents.persuaded(event, speaker));
-      });
     }
   }
 

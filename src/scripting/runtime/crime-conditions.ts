@@ -1,8 +1,8 @@
 // Condition functions (CTDA) of crime and factions, on the running game (crime-engine.ts): the
 // player's crime gold with the subject's crime faction (GetCrimeGold, ...Violent,
 // ...Nonviolent, CanPayCrimeGold: DialogueCrimeGuards' lines), guards and arrests (IsGuard,
-// GetArrestingActor, GetBribeSuccess), trespassing (IsTrespassing, GetTrespassWarningLevel,
-// IsInMyOwnedCell), known crimes (GetCrimeKnown, GetCrime), standing with factions
+// GetArrestingActor, GetBribeSuccess, IsIntimidatedbyPlayer), trespassing (IsTrespassing,
+// GetTrespassWarningLevel, IsInMyOwnedCell), known crimes (GetCrimeKnown, GetCrime), standing with factions
 // (GetPCExpelled, GetPCEnemyofFaction, GetPCInFaction, GetIsCrimeFaction,
 // GetInSharedCrimeFaction, GetFactionRelation, GetFactionCombatReaction, GetFactionReaction),
 // relationships' associations (HasAssociationType, HasFamilyRelationship,
@@ -18,6 +18,7 @@ import type { ScriptRuntime } from './runtime.ts';
 
 /** UESP's function indices of the conditions valued here. */
 export const CrimeFn = {
+  isIntimidatedbyPlayer: 116,
   getCrimeKnown: 119,
   getCrime: 122,
   isGuard: 125,
@@ -113,6 +114,9 @@ export async function crimeConditionValue(
     // The player's intimidation of the subject succeeds (the perks: Intimidation).
     case CrimeFn.getIntimidateSuccess:
       return reference === undefined ? undefined : flag(await crime.intimidates(reference));
+    // The player intimidated it, a day or so ago at most (Actor.SetIntimidated).
+    case CrimeFn.isIntimidatedbyPlayer:
+      return reference === undefined ? undefined : flag(crime.persuaded(reference, 'intimidated'));
     case CrimeFn.isTrespassing:
       return flag(
         reference === PLAYER_REF &&

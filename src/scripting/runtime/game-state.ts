@@ -139,6 +139,8 @@ export interface ActorState {
   unconscious?: boolean;
   bribed?: boolean;
   intimidated?: boolean;
+  /** The last game day (whole days passed) a bribe or intimidation holds (crime-engine.ts). */
+  persuadedUntil?: number;
   dontMove?: boolean;
   aiEnabled?: boolean;
   noBleedoutRecovery?: boolean;
