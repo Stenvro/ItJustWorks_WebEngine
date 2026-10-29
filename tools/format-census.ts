@@ -5,8 +5,8 @@
 //                                                reader (and where the files of `ext` are)
 //   node tools/format-census.ts bsa        every archive in Data: names against hashes, every
 //                                          file read and decompressed
-//   node tools/format-census.ts esm        every record type and subrecord in the load order,
-//                                          against the subrecords the engine's code reads
+//   node tools/format-census.ts esm        every subrecord of every record of the load order
+//                                          decoded by its layout (and which engine code names)
 //   node tools/format-census.ts strings    every string table of every language, and whether
 //                                          every FULL id of the load order resolves
 //   node tools/format-census.ts hkx        every Havok file by class, and which have a layout
