@@ -1383,8 +1383,12 @@ lines)` (lines: `{Item, Value}`), then `SetSelectedMarker(index)`. A click on th
   - The time passes that walking the way would take: the distance on the map, at the NPCDefault
     movement type's forward walk speed times fFastTravelSpeedMult (1 unless a plugin sets it),
     at the timescale. The game's rounding is unknown (UESP).
-  - The player arrives at the map marker's reference, behind the loading menu and a loading
-    screen, as through a load door. Game.FastTravel goes the same way.
+  - The player arrives at the reference the map marker links to (its default link: an
+    XMarkerHeading on the ground nearby; 421 of the 471 vanilla markers have one, a median 1,800
+    units off), else at the marker itself (`ScriptRuntime.fastTravelArrival`). The marker may
+    stand over a drop: High Hrothgar's is 1,300 units above the ground under it. They arrive
+    behind the loading menu and a loading screen, as through a load door. Game.FastTravel goes
+    the same way.
 
 ## The local map
 

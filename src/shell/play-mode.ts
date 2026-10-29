@@ -778,7 +778,8 @@ export class PlayMode {
     const session = this.#session;
     const runtime = session.scriptsReady;
     if (!runtime) return;
-    const at = await runtime.placement(destination);
+    // A map marker's travellers arrive at the place it links to (ScriptRuntime.fastTravelArrival).
+    const at = await runtime.placement(await runtime.fastTravelArrival(destination));
     if (!at) {
       this.#terminal.log('ui', `fast travel: ${destination.toString(16)} is nowhere`, 'warn');
       return;

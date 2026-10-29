@@ -2440,6 +2440,20 @@ export class ScriptRuntime implements VmHost {
   }
 
   /**
+   * Where fast travel to a reference puts the player: a map marker (XMRK) that links to a
+   * reference (its default link, an XMarkerHeading on the ground nearby: 421 of the 471 vanilla
+   * markers have one, about 1,800 units off; the marker itself may stand over a drop, as High
+   * Hrothgar's does) arrives there; any other reference is the place itself. Derived from the
+   * data (every linked marker's link is such a heading marker). TODO(M13): whether a keyworded
+   * link ever stands in for the default one.
+   */
+  async fastTravelArrival(destination: number): Promise<number> {
+    const record = await this.forms.record(destination);
+    if (!record?.fields.has('XMRK')) return destination;
+    return (await this.linkedReference(destination, 0)) ?? destination;
+  }
+
+  /**
    * ObjectReference.Activate: the engine's one activation (`activateRef`) by a script, the
    * default processing only if asked. Returns true, as the game's does for an activation it
    * took.

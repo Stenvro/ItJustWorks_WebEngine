@@ -3,6 +3,7 @@
 // Skipped without game data.
 
 import { describe, expect, it } from 'vitest';
+import { hostileTo } from '../src/ai/combat-ai.ts';
 import { hasGamedata, loadSim, openSim, PLAYER_REF, type Sim } from './helpers/sim.ts';
 
 const MQ104 = 0x2610c;
@@ -30,15 +31,44 @@ const COURTYARD_DOOR = 0x877cd;
 const SPRINT_START = 0x3fb00;
 const SPRINT_GATE = 0x3fafb;
 const SPRINT_SUCCESS = 0x3fb02;
+/** MQ105Ustengrav: The Horn of Jurgen Windcaller, and dunUstengravQST (the dungeon's own). */
+const HORN_QUEST = 0x713dc;
+const USTENGRAV_QUEST = 0x2125b;
+/** UstengravMapMarker, the barrow's door from the marsh, and its two inner cells. */
+const USTENGRAV_MARKER = 0x1621f;
+const USTENGRAV_DOOR = 0x15d7b;
+const USTENGRAV_01 = 0x270ab;
+const USTENGRAV_02 = 0x152aa;
+/** Ustengrav01's door down to Ustengrav02. */
+const USTENGRAV_DOWN = 0x2720c;
 
-/** A reference's place, as an arrival beside it. */
-async function beside(
+/** The player kills the living actors within reach hostile to them (the fight not under test). */
+async function fight(sim: Sim, reach: number): Promise<void> {
+  const me = await sim.position(PLAYER_REF);
+  if (!me) return;
+  for (const actor of sim.actors()) {
+    const at = actor.position;
+    if (actor.dead || !actor.enabled(actor.reference)) continue;
+    if (Math.hypot(at[0] - me[0], at[1] - me[1], at[2] - me[2]) > reach) continue;
+    if (await sim.runtime.actors.isDead(actor.reference)) continue;
+    if (await hostileTo(sim.runtime, actor.reference, PLAYER_REF)) {
+      await sim.kill(actor.reference, PLAYER_REF);
+    }
+  }
+}
+
+/** The player makes their way over the navmeshes to a point, fighting what attacks them. */
+async function fightTo(
   sim: Sim,
-  reference: number,
-): Promise<{ position: [number, number, number]; heading: number }> {
-  const at = await sim.position(reference);
-  if (!at) throw new Error(`No place for ${reference.toString(16)}`);
-  return { position: [at[0] + 100, at[1], at[2] + 20], heading: 0 };
+  target: [number, number, number],
+  seconds: number,
+  reach = 64,
+): Promise<boolean> {
+  for (let second = 0; second < seconds; second += 5) {
+    await fight(sim, 1500);
+    if (await sim.walkPath(target, 5, reach)) return true;
+  }
+  return false;
 }
 
 /** The player turns to face a reference. */
@@ -75,22 +105,33 @@ let afterTargets: Uint8Array | undefined;
 let afterWuld: Uint8Array | undefined;
 /** The game with the sprint trial passed (stage 140). */
 let afterSprint: Uint8Array | undefined;
+/** The game with the quest complete and the Horn's begun (stage 160). */
+let afterVoice: Uint8Array | undefined;
+/** The game with the player in Ustengrav (the Horn's stage 10). */
+let inUstengrav: Uint8Array | undefined;
 
 describe.skipIf(!hasGamedata())('MQ105 The Way of the Voice', () => {
   // MQ105's own start for a game that skips ahead (stage 1) plays MQ103 and MQ104 to their ends
   // and starts MQ105 at 10: the Greybeards' summons, Ivarstead and High Hrothgar on the map.
-  // The player goes to Ivarstead, up the 7,000 steps and in at the front doors (unlocked by
-  // stage 5): entering the monastery's location sets 15 (MQ105PlayerScript's OnLocationChange).
+  // The player jumps to Ivarstead, then up to the 7,000 steps' top and in at the front
+  // doors (unlocked by stage 5): entering the monastery's location sets 15 (MQ105PlayerScript's
+  // OnLocationChange). Found 2026-10-29: the player arrived at the High Hrothgar map marker
+  // itself, over a drop, and fell to their death (the cases after went on with a dead player);
+  // a map marker's travellers arrive at the heading marker it links to. With the player alive,
+  // MQ206's Alduin (initially disabled), saved moved near the monastery, was staged enabled in
+  // the cell he stood in and fought them, the masters with him; a moved actor now keeps its own
+  // enable state.
   it('summons the player and has them climb to High Hrothgar (1-15)', async () => {
     const sim = await openSim({ hour: 9 });
     try {
       void sim.runtime.quests.setStage(MQ105, 1);
       expect(await sim.until(() => sim.stageDone(MQ104, 200), 120)).toBe(true);
       expect(sim.stageDone(MQ105, 10)).toBe(true);
-      await sim.world.openExterior(TAMRIEL, { arrival: await beside(sim, IVARSTEAD_MARKER) });
+      await sim.fastTravel(IVARSTEAD_MARKER, false);
       await sim.step(2);
-      await sim.world.openExterior(TAMRIEL, { arrival: await beside(sim, HIGH_HROTHGAR_MARKER) });
+      await sim.fastTravel(HIGH_HROTHGAR_MARKER, false);
       await sim.step(2);
+      expect(await sim.runtime.actors.isDead(PLAYER_REF)).toBe(false);
       const door = await sim.position(FRONT_DOOR);
       if (door) await sim.moveTo([door[0] - 150, door[1], door[2]]);
       expect(sim.activate(FRONT_DOOR)).toBe(true);
@@ -311,6 +352,52 @@ describe.skipIf(!hasGamedata())('MQ105 The Way of the Voice', () => {
       await sim.converse(arngeir, [/next/], greeting(sim, arngeir));
       expect(await sim.until(() => sim.stageDone(MQ105, 160), 30)).toBe(true);
       expect(quest.completed).toBe(true);
+      afterVoice = await sim.save('MQ105 160');
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+});
+
+describe.skipIf(!hasGamedata())('MQ105 The Horn of Jurgen Windcaller', () => {
+  // MQ105's 160 starts MQ105Ustengrav (10: retrieve the Horn) and puts Ustengrav on the map. The
+  // player goes there (a jump to its map marker) and in at the barrow's door from the marsh.
+  it('sends the player to Ustengrav (160, Horn 10)', async () => {
+    if (!afterVoice) return;
+    const sim = await loadSim(afterVoice);
+    try {
+      expect(sim.stage(HORN_QUEST)).toBe(10);
+      await sim.fastTravel(USTENGRAV_MARKER, false);
+      await sim.step(2);
+      const door = await sim.position(USTENGRAV_DOOR);
+      if (door) await sim.walkPath(door, 30, 120);
+      expect(sim.activate(USTENGRAV_DOOR)).toBe(true);
+      await sim.world.settle();
+      expect((await sim.runtime.placement(PLAYER_REF))?.cell).toBe(USTENGRAV_01);
+      await sim.step(2);
+      inUstengrav = await sim.save('Horn 10');
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+
+  // Past the necromancers and the bandits they raise at the entrance (dunUstengravQST), and the
+  // draugr of the crypts below, to the door down to Ustengrav02: the player walks the navmesh
+  // and the fights are won with the helpers' kill. TODO(M13): the way on to the Whirlwind Sprint
+  // gates (the player holds up at the stairs past the fire plates, -1700,-3240 in Ustengrav02),
+  // the gates themselves (one word's rush carries the player through the first gate but the
+  // second shuts 30 units short), the word wall and the tomb.
+  it('takes the player through Ustengrav to its depths', async () => {
+    if (!inUstengrav) return;
+    const sim = await loadSim(inUstengrav);
+    try {
+      const down = await sim.position(USTENGRAV_DOWN);
+      expect(down && (await fightTo(sim, down, 240, 120))).toBe(true);
+      expect(await sim.runtime.actors.isDead(PLAYER_REF)).toBe(false);
+      expect(sim.activate(USTENGRAV_DOWN)).toBe(true);
+      await sim.world.settle();
+      expect((await sim.runtime.placement(PLAYER_REF))?.cell).toBe(USTENGRAV_02);
+      expect(sim.stage(USTENGRAV_QUEST)).toBeGreaterThanOrEqual(10);
     } finally {
       await sim.close();
     }
