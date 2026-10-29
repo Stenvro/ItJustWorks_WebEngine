@@ -285,6 +285,17 @@ export const INI_DEFAULTS = {
     fObjectLODMax: 30,
     fObjectLODMin: 5,
   },
+  // Where the lighting shader's features fade out with distance (src/render/shader-fades.ts).
+  LightingShader: {
+    fDecalLODFadeEnd: 0.06,
+    fDecalLODFadeStart: 0.05,
+    fEnvmapLODFadeEnd: 0.1,
+    fEnvmapLODFadeStart: 0.09,
+    fRefractionLODFadeEnd: 0.03,
+    fRefractionLODFadeStart: 0.025,
+    fSpecularLODFadeEnd: 0.1,
+    fSpecularLODFadeStart: 0.09,
+  },
   // The settings the original names without a section: SkyrimPrefs.ini keeps them in [MAIN].
   Main: {
     bCrosshairEnabled: 1,
