@@ -2115,6 +2115,8 @@ export class ModelViewer {
         runtime.cellDetached(
           [
             ...cell.data.objects.map((object) => object.reference),
+            // Its triggers detach as they attached.
+            ...cell.data.primitives.map((primitive) => primitive.reference),
             ...(this.#stage?.referencesIn(String(cell.data.cell.formId)) ?? []),
           ],
           (reference) => loaded.has(reference),

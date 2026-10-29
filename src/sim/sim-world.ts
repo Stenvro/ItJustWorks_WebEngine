@@ -954,6 +954,8 @@ export class SimWorld {
       this.runtime.cellDetached(
         [
           ...cell.data.objects.map((object) => object.reference),
+          // Its triggers detach as they attached.
+          ...cell.data.primitives.map((primitive) => primitive.reference),
           ...this.stage.referencesIn(cell.key),
         ],
         (reference) => loaded.has(reference),

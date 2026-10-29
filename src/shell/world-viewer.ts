@@ -2495,6 +2495,8 @@ export class WorldViewer {
         runtime.cellDetached(
           [
             ...data.objects.map((object) => object.reference),
+            // Its triggers detach as they attached.
+            ...data.primitives.map((primitive) => primitive.reference),
             ...(this.#stage?.referencesIn(key) ?? []),
           ],
           (reference) => loaded.has(reference),
