@@ -4,10 +4,10 @@
 // inputContexts) decides: a menu gets each button as GFx gives it (menuPadKey), the d-pad and
 // the left stick repeating as held keys do ([Interface] fMenuKeyRepeatLong/Short); otherwise the
 // main gameplay context's events are pressed and let go (Activate on A, Jump on Y, the
-// triggers' attacks), the left stick moves (Move) and the right stick looks (Look). Using the
-// gamepad tells the menus the platform is PC with a gamepad; the keyboard or mouse switches
-// back (src/ui/input-platform.ts). A remap in the Controls page takes the next button
-// (nextPadButton).
+// triggers' attacks), the left stick moves (Move) and the right stick looks (Look; in a menu it
+// turns the item menus' 3D). Using the gamepad tells the menus the platform is PC with a
+// gamepad; the keyboard or mouse switches back (src/ui/input-platform.ts). A remap in the
+// Controls page takes the next button (nextPadButton).
 
 import {
   inputContexts,
@@ -19,6 +19,7 @@ import {
 } from '../formats/controlmap/gamepad.ts';
 import type { ControlMap } from '../formats/controlmap/controlmap.ts';
 import { Platform, setInputPlatform } from '../ui/input-platform.ts';
+import { Item3D } from './item-3d.ts';
 import type { Player } from './player.ts';
 
 export interface GamepadSink {
@@ -131,6 +132,7 @@ export function attachGamepad(sink: GamepadSink): () => void {
     if (moving || looking) setInputPlatform(Platform.pcGamepad);
     player.stick = inMenu ? [0, 0] : state.leftStick;
     if (!inMenu) player.lookStick(state.rightStick[0], state.rightStick[1], seconds);
+    else Item3D.shown?.stick(state.rightStick[0], state.rightStick[1], seconds);
   };
 
   const tick = (): void => {

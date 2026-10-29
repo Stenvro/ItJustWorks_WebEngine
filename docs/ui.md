@@ -1183,12 +1183,29 @@ The inventory, container, barter, gift and magic menus show the highlighted entr
 the list (`src/shell/item-3d.ts`): the movie calls `UpdateItem3D(true)` as the highlight changes
 and `UpdateItem3D(false)` as the list hides. An item shows its world model (armor the player's
 sex's, a book its inventory art, BOOK INAM), a spell its costliest effect's menu display object
-(MGEF MDOB), a shout its own (SHOU MDOB). It is scaled so its bound sphere's radius is
-fInventory3DBoundRadiusScale (12.5) times the place's scale (fInventory3DItemPosScale 1.87, Wide
-1.5; the magic menu's 1.87 / 1.75). Dragging it (`StartMouseRotation`, `StopMouseRotation`)
-turns it about its upright axis (the menu hears `ItemRotating` as it turns: the zoom button
-shows); the wheel over it (`ZoomItemModel(±1)`) brings it to fInventory3DItemZoom (0, −500, 0)
-at fInventory3DItemZoomScale (2.25) and back, at fInventory3DItemZoomSpeed.
+(MGEF MDOB), a shout its own (SHOU MDOB). Observed in the original (`src/shell/item-3d-view.ts`):
+
+- As the item loads, its root's rotation becomes its model's BSInvMarker's (the extra data named
+  "INV": x, y, z in thousandths of a radian, put together as Rx·Ry·Rz in the NIF's turn
+  convention), or none without one: the model then stands as modelled.
+- Its scale is fInventory3DBoundRadiusScale (12.5) over its bound radius, times the place's scale
+  (fInventory3DItemPosScale 1.87, Wide 1.5; the magic menu's 1.87 / 1.75), times the marker's
+  zoom; on a screen wider than 16:9 it is scaled by 16:9 over the screen's aspect. Its bound's
+  centre stands at the place.
+- Dragging it (`StartMouseRotation`, `StopMouseRotation`; the menu hears `ItemRotating`: the zoom
+  button shows) turns it about the menu's up axis by the mouse's across move and about the
+  across axis by its up and down move, each turn put before the item's rotation (about the
+  menu's axes, the bound's centre staying in place). The amounts are the mouse look's: across,
+  counts × fInventory3DItemRotMouseSpeed (50) × fMouseHeadingSensitivity × fMouseHeadingXScale
+  radians; up and down the same with fMouseHeadingYScale, times the frame's time
+  (bInvertYValues turns it round). A gamepad's right stick turns it by its stronger axis alone,
+  fInventory3DItemRotSpeed (3) radians a second at full tilt.
+- The wheel over it (`ZoomItemModel(±1)`) moves a progress towards 1 or 0 at
+  fInventory3DItemZoomSpeed (1.5) a second; the place goes in a straight line to
+  fInventory3DItemZoom (0, −500, 0) and the scale to fInventory3DItemZoomScale (2.25).
+- TODO(M13): the original replaces the root's whole transform (a root turned in its file loses
+  that turn); our models keep the root's transform in their parts. Which menus switch the
+  bound-radius scaling off (a flag of the 3D manager) is not read: every menu uses it.
 
 ## Books
 
