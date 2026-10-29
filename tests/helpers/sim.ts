@@ -564,13 +564,20 @@ export class Sim {
     return destruction.stage(struck) !== stage;
   }
 
-  /** Activates the nearest closed door within reach of a point (true if there was one). */
+  /**
+   * Activates the nearest closed door within reach of a point (true if there was one). A door
+   * not swung yet is as the plugin placed it (GetOpenState's rule: open by default, ONAM, or
+   * closed); an open or opening one is left alone, as activating it would swing it shut again
+   * (onto the player held up beside it).
+   */
   #openDoorNear([x, y]: readonly [number, number]): boolean {
     let door: number | undefined;
     let nearest = DOOR_REACH;
     for (const placed of this.world.placedObjects()) {
       const { object } = placed;
-      if (object.baseType !== 'DOOR' || this.openState(object.reference) === 1) continue;
+      if (object.baseType !== 'DOOR') continue;
+      const state = this.openState(object.reference) || (object.openByDefault ? 1 : 3);
+      if (state === 1 || state === 2) continue;
       const away = Math.hypot((object.world[12] ?? 0) - x, (object.world[13] ?? 0) - y);
       if (away < nearest) {
         nearest = away;

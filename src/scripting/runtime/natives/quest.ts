@@ -61,9 +61,9 @@ export function registerQuest(n: Register, runtime: ScriptRuntime): void {
   );
   n('quest.isrunning', ({ self }) => (self ? quests.isRunning(self.formId) : false));
   n('quest.isstopped', ({ self }) => (self ? !quests.isRunning(self.formId) : true));
-  // Starting and stopping complete within the call here.
-  n('quest.isstarting', () => false);
-  n('quest.isstopping', () => false);
+  // In the middle of its start (its aliases filling, its start-up stage) or of its stop.
+  n('quest.isstarting', ({ self }) => (self ? quests.starting.has(self.formId) : false));
+  n('quest.isstopping', ({ self }) => (self ? quests.stopping.has(self.formId) : false));
   n('quest.iscompleted', ({ self }) =>
     self ? (state.quests.get(self.formId)?.completed ?? false) : false,
   );

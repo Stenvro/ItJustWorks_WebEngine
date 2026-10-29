@@ -72,16 +72,108 @@ export function truthy(value: Value): boolean {
   return true;
 }
 
+/** The base scripts' names as declared, for an object's string without its script loaded. */
+const BASE_TYPES = new Map(
+  [
+    'Action',
+    'Activator',
+    'ActiveMagicEffect',
+    'Actor',
+    'ActorBase',
+    'ActorValueInfo',
+    'Alias',
+    'Ammo',
+    'Apparatus',
+    'Armor',
+    'ArmorAddon',
+    'Art',
+    'AssociationType',
+    'Book',
+    'Cell',
+    'Class',
+    'ColorForm',
+    'CombatStyle',
+    'ConstructibleObject',
+    'Container',
+    'Door',
+    'EffectShader',
+    'Enchantment',
+    'EncounterZone',
+    'EquipSlot',
+    'Explosion',
+    'Faction',
+    'Flora',
+    'Form',
+    'FormList',
+    'Furniture',
+    'GlobalVariable',
+    'Hazard',
+    'HeadPart',
+    'Idle',
+    'ImageSpaceModifier',
+    'ImpactDataSet',
+    'Ingredient',
+    'Key',
+    'Keyword',
+    'LeveledActor',
+    'LeveledItem',
+    'LeveledSpell',
+    'Light',
+    'Location',
+    'LocationAlias',
+    'LocationRefType',
+    'MagicEffect',
+    'Message',
+    'MiscObject',
+    'MusicType',
+    'ObjectReference',
+    'Outfit',
+    'Package',
+    'Perk',
+    'Potion',
+    'Projectile',
+    'Quest',
+    'Race',
+    'ReferenceAlias',
+    'Scene',
+    'Scroll',
+    'Shout',
+    'SoulGem',
+    'Sound',
+    'SoundCategory',
+    'SoundDescriptor',
+    'Spell',
+    'Static',
+    'TalkingActivator',
+    'TextureSet',
+    'Topic',
+    'TopicInfo',
+    'TreeObject',
+    'VisualEffect',
+    'VoiceType',
+    'Weapon',
+    'Weather',
+    'WordOfPower',
+    'WorldSpace',
+  ].map((name) => [name.toLowerCase(), name]),
+);
+/** A type's name as declared: a base script's, else the name as the handle keeps it. */
+export const displayType = (type: string): string => BASE_TYPES.get(type) ?? type;
+/** What an object is without the host's records: no editor ID, the form's (or quest's) id. */
+export function describeHandle(handle: ObjectHandle): string {
+  const id = handle.formId.toString(16).toUpperCase().padStart(8, '0');
+  return handle.alias >= 0 ? `alias ${String(handle.alias)} on quest  (${id})` : ` (${id})`;
+}
+
 export function formatValue(value: Value): string {
   if (value === null) return 'None';
   if (typeof value === 'boolean') return value ? 'True' : 'False';
   if (typeof value === 'number') return String(value);
   if (typeof value === 'string') return value;
   if (value instanceof PapyrusArray) return `[${value.items.map(formatValue).join(', ')}]`;
-  const id = value.formId.toString(16).toUpperCase().padStart(8, '0');
-  return value.alias >= 0
-    ? `[${value.type} alias ${String(value.alias)} of ${id}]`
-    : `[${value.type} ${id}]`;
+  // As the original prints it without the records (PapyrusVm.objectText gives the editor ID
+  // where the original keeps one, and a script's name as declared).
+  return `[${displayType(value.type)} <${describeHandle(value)}>]`;
 }
 
 /**
