@@ -57,7 +57,25 @@ TES, 3 global variables (vsval count; id, value f32), 4 created objects (weapon 
 enchantments, potions, poisons), 5 effects, 6 weather (climate, weather, previous, two unknown,
 region weather; the hour, the transition's start and how far it is; the rest kept as bytes), 7
 audio, 8 sky cells, 1001 Papyrus, 1002 anim objects, 1003 timer, 1004 synchronised animations.
-Table 2 and 1000 (temp effects) and 1005 (main) are kept as bytes.
+
+Tables 2 and 3's other types (`global-data-tables.ts`, after UESP's pages for each; built from
+the documented layouts and tested by round trip, waiting on a real save, TODO(M12)): 100 process
+lists (three floats, the next crime number, then the crimes of each of 7 types: witness and
+serial numbers, type, stolen quantity, time, victim, criminal, item, owner, witnesses, bounty,
+faction, cleared), 101 combat (the next combat number, combat groups with their members' five
+positions, targets, fifteen float pairs and an optional search with an optional detail block,
+then the actors' entries and a tail), 102 interface (help messages shown, the last used weapons,
+spells and shouts; an extra part UESP sees "in certain situations", read when bytes are left),
+103 actor causes (position, serial number, actor), 105 detection manager, 106 location
+metadata, 107 quest static data (two lists of quest run data: a value's type 1, 2 and 4 are
+references, 3 a number; three reference lists; per quest a list of number pairs; a flag), 108
+story teller (a flag), 109 magic favourites (the favourites, then the hotkeys by position), 110
+player controls, 111 story event manager (its entries' layout is undocumented: kept as bytes),
+112 ingredient pairs found to share no effect, 113 menu controls, 114 menu topic manager (two
+references), 1000 temp effects (the effect entries, then two lists of typed effects: types 0,
+1, 3 to 11 documented; an undocumented type, such as 2, stops the read and keeps the rest), 1005
+main (always empty; the table 3 count leaves it out). 104 has no documentation: kept as bytes.
+`GLOBAL_DATA_READERS` maps every type to its reader; `ess-info` runs them on a save.
 
 **Papyrus**: version u16, strings (u16 count), script types (name, parent, members: name and
 type as string indices), objects (VM handle u32, script, u16 flags, i16 high word, reference id,
