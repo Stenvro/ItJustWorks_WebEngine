@@ -355,8 +355,6 @@ export class PostProcessor {
     data.set([...image.tintColor, image.tintAmount], 8);
     data.set(blurWeights(hdr.bloomBlurRadius), 16);
     data.set(effects ? [...effects.fadeColor, effects.fadeAmount] : [0, 0, 0, 0], 32);
-    const water = image.underwater;
-    data.set(water ? [...water.color, water.amount] : [0, 0, 0, 0], 36);
     const bloomWidth = targets.bloomA.width;
     const bloomHeight = targets.bloomA.height;
     const write = (index: number, stepX: number, stepY: number): void => {

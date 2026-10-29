@@ -1,13 +1,18 @@
-// Distance fade of placed references (the engine's BSFadeNode): each reference fades out by its
-// kind's multiplier, the settings Actor, Item and Object Fade (INI [LOD] fLODFadeOutMultActors,
-// fLODFadeOutMultItems, fLODFadeOutMultObjects), times its bound's radius. It dithers away over
-// the last part of that distance instead of popping. References that have distant LOD (the
-// base's "Has Distant LOD" flag) or are placed as full LOD ("Is Full LOD") never fade: the LOD
-// takes over at the grid's edge. Platform-independent.
+// Distance fade of placed references (the engine's BSFadeNode), by the original's rule. Each
+// reference has a fade distance from its bound radius: ten radii (INI [LOD] fLODBoundRadiusMult),
+// but never past the loaded grid's edge less the radius and half a cell (uGridsToLoad cells of
+// 4096 units round the camera's). It fades out from fLODFadeOutPercent (0.6) of that distance to
+// all of it, with at least 500 units before it starts (iFadeNodeMinNearDistance) and 1000 before
+// it is gone. Those distances are compared with the camera's distance divided by the reference's
+// kind's multiplier, the settings Actor, Item and Object Fade (fLODFadeOutMultActors, ...Items,
+// ...Objects), so the multiplier stretches them. It dithers away over that range instead of
+// popping. References that have distant LOD (the base's "Has Distant LOD" flag) or are placed as
+// full LOD ("Is Full LOD") never fade: the LOD takes over at the grid's edge. Platform-independent.
 //
-// TODO(M13): the exact distance rule (the executable's scale on radius × multiplier, a floor for
-// tiny items, fLODFadeOutMultSkyCell in interiors that show the sky, the time-based fade-in of
-// references that come into range) is not read from the engine yet; this is a reasonable version.
+// TODO(M13): the engine also scales the camera's distance by a per-camera factor (one at the
+// default view, as far as read) and gives sky-cell references fLODFadeOutMultSkyCell with
+// fSkyCellRefFadeDistance (150000); the time-based fade-in of references that come into range
+// (fFadeInTime) is not built.
 
 /** Which of the settings a reference fades by. */
 export type FadeKind = 'actor' | 'item' | 'object';
@@ -19,12 +24,16 @@ export interface FadeSettings {
   readonly objects: number;
 }
 
-/** World units of fade distance per unit of bound radius and of multiplier. */
-export const FADE_RADIUS_SCALE = 16;
-/** Bound radii below this fade as if they had it (a coin still shows across a room). */
-export const FADE_MIN_RADIUS = 16;
-/** The fade runs over the last tenth of the distance (Gamebryo's fLODFadeOutPercent, 0.9). */
-export const FADE_START_PERCENT = 0.9;
+/** INI [LOD] fLODBoundRadiusMult's default: the fade distance in bound radii. */
+export const LOD_BOUND_RADIUS_MULT = 10;
+/** INI [LOD] fLODFadeOutPercent's default: where in its distance a reference starts to fade. */
+export const FADE_START_PERCENT = 0.6;
+/** INI [LOD] iFadeNodeMinNearDistance's default: the nearest a fade may start (twice: end). */
+export const FADE_MIN_NEAR_DISTANCE = 500;
+/** INI [General] uGridsToLoad's default. */
+export const GRIDS_TO_LOAD = 5;
+/** Units per exterior cell. */
+const CELL_SIZE = 4096;
 
 /** Base record types the player can pick up: they fade by the Item multiplier. */
 const ITEM_TYPES: ReadonlySet<string> = new Set([
@@ -76,11 +85,23 @@ export function fadeRange(
   kind: FadeKind,
   radius: number,
   settings: FadeSettings,
+  gridsToLoad = GRIDS_TO_LOAD,
 ): { readonly start: number; readonly end: number } {
   const multiplier =
     kind === 'actor' ? settings.actors : kind === 'item' ? settings.items : settings.objects;
-  const end = Math.max(radius, FADE_MIN_RADIUS) * Math.max(0, multiplier) * FADE_RADIUS_SCALE;
-  return { start: end * FADE_START_PERCENT, end };
+  // A multiplier of 0 or less: the kind never fades.
+  if (!(multiplier > 0)) return { start: Infinity, end: Infinity };
+  let distance = gridsToLoad * CELL_SIZE * 0.5 - (radius + CELL_SIZE / 2);
+  if (Math.abs(radius) > 0.0001 && LOD_BOUND_RADIUS_MULT * radius < distance) {
+    distance = LOD_BOUND_RADIUS_MULT * radius;
+  }
+  let start = FADE_START_PERCENT * distance;
+  let end = distance;
+  if (start < FADE_MIN_NEAR_DISTANCE) {
+    start = FADE_MIN_NEAR_DISTANCE;
+    end = Math.max(2 * FADE_MIN_NEAR_DISTANCE, end);
+  }
+  return { start: start * multiplier, end: end * multiplier };
 }
 
 /** How far a reference has faded at a distance from the camera: 0 shown, 1 gone. */
