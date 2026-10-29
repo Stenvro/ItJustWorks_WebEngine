@@ -5,8 +5,8 @@
 //                                                reader (and where the files of `ext` are)
 //   node tools/format-census.ts bsa        every archive in Data: names against hashes, every
 //                                          file read and decompressed
-//   node tools/format-census.ts esm        every record type and subrecord in the load order,
-//                                          against the subrecords the engine's code reads
+//   node tools/format-census.ts esm        every subrecord of every record of the load order
+//                                          decoded by its layout (and which engine code names)
 //   node tools/format-census.ts strings    every string table of every language, and whether
 //                                          every FULL id of the load order resolves
 //   node tools/format-census.ts hkx        every Havok file by class, and which have a layout
@@ -18,8 +18,18 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { BsaArchive } from '../src/formats/bsa/bsa.ts';
-import { forEachRecord, indexPlugin } from '../src/formats/esm/plugin-index.ts';
-import { parsePluginHeader, PluginFlag } from '../src/formats/esm/plugin-header.ts';
+import { forEachRecord, indexPlugin, readRecord } from '../src/formats/esm/plugin-index.ts';
+import {
+  parsePluginHeader,
+  parsePluginInfo,
+  PluginFlag,
+} from '../src/formats/esm/plugin-header.ts';
+import {
+  decodeRecord,
+  isCloudTextureCode,
+  isImageSpaceKeyCode,
+  subrecordLayout,
+} from '../src/formats/esm/record-layouts.ts';
 import { parseFields } from '../src/formats/esm/record.ts';
 import {
   PluginStrings,
@@ -273,30 +283,78 @@ const COUNT_SUBRECORDS: Readonly<Record<string, string>> = {
 const UNUSED = new Set(['SCHR', 'SCDA', 'SCTX', 'SCRO']);
 
 if (run('esm')) {
-  // (record type, subrecord) pairs in the data, against the code: a subrecord has a decoder for
-  // a record type when one source file names both (a decoder names the types it reads, e.g.
-  // `record.type !== 'FLOR'` beside `fields.first('PFIG')`); references share one set; the
-  // shared subrecords count where any file reads them. That over-counts codes many types use
-  // (DATA, DNAM): "with a decoder" is an upper bound, the open list is certain.
-  const pairs = new Map<string, Map<string, number>>();
+  // Every subrecord of every record of the load order decoded by the subrecord layouts
+  // (src/formats/esm/record-layouts.ts): a pair is parsed when every one of its subrecords
+  // decodes and consumes its data exactly, its form ids index a master or the plugin itself and
+  // its string ids resolve in the plugin's tables (every localized field, not only FULL). VMAD
+  // is read by vmad.ts (every script, property, fragment and alias script).
+  interface Pair {
+    records: number;
+    problems: Map<string, { count: number; sample: string }>;
+    unknown: number;
+  }
+  const pairs = new Map<string, Map<string, Pair>>();
   const recordCounts = new Map<string, number>();
+  let localizedFields = 0;
+  let vmads = 0;
   for (const entry of vfs.loadOrder) {
     const source = await NodeFileSource.open(resolveDataFile(entry.name));
     const index = await indexPlugin(source);
-    await forEachRecord(source, index, (_record, loaded) => {
-      const type = loaded.header.type;
-      recordCounts.set(type, (recordCounts.get(type) ?? 0) + 1);
-      const subrecords = pairs.get(type) ?? new Map<string, number>();
-      pairs.set(type, subrecords);
-      const seen = new Set<string>();
-      for (const field of parseFields(loaded.data)) {
-        if (seen.has(field.type)) continue;
-        seen.add(field.type);
-        subrecords.set(field.type, (subrecords.get(field.type) ?? 0) + 1);
+    const head = await readRecord(source, index, 0);
+    const info = parsePluginInfo(parseFields(head.data));
+    const localized = (head.header.flags & PluginFlag.localized) !== 0;
+    const tables: StringTable[] = [];
+    if (localized) {
+      for (const kind of STRING_TABLE_KINDS) {
+        const file = stringTablePath(entry.name, 'english', kind);
+        if (vfs.has(file)) tables.push(new StringTable(await vfs.read(file), kind));
       }
+    }
+    const context = {
+      localized,
+      masterCount: info.masters.length,
+      strings: localized ? new PluginStrings(tables) : undefined,
+    };
+    const visit = (type: string, data: Uint8Array): void => {
+      recordCounts.set(type, (recordCounts.get(type) ?? 0) + 1);
+      const subrecords = pairs.get(type) ?? new Map<string, Pair>();
+      pairs.set(type, subrecords);
+      const fields = parseFields(data);
+      const decoded = decodeRecord(type, fields, context);
+      const seen = new Set<string>();
+      for (const field of fields) {
+        const pair = subrecords.get(field.type) ?? { records: 0, problems: new Map(), unknown: 0 };
+        subrecords.set(field.type, pair);
+        if (!seen.has(field.type)) pair.records++;
+        seen.add(field.type);
+        if (field.type === 'VMAD') vmads++;
+        else if (localized && /\blz\b/.test(subrecordLayout(type, field.type) ?? '')) {
+          localizedFields++;
+        }
+      }
+      for (const code of decoded.unknown) {
+        const pair = subrecords.get(code);
+        if (pair) pair.unknown++;
+      }
+      for (const [code, problems] of decoded.problems) {
+        const pair = subrecords.get(code);
+        if (!pair) continue;
+        for (const problem of problems) {
+          const entry = pair.problems.get(problem.kind) ?? { count: 0, sample: problem.detail };
+          entry.count++;
+          pair.problems.set(problem.kind, entry);
+        }
+      }
+    };
+    await forEachRecord(source, index, (_record, loaded) => {
+      visit(loaded.header.type, loaded.data);
     });
     await source.close();
   }
+
+  // Beside the parse: whether engine code outside src/formats names the subrecord (a source
+  // file names both it and the record type, or a shared subrecord anywhere). This is the use
+  // of each field, which belongs to the other areas: listed, not counted here.
   const files = codeLiteralsPerFile();
   const readFor = new Map<string, Set<string>>();
   const readAnywhere = new Set<string>();
@@ -312,48 +370,50 @@ if (run('esm')) {
       readFor.set(type, set);
     }
   }
-  // Three tiers per pair: "read" (a file names both, or a shared subrecord read anywhere),
-  // "elsewhere" (the code is read in files that do not name the type, or is built by the reader
-  // like WTHR's cloud layers "00TX".."J0TX": to check by hand), "unread" (no code reads it).
-  const generated = (code: string): boolean => !/^[A-Z0-9_]{4}$/.test(code);
   const has = (set: ReadonlySet<string>, code: string): boolean =>
     set.has(code) || [0, 1, 2, 3].some((i) => set.has(`${code.slice(0, i)}?${code.slice(i + 1)}`));
-  const tiers = { read: 0, elsewhere: 0, unread: 0 };
+  const used = (type: string, code: string): boolean =>
+    has(readFor.get(type) ?? new Set<string>(), code) ||
+    (SHARED_SUBRECORDS.has(code) && has(readAnywhere, code)) ||
+    (COUNT_SUBRECORDS[code] !== undefined && has(readAnywhere, COUNT_SUBRECORDS[code])) ||
+    UNUSED.has(code) ||
+    isCloudTextureCode(type, code) ||
+    isImageSpaceKeyCode(type, code);
+
+  const tiers = { parsed: 0, problems: 0, unknown: 0 };
+  let usedCount = 0;
+  let doneTypes = 0;
   const lines: string[] = [];
   for (const [type, subrecords] of [...pairs].sort((a, b) => a[0].localeCompare(b[0]))) {
-    const read = readFor.get(type) ?? new Set<string>();
-    const elsewhere: [string, number][] = [];
-    const unread: [string, number][] = [];
-    const isRead = (code: string): boolean =>
-      has(read, code) || (SHARED_SUBRECORDS.has(code) && has(readAnywhere, code));
-    for (const [code, count] of subrecords) {
-      const counted = COUNT_SUBRECORDS[code];
-      if (
-        isRead(code) ||
-        (counted !== undefined && has(readAnywhere, counted)) ||
-        UNUSED.has(code)
-      ) {
-        tiers.read++;
-      } else if (has(readAnywhere, code) || generated(code)) {
-        tiers.elsewhere++;
-        elsewhere.push([code, count]);
+    const bad: string[] = [];
+    const unknown: string[] = [];
+    const unused: string[] = [];
+    for (const [code, pair] of [...subrecords].sort((a, b) => b[1].records - a[1].records)) {
+      const printable = JSON.stringify(code).slice(1, -1);
+      if (pair.unknown > 0) {
+        tiers.unknown++;
+        unknown.push(`${printable} ${pair.records}`);
+      } else if (pair.problems.size > 0) {
+        tiers.problems++;
+        const detail = [...pair.problems]
+          .map(([kind, { count, sample }]) => `${kind} ${count} (${sample})`)
+          .join(', ');
+        bad.push(`${printable}: ${detail}`);
       } else {
-        tiers.unread++;
-        unread.push([code, count]);
+        tiers.parsed++;
       }
+      if (used(type, code)) usedCount++;
+      else unused.push(printable);
     }
-    const list = (entries: [string, number][]): string =>
-      entries
-        .sort((a, b) => b[1] - a[1])
-        .map(([code, count]) => `${code} ${count}`)
-        .join(', ');
-    const status = unread.length > 0 ? 'open' : elsewhere.length > 0 ? 'check' : 'done';
+    const ok = bad.length === 0 && unknown.length === 0;
+    if (ok) doneTypes++;
     lines.push(
-      `  ${type} ${String(recordCounts.get(type)).padStart(7)}  ${status.padEnd(5)} ${subrecords.size - elsewhere.length - unread.length}/${subrecords.size}${unread.length > 0 ? `  unread: ${list(unread)}` : ''}${elsewhere.length > 0 ? `  elsewhere: ${list(elsewhere)}` : ''}`,
+      `  ${type} ${String(recordCounts.get(type)).padStart(7)}  ${ok ? 'parsed' : 'open  '} ${subrecords.size - bad.length - unknown.length}/${subrecords.size}${unknown.length > 0 ? `  no layout: ${unknown.join(', ')}` : ''}${bad.length > 0 ? `  problems: ${bad.join('; ')}` : ''}${unused.length > 0 ? `  not used by engine code: ${unused.join(' ')}` : ''}`,
     );
   }
+  const total = tiers.parsed + tiers.problems + tiers.unknown;
   console.log(
-    `ESM: ${pairs.size} record types, ${tiers.read + tiers.elsewhere + tiers.unread} (record, subrecord) pairs: ${tiers.read} read, ${tiers.elsewhere} read elsewhere (to check), ${tiers.unread} unread`,
+    `ESM: ${pairs.size} record types (${doneTypes} parsed in full), ${total} (record, subrecord) pairs: ${tiers.parsed} parsed exactly, ${tiers.problems} with problems, ${tiers.unknown} without a layout; ${usedCount} named by engine code. ${vmads} VMADs, ${localizedFields} localized fields checked.`,
   );
   for (const line of lines) console.log(line);
 }
