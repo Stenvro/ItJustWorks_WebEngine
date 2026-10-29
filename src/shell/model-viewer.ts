@@ -645,10 +645,6 @@ export class ModelViewer {
       ...cell.data.markers
         .map((marker) => marker.reference)
         .filter((reference) => this.#isEnabled(reference)),
-      // A trigger's 3D is its box: it loads (OnLoad) as the other objects do.
-      ...cell.data.primitives
-        .map((primitive) => primitive.reference)
-        .filter((reference) => this.#isEnabled(reference)),
       ...[...(this.#stage?.shown() ?? [])].map((actor) => actor.actor.reference),
       ...[...(this.#created?.all ?? [])]
         .filter((entry) => !entry.visibility.hidden)
@@ -2115,7 +2111,7 @@ export class ModelViewer {
         runtime.cellDetached(
           [
             ...cell.data.objects.map((object) => object.reference),
-            // Its triggers detach as they attached.
+            // Its triggers detach as they attached (src/sim/sim-world.ts #free).
             ...cell.data.primitives.map((primitive) => primitive.reference),
             ...(this.#stage?.referencesIn(String(cell.data.cell.formId)) ?? []),
           ],

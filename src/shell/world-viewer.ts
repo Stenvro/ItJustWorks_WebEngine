@@ -1703,10 +1703,6 @@ export class WorldViewer {
       ...(cell.data?.markers ?? [])
         .map((marker) => marker.reference)
         .filter((reference) => cell.isEnabled(reference)),
-      // A trigger's 3D is its box: it loads (OnLoad) as the other objects do.
-      ...(cell.data?.primitives ?? [])
-        .map((primitive) => primitive.reference)
-        .filter((reference) => cell.isEnabled(reference)),
       ...(this.#stage?.shownIn(cellKey(cell.x, cell.y)).map((actor) => actor.actor.reference) ??
         []),
       ...[...(this.#created?.all ?? [])]
@@ -1722,8 +1718,7 @@ export class WorldViewer {
     if (!cell.ready) return false;
     if (
       (placedByReference(cell, reference) !== undefined ||
-        hasMarker(cell.data?.markers ?? [], reference) ||
-        hasMarker(cell.data?.primitives ?? [], reference)) &&
+        hasMarker(cell.data?.markers ?? [], reference)) &&
       cell.isEnabled(reference)
     ) {
       return true;
@@ -2495,7 +2490,7 @@ export class WorldViewer {
         runtime.cellDetached(
           [
             ...data.objects.map((object) => object.reference),
-            // Its triggers detach as they attached.
+            // Its triggers detach as they attached (src/sim/sim-world.ts #free).
             ...data.primitives.map((primitive) => primitive.reference),
             ...(this.#stage?.referencesIn(key) ?? []),
           ],

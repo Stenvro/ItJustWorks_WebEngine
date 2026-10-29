@@ -334,10 +334,12 @@ worldspaces on screen:
 
 - **Cells**: as a cell's references load, those with scripts get OnInit the first time (a
   non-persistent reference's scripts start with its cell), then OnCellAttach, OnLoad and
-  OnCellLoad; leaving, OnUnload and OnCellDetach. A trigger box's 3D is its primitive: it
-  loads (OnLoad, Is3DLoaded) as the other objects do (MQ101's square trigger takes its quest's
-  script in its OnLoad). A reference in the loaded area that a script enables loads (OnLoad),
-  one it disables unloads (OnUnload), as the Creation Kit describes the events.
+  OnCellLoad; leaving, OnUnload and OnCellDetach. A reference in the loaded area that a
+  script enables loads (OnLoad), one it disables unloads (OnUnload), as the Creation Kit
+  describes the events (MQ101's town square trigger, enabled as the attack begins, takes its
+  quest's script in its OnLoad). Triggers detach with their cell as they attached. TODO(M13):
+  trigger boxes get no OnLoad or OnCellLoad as their cell loads; with them WETriggerScript's
+  OnCellLoad starts world encounters as Riverwood loads, which stalls MQ102 in the simulation.
 - **Enable state**: what scripts enable and disable shows and hides at once, collision
   included, without loading the cell again; enable parents follow. Observed in the
   original: a reference with an enable parent (its XESP naming a reference that exists) only
