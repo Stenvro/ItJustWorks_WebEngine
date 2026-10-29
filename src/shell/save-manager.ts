@@ -32,6 +32,8 @@ export class SaveManager {
   readonly #requests = new Set<'save' | 'autosave'>();
   /** The renderer's frames (a save's screenshot); none headless. */
   readonly #frames: FrameSource | undefined;
+  /** Shown while a save is written (the LoadWaitSpinner); returns what ends it. */
+  busy: (() => () => void) | undefined;
 
   constructor(session: GameSession, terminal: Terminal, frames?: FrameSource) {
     this.#session = session;
@@ -83,6 +85,7 @@ export class SaveManager {
     const runtime = this.#session.scriptsReady;
     if (!runtime || !this.canSave) return undefined;
     this.#saving = true;
+    const done = this.busy?.();
     try {
       const store = await this.#open();
       const saves = await store.list();
@@ -113,6 +116,7 @@ export class SaveManager {
       return header;
     } finally {
       this.#saving = false;
+      done?.();
     }
   }
 
