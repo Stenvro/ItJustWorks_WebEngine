@@ -26,7 +26,15 @@ export interface SaveListMenu {
 export interface SaveListSource {
   list(): Promise<SaveHeader[]>;
   delete(name: string): Promise<void>;
+  /**
+   * A save's screenshot (PNG; empty when it has none), or with no name the game playing now
+   * (Save's new save).
+   */
+  screenshot?(name: string | undefined): Promise<Uint8Array | undefined>;
 }
+
+/** The picture the save list's screenshot loads (sSaveGameScreenshotName). */
+export const SAVE_SCREENSHOT_IMAGE = 'BGSSaveLoadHeader_Screenshot';
 
 /** An entry of the movie's character list. */
 export interface CharacterEntry {
@@ -94,6 +102,8 @@ export interface SaveListOptions<M extends SaveListMenu> {
   readonly load: (menu: M, name: string) => void;
   /** The import entry was chosen. */
   readonly importSave?: (menu: M) => void;
+  /** Gives the movie its screenshot picture (img://BGSSaveLoadHeader_Screenshot). */
+  readonly screenshotImage?: (png: Uint8Array | undefined) => void;
   readonly log: (message: string) => void;
 }
 
@@ -133,6 +143,14 @@ export class SaveList<M extends SaveListMenu = SaveListMenu> {
         const character = this.#characters.find((entry) => entry.id === id)?.text;
         void this.#fill(menu, args[3], args[2] === true, character);
       },
+      // PrepSaveGameScreenshot(index, entry): the movie asks for the highlighted save's
+      // screenshot (a moment after the highlight settles) and shows it, with the save's player,
+      // level and time, once the engine says ScreenshotReady. Save's index is counted past its
+      // new save (-1: the game playing now). It is answered even without a picture: the
+      // movie's ShowScreenshot is what fills the save's text.
+      PrepSaveGameScreenshot: (menu, args) => {
+        void this.#screenshot(menu, typeof args[0] === 'number' ? args[0] : -1);
+      },
       // The list is filled at once: there is no loading in batches to stop.
       ForceStopSaveListLoading: () => undefined,
       // The journal's Save keeps to the character playing (always so here).
@@ -168,6 +186,20 @@ export class SaveList<M extends SaveListMenu = SaveListMenu> {
           .catch(() => undefined);
       },
     };
+  }
+
+  /** The screenshot of the save at `index` (or of the game playing now) given to the movie. */
+  async #screenshot(menu: M, index: number): Promise<void> {
+    const listed = this.#listed;
+    const name = listed?.headers[index]?.name;
+    // The import entry (past the saves) has no picture.
+    const known = name !== undefined || (index < 0 && listed?.saving === true);
+    const source = this.#options.source();
+    const png = known ? await source?.screenshot?.(name).catch(() => undefined) : undefined;
+    // The list was filled again meanwhile: the movie asks again.
+    if (this.#listed !== listed) return;
+    this.#options.screenshotImage?.(png);
+    menu.call('ScreenshotReady');
   }
 
   /** Fills the movie's list with the characters, then tells it (onFillCharacterListComplete). */

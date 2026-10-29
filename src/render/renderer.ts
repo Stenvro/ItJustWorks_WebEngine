@@ -12,6 +12,13 @@ import {
   type ShadowSlot,
 } from './light-shadows.ts';
 
+/** A frame asked for (Renderer.captureFrame): its size, and who takes it. */
+interface FrameCapture {
+  readonly width: number;
+  readonly height: number;
+  readonly done: (frame: ImageBitmap | undefined) => void;
+}
+
 /** What a slot of the light-shadow map holds: the light's views and each layer's casters. */
 interface LightShadowState {
   readonly key: string;
@@ -266,6 +273,8 @@ export class Renderer {
   /** The precipitation occlusion map: its view, where it was centred and when. */
   #occlusion: { viewProj: Mat4; center: Vec3; frame: number } | undefined;
   #lastTime: number | undefined;
+  /** Frames asked for (a save's screenshot), taken from the canvas as the next one is submitted. */
+  #captures: FrameCapture[] = [];
 
   constructor(gpu: GpuContext) {
     this.#gpu = gpu;
@@ -712,6 +721,39 @@ export class Renderer {
       this.#menu.draw(encoder, overlay, overlayScenes, targets, canvasView, this.post.gamma);
     }
     device.queue.submit([encoder.finish()]);
+    if (this.#captures.length > 0) {
+      const captures = this.#captures;
+      this.#captures = [];
+      for (const capture of captures) this.#take(capture);
+    }
+  }
+
+  /**
+   * The next frame as drawn, scaled to `width` × `height` (a save's screenshot). The menus'
+   * movies play over the canvas, not on it, so it holds the world alone. Without a frame within
+   * `waitMs` (the page hidden, the loop paused) the canvas is taken as it was last shown.
+   */
+  captureFrame(width: number, height: number, waitMs = 500): Promise<ImageBitmap | undefined> {
+    return new Promise((resolve) => {
+      const capture: FrameCapture = { width, height, done: resolve };
+      this.#captures.push(capture);
+      setTimeout(() => {
+        if (!this.#captures.includes(capture)) return;
+        this.#captures = this.#captures.filter((other) => other !== capture);
+        this.#take(capture);
+      }, waitMs);
+    });
+  }
+
+  /** The canvas's image now: read in the task that drew it, before the frame is shown. */
+  #take(capture: FrameCapture): void {
+    createImageBitmap(this.#gpu.context.canvas, {
+      resizeWidth: Math.max(1, Math.round(capture.width)),
+      resizeHeight: Math.max(1, Math.round(capture.height)),
+      resizeQuality: 'high',
+    }).then(capture.done, () => {
+      capture.done(undefined);
+    });
   }
 
   /**

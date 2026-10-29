@@ -57,7 +57,7 @@ import type { Terminal } from './terminal.ts';
 import { lockNow } from './object-locks.ts';
 import { tellSwing } from './open-close.ts';
 import { SaveManager } from './save-manager.ts';
-import { gameDaysText, SaveList } from './save-list.ts';
+import { gameDaysText, SAVE_SCREENSHOT_IMAGE, SaveList } from './save-list.ts';
 import type { GameSave } from '../save/game-save.ts';
 import { essWorld } from '../save/ess-import.ts';
 import type { SaveHeader } from '../save/save-codec.ts';
@@ -239,7 +239,9 @@ export class PlayMode {
     this.#renderer = renderer;
     this.#world = world;
     this.#terminal = terminal;
-    this.#saves = new SaveManager(session, terminal);
+    this.#saves = new SaveManager(session, terminal, (width, height) =>
+      renderer.captureFrame(width, height),
+    );
     this.#mainSaveList = new SaveList<Menu>({
       source: () => this.#saves,
       // A game's date needs its start date; at the main menu, before any game ran, the days
@@ -251,6 +253,9 @@ export class PlayMode {
       },
       log: (message) => {
         terminal.log('save', message, 'error');
+      },
+      screenshotImage: (png) => {
+        this.#host.files.setImage(SAVE_SCREENSHOT_IMAGE, png);
       },
     });
     const log = (message: string): void => {
@@ -370,8 +375,6 @@ export class PlayMode {
         StartState: () => undefined,
         EndPressStartState: () => undefined,
         currentState: () => undefined,
-        // TODO(M12): a save's screenshot (no screenshot is taken as a save is made yet).
-        PrepSaveGameScreenshot: () => undefined,
         // The menu tells as its fade out starts (before it calls what comes after it).
         fadeOutStarted: () => undefined,
         // CREDITS, once the menu has faded out: the credits, then the menu fades in again.
@@ -552,6 +555,7 @@ export class PlayMode {
       importEss: () => {
         this.#importEss();
       },
+      screenshot: (name) => this.#saves.screenshot(name),
     };
     menus.onPassed = (slept) => {
       void this.#saves.autosave(slept ? 'rest' : 'wait');

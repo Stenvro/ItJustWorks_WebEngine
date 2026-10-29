@@ -104,4 +104,36 @@ describe('the menus’ save list', () => {
     expect(deleted).toEqual(['Save 3']);
     expect(fake.entries.map((entry) => entry.text)).toEqual(['Save 1  Whiterun']);
   });
+
+  it('gives the highlighted save’s screenshot, then says ScreenshotReady', async () => {
+    const asked: (string | undefined)[] = [];
+    const shown: (number | undefined)[] = [];
+    const source: SaveListSource = {
+      list: () => Promise.resolve(saves),
+      delete: () => Promise.resolve(),
+      screenshot: (name) => {
+        asked.push(name);
+        return Promise.resolve(new Uint8Array([name === undefined ? 0 : 1]));
+      },
+    };
+    const list = new SaveList<FakeMenu>({
+      source: () => source,
+      playTime: () => '',
+      load: () => undefined,
+      log: () => undefined,
+      screenshotImage: (png) => shown.push(png?.[0]),
+    });
+    const handlers = list.handlers();
+    const menu = new FakeMenu();
+    // Save: index -1 is the new save (the frame drawn now), 1 the second save listed.
+    handlers.SAVE?.(menu, ['list']);
+    await settle();
+    handlers.PrepSaveGameScreenshot?.(menu, [-1, {}]);
+    await settle();
+    handlers.PrepSaveGameScreenshot?.(menu, [1, {}]);
+    await settle();
+    expect(asked).toEqual([undefined, 'Save 2']);
+    expect(shown).toEqual([0, 1]);
+    expect(menu.calls.filter((call) => call[0] === 'ScreenshotReady')).toHaveLength(2);
+  });
 });
