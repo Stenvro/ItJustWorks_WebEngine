@@ -28,6 +28,7 @@ import {
 } from './cell-records.ts';
 export { parseTeleport, type Teleport } from './cell-records.ts';
 import { parseTextureSet, placeDecal, type PlacedDecal, type TextureSet } from './decal.ts';
+import { alternateTextures, type AlternateTexture } from './actor-records.ts';
 import { BookFlag, parseItem } from './item-records.ts';
 import { parseStaticDirectional, type StaticDirectional } from './material-object.ts';
 import { parseRagdollData, type RagdollData } from './ragdoll-data.ts';
@@ -52,6 +53,11 @@ export interface CellObject {
   /** The base object's name (FULL), e.g. "Door"; empty if it has none. */
   readonly name: string;
   readonly model: string;
+  /**
+   * The base object's alternate textures (MODS; an armour's world model MO2S): texture sets
+   * put into the model's named shapes, so one model serves several looks.
+   */
+  readonly alternateTextures?: readonly AlternateTexture[];
   readonly world: Mat4;
   /** Water activators (ACTI WNAM): the type of the model's water surfaces. */
   readonly water: number | undefined;
@@ -579,6 +585,24 @@ function emittanceOf(record: GameRecord): { emittance?: number } {
   return emittance === undefined ? {} : { emittance };
 }
 
+/** The base object's alternate textures for its world model, as a spreadable field. */
+function alternateTexturesOf(base: GameRecord): { alternateTextures?: AlternateTexture[] } {
+  const field = base.type === 'ARMO' ? 'MO2S' : 'MODS';
+  const swaps = alternateTextures(base, base.fields.first(field));
+  return swaps.length > 0 ? { alternateTextures: swaps } : {};
+}
+
+/**
+ * What tells a placed object's model apart: its path, and its alternate textures where it has
+ * them (the same model with other texture sets is another model).
+ */
+export function objectModelKey(object: Pick<CellObject, 'model' | 'alternateTextures'>): string {
+  const swaps = object.alternateTextures;
+  if (!swaps || swaps.length === 0) return object.model;
+  const sets = swaps.map((swap) => `${swap.shape}:${String(swap.index)}:${String(swap.textureSet)}`);
+  return `${object.model}|${sets.join(',')}`;
+}
+
 /** A static's directional material, as a spreadable field. */
 function directionalOf(base: GameRecord): { directional?: StaticDirectional } {
   if (base.type !== 'STAT') return {};
@@ -904,6 +928,7 @@ export async function loadCellData(
       editorId: base.editorId ?? '',
       name: base.text('FULL') ?? '',
       model,
+      ...alternateTexturesOf(base),
       world: referenceMatrix(ref),
       water: base.type === 'ACTI' ? nonZeroId(base.formIdField('WNAM')) : undefined,
       ...directionalOf(base),
