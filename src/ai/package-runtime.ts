@@ -946,9 +946,11 @@ export class ActorPackages {
     // Its fallout: a package that ended and stays chosen, without Skip Fallout Behavior.
     if (fallout && current && chosen?.id === current.id && !restart) this.#fallout(current);
     // A loaded save's package, chosen again first: it goes on where it was.
+    // A scene's action that started it meanwhile (evaluate(restart)) starts one that had ended
+    // anew, as it would the running package: a travel to where it stands is done at once.
     const resumed = this.#resumed;
     this.#resumed = undefined;
-    if (resumed && !current && chosen?.id === resumed.id) {
+    if (resumed && !current && chosen?.id === resumed.id && !(restart && resumed.ended)) {
       this.#takeUp(chosen, resumed);
       return;
     }

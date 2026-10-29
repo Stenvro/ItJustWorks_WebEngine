@@ -1211,7 +1211,11 @@ location's lists.
   set past her market package's hour. A loaded save's actors of the loaded area are left
   alone until their cells place them where they stood (src/save/world-save.ts): put where
   their package had them meanwhile (MQ101's Hadvar, his scene not yet resumed, at his patrol in
-  Helgen), the game state had them elsewhere while the stage showed them in the keep.
+  Helgen), the game state had them elsewhere while the stage showed them in the keep. A
+  scene's package action starting meanwhile reaches such an actor as it is placed: its saved
+  package, if it had ended, runs again from its root (as for an actor on the stage), so a
+  travel to where it stands is done at once (MQ105's push trial, begun just after a load,
+  waited for good on Borri's travel to the place he stood at).
 - An actor of the loaded area on its way through a load door its package takes leaves the stage
   through it, and its trip goes on from the door's arrival point. It walks to the navmesh
   triangle the navmesh marks in front of the door (else the navmesh point nearest the door), not

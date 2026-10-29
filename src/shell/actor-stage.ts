@@ -1278,10 +1278,20 @@ export class ActorStage {
 
   evaluatePackage(reference: number, restart = false): void {
     if (this.#actors.has(reference)) this.ai.evaluate(reference, restart);
+    // A loaded save's actor not placed yet has its package as the save left it, as the
+    // original's actors have theirs from the load on: a scene's action starting its package
+    // (restart) reaches it as it is placed (the low process leaves it alone meanwhile). Before,
+    // MQ105's push trial, begun on a load, waited for good on Borri's travel to where he stood.
+    else if (restart && this.#options.session.restoring?.actor(reference)) {
+      this.#restartsOnPlace.add(reference);
+    }
     // Each view's stage hears it: only the one that holds the loaded area (its actors) asks the
     // low process, so a view not shown sends no actor off.
     else if (this.#actors.size > 0) this.away.reconsider(reference);
   }
+
+  /** A loaded save's actors not yet placed whose package a scene's action started anew. */
+  readonly #restartsOnPlace = new Set<number>();
 
   /** An actor plays the idle an action gives it now (ActionTalking); whether it is here. */
   act(reference: number, action: string): boolean {
@@ -1749,6 +1759,8 @@ export class ActorStage {
     for (const saved of [...(restoring?.actors() ?? [])]) {
       if (saved.cell === key) {
         restoring?.drop(saved.reference);
+        // A scene's action started its package meanwhile: the low process has it now.
+        if (this.#restartsOnPlace.delete(saved.reference)) this.away.reconsider(saved.reference);
       }
     }
     for (const staged of [...this.#actors.values()]) {
@@ -2347,7 +2359,8 @@ export class ActorStage {
             entry.grounded = true;
             this.flight.restoreAloft(reference);
           }
-          if (saved.package) this.ai.resume(reference, saved.package);
+          const restart = this.#restartsOnPlace.delete(reference);
+          if (saved.package) this.ai.resume(reference, saved.package, restart);
           // Sneaking as a script set it, in the package it set it in.
           if (saved.sneaking === true) this.senses.sneakAgain(reference, saved.package?.id);
           // TODO(M13): the original's save keeps the graph with the weapon out; here it is
