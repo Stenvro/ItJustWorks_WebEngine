@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  bribeAmount,
-  intimidates,
+  bribeCost,
+  intimidated,
+  intimidation,
+  persuadedUntil,
   CrimeFlag,
   CrimeLedger,
   crimeBounty,
@@ -243,26 +245,42 @@ describe('witnesses', () => {
   });
 });
 
-describe('bribes', () => {
-  it('cost more for higher levels and the bounty, less with Speech', () => {
-    const low = bribeAmount(5, 15, 0, settings);
-    expect(bribeAmount(20, 15, 0, settings)).toBeGreaterThan(low);
-    expect(bribeAmount(5, 100, 0, settings)).toBeLessThan(low);
-    expect(bribeAmount(5, 15, 40, settings)).toBe(low + 40);
+describe('bribes and intimidation', () => {
+  const target = { level: 10, speech: 15, morality: 0, confidence: 2 };
+  // Skyrim.esm's bribe settings over the engine's.
+  const skyrim = { ...settings, bribeCostCurve: 1.4, bribeScale: 0.5, bribeSpeechcraftMult: 0.1 };
+
+  it('cost by both levels, Speech against Speech and morality (the original’s rule)', () => {
+    // (10 × 0.1 + 1 + (100 − 0) × 0.1) ^ 1.4 × 0.5: some 16 gold for a new character.
+    const sides = { player: { level: 1, speech: 15 }, target };
+    expect(Math.floor(bribeCost(sides, skyrim))).toBe(16);
+    expect(bribeCost({ ...sides, player: { level: 1, speech: 100 } }, skyrim)).toBeLessThan(
+      bribeCost(sides, skyrim),
+    );
+    // Morality 3 (no crime) quadruples it.
+    expect(bribeCost({ ...sides, target: { ...target, morality: 3 } }, skyrim)).toBeCloseTo(
+      4 * bribeCost(sides, skyrim),
+    );
   });
 
-  it('intimidates by level, Speech against Speech, and confidence (UESP)', () => {
-    const player = { level: 10, speech: 30 };
-    // An average one of the same level and Speech: as scary as the player.
-    expect(intimidates(player, { level: 10, speech: 30, confidence: 2 }, 1)).toBe(true);
-    expect(intimidates(player, { level: 12, speech: 30, confidence: 2 }, 1)).toBe(false);
-    // More Speech makes up for levels; the cowardly fold, the foolhardy never.
-    expect(
-      intimidates({ level: 10, speech: 60 }, { level: 12, speech: 30, confidence: 2 }, 1),
-    ).toBe(true);
-    expect(intimidates(player, { level: 40, speech: 30, confidence: 0 }, 1)).toBe(true);
-    expect(intimidates({ level: 80, speech: 100 }, { level: 2, speech: 0, confidence: 4 }, 1)).toBe(
-      false,
+  it('intimidates by level, Speech against Speech, and confidence (the original’s rule)', () => {
+    const sides = { player: { level: 10, speech: 15 }, target };
+    // Same Speech: the player's level against its own (average confidence).
+    expect(intimidation(sides, settings)).toBe(10);
+    expect(intimidated(10, target, settings)).toBe(true);
+    expect(intimidated(10, { ...target, level: 12 }, settings)).toBe(false);
+    // Speech 100 against 15: (1.85) ^ 1.5 times as scary.
+    expect(intimidation({ ...sides, player: { level: 10, speech: 100 } }, settings)).toBeCloseTo(
+      10 * 1.85 ** 1.5,
     );
+    // The cowardly always fold, the foolhardy as good as never, the brave at 1.5 levels.
+    expect(intimidated(0, { ...target, confidence: 0 }, settings)).toBe(true);
+    expect(intimidated(99, { ...target, level: 1, confidence: 4 }, settings)).toBe(false);
+    expect(intimidated(14, { ...target, confidence: 3 }, settings)).toBe(false);
+  });
+
+  it('hold until the day after next', () => {
+    // Given on day 3 at 23:00, it holds through day 4.
+    expect(persuadedUntil(3.95, settings.daysToStayBribed)).toBe(4);
   });
 });
