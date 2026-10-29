@@ -14,6 +14,7 @@ import { decodeUtf16le } from '../formats/text.ts';
 import { translateMovie } from './translate-movie.ts';
 import { linkImports } from '../formats/swf/swf-link.ts';
 import { patchMovie } from './movie-patches.ts';
+import { movieFile } from './movie-file.ts';
 
 /** Where the interface folder is served: a movie's base URL. */
 export const INTERFACE_URL = '/@interface/';
@@ -40,8 +41,8 @@ export class InterfaceFiles {
   async read(relative: string): Promise<Uint8Array | undefined> {
     const path = relative.replace(/^\/+/, '').replaceAll('/', '\\').toLowerCase();
     if (path === FONT_LIBRARY || path.endsWith(`\\${FONT_LIBRARY}`)) return this.fontLibrary();
-    const full = `interface\\${path}`;
-    if (!this.#vfs.has(full)) return undefined;
+    const full = movieFile(path, (file) => this.#vfs.has(file));
+    if (full === undefined) return undefined;
     if (!/\.(swf|gfx)$/.test(path) || path.startsWith('fonts_')) return this.#vfs.read(full);
     let movie = this.#movies.get(path);
     if (!movie) {
