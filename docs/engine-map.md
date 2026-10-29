@@ -168,7 +168,7 @@ These run through every area and explain most of what breaks in play.
 ### Rendering and camera
 
 The item-by-item checklist (shader types, flags, texture slots, blocks, records, systems):
-[completeness/rendering.md](completeness/rendering.md), 453 of 536 done (2026-10-29).
+[completeness/rendering.md](completeness/rendering.md), 457 of 536 done (2026-10-29).
 
 | System                                  | Status   | Main gaps                                                                                                                                                                                                                                            |
 | --------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
