@@ -6,6 +6,7 @@
 import { parseScene } from '../../../ai/scene-records.ts';
 import { GroupType } from '../../../formats/esm/record.ts';
 import { ObjectHandle } from '../../values.ts';
+import { globalValue } from '../condition-values.ts';
 import type { ScriptRuntime } from '../runtime.ts';
 import { countObjectiveCompleted } from '../stat-events.ts';
 import { bool, formOf, int, num, object, str, type Register } from './args.ts';
@@ -151,8 +152,22 @@ export function registerQuest(n: Register, runtime: ScriptRuntime): void {
     const alias = await forms.alias(self.formId, int(args[0]));
     return alias ? quests.aliasHandle(self.formId, alias.id, alias.location) : null;
   });
-  // The quest's text replacement of a global (<Global=...> in journal and dialogue text).
-  n('quest.updatecurrentinstanceglobal', () => true);
+  // UpdateCurrentInstanceGlobal(aUpdateGlobal), observed in the original: the quest's current
+  // run holds values of its text display globals (<Global=...> in its journal and dialogue
+  // text). A global the run holds takes its current value (true); one of the quest's text
+  // globals (QTGL) it does not hold yet is held from now on with its current value (false);
+  // any other global, None or a quest not running: nothing (false).
+  n('quest.updatecurrentinstanceglobal', async ({ self, args }) => {
+    const global = formOf(args[0]);
+    if (!self || global === undefined) return false;
+    const run = state.quests.get(self.formId);
+    if (!run?.running) return false;
+    const held = run.instanceGlobals?.has(global) === true;
+    if (!held && !(await forms.quest(self.formId))?.textGlobals.includes(global)) return false;
+    const value = await globalValue(runtime, global);
+    (run.instanceGlobals ??= new Map()).set(global, value);
+    return held;
+  });
 
   // --- Alias ---------------------------------------------------------------------------
   n('alias.getowningquest', ({ self }) => (self ? new ObjectHandle(self.formId, 'quest') : null));

@@ -84,6 +84,22 @@ export function formatValue(value: Value): string {
     : `[${value.type} ${id}]`;
 }
 
+/**
+ * A float as Papyrus prints it (a cast to string, a concatenation): its single-precision value
+ * with six decimals, "1.500000", "-0.000000", "100.000000" (observed in the original: C's %f).
+ * Infinities and NaN as the C runtime prints them ("inf", "-inf", "nan").
+ */
+export function floatText(value: number): string {
+  const single = Math.fround(value);
+  if (Number.isNaN(single)) return 'nan';
+  if (!Number.isFinite(single)) return single > 0 ? 'inf' : '-inf';
+  const sign = single < 0 || Object.is(single, -0) ? '-' : '';
+  const magnitude = Math.abs(single);
+  // toFixed turns to exponents from 1e21 on; a float that large is a whole number.
+  if (magnitude >= 1e21) return `${sign}${BigInt(magnitude).toString()}.000000`;
+  return `${sign}${magnitude.toFixed(6)}`;
+}
+
 /** Papyrus equality: strings ignore case, objects compare by identity. */
 export function valuesEqual(a: Value, b: Value): boolean {
   if (a instanceof ObjectHandle && b instanceof ObjectHandle) return a.sameObject(b);

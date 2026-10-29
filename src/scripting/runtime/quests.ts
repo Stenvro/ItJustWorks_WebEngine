@@ -93,6 +93,8 @@ export class QuestEngine {
     this.notStarted.delete(quest);
     state.running = true;
     state.starts++;
+    // A new run of the quest holds no globals' values yet (UpdateCurrentInstanceGlobal).
+    delete state.instanceGlobals;
     // The engine's quest start event (TESQuestStartStopEvent).
     runtime.events.emit('questStartStop', { quest, started: true });
     state.completed = false;
