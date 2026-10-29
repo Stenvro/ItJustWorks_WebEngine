@@ -2,9 +2,10 @@
 // them out: each member's byte offset in its object (inherited members included) and its
 // storage. Binary tagfiles name members instead of placing them; these tables let
 // packfile-image.ts turn a tagfile into the packfile image the readers (behavior.ts,
-// animation.ts) take. Offsets: serde-hkx's generated classes, checked against vanilla
-// packfiles where the readers use them (docs/formats/hkx.md, "Tagfiles"). Only serialized
-// members are listed: tagfiles never carry the runtime ones.
+// animation.ts, physics.ts) take. Offsets: the class reflection the original carries (each
+// class's members with their offsets and types, docs/formats/hkx.md, "Class members"): every
+// class the files hold, with the structs those embed. Only serialized members are listed:
+// files never carry the runtime ones.
 
 /** A member's storage: a number, a vector, a pointer, an inline struct or an hkArray of one. */
 export type InlineType =
@@ -21,6 +22,12 @@ export type InlineType =
   | 'vec4'
   /** hkQsTransform: translation, rotation, scale. */
   | 'qs'
+  /** hkMatrix3 or hkRotation: three columns of four floats. */
+  | 'mat3'
+  /** hkTransform (rotation columns, then translation) or hkMatrix4: sixteen floats. */
+  | 'mat4'
+  /** hkHalf: the high 16 bits of a float. */
+  | 'half'
   /** A pointer to another object. */
   | 'ptr'
   /** hkStringPtr or char*. */
@@ -28,11 +35,14 @@ export type InlineType =
   | `struct:${string}`;
 export type MemberType = InlineType | `array:${InlineType}`;
 
+/** A member's offset and storage; a fixed-size C array gives its element count. */
+export type MemberLayout = readonly [offset: number, type: MemberType, count?: number];
+
 export interface ClassLayout {
   readonly parent?: string;
   /** Bytes of an object (the element stride of a struct array). */
   readonly size: number;
-  readonly members: Readonly<Record<string, readonly [offset: number, type: MemberType]>>;
+  readonly members: Readonly<Record<string, MemberLayout>>;
 }
 
 export function inlineSize(type: InlineType): number {
@@ -43,6 +53,7 @@ export function inlineSize(type: InlineType): number {
       return 1;
     case 'u16':
     case 'i16':
+    case 'half':
       return 2;
     case 'u32':
     case 'i32':
@@ -55,7 +66,10 @@ export function inlineSize(type: InlineType): number {
     case 'vec4':
       return 16;
     case 'qs':
+    case 'mat3':
       return 48;
+    case 'mat4':
+      return 64;
     default:
       return HAVOK_LAYOUTS[type.slice('struct:'.length)]?.size ?? 0;
   }
@@ -500,7 +514,7 @@ export const HAVOK_LAYOUTS: Readonly<Record<string, ClassLayout>> = {
   },
   BSIStateManagerModifier: {
     parent: 'hkbModifier',
-    size: 160,
+    size: 128,
     members: {
       iStateVar: [80, 'i32'],
       stateData: [88, 'array:struct:BSIStateManagerModifierBSiStateData'],
@@ -564,7 +578,7 @@ export const HAVOK_LAYOUTS: Readonly<Record<string, ClassLayout>> = {
   },
   BSRagdollContactListenerModifier: {
     parent: 'hkbModifier',
-    size: 144,
+    size: 136,
     members: { contactEvent: [88, EVENT_PROPERTY], bones: [104, 'ptr'] },
   },
   hkbPoweredRagdollControlsModifier: {
@@ -795,10 +809,9 @@ export const HAVOK_LAYOUTS: Readonly<Record<string, ClassLayout>> = {
       forwardAlignFraction: [52, 'f32'],
       sidewaysAlignFraction: [56, 'f32'],
       sidewaysSampleWidth: [60, 'f32'],
-      useTrackData: [64, 'bool'],
-      lockFeetWhenPlanted: [65, 'bool'],
-      useCharacterUpVector: [66, 'bool'],
-      isQuadrupedNarrow: [67, 'bool'],
+      lockFeetWhenPlanted: [64, 'bool'],
+      useCharacterUpVector: [65, 'bool'],
+      isQuadrupedNarrow: [66, 'bool'],
     },
   },
   hkbFootIkDriverInfoLeg: {
@@ -981,15 +994,20 @@ export const HAVOK_LAYOUTS: Readonly<Record<string, ClassLayout>> = {
   hkaBone: { size: 16, members: { name: [0, 'str'], lockTranslation: [8, 'bool'] } },
   hkaSkeletonMapper: {
     parent: 'hkReferencedObject',
-    size: 128,
+    size: 144,
     members: { mapping: [16, 'struct:hkaSkeletonMapperData'] },
   },
   hkaSkeletonMapperData: {
-    size: 112,
+    size: 128,
     members: {
       skeletonA: [0, 'ptr'],
       skeletonB: [8, 'ptr'],
       simpleMappings: [16, 'array:struct:hkaSkeletonMapperDataSimpleMapping'],
+      chainMappings: [32, 'array:struct:hkaSkeletonMapperDataChainMapping'],
+      unmappedBones: [48, 'array:i16'],
+      extractedMotionMapping: [64, 'qs'],
+      keepUnmappedLocal: [112, 'bool'],
+      mappingType: [116, 'i32'],
     },
   },
   hkaSkeletonMapperDataSimpleMapping: {
@@ -1058,7 +1076,7 @@ export const HAVOK_LAYOUTS: Readonly<Record<string, ClassLayout>> = {
   hkaAnimatedReferenceFrame: { parent: 'hkReferencedObject', size: 16, members: {} },
   hkaDefaultAnimatedReferenceFrame: {
     parent: 'hkaAnimatedReferenceFrame',
-    size: 72,
+    size: 80,
     members: {
       up: [16, 'vec4'],
       forward: [32, 'vec4'],
@@ -1066,13 +1084,695 @@ export const HAVOK_LAYOUTS: Readonly<Record<string, ClassLayout>> = {
       referenceFrameSamples: [56, 'array:vec4'],
     },
   },
+
+  // --- Physics, resources and the rest the files hold -----------------------------------------
+  hkMemoryResourceContainer: {
+    parent: 'hkResourceContainer',
+    size: 64,
+    members: {
+      name: [16, 'str'],
+      resourceHandles: [32, 'array:ptr'],
+      children: [48, 'array:ptr'],
+    },
+  },
+  hkResourceContainer: {
+    parent: 'hkResourceBase',
+    size: 16,
+    members: {},
+  },
+  hkResourceBase: {
+    parent: 'hkReferencedObject',
+    size: 16,
+    members: {},
+  },
+  hkpRigidBody: {
+    parent: 'hkpEntity',
+    size: 720,
+    members: {},
+  },
+  hkpEntity: {
+    parent: 'hkpWorldObject',
+    size: 720,
+    members: {
+      material: [208, 'struct:hkpMaterial'],
+      damageMultiplier: [232, 'f32'],
+      storageIndex: [252, 'u16'],
+      contactPointCallbackDelay: [254, 'u16'],
+      autoRemoveLevel: [312, 'i8'],
+      numShapeKeysInContactPointProperties: [313, 'u8'],
+      responseModifierFlags: [314, 'u8'],
+      uid: [316, 'u32'],
+      spuCollisionCallback: [320, 'struct:hkpEntitySpuCollisionCallback'],
+      motion: [336, 'struct:hkpMaxSizeMotion'],
+      localFrame: [688, 'ptr'],
+      npData: [704, 'u32'],
+    },
+  },
+  hkpWorldObject: {
+    parent: 'hkReferencedObject',
+    size: 208,
+    members: {
+      userData: [24, 'u64'],
+      collidable: [32, 'struct:hkpLinkedCollidable'],
+      multiThreadCheck: [160, 'struct:hkMultiThreadCheck'],
+      name: [176, 'str'],
+      properties: [184, 'array:struct:hkpProperty'],
+    },
+  },
+  hkpLinkedCollidable: {
+    parent: 'hkpCollidable',
+    size: 128,
+    members: {},
+  },
+  hkpCollidable: {
+    parent: 'hkpCdBody',
+    size: 112,
+    members: {
+      forceCollideOntoPpu: [33, 'u8'],
+      broadPhaseHandle: [36, 'struct:hkpTypedBroadPhaseHandle'],
+      allowedPenetrationDepth: [104, 'f32'],
+    },
+  },
+  hkpCdBody: {
+    size: 32,
+    members: {
+      shape: [0, 'ptr'],
+      shapeKey: [8, 'u32'],
+    },
+  },
+  hkpTypedBroadPhaseHandle: {
+    parent: 'hkpBroadPhaseHandle',
+    size: 12,
+    members: {
+      type: [4, 'i8'],
+      objectQualityType: [6, 'i8'],
+      collisionFilterInfo: [8, 'u32'],
+    },
+  },
+  hkpBroadPhaseHandle: {
+    size: 4,
+    members: {},
+  },
+  hkMultiThreadCheck: {
+    size: 12,
+    members: {},
+  },
+  hkpProperty: {
+    size: 16,
+    members: {
+      key: [0, 'u32'],
+      alignmentPadding: [4, 'u32'],
+      value: [8, 'struct:hkpPropertyValue'],
+    },
+  },
+  hkpPropertyValue: {
+    size: 8,
+    members: {
+      data: [0, 'u64'],
+    },
+  },
+  hkpMaterial: {
+    size: 12,
+    members: {
+      responseType: [0, 'i8'],
+      rollingFrictionMultiplier: [2, 'half'],
+      friction: [4, 'f32'],
+      restitution: [8, 'f32'],
+    },
+  },
+  hkpEntitySpuCollisionCallback: {
+    size: 16,
+    members: {
+      eventFilter: [10, 'u8'],
+      userFilter: [11, 'u8'],
+    },
+  },
+  hkpMaxSizeMotion: {
+    parent: 'hkpKeyframedRigidMotion',
+    size: 320,
+    members: {},
+  },
+  hkpKeyframedRigidMotion: {
+    parent: 'hkpMotion',
+    size: 320,
+    members: {},
+  },
+  hkpMotion: {
+    parent: 'hkReferencedObject',
+    size: 320,
+    members: {
+      type: [16, 'u8'],
+      deactivationIntegrateCounter: [17, 'u8'],
+      deactivationNumInactiveFrames: [18, 'u16', 2],
+      motionState: [32, 'struct:hkMotionState'],
+      inertiaAndMassInv: [208, 'vec4'],
+      linearVelocity: [224, 'vec4'],
+      angularVelocity: [240, 'vec4'],
+      deactivationRefPosition: [256, 'vec4', 2],
+      deactivationRefOrientation: [288, 'u32', 2],
+      savedMotion: [296, 'ptr'],
+      savedQualityTypeIndex: [304, 'u16'],
+      gravityFactor: [306, 'half'],
+    },
+  },
+  hkMotionState: {
+    size: 176,
+    members: {
+      transform: [0, 'mat4'],
+      sweptTransform: [64, 'struct:hkSweptTransform'],
+      deltaAngle: [144, 'vec4'],
+      objectRadius: [160, 'f32'],
+      linearDamping: [164, 'half'],
+      angularDamping: [166, 'half'],
+      timeFactor: [168, 'half'],
+      maxLinearVelocity: [170, 'u8'],
+      maxAngularVelocity: [171, 'u8'],
+      deactivationClass: [172, 'u8'],
+    },
+  },
+  hkSweptTransform: {
+    size: 80,
+    members: {
+      centerOfMass0: [0, 'vec4'],
+      centerOfMass1: [16, 'vec4'],
+      rotation0: [32, 'vec4'],
+      rotation1: [48, 'vec4'],
+      centerOfMassLocal: [64, 'vec4'],
+    },
+  },
+  hkpPhysicsData: {
+    parent: 'hkReferencedObject',
+    size: 40,
+    members: {
+      worldCinfo: [16, 'ptr'],
+      systems: [24, 'array:ptr'],
+    },
+  },
+  hkpPhysicsSystem: {
+    parent: 'hkReferencedObject',
+    size: 104,
+    members: {
+      rigidBodies: [16, 'array:ptr'],
+      constraints: [32, 'array:ptr'],
+      actions: [48, 'array:ptr'],
+      phantoms: [64, 'array:ptr'],
+      name: [80, 'str'],
+      userData: [88, 'u64'],
+      active: [96, 'bool'],
+    },
+  },
+  hkpConstraintInstance: {
+    parent: 'hkReferencedObject',
+    size: 112,
+    members: {
+      data: [24, 'ptr'],
+      constraintModifiers: [32, 'ptr'],
+      entities: [40, 'ptr', 2],
+      priority: [56, 'u8'],
+      wantRuntime: [57, 'bool'],
+      destructionRemapInfo: [58, 'u8'],
+      name: [80, 'str'],
+      userData: [88, 'u64'],
+    },
+  },
+  hkpRagdollConstraintData: {
+    parent: 'hkpConstraintData',
+    size: 384,
+    members: {
+      atoms: [32, 'struct:hkpRagdollConstraintDataAtoms'],
+    },
+  },
+  hkpConstraintData: {
+    parent: 'hkReferencedObject',
+    size: 24,
+    members: {
+      userData: [16, 'u64'],
+    },
+  },
+  hkpRagdollConstraintDataAtoms: {
+    size: 352,
+    members: {
+      transforms: [0, 'struct:hkpSetLocalTransformsConstraintAtom'],
+      setupStabilization: [144, 'struct:hkpSetupStabilizationAtom'],
+      ragdollMotors: [160, 'struct:hkpRagdollMotorConstraintAtom'],
+      angFriction: [256, 'struct:hkpAngFrictionConstraintAtom'],
+      twistLimit: [268, 'struct:hkpTwistLimitConstraintAtom'],
+      coneLimit: [288, 'struct:hkpConeLimitConstraintAtom'],
+      planesLimit: [308, 'struct:hkpConeLimitConstraintAtom'],
+      ballSocket: [328, 'struct:hkpBallSocketConstraintAtom'],
+    },
+  },
+  hkpSetLocalTransformsConstraintAtom: {
+    parent: 'hkpConstraintAtom',
+    size: 144,
+    members: {
+      transformA: [16, 'mat4'],
+      transformB: [80, 'mat4'],
+    },
+  },
+  hkpConstraintAtom: {
+    size: 2,
+    members: {
+      type: [0, 'u16'],
+    },
+  },
+  hkpSetupStabilizationAtom: {
+    parent: 'hkpConstraintAtom',
+    size: 16,
+    members: {
+      enabled: [2, 'bool'],
+      maxAngle: [4, 'f32'],
+      padding: [8, 'u8', 8],
+    },
+  },
+  hkpRagdollMotorConstraintAtom: {
+    parent: 'hkpConstraintAtom',
+    size: 96,
+    members: {
+      isEnabled: [2, 'bool'],
+      initializedOffset: [4, 'i16'],
+      previousTargetAnglesOffset: [6, 'i16'],
+      target_bRca: [16, 'mat3'],
+      motors: [64, 'ptr', 3],
+    },
+  },
+  hkpAngFrictionConstraintAtom: {
+    parent: 'hkpConstraintAtom',
+    size: 12,
+    members: {
+      isEnabled: [2, 'u8'],
+      firstFrictionAxis: [3, 'u8'],
+      numFrictionAxes: [4, 'u8'],
+      maxFrictionTorque: [8, 'f32'],
+    },
+  },
+  hkpTwistLimitConstraintAtom: {
+    parent: 'hkpConstraintAtom',
+    size: 20,
+    members: {
+      isEnabled: [2, 'u8'],
+      twistAxis: [3, 'u8'],
+      refAxis: [4, 'u8'],
+      minAngle: [8, 'f32'],
+      maxAngle: [12, 'f32'],
+      angularLimitsTauFactor: [16, 'f32'],
+    },
+  },
+  hkpConeLimitConstraintAtom: {
+    parent: 'hkpConstraintAtom',
+    size: 20,
+    members: {
+      isEnabled: [2, 'u8'],
+      twistAxisInA: [3, 'u8'],
+      refAxisInB: [4, 'u8'],
+      angleMeasurementMode: [5, 'u8'],
+      memOffsetToAngleOffset: [6, 'u8'],
+      minAngle: [8, 'f32'],
+      maxAngle: [12, 'f32'],
+      angularLimitsTauFactor: [16, 'f32'],
+    },
+  },
+  hkpBallSocketConstraintAtom: {
+    parent: 'hkpConstraintAtom',
+    size: 16,
+    members: {
+      solvingMethod: [2, 'u8'],
+      bodiesToNotify: [3, 'u8'],
+      velocityStabilizationFactor: [4, 'u8'],
+      maxImpulse: [8, 'f32'],
+      inertiaStabilizationFactor: [12, 'f32'],
+    },
+  },
+  hkaRagdollInstance: {
+    parent: 'hkReferencedObject',
+    size: 72,
+    members: {
+      rigidBodies: [16, 'array:ptr'],
+      constraints: [32, 'array:ptr'],
+      boneToRigidBodyMap: [48, 'array:i32'],
+      skeleton: [64, 'ptr'],
+    },
+  },
+  hkpPositionConstraintMotor: {
+    parent: 'hkpLimitedForceConstraintMotor',
+    size: 48,
+    members: {
+      tau: [32, 'f32'],
+      damping: [36, 'f32'],
+      proportionalRecoveryVelocity: [40, 'f32'],
+      constantRecoveryVelocity: [44, 'f32'],
+    },
+  },
+  hkpLimitedForceConstraintMotor: {
+    parent: 'hkpConstraintMotor',
+    size: 32,
+    members: {
+      minForce: [24, 'f32'],
+      maxForce: [28, 'f32'],
+    },
+  },
+  hkpConstraintMotor: {
+    parent: 'hkReferencedObject',
+    size: 24,
+    members: {
+      type: [16, 'i8'],
+    },
+  },
+  hkaSkeletonMapperDataChainMapping: {
+    size: 112,
+    members: {
+      startBoneA: [0, 'i16'],
+      endBoneA: [2, 'i16'],
+      startBoneB: [4, 'i16'],
+      endBoneB: [6, 'i16'],
+      startAFromBTransform: [16, 'qs'],
+      endAFromBTransform: [64, 'qs'],
+    },
+  },
+  hkMemoryResourceHandle: {
+    parent: 'hkResourceHandle',
+    size: 48,
+    members: {
+      variant: [16, 'ptr'],
+      name: [24, 'str'],
+      references: [32, 'array:struct:hkMemoryResourceHandleExternalLink'],
+    },
+  },
+  hkResourceHandle: {
+    parent: 'hkResourceBase',
+    size: 16,
+    members: {},
+  },
+  hkMemoryResourceHandleExternalLink: {
+    size: 16,
+    members: {
+      memberName: [0, 'str'],
+      externalId: [8, 'str'],
+    },
+  },
+  hkpCapsuleShape: {
+    parent: 'hkpConvexShape',
+    size: 80,
+    members: {
+      vertexA: [48, 'vec4'],
+      vertexB: [64, 'vec4'],
+    },
+  },
+  hkpConvexShape: {
+    parent: 'hkpSphereRepShape',
+    size: 40,
+    members: {
+      radius: [32, 'f32'],
+    },
+  },
+  hkpSphereRepShape: {
+    parent: 'hkpShape',
+    size: 32,
+    members: {},
+  },
+  hkpShape: {
+    parent: 'hkReferencedObject',
+    size: 32,
+    members: {
+      userData: [16, 'u64'],
+    },
+  },
+  hkpShapeInfo: {
+    parent: 'hkReferencedObject',
+    size: 128,
+    members: {
+      shape: [16, 'ptr'],
+      isHierarchicalCompound: [24, 'bool'],
+      hkdShapesCollected: [25, 'bool'],
+      childShapeNames: [32, 'array:str'],
+      childTransforms: [48, 'array:mat4'],
+      transform: [64, 'mat4'],
+    },
+  },
+  hkpLimitedHingeConstraintData: {
+    parent: 'hkpConstraintData',
+    size: 272,
+    members: {
+      atoms: [32, 'struct:hkpLimitedHingeConstraintDataAtoms'],
+    },
+  },
+  hkpLimitedHingeConstraintDataAtoms: {
+    size: 240,
+    members: {
+      transforms: [0, 'struct:hkpSetLocalTransformsConstraintAtom'],
+      setupStabilization: [144, 'struct:hkpSetupStabilizationAtom'],
+      angMotor: [160, 'struct:hkpAngMotorConstraintAtom'],
+      angFriction: [184, 'struct:hkpAngFrictionConstraintAtom'],
+      angLimit: [196, 'struct:hkpAngLimitConstraintAtom'],
+      '2dAng': [212, 'struct:hkp2dAngConstraintAtom'],
+      ballSocket: [216, 'struct:hkpBallSocketConstraintAtom'],
+    },
+  },
+  hkpAngMotorConstraintAtom: {
+    parent: 'hkpConstraintAtom',
+    size: 24,
+    members: {
+      isEnabled: [2, 'bool'],
+      motorAxis: [3, 'u8'],
+      initializedOffset: [4, 'i16'],
+      previousTargetAngleOffset: [6, 'i16'],
+      correspondingAngLimitSolverResultOffset: [8, 'i16'],
+      targetAngle: [12, 'f32'],
+      motor: [16, 'ptr'],
+    },
+  },
+  hkpAngLimitConstraintAtom: {
+    parent: 'hkpConstraintAtom',
+    size: 16,
+    members: {
+      isEnabled: [2, 'u8'],
+      limitAxis: [3, 'u8'],
+      minAngle: [4, 'f32'],
+      maxAngle: [8, 'f32'],
+      angularLimitsTauFactor: [12, 'f32'],
+    },
+  },
+  hkp2dAngConstraintAtom: {
+    parent: 'hkpConstraintAtom',
+    size: 4,
+    members: {
+      freeRotationAxis: [2, 'u8'],
+    },
+  },
+  hkpConvexTranslateShape: {
+    parent: 'hkpConvexTransformShapeBase',
+    size: 80,
+    members: {
+      translation: [64, 'vec4'],
+    },
+  },
+  hkpConvexTransformShapeBase: {
+    parent: 'hkpConvexShape',
+    size: 64,
+    members: {
+      childShape: [40, 'struct:hkpSingleShapeContainer'],
+    },
+  },
+  hkpSingleShapeContainer: {
+    parent: 'hkpShapeContainer',
+    size: 16,
+    members: {
+      childShape: [8, 'ptr'],
+    },
+  },
+  hkpShapeContainer: {
+    size: 8,
+    members: {},
+  },
+  hkpBoxShape: {
+    parent: 'hkpConvexShape',
+    size: 64,
+    members: {
+      halfExtents: [48, 'vec4'],
+    },
+  },
+  hkpConvexVerticesShape: {
+    parent: 'hkpConvexShape',
+    size: 144,
+    members: {
+      aabbHalfExtents: [48, 'vec4'],
+      aabbCenter: [64, 'vec4'],
+      rotatedVertices: [80, 'array:struct:hkpConvexVerticesShapeFourVectors'],
+      numVertices: [96, 'i32'],
+      planeEquations: [120, 'array:vec4'],
+      connectivity: [136, 'ptr'],
+    },
+  },
+  hkpConvexVerticesShapeFourVectors: {
+    size: 48,
+    members: {
+      x: [0, 'vec4'],
+      y: [16, 'vec4'],
+      z: [32, 'vec4'],
+    },
+  },
+  hkpConvexVerticesConnectivity: {
+    parent: 'hkReferencedObject',
+    size: 48,
+    members: {
+      vertexIndices: [16, 'array:u16'],
+      numVerticesPerFace: [32, 'array:u8'],
+    },
+  },
+  hkbReferencePoseGenerator: {
+    parent: 'hkbGenerator',
+    size: 80,
+    members: {},
+  },
+  hkpListShape: {
+    parent: 'hkpShapeCollection',
+    size: 144,
+    members: {
+      childInfo: [48, 'array:struct:hkpListShapeChildInfo'],
+      flags: [64, 'u16'],
+      numDisabledChildren: [66, 'u16'],
+      aabbHalfExtents: [80, 'vec4'],
+      aabbCenter: [96, 'vec4'],
+      enabledChildren: [112, 'u32', 8],
+    },
+  },
+  hkpShapeCollection: {
+    parent: 'hkpShape',
+    size: 48,
+    members: {
+      disableWelding: [40, 'bool'],
+      collectionType: [41, 'u8'],
+    },
+  },
+  hkpListShapeChildInfo: {
+    size: 32,
+    members: {
+      shape: [0, 'ptr'],
+      collisionFilterInfo: [8, 'u32'],
+    },
+  },
+  hkpMoppBvTreeShape: {
+    parent: 'hkMoppBvTreeShapeBase',
+    size: 112,
+    members: {
+      child: [80, 'struct:hkpSingleShapeContainer'],
+    },
+  },
+  hkMoppBvTreeShapeBase: {
+    parent: 'hkpBvTreeShape',
+    size: 80,
+    members: {
+      code: [40, 'ptr'],
+    },
+  },
+  hkpBvTreeShape: {
+    parent: 'hkpShape',
+    size: 40,
+    members: {
+      bvTreeType: [32, 'u8'],
+    },
+  },
+  hkpMoppCode: {
+    parent: 'hkReferencedObject',
+    size: 64,
+    members: {
+      info: [16, 'struct:hkpMoppCodeCodeInfo'],
+      data: [32, 'array:u8'],
+      buildType: [48, 'i8'],
+    },
+  },
+  hkpMoppCodeCodeInfo: {
+    size: 16,
+    members: {
+      offset: [0, 'vec4'],
+    },
+  },
+  hkpConvexTransformShape: {
+    parent: 'hkpConvexTransformShapeBase',
+    size: 128,
+    members: {
+      transform: [64, 'mat4'],
+    },
+  },
+  BSGetTimeStepModifier: {
+    parent: 'hkbModifier',
+    size: 88,
+    members: {
+      timeStep: [80, 'f32'],
+    },
+  },
+  BSPassByTargetTriggerModifier: {
+    parent: 'hkbModifier',
+    size: 160,
+    members: {
+      targetPosition: [80, 'vec4'],
+      radius: [96, 'f32'],
+      movementDirection: [112, 'vec4'],
+      triggerEvent: [128, 'struct:hkbEventProperty'],
+    },
+  },
+  BSDecomposeVectorModifier: {
+    parent: 'hkbModifier',
+    size: 112,
+    members: {
+      vector: [80, 'vec4'],
+      x: [96, 'f32'],
+      y: [100, 'f32'],
+      z: [104, 'f32'],
+      w: [108, 'f32'],
+    },
+  },
+  BSTimerModifier: {
+    parent: 'hkbModifier',
+    size: 112,
+    members: {
+      alarmTimeSeconds: [80, 'f32'],
+      alarmEvent: [88, 'struct:hkbEventProperty'],
+      resetAlarm: [104, 'bool'],
+    },
+  },
+  BSLimbIKModifier: {
+    parent: 'hkbModifier',
+    size: 120,
+    members: {
+      limitAngleDegrees: [80, 'f32'],
+      startBoneIndex: [88, 'i16'],
+      endBoneIndex: [90, 'i16'],
+      gain: [92, 'f32'],
+      boneRadius: [96, 'f32'],
+      castOffset: [100, 'f32'],
+    },
+  },
+  BSTweenerModifier: {
+    parent: 'hkbModifier',
+    size: 208,
+    members: {
+      tweenPosition: [80, 'bool'],
+      tweenRotation: [81, 'bool'],
+      useTweenDuration: [82, 'bool'],
+      tweenDuration: [84, 'f32'],
+      targetPosition: [96, 'vec4'],
+      targetRotation: [112, 'vec4'],
+    },
+  },
+  hkbTransformVectorModifier: {
+    parent: 'hkbModifier',
+    size: 160,
+    members: {
+      rotation: [80, 'vec4'],
+      translation: [96, 'vec4'],
+      vectorIn: [112, 'vec4'],
+      vectorOut: [128, 'vec4'],
+      rotateOnly: [144, 'bool'],
+      inverse: [145, 'bool'],
+      computeOnActivate: [146, 'bool'],
+      computeOnModify: [147, 'bool'],
+    },
+  },
 };
 
 /** A member of a class or one of its bases. */
-export function findMember(
-  className: string,
-  member: string,
-): readonly [offset: number, type: MemberType] | undefined {
+export function findMember(className: string, member: string): MemberLayout | undefined {
   for (let name: string | undefined = className, depth = 0; name && depth < 16; depth++) {
     const layout: ClassLayout | undefined = HAVOK_LAYOUTS[name];
     if (!layout) return undefined;

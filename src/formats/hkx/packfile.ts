@@ -19,6 +19,15 @@ const SECTION_HEADER_SIZE = 48;
 /** hkArray's capacityAndFlags: the array does not own its memory (always set in packfiles). */
 const ARRAY_SIZE_MASK = 0x3fffffff;
 
+/** Sees every read of a packfile's data section: offset and size (the member census). */
+export type PackfileReadObserver = (file: Packfile, offset: number, size: number) => void;
+let readObserver: PackfileReadObserver | undefined;
+
+/** Starts (or, with undefined, stops) observing the reads of every packfile. */
+export function observePackfileReads(observer: PackfileReadObserver | undefined): void {
+  readObserver = observer;
+}
+
 /** An object of the data section: its offset there and its class. */
 export interface HkxObject {
   readonly offset: number;
@@ -202,17 +211,20 @@ export class Packfile {
 
   /** The object a pointer member points to (undefined for null). */
   object(offset: number): HkxObject | undefined {
+    readObserver?.(this, offset, 8);
     const target = this.#objectPointers.get(offset);
     return target === undefined ? undefined : this.objects.get(target);
   }
 
   /** Where a pointer to raw data (array contents, strings) points, or undefined for null. */
   pointer(offset: number): number | undefined {
+    readObserver?.(this, offset, 8);
     return this.#pointers.get(offset);
   }
 
   /** An hkStringPtr or char* member (undefined for null). */
   string(offset: number): string | undefined {
+    readObserver?.(this, offset, 8);
     const target = this.#pointers.get(offset);
     if (target === undefined) return undefined;
     const start = this.#data.start + target;
@@ -222,6 +234,7 @@ export class Packfile {
   /** An hkArray member: where its elements are and how many there are. */
   array(offset: number): { readonly data: number; readonly size: number } {
     const size = this.i32(offset + 8);
+    readObserver?.(this, offset, 8);
     const data = this.#pointers.get(offset);
     if (size < 0 || (size & ~ARRAY_SIZE_MASK) !== 0) {
       throw new FormatError(`Invalid hkArray size ${String(size)}`, this.#data.start + offset);
@@ -242,6 +255,7 @@ export class Packfile {
   }
 
   #at(offset: number, size: number): number {
+    readObserver?.(this, offset, size);
     if (offset < 0 || offset + size > this.#data.end) {
       throw new FormatError(`Read outside the packfile data section`, this.#data.start + offset);
     }

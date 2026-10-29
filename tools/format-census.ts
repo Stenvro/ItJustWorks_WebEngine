@@ -10,8 +10,10 @@
 //   node tools/format-census.ts strings    every string table of every language, and whether
 //                                          every FULL id of the load order resolves
 //   node tools/format-census.ts hkx        every Havok file by class, and which have a layout
+//   node tools/format-census.ts hkx-members  every serialized member of every Havok class the
+//                                          files hold (layouts.ts): which the readers read
 //
-// Without a section it runs files, esm and strings (bsa reads every byte, about a minute).
+// Without a section it runs files, esm, strings and hkx (bsa reads every byte, about a minute).
 // The other formats have sweeps of their own: nif-stats --parse, dds-stats, pex-dump --verify,
 // hkx-info --audit, audio-info --audit, tri-info --all, lod-info --meshes, swf-info --all.
 
@@ -38,17 +40,25 @@ import {
   stringTablePath,
   type StringTableKind,
 } from '../src/formats/esm/strings.ts';
-import { HAVOK_LAYOUTS } from '../src/formats/hkx/layouts.ts';
-import { Packfile } from '../src/formats/hkx/packfile.ts';
-import { readAnimationContainer, TRANSFORM_FLOATS } from '../src/formats/hkx/animation.ts';
+import { HAVOK_LAYOUTS, inlineSize, type InlineType } from '../src/formats/hkx/layouts.ts';
+import { loadCharacterInfo, parseBehaviorGraph } from '../src/formats/hkx/behavior.ts';
+import { readHavokPhysics } from '../src/formats/hkx/physics.ts';
+import { observePackfileReads, Packfile } from '../src/formats/hkx/packfile.ts';
+import {
+  readAnimationContainer,
+  readRagdollMapping,
+  TRANSFORM_FLOATS,
+} from '../src/formats/hkx/animation.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { openGameFolder, resolveDataFile } from './gamedata-path.ts';
 import { NodeFileSource } from './node-game-folder.ts';
 
-const SECTIONS = ['files', 'bsa', 'esm', 'strings', 'hkx'];
+const SECTIONS = ['files', 'bsa', 'esm', 'strings', 'hkx', 'hkx-members'];
 const args = process.argv.slice(2);
 const run = (name: string): boolean =>
-  args.some((arg) => SECTIONS.includes(arg)) ? args.includes(name) : name !== 'bsa';
+  args.some((arg) => SECTIONS.includes(arg))
+    ? args.includes(name)
+    : name !== 'bsa' && name !== 'hkx-members';
 
 /**
  * The reader of each extension found in the game data, and the sweep that runs it over every
@@ -475,7 +485,8 @@ if (run('hkx')) {
   // Every Havok file (packfiles, and the tagfiles Creation Club content ships) by class: a class
   // counts as read when the engine's code names it (behavior.ts, animation.ts and the physics read
   // packfile objects by class name; layouts.ts lays out the classes tagfiles carry; the root
-  // container and the animation container's parts are read by position). Every animation
+  // container and the animation container's parts are read by position; physics.ts reads the
+  // skeleton files' ragdoll physics, its MOPP code by position too). Every animation
   // container is read and every animation sampled, so a class the readers refuse shows here.
   const named = quotedNames();
   for (const name of [
@@ -485,6 +496,7 @@ if (run('hkx')) {
     'hkaDefaultAnimatedReferenceFrame',
     'hkaAnnotationTrack',
     'hkbBehaviorGraphStringData',
+    'hkpMoppCode',
   ])
     named.add(name);
   const classes = new Map<string, { objects: number; files: number }>();
@@ -494,6 +506,8 @@ if (run('hkx')) {
   for (const file of havokFiles) {
     try {
       const pack = Packfile.parse(await vfs.read(file));
+      // The ragdoll physics and resource containers (the skeleton files'), read in full.
+      readHavokPhysics(pack);
       for (const binding of readAnimationContainer(pack).bindings) {
         const { animation } = binding;
         const out = new Float32Array(animation.trackCount * TRANSFORM_FLOATS);
@@ -519,6 +533,112 @@ if (run('hkx')) {
   for (const [name, entry] of [...classes].sort((a, b) => b[1].files - a[1].files)) {
     console.log(
       `  ${String(entry.files).padStart(6)} ${String(entry.objects).padStart(8)}  ${named.has(name) ? 'yes ' : '    '} ${HAVOK_LAYOUTS[name] ? 'layout' : '      '} ${name}`,
+    );
+  }
+  for (const failure of failures.slice(0, 20)) console.log(`    ${failure}`);
+}
+
+if (run('hkx-members')) {
+  // Every reader runs over every Havok file (animation containers, ragdoll physics, behavior
+  // graphs, and each project's character) while every read of every packfile is recorded; then
+  // every serialized member of every object (layouts.ts, structs and struct arrays followed) is
+  // looked up: read when any of its bytes was read in any object of its class.
+  const reads = new Map<Packfile, Uint8Array>();
+  observePackfileReads((file, offset, size) => {
+    let bits = reads.get(file);
+    if (!bits) {
+      bits = new Uint8Array(1 << 16);
+      reads.set(file, bits);
+    }
+    if (offset + size > bits.length) {
+      const grown = new Uint8Array(Math.max(offset + size, bits.length * 2));
+      grown.set(bits);
+      bits = grown;
+      reads.set(file, bits);
+    }
+    bits.fill(1, offset, offset + size);
+  });
+  const read = (file: string): Promise<Uint8Array> => vfs.read(file);
+  const havokFiles = vfs.list('meshes').filter((file) => /.(hkx|hkt)$/.test(file));
+  const failures: string[] = [];
+  for (const file of havokFiles) {
+    try {
+      const pack = Packfile.parse(await vfs.read(file));
+      for (const { animation } of readAnimationContainer(pack).bindings) {
+        const out = new Float32Array(animation.trackCount * TRANSFORM_FLOATS);
+        animation.sample(animation.duration / 2, out, new Float32Array(animation.floatTrackCount));
+      }
+      for (const skeleton of pack.objectsOf('hkaSkeleton')) {
+        readRagdollMapping(pack, pack.string(skeleton.offset + 16) ?? '');
+      }
+      readHavokPhysics(pack);
+      if (pack.objectsOf('hkbBehaviorGraph').length > 0) parseBehaviorGraph(pack);
+      if (pack.objectsOf('hkbProjectData').length > 0) await loadCharacterInfo(file, read);
+    } catch (error) {
+      failures.push(`${file}: ${message(error)}`);
+    }
+  }
+  observePackfileReads(undefined);
+  /** "Class.member" → [objects with it, objects where it was read, objects where not zero]. */
+  const members = new Map<string, [number, number, number]>();
+  const visit = (
+    pack: Packfile,
+    bits: Uint8Array,
+    className: string,
+    at: number,
+    depth: number,
+  ): void => {
+    if (depth > 8) return;
+    for (let name: string | undefined = className; name; name = HAVOK_LAYOUTS[name]?.parent) {
+      const layout = HAVOK_LAYOUTS[name];
+      if (!layout) break;
+      for (const [member, [offset, type, count = 1]] of Object.entries(layout.members)) {
+        const start = at + offset;
+        const element = type.startsWith('array:') ? type.slice('array:'.length) : type;
+        const size = type.startsWith('array:') ? 16 : inlineSize(element as InlineType) * count;
+        let wasRead = false;
+        for (let i = start; i < start + size && !wasRead; i++) wasRead = bits[i] === 1;
+        if (type.startsWith('array:') && !wasRead) {
+          const { data, size: length } = pack.array(start);
+          const end = data + length * inlineSize(element as InlineType);
+          for (let i = data; i < end && !wasRead; i++) wasRead = bits[i] === 1;
+        }
+        const key = `${name}.${member}`;
+        const entry = members.get(key) ?? [0, 0, 0];
+        entry[0]++;
+        if (wasRead) entry[1]++;
+        const set = type.startsWith('array:')
+          ? pack.array(start).size > 0
+          : pack.bytes(start, size).some((byte) => byte !== 0) ||
+            pack.pointer(start) !== undefined ||
+            pack.object(start) !== undefined;
+        if (set) entry[2]++;
+        members.set(key, entry);
+        if (element.startsWith('struct:')) {
+          const struct = element.slice('struct:'.length);
+          if (type.startsWith('array:')) {
+            const { data, size: length } = pack.array(start);
+            const stride = inlineSize(element as InlineType);
+            for (let i = 0; i < length; i++)
+              visit(pack, bits, struct, data + i * stride, depth + 1);
+          } else {
+            visit(pack, bits, struct, start, depth + 1);
+          }
+        }
+      }
+    }
+  };
+  for (const [pack, bits] of reads) {
+    for (const object of pack.objects.values())
+      visit(pack, bits, object.className, object.offset, 0);
+  }
+  const unread = [...members].filter(([, [, readCount]]) => readCount === 0);
+  console.log(
+    `HKX members: ${havokFiles.length} files, ${failures.length} failures, ${members.size} serialized members of the classes the files hold, ${members.size - unread.length} read, ${unread.length} never read`,
+  );
+  for (const [key, [objects, , set]] of unread.sort((a, b) => a[0].localeCompare(b[0]))) {
+    console.log(
+      `  ${key.padEnd(64)} ${String(objects).padStart(7)} objects, ${set === 0 ? 'zero or null in all' : `set in ${String(set)}`}`,
     );
   }
   for (const failure of failures.slice(0, 20)) console.log(`    ${failure}`);
