@@ -2944,7 +2944,10 @@ original (behaviour, in our words), unless marked ours.
   (FlightTakeOff 1, FlightCruising 2, FlightHovering 3, FlightLanding 4, FlightPerching 5,
   FlightAction 6, FlightLand back to 0; LandEnd ends a landing); setting it also switches the
   character controller between its flying and ground states (in the air a flier has no
-  controller here: src/shell/actor-movers.ts holds it off).
+  controller here: src/shell/actor-movers.ts holds it off). The state is the actor's, not its
+  3D's: a flier disabled and enabled again keeps it (MQ101's Alduin, disabled at stage 25 and
+  enabled at 50 in flight, cruises on to his tower perch). TODO(M13): whether the original
+  resets anything of the flight (its maneuver, its graph's flight) as the 3D comes back.
 - **CanFly**: its race flies, its graph's Injured is not set, it is allowed to (SetAllowFlying;
   Dragonrend's DragonRend actor value here), and it has health. A hurt flier (below its race's
   injured health: RACE DATA 35%) cannot fly at all: in the air it lands, on the ground it stays.

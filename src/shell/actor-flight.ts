@@ -1618,9 +1618,13 @@ export class ActorFlight {
     this.#actors = [...actors];
     const seen = new Set<number>();
     for (const staged of this.#actors) {
-      if (staged.dead || staged.visibility.hidden) continue;
+      if (staged.dead) continue;
       if (!fliesByRace(staged.placed.look.raceFlags)) continue;
+      // Disabled, it keeps its flying state for when it is enabled again (the actor's, not its
+      // 3D's; its graph keeps its own as well): MQ101's Alduin, disabled and enabled again in
+      // flight as the player climbs the tower, cruises on from where he was.
       seen.add(staged.reference);
+      if (staged.visibility.hidden) continue;
       // Its AI disabled (EnableAI false), it steers nothing.
       if (this.#options.movers.aiDisabled(staged.reference)) continue;
       const flier = this.#flier(staged.reference);
