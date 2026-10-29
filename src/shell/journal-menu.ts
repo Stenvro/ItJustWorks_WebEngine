@@ -17,6 +17,7 @@ import { questTargets } from './compass.ts';
 import type { Terminal } from './terminal.ts';
 import { settingsHandlers } from './journal-settings.ts';
 import { controlsHandlers } from './journal-controls.ts';
+import { DEFAULT_PLAYER_NAME, IMPORT_ESS_TEXT, SaveList } from './save-list.ts';
 
 /** HelpManualPC: the help topics of the PC game (Skyrim.esm's FLST 0x163). */
 const HELP_MANUAL_PC = 0x163;
@@ -53,19 +54,19 @@ export async function playerBarInfo(
 export class JournalMenu {
   readonly #host: MenuHost;
   readonly #session: GameSession;
-  readonly #terminal: Terminal;
   readonly #memory: JournalMemory = { tab: JournalPage.quests, quest: 0, miscActive: true };
   /** The quests as the last RequestQuestsData gave them (objectives are asked for later). */
   #quests: JournalQuest[] = [];
   /** The quest list the menu passed (a clip it asked to fill). */
   #titleList: string | undefined;
-  readonly #unanswered = new Set<string>();
   /** Quit to the main menu, or the game, ends Play's game. */
   onQuit: ((toDesktop: boolean) => void) | undefined;
   /** Saving and loading (Play's): unset, the system page's Save, Load and Quicksave do nothing. */
   saves: JournalSaves | undefined;
-  /** The saves the list shows now (the system page's Save or Load), and whether it saves. */
-  #listed: { headers: SaveHeader[]; saving: boolean; list: string } | undefined;
+  /** The system page's save list (Save, Load, the characters). */
+  readonly #saveList: SaveList<Menu>;
+  /** Closes the journal open now. */
+  #close: ((menu: Menu) => void) | undefined;
   /** Show on Map: the journal closes, the map opens on a quest target (its reference). */
   onShowOnMap: ((reference: number) => void) | undefined;
   /** The objectives' targets on the map ("quest:objective" → the first target's reference). */
@@ -80,9 +81,26 @@ export class JournalMenu {
   constructor(host: MenuHost, session: GameSession, terminal: Terminal) {
     this.#host = host;
     this.#session = session;
-    this.#terminal = terminal;
     void session.settings().then((settings) => {
       this.#bountyFormat = settings.string('sBountyStatString') ?? this.#bountyFormat;
+    });
+    this.#saveList = new SaveList<Menu>({
+      source: () => this.saves,
+      playTime: (header) => session.scriptsReady?.gameTimeString(header.gameDays) ?? '',
+      // A game runs while the journal is open: its player's saves.
+      character: () => session.scriptsReady?.state.playerName ?? DEFAULT_PLAYER_NAME,
+      importText: () => (this.saves?.importEss ? IMPORT_ESS_TEXT : undefined),
+      load: (menu, name) => {
+        this.#close?.(menu);
+        this.saves?.load(name);
+      },
+      importSave: (menu) => {
+        this.#close?.(menu);
+        this.saves?.importEss?.();
+      },
+      log: (message) => {
+        terminal.log('save', message, 'error');
+      },
     });
   }
 
@@ -114,24 +132,18 @@ export class JournalMenu {
       this.#host.close(menu);
       closed();
     };
+    this.#close = close;
     void this.#playSound('UIJournalOpen');
     return this.#host.open('quest_journal.swf', {
       depth,
       interactive: true,
       handlers: {
-        // What the journal asks that is not answered yet goes to the log once.
-        ...Object.fromEntries(
-          UNBUILT.map((name) => [
-            name,
-            () => {
-              this.#notAnswered(name);
-            },
-          ]),
-        ),
         // The settings pages (src/shell/journal-settings.ts).
         ...settingsHandlers(this.#host, this.#session),
         // The controls page (src/shell/journal-controls.ts).
-        ...controlsHandlers(this.#session),
+        ...controlsHandlers(this.#session, () => {
+          this.#host.sendButtonMapping();
+        }),
         // The installed content page (Creations): an online store, never reached from
         // localhost (hard rule 4).
         ShouldShowMod: (menu, args) => {
@@ -209,68 +221,19 @@ export class JournalMenu {
         updateStats: (menu, args) => {
           menu.respond(args[0], ...this.#stats());
         },
-        // Save and Load list the saves (the movie adds its [NEW SAVE] on Save), newest first.
-        SAVE: (menu, args) => {
-          void this.#listSaves(menu, args[0], true);
-        },
-        LOAD: (menu, args) => {
-          void this.#listSaves(menu, args[0], false);
-        },
+        // The save list: characters, saves, loading and deleting (src/shell/save-list.ts).
+        ...this.#saveList.handlers(),
         SaveGame: (menu, args) => {
-          const listed = this.#listed;
           const index = typeof args[0] === 'number' ? args[0] : 0;
           // The first entry is the new save; the others are saved over.
-          const over = index > 0 ? listed?.headers[index - 1]?.name : undefined;
+          const over = index > 0 ? this.#saveList.listed?.headers[index - 1]?.name : undefined;
           close(menu);
           void this.saves?.save(over);
-        },
-        IsOKtoLoad: (menu) => {
-          menu.call('ConfirmOKToLoad');
-        },
-        LoadGame: (menu, args) => {
-          const index = typeof args[0] === 'number' ? args[0] : -1;
-          const name = this.#listed?.headers[index]?.name;
-          if (name === undefined) {
-            if (index === this.#listed?.headers.length && this.saves?.importEss) {
-              close(menu);
-              this.saves.importEss();
-            }
-            return;
-          }
-          close(menu);
-          this.saves?.load(name);
-        },
-        // The movie asked "Delete this save?" itself (X, or the bottom bar's Delete) and, the
-        // player having said yes, sends the save's index among the saves (on Save past its
-        // [NEW SAVE], which it has already counted off) and takes the entry out of its list.
-        // The list is filled again once the save has gone (the import entry, left out of the
-        // saves' indices, stays last).
-        DeleteSave: (menu, args) => {
-          const listed = this.#listed;
-          const index = typeof args[0] === 'number' ? args[0] : -1;
-          const name = listed?.headers[index]?.name;
-          if (!listed || name === undefined) return;
-          const saves = this.saves;
-          if (!saves) return;
-          saves
-            .delete(name)
-            .catch((error: unknown) => {
-              this.#terminal.log(
-                'save',
-                `${name} could not be deleted: ${error instanceof Error ? error.message : String(error)}`,
-                'error',
-              );
-            })
-            .then(() => this.#listSaves(menu, listed.list, listed.saving))
-            .catch(() => undefined);
         },
         QuickSave: (menu) => {
           close(menu);
           this.saves?.quicksave();
         },
-        // One list for every character (TODO(M13): the character filter), all at once.
-        UseCurrentCharacterFilter: () => undefined,
-        ForceStopSaveListLoading: () => undefined,
         // TODO(M13): the save's thumbnail shown (img://BGSSaveLoadHeader_Screenshot).
         PrepSaveGameScreenshot: () => undefined,
         SetSaveDisabled: () => undefined,
@@ -414,59 +377,11 @@ export class JournalMenu {
     return topics;
   }
 
-  /**
-   * Fills the save list (the movie's entryList) with the saves, then tells the movie it is
-   * complete (onSaveLoadBatchComplete: initial update, entries processed, entries in all). An
-   * entry: its text (the list's line), the player's name, level and race, the game time.
-   */
-  async #listSaves(menu: Menu, list: unknown, saving: boolean): Promise<void> {
-    const path = typeof list === 'string' && list.startsWith('_') ? list : menu.reference(list);
-    if (!path) return;
-    const headers = (await this.saves?.list()) ?? [];
-    this.#listed = { headers, saving, list: path };
-    const runtime = this.#session.scriptsReady;
-    menu.set(`${path}.length`, 0);
-    headers.forEach((header, index) => {
-      menu.invoke(`${path}.push`, {
-        text: `${header.name}  ${header.location}`,
-        name: header.playerName,
-        level: header.playerLevel,
-        raceName: '',
-        playTime: runtime?.gameTimeString(header.gameDays) ?? '',
-        index,
-        fileNum: header.number,
-      });
-    });
-    // Load ends with the import of an original save (.ess: a file picker).
-    const entries = headers.length + (!saving && this.saves?.importEss ? 1 : 0);
-    if (entries > headers.length) {
-      menu.invoke(`${path}.push`, {
-        text: IMPORT_ESS_TEXT,
-        name: '',
-        level: 0,
-        raceName: '',
-        playTime: '',
-        index: headers.length,
-        fileNum: 0,
-      });
-    }
-    menu.call('onSaveLoadBatchComplete', true, entries, entries);
-  }
-
-  #notAnswered(name: string): void {
-    if (this.#unanswered.has(name)) return;
-    this.#unanswered.add(name);
-    this.#terminal.log('ui', `the journal asks ${name}: not answered yet`, 'warn');
-  }
-
   async #playSound(editorId: string): Promise<void> {
     const sounds = await this.#session.sounds();
     await sounds.playNamed(editorId, undefined);
   }
 }
-
-/** The system page's requests not answered yet: the save list's character filter (TODO(M13)). */
-const UNBUILT = ['PopulateCharacterList', 'CharacterSelected'] as const;
 
 /** What the journal's Save, Load and Quicksave do (Play's save manager). */
 export interface JournalSaves {
@@ -479,6 +394,3 @@ export interface JournalSaves {
   /** Picks an original save (.ess), imports it and loads it. */
   importEss?(): void;
 }
-
-/** The Load list's last entry: the import of an original save. */
-const IMPORT_ESS_TEXT = 'Import .ess (a save of the original game)';

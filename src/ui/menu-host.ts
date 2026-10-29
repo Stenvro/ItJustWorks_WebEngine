@@ -30,6 +30,7 @@ import { readSwf } from '../formats/swf/swf.ts';
 import { flashKeyCode } from './key-codes.ts';
 import { followPlatform } from './input-platform.ts';
 import { DEFAULT_MENU_KEYS } from './menu-keys.ts';
+import type { ButtonMapping } from './button-art.ts';
 import { SAFE_ZONE, safeRect, scaleMode, visibleRect, type SafeZone } from './stage-rects.ts';
 
 /**
@@ -138,6 +139,11 @@ function editable(target: EventTarget | null): boolean {
 
 /** CLIK's input manager, which every menu built on CLIK reads its keys from. */
 const INPUT_DELEGATE = 'gfx.managers.InputDelegate.instance';
+/**
+ * A movie's GameDelegate entry for SetButtonMapping once the movie registered it ([scope,
+ * method]: its length is read, not the clip, which the bridge would copy whole).
+ */
+const BUTTON_MAPPING_CALLBACK = 'gfx.io.GameDelegate.callBackHash.SetButtonMapping.length';
 /** The Flash key codes of the arrow keys: left 37, up 38, right 39, down 40. */
 const FLASH_LEFT = 37;
 const FLASH_DOWN = 40;
@@ -615,6 +621,29 @@ export class MenuHost {
   menuKeys: (() => Readonly<Record<string, string>>) | undefined;
 
   /**
+   * The player's bindings as the menus' button hints take them (src/ui/button-art.ts,
+   * buttonMappings): sent to every movie that registers SetButtonMapping as it loads, and again
+   * when the controls change; undefined: the movies keep their default art.
+   */
+  buttonMapping: (() => readonly ButtonMapping[]) | undefined;
+
+  /** Sends the bindings to every open movie that takes them (the controls changed). */
+  sendButtonMapping(): void {
+    for (const menu of this.#menus.values()) this.#sendButtonMapping(menu);
+  }
+
+  /** Whether the movie took the bindings (it registered SetButtonMapping). */
+  #sendButtonMapping(menu: Menu): boolean {
+    const mapping = this.buttonMapping?.();
+    if (!mapping || menu.closed || menu.get(BUTTON_MAPPING_CALLBACK) === undefined) return false;
+    menu.call(
+      'SetButtonMapping',
+      mapping.map((entry) => ({ ...entry })),
+    );
+    return true;
+  }
+
+  /**
    * Keys the menus leave to the game once the topmost menu's own onKey has passed them: the
    * console's (the Menu Mode context binds Console too: it opens over every menu).
    */
@@ -790,7 +819,11 @@ export class MenuHost {
     // The player has the page's focus before the menu's setup runs: a movie's
     // Selection.setFocus (a message box's first button) holds only in a player with focus.
     if (options.interactive) menu.focus();
+    // The bindings as the movie loads (observed in the original), before its setup draws its
+    // button hints; a movie that registers for them only as its setup runs gets them after it.
+    const mapped = this.#sendButtonMapping(menu);
     await options.setup?.(menu);
+    if (!mapped && menu.element === element) this.#sendButtonMapping(menu);
     // Shown once its movie has drawn what the setup set: the player's canvas still holds the
     // movie's own first frame (its placeholders: "Perk Name", "Conjuration 99", a list's
     // "TEXT") until the movie's next frames have run and been drawn.
