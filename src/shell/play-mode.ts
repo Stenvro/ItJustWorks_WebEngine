@@ -57,6 +57,7 @@ import type { Terminal } from './terminal.ts';
 import { lockNow } from './object-locks.ts';
 import { tellSwing } from './open-close.ts';
 import { SaveManager } from './save-manager.ts';
+import { LoadWaitSpinner } from './load-wait-spinner.ts';
 import { gameDaysText, IMPORT_ESS_TEXT, SAVE_SCREENSHOT_IMAGE, SaveList } from './save-list.ts';
 import type { GameSave } from '../save/game-save.ts';
 import { essWorld } from '../save/ess-import.ts';
@@ -320,7 +321,15 @@ export class PlayMode {
     };
     this.#console = new ConsoleMenu(this.#host, terminal, ini);
     this.#fader = new FaderMenu(this.#host, terminal, () => session.loading);
-    this.#titles = new TitleSequence(this.#host, terminal, () => session.loading);
+    this.#titles = new TitleSequence(
+      this.#host,
+      terminal,
+      () => session.loading,
+      session.menuStack,
+    );
+    // The save manager's spinner while a save is written.
+    const spinner = new LoadWaitSpinner(this.#host, session.menuStack, terminal);
+    this.#saves.busy = () => spinner.begin();
   }
 
   /** The main menu while it is open (dev checks). */
