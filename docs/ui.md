@@ -256,6 +256,23 @@ Still missing in Ruffle (0.7.1), and so in the menus: `<img>` in a text field's 
 help messages show their keys' art as `<img src='E.png'>`: the text shows, the key does not).
 TODO(M13), ruffle-rs/ruffle#16618.
 
+### Ruffle's limits
+
+- **Device fonts.** A text field set in a font with no glyphs of its own takes it from the font
+  library fontconfig.txt builds, by name (its mapped names, "$EverywhereFont", and its fonts'
+  own, "Futura Condensed"). The original installs no other font source: it carries no
+  rasterizer for the system's fonts (no system font provider), so a device font the library
+  lacks is found nowhere and its text is not drawn (inferred from that: Scaleform then uses an
+  empty font). Ruffle would draw it in a system font: such fields are set to use the movie's own
+  (empty) outlines as the movie loads (`patchDeviceFonts`, `src/ui/movie-patches.ts`). The
+  game's movies have one: hudmenu.swf's "Times New Roman", an unnamed, empty field on its root
+  (`tests/interface.int.test.ts` sweeps every movie).
+- **scale9Grid.** About 100 sprites carry a DefineScalingGrid (68 in map.swf; the
+  item menus' frames, the journal's, the message box's), and the journal's CLIK lists set
+  `scale9Grid` on their item containers in ActionScript. Whether Ruffle 0.7.1 slices them is not
+  checked on screen; slicing them in the bridge needs the sprite's shapes cut along the grid and
+  kept unscaled as the clip scales (a script each frame). TODO(M13).
+
 ## Videos
 
 Before the main menu the intro plays: [General] sIntroSequence (by default `BGS_LOGO.BIK`; a

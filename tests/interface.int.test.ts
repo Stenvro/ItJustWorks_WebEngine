@@ -9,6 +9,7 @@ import { parseFontConfig } from '../src/formats/swf/fontconfig.ts';
 import {
   allTags,
   readSwf,
+  swfFonts,
   swfImports,
   SwfTagCode,
   tagBody,
@@ -16,7 +17,8 @@ import {
 } from '../src/formats/swf/swf.ts';
 import { parseTranslations, type Translations } from '../src/formats/swf/translation.ts';
 import { decodeUtf16le, decodeWindows1252 } from '../src/formats/text.ts';
-import { buildFontLibrary } from '../src/ui/font-library.ts';
+import { buildFontLibrary, libraryFontNames } from '../src/ui/font-library.ts';
+import { patchMovie } from '../src/ui/movie-patches.ts';
 import { withBridge } from '../src/ui/menu-bridge.ts';
 import { translateMovie } from '../src/ui/translate-movie.ts';
 import { linkImports } from '../src/formats/swf/swf-link.ts';
@@ -230,5 +232,36 @@ describe.skipIf(!hasGamedata())('the interface movies on the local game data', (
       }
     }
     expect([...asked].filter((name) => !library.fonts.has(name))).toEqual([]);
+  }, 60_000);
+
+  it('draws no text in a device font the font library lacks, as the original finds none', async () => {
+    const config = parseFontConfig(decodeWindows1252(await vfs.read('interface\\fontconfig.txt')));
+    const libraries = await Promise.all(
+      config.libraries.map(async (path) => readSwf(await vfs.read(path))),
+    );
+    const names = libraryFontNames(
+      config,
+      libraries,
+      readSwf(await vfs.read('interface\\gfxfontlib.swf')),
+    );
+    const patched: string[] = [];
+    for (const path of menus) {
+      const bytes = await vfs.read(path);
+      const before = readSwf(bytes);
+      const lacking = swfFonts(before).filter(
+        (font) =>
+          font.glyphs === 0 &&
+          font.code !== SwfTagCode.defineFont4 &&
+          !names.has(font.name.toLowerCase()),
+      );
+      const out = patchMovie(path, bytes, names);
+      if (lacking.length === 0) continue;
+      expect(out, path).not.toBe(bytes);
+      expect(readSwf(out).tags.length, path).toBe(before.tags.length);
+      const file = path.split('\\').pop() ?? path;
+      patched.push(...lacking.map((font) => `${file}: ${font.name}`));
+    }
+    // The game's only device font the library lacks.
+    expect(patched).toEqual(['hudmenu.swf: Times New Roman']);
   }, 60_000);
 });
