@@ -144,6 +144,8 @@ export class ActorsAway {
   readonly #trips = new Map<number, Trip>();
   /** The plugins' actor references of each cell asked about (#candidates). */
   readonly #cellActors = new Map<number, readonly number[]>();
+  /** The actors each location lists (#locationActors), by location. */
+  readonly #locationLists = new Map<number, Promise<number[]>>();
   #walkSpeed: number | undefined;
   #catalog: Promise<MovementCatalog | undefined> | undefined;
   /** The races' data read (whether they fly, their movement types), by race. */
@@ -402,7 +404,12 @@ export class ActorsAway {
     const here = spaceOf(player);
     const spaces = [here, ...spacesNextTo(routes, here)];
     const begun = performance.now();
-    const candidates = await this.#candidates(runtime, spaces, far);
+    const candidates = await this.#candidates(
+      runtime,
+      spaces,
+      far,
+      await this.#locationActors(runtime),
+    );
     const run: ScheduleRun = { mode, far, actors: candidates.length, moved: 0, seconds: 0 };
     // Several at once: each waits on its records more than it works. The nearest first.
     const queue = [...candidates].reverse();
@@ -525,9 +532,11 @@ export class ActorsAway {
     runtime: ScriptRuntime,
     spaces: readonly Space[],
     far: boolean,
+    /** The actors the player's location lists (#locationActors). */
+    located: readonly number[] = [],
   ): Promise<number[]> {
     const db = runtime.forms.db;
-    const found = new Set<number>();
+    const found = new Set<number>(located);
     for (const space of spaces) {
       const cell = space.kind === 'interior' ? space.cell : db.persistentCell(space.world);
       if (cell === undefined) continue;
@@ -566,6 +575,41 @@ export class ActorsAway {
       living.push(reference);
     }
     return living;
+  }
+
+  /**
+   * The actors the player's location lists as its own (LCTN: its references of a location
+   * reference type, LCSR/ACSR, and its unique actors, LCUN/ACUN), wherever their cells are and
+   * whether or not they are persistent: the middle-low process asks them as it asks those of
+   * the player's space. The location knows them while their cells are not loaded, as its
+   * aliases fill from them. Whiterun's gate guards are placed in WhiterunWorld (the barracks)
+   * and listed by WhiterunLocation (CWSoldier), which the plains outside the gate in Tamriel
+   * belong to; their ForceGreet and Travel packages have them by the gate's Tamriel side, so
+   * they wait there as the player first comes to the city. TODO(M13): the original's own rule
+   * for which temporary actors of unloaded cells keep a schedule (not documented; ours: those
+   * the player's location lists).
+   */
+  async #locationActors(runtime: ScriptRuntime): Promise<number[]> {
+    const location = await runtime.locationOf(PLAYER_REF);
+    if (location === undefined) return [];
+    let actors = this.#locationLists.get(location);
+    if (!actors) {
+      actors = (async () => {
+        const record = await runtime.quests.filler.location(location);
+        if (!record) return [];
+        const db = runtime.forms.db;
+        const listed = [
+          ...record.references.map((entry) => entry.reference),
+          ...record.uniques.values(),
+        ];
+        return listed.filter((reference) => {
+          const at = db.locate(reference);
+          return at !== undefined && db.typeAt(at) === 'ACHR';
+        });
+      })();
+      this.#locationLists.set(location, actors);
+    }
+    return actors;
   }
 
   /** A trip's legs: its route's doors, the roads it walks between them. */
