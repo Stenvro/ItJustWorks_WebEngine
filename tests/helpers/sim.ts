@@ -11,6 +11,7 @@
 //   sim.close();
 
 import { findPath } from '../../src/ai/pathfinding.ts';
+import { fastTravelHours } from '../../src/gameplay/fast-travel.ts';
 import { readGameSave, saveGame } from '../../src/save/game-save.ts';
 import type { SpokenInfo, TopicChoice } from '../../src/scripting/runtime/dialogue-engine.ts';
 import { afterInfo } from '../../src/scripting/runtime/dialogue-rules.ts';
@@ -194,6 +195,37 @@ export class Sim {
     const arrival: Arrival = { position: at.position, heading: at.rotation[2] };
     if (at.world !== undefined) await this.world.openExterior(at.world, { arrival });
     else if (at.cell !== undefined) await this.world.openInterior(at.cell, arrival);
+  }
+
+  /**
+   * The player fast travels to a reference (a map marker), as Play's map does
+   * (src/shell/play-mode.ts): the hours the way takes pass, the sky takes its next weather, and
+   * the player arrives where the marker sends them (ScriptRuntime.fastTravelArrival). Without
+   * `passTime`, a jump there: the player arrives as fast travel would put them, no time passing.
+   */
+  async fastTravel(destination: number, passTime = true): Promise<void> {
+    const session = this.world.session;
+    const at = await this.runtime.placement(await this.runtime.fastTravelArrival(destination));
+    if (!at) throw new Error(`No place for ${destination.toString(16)}`);
+    const from = await this.runtime.placement(PLAYER_REF);
+    const way =
+      from?.world !== undefined && from.world === at.world
+        ? Math.hypot(at.position[0] - from.position[0], at.position[1] - from.position[1])
+        : 0;
+    const settings = await session.settings();
+    const hours = fastTravelHours(
+      way,
+      (await session.playerData()).movement.normal.walk.forward,
+      settings.number('fFastTravelSpeedMult') ?? 1,
+      session.timeScale,
+    );
+    if (passTime && hours > 0) session.advanceClock(hours);
+    if (passTime) session.sky.fastTravel();
+    const arrival: Arrival = { position: at.position, heading: at.rotation[2] };
+    if (at.world !== undefined) await this.world.openExterior(at.world, { arrival });
+    else if (at.cell !== undefined) await this.world.openInterior(at.cell, arrival);
+    if (passTime) this.runtime.events.emit('fastTravelEnd', { hours });
+    await this.world.settle();
   }
 
   /** Sets the game hour as a script does (GameHour.SetValue): the clock jumps there. */

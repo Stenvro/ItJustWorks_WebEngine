@@ -31,16 +31,6 @@ const SPRINT_START = 0x3fb00;
 const SPRINT_GATE = 0x3fafb;
 const SPRINT_SUCCESS = 0x3fb02;
 
-/** A reference's place, as an arrival beside it. */
-async function beside(
-  sim: Sim,
-  reference: number,
-): Promise<{ position: [number, number, number]; heading: number }> {
-  const at = await sim.position(reference);
-  if (!at) throw new Error(`No place for ${reference.toString(16)}`);
-  return { position: [at[0] + 100, at[1], at[2] + 20], heading: 0 };
-}
-
 /** The player turns to face a reference. */
 async function face(sim: Sim, reference: number): Promise<void> {
   const at = await sim.position(reference);
@@ -79,18 +69,25 @@ let afterSprint: Uint8Array | undefined;
 describe.skipIf(!hasGamedata())('MQ105 The Way of the Voice', () => {
   // MQ105's own start for a game that skips ahead (stage 1) plays MQ103 and MQ104 to their ends
   // and starts MQ105 at 10: the Greybeards' summons, Ivarstead and High Hrothgar on the map.
-  // The player goes to Ivarstead, up the 7,000 steps and in at the front doors (unlocked by
-  // stage 5): entering the monastery's location sets 15 (MQ105PlayerScript's OnLocationChange).
+  // The player jumps to Ivarstead, then up to the 7,000 steps' top and in at the front
+  // doors (unlocked by stage 5): entering the monastery's location sets 15 (MQ105PlayerScript's
+  // OnLocationChange). Found 2026-10-29: the player arrived at the High Hrothgar map marker
+  // itself, over a drop, and fell to their death (the cases after went on with a dead player);
+  // a map marker's travellers arrive at the heading marker it links to. With the player alive,
+  // MQ206's Alduin (initially disabled), saved moved near the monastery, was staged enabled in
+  // the cell he stood in and fought them, the masters with him; a moved actor now keeps its own
+  // enable state.
   it('summons the player and has them climb to High Hrothgar (1-15)', async () => {
     const sim = await openSim({ hour: 9 });
     try {
       void sim.runtime.quests.setStage(MQ105, 1);
       expect(await sim.until(() => sim.stageDone(MQ104, 200), 120)).toBe(true);
       expect(sim.stageDone(MQ105, 10)).toBe(true);
-      await sim.world.openExterior(TAMRIEL, { arrival: await beside(sim, IVARSTEAD_MARKER) });
+      await sim.fastTravel(IVARSTEAD_MARKER, false);
       await sim.step(2);
-      await sim.world.openExterior(TAMRIEL, { arrival: await beside(sim, HIGH_HROTHGAR_MARKER) });
+      await sim.fastTravel(HIGH_HROTHGAR_MARKER, false);
       await sim.step(2);
+      expect(await sim.runtime.actors.isDead(PLAYER_REF)).toBe(false);
       const door = await sim.position(FRONT_DOOR);
       if (door) await sim.moveTo([door[0] - 150, door[1], door[2]]);
       expect(sim.activate(FRONT_DOOR)).toBe(true);
