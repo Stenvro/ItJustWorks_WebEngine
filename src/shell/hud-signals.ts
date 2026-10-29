@@ -87,8 +87,11 @@ export interface MenuSink {
   fastTravel(destination: number): void;
   /** The player died (src/shell/player-death.ts): the menus dying ends close. */
   playerDied?(): void;
-  /** fPlayerDeathReloadTime after the death: the game loads its most recent save. */
-  reloadAfterDeath?(): void;
+  /**
+   * fPlayerDeathReloadTime after the death: the game loads its most recent save (`ask`: the
+   * reload time is 0 or less, and a message box offers the reload or the main menu first).
+   */
+  reloadAfterDeath?(ask: boolean): void;
   /** Game.RequestSave / RequestAutoSave: a save as soon as the game may save. */
   requestSave?(kind: 'save' | 'autosave'): void;
   /** A tutorial (a default object's help message: HBFT), the first time. */

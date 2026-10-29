@@ -41,6 +41,14 @@ describe("the player's death", () => {
     // Due once only.
     expect(timer.advance(1)).toBe(false);
     expect(timer.elapsed).toBeCloseTo(5.1);
+    expect(timer.asks).toBe(false);
+  });
+
+  it('asks at once (Reload or Main Menu) when fPlayerDeathReloadTime is 0 or less', () => {
+    const timer = new PlayerDeathTimer({ ...settings, reloadTime: 0 });
+    expect(timer.asks).toBe(true);
+    expect(timer.advance(0)).toBe(true);
+    expect(new PlayerDeathTimer({ ...settings, reloadTime: -1 }).asks).toBe(true);
   });
 
   it('moves the camera in over iBleedoutTransitionMillis and pulls back over the wait', () => {

@@ -938,6 +938,11 @@ export class PlaySession {
    */
   knocked = false;
   /**
+   * The player bleeds out (a script made them essential: src/shell/player-death.ts): as the dead,
+   * they neither move nor activate anything until they get up.
+   */
+  bleedingOut = false;
+  /**
    * The player is in a paired animation (a killmove, src/shell/actor-combat.ts): its clip
    * places them; their keys do not move them meanwhile.
    */
@@ -945,6 +950,11 @@ export class PlaySession {
 
   /** Lights a menu adds to the world while it is open (the race menu's two). */
   extraLights: readonly PointLight[] = [];
+
+  /** Dead, knocked down or bleeding out: the player's keys neither move nor activate anything. */
+  get held(): boolean {
+    return this.dead || this.knocked || this.bleedingOut;
+  }
 
   /** Whether the player's body is drawn: in third person, from the free camera or a menu's. */
   get bodyShown(): boolean {
@@ -977,7 +987,7 @@ export class PlaySession {
     const player = this.player;
     const { moving, running, sprinting } = player.motion;
     // Free camera, being placed or dead: the player does not move.
-    const free = this.#freeCamera || this.#spawnPending || this.dead || this.knocked;
+    const free = this.#freeCamera || this.#spawnPending || this.held;
     const [vx, vy] = player.character.velocity;
     return {
       moving: !free && moving,
@@ -1054,7 +1064,7 @@ export class PlaySession {
         for (const hook of this.stepHooks) hook(step);
       });
       this.#setTarget(undefined);
-    } else if (this.dead || this.knocked) {
+    } else if (this.held) {
       // The world steps on; the player's keys do nothing.
       this.#setGrab(undefined);
       this.#hold = undefined;
@@ -1416,7 +1426,7 @@ export class PlaySession {
       return;
     }
     this.#followThrown(seconds);
-    if (grab || this.seated || this.dead || this.knocked) return;
+    if (grab || this.seated || this.held) return;
     const ray = this.#pickRay();
     const hit = this.physics.pick(
       ray.origin,
