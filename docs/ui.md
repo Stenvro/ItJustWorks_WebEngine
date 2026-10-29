@@ -63,6 +63,19 @@ first frame (after the header tags; written with `src/formats/swf/avm1-writer.ts
   `__itjwGetVariable(path)` do what GFx's Invoke, SetVariable and GetVariable do (paths as
   ActionScript resolves them: `_root.HUDMovieBaseInstance.LocationLockBase`).
 
+A menu's movie is `interface\<name>.swf`; where that file is missing the original reads
+`interface\exported\<name>.gfx` instead (`movieFile`, `src/ui/movie-file.ts`). The vanilla
+exported copies are all shadowed by their .swf.
+
+**Button mapping.** As a movie loads, every movie that registered `SetButtonMapping` gets the
+player's bindings (observed in the original): an array of `{mapName, buttonName}`, the remappable
+gameplay events bound on the mouse, then those on the keyboard, with the art of the binding
+(`buttonMappings`, `src/ui/button-art.ts`). The movies' `Shared.ButtonMapping` (the item menus'
+bottom bar) turns the default art their hints name (its own table: Activate E, Tween Menu Tab,
+...) into the key bound now. The menu host sends it before the menu's setup (again after it
+when the movie registered only then) and to every open movie when a remap or a reset changes
+the controls. TODO(M13): with a gamepad the original sends the gamepad's bindings.
+
 Checked in the browser on `hudmenu.swf`: its own calls reach the page tagged with the menu, and
 `InitExtensions` then `call("SetLocationName", "Whiterun")` set the location text.
 
@@ -475,6 +488,11 @@ controls back (activation, fighting and the menus stay off until the keep, stage
 (`rideModes` in src/shell/hud-elements.ts) gives these modes to the HUD and to the headless
 simulation's checks (tests/sim-opening-ride.int.test.ts).
 
+`MovementDisabled` (observed in the original, `movementDisabledStep`): on as the HUD loads while
+the player's movement controls are off (Game.DisablePlayerControls' abMovement), then switched on
+as they go off and off as they come back; a change while the dialogue menu is open leaves the
+mode as it was. The movie's own list says what shows in it.
+
 The HUD also shows: speech around the player (`ShowSubtitle(text)`, `HideSubtitle()`; with
 General Subtitles, `SetSubtitlesEnabled`; observed in the original: only within
 `[Interface]` fMaxSubtitleDistance, 1250, of the speaker, and with bShowSubtitleSpeakerName the
@@ -765,10 +783,31 @@ Deleting a save: X (or the bottom bar's Delete) on Save or Load makes the movie 
 save?" itself; Yes calls `DeleteSave(index)` with the save's index among the saves (on Save the
 movie has already counted off its [NEW SAVE]) and takes the entry out of its list; the engine
 deletes the save and fills the list again.
-Show on Map: an objective with a target on the map gets the `questTargetID` of its first
-target (its reference); the movie closes the journal and calls `ShowTargetOnMap(id)`, and the
-map opens over that target (`src/shell/game-menus.ts`: the map of the target's world, without
-the player when it is another map).
+
+### Saves in the menus
+
+The main menu's Load and the journal's Save and Load are one class of the movies (SaveLoadPanel,
+in `startmenu.swf` and `quest_journal.swf`), answered by `src/shell/save-list.ts`:
+
+- `PopulateCharacterList(list, batch size)`: one entry per character `{text, id, flags}`, the one
+  saved last first, then `onFillCharacterListComplete(true)`. The main menu's Load starts here; the
+  journal's Load shows it from its Characters button.
+- `CharacterSelected(id, flags, saving, list, batch size)`: that character's saves, newest first,
+  each `{text, name, level, raceName, playTime, index, fileNum}`, then
+  `onSaveLoadBatchComplete(true, entries, entries)`. The journal's `SAVE` and `LOAD(list, batch
+size)` list the character playing. The list is filled at once (`ForceStopSaveListLoading` has
+  nothing to stop). Characters are told apart by the player's name (TODO(M13): the original keeps
+  a character id in the save).
+- `IsOKtoLoad` is answered `ConfirmOKToLoad`; `LoadGame(index)` loads the save at that index of
+  the list (the main menu fades out first, `FadeOutAndCall`). After a delete the main menu asks
+  `DoDeleteSaveUISanityCheck` and hears `OnDeleteSaveUISanityCheck(has recent save, can load)`.
+- Load's last entry in the journal imports an original save (.ess); the main menu has none (its
+  fade out would wait on the file picker).
+- TODO(M12): `PrepSaveGameScreenshot` / `ScreenshotReady`: saves keep no screenshot yet.
+  Show on Map: an objective with a target on the map gets the `questTargetID` of its first
+  target (its reference); the movie closes the journal and calls `ShowTargetOnMap(id)`, and the
+  map opens over that target (`src/shell/game-menus.ts`: the map of the target's world, without
+  the player when it is another map).
 
 Settings (`src/shell/journal-settings.ts`, `src/shell/settings-options.ts`): the movie lists each
 page's entries and asks the engine to fill them (`RequestGameplayOptions`, `RequestDisplayOptions`,

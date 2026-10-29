@@ -793,7 +793,19 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
       reference !== undefined && (world.furnitureInUse?.(reference, int(call.args[0])) ?? false)
     );
   });
-  n('objectreference.calculateencounterlevel', () => 1);
+  // CalculateEncounterLevel(aiDifficulty = 4), observed in the original: the level of the
+  // reference's encounter zone (the player's level without one) times the difficulty's
+  // fLeveledActorMult (0 easy to 3 very hard; any other: 1), rounded down, at least 1.
+  n('objectreference.calculateencounterlevel', async (call) => {
+    const reference = self(call);
+    if (reference === undefined) return 0;
+    const level = await runtime.progression.encounterLevel(reference);
+    const difficulty = int(call.args[0], 4);
+    const { leveling } = await runtime.progression.settings();
+    const mult =
+      difficulty >= 0 && difficulty < 4 ? (leveling.levelModifierMults[difficulty] ?? 1) : 1;
+    return Math.max(1, Math.floor(Math.fround(mult * level)));
+  });
   n('objectreference.reset', async (call) => {
     const reference = self(call);
     if (reference !== undefined) await runtime.resetReference(reference, ref(call.args[0]));

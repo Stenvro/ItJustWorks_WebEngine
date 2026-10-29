@@ -59,6 +59,12 @@ export interface WaterType {
   readonly displacement: SimulatorValues;
   /** The rain simulator (DNAM 15 to 18 and 24): drops of rain falling on the water. */
   readonly rain: SimulatorValues;
+  /**
+   * INAM: the imagespace the view takes while the camera is under this water (vanilla:
+   * UnderwaterImageSpace, Dawnguard's DLC1_UnderwaterImageSpace, the Soul Cairn's lava
+   * DLC01UnderLava01), in place of the weather's or the cell's.
+   */
+  readonly imageSpace?: number;
 }
 
 /**
@@ -86,7 +92,13 @@ const textureOf = (value: string): string => {
   return normalized.startsWith('textures\\') ? normalized : `textures\\${normalized}`;
 };
 
-export function parseWater(record: Pick<GameRecord, 'formId' | 'editorId' | 'fields'>): WaterType {
+const underwaterImageSpace = (id: number | undefined): { imageSpace?: number } =>
+  id === undefined || id === 0 ? {} : { imageSpace: id };
+
+export function parseWater(
+  record: Pick<GameRecord, 'formId' | 'editorId' | 'fields'> &
+    Partial<Pick<GameRecord, 'formIdField'>>,
+): WaterType {
   const { fields } = record;
   const dnam = fields.first('DNAM') ?? new Uint8Array(0);
   const d = view(dnam);
@@ -150,6 +162,7 @@ export function parseWater(record: Pick<GameRecord, 'formId' | 'editorId' | 'fie
       dampener: f(22),
     },
     rain: { startingSize: f(23), force: f(14), velocity: f(15), falloff: f(16), dampener: f(17) },
+    ...underwaterImageSpace(record.formIdField?.('INAM')),
   };
 }
 

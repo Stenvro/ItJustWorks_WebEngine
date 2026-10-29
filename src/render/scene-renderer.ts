@@ -98,6 +98,7 @@ import { CELL_SIZE } from '../world/land.ts';
 export { GpuModel, type ModelAddon };
 export { flatAmbient, type PointLight, type SceneFog, type SceneLighting };
 import { gbufferTarget } from './gbuffer.ts';
+import { materialTextures } from './material-slots.ts';
 import { projectedUVParams, type MaterialObject } from '../world/material-object.ts';
 import type { WaterType } from '../world/water.ts';
 
@@ -194,7 +195,6 @@ const DECAL_DEPTH_BIAS = 16;
 const DECAL_SLOPE_BIAS = 1.5;
 const SLSF2_ZBUFFER_WRITE = 0x1;
 const SLSF2_DOUBLE_SIDED = 0x10;
-const SLSF1_ENVIRONMENT_MAPPING = 0x80;
 const SLSF1_CAST_SHADOWS = 0x200;
 /** LOD landscape and LOD object shader types: distant LOD casts no shadows. */
 const LOD_SHADER_TYPES = new Set([9, 13, 15, 18]);
@@ -319,23 +319,10 @@ const PROJECTED_TEXTURES = {
   normal: 'textures\\effects\\projectednormal.dds',
   noise: 'textures\\effects\\projectednoise.dds',
 } as const;
-/** The LOD landscape noise texture (type 18, LOD landscape noise). */
-const LOD_LANDSCAPE_NOISE = 'textures\\terrain\\noise.dds';
-const SHADER_LOD_LANDSCAPE_NOISE = 18;
-const SHADER_FACEGEN = 4;
-const SHADER_MULTI_LAYER_PARALLAX = 11;
-const SHADER_PARALLAX = 3;
-const SLSF1_MODEL_SPACE_NORMALS = 0x1000;
-const SLSF1_SPECULAR = 0x1;
-const SLSF2_GLOW_MAP = 0x40;
-const SLSF2_SOFT_LIGHTING = 0x2000000;
-const SLSF2_RIM_LIGHTING = 0x4000000;
-const SLSF2_BACK_LIGHTING = 0x8000000;
 /** Sort key offset that puts sky objects behind everything in the blended pass. */
 const SKY_DISTANCE = 1e30;
 /** NiAlphaProperty: alpha test on. */
 const ALPHA_TEST = 0x200;
-const SHADER_GLOW = 2;
 
 /** NiAlphaProperty blend modes → WebGPU blend factors. */
 const BLEND_FACTORS: readonly GPUBlendFactor[] = [
@@ -1537,48 +1524,6 @@ function writeMultiPass(
   const length = Math.hypot(x, y, z) || 1;
   floats.set([-x / length, -y / length, -z / length, Math.cos((maxAngle * Math.PI) / 180)], 56);
   uints[38] = (uints[38] ?? 0) | DRAW_MULTI_PASS | (snow ? DRAW_SNOW : 0);
-}
-
-/**
- * The textures a material binds: diffuse (effect: source), normal map, slot 2 (glow map or
- * rim / soft light map; effect: greyscale palette), environment map and mask, slot 7 (back
- * light map, or the specular map of model-space normals) and slot 6 (the multi-layer
- * parallax inner layer; parallax: the height map, slot 3; LOD landscape noise: the terrain
- * noise); '' where none.
- */
-function materialTextures(
-  material: PartMaterial | undefined,
-): [string, string, string, string, string, string, string, string] {
-  if (material?.kind === 'effect') {
-    return [material.sourceTexture, '', material.greyscaleTexture, '', '', '', '', ''];
-  }
-  if (material?.kind !== 'lighting') return ['', '', '', '', '', '', '', ''];
-  const slot = (index: number): string => material.textures[index] ?? '';
-  const multiLayer = material.shaderType === SHADER_MULTI_LAYER_PARALLAX;
-  const environment = (material.flags1 & SLSF1_ENVIRONMENT_MAPPING) !== 0 || multiLayer;
-  const glow = material.shaderType === SHADER_GLOW && (material.flags2 & SLSF2_GLOW_MAP) !== 0;
-  const rimSoft = (material.flags2 & (SLSF2_SOFT_LIGHTING | SLSF2_RIM_LIGHTING)) !== 0;
-  const backLight = (material.flags2 & SLSF2_BACK_LIGHTING) !== 0;
-  // FaceGen heads: the face tint (slot 6, in the layer's place) and the detail map (slot 3).
-  const facegen = material.shaderType === SHADER_FACEGEN;
-  const specularMap =
-    (material.flags1 & SLSF1_MODEL_SPACE_NORMALS) !== 0 && (material.flags1 & SLSF1_SPECULAR) !== 0;
-  return [
-    slot(0),
-    slot(1),
-    glow || rimSoft ? slot(2) : '',
-    environment ? slot(4) : '',
-    environment ? slot(5) : '',
-    backLight || specularMap ? slot(7) : '',
-    multiLayer || facegen
-      ? slot(6)
-      : material.shaderType === SHADER_PARALLAX
-        ? slot(3)
-        : material.shaderType === SHADER_LOD_LANDSCAPE_NOISE
-          ? LOD_LANDSCAPE_NOISE
-          : '',
-    facegen ? slot(3) : '',
-  ];
 }
 
 /** Debug views of the lighting shader (dev tools): what a pixel shows instead of its colour. */

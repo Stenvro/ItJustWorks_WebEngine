@@ -14,7 +14,7 @@ import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { CellObject } from '../world/cell-loader.ts';
 import { parseItem } from '../world/item-records.ts';
 import { itemSound } from '../gameplay/inventory.ts';
-import { buttonArt, userEvent, withKeyLabels } from '../ui/button-art.ts';
+import { buttonArt, buttonMappings, userEvent, withKeyLabels } from '../ui/button-art.ts';
 import { menuKeys } from '../ui/menu-keys.ts';
 import {
   parseLoadingScreen,
@@ -57,6 +57,7 @@ import type { Terminal } from './terminal.ts';
 import { lockNow } from './object-locks.ts';
 import { tellSwing } from './open-close.ts';
 import { SaveManager } from './save-manager.ts';
+import { gameDaysText, SaveList } from './save-list.ts';
 import type { GameSave } from '../save/game-save.ts';
 import { essWorld } from '../save/ess-import.ts';
 import type { SaveHeader } from '../save/save-codec.ts';
@@ -180,6 +181,8 @@ export class PlayMode {
   #starting = false;
   /** Saving and loading: the saves' store, names and autosaves (save-manager.ts). */
   readonly #saves: SaveManager;
+  /** The main menu's Load: its characters and their saves. */
+  readonly #mainSaveList: SaveList<Menu>;
   /** The player's data: its bindings (the menus show the keys of the events their texts name). */
   #playerData: PlayerData | undefined;
   /** The loading menu's text (the loading screen's, once chosen). */
@@ -237,6 +240,19 @@ export class PlayMode {
     this.#world = world;
     this.#terminal = terminal;
     this.#saves = new SaveManager(session, terminal);
+    this.#mainSaveList = new SaveList<Menu>({
+      source: () => this.#saves,
+      // A game's date needs its start date; at the main menu, before any game ran, the days
+      // passed (TODO(M12): the save's header to keep its date).
+      playTime: (header) =>
+        session.scriptsReady?.gameTimeString(header.gameDays) ?? gameDaysText(header.gameDays),
+      load: (_menu, name) => {
+        this.#loadSaved(name);
+      },
+      log: (message) => {
+        terminal.log('save', message, 'error');
+      },
+    });
     const log = (message: string): void => {
       terminal.log('ui', message);
     };
@@ -270,6 +286,8 @@ export class PlayMode {
     );
     // The menus' navigation keys as the player's bindings say (W, A, S, D as the arrows).
     this.#host.menuKeys = () => menuKeys(this.#playerData?.controls);
+    // The menus' button hints as the player's bindings say.
+    this.#host.buttonMapping = () => buttonMappings(this.#playerData?.controls);
     this.#host.passKey = isConsoleKey;
     // A held direction key repeats at the engine's pace.
     this.#host.keyRepeat = {
@@ -339,6 +357,21 @@ export class PlayMode {
             );
           });
         },
+        // Load: the characters, then a character's saves (src/shell/save-list.ts); the movie
+        // fades out before it calls LoadGame.
+        ...this.#mainSaveList.handlers(),
+        // After a delete: whether Continue still has a save, and whether Load has any.
+        DoDeleteSaveUISanityCheck: (menu) => {
+          void this.#saves.list().then((saves) => {
+            menu.call('OnDeleteSaveUISanityCheck', saves.length > 0, saves.length > 0);
+          });
+        },
+        // The consoles' "press start" screen: a PC menu passes it at once.
+        StartState: () => undefined,
+        EndPressStartState: () => undefined,
+        currentState: () => undefined,
+        // TODO(M12): a save's screenshot (no screenshot is taken as a save is made yet).
+        PrepSaveGameScreenshot: () => undefined,
         // The menu tells as its fade out starts (before it calls what comes after it).
         fadeOutStarted: () => undefined,
         // CREDITS, once the menu has faded out: the credits, then the menu fades in again.
@@ -361,8 +394,8 @@ export class PlayMode {
       setup: async (menu) => {
         await menu.waitFor('_root.MenuHolder.Menu_mc.InitExtensions');
         menu.invoke('_root.MenuHolder.Menu_mc.InitExtensions');
-        // With saves, Continue (the most recent) shows and Load is enabled. TODO(M12): the main
-        // menu's own save list (Load).
+        // With saves, Continue (the most recent) shows and Load is enabled (its list: the
+        // characters, then their saves).
         const hasSaves = (await this.#saves.list().catch(() => [])).length > 0;
         menu.call('sendMenuProperties', ...mainMenuProperties(hasSaves));
         // The platform: PC with keyboard and mouse (PLATFORM_PC_KBMOUSE 0; no PS3 button swap).
@@ -475,6 +508,7 @@ export class PlayMode {
       compass: () => compass.targets(),
       plugins: () => session.vfs.loadOrder.map((entry) => entry.name),
       keyLabels: (text) => withKeyLabels(text, this.#playerData?.controls),
+      menuOpen: (name) => session.menuStack.isOpen(name),
       floating: () => {
         const at = session.scriptWorld.livePlacement(PLAYER_REF);
         return at
