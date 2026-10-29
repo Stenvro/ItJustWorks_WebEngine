@@ -277,6 +277,11 @@ export const INI_DEFAULTS = {
   LOD: {
     fActorLODMax: 15,
     fActorLODMin: 5,
+    // How references fade in and out over time (src/render/object-fade.ts stepFade).
+    fFadeInThreshold: 0.7,
+    fFadeInTime: 1.2,
+    fFadeOutThreshold: 0.3,
+    fFadeOutTime: 2,
     fItemLODMax: 10,
     fItemLODMin: 1.5,
     fLODFadeOutMultActors: 6,
@@ -284,6 +289,17 @@ export const INI_DEFAULTS = {
     fLODFadeOutMultObjects: 5,
     fObjectLODMax: 30,
     fObjectLODMin: 5,
+  },
+  // Where the lighting shader's features fade out with distance (src/render/shader-fades.ts).
+  LightingShader: {
+    fDecalLODFadeEnd: 0.06,
+    fDecalLODFadeStart: 0.05,
+    fEnvmapLODFadeEnd: 0.1,
+    fEnvmapLODFadeStart: 0.09,
+    fRefractionLODFadeEnd: 0.03,
+    fRefractionLODFadeStart: 0.025,
+    fSpecularLODFadeEnd: 0.1,
+    fSpecularLODFadeStart: 0.09,
   },
   // The settings the executable names without a section: SkyrimPrefs.ini keeps them in [MAIN].
   Main: {

@@ -17,6 +17,10 @@ fn fs_refraction(in: VertexOut) -> @location(0) vec4f {
       (draw.flags.y & REFRACTION_SLSF2_VERTEX_COLORS) != 0u) {
     mask *= in.color.a;
   }
+  // Refraction fades out with distance unless No_Fade (shader-fades.ts).
+  if ((draw.flags.y & SLSF2_NO_FADE) == 0u) {
+    mask *= lodFeatureFade(lodFadeValue(), frame.decalFades.z, frame.decalFades.w);
+  }
   // Where the mask is zero the shape leaves what other refraction shapes wrote.
   if (!alphaTestPasses(mask) || mask <= 0.0) {
     discard;

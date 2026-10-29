@@ -104,11 +104,7 @@ const LIGHTING_SLSF2: Record<number, Entry> = {
   0: ['ZBuffer_Write', 'done', 'pipeline depth write'],
   1: ['LOD_Landscape', 'done', 'LOD materials'],
   2: ['LOD_Objects', 'done', 'LOD materials'],
-  3: [
-    'No_Fade',
-    'open',
-    'read: spares decals and refraction their distance fades (not built), not object fade',
-  ],
+  3: ['No_Fade', 'done', 'lighting.wgsl, refraction.wgsl: no decal or refraction distance fade'],
   4: ['Double_Sided', 'done', 'cull mode'],
   5: ['Vertex_Colors', 'done', 'lighting.wgsl'],
   6: ['Glow_Map', 'done', 'lighting.wgsl'],
@@ -165,7 +161,7 @@ const EFFECT_SLSF2: Record<number, Entry> = {
   3: [
     'No_Fade',
     'open',
-    'read: spares decals and refraction their distance fades (not built), not object fade',
+    'the lighting shader fades are built; whether effect shapes have any is unread',
   ],
   4: ['Double_Sided', 'done', 'cull mode'],
   5: ['Vertex_Colors', 'done', 'effect.wgsl'],
@@ -313,7 +309,10 @@ const BLOCKS: Record<string, readonly [Status, string]> = {
   BSInvMarker: ['open', 'the inventory 3D view of an item (its rotation and zoom) unread'],
   NiFloatExtraData: ['open', 'parsed; what reads it (FOV, scale) unchecked'],
   NiFloatExtraDataController: ['open', 'parsed; not animated'],
-  BSLagBoneController: ['open', 'skeletons trail (lag-bone.ts); effect and worn models not'],
+  BSLagBoneController: [
+    'open',
+    'skeletons trail in world space (lag-bone.ts); effect and worn models not',
+  ],
   NiPathInterpolator: ['open', 'motion along a path not read'],
   NiLookAtInterpolator: ['open', 'look-at rotation not read'],
   BSFrustumFOVController: ['open', 'parsed; the camera FOV animation unused'],

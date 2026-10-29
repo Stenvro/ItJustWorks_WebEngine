@@ -108,9 +108,29 @@ fn fadeDiscarded(pixel: vec2f) -> bool {
   if (level == 0u) {
     return false;
   }
+  return ditherDiscarded(pixel, f32(level) / 255.0);
+}
+
+// Whether a 4x4 ordered dither drops this pixel when `amount` (0..1) of the surface is gone.
+fn ditherDiscarded(pixel: vec2f, amount: f32) -> bool {
   var bayer = array<u32, 16>(0u, 8u, 2u, 10u, 12u, 4u, 14u, 6u, 3u, 11u, 1u, 9u, 15u, 7u, 13u, 5u);
   let p = vec2u(pixel) & vec2u(3u);
-  return (f32(bayer[p.y * 4u + p.x]) + 0.5) / 16.0 < f32(level) / 255.0;
+  return (f32(bayer[p.y * 4u + p.x]) + 0.5) / 16.0 < amount;
+}
+
+// The shaders' own distance fades (shader-fades.ts): the draw's distance from the camera divided
+// by its fade kind's multiplier, over 7200 (the kind in flags.w bits 5-6).
+// SLSF2 No_Fade: decals and refraction keep their distance fades off.
+const SLSF2_NO_FADE = 0x8u;
+
+fn lodFadeValue() -> f32 {
+  let kind = (draw.flags.w >> 5u) & 3u;
+  return distance(frame.cameraPos.xyz, draw.world[3].xyz) * frame.lodFadeScale[kind];
+}
+
+// How much of a feature is left at a fade value: 1 up to `start`, 0 from `end`.
+fn lodFeatureFade(value: f32, start: f32, end: f32) -> f32 {
+  return 1.0 - saturate((value - start) / max(end - start, 1e-6));
 }
 
 // Directional materials: coordinates across the direction surfaces face to get the material

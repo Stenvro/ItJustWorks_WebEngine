@@ -38,6 +38,12 @@ struct Frame {
   // The first-person geometry's view-projection (the player's arms and what they hold): the
   // same view with first person's own field of view and near plane (common.wgsl).
   firstPersonViewProj: mat4x4f,
+  // The shaders' own distance fades (shader-fades.ts): per fade kind (object, actor, item) the
+  // scale from a draw's camera distance to its fade value, 1 / (multiplier * 7200); where
+  // specular and the environment map fade out (start, end each); where decals and refraction do.
+  lodFadeScale: vec4f,
+  specularFades: vec4f,
+  decalFades: vec4f,
 };
 
 struct PointLight {

@@ -237,8 +237,8 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
   let flags2 = draw.flags.y;
   let drawFlags = draw.flags.z;
   // The top byte holds the distance fade (common.wgsl fadeDiscarded), bits 8-23 the draw's
-  // light list.
-  let shaderType = draw.flags.w & 0xffu;
+  // light list, bits 5-6 its fade kind (lodFadeValue).
+  let shaderType = draw.flags.w & 0x1fu;
   if (fadeDiscarded(in.position.xy)) {
     discard;
   }
@@ -290,6 +290,16 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
   // Tree_Anim shapes keep their leaf weights in the vertex alpha.
   if ((flags1 & SLSF1_VERTEX_ALPHA) != 0u && (drawFlags & DRAW_TREE_ANIM) == 0u) {
     alpha *= in.color.a;
+  }
+  // The shaders' own distance fades (shader-fades.ts): decals fade out (No_Fade spares them).
+  let lodFade = lodFadeValue();
+  if ((flags1 & SLSF1_DECALS) != 0u && (flags2 & SLSF2_NO_FADE) == 0u) {
+    let decalFade = lodFeatureFade(lodFade, frame.decalFades.x, frame.decalFades.y);
+    alpha *= decalFade;
+    // Without blending the fading decal dissolves instead.
+    if ((drawFlags & DRAW_ALPHA_BLEND) == 0u && ditherDiscarded(in.position.xy, 1.0 - decalFade)) {
+      discard;
+    }
   }
   if (!alphaTestPasses(alpha)) {
     discard;
@@ -493,7 +503,9 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
     let r = reflect(-toCamera, n);
     // Skyrim is Z-up; cubemaps use Y-up face orientation.
     let env = textureSampleLevel(envMap, linearSampler, vec3f(r.x, r.z, r.y), 0.0).rgb;
-    color += env * mask * diffuseLight;
+    // It fades out with distance (shader-fades.ts).
+    let envFade = lodFeatureFade(lodFade, frame.specularFades.z, frame.specularFades.w);
+    color += env * mask * diffuseLight * envFade;
   }
 
   // Specular: times the specular mask and colour (multi-index snow: the mask only).
@@ -510,7 +522,8 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
     let facing = max(1.0 - saturate(dot(shadingNormal, toCamera)), 1e-4);
     specular += tint * pow(facing, max(frame.ambient[3].w, 1e-4)) * glossiness;
   }
-  color += specular;
+  // Specular fades out with distance (shader-fades.ts).
+  color += specular * lodFeatureFade(lodFade, frame.specularFades.x, frame.specularFades.y);
   // Snow: the rim light in place of the specular (the engine's SnowParameters.x).
   let snowSpecular = select(0.0, snowRimSpecular(vertexNormal, shadingNormal, toCamera), snowMask > 0.0);
   // Sky objects (weather sky statics) are not fogged: finished here, also when opaque.
