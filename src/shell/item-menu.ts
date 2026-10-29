@@ -186,6 +186,10 @@ export class ItemMenu {
       interactive: true,
       onKey: (menu, event) => {
         if (event.repeat) return false;
+        // The item menus' Item Zoom (C) zooms the 3D in or out, the menu fading; their Cancel
+        // (Tab, Escape) while it is zoomed in zooms it back out instead of closing.
+        if (event.code === 'KeyC' && item3d.itemZoom()) return true;
+        if ((event.code === 'Tab' || event.code === 'Escape') && item3d.cancelZoom()) return true;
         if (event.code === 'KeyR' && model.transfer) {
           // The container menu's X button: take all, or store the player's entry.
           menu.call('XButtonPress');

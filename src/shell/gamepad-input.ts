@@ -12,6 +12,7 @@
 import {
   inputContexts,
   menuPadKey,
+  padEvents,
   PadInput,
   readPad,
   stickDirection,
@@ -95,7 +96,15 @@ export function attachGamepad(sink: GamepadSink): () => void {
       return 'none';
     }
     if (sink.menuTakesKeys()) {
-      const code = menuPadKey(sink.controls(), input, inputContexts(sink.openMenus()));
+      const contexts = inputContexts(sink.openMenus());
+      // The item menus' Item Zoom (the right stick pressed) zooms their 3D, the menu fading;
+      // their Cancel while it is zoomed in zooms it back out instead of closing.
+      const map = sink.controls();
+      const events = map ? contexts.flatMap((context) => padEvents(map, context, input)) : [];
+      const item3d = Item3D.shown;
+      if (item3d && events.includes('Item Zoom') && item3d.itemZoom()) return 'none';
+      if (item3d && events.includes('Cancel') && item3d.cancelZoom()) return 'none';
+      const code = menuPadKey(map, input, contexts);
       if (code === undefined || !sink.menuKey('keyDown', code)) return 'none';
       if (DIRECTIONS.has(input)) {
         repeat = { input, code, at: now + (sink.keyRepeat?.().long ?? 0.5) * 1000 };

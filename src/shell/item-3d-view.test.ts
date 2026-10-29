@@ -7,7 +7,9 @@ import {
   mouseTurn,
   NO_ROTATION,
   stickTurn,
+  toggledZoom,
   turned,
+  wheelZoom,
   zoomStep,
 } from './item-3d-view.ts';
 
@@ -81,5 +83,16 @@ describe('the item menus 3D view', () => {
     expect(zoomStep(0, true, 0.2, 1.5)).toBeCloseTo(0.3);
     expect(zoomStep(0.9, true, 0.2, 1.5)).toBe(1);
     expect(zoomStep(0.1, false, 0.2, 1.5)).toBe(0);
+  });
+
+  it('starts a zoom only from rest, the wheel only towards the other end', () => {
+    expect(toggledZoom(0, 0)).toBe(1);
+    expect(toggledZoom(1, 1)).toBe(0);
+    expect(toggledZoom(0.4, 1)).toBeUndefined();
+    expect(wheelZoom(0, 0, 1)).toBe(1);
+    expect(wheelZoom(0, 0, -1)).toBeUndefined();
+    expect(wheelZoom(1, 1, -1)).toBe(0);
+    expect(wheelZoom(1, 1, 1)).toBeUndefined();
+    expect(wheelZoom(0, 0, 2)).toBeUndefined();
   });
 });
