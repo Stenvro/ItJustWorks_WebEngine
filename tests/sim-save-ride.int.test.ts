@@ -32,11 +32,18 @@ function riders(sim: Sim): Map<number, number> {
 function seats(sim: Sim, actors: Iterable<number>): Map<number, unknown> {
   const states = new Map<number, unknown>();
   for (const actor of actors) {
-    const graph =
-      actor === PLAYER_REF
-        ? sim.world.playerView?.avatar?.saveGraphs().body
-        : sim.actor(actor)?.placed.behavior?.saveState();
-    states.set(actor, graph?.states);
+    if (actor === PLAYER_REF) {
+      // The player's body graph: its root file's machines' states.
+      const body = sim.world.playerView?.avatar?.saveGraphs().body;
+      const root =
+        body && 'files' in body ? body.files.find((file) => file.file === '') : undefined;
+      states.set(
+        actor,
+        root?.machines.map(([place, id]) => [place, id]),
+      );
+      continue;
+    }
+    states.set(actor, sim.actor(actor)?.placed.behavior?.saveState()?.states);
   }
   return states;
 }

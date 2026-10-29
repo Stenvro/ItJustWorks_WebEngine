@@ -181,7 +181,7 @@ interface ActionRun {
   status: ActionStatus;
   /** Its work is done (IsActionComplete): a line said, a package completed, a timer run out. */
   complete: boolean;
-  /** A timer's seconds left. */
+  /** A timer's seconds left; a looping line's before it is said again. */
   left: number;
   /** When it started (the latest look and packages win). */
   order: number;
@@ -455,7 +455,9 @@ export class SceneDirector {
       if (!live(playing) || playing.paused) continue;
       playing.clock += seconds;
       for (const run of playing.actions) {
-        if (run.status !== 'running' || run.complete || run.action.type !== 'timer') continue;
+        if (run.status !== 'running') continue;
+        if (run.action.type === 'dialogue') run.left = Math.max(0, run.left - seconds);
+        if (run.complete || run.action.type !== 'timer') continue;
         run.left -= seconds;
         if (run.left <= 0) {
           run.complete = true;
@@ -974,7 +976,10 @@ export class SceneDirector {
   #resumeActions(playing: Playing): void {
     for (const run of playing.actions) {
       if (run.status !== 'running') continue;
-      if (run.complete) {
+      // A looping line said already is said again after what was left of its wait.
+      const looping =
+        run.action.type === 'dialogue' && (run.action.flags & SceneActionFlag.looping) !== 0;
+      if (run.complete && !looping) {
         run.order = ++this.#order;
         run.actor = this.#castOf(playing, run.action.alias);
         if (run.actor !== undefined) this.#updateLook(playing, run.actor);
@@ -1083,13 +1088,17 @@ export class SceneDirector {
    * A dialogue action's line, said by its actor; done once said. A looping line (116 vanilla
    * actions) is said again every DMIN to DMAX seconds until it ends and is done once it has
    * been said: DLC2WE05Scene's second phase, a looping line beside a package and no completion
-   * conditions, would never end otherwise. TODO(M13): the engine's rule.
+   * conditions, would never end otherwise. TODO(M13): the engine's rule. A save keeps its wait
+   * (observed in the original: the action keeps its seconds before it speaks again), not that
+   * its line is being said: loaded, the line is said again from its start.
    */
   async #speak(playing: Playing, run: ActionRun, speaker: number, topic: number): Promise<void> {
     const action = run.action;
     if (action.type !== 'dialogue') return;
     const looping = (action.flags & SceneActionFlag.looping) !== 0;
     for (;;) {
+      // A looping line waits between its sayings (kept by a save: a loaded one waits what was left).
+      if (run.left > 0) await this.#wait(playing, run.left);
       while (playing.paused && live(playing)) await this.#nextUpdate();
       if (!live(playing) || run.status !== 'running') return;
       const look = this.#lookOf(playing, speaker);
@@ -1116,7 +1125,7 @@ export class SceneDirector {
       if (!looping) return;
       const min = Math.max(0, Math.min(action.loopingMin, action.loopingMax));
       const max = Math.max(min, action.loopingMin, action.loopingMax);
-      await this.#wait(playing, min + (max - min) * this.#host.random());
+      run.left = min + (max - min) * this.#host.random();
     }
   }
 

@@ -465,6 +465,32 @@ describe('scene phases and actions', () => {
     expect(test.director.isPlaying(0x10)).toBe(false);
   });
 
+  // As the original's dialogue action keeps across a save whether it runs, whether it is done
+  // and a looping one's seconds before it speaks again, not that its line is being said.
+  it('keeps a looping line’s wait in a save: loaded, it speaks again when its wait is over', async () => {
+    const records = [
+      scene(0x10, {
+        actors: [actor(0)],
+        phases: [phase([], [truth(9)])],
+        actions: [
+          line(1, 0, 0, 0, 0xa1, { flags: SceneActionFlag.looping, loopingMin: 2, loopingMax: 4 }),
+        ],
+      }),
+    ];
+    const first = setup(records);
+    first.director.start(0x10);
+    await first.tick();
+    expect(first.only('say')).toHaveLength(1);
+    // Saved one second into its two seconds' wait: loaded, it speaks a second later, not at once.
+    await first.tick(1);
+    const waiting = setup(records);
+    waiting.director.restore(first.director.saveData());
+    await waiting.tick();
+    expect(waiting.only('say')).toHaveLength(0);
+    await waiting.tick(1.1);
+    expect(waiting.only('say')).toHaveLength(1);
+  });
+
   it('gives a package action its packages until one completes, its actor standing after', async () => {
     const test = setup([
       scene(0x10, {
