@@ -416,6 +416,12 @@ export interface ProcedureRun {
   held(slot: number): readonly FoundItem[];
   /** Fills an object list input (Find), by slot. */
   keep(slot: number, found: readonly FoundObject[]): void;
+  /**
+   * The point a loaded save's procedure was going to (a patrol's next point), once: it goes on
+   * to it. setGoal keeps the point it goes to now for a save (undefined as it ends).
+   */
+  resumedGoal?(): number | undefined;
+  setGoal?(point: number | undefined): void;
   /** Whether the package was left: a procedure ends at once. */
   stopped(): boolean;
   /** Waits real seconds (shorter if the package is left meanwhile). */
@@ -536,6 +542,8 @@ export interface SavedPackage {
   readonly found: readonly (readonly [number, readonly FoundObject[]])[];
   /** Packages that run once a day: the day each last ran. */
   readonly ranOn: readonly (readonly [number, number])[];
+  /** The point its procedure went to (a patrol's next point: ProcedureRun.setGoal). */
+  readonly goal?: number | undefined;
   /**
    * It ended and the actor sandboxed where it stood (its fallout): after the load it does so
    * again, rather than standing done (and taking its tree again from the root).
@@ -558,6 +566,9 @@ interface Running {
   readonly context: PackageContext;
   /** Its object lists (what a Find found), by input id. */
   readonly found: Map<number, readonly FoundObject[]>;
+  /** The point its procedure goes to (ProcedureRun.setGoal), and a loaded save's, once. */
+  goal?: number | undefined;
+  resumedGoal?: number | undefined;
   /** A scene's package action gave it (not the actor's own choice). */
   readonly fromScene: boolean;
   /** Set when it is left: its tree stops. */
@@ -794,6 +805,7 @@ export class ActorPackages {
       path,
       found: [...running.found],
       ranOn,
+      ...(running.goal !== undefined && { goal: running.goal }),
       ...(this.#fallingOut === running && { fallout: true }),
     };
   }
@@ -814,6 +826,8 @@ export class ActorPackages {
       context,
       data: { ...chosen.data, context },
       found: new Map(saved.found),
+      goal: saved.goal,
+      resumedGoal: saved.goal,
       completed: saved.completed,
       ended: saved.ended,
       resume: saved.path.length > 0 ? saved.path : undefined,
@@ -1280,6 +1294,14 @@ export class ActorPackages {
       keep: (slot, found) => {
         const input = inputOf(slot);
         if (input !== undefined) running.found.set(input, found);
+      },
+      resumedGoal: () => {
+        const goal = running.resumedGoal;
+        running.resumedGoal = undefined;
+        return goal;
+      },
+      setGoal: (point) => {
+        running.goal = point;
       },
       stopped: () => this.#looping(running) || isStopped(running),
       wait: (seconds) => this.#wait(running, seconds),
