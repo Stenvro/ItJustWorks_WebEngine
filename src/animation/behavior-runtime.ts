@@ -99,6 +99,8 @@ interface FileNodes {
   readonly machines: readonly StateMachine[];
   readonly clips: readonly Clip[];
   readonly places: ReadonlyMap<object, number>;
+  /** Its BSIsActiveModifiers: their outputs say whether they are active. */
+  readonly isActive: readonly Extract<BehaviorModifier, { kind: 'is-active' }>[];
 }
 
 const fileNodes = new WeakMap<BehaviorGraph, FileNodes>();
@@ -109,7 +111,14 @@ function nodesOf(graph: BehaviorGraph): FileNodes {
   const machines: StateMachine[] = [];
   const clips: Clip[] = [];
   const places = new Map<object, number>();
+  const isActive: Extract<BehaviorModifier, { kind: 'is-active' }>[] = [];
   const seen = new Set<object>();
+  const visitModifier = (modifier: BehaviorModifier): void => {
+    if (seen.has(modifier)) return;
+    seen.add(modifier);
+    if (modifier.kind === 'is-active') isActive.push(modifier);
+    for (const child of modifierChildren(modifier)) visitModifier(child);
+  };
   const visit = (node: BehaviorGenerator | undefined): void => {
     if (!node || seen.has(node)) return;
     seen.add(node);
@@ -119,11 +128,13 @@ function nodesOf(graph: BehaviorGraph): FileNodes {
     } else if (node.kind === 'clip') {
       places.set(node, clips.length);
       clips.push(node);
+    } else if (node.kind === 'modifier-generator' && node.modifier) {
+      visitModifier(node.modifier);
     }
     for (const child of children(node)) visit(child);
   };
   visit(graph.root);
-  nodes = { machines, clips, places };
+  nodes = { machines, clips, places, isActive };
   fileNodes.set(graph, nodes);
   return nodes;
 }
@@ -931,6 +942,7 @@ export class BehaviorRuntime {
     for (const node of this.#active) {
       this.#machines.delete(node);
       this.#clips.delete(node);
+      this.#modifiers.delete(node);
     }
     this.#active = new Set();
     this.#queue = [];
@@ -946,17 +958,27 @@ export class BehaviorRuntime {
     }
     const reached = new Map<string, BehaviorGraph>();
     for (const [graph, file] of this.#files) reached.set(file, graph);
-    for (const file of saved.files) {
-      const graph = reached.get(file.file);
-      if (graph) this.#resumeFile(graph, file);
-      else this.#resumeFiles.set(file.file, file);
+    const files = new Map(saved.files.map((file) => [file.file, file]));
+    for (const [file, graph] of reached) {
+      this.#resumeFile(graph, files.get(file) ?? { file, machines: [], clips: [] });
+      files.delete(file);
     }
+    for (const [file, entry] of files) this.#resumeFiles.set(file, entry);
     this.#told = true;
   }
 
   /** One file's saved machines and clips, to go on as they are reached. */
   #resumeFile(graph: BehaviorGraph, saved: SavedGraphFile): void {
     const nodes = nodesOf(graph);
+    // What its is-active modifiers say comes from what is active as it runs again, not from
+    // the save: one of a state a transition still blended from (not kept) said it was active,
+    // and kept so, an actor just up from furniture stayed animation-driven (bAnimationDriven)
+    // and could not walk.
+    const scope = this.#scope(graph);
+    for (const modifier of nodes.isActive) {
+      this.#modifiers.delete(modifier);
+      for (const slot of modifier.slots) this.#write(slot.output, scope, slot.invert ? 1 : 0);
+    }
     for (const [place, id, time] of saved.machines) {
       const node = nodes.machines[place];
       if (!node?.states.some((state) => state.id === id)) continue;

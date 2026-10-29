@@ -285,6 +285,11 @@ out in its hand, its sneak, a script's or a scene's idle go on. The graph's vari
 engine sets every frame (Speed, Direction, IsSneaking) are set again from what the actor does,
 as in the original.
 
+What the is-active modifiers (BSIsActiveModifier) say is not taken from the save but from what is
+active as the graph runs again: one of a state a transition still blended from said it was
+active, and kept so, the player saved just up from the opening's block stayed animation-driven
+(bAnimationDriven) and could not walk.
+
 Not kept (TODO(M13)): a transition's blend (the machine goes on in the state it blends to), a
 syncing blender's phase, the modifiers' own states (a timer's seconds), the events queued; the
 engine's own side of a bleedout and of a paired animation (who holds whom: their graphs go on in
