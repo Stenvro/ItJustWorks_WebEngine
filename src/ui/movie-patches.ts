@@ -6,26 +6,111 @@
 // under the menus (src/render/menu-overlay.ts), with that black field under it; the movie keeps
 // the border, its black fill made transparent (its DefineShape2 becomes a DefineShape3, every
 // black fill alpha 0). A movie whose layout differs (a mod's) is left as it is.
-// Platform-independent. Notes: docs/ui.md ("The map").
+//
+// A text field set in a device font (a font with no glyphs of its own) takes its font from the
+// font library fontconfig.txt builds, by name: the original installs no other font source (no
+// system font provider: it has no rasterizer for the system's fonts), so a device font the
+// library lacks is found nowhere and the field draws no text. A Flash player would draw such
+// text in a system font: the field is made to use the movie's own (empty) outlines instead.
+// The game's movies have one: hudmenu.swf's "Times New Roman" (an unnamed, empty field).
+// Platform-independent. Notes: docs/ui.md ("The map", "Ruffle's limits").
 
 import { BinaryReader } from '../formats/binary-reader.ts';
 import { readPlacement } from '../formats/swf/place-object.ts';
-import { readSwf, swfExports, SwfTagCode, type SwfMovie, type SwfTag } from '../formats/swf/swf.ts';
+import {
+  readSwf,
+  swfExports,
+  swfFonts,
+  SwfTagCode,
+  type SwfMovie,
+  type SwfTag,
+} from '../formats/swf/swf.ts';
 import { concatBytes, encodeTag } from '../formats/swf/swf-writer.ts';
 
 /** DefineShape and DefineShape2: RGB styles. DefineShape3: RGBA. */
 const RGB_SHAPES: ReadonlySet<number> = new Set([SwfTagCode.defineShape, 22]);
 const DEFINE_SHAPE3 = 32;
+const DEFINE_EDIT_TEXT = 37;
+/** DefineEditText's first flags byte: HasFont; its second: UseOutlines. */
+const HAS_FONT = 0x01;
+const USE_OUTLINES = 0x01;
 
-/** A movie as the engine plays it: patched where it must be, else the same bytes. */
-export function patchMovie(path: string, bytes: Uint8Array): Uint8Array {
+/**
+ * A movie as the engine plays it: patched where it must be, else the same bytes. `fonts`: the
+ * names (lower case) the font library answers (its fonts' and fontconfig's mapped names).
+ */
+export function patchMovie(
+  path: string,
+  bytes: Uint8Array,
+  fonts?: ReadonlySet<string>,
+): Uint8Array {
   const name = path.toLowerCase().replace(/^.*[\\/]/, '');
-  if (name !== 'map.swf') return bytes;
+  let out = bytes;
   try {
-    return patchLocalMapFrame(bytes) ?? bytes;
+    if (name === 'map.swf') out = patchLocalMapFrame(out) ?? out;
+    if (fonts) out = patchDeviceFonts(out, fonts) ?? out;
   } catch {
     return bytes;
   }
+  return out;
+}
+
+/**
+ * Text fields set in a device font the font library lacks made to draw no text (see above);
+ * undefined when the movie has none.
+ */
+export function patchDeviceFonts(
+  bytes: Uint8Array,
+  fonts: ReadonlySet<string>,
+): Uint8Array | undefined {
+  const movie = readSwf(bytes);
+  const missing = new Set(
+    swfFonts(movie)
+      .filter(
+        (font) =>
+          font.glyphs === 0 &&
+          font.code !== SwfTagCode.defineFont4 &&
+          !fonts.has(font.name.toLowerCase()),
+      )
+      .map((font) => font.id),
+  );
+  if (missing.size === 0) return undefined;
+  const patched = new Map<SwfTag, Uint8Array>();
+  for (const tag of movie.tags) {
+    if (tag.code !== DEFINE_EDIT_TEXT) continue;
+    const body = movie.bytes.slice(tag.offset, tag.offset + tag.length);
+    const rectBits = 5 + 4 * ((body[2] ?? 0) >> 3);
+    const flagsAt = 2 + Math.ceil(rectBits / 8);
+    const flags1 = body[flagsAt] ?? 0;
+    const flags2 = body[flagsAt + 1] ?? 0;
+    if (!(flags1 & HAS_FONT) || flags2 & USE_OUTLINES) continue;
+    const font = (body[flagsAt + 2] ?? 0) | ((body[flagsAt + 3] ?? 0) << 8);
+    if (!missing.has(font)) continue;
+    body[flagsAt + 1] = flags2 | USE_OUTLINES;
+    patched.set(tag, body);
+  }
+  if (patched.size === 0) return undefined;
+  return rewritten(movie, (tag) => {
+    const body = patched.get(tag);
+    return body && encodeTag(tag.code, body);
+  });
+}
+
+/** The movie written again (uncompressed): its tags as `replace` gives them, or as they were. */
+function rewritten(movie: SwfMovie, replace: (tag: SwfTag) => Uint8Array | undefined): Uint8Array {
+  const rectBits = 5 + 4 * ((movie.bytes[8] ?? 0) >> 3);
+  const header = movie.bytes.subarray(0, 8 + Math.ceil(rectBits / 8) + 4);
+  const out = concatBytes([
+    header,
+    ...movie.tags.map(
+      (tag) =>
+        replace(tag) ??
+        encodeTag(tag.code, movie.bytes.subarray(tag.offset, tag.offset + tag.length)),
+    ),
+  ]);
+  out.set([0x46, 0x57, 0x53], 0);
+  new DataView(out.buffer).setUint32(4, out.length, true);
+  return out;
 }
 
 /** map.swf: the local map frame's black field made transparent (see above). */
@@ -71,20 +156,10 @@ function patchLocalMapFrame(bytes: Uint8Array): Uint8Array | undefined {
     }
   }
   if (patched.size === 0) return undefined;
-  const rectBits = 5 + 4 * ((movie.bytes[8] ?? 0) >> 3);
-  const header = movie.bytes.subarray(0, 8 + Math.ceil(rectBits / 8) + 4);
-  const out = concatBytes([
-    header,
-    ...movie.tags.map((tag) => {
-      const body = patched.get(characterId(movie, tag));
-      return RGB_SHAPES.has(tag.code) && body
-        ? encodeTag(DEFINE_SHAPE3, body)
-        : encodeTag(tag.code, movie.bytes.subarray(tag.offset, tag.offset + tag.length));
-    }),
-  ]);
-  out.set([0x46, 0x57, 0x53], 0);
-  new DataView(out.buffer).setUint32(4, out.length, true);
-  return out;
+  return rewritten(movie, (tag) => {
+    const body = patched.get(characterId(movie, tag));
+    return RGB_SHAPES.has(tag.code) && body ? encodeTag(DEFINE_SHAPE3, body) : undefined;
+  });
 }
 
 function characterId(movie: SwfMovie, tag: SwfTag): number {
