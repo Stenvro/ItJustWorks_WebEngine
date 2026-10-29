@@ -42,6 +42,7 @@ import {
   objectActivation,
   perkActivation,
   PlaySession,
+  autoDoorsOf,
   type Activatable,
   type CellRagdoll,
   type CollisionGroup,
@@ -1162,6 +1163,23 @@ export class SimWorld {
     play.onObjectTrigger = (trigger, object, entered) => {
       this.runtime.triggered(trigger, object, entered);
     };
+    // An automatic load door takes the player through as they come near (its scripts first).
+    play.autoDoors = () =>
+      [...this.#cells.values()].flatMap((cell) =>
+        autoDoorsOf(cell.data.objects).filter((door) => cell.isEnabled(door.reference)),
+      );
+    play.onAutoDoor = (reference) => {
+      const target = this.#defaultActivation(reference);
+      if (target) {
+        this.runtime.playerActivated(reference, () => {
+          target.activate();
+        });
+      }
+    };
+    void this.session.settings().then((settings) => {
+      play.autoDoorDistance = settings.number('fAutoDoorActivateDistance') ?? play.autoDoorDistance;
+      play.autoDoorRidingText = settings.string('sNotAllowedToUseAutoDoorsWhileonHorse') ?? '';
+    });
     play.onTrapTouch = (touching) => {
       this.runtime.trapHits.touching(PLAYER_REF, touching);
     };
@@ -1467,7 +1485,13 @@ export class SimWorld {
   #defaultActivation(reference: number, activator?: number): Activatable | undefined {
     const created = this.#created.get(reference);
     const placed = created ? undefined : this.placed(reference);
-    const object = placed?.object ?? created?.object;
+    // One without a model of its own (an automatic door's marker) is in its cell's data alone.
+    const object =
+      placed?.object ??
+      created?.object ??
+      [...this.#cells.values()]
+        .map((cell) => cell.data.objects.find((candidate) => candidate.reference === reference))
+        .find((candidate) => candidate !== undefined);
     if (!object) return undefined;
     const instance = placed?.instance ?? created?.instance;
     const target = objectActivation(
@@ -1486,6 +1510,29 @@ export class SimWorld {
     );
     const playback = instance?.playback;
     if (!target || !playback || this.session.hud.uses?.swung) return target;
+    // A container the player searches: its lid opens as its menu does (Play's object uses).
+    // The simulation's menu closes at once; it is held open until the lid has opened, as a
+    // player looking in holds it at least that long, so its scripts hear OnOpen, then OnClose.
+    if (object.baseType === 'CONT' && (activator ?? PLAYER_REF) === PLAYER_REF) {
+      const swing = (sequence: 'open' | 'close'): void => {
+        playback.sequence = sequence;
+        playback.start = objectClock();
+        tellSwing(this.runtime, object.reference, playback, instance.model.sequences, PLAYER_REF);
+      };
+      const seconds = instance.model.sequences?.byName.get('open')?.duration ?? 0;
+      return {
+        ...target,
+        activate: () => {
+          target.activate();
+          swing('open');
+          this.session.hud.menus?.container(object.reference, () => {
+            setTimeout(() => {
+              swing('close');
+            }, seconds * 1000);
+          });
+        },
+      };
+    }
     // Without Play's object uses (the HUD's), a door's swing is told here as Play tells it
     // (OnOpen, OnClose: who activated it).
     return {

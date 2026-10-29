@@ -43,6 +43,23 @@ interface QuestIndex {
   readonly holders: ReadonlyMap<number, readonly number[]>;
 }
 
+/**
+ * The packages of the aliases holding an actor, as it runs them (given in the order the aliases
+ * were filled). Observed in the original: a reference keeps the aliases holding it sorted by
+ * their quests' priority, the highest first, and an alias filled later goes before one of a
+ * quest of the same priority (MQ102A's Hadvar, filled as MQ101's still holds him, takes him out
+ * of the cave). TODO(M13): with three or more of one priority the original's place for a new
+ * one is where its binary search meets an equal, not always before them all.
+ */
+export function aliasPackageOrder(
+  held: readonly { readonly priority: number; readonly packages: readonly number[] }[],
+): number[] {
+  return [...held]
+    .reverse()
+    .sort((a, b) => b.priority - a.priority)
+    .flatMap((entry) => entry.packages);
+}
+
 export class PackageData implements PackageWorld {
   readonly #db: RecordDatabase;
   readonly #states: () => QuestStates | undefined;
@@ -182,14 +199,14 @@ export class PackageData implements PackageWorld {
   async aliasPackages(actor: PackageActor): Promise<readonly number[] | undefined> {
     const runtime = this.#scripts();
     if (runtime) {
-      // The aliases that hold it now, their quests by priority (the highest first).
+      // The aliases that hold it now, in the order they were filled.
       const held: { priority: number; packages: readonly number[] }[] = [];
       for (const { quest, alias } of runtime.aliasesHolding(actor.reference)) {
         const record = await runtime.forms.quest(quest);
         const packages = record?.aliases.find((entry) => entry.id === alias)?.packages ?? [];
         if (record && packages.length > 0) held.push({ priority: record.priority, packages });
       }
-      return held.sort((a, b) => b.priority - a.priority).flatMap((entry) => entry.packages);
+      return aliasPackageOrder(held);
     }
     await this.ready();
     const holders = this.#index?.holders;

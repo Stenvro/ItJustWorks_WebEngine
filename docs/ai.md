@@ -888,7 +888,12 @@ Once the cell is loaded the packages run (above); the actors away follow this pl
 With the running game's scripts, quest state and
 globals are theirs, and the packages of the aliases that hold an actor come before its own
 (by quest priority, as the Creation Kit stacks them); without them an actor an alias may hold
-is not decided.
+is not decided. Observed in the original: a reference keeps the aliases holding it sorted by
+their quests' priority (highest first), and one filled later goes before one of the same
+priority (a binary search inserts it at an equal one). At MQ101's stage 800 Hadvar is held by
+MQ101 (MQ101HadvarPatrol4 from stage 30, back to the carts in Helgen) and MQ102A (filled then:
+MQ102FriendTravelToExit), both of priority 80: he makes for the cave's exit
+(`aliasPackageOrder` in package-data.ts).
 
 ## Followers, mounts and vehicles
 
@@ -1203,7 +1208,10 @@ location's lists.
   worldspace or interior, the middle-low process's are: what is there is where it should be as
   it loads (no time passed for the rest). A shopkeeper two doors from the player (Carlotta
   Valentia at home, the player in the Bannered Mare) is at her market stall once the clock is
-  set past her market package's hour.
+  set past her market package's hour. A loaded save's actors of the loaded area are left
+  alone until their cells place them where they stood (src/save/world-save.ts): put where
+  their package had them meanwhile (MQ101's Hadvar, his scene not yet resumed, at his patrol in
+  Helgen), the game state had them elsewhere while the stage showed them in the keep.
 - An actor of the loaded area on its way through a load door its package takes leaves the stage
   through it, and its trip goes on from the door's arrival point. It walks to the navmesh
   triangle the navmesh marks in front of the door (else the navmesh point nearest the door), not

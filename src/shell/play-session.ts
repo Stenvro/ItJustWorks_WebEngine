@@ -75,6 +75,8 @@ const NOTICE_MS = 3000;
 
 /** Milliseconds per frame spent placing collision of loaded cells. */
 const COLLISION_BUDGET_MS = 3;
+/** The vanilla fAutoDoorActivateDistance. */
+const AUTO_DOOR_ACTIVATE_DISTANCE = 350;
 /**
  * Waiting this long for the ground's collision, the player is placed anyway (seconds): only a
  * safety net, the ground's cells always finish loading. A shorter wait placed players on slow
@@ -173,6 +175,27 @@ export interface ObjectUses {
   swung?(object: CellObject, instance: ModelInstance, activator: number): void;
   /** What the crosshair's prompt reads of the game's state (src/shell/activation-facts.ts). */
   readonly facts?: ActivationFacts;
+}
+
+/**
+ * Whether the player goes through a placed object by walking up to it: an automatic load door
+ * (DOOR "Automatic": AutoLoadDoor01, a marker at the ends of caves). It is activated as they
+ * come near (PlaySession.autoDoors), its scripts first, whatever the crosshair offers.
+ */
+export function walksThrough(object: CellObject): boolean {
+  return object.baseType === 'DOOR' && object.teleport !== undefined && object.automatic === true;
+}
+
+const autoDoorLists = new WeakMap<readonly CellObject[], readonly CellObject[]>();
+
+/** A cell's automatic load doors (walksThrough), found once per loaded cell's object list. */
+export function autoDoorsOf(objects: readonly CellObject[]): readonly CellObject[] {
+  let doors = autoDoorLists.get(objects);
+  if (!doors) {
+    doors = objects.filter(walksThrough);
+    autoDoorLists.set(objects, doors);
+  }
+  return doors;
 }
 
 /**
@@ -1039,6 +1062,7 @@ export class PlaySession {
       );
       // What the player walked into moves from now on (held objects wait for a touch).
       for (const collider of this.player.character.touched) this.physics.touch(collider);
+      this.#watchAutoDoors();
       // An actor nearer than what the physics pick found is the target. The pick meets actors'
       // character controllers, their keyframed BIPED bodies and the ragdolls of the dead
       // (L_ITEMPICKER collides with L_CHARCONTROLLER, L_BIPED and L_DEADBIP): the actor it met
@@ -1557,6 +1581,55 @@ export class PlaySession {
 
   /** The player entered (true) or left a trigger volume of a reference. */
   onTrigger: ((reference: number, entered: boolean) => void) | undefined;
+  /** The automatic load doors of the loaded area (walksThrough). */
+  autoDoors: (() => Iterable<CellObject>) | undefined;
+  /** An automatic door takes the player through (activated, its scripts first). */
+  onAutoDoor: ((reference: number) => void) | undefined;
+  /** The automatic doors the player is within fAutoDoorActivateDistance of. */
+  #nearAutoDoors = new Set<number>();
+  /** The automatic doors of the loaded area in the last frame. */
+  #seenAutoDoors = new Set<number>();
+  /** fAutoDoorActivateDistance (game setting; the viewers set the load order's). */
+  autoDoorDistance = AUTO_DOOR_ACTIVATE_DISTANCE;
+
+  /**
+   * Observed in the original: an automatic door watches the player's distance from it as its
+   * 3D loads; within fAutoDoorDisplayDistance its destination is shown, and coming within
+   * fAutoDoorActivateDistance the screen fades for fAutoDoorFadeSecs and the door takes them
+   * through (riding, sNotAllowedToUseAutoDoorsWhileonHorse instead). TODO(M13): the display
+   * distance's prompt, the fade itself (here only its time passes); whether the distance is the
+   * player's feet or their character's middle.
+   */
+  #watchAutoDoors(): void {
+    const doors = this.autoDoors?.();
+    if (!doors) return;
+    const [x, y, z] = this.player.feet;
+    const near = new Set<number>();
+    const seen = new Set<number>();
+    for (const door of doors) {
+      seen.add(door.reference);
+      const [dx, dy, dz] = [door.world[12] ?? 0, door.world[13] ?? 0, door.world[14] ?? 0];
+      if (Math.hypot(dx - x, dy - y, dz - z) <= this.autoDoorDistance) near.add(door.reference);
+    }
+    const watched = this.#seenAutoDoors;
+    this.#seenAutoDoors = seen;
+    for (const reference of near) {
+      // Coming near: one the player arrives by (just loaded) does not send them back.
+      if (this.#nearAutoDoors.has(reference) || !watched.has(reference)) continue;
+      if (this.player.mount?.() !== undefined) {
+        this.notify(this.autoDoorRidingText);
+        continue;
+      }
+      const seconds = this.player.ini.number('General', 'fAutoDoorFadeSecs');
+      setTimeout(() => {
+        this.onAutoDoor?.(reference);
+      }, seconds * 1000);
+    }
+    this.#nearAutoDoors = near;
+  }
+
+  /** sNotAllowedToUseAutoDoorsWhileonHorse (the viewers set the load order's). */
+  autoDoorRidingText = '';
   /** A moving object (its reference) entered (true) or left a trigger volume of a reference. */
   onObjectTrigger: ((trigger: number, object: number, entered: boolean) => void) | undefined;
   /** The triggers each moving object is in, by the object's reference. */

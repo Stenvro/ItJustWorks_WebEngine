@@ -20,6 +20,7 @@ import {
   objectActivation,
   perkActivation,
   PlaySession,
+  autoDoorsOf,
   type Activatable,
   type CellRagdoll,
   type CollisionGroup,
@@ -944,6 +945,25 @@ export class ModelViewer {
     };
     play.onObjectTrigger = (trigger, object, entered) => {
       this.#session?.scriptsReady?.triggered(trigger, object, entered);
+    };
+    // An automatic load door takes the player through as they come near (its scripts first).
+    play.autoDoors = () =>
+      this.#cell
+        ? autoDoorsOf(this.#cell.data.objects).filter((door) => this.#isEnabled(door.reference))
+        : [];
+    void session.settings().then((settings) => {
+      play.autoDoorDistance = settings.number('fAutoDoorActivateDistance') ?? play.autoDoorDistance;
+      play.autoDoorRidingText = settings.string('sNotAllowedToUseAutoDoorsWhileonHorse') ?? '';
+    });
+    play.onAutoDoor = (reference) => {
+      const target = this.#defaultActivation(reference);
+      if (!target) return;
+      const runtime = this.#session?.scriptsReady;
+      if (runtime) {
+        runtime.playerActivated(reference, () => {
+          target.activate();
+        });
+      } else target.activate();
     };
     // The traps the player touches hit them (OnTrapHitStart, ...: trap-hits.ts).
     play.onTrapTouch = (touching) => {

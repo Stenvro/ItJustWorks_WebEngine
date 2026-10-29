@@ -191,10 +191,16 @@ export class QuestEngine {
     const fragments = (attachments?.fragments ?? [])
       .filter((fragment) => fragment.stage === stage && chosen.has(fragment.logEntry))
       .sort((a, b) => a.logEntry - b.logEntry);
+    // Observed in the original: each log entry's fragment is queued as a call of its own as the
+    // entry happens (with its own finished callback), so one waiting (Utility.Wait) holds up
+    // none of the others; the caller waits for them all. MQ101's stage 500 collapses the bridge
+    // over a few seconds in its first entry while the route's entry starts the caves' scene.
     const run = async (): Promise<void> => {
-      for (const fragment of fragments) {
-        await runtime.vm.call(new ObjectHandle(record.formId, fragment.script), fragment.function);
-      }
+      await Promise.all(
+        fragments.map((fragment) =>
+          runtime.vm.call(new ObjectHandle(record.formId, fragment.script), fragment.function),
+        ),
+      );
     };
     if (wait) await run();
     else if (this.#heldStartUps) this.#heldStartUps.push(run);
