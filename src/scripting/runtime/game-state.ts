@@ -54,6 +54,8 @@ export interface ReferenceState {
   /** The worldspace of an exterior cell it was moved into. */
   world?: number;
   deleted?: boolean;
+  /** DeleteWhenAble: deleted once out of the loaded area and held by no alias. */
+  deleteWhenAble?: boolean;
   /** Taken into a container (an actor's inventory) as its base's count: out of the world. */
   container?: { readonly holder: number; readonly base: number; readonly count: number };
   /** Destruction (destruction-engine.ts): IsDestroyed, the stages reached, the health left. */

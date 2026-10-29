@@ -408,10 +408,11 @@ export class ModelViewer {
 
   /** What the running game's scripts see of, and do to, the cell on screen. */
   readonly #scriptView: ScriptView = {
-    created: (reference) => {
-      void this.#showCreated(reference);
-      void this.#stage?.created(reference, this.#play?.physics);
-    },
+    created: (reference) =>
+      Promise.allSettled([
+        this.#showCreated(reference),
+        this.#stage?.created(reference, this.#play?.physics),
+      ]).then(() => undefined),
     loadedReferences: () => this.#loadedReferences(),
     loaded: (reference) => this.#loadedReferences().includes(reference),
     livePlacement: (reference) => {

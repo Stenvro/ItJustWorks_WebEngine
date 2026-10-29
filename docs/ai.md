@@ -1165,6 +1165,20 @@ them living and enabled at the start), each where its package has it now (the pl
 from its packages, factions, race and sex, read once). Actors that are not persistent exist only
 with their cells: they are put where their packages have them as their cells load.
 
+The middle-low process also asks the actors the player's location lists as its own (LCTN: its
+references of a location reference type, LCSR/ACSR, and its unique actors, LCUN/ACUN), wherever
+their cells are, the temporary ones too: the location knows them while their cells are not
+loaded. Whiterun's two gate guards are temporary actors placed in WhiterunWorld (cell 6,0, by
+the barracks), in no quest alias, whose packages (WhiterunGateGuardForcegreet,
+WhiterunGateGuard2Travel) have them by the gate's Tamriel side; WhiterunLocation lists them
+(CWSoldier) and the plains outside the gate belong to it. Coming there from Tamriel, the player
+finds them by the gate, and the first walks up and stops them ("Halt! City's closed with the
+dragons about."; `tests/sim-gate-guard.int.test.ts`). The original keeps no exterior cell behind
+a load door loaded (it preloads only linked interiors, bPreloadLinkedInteriors, off by default),
+so the guards' own cell is not what brings them. TODO(M13): the original's own rule for which
+temporary actors of unloaded cells keep a schedule is not documented; ours is the player's
+location's lists.
+
 - **When the hour changes, and every fEvaluatePackageTimer seconds** (as the high process
   chooses again), an actor its package wants elsewhere sets out from where it is. Its trip
   follows the route (above) door to door, through as many load doors as it has, at its walk

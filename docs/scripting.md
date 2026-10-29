@@ -758,6 +758,46 @@ Favor017 (Favor253, 110 and 204 find no one for an alias) and DialogueWhiterunHe
 the Bannered Mare BardSongStarter (the bard's song; it stops at once), WIGreeting and
 DialogueWhiterunArgueScene.
 
+### World encounters
+
+The world encounters (the WE, WERoad, WEJS, WERJ, WEDL quests and the DLCs') run on the game's
+own scripts and the story manager; the engine's part is the events and the alias fills
+(`tests/sim-world-encounters.int.test.ts`):
+
+- **The trigger.** A WE trigger (WETriggerOnLoad and its kin: WETriggerScript) with
+  TriggerOnLoad starts its encounter in OnCellLoad (its primitive has 3D), others in
+  OnTriggerEnter by the player. It goes to its "off" state first and sends a script event:
+  WEStart (WERoadStart for road encounters), its hold's location, itself, the hold's faction
+  marker (Civil War owner, contested or not) and its EventNum (0: any encounter; a number: a
+  specific one, cleared after spawning). It stays off until the started quest's shut-down stage
+  calls ReArmTrigger; a trigger whose event started nothing stays off.
+- **The chance and the rules.** The data has no dice of the engine's for encounters, and no game
+  setting reads like one: every enabled trigger that loads sends its event. What keeps them
+  apart is the story manager's tree: WEQuestNode needs WEEnabled 1 (the carriage system sets it
+  to 0 for a ride), WEPriorityQuests WEDebug 0, the dragon node DragonsReturned,
+  MQ106TurnOffRandomDragons 0 and WINextDragon (its cooldown day) past; the specific nodes match
+  V1; the general WEQuests node is random with "do all before repeating" (each encounter once
+  before any again), some quests "again after" a number of hours, the dragons' "max 1 running";
+  a running quest is not started again, and each quest's own conditions and alias fills
+  decide (an alias that finds no one keeps it from starting).
+- **The aliases.** The event's data fills the trigger, the hold's locations and the faction
+  marker; references are made at markers (Create Reference To, actors from leveled bases) or in
+  containers; locations and their references (a dungeon's boss and its chest) are found by
+  their conditions.
+- **Loading.** A reference a script or an alias creates in the loaded area is attached and loaded
+  once the view has placed it (OnCellAttach, OnLoad), as a cell's references are; a reference an
+  alias holds hears its cell's and its 3D's events (OnCellAttach, OnLoad, OnCellLoad, OnUnload,
+  OnCellDetach) through the alias's scripts even if it has none of its own. WEAliasScript counts
+  its actor in on load (WEScript.AliasLoadingOrUnloading) and applies its options there
+  (KillOnLoad, PacifyOnLoad, a faction, aggression on line of sight or distance).
+- **The end.** As its actors unload, WEAliasScript counts them out and WEScript polls each game
+  hour (RegisterForUpdateGameTime, StopQuestPollingFrequencey): with none loaded it stops the
+  quest. The shut-down stage re-arms the trigger and deletes what the quest made with
+  DeleteWhenAble: a reference is deleted once it is out of the loaded area and no alias holds
+  it (at once if so already, else as its cell detaches or its last alias lets go). The engine
+  itself deletes nothing a stopped quest's aliases created (the encounters' shut-down stages
+  do it); TODO(M13): whether it ever does for a created reference left behind.
+
 ## Actors
 
 `actor-engine.ts`: a reference's base resolved as for its look (leveled lists picked once,

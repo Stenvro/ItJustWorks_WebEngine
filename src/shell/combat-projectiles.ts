@@ -379,7 +379,7 @@ export class CombatProjectiles {
     state.motionType = sticks ? 4 : 1;
     if (shooter?.cell !== undefined) state.cell = shooter.cell;
     if (shooter?.world !== undefined) state.world = shooter.world;
-    runtime.world.created?.(reference);
+    void runtime.world.created?.(reference);
     this.#stuck.push(reference);
     while (this.#stuck.length > MAX_STUCK_ARROWS) {
       const oldest = this.#stuck.shift();
