@@ -19,7 +19,9 @@ Formats: [nif.md](formats/nif.md#animation) (controllers, sequences, keys),
 
 ## Object graphs
 
-`ObjectGraph` runs the subset of the Havok Behavior runtime that objects need:
+`ObjectGraph` runs the subset of the Havok Behavior runtime that objects need (the page advances the
+graphs of what it draws each frame; the headless simulation every placed object's each step, so
+their text keys reach scripts: a word of power's "End" enables its trigger):
 
 - **Start**: every state machine enters its start state (startStateId, or the variable bound
   to it; random start states by probability, from a generator seeded with the reference's form
@@ -963,6 +965,12 @@ direct Decapitate on an Embershard Mine bandit: three head nodes cut, the FaceGe
 ten shapes on the piece, the head on the floor asleep within seconds.
 
 ## The player
+
+While the body's graph is animation-driven (bAnimationDriven, bAllowRotation, read as for every
+actor: `src/ai/movement-drive.ts`) its root motion moves the player instead of their input
+(`Player.animationMotion`): a Whirlwind Sprint's rush (ActionVoiceRelease picks
+ShoutSprintMediumStart, ShoutSprintLongStart or ShoutSprintLongestStart by the words shouted)
+carries them as far as its clip goes.
 
 The player's body (`player-avatar.ts`) is the Player actor (NPC_ 0x7, reference 0x14) placed like
 any actor: its race's skeleton, its outfit (the iron set) and its head, in the player's

@@ -16,6 +16,7 @@ import {
   type LocomotionActions,
   type LocomotionGraph,
 } from '../ai/locomotion.ts';
+import { driveOf } from '../ai/movement-drive.ts';
 import { MovementCatalog } from '../ai/movement-types.ts';
 import type { MovementType } from '../world/movement.ts';
 import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
@@ -136,12 +137,39 @@ export class PlayerAvatar {
     };
     player.cameraOffset = () => this.#cameraOffset();
     player.taggedMovement = () => this.#taggedMovement();
+    player.animationMotion = () => this.#animationMotion();
     void session.db
       .then((db) => MovementCatalog.read(db))
       .then((catalog) => {
         this.#movementTypes = catalog;
       });
     this.#listen(made.body);
+  }
+
+  /**
+   * While the body's graph drives the player's movement (bAnimationDriven, bAllowRotation, read
+   * as for every actor: src/ai/movement-drive.ts), the ground velocity of its last update's root
+   * motion (world units a second), at the body's size and facing. A Whirlwind Sprint's rush
+   * (ShoutSprintMediumStart and the longer ones) carries the player so.
+   */
+  #animationMotion(): readonly [number, number] | undefined {
+    const body = this.#made.body;
+    const behavior = body.behavior;
+    if (!behavior || this.#dead || this.seated || this.knocked || this.stepped <= 0)
+      return undefined;
+    const drive = driveOf(
+      behavior.variable('bAnimationDriven') ?? 0,
+      behavior.variable('bAllowRotation') ?? 0,
+    );
+    if (drive === 'controller') return undefined;
+    const motion = behavior.rootMotion();
+    const scale = (body.look.scale * body.actor.scale) / this.stepped;
+    const x = motion.translation[0] * scale;
+    const y = motion.translation[1] * scale;
+    // The body's frame (x right, y forward) to the world's: right (cos, −sin), forward (sin, cos).
+    const sin = Math.sin(this.#bodyYaw);
+    const cos = Math.cos(this.#bodyYaw);
+    return [x * cos + y * sin, -x * sin + y * cos];
   }
 
   /** The movement types by name (the graph's states: a beast form's). */

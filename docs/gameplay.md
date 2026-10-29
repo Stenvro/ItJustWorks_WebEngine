@@ -762,6 +762,9 @@ Format/SPEL"; the game settings.
 - Target Location: what it makes (summons, hazards, scripted references) stands where it landed
   (`ApplyOptions.at`: the summon facing the summoner); its other effects reach those near by its
   explosion and area.
+  Without a projectile it lands at once where it was aimed: at its target's place (a package's
+  Shout aims MQ105PhantomFormShout at a marker), its other effects on the target; untargeted, at
+  its caster's feet.
 - Scripts' casts (Spell.Cast, RemoteCast) fly from the source's right hand (an object's place)
   toward the target's chest, or along its facing (WorldBridge.launchSpell); free.
   DoCombatSpellApply delivers at once.

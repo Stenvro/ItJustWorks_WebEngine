@@ -460,6 +460,39 @@ describe('ActorPackages', () => {
     expect(events).toEqual(['begin Pack1']);
   });
 
+  it('keeps a once-a-day ForceGreet that waits at its place until the player comes', async () => {
+    // Without Sandbox While Waiting the ForceGreet template travels to its wait location: the
+    // travel succeeds and the tree runs out, but the package waits there for the player (7).
+    const ran: string[] = [];
+    const { actor, truths } = setup(
+      [
+        pack(
+          1,
+          branch('Stacked', [procedure('forcegreet', 1, [condition(7)]), procedure('travel')]),
+          { flags: PackageFlag.oncePerDay },
+        ),
+      ],
+      {
+        forcegreet: () => {
+          ran.push('forcegreet');
+          return Promise.resolve('success');
+        },
+        travel: () => {
+          ran.push('travel');
+          return Promise.resolve('success');
+        },
+      },
+    );
+    await tick(actor);
+    await tick(actor, 3);
+    expect(actor.current?.id).toBe(1);
+    truths.add(7);
+    actor.evaluate();
+    await tick(actor);
+    await tick(actor);
+    expect(ran).toEqual(['travel', 'forcegreet']);
+  });
+
   it('runs a once-a-day package once a day', async () => {
     let runs = 0;
     const { actor, setDay } = setup(

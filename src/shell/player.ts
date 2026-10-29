@@ -697,6 +697,13 @@ export class Player implements Camera {
    */
   taggedMovement: (() => MovementType | undefined) | undefined;
 
+  /**
+   * While the player's graph drives their movement (bAnimationDriven, bAllowRotation: a
+   * Whirlwind Sprint's rush, a stagger), the ground velocity its clips' root motion gives (units
+   * a second, world x and y; src/shell/player-avatar.ts); undefined: their input moves them.
+   */
+  animationMotion: (() => readonly [number, number] | undefined) | undefined;
+
   /** The movement types the player moves with. */
   get movement(): PlayerMovement {
     return this.#setup.movement;
@@ -1065,7 +1072,11 @@ export class Player implements Camera {
     // Right is (cos, -sin), forward (sin, cos).
     const vx = ((x * cos + y * sin) / length) * speed;
     const vy = ((-x * sin + y * cos) / length) * speed;
-    if (character.grounded || swimming) character.velocity = [vx, vy];
+    // An animation-driven graph moves the player by its clips, not their input, as it does every
+    // actor (src/ai/movement-drive.ts).
+    const animated = swimming || pilot ? undefined : this.animationMotion?.();
+    if (animated) character.velocity = [animated[0], animated[1]];
+    else if (character.grounded || swimming) character.velocity = [vx, vy];
     if (swimming && water !== undefined) {
       // Float with the shoulders at the surface; looking down while swimming forward dives,
       // looking up from below rises.

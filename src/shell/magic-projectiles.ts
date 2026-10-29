@@ -383,7 +383,29 @@ export class MagicProjectiles {
       return;
     }
     if (!projectile || delivery === Delivery.touch) {
-      if (options.target !== undefined) await at(options.target);
+      // A Target Location spell without a projectile lands at once where it was aimed: what it
+      // makes (a summon, a hazard) stands at the target's place, as an impact's does; its other
+      // effects reach the target. A package's Shout aims MQ105PhantomFormShout at a marker so.
+      const place =
+        delivery === Delivery.targetLocation && options.target !== undefined
+          ? await runtime.placement(options.target)
+          : undefined;
+      if (place && options.target !== undefined) {
+        const placing: number[] = [];
+        const others: number[] = [];
+        for (const [index, entry] of delivered.item.effects.entries()) {
+          const archetype = (await runtime.magic.effect(entry.effect))?.archetype;
+          (archetype !== undefined && PLACING.has(archetype) ? placing : others).push(index);
+        }
+        if (placing.length > 0) {
+          await casting.deliver(delivered, delivered.caster, {
+            at: [place.position[0], place.position[1], place.position[2]],
+            effects: placing,
+          });
+        }
+        if (others.length > 0)
+          await casting.deliver(delivered, options.target, { effects: others });
+      } else if (options.target !== undefined) await at(options.target);
       else if (delivery === Delivery.targetLocation)
         await casting.deliver(delivered, delivered.caster);
       return;

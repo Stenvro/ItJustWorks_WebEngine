@@ -403,7 +403,10 @@ The living actors near the player run their AI packages once the running game's 
 there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the sandbox:
 
 - **Which package:** the first of its packages, in order, whose schedule fits the game's time
-  (as at the start, below), that has not run today if it runs once a day, and whose conditions
+  (as at the start, below), that has not begun today if it runs once a day (unless it is the one
+  it runs: not completed by a procedure's success, and still running or, its tree run out, waiting
+  on a Stacked branch's earlier child, as a ForceGreet waits at its place for the player; a
+  loaded save's ended package keeps the branches it ran under), and whose conditions
   hold on the running game (`ScriptRuntime.conditionsHold`, with the package's data inputs for
   GetNumericPackageData, IsNullPackageData and conditions run on package data): the packages of
   the quest aliases that hold it first (by quest priority), then its own, then its default
