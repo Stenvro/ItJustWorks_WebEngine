@@ -1035,7 +1035,12 @@ tools/crime-info.ts` lists the crime factions with their values, jails and chest
   as hostile (`reaction`). Kills reach crime through `ActorEngine.kill`; combat's hits
   (`src/shell/actor-combat.ts`, arrows' as they strike) and hostile spells as their projectile,
   spray or area reaches the victim (the projectiles' hit: `src/shell/actor-stage.ts`) call
-  `crime.assault(attacker, victim)`, the one hit always among the witnesses.
+  `crime.assault(attacker, victim)`, the one hit always among the witnesses. An actor's assault
+  (no bounty: an alarm, the guards among its witnesses fight the attacker) goes unreported by
+  the witnesses that regard the attacker as an ally (`reaction`: a shared faction, an allied
+  one), the one hit too, as an ally overlooks the player's assault: a guard's stray arrow on
+  another guard as the dragon they shot at falls raises no fight between them (TODO(M13): the
+  engine's own rule for who reports an actor's crime).
 
 ### Stolen items
 
