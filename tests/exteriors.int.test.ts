@@ -164,6 +164,42 @@ describe.skipIf(!hasGamedata())('exteriors on the local game data', () => {
     expect(vfs.has('textures\\water\\skyrim.esm\\flow.7.-4.dds')).toBe(true);
   }, 30_000);
 
+  it("gives Riverwood's river, Lake Ilinalta and the sea at Solitude their water", async () => {
+    const tamriel = await Worldspace.open(db, await worldId('Tamriel'));
+    const waterOf = async (x: number, y: number) => {
+      const id = await tamriel.cell(x, y);
+      const record = id === undefined ? undefined : await db.get(id);
+      if (!record) throw new Error(`no cell ${String(x)},${String(y)}`);
+      const water = cellWater(parseCell(record), {
+        height: tamriel.waterWorld.defaultWaterHeight,
+        type: tamriel.waterWorld.water,
+      });
+      const type = water?.type === undefined ? undefined : await db.get(water.type);
+      return { height: water?.height, type: type && parseWater(type) };
+    };
+    const river = await waterOf(4, -11);
+    expect(river.height).toBe(-250);
+    expect(river.type?.editorId).toBe('RiverWaterFlow');
+    const lake = await waterOf(-8, -13);
+    expect(lake.height).toBe(600);
+    expect(lake.type?.editorId).toBe('RiverWaterFlow');
+    // The sea: the world's default height and water.
+    const sea = await waterOf(-14, 28);
+    expect(sea.height).toBe(-14000);
+    expect(sea.type?.editorId).toBe('DefaultWater');
+    for (const { type } of [river, lake, sea]) {
+      // Their colours, fog and the displacement's dampener the shader uses.
+      expect(type?.shallowColor.map((c) => Math.round(c * 255))).toEqual([38, 39, 24]);
+      expect(type?.deepColor.map((c) => Math.round(c * 255))).toEqual([5, 14, 18]);
+      expect([type?.fogNear, type?.fogFar]).toEqual([-10, 150]);
+      expect(type?.displacement.dampener).toBeCloseTo(0.98);
+      // The rain simulator's values are the ones the engine's rain layer runs with.
+      expect(type?.rain.force).toBeCloseTo(0.1);
+      expect(type?.rain.velocity).toBeCloseTo(0.6);
+      expect(type?.rain.falloff).toBeCloseTo(0.985);
+    }
+  }, 30_000);
+
   it('reads distant LOD: settings, terrain with its water, objects and trees', async () => {
     const settings = parseLodSettings(await vfs.read('lodsettings\\tamriel.lod'));
     expect(settings).toMatchObject({ southWestX: -96, stride: 256, lowestLevel: 4 });

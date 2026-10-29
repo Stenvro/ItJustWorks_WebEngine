@@ -581,6 +581,14 @@ export const INI_DEFAULTS = {
     iConsoleTextSize: 20,
     iConsoleHistoryCharBufferSize: 16384,
   },
+  // The water's displacement field (src/render/water-displacement.ts): whether it runs, whether
+  // splashes and projectiles stir it, the grid's width (units) and its texels a side.
+  Water: {
+    bUseWaterDisplacements: 1,
+    bUseBulletWaterDisplacements: 1,
+    fWadingWaterQuadSize: 2048,
+    fWadingWaterTextureRes: 512,
+  },
 } as const;
 
 /** The text settings the engine uses, with the same defaults' source. */
