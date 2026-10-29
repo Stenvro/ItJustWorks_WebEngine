@@ -234,7 +234,7 @@ const parseControllerSequence: BlockParser = (reader, context): ControllerSequen
   const manager = reader.i32();
   const accumRootName = readStringRef(reader, context);
   const notes = reader.u16();
-  reader.skip(notes * 4); // BSAnimNotes refs
+  const animNotes = Array.from({ length: notes }, () => reader.i32());
   return {
     kind: 'controller-sequence',
     name,
@@ -247,6 +247,7 @@ const parseControllerSequence: BlockParser = (reader, context): ControllerSequen
     stopTime,
     manager,
     accumRootName,
+    animNotes,
   };
 };
 

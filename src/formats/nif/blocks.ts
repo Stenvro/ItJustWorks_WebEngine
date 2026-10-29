@@ -135,10 +135,18 @@ const parseNode: BlockParser = (reader, context, type): NiNodeBlock => {
   let value: number | undefined;
   let treeBones: { trunk: Ref[]; branches: Ref[] } | undefined;
   let damageStage: { min: number; max: number } | undefined;
+  let switchFlags: number | undefined;
+  let valueFlags: number | undefined;
+  let multiBound: { ref: Ref; cullingMode: number } | undefined;
+  let ordered:
+    { alphaSortBound: [number, number, number, number]; staticBound: boolean } | undefined;
+  let range: { min: number; max: number; current: number } | undefined;
+  let lodLevelData: Ref | undefined;
+  let masterParticles: { maxEmitterObjects: number; systems: Ref[] } | undefined;
 
   switch (type) {
     case 'NiSwitchNode':
-      reader.u16(); // switch flags
+      switchFlags = reader.u16();
       switchIndex = reader.u32();
       break;
     case 'NiBillboardNode':
@@ -148,36 +156,37 @@ const parseNode: BlockParser = (reader, context, type): NiNodeBlock => {
       treeBones = { trunk: readRefs(reader), branches: readRefs(reader) };
       break;
     case 'BSMultiBoundNode':
-      reader.i32(); // multi bound
-      reader.u32(); // culling mode
+      multiBound = { ref: reader.i32(), cullingMode: reader.u32() };
       break;
     case 'BSOrderedNode':
-      reader.skip(16 + 1); // alpha sort bound (vec4) + static bound
+      ordered = {
+        alphaSortBound: [reader.f32(), reader.f32(), reader.f32(), reader.f32()],
+        staticBound: reader.u8() !== 0,
+      };
       break;
     case 'BSValueNode':
       value = reader.i32();
-      reader.u8(); // flags
+      valueFlags = reader.u8();
       break;
     case 'BSDamageStage': {
       // BSRangeNode: min, max, current. A damage stage node shows its subtree while the
       // object's model damage stage (DSTD) is within min..max.
       const min = reader.u8();
       const max = reader.u8();
-      reader.u8(); // current
+      range = { min, max, current: reader.u8() };
       damageStage = { min, max };
       break;
     }
     case 'BSRangeNode':
     case 'BSBlastNode':
     case 'BSDebrisNode':
-      reader.skip(3); // min, max, current
+      range = { min: reader.u8(), max: reader.u8(), current: reader.u8() };
       break;
     case 'NiLODNode':
-      reader.i32(); // LOD level data
+      lodLevelData = reader.i32();
       break;
     case 'BSMasterParticleSystem':
-      reader.u16(); // max emitter objects
-      readRefs(reader); // particle systems
+      masterParticles = { maxEmitterObjects: reader.u16(), systems: readRefs(reader) };
       break;
   }
 
@@ -191,6 +200,13 @@ const parseNode: BlockParser = (reader, context, type): NiNodeBlock => {
     ...(value !== undefined && { value }),
     ...(treeBones && { treeBones }),
     ...(damageStage && { damageStage }),
+    ...(switchFlags !== undefined && { switchFlags }),
+    ...(valueFlags !== undefined && { valueFlags }),
+    ...(multiBound && { multiBound }),
+    ...(ordered && { ordered }),
+    ...(range && { range }),
+    ...(lodLevelData !== undefined && { lodLevelData }),
+    ...(masterParticles && { masterParticles }),
   };
 };
 
@@ -245,9 +261,9 @@ const parseTriShape: BlockParser = (reader, context, type): BSTriShapeBlock => {
   if (type === 'BSDynamicTriShape') {
     const size = reader.u32();
     dynamicPositions = readFloats(reader, size / 4);
-  } else if (type === 'BSMeshLODTriShape') {
-    reader.skip(12); // LOD0/1/2 sizes
   }
+  let lodSizes: [number, number, number] | undefined;
+  if (type === 'BSMeshLODTriShape') lodSizes = [reader.u32(), reader.u32(), reader.u32()];
 
   // BSSubIndexTriShape (SSE): segments of the triangle list (flags u8, first index u32,
   // triangle count u32), e.g. one per cell of a terrain LOD block.
@@ -276,6 +292,7 @@ const parseTriShape: BlockParser = (reader, context, type): BSTriShapeBlock => {
     triangles,
     ...(dynamicPositions && { dynamicPositions }),
     ...(segments && { segments }),
+    ...(lodSizes && { lodSizes }),
   };
 };
 
@@ -290,8 +307,17 @@ const parseNiTriShape: BlockParser = (reader, context, type): NiTriShapeBlock =>
   reader.u8(); // material needs update
   const shaderProperty = reader.i32();
   const alphaProperty = reader.i32();
-  if (type === 'BSLODTriShape') reader.skip(12); // LOD0/1/2 sizes
-  return { ...base, kind: 'ni-tri-shape', data, skin, shaderProperty, alphaProperty };
+  const lodSizes: [number, number, number] | undefined =
+    type === 'BSLODTriShape' ? [reader.u32(), reader.u32(), reader.u32()] : undefined;
+  return {
+    ...base,
+    kind: 'ni-tri-shape',
+    data,
+    skin,
+    shaderProperty,
+    alphaProperty,
+    ...(lodSizes && { lodSizes }),
+  };
 };
 
 const parseNiTriShapeData: BlockParser = (reader, context, type): NiTriShapeDataBlock => {

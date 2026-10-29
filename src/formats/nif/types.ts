@@ -41,6 +41,26 @@ export interface NiNodeBlock extends NiAvObject {
    * them it is not drawn and does not collide.
    */
   readonly damageStage?: { readonly min: number; readonly max: number };
+  /** NiSwitchNode: flags (bit 0 update only the active child, bit 1 update controllers). */
+  readonly switchFlags?: number;
+  /** BSValueNode: its flags. */
+  readonly valueFlags?: number;
+  /** BSMultiBoundNode: its BSMultiBound (room and portal culling) and culling mode. */
+  readonly multiBound?: { readonly ref: Ref; readonly cullingMode: number };
+  /** BSOrderedNode: the alpha sort bound (centre, radius) and whether it is static. */
+  readonly ordered?: {
+    readonly alphaSortBound: readonly [number, number, number, number];
+    readonly staticBound: boolean;
+  };
+  /** BSRangeNode and its kinds (BSDamageStage, BSBlastNode, BSDebrisNode): min, max, current. */
+  readonly range?: { readonly min: number; readonly max: number; readonly current: number };
+  /** NiLODNode: its LOD level data block. */
+  readonly lodLevelData?: Ref;
+  /** BSMasterParticleSystem: the emitter cap and its particle systems. */
+  readonly masterParticles?: {
+    readonly maxEmitterObjects: number;
+    readonly systems: readonly Ref[];
+  };
 }
 
 /** Unpacked BSVertexDesc. Offsets and stride in bytes. */
@@ -74,6 +94,8 @@ export interface BSTriShapeBlock extends NiAvObject {
   readonly triangles: Uint16Array;
   /** BSDynamicTriShape: positions (xyzw) that override the vertex data (faces). */
   readonly dynamicPositions?: Float32Array;
+  /** BSMeshLODTriShape: the triangle counts of LOD levels 0, 1 and 2 (the list's prefixes). */
+  readonly lodSizes?: readonly [number, number, number];
   /** BSSubIndexTriShape: segments of the triangle list (index = first triangle index). */
   readonly segments?: readonly { flags: number; index: number; triangleCount: number }[];
 }
@@ -85,6 +107,8 @@ export interface NiTriShapeBlock extends NiAvObject {
   readonly skin: Ref;
   readonly shaderProperty: Ref;
   readonly alphaProperty: Ref;
+  /** BSLODTriShape: the triangle counts of LOD levels 0, 1 and 2. */
+  readonly lodSizes?: readonly [number, number, number];
 }
 
 export interface NiTriShapeDataBlock {
@@ -548,6 +572,8 @@ export interface ControllerSequenceBlock {
   readonly stopTime: number;
   readonly manager: Ref;
   readonly accumRootName: string;
+  /** BSAnimNotes blocks (IK notes; no vanilla sequence has any). */
+  readonly animNotes: readonly Ref[];
 }
 
 export interface ObjectPaletteBlock {
@@ -695,6 +721,11 @@ export interface CollisionObjectBlock {
   /** bhkCOFlags (0x1 active, 0x80 sync on update, ...). */
   readonly flags: number;
   readonly body: Ref;
+  /**
+   * bhkBlendCollisionObject (a ragdoll bone's): the gains that blend the body toward the
+   * animated pose (hierarchy and velocity).
+   */
+  readonly blend?: { readonly heirGain: number; readonly velocityGain: number };
 }
 
 /** bhkRigidBody / bhkRigidBodyT with its bhkRigidBodyCInfo2010. Havok units (≈ metres). */
