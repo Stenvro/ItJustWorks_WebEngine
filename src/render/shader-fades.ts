@@ -1,6 +1,7 @@
 // The lighting shader's own distance fades, by the original's rule. Every geometry keeps a fade
 // value: its distance from the camera divided by its fade kind's multiplier (the settings Actor,
-// Item and Object Fade, object-fade.ts), over 7200. As that value grows, specular fades out from
+// Item and Object Fade, object-fade.ts; a multiplier of 0 or less takes a fifth of the distance),
+// over 7200. As that value grows, specular fades out from
 // fSpecularLODFadeStart to fSpecularLODFadeEnd, the environment map from fEnvmapLODFadeStart to
 // ...End, decals (Decal and Dynamic_Decal shapes) from fDecalLODFadeStart to ...End, and
 // refraction from fRefractionLODFadeStart to ...End (all INI [LightingShader]; Skyrim_Default.ini
@@ -42,11 +43,16 @@ export function fadeKindIndex(kind: FadeKind | undefined): number {
   return kind === 'actor' ? 1 : kind === 'item' ? 2 : 0;
 }
 
-/** A geometry's fade value at a camera distance (0 when its kind never fades). */
+/** The scale from camera distance to fade value at a multiplier (0 or less: a fifth). */
+function fadeScale(multiplier: number): number {
+  return (multiplier > 0 ? 1 / multiplier : 0.2) / LOD_FADE_DISTANCE;
+}
+
+/** A geometry's fade value at a camera distance. */
 export function lodFadeValue(distance: number, kind: FadeKind, settings: FadeSettings): number {
   const multiplier =
     kind === 'actor' ? settings.actors : kind === 'item' ? settings.items : settings.objects;
-  return multiplier > 0 ? distance / (multiplier * LOD_FADE_DISTANCE) : 0;
+  return distance * fadeScale(multiplier);
 }
 
 /** How much of a feature is left at a fade value: 1 up to `start`, 0 from `end`. */
@@ -58,16 +64,14 @@ export function featureFade(value: number, start: number, end: number): number {
 
 /**
  * The frame's twelve floats (frame.wgsl lodFadeScale, specularFades, decalFades): the scale
- * from distance to fade value per kind (object, actor, item; 0 where the kind never fades),
- * then the four features' start and end.
+ * from distance to fade value per kind (object, actor, item), then the four features' start
+ * and end.
  */
 export function shaderFadeFrame(objectFade: FadeSettings, fades: ShaderFadeSettings): number[] {
-  const scale = (multiplier: number): number =>
-    multiplier > 0 ? 1 / (multiplier * LOD_FADE_DISTANCE) : 0;
   return [
-    scale(objectFade.objects),
-    scale(objectFade.actors),
-    scale(objectFade.items),
+    fadeScale(objectFade.objects),
+    fadeScale(objectFade.actors),
+    fadeScale(objectFade.items),
     0,
     fades.specularStart,
     fades.specularEnd,

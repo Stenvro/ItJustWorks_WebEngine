@@ -48,7 +48,16 @@ import {
   selectObjectLights,
 } from './light-lists.ts';
 import { identity, maxScale, multiply, transformPoint, type Mat4, type Vec3 } from './math.ts';
-import { fadeOut, fadeRange, type FadeKind, type FadeSettings } from './object-fade.ts';
+import {
+  DEFAULT_FADE_TIMING,
+  fadeRange,
+  fadeValue,
+  stepFade,
+  type FadeKind,
+  type FadeSettings,
+  type FadeState,
+  type FadeTiming,
+} from './object-fade.ts';
 import {
   DEFAULT_SHADER_FADES,
   fadeKindIndex,
@@ -833,6 +842,11 @@ interface FadeGroup {
   readonly draws: Draw[];
   radius: number;
   level: number;
+  /** Its time-based fade (object-fade.ts stepFade). */
+  readonly state: FadeState;
+  /** The animation time it was last updated at, and last in view at (-1: never). */
+  updated: number;
+  seen: number;
   /** The instances' fade it stands for (its veil, whether distance counts). */
   readonly of?: InstanceFade;
 }
@@ -1578,6 +1592,10 @@ export class SceneRenderer {
   defaultWater: GpuWaterType | undefined;
   /** The settings Actor, Item and Object Fade (INI [LOD] fLODFadeOutMult*). */
   objectFade: FadeSettings = DEFAULT_FADE;
+  /** How references fade in and out over time (INI [LOD] fFadeIn..., fFadeOut...). */
+  fadeTiming: FadeTiming = DEFAULT_FADE_TIMING;
+  /** The animation time of the frame being drawn (when fading draws were last in view). */
+  #fadeTime = 0;
   /** Where the lighting shader's features fade out with distance (shader-fades.ts). */
   shaderFades: ShaderFadeSettings = DEFAULT_SHADER_FADES;
   /**
@@ -2301,7 +2319,16 @@ export class SceneRenderer {
       if (!fade && instance.fade && !instance.firstPerson) {
         fade = fadeGroups.get(instance.fade);
         if (!fade) {
-          fade = { kind: instance.fade.kind, draws: [], radius: 0, level: 0, of: instance.fade };
+          fade = {
+            kind: instance.fade.kind,
+            draws: [],
+            radius: 0,
+            level: 0,
+            state: { alpha: 0, shown: false },
+            updated: -1,
+            seen: -1,
+            of: instance.fade,
+          };
           fadeGroups.set(instance.fade, fade);
         }
       }
@@ -3144,8 +3171,9 @@ export class SceneRenderer {
     };
     const world = new Float32Array(16);
     const sceneList = [...scenes];
+    this.#fadeTime = seconds;
     for (const scene of sceneList) {
-      this.#updateFades(scene, camera);
+      this.#updateFades(scene, camera, seconds);
       this.#updateRooms(scene);
     }
     // Each instance's sequence is evaluated once per frame.
@@ -3997,10 +4025,11 @@ export class SceneRenderer {
   }
 
   /**
-   * How far each fading instance of a scene has faded from the camera (object-fade.ts): the
-   * level goes into its draws' flags.w top byte, uploaded only when it changes.
+   * How far each fading instance of a scene has faded (object-fade.ts): its fade value from the
+   * camera's distance moves its time-based fade on, and the level goes into its draws' flags.w
+   * top byte, uploaded only when it changes.
    */
-  #updateFades(scene: GpuScene, camera: Vec3): void {
+  #updateFades(scene: GpuScene, camera: Vec3, seconds: number): void {
     if (scene.fades.length === 0) return;
     const uints = new Uint32Array(scene.uniformData);
     const runs = new UniformRuns(this.#device, scene.uniforms, scene.uniformData);
@@ -4013,7 +4042,15 @@ export class SceneRenderer {
       const dy = center[1] - camera[1];
       const dz = center[2] - camera[2];
       const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      const away = group.of?.byDistance === false ? 0 : fadeOut(distance, start, end);
+      const value = group.of?.byDistance === false ? 1 : fadeValue(distance, start, end);
+      // Several views a frame (the menu overlay) update it once.
+      if (seconds !== group.updated) {
+        // In view the frame before: it fades; else it takes its end state at once.
+        const seen = group.updated >= 0 && group.seen >= group.updated;
+        stepFade(group.state, value, Math.max(0, seconds - group.updated), seen, this.fadeTiming);
+        group.updated = seconds;
+      }
+      const away = 1 - group.state.alpha;
       const level = Math.round(Math.max(away, Math.min(1, group.of?.veil ?? 0)) * 255);
       if (level === group.level) continue;
       group.level = level;
@@ -4047,10 +4084,14 @@ export class SceneRenderer {
 
   #visible(draw: Draw): boolean {
     if (draw.visibility?.hidden) return false;
-    // Faded out entirely with distance (object-fade.ts).
-    if (draw.fade && draw.fade.level >= 255) return false;
     if (draw.sky || draw.firstPerson) return true;
     if (!sphereVisible(this.#frame.planes, draw.center, draw.radius)) return false;
+    if (draw.fade) {
+      // In view: its fade goes on over time (object-fade.ts stepFade).
+      draw.fade.seen = this.#fadeTime;
+      // Faded out entirely (object-fade.ts).
+      if (draw.fade.level >= 255) return false;
+    }
     return this.#frame.rooms?.visible(draw.center, draw.radius) ?? true;
   }
 

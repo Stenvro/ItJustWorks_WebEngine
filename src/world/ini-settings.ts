@@ -277,6 +277,11 @@ export const INI_DEFAULTS = {
   LOD: {
     fActorLODMax: 15,
     fActorLODMin: 5,
+    // How references fade in and out over time (src/render/object-fade.ts stepFade).
+    fFadeInThreshold: 0.7,
+    fFadeInTime: 1.2,
+    fFadeOutThreshold: 0.3,
+    fFadeOutTime: 2,
     fItemLODMax: 10,
     fItemLODMin: 1.5,
     fLODFadeOutMultActors: 6,

@@ -935,7 +935,13 @@ async function main(): Promise<void> {
         }
         // The lighting shader's own distance fades (src/render/shader-fades.ts).
         const ini = session.ini;
-        const shading = (key: Parameters<typeof ini.number<'LightingShader'>>[1]): number =>
+        renderer.scene.fadeTiming = {
+          inThreshold: ini.number('LOD', 'fFadeInThreshold'),
+          outThreshold: ini.number('LOD', 'fFadeOutThreshold'),
+          inTime: ini.number('LOD', 'fFadeInTime'),
+          outTime: ini.number('LOD', 'fFadeOutTime'),
+        };
+        const shading =(key: Parameters<typeof ini.number<'LightingShader'>>[1]): number =>
           ini.number('LightingShader', key);
         renderer.scene.shaderFades = {
           specularStart: shading('fSpecularLODFadeStart'),
