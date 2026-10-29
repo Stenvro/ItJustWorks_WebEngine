@@ -663,7 +663,9 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
   n('objectreference.tethertohorse', (call) => {
     const cart = self(call);
     const horse = ref(call.args[0]);
-    if (cart !== undefined && horse !== undefined) world.tether?.(cart, horse);
+    if (cart === undefined || horse === undefined) return null;
+    state.reference(cart).horse = horse;
+    world.tether?.(cart, horse);
     return null;
   });
 

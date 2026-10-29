@@ -221,17 +221,39 @@ each kind. Ours:
   belongs to its 3D, which the save does not hold; neither the actor's nor its process's save
   writes it).
 
-A procedure's step after a load begins again (no progress inside a step is saved). A Travel to a
+A procedure's step after a load begins again (no progress inside a step is saved), except a
+patrol's: the package keeps the point its patrol goes to (`SavedPackage.goal`, as the original's
+patrol package data holds it), and the loaded patrol goes on to that point (before, the
+opening's horses turned back to their patrols' first points). A Travel to a
 reference that moves aims where the reference is as it begins; to end where the original's
 continuing travel would, a travel to a moving destination ends within reach of where the
 destination is now, not of where its path led: an actor at its path's end whose target moved on
 goes on after it (src/shell/actor-movers.ts).
 
+## Vehicles
+
+As the original keeps them with the references (src/shell/actor-vehicles.ts):
+
+- A cart's tether: TetherToHorse puts the horse in the cart's reference state (`horse`). As
+  a physics world starts (a loaded game, a view opened again) the vehicles take every kept tether
+  up again, the horse not moved (it stands in its shafts), a cart a script keyframed still so.
+- A pulled cart's place: its root goes to its reference state (position and rotation) as the
+  game is saved and as the view closes, so it is placed there again, still tethered. A persistent
+  object stands with the cell it is in now, not the one it was placed in
+  (`Worldspace.persistentReferencesNow`): the player's cart, saved on the road, loads although
+  the cell where the ride began does not.
+- Its riders: the game state keeps each actor's vehicle (SetVehicle); an actor placed on the
+  stage, and the player once their play starts, ride it again. A rider's graph (its riding idle
+  seats it) is kept with it (`SavedActor.graph`), the player's graphs in `WorldSave.playerGraphs`
+  (the body's and the first-person one): each goes on in its saved state as it loads.
+  TODO(M13): a rider part-way out of its vehicle (its exit idle begun) is saved seated.
+- The horse's package goes on with its patrol's point (above): the ride goes on after the load.
+
 ## Not saved yet
 
 - The player's sneaking and drawn weapon (the actor state's, as the NPCs' above): TODO(M12).
-- The procedures' own progress inside a step (a patrol's next marker, a sandbox's activity: they choose again), actors' graphs
-  beyond their furniture, the sky's transition; the actors of cells not loaded when saving
+- The procedures' own progress inside a step (a sandbox's activity: it chooses again), actors'
+  graphs beyond their furniture and their vehicles, the sky's transition; the actors of cells not loaded when saving
   (their packages place them, as before).
 
 - The main menu's Load list and the save list's character filter (Continue loads the newest
