@@ -5,9 +5,11 @@ import {
   HAS_DISTANT_LOD,
   IS_FULL_LOD,
   fadeKind,
-  fadeOut,
   fadeRange,
+  fadeValue,
   neverFades,
+  stepFade,
+  type FadeState,
 } from './object-fade.ts';
 
 const SETTINGS = { actors: 9, items: 6, objects: 9 };
@@ -43,13 +45,39 @@ describe('object fade', () => {
     expect(fadeRange('object', 100, { ...SETTINGS, objects: 0 }).end).toBe(Infinity);
   });
 
-  it('dithers away over the last part of the distance instead of popping', () => {
+  it('gives a fade value of 1 at the start of the range and 0 at its end', () => {
     const { start, end } = fadeRange('object', 200, SETTINGS);
     expect(start).toBeCloseTo(end * FADE_START_PERCENT);
-    expect(fadeOut(start - 1, start, end)).toBe(0);
-    expect(fadeOut((start + end) / 2, start, end)).toBeCloseTo(0.5);
-    expect(fadeOut(end, start, end)).toBe(1);
-    expect(fadeOut(end * 2, start, end)).toBe(1);
+    expect(fadeValue(start, start, end)).toBeCloseTo(1);
+    expect(fadeValue((start + end) / 2, start, end)).toBeCloseTo(0.5);
+    expect(fadeValue(end * 2, start, end)).toBeLessThan(0);
+    expect(fadeValue(1e9, Infinity, Infinity)).toBe(1);
+  });
+
+  it('fades in over 1.2 s past 0.7 and out over 2 s below 0.3, with hysteresis', () => {
+    const state: FadeState = { alpha: 0, shown: false };
+    // Not in view the frame before: it is shown at once.
+    stepFade(state, 0.8, 0.016, false);
+    expect(state).toEqual({ alpha: 1, shown: true });
+    // Between the thresholds a shown reference stays.
+    stepFade(state, 0.5, 0.5, true);
+    expect(state.alpha).toBe(1);
+    // Below 0.3 it fades out by dt / 2 a frame, at most 0.1 a frame.
+    stepFade(state, 0.2, 0.1, true);
+    expect(state.alpha).toBeCloseTo(0.95);
+    stepFade(state, 0.2, 1, true);
+    expect(state.alpha).toBeCloseTo(0.85);
+    // Back above 0.3 while fading: it fades in again by dt / 1.2.
+    stepFade(state, 0.5, 0.06, true);
+    expect(state.alpha).toBeCloseTo(0.9);
+    expect(state.shown).toBe(true);
+    // Far away and out of view: hidden at once; it waits for 0.7 to come back.
+    stepFade(state, -1, 0.016, false);
+    expect(state).toEqual({ alpha: 0, shown: false });
+    stepFade(state, 0.5, 0.1, true);
+    expect(state.alpha).toBe(0);
+    stepFade(state, 0.75, 0.06, true);
+    expect(state.alpha).toBeCloseTo(0.05);
   });
 
   it('never fades references with distant LOD or placed as full LOD', () => {

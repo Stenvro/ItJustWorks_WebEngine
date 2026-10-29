@@ -14,7 +14,8 @@ describe('shader distance fades', () => {
     expect(lodFadeValue(3600, 'object', FADE)).toBeCloseTo(0.1);
     expect(lodFadeValue(4320, 'actor', FADE)).toBeCloseTo(0.1);
     expect(lodFadeValue(2160, 'item', FADE)).toBeCloseTo(0.1);
-    expect(lodFadeValue(1e6, 'object', { ...FADE, objects: 0 })).toBe(0);
+    // A multiplier of 0 or less: a fifth of the distance.
+    expect(lodFadeValue(3600, 'object', { ...FADE, objects: 0 })).toBeCloseTo(0.1);
   });
 
   it('fades specular out between 0.09 and 0.1 (objects: 3240 to 3600 units)', () => {
@@ -29,7 +30,7 @@ describe('shader distance fades', () => {
     expect(frame).toHaveLength(12);
     expect(frame[0]).toBeCloseTo(1 / 36000);
     expect(frame[1]).toBeCloseTo(1 / 43200);
-    expect(frame[2]).toBe(0);
+    expect(frame[2]).toBeCloseTo(1 / 36000);
     expect(frame.slice(8)).toEqual([0.05, 0.06, 0.025, 0.03]);
     expect([fadeKindIndex('object'), fadeKindIndex('actor'), fadeKindIndex('item')]).toEqual([
       0, 1, 2,
