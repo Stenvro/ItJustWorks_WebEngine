@@ -226,12 +226,16 @@ export class ActorPose {
   readonly worlds: Float32Array;
   /** Bumped by every update (palettes are rewritten when it changes). */
   version = 0;
-  /**
-   * The clock (seconds) the lag bones trail by. TODO(M13): the original trails in world space
-   * (an actor's own walk and turns swing its tail); ours trails within the pose (model space).
-   */
+  /** The clock (seconds) the lag bones trail by. */
   clock: () => number = () => Date.now() / 1000;
+  /**
+   * Where the pose stands in the world (model space to world, read at each update): lag bones
+   * trail in world space as in the original, so the actor's own walk and turns swing its tail.
+   * Undefined: they trail within the pose.
+   */
+  space: Float32Array | undefined;
   readonly #local = new Float32Array(16);
+  readonly #parentSpace = new Float32Array(16);
   readonly #lag: LagBoneState | undefined;
   #lastTime: number | undefined;
 
@@ -268,8 +272,13 @@ export class ActorPose {
       }
       const parent = rig.parents[node] ?? -1;
       if (lag?.bones.has(node) && parent >= 0) {
-        // A lag bone trails its parent (src/render/lag-bone.ts).
-        source = lag.solve(node, this.worlds, parent * 16, source, sourceAt, dt, local);
+        // A lag bone trails its parent (src/render/lag-bone.ts), in world space when the pose
+        // is placed: its local transform is the same under the parent either way.
+        const space = this.space;
+        if (space) multiplyAt(space, 0, this.worlds, parent * 16, this.#parentSpace, 0);
+        source = space
+          ? lag.solve(node, this.#parentSpace, 0, source, sourceAt, dt, local)
+          : lag.solve(node, this.worlds, parent * 16, source, sourceAt, dt, local);
         sourceAt = 0;
       }
       if (parent < 0) {

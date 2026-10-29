@@ -933,6 +933,26 @@ async function main(): Promise<void> {
         if (fade.actors !== actors || fade.items !== items || fade.objects !== objects) {
           renderer.scene.objectFade = { actors, items, objects };
         }
+        // The lighting shader's own distance fades (src/render/shader-fades.ts).
+        const ini = session.ini;
+        renderer.scene.fadeTiming = {
+          inThreshold: ini.number('LOD', 'fFadeInThreshold'),
+          outThreshold: ini.number('LOD', 'fFadeOutThreshold'),
+          inTime: ini.number('LOD', 'fFadeInTime'),
+          outTime: ini.number('LOD', 'fFadeOutTime'),
+        };
+        const shading = (key: Parameters<typeof ini.number<'LightingShader'>>[1]): number =>
+          ini.number('LightingShader', key);
+        renderer.scene.shaderFades = {
+          specularStart: shading('fSpecularLODFadeStart'),
+          specularEnd: shading('fSpecularLODFadeEnd'),
+          envmapStart: shading('fEnvmapLODFadeStart'),
+          envmapEnd: shading('fEnvmapLODFadeEnd'),
+          decalStart: shading('fDecalLODFadeStart'),
+          decalEnd: shading('fDecalLODFadeEnd'),
+          refractionStart: shading('fRefractionLODFadeStart'),
+          refractionEnd: shading('fRefractionLODFadeEnd'),
+        };
         renderer.post.gamma = session.ini.number('Display', 'fGamma');
         // The launcher's anti-aliasing, volumetric lighting and lens flare.
         renderer.antiAliasing = session.ini.bool('Display', 'bUseTAA');

@@ -1095,6 +1095,8 @@ export class ActorPlacer {
       ...(creatureFace && { face: creatureFace }),
       time: undefined,
     };
+    // Its lag bones trail in world space (src/render/lag-bone.ts).
+    pose.space = instances[0]?.world;
     return placed;
   }
 }
