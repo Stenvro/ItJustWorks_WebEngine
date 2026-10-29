@@ -198,18 +198,18 @@ The item-by-item checklist (shader types, flags, texture slots, blocks, records,
 ### File formats
 
 The checklist is docs/completeness/formats.md (`node tools/format-census.ts` and the per-format
-sweeps): 155 items, 150 done (2026-10-29, round 2).
+sweeps): 156 items, 152 done (2026-10-29, round 3).
 
-| System                    | Status   | Main gaps                                                                                                                               |
-| ------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Archives, load order, INI | complete | (every archive and file read; the marketplace's archive mounted: 2026-10-29)                                                            |
-| Plugin structure, strings | complete | (every localized field and every VMAD swept: 2026-10-29)                                                                                |
-| Record subrecords         | complete | (every subrecord of the 120 record types decoded by its layout: 2026-10-29); 642 pairs parsed but not used by engine code (other areas) |
-| NIF                       | complete | (every block type parsed; the fields read past reviewed, the usable ones kept: 2026-10-29)                                              |
-| DDS, PEX, audio, TRI, LOD | complete |                                                                                                                                         |
-| HKX                       | partial  | the skeletons' ragdoll physics (hkp classes) not read; member coverage of the read classes unchecked (uncompressed clips: done)         |
-| ESS                       | partial  | 13 of 30 global data types; change forms partly (actor data, base objects)                                                              |
-| SEQ                       | partial  | read (2026-10-29); its use when a plugin is new to a save (M12)                                                                         |
+| System                    | Status   | Main gaps                                                                                                                                                                                                       |
+| ------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Archives, load order, INI | complete | (every archive and file read; the marketplace's archive mounted: 2026-10-29)                                                                                                                                    |
+| Plugin structure, strings | complete | (every localized field and every VMAD swept: 2026-10-29)                                                                                                                                                        |
+| Record subrecords         | complete | (every subrecord of the 120 record types decoded by its layout: 2026-10-29); 642 pairs parsed but not used by engine code (other areas)                                                                         |
+| NIF                       | complete | (every block type parsed; the fields read past reviewed, the usable ones kept: 2026-10-29)                                                                                                                      |
+| DDS, PEX, audio, TRI, LOD | complete |                                                                                                                                                                                                                 |
+| HKX                       | partial  | 60 serialized members set in the data that the readers do not read yet (`format-census hkx-members`) (the skeletons' ragdoll physics, every class laid out as the original's class reflection says: 2026-10-29) |
+| ESS                       | partial  | every global data type has a reader (17 built from UESP's layouts, waiting on a real save: M12); change forms partly (actor data, base objects)                                                                 |
+| SEQ                       | partial  | read (2026-10-29); its use when a plugin is new to a save (M12)                                                                                                                                                 |
 
 ## Order of work
 

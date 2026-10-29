@@ -1798,9 +1798,10 @@ function readFootIkDriverInfo(file: Packfile, data: HkxObject): FootIkSetup | un
     forwardAlignFraction: file.f32(at + 52),
     sidewaysAlignFraction: file.f32(at + 56),
     sidewaysSampleWidth: file.f32(at + 60),
-    useTrackData: file.bool(at + 64),
-    lockFeetWhenPlanted: file.bool(at + 65),
-    useCharacterUpVector: file.bool(at + 66),
+    // The driver info has no useTrackData (the modifier has): its flags start at 64.
+    useTrackData: false,
+    lockFeetWhenPlanted: file.bool(at + 64),
+    useCharacterUpVector: file.bool(at + 65),
   };
 }
 
