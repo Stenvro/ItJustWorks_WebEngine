@@ -75,7 +75,7 @@ These run through every area and explain most of what breaks in play.
 | Script events               | partial  | 52 of 68 not yet checked in the simulation (OnAnimationEventUnregistered, OnMenuOpen/Close: done)                                                                                                                                    |
 | Event sources               | partial  | 7 sources without a kind; the stats' sources besides kills (every hub kind has a producer: 2026-10-27; resets/traps done)                                                                                                            |
 | Story manager               | partial  | most raised types not yet checked in the simulation; a start asked while an event is processed does not queue (TODO(M13))                                                                                                            |
-| Save and load               | partial  | own format (docs/formats/save.md); whether a native in flight is called again on load; .ess import (M12) (threads in a native's promise, translations, hazards, projectiles: done)                                                   |
+| Save and load               | partial  | own format (docs/formats/save.md); whether a native in flight is called again on load; .ess import (M12) (threads in a native's promise, translations, hazards, projectiles, actor graphs: done)                                     |
 | Stats, skills, actor values | complete | tracked-stats event                                                                                                                                                                                                                  |
 | Audio                       | partial  | (the skills menu's SMSC mute, pause categories by DOBJ, sounds held in menus and on the loading screen, Slow Time by DOBJ TSSC: done)                                                                                                |
 | Load order, settings        | partial  | a master loading after its dependent is only reported; the launcher's detail presets (plugin screen, Plugins.txt import, missing masters, plugin archives, layered INI files: done)                                                  |
@@ -148,7 +148,7 @@ These run through every area and explain most of what breaks in play.
 | Dismemberment        | partial | the engine's re-dressing rule (which limb's record, whether it takes off) not read (re-dressing a reloaded corpse: done)                                                                        |
 | Actor build          | partial | first-person render pass, bone LOD                                                                                                                                                              |
 | Faces                | partial | expression change rate                                                                                                                                                                          |
-| Graph state in saves | partial | objects' graphs (sequences, skeletal machines) saved; actors' rebuilt from furniture and packages; behavior references                                                                          |
+| Graph state in saves | partial | transitions' blends, sync phases, modifiers' states; objects' machines in behavior references (every actor's and the player's graph, riders' exits: done)                                       |
 
 ### Physics
 

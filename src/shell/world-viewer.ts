@@ -820,6 +820,7 @@ export class WorldViewer {
     facesForLine: (speaker, target) => this.#stage?.talk.faces(speaker, target),
     saveActors: () => this.#stage?.saveActors() ?? [],
     savePlayerGraphs: () => this.#stage?.savePlayerGraphs(),
+    savePlayer: () => this.#stage?.savePlayer(),
     saveProjectiles: () => this.#stage?.projectiles.save() ?? [],
     impactAt: (impactDataSet, from, direction, length) =>
       this.#stage?.combat.impactAt(impactDataSet, from, direction, length) ?? false,
