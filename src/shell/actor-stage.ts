@@ -1726,12 +1726,26 @@ export class ActorStage {
         if (actor) candidates.push({ actor: this.#dead(actor, runtime), here: true });
       }
     }
+    // Actors from another cell (moved here, or a save's standing here): this cell's data does
+    // not hold their enable state, their own reference's does (an initially disabled flier the
+    // actors away had moved over High Hrothgar was staged there enabled and fought the player).
+    // The scripts' enables and disables still win (the cell's state reads them first).
+    const foreign = new Map<number, boolean>();
+    if (runtime) {
+      for (const { actor } of candidates) {
+        const reference = actor.reference;
+        if (own.has(reference) || runtime.state.created.has(reference)) continue;
+        foreign.set(reference, await runtime.isEnabled(reference));
+      }
+    }
     if (this.#cells.get(key) !== cell) return [];
-    const placed = await this.#place(candidates, key, cell, (reference) =>
-      runtime?.state.created.has(reference) === true
-        ? createdEnabled(runtime, reference)
-        : cell.enabled(reference),
-    );
+    const placed = await this.#place(candidates, key, cell, (reference) => {
+      if (runtime?.state.created.has(reference) === true) return createdEnabled(runtime, reference);
+      const own = foreign.get(reference);
+      const scripted = runtime?.state.references.get(reference);
+      const set = scripted?.enabled !== undefined || scripted?.deleted === true;
+      return own !== undefined && !set ? own : cell.enabled(reference);
+    });
     return ragdollsOf(
       placed.map((staged) => staged.placed),
       (path) => this.#options.session.collision(path),
