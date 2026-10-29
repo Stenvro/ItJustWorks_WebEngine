@@ -136,4 +136,24 @@ describe('the menus’ save list', () => {
     expect(shown).toEqual([0, 1]);
     expect(menu.calls.filter((call) => call[0] === 'ScreenshotReady')).toHaveLength(2);
   });
+
+  it('asks for the import’s file when its entry is pressed, a save is confirmed', async () => {
+    const picked: number[] = [];
+    const list = new SaveList<FakeMenu>({
+      source: () => ({ list: () => Promise.resolve(saves), delete: () => Promise.resolve() }),
+      playTime: () => '',
+      importText: () => 'Import',
+      pickImport: (_menu, index) => picked.push(index),
+      load: () => undefined,
+      log: () => undefined,
+    });
+    const handlers = list.handlers();
+    const menu = new FakeMenu();
+    handlers.LOAD?.(menu, ['list']);
+    await settle();
+    handlers.IsOKtoLoad?.(menu, [0]);
+    handlers.IsOKtoLoad?.(menu, [3]);
+    expect(menu.calls.filter((call) => call[0] === 'ConfirmOKToLoad')).toHaveLength(1);
+    expect(picked).toEqual([3]);
+  });
 });

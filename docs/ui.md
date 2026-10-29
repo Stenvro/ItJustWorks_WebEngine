@@ -123,6 +123,15 @@ CREATIONS, CREDITS, QUIT. Its music is `music\special\mus_maintheme.xwm` (the fi
 replace), played once from the menu's start in the music category; it fades out with the menu as
 a new game starts. The menu plays its own sounds (UIMenuOK, UIMenuFocus, UIStartNewGame).
 
+NEW and CONTINUE ask first (observed in the original). `NEW` is answered
+`ConfirmNewGame(sConfirmNew)` ("Start a new game?"), or sConfirmNewMods while plugins of the
+player's own are loaded (plugins.txt's; the game's masters and Creations are not mods);
+`CONTINUE` is answered `ConfirmContinue(sConfirmContinue)` when there is a save and no load is
+under way. The movie shows the question, and on yes fades out and calls `StartNewGame` or
+`ContinueLastSavedGame`. `OnDisabledLoadPress` (LOAD without saves) does nothing, as in the
+original; `HELP` (not shown on PC) and `QuitToMainMenu` (the consoles' quit panel) are not
+answered by the original's main menu either.
+
 ## Stage.visibleRect and Stage.safeRect
 
 The menus lay themselves out with Scaleform's Stage extensions (their `Shared.GlobalFunc`
@@ -801,9 +810,21 @@ size)` list the character playing. The list is filled at once (`ForceStopSaveLis
 - `IsOKtoLoad` is answered `ConfirmOKToLoad`; `LoadGame(index)` loads the save at that index of
   the list (the main menu fades out first, `FadeOutAndCall`). After a delete the main menu asks
   `DoDeleteSaveUISanityCheck` and hears `OnDeleteSaveUISanityCheck(has recent save, can load)`.
-- Load's last entry in the journal imports an original save (.ess); the main menu has none (its
-  fade out would wait on the file picker).
-- TODO(M12): `PrepSaveGameScreenshot` / `ScreenshotReady`: saves keep no screenshot yet.
+- Load's last entry imports an original save (.ess). In the main menu the file picker opens as
+  the entry is pressed (`IsOKtoLoad`, the press the page needs to open a picker; the movie's
+  "Load this game?" is skipped); with a file picked the engine has the movie fade out
+  (`FadeOutAndCall("LoadGame", [index])`) and the import loads; without one the menu stays.
+- Screenshots (`src/shell/save-screenshot.ts`): a save keeps the frame drawn as it is made
+  (`Renderer.captureFrame`: the canvas holds the world alone, the menus play over it) at
+  [Display] iSaveGameScreenShotWidth × iSaveGameScreenShotHeight (256 × 192) as a PNG, unless
+  [SaveGame] bOutputSaveGameScreenshot is 0; an imported save keeps its own (the .ess header's
+  pixels). A moment after a save is highlighted the movie asks
+  `PrepSaveGameScreenshot(index, entry)` (Save's index counted past its new save: −1 is the
+  game playing now, the frame drawn then); the engine gives the picture as
+  `img://BGSSaveLoadHeader_Screenshot` (sSaveGameScreenshotName) and calls `ScreenshotReady`,
+  whose `ShowScreenshot` loads it, fits it to the frame and fills the save's player, level and
+  time: it is answered for every entry, with an empty picture when there is none. The loading
+  menu (`loadingmenu.swf`) shows no screenshot: it has its loading screen's model.
   Show on Map: an objective with a target on the map gets the `questTargetID` of its first
   target (its reference); the movie closes the journal and calls `ShowTargetOnMap(id)`, and the
   map opens over that target (`src/shell/game-menus.ts`: the map of the target's world, without
