@@ -160,6 +160,12 @@ const MAX_INSTRUCTIONS = 2_000_000;
  * millisecond. Counted in turns, not on a clock: the same in every run, and no timer API.
  */
 const NATIVE_PATIENCE_TURNS = 1000;
+
+/** Whether a script or a parent has a function by the name in any of its states. */
+function handlesInAnyState(script: LoadedScript, name: string): boolean {
+  const lower = name.toLowerCase();
+  return chainOf(script).some((level) => [...level.states.values()].some((s) => s.has(lower)));
+}
 /** How often a thread looks at the frame's budget (instructions). */
 const BUDGET_CHECK = 256;
 
@@ -1072,6 +1078,10 @@ export class PapyrusVm {
     args: readonly Value[],
     initializing: boolean,
   ): Promise<Value> {
+    // An event no state of the script handles runs nothing: no thread, no turn in the run
+    // queue (a queued thread would take the token from one inside a long native, so an event
+    // nobody hears would change which thread runs next).
+    if (!initializing && !handlesInAnyState(instance.script, event)) return Promise.resolve(null);
     return this.#spawn(
       initializing,
       async (thread) => {

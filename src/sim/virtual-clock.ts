@@ -1,9 +1,10 @@
 // The headless simulation's clock and dice. Parts of the engine read the page's clock
 // (performance.now: an object graph's sequences, the movers' and doors' timers, the play's
-// collision budget, the Papyrus frame budget), wait on its timers (setTimeout: furniture's and
-// doors' waits, a voice line's lead-in) and roll Math.random (idle choices, package rolls). While
-// a simulation runs, all three are replaced: the clock moves only as the simulation steps, timers
-// fire when the simulation's clock reaches them (in the order they are due), and the dice are a
+// collision budget, the Papyrus frame budget; Date.now: the fighters' waits for a weapon put
+// away or an attack begun, AddItem's leveled rolls), wait on its timers (setTimeout:
+// furniture's and doors' waits, a voice line's lead-in) and roll Math.random (idle choices,
+// package rolls). While a simulation runs, all of them are replaced: the clocks move only as the
+// simulation steps, timers fire when the simulation's clock reaches them (in the order they are due), and the dice are a
 // seeded generator. So a step's work is the same on every run and machine, a second waited is a
 // second of the simulation however fast it runs, and the Papyrus frame budget never runs out
 // within a step (every thread runs until it waits).
@@ -19,6 +20,9 @@ export function seededRandom(seed: number): () => number {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+
+/** The date the simulation's Date.now starts from (ms since 1970; 2011-11-11). */
+const SIM_EPOCH = Date.UTC(2011, 10, 11);
 
 interface Timer {
   readonly id: number;
@@ -105,10 +109,18 @@ export class VirtualClock {
     );
     const performanceNow = Object.getOwnPropertyDescriptor(performance, 'now');
     const mathRandom = Object.getOwnPropertyDescriptor(Math, 'random');
+    const dateNow = Object.getOwnPropertyDescriptor(Date, 'now');
     Object.defineProperty(performance, 'now', {
       configurable: true,
       writable: true,
       value: () => this.#ms,
+    });
+    // The date's clock goes on from a fixed date as the simulation steps (what is seeded from
+    // it, as AddItem's leveled lists, rolls the same on every run).
+    Object.defineProperty(Date, 'now', {
+      configurable: true,
+      writable: true,
+      value: () => SIM_EPOCH + this.#ms,
     });
     Object.defineProperty(Math, 'random', {
       configurable: true,
@@ -128,6 +140,7 @@ export class VirtualClock {
       if (performanceNow) Object.defineProperty(performance, 'now', performanceNow);
       else Reflect.deleteProperty(performance, 'now');
       if (mathRandom) Object.defineProperty(Math, 'random', mathRandom);
+      if (dateNow) Object.defineProperty(Date, 'now', dateNow);
       for (const [name, value] of saved) scope[name] = value;
       this.#timers.clear();
     };
