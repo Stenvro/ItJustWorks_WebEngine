@@ -87,7 +87,9 @@ import { cellWater } from '../world/water.ts';
 import { FlowMaps, waterPlugin } from '../world/flow-map.ts';
 import { surfaceOver, waterVolumes, type WaterVolume } from '../world/water-volumes.ts';
 import { weatherRegionAt } from '../world/sky-weather.ts';
-import { parseClimate } from '../world/weather.ts';
+import { parseClimate, type ClimateRecord } from '../world/weather.ts';
+import { skyState } from '../world/sky-state.ts';
+import { skyLighting } from '../shell/world-sky.ts';
 import { cellKey, WorldFlag, type Arrival, type Worldspace } from '../world/worldspace.ts';
 import type { GameSave } from '../save/game-save.ts';
 import type { SaveHeader } from '../save/save-codec.ts';
@@ -250,6 +252,8 @@ export class SimWorld {
   readonly #flora: FloraLooks;
   readonly #destruction: DestructionLooks;
   readonly #destinations = new Map<number, DoorDestination | undefined>();
+  /** The open worldspace's climate (its sky's light by the hour). */
+  #climate: ClimateRecord | undefined;
   /**
    * Travel through a load door started by an activation, or a script's move of the player to
    * another place (awaited by the next step).
@@ -506,8 +510,8 @@ export class SimWorld {
    * Opens a worldspace with the player at `arrival`, or as the game brings them in near a cell
    * (in front of the nearest load door, else at the nearest map marker); the cells around them
    * load as they move, the sky takes the climate and the weather regions they walk into.
-   * TODO(sim): the sky's light outdoors (src/shell/world-sky.ts makes it with the sky's draws and
-   * panel): headless exteriors have no daylight for detection yet, nor player regions.
+   * Outdoors the sky lights the actors as the page's sky does (its weather and the hour: the
+   * daylight detection sees by). TODO(sim): the player's regions.
    */
   openExterior(
     formId: number,
@@ -551,6 +555,7 @@ export class SimWorld {
     await this.session.weathers();
     if (climate) await this.session.weatherGlobals(climate.weathers);
     this.session.sky.setClimate(climate);
+    this.#climate = climate;
     this.session.sky.setPlace({
       interior: false,
       lightingTemplate: world.record.lightingTemplate !== undefined,
@@ -604,6 +609,13 @@ export class SimWorld {
     if (this.#avatar) this.#seat?.frame(this.#avatar.stepped);
     this.stage.animate(this.#time);
     for (const cell of this.#cells.values()) animateSkeletons(cell.skeletons, this.#time);
+    // The objects' graphs run whether anyone sees them or not: their sequences' text keys reach
+    // the scripts (a word of power's "End" enables its trigger), as the page's renderer
+    // advances them for what it draws.
+    const now = objectClock();
+    for (const cell of this.#cells.values()) {
+      for (const placed of cell.byReference.values()) placed.instance.graph?.update(now);
+    }
     session.tickScripts(seconds);
     if (this.#place?.kind === 'exterior') this.#track(this.#stream());
     if (this.#travel) {
@@ -1306,6 +1318,7 @@ export class SimWorld {
    * yet (see openExterior).
    */
   #lightProbe(at: Vec3): LightProbe | undefined {
+    if (this.#place?.kind === 'exterior') return this.#skyProbe(at);
     const cell = this.#cellAt(at);
     if (!cell || this.#place?.kind !== 'interior') return undefined;
     const lighting = cellSceneLighting(cell.data, cell.isEnabled);
@@ -1324,6 +1337,46 @@ export class SimWorld {
         (id) => this.session.emittance(id).rgb,
       ),
       interior: true,
+    };
+  }
+
+  /**
+   * The light outdoors (as src/shell/world-viewer.ts's probe): the sky's ambient and sun from its
+   * weathers (the outgoing one fading) at the hour, the cells' lights and those carried and made.
+   * Without the page's imagespace its Sunlight Scale is 1 (TODO(sim): the weather's imagespace).
+   */
+  #skyProbe(at: Vec3): LightProbe | undefined {
+    const session = this.session;
+    const sky = session.sky;
+    const weather = sky.current === undefined ? undefined : session.weatherRecord(sky.current);
+    if (!weather) return undefined;
+    const previous = sky.outgoing === undefined ? undefined : session.weatherRecord(sky.outgoing);
+    const state = skyState({
+      weather,
+      ...(previous && { previous, transition: sky.transition }),
+      climate: this.#climate,
+      hour: session.gameHour,
+      daysPassed: session.gameDaysPassed,
+      cloudMinutes: 0,
+    });
+    const light = skyLighting(state, undefined);
+    return {
+      ambient: light.ambient,
+      sunColor: light.sunColor,
+      sunDirection: light.sunDirection,
+      lights: pointLights(
+        [
+          ...[...this.#cells.values()].flatMap((cell) =>
+            cell.data.lights.filter((light) => cell.isEnabled(light.reference)),
+          ),
+          ...this.#created.lights(),
+          ...this.stage.lights(),
+        ],
+        objectClock(),
+        at,
+        (id) => session.emittance(id).rgb,
+      ),
+      interior: false,
     };
   }
 

@@ -158,7 +158,7 @@ async function showPackage(id: number): Promise<void> {
   );
   for (const condition of pack.conditions) {
     console.log(
-      `      condition ${String(condition.function)} ${await name(condition.form)} ${String(condition.param2)} op ${String(condition.operator)} ${JSON.stringify(condition.comparand)}`,
+      `      condition ${String(condition.function)} ${await name(condition.form)} ${String(condition.param2)} op ${String(condition.operator)} ${JSON.stringify(condition.comparand)}${condition.or ? ' OR' : ''}`,
     );
   }
   const template = pack.template === undefined ? pack : await data.package(pack.template);

@@ -549,6 +549,8 @@ export interface SavedPackage {
    * again, rather than standing done (and taking its tree again from the root).
    */
   readonly fallout?: boolean | undefined;
+  /** A procedure's success completed it (Running.finished). */
+  readonly finished?: boolean | undefined;
 }
 
 /** A package that runs, with its template's tree and its data. */
@@ -581,6 +583,11 @@ interface Running {
   readonly parent?: Running | undefined;
   /** Its tree ran to its end (or a procedure's success completed it). */
   completed: boolean;
+  /**
+   * A procedure's success completed it (FNAM 0x1), not its tree running out (a ForceGreet's
+   * travel to its wait location: it waits there, its tree taken again as the player comes).
+   */
+  finished?: boolean;
   /** Completed and ended (its scripts heard of it): it stays, done, while it is still chosen. */
   ended: boolean;
   /** The procedure running now (development checks). */
@@ -613,6 +620,34 @@ export interface TravelOptions {
   readonly speedMult?: (gaitSpeed: number) => number;
   /** The reference the place is (a flier flies to a sky marker, lands at anything else). */
   readonly target?: number;
+}
+
+/**
+ * Whether a tree that ran out along these branches waits on: a Stacked branch on the way ran a
+ * later child, so an earlier one may run yet (a ForceGreet's travel to its wait location, its
+ * greeting to come as the player comes into its trigger).
+ */
+function waitsOn(path: readonly ProcedureBranch[]): boolean {
+  for (let i = 0; i + 1 < path.length; i++) {
+    const branch = path[i];
+    const below = path[i + 1];
+    if (branch?.type.toLowerCase() === 'stacked' && below && branch.children.indexOf(below) > 0)
+      return true;
+  }
+  return false;
+}
+
+/** The branches from a tree's root down a way of child indices (SavedPackage.path). */
+function branchesAlong(root: ProcedureBranch, path: readonly number[]): ProcedureBranch[] {
+  const branches = [root];
+  let branch = root;
+  for (const index of path) {
+    const child = branch.children[index];
+    if (!child) break;
+    branches.push(child);
+    branch = child;
+  }
+  return branches;
 }
 
 export class ActorPackages {
@@ -807,6 +842,7 @@ export class ActorPackages {
       ranOn,
       ...(running.goal !== undefined && { goal: running.goal }),
       ...(this.#fallingOut === running && { fallout: true }),
+      ...(running.finished === true && { finished: true }),
     };
   }
 
@@ -829,9 +865,14 @@ export class ActorPackages {
       goal: saved.goal,
       resumedGoal: saved.goal,
       completed: saved.completed,
+      ...(saved.finished === true && { finished: true }),
       ended: saved.ended,
       resume: saved.path.length > 0 ? saved.path : undefined,
     };
+    // One that had ended keeps the branches its last procedure ran under: as they may no longer
+    // run (or a Stacked branch's earlier child may), its tree is taken again from the root (a
+    // ForceGreet waiting at its place greets as the player comes into its trigger).
+    if (saved.ended) running.path = branchesAlong(chosen.tree, saved.path);
     this.#running = running;
     if (running.completed) {
       if (saved.fallout === true) this.#fallout(running);
@@ -1038,6 +1079,20 @@ export class ActorPackages {
   }
 
   /** The package that runs now (`completed`: one that just ended, not taken again at once). */
+  /**
+   * Whether a package is the one the actor runs (or a loaded save's ran): not completed by a
+   * procedure's success, and still running or, its tree run out, waiting on a Stacked branch's
+   * earlier child (waitsOn).
+   */
+  #runningNow(id: number, tree: ProcedureBranch): boolean {
+    const running = this.#running;
+    if (running?.id === id && !running.stopped && running.finished !== true)
+      return !running.ended || waitsOn(running.path);
+    const resumed = this.#resumed;
+    if (resumed?.id !== id || resumed.finished === true) return false;
+    return !resumed.ended || waitsOn(branchesAlong(tree, resumed.path));
+  }
+
   async #choose(completed: number | undefined): Promise<Running | undefined> {
     const mind = this.#mind;
     const time = mind.time();
@@ -1045,12 +1100,20 @@ export class ActorPackages {
       if (id === completed) continue;
       const pack = await mind.package(id);
       if (!pack || !scheduleFits(pack.schedule, time)) continue;
-      if ((pack.flags & PackageFlag.oncePerDay) !== 0 && this.#ranOn.get(id) === mind.day()) {
-        continue;
-      }
       const template = pack.template === undefined ? pack : await mind.package(pack.template);
       const tree = template?.tree ?? pack.tree;
       if (!tree) continue;
+      // Once Per Day: begun today, it is not begun again; but while it runs (here or in a loaded
+      // save: #runningNow) it is still the one it runs, not a new start. A ForceGreet that runs
+      // once a day (MQ105ArngeirFinalTrialGreet) was dropped at the next evaluation after it
+      // began, before the player came.
+      if (
+        (pack.flags & PackageFlag.oncePerDay) !== 0 &&
+        this.#ranOn.get(id) === mind.day() &&
+        !this.#runningNow(id, tree)
+      ) {
+        continue;
+      }
       // Where it began: as it is chosen (it starts at once).
       const context = {
         start: this.#body.position(),
@@ -1111,6 +1174,7 @@ export class ActorPackages {
     try {
       const result = await this.#branch(running, running.tree);
       if (!isStopped(running) && result !== 'stopped') running.completed = true;
+      if (!isStopped(running) && result === 'complete') running.finished = true;
     } catch {
       // A procedure that throws ends the package as failed (it is chosen again).
       if (!isStopped(running)) running.completed = true;
