@@ -227,3 +227,37 @@ describe('the relay from the event hub to the scripts', () => {
     ]);
   });
 });
+
+describe('the relay: books, unequipping, packages, locks and race switches', () => {
+  it('sends OnRead to the book read, a reference or a scripted book in an inventory', async () => {
+    const { hub, sent } = relayed();
+    await hub.emitted('bookRead', { book: LETTER, reader: PLAYER_REF, reference: 0x700 });
+    await hub.emitted('bookRead', { book: ITEM, reader: PLAYER_REF, reference: undefined });
+    // An unscripted book from an inventory has no scripts to tell.
+    await hub.emitted('bookRead', { book: LETTER, reader: PLAYER_REF, reference: undefined });
+    expect(sent).toEqual(['OnRead 700 ()', 'OnRead 400 ()']);
+  });
+
+  it('sends OnObjectUnequipped, then OnUnequipped(the actor) to a scripted item', async () => {
+    const { hub, sent } = relayed();
+    await hub.emitted('equip', { actor: NPC, item: ITEM, reference: undefined, equipped: false });
+    expect(sent).toEqual([
+      'OnObjectUnequipped 200 (form 400, null)',
+      'OnUnequipped 400 (actor 200)',
+    ]);
+  });
+
+  it('sends OnPackageChange and OnPackageEnd with the package left (TESPackageEvent)', async () => {
+    const { hub, sent } = relayed();
+    await hub.emitted('package', { actor: NPC, package: 0x800, type: 'change' });
+    await hub.emitted('package', { actor: NPC, package: 0x900, type: 'end' });
+    expect(sent).toEqual(['OnPackageChange 200 (form 800)', 'OnPackageEnd 200 (form 900)']);
+  });
+
+  it('sends OnLockStateChanged and OnRaceSwitchComplete without arguments', async () => {
+    const { hub, sent } = relayed();
+    await hub.emitted('lockChanged', { reference: DOOR });
+    await hub.emitted('switchRaceComplete', { actor: NPC });
+    expect(sent).toEqual(['OnLockStateChanged 100 ()', 'OnRaceSwitchComplete 200 ()']);
+  });
+});

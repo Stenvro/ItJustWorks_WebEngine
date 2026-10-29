@@ -75,6 +75,54 @@ const SCRIPT: BuildScript = {
         ['return', id('x')],
       ],
     },
+    {
+      name: 'Single',
+      returnType: 'Float',
+      locals: [['f', 'Float']],
+      code: [
+        ['fadd', id('f'), float(Math.fround(0.1)), float(Math.fround(0.2))],
+        ['return', id('f')],
+      ],
+    },
+    {
+      name: 'Finds',
+      returnType: 'Int',
+      locals: [
+        ['a', 'Int[]'],
+        ['x', 'Int'],
+        ['y', 'Int'],
+      ],
+      code: [
+        ['array_create', id('a'), int(3)],
+        ['array_setelement', id('a'), int(2), int(9)],
+        ['array_findelement', id('a'), id('x'), int(9), int(3)],
+        ['array_rfindelement', id('a'), id('y'), int(9), int(-1)],
+        ['iadd', id('x'), id('x'), id('y')],
+        ['assign', id('a'), none],
+        ['array_findelement', id('a'), id('y'), int(9), int(0)],
+        ['return', id('x')],
+      ],
+    },
+    {
+      name: 'Casts',
+      returnType: 'String',
+      locals: [
+        ['o', 'Rules'],
+        ['i', 'Int'],
+        ['s', 'String'],
+      ],
+      code: [
+        ['cast', id('i'), id('o')],
+        ['assign', id('o'), id('self')],
+        ['cast', id('s'), id('o')],
+        ['return', id('s')],
+      ],
+    },
+    {
+      name: 'CallOnNone',
+      locals: [['o', 'Rules']],
+      code: [['callmethod', id('Texts'), id('o'), id('::NoneVar')]],
+    },
   ],
 };
 
@@ -110,7 +158,7 @@ describe('Papyrus VM rules', () => {
   it('leaves the result of a division by zero as it was and logs it', async () => {
     const { vm, logged, self } = setup();
     expect(await vm.call(self, 'DivideByZero')).toBe(7);
-    expect(logged).toEqual(['Rules.DivideByZero [rules 00000010]: Cannot divide by zero']);
+    expect(logged).toEqual(['Rules.DivideByZero [rules < (00000010)>]: Cannot divide by zero']);
   });
 
   it('makes arrays of 1 to 128 elements only', async () => {
@@ -133,5 +181,86 @@ describe('Papyrus VM rules', () => {
       'Array index 5 is out of range (0-1)',
       'Cannot access an element of a None array',
     ]);
+  });
+
+  it('does float arithmetic in single precision', async () => {
+    const { vm, self } = setup();
+    expect(await vm.call(self, 'Single')).toBe(Math.fround(Math.fround(0.1) + Math.fround(0.2)));
+  });
+
+  it('logs a find from a start index out of range, finding nothing; RFind from -1 is the last', async () => {
+    const { vm, logged, self } = setup();
+    // Find from 3 of a three-element array: -1 and the error; RFind from -1 finds index 2.
+    expect(await vm.call(self, 'Finds')).toBe(1);
+    expect(logged.map((line) => line.slice(line.indexOf(': ') + 2))).toEqual([
+      'Array start index 3 is out of range (0-2)',
+      "Variable isn't an array and cannot be searched",
+    ]);
+  });
+
+  it('logs a cast between unrelated kinds, and prints an object as the original does', async () => {
+    const { vm, logged, self } = setup();
+    vm.host.describeObject = (target) =>
+      Promise.resolve(`TheRules (${target.formId.toString(16).padStart(8, '0')})`);
+    expect(await vm.call(self, 'Casts')).toBe('[Rules <TheRules (00000010)>]');
+    expect(logged.map((line) => line.slice(line.indexOf(': ') + 2))).toEqual([
+      'Cannot cast from Rules to Int',
+    ]);
+  });
+
+  it('logs a call on None in the original’s words and goes on', async () => {
+    const { vm, logged, self } = setup();
+    expect(await vm.call(self, 'CallOnNone')).toBeNull();
+    expect(logged).toEqual([
+      'warn: Rules.CallOnNone [rules < (00000010)>]: Cannot call Texts() on a None object, aborting function call (o)',
+    ]);
+  });
+});
+
+describe('a state change (the compiled GotoState)', () => {
+  // GotoState as the compiler writes it in every script: onEndState in the state left, the new
+  // state set, then onBeginState in the state entered.
+  const gotoState = {
+    name: 'GotoState',
+    params: [['newState', 'String']] as const,
+    code: [
+      ['callmethod', id('onEndState'), id('self'), id('::NoneVar')],
+      ['assign', id('::State'), id('newState')],
+      ['callmethod', id('onBeginState'), id('self'), id('::NoneVar')],
+    ] as const,
+  };
+  const marker = (text: string) => ({
+    code: [['strcat', id('trail'), id('trail'), str(text)]] as const,
+  });
+  const pex = parsePex(
+    buildPex({
+      name: 'Lever',
+      variables: [['trail', 'String', str('')]],
+      functions: [
+        gotoState,
+        { name: 'Trail', returnType: 'String', code: [['return', id('trail')]] },
+      ],
+      states: [
+        { name: 'Up', functions: [{ name: 'onEndState', ...marker('end up;') }] },
+        { name: 'Down', functions: [{ name: 'onBeginState', ...marker('begin down;') }] },
+      ],
+    }),
+  );
+
+  it('sends onEndState to the state left, then onBeginState to the state entered', async () => {
+    const library = new ScriptLibrary((name) =>
+      Promise.resolve(name === 'lever' ? pex : undefined),
+    );
+    const host: VmHost = {
+      formType: () => Promise.resolve('form'),
+      attachedScripts: () => Promise.resolve([{ name: 'Lever', properties: new Map() }]),
+      native: () => undefined,
+      warn: () => undefined,
+    };
+    const vm = new PapyrusVm(library, host);
+    const lever = new ObjectHandle(0x20, 'Lever');
+    await vm.call(lever, 'GotoState', ['Up']);
+    await vm.call(lever, 'GotoState', ['Down']);
+    expect(await vm.call(lever, 'Trail')).toBe('end up;begin down;');
   });
 });

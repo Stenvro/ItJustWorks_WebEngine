@@ -328,7 +328,16 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
     await runtime.removeItem(reference, call.args[0] ?? null, count, true, undefined);
     return runtime.referenceHandle(await runtime.placeAt(item, reference, count));
   });
-  n('objectreference.getitemhealthpercent', () => 1);
+  // An item reference's health as a fraction (1: whole; a tempered one's 1.1 and up): what the
+  // plugin placed it with (REFR XHLT, a percent), else whole. TODO(M13): a tempered stack
+  // dropped into the world keeps its health on the reference.
+  n('objectreference.getitemhealthpercent', async (call) => {
+    const reference = self(call);
+    if (reference === undefined) return 1;
+    const health = (await runtime.forms.record(reference))?.fields.first('XHLT');
+    if (!health || health.length < 4) return 1;
+    return new DataView(health.buffer, health.byteOffset, 4).getInt32(0, true) / 100;
+  });
   n('objectreference.addinventoryeventfilter', (call) =>
     runtime.inventoryFilter(call.self, formOf(call.args[0]), 'add'),
   );
