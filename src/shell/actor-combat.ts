@@ -1937,10 +1937,11 @@ export class ActorCombat implements CombatBridge {
     const physics = this.#play?.physics;
     const chest: Vec3 = [feet[0], feet[1], feet[2] + strike.height * CHEST];
     if (contacts.length === 0) {
-      // Nothing to hit: a wall in reach before it recoils it.
+      // Nothing to hit: a wall in reach before it recoils it. The ray starts inside the
+      // striker's own body (its chest): its own colliders are no wall.
       const forward: Vec3 = [Math.sin(strike.heading), Math.cos(strike.heading), 0];
       const wall = physics?.queriesCurrent
-        ? physics.raycast(chest, forward, strike.reach, Layer.weapon)
+        ? physics.raycast(chest, forward, strike.reach, Layer.weapon, undefined, fighter.reference)
         : undefined;
       // The blow knocks the moving body it met (clutter, a corpse's ragdoll) by the weapon's
       // weight (src/gameplay/impulses.ts).

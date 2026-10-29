@@ -106,7 +106,11 @@ import {
   scriptConstraints,
   type ScriptView,
 } from './script-world.ts';
-import { actorScriptGraph, placedScriptGraph } from '../animation/script-graphs.ts';
+import {
+  actorScriptGraph,
+  placedScriptGraph,
+  playerScriptGraph,
+} from '../animation/script-graphs.ts';
 import { CreatedObjects } from './created-objects.ts';
 import { FloraLooks } from './flora-looks.ts';
 import { DestructionLooks } from './destruction-looks.ts';
@@ -745,6 +749,9 @@ export class WorldViewer {
         const graph = placedScriptGraph(placed?.instance.graph, skeleton?.skeleton.behavior, clock);
         if (graph) return graph;
       }
+      // The player's body and first-person graphs (their avatar's).
+      if (reference === PLAYER_REF && this.#avatar)
+        return playerScriptGraph(this.#avatar.body.behavior, this.#avatar.firstPerson?.behavior);
       return actorScriptGraph(this.#stage?.get(reference)?.placed.behavior);
     },
     motionTypeChanged: (reference, motionType) => {
