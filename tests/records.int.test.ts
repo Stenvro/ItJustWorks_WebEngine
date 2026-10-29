@@ -13,6 +13,7 @@ import {
 } from '../src/world/material-object.ts';
 import { emittanceColor, emittanceWeather, type EmittanceSource } from '../src/world/emittance.ts';
 import { parseRegionWeather, parseWeather } from '../src/world/weather.ts';
+import { parseSeq, seqPath } from '../src/formats/esm/seq.ts';
 import { RecordDatabase, type GameRecord } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
@@ -130,6 +131,25 @@ describe.skipIf(!hasGamedata())('record database on the local game data', () => 
   it('opens every plugin without problems', () => {
     expect(db.problems).toEqual([]);
     expect(db.plugins.map((p) => p.info.masters.length)[0]).toBe(0);
+  });
+
+  it('lists only start-game-enabled quests of its plugin in each SEQ file', async () => {
+    let listed = 0;
+    for (const plugin of db.plugins) {
+      const file = seqPath(plugin.entry.name);
+      if (!vfs.has(file)) continue;
+      for (const id of parseSeq(await vfs.read(file))) {
+        // HearthFires.esm's file predates its Update.esm master: its own index is one lower.
+        let record = await db.get(db.toGlobal(plugin, id));
+        if (record?.type !== 'QUST') {
+          const own = ((plugin.masterSlots.length << 24) | (id & 0xffffff)) >>> 0;
+          record = await db.get(db.toGlobal(plugin, own));
+        }
+        expect(record?.type, `${plugin.entry.name} ${id.toString(16)}`).toBe('QUST');
+        listed++;
+      }
+    }
+    expect(listed).toBeGreaterThan(400);
   });
 
   it('maps form ids between plugins and the load order', () => {

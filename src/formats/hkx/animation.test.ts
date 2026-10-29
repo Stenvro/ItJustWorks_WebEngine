@@ -302,3 +302,69 @@ describe('ragdoll mapping', () => {
     expect(readRagdollMapping(pack, 'no such skeleton')).toBeUndefined();
   });
 });
+
+describe('uncompressed (interleaved) animations', () => {
+  /** Two tracks, three frames over 2 s, one float track: frame f's track 0 is at x = f. */
+  function buildInterleaved(): Uint8Array {
+    const b = new PackfileBuilder();
+    const container = b.object('hkaAnimationContainer', 64);
+    const animation = b.object('hkaInterleavedUncompressedAnimation', 88);
+    const binding = b.object('hkaAnimationBinding', 72);
+    b.pointer(b.array(container + 48, 8, 1), binding);
+    b.i32(animation + 16, 1)
+      .f32(animation + 20, 2)
+      .i32(animation + 24, 2)
+      .i32(animation + 28, 1);
+    const transforms = b.array(animation + 56, 48, 6);
+    const half = Math.SQRT1_2;
+    for (let frame = 0; frame < 3; frame++) {
+      for (let track = 0; track < 2; track++) {
+        const t = transforms + (frame * 2 + track) * 48;
+        b.f32(t, track === 0 ? frame : 5);
+        // Track 1 turns 90° about z from frame 1 on; stored with its sign flipped at frame 2.
+        if (track === 1 && frame > 0) {
+          const sign = frame === 2 ? -1 : 1;
+          b.f32(t + 16 + 8, half * sign).f32(t + 16 + 12, half * sign);
+        } else b.f32(t + 16 + 12, 1);
+        b.f32(t + 32, 1)
+          .f32(t + 36, 1)
+          .f32(t + 40, 1 + frame);
+      }
+    }
+    const floats = b.array(animation + 72, 4, 3);
+    b.f32(floats, 0)
+      .f32(floats + 4, 10)
+      .f32(floats + 8, 20);
+    b.string(binding + 16, 'NPC Root [Root]').pointer(binding + 24, animation);
+    return b.build(container);
+  }
+
+  const animation = readAnimationContainer(Packfile.parse(buildInterleaved())).bindings[0]
+    ?.animation;
+  if (!animation) throw new Error('no animation');
+
+  it('reads its tracks and blends between the frames around the time', () => {
+    expect(animation.trackCount).toBe(2);
+    expect(animation.floatTrackCount).toBe(1);
+    const out = new Float32Array(2 * TRANSFORM_FLOATS);
+    const floats = new Float32Array(1);
+    animation.sample(0.5, out, floats);
+    expect(out[0]).toBeCloseTo(0.5);
+    expect(out[9]).toBeCloseTo(1.5);
+    expect(out[TRANSFORM_FLOATS]).toBeCloseTo(5);
+    expect(floats[0]).toBeCloseTo(5);
+    animation.sample(2, out, floats);
+    expect(out[0]).toBeCloseTo(2);
+    expect(floats[0]).toBeCloseTo(20);
+  });
+
+  it('takes the shorter way between rotations and keeps them unit length', () => {
+    const out = new Float32Array(2 * TRANSFORM_FLOATS);
+    animation.sample(1.5, out);
+    // Frames 1 and 2 hold the same turn with opposite signs: the blend stays on it.
+    const q = Array.from(out.subarray(TRANSFORM_FLOATS + 3, TRANSFORM_FLOATS + 7));
+    expect(Math.abs(q[2] ?? 0)).toBeCloseTo(Math.SQRT1_2);
+    expect(Math.abs(q[3] ?? 0)).toBeCloseTo(Math.SQRT1_2);
+    expect(Math.hypot(...q)).toBeCloseTo(1);
+  });
+});

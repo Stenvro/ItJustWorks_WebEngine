@@ -198,9 +198,17 @@ export function archiveListFromIni(ini: Ini | undefined): readonly string[] {
 }
 
 /**
- * Archives in load order (low → high; later wins on conflicts):
- * first the INI list, then per plugin `<name>.bsa` and `<name> - Textures.bsa`.
- * Non-existent archives are skipped, as in the original.
+ * The Creation Club menu's images (interface\marketplace\*.png): in no INI list and no
+ * plugin's, the original's marketplace opens this archive itself as it starts.
+ */
+export const MARKETPLACE_ARCHIVE = 'MarketplaceTextures.bsa';
+
+/**
+ * Archives in load order (low → high; later wins on conflicts): the marketplace's archive,
+ * then the INI list, then per plugin `<name>.bsa` and `<name> - Textures.bsa`.
+ * Non-existent archives are skipped, as in the original. TODO(M13): where the marketplace's
+ * archive ranks among the others is not known; it goes lowest, so it never hides game content
+ * (its files are its own in the vanilla data).
  */
 export function computeArchiveOrder(
   iniArchives: readonly string[],
@@ -218,6 +226,7 @@ export function computeArchiveOrder(
     result.push(actual);
   };
 
+  add(MARKETPLACE_ARCHIVE);
   for (const name of iniArchives) add(name);
   for (const plugin of loadOrder) {
     const base = plugin.name.slice(0, plugin.name.lastIndexOf('.'));
@@ -238,6 +247,7 @@ export function gameContentArchives(
   loadOrder: readonly LoadOrderEntry[],
 ): Set<string> {
   const names = new Set(iniArchives.map((name) => asciiLowerCase(name)));
+  names.add(asciiLowerCase(MARKETPLACE_ARCHIVE));
   for (const plugin of loadOrder) {
     if (plugin.source === 'plugins.txt') continue;
     const base = asciiLowerCase(plugin.name.slice(0, plugin.name.lastIndexOf('.')));
