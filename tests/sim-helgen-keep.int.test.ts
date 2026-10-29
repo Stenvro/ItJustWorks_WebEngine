@@ -5,9 +5,15 @@
 
 import { afterAll, describe, expect, it } from 'vitest';
 import { ObjectHandle } from '../src/scripting/values.ts';
-import { hasGamedata, openSim, PLAYER_REF, type Sim } from './helpers/sim.ts';
+import { hasGamedata, loadSim, openSim, PLAYER_REF, type Sim } from './helpers/sim.ts';
 
 const MQ101 = 0x3372b;
+const MQ102 = 0x4e50d;
+/** MQ102B: Ralof's route (the friend's part of MQ102). */
+const MQ102B = 0x2610a;
+/** HelgenKeep01toExteriorExitREF: the cave's way out into Tamriel (an automatic door). */
+const CAVE_EXIT = 0x91608;
+const TAMRIEL = 0x3c;
 /** HelgenKeep01. */
 const KEEP = 0x5de24;
 /** MQ101KeepIntroSceneB (Ralof's route) and MQ101KeepIntroSceneA (Hadvar's). */
@@ -218,6 +224,8 @@ describe.skipIf(!hasGamedata())('MQ101 in Helgen Keep', () => {
   // and walks into the set-stage triggers a scene waits for.
   describe('Ralof’s route past the key', () => {
     let sim: Sim | undefined;
+    /** The game as the caves' case left it (by the cave's exit). */
+    let byTheExit: Uint8Array | undefined;
     const killed = new Set<number>();
     afterAll(async () => {
       await sim?.close();
@@ -344,16 +352,42 @@ describe.skipIf(!hasGamedata())('MQ101 in Helgen Keep', () => {
       // went on through the spiders' cave (630).
       for (const stage of [550, 560, 630, 650, 800])
         expect(open.stageDone(MQ101, stage)).toBe(true);
+      byTheExit = await open.save();
     }, 600_000);
 
-    // Ralof's route, found 2026-10-28: past 800 MQ102 (5) and MQ102B (5) run, and Ralof holds
-    // (MQ101HoldCurrentPositionWeapons). MQ102's fragments set MQ101's 900 (stage 10, Ralof's
-    // talk outside the cave): the player has to take the cave's exit into Tamriel
-    // (HelgenKeep01toExteriorExitREF, an AutoLoadDoor01 at -4547, -20651, -3277, past
-    // MQ101SetStage800) with Ralof following, and the scene outside has to play; not driven
-    // yet (whether Ralof should leave his hold package at 800 is not checked). The bear (MQ101BearRef) was passed by the triggers, not
-    // fought or sneaked by. Hadvar's route, out through the cave's automatic door to 900:
-    // tests/sim-helgen-keep-hadvar.int.test.ts.
-    it.todo('leaves the caves with Ralof for MQ102 (stage 900)');
+    // Past 800 MQ102 (5) and MQ102B (5) run, and Ralof makes for the cave's exit
+    // (MQ102FriendTravelToExit). The cave's end is an automatic door, which takes the player
+    // out as they come near; outside, the exit's trigger sets MQ102 15 (MQ102B 10), Ralof's
+    // talk outside the cave plays, and its end sets MQ102 10, which sets MQ101 900 (some 45 s
+    // after the player came out). The bear (MQ101BearRef) was passed by the triggers, not
+    // fought or sneaked by.
+    it('walks up to the cave’s end and out into Tamriel with Ralof (MQ102 15, MQ102B 10, MQ101 900)', async () => {
+      expect(byTheExit).toBeDefined();
+      if (!byTheExit) return;
+      const open = await loadSim(byTheExit);
+      try {
+        const ralof = open.runtime.state.quest(MQ101).aliases.get(12) ?? 0;
+        await open.step(1);
+        const door = await open.position(CAVE_EXIT);
+        expect(door).toBeDefined();
+        if (!door) return;
+        // Along the cave towards its end: the automatic door takes the player out on the way.
+        await open.walkPath(door, 30, 120);
+        expect(await open.until(() => open.world.loadedCells.length > 1, 5)).toBe(true);
+        expect((await open.runtime.placement(PLAYER_REF))?.world).toBe(TAMRIEL);
+        // Outside, the exit's trigger sets MQ102 15 (its route entry MQ102B 10); Ralof's talk
+        // there ends with MQ102 10, which sets MQ101 900.
+        for (let second = 0; second < 120 && !open.stageDone(MQ101, 900); second++) {
+          await open.step(1);
+          if ((await open.runtime.placement(ralof))?.world === TAMRIEL) await keepBy(open, ralof);
+        }
+        expect(open.stageDone(MQ102, 15)).toBe(true);
+        expect(open.stageDone(MQ102B, 10)).toBe(true);
+        expect(open.stageDone(MQ101, 900)).toBe(true);
+        expect((await open.runtime.placement(ralof))?.world).toBe(TAMRIEL);
+      } finally {
+        await open.close();
+      }
+    }, 600_000);
   });
 });
