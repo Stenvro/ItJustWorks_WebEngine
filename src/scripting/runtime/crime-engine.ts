@@ -395,6 +395,13 @@ export class CrimeEngine {
     for (const witness of seen) {
       if (witness === criminal || witness === PLAYER_REF) continue;
       if (await runtime.actors.isDead(witness)) continue;
+      // An ally of the criminal overlooks an assault, as an ally by relationship overlooks the
+      // player's (overlooksCrime): the victim too, so a guard's stray arrow on a fellow guard (both
+      // of the hold's guard factions) is no alarm between them. TODO(M13): the engine's own rule
+      // for which witnesses of an NPC's crime report it.
+      if (options.act === 'attack' && (await this.reaction(witness, criminal)) === 'ally') {
+        continue;
+      }
       if (witness !== victim) {
         const own = await runtime.actors.crimeFaction(witness);
         if (own === undefined || !group.includes(own)) continue;

@@ -17,6 +17,9 @@ const RIFTEN_CITIZEN = 0x201;
 const BANDIT = 0x202;
 const FOLLOWER = 0x203;
 const FRIEND = 0x204;
+/** Two guards of Whiterun's faction: allies. */
+const GUARD = 0x205;
+const OTHER_GUARD = 0x206;
 
 const hold = (formId: number): FactionRecord => ({
   formId,
@@ -52,6 +55,8 @@ function engine(): { crime: CrimeEngine; state: GameState; events: StoryEventDat
     [FOLLOWER, WHITERUN],
     [FRIEND, WHITERUN],
     [RIFTEN_CITIZEN, RIFT],
+    [GUARD, WHITERUN],
+    [OTHER_GUARD, WHITERUN],
   ]);
   const events: StoryEventData[] = [];
   const stats = new Map<string, number>();
@@ -70,7 +75,10 @@ function engine(): { crime: CrimeEngine; state: GameState; events: StoryEventDat
       isDead: (actor: number) => Promise.resolve(state.actors.get(actor)?.dead === true),
       faction: (formId: number) =>
         Promise.resolve(formId === WHITERUN || formId === RIFT ? hold(formId) : undefined),
-      factionsOf: () => Promise.resolve(new Map<number, number>()),
+      factionsOf: (actor: number) =>
+        Promise.resolve(
+          new Map<number, number>(actor === GUARD || actor === OTHER_GUARD ? [[WHITERUN, 0]] : []),
+        ),
       factionReaction: () => Promise.resolve(undefined),
       value: () => Promise.resolve({ base: 0, max: 0, current: 0 }),
       info: () => Promise.resolve(undefined),
@@ -135,6 +143,28 @@ describe('crimes and their witnesses', () => {
         criminal: BANDIT,
         victim: VICTIM,
         witnesses: [VICTIM, CITIZEN],
+        act: 'attack',
+      },
+    ]);
+  });
+
+  it("of an NPC on its ally: no alarm from the victim or the criminal's other allies", async () => {
+    const { crime } = engine();
+    const told: CrimeEvent[] = [];
+    crime.listen((event) => told.push(event));
+    // A guard's stray arrow on another guard: neither the one hit nor a fellow guard reports it;
+    // a citizen who saw it does.
+    await crime.commit(CrimeType.attack, GUARD, {
+      act: 'attack',
+      victim: OTHER_GUARD,
+      witnesses: [OTHER_GUARD, CITIZEN],
+    });
+    expect(told).toEqual([
+      {
+        kind: 'npcCrime',
+        criminal: GUARD,
+        victim: OTHER_GUARD,
+        witnesses: [CITIZEN],
         act: 'attack',
       },
     ]);
