@@ -3,6 +3,8 @@
 // actor in cells.
 //
 //   node tools/package-info.ts 37058 [--hour 10] [--days 0]   one actor (reference id, hex)
+//   node tools/package-info.ts --package MQ102BalgruufForcegreetPlayer   one package (editor id or
+//                                                             hex form id): inputs and tree
 //   node tools/package-info.ts --parse                        every PACK: trees, inputs, procedures
 //   node tools/package-info.ts --procedures                   each procedure's parameters, as the
 //                                                             templates name and type its slots
@@ -115,7 +117,15 @@ const tree = (branch: ProcedureBranch | undefined, depth = 0): string[] =>
     ? [
         `${'  '.repeat(depth + 3)}${branch.procedure ?? branch.type}${
           branch.inputs.length > 0 ? ` inputs ${branch.inputs.join(',')}` : ''
-        }${branch.conditions.length > 0 ? ` (${String(branch.conditions.length)} conditions)` : ''}`,
+        }${branch.conditions.length > 0 ? ` (${String(branch.conditions.length)} conditions)` : ''}${
+          branch.flags !== 0 ? ` flags ${branch.flags.toString(16)}` : ''
+        }`,
+        ...(args.includes('--conditions')
+          ? branch.conditions.map(
+              (c) =>
+                `${'  '.repeat(depth + 4)}if ${String(c.function)}(${c.form.toString(16)}, ${String(c.param2)}) op ${String(c.operator)} ${JSON.stringify(c.comparand)} run on ${String(c.runOn)}${c.or ? ' OR' : ''}`,
+            )
+          : []),
         ...branch.children.flatMap((child) => tree(child, depth + 1)),
       ]
     : [];
@@ -130,34 +140,37 @@ async function showActor(reference: number): Promise<void> {
   console.log(`${actor.editorId || hex(reference)}: base ${await name(actor.base)}`);
   console.log(`  at ${actor.position.map(Math.round).join(', ')}`);
   console.log(`  time ${time.hour.toFixed(2)} h, day of week ${String(time.dayOfWeek)}`);
-  for (const id of look?.packages ?? []) {
-    const pack = await data.package(id);
-    if (!pack) continue;
-    const s = pack.schedule;
-    const when =
-      s && s.hour >= 0
-        ? `${String(s.hour)}:${String(Math.max(0, s.minute)).padStart(2, '0')} for ${String(s.duration / 60)} h`
-        : 'any time';
-    console.log(
-      `  ${pack.editorId} [${hex(id)}] ${when}${s && s.dayOfWeek >= 0 ? ` day ${String(s.dayOfWeek)}` : ''}, ${String(pack.conditions.length)} conditions, template ${await name(pack.template)}`,
-    );
-    for (const condition of pack.conditions) {
-      console.log(
-        `      condition ${String(condition.function)} ${await name(condition.form)} ${String(condition.param2)} op ${String(condition.operator)} ${JSON.stringify(condition.comparand)}`,
-      );
-    }
-    const template = pack.template === undefined ? pack : await data.package(pack.template);
-    // The template's names of its inputs (BNAM), as the Creation Kit shows them.
-    const inputName = (id: number): string =>
-      template?.inputNames.find((entry) => entry.id === id)?.name ?? '';
-    for (const input of pack.inputs) {
-      console.log(
-        `      input ${String(input.id)} "${inputName(input.id)}" ${input.type} ${JSON.stringify(input.value)}`,
-      );
-    }
-    for (const line of tree(template?.tree ?? pack.tree)) console.log(line);
-  }
+  for (const id of look?.packages ?? []) await showPackage(id);
   console.log(`  starts: ${await describeStart(await startOf(actor))}`);
+}
+
+/** One package: its schedule, conditions, inputs (named as its template names them) and tree. */
+async function showPackage(id: number): Promise<void> {
+  const pack = await data.package(id);
+  if (!pack) return;
+  const s = pack.schedule;
+  const when =
+    s && s.hour >= 0
+      ? `${String(s.hour)}:${String(Math.max(0, s.minute)).padStart(2, '0')} for ${String(s.duration / 60)} h`
+      : 'any time';
+  console.log(
+    `  ${pack.editorId} [${hex(id)}] ${when}${s && s.dayOfWeek >= 0 ? ` day ${String(s.dayOfWeek)}` : ''}, ${String(pack.conditions.length)} conditions, template ${await name(pack.template)}`,
+  );
+  for (const condition of pack.conditions) {
+    console.log(
+      `      condition ${String(condition.function)} ${await name(condition.form)} ${String(condition.param2)} op ${String(condition.operator)} ${JSON.stringify(condition.comparand)}`,
+    );
+  }
+  const template = pack.template === undefined ? pack : await data.package(pack.template);
+  // The template's names of its inputs (BNAM), as the Creation Kit shows them.
+  const inputName = (id: number): string =>
+    template?.inputNames.find((entry) => entry.id === id)?.name ?? '';
+  for (const input of pack.inputs) {
+    console.log(
+      `      input ${String(input.id)} "${inputName(input.id)}" ${input.type} ${JSON.stringify(input.value)}`,
+    );
+  }
+  for (const line of tree(template?.tree ?? pack.tree)) console.log(line);
 }
 
 /**
@@ -356,6 +369,15 @@ async function procedureParameters(db: RecordDatabase): Promise<void> {
 }
 
 async function main(db: RecordDatabase): Promise<void> {
+  if (args[0] === '--package') {
+    const wanted = args[1] ?? '';
+    let id = /^[0-9a-f]+$/i.test(wanted) ? parseInt(wanted, 16) : undefined;
+    for (const formId of id === undefined ? db.formIdsOfType('PACK') : []) {
+      if ((await db.get(formId))?.editorId?.toLowerCase() === wanted.toLowerCase()) id = formId;
+    }
+    if (id === undefined) throw new Error(`No package ${wanted}`);
+    return showPackage(id);
+  }
   if (args[0] === '--parse') return parseAll();
   if (args[0] === '--simultaneous') return simultaneousBranches();
   if (args[0] === '--procedures') return procedureParameters(db);
