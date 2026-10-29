@@ -83,6 +83,15 @@ As the Creation Kit wiki's "Threading Notes (Papyrus)" describe them (`papyrus-v
   game's rate.
 - A script error (a runaway thread, too deep a call stack) stops its thread and is reported,
   never thrown at the engine, as the game logs it.
+- **Faults the thread survives** (observed in the original, logged with its stack in the
+  original's wording): an array of a size outside 1 to 128 is not made ("Array size of 0 must
+  be greater then 0", "... is too large, must be 128 or smaller"); an element read or written
+  out of range or on None ("Array index 5 is out of range (0-1)", "Cannot access an element of
+  a None array"; a read gives the type's default); a division or modulo by zero ("Cannot
+  divide by zero") leaves its result as it was.
+- **Numbers as strings** (a cast to string, a concatenation; observed in the original): a
+  float with six decimals of its single-precision value ("1.500000", "-0.250000"), an int as it
+  is, by the type of the variable or literal it comes from.
 
 TODO(M12): save the threads, variables and registrations.
 
@@ -151,9 +160,8 @@ called that is missing; `node tools/papyrus-natives.ts` lists the natives done p
   Node) the bridge does nothing and the state alone answers. Those that do not do all the game
   does yet are listed in `natives/placeholders.ts`, each with the milestone that brings what
   they lack (`node tools/papyrus-natives.ts --placeholders`, with the vanilla scripts' calls of
-  each; the integration test holds each to a milestone): 21, 3 of them called by the vanilla
-  scripts (arrows stuck in bodies, ragdolls a script adds, the seated player's camera turn),
-  the rest never (the movement controller's overrides, synced animations, the terrain's
+  each; the integration test holds each to a milestone): 18, none of them called by the vanilla
+  scripts (the movement controller's overrides, synced animations, the terrain's
   effects at a node, the camera's target, actors under player controls; all M13).
   RequestSave / RequestAutoSave queue a save (a new one, the next autosave) that Play makes
   once the game may save (`src/shell/save-manager.ts` requested); ShakeController rumbles
@@ -163,7 +171,15 @@ called that is missing; `node tools/papyrus-natives.ts` lists the natives done p
   fPlayerSunGazeDelta of a fully shown sun for fPlayerSunGazeStartTimer applies the modifier
   SetSunGazeImageSpaceModifier set, once a gaze) answers IsPlayerSunGazing. Natives that rightly do
   nothing here (profiling, the console's debug helpers, achievements, preloading) are not
-  placeholders.
+  placeholders: `natives/placeholders.ts` INERT_NATIVES lists each with why, and
+  `node tools/papyrus-completeness.ts` counts any other native registered as a bare constant
+  as open (docs/completeness/papyrus.md). UpdateCurrentInstanceGlobal (observed in the
+  original): the quest's run holds values of its text display globals (QTGL); a global it
+  holds takes its current value (true), one of its text globals it does not hold yet is held
+  from now on (false), any other or a quest not running: nothing; its texts show the held
+  value, else the current one (inferred). CalculateEncounterLevel (observed in the original):
+  the reference's encounter zone's level (the player's without one) times the difficulty's
+  fLeveledActorMult (0 easy to 3 very hard, any other 1), rounded down, at least 1.
 - **Conditions** (`condition-values.ts`): see Conditions below.
 - Work that goes on by itself (events, waits, story events) is detached: a fault in it is
   reported, never left to stop the app.
