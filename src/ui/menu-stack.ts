@@ -62,6 +62,7 @@ export const MenuName = {
   journal: 'Journal Menu',
   levelUp: 'LevelUp Menu',
   loading: 'Loading Menu',
+  loadWaitSpinner: 'LoadWaitSpinner',
   lockpicking: 'Lockpicking Menu',
   magic: 'MagicMenu',
   main: 'Main Menu',
@@ -71,6 +72,7 @@ export const MenuName = {
   raceSex: 'RaceSex Menu',
   sleepWait: 'Sleep/Wait Menu',
   stats: 'StatsMenu',
+  titleSequence: 'TitleSequence Menu',
   training: 'Training Menu',
   tutorial: 'Tutorial Menu',
   tween: 'TweenMenu',
@@ -187,6 +189,7 @@ export const VANILLA_MENUS: Readonly<Record<string, MenuKind>> = {
     flags: F.pausesGame | F.alwaysOpen | F.allowSaving | F.applicationMenu,
     hidesHud: true,
   },
+  [MenuName.loadWaitSpinner]: { flags: F.alwaysOpen | F.allowSaving },
   [MenuName.lockpicking]: {
     flags: F.pausesGame | F.disablePauseMenu | F.requiresUpdate,
     hidesHud: true,
@@ -229,6 +232,7 @@ export const VANILLA_MENUS: Readonly<Record<string, MenuKind>> = {
       F.pausesGame | F.usesMenuContext | F.disablePauseMenu | F.requiresUpdate | F.customRendering,
     hidesHud: true,
   },
+  [MenuName.titleSequence]: { flags: 0 },
   [MenuName.training]: { flags: F.pausesGame | F.usesMenuContext | F.updateUsesCursor },
   [MenuName.tutorial]: { flags: F.pausesGame | F.modal | F.updateUsesCursor },
   [MenuName.tween]: {

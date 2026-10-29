@@ -5,6 +5,7 @@
 // Notes: docs/ui.md ("Title cards").
 
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
+import { MenuName, type MenuStack } from '../ui/menu-stack.ts';
 import type { Terminal } from './terminal.ts';
 
 /** Over the fader (the cards show on the opening's black), under the loading menu. */
@@ -18,14 +19,19 @@ export class TitleSequence {
   /** Whether a loading screen is up: the cards wait under it, hidden. */
   readonly #covered: () => boolean;
   #watch: ReturnType<typeof setInterval> | undefined;
+  /** The menu stack (TitleSequence Menu while the cards are open). */
+  readonly #stack: MenuStack | undefined;
+  #unstack: (() => void) | undefined;
 
-  constructor(host: MenuHost, terminal: Terminal, covered: () => boolean) {
+  constructor(host: MenuHost, terminal: Terminal, covered: () => boolean, stack?: MenuStack) {
     this.#host = host;
     this.#terminal = terminal;
     this.#covered = covered;
+    this.#stack = stack;
   }
 
   show(): void {
+    this.#unstack ??= this.#stack?.hold(MenuName.titleSequence);
     this.#watch ??= setInterval(() => {
       void this.#menu?.then((menu) => {
         if (menu) menu.shown = !this.#covered();
@@ -54,6 +60,8 @@ export class TitleSequence {
   hide(): void {
     if (this.#watch !== undefined) clearInterval(this.#watch);
     this.#watch = undefined;
+    this.#unstack?.();
+    this.#unstack = undefined;
     const menu = this.#menu;
     this.#menu = undefined;
     void menu?.then((opened) => {

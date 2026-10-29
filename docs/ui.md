@@ -123,6 +123,15 @@ CREATIONS, CREDITS, QUIT. Its music is `music\special\mus_maintheme.xwm` (the fi
 replace), played once from the menu's start in the music category; it fades out with the menu as
 a new game starts. The menu plays its own sounds (UIMenuOK, UIMenuFocus, UIStartNewGame).
 
+NEW and CONTINUE ask first (observed in the original). `NEW` is answered
+`ConfirmNewGame(sConfirmNew)` ("Start a new game?"), or sConfirmNewMods while plugins of the
+player's own are loaded (plugins.txt's; the game's masters and Creations are not mods);
+`CONTINUE` is answered `ConfirmContinue(sConfirmContinue)` when there is a save and no load is
+under way. The movie shows the question, and on yes fades out and calls `StartNewGame` or
+`ContinueLastSavedGame`. `OnDisabledLoadPress` (LOAD without saves) does nothing, as in the
+original; `HELP` (not shown on PC) and `QuitToMainMenu` (the consoles' quit panel) are not
+answered by the original's main menu either.
+
 ## Stage.visibleRect and Stage.safeRect
 
 The menus lay themselves out with Scaleform's Stage extensions (their `Shared.GlobalFunc`
@@ -566,6 +575,17 @@ AllowSaving, ...). The stack answers what the flags say together: menu mode foll
 open (F5 in an item menu, a book or the map saves nothing), and scripts ask it through SKSE's
 `UI.IsMenuOpen`. A mod registers its own menus with their flags (`register`).
 
+The title cards are `TitleSequence Menu` while open. `LoadWaitSpinner` (always open, saving
+allowed; `src/shell/load-wait-spinner.ts`) shows while a save is written: the movie's icon turns
+in the bottom right corner (`InitExtensions` locks it there), with its `FadeInMenu` and
+`FadeOutMenu`. Quantity Menu, Top Menu, Overlay Menu and Overlay Interaction Menu are names no
+menu of the original is made under; SafeZoneMenu is the consoles' safe-zone screen.
+TODO(M13): the Debug Text Menu's flags and when it opens.
+
+Lockpicking keeps the failed tries on each lock (the picks broken on it, the count the original
+keeps with the lock: `failedLockTries` in `src/shell/lockpicking-menu.ts`) for the lock queries
+of the scripts and conditions.
+
 The HUD follows the stack: each menu has the mode it puts hudmenu.swf in, and the movie's own
 element lists say what shows then (read from its `SetModes`). `MessagesBlock` and
 `QuestUpdateBaseInstance` show in `BookMode`, `InventoryMode`, `BarterMode`, `TweenMode`,
@@ -617,7 +637,20 @@ no setting), the player's level and the progress to the next. The menu asks `Hig
 and `OpenHighlightedMenu(i)` (1 Skills, up; 2 Magic, left; 3 Inventory, right; 4 Map, down: its
 `FrameToLabelMap`), and on Tab or Esc `StartCloseMenu`; the engine answers
 `StartCloseMenuAnim()`, and the menu's `CloseMenu` once its animation is done closes it. A
-menu chosen takes the tween's place at once.
+menu chosen opens over the tween, which stays open under it, as in the original: the engine
+calls the tween's `HideMenu` (and for Skills `ResetStatsButton`, its LEVEL UP label back to
+SKILLS), the view's lean and blur go. When the menu chosen closes, the tween closes with it,
+unless the menu goes back to it (an item menu's ShowTweenMenu): then the tween hears
+`ShowMenu` and shows again (`src/shell/game-menus.ts`, the menu kept under).
+
+The map keeps the same way under the journal opened from it (J, its bar's button): the map's
+movie hears `ShowJournal(true)` as the journal opens (its bottom bar hidden) and
+`ShowJournal(false)` as it closes, takes no input meanwhile, and is back once the journal has
+closed; Show on Map from that journal closes it for the map on the target. Observed in the
+original's journal: `ShowMenu` answers the engine's "Show Journal" message,
+`RefreshSystemButtons` its "RefreshMenu", `SettingsSaved` its "Journal Settings Saved", and
+`StartCloseMenu` its hiding of the journal. TODO(M13): who sends the first two, and the tween
+kept under a map that has the journal over it (ours keeps one menu under).
 The movie plays no sounds; choosing plays the engine's UITweenSelectSD (silence in the vanilla
 data), highlighting nothing.
 
@@ -801,9 +834,21 @@ size)` list the character playing. The list is filled at once (`ForceStopSaveLis
 - `IsOKtoLoad` is answered `ConfirmOKToLoad`; `LoadGame(index)` loads the save at that index of
   the list (the main menu fades out first, `FadeOutAndCall`). After a delete the main menu asks
   `DoDeleteSaveUISanityCheck` and hears `OnDeleteSaveUISanityCheck(has recent save, can load)`.
-- Load's last entry in the journal imports an original save (.ess); the main menu has none (its
-  fade out would wait on the file picker).
-- TODO(M12): `PrepSaveGameScreenshot` / `ScreenshotReady`: saves keep no screenshot yet.
+- Load's last entry imports an original save (.ess). In the main menu the file picker opens as
+  the entry is pressed (`IsOKtoLoad`, the press the page needs to open a picker; the movie's
+  "Load this game?" is skipped); with a file picked the engine has the movie fade out
+  (`FadeOutAndCall("LoadGame", [index])`) and the import loads; without one the menu stays.
+- Screenshots (`src/shell/save-screenshot.ts`): a save keeps the frame drawn as it is made
+  (`Renderer.captureFrame`: the canvas holds the world alone, the menus play over it) at
+  [Display] iSaveGameScreenShotWidth × iSaveGameScreenShotHeight (256 × 192) as a PNG, unless
+  [SaveGame] bOutputSaveGameScreenshot is 0; an imported save keeps its own (the .ess header's
+  pixels). A moment after a save is highlighted the movie asks
+  `PrepSaveGameScreenshot(index, entry)` (Save's index counted past its new save: −1 is the
+  game playing now, the frame drawn then); the engine gives the picture as
+  `img://BGSSaveLoadHeader_Screenshot` (sSaveGameScreenshotName) and calls `ScreenshotReady`,
+  whose `ShowScreenshot` loads it, fits it to the frame and fills the save's player, level and
+  time: it is answered for every entry, with an empty picture when there is none. The loading
+  menu (`loadingmenu.swf`) shows no screenshot: it has its loading screen's model.
   Show on Map: an objective with a target on the map gets the `questTargetID` of its first
   target (its reference); the movie closes the journal and calls `ShowTargetOnMap(id)`, and the
   map opens over that target (`src/shell/game-menus.ts`: the map of the target's world, without
