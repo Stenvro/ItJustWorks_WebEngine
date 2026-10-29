@@ -11,6 +11,7 @@ import {
   conditionsHold,
   packageStart,
   scheduleFits,
+  withinPlace,
   type GameTime,
   type PackageActor,
   type PackageReference,
@@ -444,5 +445,25 @@ describe('where packages put actors', () => {
       kind: 'here',
       procedure: 'ForceGreet',
     });
+  });
+});
+
+// Found 2026-10-29: Gerdur's force greet (MQ102GerdurForceGreet) travelled to within 300 of the
+// player across, 300.04 apart in three dimensions on the slope: its greeting, which asks to be
+// within that radius, was skipped and the package done without a word.
+describe('withinPlace (GetWithinPackageLocation)', () => {
+  const reach = { least: 100, height: 100 };
+  it('measures across, as a travel arrives, within a height window', () => {
+    expect(withinPlace([233.97, 187.66, 7.84], [0, 0, 0], 300, reach)).toBe(true);
+    expect(withinPlace([301, 0, 0], [0, 0, 0], 300, reach)).toBe(false);
+    // The height window is the larger of the radius and fAIMinLocationHeight.
+    expect(withinPlace([0, 0, 290], [0, 0, 0], 300, reach)).toBe(true);
+    expect(withinPlace([0, 0, 310], [0, 0, 0], 300, reach)).toBe(false);
+    expect(withinPlace([0, 0, 90], [0, 0, 0], 10, reach)).toBe(true);
+    expect(withinPlace([0, 0, 110], [0, 0, 0], 10, reach)).toBe(false);
+  });
+  it('reaches at least the least radius of what the place is at', () => {
+    expect(withinPlace([90, 0, 0], [0, 0, 0], 0, reach)).toBe(true);
+    expect(withinPlace([90, 0, 0], [0, 0, 0], 0, { least: 25, height: 100 })).toBe(false);
   });
 });

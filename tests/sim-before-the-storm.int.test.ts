@@ -258,7 +258,7 @@ describe.skipIf(!hasGamedata())('MQ102 Before the Storm (Hadvar’s route)', () 
   // know: src/ai/package-start.ts). UESP has him outside the gate. Next: how the engine brings a
   // temporary actor whose package lies in another worldspace there (original); then the case: "Halt!",
   // "Riverwood calls for the Jarl's aid" (82, which sets MQ102 100), the gate unlocked.
-  // Not driven yet: Ralof’s route (MQ102B).
+  // Ralof’s route (MQ102B) to Irileth: tests/sim-before-the-storm-ralof.int.test.ts.
   it.todo('has the gate guard stop the player outside Whiterun (MQ102 82, 100)');
 
   it('tells the Jarl of Helgen, who sends the player to Farengar (MQ102 110, 150, 160, 200; MQ103 10)', async () => {

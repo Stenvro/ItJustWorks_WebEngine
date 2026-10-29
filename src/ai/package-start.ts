@@ -10,6 +10,7 @@
 // Platform-independent. Notes: docs/ai.md ("Where packages put actors").
 
 import { ConditionRunOn, type Condition } from '../scripting/conditions.ts';
+import { AI_DEFAULTS } from './ai-settings.ts';
 import {
   LocationType,
   TargetType,
@@ -102,6 +103,35 @@ export interface PackageWorld {
   /** Where the player is now (undefined where it is not known: no game running). */
   player?():
     { readonly space: Space; readonly position: readonly [number, number, number] } | undefined;
+}
+
+/** How far a place reaches round its point (GetWithinPackageLocation). */
+export interface PlaceReach {
+  /**
+   * The least radius across: the destination radius of what the place is at (a marker's,
+   * furniture's, else fAIDistanceRadiusMinLocation), as a travel there arrives within it.
+   */
+  readonly least: number;
+  /** fAIMinLocationHeight: the least height above or below it. */
+  readonly height: number;
+}
+
+/**
+ * Whether a point is within a place (GetWithinPackageLocation; observed in the original): no
+ * farther above or below it than the larger of its radius and the least height, and across
+ * (on the ground's plane, as a travel's arrival is measured) within the larger of its radius
+ * and the least radius. (Measured in three dimensions, an actor whose travel had arrived
+ * across stood a fraction outside the radius on a slope: the ForceGreet templates' greeting,
+ * which asks to be within the travel's radius, was skipped and the package done.)
+ */
+export function withinPlace(
+  at: readonly [number, number, number],
+  place: readonly [number, number, number],
+  radius: number,
+  reach: PlaceReach,
+): boolean {
+  if (Math.abs(at[2] - place[2]) > Math.max(radius, reach.height)) return false;
+  return Math.hypot(at[0] - place[0], at[1] - place[1]) <= Math.max(radius, reach.least);
 }
 
 /** A place a package's location input names, where it is known (GetWithinPackageLocation). */
@@ -299,9 +329,14 @@ function conditionValue(
     const at = whereRunsOn(condition, actor, world, inputs);
     if (!place || !at) return undefined;
     if (!sameSpace(place.space, at.space)) return 0;
-    const [x, y, z] = at.position;
-    const [px, py, pz] = place.position;
-    return flag(Math.hypot(x - px, y - py, z - pz) <= Math.max(place.radius, 1));
+    // TODO(M13): the start does not know what the reference is (a marker's or furniture's
+    // least radius is fAIMarkerDestinationRadius, fAIFurnitureDestinationRadius).
+    return flag(
+      withinPlace(at.position, place.position, place.radius, {
+        least: AI_DEFAULTS.distanceRadiusMinLocation,
+        height: AI_DEFAULTS.minLocationHeight,
+      }),
+    );
   }
   if (condition.runOn !== ConditionRunOn.subject) return undefined;
   switch (condition.function) {
