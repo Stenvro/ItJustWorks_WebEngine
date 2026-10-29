@@ -37,10 +37,12 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
   });
   n('objectreference.delete', (call) => {
     const reference = self(call);
-    if (reference !== undefined) {
-      state.reference(reference).deleted = true;
-      world.enableChanged?.(reference, false);
-    }
+    if (reference !== undefined) runtime.deleteReference(reference);
+    return null;
+  });
+  n('objectreference.deletewhenable', (call) => {
+    const reference = self(call);
+    if (reference !== undefined) runtime.deleteWhenAble(reference);
     return null;
   });
   n('objectreference.isdeleted', (call) => {
