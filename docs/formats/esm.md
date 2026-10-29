@@ -94,6 +94,36 @@ quest without the flag (ccBGSSSE001_Start_MQ1). TODO(M12): what the original doe
 (starting a plugin's quests in a save that did not have it). Reader: `src/formats/esm/seq.ts`,
 `node tools/seq-info.ts`.
 
+## Subrecord layouts
+
+`src/formats/esm/record-layouts.ts` gives every (record type, subrecord) pair of the load order a
+layout (after xEdit's TES5 definitions), in the small language of `src/formats/esm/layout.ts`;
+`decodeRecord` reads a record's subrecords by them, VMAD by `vmad.ts`. `format-census esm`
+decodes every subrecord of every record of the load order: all 1,414 pairs of the 120 record
+types consume their data exactly, every form id's top byte indexes a master or the plugin, and
+every localized string id (105,535 in the localized plugins, every `lz` field, not only FULL)
+resolves. What the data showed beyond xEdit's definitions:
+
+- **Old Creation Kit saves.** Subrecords grew over the Creation Kit's versions and old records
+  keep the short forms: XCLL (64 or 92 bytes) and LGTM DATA (64, 72 or 92) end after the six
+  ambient colours, the fresnel power or the inherit flags; EFSH DATA is 308, 312, 344, 396 or 400 bytes; MATO
+  DATA 28 to 52; WATR DNAM 228 or 232; EXPL DATA 44, 48 or 52; ECZN DATA 8 or 12; CSFL 4 to 32.
+- **MODT** (and every model's texture hashes): records of form version 40 and later start with
+  a u32 counter count (2), the texture and addon-node counts, then 12-byte entries (file hash,
+  "dds\0", folder hash) and the addon node indexes; records of form version 39 and older have
+  the 12-byte entries alone.
+- **EXPL DATA** of four old records (form version 19 to 28; one is FireStormExplosion02)
+  keeps a layout with floats where the form ids are now (xEdit notes the contradiction).
+- **LCTN** persistent and special references are 12 and 16 bytes per entry (actor or reference
+  type, reference, then the location's cell grid or, for interiors, its cell); RCPR has the 12
+  bytes of LCPR. **NAVM ONAM** holds numbers, not form ids.
+- **PACK PNAM** is the procedure's name in a branch and the data input's public flag (u32)
+  after an input; **PERK EPFD** follows its EPFT: 1 float, 2 two floats, 3 to 5 a form id,
+  6 a string, 7 a localized string.
+
+Parsed is not used: the census lists, per record type, the subrecords no engine code outside
+`src/formats` names (static, by source text). Using them belongs to the systems that need them.
+
 ## Cells
 
 **CELL:** DATA flag `0x1` = interior. XCLL (92 bytes): ambient, directional and fog-near colours
