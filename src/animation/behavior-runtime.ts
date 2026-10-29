@@ -61,7 +61,6 @@ import {
 import { isPaired, pairedTrackBones, type PairedSide } from './paired-clips.ts';
 import { graphEvent, type GraphEvent } from './graph-events.ts';
 
-/** What a running graph needs from outside: its clips and referenced behavior files. */
 /** A placed object's skeletal graph as a save keeps it (BehaviorRuntime.saveState). */
 export interface BehaviorGraphState {
   /** [the machine's place among the graph's machines, its state id]. */
@@ -70,6 +69,82 @@ export interface BehaviorGraphState {
   readonly variables: readonly number[];
 }
 
+/**
+ * An actor's graph as a save keeps it (BehaviorRuntime.saveActorState), as the original's save
+ * keeps its behavior graph's internal state: the active nodes' own states and the variables.
+ * Keyed so a reload of the same data finds them again: each behavior file by the name its
+ * reference gives it (the root file ''), its nodes by their place among the file's own machines
+ * and clips (in the order reached from the file's root), the variables by name.
+ */
+export interface ActorGraphState {
+  readonly files: readonly SavedGraphFile[];
+  /** The variables whose values differ from their files' initial ones. */
+  readonly variables: readonly (readonly [string, number])[];
+  /** The vector variables set (TargetLocation). */
+  readonly vectors?: readonly (readonly [string, number, number, number, number])[];
+  /**
+   * The events raised or sent and not handled yet, by name (with their payloads): the graph
+   * handles them as it next runs (saves made before kept none).
+   */
+  readonly events?: readonly (readonly [string] | readonly [string, string])[];
+}
+
+/** One behavior file's active nodes, as ActorGraphState keeps them. */
+export interface SavedGraphFile {
+  /** The file as its reference names it (lower case; '' the root file). */
+  readonly file: string;
+  /** [the machine's place among the file's machines, its state id, seconds in that state]. */
+  readonly machines: readonly (readonly [number, number, number])[];
+  /** [the clip's place among the file's clips, its local time, 1 playing backward (ping-pong)]. */
+  readonly clips: readonly (readonly [number, number, number])[];
+}
+
+/** A file's machines and clips in the order reached from its root (shared by every runtime). */
+interface FileNodes {
+  readonly machines: readonly StateMachine[];
+  readonly clips: readonly Clip[];
+  readonly places: ReadonlyMap<object, number>;
+  /** Its BSIsActiveModifiers: their outputs say whether they are active. */
+  readonly isActive: readonly Extract<BehaviorModifier, { kind: 'is-active' }>[];
+}
+
+const fileNodes = new WeakMap<BehaviorGraph, FileNodes>();
+
+function nodesOf(graph: BehaviorGraph): FileNodes {
+  let nodes = fileNodes.get(graph);
+  if (nodes) return nodes;
+  const machines: StateMachine[] = [];
+  const clips: Clip[] = [];
+  const places = new Map<object, number>();
+  const isActive: Extract<BehaviorModifier, { kind: 'is-active' }>[] = [];
+  const seen = new Set<object>();
+  const visitModifier = (modifier: BehaviorModifier): void => {
+    if (seen.has(modifier)) return;
+    seen.add(modifier);
+    if (modifier.kind === 'is-active') isActive.push(modifier);
+    for (const child of modifierChildren(modifier)) visitModifier(child);
+  };
+  const visit = (node: BehaviorGenerator | undefined): void => {
+    if (!node || seen.has(node)) return;
+    seen.add(node);
+    if (node.kind === 'state-machine') {
+      places.set(node, machines.length);
+      machines.push(node);
+    } else if (node.kind === 'clip') {
+      places.set(node, clips.length);
+      clips.push(node);
+    } else if (node.kind === 'modifier-generator' && node.modifier) {
+      visitModifier(node.modifier);
+    }
+    for (const child of children(node)) visit(child);
+  };
+  visit(graph.root);
+  nodes = { machines, clips, places, isActive };
+  fileNodes.set(graph, nodes);
+  return nodes;
+}
+
+/** What a running graph needs from outside: its clips and referenced behavior files. */
 export interface BehaviorHost {
   /**
    * A clip's animation by its name (as the graph names it); undefined while it loads or if
@@ -343,6 +418,11 @@ interface MachineState {
   transition: Transition | undefined;
   /** A transition into this machine named the state to start in. */
   startOverride: number | undefined;
+  /**
+   * A loaded save's machine: the seconds it had been in the state it starts in (it goes on
+   * there, its enter events not raised again).
+   */
+  resumeTime?: number | undefined;
   /** Events received in the current state (global id → the time in the state then). */
   readonly received: Map<number, number>;
   /** A transition triggered before its initiate interval: taken when the interval begins. */
@@ -421,6 +501,23 @@ export class BehaviorRuntime {
   readonly #variableIndex = new Map<string, number>();
   readonly #variableNames: string[] = [];
   #values: number[] = [];
+  /** The variables' initial values (their files'), by index. */
+  readonly #initials: number[] = [];
+  /** The behavior files reached, as their references name them (the root file ''). */
+  readonly #files = new Map<BehaviorGraph, string>();
+  /** A loaded save's states not put back yet: of files not reached yet, by file. */
+  readonly #resumeFiles = new Map<string, SavedGraphFile>();
+  /** ... of clips not playing yet (their local times, as they start). */
+  readonly #resumeClips = new WeakMap<object, { time: number; backward: boolean }>();
+  /** ... of variables of files not reached yet, by name (lower case). */
+  readonly #resumeVariables = new Map<string, number>();
+  readonly #resumeVectors = new Map<string, Vec4>();
+  /**
+   * The machines and clips a loaded save put back, until the update that reaches them: those it
+   * does not reach start anew when they are reached later (a walk the actor takes up later
+   * begins at its start, not where the save had it).
+   */
+  readonly #resuming = new Set<object>();
   readonly #eventIndex = new Map<string, number>();
   readonly #eventNames: string[] = [];
   /** The events its graphs' files name (lower case). */
@@ -604,6 +701,7 @@ export class BehaviorRuntime {
     this.#ragdollBones = options.ragdollBones ?? new Int16Array(0);
     this.#rootScope = this.#scope(options.root);
     this.#root = options.root.root;
+    this.#files.set(options.root, '');
   }
 
   // --- Names ---------------------------------------------------------------------------------
@@ -619,8 +717,14 @@ export class BehaviorRuntime {
         index = this.#variableNames.length;
         this.#variableIndex.set(key, index);
         this.#variableNames.push(variable.name);
-        this.#values.push(variable.initial);
-        if (variable.vector) this.#vectors.set(index, variable.vector);
+        this.#initials.push(variable.initial);
+        // A loaded save's value, for a file reached after the save was put back.
+        const resumed = this.#resumeVariables.get(key);
+        this.#resumeVariables.delete(key);
+        this.#values.push(resumed ?? variable.initial);
+        const vector = this.#resumeVectors.get(key) ?? variable.vector;
+        this.#resumeVectors.delete(key);
+        if (vector) this.#vectors.set(index, vector);
       }
       return index;
     });
@@ -749,7 +853,11 @@ export class BehaviorRuntime {
    * A saved graph put back before it first runs: its variables, and each machine starts in its
    * saved state (what that state plays starts there).
    */
-  restoreState(saved: BehaviorGraphState): void {
+  restoreState(saved: BehaviorGraphState | ActorGraphState): void {
+    if ('files' in saved) {
+      this.restoreActorState(saved);
+      return;
+    }
     saved.variables.forEach((value, index) => {
       if (index < this.#values.length) this.#values[index] = value;
     });
@@ -768,6 +876,149 @@ export class BehaviorRuntime {
       });
     }
     this.#told = true;
+  }
+
+  /**
+   * What a save keeps of an actor's graph, as the original keeps its behavior graph's internal
+   * state (docs/formats/save.md, "Animation graphs"): each active state machine's state and the
+   * seconds it has been in it, each playing clip's local time, and the variables (those moved
+   * from their initial values: put back over a graph that starts at them, the same), and the
+   * events not handled yet. Not kept, as there: a transition's blend (the machine goes on in
+   * the state it blends to), the pose.
+   */
+  saveActorState(): ActorGraphState {
+    type Places = (readonly [number, number, number])[];
+    const files = new Map<string, { machines: Places; clips: Places }>();
+    const entryOf = (node: object) => {
+      const graph = this.#scopeOf(node).graph;
+      const file = this.#files.get(graph);
+      const place = nodesOf(graph).places.get(node);
+      if (file === undefined || place === undefined) return undefined;
+      let entry = files.get(file);
+      if (!entry) {
+        entry = { machines: [], clips: [] };
+        files.set(file, entry);
+      }
+      return { entry, place };
+    };
+    for (const node of this.#active) {
+      const generator = node as BehaviorGenerator | BehaviorModifier;
+      if ('enable' in generator) continue;
+      if (generator.kind === 'state-machine') {
+        const machine = this.#machines.get(generator);
+        const at = machine?.current && entryOf(generator);
+        if (at && machine.current) {
+          at.entry.machines.push([at.place, machine.current.id, machine.timeInState]);
+        }
+      } else if (generator.kind === 'clip') {
+        const clip = this.#clips.get(generator);
+        const at = clip && entryOf(generator);
+        if (at) at.entry.clips.push([at.place, clip.time, clip.backward ? 1 : 0]);
+      }
+    }
+    // Machines not entered yet since a load keep the state they will start in.
+    for (const [file, saved] of this.#resumeFiles)
+      files.set(file, { machines: [...saved.machines], clips: [...saved.clips] });
+    const variables: [string, number][] = [];
+    this.#values.forEach((value, index) => {
+      const name = this.#variableNames[index];
+      if (name !== undefined && value !== this.#initials[index]) variables.push([name, value]);
+    });
+    for (const [name, value] of this.#resumeVariables) variables.push([name, value]);
+    const vectors: [string, number, number, number, number][] = [];
+    for (const [index, [x, y, z, w]] of this.#vectors) {
+      const name = this.#variableNames[index];
+      if (name !== undefined) vectors.push([name, x, y, z, w]);
+    }
+    // The events not handled yet: one a clip raised as it ended (a shout's shoutStop as its
+    // release clip reaches its end) is handled at the next update; lost, the graph stayed in
+    // the state it would have left (the shout's, animation-driven, for ever).
+    const events = this.#queue.map(({ id, payload }) => {
+      const name = this.#eventNames[id] ?? '';
+      return payload === undefined ? ([name] as const) : ([name, payload] as const);
+    });
+    return {
+      files: [...files].map(([file, { machines, clips }]) => ({ file, machines, clips })),
+      variables,
+      ...(vectors.length > 0 && { vectors }),
+      ...(events.length > 0 && { events }),
+    };
+  }
+
+  /**
+   * A loaded save's actor graph put back: its variables, each machine goes on in its saved
+   * state (as long in it as it was, its enter events not raised again), each clip from its
+   * local time. Files not reached yet take theirs as they are. Whatever the graph ran before
+   * is dropped first (the player's graphs run before their save is put back).
+   */
+  restoreActorState(saved: ActorGraphState): void {
+    for (const node of this.#active) {
+      this.#machines.delete(node);
+      this.#clips.delete(node);
+      this.#modifiers.delete(node);
+    }
+    this.#active = new Set();
+    this.#queue = [];
+    for (const [name, value] of saved.variables) {
+      const index = this.#variableIndex.get(name.toLowerCase());
+      if (index === undefined) this.#resumeVariables.set(name.toLowerCase(), value);
+      else this.#values[index] = value;
+    }
+    for (const [name, x, y, z, w] of saved.vectors ?? []) {
+      const index = this.#variableIndex.get(name.toLowerCase());
+      if (index === undefined) this.#resumeVectors.set(name.toLowerCase(), [x, y, z, w]);
+      else this.#vectors.set(index, [x, y, z, w]);
+    }
+    const reached = new Map<string, BehaviorGraph>();
+    for (const [graph, file] of this.#files) reached.set(file, graph);
+    const files = new Map(saved.files.map((file) => [file.file, file]));
+    for (const [file, graph] of reached) {
+      this.#resumeFile(graph, files.get(file) ?? { file, machines: [], clips: [] });
+      files.delete(file);
+    }
+    for (const [file, entry] of files) this.#resumeFiles.set(file, entry);
+    // The events it had not handled yet, handled as it first runs (the machines they reach
+    // start in their saved states then). Not raised to the engine again.
+    for (const [name, payload] of saved.events ?? []) {
+      const id = this.#event(name);
+      this.#queue.push(payload === undefined ? { id } : { id, payload });
+    }
+    this.#told = true;
+  }
+
+  /** One file's saved machines and clips, to go on as they are reached. */
+  #resumeFile(graph: BehaviorGraph, saved: SavedGraphFile): void {
+    const nodes = nodesOf(graph);
+    // What its is-active modifiers say comes from what is active as it runs again, not from
+    // the save: one of a state a transition still blended from (not kept) said it was active,
+    // and kept so, an actor just up from furniture stayed animation-driven (bAnimationDriven)
+    // and could not walk.
+    const scope = this.#scope(graph);
+    for (const modifier of nodes.isActive) {
+      this.#modifiers.delete(modifier);
+      for (const slot of modifier.slots) this.#write(slot.output, scope, slot.invert ? 1 : 0);
+    }
+    for (const [place, id, time] of saved.machines) {
+      const node = nodes.machines[place];
+      if (!node?.states.some((state) => state.id === id)) continue;
+      this.#machines.set(node, {
+        current: undefined,
+        previous: undefined,
+        timeInState: 0,
+        transition: undefined,
+        startOverride: id,
+        resumeTime: time,
+        received: new Map(),
+        pending: undefined,
+      });
+      this.#resuming.add(node);
+    }
+    for (const [place, time, backward] of saved.clips) {
+      const node = nodes.clips[place];
+      if (!node) continue;
+      this.#resumeClips.set(node, { time, backward: backward === 1 });
+      this.#resuming.add(node);
+    }
   }
 
   /** Every state machine of the graph, in the order they are reached from the root. */
@@ -1043,6 +1294,13 @@ export class BehaviorRuntime {
       if (!active.has(node)) this.#deactivate(node);
     }
     this.#active = active;
+    // A loaded save's machines and clips this update did not reach start anew when reached.
+    for (const node of this.#resuming) {
+      if (active.has(node)) continue;
+      this.#resumeClips.delete(node);
+      if (this.#machines.get(node)?.current === undefined) this.#machines.delete(node);
+    }
+    this.#resuming.clear();
     this.#motion = this.#tween(this.#host.rootMotion ? this.#rootMotion() : NO_MOTION);
     if (!pose) return;
     this.#footIkControls = undefined;
@@ -1635,12 +1893,17 @@ export class BehaviorRuntime {
       id = this.#read(node.startStateId, scope);
     }
     const start = enabled.find((state) => state.id === id) ?? enabled[0];
+    // A loaded save's machine goes on in its state: as long in it as it was, not entered anew.
+    const resumed = machine.resumeTime;
+    machine.resumeTime = undefined;
     machine.current = start;
-    machine.timeInState = 0;
+    machine.timeInState = resumed ?? 0;
     machine.received.clear();
     machine.pending = undefined;
     if (start) this.#syncState(node, start.id);
-    if (start) for (const event of start.enterNotifyEvents ?? []) this.#raise(event, scope);
+    if (start && resumed === undefined) {
+      for (const event of start.enterNotifyEvents ?? []) this.#raise(event, scope);
+    }
   }
 
   #machineEvent(node: StateMachine, machine: MachineState, event: number): void {
@@ -2363,6 +2626,16 @@ export class BehaviorRuntime {
     const graph = this.#host.behavior(node.behavior);
     if (!graph) return undefined;
     this.#scope(graph);
+    if (!this.#files.has(graph)) {
+      const file = node.behavior.toLowerCase();
+      this.#files.set(graph, file);
+      // A loaded save's states of this file, now that it is reached.
+      const saved = this.#resumeFiles.get(file);
+      if (saved) {
+        this.#resumeFiles.delete(file);
+        this.#resumeFile(graph, saved);
+      }
+    }
     return graph.root;
   }
 
@@ -2609,7 +2882,21 @@ export class BehaviorRuntime {
     const binding = this.#host.clip(node.animation);
     const animation = binding?.animation;
     let state = this.#clips.get(node);
-    if (!state) {
+    const resumed = state ? undefined : this.#resumeClips.get(node);
+    if (resumed) {
+      // A loaded save's clip goes on from its local time: not started anew, what lies at that
+      // time is not passed again.
+      this.#resumeClips.delete(node);
+      state = {
+        time: resumed.time,
+        previous: resumed.time,
+        wrapped: false,
+        updated: Math.max(0, this.#updates - 1),
+        backward: resumed.backward,
+        phase: undefined,
+      };
+      this.#clips.set(node, state);
+    } else if (!state) {
       const start = this.#read(node.startTime ?? { value: 0 }, scope);
       state = {
         time: Math.max(0, start),

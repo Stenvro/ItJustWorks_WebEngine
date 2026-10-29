@@ -85,6 +85,18 @@ a scene plays on in its phase (IsPlaying is true at once): its begin and that ph
 fragments do not run again, its actions not done start again (a line is said again, a package
 action gives its package again, a timer runs on), those done that still run keep their looks.
 
+A dialogue action keeps what the original's keeps of it (observed in the original): whether it
+runs, whether it is done, and a looping one's seconds before it speaks again. Not kept: that its
+line is being said. So a line in progress as the game is saved is said again from its start
+once the loaded scene goes on (a looping one said already, after what was left of its wait).
+Its speaker's graph is kept (below, "Animation graphs"): one saved in the line's dialogue idle
+stands in it from the load, and the line said again plays its idle again. Such an idle ends as
+it does in play: the actor's next path stops it at once where its graph set bForceIdleStop (the
+dialogue idles do), else its AI's IdleStop as it sets out (src/shell/actor-movers.ts).
+TODO(M13): whether the line's end itself ends a looping dialogue idle (here it does not).
+MQ101's Ralof, saved in his line's idle up at the block, stands in it until the line said again
+is over and his scene's next phase sends him to the tower, as he does in a game not saved there.
+
 After a load the scripts hear OnPlayerLoadGame (the player and its aliases). TODO(M13): the
 original sends it once the loaded world is up; here as the scripts are ready, before the
 player's cell loads.
@@ -211,8 +223,11 @@ each kind. Ours:
   (`loadGameScripts`).
 - Kept with the loaded actors (`SavedActor`): `sneaking` (StartSneaking: it sneaks again while
   the package it was set in, resumed, runs) and `weaponDrawn` (its weapon out, as DrawWeapon
-  leaves it outside a fight: drawn again as it is loaded; TODO(M13): the original's save keeps
-  its graph with the weapon out, so it does not draw again).
+  leaves it outside a fight, or in one): its graph is put back with the weapon out (below,
+  "Animation graphs"), so it is out at once, in its hand, without drawing again. A save made
+  before graphs were kept draws it again as it is loaded.
+- The player's (`WorldSave.player`, `SavedPlayer`): sneaking, the weapon out, getting out of
+  their vehicle; with their graphs, as an NPC's.
 - `flying` (a flier in the air: cruising, hovering, landing): as it loads it is not set on the
   ground but stays where it was saved, and its flight, finding it high above the ground, has it
   cruise on from there (before, MQ104's dragon circling the Western Watchtower came down at
@@ -244,17 +259,65 @@ As the original keeps them with the references (src/shell/actor-vehicles.ts):
   the cell where the ride began does not.
 - Its riders: the game state keeps each actor's vehicle (SetVehicle); an actor placed on the
   stage, and the player once their play starts, ride it again. A rider's graph (its riding idle
-  seats it) is kept with it (`SavedActor.graph`), the player's graphs in `WorldSave.playerGraphs`
-  (the body's and the first-person one): each goes on in its saved state as it loads.
-  TODO(M13): a rider part-way out of its vehicle (its exit idle begun) is saved seated.
+  seats it) goes on in its saved state as it loads, as every actor's does (below, "Animation
+  graphs"). A rider part-way out of its vehicle (its exit idle begun, it let go of the vehicle)
+  keeps where the vehicle was as it let go and how far its exit's root motion has taken it
+  (`SavedActor.vehicleExit`, `SavedPlayer.vehicleExit`): loaded, it has let go already, and its
+  exit idle goes on from where it was and takes it on out from there to the exit's end
+  (ExitCartEnd ends the ride). Before, it was saved seated.
 - The horse's package goes on with its patrol's point (above): the ride goes on after the load.
+
+## Animation graphs
+
+The original keeps each actor's behavior graph with the actor (observed in the original): the
+graph's internal state as Havok Behavior defines it (hkbBehaviorGraphInternalState: each active
+node's own state by its node id, and the variable values; a state machine's own state is its
+state, the seconds in it and its transitions under way; a clip's, its local time and play
+direction). Ours
+(`SavedActor.graph`, `WorldSave.playerGraphs` with the body's and the first-person graph,
+`ActorGraphState`, src/animation/behavior-runtime.ts):
+
+- Every loaded actor's graph (not a corpse's: it lies by its ragdoll pose) and the player's.
+- Per behavior file reached, keyed by the file's name as its reference gives it (the root file
+  ''): each active state machine's state id and seconds in it, by the machine's place among the
+  file's machines; each playing clip's local time and direction, by its place among the file's
+  clips (both in the order reached from the file's root, which a reload of the same data gives
+  again).
+- The variables by name, those whose values moved from their files' initial ones (put back over
+  a graph that starts at the initial values, the same as keeping them all), and the vector
+  variables (TargetLocation).
+- The events it has not handled yet, by name with their payloads (an event a node raises is
+  handled at the graph's next update): put back, they are handled as it first runs, not raised
+  to the engine again. Lost, the graph stayed in the state the event would have taken it from:
+  the player saved the frame the Whirlwind Sprint's release clip reached its end (raising
+  shoutStop) loaded with their graph held in the shout for ever, animation-driven and unable to
+  move.
+
+As an actor is placed (the player as their body is there), its graph is put back before it first
+runs: its variables, each machine starts in its saved state as long in it as it was (its enter
+events not raised again), each clip goes on from its local time (what lies at that time is not
+passed again). A file not reached yet takes its states as it is. Then the engine's systems take
+it up as it is: one in furniture is in it without its graph being told to enter (it goes on
+part-way through its sitting, sleeping or leaning idle, a workbench's held idle), its weapon is
+out in its hand, its sneak, a script's or a scene's idle go on. The graph's variables the
+engine sets every frame (Speed, Direction, IsSneaking) are set again from what the actor does,
+as in the original.
+
+What the is-active modifiers (BSIsActiveModifier) say is not taken from the save but from what is
+active as the graph runs again: one of a state a transition still blended from said it was
+active, and kept so, the player saved just up from the opening's block stayed animation-driven
+(bAnimationDriven) and could not walk.
+
+Not kept (TODO(M13)): a transition's blend (the machine goes on in the state it blends to), a
+syncing blender's phase, the modifiers' own states (a timer's seconds); the
+engine's own side of a bleedout and of a paired animation (who holds whom: their graphs go on in
+those states, the systems' bookkeeping is not saved yet). Machines inside behavior references of
+the placed objects' graphs (`graphs`, above) are not kept either.
 
 ## Not saved yet
 
-- The player's sneaking and drawn weapon (the actor state's, as the NPCs' above): TODO(M12).
-- The procedures' own progress inside a step (a sandbox's activity: it chooses again), actors'
-  graphs beyond their furniture and their vehicles, the sky's transition; the actors of cells not loaded when saving
-  (their packages place them, as before).
+- The procedures' own progress inside a step (a sandbox's activity: it chooses again), the sky's
+  transition; the actors of cells not loaded when saving (their packages place them, as before).
 
 - The main menu's Load list and the save list's character filter (Continue loads the newest
   save), thumbnails, Save on Pause (bSaveOnPause with fAutosaveEveryXMins).

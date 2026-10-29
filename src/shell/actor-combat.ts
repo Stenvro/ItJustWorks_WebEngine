@@ -1136,6 +1136,20 @@ export class ActorCombat implements CombatBridge {
     return fighter.player ? this.#avatar?.placement.world : fighter.body?.instances[0]?.world;
   }
 
+  /**
+   * A loaded save's actor whose weapon was out, its graph put back with the weapon out: drawn
+   * at once, in its hand, without drawing again (the original keeps the weapon state with the
+   * actor and the graph with it). Whether it could (it joined the fights' bookkeeping).
+   */
+  drawnAgain(reference: number): boolean {
+    const fighter = this.#fighters.get(reference);
+    if (!fighter) return false;
+    fighter.state.weapon = WeaponState.drawn;
+    fighter.inHand = true;
+    this.#handsEquipped(fighter);
+    return true;
+  }
+
   /** What an actor's weapon state is (sheathed, drawing, drawn, ...). */
   weaponState(reference: number): number {
     return this.#fighters.get(reference)?.state.weapon ?? WeaponState.sheathed;

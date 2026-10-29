@@ -531,6 +531,11 @@ export class ActorFurniture {
     face: (heading: number | undefined) => void,
     options: {
       readonly quick?: boolean;
+      /**
+       * With `quick`: a loaded save's user whose graph was put back in the furniture's state
+       * (part-way through its idle): it is in it without its graph being told to enter.
+       */
+      readonly resumed?: boolean;
       readonly types?: number;
       /** Its AI activates the furniture as it enters (its scripts get OnActivate). */
       readonly activates?: boolean;
@@ -584,7 +589,7 @@ export class ActorFurniture {
         if (this.#uses.get(actor) !== use) return false;
         use.events = enter === undefined || enter === event ? [event] : [enter, event];
         user.moveTo(marker.position, marker.heading);
-        for (const sent of use.events) user.send(sent);
+        if (options.resumed !== true) for (const sent of use.events) user.send(sent);
         this.#in(user, use);
         return true;
       }

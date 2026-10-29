@@ -78,6 +78,11 @@ const PATH_GOAL_REACH = 256;
 const DOOR_REACH = 160;
 /** How far the player steps aside round someone standing in their way (doubling each time). */
 const SIDESTEP = 48;
+/**
+ * Held up at one point this many times (stepped aside each time, and back into the same spot: an
+ * open door's leaf against a wall), the player looks for their way again from where they stand.
+ */
+const HELD_SEARCH_AGAIN = 3;
 /** Held up off the navmesh with the way on this much above the feet, the player jumps. */
 const JUMP_OUT = 16;
 /** What holds the player up is looked for this far ahead, this high above the feet. */
@@ -429,11 +434,16 @@ export class Sim {
     const until = this.time + seconds;
     // Blockers whose activate parent was pulled in this walk (not pulled shut again).
     const pulled = new Set<number>();
-    for (const point of path.points.slice(from === feet ? 1 : 0)) {
-      const last = point === path.points.at(-1);
+    let points = path.points.slice(from === feet ? 1 : 0);
+    let searched = false;
+    for (let index = 0; index < points.length; index++) {
+      const point = points[index];
+      if (!point) break;
+      const last = index === points.length - 1;
       const near = last ? reach : 24;
       let side = 1;
       let jumped = false;
+      let held = 0;
       for (;;) {
         const left = until - this.time;
         if (left <= 0) return false;
@@ -452,6 +462,19 @@ export class Sim {
           this.press('Jump', false);
           await this.walkTo([point[0], point[1], point[2]], 0.5, near);
           continue;
+        }
+        // Held up at this point again and again: the way on, searched again from here (once a
+        // walk), goes round what holds them (the way's corners lie where it found room).
+        if (++held >= HELD_SEARCH_AGAIN && !searched) {
+          searched = true;
+          const here: Vec3 = [x1, y1, z1];
+          const start = navmeshes.locate(here) ? here : navmeshes.nearest?.(here, PATH_GOAL_REACH);
+          const again = start && findPath(navmeshes, start, goal, { radius: PLAYER_RADIUS });
+          if (again) {
+            points = again.points.slice(start === here ? 1 : 0);
+            index = -1;
+            break;
+          }
         }
         const dx = point[0] - x1;
         const dy = point[1] - y1;

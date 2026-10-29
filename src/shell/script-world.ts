@@ -26,7 +26,13 @@ import { matrixPlacement } from '../world/cell-loader.ts';
 import type { SoundSystem } from '../audio/sound-system.ts';
 import type { SoundInstance } from '../audio/sound-instance.ts';
 import type { SavedGraph, ScriptGraph } from '../animation/script-graphs.ts';
-import type { SavedActor, SavedGraphs, SavedProjectile, WorldSave } from '../save/world-save.ts';
+import type {
+  SavedActor,
+  SavedGraphs,
+  SavedPlayer,
+  SavedProjectile,
+  WorldSave,
+} from '../save/world-save.ts';
 import type { ScreenModifiers } from './screen-modifiers.ts';
 import { SkyMode, type SkyWeather } from '../world/sky-weather.ts';
 import type { Terminal } from './terminal.ts';
@@ -162,8 +168,10 @@ export interface ScriptView {
   facesForLine?(speaker: number, target: number): boolean | undefined;
   /** What a save keeps of the view's actors (their stage's: src/save/world-save.ts). */
   saveActors?(): readonly SavedActor[];
-  /** The player's graphs while they ride a vehicle (src/save/world-save.ts). */
+  /** The player's graphs (src/save/world-save.ts). */
   savePlayerGraphs?(): SavedGraphs | undefined;
+  /** The player's sneaking, drawn weapon and vehicle exit (src/save/world-save.ts). */
+  savePlayer?(): SavedPlayer | undefined;
   /** What flies in this view (projectiles in flight, runes at rest), for a save. */
   saveProjectiles?(): readonly SavedProjectile[];
   /** The player passes into another cell or worldspace (a loading screen is up). */
@@ -616,11 +624,13 @@ export class ScriptWorld implements WorldBridge {
     }
     const projectiles = [...this.#views].flatMap((view) => view.saveProjectiles?.() ?? []);
     const playerGraphs = [...this.#views].map((view) => view.savePlayerGraphs?.()).find(Boolean);
+    const player = [...this.#views].map((view) => view.savePlayer?.()).find(Boolean);
     return {
       actors,
       graphs,
       ...(projectiles.length > 0 && { projectiles }),
       ...(playerGraphs && { playerGraphs }),
+      ...(player && { player }),
     };
   }
 

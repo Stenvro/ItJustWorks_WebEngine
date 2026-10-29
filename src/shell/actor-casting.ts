@@ -351,6 +351,8 @@ export class ActorCasting {
   readonly #playerHands = new Map<number, number | undefined>();
   #handsRead = 0;
   #readingHands = false;
+  /** The player's voice key going down, while its shout is being begun (voiceUp waits). */
+  #voicePress: Promise<unknown> | undefined;
   #runtime: ScriptRuntime | undefined;
   #stop: (() => void) | undefined;
 
@@ -1277,7 +1279,13 @@ export class ActorCasting {
   }
 
   /** The player's voice key: the shout begins (its graph's shoutStart), or a power is cast. */
-  async voiceDown(): Promise<'shout' | 'power' | undefined> {
+  voiceDown(): Promise<'shout' | 'power' | undefined> {
+    const press = this.#voiceDown();
+    this.#voicePress = press;
+    return press;
+  }
+
+  async #voiceDown(): Promise<'shout' | 'power' | undefined> {
     const runtime = this.#listen();
     const user = this.#user(PLAYER_REF);
     if (!runtime || !user) return undefined;
@@ -1296,6 +1304,12 @@ export class ActorCasting {
 
   /** The player's voice key let go after `held` seconds: the words it was held for go. */
   async voiceUp(held: number): Promise<void> {
+    // A tap let go while its shout was still being begun lets out its words once it has begun
+    // (else the shout began after the key was up and was never let out: its graph held the
+    // inhale for ever).
+    const press = this.#voicePress;
+    this.#voicePress = undefined;
+    await press;
     const runtime = this.#listen();
     if (!runtime?.casting.isShouting(PLAYER_REF)) return;
     const voice = (await runtime.equipment.of(PLAYER_REF)).voice;
