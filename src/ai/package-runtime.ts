@@ -1071,10 +1071,23 @@ export class ActorPackages {
    * WaitingForPlayer is 0, and travels to wait once a script set it to 1).
    */
   async #branchesHold(running: Running): Promise<boolean> {
-    for (const branch of running.ended ? running.path : [...running.active]) {
-      if (branch.conditions.length === 0) continue;
-      if (!(await this.#mind.conditionsHold(branch.conditions, this.actor, running.data)))
-        return false;
+    const path = running.ended ? running.path : [...running.active];
+    for (const [depth, branch] of path.entries()) {
+      if (branch.conditions.length > 0) {
+        if (!(await this.#mind.conditionsHold(branch.conditions, this.actor, running.data)))
+          return false;
+      }
+      // A Stacked branch runs the first child that may: one before the child it runs that
+      // now may run takes over (the ForceGreet templates sandbox at their wait location until
+      // the player comes into their trigger, then greet).
+      const below = path[depth + 1];
+      if (branch.type.toLowerCase() !== 'stacked' || below === undefined) continue;
+      for (const child of branch.children) {
+        if (child === below) break;
+        if (await this.#mind.conditionsHold(child.conditions, this.actor, running.data)) {
+          return false;
+        }
+      }
     }
     return true;
   }

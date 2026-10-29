@@ -429,7 +429,11 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   GetIsCurrentPackage answer from it.
 - **Its tree** runs from the root (Creation Kit: Procedure Tree; the engine's rules are not
   documented, these are its names'): a Sequence runs its children in order, one whose conditions
-  do not hold skipped; a Stacked branch the first child that may run; a Simultaneous branch all
+  do not hold skipped; a Stacked branch the first child that may run, and as the package is
+  evaluated again (every fEvaluatePackageTimer) a child before it that now may run takes over (the
+  ForceGreet templates sandbox or sit until the player comes into their trigger, then greet:
+  Farengar in MQ103, the Whiterun gate guard; the tree is taken again from its root, the package
+  stays); a Simultaneous branch all
   those whose conditions hold at once, every update each of them (observed in the original),
   ending as one of them ends, whichever (those beside it stop then: the Sleep template finds a bed
   while it sandboxes, then sleeps), or, with PRCB flag 0x2 (xEdit's "Unknown 1"), as all of them
