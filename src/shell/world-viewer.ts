@@ -2674,14 +2674,21 @@ export class WorldViewer {
     const frame = this.#sky?.skyFrame();
     if (!frame) return undefined;
     const { state } = frame;
+    // The displacement field follows the camera; rain stirs it too.
+    const camera = this.#renderer.view?.camera.position;
+    let rain = 0;
+    for (const falling of this.#sky?.precipitation() ?? []) {
+      if (falling.system.precipitation.type === 'rain') rain += falling.amount;
+    }
+    const displacement =
+      camera && this.#play?.displacement.frame(camera, performance.now() / 1000, Math.min(rain, 1));
     return {
       horizon: state.horizon,
       lower: state.skyLower,
       upper: state.skyUpper,
       multiplier: state.waterMultiplier,
       profile: frame.sky.profile,
-      // Rings from splashes and wakes (water-ripples.ts).
-      ...(this.#play && { ripples: this.#play.ripples.active(performance.now() / 1000) }),
+      displacement,
     };
   }
 

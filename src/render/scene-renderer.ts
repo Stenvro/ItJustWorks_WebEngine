@@ -49,7 +49,8 @@ import {
 } from './light-lists.ts';
 import { identity, maxScale, multiply, transformPoint, type Mat4, type Vec3 } from './math.ts';
 import { fadeOut, fadeRange, type FadeKind, type FadeSettings } from './object-fade.ts';
-import { MAX_RIPPLES, type Ripple } from './water-ripples.ts';
+import type { DisplacementFrame } from './water-displacement.ts';
+import { DisplacementSimulation } from './water-displacement-gpu.ts';
 import type {
   AlphaState,
   EffectMaterial,
@@ -540,8 +541,8 @@ function bindShadowPart(
   }
 }
 
-/** WGSL `WaterParams`: 11 vec4. */
-const WATER_PARAM_FLOATS = 44;
+/** WGSL `WaterParams`: 12 vec4. */
+const WATER_PARAM_FLOATS = 48;
 
 /** A river cell's flow map (textures\water\<plugin>\flow.x.y.dds) and where it lies. */
 export interface WaterFlow {
@@ -549,8 +550,8 @@ export interface WaterFlow {
   /** South-west corner of the cell the map covers. */
   readonly origin: readonly [number, number];
 }
-/** WGSL `WaterFrame`: 5 vec4 + 32 profile samples + the ripples. */
-const WATER_FRAME_FLOATS = 20 + 32 * 4 + MAX_RIPPLES * 4;
+/** WGSL `WaterFrame`: 5 vec4 + 32 profile samples + the displacement field's placement. */
+const WATER_FRAME_FLOATS = 20 + 32 * 4 + 4;
 
 /** A water type (WATR) on the GPU: its parameters and noise textures. */
 export class GpuWaterType {
@@ -571,14 +572,15 @@ export class GpuWaterType {
 
 /** Per-frame inputs of the water shader besides the frame uniforms. */
 export interface WaterFrame {
-  readonly horizon: Vec3;
-  readonly lower: Vec3;
-  readonly upper: Vec3;
-  readonly multiplier: Vec3;
+  /** The sky's colours and the weather's water multiplier (none indoors: a plain gradient). */
+  readonly horizon?: Vec3;
+  readonly lower?: Vec3;
+  readonly upper?: Vec3;
+  readonly multiplier?: Vec3;
   /** Sky dome weights by elevation (ATMOSPHERE_SAMPLES × 4), if there is a sky. */
   readonly profile: Float32Array | undefined;
-  /** Rings on the water from splashes and wakes (water-ripples.ts), newest first. */
-  readonly ripples?: readonly Ripple[];
+  /** The displacement field's turn this frame (water-displacement.ts), while it runs. */
+  readonly displacement?: DisplacementFrame | undefined;
 }
 
 /**
@@ -1656,7 +1658,10 @@ export class SceneRenderer {
   readonly #waterTypeLayout: GPUBindGroupLayout;
   readonly #waterPipelineLayout: GPUPipelineLayout;
   readonly #waterFrameBuffer: GPUBuffer;
-  readonly #waterFrameBindGroup: GPUBindGroup;
+  readonly #waterFrameLayout: GPUBindGroupLayout;
+  #waterFrameBindGroup: GPUBindGroup;
+  /** The water's displacement field (water-displacement-gpu.ts). */
+  readonly #displacement: DisplacementSimulation;
   readonly #waterFrameData = new Float32Array(WATER_FRAME_FLOATS);
   readonly #screenSampler: GPUSampler;
   /** Stand-ins for the opaque scene's copies until the renderer provides them. */
@@ -1902,10 +1907,15 @@ export class SceneRenderer {
         texture2d(11),
       ],
     });
+    // The frame's sky and the displacement field's slopes.
     const waterFrameLayout = device.createBindGroupLayout({
       label: 'water-frame',
-      entries: [{ binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: {} }],
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: {} },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+      ],
     });
+    this.#waterFrameLayout = waterFrameLayout;
     this.#waterPipelineLayout = device.createPipelineLayout({
       label: 'water',
       bindGroupLayouts: [frameLayout, this.#drawLayout, this.#waterTypeLayout, waterFrameLayout],
@@ -1915,11 +1925,8 @@ export class SceneRenderer {
       size: WATER_FRAME_FLOATS * 4,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-    this.#waterFrameBindGroup = device.createBindGroup({
-      label: 'water-frame',
-      layout: waterFrameLayout,
-      entries: [{ binding: 0, resource: { buffer: this.#waterFrameBuffer } }],
-    });
+    this.#displacement = new DisplacementSimulation(device);
+    this.#waterFrameBindGroup = this.#createWaterFrameBindGroup();
     this.#noSceneColor = device.createTexture({
       label: 'no-scene-color',
       format: 'rgba16float',
@@ -3730,7 +3737,8 @@ export class SceneRenderer {
       [type.refractionMagnitude, type.reflectionMagnitude, type.noiseFalloff, type.flowmapScale],
       12,
     );
-    data.set([type.fogNear, type.fogFar, type.fogAmount, 0], 16);
+    // w: how much the displacement field shows on this water (its Displacement Dampener).
+    data.set([type.fogNear, type.fogFar, type.fogAmount, type.displacement.dampener], 16);
     data.set(
       [
         type.sunSpecularPower,
@@ -3746,6 +3754,10 @@ export class SceneRenderer {
     data.set([...type.amplitude, 0], 36);
     const flowTexture = flow ? await textures.get(flow.texture) : undefined;
     data.set([flow?.origin[0] ?? 0, flow?.origin[1] ?? 0, flowTexture ? 1 : 0, 0], 40);
+    data.set(
+      [type.depthReflections, type.depthRefraction, type.depthNormals, type.depthSpecular],
+      44,
+    );
     const buffer = createBuffer(device, data, GPUBufferUsage.UNIFORM, `water-${type.editorId}`);
     const noise = await Promise.all(type.noiseTextures.map((path) => textures.get(path)));
     const view = (index: number): GPUTextureView =>
@@ -3780,10 +3792,27 @@ export class SceneRenderer {
       // No sky (interiors): a plain gradient.
       for (let i = 0; i < 32; i++) data.set([1 - i / 31, i / 31, 0, 1], 20 + i * 4);
     }
-    (frame?.ripples ?? []).slice(0, MAX_RIPPLES).forEach((ring, i) => {
-      data.set([ring.x, ring.y, ring.age, ring.strength], 148 + i * 4);
-    });
+    // The displacement field: its passes run first, then the shader reads it around its centre.
+    const displacement = frame?.displacement;
+    if (this.#displacement.run(displacement)) {
+      this.#waterFrameBindGroup = this.#createWaterFrameBindGroup();
+    }
+    if (displacement) {
+      const [x, y] = displacement.center;
+      data.set([x, y, 1 / displacement.quadSize, 1], 148);
+    }
     this.#device.queue.writeBuffer(this.#waterFrameBuffer, 0, data);
+  }
+
+  #createWaterFrameBindGroup(): GPUBindGroup {
+    return this.#device.createBindGroup({
+      label: 'water-frame',
+      layout: this.#waterFrameLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.#waterFrameBuffer } },
+        { binding: 1, resource: this.#displacement.slopes.createView() },
+      ],
+    });
   }
 
   /** Material bind group layout (group 2 of object shaders), shared with grass. */
