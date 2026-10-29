@@ -430,6 +430,36 @@ describe('ActorPackages', () => {
     expect(ran).toEqual(['sandbox']);
   });
 
+  it('lets a stacked branch’s earlier child that may now run take over', async () => {
+    // The ForceGreet template: it sandboxes at its wait location until the player comes into
+    // its trigger (7), then greets.
+    const ran: string[] = [];
+    const runner =
+      (name: string): ProcedureRunner =>
+      async (run) => {
+        ran.push(name);
+        while (!run.stopped()) await run.wait(1);
+        return 'failure';
+      };
+    const { actor, truths, events } = setup(
+      [
+        pack(
+          1,
+          branch('Stacked', [procedure('forcegreet', 0, [condition(7)]), procedure('sandbox')]),
+        ),
+      ],
+      { forcegreet: runner('forcegreet'), sandbox: runner('sandbox') },
+    );
+    await tick(actor);
+    expect(ran).toEqual(['sandbox']);
+    truths.add(7);
+    actor.evaluate();
+    await tick(actor);
+    await tick(actor);
+    expect(ran).toEqual(['sandbox', 'forcegreet']);
+    expect(events).toEqual(['begin Pack1']);
+  });
+
   it('runs a once-a-day package once a day', async () => {
     let runs = 0;
     const { actor, setDay } = setup(
