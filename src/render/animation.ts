@@ -18,6 +18,7 @@ import type {
   Vec3,
 } from '../formats/nif/types.ts';
 import { lagBone, type LagBone } from './lag-bone.ts';
+import { followRotation, pathSource, samplePath, type PathSource } from './path-motion.ts';
 import { fromNifTransform, multiply, type Mat4 } from './math.ts';
 
 export interface Timing {
@@ -56,6 +57,8 @@ export interface TransformSource {
   readonly rotation: Quaternion | undefined;
   readonly scale: number | undefined;
   readonly data: TransformDataBlock | undefined;
+  /** NiPathInterpolator: the node moves along a path (src/render/path-motion.ts). */
+  readonly path?: PathSource;
 }
 
 /** What a controller animates, and how its value changes over its time. */
@@ -75,6 +78,17 @@ export type AnimationTrack = { readonly timing: Timing } & (
       readonly source: Vec3Source;
     }
   | { readonly kind: 'alpha-test'; readonly alpha: Ref; readonly source: FloatSource }
+  | {
+      /**
+       * NiLookAtInterpolator: the node turns its axis (LookAtFlags: 2 y, 4 z, else x; 1 the
+       * other way) toward another node, its other axes keeping world up. The vanilla ones turn
+       * the forge markers' editor preview cameras (PreviewCam toward PreviewCamTarget).
+       */
+      readonly kind: 'look-at';
+      readonly block: Ref;
+      readonly target: Ref;
+      readonly flags: number;
+    }
 );
 
 export interface ModelAnimation {
@@ -396,7 +410,10 @@ export function boolSource(file: NifFile, ref: Ref): BoolSource | undefined {
   };
 }
 
-function transformSource(file: NifFile, ref: Ref): TransformSource | undefined {
+export function transformSource(file: NifFile, ref: Ref): TransformSource | undefined {
+  const path = pathSource(file, ref);
+  if (path)
+    return { translation: undefined, rotation: undefined, scale: undefined, data: undefined, path };
   const interpolator = file.blocks[ref];
   if (interpolator?.kind !== 'transform-interpolator') return undefined;
   const data = file.blocks[interpolator.data];
@@ -432,6 +449,10 @@ export function sampleBool(source: BoolSource, time: number): boolean {
 }
 
 export function sampleTransform(source: TransformSource, time: number): TransformSample {
+  if (source.path) {
+    const at = samplePath(source.path, time);
+    return { translation: at.translation, rotation: at.rotation, scale: undefined };
+  }
   const data = source.data;
   if (!data) return source;
   return {
@@ -470,6 +491,13 @@ function trackFor(
   switch (controller.type) {
     case 'NiTransformController':
     case 'NiMultiTargetTransformController': {
+      const look = file.blocks[interpolator];
+      if (look?.kind === 'look-at-interpolator') {
+        const at = look.lookAt >= 0 ? look.lookAt : objectByName(file, look.lookAtName);
+        return at >= 0
+          ? { kind: 'look-at', block: target, target: at, flags: look.flags, timing }
+          : undefined;
+      }
       const source = transformSource(file, interpolator);
       return source && { kind: 'transform', block: target, timing, source };
     }
@@ -653,6 +681,8 @@ export function objectWorld(
   graph: Pick<ModelSequences, 'parents' | 'transforms' | 'roots'>,
   frame: AnimationFrame | undefined,
   ref: Ref,
+  /** Local transforms that replace the rest ones (an evaluation under way). */
+  locals?: ReadonlyMap<Ref, NifTransform>,
 ): Mat4 | undefined {
   const moved = frame?.worlds.get(ref);
   if (moved) return moved;
@@ -667,7 +697,7 @@ export function objectWorld(
       world = above;
       continue;
     }
-    const transform = graph.transforms.get(r);
+    const transform = locals?.get(r) ?? graph.transforms.get(r);
     // As for every model, the root's own transform is not used.
     if (!transform || (roots.has(r) && graph.parents.get(r) === undefined)) continue;
     world = multiply(
@@ -821,6 +851,7 @@ function evaluate(
   const shaderFloats = new Map<Ref, Map<number, number>>();
   const shaderColors = new Map<Ref, Map<number, Vec3>>();
   const alphaTest = new Map<Ref, number>();
+  const lookAts: Extract<AnimationTrack, { kind: 'look-at' }>[] = [];
   // Weighted layers: per target, blended after the outright ones.
   const blended = new Map<string, WeightedSum>();
   const rotations = new Map<Ref, WeightedRotation>();
@@ -872,6 +903,9 @@ function evaluate(
         case 'alpha-test':
           weighted(`a${String(track.alpha)}`, 1).add([sampleFloat(track.source, time)], weight);
           break;
+        case 'look-at':
+          lookAts.push(track);
+          break;
       }
       continue;
     }
@@ -905,6 +939,9 @@ function evaluate(
       }
       case 'alpha-test':
         alphaTest.set(track.alpha, sampleFloat(track.source, time));
+        break;
+      case 'look-at':
+        lookAts.push(track);
         break;
     }
   }
@@ -948,6 +985,35 @@ function evaluate(
     } else if (key.startsWith('a')) {
       alphaTest.set(Number(key.slice(1)), mean[0] ?? 0);
     }
+  }
+  // Look-ats turn their node toward their target where everything else put both.
+  for (const look of lookAts) {
+    const rest = locals.get(look.block) ?? animation.transforms.get(look.block);
+    const parent = animation.parents.get(look.block);
+    const target = objectWorld(animation, undefined, look.target, locals);
+    const above =
+      parent === undefined ? undefined : objectWorld(animation, undefined, parent, locals);
+    if (!rest || !target) continue;
+    // The target in the parent's frame (rigid: the transpose of its rotation), from the node.
+    let to: Vec3 = [target[12] ?? 0, target[13] ?? 0, target[14] ?? 0];
+    if (above) {
+      const d = [to[0] - (above[12] ?? 0), to[1] - (above[13] ?? 0), to[2] - (above[14] ?? 0)];
+      const column = (c: number): number =>
+        (above[c * 4] ?? 0) * (d[0] ?? 0) +
+        (above[c * 4 + 1] ?? 0) * (d[1] ?? 0) +
+        (above[c * 4 + 2] ?? 0) * (d[2] ?? 0);
+      const scale = Math.hypot(above[0] ?? 0, above[1] ?? 0, above[2] ?? 0) || 1;
+      to = [column(0) / scale ** 2, column(1) / scale ** 2, column(2) / scale ** 2];
+    }
+    const sign = (look.flags & 1) !== 0 ? -1 : 1;
+    const way: Vec3 = [
+      (to[0] - rest.translation[0]) * sign,
+      (to[1] - rest.translation[1]) * sign,
+      (to[2] - rest.translation[2]) * sign,
+    ];
+    const axis = (look.flags & 4) !== 0 ? 2 : (look.flags & 2) !== 0 ? 1 : 0;
+    const turn = followRotation(way, axis);
+    if (turn) locals.set(look.block, { ...rest, rotation: quaternionRotation(turn) });
   }
   // World matrices of the moved objects and everything below them.
   const worlds = new Map<Ref, Mat4>();

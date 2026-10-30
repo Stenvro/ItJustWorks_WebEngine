@@ -1596,7 +1596,7 @@ export interface SceneFrame {
 }
 
 /** The fade multipliers before the settings are read (the executable's [LOD] defaults). */
-const DEFAULT_FADE: FadeSettings = { actors: 6, items: 3, objects: 5 };
+const DEFAULT_FADE: FadeSettings = { actors: 6, items: 3, objects: 5, skyCell: 1 };
 
 export class SceneRenderer {
   /** One of DebugView; 0 shows the normal image. */
@@ -2758,6 +2758,8 @@ export class SceneRenderer {
         floats.set(identity(), 0);
         writeMaterial(floats, uints, system.data);
         floats[28] = system.data.aspectRatio;
+        // The first-person geometry's systems are drawn with it (particle.wgsl).
+        markFirstPerson(uints, instance.firstPerson === true);
         const rest = system.data.objects.get(system.data.block) ?? identity();
         const origin = transformPoint(multiply(instance.world, rest), [0, 0, 0]);
         // Each placement gets its own random sequence, the same every time it loads.

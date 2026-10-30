@@ -872,17 +872,20 @@ TODO(M13) calibrate rain against the original.
 The engine draws the first-person geometry (the arms, the weapon, a torch, an animation object
 in the hands) through a camera of its own over the world: first person's field of view
 (`[Display] fDefault1stPersonFOV`, the console's second `fov` value) and a near plane of its
-own. Here those instances carry `ModelInstance.firstPerson`; their draws get the
+own (`[Display] fNear1stPersonDistance`, 5 units), drawn into the nearest
+`[Display] f1stPersonFarDepthRange` (0.01) of the depth range (observed in the original). Here
+those instances carry `ModelInstance.firstPerson`; their draws get the
 `DRAW_FIRST_PERSON` flag (a bit the NiAlphaProperty flags leave unused) and are never culled.
 `objectVertex` (common.wgsl) projects them with `frame.firstPersonViewProj` (the player's view
 with first person's projection, src/render/first-person-view.ts) and moves their reversed-Z
-depth linearly into the band `[0.98, 1]`. The player's controller keeps the eye farther than the
-world's near plane (`fNearDistance` 15) from any wall, and a wall at 15.3 units already has
-depth 0.98: the arms never sink into a wall, and still hide their own far sides (the band is
-linear in clip space, so it interpolates as depth does). A bow's zoom, the dialogue zoom and the
-tween menu narrow the world's view only. TODO(M13): the engine's first-person near plane (1
-here); first-person particles (a weapon's enchantment) still use the world's projection; the
-composite reads the arms' depth as about 15 units away (fog, ambient occlusion).
+depth linearly into the band `[0.99, 1]`. The player's controller keeps the eye farther than the
+world's near plane (`fNearDistance` 15) from any wall, and a wall at 15.15 units already has
+depth 0.99: the arms never sink into a wall, and still hide their own far sides (the band is
+linear in clip space, so it interpolates as depth does). The first-person instance's particle
+systems (a spell in the hand, a torch's flame, an enchanted weapon's) are drawn the same way
+(particle.wgsl). A bow's zoom, the dialogue zoom and the tween menu narrow the world's view
+only. TODO(M13): the composite reads the arms' depth as about 15 units away (fog, ambient
+occlusion).
 
 ## Cameras
 
@@ -891,9 +894,33 @@ src/shell/camera-states.ts), worked out each frame by precedence: a kill camera 
 killmove and ranged kill cameras, src/shell/killmove-camera.ts), the free camera, the tween
 menu's, an animated camera (StartAnimatedCamera), bleedout, furniture, auto vanity, a dragon's
 back, then first person, or third person, or a mount's. Riding a horse the third-person camera
-takes `fOverShoulderHorse{PosX,AddY,PosZ}` (TODO(M13): the engine's values); on a dragon it is
+takes `fOverShoulderHorse{PosX,AddY,PosZ}` (the engine's 0, -300, 0); on a dragon it is
 always third person, zoomed between `fVanityModeMinDistFly` and `fVanityModeMaxDist` ×
-`fVanityModeMaxDistFlyMult`. The auto vanity camera starts after `fAutoVanityModeDelay` seconds
+`fVanityModeMaxDistFlyMult`.
+
+The dragon's camera (DragonCameraState, observed in the original): its shoulder offsets are
+`[Camera] fOverShoulderDragon{PosX,AddY,PosZ}` (0, -600, 0), with a weapon or spell drawn the
+GMSTs `fOverShoulderRangedDragon{PosX,AddY,PosZ}` (0, -150, 90). Its heading is kept as the
+player's turn about the dragon's heading, so the view turns with the dragon. Only a moving mount
+that is horse-like (the ActorTypeHorse keyword, or a race that tilts front to back) holds the
+view's heading in the world as it turns, at most `fDragonMaxAngleBeforeTurn` (90°) from its
+heading; no vanilla dragon is. When the player has locked the dragon on a target, the view
+looks from the player at that target instead; every change between the free view and a locked
+one (a lock, a new target, the lock let go) eases over `fDragonCameraDollyTime` (0.75 s), the
+heading and pitch each a straight blend from where the view was going. A locked target that
+dies, is disabled or unloaded gives way to the next, none left lets the lock go.
+`bDragonCameraTargetPlayer` (1) keeps the camera on the player; at 0 it hangs on the dragon while
+nothing is locked. TODO(M13): the original's list of targets (its order) and the buttons that
+cycle it and let it go; here Right Attack locks the actor nearest the view.
+
+The kill cameras' shots play their camera models (meshes\cameras\*.nif, src/render/camera-model.ts):
+an NiCamera under its root, the root's place in the shot's frame moved by its own
+NiTransformController (keys, or an NiPathInterpolator path: base.nif, baseleft.nif) from the
+shot's start, the field of view by the NiCamera's BSFrustumFOVController (its value the frustum's
+right edge, the tangent of half the horizontal angle; the top edge keeps its ratio). The models'
+root turns hold small turns about looking at the shot's target (their Max camera's -Z); the
+camera looks at the target. TODO(M13): how the engine adds those turns, and the bone a shot's
+location is measured from. The auto vanity camera starts after `fAutoVanityModeDelay` seconds
 without a key, the mouse or movement (not in combat, a menu, a conversation or on a mount; never
 with `bDisableAutoVanityMode`, at once with `bForceAutoVanityMode`) and circles the player
 `fDefaultAutoVanityZoom` units away, `fAutoVanityIncrement` radians a 60th of a second; any

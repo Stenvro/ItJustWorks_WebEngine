@@ -145,6 +145,21 @@ match groups.
 
 ## Animation
 
+Motion along a path (NiPathInterpolator, src/render/path-motion.ts): the node moves along its
+NiPosData curve (keys over 0..1, quadratic with stored tangents) by the percentage its NiFloatData
+gives over the controller's time; with Constant Velocity (0x10) the percentage is a share of the
+curve's length (a length table, 16 steps a key segment), else a time on the curve's keys. Follow
+(0x20) lays the follow axis along the curve's direction (Flip, 0x40, the other way), the other
+axes keeping world up. Bank (0x08) is set only on the hawks' paths, whose max bank angle is 0.
+NiLookAtInterpolator turns its node's axis (LookAtFlags: 2 y, 4 z, else x; 1 flips it) toward
+another node; the five vanilla ones turn the forge markers' editor preview camera.
+The skeletons' and animated objects' NiFloatExtraData named `hkVis:<node>` and
+`hkPhoneme:<...>` name the Havok float slots the engine's controllers read from the Havok pose
+(observed in the original: a node is hidden while its `hkVis` slot is exactly 0); the
+NiFloatExtraDataController blocks animating them are not what shows the nodes.
+`TwistOverride`, `Pauldron Override` and `Orientation` (on skeleton bones) are named nowhere
+in the executable: exporter data.
+
 Objects animate through controllers (`src/formats/nif/animation-blocks.ts`,
 `src/render/animation.ts`). Every vanilla mesh parses (`node tools/nif-stats.ts --parse`).
 

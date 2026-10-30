@@ -1,20 +1,22 @@
 // The first-person geometry's view (docs/rendering.md, "First person"): the engine draws the
 // player's arms and what they hold through a camera of their own, with first person's field of
 // view ([Display] fDefault1stPersonFOV, the console's second fov value) and a near plane of its
-// own, over the world. Here the arms are drawn with the world (common.wgsl) through this
+// own ([Display] fNear1stPersonDistance, 5 units), drawn into the nearest share of the depth
+// range ([Display] f1stPersonFarDepthRange, 0.01), over the world (observed in the original).
+// Its particle systems (a spell in the hand, a torch's flame) are drawn the same way. Here the arms are drawn with the world (common.wgsl) through this
 // view-projection, their depth moved into the band nearest the eye that the world never reaches:
 // the player stays farther than the world's near plane (fNearDistance) from any wall.
 
 import { multiply, perspectiveReversedZ, type Mat4 } from './math.ts';
 
-/**
- * The first-person camera's near plane (game units). TODO(M13): the engine's value; the arms'
- * nearest parts (a raised shield, a drawn bow's string) come within a few units of the eye.
- */
-export const FIRST_PERSON_NEAR = 1;
+/** The first-person camera's near plane (game units): [Display] fNear1stPersonDistance. */
+export const FIRST_PERSON_NEAR = 5;
 
-/** Where the first-person depth band starts (reversed Z; common.wgsl FIRST_PERSON_DEPTH). */
-export const FIRST_PERSON_DEPTH = 0.98;
+/**
+ * Where the first-person depth band starts (reversed Z; common.wgsl FIRST_PERSON_DEPTH): the
+ * nearest [Display] f1stPersonFarDepthRange (0.01) of the depth range.
+ */
+export const FIRST_PERSON_DEPTH = 0.99;
 
 /**
  * The vertical field of view (radians) of a horizontal one across a 4:3 frame (degrees), as
