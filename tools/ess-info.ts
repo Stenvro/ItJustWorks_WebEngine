@@ -69,9 +69,19 @@ if (stats) console.log(`misc stats: ${String(readMiscStats(stats).length)}`);
 const papyrusData = globalData(ess, 1001);
 if (papyrusData) {
   try {
-    const papyrus = readPapyrus(papyrusData);
+    const papyrus = readPapyrus(papyrusData, ess.header.version >= 12);
     console.log(
       `papyrus: ${String(papyrus.strings.length)} strings, ${String(papyrus.types.length)} types, ${String(papyrus.objects.length)} objects, ${String(papyrus.arrays.length)} arrays, ${String(papyrus.stacks.length)} stacks (${String(papyrus.unread)} bytes not read)`,
+    );
+    for (const stack of papyrus.stackData) {
+      const frames = stack.frames.map(
+        (frame) => `${frame.script}.${frame.functionName} at ${String(frame.instruction)}`,
+      );
+      console.log(`  stack ${String(stack.id)}: ${frames.join(' < ')}`);
+    }
+    const { registrations: r } = papyrus;
+    console.log(
+      `  ${String(papyrus.functionMessages.length)} function messages, ${String(papyrus.suspendedStacks[0].length + papyrus.suspendedStacks[1].length)} suspended stacks; registrations (version ${String(r.version)}): ${String(r.waits.flat().length)} waits, ${String(r.updates.length)} updates, ${String(r.gameTimeUpdates.length)} game time updates, ${String(r.sleepEvents.length)} sleep, ${String(r.trackedStatsEvents.length)} tracked stats, ${String(r.inventoryFilters.length)} inventory filters, ${String(r.animationEvents.reduce((sum, entry) => sum + entry.events.length, 0))} animation events, user logs: ${r.userLogs.join(', ') || 'none'}`,
     );
   } catch (error) {
     console.log(`papyrus: ${error instanceof Error ? error.message : String(error)}`);
