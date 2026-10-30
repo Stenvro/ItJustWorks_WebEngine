@@ -190,13 +190,122 @@ export function skinnedDecalPart(
     }
   }
   const posed = skinPositions(part.vertices, layout.stride, skinning, part.vertexCount, palette);
-  const toCube = new Float32Array(16);
-  multiplyInto(toBox, target.world, toCube);
-  const local = new Float32Array(part.vertexCount * 3);
+  const ranges: (IndexRange & { readonly bodyPart?: number })[] = skin.partitions
+    ? skin.partitions.map((p) => ({ first: p.first, count: p.count, bodyPart: p.bodyPart }))
+    : [{ first: 0, count: part.indices.length }];
+  const shape = boxShape(
+    part,
+    cubePositions(posed, part.vertexCount, toBox, target.world),
+    ranges,
+    target.partitionVisible,
+    rect,
+    color,
+  );
+  if (!shape) return undefined;
+  const decalFlags = material.flags2 & ~(layout.color >= 0 ? 0 : SLSF2_VERTEX_COLORS);
+  return {
+    name: `${part.name}:decal`,
+    block: -1,
+    shader: -1,
+    alphaProperty: -1,
+    world: part.world,
+    layout,
+    vertices: shape.vertices,
+    vertexCount: shape.vertexCount,
+    indices: shape.indices,
+    material: { ...material, flags2: decalFlags },
+    alpha,
+    center: part.center,
+    radius: part.radius,
+    skin: {
+      ...skin,
+      ...(skin.partitions ? { partitions: shape.partitions } : {}),
+    },
+  };
+}
+
+/** A rigid (unskinned) shape of an actor's models as it stands at the hit. */
+export interface RigidDecalTarget {
+  readonly part: ModelPart;
+  /** The shape's own space → world as it is drawn now (its node's pose and its placement). */
+  readonly world: Mat4;
+}
+
+/**
+ * The decal shape of one rigid shape: its triangles inside `box` copied as they are (the
+ * shape's own space), the texture coordinates of `rect` projected across the box, drawn where
+ * the shape is (`node`: the index of the decal instance's pose node it hangs on, under it as
+ * the shape is; none: placed as the shape's model places it). Undefined: the shape is skinned or nothing
+ * of it lies in the box.
+ */
+export function rigidDecalPart(
+  target: RigidDecalTarget,
+  box: Mat4,
+  rect: readonly [number, number, number, number],
+  material: LightingMaterial,
+  alpha: AlphaState | undefined,
+  color: readonly [number, number, number] = [1, 1, 1],
+  node?: number,
+): ModelPart | undefined {
+  const { part } = target;
+  const layout = part.layout;
+  if (part.skin || layout.uv < 0) return undefined;
+  const toBox = invert(box);
+  if (!toBox) return undefined;
+  const view = new DataView(
+    part.vertices.buffer,
+    part.vertices.byteOffset,
+    part.vertices.byteLength,
+  );
+  const positions = new Float32Array(part.vertexCount * 3);
   for (let v = 0; v < part.vertexCount; v++) {
-    const x = posed[v * 3] ?? 0;
-    const y = posed[v * 3 + 1] ?? 0;
-    const z = posed[v * 3 + 2] ?? 0;
+    for (let k = 0; k < 3; k++) {
+      positions[v * 3 + k] = view.getFloat32(v * layout.stride + k * 4, true);
+    }
+  }
+  const shape = boxShape(
+    part,
+    cubePositions(positions, part.vertexCount, toBox, target.world),
+    [{ first: 0, count: part.indices.length }],
+    undefined,
+    rect,
+    color,
+  );
+  if (!shape) return undefined;
+  const decalFlags = material.flags2 & ~(layout.color >= 0 ? 0 : SLSF2_VERTEX_COLORS);
+  return {
+    name: `${part.name}:decal`,
+    block: -1,
+    shader: -1,
+    alphaProperty: -1,
+    world: part.world,
+    layout,
+    vertices: shape.vertices,
+    vertexCount: shape.vertexCount,
+    indices: shape.indices,
+    material: { ...material, flags1: material.flags1 & ~SLSF1_SKINNED, flags2: decalFlags },
+    alpha,
+    center: part.center,
+    radius: part.radius,
+    ...(node !== undefined && { node }),
+    ...(part.local && { local: part.local }),
+  };
+}
+
+/** Positions (a shape's space) carried by `world` into the box's unit cube. */
+function cubePositions(
+  positions: Float32Array,
+  vertexCount: number,
+  toBox: Mat4,
+  world: Mat4,
+): Float32Array {
+  const toCube = new Float32Array(16);
+  multiplyInto(toBox, world, toCube);
+  const local = new Float32Array(vertexCount * 3);
+  for (let v = 0; v < vertexCount; v++) {
+    const x = positions[v * 3] ?? 0;
+    const y = positions[v * 3 + 1] ?? 0;
+    const z = positions[v * 3 + 2] ?? 0;
     for (let r = 0; r < 3; r++) {
       local[v * 3 + r] =
         (toCube[r] ?? 0) * x +
@@ -205,24 +314,42 @@ export function skinnedDecalPart(
         (toCube[12 + r] ?? 0);
     }
   }
+  return local;
+}
+
+/**
+ * A shape's triangles in the box (`local`: its vertices in the box's unit cube), range by range
+ * (a skin's partitions, kept so equipment hides the decal with the skin beneath): their
+ * vertices copied, the texture coordinates of `rect` projected across the box (across its X,
+ * down its Z), the colour on the vertex colours. Undefined: none lies in the box.
+ */
+function boxShape(
+  part: ModelPart,
+  local: Float32Array,
+  ranges: readonly (IndexRange & { readonly bodyPart?: number })[],
+  partitionVisible: ((bodyPart: number) => boolean) | undefined,
+  rect: readonly [number, number, number, number],
+  color: readonly [number, number, number],
+):
+  | {
+      readonly vertices: Uint8Array;
+      readonly vertexCount: number;
+      readonly indices: Uint16Array;
+      readonly partitions: SkinPartitionRange[];
+    }
+  | undefined {
+  const layout = part.layout;
   const at = (v: number): number[] => [
     local[v * 3] ?? 0,
     local[v * 3 + 1] ?? 0,
     local[v * 3 + 2] ?? 0,
   ];
-  // The triangles in the box, partition by partition (the decal keeps its partitions, so
-  // equipment hides it with the skin beneath).
-  const ranges: (IndexRange & { readonly bodyPart?: number })[] = skin.partitions
-    ? skin.partitions.map((p) => ({ first: p.first, count: p.count, bodyPart: p.bodyPart }))
-    : [{ first: 0, count: part.indices.length }];
   const remap = new Map<number, number>();
   const sources: number[] = [];
   const indices: number[] = [];
   const partitions: SkinPartitionRange[] = [];
   for (const range of ranges) {
-    if (range.bodyPart !== undefined && target.partitionVisible?.(range.bodyPart) === false) {
-      continue;
-    }
+    if (range.bodyPart !== undefined && partitionVisible?.(range.bodyPart) === false) continue;
     const first = indices.length;
     for (let i = range.first; i + 2 < range.first + range.count; i += 3) {
       const tri = [part.indices[i] ?? 0, part.indices[i + 1] ?? 0, part.indices[i + 2] ?? 0];
@@ -244,8 +371,8 @@ export function skinnedDecalPart(
   if (indices.length === 0 || sources.length > 0xffff) return undefined;
   const stride = layout.stride;
   const vertices = new Uint8Array(sources.length * stride);
-  const view = new DataView(vertices.buffer);
   const uvs = new Float32Array(sources.length * 2);
+  const view = new DataView(vertices.buffer);
   sources.forEach((source, i) => {
     vertices.set(part.vertices.subarray(source * stride, (source + 1) * stride), i * stride);
     const [x, , z] = at(source);
@@ -265,39 +392,28 @@ export function skinnedDecalPart(
     }
   });
   if (layout.tangent >= 0 && layout.normal >= 0) writeTangents(vertices, layout, uvs, indices);
-  const decalFlags = material.flags2 & ~(layout.color >= 0 ? 0 : SLSF2_VERTEX_COLORS);
-  return {
-    name: `${part.name}:decal`,
-    block: -1,
-    shader: -1,
-    alphaProperty: -1,
-    world: part.world,
-    layout,
-    vertices,
-    vertexCount: sources.length,
-    indices: Uint16Array.from(indices),
-    material: { ...material, flags2: decalFlags },
-    alpha,
-    center: part.center,
-    radius: part.radius,
-    skin: {
-      ...skin,
-      ...(skin.partitions ? { partitions } : {}),
-    },
-  };
+  return { vertices, vertexCount: sources.length, indices: Uint16Array.from(indices), partitions };
 }
 
-/** The decal shapes of a hit's box on a body's skinned parts, as one model (none: undefined). */
+/**
+ * The decal shapes of a hit's box on a body's skinned parts (and on its rigid shapes, `rigid`),
+ * as one model (none: undefined).
+ */
 export function skinnedDecalModel(
   targets: readonly DecalTarget[],
   box: Mat4,
   rect: readonly [number, number, number, number],
   look: SkinnedDecalLook,
+  rigid: readonly RigidDecalTarget[] = [],
 ): ModelData | undefined {
   const { material, alpha } = skinnedDecalMaterial(look);
   const parts: ModelPart[] = [];
   for (const target of targets) {
     const part = skinnedDecalPart(target, box, rect, material, alpha, look.color);
+    if (part) parts.push(part);
+  }
+  for (const target of rigid) {
+    const part = rigidDecalPart(target, box, rect, material, alpha, look.color);
     if (part) parts.push(part);
   }
   const first = parts[0];

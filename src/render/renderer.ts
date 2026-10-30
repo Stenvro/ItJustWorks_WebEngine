@@ -66,12 +66,22 @@ import { fitCascades, shadowAnchor, SHADOW_SPLITS, type Cascade } from './shadow
 import {
   boundingSphere,
   fitFocusShadow,
+  FOCUS_DOUBLE_EVERY,
+  FOCUS_FADE_START,
   FOCUS_SHADOW_COUNT,
   FOCUS_SHADOW_DISTANCE,
+  focusFade,
+  focusMapSize,
   selectFocusShadows,
   type FocusCandidate,
   type FocusShadow,
 } from './focus-shadows.ts';
+
+/** A focus map of the frame and the body (scene) it is fitted round. */
+interface FocusMap {
+  readonly shadow: FocusShadow;
+  readonly scene: GpuScene;
+}
 
 /**
  * Frames between updates of each shadow cascade: the near ones every frame, the far ones
@@ -323,9 +333,14 @@ export class Renderer {
   /** Light-shadow map layers rendered in the last frame (the terminal's stats). */
   lightShadowPasses = 0;
   readonly #shadowLights = new ShadowLightSelector();
-  /** iNumFocusShadow and fMaxFocusShadowMapDistance ([Display]; the shell sets them). */
+  /**
+   * iNumFocusShadow, fMaxFocusShadowMapDistance, fFadingFracStart and
+   * fFocusShadowMapDoubleEveryXUnit ([Display]; the shell sets them).
+   */
   focusShadowCount = FOCUS_SHADOW_COUNT;
   focusShadowDistance = FOCUS_SHADOW_DISTANCE;
+  focusShadowFadeStart = FOCUS_FADE_START;
+  focusShadowDoubleEvery = FOCUS_DOUBLE_EVERY;
   /** Focus shadow maps rendered in the last frame (the terminal's stats). */
   focusShadowPasses = 0;
   /** The focus maps' casters of the frame (kept to spare arrays each frame). */
@@ -549,7 +564,7 @@ export class Renderer {
     }
     let shadows: FrameShadows | undefined;
     let lightShadowSlots: readonly ShadowSlot[] = [];
-    let focus: readonly FocusShadow[] = [];
+    let focus: readonly FocusMap[] = [];
     let wind: Vec3 = [0, 0, 0];
     /** Cascades to render into the shadow map this frame. */
     const dueCascades: number[] = [];
@@ -594,7 +609,8 @@ export class Renderer {
         shadows = { cascades: this.#cascades };
         focus = this.#fitFocusShadows(view, lighting.sunDirection);
       }
-      this.scene.updateFocusShadows(focus);
+      this.scene.updateFocusShadows(focus.map((entry) => entry.shadow));
+      this.scene.updateFocusScenes(focus.map((entry) => entry.scene));
       this.scene.setWorldMapOverlay(view.worldMapOverlay?.());
       lightShadowSlots = this.#selectShadowLights(view, lighting.lights, delta);
       this.scene.updateFrame(
@@ -640,7 +656,7 @@ export class Renderer {
     }
     // The focus maps round the bodies near the player, every frame (they move).
     this.focusShadowPasses = focus.length;
-    if (view && focus.length > 0) this.#focusShadowPass(encoder, focus, terrainCells, scenes);
+    if (view && focus.length > 0) this.#focusShadowPass(encoder, focus);
     // The shadow lights' maps: only the layers whose casters changed.
     this.lightShadowPasses = 0;
     if (view) this.#lightShadowPasses(encoder, view, lightShadowSlots, scenes);
@@ -706,7 +722,15 @@ export class Renderer {
       if (sky) this.sky.draw(opaque, this.scene.frameBindGroup, sky);
       const terrain = this.showLod ? view.terrain?.() : undefined;
       if (terrain) {
-        this.terrain.draw(opaque, this.scene.frameBindGroup, terrain, this.scene.viewPlanes);
+        this.terrain.draw(
+          opaque,
+          this.scene.frameBindGroup,
+          terrain,
+          this.scene.viewPlanes,
+          (center, radius, out, at) => {
+            this.scene.chooseLandLights(center, radius, out, at);
+          },
+        );
       }
       const trees = this.showLod && this.showTrees ? view.trees?.() : undefined;
       if (trees) this.treeLod.draw(opaque, this.scene.frameBindGroup, trees, this.scene.viewPlanes);
@@ -1038,9 +1062,9 @@ export class Renderer {
    * The focus maps of the frame: the bodies near the player (focus-shadows.ts), each fitted by
    * the bound of its scene's shadow casters.
    */
-  #fitFocusShadows(view: SceneView, toLight: Vec3): FocusShadow[] {
+  #fitFocusShadows(view: SceneView, toLight: Vec3): FocusMap[] {
     if (!view.focusShadows || this.focusShadowCount <= 0) return [];
-    const candidates: FocusCandidate[] = [];
+    const candidates: FocusCandidate<GpuScene>[] = [];
     for (const body of view.focusShadows()) {
       const bound = boundingSphere(
         body.scene.draws.filter((draw) => draw.part.shadowPipeline && !draw.visibility?.hidden),
@@ -1049,21 +1073,36 @@ export class Renderer {
     }
     const player = candidates.find((candidate) => candidate.player)?.center;
     const anchor = shadowAnchor(view.camera.position);
+    const camera = view.camera.position;
     return selectFocusShadows(
       candidates,
-      player ?? view.camera.position,
+      player ?? camera,
       this.focusShadowCount,
       this.focusShadowDistance,
-    ).map((body) => fitFocusShadow(body.center, body.radius, toLight, FOCUS_MAP_SIZE, anchor));
+    ).map((body) => {
+      // The map's size by the body's distance to the camera (the original measures it from the
+      // actor's root node; here from its bound's centre).
+      const distance = Math.hypot(
+        body.center[0] - camera[0],
+        body.center[1] - camera[1],
+        body.center[2] - camera[2],
+      );
+      const size = focusMapSize(
+        distance,
+        Math.min(FOCUS_MAP_SIZE, SHADOW_MAP_SIZE),
+        this.focusShadowDoubleEvery,
+      );
+      const fade = focusFade(body.key, this.focusShadowDistance, this.focusShadowFadeStart);
+      const shadow = fitFocusShadow(body.center, body.radius, toLight, size, anchor, fade);
+      return { shadow, scene: body.target };
+    });
   }
 
-  /** Renders the focus maps into their quarters of the focus layer of the sun's shadow map. */
-  #focusShadowPass(
-    encoder: GPUCommandEncoder,
-    focus: readonly FocusShadow[],
-    terrain: readonly GpuTerrainCell[],
-    scenes: readonly GpuScene[],
-  ): void {
+  /**
+   * Renders the focus maps into their quarters of the focus layer of the sun's shadow map, each
+   * from its body's own casters alone (focus-shadows.ts), in a corner of its map's size.
+   */
+  #focusShadowPass(encoder: GPUCommandEncoder, focus: readonly FocusMap[]): void {
     const pass = encoder.beginRenderPass({
       label: 'focus-shadows',
       colorAttachments: [],
@@ -1078,28 +1117,17 @@ export class Renderer {
         depthStoreOp: 'store',
       },
     });
-    // One walk over the scenes' draws sorts the casters out for every focus map.
-    const views = focus.map((shadow) => ({
-      planes: frustumPlanes(shadow.viewProj),
-      minRadius: shadow.texelSize * MIN_CASTER_TEXELS,
-    }));
-    this.scene.collectShadowCasters(scenes, views, this.#focusCasters);
-    views.forEach(({ planes }, i) => {
-      const casters = this.#focusCasters[i];
+    focus.forEach(({ shadow, scene }, i) => {
+      // The body's own casters, however small (the original's list holds its 3D alone).
+      const views = [{ planes: frustumPlanes(shadow.viewProj), minRadius: 0 }];
+      this.scene.collectShadowCasters([scene], views, this.#focusCasters);
+      const casters = this.#focusCasters[0];
       if (!casters) return;
       const x = (i % 2) * FOCUS_MAP_SIZE;
       const y = Math.floor(i / 2) * FOCUS_MAP_SIZE;
-      pass.setViewport(x, y, FOCUS_MAP_SIZE, FOCUS_MAP_SIZE, 0, 1);
-      pass.setScissorRect(x, y, FOCUS_MAP_SIZE, FOCUS_MAP_SIZE);
-      const slot = focusCascadeSlot(i);
-      this.terrain.drawShadows(
-        pass,
-        this.scene.cascadeBindGroup,
-        this.scene.cascadeOffset(slot),
-        terrain,
-        planes,
-      );
-      this.scene.drawShadowCasters(pass, casters, slot);
+      pass.setViewport(x, y, shadow.size, shadow.size, 0, 1);
+      pass.setScissorRect(x, y, shadow.size, shadow.size);
+      this.scene.drawShadowCasters(pass, casters, focusCascadeSlot(i));
     });
     pass.end();
     // Let go of the frame's draws (scenes may be unloaded before the next).

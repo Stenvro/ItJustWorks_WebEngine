@@ -49,6 +49,11 @@ export interface ScenePort {
   ): GpuScene | undefined;
   /** Fades a scene's draws (an effect shader's fill and edge). */
   fadeScene(scene: GpuScene, fade: number): void;
+  /**
+   * Whether the camera saw a scene in the last frame drawn (a draw within its view); absent
+   * headless, where nothing is seen or unseen.
+   */
+  seen?(scene: GpuScene): boolean;
   /** A head part's expression morphs on the GPU (undefined headless). */
   createMorphs(data: MorphData): GpuMorphs | undefined;
   /** A texture the engine paints (the player's face tint; undefined headless). */

@@ -1439,6 +1439,19 @@ describe('bone LOD', () => {
     runtime.minimumBones = Infinity;
     runtime.update(1);
     expect([runtime.pose[0], runtime.pose[10]]).toEqual([3, 3]);
+    // Unseen, near or far, it animates its minimum bones alone: one (the root), then none.
+    runtime.boneLodDistance = 0;
+    runtime.seen = false;
+    runtime.minimumBones = 1;
+    runtime.update(1);
+    expect([runtime.pose[0], runtime.pose[10]]).toEqual([4, 3]);
+    runtime.minimumBones = 0;
+    runtime.update(1);
+    expect([runtime.pose[0], runtime.pose[10]]).toEqual([4, 3]);
+    // Seen again (or not known, as headless): every bone near the camera.
+    runtime.seen = undefined;
+    runtime.update(1);
+    expect([runtime.pose[0], runtime.pose[10]]).toEqual([6, 6]);
   });
 });
 

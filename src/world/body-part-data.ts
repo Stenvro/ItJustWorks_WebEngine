@@ -243,3 +243,8 @@ export function parseBodyPartData(record: BodyPartRecord): BodyPart[] {
 export function headNode(parts: readonly BodyPart[]): string | undefined {
   return parts.find((part) => part.type === BodyPartType.head && part.node !== '')?.node;
 }
+
+/** The torso part's skeleton node (what a kill camera's shot is measured from), if any. */
+export function torsoNode(parts: readonly BodyPart[]): string | undefined {
+  return parts.find((part) => part.type === BodyPartType.torso && part.node !== '')?.node;
+}

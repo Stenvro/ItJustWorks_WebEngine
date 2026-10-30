@@ -61,6 +61,13 @@ fn lightListIndex(list: LightList, i: u32) -> u32 {
   let word = list.words[half >> 1u];
   return select(word >> 16u, word & 0xffffu, (half & 1u) == 0u);
 }
+
+// The focus map that shades this scene's draws (1 + its index; 0: none): the entry past the
+// draws' lists (SceneRenderer.updateFocusScenes), standing in for the original's stencil mark
+// of a focus actor's pixels.
+fn sceneFocus() -> u32 {
+  return drawLights[arrayLength(&drawLights) - 1u].x;
+}
 @group(2) @binding(0) var linearSampler: sampler;
 // Lighting: diffuse. Effect: source texture.
 @group(2) @binding(1) var diffuseMap: texture_2d<f32>;

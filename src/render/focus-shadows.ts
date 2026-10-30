@@ -4,20 +4,29 @@
 // actors whose 3D is loaded and shown, keyed by their squared distance to the player less the
 // square of their bound's larger horizontal half extent (at least 1), keeps those below
 // fMaxFocusShadowMapDistance², sorts them nearest first and hands out the focus maps in that
-// order, the player's own body first (when shown), until iNumFocusShadow are taken.
+// order, the player's own body first (key 0, when shown), until iNumFocusShadow are taken.
 //
-// Here each focus map is a quarter of one layer of the sun's shadow map (an atlas of 2×2), an
-// orthographic view along the same light view as the cascades, fitted round the actor's bound
-// and reaching as far towards the sun as the cascades do. It holds every caster in that column
-// (not only the actor), so a receiver inside its square takes its shadow from the focus map
-// alone, the cascades fading in over the square's outer tenth.
-// TODO(M13): whether the engine's focus maps draw only their actor (and leave it out of the
-// cascades), and its focus map resolution; here they share the sun's iShadowMapResolution.
+// What a focus map holds and shades, observed in the original: each map has its own render
+// list with the actor's 3D alone in it (no other actor, object or land), drawn through an
+// orthographic view along the sun round the actor's world bound (its radius to each side,
+// from the bound's near side to 1.1 radii past its centre). Its size is
+// 50 × 2^max(0, (4X − d) / X) texels, X being fFocusShadowMapDoubleEveryXUnit (450) and d the
+// actor's distance to the camera, at most iShadowMapResolution: 800 at the camera, halving every
+// 450 units to 50 from 1800 on. Before the shadow mask the actor is drawn again into the scene's
+// stencil with the map's number, so the map shades the actor's own pixels and nothing else; its
+// shadow on the world and on other actors comes from the cascades. Its share fades with its
+// key, fully from fFadingFracStart (0.25) of fMaxFocusShadowMapDistance² to nothing at it.
+//
+// Here each focus map is a quarter of one layer of the sun's shadow map (an atlas of 2×2), its
+// size a corner of that quarter; the draws of the actor's scene name the map (their scene's
+// focus slot, SceneRenderer.updateFocusScenes) in place of the stencil.
+// TODO(M13): how the shadow mask mixes a fading focus map with the cascades (read: the fade
+// goes to the mask's constants; here the focus result is mixed into the cascades' by it).
 // Platform-independent.
 
 import { project } from './frustum.ts';
 import { lookAt, multiply, type Mat4, type Vec3 } from './math.ts';
-import { CASTER_REACH, orthographic } from './shadow-cascades.ts';
+import { orthographic } from './shadow-cascades.ts';
 
 /** Focus maps at most (the atlas's quarters; iNumFocusShadow is clamped to it). */
 export const MAX_FOCUS_SHADOWS = 4;
@@ -25,10 +34,12 @@ export const MAX_FOCUS_SHADOWS = 4;
 export const FOCUS_SHADOW_COUNT = 4;
 /** fMaxFocusShadowMapDistance's built-in default (game units). */
 export const FOCUS_SHADOW_DISTANCE = 450;
-/** Extra room round an actor's bound (a raised weapon, a cloak, hair). */
-const FOCUS_MARGIN = 24;
-/** How far behind the actor (away from the sun) receivers still take the focus map. */
-const RECEIVER_DEPTH = 4000;
+/** fFadingFracStart's built-in default: the share of the distance² where the fade starts. */
+export const FOCUS_FADE_START = 0.25;
+/** fFocusShadowMapDoubleEveryXUnit's built-in default (game units). */
+export const FOCUS_DOUBLE_EVERY = 450;
+/** A focus map's size at and beyond four doubling distances from the camera (texels). */
+const FOCUS_BASE_SIZE = 50;
 
 /** A body that may take a focus map: its bound, and whether it is the player's. */
 export interface FocusCandidate<T = unknown> {
@@ -40,6 +51,9 @@ export interface FocusCandidate<T = unknown> {
   readonly target: T;
 }
 
+/** A body given a focus map, with its key (squared distance less its size; the player's 0). */
+export type FocusChoice<T = unknown> = FocusCandidate<T> & { readonly key: number };
+
 /**
  * The bodies that take the focus maps, in the engine's order: the player first, then the
  * others nearest the player (less their size) within `maxDistance`, `count` in all.
@@ -49,10 +63,13 @@ export function selectFocusShadows<T>(
   playerPosition: Vec3 | undefined,
   count = FOCUS_SHADOW_COUNT,
   maxDistance = FOCUS_SHADOW_DISTANCE,
-): FocusCandidate<T>[] {
+): FocusChoice<T>[] {
   const limit = Math.max(0, Math.min(MAX_FOCUS_SHADOWS, Math.floor(count)));
   if (limit === 0) return [];
-  const chosen = candidates.filter((candidate) => candidate.player).slice(0, 1);
+  const chosen: FocusChoice<T>[] = candidates
+    .filter((candidate) => candidate.player)
+    .slice(0, 1)
+    .map((candidate) => ({ ...candidate, key: 0 }));
   if (playerPosition) {
     const max = maxDistance * maxDistance;
     const keyed = candidates
@@ -62,13 +79,43 @@ export function selectFocusShadows<T>(
         const dy = candidate.center[1] - playerPosition[1];
         const dz = candidate.center[2] - playerPosition[2];
         const key = Math.max(1, dx * dx + dy * dy + dz * dz - candidate.halfWidth ** 2);
-        return { candidate, key };
+        return { ...candidate, key };
       })
       .filter((entry) => entry.key < max)
       .sort((a, b) => a.key - b.key);
-    for (const { candidate } of keyed) chosen.push(candidate);
+    chosen.push(...keyed);
   }
   return chosen.slice(0, limit);
+}
+
+/**
+ * How much a focus map counts by its body's key: fully below `fadeStart` of the distance²,
+ * falling linearly to nothing at it.
+ */
+export function focusFade(
+  key: number,
+  maxDistance = FOCUS_SHADOW_DISTANCE,
+  fadeStart = FOCUS_FADE_START,
+): number {
+  const max = maxDistance * maxDistance;
+  const start = fadeStart * max;
+  if (key < start) return 1;
+  if (max <= start) return 0;
+  return Math.max(0, Math.min(1, (max - key) / (max - start)));
+}
+
+/**
+ * A focus map's size in texels for a body `distance` from the camera: doubling for every
+ * `doubleEvery` units nearer than four of them, from 50, at most `maxSize`.
+ */
+export function focusMapSize(
+  distance: number,
+  maxSize: number,
+  doubleEvery = FOCUS_DOUBLE_EVERY,
+): number {
+  const step = doubleEvery > 0 ? doubleEvery : FOCUS_DOUBLE_EVERY;
+  const doublings = Math.max(0, (4 * step - distance) / step);
+  return Math.max(1, Math.min(maxSize, Math.floor(FOCUS_BASE_SIZE * 2 ** doublings)));
 }
 
 /** A sphere holding all of `spheres` (undefined: none). */
@@ -107,23 +154,28 @@ export function boundingSphere(
 /** A focus map's view. */
 export interface FocusShadow {
   readonly viewProj: Mat4;
+  /** Texels per side of its map (focusMapSize). */
+  readonly size: number;
   /** World units per texel of its map. */
   readonly texelSize: number;
   /** Depth range of its view (world units), to turn a bias in units into depth. */
   readonly depthRange: number;
+  /** How much it counts (focusFade). */
+  readonly fade: number;
 }
 
 /**
- * Fits a focus map round a body: the cascades' light view (turning about `anchor`, looking
- * along −toLight), a square round the bound snapped to whole texels of a `mapSize` map, from
- * the cascades' caster reach towards the sun to RECEIVER_DEPTH behind the body.
+ * Fits a focus map round a body's bound as the original does: the cascades' light view
+ * (turning about `anchor`, looking along −toLight), the bound's radius to each side of its
+ * centre, from one radius towards the sun to 1.1 radii away from it, `size` texels a side.
  */
 export function fitFocusShadow(
   center: Vec3,
   radius: number,
   toLight: Vec3,
-  mapSize: number,
+  size: number,
   anchor: Vec3 = [0, 0, 0],
+  fade = 1,
 ): FocusShadow {
   const up: Vec3 = Math.abs(toLight[2]) > 0.99 ? [0, 1, 0] : [0, 0, 1];
   const view = lookAt(
@@ -131,14 +183,18 @@ export function fitFocusShadow(
     [anchor[0] - toLight[0], anchor[1] - toLight[1], anchor[2] - toLight[2]],
     up,
   );
-  // A size that changes only in steps keeps the texel size steady as the body animates.
-  const half = Math.ceil((radius + FOCUS_MARGIN) / 16) * 16;
-  const texelSize = (2 * half) / mapSize;
+  const half = Math.max(radius, 1);
   const [cx, cy, cz] = project(view, center);
-  const sx = Math.round(cx / texelSize) * texelSize;
-  const sy = Math.round(cy / texelSize) * texelSize;
-  const near = -(cz + half + CASTER_REACH);
-  const far = -(cz - half - RECEIVER_DEPTH);
-  const projection = orthographic(sx - half, sx + half, sy - half, sy + half, near, far);
-  return { viewProj: multiply(projection, view), texelSize, depthRange: far - near };
+  // The original's camera stands 1.1 radii towards the sun, its near plane 0.1 and its far
+  // plane 2.2 radii out.
+  const near = -cz - half;
+  const far = -cz + 1.1 * half;
+  const projection = orthographic(cx - half, cx + half, cy - half, cy + half, near, far);
+  return {
+    viewProj: multiply(projection, view),
+    size,
+    texelSize: (2 * half) / size,
+    depthRange: far - near,
+    fade,
+  };
 }
