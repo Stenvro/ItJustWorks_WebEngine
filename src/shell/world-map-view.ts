@@ -10,19 +10,16 @@
 // times fWorldMapNearDepthBlurScale nearer than the focus (the clouds), the sky too unless
 // bWorldMapNoSkyDepthBlur. Notes: docs/ui.md ("The map").
 //
-// TODO(M13): the relief overlay. The engine lays a tiling normal map over the map's LOD land
-// for its relief: [MapMenu] sWorldMapOverlayNormalTexture (textures\terrain\
-// worldmapoverlay_n.dds) at fMapMenuOverlayScale (0.000035) per world unit and strength
-// fMapMenuOverlayNormalStrength (1.1), on snow sWorldMapOverlayNormalSnowTexture
-// (worldmapoverlaysnow_n.dds) at fMapMenuOverlaySnowScale (0.000045), strength
-// fMapMenuOverlayNormalSnowStrength (0.4). Not drawn yet: the LOD land's material
-// (lighting.wgsl, LOD landscape) needs the two textures bound and a map mode; how the shader
-// tells snow and blends the two normals is not read yet (the lighting shader's world-map path).
+// The relief overlay: a tiling normal map laid over the map's LOD land ([MapMenu]
+// sWorldMapOverlayNormalTexture at fMapMenuOverlayScale per world unit and strength
+// fMapMenuOverlayNormalStrength; on snow sWorldMapOverlayNormalSnowTexture at
+// fMapMenuOverlaySnowScale, strength fMapMenuOverlayNormalSnowStrength), drawn by the LOD land
+// shader while the map's 3D is up (lighting.wgsl worldMapRelief).
 
 import { identity } from '../render/math.ts';
 import type { SceneView } from '../render/renderer.ts';
 import type { GpuSky } from '../render/sky.ts';
-import type { GpuModel, GpuScene, WaterFrame } from '../render/scene-renderer.ts';
+import type { GpuModel, GpuScene, WaterFrame, WorldMapOverlay } from '../render/scene-renderer.ts';
 import { blendImageSpaces, parseImageSpace, type ImageSpace } from '../world/image-space.ts';
 import { MAP_CAMERA_DEFAULTS, MapCamera, type MapCameraSettings } from '../world/map-camera.ts';
 import { skySettings, skyState, type SkySettings, type SkyState } from '../world/sky-state.ts';
@@ -43,6 +40,9 @@ import type { Vec3 } from '../render/math.ts';
 export const WORLD_MAP_WEATHER = 0xa6858;
 /** The world map's clouds where the map world has no cloud model (WRLD MODL). */
 const DEFAULT_CLOUD_MODEL = 'meshes\\sky\\skyrimworldmapcloudbank.nif';
+/** [MapMenu] sWorldMapOverlayNormalTexture and sWorldMapOverlayNormalSnowTexture. */
+const OVERLAY_NORMAL_TEXTURE = 'textures\\terrain\\worldmapoverlay_n.dds';
+const OVERLAY_SNOW_TEXTURE = 'textures\\terrain\\worldmapoverlaysnow_n.dds';
 
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -87,6 +87,7 @@ export class WorldMapView {
   readonly #imageSpaces = new Map<number, ImageSpace | undefined>();
   #state: SkyState | undefined;
   #imageSpace: ImageSpace | undefined;
+  #overlay: WorldMapOverlay | undefined;
   #disposed = false;
 
   private constructor(
@@ -116,6 +117,27 @@ export class WorldMapView {
     this.#clouds = parts.cloudModel
       ? session.renderer.scene.createScene([{ model: parts.cloudModel, world: identity() }])
       : undefined;
+    void this.#loadOverlay();
+  }
+
+  /** The relief overlay's two normal maps; drawn once both are loaded. */
+  async #loadOverlay(): Promise<void> {
+    const session = this.#session;
+    const [normal, snow] = await Promise.all(
+      [OVERLAY_NORMAL_TEXTURE, OVERLAY_SNOW_TEXTURE].map((path) =>
+        session.textures.get(path, true).catch(() => undefined),
+      ),
+    );
+    if (!normal || !snow || this.#disposed) return;
+    const ini = session.ini;
+    this.#overlay = {
+      normal,
+      snow,
+      scale: ini.number('MapMenu', 'fMapMenuOverlayScale'),
+      strength: ini.number('MapMenu', 'fMapMenuOverlayNormalStrength'),
+      snowScale: ini.number('MapMenu', 'fMapMenuOverlaySnowScale'),
+      snowStrength: ini.number('MapMenu', 'fMapMenuOverlayNormalSnowStrength'),
+    };
   }
 
   /**
@@ -189,6 +211,7 @@ export class WorldMapView {
           ? undefined
           : { sky: this.#sky, state: this.#state, ...sunTextures(this.#climate) },
       water: () => this.#waterFrame(),
+      worldMapOverlay: () => this.#overlay,
       imageSpace: () => this.#imageSpace,
       camera: this.camera,
       clock: () => performance.now() / 1000,
