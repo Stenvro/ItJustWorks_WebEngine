@@ -267,11 +267,22 @@ TODO(M13), ruffle-rs/ruffle#16618.
   (empty) outlines as the movie loads (`patchDeviceFonts`, `src/ui/movie-patches.ts`). The
   game's movies have one: hudmenu.swf's "Times New Roman", an unnamed, empty field on its root
   (`tests/interface.int.test.ts` sweeps every movie).
-- **scale9Grid.** About 100 sprites carry a DefineScalingGrid (68 in map.swf; the
-  item menus' frames, the journal's, the message box's), and the journal's CLIK lists set
-  `scale9Grid` on their item containers in ActionScript. Whether Ruffle 0.7.1 slices them is not
-  checked on screen; slicing them in the bridge needs the sprite's shapes cut along the grid and
-  kept unscaled as the clip scales (a script each frame). TODO(M13).
+- **scale9Grid.** About 100 sprites carry a DefineScalingGrid (68 in map.swf, its markers; the
+  item menus', start menu's and journal's scroll bar thumbs, the journal's border, the message
+  box's and the item card's frames, the text entry's), and the journal's CLIK lists set
+  `scale9Grid` on their item containers in ActionScript. Ruffle 0.7.1 does not slice them (seen
+  on screen: a sprite with a grid scaled 4 × 2 had its borders scaled with it), so the movies do
+  it themselves (`src/ui/scale9.ts`): as a movie loads, every shape placed in a grid sprite or in a
+  sprite under it is wrapped in a clip, with a piece symbol (the shape under a unit-square mask)
+  exported to attach; each frame, a grid sprite whose scale on the stage changed maps its
+  content's bounds along each axis in three parts (before and after the grid by 1 / scale, the
+  grid's part stretched over the rest) and shows each wrapper as nine masked pieces, one per cell.
+  Shapes of nested clips are cut too, as Scaleform does (CLIK's lists rely on it: a 1 × 1 grid at
+  the origin keeps a scaled list's items unscaled); text is not cut. Unscaled, the shapes show as
+  they are and no piece is made. Mouse.getTopMostEntity takes a wrapper for its parent's shape.
+  TODO(M13): a sprite scaled below its corners' size (the middle shrinks to nothing), rotated
+  clips, nested content that moves while the sprite's scale stays, and grids set at run time on
+  clips with no shapes of their own (the journal lists' item containers, never scaled).
 
 ## Videos
 
@@ -1349,10 +1360,19 @@ lockpicks)`; the rest is the menus' 3D. `meshes\interface\lockpicking\lockpicksh
   pick the strain breaks it after fLockpickBreak<Novice..Master> (2, 1, 0.75, 0.5, 0.25 s) ×
   (fLockpickBreakSkillBase 1 + fLockpickBreakSkillMult 0.005 × skill) (Unbreakable and the
   Skeleton Key: never; Make Lockpicks Unbreakable). Locksmith starts the
-  pick within its starting arc (45°) about the opening (Set Lockpick Starting Arc). A lock's
-  sweet spot stays where it is until the game is loaded again. Opened, Wax Key gives its key
-  (Mod Lockpicking Key Reward Chance); Quick Hands keeps it unnoticed (Mod Lockpicking Crime
-  Chance).
+  pick anywhere within its starting arc (45°) on either side of the opening, kept within where
+  the sweet spot's middle may lie (Set Lockpick Starting Arc); else, and after a broken pick, it
+  starts in the middle. The sweet spot is placed anew, at random, each time the menu opens
+  (observed in the original: as the menu shows). Opened, Wax Key gives its key (Mod Lockpicking
+  Key Reward Chance); Quick Hands keeps it unnoticed (Mod Lockpicking Crime Chance).
+- A lock that needs its key, or a broken one (ObjectReference.IsLockBroken: its failed tries),
+  is not picked: sImpossibleLock. What raises a lock's failed tries is not found in the original
+  (a broken pick does not; TODO(M13)).
+- The debug display: the engine sends SetPickMinMax (−90, 90: the sweep about its middle) as
+  the menu is made, UpdateSweetSpot (the sweet spot's middle in that sweep, its width, the
+  partial zones' width) as it shows, UpdatePickAngle, UpdateLockAngle (0..90) and
+  UpdatePickHealth (100 down to 0 under strain) as they change; the movie shows them only once
+  ToggleDebugMode is called, which the engine never does.
 - Sounds: UILockpickingEnter, PickMovement, CylinderTurn, CylinderStop, PickTensionLPM (while
   strained), PickBreak, Unlock. The opened lock sends OnLockStateChanged.
 

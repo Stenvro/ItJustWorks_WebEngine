@@ -23,6 +23,7 @@
 import { Avm1Writer, Function2Flag, Op, type PushValue } from '../formats/swf/avm1-writer.ts';
 import { mouseExtensions } from './gfx-mouse.ts';
 import { textFieldExtensions } from './gfx-text.ts';
+import { scale9Actions, scale9Tick } from './scale9.ts';
 import { readSwf, SwfTagCode, tagBody } from '../formats/swf/swf.ts';
 import { concatBytes, encodeTag, writeSwf } from '../formats/swf/swf-writer.ts';
 import type { Rect } from './stage-rects.ts';
@@ -118,6 +119,8 @@ export function bridgeActions(menu: string, stage?: StageRects): Uint8Array {
   w.function2('', [], 1, Function2Flag.suppressThis | Function2Flag.suppressArguments, (body) => {
     body.getPath(framesObject).push(framesName).getPath(BRIDGE_FRAMES).op(Op.increment);
     body.op(Op.setMember);
+    // The sprites with a scaling grid cut along it as they are scaled (src/ui/scale9.ts).
+    scale9Tick(body);
   });
   w.op(Op.setMember);
 
@@ -188,6 +191,8 @@ export function bridgeActions(menu: string, stage?: StageRects): Uint8Array {
   });
   // Mouse.getTopMostEntity: what the menus' lists ask as they are clicked.
   mouseExtensions(w);
+  // Scaling grids, which the player does not draw.
+  scale9Actions(w);
 
   // ExternalInterface.call = function () {
   //   for (var i = 0; i < arguments.length; i++)      // objects go as references

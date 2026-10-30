@@ -301,6 +301,14 @@ export class HudController implements HudSink {
     );
   }
 
+  /**
+   * The charge meters faded out: as the tween menu, the inventory, the magic menu or a
+   * container's menu opens (observed in the original: those menus send the HUD its message).
+   */
+  fadeOutChargeMeters(): void {
+    this.#menu?.call('FadeOutChargeMeters');
+  }
+
   /** A message at the top left, unless the setting bShowHUDMessages turns them off. */
   notification(text: string): void {
     if (!this.#source.ini().bool('Interface', 'bShowHUDMessages')) return;

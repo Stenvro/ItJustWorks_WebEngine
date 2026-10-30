@@ -71,6 +71,7 @@ const NOT_ON_PC: ReadonlyMap<string, string> = new Map([
   ['SetPerkCount', UNSENT],
   ['moveCategoriesUp', UNSENT],
   ['AdjustForPALSD', UNSENT],
+  ['SetFirstExitedMenu', UNSENT],
 ]);
 
 /** Callbacks the host sends every movie that registers them (SetButtonMapping). */
