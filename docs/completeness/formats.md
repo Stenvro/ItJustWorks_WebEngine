@@ -35,12 +35,19 @@ a master or the plugin and its string ids resolve. Nothing depends on names in s
 Beside it the census lists, per record type, the subrecords no engine code outside
 `src/formats` names (by source text): parsed, used by: open, which is the other areas' work.
 
-## Summary (2026-10-30, round 5)
+## Summary (2026-10-30, round 6)
 
-The checklist has **156 items**: 36 format items below and the 120 record types of the load
-order (the table at the end). **153 are done** (33 format items, all 120 record types). Open:
-the save game's global data and change forms (built, waiting on a real save: no .ess is in the
-installation to sweep), and SEQ use (M12).
+The checklist has **157 items**: 37 format items below and the 120 record types of the load
+order (the table at the end). **154 are done** (34 format items, all 120 record types). Open:
+the save game's change forms (an actor's movement controller, combat controller, AI process
+and the player's own data) and global data (whether the UESP-built readers end exactly), and
+SEQ use (M12).
+
+Round 6 (two real saves): the Papyrus data read to its last byte (u32 string indices and u64
+handles in Special Edition saves, the stacks' frames, messages, suspended stacks and the
+registrations), every change form type read to its end but ACHR after its movement data, and
+every actor's actor values; the import takes the scripts' states and is checked against a real
+save (the player's place, items, MQ101's stages, actor values).
 
 Done this round: the change forms by the original's layouts for every flag UESP lists and every
 extra data type the original writes data for (but Interaction and two package cases), actors
@@ -193,27 +200,30 @@ rod's clips), SEQ files, the marketplace's archive and the census tool.
 
 ## Saves (ESS)
 
-There is no .ess in the installation, so these cannot be swept here: `ess-info` on a player's
-saves measures them (`tests/sim-ess-import.int.test.ts` reads one).
+There is no .ess in the installation; two real saves of the maintainer's (New Game to Helgen
+keep, 2026-10-30) are measured with `ess-info`, and `tests/sim-ess-import.int.test.ts` checks
+and imports the first of them when it is there.
 
-- [ ] Change forms: **built, waiting on a real save** (round trip tests in
-      `src/formats/ess/ess.test.ts` and `src/save/ess-import.test.ts`; `ess-info` measures a
-      player's saves). Read by the original's layouts: references and projectiles with every
-      extra data type the original writes data for, inventories, actors through their actor
-      value modifiers and storage and added spells, quests, NPCs (every flag), cells, factions,
-      leveled lists. `src/formats/ess/change-forms.ts`. Open: the AI process data (not decoded:
-      the actor values after it are found by their shape), the player's own data after the
-      actor's, an actor's movement and combat data, the Interaction extra, a package's running
-      data and a package the game made, the arrows' transform size, and the other base types'
-      own flags (BOOK, INGR, FLST, ECZN, LCTN, SMQN, RELA, SCEN, PACK, INFO, NOTE).
+- [x] Papyrus data (global data 1001): read to its last byte on both saves (round 6). Special
+      Edition widens the string indices to u32 and the VM handles to u64; the running stacks
+      with their frames and code, function messages, suspended stacks and the game's script
+      registrations are read (`src/formats/ess/papyrus.ts`). Their sizes for the parts no save
+      held yet (queued unbinds, latent function queues, LOS events, the last five lists) are
+      xEdit's (TODO(M13)).
+- [ ] Change forms: every type in both saves (21,599 change forms) is read to its end but
+      ACHR, and every actor through its actor values and added spells (round 6: cells' seen
+      data, the base objects' own data by the original's layouts (FLST, LCTN, SMQN, SCEN,
+      BOOK, INGR, ECZN, RELA, TACT, ...), every projectile kind and hazards, the Interaction
+      extra, the arrows' transform, actor value indices from 128). Open: an actor's movement
+      controller data (2,235 and 2,238 actors stop there: its agents and interfaces each have
+      their own layout), the combat controller's and the player's own data after it, the AI
+      process data (found by shape, not decoded), a package the game made (in PACK and in the
+      trespass and package-data extras) and a grenade's constraints (none in the saves).
 - [ ] Global data: every one of the 30 types has a reader (`GLOBAL_DATA_READERS`, run by
-      `ess-info`). The 17 new ones (process lists with their crimes, combat, interface, actor
-      causes, detection manager, location metadata, quest static data, story teller, magic
-      favourites, player controls, story event manager, ingredient pairs, menu controls, menu
-      topic manager, temp effects, 104, main) are **built, waiting on a real save**: written
-      from UESP's layouts and tested by round trip (`global-data-tables.ts` and its test). Where
-      UESP stops, the rest is kept as bytes: 104, the story event manager's entries, temp
-      effects of an undocumented type (2). The weather's tail (partly unknown) stays bytes too.
+      `ess-info`), and every reader runs on both real saves without an error. Not yet measured:
+      whether each of the 17 built from UESP's layouts reads to its last byte (the readers do
+      not report what is left). Where UESP stops, the rest is kept as bytes: 104, the story
+      event manager's entries, temp effects of an undocumented type (2), the weather's tail.
 
 ## Files the original does not load
 

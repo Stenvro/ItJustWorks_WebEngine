@@ -445,7 +445,7 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   const papyrusData = globalData(ess, 1001);
   if (papyrusData) {
     try {
-      const papyrus = readPapyrus(papyrusData);
+      const papyrus = readPapyrus(papyrusData, ess.header.version >= 12);
       instances = scriptInstances(papyrus, resolve, ours, skips);
       if (papyrus.stacks.length) {
         skips.add(`papyrus: ${String(papyrus.stacks.length)} running stacks (TODO(M12))`);
@@ -582,12 +582,11 @@ function scriptInstances(
         return [member.name.toLowerCase(), variable ? value(variable) : null];
       }),
     ]);
-    // TODO(M13): the script's state name (the save's object data does not show it plainly).
     instances.push({
       formId: handle.formId,
       alias: handle.alias,
       script: object.script,
-      state: '',
+      state: entry.state,
       vars,
     });
   }
