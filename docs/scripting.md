@@ -83,7 +83,7 @@ As the Creation Kit wiki's "Threading Notes (Papyrus)" describe them (`papyrus-v
   or 5 s have passed (ours: their work waits for the fade). A latent native's thread waits for
   its work (its script unlocked, as for any latent call) and gets its result; EnableNoWait and
   DisableNoWait queue the same work and return at once. No run takes work while the VM is
-  frozen. Not wired yet (TODO(M13), natives/index.ts nativeWork: with the work queued the opening's simulations stall, cause not found), so ours still does the work in the call; the queues themselves run as a frame begins (`scheduler.ts` advance: the post-render run
+  frozen (ours: while a load runs only the post-render queue goes on, 0.5 ms an update, as two runs the original makes outside the frame's; that they are the load's is inferred). Ours runs both queues as a frame begins (natives/index.ts queues each native's work; a test calling a native directly steps the world meanwhile: the sim's native()) (`scheduler.ts` advance: the post-render run
   for the frame just drawn, then the render-safe one; TODO(M13): the render-safe point against
   the VM's update is inferred), the time counted being each one's work up to its first wait.
   A save keeps the thread at its call, so on load the call is made and its work queued again

@@ -1335,8 +1335,10 @@ export class GameSession {
     runtime.inMenuMode = this.menuMode;
     runtime.menuOpen ??= (name) => this.menuStack.isOpen(name);
     if (this.loading) {
-      // While a load runs, the original still takes the post-render queue's work, for 0.5 ms
-      // each update (src/scripting/latent-queues.ts): a script moving the player waits on it.
+      // While a load runs, the post-render queue's work still goes on, 0.5 ms each update
+      // (src/scripting/latent-queues.ts): a script moving the player waits on it. Observed in
+      // the original: two runs of the queue outside the frame's, with 0.5 ms; that they are
+      // the load's is inferred (TODO(M13)).
       runtime.vm.scheduler.latent.run('postRender', LOADING_QUEUE_MS);
       return;
     }
