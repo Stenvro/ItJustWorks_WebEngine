@@ -104,50 +104,63 @@ export class SleepWaitMenu {
     });
   }
 
-  /**
-   * The hours pass iSecondsToSleepPerUpdate game seconds an update, the scripts' timers with
-   * them, the menu counting the hours left down; a sleep tells its listeners.
-   */
+  /** The hours pass (passHours), the menu counting them down; then Play's autosave. */
   async #pass(menu: Menu, hours: number, sleeping: boolean): Promise<void> {
-    const session = this.#session;
-    const runtime = session.scriptsReady;
-    if (!runtime) return;
-    const settings = await session.settings();
-    const perUpdate = Math.max(1, settings.number('iSecondsToSleepPerUpdate') ?? 900) / 3600;
-    const start = runtime.state.gameDaysPassed;
-    // The hub tells it (TESSleepStartEvent / TESWaitStartEvent: OnSleepStart to those registered).
-    if (sleeping) {
-      await runtime.events.emitted('sleep', {
-        started: true,
-        interrupted: false,
-        start,
-        end: start + hours / 24,
-      });
-    } else runtime.events.emit('wait', { started: true, interrupted: false });
-    let interrupted = false;
-    for (let left = hours; left > 1e-6;) {
-      await wait(UPDATE_MS);
-      // Someone attacks: the hours stop there.
-      if (session.combatWatch?.fightingPlayer === true) {
-        interrupted = true;
-        break;
-      }
-      const step = Math.min(perUpdate, left);
-      left -= step;
-      session.advanceClock(step);
-      runtime.update(0, step / 24);
-      // Health, magicka and stamina regenerate over the time (its real seconds).
-      await runtime.progression.passTime(step);
+    const passed = await passHours(this.#session, hours, sleeping, async (left) => {
       const shown = Math.ceil(left - 1e-6);
       menu.set(`${ROOT}.HoursSlider.value`, shown);
       menu.set(`${ROOT}.HoursText.text`, String(shown));
       menu.invoke(`${ROOT}.SetCurrentTime`, await this.#now());
-    }
-    await wait(UPDATE_MS);
-    for (const listener of session.timeSkipped) listener();
-    if (sleeping) await runtime.events.emitted('sleep', { started: false, interrupted });
-    else runtime.events.emit('wait', { started: false, interrupted });
+    });
     // The autosave after resting or waiting (bSaveOnRest, bSaveOnWait).
-    this.onPassed?.(sleeping);
+    if (passed) this.onPassed?.(sleeping);
   }
+}
+
+/**
+ * The hours of a wait or a sleep pass (the menu's OK; the headless simulation's sleep and wait):
+ * iSecondsToSleepPerUpdate game seconds an update, the scripts' timers with them; `counted`
+ * after each update with the hours left. A sleep tells its listeners. False if no game runs.
+ */
+export async function passHours(
+  session: GameSession,
+  hours: number,
+  sleeping: boolean,
+  counted?: (left: number) => Promise<void>,
+): Promise<boolean> {
+  const runtime = session.scriptsReady;
+  if (!runtime) return false;
+  const settings = await session.settings();
+  const perUpdate = Math.max(1, settings.number('iSecondsToSleepPerUpdate') ?? 900) / 3600;
+  const start = runtime.state.gameDaysPassed;
+  // The hub tells it (TESSleepStartEvent / TESWaitStartEvent: OnSleepStart to those registered).
+  if (sleeping) {
+    await runtime.events.emitted('sleep', {
+      started: true,
+      interrupted: false,
+      start,
+      end: start + hours / 24,
+    });
+  } else runtime.events.emit('wait', { started: true, interrupted: false });
+  let interrupted = false;
+  for (let left = hours; left > 1e-6;) {
+    await wait(UPDATE_MS);
+    // Someone attacks: the hours stop there.
+    if (session.combatWatch?.fightingPlayer === true) {
+      interrupted = true;
+      break;
+    }
+    const step = Math.min(perUpdate, left);
+    left -= step;
+    session.advanceClock(step);
+    runtime.update(0, step / 24);
+    // Health, magicka and stamina regenerate over the time (its real seconds).
+    await runtime.progression.passTime(step);
+    await counted?.(left);
+  }
+  await wait(UPDATE_MS);
+  for (const listener of session.timeSkipped) listener();
+  if (sleeping) await runtime.events.emitted('sleep', { started: false, interrupted });
+  else runtime.events.emit('wait', { started: false, interrupted });
+  return true;
 }

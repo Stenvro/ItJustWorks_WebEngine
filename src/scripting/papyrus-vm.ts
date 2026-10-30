@@ -1117,6 +1117,8 @@ export class PapyrusVm {
    */
   async startInitialize(target: ObjectHandle): Promise<{ readonly done: Promise<void> }> {
     const instances = await this.#attachedInstances(target);
+    // Told as an event sent to the object, once for all its scripts (as sendEvent tells one).
+    if (instances.length > 0) this.onEventSent?.(target, 'OnInit', []);
     const done = instances.map((instance) => {
       const finished = this.#dispatch(instance, 'OnInit', [], true);
       instance.initializing = finished.then(() => {
