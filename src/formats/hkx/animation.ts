@@ -26,6 +26,11 @@ export interface HkxSkeleton {
   /** Float slots (visibility and fade of attached objects) and their reference values. */
   readonly floatSlots: readonly string[];
   readonly referenceFloats: Float32Array;
+  /**
+   * Local frames on bones (hkaSkeletonLocalFrameOnBone: a frame object and its bone): none in
+   * the game's files; read so a mod's are not lost (the frame's class, its bone).
+   */
+  readonly localFrames?: readonly { readonly bone: number; readonly className: string }[];
 }
 
 /** A text event at a time of an animation ("FootLeft", "SoundPlay.NPCHumanFootstep", ...). */
@@ -80,12 +85,17 @@ export interface AnimationBinding {
 export interface AnimationContainer {
   readonly skeletons: readonly HkxSkeleton[];
   readonly bindings: readonly AnimationBinding[];
+  /**
+   * Every animation of the container (hkaAnimationContainer.animations), bound or not; a
+   * binding's animation is the same object as its entry here.
+   */
+  readonly animations: readonly HkxAnimation[];
 }
 
 // --- Member offsets (Havok 2010.2, 64-bit) -------------------------------------------------
 
 /** hkaAnimationContainer: skeletons, animations, bindings (arrays of pointers). */
-const CONTAINER = { skeletons: 16, bindings: 48 } as const;
+const CONTAINER = { skeletons: 16, animations: 32, bindings: 48 } as const;
 /** hkaSkeleton. */
 const SKELETON = {
   name: 16,
@@ -94,7 +104,10 @@ const SKELETON = {
   referencePose: 56,
   referenceFloats: 72,
   floatSlots: 88,
+  localFrames: 104,
 } as const;
+/** hkaSkeletonLocalFrameOnBone: localFrame pointer, boneIndex. */
+const LOCAL_FRAME_SIZE = 16;
 const BONE_SIZE = 16;
 const QS_TRANSFORM_SIZE = 48;
 /** hkaAnimation (base) and hkaSplineCompressedAnimation. */
@@ -114,6 +127,8 @@ const ANIMATION = {
   frameDuration: 80,
   blockOffsets: 88,
   floatBlockOffsets: 104,
+  transformOffsets: 120,
+  floatOffsets: 136,
   data: 152,
 } as const;
 /** hkaAnnotationTrack: trackName (8), annotations (hkArray of time f32 @0, text @8). */
@@ -134,23 +149,142 @@ const SPLINE_COMPRESSED = 5;
 
 // --- Reading -------------------------------------------------------------------------------
 
+/** The file's animation container (its contents' named variant), read. */
 export function readAnimationContainer(pack: Packfile): AnimationContainer {
-  const container = pack.objectsOf('hkaAnimationContainer')[0];
-  if (!container) return { skeletons: [], bindings: [] };
+  const container = pack.contents('hkaAnimationContainer');
+  if (!container) return { skeletons: [], bindings: [], animations: [] };
   const skeletons = pack
     .objectArray(container.offset + CONTAINER.skeletons)
     .filter((object): object is HkxObject => object !== undefined)
     .map((object) => readSkeleton(pack, object));
+  // Each animation object is read once: the container lists it and a binding points at it.
+  const read = new Map<number, HkxAnimation>();
+  const animation = (object: HkxObject): HkxAnimation => {
+    let known = read.get(object.offset);
+    if (!known) {
+      known = readAnimation(pack, object);
+      read.set(object.offset, known);
+    }
+    return known;
+  };
+  const animations = pack
+    .objectArray(container.offset + CONTAINER.animations)
+    .filter((object): object is HkxObject => object !== undefined)
+    .map(animation);
   const bindings: AnimationBinding[] = [];
   for (const object of pack.objectArray(container.offset + CONTAINER.bindings)) {
-    if (object) bindings.push(readBinding(pack, object));
+    if (object) bindings.push(readBinding(pack, object, animation));
   }
-  return { skeletons, bindings };
+  return { skeletons, bindings, animations };
 }
 
-/** hkaSkeletonMapper: its mapping (hkaSkeletonMapperData) at 16; simple mappings 64 bytes. */
-const MAPPER = { mapping: 16, skeletonA: 0, skeletonB: 8, simpleMappings: 16 } as const;
+/** hkaSkeletonMapper: its mapping (hkaSkeletonMapperData) at 16. */
+const MAPPER = {
+  mapping: 16,
+  skeletonA: 0,
+  skeletonB: 8,
+  simpleMappings: 16,
+  chainMappings: 32,
+  unmappedBones: 48,
+  extractedMotionMapping: 64,
+  keepUnmappedLocal: 112,
+  mappingType: 116,
+} as const;
+/** hkaSkeletonMapperDataSimpleMapping: boneA, boneB, aFromBTransform at 16. */
 const SIMPLE_MAPPING_SIZE = 64;
+/** hkaSkeletonMapperDataChainMapping: four bones, then two hkQsTransforms at 16 and 64. */
+const CHAIN_MAPPING_SIZE = 112;
+
+/** A bone of skeleton A mapped onto one of skeleton B, with A's bone from B's (a transform). */
+export interface SimpleBoneMapping {
+  readonly boneA: number;
+  readonly boneB: number;
+  /** TRANSFORM_FLOATS: translation, rotation, scale. */
+  readonly aFromB: Float32Array;
+}
+
+/**
+ * A chain of bones of A (start to end) mapped onto a chain of B's: the bones between follow
+ * the chain (the vanilla tails and wings of four characters' ragdolls).
+ */
+export interface ChainBoneMapping {
+  readonly startBoneA: number;
+  readonly endBoneA: number;
+  readonly startBoneB: number;
+  readonly endBoneB: number;
+  readonly startAFromB: Float32Array;
+  readonly endAFromB: Float32Array;
+}
+
+/** An hkaSkeletonMapperData: how a pose of skeleton A is carried onto skeleton B. */
+export interface SkeletonMapping {
+  readonly skeletonA: string;
+  readonly skeletonB: string;
+  readonly simple: readonly SimpleBoneMapping[];
+  readonly chains: readonly ChainBoneMapping[];
+  /** B's bones no mapping reaches. */
+  readonly unmappedBones: Int16Array;
+  /** How the extracted motion carries over (TRANSFORM_FLOATS; identity in every vanilla file). */
+  readonly extractedMotion: Float32Array;
+  /** Unmapped bones keep their local transform (else their pose in model space). */
+  readonly keepUnmappedLocal: boolean;
+  /** hkaSkeletonMapperData::MappingType: 0 ragdoll, 1 retargeting. */
+  readonly mappingType: number;
+}
+
+/** Every skeleton mapper of a file (hkaSkeletonMapper), read. */
+export function readSkeletonMappings(pack: Packfile): SkeletonMapping[] {
+  const result: SkeletonMapping[] = [];
+  for (const mapper of pack.objectsOf('hkaSkeletonMapper')) {
+    const at = mapper.offset + MAPPER.mapping;
+    const a = pack.object(at + MAPPER.skeletonA);
+    const b = pack.object(at + MAPPER.skeletonB);
+    if (!a || !b) continue;
+    const simple = pack.array(at + MAPPER.simpleMappings);
+    const chains = pack.array(at + MAPPER.chainMappings);
+    result.push({
+      skeletonA: pack.string(a.offset + SKELETON.name) ?? '',
+      skeletonB: pack.string(b.offset + SKELETON.name) ?? '',
+      simple: Array.from({ length: simple.size }, (_, i) => {
+        const entry = simple.data + i * SIMPLE_MAPPING_SIZE;
+        return {
+          boneA: pack.i16(entry),
+          boneB: pack.i16(entry + 2),
+          aFromB: qsTransform(pack, entry + 16),
+        };
+      }),
+      chains: Array.from({ length: chains.size }, (_, i) => {
+        const entry = chains.data + i * CHAIN_MAPPING_SIZE;
+        return {
+          startBoneA: pack.i16(entry),
+          endBoneA: pack.i16(entry + 2),
+          startBoneB: pack.i16(entry + 4),
+          endBoneB: pack.i16(entry + 6),
+          startAFromB: qsTransform(pack, entry + 16),
+          endAFromB: qsTransform(pack, entry + 64),
+        };
+      }),
+      unmappedBones: int16Array(pack, at + MAPPER.unmappedBones) ?? new Int16Array(0),
+      extractedMotion: qsTransform(pack, at + MAPPER.extractedMotionMapping),
+      keepUnmappedLocal: pack.bool(at + MAPPER.keepUnmappedLocal),
+      mappingType: pack.i32(at + MAPPER.mappingType),
+    });
+  }
+  return result;
+}
+
+/** An hkQsTransform (translation, rotation, scale: 48 bytes) as TRANSFORM_FLOATS floats. */
+export function qsTransform(
+  pack: Packfile,
+  at: number,
+  out = new Float32Array(TRANSFORM_FLOATS),
+  o = 0,
+): Float32Array {
+  for (let k = 0; k < 3; k++) out[o + k] = pack.f32(at + k * 4);
+  for (let k = 0; k < 4; k++) out[o + 3 + k] = pack.f32(at + 16 + k * 4);
+  for (let k = 0; k < 3; k++) out[o + 7 + k] = pack.f32(at + 32 + k * 4);
+  return out;
+}
 
 /**
  * The ragdoll skeleton of a character's skeleton file and how its bones map onto the animation
@@ -161,6 +295,13 @@ const SIMPLE_MAPPING_SIZE = 64;
 export interface RagdollMapping {
   readonly ragdoll: HkxSkeleton;
   readonly bones: Int16Array;
+  /**
+   * The mapper itself (ragdoll → animation) and its partner (animation → ragdoll, which the
+   * files carry beside it): the bodies' offsets from their bones (aFromB) and the chains, for
+   * the ragdoll that drives or follows the pose (src/physics).
+   */
+  readonly toAnimation: SkeletonMapping;
+  readonly fromAnimation?: SkeletonMapping;
 }
 
 /** The mapping from the ragdoll skeleton onto `animation` (by name), if the file has one. */
@@ -172,14 +313,19 @@ export function readRagdollMapping(pack: Packfile, animation: string): RagdollMa
     if (!a || !b) continue;
     const ragdoll = readSkeleton(pack, a);
     if (pack.string(b.offset + SKELETON.name) !== animation || ragdoll.name === animation) continue;
+    const mappings = readSkeletonMappings(pack);
+    const toAnimation = mappings.find(
+      (mapping) => mapping.skeletonA === ragdoll.name && mapping.skeletonB === animation,
+    );
+    if (!toAnimation) continue;
+    const fromAnimation = mappings.find(
+      (mapping) => mapping.skeletonA === animation && mapping.skeletonB === ragdoll.name,
+    );
     const bones = new Int16Array(ragdoll.bones.length).fill(-1);
-    const { data, size } = pack.array(at + MAPPER.simpleMappings);
-    for (let i = 0; i < size; i++) {
-      const entry = data + i * SIMPLE_MAPPING_SIZE;
-      const boneA = pack.i16(entry);
-      if (boneA >= 0 && boneA < bones.length) bones[boneA] = pack.i16(entry + 2);
+    for (const { boneA, boneB } of toAnimation.simple) {
+      if (boneA >= 0 && boneA < bones.length) bones[boneA] = boneB;
     }
-    return { ragdoll, bones };
+    return { ragdoll, bones, toAnimation, ...(fromAnimation && { fromAnimation }) };
   }
   return undefined;
 }
@@ -202,14 +348,19 @@ export function readSkeleton(pack: Packfile, object: HkxObject): HkxSkeleton {
   }
   const referencePose = new Float32Array(bones.size * TRANSFORM_FLOATS);
   for (let i = 0; i < bones.size; i++) {
-    const p = pose.data + i * QS_TRANSFORM_SIZE;
-    const o = i * TRANSFORM_FLOATS;
-    for (let k = 0; k < 3; k++) referencePose[o + k] = pack.f32(p + k * 4);
-    for (let k = 0; k < 4; k++) referencePose[o + 3 + k] = pack.f32(p + 16 + k * 4);
-    for (let k = 0; k < 3; k++) referencePose[o + 7 + k] = pack.f32(p + 32 + k * 4);
+    qsTransform(pack, pose.data + i * QS_TRANSFORM_SIZE, referencePose, i * TRANSFORM_FLOATS);
   }
   const floats = pack.array(at + SKELETON.referenceFloats);
+  const frames = pack.array(at + SKELETON.localFrames);
+  const localFrames = Array.from({ length: frames.size }, (_, i) => {
+    const entry = frames.data + i * LOCAL_FRAME_SIZE;
+    return {
+      bone: pack.i32(entry + 8),
+      className: pack.object(entry)?.className ?? '',
+    };
+  });
   return {
+    ...(localFrames.length > 0 && { localFrames }),
     name: pack.string(at + SKELETON.name) ?? '',
     bones: Array.from({ length: bones.size }, (_, i) => ({
       name: pack.string(bones.data + i * BONE_SIZE) ?? '',
@@ -224,13 +375,17 @@ export function readSkeleton(pack: Packfile, object: HkxObject): HkxSkeleton {
   };
 }
 
-function readBinding(pack: Packfile, object: HkxObject): AnimationBinding {
+function readBinding(
+  pack: Packfile,
+  object: HkxObject,
+  read: (animation: HkxObject) => HkxAnimation,
+): AnimationBinding {
   const at = object.offset;
   const animation = pack.object(at + BINDING.animation);
   if (!animation) throw new FormatError('hkaAnimationBinding without an animation', at);
   return {
     skeletonName: pack.string(at + BINDING.skeletonName) ?? '',
-    animation: readAnimation(pack, animation),
+    animation: read(animation),
     trackToBone: int16Array(pack, at + BINDING.trackToBone),
     floatTrackToSlot: int16Array(pack, at + BINDING.floatTrackToSlot),
     additive: pack.i8(at + BINDING.blendHint) === 1,
@@ -251,7 +406,11 @@ export function readAnimation(pack: Packfile, object: HkxObject): HkxAnimation {
   }
   const blockOffsets = pack.array(at + ANIMATION.blockOffsets);
   const floatBlockOffsets = pack.array(at + ANIMATION.floatBlockOffsets);
+  const transformOffsets = pack.array(at + ANIMATION.transformOffsets);
+  const floatOffsets = pack.array(at + ANIMATION.floatOffsets);
   const data = pack.array(at + ANIMATION.data);
+  const u32Array = ({ data: from, size }: { data: number; size: number }): Uint32Array =>
+    Uint32Array.from({ length: size }, (_, i) => pack.u32(from + i * 4));
   const header: SplineHeader = {
     duration: pack.f32(at + ANIMATION.duration),
     trackCount: pack.i32(at + ANIMATION.transformTracks),
@@ -259,15 +418,14 @@ export function readAnimation(pack: Packfile, object: HkxObject): HkxAnimation {
     numFrames: pack.i32(at + ANIMATION.numFrames),
     numBlocks: pack.i32(at + ANIMATION.numBlocks),
     maxFramesPerBlock: pack.i32(at + ANIMATION.maxFramesPerBlock),
+    maskAndQuantizationSize: pack.i32(at + ANIMATION.maskAndQuantizationSize),
     blockDuration: pack.f32(at + ANIMATION.blockDuration),
     blockInverseDuration: pack.f32(at + ANIMATION.blockInverseDuration),
     frameDuration: pack.f32(at + ANIMATION.frameDuration),
-    blockOffsets: Uint32Array.from({ length: blockOffsets.size }, (_, i) =>
-      pack.u32(blockOffsets.data + i * 4),
-    ),
-    floatBlockOffsets: Uint32Array.from({ length: floatBlockOffsets.size }, (_, i) =>
-      pack.u32(floatBlockOffsets.data + i * 4),
-    ),
+    blockOffsets: u32Array(blockOffsets),
+    floatBlockOffsets: u32Array(floatBlockOffsets),
+    transformOffsets: u32Array(transformOffsets),
+    floatOffsets: u32Array(floatOffsets),
   };
   if (header.blockOffsets.length !== header.numBlocks || header.numBlocks < 1) {
     throw new FormatError(
@@ -481,6 +639,18 @@ interface SplineHeader {
   readonly frameDuration: number;
   readonly blockOffsets: Uint32Array;
   readonly floatBlockOffsets: Uint32Array;
+  /**
+   * Bytes of a block's TransformMasks and float masks (aligned to 4): its track data starts
+   * there.
+   */
+  readonly maskAndQuantizationSize: number;
+  /**
+   * Where each transform track's data starts in each block (block-major, from the block's
+   * start) and each float track's: set in 434 of the vanilla clips (the paired animations,
+   * the first person's), empty in the others, where the tracks follow each other.
+   */
+  readonly transformOffsets: Uint32Array;
+  readonly floatOffsets: Uint32Array;
 }
 
 /** A B-spline curve: its degree, knots (frames in the block) and control points. */
@@ -680,8 +850,13 @@ function decodeBlock(data: Uint8Array, header: SplineHeader, block: number): Dec
   const floatMasks: number[] = [];
   for (let i = 0; i < header.floatTrackCount; i++) floatMasks.push(reader.u8());
   reader.align(4);
+  if (header.maskAndQuantizationSize > 0) reader.offset = start + header.maskAndQuantizationSize;
   const tracks: (TrackBlock | undefined)[] = [];
-  for (const [quantization, positionTypes, rotationTypes, scaleTypes] of masks) {
+  const trackOffset = (offsets: Uint32Array, count: number, i: number): number | undefined =>
+    offsets.length === 0 ? undefined : offsets[block * count + i];
+  for (const [track, [quantization, positionTypes, rotationTypes, scaleTypes]] of masks.entries()) {
+    const at = trackOffset(header.transformOffsets, header.trackCount, track);
+    if (at !== undefined) reader.offset = start + at;
     const translation = readVector(reader, positionTypes, quantization & 3, 0);
     const rotation = readRotation(reader, rotationTypes, (quantization >> 2) & 0xf);
     reader.align(4);
@@ -691,7 +866,9 @@ function decodeBlock(data: Uint8Array, header: SplineHeader, block: number): Dec
   }
   // The float tracks' data starts at the block's float offset.
   reader.offset = start + (header.floatBlockOffsets[block] ?? reader.offset - start);
-  const floats = floatMasks.map((mask) => {
+  const floats = floatMasks.map((mask, track) => {
+    const at = trackOffset(header.floatOffsets, header.floatTrackCount, track);
+    if (at !== undefined) reader.offset = start + at;
     const channel = readFloat(reader, mask);
     return channel && isUsable(channel) ? channel : undefined;
   });

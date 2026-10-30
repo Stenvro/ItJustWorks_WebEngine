@@ -11,6 +11,7 @@
 
 import { FormatError } from '../binary-reader.ts';
 import { folderOf, normalizePath } from '../paths.ts';
+import { qsTransform } from './animation.ts';
 import { Packfile, type HkxObject } from './packfile.ts';
 
 /** A member that a variable binding may override. */
@@ -20,6 +21,11 @@ export interface Bindable {
   readonly variable?: number;
   /** Index of the character property bound to it (BINDING_TYPE_CHARACTER_PROPERTY), if any. */
   readonly property?: number;
+  /**
+   * The binding's bitIndex: a bool variable sets or clears this bit of the member (a flags
+   * member) instead of the whole value. −1 (absent) in every vanilla binding.
+   */
+  readonly bit?: number;
 }
 
 /** A vector or quaternion (x, y, z, w). */
@@ -45,6 +51,23 @@ export interface BehaviorVariable {
   readonly initial: number;
   /** Vector and quaternion variables (types 6–8): their initial value. */
   readonly vector?: Vec4;
+  /**
+   * hkbRoleAttribute: role (0 default, 1 property, 2 direction, 3 position, ...) and flags
+   * (1 ragdoll, 2 normalized, 4 not a variable, 8 hidden, 16 output, 32 not a character
+   * property, 64 chain). Set only where not 0: every variable of the vanilla graphs has 0/0
+   * (the editor's; nothing in the runtime depends on them).
+   */
+  readonly role?: number;
+  readonly roleFlags?: number;
+  /**
+   * The editor's range (hkbBehaviorGraphData word min and max values, reals as floats): set in
+   * three graphs, with uninitialized values among them (the ballista's IsBlocking runs from
+   * 3.9e-27 down to 5.8e-30, its bAnimationDriven min equals its max at a pointer's value), so
+   * the original cannot clamp by them; read, not applied.
+   */
+  readonly range?: { readonly min: number; readonly max: number };
+  /** A pointer variable's hkbBoneWeightArray (the value set's variant it indexes), if any. */
+  readonly boneWeights?: Float32Array;
 }
 
 /** A bone a look-at turns (BSLookAtModifierBoneData). */
@@ -94,6 +117,12 @@ export interface FootIkLeg {
   readonly maxAnkleAngleDegrees: number;
   /** Raised when the ray under the foot finds nothing (hkbFootIkModifier's legs). */
   readonly ungroundedEvent?: BehaviorEvent;
+  /**
+   * hkbFootIkModifierLeg.originalAnkleTransformMS: the ankle's model-space transform the
+   * modifier starts from (TRANSFORM_FLOATS), where the file sets it (the 6 legs of the two
+   * vanilla hkbFootIkModifiers).
+   */
+  readonly originalAnkleTransformMS?: Float32Array;
 }
 
 /** How foot IK looks for the ground (hkbFootIkDriverInfo, hkbFootIkModifier). */
@@ -113,6 +142,13 @@ export interface FootIkSetup {
   readonly useTrackData: boolean;
   readonly lockFeetWhenPlanted: boolean;
   readonly useCharacterUpVector: boolean;
+  /**
+   * hkbFootIkDriverInfo.isQuadrupedNarrow: a quadruped whose feet stand close together (the
+   * bear, wolf, cow, deer, horse, sabre cat and skeever: 7 of the 16 characters with foot IK),
+   * whose ground is sampled under its body rather than beside each foot. TODO(M13): the foot
+   * IK solver (src/animation/procedural.ts) does not tell narrow quadrupeds apart yet.
+   */
+  readonly isQuadrupedNarrow?: boolean;
 }
 
 /** An event with its payload (hkbEventProperty): −1 for none. */
@@ -182,6 +218,12 @@ export interface StateMachineState {
 
 export interface BlenderChild {
   readonly weight: Bindable;
+  /**
+   * How much of the child's world-from-model (its root motion) the blend takes, times its
+   * weight (hkbBlenderGeneratorChild.worldFromModelWeight): 1 in 6,057 vanilla children, 0 in
+   * 475 (poses laid over others: their motion is left to the rest). Absent: 1.
+   */
+  readonly worldFromModelWeight?: number;
   readonly generator: BehaviorGenerator | undefined;
   /** Per Havok bone: how much of the child each bone takes (hkbBoneWeightArray). */
   readonly boneWeights?: Float32Array;
@@ -196,158 +238,173 @@ export interface ClipTrigger {
   readonly isAnnotation: boolean;
 }
 
-export type BehaviorGenerator =
-  | {
-      readonly kind: 'state-machine';
-      readonly name: string;
-      readonly startStateId: Bindable;
-      /** StartStateMode: 0 default (startStateId), 1 sync, 2 random, 3 chooser. */
-      readonly startStateMode: number;
-      readonly states: readonly StateMachineState[];
-      /** Transitions from any state. */
-      readonly wildcardTransitions: readonly StateTransition[];
-      /** Raised at the beginning and end of a transition (once for an instant one). */
-      readonly eventToSendWhenStateOrTransitionChanges?: BehaviorEvent;
-      readonly returnToPreviousStateEventId?: number;
-      readonly randomTransitionEventId?: number;
-      readonly transitionToNextHigherStateEventId?: number;
-      readonly transitionToNextLowerStateEventId?: number;
-      /** START_STATE_MODE_SYNC: the variable that holds the start state. */
-      readonly syncVariableIndex?: number;
-      readonly wrapAroundStateId?: boolean;
-      readonly maxSimultaneousTransitions?: number;
-      /** 0 no transition, 1 to the start state if a transition exists, 2 always. */
-      readonly selfTransitionMode?: number;
-      /**
-       * Output: 1 while the machine is active (bound to a flag: Swim_Behavior and
-       * KillMove_Behavior set bHumanoidFootIKDisable that way).
-       */
-      readonly isActive?: Bindable;
-    }
-  | {
-      readonly kind: 'blender';
-      readonly name: string;
-      /** BlenderFlags (BLENDER_FLAGS below). */
-      readonly flags: number;
-      readonly blendParameter: Bindable;
-      readonly children: readonly BlenderChild[];
-      readonly referencePoseWeightThreshold?: number;
-      readonly minCyclicBlendParameter?: number;
-      readonly maxCyclicBlendParameter?: number;
-      readonly indexOfSyncMasterChild?: number;
-      readonly subtractLastChild?: boolean;
-      /** An hkbPoseMatchingGenerator's own members (the get-up poses). */
-      readonly poseMatching?: PoseMatching;
-    }
-  | {
-      readonly kind: 'modifier-generator';
-      readonly name: string;
-      readonly generator: BehaviorGenerator | undefined;
-      readonly modifier?: BehaviorModifier;
-    }
-  | {
-      readonly kind: 'gamebryo-sequence';
-      readonly name: string;
-      /** The NIF sequence (NiControllerSequence) it plays on the mesh's controller manager. */
-      readonly sequence: string;
-      /** BlendModeFunction: 0 none, 1 percent, 2 one minus percent. */
-      readonly blendMode: number;
-      readonly percent: Bindable;
-    }
-  | {
-      readonly kind: 'clip';
-      readonly name: string;
-      /** Skeletal animation (hkaAnimation) by name, from the character's animation list. */
-      readonly animation: string;
-      /** PlaybackMode: 0 single play, 1 looping, 2 user controlled, 3 ping-pong, 4 count. */
-      readonly mode: number;
-      readonly playbackSpeed: number;
-      readonly speed?: Bindable;
-      readonly startTime?: Bindable;
-      readonly cropStart?: number;
-      readonly cropEnd?: number;
-      readonly enforcedDuration?: number;
-      readonly userControlledTimeFraction?: Bindable;
-      readonly flags?: number;
-      readonly triggers?: readonly ClipTrigger[];
-    }
-  | {
-      readonly kind: 'manual-selector';
-      readonly name: string;
-      readonly generators: readonly (BehaviorGenerator | undefined)[];
-      readonly selectedGeneratorIndex: Bindable;
-    }
-  | {
-      /**
-       * BSiStateTaggingGenerator: plays its generator, tagging the actor's state (iStateToSetAs,
-       * bound to an iState_<movement type> variable: the engine's movement type while active).
-       */
-      readonly kind: 'state-tagging';
-      readonly name: string;
-      readonly generator: BehaviorGenerator | undefined;
-      readonly iState: Bindable;
-      readonly priority: number;
-    }
-  | {
-      /** BSCyclicBlendTransitionGenerator: a blender whose changes are cross-faded. */
-      readonly kind: 'cyclic-blend';
-      readonly name: string;
-      readonly generator: BehaviorGenerator | undefined;
-      readonly freezeEvent: BehaviorEvent;
-      readonly crossBlendEvent: BehaviorEvent;
-      readonly blendParameter: Bindable;
-      readonly transitionDuration: number;
-      readonly blendCurve: number;
-    }
-  | {
-      /** BSBoneSwitchGenerator: its default generator, some bones from other generators. */
-      readonly kind: 'bone-switch';
-      readonly name: string;
-      readonly generator: BehaviorGenerator | undefined;
-      readonly children: readonly {
+/**
+ * hkbNode.userData: an integer the authoring tool stores on a node. Bethesda's files set it per
+ * class, never per node: 1 on hkbModifierGenerator, hkbModifierList, BSiStateTaggingGenerator,
+ * BSBoneSwitchGenerator and the ragdoll, twist, damping and event-driven modifiers; 2 on
+ * BSIsActiveModifier, hkbEvaluateExpressionModifier, BSInterpValueModifier, BSSpeedSamplerModifier
+ * and the other value modifiers; 3 on the event modifiers (BSEventOnDeactivateModifier,
+ * BSEventEveryNEventsModifier, BSModifyOnceModifier, BSIStateManagerModifier); 0 elsewhere.
+ * TODO(M13): what, if anything, the original's runtime does with it is unknown.
+ */
+export interface NodeUserData {
+  readonly userData?: number;
+}
+
+export type BehaviorGenerator = NodeUserData &
+  (
+    | {
+        readonly kind: 'state-machine';
+        readonly name: string;
+        readonly startStateId: Bindable;
+        /** StartStateMode: 0 default (startStateId), 1 sync, 2 random, 3 chooser. */
+        readonly startStateMode: number;
+        readonly states: readonly StateMachineState[];
+        /** Transitions from any state. */
+        readonly wildcardTransitions: readonly StateTransition[];
+        /** Raised at the beginning and end of a transition (once for an instant one). */
+        readonly eventToSendWhenStateOrTransitionChanges?: BehaviorEvent;
+        readonly returnToPreviousStateEventId?: number;
+        readonly randomTransitionEventId?: number;
+        readonly transitionToNextHigherStateEventId?: number;
+        readonly transitionToNextLowerStateEventId?: number;
+        /** START_STATE_MODE_SYNC: the variable that holds the start state. */
+        readonly syncVariableIndex?: number;
+        readonly wrapAroundStateId?: boolean;
+        readonly maxSimultaneousTransitions?: number;
+        /** 0 no transition, 1 to the start state if a transition exists, 2 always. */
+        readonly selfTransitionMode?: number;
+        /**
+         * Output: 1 while the machine is active (bound to a flag: Swim_Behavior and
+         * KillMove_Behavior set bHumanoidFootIKDisable that way).
+         */
+        readonly isActive?: Bindable;
+      }
+    | {
+        readonly kind: 'blender';
+        readonly name: string;
+        /** BlenderFlags (BLENDER_FLAGS below). */
+        readonly flags: number;
+        readonly blendParameter: Bindable;
+        readonly children: readonly BlenderChild[];
+        readonly referencePoseWeightThreshold?: number;
+        readonly minCyclicBlendParameter?: number;
+        readonly maxCyclicBlendParameter?: number;
+        readonly indexOfSyncMasterChild?: number;
+        readonly subtractLastChild?: boolean;
+        /** An hkbPoseMatchingGenerator's own members (the get-up poses). */
+        readonly poseMatching?: PoseMatching;
+      }
+    | {
+        readonly kind: 'modifier-generator';
+        readonly name: string;
         readonly generator: BehaviorGenerator | undefined;
-        readonly boneWeights?: Float32Array;
-      }[];
-    }
-  | {
-      /** BSSynchronizedClipGenerator: a clip played in step with another actor's. */
-      readonly kind: 'synchronized-clip';
-      readonly name: string;
-      readonly generator: BehaviorGenerator | undefined;
-      /** SyncAnimPrefix: the prefix of the partner's tracks and events ("2_"), if any. */
-      readonly syncPrefix: string | undefined;
-      /** bSyncClipIgnoreMarkPlacement: the partner is not moved to its mark. */
-      readonly ignoreMarkPlacement: boolean;
-      /** fGetToMarkTime: seconds the partner takes to its mark (0: at once). */
-      readonly getToMarkTime: number;
-      /** fMarkErrorThreshold: how near its mark the partner counts as there. */
-      readonly markErrorThreshold: number;
-      /** bLeadCharacter: this side leads (its actor places the other). */
-      readonly leadCharacter: boolean;
-      /** bReorientSupportChar: the supporting side is turned to its mark's facing. */
-      readonly reorientSupport: boolean;
-      /** bApplyMotionFromRoot. */
-      readonly applyMotionFromRoot: boolean;
-    }
-  | {
-      /** BSOffsetAnimationGenerator: a clip whose frame a variable picks, laid on another. */
-      readonly kind: 'offset-animation';
-      readonly name: string;
-      readonly generator: BehaviorGenerator | undefined;
-      readonly offsetGenerator: BehaviorGenerator | undefined;
-      readonly offsetVariable: Bindable;
-      readonly rangeStart: number;
-      readonly rangeEnd: number;
-    }
-  | {
-      /** hkbBehaviorReferenceGenerator: the root of another behavior file. */
-      readonly kind: 'behavior-reference';
-      readonly name: string;
-      /** The behavior file, relative to the project's folder. */
-      readonly behavior: string;
-    }
-  | { readonly kind: 'reference-pose'; readonly name: string }
-  | { readonly kind: 'other'; readonly name: string; readonly className: string };
+        readonly modifier?: BehaviorModifier;
+      }
+    | {
+        readonly kind: 'gamebryo-sequence';
+        readonly name: string;
+        /** The NIF sequence (NiControllerSequence) it plays on the mesh's controller manager. */
+        readonly sequence: string;
+        /** BlendModeFunction: 0 none, 1 percent, 2 one minus percent. */
+        readonly blendMode: number;
+        readonly percent: Bindable;
+      }
+    | {
+        readonly kind: 'clip';
+        readonly name: string;
+        /** Skeletal animation (hkaAnimation) by name, from the character's animation list. */
+        readonly animation: string;
+        /** PlaybackMode: 0 single play, 1 looping, 2 user controlled, 3 ping-pong, 4 count. */
+        readonly mode: number;
+        readonly playbackSpeed: number;
+        readonly speed?: Bindable;
+        readonly startTime?: Bindable;
+        readonly cropStart?: number;
+        readonly cropEnd?: number;
+        readonly enforcedDuration?: number;
+        readonly userControlledTimeFraction?: Bindable;
+        readonly flags?: number;
+        readonly triggers?: readonly ClipTrigger[];
+      }
+    | {
+        readonly kind: 'manual-selector';
+        readonly name: string;
+        readonly generators: readonly (BehaviorGenerator | undefined)[];
+        readonly selectedGeneratorIndex: Bindable;
+      }
+    | {
+        /**
+         * BSiStateTaggingGenerator: plays its generator, tagging the actor's state (iStateToSetAs,
+         * bound to an iState_<movement type> variable: the engine's movement type while active).
+         */
+        readonly kind: 'state-tagging';
+        readonly name: string;
+        readonly generator: BehaviorGenerator | undefined;
+        readonly iState: Bindable;
+        readonly priority: number;
+      }
+    | {
+        /** BSCyclicBlendTransitionGenerator: a blender whose changes are cross-faded. */
+        readonly kind: 'cyclic-blend';
+        readonly name: string;
+        readonly generator: BehaviorGenerator | undefined;
+        readonly freezeEvent: BehaviorEvent;
+        readonly crossBlendEvent: BehaviorEvent;
+        readonly blendParameter: Bindable;
+        readonly transitionDuration: number;
+        readonly blendCurve: number;
+      }
+    | {
+        /** BSBoneSwitchGenerator: its default generator, some bones from other generators. */
+        readonly kind: 'bone-switch';
+        readonly name: string;
+        readonly generator: BehaviorGenerator | undefined;
+        readonly children: readonly {
+          readonly generator: BehaviorGenerator | undefined;
+          readonly boneWeights?: Float32Array;
+        }[];
+      }
+    | {
+        /** BSSynchronizedClipGenerator: a clip played in step with another actor's. */
+        readonly kind: 'synchronized-clip';
+        readonly name: string;
+        readonly generator: BehaviorGenerator | undefined;
+        /** SyncAnimPrefix: the prefix of the partner's tracks and events ("2_"), if any. */
+        readonly syncPrefix: string | undefined;
+        /** bSyncClipIgnoreMarkPlacement: the partner is not moved to its mark. */
+        readonly ignoreMarkPlacement: boolean;
+        /** fGetToMarkTime: seconds the partner takes to its mark (0: at once). */
+        readonly getToMarkTime: number;
+        /** fMarkErrorThreshold: how near its mark the partner counts as there. */
+        readonly markErrorThreshold: number;
+        /** bLeadCharacter: this side leads (its actor places the other). */
+        readonly leadCharacter: boolean;
+        /** bReorientSupportChar: the supporting side is turned to its mark's facing. */
+        readonly reorientSupport: boolean;
+        /** bApplyMotionFromRoot. */
+        readonly applyMotionFromRoot: boolean;
+      }
+    | {
+        /** BSOffsetAnimationGenerator: a clip whose frame a variable picks, laid on another. */
+        readonly kind: 'offset-animation';
+        readonly name: string;
+        readonly generator: BehaviorGenerator | undefined;
+        readonly offsetGenerator: BehaviorGenerator | undefined;
+        readonly offsetVariable: Bindable;
+        readonly rangeStart: number;
+        readonly rangeEnd: number;
+      }
+    | {
+        /** hkbBehaviorReferenceGenerator: the root of another behavior file. */
+        readonly kind: 'behavior-reference';
+        readonly name: string;
+        /** The behavior file, relative to the project's folder. */
+        readonly behavior: string;
+      }
+    | { readonly kind: 'reference-pose'; readonly name: string }
+    | { readonly kind: 'other'; readonly name: string; readonly className: string }
+  );
 
 /** An event raised by an expression (hkbExpressionData). */
 export interface ExpressionData {
@@ -360,7 +417,12 @@ export interface ExpressionData {
 }
 
 /** Modifiers: what changes variables, raises events or moves bones while it is active. */
-export type BehaviorModifier = { readonly name: string; readonly enable: Bindable } & (
+export type BehaviorModifier = {
+  readonly name: string;
+  readonly enable: Bindable;
+  /** hkbNode.userData, where not 0 (NodeUserData). */
+  readonly userData?: number;
+} & (
   | { readonly kind: 'list'; readonly modifiers: readonly BehaviorModifier[] }
   | { readonly kind: 'expressions'; readonly expressions: readonly ExpressionData[] }
   | {
@@ -404,6 +466,9 @@ export type BehaviorModifier = { readonly name: string; readonly enable: Bindabl
     }
   | {
       readonly kind: 'damping';
+      /** Whether it damps rawValue (every vanilla one) and rawVector (none). */
+      readonly enableScalarDamping: Bindable;
+      readonly enableVectorDamping: Bindable;
       readonly kP: Bindable;
       readonly kI: Bindable;
       readonly kD: Bindable;
@@ -670,6 +735,10 @@ export type BehaviorModifier = { readonly name: string; readonly enable: Bindabl
       readonly proportionalRecoveryVelocity: Bindable;
       readonly constantRecoveryVelocity: Bindable;
       readonly bones: Int16Array;
+      /** Where the character's world-from-model comes from while it drives the ragdoll. */
+      readonly worldFromModelMode: WorldFromModelMode;
+      /** How strongly each bone is driven (hkbBoneWeightArray), if the file gives weights. */
+      readonly boneWeights?: Float32Array;
     }
   | {
       /**
@@ -746,13 +815,40 @@ export interface PoseMatching {
   readonly mode: number;
 }
 
+/**
+ * hkbWorldFromModelModeData: where the character's world-from-model comes from while a powered
+ * ragdoll drives it. mode: 0 the old one, 1 the input's, 2 computed from the pose matching
+ * bones, 3 none, 4 the ragdoll's (WORLD_FROM_MODEL_MODE_*). The vanilla powered ragdolls have 2
+ * or 4, with bone 0 and two others.
+ */
+export interface WorldFromModelMode {
+  readonly mode: number;
+  readonly poseMatchingBones: readonly [number, number, number];
+}
+
+/** hkbEventInfo::Flags. */
+export const EVENT_FLAGS = {
+  /** Clip generators do not raise it (the horse's, troll's, werewolf's SyncLeft and SyncRight). */
+  silent: 0x1,
+  /** A sync point of the clips that raise it (FootLeft, FootRight, SyncLeft, ...). */
+  syncPoint: 0x2,
+} as const;
+
 export interface BehaviorGraph {
   readonly name: string;
   /** Event names by id (hkbBehaviorGraphStringData). */
   readonly events: readonly string[];
+  /** Each event's EVENT_FLAGS (hkbBehaviorGraphData.eventInfos), by id. */
+  readonly eventFlags?: readonly number[];
   readonly variables: readonly BehaviorVariable[];
   /** Character property names by index (bound with BINDING_TYPE_CHARACTER_PROPERTY). */
   readonly characterProperties?: readonly string[];
+  /**
+   * The type the graph gives each of them (hkbBehaviorGraphData.characterPropertyInfos, as
+   * BehaviorVariable.type), where the file lists them (42 vanilla graphs); their role flags
+   * are uninitialized editor data (4041, 7136, ...) and not read.
+   */
+  readonly characterPropertyTypes?: readonly number[];
   readonly root: BehaviorGenerator | undefined;
 }
 
@@ -799,6 +895,7 @@ export interface GraphStart {
 
 // hkbBindable: variableBindingSet pointer at 16. hkbNode: name at 56. hkbModifier: enable 72.
 const BINDABLE_BINDINGS = 16;
+const NODE_USER_DATA = 48;
 const NODE_NAME = 56;
 const MODIFIER_ENABLE = 72;
 const BINDING_SIZE = 40;
@@ -862,9 +959,23 @@ export function parseBehaviorGraph(
   const data = file.object(graph.offset + 136);
   const variables: BehaviorVariable[] = [];
   let events: string[] = [];
+  let eventFlags: number[] = [];
   let characterProperties: string[] = [];
+  let characterPropertyTypes: number[] = [];
   if (data?.className === 'hkbBehaviorGraphData') {
+    // hkbBehaviorGraphData: variableInfos 32, characterPropertyInfos 48, eventInfos 64, word
+    // min and max values 80 and 96, variableInitialValues 112, stringData 120.
     const infos = file.array(data.offset + 32);
+    const propertyInfos = file.array(data.offset + 48);
+    characterPropertyTypes = Array.from({ length: propertyInfos.size }, (_, i) =>
+      file.i8(propertyInfos.data + i * VARIABLE_INFO_SIZE + 4),
+    );
+    const eventInfos = file.array(data.offset + 64);
+    eventFlags = Array.from({ length: eventInfos.size }, (_, i) =>
+      file.u32(eventInfos.data + i * 4),
+    );
+    const minimum = file.array(data.offset + 80);
+    const maximum = file.array(data.offset + 96);
     const values = file.object(data.offset + 112);
     const strings = file.object(data.offset + 120);
     const names = strings ? file.stringArray(strings.offset + 48) : [];
@@ -875,17 +986,32 @@ export function parseBehaviorGraph(
     const words = values ? file.array(values.offset + 16) : { data: 0, size: 0 };
     // Vector variables' words index hkbVariableValueSet.quadVariableValues (at 32).
     const quads = values ? file.array(values.offset + 32) : { data: 0, size: 0 };
+    const variants = values ? file.array(values.offset + 48) : { data: 0, size: 0 };
     for (let i = 0; i < infos.size; i++) {
-      const type = file.i8(infos.data + i * VARIABLE_INFO_SIZE + 4);
-      const at = words.data + i * 4;
-      const initial =
-        i >= words.size ? 0 : type === VARIABLE_TYPE_REAL ? file.f32(at) : file.i32(at);
+      const info = infos.data + i * VARIABLE_INFO_SIZE;
+      const type = file.i8(info + 4);
+      const word = (array: { data: number; size: number }): number | undefined => {
+        if (i >= array.size) return undefined;
+        const at = array.data + i * 4;
+        return type === VARIABLE_TYPE_REAL ? file.f32(at) : file.i32(at);
+      };
+      const initial = word(words) ?? 0;
       const quad = type >= VARIABLE_TYPE_VECTOR3 && initial >= 0 && initial < quads.size;
+      const role = file.i16(info);
+      const roleFlags = file.i16(info + 2);
+      const min = word(minimum);
+      const max = word(maximum);
+      const boneWeights =
+        type === VARIABLE_TYPE_POINTER ? variantBoneWeights(file, variants, initial) : undefined;
       variables.push({
         name: names[i] ?? '',
         type,
         initial,
         ...(quad && { vector: vec4(file, quads.data + initial * 16) }),
+        ...(role !== 0 && { role }),
+        ...(roleFlags !== 0 && { roleFlags }),
+        ...(min !== undefined && max !== undefined && { range: { min, max } }),
+        ...(boneWeights && { boneWeights }),
       });
     }
   }
@@ -896,8 +1022,10 @@ export function parseBehaviorGraph(
   return {
     name: file.string(graph.offset + NODE_NAME) ?? '',
     events,
+    eventFlags,
     variables,
     characterProperties,
+    ...(characterPropertyTypes.length > 0 && { characterPropertyTypes }),
     root: reader.generator(file.object(graph.offset + 128)),
   };
 }
@@ -921,7 +1049,10 @@ class GraphReader {
     if (this.#generators.has(object.offset)) return this.#generators.get(object.offset);
     this.#visiting.add(object.offset);
     try {
-      const generator = this.#readGenerator(object);
+      const read = this.#readGenerator(object);
+      // hkbNode.userData (at 48): NodeUserData. The graph itself (an hkbGenerator too) has 0.
+      const userData = this.#file.u32(object.offset + NODE_USER_DATA);
+      const generator = userData === 0 ? read : { ...read, userData };
       this.#generators.set(object.offset, generator);
       return generator;
     } finally {
@@ -1047,6 +1178,7 @@ class GraphReader {
             return [
               {
                 weight: childBindable('weight', file.f32(child.offset + 64)),
+                worldFromModelWeight: file.f32(child.offset + 68),
                 generator: this.generator(file.object(child.offset + 48)),
                 ...(boneWeights && { boneWeights }),
               },
@@ -1205,7 +1337,12 @@ class GraphReader {
     const name = file.string(at + NODE_NAME) ?? '';
     const bindable = bindableReader(file, at);
     const vector = vectorReader(file, at);
-    const base = { name, enable: bindable('enable', file.bool(at + MODIFIER_ENABLE) ? 1 : 0) };
+    const userData = file.u32(at + NODE_USER_DATA);
+    const base = {
+      name,
+      enable: bindable('enable', file.bool(at + MODIFIER_ENABLE) ? 1 : 0),
+      ...(userData !== 0 && { userData }),
+    };
     const sub = (offset: number): BehaviorModifier | undefined =>
       this.modifier(file.object(at + offset));
     switch (object.className) {
@@ -1289,6 +1426,8 @@ class GraphReader {
         return {
           ...base,
           kind: 'damping',
+          enableScalarDamping: bindable('enableScalarDamping', file.bool(at + 92) ? 1 : 0),
+          enableVectorDamping: bindable('enableVectorDamping', file.bool(at + 93) ? 1 : 0),
           kP: bindable('kP', file.f32(at + 80)),
           kI: bindable('kI', file.f32(at + 84)),
           kD: bindable('kD', file.f32(at + 88)),
@@ -1421,7 +1560,9 @@ class GraphReader {
         const { data, size } = file.array(at + 128);
         const legs = Array.from({ length: size }, (_, i): FootIkLeg => {
           const leg = data + i * FOOT_IK_MODIFIER_LEG_SIZE;
+          const ankle = qsTransform(file, leg);
           return {
+            ...(ankle.some((value) => value !== 0) && { originalAnkleTransformMS: ankle }),
             kneeAxis: vec3(file, leg + 64),
             footEnd: vec3(file, leg + 80),
             ungroundedEvent: this.event(leg + 96),
@@ -1526,6 +1667,15 @@ class GraphReader {
             file.f32(at + 96),
           ),
           bones: boneIndexArray(file, file.object(at + 112)),
+          // hkbWorldFromModelModeData at 120: three pose matching bones, then the mode.
+          worldFromModelMode: {
+            poseMatchingBones: [file.i16(at + 120), file.i16(at + 122), file.i16(at + 124)],
+            mode: file.i8(at + 126),
+          },
+          ...((): { boneWeights?: Float32Array } => {
+            const boneWeights = this.boneWeights(at, 'boneWeights', file.object(at + 128));
+            return boneWeights ? { boneWeights } : {};
+          })(),
         };
       case 'hkbRigidBodyRagdollControlsModifier': {
         const f = (offset: number): number => file.f32(at + 80 + offset);
@@ -1708,9 +1858,10 @@ function bindableReader(file: Packfile, at: number): (member: string, value: num
   return (member, value) => {
     const binding = bindings.get(member);
     if (!binding) return { value };
+    const bit = binding.bit >= 0 ? { bit: binding.bit } : {};
     return binding.type === BINDING_TYPE_CHARACTER_PROPERTY
-      ? { value, property: binding.index }
-      : { value, variable: binding.index };
+      ? { value, property: binding.index, ...bit }
+      : { value, variable: binding.index, ...bit };
   };
 }
 
@@ -1802,6 +1953,7 @@ function readFootIkDriverInfo(file: Packfile, data: HkxObject): FootIkSetup | un
     useTrackData: false,
     lockFeetWhenPlanted: file.bool(at + 64),
     useCharacterUpVector: file.bool(at + 65),
+    isQuadrupedNarrow: file.bool(at + 66),
   };
 }
 
@@ -1809,17 +1961,22 @@ function readFootIkDriverInfo(file: Packfile, data: HkxObject): FootIkSetup | un
 function readBindings(
   file: Packfile,
   bindable: number,
-): Map<string, { type: number; index: number }> {
-  const result = new Map<string, { type: number; index: number }>();
+): Map<string, { type: number; index: number; bit: number }> {
+  const result = new Map<string, { type: number; index: number; bit: number }>();
   const set = file.object(bindable + BINDABLE_BINDINGS);
   if (set?.className !== 'hkbVariableBindingSet') return result;
+  // hkbVariableBindingSet: bindings 16, indexOfBindingToEnable 32 (the binding of the node's
+  // enable, which Havok applies before the others; −1: none). Every vanilla one names "enable".
   const { data, size } = file.array(set.offset + 16);
+  const enableBinding = file.i32(set.offset + 32);
   for (let i = 0; i < size; i++) {
+    // hkbVariableBindingSetBinding: memberPath 0, variableIndex 28, bitIndex 32, bindingType 33.
     const at = data + i * BINDING_SIZE;
     const type = file.i8(at + 33);
     if (type !== BINDING_TYPE_VARIABLE && type !== BINDING_TYPE_CHARACTER_PROPERTY) continue;
-    const path = file.string(at);
-    if (path !== undefined) result.set(path, { type, index: file.i32(at + 28) });
+    const path = i === enableBinding ? 'enable' : file.string(at);
+    if (path !== undefined)
+      result.set(path, { type, index: file.i32(at + 28), bit: file.i8(at + 32) });
   }
   return result;
 }
@@ -2020,18 +2177,27 @@ export function readCharacterBoneWeights(character: Packfile): Map<string, Float
   const variants = character.array(values.offset + 48);
   for (let i = 0; i < Math.min(infos.size, words.size); i++) {
     if (character.i8(infos.data + i * VARIABLE_INFO_SIZE + 4) !== VARIABLE_TYPE_POINTER) continue;
-    const index = character.i32(words.data + i * 4);
     const name = names[i];
-    if (name === undefined || index < 0 || index >= variants.size) continue;
-    const array = character.object(variants.data + index * 8);
-    if (array?.className !== 'hkbBoneWeightArray') continue;
-    const { data: weights, size } = character.array(array.offset + 48);
-    result.set(
-      name.toLowerCase(),
-      Float32Array.from({ length: size }, (_, bone) => character.f32(weights + bone * 4)),
-    );
+    const weights = variantBoneWeights(character, variants, character.i32(words.data + i * 4));
+    if (name !== undefined && weights) result.set(name.toLowerCase(), weights);
   }
   return result;
+}
+
+/**
+ * The hkbBoneWeightArray (its weights: hkArray<hkReal> at 48) a pointer variable's word
+ * indexes among a value set's variants, if it is one.
+ */
+function variantBoneWeights(
+  file: Packfile,
+  variants: { readonly data: number; readonly size: number },
+  index: number,
+): Float32Array | undefined {
+  if (index < 0 || index >= variants.size) return undefined;
+  const array = file.object(variants.data + index * 8);
+  if (array?.className !== 'hkbBoneWeightArray') return undefined;
+  const { data, size } = file.array(array.offset + 48);
+  return Float32Array.from({ length: size }, (_, bone) => file.f32(data + bone * 4));
 }
 
 /**
@@ -2061,6 +2227,30 @@ export function readCharacterPropertyValues(character: Packfile): Record<string,
     result[name] = type === VARIABLE_TYPE_REAL ? character.f32(at) : character.i32(at);
   }
   return result;
+}
+
+/**
+ * Whether a behavior project names a character file that exists: a project that does not
+ * gives no graph (a graph runs on a character, which names its behavior file and skeleton),
+ * so the mesh naming it shows without one. The vanilla data has seven such projects, all under
+ * meshes\magic: six name a character in magicbehaviors\characters\fireball01handeffects\, which
+ * is not in the archives, and no mesh or record names them (the original never opens them);
+ * shoutimod.hkx lists no character and fxshoutimoddismay.nif names it.
+ */
+export async function projectHasCharacter(
+  project: string,
+  read: (path: string) => Promise<Uint8Array>,
+): Promise<boolean> {
+  const path = normalizePath(project);
+  const { characterFilenames } = readProjectInfo(Packfile.parse(await readHavokFile(path, read)));
+  const first = characterFilenames[0];
+  if (first === undefined) return false;
+  try {
+    await readHavokFile(projectRelative(path, first), read);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** A behavior project's character file (`path` normalized). */
@@ -2197,6 +2387,84 @@ export interface CharacterInfo {
   readonly mirror?: MirrorSetup;
   /** The project's default event mode of blending transitions (readDefaultEventMode). */
   readonly defaultEventMode: number;
+  /**
+   * The character controller the character asks for (hkbCharacterData.characterControllerInfo):
+   * a capsule 1.7 high with a radius of 0.4 (Havok units) and collision filter info 1 in every
+   * vanilla character. The actor's controller is sized by its race and skeleton instead
+   * (src/physics); kept for mods.
+   */
+  readonly controller: {
+    readonly capsuleHeight: number;
+    readonly capsuleRadius: number;
+    readonly collisionFilterInfo: number;
+  };
+  /**
+   * The character's axes in model space (up, forward, right) and its scale: up +z and scale 1
+   * everywhere; forward +x and right −y in 342 characters, forward +y and right +x in 19 (the
+   * humans' defaultmale, the first person, the draugr and most quadrupeds). What the foot IK
+   * and look-at modifiers take as the character's forward (src/animation/procedural.ts).
+   */
+  readonly modelUp: Vec4;
+  readonly modelForward: Vec4;
+  readonly modelRight: Vec4;
+  readonly scale: number;
+  /** The bone weights of its pointer properties, by lower-case name (readCharacterBoneWeights). */
+  readonly boneWeights: ReadonlyMap<string, Float32Array>;
+  /**
+   * The rest of hkbCharacterStringData and hkbCharacterData, empty in every vanilla character:
+   * skins, LODs, retargeting, mirrored sync point name pairs, animation files.
+   */
+  readonly deformableSkinNames: readonly string[];
+  readonly rigidSkinNames: readonly string[];
+  readonly animationFilenames: readonly string[];
+  readonly retargetingSkeletonMapperFilenames: readonly string[];
+  readonly lodNames: readonly string[];
+  readonly numBonesPerLod: readonly number[];
+  readonly mirroredSyncPointSubstrings: readonly (readonly [string, string])[];
+  /** The project file (hkbProjectData). */
+  readonly project: ProjectInfo;
+}
+
+/**
+ * A behavior project's own data (hkbProjectData, hkbProjectStringData) beside its character
+ * file. The original takes the character from characterFilenames (projectCharacterFile); the
+ * rest is the editor's: the world's up axis (+z in every file), the folders (empty in every
+ * file), the editor's source file (the creators' .hkp paths, nine files), and lists of the
+ * project's behavior (nine) and animation (one) files that the character names too.
+ */
+export interface ProjectInfo {
+  readonly worldUp: Vec4;
+  readonly animationFilenames: readonly string[];
+  readonly behaviorFilenames: readonly string[];
+  readonly characterFilenames: readonly string[];
+  readonly eventNames: readonly string[];
+  readonly animationPath: string;
+  readonly behaviorPath: string;
+  readonly characterPath: string;
+  readonly fullPathToSource: string;
+}
+
+/** Reads a project file's hkbProjectData and hkbProjectStringData. */
+export function readProjectInfo(project: Packfile): ProjectInfo {
+  const data = requireObject(project, 'hkbProjectData');
+  const strings = project.object(data.offset + 32);
+  // hkbProjectStringData: animationFilenames 16, behaviorFilenames 32, characterFilenames 48,
+  // eventNames 64, animationPath 80, behaviorPath 88, characterPath 96, fullPathToSource 104.
+  const list = (offset: number): string[] =>
+    strings ? project.stringArray(strings.offset + offset) : [];
+  const text = (offset: number): string =>
+    (strings ? project.string(strings.offset + offset) : undefined) ?? '';
+  return {
+    worldUp: vec4(project, data.offset + 16),
+    animationFilenames: list(16),
+    behaviorFilenames: list(32),
+    characterFilenames: list(48),
+    eventNames: list(64),
+    animationPath: text(80),
+    behaviorPath: text(88),
+    characterPath: text(96),
+    fullPathToSource: text(104),
+  };
 }
 
 /** A character's mirroring (hkbMirroredSkeletonInfo). */
@@ -2227,7 +2495,36 @@ export async function loadCharacterInfo(
   };
   const footIk = readFootIkDriverInfo(character, data);
   const mirror = readMirroring(character, data);
+  const stringList = (offset: number): string[] => character.stringArray(strings.offset + offset);
+  const syncA = stringList(128);
+  const syncB = stringList(144);
+  const lods = character.array(data.offset + 112);
   return {
+    // hkbCharacterData: controller info 16 (capsule height, radius, filter info), up 48,
+    // forward 64, right 80, numBonesPerLod 112, scale 168. Its string data: deformable and
+    // rigid skin names 16 and 32, animation file names 64, retargeting mappers 96, LOD names
+    // 112, mirrored sync point substrings 128 and 144.
+    controller: {
+      capsuleHeight: character.f32(data.offset + 16),
+      capsuleRadius: character.f32(data.offset + 20),
+      collisionFilterInfo: character.u32(data.offset + 24),
+    },
+    modelUp: vec4(character, data.offset + 48),
+    modelForward: vec4(character, data.offset + 64),
+    modelRight: vec4(character, data.offset + 80),
+    scale: character.f32(data.offset + 168),
+    boneWeights: readCharacterBoneWeights(character),
+    deformableSkinNames: stringList(16),
+    rigidSkinNames: stringList(32),
+    animationFilenames: stringList(64),
+    retargetingSkeletonMapperFilenames: stringList(96),
+    lodNames: stringList(112),
+    numBonesPerLod: Array.from({ length: lods.size }, (_, i) => character.i32(lods.data + i * 4)),
+    mirroredSyncPointSubstrings: syncA.map((a, i): readonly [string, string] => [
+      a,
+      syncB[i] ?? '',
+    ]),
+    project: readProjectInfo(projectFile),
     name: character.string(strings.offset + 160) ?? '',
     rig: file(168),
     ragdoll: file(176),
