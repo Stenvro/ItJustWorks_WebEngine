@@ -110,6 +110,11 @@ describe.skipIf(!hasGamedata())('a save made and loaded (simulation)', () => {
     expect(after.stageDone(quest, stage)).toBe(true);
     expect(state.gameDaysPassed).toBeCloseTo(saved.days, 3);
     expect(after.hour).toBeCloseTo(15, 0);
+    // The player's own scripts hear the load once (OnPlayerLoadGame), as the loaded world is
+    // up; the aliases holding the player and the effects on them hear it too.
+    const loaded = after.scriptEvents({ event: 'OnPlayerLoadGame' });
+    expect(loaded.filter((e) => e.target === PLAYER_REF && e.alias === undefined)).toHaveLength(1);
+    expect(loaded.length).toBeGreaterThan(1);
     const saveProblems = after.problems().filter((p) => p.tag === 'save');
     // Every script instance found its script and variables again, every saved thread resumed
     // (threads in a native's promise are only logged as not saved).

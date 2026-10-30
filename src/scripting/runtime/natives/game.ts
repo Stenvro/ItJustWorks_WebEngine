@@ -23,21 +23,23 @@ export const CONTROLS = [
 
 /**
  * The control map's user event groups (UserEventFlag) each control of
- * Game.DisablePlayerControls switches: movement (jumping with it: Jump names both), fighting,
- * the camera switch (Toggle POV and the wheel's zoom, which leaves first person), looking,
- * sneaking, the menus and activation. The journal's tabs are the journal's own (its other pages
- * shut), no group of the control map. TODO(M13): whether the engine's abMenu also switches the
- * main four (the tween menu's and the quick keys' group) on its own; every event of that group
- * names the menu group too, so it is off with it either way.
+ * Game.DisablePlayerControls switches (observed in the original): movement (jumping with it),
+ * fighting, looking, sneaking, and for abMenu the main four alone (the tween menu, the quick
+ * keys and the hotkeys), not the menu group: the journal and the wait menu (0x808) stay. The
+ * others are no group: abCamSwitch locks the camera's switch for its aiDisablePOVType (the
+ * player controls keep a lock per type: povSwitchAllowed), abActivate switches the player
+ * controls' activation off (Player.activationAllowed), abJournalTabs the journal's other pages.
+ * TODO(M13): what abMovement does to the player controls besides, and which six menus abMenu
+ * hides as it disables them, are not read.
  */
 const CONTROL_FLAGS: Readonly<Record<(typeof CONTROLS)[number], number>> = {
   movement: UserEventFlag.movement | UserEventFlag.jumping,
   fighting: UserEventFlag.fighting,
-  camSwitch: UserEventFlag.povSwitch | UserEventFlag.wheelZoom,
+  camSwitch: 0,
   looking: UserEventFlag.looking,
   sneaking: UserEventFlag.sneaking,
-  menu: UserEventFlag.menu,
-  activate: UserEventFlag.activate,
+  menu: UserEventFlag.mainFour,
+  activate: 0,
   journalTabs: 0,
 };
 
@@ -46,6 +48,11 @@ export function disabledControlFlags(controls: Controls): number {
   let disabled = 0;
   for (const control of CONTROLS) if (!controls[control]) disabled |= CONTROL_FLAGS[control];
   return disabled;
+}
+
+/** Whether the camera may switch (no script holds a lock of any aiDisablePOVType). */
+export function povSwitchAllowed(controls: Controls): boolean {
+  return controls.povLocks.length === 0;
 }
 
 export function registerGame(n: Register, runtime: ScriptRuntime): void {
@@ -74,12 +81,19 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
 
   // --- Controls ------------------------------------------------------------------------------
   const setControls = (enabled: boolean, args: readonly Value[]): void => {
+    const controls = runtime.controls;
     CONTROLS.forEach((control, i) => {
       // Arguments left out default to true (each control named is changed).
       const named = bool(args[i], true);
-      if (named) runtime.controls[control] = enabled;
+      if (named) controls[control] = enabled;
     });
-    runtime.controls.disablePov = enabled ? 0 : int(args[8]);
+    // abCamSwitch sets or clears the lock of its aiDisablePOVType alone (observed in the
+    // original: one per type in the player controls).
+    if (bool(args[2], true)) {
+      const type = int(args[8]);
+      const locks = controls.povLocks.filter((lock) => lock !== type);
+      controls.povLocks = enabled ? locks : [...locks, type];
+    }
     world.controlsChanged?.();
   };
   n('game.enableplayercontrols', ({ args }) => {

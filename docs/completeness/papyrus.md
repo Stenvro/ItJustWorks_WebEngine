@@ -8,18 +8,19 @@ The natives and events parts come from the sweep `node tools/papyrus-completenes
 for every item); the VM part is kept by hand against `src/scripting/papyrus-vm.ts` and
 docs/scripting.md ("Threads", "Properties", "The log").
 
-## Count (2026-10-30, round 4)
+## Count (2026-10-30, round 5)
 
 | Part    | Items | Done | Open |
 | ------- | ----: | ---: | ---: |
 | Natives |   687 |  687 |    0 |
 | Events  |    99 |   98 |    1 |
-| VM      |    30 |   29 |    1 |
-| Total   |   816 |  814 |    2 |
+| VM      |    30 |   30 |    0 |
+| Total   |   816 |  815 |    1 |
 
 Round 4 counts the None-argument sweep as a natives item and the simulation's share of the
 events as an events item (both were listed, not counted). The sweep reports the simulation's
-share separately: 38 of the 98 events are checked in the headless simulation (27 before).
+share separately: 55 of the 98 events are checked in the headless simulation (38 after round 4,
+27 before).
 
 ## Natives
 
@@ -81,8 +82,8 @@ its COVERED list. The four story events the original never raises (Bribe, Flatte
 Player Gets Favor) count as sent; the story manager's test sends each type's event to the
 quest it starts.
 
-All 98 are sent and checked by an engine-level test. Of them 27 are checked in the headless
-simulation (the sweep's count); the other 71 by the runtime's, the relay's, the VM's or the
+All 98 are sent and checked by an engine-level test. Of them 55 are checked in the headless
+simulation (the sweep's count); the other 43 by the runtime's, the relay's, the VM's or the
 story manager's tests (src/scripting/runtime/engine-events.test.ts, script-events.test.ts,
 story-manager.test.ts, src/scripting/papyrus-vm-errors.test.ts, tests/effect-events.int.test.ts).
 
@@ -95,8 +96,25 @@ package left), the vampirism, lycanthropy and feeding events, onBeginState/onEnd
 compiled GotoState), OnUnequipped, and the story manager's 30 events. Fixed: OnRead reaches a
 book read from an inventory when its base carries scripts (it reached only book references).
 
-- [ ] In the simulation: 60 events still have an engine-level test only (the sweep lists
-      them). Round 4 added 11 (tests/conformance/scripting/script-events-registered.test.ts, one
+- [ ] In the simulation: 43 events still have an engine-level test only (the sweep lists
+      them). Round 5 added 17 (tests/conformance/scripting/script-events-items.test.ts, one
+      simulation in the Bannered Mare, each raised by the engine path that raises it: a potion
+      drunk, a sword equipped and unequipped, a treasure map taken, natives called through the
+      VM, the player walking; save-load.test.ts for the load):
+      OnEffectStart, OnEffectFinish, OnEquipped, OnUnequipped, OnContainerChanged,
+      onEndState / onBeginState (the compiled GotoState's calls, now told as events),
+      OnLockStateChanged, OnDestructionStageChanged, OnEnterBleedout, OnAnimationEvent,
+      OnAnimationEventUnregistered, OnRaceSwitchComplete, OnVampireFeed,
+      OnVampirismStateChanged, OnLycanthropyStateChanged, OnPlayerLoadGame.
+      Fixed in the engine on the way: a reference disabled lets go of its graph's animation
+      event registrations and tells them (OnAnimationEventUnregistered: only a cell detaching
+      did); a created object disabled or enabled is told as a cell's own (OnUnload / OnLoad);
+      OnPlayerLoadGame is sent once the loaded world is up (the first frame the game runs), as
+      the original sends it, not as the scripts are. Left: the story manager's 29 (each needs a
+      quest node of its type that starts in the sim), OnRead and OnSell (the book and barter
+      menus, which the sim has not), OnSpellCast and OnWardHit (a cast by an actor's hands),
+      OnPlayerBowShot, OnGrab / OnRelease, OnSleepStart / OnSleepStop, OnClose,
+      OnTranslationFailed, OnPlayerFastTravelEnd, OnInit (named in no sim case), OnPackageChange (no package left for another in a short simulation: an hour set ahead and EvaluatePackage moved no patron on). Round 4 added 11 (tests/conformance/scripting/script-events-registered.test.ts, one
       simulation): OnUpdate, OnUpdateGameTime, OnGainLOS, OnLostLOS, OnTranslationAlmostComplete,
       OnTranslationComplete, OnObjectUnequipped, OnItemRemoved, OnCombatStateChanged,
       OnPackageEnd, OnTrackedStatsEvent. Left: those whose trigger needs data of their own (a
@@ -127,14 +145,21 @@ book read from an inventory when its base carries scripts (it reached only book 
       one), the time counted being the main thread's work of each (ours: the native's own run,
       not what it started); while overstressed all of the fixed queue resumes, the budget
       starting again after each.
-- [ ] The latent calls' render-safe and post-render queues. Read in round 4: a latent native
-      queues its main-thread work (a delay functor, saved with the game) in one of the two; each
-      frame a queue runs the work queued before it, first come first served, until it is empty
-      or its budget is spent (the budget given, else 0.05 of fUpdateBudgetMS; at least one
-      each frame); work that waits on (Utility.Wait's) goes back for the next frame, and work
-      done returns its result to the waiting stack. Not built: ours starts a latent native's
-      work in the call itself; it needs each latent native split into its start and its queued
-      work, and which of the two queues each uses read.
+- [x] The latent calls' render-safe and post-render queues (round 5, observed in the
+      original; src/scripting/latent-queues.ts, docs/scripting.md "Threads"). The render-safe
+      queue takes Spell.Cast and RemoteCast, Scroll.Cast and TetherToHorse; the post-render
+      queue 27 (AddItem, RemoveItem, DropObject, the five MoveTo natives, SetPosition, SetAngle,
+      SetScale, SetMotionType, ApplyHavokImpulse, DamageObject, Delete, Reset, Enable, Disable,
+      EnableNoWait and DisableNoWait (not latent: they return at once), Resurrect,
+      AttachAshPile, SendPlayerToJail, the two ragdoll natives, the two Havok constraint
+      natives). The post-render queue runs after the frame is drawn, the render-safe one at a
+      point of the frame before; each run swaps the queue's two lists and runs the work queued
+      before it in order while its budget lasts (the budget given, else 0.05 of
+      fUpdateBudgetMS), at least one; what a run leaves waits for the run after next. Only a
+      fading Enable / Disable goes back for the next run (until the fade is over or 5 s; ours:
+      its work waits for the fade). Ours runs both as a frame begins (the render-safe point
+      against the VM's update inferred); a latent native's thread waits for its
+      work, its script unlocked. Wired to the natives (natives/index.ts); the opening, MQ102 to MQ104 and the saves run with it in the simulation (a test awaiting a native itself must step the world: the sim helper native()).
 - [x] A loaded game's VM runs on its own for fPostLoadUpdateTimeMS.
 - [x] No call-depth limit and no error for it (observed in the original: a stack grows page by
       page while memory lasts). Ours keeps a guard of 4096 calls for the browser's memory.
@@ -176,7 +201,9 @@ book read from an inventory when its base carries scripts (it reached only book 
       modifiers, keywords, location ref types, movable statics, music, quests, races, voice
       types, worldspaces; references and other forms none) and its id ("[Actor < (00000014)>]"),
       an alias "alias <name> on quest <quest> (<id>)", an active effect "Active effect <n> on
-      <actor> (<id>)" (our n is 0: TODO(M13)).
+      <actor's shown name> (<id>)" (round 5, observed in the original: n is the 16 bits of the
+      effect's handle that tell it apart, ours the effect's own number; how the original counts
+      them is not read: TODO(M13). The actor's name was missing).
 - [x] Float arithmetic, negation and casts to Float in single precision.
 - [x] A call on None: "Cannot call X() on a None object, aborting function call"; a property on
       None: 'Cannot get/set property "X" on a None object.'
@@ -192,4 +219,5 @@ book read from an inventory when its base carries scripts (it reached only book 
       (the thread is saved at its call). A latent native's queued work is saved with the game
       and finishes after the load, its result going to the waiting stack, without calling the
       native again: ours keeps a clock wait as data the same way and calls the other latent
-      natives again (their work is not queued apart: the latent queues' item).
+      natives again: ours saves the thread at its call, so its work is queued again on load
+      (the latent queues' item; only a None line shows twice).
