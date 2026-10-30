@@ -216,12 +216,20 @@ export const INI_DEFAULTS = {
     fZKeyDelay: 0.2,
   },
   // A dynamic decal (a hit's blood) lasts fDecalLifetime seconds ([Display]); at most
-  // uMaxDecals are kept, the oldest going first (src/shell/combat-impacts.ts).
+  // uMaxDecals are kept, the oldest going first (src/shell/combat-impacts.ts). Skinned decals
+  // (blood on actors): none beyond uMaxSkinDecals living, iMaxSkinDecalsPerFrame made in a
+  // frame or uMaxSkinDecalPerActor on one actor; none farther than fDecalLOD0 from the camera.
   Decals: {
+    bAllowDecalsOnAlpha: 1,
+    bSkinnedDecals: 1,
     uMaxDecals: 1000,
+    uMaxSkinDecalPerActor: 25,
+    uMaxSkinDecals: 100,
   },
   Display: {
+    fDecalLOD0: 800,
     fDecalLifetime: 30,
+    iMaxSkinDecalsPerFrame: 25,
     fDefault1stPersonFOV: 80,
     fDefaultWorldFOV: 80,
     // The settings menu's DDOF Intensity and Brightness: the settings and their sliders' ends.

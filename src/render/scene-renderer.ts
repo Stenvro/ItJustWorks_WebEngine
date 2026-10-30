@@ -16,6 +16,7 @@ import {
   type ModelSequences,
   type Playback,
 } from './animation.ts';
+import { ModelLagBones } from './lag-bone.ts';
 import { billboardWorld } from './billboard.ts';
 import {
   CHARACTER_LIGHT,
@@ -1610,6 +1611,11 @@ export class SceneRenderer {
   fadeTiming: FadeTiming = DEFAULT_FADE_TIMING;
   /** The animation time of the frame being drawn (when fading draws were last in view). */
   #fadeTime = 0;
+  /**
+   * The lag bones of placed instances (BSLagBoneController in effect models, torches, worn
+   * pieces): each instance trails its own motion, by its world matrix and model animation.
+   */
+  readonly #instanceLagBones = new WeakMap<Mat4, Map<ModelAnimation, ModelLagBones>>();
   /** Where the lighting shader's features fade out with distance (shader-fades.ts). */
   shaderFades: ShaderFadeSettings = DEFAULT_SHADER_FADES;
   /** The world map's relief overlay while the map's 3D is drawn (setWorldMapOverlay). */
@@ -3301,7 +3307,11 @@ export class SceneRenderer {
       }
       for (const draw of scene.animated) {
         const frame =
-          playedFrame(draw.playback) ?? graphFrame(draw.graph) ?? frameOf(draw.animation);
+          playedFrame(draw.playback) ??
+          graphFrame(draw.graph) ??
+          (draw.hung || draw.posed
+            ? frameOf(draw.animation)
+            : this.#lagged(draw.animation, frameOf(draw.animation), draw.instanceWorld, seconds));
         const floats = new Float32Array(scene.uniformData, draw.offset, DRAW_SIZE / 4);
         const billboard = draw.part.billboard;
         // Uploaded only when something in it changed: an actor standing still keeps its
@@ -3420,9 +3430,37 @@ export class SceneRenderer {
       seconds,
       camera,
       wind,
-      (draw) => (draw.graph ? graphFrame(draw.graph) : frameOf(draw.animation)),
+      (draw) =>
+        draw.graph
+          ? graphFrame(draw.graph)
+          : this.#lagged(draw.animation, frameOf(draw.animation), draw.instanceWorld, seconds),
       appendParticles ? this.#particleCursor : 0,
     );
+  }
+
+  /**
+   * A model's frame with its lag bones trailing for one instance (its parts and particle
+   * emitters under them follow): the instance's own lag state, solved once per frame. Models
+   * without lag bones keep their frame.
+   */
+  #lagged(
+    animation: ModelAnimation | undefined,
+    frame: AnimationFrame | undefined,
+    instanceWorld: Mat4,
+    seconds: number,
+  ): AnimationFrame | undefined {
+    if (!animation?.lagBones || !frame) return frame;
+    let byModel = this.#instanceLagBones.get(instanceWorld);
+    if (!byModel) {
+      byModel = new Map();
+      this.#instanceLagBones.set(instanceWorld, byModel);
+    }
+    let state = byModel.get(animation);
+    if (!state) {
+      state = new ModelLagBones(animation);
+      byModel.set(animation, state);
+    }
+    return { ...frame, worlds: state.update(frame.worlds, instanceWorld, seconds) };
   }
 
   /** Updates the particle systems and gathers their instances into this frame's buffer. */

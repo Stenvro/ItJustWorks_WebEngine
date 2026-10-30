@@ -14,7 +14,8 @@
 //
 // Platform-independent: matrices are column-major 4x4 with a uniform scale, as the poses'.
 
-import type { LagBoneControllerBlock } from '../formats/nif/types.ts';
+import type { LagBoneControllerBlock, NifTransform } from '../formats/nif/types.ts';
+import { fromNifTransform } from './math.ts';
 
 /** One lag bone of a skeleton: its node and the controller's values. */
 export interface LagBone {
@@ -268,5 +269,147 @@ export class LagBoneState {
     }
     multiply(parentWorld, parentAt, out, 0, last);
     return out;
+  }
+}
+
+/** A model's scene graph as its animation keeps it (animation.ts ModelAnimation). */
+export interface LagBoneGraph {
+  /** The model's lag bones, by the block of the node each moves. */
+  readonly lagBones?: readonly LagBone[];
+  readonly parents: ReadonlyMap<number, number>;
+  readonly transforms: ReadonlyMap<number, NifTransform>;
+  readonly roots: readonly number[];
+}
+
+const IDENTITY = Float32Array.from([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+
+/**
+ * The lag bones of one placed instance of a model (an effect model, a torch, a worn piece: the
+ * scene renderer keeps one per instance, as each trails its own motion). `update` gives the
+ * frame's model-space node matrices with the lag bones trailing in world space and the nodes
+ * under them following.
+ */
+export class ModelLagBones {
+  readonly #graph: LagBoneGraph;
+  readonly #bones: readonly LagBone[];
+  readonly #state: LagBoneState;
+  #lastSeconds: number | undefined;
+  #seconds: number | undefined;
+  #worlds: ReadonlyMap<number, Float32Array> = new Map();
+  readonly #parentWorld = new Float32Array(16);
+  readonly #local = new Float32Array(16);
+  readonly #inverse = new Float32Array(16);
+
+  constructor(graph: LagBoneGraph) {
+    this.#graph = graph;
+    // Parents before children: a lag bone under another trails the other's trailed place.
+    const depth = (node: number): number => {
+      let d = 0;
+      for (let r = graph.parents.get(node); r !== undefined; r = graph.parents.get(r)) d++;
+      return d;
+    };
+    this.#bones = [...(graph.lagBones ?? [])].sort((a, b) => depth(a.node) - depth(b.node));
+    const rest = new Float32Array(this.#bones.length * 16);
+    this.#bones.forEach((bone, i) => {
+      rest.set(this.#restLocal(bone.node), i * 16);
+    });
+    this.#state = new LagBoneState(
+      this.#bones.map((bone, i) => ({ ...bone, node: i })),
+      rest,
+    );
+  }
+
+  /** Forgets where the bones were (a teleport). */
+  reset(): void {
+    this.#state.reset();
+    this.#lastSeconds = undefined;
+  }
+
+  /**
+   * The model-space matrices of this frame (`seconds`): the animated ones (`animated`, from the
+   * model's controllers; the others at rest), with the lag bones and everything under them
+   * trailing as the instance moves (`instanceWorld`). Solved once per frame; later calls in
+   * the same frame return the same matrices.
+   */
+  update(
+    animated: ReadonlyMap<number, ArrayLike<number>> | undefined,
+    instanceWorld: ArrayLike<number>,
+    seconds: number,
+  ): ReadonlyMap<number, Float32Array> {
+    if (this.#seconds === seconds) return this.#worlds;
+    this.#seconds = seconds;
+    const dt = this.#lastSeconds === undefined ? 0 : Math.max(0, seconds - this.#lastSeconds);
+    this.#lastSeconds = seconds;
+    const graph = this.#graph;
+    // As for every model, a root's own transform is not used.
+    const roots = new Set(graph.roots.filter((root) => graph.parents.get(root) === undefined));
+    const original = new Map<number, Float32Array>();
+    const originalOf = (ref: number): Float32Array => {
+      const known = original.get(ref);
+      if (known) return known;
+      const world = new Float32Array(16);
+      const moved = animated?.get(ref);
+      const parent = graph.parents.get(ref);
+      if (moved) {
+        for (let i = 0; i < 16; i++) world[i] = moved[i] ?? 0;
+      } else if (parent === undefined) {
+        world.set(roots.has(ref) ? IDENTITY : this.#restLocal(ref));
+      } else {
+        multiply(originalOf(parent), 0, this.#restLocal(ref), 0, world);
+      }
+      original.set(ref, world);
+      return world;
+    };
+    // A node's transform under its parent this frame (as animated, or at rest).
+    const localOf = (ref: number, out: Float32Array): Float32Array => {
+      const parent = graph.parents.get(ref);
+      if (parent === undefined) {
+        out.set(originalOf(ref));
+        return out;
+      }
+      invertRigid(originalOf(parent), 0, this.#inverse);
+      multiply(this.#inverse, 0, originalOf(ref), 0, out);
+      return out;
+    };
+    const lagged = new Map<number, Float32Array>();
+    const worldOf = (ref: number): Float32Array => {
+      const known = lagged.get(ref);
+      if (known) return known;
+      const parent = graph.parents.get(ref);
+      if (parent === undefined) return originalOf(ref);
+      const above = worldOf(parent);
+      if (above === originalOf(parent)) return originalOf(ref);
+      const world = new Float32Array(16);
+      multiply(above, 0, localOf(ref, this.#local), 0, world);
+      lagged.set(ref, world);
+      return world;
+    };
+    this.#bones.forEach((bone, i) => {
+      const parent = graph.parents.get(bone.node);
+      if (parent === undefined) return;
+      const parentModel = worldOf(parent);
+      multiply(instanceWorld, 0, parentModel, 0, this.#parentWorld);
+      const local = localOf(bone.node, this.#local);
+      this.#state.solve(i, this.#parentWorld, 0, local, 0, dt, local);
+      const world = new Float32Array(16);
+      multiply(parentModel, 0, local, 0, world);
+      lagged.set(bone.node, world);
+    });
+    const worlds = new Map<number, Float32Array>();
+    for (const [ref, world] of animated ?? []) worlds.set(ref, Float32Array.from(world));
+    for (const ref of graph.transforms.keys()) {
+      const world = worldOf(ref);
+      if (world !== originalOf(ref)) worlds.set(ref, world);
+    }
+    this.#worlds = worlds;
+    return worlds;
+  }
+
+  /** A node's rest transform under its parent. */
+  #restLocal(ref: number): Float32Array {
+    const transform = this.#graph.transforms.get(ref);
+    return transform
+      ? fromNifTransform(transform.translation, transform.rotation, transform.scale)
+      : IDENTITY;
   }
 }
