@@ -1040,6 +1040,15 @@ export class ActorMovers {
   }
 
   /** What an actor's AI wants now (undefined: it stands). */
+  /**
+   * Scripts' overrides of the actors' movement controllers (Actor.KeepOffsetFromActor,
+   * SetPlayerControls), asked each step: what one answers replaces the AI's request
+   * (undefined: no override; the AI's).
+   */
+  steering:
+    | ((reference: number) => { readonly request: MoveRequest | undefined } | undefined)
+    | undefined;
+
   request(reference: number, request: MoveRequest | undefined): void {
     if (request) this.#requests.set(reference, request);
     else this.#requests.delete(reference);
@@ -2052,7 +2061,10 @@ export class ActorMovers {
     const avoiding = this.#avoidanceSettings();
     for (const mover of this.#movers.values()) {
       const staged = mover.staged;
-      const wanted = this.#requests.get(staged.reference);
+      // Its movement controller steered by a script's override (KeepOffsetFromActor, the
+      // player's controls) instead of its AI's wish.
+      const steered = this.steering?.(staged.reference);
+      const wanted = steered ? steered.request : this.#requests.get(staged.reference);
       // On its way it goes round the others and the player in it (the nearest of them within
       // its avoidance radius, iMaxActorsToAvoid at the most).
       let request = wanted;

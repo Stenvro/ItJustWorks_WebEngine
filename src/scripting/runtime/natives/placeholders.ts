@@ -5,30 +5,25 @@
 // nothing here (profiling, the console's debug helpers, achievements, preloading) are not
 // placeholders. Platform-independent.
 
-export const PLACEHOLDER_NATIVES: ReadonlyMap<string, string> = new Map([
-  // Effects, physics and controllers the engine does not show yet.
-  ['game.setcameratarget', "TODO(M13): the camera's target other than the player"],
-  ['objectreference.forceremoveragdollfromworld', 'TODO(M13): ragdolls a script adds and removes'],
-  ['objectreference.playterraineffect', "TODO(M13): the terrain's effects at a node"],
-  ['objectreference.playsyncedanimationss', 'TODO(M13): synced animations of two references'],
-  [
-    'objectreference.playsyncedanimationandwaitss',
-    'TODO(M13): synced animations of two references',
-  ],
-  // Movement controller overrides (no vanilla script calls them).
-  ['actor.keepoffsetfromactor', "TODO(M13): the movement controller's offsets"],
-  ['actor.clearkeepoffsetfromactor', "TODO(M13): the movement controller's offsets"],
-  ['actor.forcemovementdirection', "TODO(M13): the movement controller's forced movement"],
-  ['actor.forcemovementdirectionramp', "TODO(M13): the movement controller's forced movement"],
-  ['actor.forcemovementrotationspeed', "TODO(M13): the movement controller's forced movement"],
-  ['actor.forcemovementrotationspeedramp', "TODO(M13): the movement controller's forced movement"],
-  ['actor.forcemovementspeed', "TODO(M13): the movement controller's forced movement"],
-  ['actor.forcemovementspeedramp', "TODO(M13): the movement controller's forced movement"],
-  ['actor.forcetargetangle', "TODO(M13): the movement controller's forced movement"],
-  ['actor.forcetargetdirection', "TODO(M13): the movement controller's forced movement"],
-  ['actor.forcetargetspeed', "TODO(M13): the movement controller's forced movement"],
-  ['actor.clearforcedmovement', "TODO(M13): the movement controller's forced movement"],
-  ['actor.setplayercontrols', 'TODO(M13): actors other than the player under player controls'],
+export const PLACEHOLDER_NATIVES: ReadonlyMap<string, string> = new Map<string, string>([]);
+
+/**
+ * Natives Actor.psc declares that the original binds to nothing (observed in the original: no
+ * native of these names is registered), by lowercase "script.function": their names as
+ * declared. A call is the VM's error 'error: Unbound native function "<name>" called' on the
+ * calling stack, and returns None (natives/actor.ts). No vanilla script calls them.
+ */
+export const UNBOUND_NATIVES: ReadonlyMap<string, string> = new Map([
+  ['actor.forcemovementdirection', 'ForceMovementDirection'],
+  ['actor.forcemovementdirectionramp', 'ForceMovementDirectionRamp'],
+  ['actor.forcemovementrotationspeed', 'ForceMovementRotationSpeed'],
+  ['actor.forcemovementrotationspeedramp', 'ForceMovementRotationSpeedRamp'],
+  ['actor.forcemovementspeed', 'ForceMovementSpeed'],
+  ['actor.forcemovementspeedramp', 'ForceMovementSpeedRamp'],
+  ['actor.forcetargetangle', 'ForceTargetAngle'],
+  ['actor.forcetargetdirection', 'ForceTargetDirection'],
+  ['actor.forcetargetspeed', 'ForceTargetSpeed'],
+  ['actor.clearforcedmovement', 'ClearForcedMovement'],
 ]);
 
 // Natives registered as a bare constant because the game does nothing there either (or nothing a
