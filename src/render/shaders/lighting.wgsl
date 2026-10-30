@@ -216,24 +216,51 @@ fn lodLandNoise(color: vec3f, noise: f32) -> f32 {
   return 0.8333333 * (p * (0.37 - noise) + noise) + 0.37;
 }
 
-// The world map's relief overlay on LOD land (the map menu's 3D; frame.worldMap): the overlay's
-// normal map ([MapMenu] sWorldMapOverlayNormalTexture) projected along the three world axes at
-// its scale, weighed by the surface's normal, the snow overlay at its own scale where the land
-// is bright (snow, by the LOD land's blend parameter), bent into the normal by the strength of
-// the one or the other on slopes; ground that is almost flat keeps its own normal.
-// TODO(M13): the original shader's exact weights and snow mask are unread (this follows
-// Community Shaders' reading of the world-map path).
-fn worldMapRelief(n: vec3f, worldPos: vec3f, dx: vec3f, dy: vec3f, base: vec3f) -> vec3f {
-  var w = pow(abs(n), vec3f(4.0));
-  w /= max(w.x + w.y + w.z, 1e-4);
+// The world map's relief overlay on LOD land (the map menu's 3D; frame.worldMap), as the
+// original's LOD land shaders compiled for the world map do it (observed in the original):
+// the overlay's normal map ([MapMenu] sWorldMapOverlayNormalTexture) projected along the three
+// world axes at its scale (frame.worldMap.x), weighed by max(((|n| - 0.2) * 7)^3, 0.01)
+// normalized; the snow overlay at its own scale (z) taken over by the land's blend parameter
+// (the snow share, worldMapSnow); the overlay laid into the surface's own tangent frame (the
+// tangent across the normal's slope); the normal moved to it fully on slopes and halfway on
+// ground almost flat. The strengths (y, w) are passed but the original's shader reads none.
+fn worldMapRelief(n: vec3f, worldPos: vec3f, dx: vec3f, dy: vec3f, snowy: f32) -> vec3f {
+  let a = (abs(n) - 0.2) * 7.0;
+  var w = max(a * a * a, vec3f(0.01));
+  w /= w.x + w.y + w.z;
   let land = worldMapOverlayAt(worldMapOverlay, worldPos, dx, dy, frame.worldMap.x, w);
   let snow = worldMapOverlayAt(worldMapOverlaySnow, worldPos, dx, dy, frame.worldMap.z, w);
-  var snowy = saturate(2.6666667 * (max(base.r, max(base.g, base.b)) - 0.75));
-  snowy = snowy * snowy * (3.0 - 2.0 * snowy);
   let overlay = safeNormalize(mix(land, snow, snowy) * 2.0 - 1.0);
-  let strength = mix(frame.worldMap.y, frame.worldMap.w, snowy);
-  let slope = 1.0 - saturate(20.0 * (n.z - 0.95));
-  return safeNormalize(n + vec3f(overlay.xy, 0.0) * strength * slope);
+  let flatness = saturate((n.z - 0.95) * 20.0);
+  let slope = saturate(1.5 - flatness * flatness * (3.0 - 2.0 * flatness));
+  let tangent = safeNormalize(vec3f(n.z, 0.0, -n.x));
+  let bitangent = safeNormalize(cross(tangent, n));
+  let bent = overlay.x * tangent + overlay.y * bitangent + overlay.z * n;
+  let length2 = dot(bent, bent);
+  let m = bent * inverseSqrt(max(length2, 1e-12));
+  if (abs(dot(m, m) - 1.0) >= 0.001 || length2 <= 1e-12) {
+    return n;
+  }
+  return safeNormalize(mix(n, m, slope));
+}
+
+/** The land's snow share on the world map: the LOD land blend parameter of its colour. */
+fn worldMapSnow(base: vec3f) -> f32 {
+  let p = saturate(1.6666667 * (dot(base, vec3f(0.55)) - 0.4));
+  return p * p * (3.0 - 2.0 * p);
+}
+
+// The world map's colour on LOD land (observed in the original): the colour pulled 30 % (50 %
+// where snowy) towards a floor on red and green and, on blue, a floor where the snow share is
+// above 0.08 and a ceiling below it, each rising with the snow share.
+fn worldMapColor(base: vec3f, snowy: f32) -> vec3f {
+  let k = snowy * vec4f(0.2, 0.441, 0.27, 0.281) + vec4f(0.3, 0.465, 0.078, 0.098);
+  let high = 2.0 * vec3f(k.z, k.w, k.y);
+  var goal = vec3f(max(base.xy, high.xy), min(base.z, high.z));
+  if (k.y > 0.5) {
+    goal.z = max(base.z, 2.0 * (snowy * 0.441 - 0.035));
+  }
+  return mix(base, goal, k.x);
 }
 
 fn worldMapOverlayAt(
@@ -255,8 +282,10 @@ fn worldMapOverlayAt(
 // The character light (Community Shaders' Lighting.hlsl CHARACTER_LIGHT, with the INI's
 // fCharacterLight... in the frame: primary and secondary intensity in ambient[4].w and [5].w,
 // luminance scale and maximum in time.zw): a light from the camera, and one from below and in
-// front of the actor (its model space), by the light around it. TODO(M13): the engine scales it
-// by a luminance texture it binds; ours is the directional ambient's luminance there.
+// front of the actor (its model space), by the light around it. Observed in the original: that
+// luminance is one sample of the texture in the lighting shader's slot 11 at its corner (1, 1),
+// times the luminance scale, clamped to 0..the maximum. TODO(M13): which texture the engine binds
+// in that slot is unread; ours is the directional ambient's luminance there.
 fn characterLight(n: vec3f, toCamera: vec3f, ambient: vec3f) -> vec3f {
   let model = normalize(transpose(mat3x3f(draw.world[0].xyz, draw.world[1].xyz, draw.world[2].xyz)) * n);
   let amount = frame.ambient[4].w * saturate(dot(toCamera, n)) +
@@ -383,7 +412,9 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
       base *= lodLandNoise(base, sampleGrad(layerMap, in.uv * 3.0, uvGradients, 3.0).r);
     }
     if (LOD_LAND && frame.worldMap.x > 0.0) {
-      n = worldMapRelief(n, in.worldPos, worldGradients[0], worldGradients[1], base);
+      let snowy = worldMapSnow(base);
+      n = worldMapRelief(n, in.worldPos, worldGradients[0], worldGradients[1], snowy);
+      base = worldMapColor(base, snowy);
     }
   }
   if (shaderType == SHADER_FACEGEN) {

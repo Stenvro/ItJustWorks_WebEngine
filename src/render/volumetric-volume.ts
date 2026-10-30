@@ -1,18 +1,22 @@
 // The weather's volumetric lighting as the original scatters it: a froxel volume over the view
 // (shaders/volumetric.wgsl), generated each frame from the sun's shadow cascades and a drifting
-// density noise, blended with the last frame, gathered slice by slice from the camera, blurred
-// within each slice and added to the HDR scene by each pixel's depth (docs/rendering.md,
-// "Volumetric lighting").
+// density noise, summed slice by slice from the camera, read by each pixel's depth and blended
+// with the last frame's reading there, blurred across the screen and added to the HDR scene
+// (docs/rendering.md, "Volumetric lighting").
 
 import volumetricShader from './shaders/volumetric.wgsl?raw';
 import { HDR_FORMAT } from './post.ts';
 import type { Mat4 } from './math.ts';
 import { invert } from './frustum.ts';
 import {
+  compositeScale,
   densityNoise,
+  ditherNoise,
   noiseDrift,
-  sliceJitter,
   volumeSize,
+  DITHER_SIZE,
+  JITTER_FRAMES,
+  NOISE_SCALE,
   NOISE_SIZE,
   TEMPORAL_FACTOR,
 } from './volumetric-data.ts';
@@ -20,9 +24,14 @@ import type { Rgb } from '../world/weather.ts';
 
 type Vec3 = readonly [number, number, number];
 
+/** The screen targets' format: the amount (r) and its depth (g). */
+const SCREEN_FORMAT: GPUTextureFormat = 'rg16float';
 /** The uniforms: four matrices (64 floats) and eight vectors. */
 const UNIFORM_FLOATS = 96;
-/** The cascades' depth bias in the volume (as the scene's, frame.wgsl shadowParams.z). */
+/**
+ * The first cascade's depth bias in the volume (as the scene's, frame.wgsl shadowParams.z); the
+ * second's lookup is not biased (observed in the original).
+ */
 const SHADOW_BIAS = 0.0004;
 
 /** What the volume needs of a frame. */
@@ -52,21 +61,32 @@ export interface VolumeShadows {
 }
 
 /** The volume's passes, in the order they run (the GPU profile's entries). */
-export const VOLUME_PASSES = ['generate', 'raymarch', 'blur', 'composite'] as const;
+export const VOLUME_PASSES = ['generate', 'raymarch', 'composite', 'blur', 'apply'] as const;
 export type VolumePass = (typeof VOLUME_PASSES)[number];
 
 interface VolumeTextures {
   readonly size: readonly [number, number, number];
-  /** The generated froxels, this frame's and the last (they swap). */
-  readonly froxels: [GPUTexture, GPUTexture];
+  readonly froxels: GPUTexture;
   readonly gathered: GPUTexture;
+  /** The bind group that stays with these textures. */
+  readonly raymarch: GPUBindGroup;
+  /** That which also holds a texture of the frame: made again when it changes. */
+  generate: CachedGroup | undefined;
+}
+
+/** The screen-sized targets (rg16float: the amount, its depth as VOLUME_NEAR / distance). */
+interface ScreenTextures {
+  readonly width: number;
+  readonly height: number;
+  /** The composite, this frame's and the last (they swap: the temporal blend's history). */
+  readonly composite: [GPUTexture, GPUTexture];
+  /** The horizontal blur's result. */
   readonly blurred: GPUTexture;
-  /** The bind groups that stay with these textures (by which froxel texture is this frame's). */
-  readonly raymarch: [GPUBindGroup, GPUBindGroup];
-  readonly blur: GPUBindGroup;
-  /** Those that also hold a texture of the frame: made again when it changes. */
-  generate: [CachedGroup | undefined, CachedGroup | undefined];
-  composite: CachedGroup | undefined;
+  readonly blur: [GPUBindGroup, GPUBindGroup];
+  readonly apply: GPUBindGroup;
+  /** The composite's groups by which texture is this frame's (they hold the scene's depth). */
+  composite0: CachedGroup | undefined;
+  composite1: CachedGroup | undefined;
 }
 
 interface CachedGroup {
@@ -83,8 +103,9 @@ class VolumeProfiler {
   readonly timings: Record<VolumePass, number> = {
     generate: 0,
     raymarch: 0,
-    blur: 0,
     composite: 0,
+    blur: 0,
+    apply: 0,
   };
   readonly #querySet: GPUQuerySet;
   readonly #resolve: GPUBuffer;
@@ -163,19 +184,23 @@ export class VolumetricVolume {
   readonly #device: GPUDevice;
   readonly #generate: GPUComputePipeline;
   readonly #raymarch: GPUComputePipeline;
-  readonly #blur: GPUComputePipeline;
   readonly #composite: GPURenderPipeline;
+  readonly #blur: GPURenderPipeline;
+  readonly #apply: GPURenderPipeline;
   /** The composite reads the volume with one filtered sample (float32-filterable). */
   readonly #filtered: boolean;
   readonly #uniforms: GPUBuffer;
   readonly #uniformData = new Float32Array(UNIFORM_FLOATS);
   readonly #noise: GPUTexture;
   readonly #noiseSampler: GPUSampler;
+  readonly #dither: GPUTexture;
+  readonly #historySampler: GPUSampler;
   readonly #shadowSampler: GPUSampler;
   readonly #volumeSampler: GPUSampler;
   /** A 1×1 lit shadow map for frames without one. */
   readonly #noShadow: GPUTexture;
   #textures: VolumeTextures | undefined;
+  #screen: ScreenTextures | undefined;
   #profiler: VolumeProfiler | undefined;
   #previousViewProj: Float32Array | undefined;
   readonly #noiseOffset: [number, number, number] = [0, 0, 0];
@@ -193,26 +218,25 @@ export class VolumetricVolume {
       });
     this.#generate = compute('generate');
     this.#raymarch = compute('raymarch');
-    this.#blur = compute('blur');
     this.#filtered = device.features.has('float32-filterable');
-    this.#composite = device.createRenderPipeline({
-      label: 'volumetric-composite',
-      layout: 'auto',
-      vertex: { module, entryPoint: 'vs_fullscreen' },
-      fragment: {
-        module,
-        entryPoint: this.#filtered ? 'fs_compositeFiltered' : 'fs_composite',
-        targets: [
-          {
-            format: HDR_FORMAT,
-            blend: {
-              color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
-              alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' },
-            },
-          },
-        ],
+    const screen = (entryPoint: string, target: GPUColorTargetState): GPURenderPipeline =>
+      device.createRenderPipeline({
+        label: `volumetric-${entryPoint}`,
+        layout: 'auto',
+        vertex: { module, entryPoint: 'vs_fullscreen' },
+        fragment: { module, entryPoint, targets: [target] },
+        primitive: { topology: 'triangle-list' },
+      });
+    this.#composite = screen(this.#filtered ? 'fs_compositeFiltered' : 'fs_composite', {
+      format: SCREEN_FORMAT,
+    });
+    this.#blur = screen('fs_blur', { format: SCREEN_FORMAT });
+    this.#apply = screen('fs_apply', {
+      format: HDR_FORMAT,
+      blend: {
+        color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
+        alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' },
       },
-      primitive: { topology: 'triangle-list' },
     });
     this.#uniforms = device.createBuffer({
       label: 'volumetric',
@@ -239,6 +263,23 @@ export class VolumetricVolume {
       addressModeU: 'repeat',
       addressModeV: 'repeat',
       addressModeW: 'repeat',
+    });
+    this.#dither = device.createTexture({
+      label: 'volumetric-dither',
+      size: [DITHER_SIZE, DITHER_SIZE],
+      format: 'r8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+    device.queue.writeTexture(
+      { texture: this.#dither },
+      ditherNoise(),
+      { bytesPerRow: DITHER_SIZE },
+      [DITHER_SIZE, DITHER_SIZE],
+    );
+    this.#historySampler = device.createSampler({
+      label: 'volumetric-history',
+      magFilter: 'linear',
+      minFilter: 'linear',
     });
     this.#shadowSampler = device.createSampler({
       label: 'volumetric-shadow',
@@ -286,6 +327,7 @@ export class VolumetricVolume {
     const inverse = invert(viewProj);
     if (!inverse) return;
     const textures = this.#ensureTextures();
+    const screen = this.#ensureScreen(hdr.width, hdr.height);
     const [width, height, slices] = textures.size;
     const dt = this.#lastTime === undefined ? 0 : Math.min(0.25, (now - this.#lastTime) / 1000);
     this.#lastTime = now;
@@ -297,9 +339,10 @@ export class VolumetricVolume {
       frame.wind,
       Math.random,
     );
+    const densitySize = Math.max(1, frame.densitySize);
     for (let i = 0; i < 3; i++) {
       // Kept within a span of noise tiles so the offset keeps its precision.
-      const span = Math.max(1, frame.densitySize) * NOISE_SIZE;
+      const span = (densitySize / NOISE_SCALE) * NOISE_SIZE;
       this.#noiseOffset[i] = ((this.#noiseOffset[i] ?? 0) + (drift[i] ?? 0)) % span;
     }
     const camera = column(inverse, [0, 0, viewProj[14] ?? 1, 0]);
@@ -314,14 +357,9 @@ export class VolumetricVolume {
     data.set(cascades[1]?.viewProj ?? viewProj, 48);
     data.set([camera[0], camera[1], camera[2], viewProj[14] ?? 1], 64);
     data.set([lx / length, ly / length, lz / length, frame.scattering], 68);
-    data.set([width, height, slices, sliceJitter(this.#frame++)], 72);
+    data.set([width, height, slices, this.#frame++ % JITTER_FRAMES], 72);
     data.set(
-      [
-        this.#noiseOffset[0],
-        this.#noiseOffset[1],
-        this.#noiseOffset[2],
-        1 / Math.max(1, frame.densitySize),
-      ],
+      [this.#noiseOffset[0], this.#noiseOffset[1], this.#noiseOffset[2], NOISE_SCALE / densitySize],
       76,
     );
     data.set(
@@ -337,7 +375,7 @@ export class VolumetricVolume {
       [cascades[0]?.far ?? 0, cascades[1]?.far ?? 0, shadows ? cascades.length : 0, SHADOW_BIAS],
       84,
     );
-    data.set([...frame.color, frame.strength], 88);
+    data.set([...frame.color, compositeScale(frame.strength, slices)], 88);
     data.set([1 / depth.width, 1 / depth.height, 0, 0], 92);
     this.#device.queue.writeBuffer(this.#uniforms, 0, data);
     this.#previousViewProj ??= new Float32Array(16);
@@ -354,10 +392,7 @@ export class VolumetricVolume {
       return writes ? { timestampWrites: writes } : {};
     };
 
-    // This frame's froxels are the first texture; the last frame's the second.
-    const current = this.#frame % 2;
     const shadowMap = shadows && cascades.length > 0 ? shadows.map : this.#noShadow;
-    const generate = this.#generateGroup(textures, current, shadowMap);
     const groupsX = Math.ceil(width / 8);
     const groupsY = Math.ceil(height / 8);
     const compute = (
@@ -375,19 +410,39 @@ export class VolumetricVolume {
       computePass.dispatchWorkgroups(groupsX, groupsY, z);
       computePass.end();
     };
-    compute('generate', this.#generate, generate, slices);
-    compute('raymarch', this.#raymarch, textures.raymarch[current] ?? textures.raymarch[0], 1);
-    compute('blur', this.#blur, textures.blur, slices);
+    compute('generate', this.#generate, this.#generateGroup(textures, shadowMap), slices);
+    compute('raymarch', this.#raymarch, textures.raymarch, 1);
 
-    const add = encoder.beginRenderPass({
-      label: 'volumetric-composite',
-      colorAttachments: [{ view: hdr.createView(), loadOp: 'load', storeOp: 'store' }],
-      ...stamps('composite'),
-    });
-    add.setPipeline(this.#composite);
-    add.setBindGroup(0, this.#compositeGroup(textures, depth));
-    add.draw(3);
-    add.end();
+    // The composite into this frame's screen target, the last frame's its history; then the
+    // blur across, and the blur down added to the scene.
+    const current = this.#frame % 2;
+    const draw = (
+      pass: VolumePass,
+      pipeline: GPURenderPipeline,
+      group: GPUBindGroup,
+      target: GPUTexture,
+      load: GPULoadOp,
+    ): void => {
+      const render = encoder.beginRenderPass({
+        label: `volumetric-${pass}`,
+        colorAttachments: [{ view: target.createView(), loadOp: load, storeOp: 'store' }],
+        ...stamps(pass),
+      });
+      render.setPipeline(pipeline);
+      render.setBindGroup(0, group);
+      render.draw(3);
+      render.end();
+    };
+    const target = screen.composite[current] ?? screen.composite[0];
+    draw(
+      'composite',
+      this.#composite,
+      this.#compositeGroup(screen, textures, depth, current),
+      target,
+      'clear',
+    );
+    draw('blur', this.#blur, screen.blur[current] ?? screen.blur[0], screen.blurred, 'clear');
+    draw('apply', this.#apply, screen.apply, hdr, 'load');
     if (profiler) profiler.resolve(encoder);
   }
 
@@ -402,35 +457,86 @@ export class VolumetricVolume {
     });
   }
 
-  /** The generate pass's group: this frame's froxels written, the last's read, the shadows. */
-  #generateGroup(textures: VolumeTextures, current: number, shadowMap: GPUTexture): GPUBindGroup {
-    const cached = textures.generate[current];
+  /** The generate pass's group: the froxels written, the noise and the shadows. */
+  #generateGroup(textures: VolumeTextures, shadowMap: GPUTexture): GPUBindGroup {
+    const cached = textures.generate;
     if (cached?.source === shadowMap) return cached.group;
-    const write = textures.froxels[current] ?? textures.froxels[0];
-    const read = textures.froxels[1 - current] ?? textures.froxels[1];
     const group = this.#group(this.#generate, [
       { binding: 1, resource: this.#noise.createView() },
       { binding: 2, resource: this.#noiseSampler },
       { binding: 3, resource: shadowMap.createView({ dimension: '2d-array' }) },
       { binding: 4, resource: this.#shadowSampler },
-      { binding: 5, resource: read.createView() },
-      { binding: 6, resource: write.createView() },
+      { binding: 6, resource: textures.froxels.createView() },
     ]);
-    textures.generate[current] = { source: shadowMap, group };
+    textures.generate = { source: shadowMap, group };
     return group;
   }
 
-  /** The composite's group: the blurred volume and the scene's depth. */
-  #compositeGroup(textures: VolumeTextures, depth: GPUTexture): GPUBindGroup {
-    const cached = textures.composite;
+  /**
+   * The composite's group: the summed volume, the scene's depth, the last frame's composite
+   * (the other screen target) and the dither.
+   */
+  #compositeGroup(
+    screen: ScreenTextures,
+    textures: VolumeTextures,
+    depth: GPUTexture,
+    current: number,
+  ): GPUBindGroup {
+    const cached = current === 0 ? screen.composite0 : screen.composite1;
     if (cached?.source === depth) return cached.group;
+    const history = screen.composite[1 - current] ?? screen.composite[1];
     const group = this.#group(this.#composite, [
-      { binding: 11, resource: textures.blurred.createView() },
+      { binding: 11, resource: textures.gathered.createView() },
       { binding: 12, resource: depth.createView() },
       ...(this.#filtered ? [{ binding: 13, resource: this.#volumeSampler }] : []),
+      { binding: 14, resource: history.createView() },
+      { binding: 15, resource: this.#historySampler },
+      { binding: 16, resource: this.#dither.createView() },
     ]);
-    textures.composite = { source: depth, group };
+    if (current === 0) screen.composite0 = { source: depth, group };
+    else screen.composite1 = { source: depth, group };
     return group;
+  }
+
+  /** The screen targets at the scene's size (made anew when it changes). */
+  #ensureScreen(width: number, height: number): ScreenTextures {
+    const old = this.#screen;
+    if (old?.width === width && old.height === height) return old;
+    if (old) {
+      for (const texture of [...old.composite, old.blurred]) texture.destroy();
+    }
+    // A new size has no history to blend with.
+    this.#previousViewProj = undefined;
+    const make = (label: string): GPUTexture =>
+      this.#device.createTexture({
+        label,
+        size: [width, height],
+        format: SCREEN_FORMAT,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+      });
+    const composite: [GPUTexture, GPUTexture] = [
+      make('volumetric-composite-a'),
+      make('volumetric-composite-b'),
+    ];
+    const blurred = make('volumetric-blurred');
+    // The blur across reads no uniforms (its group holds the source alone).
+    const blur = (source: GPUTexture): GPUBindGroup =>
+      this.#device.createBindGroup({
+        label: 'volumetric-blur',
+        layout: this.#blur.getBindGroupLayout(0),
+        entries: [{ binding: 17, resource: source.createView() }],
+      });
+    this.#screen = {
+      width,
+      height,
+      composite,
+      blurred,
+      blur: [blur(composite[0]), blur(composite[1])],
+      apply: this.#group(this.#apply, [{ binding: 17, resource: blurred.createView() }]),
+      composite0: undefined,
+      composite1: undefined,
+    };
+    return this.#screen;
   }
 
   /** The volume's textures for the quality setting (made anew when it changes). */
@@ -439,41 +545,34 @@ export class VolumetricVolume {
     const old = this.#textures;
     if (old?.size.every((v, i) => v === size[i])) return old;
     if (old) {
-      for (const texture of [...old.froxels, old.gathered, old.blurred]) texture.destroy();
+      for (const texture of [old.froxels, old.gathered]) texture.destroy();
     }
     this.#previousViewProj = undefined;
-    const make = (label: string, format: GPUTextureFormat): GPUTexture =>
+    const make = (label: string): GPUTexture =>
       this.#device.createTexture({
         label,
         size: [...size],
         dimension: '3d',
-        format,
+        format: 'r32float',
         usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
       });
-    const froxels: [GPUTexture, GPUTexture] = [
-      make('volumetric-froxels-a', 'r32uint'),
-      make('volumetric-froxels-b', 'r32uint'),
-    ];
-    const gathered = make('volumetric-gathered', 'r32float');
-    const blurred = make('volumetric-blurred', 'r32float');
-    const raymarch = (froxel: GPUTexture): GPUBindGroup =>
-      this.#group(this.#raymarch, [
-        { binding: 7, resource: froxel.createView() },
-        { binding: 8, resource: gathered.createView() },
-      ]);
+    const froxels = make('volumetric-froxels');
+    const gathered = make('volumetric-gathered');
     this.#textures = {
       size,
       froxels,
       gathered,
-      blurred,
-      raymarch: [raymarch(froxels[0]), raymarch(froxels[1])],
-      blur: this.#group(this.#blur, [
-        { binding: 9, resource: gathered.createView() },
-        { binding: 10, resource: blurred.createView() },
+      raymarch: this.#group(this.#raymarch, [
+        { binding: 7, resource: froxels.createView() },
+        { binding: 8, resource: gathered.createView() },
       ]),
-      generate: [undefined, undefined],
-      composite: undefined,
+      generate: undefined,
     };
+    // The screen targets' composite groups hold the old volume.
+    if (this.#screen) {
+      this.#screen.composite0 = undefined;
+      this.#screen.composite1 = undefined;
+    }
     return this.#textures;
   }
 }
