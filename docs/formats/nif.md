@@ -155,8 +155,24 @@ NiLookAtInterpolator turns its node's axis (LookAtFlags: 2 y, 4 z, else x; 1 fli
 another node; the five vanilla ones turn the forge markers' editor preview camera.
 The skeletons' and animated objects' NiFloatExtraData named `hkVis:<node>` and
 `hkPhoneme:<...>` name the Havok float slots the engine's controllers read from the Havok pose
-(observed in the original: a node is hidden while its `hkVis` slot is exactly 0); the
-NiFloatExtraDataController blocks animating them are not what shows the nodes.
+(observed in the original: a model gets one visibility controller per `hkVis` name, which
+reads that slot's value from the graph's output whatever its weight, and hides the node while
+the value is exactly 0); the NiFloatExtraDataController blocks animating them are not what
+shows the nodes. Only the human, beast and falmer skeletons and 30 animated objects carry
+`hkVis` names; the draugr's Havok skeleton has hkVis:Weapon and hkVis:Shield slots but its
+model names none, so nothing of it is hidden. No Havok skeleton has an `hkPhoneme` slot.
+
+NiMeshParticleSystem (the dragon crash's rocks, `effects\dragoncrash\fxdragoncrashfurrow01.nif`):
+its NiMeshPSysData keeps a pool of copies (defaultPoolSize 52) of the node its
+BSPSysHavokUpdateModifier names, a culled NewRoot holding the rock shape and a bhkRigidBody; the
+modifier's own reference is the NiPSysRotationModifier that starts each copy's turn (random axis,
+12.6 ± 3.1 rad/s), which is not in the system's modifier list. The system has no position
+modifier: Havok moves the bodies. Bone LOD (BSBoneLODExtraData on 52 skeletons): pairs of a
+distance and a bone name; observed in the original, the bones are looked up in the Havok
+skeleton (pairs whose bone is missing or whose distance is not above 0 are dropped) and the
+levels are sorted by distance. NiBSBoneLODController (the centaur's, wolf's and werewolf's old
+exports) gets its levels from string extra data named `BSBoneLOD#Bone#<n>`, which no vanilla
+file has.
 `TwistOverride`, `Pauldron Override` and `Orientation` (on skeleton bones) are named nowhere
 in the original: exporter data.
 

@@ -189,6 +189,12 @@ export interface RootMotion {
 const NO_MOTION: RootMotion = { translation: [0, 0, 0], yaw: 0 };
 
 /**
+ * A float slot's block in a generated pose that no clip set (value 0, weight 0), and an additive
+ * pose's bone that does not move: no translation, no turn, unit scale.
+ */
+const UNSET_SLOT = Float32Array.of(0, 0, 0, 0, 0, 0, 1, 1, 1, 1);
+
+/**
  * The span of a clip's end whose motion a clip continuing its motion past its end goes on with
  * (seconds; Havok's continue-motion-at-end keeps the last motion: its sampling is ours).
  */
@@ -586,6 +592,25 @@ export class BehaviorRuntime {
   /** Pose buffers by depth of the generation. */
   readonly #buffers: Float32Array[] = [];
   readonly #boneCount: number;
+  /**
+   * The skeleton's float slots (hkVis:Weapon, hkFade:AnimObjectA, ...) ride in the generated
+   * poses as one block of TRANSFORM_FLOATS after the bones each: x the slot's value times its
+   * weight, y the weight (the share of the pose that set it). Blends and transitions mix them
+   * as they mix translations, so a slot's value is x / y: the clips that have a track for it,
+   * by their weights; clips without one give it nothing (Havok's partial float tracks).
+   */
+  readonly #blockCount: number;
+  /** The reference pose with an unset block per float slot: what generation starts from. */
+  readonly #referencePose: Float32Array;
+  /**
+   * The float slots' values after the last update (by the skeleton's floatSlots) and their
+   * weights: 0 where no clip playing has a track for the slot (its value is then the
+   * skeleton's reference value).
+   */
+  readonly floatSlots: Float32Array;
+  readonly floatSlotWeights: Float32Array;
+  /** A clip's float tracks at a time. */
+  #floatTracks = new Float32Array(0);
   /** Vector variables' values (TargetLocation), by the character's variable index. */
   readonly #vectors = new Map<number, Vec4>();
   /** The last update's step (the procedural modifiers ease by it). */
@@ -677,6 +702,13 @@ export class BehaviorRuntime {
    * headRotation), laid on the head bone after the graph's pose; undefined or zero: none.
    */
   headTurn: ArrayLike<number> | undefined;
+  /**
+   * The camera's distance at this update (bone LOD, setBoneLod); undefined: every bone
+   * animates.
+   */
+  cameraDistance: number | undefined = undefined;
+  /** The bone LOD's levels: beyond `squared` distance, only the first `count` bones animate. */
+  #boneLod: readonly { readonly squared: number; readonly count: number }[] | undefined;
   /** The head bone the line's turn goes to (−1: none). */
   #headBone: number | undefined;
 
@@ -714,6 +746,18 @@ export class BehaviorRuntime {
     this.#properties = options.properties ?? {};
     this.#boneCount = options.skeleton.bones.length;
     this.pose = options.skeleton.referencePose.slice();
+    const slots = options.skeleton.floatSlots.length;
+    this.#blockCount = this.#boneCount + slots;
+    this.#referencePose = new Float32Array(this.#blockCount * TRANSFORM_FLOATS);
+    this.#referencePose.set(
+      options.skeleton.referencePose.subarray(0, this.#boneCount * TRANSFORM_FLOATS),
+    );
+    for (let slot = 0; slot < slots; slot++) {
+      this.#referencePose.set(UNSET_SLOT, (this.#boneCount + slot) * TRANSFORM_FLOATS);
+    }
+    this.floatSlots = new Float32Array(slots);
+    this.floatSlots.set(options.skeleton.referenceFloats.subarray(0, slots));
+    this.floatSlotWeights = new Float32Array(slots);
     this.#space = new ModelSpace(options.skeleton.parents);
     this.#footIk = options.footIk;
     this.#ragdollBones = options.ragdollBones ?? new Int16Array(0);
@@ -1331,16 +1375,63 @@ export class BehaviorRuntime {
     this.#eyes = undefined;
     const generated = this.#generate(this.#root, 0);
     const reference = this.skeleton.referencePose;
+    const bones = this.#boneCount * TRANSFORM_FLOATS;
+    // Bone LOD: far from the camera the last bones keep their pose (setBoneLod).
+    const animated = this.#animatedBones() * TRANSFORM_FLOATS;
     if (!generated) {
       this.pose.set(reference);
     } else if (generated.additive) {
       this.pose.set(reference);
-      addPose(this.pose, generated.pose, 1);
+      addPose(this.pose, generated.pose.subarray(0, bones), 1);
     } else {
-      this.pose.set(generated.pose);
+      this.pose.set(generated.pose.subarray(0, animated));
     }
+    this.#readFloatSlots(generated && !generated.additive ? generated.pose : undefined);
     this.#turnHead();
     this.#driveFootIk();
+  }
+
+  /**
+   * The skeleton model's bone LOD (BSBoneLODExtraData: a distance and a bone per level), as
+   * observed in the original: each level's bone is looked up in the Havok skeleton (levels
+   * whose bone it lacks, or whose distance is not above 0, are dropped) and the levels go by
+   * distance. Beyond a level's distance from the camera that bone and every bone after it in
+   * the skeleton's order no longer animate: they keep the pose they had (a human's camera
+   * bones beyond 128 units, its fingers beyond 768, its magic and weapon nodes beyond 2048).
+   * TODO(M13): the per-frame choice of the level is inferred (the deepest level whose distance
+   * the camera is beyond).
+   */
+  setBoneLod(levels: readonly { readonly distance: number; readonly bone: string }[]): void {
+    const index = new Map(this.skeleton.bones.map((bone, i) => [bone.name.toLowerCase(), i]));
+    const kept = levels.flatMap(({ distance, bone }) => {
+      const at = index.get(bone.toLowerCase());
+      return at !== undefined && distance > 0 ? [{ squared: distance * distance, count: at }] : [];
+    });
+    kept.sort((a, b) => a.squared - b.squared);
+    this.#boneLod = kept.length > 0 ? kept : undefined;
+  }
+
+  /** How many bones animate at the camera's distance (bone LOD). */
+  #animatedBones(): number {
+    const levels = this.#boneLod;
+    const distance = this.cameraDistance;
+    if (!levels || distance === undefined) return this.#boneCount;
+    let count = this.#boneCount;
+    const squared = distance * distance;
+    for (const level of levels) if (squared > level.squared) count = Math.min(count, level.count);
+    return count;
+  }
+
+  /** The float slots' values and weights from a generated pose's slot blocks. */
+  #readFloatSlots(generated: Float32Array | undefined): void {
+    const reference = this.skeleton.referenceFloats;
+    for (let slot = 0; slot < this.floatSlots.length; slot++) {
+      const o = (this.#boneCount + slot) * TRANSFORM_FLOATS;
+      const weight = generated ? (generated[o + 1] ?? 0) : 0;
+      this.floatSlotWeights[slot] = Math.min(1, weight);
+      this.floatSlots[slot] =
+        weight > 1e-6 ? (generated?.[o] ?? 0) / weight : (reference[slot] ?? 0);
+    }
   }
 
   /** The line's head turn on the head bone ("NPC Head [Head]", else a bone named Head). */
@@ -3861,7 +3952,7 @@ export class BehaviorRuntime {
   #buffer(depth: number): Float32Array {
     let buffer = this.#buffers[depth];
     if (!buffer) {
-      buffer = new Float32Array(this.#boneCount * TRANSFORM_FLOATS);
+      buffer = new Float32Array(this.#referencePose.length);
       this.#buffers[depth] = buffer;
     }
     return buffer;
@@ -3876,7 +3967,7 @@ export class BehaviorRuntime {
         return this.#generateClip(node, depth);
       case 'reference-pose': {
         const out = this.#buffer(depth);
-        out.set(this.skeleton.referencePose);
+        out.set(this.#referencePose);
         return { pose: out, additive: false };
       }
       case 'state-machine': {
@@ -3906,10 +3997,16 @@ export class BehaviorRuntime {
       case 'bone-switch': {
         const base = this.#generate(node.generator, depth + 1);
         const out = this.#buffer(depth);
-        out.set(base ? this.#solid(base, depth + 2) : this.skeleton.referencePose);
+        out.set(base ? this.#solid(base, depth + 2) : this.#referencePose);
         for (const child of node.children) {
           const pose = this.#generate(child.generator, depth + 2);
-          if (pose) blendPoses(out, this.#solid(pose, depth + 3), 1, out, child.boneWeights);
+          if (!pose) continue;
+          const solid = this.#solid(pose, depth + 3);
+          // The bone weights name bones only: a child sets the float slots it has tracks for.
+          // TODO(M13): whether the original's bone switch weighs float slots at all.
+          const slots = this.#slotsKept(out, solid);
+          blendPoses(out, solid, 1, out, child.boneWeights);
+          this.#restoreSlots(out, slots);
         }
         return { pose: out, additive: false };
       }
@@ -3974,7 +4071,7 @@ export class BehaviorRuntime {
   #solid(generated: Generated, depth: number): Float32Array {
     if (!generated.additive) return generated.pose;
     const out = this.#buffer(depth);
-    out.set(this.skeleton.referencePose);
+    out.set(this.#referencePose);
     addPose(out, generated.pose, 1);
     return out;
   }
@@ -4005,13 +4102,17 @@ export class BehaviorRuntime {
     const binding = clip && this.#host.clip(clip.animation);
     if (!binding) return base && this.#own(base, depth);
     const out = this.#buffer(depth);
-    out.set(base ? this.#solid(base, depth + 1) : this.skeleton.referencePose);
+    out.set(base ? this.#solid(base, depth + 1) : this.#referencePose);
     const span = node.rangeEnd - node.rangeStart;
     const value = this.#read(node.offsetVariable, scope);
     const fraction = span !== 0 ? Math.min(1, Math.max(0, (value - node.rangeStart) / span)) : 0;
     const offset = this.#sample(binding, fraction * binding.animation.duration, depth + 2);
     if (offset.additive) addPose(out, offset.pose, 1);
-    else blendPoses(out, offset.pose, 1, out);
+    else {
+      const slots = this.#slotsKept(out, offset.pose);
+      blendPoses(out, offset.pose, 1, out);
+      this.#restoreSlots(out, slots);
+    }
     return { pose: out, additive: false };
   }
 
@@ -4038,20 +4139,26 @@ export class BehaviorRuntime {
   /** A clip's pose at a time (an additive clip holds the difference to the pose below). */
   #sample(binding: AnimationBinding, time: number, depth: number): Generated {
     const out = this.#buffer(depth);
-    const reference = this.skeleton.referencePose;
+    const reference = this.#referencePose;
     const animation = binding.animation;
     const paired = this.#pairedMap(binding);
     const trackToBone = paired ?? binding.trackToBone;
+    // Its float tracks set their slots (a paired clip's name the paired skeleton's slots, which
+    // this skeleton does not have; no vanilla additive clip has float tracks).
+    const floats =
+      animation.floatTrackCount > 0 && !paired && !binding.additive && this.floatSlots.length > 0
+        ? this.#floatTrackBuffer(animation.floatTrackCount)
+        : undefined;
     if (binding.additive) {
       // Additive clips hold the difference to the pose below: no turn, no move by default.
-      for (let bone = 0; bone < this.#boneCount; bone++) {
-        out.set([0, 0, 0, 0, 0, 0, 1, 1, 1, 1], bone * TRANSFORM_FLOATS);
+      for (let block = 0; block < this.#blockCount; block++) {
+        out.set(UNSET_SLOT, block * TRANSFORM_FLOATS);
       }
     } else {
       out.set(reference);
     }
     if (!trackToBone) {
-      animation.sample(time, out);
+      animation.sample(time, out.subarray(0, this.#boneCount * TRANSFORM_FLOATS), floats);
     } else {
       const size = animation.trackCount * TRANSFORM_FLOATS;
       const long = animation.trackCount > this.#boneCount;
@@ -4065,7 +4172,7 @@ export class BehaviorRuntime {
             t * TRANSFORM_FLOATS,
           );
       }
-      animation.sample(time, tracks);
+      animation.sample(time, tracks, floats);
       for (let t = 0; t < animation.trackCount; t++) {
         const bone = trackToBone[t] ?? -1;
         if (bone >= 0 && bone < this.#boneCount) {
@@ -4076,7 +4183,45 @@ export class BehaviorRuntime {
         }
       }
     }
+    if (floats) this.#writeFloatSlots(binding, floats, out);
     return { pose: out, additive: binding.additive };
+  }
+
+  /** The slot blocks of `base` that `over` does not set (copies, by slot), to put back. */
+  #slotsKept(base: Float32Array, over: Float32Array): Map<number, Float32Array> | undefined {
+    let kept: Map<number, Float32Array> | undefined;
+    for (let slot = 0; slot < this.floatSlots.length; slot++) {
+      const o = (this.#boneCount + slot) * TRANSFORM_FLOATS;
+      if ((over[o + 1] ?? 0) > 0) continue;
+      kept ??= new Map();
+      kept.set(o, base.slice(o, o + TRANSFORM_FLOATS));
+    }
+    return kept;
+  }
+
+  #restoreSlots(pose: Float32Array, kept: Map<number, Float32Array> | undefined): void {
+    if (kept) for (const [o, block] of kept) pose.set(block, o);
+  }
+
+  /** The buffer a clip's float tracks are sampled into (NaN: a track left unwritten). */
+  #floatTrackBuffer(count: number): Float32Array {
+    if (this.#floatTracks.length < count) this.#floatTracks = new Float32Array(count);
+    const floats = this.#floatTracks.subarray(0, count);
+    floats.fill(Number.NaN);
+    return floats;
+  }
+
+  /** Writes a clip's float tracks into its pose's slot blocks (its value, full weight). */
+  #writeFloatSlots(binding: AnimationBinding, floats: Float32Array, out: Float32Array): void {
+    const slots = this.floatSlots.length;
+    for (let track = 0; track < floats.length; track++) {
+      const slot = binding.floatTrackToSlot ? (binding.floatTrackToSlot[track] ?? -1) : track;
+      const value = floats[track] ?? Number.NaN;
+      if (slot < 0 || slot >= slots || !Number.isFinite(value)) continue;
+      const o = (this.#boneCount + slot) * TRANSFORM_FLOATS;
+      out[o] = value;
+      out[o + 1] = 1;
+    }
   }
 
   /** A paired clip's track map for the side set (undefined: its binding's own). */
@@ -4107,7 +4252,7 @@ export class BehaviorRuntime {
       return this.#pass(node.children[this.#matchState(node).index]?.generator, depth);
     }
     const weighted = activeChildren(node, this.#blenderRead(node, scope));
-    const accumulator = new PoseAccumulator(this.#boneCount);
+    const accumulator = new PoseAccumulator(this.#blockCount);
     const additive: [Generated, number, Float32Array | undefined][] = [];
     let total = 0;
     const parametric = (node.flags & BLENDER_FLAGS.parametricBlend) !== 0;
@@ -4127,7 +4272,7 @@ export class BehaviorRuntime {
     }
     if (total <= 0 && additive.length === 0) return undefined;
     const out = this.#buffer(depth);
-    accumulator.finish(out, this.skeleton.referencePose);
+    accumulator.finish(out, this.#referencePose);
     for (const [pose, weight, boneWeights] of additive)
       addPose(out, pose.pose, weight, boneWeights);
     return { pose: out, additive: false };

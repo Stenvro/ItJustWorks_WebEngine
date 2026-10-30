@@ -118,4 +118,23 @@ describe('worn models on a skeleton', () => {
     expect(position(pose, 'SkirtBone')).toEqual([7, 0, 60]);
     expect(wearOnRig(rig, []).rig).toBe(rig);
   });
+
+  it("takes a worn model's lag bones and visibility slots onto the skeleton", () => {
+    const lag = { linearVelocity: 0.5, linearRotation: 0.25, maximumDistance: 10 };
+    const { rig: dressed } = wearOnRig(rig, [
+      {
+        nodes: [node('ArmorFX.nif', -1), node('NPC SPINE [Spn0]', 0), node('Trail', 1, 7)],
+        attachTo: undefined,
+        // Its trail lags; a lag bone on the skeleton's own spine stays the skeleton's.
+        lagBones: [
+          { node: 2, ...lag },
+          { node: 1, ...lag },
+        ],
+        visibilitySlots: ['hkvis:trail'],
+      },
+    ]);
+    const trail = dressed.names.indexOf('Trail');
+    expect(dressed.lagBones).toEqual([{ node: trail, ...lag }]);
+    expect(dressed.visibilitySlots).toEqual(['hkvis:trail']);
+  });
 });

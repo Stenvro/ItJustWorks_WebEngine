@@ -20,9 +20,23 @@ not sample, flags xEdit and nif.xml call unused).
 
 | Part       | Items | Done | Open | n/a |
 | ---------- | ----- | ---- | ---- | --- |
-| Systems    | 78    | 67   | 11   | 0   |
-| Data sweep | 462   | 410  | 16   | 36  |
-| **Total**  | 540   | 477  | 27   | 36  |
+| Systems    | 79    | 68   | 11   | 0   |
+| Data sweep | 463   | 414  | 11   | 38  |
+| **Total**  | 542   | 482  | 22   | 38  |
+
+Done in round 7, part B (scene graph, physics-driven, LOD): the Havok float slots. Behavior
+graphs now blend their clips' float tracks (a slot's value from the clips that have a track
+for it, by their weights), and a model's NiFloatExtraData named `hkVis:<node>` makes a
+visibility controller that hides that node and all below it while the slot is exactly 0 (the
+held weapon, shield and hands' casting art of humans and falmer, the puzzle pieces and trap
+parts of 30 animated objects); a draugr's skeleton has an hkVis:Weapon slot its model has no
+controller for. No Havok skeleton has an hkPhoneme slot, so its controllers find none. Bone
+LOD (BSBoneLODExtraData): beyond each level's distance from the camera its bone and those after
+it in the skeleton no longer animate. Mesh particles (the dragon crash's rocks): one copy of
+the mesh per particle, moved as a rigid body (gravity, damping, bouncing and sliding on the
+ground under the effect by its body's restitution and friction); the physics world's shapes
+are a new open row. Lag bones on models worn on a skeleton (the Daedric armour's and the
+spriggans' trailing effects). NiBSBoneLODController is an old export's: n/a.
 
 Done in round 7, part A (lights, shader terms, flags), all observed in the original: a
 geometry's light list names lights in the order they joined the scene (never by strength), shadow
@@ -80,13 +94,12 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 
 1. **Shader terms only the shader cache holds**: the volumetric generate shader's scattering, its
    blur and noise; the map overlay's weights and snow mask (inferred now).
-2. **Havok float slots**: hkVis (a node hidden while its slot is 0) and hkPhoneme from the
-   behavior runtime's pose; **mesh particles** (the dragon crash's Havok-driven rocks); **bone
-   LOD**; LOD culled by rooms and portals.
+2. **LOD culled by rooms and portals** (DLC1HunterHQWorld only); mesh particles against the
+   physics world's shapes; the alternate textures naming a shape the model lacks.
 3. **IBLF lens flare** (its textures are Effects\LensFlares\Ramps.dds and Masks.dds);
    **WATR NAM5**; the water constants' sources and interiors' reflection; Fire_Refraction's
    normal falloff; land's lists of seven per quad; Screendoor_Alpha_Fade's blended fade.
-4. Lag bones on armour hung on a skeleton; geometry decals on rigid worn shapes (ours project).
+4. Geometry decals on rigid worn shapes (ours project).
 
 ## Systems
 
@@ -169,7 +182,8 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 | 75  | The map's relief overlay on its LOD land                           | done   | lighting.wgsl worldMapRelief, world-map-view.ts                                                                                                                                        |
 | 76  | Shader terms only the shader cache holds (volumetric, map overlay) | open   | the cache is readable (water read); the volumetric and map-overlay techniques not yet found in it                                                                                      |
 | 77  | Water: the reflection in interiors and of several planes           | open   | interiors reflect the sky colours; one plane (the nearest), the original up to 2 / 4 by height                                                                                         |
-| 78  | Havok float slots: hkVis visibility, hkPhoneme                     | open   | rule read (a node hidden while its slot is 0); the behavior runtime blends no float tracks                                                                                             |
+| 78  | Havok float slots: hkVis visibility, hkPhoneme                     | done   | behavior-runtime.ts float slot blocks, skeleton.ts showBySlots; hkPhoneme: no skeleton has the slots                                                                                   |
+| 79  | Mesh particles' Havok bodies against the world's shapes            | open   | particle-sim.ts: gravity, damping, the ground under the effect; not the physics world's shapes                                                                                         |
 
 ## Data sweep
 
@@ -385,124 +399,124 @@ entry's 3D index, is unread.
 
 ### Block types
 
-| Item                                                | Uses   | Status | Where / why                                                                            |
-| --------------------------------------------------- | ------ | ------ | -------------------------------------------------------------------------------------- |
-| NiNode (10612 files)                                | 102385 | done   |                                                                                        |
-| BSLightingShaderProperty (20966 files)              | 74845  | done   | lighting.wgsl                                                                          |
-| BSShaderTextureSet (20966 files)                    | 64058  | done   |                                                                                        |
-| BSTriShape (18601 files)                            | 61597  | done   | build-model                                                                            |
-| NiFloatInterpolator (2192 files)                    | 38251  | done   |                                                                                        |
-| NiAlphaProperty (12313 files)                       | 36617  | done   | blend and test pipelines                                                               |
-| NiFloatData (2030 files)                            | 35333  | done   |                                                                                        |
-| NiSkinData (7207 files)                             | 27794  | done   |                                                                                        |
-| NiSkinPartition (7207 files)                        | 27794  | done   |                                                                                        |
-| BSDynamicTriShape (3727 files)                      | 21581  | done   | face-morphs                                                                            |
-| NiTransformInterpolator (1816 files)                | 20479  | done   |                                                                                        |
-| NiTransformData (1767 files)                        | 19163  | done   |                                                                                        |
-| BSFadeNode (18797 files)                            | 18797  | done   |                                                                                        |
-| BSDismemberSkinInstance (6548 files)                | 16200  | done   | skinning.ts                                                                            |
-| BSXFlags (13511 files)                              | 13511  | done   | model-data.ts                                                                          |
-| NiSkinInstance (3890 files)                         | 11621  | done   | skinning.ts                                                                            |
-| BSEffectShaderPropertyFloatController (1381 files)  | 8787   | done   | animation.ts shader variables                                                          |
-| NiBoolTimelineInterpolator (615 files)              | 8492   | done   | animation.ts (as a bool interpolator)                                                  |
-| BSEffectShaderProperty (3022 files)                 | 8362   | done   | effect.wgsl (environment map open)                                                     |
-| NiBlendFloatInterpolator (856 files)                | 8164   | done   |                                                                                        |
-| NiBoolInterpolator (1074 files)                     | 7885   | done   |                                                                                        |
-| NiTextKeyExtraData (1455 files)                     | 5095   | done   |                                                                                        |
-| NiControllerSequence (1313 files)                   | 4947   | done   | animation.ts                                                                           |
-| NiTransformController (943 files)                   | 4906   | done   | animation.ts                                                                           |
-| NiBoolData (927 files)                              | 4724   | done   |                                                                                        |
-| NiBlendBoolInterpolator (624 files)                 | 3795   | done   |                                                                                        |
-| BSLightingShaderPropertyFloatController (629 files) | 3347   | done   | animation.ts shader variables                                                          |
-| NiPosData (540 files)                               | 3160   | done   |                                                                                        |
-| NiPoint3Interpolator (516 files)                    | 3115   | done   |                                                                                        |
-| NiStringExtraData (990 files)                       | 2798   | done   | model-data.ts                                                                          |
-| NiPSysModifierActiveCtlr (606 files)                | 2793   | done   |                                                                                        |
-| BSInvMarker (2299 files)                            | 2299   | done   | item-3d-view.ts                                                                        |
-| NiPSysDragModifier (470 files)                      | 2293   | done   |                                                                                        |
-| NiBillboardNode (805 files)                         | 2067   | done   | billboard.ts                                                                           |
-| NiFloatExtraData (102 files)                        | 1786   | n/a    | names Havok float slots (hkVis, hkPhoneme: read from the pose); the rest exporter data |
-| NiPSysUpdateCtlr (912 files)                        | 1729   | done   | implicit: systems update each frame                                                    |
-| NiPSysAgeDeathModifier (912 files)                  | 1729   | done   |                                                                                        |
-| BSPSysLODModifier (912 files)                       | 1729   | done   |                                                                                        |
-| NiPSysSpawnModifier (912 files)                     | 1729   | done   |                                                                                        |
-| NiPSysPositionModifier (912 files)                  | 1726   | done   | implicit: particles move by velocity                                                   |
-| NiPSysBoundUpdateModifier (912 files)               | 1726   | done   | implicit: bounds per frame                                                             |
-| BSPSysSimpleColorModifier (903 files)               | 1691   | done   |                                                                                        |
-| NiPSysEmitterCtlr (819 files)                       | 1587   | done   |                                                                                        |
-| NiPSysData (802 files)                              | 1547   | done   |                                                                                        |
-| NiParticleSystem (802 files)                        | 1547   | done   | particle-sim.ts                                                                        |
-| BSPSysScaleModifier (847 files)                     | 1506   | done   |                                                                                        |
-| NiPSysGravityModifier (679 files)                   | 1379   | done   |                                                                                        |
-| NiControllerManager (1313 files)                    | 1313   | done   | animation.ts                                                                           |
-| NiMultiTargetTransformController (1313 files)       | 1313   | done   | animation.ts                                                                           |
-| NiDefaultAVObjectPalette (1313 files)               | 1313   | done   |                                                                                        |
-| BSBehaviorGraphExtraData (1251 files)               | 1251   | done   | behavior graphs on objects                                                             |
-| NiVisController (279 files)                         | 1054   | done   | animation.ts                                                                           |
-| BSEffectShaderPropertyColorController (421 files)   | 988    | done   | animation.ts shader variables                                                          |
-| NiPSysRotationModifier (573 files)                  | 905    | done   |                                                                                        |
-| BSValueNode (242 files)                             | 814    | done   |                                                                                        |
-| NiBlendPoint3Interpolator (296 files)               | 799    | done   |                                                                                        |
-| BSNiAlphaPropertyTestRefController (227 files)      | 767    | done   | animation.ts                                                                           |
-| NiPSysMeshEmitter (350 files)                       | 644    | done   |                                                                                        |
-| BSPSysSubTexModifier (338 files)                    | 574    | done   |                                                                                        |
-| NiBooleanExtraData (203 files)                      | 567    | n/a    | gameplay data                                                                          |
-| NiPSysBoxEmitter (330 files)                        | 564    | done   |                                                                                        |
-| NiPSysBombModifier (235 files)                      | 500    | done   |                                                                                        |
-| NiPSysCylinderEmitter (258 files)                   | 373    | done   |                                                                                        |
-| NiStringsExtraData (182 files)                      | 337    | n/a    | gameplay data                                                                          |
-| NiBinaryExtraData (30 files)                        | 321    | n/a    | gameplay data                                                                          |
-| BSLightingShaderPropertyColorController (123 files) | 291    | done   | animation.ts shader variables                                                          |
-| NiTriShapeData (158 files)                          | 289    | done   | build-model                                                                            |
-| BSLeafAnimNode (286 files)                          | 286    | done   | leaf flutter                                                                           |
-| BSOrderedNode (247 files)                           | 256    | done   | draw order of its children                                                             |
-| NiTriShape (134 files)                              | 246    | done   | build-model                                                                            |
-| BSMultiBoundNode (246 files)                        | 246    | done   | culling bounds                                                                         |
-| BSMultiBound (246 files)                            | 246    | done   | culling by bounding spheres draws the same image                                       |
-| BSFurnitureMarkerNode (243 files)                   | 243    | n/a    | furniture markers                                                                      |
-| BSMultiBoundOBB (240 files)                         | 240    | done   | culling by bounding spheres draws the same image                                       |
-| NiPSysEmitterSpeedCtlr (133 files)                  | 234    | done   | particle-data.ts                                                                       |
-| NiPSysGravityStrengthCtlr (125 files)               | 230    | done   | particle-data.ts                                                                       |
-| BSLagBoneController (108 files)                     | 221    | open   | skeletons and placed or held models trail; armour hung on a skeleton not               |
-| NiFloatExtraDataController (71 files)               | 188    | n/a    | animates hkVis values; the original shows nodes by the Havok pose, not these           |
-| BSPSysInheritVelocityModifier (104 files)           | 188    | done   |                                                                                        |
-| BSStripPSysData (151 files)                         | 179    | done   |                                                                                        |
-| BSStripParticleSystem (151 files)                   | 179    | done   | particle-sim.ts strips                                                                 |
-| BSPSysStripUpdateModifier (151 files)               | 179    | done   |                                                                                        |
-| NiSwitchNode (165 files)                            | 172    | done   |                                                                                        |
-| NiIntegerExtraData (143 files)                      | 169    | n/a    | gameplay data                                                                          |
-| NiPSysSphereEmitter (101 files)                     | 148    | done   |                                                                                        |
-| BSPSysMultiTargetEmitterCtlr (93 files)             | 142    | done   |                                                                                        |
-| NiCamera (129 files)                                | 138    | done   | cinematic cameras                                                                      |
-| NiPSysEmitterInitialRadiusCtlr (80 files)           | 113    | done   | particle-data.ts                                                                       |
-| NiPSysPlanarCollider (42 files)                     | 96     | done   |                                                                                        |
-| BSMasterParticleSystem (93 files)                   | 93     | done   |                                                                                        |
-| NiPSysColliderManager (51 files)                    | 77     | done   |                                                                                        |
-| NiPSysEmitterLifeSpanCtlr (60 files)                | 76     | done   | particle-data.ts                                                                       |
-| NiPathInterpolator (25 files)                       | 73     | done   | path-motion.ts (constant velocity, follow, flip)                                       |
-| BSTreeNode (71 files)                               | 71     | done   | leaf flutter                                                                           |
-| BSDecalPlacementVectorExtraData (61 files)          | 61     | n/a    | editor data (0-2 points each); the original loads it, nothing reads it                 |
-| BSBound (57 files)                                  | 57     | done   | bounds                                                                                 |
-| BSFrustumFOVController (54 files)                   | 54     | done   | camera-model.ts (the kill cameras)                                                     |
-| BSBoneLODExtraData (52 files)                       | 52     | open   | bone LOD (bones held beyond a distance) not built                                      |
-| BSPSysRecycleBoundModifier (36 files)               | 45     | done   |                                                                                        |
-| BSLODTriShape (34 files)                            | 43     | done   | build-model                                                                            |
-| BSProceduralLightningController (13 files)          | 37     | done   | lightning.ts                                                                           |
-| BSSkyShaderProperty (4 files)                       | 35     | done   | sky.ts                                                                                 |
-| BSWaterShaderProperty (33 files)                    | 33     | done   | water.wgsl                                                                             |
-| BSBlastNode (28 files)                              | 31     | done   | explosions                                                                             |
-| NiTriStripsData (17 files)                          | 31     | n/a    | collision geometry only (bhkNiTriStripsShape)                                          |
-| NiPSysSphericalCollider (15 files)                  | 28     | done   |                                                                                        |
-| BSDamageStage (7 files)                             | 13     | done   | destruction stages                                                                     |
-| BSWindModifier (7 files)                            | 10     | done   |                                                                                        |
-| BSMultiBoundAABB (6 files)                          | 6      | done   | culling by bounding spheres draws the same image                                       |
-| NiLookAtInterpolator (5 files)                      | 5      | done   | animation.ts look-at tracks                                                            |
-| NiPSysEmitterPlanarAngleCtlr (2 files)              | 4      | done   | particle-data.ts                                                                       |
-| NiPSysEmitterDeclinationCtlr (2 files)              | 4      | done   | particle-data.ts                                                                       |
-| NiBSBoneLODController (3 files)                     | 3      | open   | bone LOD (bones held beyond a distance) not built                                      |
-| NiMeshPSysData (1 files)                            | 3      | open   | the dragon crash rocks (Havok-driven mesh particles) not drawn                         |
-| NiMeshParticleSystem (1 files)                      | 3      | open   | the dragon crash rocks (Havok-driven mesh particles) not drawn                         |
-| NiPSysInitialRotSpeedCtlr (1 files)                 | 1      | done   | particle-data.ts                                                                       |
+| Item                                                | Uses   | Status | Where / why                                                                                             |
+| --------------------------------------------------- | ------ | ------ | ------------------------------------------------------------------------------------------------------- |
+| NiNode (10612 files)                                | 102385 | done   |                                                                                                         |
+| BSLightingShaderProperty (20966 files)              | 74845  | done   | lighting.wgsl                                                                                           |
+| BSShaderTextureSet (20966 files)                    | 64058  | done   |                                                                                                         |
+| BSTriShape (18601 files)                            | 61597  | done   | build-model                                                                                             |
+| NiFloatInterpolator (2192 files)                    | 38251  | done   |                                                                                                         |
+| NiAlphaProperty (12313 files)                       | 36617  | done   | blend and test pipelines                                                                                |
+| NiFloatData (2030 files)                            | 35333  | done   |                                                                                                         |
+| NiSkinData (7207 files)                             | 27794  | done   |                                                                                                         |
+| NiSkinPartition (7207 files)                        | 27794  | done   |                                                                                                         |
+| BSDynamicTriShape (3727 files)                      | 21581  | done   | face-morphs                                                                                             |
+| NiTransformInterpolator (1816 files)                | 20479  | done   |                                                                                                         |
+| NiTransformData (1767 files)                        | 19163  | done   |                                                                                                         |
+| BSFadeNode (18797 files)                            | 18797  | done   |                                                                                                         |
+| BSDismemberSkinInstance (6548 files)                | 16200  | done   | skinning.ts                                                                                             |
+| BSXFlags (13511 files)                              | 13511  | done   | model-data.ts                                                                                           |
+| NiSkinInstance (3890 files)                         | 11621  | done   | skinning.ts                                                                                             |
+| BSEffectShaderPropertyFloatController (1381 files)  | 8787   | done   | animation.ts shader variables                                                                           |
+| NiBoolTimelineInterpolator (615 files)              | 8492   | done   | animation.ts (as a bool interpolator)                                                                   |
+| BSEffectShaderProperty (3022 files)                 | 8362   | done   | effect.wgsl (environment map open)                                                                      |
+| NiBlendFloatInterpolator (856 files)                | 8164   | done   |                                                                                                         |
+| NiBoolInterpolator (1074 files)                     | 7885   | done   |                                                                                                         |
+| NiTextKeyExtraData (1455 files)                     | 5095   | done   |                                                                                                         |
+| NiControllerSequence (1313 files)                   | 4947   | done   | animation.ts                                                                                            |
+| NiTransformController (943 files)                   | 4906   | done   | animation.ts                                                                                            |
+| NiBoolData (927 files)                              | 4724   | done   |                                                                                                         |
+| NiBlendBoolInterpolator (624 files)                 | 3795   | done   |                                                                                                         |
+| BSLightingShaderPropertyFloatController (629 files) | 3347   | done   | animation.ts shader variables                                                                           |
+| NiPosData (540 files)                               | 3160   | done   |                                                                                                         |
+| NiPoint3Interpolator (516 files)                    | 3115   | done   |                                                                                                         |
+| NiStringExtraData (990 files)                       | 2798   | done   | model-data.ts                                                                                           |
+| NiPSysModifierActiveCtlr (606 files)                | 2793   | done   |                                                                                                         |
+| BSInvMarker (2299 files)                            | 2299   | done   | item-3d-view.ts                                                                                         |
+| NiPSysDragModifier (470 files)                      | 2293   | done   |                                                                                                         |
+| NiBillboardNode (805 files)                         | 2067   | done   | billboard.ts                                                                                            |
+| NiFloatExtraData (102 files)                        | 1786   | n/a    | names Havok float slots (hkVis: a controller per name, skeleton.ts showBySlots); the rest exporter data |
+| NiPSysUpdateCtlr (912 files)                        | 1729   | done   | implicit: systems update each frame                                                                     |
+| NiPSysAgeDeathModifier (912 files)                  | 1729   | done   |                                                                                                         |
+| BSPSysLODModifier (912 files)                       | 1729   | done   |                                                                                                         |
+| NiPSysSpawnModifier (912 files)                     | 1729   | done   |                                                                                                         |
+| NiPSysPositionModifier (912 files)                  | 1726   | done   | implicit: particles move by velocity                                                                    |
+| NiPSysBoundUpdateModifier (912 files)               | 1726   | done   | implicit: bounds per frame                                                                              |
+| BSPSysSimpleColorModifier (903 files)               | 1691   | done   |                                                                                                         |
+| NiPSysEmitterCtlr (819 files)                       | 1587   | done   |                                                                                                         |
+| NiPSysData (802 files)                              | 1547   | done   |                                                                                                         |
+| NiParticleSystem (802 files)                        | 1547   | done   | particle-sim.ts                                                                                         |
+| BSPSysScaleModifier (847 files)                     | 1506   | done   |                                                                                                         |
+| NiPSysGravityModifier (679 files)                   | 1379   | done   |                                                                                                         |
+| NiControllerManager (1313 files)                    | 1313   | done   | animation.ts                                                                                            |
+| NiMultiTargetTransformController (1313 files)       | 1313   | done   | animation.ts                                                                                            |
+| NiDefaultAVObjectPalette (1313 files)               | 1313   | done   |                                                                                                         |
+| BSBehaviorGraphExtraData (1251 files)               | 1251   | done   | behavior graphs on objects                                                                              |
+| NiVisController (279 files)                         | 1054   | done   | animation.ts                                                                                            |
+| BSEffectShaderPropertyColorController (421 files)   | 988    | done   | animation.ts shader variables                                                                           |
+| NiPSysRotationModifier (573 files)                  | 905    | done   |                                                                                                         |
+| BSValueNode (242 files)                             | 814    | done   |                                                                                                         |
+| NiBlendPoint3Interpolator (296 files)               | 799    | done   |                                                                                                         |
+| BSNiAlphaPropertyTestRefController (227 files)      | 767    | done   | animation.ts                                                                                            |
+| NiPSysMeshEmitter (350 files)                       | 644    | done   |                                                                                                         |
+| BSPSysSubTexModifier (338 files)                    | 574    | done   |                                                                                                         |
+| NiBooleanExtraData (203 files)                      | 567    | n/a    | gameplay data                                                                                           |
+| NiPSysBoxEmitter (330 files)                        | 564    | done   |                                                                                                         |
+| NiPSysBombModifier (235 files)                      | 500    | done   |                                                                                                         |
+| NiPSysCylinderEmitter (258 files)                   | 373    | done   |                                                                                                         |
+| NiStringsExtraData (182 files)                      | 337    | n/a    | gameplay data                                                                                           |
+| NiBinaryExtraData (30 files)                        | 321    | n/a    | gameplay data                                                                                           |
+| BSLightingShaderPropertyColorController (123 files) | 291    | done   | animation.ts shader variables                                                                           |
+| NiTriShapeData (158 files)                          | 289    | done   | build-model                                                                                             |
+| BSLeafAnimNode (286 files)                          | 286    | done   | leaf flutter                                                                                            |
+| BSOrderedNode (247 files)                           | 256    | done   | draw order of its children                                                                              |
+| NiTriShape (134 files)                              | 246    | done   | build-model                                                                                             |
+| BSMultiBoundNode (246 files)                        | 246    | done   | culling bounds                                                                                          |
+| BSMultiBound (246 files)                            | 246    | done   | culling by bounding spheres draws the same image                                                        |
+| BSFurnitureMarkerNode (243 files)                   | 243    | n/a    | furniture markers                                                                                       |
+| BSMultiBoundOBB (240 files)                         | 240    | done   | culling by bounding spheres draws the same image                                                        |
+| NiPSysEmitterSpeedCtlr (133 files)                  | 234    | done   | particle-data.ts                                                                                        |
+| NiPSysGravityStrengthCtlr (125 files)               | 230    | done   | particle-data.ts                                                                                        |
+| BSLagBoneController (108 files)                     | 221    | done   | lag-bone.ts: skeletons, worn models (wearOnRig), placed and held models trail                           |
+| NiFloatExtraDataController (71 files)               | 188    | n/a    | animates hkVis values; the original shows nodes by the Havok pose, not these                            |
+| BSPSysInheritVelocityModifier (104 files)           | 188    | done   |                                                                                                         |
+| BSStripPSysData (151 files)                         | 179    | done   |                                                                                                         |
+| BSStripParticleSystem (151 files)                   | 179    | done   | particle-sim.ts strips                                                                                  |
+| BSPSysStripUpdateModifier (151 files)               | 179    | done   |                                                                                                         |
+| NiSwitchNode (165 files)                            | 172    | done   |                                                                                                         |
+| NiIntegerExtraData (143 files)                      | 169    | n/a    | gameplay data                                                                                           |
+| NiPSysSphereEmitter (101 files)                     | 148    | done   |                                                                                                         |
+| BSPSysMultiTargetEmitterCtlr (93 files)             | 142    | done   |                                                                                                         |
+| NiCamera (129 files)                                | 138    | done   | cinematic cameras                                                                                       |
+| NiPSysEmitterInitialRadiusCtlr (80 files)           | 113    | done   | particle-data.ts                                                                                        |
+| NiPSysPlanarCollider (42 files)                     | 96     | done   |                                                                                                         |
+| BSMasterParticleSystem (93 files)                   | 93     | done   |                                                                                                         |
+| NiPSysColliderManager (51 files)                    | 77     | done   |                                                                                                         |
+| NiPSysEmitterLifeSpanCtlr (60 files)                | 76     | done   | particle-data.ts                                                                                        |
+| NiPathInterpolator (25 files)                       | 73     | done   | path-motion.ts (constant velocity, follow, flip)                                                        |
+| BSTreeNode (71 files)                               | 71     | done   | leaf flutter                                                                                            |
+| BSDecalPlacementVectorExtraData (61 files)          | 61     | n/a    | editor data (0-2 points each); the original loads it, nothing reads it                                  |
+| BSBound (57 files)                                  | 57     | done   | bounds                                                                                                  |
+| BSFrustumFOVController (54 files)                   | 54     | done   | camera-model.ts (the kill cameras)                                                                      |
+| BSBoneLODExtraData (52 files)                       | 52     | done   | BehaviorRuntime.setBoneLod: far bones keep their pose                                                   |
+| BSPSysRecycleBoundModifier (36 files)               | 45     | done   |                                                                                                         |
+| BSLODTriShape (34 files)                            | 43     | done   | build-model                                                                                             |
+| BSProceduralLightningController (13 files)          | 37     | done   | lightning.ts                                                                                            |
+| BSSkyShaderProperty (4 files)                       | 35     | done   | sky.ts                                                                                                  |
+| BSWaterShaderProperty (33 files)                    | 33     | done   | water.wgsl                                                                                              |
+| BSBlastNode (28 files)                              | 31     | done   | explosions                                                                                              |
+| NiTriStripsData (17 files)                          | 31     | n/a    | collision geometry only (bhkNiTriStripsShape)                                                           |
+| NiPSysSphericalCollider (15 files)                  | 28     | done   |                                                                                                         |
+| BSDamageStage (7 files)                             | 13     | done   | destruction stages                                                                                      |
+| BSWindModifier (7 files)                            | 10     | done   |                                                                                                         |
+| BSMultiBoundAABB (6 files)                          | 6      | done   | culling by bounding spheres draws the same image                                                        |
+| NiLookAtInterpolator (5 files)                      | 5      | done   | animation.ts look-at tracks                                                                             |
+| NiPSysEmitterPlanarAngleCtlr (2 files)              | 4      | done   | particle-data.ts                                                                                        |
+| NiPSysEmitterDeclinationCtlr (2 files)              | 4      | done   | particle-data.ts                                                                                        |
+| NiBSBoneLODController (3 files)                     | 3      | n/a    | old exports (centaur, wolf, werewolf); no BSBoneLOD#Bone# names give it levels                          |
+| NiMeshPSysData (1 files)                            | 3      | done   | its pool: one copy of the mesh per particle (model-data.ts)                                             |
+| NiMeshParticleSystem (1 files)                      | 3      | done   | mesh parts per particle (meshParticle), particle-sim bodies                                             |
+| NiPSysInitialRotSpeedCtlr (1 files)                 | 1      | done   | particle-data.ts                                                                                        |
 
 ### Records: CLMT (9)
 

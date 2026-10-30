@@ -136,7 +136,12 @@ export class FirstPersonBody {
     if (dressing !== this.#dressing || this.#destroyed) return;
     const dressed = wearOnRig(
       this.#rig,
-      made.map(({ model }) => ({ nodes: model.nodes ?? [], attachTo: model.attachTo })),
+      made.map(({ model }) => ({
+        nodes: model.nodes ?? [],
+        attachTo: model.attachTo,
+        lagBones: model.nodeLagBones,
+        visibilitySlots: model.visibilitySlots,
+      })),
     );
     const pose = new ActorPose(new ActorSkeleton(dressed.rig, this.#havok));
     pose.update(this.#skeleton.behavior.pose);

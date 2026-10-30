@@ -1397,3 +1397,104 @@ describe('syncing blenders', () => {
     expect(time('trot')).toBeCloseTo(0.25, 5);
   });
 });
+
+describe('bone LOD', () => {
+  it('keeps the pose of a level bone and those after it beyond its distance', () => {
+    const twoBones: HkxSkeleton = {
+      ...skeleton,
+      bones: [
+        { name: 'Root', lockTranslation: false },
+        { name: 'Finger', lockTranslation: false },
+      ],
+      parents: Int16Array.of(-1, 0),
+      referencePose: Float32Array.of(0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1),
+    };
+    const moving: AnimationBinding = {
+      ...animation(0, 10),
+      animation: {
+        ...animation(0, 10).animation,
+        trackCount: 2,
+        sample: (time, out) => {
+          out.set([time, 0, 0, 0, 0, 0, 1, 1, 1, 1, time, 0, 0, 0, 0, 0, 1, 1, 1, 1]);
+        },
+      },
+    };
+    const runtime = new BehaviorRuntime({
+      root: graph(clip('move'), []),
+      host: host({ move: moving }),
+      skeleton: twoBones,
+    });
+    runtime.setBoneLod([
+      { distance: 768, bone: 'finger' },
+      { distance: 100, bone: 'NoSuchBone' },
+    ]);
+    runtime.cameraDistance = 500;
+    runtime.update(1);
+    expect([runtime.pose[0], runtime.pose[10]]).toEqual([1, 1]);
+    runtime.cameraDistance = 1000;
+    runtime.update(1);
+    // The root moves on; the finger keeps where it was.
+    expect([runtime.pose[0], runtime.pose[10]]).toEqual([2, 1]);
+  });
+});
+
+describe('float slots', () => {
+  /** One bone and two float slots (hkVis:Weapon, hkFade:A). */
+  const slotted: HkxSkeleton = {
+    ...skeleton,
+    floatSlots: ['hkVis:Weapon', 'hkFade:A'],
+    referenceFloats: Float32Array.of(0, 0),
+  };
+  /** A clip with a float track for slot 0 holding `value` (none when undefined). */
+  const withSlot = (value: number | undefined): AnimationBinding => {
+    const base = animation(0, 10);
+    return {
+      ...base,
+      animation: {
+        ...base.animation,
+        floatTrackCount: value === undefined ? 0 : 1,
+        sample: (time, out, floats) => {
+          out.set([time, 0, 0, 0, 0, 0, 1, 1, 1, 1]);
+          if (floats && value !== undefined) floats[0] = value;
+        },
+      },
+      floatTrackToSlot: value === undefined ? undefined : Int16Array.of(0),
+    };
+  };
+  const blend = (a: string, b: string): BehaviorGenerator => ({
+    kind: 'blender',
+    name: 'Blend',
+    flags: 0,
+    blendParameter: { value: 0 },
+    children: [
+      { weight: { value: 1 }, generator: clip(a) },
+      { weight: { value: 3 }, generator: clip(b) },
+    ],
+  });
+
+  it('blends the slots of the clips that have a track for them', () => {
+    const runtime = new BehaviorRuntime({
+      root: graph(blend('shown', 'hidden'), []),
+      host: host({ shown: withSlot(1), hidden: withSlot(0) }),
+      skeleton: slotted,
+    });
+    runtime.update(0);
+    expect(runtime.floatSlots[0]).toBeCloseTo(0.25);
+    expect(runtime.floatSlotWeights[0]).toBeCloseTo(1);
+    // No clip sets the second slot: no weight, its reference value.
+    expect(runtime.floatSlotWeights[1]).toBe(0);
+    expect(runtime.pose.length).toBe(10);
+  });
+
+  it('takes a slot from the clips that have it only', () => {
+    const runtime = new BehaviorRuntime({
+      root: graph(blend('shown', 'none'), []),
+      host: host({ shown: withSlot(1), none: withSlot(undefined) }),
+      skeleton: slotted,
+    });
+    runtime.update(0);
+    // A quarter of the pose sets it, to 1.
+    expect(runtime.floatSlots[0]).toBeCloseTo(1);
+    expect(runtime.floatSlotWeights[0]).toBeCloseTo(0.25);
+  });
+});

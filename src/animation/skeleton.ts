@@ -8,6 +8,7 @@ import type { NifFile } from '../formats/nif/nif.ts';
 import { TRANSFORM_FLOATS, type HkxSkeleton } from '../formats/hkx/animation.ts';
 import { lagBone, LagBoneState, type LagBone } from '../render/lag-bone.ts';
 import { fromNifTransform } from '../render/math.ts';
+import { hkVisibilitySlots } from '../render/model-data.ts';
 
 /** A skeleton model's node tree, parents before children. */
 export interface RigData {
@@ -18,6 +19,16 @@ export interface RigData {
   readonly local: Float32Array;
   /** The skeleton model's lag bones (BSLagBoneController), by node (src/render/lag-bone.ts). */
   readonly lagBones?: readonly LagBone[];
+  /**
+   * The Havok visibility slots the model has controllers for (its NiFloatExtraData named
+   * , lower case): only these show and hide nodes (ActorPose.showBySlots).
+   */
+  readonly visibilitySlots?: readonly string[];
+  /**
+   * The skeleton model's bone LOD (BSBoneLODExtraData): from each distance on, the bone named
+   * and those after it in the Havok skeleton keep their pose (BehaviorRuntime.setBoneLod).
+   */
+  readonly boneLod?: readonly { readonly distance: number; readonly bone: string }[];
 }
 
 /** The node tree of a skeleton model (the roots' own transforms are ignored, as for models). */
@@ -52,11 +63,16 @@ export function buildRig(file: NifFile): RigData {
     const node = nodeOfBlock.get(block.target);
     if (node !== undefined && (parents[node] ?? -1) >= 0) lagBones.push(lagBone(block, node));
   }
+  const visibilitySlots = hkVisibilitySlots(file);
+  const lodBlock = file.blocks.find((block) => block.kind === 'bone-lod-extra-data');
+  const boneLod = lodBlock?.kind === 'bone-lod-extra-data' ? lodBlock.levels : undefined;
   return {
     names,
     parents: Int16Array.from(parents),
     local,
     ...(lagBones.length > 0 && { lagBones }),
+    ...(boneLod && boneLod.length > 0 && { boneLod }),
+    ...(visibilitySlots.length > 0 && { visibilitySlots }),
   };
 }
 
@@ -68,6 +84,10 @@ export interface WornNodes {
     readonly local: Float32Array;
   }[];
   readonly attachTo: string | undefined;
+  /** Its lag bones by its own node index: they trail in the skeleton's pose. */
+  readonly lagBones?: readonly LagBone[] | undefined;
+  /** Its Havok visibility slots (RigData.visibilitySlots): the skeleton's take them too. */
+  readonly visibilitySlots?: readonly string[] | undefined;
 }
 
 /**
@@ -113,7 +133,20 @@ export function wearOnRig(
     });
     return map;
   });
-  if (locals.length === 0) return { rig, nodeMaps };
+  // A worn model's lag bones (the Daedric armour's and the spriggans' trailing effects) trail
+  // in the skeleton's pose, on the nodes it added (a node it shares is the skeleton's own).
+  const lagBones = [...(rig.lagBones ?? [])];
+  const visibilitySlots = new Set(rig.visibilitySlots ?? []);
+  models.forEach((model, m) => {
+    for (const slot of model.visibilitySlots ?? []) visibilitySlots.add(slot);
+    for (const bone of model.lagBones ?? []) {
+      const node = nodeMaps[m]?.[bone.node] ?? -1;
+      if (node < rig.names.length || lagBones.some((known) => known.node === node)) continue;
+      lagBones.push({ ...bone, node });
+    }
+  });
+  const slotsChanged = visibilitySlots.size !== (rig.visibilitySlots?.length ?? 0);
+  if (locals.length === 0 && !slotsChanged) return { rig, nodeMaps };
   const local = new Float32Array(names.length * 16);
   local.set(rig.local);
   locals.forEach((matrix, i) => {
@@ -124,7 +157,9 @@ export function wearOnRig(
       names,
       parents: Int16Array.from(parents),
       local,
-      ...(rig.lagBones && { lagBones: rig.lagBones }),
+      ...(lagBones.length > 0 && { lagBones }),
+      ...(visibilitySlots.size > 0 && { visibilitySlots: [...visibilitySlots] }),
+      ...(rig.boneLod && { boneLod: rig.boneLod }),
     },
     nodeMaps,
   };
@@ -184,6 +219,19 @@ function multiplyAt(
   }
 }
 
+/** A running graph's float slots (BehaviorRuntime): their names, values and weights. */
+export interface FloatSlotSource {
+  readonly skeleton: { readonly floatSlots: readonly string[] };
+  readonly floatSlots: Float32Array;
+  readonly floatSlotWeights: Float32Array;
+}
+
+/** The prefix of the float slots that show and hide a node. */
+const VISIBILITY_SLOT = 'hkvis:';
+
+/** The node each float slot shows (−1: none), by slot names and skeleton. */
+const slotNodes = new WeakMap<readonly string[], WeakMap<ActorSkeleton, number[]>>();
+
 /** A skeleton model with the Havok skeleton that animates it. */
 export class ActorSkeleton {
   readonly rig: RigData;
@@ -234,6 +282,11 @@ export class ActorPose {
    * Undefined: they trail within the pose.
    */
   space: Float32Array | undefined;
+  /**
+   * Per node, 1 where a visibility slot of the graph's pose hides it or a node above it
+   * (showBySlots); undefined: every node is shown.
+   */
+  hidden: Uint8Array | undefined = undefined;
   readonly #local = new Float32Array(16);
   readonly #parentSpace = new Float32Array(16);
   readonly #lag: LagBoneState | undefined;
@@ -330,6 +383,57 @@ export class ActorPose {
       }
     }
     this.version++;
+  }
+
+  /**
+   * Shows and hides nodes by the Havok pose's visibility slots (observed in the original: a
+   * slot named "hkVis:<node>" hides that node, and all below it, while its value is exactly 0):
+   * a sheathing clip hides the weapon in the hand, a puzzle's clip shows the gem it sets.
+   * The original reads the slot's value as the pose has it, whatever its weight: a slot no clip
+   * playing has a track for holds the skeleton's reference value (0 in every vanilla
+   * skeleton), so its node is hidden then. TODO(M13): Havok's fill of such a slot (reference
+   * value assumed).
+   */
+  showBySlots(graph: FloatSlotSource): void {
+    const names = graph.skeleton.floatSlots;
+    let nodes = slotNodes.get(names)?.get(this.skeleton);
+    if (!nodes) {
+      // Only the slots the model has a controller for (an hkVis NiFloatExtraData): a draugr's
+      // skeleton has an hkVis:Weapon slot its model names nowhere.
+      const controlled = new Set(this.skeleton.rig.visibilitySlots ?? []);
+      nodes = names.map((name) =>
+        controlled.has(name.toLowerCase())
+          ? (this.skeleton.nodeByName.get(name.slice(VISIBILITY_SLOT.length).toLowerCase()) ?? -1)
+          : -1,
+      );
+      let bySkeleton = slotNodes.get(names);
+      if (!bySkeleton) {
+        bySkeleton = new WeakMap();
+        slotNodes.set(names, bySkeleton);
+      }
+      bySkeleton.set(this.skeleton, nodes);
+    }
+    let hidden: Uint8Array | undefined;
+    nodes.forEach((node, slot) => {
+      if (node < 0 || graph.floatSlots[slot] !== 0) return;
+      hidden ??= new Uint8Array(this.skeleton.nodeCount);
+      hidden[node] = 1;
+    });
+    if (hidden) {
+      // Parents come before their children: a hidden node hides its subtree.
+      const parents = this.skeleton.rig.parents;
+      for (let node = 0; node < hidden.length; node++) {
+        const parent = parents[node] ?? -1;
+        if (parent >= 0 && hidden[parent]) hidden[node] = 1;
+      }
+    }
+    this.hidden = hidden;
+  }
+
+  /** Whether a node (by name) is hidden by a visibility slot (showBySlots). */
+  hiddenNode(name: string): boolean {
+    const node = this.skeleton.nodeByName.get(name.toLowerCase());
+    return node !== undefined && this.hidden?.[node] === 1;
   }
 
   /** A node's model-space matrix by name, or undefined. */

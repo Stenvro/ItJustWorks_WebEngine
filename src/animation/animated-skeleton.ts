@@ -40,6 +40,8 @@ export interface AnimationRate {
   readonly interval: number;
   readonly interpolate: boolean;
   readonly slop: number;
+  /** The skeleton's distance from the camera (its bone LOD); undefined: not known. */
+  readonly cameraDistance?: number;
 }
 
 const EVERY_FRAME: AnimationRate = { interval: 0, interpolate: false, slop: 0 };
@@ -59,6 +61,9 @@ interface Interpolation {
 }
 
 const interpolations = new WeakMap<AnimatedSkeleton, Interpolation>();
+
+/** The graphs whose bone LOD was given (once each). */
+const boneLodSet = new WeakSet<BehaviorRuntime>();
 
 /**
  * Moves every skeleton: its graph runs to `seconds` on the renderer's clock, every frame or,
@@ -85,10 +90,20 @@ export function animateSkeletons(
         const t = (seconds - state.from) / Math.max(1e-6, state.until - state.from);
         blendPoses(state.before, behavior.pose, t, state.blended);
         animated.pose.update(state.blended);
+        animated.pose.showBySlots(behavior);
       }
       continue;
     }
     const wanted = (behavior && rate?.(animated)) ?? EVERY_FRAME;
+    if (behavior) {
+      // Its skeleton model's bone LOD, by its distance from the camera.
+      if (!boneLodSet.has(behavior)) {
+        boneLodSet.add(behavior);
+        const levels = animated.pose.skeleton.rig.boneLod;
+        if (levels) behavior.setBoneLod(levels);
+      }
+      behavior.cameraDistance = wanted.cameraDistance;
+    }
     let interval = wanted.interval;
     // The graph may forbid it (bDisableInterp: inferred from the engine's variable names).
     if (interval > 0 && behavior?.variable('bDisableInterp') === 1) interval = 0;
@@ -104,7 +119,10 @@ export function animateSkeletons(
         animated.time === undefined ? 0 : Math.min(MAX_STEP, Math.max(0, seconds - animated.time));
       animated.time = Math.max(seconds, animated.time ?? seconds);
       step(animated, dt);
-      if (behavior) animated.pose.update(behavior.pose);
+      if (behavior) {
+        animated.pose.update(behavior.pose);
+        animated.pose.showBySlots(behavior);
+      }
       continue;
     }
     const time = animated.time ?? seconds;
@@ -133,6 +151,7 @@ export function animateSkeletons(
     // It shows the pose it had (the interpolation's start); not interpolated (unseen), the pose
     // ahead at once.
     animated.pose.update(wanted.interpolate ? interpolation.before : behavior.pose);
+    animated.pose.showBySlots(behavior);
   }
 }
 
@@ -179,6 +198,7 @@ export function startObjectSkeleton(
   nodes: readonly SkeletonNode[],
   graph: SkeletalGraph,
   random: () => number,
+  visibilitySlots?: readonly string[],
 ): ObjectSkeleton | undefined {
   if (nodes.length === 0) return undefined;
   const local = new Float32Array(nodes.length * 16);
@@ -189,6 +209,7 @@ export function startObjectSkeleton(
     names: nodes.map((node) => node.name),
     parents: Int16Array.from(nodes, (node) => node.parent),
     local,
+    ...(visibilitySlots && { visibilitySlots }),
   };
   const skeleton = new ActorSkeleton(rig, graph.havok);
   // Parts under no animated bone stay where the model (and its sequences) puts them.
@@ -209,6 +230,7 @@ export function startObjectSkeleton(
   behavior.update(0);
   behavior.takeRaised();
   pose.update(behavior.pose);
+  pose.showBySlots(behavior);
   return { skeleton: { pose, behavior, time: undefined }, poseNodes };
 }
 
@@ -276,17 +298,18 @@ export function animationRate(
   },
   settings: AnimationRateSettings = ANIMATION_RATE,
 ): AnimationRate {
-  if (!settings.enabled) return EVERY_FRAME;
   const dx = at[0] - camera.position[0];
   const dy = at[1] - camera.position[1];
   const dz = at[2] - camera.position[2];
-  const distance = (Math.hypot(dx, dy, dz) * REFERENCE_FOV) / Math.max(1, camera.fov);
+  const cameraDistance = Math.hypot(dx, dy, dz);
+  if (!settings.enabled) return { ...EVERY_FRAME, cameraDistance };
+  const distance = (cameraDistance * REFERENCE_FOV) / Math.max(1, camera.fov);
   const forward = camera.forward;
   const seen = !forward || dx * forward[0] + dy * forward[1] + dz * forward[2] >= 0;
   const { minTime, maxTime, nearDistance: near, farDistance: far, slop } = settings;
-  if (!seen) return { interval: maxTime, interpolate: distance <= far, slop };
-  if (distance <= near) return { interval: 0, interpolate: true, slop };
+  if (!seen) return { interval: maxTime, interpolate: distance <= far, slop, cameraDistance };
+  if (distance <= near) return { interval: 0, interpolate: true, slop, cameraDistance };
   const interval =
     distance >= far ? maxTime : minTime + ((maxTime - minTime) * (distance - near)) / (far - near);
-  return { interval, interpolate: true, slop };
+  return { interval, interpolate: true, slop, cameraDistance };
 }

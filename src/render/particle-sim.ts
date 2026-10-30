@@ -10,6 +10,7 @@ import { controllerTime, sampleBool, sampleFloat } from './animation.ts';
 import { billboardWorld } from './billboard.ts';
 import { invert } from './frustum.ts';
 import { identity, maxScale, multiply, type Mat4, type Vec3 } from './math.ts';
+import { HAVOK_SCALE } from '../physics/collision-data.ts';
 import type {
   ParticleEmitter,
   ParticleParam,
@@ -55,6 +56,11 @@ export interface ParticleSource {
   update(context: ParticleContext): void;
   /** Writes the instances (PARTICLE_FLOATS each) at `offset`; returns how many. */
   write(out: Float32Array, offset: number, context: ParticleContext): number;
+  /**
+   * A mesh particle system's particle `index` as a world matrix (its mesh's placement) into
+   * `out`; false when there is no such particle (its part is not drawn).
+   */
+  meshWorld?(index: number, out: Mat4): boolean;
 }
 
 /** Floats of per-particle state (see the S_* offsets). */
@@ -77,6 +83,13 @@ const S_COLOR = 16;
 const S_STRIP_TIME = 20;
 const S_STRIP_COUNT = 21;
 const S_STRIP_HEAD = 22;
+/** Mesh particles (no atlas frames): the axis they turn about, in simulation space. */
+const S_MESH_AXIS = 11;
+/** Mesh particles' rigid bodies: whether the body touched the ground in the last step. */
+const S_MESH_CONTACT = 14;
+
+/** The Havok world's gravity in game units per second² (9.8 m/s²). */
+const HAVOK_GRAVITY = 9.8 * HAVOK_SCALE;
 
 /** Drag percentages are per frame of the 30 fps the effects were authored at. */
 const DRAG_FRAME_RATE = 30;
@@ -254,6 +267,11 @@ export class ParticleSimulation implements ParticleSource {
     const data = this.data;
     const s = this.#state;
     const toWorld = this.#simToWorldFor(context);
+    // Mesh particles draw as the model's parts (meshWorld), not as quads: only their bounds.
+    if (data.mesh) {
+      this.#meshBounds(toWorld);
+      return 0;
+    }
     const worldScale = maxScale(toWorld) * this.#lodSize;
     const color = data.modifiers.color;
     const subTexture = data.modifiers.subTexture;
@@ -508,6 +526,7 @@ export class ParticleSimulation implements ParticleSource {
 
     this.#applyForces(context, dt);
     this.#collide(context, dt);
+    if (data.mesh?.body) this.#moveBodies(dt);
 
     // Position update (and strip points).
     const strip = data.strip;
@@ -526,6 +545,8 @@ export class ParticleSimulation implements ParticleSource {
       }
     }
 
+    if (data.mesh?.body) this.#ground(context);
+
     // Emission (after the update, with each new particle's age within this step).
     this.#updateObjectVelocity(context, dt);
     data.emitters.forEach((emitter, index) => {
@@ -542,6 +563,125 @@ export class ParticleSimulation implements ParticleSource {
     });
 
     this.#recycle(context);
+  }
+
+  /**
+   * Mesh particles' rigid bodies: the world's gravity (times the body's gravity factor) and
+   * the body's damping on their speed and turn. TODO(M13): the original's bodies are Havok's,
+   * colliding with the world's shapes and each other; ours fall onto the ground plane the
+   * effect stands on (#ground).
+   */
+  #moveBodies(dt: number): void {
+    const body = this.data.mesh?.body;
+    if (!body) return;
+    const s = this.#state;
+    const fall = HAVOK_GRAVITY * body.gravityFactor * dt;
+    const linear = Math.max(0, 1 - body.linearDamping * dt);
+    const angular = Math.max(0, 1 - body.angularDamping * dt);
+    for (let i = 0; i < this.count; i++) {
+      const o = i * STRIDE;
+      s[o + S_VEL + 2] = (s[o + S_VEL + 2] ?? 0) - fall;
+      for (let k = 0; k < 3; k++) s[o + S_VEL + k] = (s[o + S_VEL + k] ?? 0) * linear;
+      s[o + S_SPIN] = (s[o + S_SPIN] ?? 0) * angular;
+      s[o + S_ANGLE] = (s[o + S_ANGLE] ?? 0) + (s[o + S_SPIN] ?? 0) * dt;
+    }
+  }
+
+  /**
+   * Mesh particles' bodies against the ground under the effect (its placement's origin, up z):
+   * they bounce by the body's restitution and slide and roll to a stop by its friction.
+   */
+  #ground(context: ParticleContext): void {
+    const body = this.data.mesh?.body;
+    if (!body) return;
+    const s = this.#state;
+    // The placement's origin in simulation space: its height is the ground's.
+    const floor = this.#toSim[14] ?? 0;
+    const dt = context.dt;
+    for (let i = 0; i < this.count; i++) {
+      const o = i * STRIDE;
+      const z = s[o + S_POS + 2] ?? 0;
+      if (z > floor) {
+        s[o + S_MESH_CONTACT] = 0;
+        continue;
+      }
+      s[o + S_POS + 2] = floor;
+      const vz = s[o + S_VEL + 2] ?? 0;
+      if (vz < 0) s[o + S_VEL + 2] = -vz * body.restitution;
+      // Friction: the ground slows its slide and its turn by μ·g.
+      const slow = body.friction * HAVOK_GRAVITY * dt;
+      const vx = s[o + S_VEL] ?? 0;
+      const vy = s[o + S_VEL + 1] ?? 0;
+      const speed = Math.hypot(vx, vy);
+      const kept = speed > slow ? (speed - slow) / speed : 0;
+      s[o + S_VEL] = vx * kept;
+      s[o + S_VEL + 1] = vy * kept;
+      s[o + S_SPIN] = (s[o + S_SPIN] ?? 0) * Math.max(0, 1 - body.friction * dt * 4);
+      s[o + S_MESH_CONTACT] = 1;
+    }
+  }
+
+  /** The world bounds of a mesh system's particles (their meshes' size not counted). */
+  #meshBounds(toWorld: Mat4): void {
+    const s = this.#state;
+    const p = this.#a;
+    const min = [Infinity, Infinity, Infinity];
+    const max = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < this.count; i++) {
+      const o = i * STRIDE;
+      point(toWorld, s[o + S_POS] ?? 0, s[o + S_POS + 1] ?? 0, s[o + S_POS + 2] ?? 0, p);
+      for (let k = 0; k < 3; k++) {
+        min[k] = Math.min(min[k] ?? 0, p[k] ?? 0);
+        max[k] = Math.max(max[k] ?? 0, p[k] ?? 0);
+      }
+    }
+    if (this.count === 0) {
+      this.radius = 0;
+      return;
+    }
+    for (let k = 0; k < 3; k++) this.center[k] = ((min[k] ?? 0) + (max[k] ?? 0)) / 2;
+    this.radius = Math.hypot(
+      (max[0] ?? 0) - this.center[0],
+      (max[1] ?? 0) - this.center[1],
+      (max[2] ?? 0) - this.center[2],
+    );
+  }
+
+  meshWorld(index: number, out: Mat4): boolean {
+    if (!this.data.mesh || index >= this.count) return false;
+    const s = this.#state;
+    const o = index * STRIDE;
+    const life = s[o + S_LIFE] ?? 1;
+    const age = s[o + S_AGE] ?? 0;
+    const t = life > 0 ? Math.min(1, age / life) : 1;
+    const scales = this.data.modifiers.scales;
+    const size = (s[o + S_RADIUS] ?? 1) * (scales ? evenKeys(scales, t) : 1);
+    // The angle: a body's is integrated by #moveBodies; others turn at their spin.
+    const angle = this.data.mesh.body
+      ? (s[o + S_ANGLE] ?? 0)
+      : (s[o + S_ANGLE] ?? 0) + (s[o + S_SPIN] ?? 0) * age;
+    const x = s[o + S_MESH_AXIS] ?? 1;
+    const y = s[o + S_MESH_AXIS + 1] ?? 0;
+    const z = s[o + S_MESH_AXIS + 2] ?? 0;
+    const c = Math.cos(angle);
+    const n = Math.sin(angle);
+    const C = 1 - c;
+    const local = identity();
+    // Rotation about the axis (column-major), scaled by the particle's size.
+    local[0] = (c + x * x * C) * size;
+    local[1] = (y * x * C + z * n) * size;
+    local[2] = (z * x * C - y * n) * size;
+    local[4] = (x * y * C - z * n) * size;
+    local[5] = (c + y * y * C) * size;
+    local[6] = (z * y * C + x * n) * size;
+    local[8] = (x * z * C + y * n) * size;
+    local[9] = (y * z * C - x * n) * size;
+    local[10] = (c + z * z * C) * size;
+    local[12] = s[o + S_POS] ?? 0;
+    local[13] = s[o + S_POS + 1] ?? 0;
+    local[14] = s[o + S_POS + 2] ?? 0;
+    multiply(this.#simToWorld, local, out);
+    return true;
   }
 
   #kill(index: number): void {
@@ -661,7 +801,19 @@ export class ParticleSimulation implements ParticleSource {
     const s = this.#state;
     const rand = this.#random;
     const rotation = data.modifiers.rotation;
-    if (rotation && this.#active(rotation.name)) {
+    if (data.mesh) {
+      // A mesh particle turns about its rotation modifier's axis, or a random one.
+      const axis: number[] = rotation?.axis ? [...rotation.axis] : [1, 0, 0];
+      if (rotation?.randomAxis) {
+        axis[0] = rand() * 2 - 1;
+        axis[1] = rand() * 2 - 1;
+        axis[2] = rand() * 2 - 1;
+      }
+      normalize(axis);
+      for (let k = 0; k < 3; k++) s[o + S_MESH_AXIS + k] = axis[k] ?? 0;
+      s[o + S_MESH_CONTACT] = 0;
+    }
+    if (rotation && (data.mesh || this.#active(rotation.name))) {
       const name = rotation.name;
       s[o + S_ANGLE] =
         this.#param(name, 'rotationAngle', rotation.angle) +
@@ -673,6 +825,7 @@ export class ParticleSimulation implements ParticleSource {
       s[o + S_SPIN] = spin;
     }
     const subTexture = data.modifiers.subTexture;
+    if (data.mesh) return;
     if (subTexture && this.#active(subTexture.name)) {
       s[o + S_FRAME_FIXED] = -1;
       s[o + S_FRAME_START] =
