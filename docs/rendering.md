@@ -899,17 +899,39 @@ TODO(M13) in the renderer; the state and its weather are as the engine's there.
 The water shader (`shaders/water.wgsl`; the WATR values it reads:
 [formats/esm.md](formats/esm.md#water)) and the water's displacement field.
 
-**Under water** the view takes the water type's own imagespace (WATR INAM: UnderwaterImageSpace,
-Dawnguard's DLC1_UnderwaterImageSpace, the Soul Cairn's DLC01UnderLava01) in place of the
-weather's or the cell's, the screen modifiers on top (`src/world/underwater.ts`). Where the view
-crosses the surface (observed in the original): each frame the four corners of the camera's near
-plane are measured against the water's height (`underwaterCrossing`); all above, the view is
-above water; all below, the underwater view covers the image; across, the engine draws the part
-of the screen under the surface into its underwater mask (the ISUnderwaterMask pass: cleared,
-then a quad from the line where the water's plane meets the near plane, turned by the camera's
-roll, down to the screen's lower edge) and the underwater view applies there alone. TODO(M13):
-ours switches the whole view by the camera's height (no mask), and how the engine lights the
-underwater fog's colours is unread (ours: the shallow and deep colours by the scene's light).
+**Under water** (`src/world/underwater.ts`, observed in the original). Each frame the four
+corners of the camera's near plane are measured against the water at the camera
+(`nearPlaneWater`, from the inverse view-projection): all above, the view is above water; all
+below, the underwater view covers the image; across, the engine draws the part of the screen
+under the surface into its underwater mask (the ISUnderwaterMask pass: cleared, then a quad from
+the line where the water's plane meets the near plane, turned by the camera's roll, down to the
+screen's lower edge) and the underwater view applies there alone. The engine only tries this
+with the camera under the water or within 15 units of a water's surface. A point's height on the
+near plane is linear in its screen position, so ours passes the mask as a half-plane of the
+screen (x · a + y · b + c below 0) and tests it per pixel instead of drawing a quad.
+
+The underwater fog is an image pass, not the scene's fog (that stays the weather's or the
+cell's): the depth of field effect turns on its fogged shader wholly under and its masked
+fogged shader across. Their shaders (read from the shader cache) take the view depth from the
+depth buffer and mix the image toward the fog colour by saturate((depth − near) / (far − near))
+with the water type's underwater fog near and far planes (WATR DNAM); the masked one multiplies
+that by the mask. Where the sky is not blurred, open sky (all nine depth taps at the far end)
+reads the raw depth (1) as its distance and is barely fogged. The fog colour is the water's
+shallow colour times the weather's water multiplier (sky colour 14; its alpha, 1, scales the
+fog); indoors, with no weather, the shallow colour. The water type's underwater fog amount
+reaches the shader's constants but is not read. Ours does the same in the depth of field pass
+(`shaders/dof.wgsl`, on the tone-mapped image), running it for the underwater view even
+without a depth of field.
+
+The water type's own imagespace (WATR INAM: UnderwaterImageSpace, Dawnguard's
+DLC1_UnderwaterImageSpace, the Soul Cairn's DLC01UnderLava01): wholly under, the depth of field
+takes its values; across, the masked shader takes the scene's depth of field outside the mask
+and the water imagespace's inside it (one blurred copy, at the scene's radius). Five water types
+name no imagespace (DefaultWaterCold among them): no depth of field inside the mask there.
+`node tools/water-info.ts --underwater` lists each type's fog, planes and imagespace. Ours
+takes the water imagespace in place of the weather's or the cell's, the screen modifiers on top,
+once the near plane is wholly under. TODO(M13): where the engine swaps in that imagespace's
+colour terms (tint, saturation, brightness) is unread.
 
 **Which water.** A cell's water is its XCWT type, else its world's water (NAM2, from the
 parent world when the world takes its water from it), at its XCLW height, else the world's

@@ -40,7 +40,19 @@ The flow-map techniques draw four staggered taps whose coordinate is 64 a cell t
 √(1.01 − the tap's blue), moved by its alpha times its rate; near the camera the flow normal is
 the water's normal, giving way to the first noise layer's by the noise falloff. Where the view
 crosses the surface: the near plane's corners against the water, the underwater mask drawn by
-the line where the water's plane cuts the near plane (#15, read; ours not yet split).
+the line where the water's plane cuts the near plane (#15, built in round 13).
+
+Done in round 13, observed in the original: the underwater view (#13, #15). The camera's near
+plane against the water at the camera gives above, across or under; across, the underwater
+mask is the screen below the line where the water's plane cuts the near plane (a half-plane of
+the screen: on the near plane a point's height is linear in its screen position, the camera's
+roll turning it). The underwater fog is not the scene's fog but the depth of field's fogged
+pass: the image turns toward the fog colour by the view depth, from none at the water type's
+underwater fog near plane to all of it at its far plane, inside the mask (the whole image when
+wholly under); the fog colour is the water's shallow colour times the weather's water
+multiplier (white indoors), the fog amount unread by the shader. Inside the mask the depth of
+field is the water's imagespace's. `node tools/water-info.ts --underwater` lists every water
+type's inputs (58 types; 5 name no imagespace: no depth of field inside the mask there).
 
 Done in round 11, observed in the original: the image-based lens flare of bright lights
 (bIBLFEnable, #33) as the engine's passes and its shader cache's shaders draw it: no list of
@@ -203,8 +215,8 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 
 ## Next biggest open items
 
-1. The underwater mask where the view crosses the surface and how the underwater fog's colours
-   are lit (#15); the character light's slot 11 by the draw order (#62).
+1. Where the engine swaps in the water's imagespace's colour terms (#14); the character
+   light's slot 11 by the draw order (#62).
 2. The details rows 80 and 82 to 84 leave unread: how the shadow mask mixes a fading focus map,
    the kill cameras' lead actor and near-target cut-away, the plain decals' spacing on a node,
    the first bone of an unseen actor whose root left its bound.
@@ -225,9 +237,9 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 | 10  | Whether focus maps draw only their actor                           | done   | focus-shadows.ts: only their actor, and they shade only its pixels (its scene's draws name the map); the cascades keep its shadow on the rest; each map's size by its distance to the camera                                                                                                                                                   |
 | 11  | Shadow lights: omnidirectional, spot, hemisphere                   | done   | light-shadows.ts                                                                                                                                                                                                                                                                                                                               |
 | 12  | Fog: weather, XCLL and LGTM (near, far, power, max)                | done   | frame.wgsl                                                                                                                                                                                                                                                                                                                                     |
-| 13  | Underwater fog                                                     | done   | underwater.ts                                                                                                                                                                                                                                                                                                                                  |
-| 14  | Underwater imagespace (WATR INAM)                                  | done   | underwater.ts, world-sky.ts                                                                                                                                                                                                                                                                                                                    |
-| 15  | Underwater colour (how the water's colours are lit, the tint)      | open   | the water's imagespace is the one path; read: across the surface the original's underwater mask (ISUnderwaterMask) keeps the underwater view to the screen below the water line (underwater.ts underwaterCrossing); ours switches by the camera's height; how the fog colours are lit is inferred                                              |
+| 13  | Underwater fog                                                     | done   | underwater.ts, post.ts, shaders/dof.wgsl: the depth of field's fogged pass by the view depth, the water type's near and far planes, inside the underwater mask                                                                                                                                                                                 |
+| 14  | Underwater imagespace (WATR INAM)                                  | open   | underwater.ts, world-sky.ts; its depth of field inside the mask is the original's; where the engine swaps in its colour terms (tint, saturation, brightness) is unread: ours with the near plane wholly under                                                                                                                                  |
+| 15  | Underwater colour (how the water's colours are lit, the tint)      | done   | underwater.ts nearPlaneWater, renderer.ts, shaders/dof.wgsl: the near plane against the water (above, across, under), the underwater mask below the line where the water cuts the near plane; the fog colour the shallow colour times the weather's water multiplier                                                                           |
 | 16  | Terrain LOD                                                        | done   | terrain.ts                                                                                                                                                                                                                                                                                                                                     |
 | 17  | Object LOD (.bto, HD LOD)                                          | done   | scene-renderer LOD materials                                                                                                                                                                                                                                                                                                                   |
 | 18  | Tree LOD billboards                                                | done   | tree-lod.ts                                                                                                                                                                                                                                                                                                                                    |
