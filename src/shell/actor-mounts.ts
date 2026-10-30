@@ -46,6 +46,7 @@ import type { PlacedActor } from './actors.ts';
 import type { GameSession } from './game-session.ts';
 import type { Activatable } from './play-session.ts';
 import type { PlayerView } from './race-menu.ts';
+import { DragonTargetLock } from './dragon-target-lock.ts';
 import type { Terminal } from './terminal.ts';
 
 /** KYWD ActorTypeHorse (Skyrim.esm): the races one rides (HorseEvents' condition). */
@@ -78,8 +79,6 @@ const KIND_EVENTS: Readonly<
 const PATROL_AHEAD = 4096;
 /** A dragon flown to a place (the map's fast travel) has arrived within this (units). */
 const TRAVEL_ARRIVED = 2048;
-/** The actor the player sets their dragon on: the nearest to their view within this (units). */
-const DRAGON_TARGET_REACH = 8192;
 /** FACT PlayerHorseFaction (Skyrim.esm): the horses the player bought (the stables quest). */
 const PLAYER_HORSE_FACTION = 0x68d78;
 /** The rider's event getting off a horse in the water (IDLE DismountSwim). */
@@ -105,13 +104,13 @@ interface Ride {
   landing: boolean;
   /** A dragon flown to a place (the map's fast travel). */
   travel: Vec3 | undefined;
-  /** The Right Attack button was held at the last frame (the dragon's target on a press). */
-  attacking: boolean;
+  /** The lock's button (Jump) and Hotkey1 and Hotkey2 were held at the last frame. */
+  held: { lock: boolean; back: boolean; on: boolean };
   /**
-   * The target the player locked their dragon on (the dragon's camera looks at it: src/shell/
-   * camera-states.ts), if any.
+   * The target lock the player set their dragon on (the dragon's camera looks at its target:
+   * src/shell/camera-states.ts).
    */
-  locked: number | undefined;
+  readonly lock: DragonTargetLock;
   phase: 'mounting' | 'riding' | 'dismounting';
   /** Seconds in the phase (a paired animation's timeout). */
   elapsed: number;
@@ -345,7 +344,8 @@ export class ActorMounts {
     if (ride?.kind !== 'dragon' || ride.phase !== 'riding') return undefined;
     const dragon = this.#options.get(ride.horse);
     if (!dragon) return undefined;
-    const target = ride.locked === undefined ? undefined : this.#options.get(ride.locked);
+    const locked = ride.lock.locked;
+    const target = locked === undefined ? undefined : this.#options.get(locked);
     return {
       heading: dragon.heading,
       feet: [...dragon.position],
@@ -476,8 +476,8 @@ export class ActorMounts {
       patrol: false,
       landing: false,
       travel: undefined,
-      attacking: true,
-      locked: undefined,
+      held: { lock: true, back: true, on: true },
+      lock: new DragonTargetLock(),
       phase: instant ? 'riding' : 'mounting',
       elapsed: 0,
       done: undefined,
@@ -868,25 +868,28 @@ export class ActorMounts {
       }
       return;
     }
-    // The player's target: the actor nearest their view, locked (the dragon's camera looks at
-    // it). Observed in the original: a locked target that dies, is disabled or unloaded, is the
-    // player or their mount gives way to the next one, none left lets the lock go.
-    // TODO(M13): the original's list of targets (its order) and its buttons to cycle and let go.
-    const attacking = player.isHeld('Right Attack/Block');
-    if (attacking && !ride.attacking) {
-      const target = this.#viewTarget(player.position, player.forward, ride.horse);
-      ride.locked = target;
-      if (target !== undefined) this.#options.startCombat?.(ride.horse, target);
+    // The dragon's target lock (src/shell/dragon-target-lock.ts, observed in the original):
+    // Jump locks and lets go (or holds it, bTargetLockIsToggle 0), Hotkey1 and Hotkey2 step
+    // back and on through the targets; a target that will no longer do gives way to the next.
+    const valid = (reference: number): boolean => this.#lockable(reference, ride.horse);
+    const lockHeld = player.isHeld('Jump');
+    const toggle = this.#options.session.ini.number('GamePlay', 'bTargetLockIsToggle') !== 0;
+    const lockPressed = lockHeld && !ride.held.lock;
+    const lockReleased = !lockHeld && ride.held.lock;
+    const before = ride.lock.locked;
+    if (lockPressed && (!toggle || before === undefined)) {
+      const range = this.#options.session.ini.number('GamePlay', 'fTargetLockXYRange');
+      ride.lock.lock(this.#options.actors?.() ?? [], player.position, range, valid);
+    } else if ((lockPressed && toggle) || (lockReleased && !toggle)) {
+      ride.lock.release();
     }
-    ride.attacking = attacking;
-    if (ride.locked !== undefined) {
-      const target = this.#options.get(ride.locked);
-      if (!target || target.dead) {
-        const next = this.#viewTarget(player.position, player.forward, ride.horse);
-        ride.locked = next;
-        if (next !== undefined) this.#options.startCombat?.(ride.horse, next);
-      }
-    }
+    const back = player.isHeld('Hotkey1');
+    const on = player.isHeld('Hotkey2');
+    if (ride.lock.locked !== undefined && back && !ride.held.back) ride.lock.cycle(false, valid);
+    if (ride.lock.locked !== undefined && on && !ride.held.on) ride.lock.cycle(true, valid);
+    ride.held = { lock: lockHeld, back, on };
+    const locked = ride.lock.check(valid);
+    if (locked !== undefined && locked !== before) this.#options.startCombat?.(ride.horse, locked);
     if (ride.travel) return;
     if (player.isHeld('Forward')) {
       ride.patrol = true;
@@ -902,27 +905,25 @@ export class ActorMounts {
     }
   }
 
-  /** The living actor nearest the player's view line (a dragon's target), not their mount. */
-  #viewTarget(eye: Vec3, forward: Vec3, mount: number): number | undefined {
-    let best: { reference: number; off: number } | undefined;
-    for (const staged of this.#options.actors?.() ?? []) {
-      if (staged.dead || staged.reference === mount || staged.reference === PLAYER_REF) continue;
-      const d: Vec3 = [
-        staged.position[0] - eye[0],
-        staged.position[1] - eye[1],
-        staged.position[2] - eye[2],
-      ];
-      const along = d[0] * forward[0] + d[1] * forward[1] + d[2] * forward[2];
-      if (along <= 0 || along > DRAGON_TARGET_REACH) continue;
-      const off =
-        Math.hypot(
-          d[0] - forward[0] * along,
-          d[1] - forward[1] * along,
-          d[2] - forward[2] * along,
-        ) / along;
-      if (!best || off < best.off) best = { reference: staged.reference, off };
-    }
-    return best?.reference;
+  /**
+   * Whether the dragon's lock may take an actor (observed in the original): loaded, enabled
+   * and living, not the player or their mount. TODO(M13): the engine also leaves out children,
+   * the unconscious and the essential who are down, which the stage does not tell.
+   */
+  #lockable(reference: number, mount: number): boolean {
+    if (reference === mount || reference === PLAYER_REF) return false;
+    const staged = this.#options.get(reference);
+    return staged !== undefined && !staged.dead && staged.enabled(reference);
+  }
+
+  /**
+   * Whether the player's press is the dragon's (Hotkey1 and Hotkey2 step through its locked
+   * targets instead of using favorites).
+   */
+  takesPress(name: string): boolean {
+    if (name !== 'Hotkey1' && name !== 'Hotkey2') return false;
+    const ride = this.#rides.get(PLAYER_REF);
+    return ride?.kind === 'dragon' && ride.lock.locked !== undefined;
   }
 
   /**

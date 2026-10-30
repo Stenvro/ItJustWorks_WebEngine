@@ -85,6 +85,7 @@ const OCCLUSION_DEPTH = 8192;
 /** And is redrawn at least this often (frames), as cells stream in. */
 const OCCLUSION_REFRESH_FRAMES = 120;
 import type { Mat4, Vec3 } from './math.ts';
+import type { ParticleBodies } from './particle-sim.ts';
 import {
   mirroredCamera,
   REFLECTION_FACES,
@@ -176,6 +177,8 @@ export interface SceneView {
    * objects take theirs each frame (portal-strict lights: SceneRenderer.roomAt).
    */
   readonly roomAt?: (point: Vec3) => number;
+  /** The physics world mesh particles' rigid bodies live in (src/physics/particle-bodies.ts). */
+  readonly particleBodies?: () => ParticleBodies | undefined;
   /** Sky colours for water reflections and the weather's water tint. */
   readonly water?: () => WaterFrame | undefined;
   /** Imagespace of the frame (eye adaptation, bloom, grading); none: the image as rendered. */
@@ -616,6 +619,7 @@ export class Renderer {
     // their particle systems.
     if (view) {
       this.scene.roomAt = view.roomAt;
+      this.scene.particleBodies = view.particleBodies?.();
       this.scene.animate(scenes, view.clock?.() ?? timeSeconds, view.camera.position, wind);
     }
     const overlay = this.overlay;

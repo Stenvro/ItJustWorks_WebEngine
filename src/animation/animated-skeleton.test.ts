@@ -138,6 +138,13 @@ describe('object skeletons', () => {
     expect(skeleton.pose.worlds[2 * 16 + 12]).toBeCloseTo(2.5);
   });
 
+  it('measures the bone LOD across the ground, by the skeleton scale', () => {
+    const camera = { position: [0, 0, 0] as const, forward: [0, 1, 0] as const, fov: 80 };
+    // 3000 above the camera counts for nothing; a creature twice the size counts half as far.
+    expect(animationRate([0, 1000, 3000], camera).boneLodDistance).toBeCloseTo(1000);
+    expect(animationRate([0, 1000, 0], camera, undefined, 2).boneLodDistance).toBeCloseTo(500);
+  });
+
   it('says how often by distance, field of view and facing', () => {
     const camera = { position: [0, 0, 0] as const, forward: [0, 1, 0] as const, fov: 80 };
     expect(animationRate([0, 300, 0], camera).interval).toBe(0);

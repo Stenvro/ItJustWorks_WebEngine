@@ -40,8 +40,11 @@ export interface AnimationRate {
   readonly interval: number;
   readonly interpolate: boolean;
   readonly slop: number;
-  /** The skeleton's distance from the camera (its bone LOD); undefined: not known. */
-  readonly cameraDistance?: number;
+  /**
+   * The skeleton's bone LOD distance (BehaviorRuntime.boneLodDistance): from the camera across
+   * the ground, by its scale; undefined: not known.
+   */
+  readonly boneLodDistance?: number;
 }
 
 const EVERY_FRAME: AnimationRate = { interval: 0, interpolate: false, slop: 0 };
@@ -102,7 +105,7 @@ export function animateSkeletons(
         const levels = animated.pose.skeleton.rig.boneLod;
         if (levels) behavior.setBoneLod(levels);
       }
-      behavior.cameraDistance = wanted.cameraDistance;
+      behavior.boneLodDistance = wanted.boneLodDistance;
     }
     let interval = wanted.interval;
     // The graph may forbid it (bDisableInterp: inferred from the engine's variable names).
@@ -244,6 +247,8 @@ export interface AnimationRateSettings {
   readonly nearDistance: number;
   readonly farDistance: number;
   readonly slop: number;
+  /** fBoneLODDistanceScale: the bone LOD's distances are measured times this. */
+  readonly boneLodScale: number;
 }
 
 /** The engine's built-in values. */
@@ -254,6 +259,7 @@ export const ANIMATION_RATE: AnimationRateSettings = {
   nearDistance: 400,
   farDistance: 800,
   slop: 0.25,
+  boneLodScale: 1,
 };
 
 /** The field of view (degrees across a 4:3 frame) the distances are given for. */
@@ -271,6 +277,7 @@ export function animationRateSettings(ini: {
     nearDistance: ini.number('Animation', 'fAnimInterpNearDist'),
     farDistance: ini.number('Animation', 'fAnimInterpFarDist'),
     slop: ini.number('Animation', 'fAnimInterpSlop'),
+    boneLodScale: ini.number('Animation', 'fBoneLODDistanceScale'),
   };
 }
 
@@ -286,7 +293,9 @@ export function fovAcross(fovY: number): number {
  * beyond, every fAnimInterpMinTime seconds rising evenly to fAnimInterpMaxTime at
  * fAnimInterpFarDist and beyond; one behind the camera every fAnimInterpMaxTime. Its pose is
  * interpolated between the updates, but not for one behind the camera beyond the far distance
- * (nothing of it is seen: it steps).
+ * (nothing of it is seen: it steps). Its bone LOD's distance (observed in the original) is
+ * the camera's across the ground (height left out), times fBoneLODDistanceScale over the
+ * skeleton's `scale`: a large creature counts as nearer.
  */
 export function animationRate(
   at: readonly [number, number, number],
@@ -297,19 +306,20 @@ export function animationRate(
     readonly fov: number;
   },
   settings: AnimationRateSettings = ANIMATION_RATE,
+  scale = 1,
 ): AnimationRate {
   const dx = at[0] - camera.position[0];
   const dy = at[1] - camera.position[1];
   const dz = at[2] - camera.position[2];
-  const cameraDistance = Math.hypot(dx, dy, dz);
-  if (!settings.enabled) return { ...EVERY_FRAME, cameraDistance };
-  const distance = (cameraDistance * REFERENCE_FOV) / Math.max(1, camera.fov);
+  const boneLodDistance = (Math.hypot(dx, dy) * settings.boneLodScale) / Math.max(1e-6, scale);
+  if (!settings.enabled) return { ...EVERY_FRAME, boneLodDistance };
+  const distance = (Math.hypot(dx, dy, dz) * REFERENCE_FOV) / Math.max(1, camera.fov);
   const forward = camera.forward;
   const seen = !forward || dx * forward[0] + dy * forward[1] + dz * forward[2] >= 0;
   const { minTime, maxTime, nearDistance: near, farDistance: far, slop } = settings;
-  if (!seen) return { interval: maxTime, interpolate: distance <= far, slop, cameraDistance };
-  if (distance <= near) return { interval: 0, interpolate: true, slop, cameraDistance };
+  if (!seen) return { interval: maxTime, interpolate: distance <= far, slop, boneLodDistance };
+  if (distance <= near) return { interval: 0, interpolate: true, slop, boneLodDistance };
   const interval =
     distance >= far ? maxTime : minTime + ((maxTime - minTime) * (distance - near)) / (far - near);
-  return { interval, interpolate: true, slop, cameraDistance };
+  return { interval, interpolate: true, slop, boneLodDistance };
 }

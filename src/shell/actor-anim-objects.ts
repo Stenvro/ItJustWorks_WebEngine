@@ -16,7 +16,7 @@
 
 import { AnimObjectList, type HeldAnimObject } from '../animation/anim-objects.ts';
 import type { ActorPose } from '../animation/skeleton.ts';
-import type { ModelTextureSwaps } from '../render/actor-model.ts';
+import { alternateSwaps, type ModelTextureSwaps } from '../render/actor-model.ts';
 import { multiply } from '../render/math.ts';
 import type { RenderPort } from '../render/render-port.ts';
 import type {
@@ -269,17 +269,13 @@ export class ActorAnimObjects {
     if (attached && entry.actor === PLAYER_REF) this.#playerHolds = true;
   }
 
-  /** The texture sets of an object's alternate textures (MODS), by shape. */
+  /** The texture sets of an object's alternate textures (MODS), by 3D index. */
   async #swaps(form: AnimObjectRecord): Promise<ModelTextureSwaps | undefined> {
     if (form.alternateTextures.length === 0) return undefined;
-    const shapes = await Promise.all(
-      form.alternateTextures.map(async (swap) => {
-        const textures = await this.#textureSet(swap.textureSet);
-        return textures ? [{ shape: swap.shape, textures }] : [];
-      }),
+    const alternates = await alternateSwaps(form.alternateTextures, (formId) =>
+      this.#textureSet(formId),
     );
-    const flat = shapes.flat();
-    return flat.length > 0 ? { shapes: flat } : undefined;
+    return alternates.length > 0 ? { alternates } : undefined;
   }
 
   #textureSet(formId: number): Promise<readonly string[] | undefined> {

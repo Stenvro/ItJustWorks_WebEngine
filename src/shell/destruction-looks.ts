@@ -12,7 +12,7 @@ import type { CollisionBody, CollisionData } from '../physics/collision-data.ts'
 import { Layer } from '../physics/collision-layers.ts';
 import type { PlacedCollision } from '../physics/physics-world.ts';
 import { identity } from '../render/math.ts';
-import type { ModelTextureSwaps } from '../render/actor-model.ts';
+import { alternateSwaps, type ModelTextureSwaps } from '../render/actor-model.ts';
 import type { RenderPort } from '../render/render-port.ts';
 import type { GpuScene, InstanceVisibility, ModelInstance } from '../render/scene-renderer.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -261,17 +261,13 @@ export class DestructionLooks {
     return { key, scene, visibility, group, play };
   }
 
-  /** DMDS: the texture sets' textures by shape. */
+  /** DMDS: the texture sets' textures by 3D index. */
   async #swaps(look: DestructionLook): Promise<ModelTextureSwaps | undefined> {
     if (look.alternateTextures.length === 0) return undefined;
-    const shapes = await Promise.all(
-      look.alternateTextures.map(async (swap) => {
-        const textures = await this.#textureSet(swap.textureSet);
-        return textures ? [{ shape: swap.shape, textures }] : [];
-      }),
+    const alternates = await alternateSwaps(look.alternateTextures, (formId) =>
+      this.#textureSet(formId),
     );
-    const flat = shapes.flat();
-    return flat.length > 0 ? { shapes: flat } : undefined;
+    return alternates.length > 0 ? { alternates } : undefined;
   }
 
   #textureSet(formId: number): Promise<readonly string[] | undefined> {
