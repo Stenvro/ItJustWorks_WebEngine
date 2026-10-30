@@ -22,6 +22,7 @@ const SLSF1_RECEIVE_SHADOWS = 0x100u;
 const SLSF1_EYE_ENVIRONMENT_MAPPING = 0x20000u;
 // nif.xml Hair_Soft_Lighting: the flag that picks the original's hair technique.
 const SLSF1_HAIR = 0x40000u;
+const SLSF1_SCREENDOOR_ALPHA_FADE = 0x80000u;
 // Decal and Dynamic_Decal.
 const SLSF1_DECALS = 0xc000000u;
 const SLSF1_MODEL_SPACE_NORMALS = 0x1000u;
@@ -277,7 +278,11 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
   // The top byte holds the distance fade (common.wgsl fadeDiscarded), bits 8-23 the draw's
   // light list, bits 5-6 its fade kind (lodFadeValue).
   let shaderType = draw.flags.w & 0x1fu;
-  if (fadeDiscarded(in.position.xy) || reflectionClipped(in.worldPos)) {
+  // Screendoor_Alpha_Fade (observed in the original): a shape with it fades by blending, not by
+  // the stipple; while it fades it is drawn in the blended pass (scene-renderer.ts fadeBlend).
+  let fadeLevel = draw.flags.w >> 24u;
+  let blendedFade = !DEFERRED && (flags1 & SLSF1_SCREENDOOR_ALPHA_FADE) != 0u && fadeLevel > 0u;
+  if ((!blendedFade && fadeDiscarded(in.position.xy)) || reflectionClipped(in.worldPos)) {
     discard;
   }
   let multiPass = (drawFlags & DRAW_MULTI_PASS) != 0u;
@@ -326,6 +331,9 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
 
   var base = diffuse.rgb;
   var alpha = diffuse.a * draw.params.y;
+  if (blendedFade) {
+    alpha *= 1.0 - f32(fadeLevel) / 255.0;
+  }
   // Tree_Anim shapes keep their leaf weights in the vertex alpha.
   if ((flags1 & SLSF1_VERTEX_ALPHA) != 0u && (drawFlags & DRAW_TREE_ANIM) == 0u) {
     alpha *= in.color.a;
@@ -473,12 +481,13 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
 
   // Shadows as the original's technique picks them: Receive_Shadows, Assume_Shadowmask or a decal
   // flag lets a shape take the scene's shadow mask (the sun's and the shadow lights' shadows);
-  // an alpha-blended shape takes none of it unless it carries Assume_Shadowmask or is a decal.
+  // an alpha-blended shape (or one fading by blending) takes none of it unless it carries
+  // Assume_Shadowmask or is a decal.
   // TODO(M13): the original reads the opaque scene's screen-space mask at the pixel; ours looks
   // the shadow maps up at the blended surface itself.
   let maskAssumed = (flags2 & SLSF2_ASSUME_SHADOWMASK) != 0u || (flags1 & SLSF1_DECALS) != 0u;
   let receivesShadows = ((flags1 & SLSF1_RECEIVE_SHADOWS) != 0u || maskAssumed) &&
-    ((drawFlags & DRAW_ALPHA_BLEND) == 0u || maskAssumed);
+    (((drawFlags & DRAW_ALPHA_BLEND) == 0u && !blendedFade) || maskAssumed);
   let shadow = select(1.0, sunShadow(in.worldPos, vertexNormal), receivesShadows);
   let lights = objectLighting(
     shadingNormal,
