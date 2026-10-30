@@ -116,6 +116,17 @@ export const CONSOLE_COMMANDS: readonly ConsoleCommandInfo[] = [
     'Turn the player’s collision off and on (fly through the world).',
   ),
   c('ToggleMenus', 'TM', false, [], 'Hide and show the menus and HUD.'),
+  // The debug text pages (the Debug Text Menu): the original keeps the three commands, but their
+  // actions return at once and nothing else opens the menu (docs/ui.md, "The menu stack").
+  c('ToggleDebugText', 'TDT', false, [], 'Show the debug text pages on the screen.'),
+  c(
+    'SetDebugText',
+    'sdt',
+    false,
+    [p('String (Optional)', string, true), p('Integer (Optional)', int, true)],
+    'Choose the debug text page shown.',
+  ),
+  c('SaveDebugTextPages', 'SaveDTP', false, [], 'Save the debug text pages to the INI file.'),
   c(
     'Help',
     undefined,

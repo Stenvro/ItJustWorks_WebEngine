@@ -76,6 +76,7 @@ import {
 import { parsePerk, type PerkRecord } from '../../world/perk-records.ts';
 import { parseSkill } from '../../world/perk-trees.ts';
 import type { ActorInfo } from './actor-engine.ts';
+import { globalValue } from './condition-values.ts';
 import { PLAYER_REF } from './forms.ts';
 import type { ScriptRuntime } from './runtime.ts';
 
@@ -488,7 +489,7 @@ export class ProgressionEngine {
   }
 
   /** Whether the player can take a perk now, and if not why. */
-  async perkAvailability(perk: number, pointsValue?: number): Promise<PerkAvailability> {
+  async perkAvailability(perk: number, pointsGlobal?: number): Promise<PerkAvailability> {
     const runtime = this.#runtime;
     const actors = runtime.actors;
     const record = await this.#perk(perk);
@@ -508,27 +509,27 @@ export class ProgressionEngine {
     if (record.level > (await actors.playerLevel())) return 'requirements';
     if (!(await runtime.conditionsHold(record.conditions, runtime.referenceHandle(PLAYER_REF))))
       return 'requirements';
-    return (await this.perkPointsOf(pointsValue)) > 0 ? 'available' : 'noPoints';
+    return (await this.perkPointsOf(pointsGlobal)) > 0 ? 'available' : 'noPoints';
   }
 
   /**
-   * The perk points to spend: the player's, or a beast form's (its actor value: WerewolfPerks,
-   * VampirePerks; src/gameplay/beast-perk-trees.ts).
+   * The perk points to spend: the player's, or a beast form's (the global its default object
+   * names: DLC1WerewolfPerkPoints, DLC1VampirePerkPoints; src/gameplay/beast-perk-trees.ts).
    */
-  async perkPointsOf(pointsValue?: number): Promise<number> {
+  async perkPointsOf(pointsGlobal?: number): Promise<number> {
     const runtime = this.#runtime;
-    if (pointsValue === undefined) return runtime.perkPoints;
-    return Math.max(0, Math.floor((await runtime.actors.value(PLAYER_REF, pointsValue)).current));
+    if (pointsGlobal === undefined) return runtime.perkPoints;
+    return Math.max(0, Math.floor(await globalValue(runtime, pointsGlobal)));
   }
 
   /** Takes a perk for a perk point if it is available (perkAvailability). */
-  async takePerk(perk: number, pointsValue?: number): Promise<boolean> {
-    if ((await this.perkAvailability(perk, pointsValue)) !== 'available') return false;
+  async takePerk(perk: number, pointsGlobal?: number): Promise<boolean> {
+    if ((await this.perkAvailability(perk, pointsGlobal)) !== 'available') return false;
     const runtime = this.#runtime;
-    if (pointsValue === undefined) runtime.perkPoints = Math.max(0, runtime.perkPoints - 1);
+    if (pointsGlobal === undefined) runtime.perkPoints = Math.max(0, runtime.perkPoints - 1);
     else {
-      const value = await runtime.actors.value(PLAYER_REF, pointsValue);
-      runtime.actors.setBase(PLAYER_REF, pointsValue, Math.max(0, value.base - 1));
+      const points = await globalValue(runtime, pointsGlobal);
+      runtime.state.globals.set(pointsGlobal, Math.max(0, points - 1));
     }
     await runtime.perks.add(PLAYER_REF, perk);
     return true;

@@ -20,6 +20,9 @@ import { parsePerk, type PerkRecord } from '../src/world/perk-records.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
+import { beastTree } from '../src/gameplay/beast-perk-trees.ts';
+import { DefaultObjects } from '../src/world/default-objects.ts';
+import { parseSkill } from '../src/world/perk-trees.ts';
 
 /** Skyrim.esm. */
 const ARMSMAN_00 = 0xbabe4;
@@ -222,4 +225,35 @@ describe.skipIf(!hasGamedata())('perks on the local game data', () => {
     await runtime.magic.dispelSpell(PLAYER_REF, item.formId);
     expect(await runtime.perks.has(PLAYER_REF, DRAGONHIDE_PERK)).toBe(false);
   }, 60_000);
+
+  it("buys a beast form's perks with its default object's global, not the player's points", async () => {
+    const defaults = await DefaultObjects.read(db);
+    const editorId = async (formId: number | undefined) =>
+      formId === undefined ? undefined : (await db.get(formId))?.editorId;
+    expect(await editorId(defaults.get('RIWR'))).toBe('WerewolfBeastRace');
+    expect(await editorId(defaults.get('RIVR'))).toBe('DLC1VampireBeastRace');
+    const werewolf = beastTree(true, defaults.get('RIWR'), (use) => defaults.get(use));
+    const points = werewolf ? defaults.get(werewolf.pointsGlobal) : undefined;
+    expect(await editorId(points)).toBe('DLC1WerewolfPerkPoints');
+    const lord = beastTree(true, defaults.get('RIVR'), (use) => defaults.get(use));
+    expect(await editorId(lord ? defaults.get(lord.pointsGlobal) : undefined)).toBe(
+      'DLC1VampirePerkPoints',
+    );
+    if (points === undefined) return;
+    // A perk that starts the werewolf's tree (a child of its root) wants one of those points.
+    const record = await runtime.forms.actorValueFormNamed('AVHealRatePowerMod');
+    expect(record?.text('FULL')).toBe('Werewolf');
+    if (!record) return;
+    const tree = parseSkill(record);
+    const root = tree.nodes.find((node) => node.index === 0);
+    const first = tree.nodes.find((node) => root?.children.includes(node.index))?.perk;
+    if (first === undefined) throw new Error('the werewolf tree has no first perk');
+    runtime.state.globals.set(points, 0);
+    const before = runtime.perkPoints;
+    expect(await runtime.progression.perkAvailability(first, points)).toBe('noPoints');
+    runtime.state.globals.set(points, 1);
+    expect(await runtime.progression.takePerk(first, points)).toBe(true);
+    expect(runtime.state.globals.get(points)).toBe(0);
+    expect(runtime.perkPoints).toBe(before);
+  });
 });

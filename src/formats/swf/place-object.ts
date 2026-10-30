@@ -50,6 +50,15 @@ function skipMatrix(bytes: Uint8Array, at: number): number {
   return bits.end;
 }
 
+/** Whether a MATRIX turns or skews (its RotateSkew0 or RotateSkew1 is not 0). */
+function matrixTurns(bytes: Uint8Array, at: number): boolean {
+  const bits = new Bits(bytes, at);
+  if (bits.unsigned(1)) bits.unsigned(bits.unsigned(5) * 2);
+  if (!bits.unsigned(1)) return false;
+  const size = bits.unsigned(5);
+  return bits.unsigned(size) !== 0 || bits.unsigned(size) !== 0;
+}
+
 function skipColorTransform(bytes: Uint8Array, at: number): number {
   const bits = new Bits(bytes, at);
   const add = bits.unsigned(1);
@@ -113,6 +122,8 @@ export interface Placement {
   readonly depth: number;
   readonly character: number | undefined;
   readonly name: string | undefined;
+  /** Its matrix turns or skews what it places. */
+  readonly turned: boolean;
 }
 
 export function readPlacement(body: Uint8Array, code: number): Placement {
@@ -128,6 +139,7 @@ export function readPlacement(body: Uint8Array, code: number): Placement {
     character = (body[at] ?? 0) | ((body[at + 1] ?? 0) << 8);
     at += 2;
   }
+  const turned = (flags & 0x04) !== 0 && matrixTurns(body, at);
   if (flags & 0x04) at = skipMatrix(body, at);
   if (flags & 0x08) at = skipColorTransform(body, at);
   if (flags & 0x10) at += 2; // ratio
@@ -136,7 +148,7 @@ export function readPlacement(body: Uint8Array, code: number): Placement {
     const end = skipString(body, at);
     name = decodeUtf8(body, at, end - 1) ?? decodeWindows1252(body, at, end - 1);
   }
-  return { depth, character, name };
+  return { depth, character, name, turned };
 }
 
 /** Where a PlaceObject2/3's character id sits, or undefined if it places none (a move). */

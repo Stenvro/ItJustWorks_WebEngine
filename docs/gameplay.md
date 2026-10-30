@@ -1517,6 +1517,15 @@ WerewolfChange player"` (twice: the first cast only ends the Companions' "virgin
 - **Game.SetBeastForm** (`runtime.beastForm`): the inventory, magic and favorites menus stay
   shut (their keys and the tween menu's choices: src/shell/game-menus.ts); the map, skills and
   journal open (UESP "Skyrim:Werewolf").
+- **The beast's perk tree** (src/gameplay/beast-perk-trees.ts): in a beast form the skills menu
+  shows the form's tree alone, the form being the player's race's by the default objects
+  WerewolfRace (RIWR) and VampireRace (RIVR). Its perks cost the points in the global the
+  default objects WerewolfAvailablePerks (AVWP: DLC1WerewolfPerkPoints) and VampireAvailablePerks
+  (AVVP: DLC1VampirePerkPoints) name, which the feeding scripts raise
+  (DLC1WerewolfFeedPointsScript, DLC1PlayerVampireChangeScript); the same scripts set the actor
+  values WerewolfPerks and VampirePerks to the progress to the next point (feed or blood points
+  over the next perk's, × 100), the tree's meter. TODO(M13): the number shown as the tree's level
+  is not read (ours: that progress).
 - **Actor.SetRace** makes the actor again in the race (the player's avatar, an NPC where it
   stands), its graph starting at its beginning (the werewolf's begins with its change howl);
   once the new 3D stands its scripts hear **OnRaceSwitchComplete** (Node: at once).
