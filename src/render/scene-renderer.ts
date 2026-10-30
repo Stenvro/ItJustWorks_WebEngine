@@ -67,6 +67,7 @@ import {
   shaderFadeFrame,
   type ShaderFadeSettings,
 } from './shader-fades.ts';
+import { waterFogFar, waterFogPower } from './water-color.ts';
 import type { DisplacementFrame } from './water-displacement.ts';
 import { DisplacementSimulation } from './water-displacement-gpu.ts';
 import { REFLECTION_FACES, reflectionLookupMatrices } from './water-reflection.ts';
@@ -610,6 +611,12 @@ export interface WaterFrame {
   readonly profile: Float32Array | undefined;
   /** The displacement field's turn this frame (water-displacement.ts), while it runs. */
   readonly displacement?: DisplacementFrame | undefined;
+  /**
+   * Interiors: the cube the water reflects, the cell's water environment map (CELL XWEM, a
+   * cube texture), or null where the cell names none (the original makes no reflection cube
+   * there: the cube reads black). Undefined outdoors (the reflection faces, else the sky).
+   */
+  readonly environment?: GPUTexture | null;
 }
 
 /**
@@ -1762,6 +1769,10 @@ export class SceneRenderer {
   #waterReflectionActive = false;
   /** No reflection: one black texel per face. */
   readonly #noReflection: GPUTexture;
+  /** Black cube: the water's environment map where it has none. */
+  readonly #noEnvironment: GPUTexture;
+  /** The interior water's environment map bound to the water frame (WaterFrame.environment). */
+  #waterEnvironment: GPUTexture | undefined;
   readonly #screenSampler: GPUSampler;
   /** Stand-ins for the opaque scene's copies until the renderer provides them. */
   readonly #noSceneColor: GPUTexture;
@@ -2050,6 +2061,7 @@ export class SceneRenderer {
           visibility: GPUShaderStage.FRAGMENT,
           texture: { viewDimension: '2d-array' },
         },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { viewDimension: 'cube' } },
       ],
     });
     this.#waterFrameLayout = waterFrameLayout;
@@ -2068,6 +2080,13 @@ export class SceneRenderer {
       format: 'rgba16float',
       size: [1, 1, REFLECTION_FACES],
       usage: GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.#noEnvironment = device.createTexture({
+      label: 'no-water-environment',
+      format: 'rgba8unorm',
+      size: [1, 1, 6],
+      usage: GPUTextureUsage.TEXTURE_BINDING,
+      textureBindingViewDimension: 'cube',
     });
     this.#waterFrameBindGroup = this.#createWaterFrameBindGroup();
     this.#noSceneColor = device.createTexture({
@@ -4132,12 +4151,29 @@ export class SceneRenderer {
     data.set([...type.shallowColor, type.opacity], 0);
     data.set([...type.deepColor, type.reflectivity], 4);
     data.set([...type.reflectionColor, type.fresnel], 8);
+    // The values as the engine's water material hands them to the shader (observed in the
+    // original): the noise falloff within 1..8191, the fog's far distance at least 1 with the
+    // record's own range, its exponent four times the Fog Amount and at least 1.
     data.set(
-      [type.refractionMagnitude, type.reflectionMagnitude, type.noiseFalloff, type.flowmapScale],
+      [
+        type.refractionMagnitude,
+        type.reflectionMagnitude,
+        Math.min(Math.max(type.noiseFalloff, 1), 8191),
+        type.flowmapScale,
+      ],
       12,
     );
     // w: how much the displacement field shows on this water (its Displacement Dampener).
-    data.set([type.fogNear, type.fogFar, type.fogAmount, type.displacement.dampener], 16);
+    const fogRange = type.fogFar - type.fogNear;
+    data.set(
+      [
+        fogRange === 0 ? 1e-5 : fogRange,
+        waterFogFar(type.fogFar),
+        waterFogPower(type.fogAmount),
+        type.displacement.dampener,
+      ],
+      16,
+    );
     data.set(
       [
         type.sunSpecularPower,
@@ -4180,7 +4216,15 @@ export class SceneRenderer {
   updateWaterFrame(frame: WaterFrame | undefined, width: number, height: number): void {
     const data = this.#waterFrameData;
     data.fill(0);
-    data.set([...(frame?.horizon ?? [0.5, 0.6, 0.7]), 1], 0);
+    // w: what the water reflects: 0 the reflection faces or the sky, 1 the interior's
+    // environment cube, 2 nothing (an interior without one).
+    const environment = frame?.environment;
+    const source = environment === undefined ? 0 : environment === null ? 2 : 1;
+    data.set([...(frame?.horizon ?? [0.5, 0.6, 0.7]), source], 0);
+    if ((environment ?? undefined) !== this.#waterEnvironment) {
+      this.#waterEnvironment = environment ?? undefined;
+      this.#waterFrameBindGroup = this.#createWaterFrameBindGroup();
+    }
     data.set([...(frame?.lower ?? [0.4, 0.5, 0.6]), 1], 4);
     data.set([...(frame?.upper ?? [0.3, 0.4, 0.5]), 1], 8);
     data.set([...(frame?.multiplier ?? [1, 1, 1]), 1], 12);
@@ -4223,6 +4267,12 @@ export class SceneRenderer {
           binding: 2,
           resource: (this.#waterReflection ?? this.#noReflection).createView({
             dimension: '2d-array',
+          }),
+        },
+        {
+          binding: 3,
+          resource: (this.#waterEnvironment ?? this.#noEnvironment).createView({
+            dimension: 'cube',
           }),
         },
       ],
