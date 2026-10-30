@@ -496,19 +496,39 @@ light, clamped to 7) and at most four shadow lights (three bits, clamped to 4): 
 loops over that many and drops the rest. So an object among many candles is lit by seven of
 them, the shadowed ones first.
 
+How a geometry's own list is kept, observed in the original:
+
+- **Who joins it.** When a geometry's lights are refreshed, the scene walks its active lights
+  (or, in a room, the room's lights) in their order and adds each light that is not a shadow
+  light, has no restricted node and whose sphere touches the geometry's bound (distance between
+  the centres less the bound's radius under the light's radius). Shadow lights never join a
+  geometry's list: they reach lighting geometry only through the frame's shadow lights.
+- **The order.** A refresh moves each light it finds to the front part of the list, in the
+  order found, and afterwards drops the lights it did not find again unless they are dynamic
+  (those stay behind the found ones). So the list names lights in the order they joined the
+  scene, never by strength: the eighth candle is left out however bright it is.
+- **Land.** A light created from a reference flagged Doesn't Light Landscape (REFR `0x20000`;
+  Doesn't Light Water is `0x100`) is not added to land geometry (the shader flags Landscape or
+  No_LOD_Land_Blend).
+- **Effects.** An effect shader's pass takes lights only with Effect_Lighting, into an array of
+  five: the directional light (the sun, not its shadow light) and at most four of its list's
+  lights; it never names shadow lights. Particle systems are effect geometry: they keep lists by
+  their bound as any geometry does.
+
 Here every lit draw has a slot in its scene's light-list buffer (`flags.w` bits 8–23 name it;
 the shader type keeps bits 0–7, the distance fade bits 24–31): a count and seven indices into
 the frame's lights, 16 bits each. A draw's list is chosen the first time it is drawn in a
-frame (`SceneRenderer.#chooseLights`, by its bounding sphere and room) and uploaded in one
-range per scene; the lighting and effect shaders loop over it (`drawLightList`,
-`lightListIndex` in `common.wgsl`). A light is in a list when its sphere touches the draw's
-bound and it is not a portal-strict light of another room; shadow lights (casting this frame)
-come first, at most four, then the others, seven in all, the strongest at the bound winning:
-luminance × (1 − (d/r)²) at the bound's nearest point. TODO(M13): the order of a geometry's own
-list (the order lights reach it) is unread; strongest first is ours. Particle systems take every
-light of the frame (TODO(M13): their own lists by the system's bound); land, tree LOD and
-decals too (TODO(M13): the engine's land lists, and only lights flagged to light land). Grass
-takes no point lights: [Grass] bGrassPointLighting is off by default.
+frame (`SceneRenderer.#chooseLights`, by its bounding sphere and room), a particle system's as
+it is drawn (by its particles' bound), and uploaded in one range per scene; the lighting and
+effect shaders loop over it (`drawLightList`, `lightListIndex` in `common.wgsl`). A light is
+in a list when its sphere touches the bound and it is not a portal-strict light of another room;
+a lighting draw names the frame's shadow lights first (at most four, in the frame's order), then
+the others in the order they joined the scene (`PointLight.order`: the world viewer numbers the
+loaded cells' lights as the cells loaded, then magic's lights), seven in all; an effect draw
+names no shadow light and four at most. Land takes every light of the frame except those that do
+not light landscape (`landLightAt` in `frame.wgsl`; TODO(M13): land's own lists of seven per
+quad); tree LOD and decals take every light of the frame. Grass takes no point lights: [Grass]
+bGrassPointLighting is off by default.
 
 ### Rooms' lighting
 
@@ -605,9 +625,11 @@ strength × (normal − 0.5), x mirrored; past 0.15 and 0.85 of the screen the s
 coordinate moves at 0.78 of the rate (blended in by the strength); the mask is read where the
 shifted coordinate lands, so nothing in front of a shape is pulled into it; the result is
 the scene lerped to the shifted scene by that mask. Their UV controllers scroll the noise.
-Fire_Refraction (`0x10000`) without Refraction (about
-50 shapes) is drawn as a regular surface: what it changes in the engine is not documented
-(TODO(M13)).
+Fire_Refraction (`0x10000`): observed in the original, it is read only when a refraction shape's
+pass is built, where it picks the falloff variant of the pass that writes the refraction normals
+(the utility shader's normal output). TODO(M13): that variant's term is not yet read from the
+shader cache; ours draws such shapes as plain refraction. Fire_Refraction without Refraction
+(about 50 shapes) builds no refraction pass and is drawn as a regular surface.
 
 ## Weapon blood
 
@@ -1073,6 +1095,26 @@ shadow mask (the sun's and the shadow lights' shadows). A shape drawn with alpha
 fading without the stipple, takes none of it unless it carries Assume_Shadowmask or a decal flag
 (the actors' hair, eyes, skin and beards do). lighting.wgsl follows this; it looks the shadow maps
 up at the blended surface where the original reads the opaque scene's mask (TODO(M13)).
+
+Screendoor_Alpha_Fade: a shape fading out (its fade value under 1) is stippled when
+bEnableStippleFade is on, unless it carries this flag; then it is drawn blended by its fade
+alpha instead, without the shadow mask. The ten uses (the falling rocks of the rock hazard,
+fxhavokrockhazard.nif) dither here (TODO(M13): draw them blended while they fade).
+
+The sparkle technique (shader type 14, and the second pass of multi-index snow), as its pixel
+shaders in the cache have it: the noise is the engine's projected normal detail map
+(ProjectedNormalDetail.dds), its blue channel sampled at the UV times |x|^1.3, |x|^1.6 and |x|^1.9
+of the Sparkle Parameters (x, y, z, w); `s = Σ min(|b|, 1)^y`; per light (the sun and each point
+light) a sparkle is on where `s · z · saturate(r · L)^w ≥ 0.5` (r the view mirrored about the
+normal), adding the light's `saturate(n · h)` to the specular. The technique's Snow variant has no
+sparkle term, and every type 14 shape of the data (19, the ice of caves and Windhelm) carries the
+Snow flag: they draw as snow.
+
+Eyes (shader type 16): the vertex shader takes the eye's reflection centre from the material's
+left and right centres by the vertex's eye data (0 left, 1 right: on all 578,856 eye vertices of
+the data the nearer centre's), moves it as the vertex is moved (skinning included) and passes the
+direction from it to the vertex; the pixel shader reflects the view about that direction for the
+cube map and takes the directional ambient with it in place of the normal.
 
 Object fade (object-fade.ts): a reference's fade distance is ten bound radii (fLODBoundRadiusMult),
 capped at the loaded grid's edge less its radius and half a cell; its fade range runs from 0.6 of

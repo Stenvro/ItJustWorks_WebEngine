@@ -44,6 +44,7 @@ const SHADER_HAIR_TINT = 6u;
 const SHADER_LOD_LANDSCAPE = 9u;
 const SHADER_MULTI_LAYER_PARALLAX = 11u;
 const SHADER_LOD_OBJECTS = 13u;
+const SHADER_SPARKLE_SNOW = 14u;
 const SHADER_LOD_OBJECTS_HD = 15u;
 const SHADER_EYE_ENVIRONMENT_MAP = 16u;
 const SHADER_LOD_LANDSCAPE_NOISE = 18u;
@@ -422,13 +423,6 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
     if (!frontFacing) {
       shadingNormal = -shadingNormal;
     }
-    // Sparkle noise at three scales of the engine's projected normal map.
-    let scales = pow(vec3f(abs(draw.sparkle.x)), vec3f(1.3, 1.6, 1.9));
-    let s1 = sampleGrad(projectedNormal, in.uv * scales.x, uvGradients, scales.x).z;
-    let s2 = sampleGrad(projectedNormal, in.uv * scales.y, uvGradients, scales.y).z;
-    let s3 = sampleGrad(projectedNormal, in.uv * scales.z, uvGradients, scales.z).z;
-    let glints = pow(max(min(vec3f(1.0), abs(vec3f(s1, s2, s3))), vec3f(1e-6)), vec3f(draw.sparkle.y));
-    sparkle = glints.x + glints.y + glints.z;
     projectedMask = 1.0;
   } else if (projected) {
     if ((drawFlags & DRAW_PROJECTED_TEXTURED) != 0u) {
@@ -447,13 +441,26 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
   // Snow (a static counted as snow, or a snow shader) leaves its highlights to the snow
   // shader's rim light.
   let snow = (drawFlags & DRAW_SNOW) != 0u || (flags2 & SLSF2_SNOW) != 0u;
+  // The sparkle technique (the multi-index snow pass, and shader type 14 on its own shapes):
+  // noise at three scales of the engine's projected normal detail map, its blue channel
+  // (observed in the original). Its snow variant has no sparkle term, and every type 14 shape
+  // of the data carries the snow flag.
+  let sparkleTechnique = multiPass || shaderType == SHADER_SPARKLE_SNOW;
+  if (sparkleTechnique && !snow) {
+    let scales = pow(vec3f(abs(draw.sparkle.x)), vec3f(1.3, 1.6, 1.9));
+    let s1 = sampleGrad(projectedNormalDetail, in.uv * scales.x, uvGradients, scales.x).z;
+    let s2 = sampleGrad(projectedNormalDetail, in.uv * scales.y, uvGradients, scales.y).z;
+    let s3 = sampleGrad(projectedNormalDetail, in.uv * scales.z, uvGradients, scales.z).z;
+    let glints = pow(max(min(vec3f(1.0), abs(vec3f(s1, s2, s3))), vec3f(1e-6)), vec3f(draw.sparkle.y));
+    sparkle = glints.x + glints.y + glints.z;
+  }
   // Snow mask: the projected material's weight, else the diffuse alpha (snow textures keep
   // the mask there, bEnableSnowMask).
   let snowMask = select(0.0, select(diffuse.a, projectedMask, projected || multiPass), snow);
   let hasSpecular = (flags1 & SLSF1_SPECULAR) != 0u && !lodLand;
   let anisotropic = (flags2 & SLSF2_ANISOTROPIC_LIGHTING) != 0u;
   // Sparkles light up only without the snow shader.
-  let sparkles = select(0.0, sparkle, multiPass && !snow);
+  let sparkles = select(0.0, sparkle, sparkleTechnique && !snow);
   let inputs = SpecularInputs(
     shadingNormal,
     vertexNormal,
@@ -484,7 +491,10 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
     vertexNormal,
     receivesShadows,
   );
-  let ambient = directionalAmbient(shadingNormal);
+  // Eyes take their ambient light and reflection about the direction from their eye's reflection
+  // centre (common.wgsl eyeNormal), not about the eye mesh's normal.
+  let eye = shaderType == SHADER_EYE_ENVIRONMENT_MAP;
+  let ambient = directionalAmbient(select(shadingNormal, in.eyeNormal, eye));
 
   // Emit: own emit, or the glow map times the emissive colour; lit like the rest, so the
   // diffuse texture colours it.
@@ -532,8 +542,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
   // Environment map, lit like the surface; masked by the environment mask (else by the
   // specular mask).
   // Eyes: their own flag (Eye_Environment_Mapping; bUseEyeEnvMapping 1) and their cube map
-  // scale. TODO(M13): the engine reflects about the eye's reflection centre (the shader's left
-  // and right centres by the vertex red); ours about the eye mesh's own normal.
+  // scale, reflected about the eye normal.
   let environment =
     ((flags1 & SLSF1_ENVIRONMENT_MAPPING) != 0u &&
       (shaderType == SHADER_ENVIRONMENT_MAP || shaderType == SHADER_EYE_ENVIRONMENT_MAP)) ||
@@ -541,7 +550,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
     shaderType == SHADER_MULTI_LAYER_PARALLAX;
   if (environment) {
     let mask = select(glossiness, envMaskSample.r, draw.effect.z > 0.5) * draw.params.w;
-    let r = reflect(-toCamera, n);
+    let r = reflect(-toCamera, select(n, in.eyeNormal, eye));
     // Skyrim is Z-up; cubemaps use Y-up face orientation.
     let env = textureSampleLevel(envMap, linearSampler, vec3f(r.x, r.z, r.y), 0.0).rgb;
     // It fades out with distance (shader-fades.ts).

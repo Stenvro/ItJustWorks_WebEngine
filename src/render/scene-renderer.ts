@@ -6,6 +6,7 @@
 import type { FaceWeights } from '../animation/face.ts';
 import { sequenceWeight, type ObjectGraph } from '../animation/object-graph.ts';
 import type { ActorPose } from '../animation/skeleton.ts';
+import { VertexAttribute } from '../formats/nif/blocks.ts';
 import {
   animate,
   animateLayers,
@@ -47,6 +48,7 @@ import {
   LIGHT_LIST_WORDS,
   packLightKey,
   selectObjectLights,
+  type LightListKind,
 } from './light-lists.ts';
 import { identity, maxScale, multiply, transformPoint, type Mat4, type Vec3 } from './math.ts';
 import {
@@ -347,7 +349,8 @@ const SLSF2_TREE_ANIM = 0x20000000;
 /** The engine's directional material textures (BSGraphics default textures). */
 const PROJECTED_TEXTURES = {
   diffuse: 'textures\\effects\\projecteddiffuse.dds',
-  normal: 'textures\\effects\\projectednormal.dds',
+  // The sparkle technique's noise (its blue channel); the projected normal itself is unused here.
+  normalDetail: 'textures\\effects\\projectednormaldetail.dds',
   noise: 'textures\\effects\\projectednoise.dds',
 } as const;
 /** Sort key offset that puts sky objects behind everything in the blended pass. */
@@ -1351,6 +1354,8 @@ interface MaterialSource {
   readonly alpha: AlphaState | undefined;
   readonly shader: number;
   readonly alphaProperty: number;
+  /** The part's vertex format (eyes: whether its vertices carry eye data). */
+  readonly layout?: VertexLayout;
 }
 
 /** Writes an animation frame's values over a part's material uniforms. */
@@ -1525,6 +1530,15 @@ function writeMaterial(floats: Float32Array, uints: Uint32Array, part: MaterialS
   // No directional material: nothing projected (direction up keeps the shader's maths finite).
   floats.set([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0], 48);
   floats.set(material?.sparkle ?? [1, 1, 1, 1], 60);
+  // Eyes (type 16) use neither the inner layer nor sparkles: those slots hold the left and right
+  // reflection centres, the right one's w whether the vertices carry eye data (common.wgsl
+  // eyeNormal).
+  const eyes = material?.eyeCenters;
+  if (eyes) {
+    const eyeData = ((part.layout?.attributes ?? 0) & VertexAttribute.eyeData) !== 0;
+    floats.set([...eyes[0], 0], 44);
+    floats.set([...eyes[1], eyeData ? 1 : 0], 60);
+  }
 }
 
 /**
@@ -2842,11 +2856,12 @@ export class SceneRenderer {
       const kind = fadeKindIndex(draw.fade?.kind);
       drawUints[at] = ((drawUints[at] ?? 0) & ~0xffff60) | (slot << 8) | (kind << 5);
     }
-    // Particle systems take every light of the frame. TODO(M13): the engine gives a particle
-    // geometry its own list too (by the system's bound).
+    // Particle systems keep their own lists too, by their particles' bound (an effect's list:
+    // chosen as they are drawn, drawTransparent).
     for (const system of particles) {
       const at = system.uniformOffset / 4 + 39;
-      drawUints[at] = ((drawUints[at] ?? 0) & ~0xffff00) | (NO_LIGHT_LIST << 8);
+      const slot = Math.min(system.uniformOffset / DRAW_STRIDE, NO_LIGHT_LIST);
+      drawUints[at] = ((drawUints[at] ?? 0) & ~0xffff00) | (slot << 8);
     }
     const buffer = createBuffer(
       this.#device,
@@ -3109,7 +3124,9 @@ export class SceneRenderer {
   /** A light's shadow slot and fade for the shader (slot −1: it casts none this frame). */
   #lightShadowOf(light: PointLight): [number, number, number, number] {
     const held = light.shadow && this.#lightShadowSlots.get(light.shadow.id);
-    return held ? [held.slot, held.fade, 0, 0] : [-1, 0, 0, 0];
+    // z: the light leaves land unlit (its reference's Doesn't Light Landscape flag).
+    const land = light.lightsLand === false ? 1 : 0;
+    return held ? [held.slot, held.fade, land, 0] : [-1, 0, land, 0];
   }
 
   /**
@@ -3978,7 +3995,9 @@ export class SceneRenderer {
       }
       for (const particles of scene.particles) {
         if (particles.count === 0) continue;
-        transparent.push({ scene, particles, distance: distance(particles.simulation.center) });
+        const { center, radius } = particles.simulation;
+        this.#chooseSlotLights(scene, particles.uniformOffset, center, radius, 'effect');
+        transparent.push({ scene, particles, distance: distance(center) });
       }
     }
     transparent.sort((a, b) => b.distance - a.distance);
@@ -4428,28 +4447,35 @@ export class SceneRenderer {
    * submitted.
    */
   #chooseLights(scene: GpuScene, draw: Draw): void {
+    if (draw.sky) return;
+    const kind = draw.part.part.material?.kind === 'effect' ? 'effect' : 'lighting';
+    this.#chooseSlotLights(scene, draw.uniformOffset, draw.center, draw.radius, kind);
+  }
+
+  /**
+   * The lights of the draw slot at `uniformOffset` with the bound (center, radius): a lighting
+   * geometry's, or an effect's (lit effects and particle systems, light-lists.ts).
+   */
+  #chooseSlotLights(
+    scene: GpuScene,
+    uniformOffset: number,
+    center: readonly [number, number, number],
+    radius: number,
+    kind: LightListKind,
+  ): void {
     const lists = scene.lightLists;
-    if (!lists || draw.sky) return;
-    const slot = draw.uniformOffset / DRAW_STRIDE;
+    if (!lists) return;
+    const slot = uniformOffset / DRAW_STRIDE;
     if (slot >= NO_LIGHT_LIST || lists.chosen[slot] === this.#lightFrame) return;
     lists.chosen[slot] = this.#lightFrame;
-    const room =
-      ((lists.uniformUints[draw.uniformOffset / 4 + 38] ?? 0) >>> DRAW_ROOM_SHIFT) & 0xff;
+    const room = ((lists.uniformUints[uniformOffset / 4 + 38] ?? 0) >>> DRAW_ROOM_SHIFT) & 0xff;
     const at = slot * LIGHT_LIST_WORDS;
     const data = lists.data;
     const before0 = data[at];
     const before1 = data[at + 1];
     const before2 = data[at + 2];
     const before3 = data[at + 3];
-    selectObjectLights(
-      this.#lightKeys,
-      this.#lightKeyCount,
-      draw.center,
-      draw.radius,
-      room,
-      data,
-      at,
-    );
+    selectObjectLights(this.#lightKeys, this.#lightKeyCount, center, radius, room, data, at, kind);
     if (
       data[at] !== before0 ||
       data[at + 1] !== before1 ||
@@ -4520,11 +4546,11 @@ export class SceneRenderer {
       materialTextures(material).map((path) => textures.get(path, fromGameContent)),
     );
     // The engine's directional material textures (not held by models: never evicted).
-    const [projectedDiffuse, projectedNormal, projectedNoise] =
+    const [projectedDiffuse, projectedNormalDetail, projectedNoise] =
       material?.kind === 'lighting' || material?.kind === 'effect'
         ? await Promise.all([
             textures.get(PROJECTED_TEXTURES.diffuse),
-            textures.get(PROJECTED_TEXTURES.normal),
+            textures.get(PROJECTED_TEXTURES.normalDetail),
             textures.get(PROJECTED_TEXTURES.noise),
           ])
         : [undefined, undefined, undefined];
@@ -4553,7 +4579,10 @@ export class SceneRenderer {
         { binding: 6, resource: (flat(slot7) ?? defaults.black).createView() },
         { binding: 7, resource: (flat(slot6) ?? defaults.black).createView() },
         { binding: 8, resource: (flat(projectedDiffuse) ?? defaults.white).createView() },
-        { binding: 9, resource: (flat(projectedNormal) ?? defaults.flatNormal).createView() },
+        {
+          binding: 9,
+          resource: (flat(projectedNormalDetail) ?? defaults.flatNormal).createView(),
+        },
         { binding: 10, resource: (flat(projectedNoise) ?? defaults.black).createView() },
         // A missing detail map leaves the face as it is (the engine's blank detail map).
         { binding: 11, resource: (flat(detail) ?? defaults.blankDetail).createView() },

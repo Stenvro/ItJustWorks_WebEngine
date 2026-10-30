@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   LIGHT_KEY_FLOATS,
   LIGHT_LIST_WORDS,
+  MAX_EFFECT_LIGHTS,
   MAX_OBJECT_LIGHTS,
   packLightKey,
   selectObjectLights,
@@ -40,15 +41,35 @@ describe('selectObjectLights', () => {
     expect(select([candle(0), candle(500), candle(240)], [0, 0, 0], 50)).toEqual([0, 2]);
   });
 
-  it('keeps seven lights when more touch the object, the strongest at its bound', () => {
+  it('keeps the first seven lights in the order they joined the scene, whatever their strength', () => {
     // Twelve candles in a row; the object sits at x = 0 with a 10-unit bound.
     const lights = Array.from({ length: 12 }, (_, i) => candle(i * 10));
     const chosen = select(lights, [0, 0, 0], 10);
     expect(chosen).toHaveLength(MAX_OBJECT_LIGHTS);
     expect(chosen).toEqual([0, 1, 2, 3, 4, 5, 6]);
-    // A bright light farther away beats nearer dim ones.
+    // A bright light that joined later does not push out an earlier dim one.
     const bright = [...lights.slice(0, 8), candle(150, 20)];
-    expect(select(bright, [0, 0, 0], 10)).toContain(8);
+    expect(select(bright, [0, 0, 0], 10)).not.toContain(8);
+    // The frame's order (by distance) is not the scene's: the order key decides.
+    const joined = [
+      { ...candle(0), order: 5 },
+      { ...candle(5), order: 1 },
+      { ...candle(9), order: 3 },
+    ];
+    expect(select(joined, [0, 0, 0], 10)).toEqual([1, 2, 0]);
+  });
+
+  it('gives an effect at most four lights, none of them shadow lights', () => {
+    const lights = [
+      { ...candle(0), shadowed: true },
+      ...Array.from({ length: 6 }, (_, i) => candle(i * 10)),
+    ];
+    const out = new Uint32Array(LIGHT_LIST_WORDS);
+    const keys = keysOf(lights);
+    expect(selectObjectLights(keys, lights.length, [0, 0, 0], 10, 0, out, 0, 'effect')).toBe(
+      MAX_EFFECT_LIGHTS,
+    );
+    expect(unpackObjectLights(out)).toEqual([1, 2, 3, 4]);
   });
 
   it('puts shadow lights first, at most four', () => {

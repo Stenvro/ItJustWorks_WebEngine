@@ -203,7 +203,7 @@ fn fs_main(in: TerrainOut) -> TerrainPixel {
   let albedo = base * in.color;
   let toCamera = safeNormalize(frame.cameraPos.xyz - in.worldPos);
   let shadow = sunShadow(in.worldPos, in.normal);
-  let light = lightAt(n, in.worldPos, toCamera, max(shininess, 1.0), true, shadow);
+  let light = landLightAt(n, in.worldPos, toCamera, max(shininess, 1.0), true, shadow);
   var color = albedo * light.diffuse;
   // Snow has the rim highlight instead of its specular: the composite adds it (after the
   // snow's scattering), with the AO, fog and sparkles.
