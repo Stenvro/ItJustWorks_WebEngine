@@ -13,6 +13,8 @@
 // library lacks is found nowhere and the field draws no text. A Flash player would draw such
 // text in a system font: the field is made to use the movie's own (empty) outlines instead.
 // The game's movies have one: hudmenu.swf's "Times New Roman" (an unnamed, empty field).
+//
+// Sprites with a scaling grid are made to cut themselves along it (src/ui/scale9.ts).
 // Platform-independent. Notes: docs/ui.md ("The map", "Ruffle's limits").
 
 import { BinaryReader } from '../formats/binary-reader.ts';
@@ -26,6 +28,7 @@ import {
   type SwfTag,
 } from '../formats/swf/swf.ts';
 import { concatBytes, encodeTag } from '../formats/swf/swf-writer.ts';
+import { patchScalingGrids } from './scale9.ts';
 
 /** DefineShape and DefineShape2: RGB styles. DefineShape3: RGBA. */
 const RGB_SHAPES: ReadonlySet<number> = new Set([SwfTagCode.defineShape, 22]);
@@ -49,6 +52,7 @@ export function patchMovie(
   try {
     if (name === 'map.swf') out = patchLocalMapFrame(out) ?? out;
     if (fonts) out = patchDeviceFonts(out, fonts) ?? out;
+    out = patchScalingGrids(out) ?? out;
   } catch {
     return bytes;
   }

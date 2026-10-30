@@ -11,12 +11,16 @@
 // break); turned all the way, the lock opens. The perks widen the sweet spot (Novice .. Master
 // Locks), make picks unbreakable (Unbreakable), start the pick near the sweet spot (Locksmith),
 // give a picked lock's key (Wax Key) and keep the picking unnoticed (Quick Hands): the perk
-// system's entry points (perk-engine.ts). A
-// lock's sweet spot stays where it is until the game is loaded again. The bar shows the skill,
-// its progress to the next level, the lock's level and the lockpicks left (SetLockInfo). A lock
-// opened is fSkillUsageLockPick<level> uses of Lockpicking, a broken pick
-// fSkillUsageLockPickBroken (the progression engine). Cancel (Tab, Esc) leaves. An owned lock
-// picked where someone sees it is trespassing (crime-engine.ts lockPicked).
+// system's entry points (perk-engine.ts). The sweet spot is placed anew each time the menu
+// opens (observed in the original: as the menu shows); a broken pick's successor starts in the
+// middle. The engine reports the pick's sweep, the sweet spot, the pick's and the lock's angles
+// and the pick's health to the movie's debug display (SetPickMinMax, UpdateSweetSpot,
+// UpdatePickAngle, UpdateLockAngle, UpdatePickHealth), which shows only once toggled
+// (ToggleDebugMode, which the engine never calls). The bar shows the skill, its progress to the
+// next level, the lock's level and the lockpicks left (SetLockInfo). A lock opened is
+// fSkillUsageLockPick<level> uses of Lockpicking, a broken pick fSkillUsageLockPickBroken (the
+// progression engine). Cancel (Tab, Esc) leaves. An owned lock picked where someone sees it is
+// trespassing (crime-engine.ts lockPicked).
 // Notes: docs/ui.md ("Lockpicking").
 
 import {
@@ -85,9 +89,6 @@ const BREAK_SECONDS = 1.2;
 /** The menus' depth among the game's menus. */
 const LOCK_DEPTH = 6;
 
-/** Each lock's sweet spot, as placed this session (a lock keeps it until the game is loaded). */
-const SWEET_SPOTS = new Map<number, number>();
-
 type InterfaceKey = keyof (typeof INI_DEFAULTS)['Interface'];
 
 /** Keys of the RotateLock event: the movement keys. */
@@ -137,14 +138,9 @@ export class LockpickingMenu {
     const unbreakable =
       (await perks.apply(EntryPoint.makeLockpicksUnbreakable, PLAYER_REF, 0)) !== 0;
     const startArc = await perks.apply(EntryPoint.setLockpickStartingArc, PLAYER_REF, 0);
-    let random = SWEET_SPOTS.get(reference);
-    if (random === undefined) {
-      random = Math.random();
-      SWEET_SPOTS.set(reference, random);
-    }
     const shape = lockShape(difficulty, skill, {
       perk,
-      random,
+      random: Math.random(),
       settings: lockpickSettings((name) => settings.number(name)),
       // The original counts the picks broken in the menu itself (a count of its own, not the
       // lock's), from none as it opens, and sets the sweet spot (widened by
@@ -223,6 +219,8 @@ class Picking {
   #tension: Promise<SoundInstance | undefined> | undefined;
   #atLimit = false;
   readonly #keys = new Set<string>();
+  /** The pick's angle, the lock's and the pick's health as last reported to the movie. */
+  #reported: { pick: number; turn: number; health: number } | undefined;
 
   constructor(host: MenuHost, session: GameSession, runtime: ScriptRuntime, setup: PickingSetup) {
     this.#host = host;
@@ -230,10 +228,12 @@ class Picking {
     this.#runtime = runtime;
     this.#setup = setup;
     if (setup.startArc > 0) {
-      // Near the opening position: somewhere within the arc about it (Locksmith: 45°).
-      // TODO(M13): where in the arc the engine puts it is not documented.
-      const offset = (Math.random() - 0.5) * setup.startArc;
-      this.#pick = clampPick(setup.shape.center + offset);
+      // Near the opening position (Locksmith: 45°): anywhere within the arc on either side of
+      // it, kept where the sweet spot's middle could lie (observed in the original).
+      const { center, sweetSpot } = setup.shape;
+      const low = Math.max(center - setup.startArc, sweetSpot / 2);
+      const high = Math.min(center + setup.startArc, PICK_RANGE - sweetSpot / 2);
+      this.#pick = clampPick(low + Math.random() * Math.max(0, high - low));
     }
   }
 
@@ -292,6 +292,13 @@ class Picking {
         menu.invoke('_root.InitExtensions');
         menu.tellPlatform('_root.SetPlatform');
         await this.#showInfo(menu);
+        // The debug display's values (in the original's terms: the pick's sweep −90..90°, the
+        // sweet spot's middle there, its width and its partial zones' width).
+        const { center, sweetSpot, partial } = this.#setup.shape;
+        menu.call('SetPickMinMax', -PICK_RANGE / 2, PICK_RANGE / 2);
+        menu.call('UpdateSweetSpot', center - PICK_RANGE / 2, sweetSpot, partial);
+        this.#reported = undefined;
+        this.#report(menu);
       },
     });
     window.addEventListener('pointermove', this.#moved);
@@ -416,6 +423,8 @@ class Picking {
   async #broken(): Promise<void> {
     this.#strain = 0;
     this.#turn = 0;
+    // The next pick starts in the middle of the sweep (observed in the original).
+    this.#pick = PICK_RANGE / 2;
     this.#keys.clear();
     this.#busyUntil = clock() + BREAK_SECONDS;
     void this.#tension?.then((sound) => sound?.stop());
@@ -496,6 +505,17 @@ class Picking {
     const pick = aboutY(PICK_PIVOT, this.#pick - PICK_RANGE / 2);
     this.#pickWorld.set(multiply(this.#base, multiply(cylinder, pick)));
     this.#pickMotion.version++;
+    if (this.#menu) this.#report(this.#menu);
+  }
+
+  /** The pick's and the lock's angles and the pick's health (0..100) to the debug display. */
+  #report(menu: Menu): void {
+    const now = { pick: this.#pick, turn: this.#turn, health: 100 * (1 - this.#strain) };
+    const last = this.#reported;
+    if (now.pick !== last?.pick) menu.call('UpdatePickAngle', now.pick - PICK_RANGE / 2);
+    if (now.turn !== last?.turn) menu.call('UpdateLockAngle', now.turn);
+    if (now.health !== last?.health) menu.call('UpdatePickHealth', now.health);
+    this.#reported = now;
   }
 
   /** A UI sound (a sound descriptor by editor id), at no place. */

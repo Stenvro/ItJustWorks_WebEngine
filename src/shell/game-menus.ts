@@ -1014,6 +1014,8 @@ export class GameMenus {
     const progress = runtime ? (await runtime.progression.levelProgress()) * 100 : 0;
     const levelUp = (runtime?.state.levelUps ?? 0) > 0;
     let chosen: TweenChoice | undefined;
+    // The HUD's charge meters fade out as it opens (observed in the original).
+    this.#session.hud.fadeOutChargeMeters();
     open.menu = await this.#host.open('tweenmenu.swf', {
       depth: MENU_DEPTH,
       interactive: true,

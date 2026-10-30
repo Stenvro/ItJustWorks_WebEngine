@@ -10,6 +10,8 @@ import { lockDifficulty, LOCKPICK, SKELETON_KEY } from '../gameplay/lockpicking.
 import type { Renderer } from '../render/renderer.ts';
 import type { Vec3 } from '../render/math.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import { lockBroken } from '../scripting/runtime/natives/reference.ts';
+import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { CellObject } from '../world/cell-loader.ts';
 import { parseItem } from '../world/item-records.ts';
@@ -1258,7 +1260,13 @@ export class PlayMode {
       then();
       return;
     }
-    if (lockDifficulty(lock.level) === undefined) {
+    // Only the key opens a lock that needs one, or one broken (ObjectReference.IsLockBroken), as
+    // observed in the original.
+    const tries = runtime.state.references.get(reference)?.lockTries ?? 0;
+    const broken =
+      tries > 0 &&
+      lockBroken(tries, await runtime.perks.apply(EntryPoint.ignoreBrokenLock, PLAYER_REF, 0));
+    if (lockDifficulty(lock.level) === undefined || broken) {
       say('sImpossibleLock');
       return;
     }

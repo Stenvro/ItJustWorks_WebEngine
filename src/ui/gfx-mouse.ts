@@ -16,6 +16,7 @@
 // Platform-independent. Notes: docs/ui.md ("The mouse").
 
 import { Avm1Writer, Function2Flag, Op, type PushValue } from '../formats/swf/avm1-writer.ts';
+import { SCALE9_WRAPPER } from './scale9.ts';
 
 /** _global's search: the entity of a clip at a point in global coordinates (or null). */
 const ENTITY_AT = '__itjwEntityAt';
@@ -56,6 +57,10 @@ function defineEntityAt(w: Avm1Writer): void {
     member(body, 1, '_visible').op(Op.not).ifTo('none');
     body.push(true, reg(3), reg(2), 3, reg(1), 'hitTest').op(Op.callMethod);
     body.op(Op.not).ifTo('none');
+    // A scaling grid's wrapper of a shape (src/ui/scale9.ts) stands for its parent's own shape.
+    member(body, 1, SCALE9_WRAPPER).push(null).op(Op.equals2).ifTo('search');
+    member(body, 1, '_parent').op(Op.return);
+    body.label('search');
     body.push('x', reg(2), 'y', reg(3), 2).op(Op.initObject).storeRegister(9).op(Op.pop);
     body.push(reg(9), 1, reg(1), 'globalToLocal').op(Op.callMethod).op(Op.pop);
     body.push(null).storeRegister(4).op(Op.pop);
