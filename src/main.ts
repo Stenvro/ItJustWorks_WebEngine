@@ -930,8 +930,14 @@ async function main(): Promise<void> {
         const actors = session.ini.number('LOD', 'fLODFadeOutMultActors');
         const items = session.ini.number('LOD', 'fLODFadeOutMultItems');
         const objects = session.ini.number('LOD', 'fLODFadeOutMultObjects');
-        if (fade.actors !== actors || fade.items !== items || fade.objects !== objects) {
-          renderer.scene.objectFade = { actors, items, objects };
+        const skyCell = session.ini.number('LOD', 'fLODFadeOutMultSkyCell');
+        if (
+          fade.actors !== actors ||
+          fade.items !== items ||
+          fade.objects !== objects ||
+          fade.skyCell !== skyCell
+        ) {
+          renderer.scene.objectFade = { actors, items, objects, skyCell };
         }
         // The lighting shader's own distance fades (src/render/shader-fades.ts).
         const ini = session.ini;

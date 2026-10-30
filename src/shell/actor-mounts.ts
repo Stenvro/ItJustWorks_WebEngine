@@ -107,6 +107,11 @@ interface Ride {
   travel: Vec3 | undefined;
   /** The Right Attack button was held at the last frame (the dragon's target on a press). */
   attacking: boolean;
+  /**
+   * The target the player locked their dragon on (the dragon's camera looks at it: src/shell/
+   * camera-states.ts), if any.
+   */
+  locked: number | undefined;
   phase: 'mounting' | 'riding' | 'dismounting';
   /** Seconds in the phase (a paired animation's timeout). */
   elapsed: number;
@@ -324,6 +329,32 @@ export class ActorMounts {
    * A flying mount an actor rides (a dragon): whether the player sent it on (its patrol) or it
    * flies them to a place (the map's fast travel); undefined riding none.
    */
+  /**
+   * The ridden dragon as its camera follows it: its heading and feet, and the target the
+   * player locked it on (where that stands), if any.
+   */
+  dragonView(rider: number):
+    | {
+        readonly heading: number;
+        readonly feet: Vec3;
+        readonly holds: boolean;
+        readonly locked?: { readonly reference: number; readonly position: Vec3 } | undefined;
+      }
+    | undefined {
+    const ride = this.#rides.get(rider);
+    if (ride?.kind !== 'dragon' || ride.phase !== 'riding') return undefined;
+    const dragon = this.#options.get(ride.horse);
+    if (!dragon) return undefined;
+    const target = ride.locked === undefined ? undefined : this.#options.get(ride.locked);
+    return {
+      heading: dragon.heading,
+      feet: [...dragon.position],
+      // A dragon is not horse-like: the view always turns with it (camera-states.ts).
+      holds: false,
+      locked: target && { reference: target.reference, position: [...target.position] },
+    };
+  }
+
   flyingMount(
     actor: number,
   ): { readonly patrol: boolean; readonly travelling: boolean } | undefined {
@@ -446,6 +477,7 @@ export class ActorMounts {
       landing: false,
       travel: undefined,
       attacking: true,
+      locked: undefined,
       phase: instant ? 'riding' : 'mounting',
       elapsed: 0,
       done: undefined,
@@ -836,13 +868,25 @@ export class ActorMounts {
       }
       return;
     }
-    // The player's target: the actor nearest their view.
+    // The player's target: the actor nearest their view, locked (the dragon's camera looks at
+    // it). Observed in the original: a locked target that dies, is disabled or unloaded, is the
+    // player or their mount gives way to the next one, none left lets the lock go.
+    // TODO(M13): the original's list of targets (its order) and its buttons to cycle and let go.
     const attacking = player.isHeld('Right Attack/Block');
     if (attacking && !ride.attacking) {
       const target = this.#viewTarget(player.position, player.forward, ride.horse);
+      ride.locked = target;
       if (target !== undefined) this.#options.startCombat?.(ride.horse, target);
     }
     ride.attacking = attacking;
+    if (ride.locked !== undefined) {
+      const target = this.#options.get(ride.locked);
+      if (!target || target.dead) {
+        const next = this.#viewTarget(player.position, player.forward, ride.horse);
+        ride.locked = next;
+        if (next !== undefined) this.#options.startCombat?.(ride.horse, next);
+      }
+    }
     if (ride.travel) return;
     if (player.isHeld('Forward')) {
       ride.patrol = true;

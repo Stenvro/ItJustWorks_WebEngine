@@ -306,24 +306,30 @@ const BLOCKS: Record<string, readonly [Status, string]> = {
   NiStringsExtraData: ['n/a', 'gameplay data'],
   NiBinaryExtraData: ['n/a', 'gameplay data'],
   NiTriStripsData: ['n/a', 'collision geometry only (bhkNiTriStripsShape)'],
+  NiFloatExtraData: [
+    'n/a',
+    'names Havok float slots (hkVis, hkPhoneme: read from the pose); the rest exporter data',
+  ],
+  NiFloatExtraDataController: [
+    'n/a',
+    'animates hkVis values; the original shows nodes by the Havok pose, not these',
+  ],
+  NiPathInterpolator: ['done', 'path-motion.ts (constant velocity, follow, flip)'],
+  NiLookAtInterpolator: ['done', 'animation.ts look-at tracks'],
+  BSFrustumFOVController: ['done', 'camera-model.ts (the kill cameras)'],
   // Open.
-  NiFloatExtraData: ['open', 'parsed; what reads it (FOV, scale) unchecked'],
-  NiFloatExtraDataController: ['open', 'parsed; not animated'],
   BSLagBoneController: [
     'open',
     'skeletons and placed or held models trail; armour hung on a skeleton not',
   ],
-  NiPathInterpolator: ['open', 'motion along a path not read'],
-  NiLookAtInterpolator: ['open', 'look-at rotation not read'],
-  BSFrustumFOVController: ['open', 'parsed; the camera FOV animation unused'],
   BSDecalPlacementVectorExtraData: [
     'n/a',
     'editor data (0-2 points each); the original loads it, nothing reads it',
   ],
-  BSBoneLODExtraData: ['open', 'bone LOD unread'],
-  NiBSBoneLODController: ['open', 'bone LOD unread'],
-  NiMeshParticleSystem: ['open', 'mesh particles not drawn'],
-  NiMeshPSysData: ['open', 'mesh particles not drawn'],
+  BSBoneLODExtraData: ['open', 'bone LOD (bones held beyond a distance) not built'],
+  NiBSBoneLODController: ['open', 'bone LOD (bones held beyond a distance) not built'],
+  NiMeshParticleSystem: ['open', 'the dragon crash rocks (Havok-driven mesh particles) not drawn'],
+  NiMeshPSysData: ['open', 'the dragon crash rocks (Havok-driven mesh particles) not drawn'],
 };
 
 // --- Sweep ----------------------------------------------------------------------------------

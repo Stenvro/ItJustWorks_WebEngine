@@ -31,7 +31,14 @@ const CORNERS = array<vec2f, 6>(
 
 fn particleOut(world: vec3f, uv: vec2f, color: vec4f) -> ParticleOut {
   var out: ParticleOut;
-  out.position = frame.viewProj * vec4f(world, 1.0);
+  if ((draw.flags.z & DRAW_FIRST_PERSON) != 0u) {
+    // A system of the player's first-person geometry (a spell in the hand, a torch's flame) is
+    // drawn with it: first person's field of view, in its depth band (common.wgsl).
+    let clip = frame.firstPersonViewProj * vec4f(world, 1.0);
+    out.position = vec4f(clip.xy, FIRST_PERSON_DEPTH * clip.w + (1.0 - FIRST_PERSON_DEPTH) * clip.z, clip.w);
+  } else {
+    out.position = frame.viewProj * vec4f(world, 1.0);
+  }
   out.worldPos = world;
   out.uv = uv;
   out.color = color;

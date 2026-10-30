@@ -938,11 +938,13 @@ export async function loadCellData(
       ...emittanceOf(record),
       ...((record.flags & DONT_HAVOK_SETTLE) !== 0 && { dontHavokSettle: true }),
       ...objectRagdollOf(record),
-      // Distance fade by its kind, unless it has distant LOD or is full LOD (object-fade.ts).
+      // Distance fade by its kind (full LOD: the sky cell's), unless it has distant LOD
+      // (object-fade.ts).
       ...(!neverFades(base.type, base.flags, record.flags) && {
         fade: fadeKind(
           base.type,
           base.type === 'LIGH' && (parseLight(base).flags & LightFlag.canCarry) !== 0,
+          record.flags,
         ),
       }),
       ...(base.type === 'DOOR' && { teleport: parseTeleport(record) }),
