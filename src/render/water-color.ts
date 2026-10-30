@@ -1,32 +1,34 @@
 // The water's colour, as the water shader makes it (shaders/water.wgsl fs_water), for tests and
 // tools: the scene below sinks into the water type's fog, from its shallow towards its deep
 // colour, the weather's water multiplier tints it, and the reflection takes over by the fresnel
-// term and the reflectivity; the depth properties take reflections, refraction, normals and the
-// sun's specular back where the water is shallow. Platform-independent.
+// term; the depth properties take reflections, refraction, normals and the sun's specular back
+// where the water is shallow. Platform-independent.
 //
-// The fog's distance is the way the view ray travels through the water to what lies below; at
-// fog near nothing is fogged, at fog far the fog amount is reached (WATR DNAM, xEdit's TES5
-// definition: Fog Properties). TODO(M13): the original's shader is not readable; this is our
-// model of its terms (the fresnel is Schlick's, its base the Fresnel Amount).
+// These are the original water shader's terms (observed in the original): how deep the water
+// is counts as a share of the fog's far distance (WATR DNAM Fog Distance - Far Plane); the body
+// goes from the shallow to the deep colour over it; the fog over the scene below is
+// 1 - ((far - depth) / (far - near))^amount; the reflection is the reflection colour taken over
+// by the reflected scene by the Reflection Magnitude; the fresnel is Schlick's from the Fresnel
+// Amount. TODO(M13): which WATR value feeds which of the shader's constants is our reading
+// (xEdit's names against the terms), the engine's material setup is unread.
 
 import type { WaterType } from '../world/water.ts';
 import type { Rgb } from '../world/weather.ts';
 
-/** How deep water is by its fog's distance: 0 at fog near .. 1 at fog far and beyond. */
-export function waterDeepness(
-  thickness: number,
-  type: Pick<WaterType, 'fogNear' | 'fogFar'>,
-): number {
-  const range = Math.max(type.fogFar - type.fogNear, 1);
-  return Math.max(0, Math.min(1, (thickness - type.fogNear) / range));
+/** How deep water is by a depth: 0 at the surface .. 1 at the fog's far distance and beyond. */
+export function waterDeepness(depth: number, type: Pick<WaterType, 'fogFar'>): number {
+  return Math.max(0, Math.min(1, depth / Math.max(type.fogFar, 1e-3)));
 }
 
-/** The water fog over a distance through the water (0 .. the fog amount). */
+/** The water fog over a distance through the water: 0 at fog near .. 1 at fog far. */
 export function waterFog(
-  thickness: number,
+  depth: number,
   type: Pick<WaterType, 'fogNear' | 'fogFar' | 'fogAmount'>,
 ): number {
-  return waterDeepness(thickness, type) * type.fogAmount;
+  const far = Math.max(type.fogFar, 1e-3);
+  const range = Math.max(far - type.fogNear, 1e-3);
+  const clear = Math.max(0, Math.min(1, (far - Math.min(depth, far)) / range));
+  return 1 - clear ** Math.max(type.fogAmount, 1e-3);
 }
 
 /**
@@ -58,13 +60,13 @@ export interface WaterColorInput {
   readonly thickness: number;
   /** cos of the angle between the view and the surface's normal. */
   readonly facing: number;
-  /** The sky the surface reflects (the scene, where it reflects that, replaces the result). */
+  /** What the surface reflects (the reflection cube, or the scene where it finds it). */
   readonly reflected: Rgb;
   /** The weather's water multiplier. */
   readonly multiplier: Rgb;
 }
 
-/** The water's colour at a point, before the sun's specular and the air's fog. */
+/** The water's colour at a point near the camera, before the sun's specular and the air's fog. */
 export function waterColor(type: WaterType, input: WaterColorInput): Rgb {
   const mix = (a: Rgb, b: Rgb, t: number): Rgb => [
     a[0] + (b[0] - a[0]) * t,
@@ -72,15 +74,15 @@ export function waterColor(type: WaterType, input: WaterColorInput): Rgb {
     a[2] + (b[2] - a[2]) * t,
   ];
   const times = (a: Rgb, b: Rgb): Rgb => [a[0] * b[0], a[1] * b[1], a[2] * b[2]];
-  const fog = waterFog(input.thickness, type);
-  const body = times(mix(type.shallowColor, type.deepColor, fog), input.multiplier);
-  const underwater = mix(input.below, body, fog);
+  const deepness = waterDeepness(input.thickness, type);
+  const body = times(mix(type.shallowColor, type.deepColor, deepness), input.multiplier);
+  const refracted = mix(input.below, body, waterFog(input.thickness, type));
   const reflection = mix(
-    input.reflected,
     times(type.reflectionColor, input.multiplier),
+    input.reflected,
     type.reflectionMagnitude,
   );
-  const [reflections] = depthControl(type, waterDeepness(input.thickness, type));
-  const share = waterFresnel(type.fresnel, input.facing) * type.reflectivity * reflections;
-  return mix(underwater, reflection, Math.max(0, Math.min(1, share)));
+  const [reflections] = depthControl(type, deepness);
+  const share = waterFresnel(type.fresnel, input.facing) * reflections;
+  return mix(refracted, reflection, Math.max(0, Math.min(1, share)));
 }

@@ -63,6 +63,9 @@ const PROJECTED_TILING = 0.2;
 // to the composite (composite.wgsl), which runs after the snow's scattering, as the engine's
 // lighting shader leaves them to ISSAOComposite. Blended parts finish their colour here.
 override DEFERRED: bool = false;
+// Set for LOD land's pipelines: only they carry the world map's relief overlay, so every other
+// pipeline compiles that branch and its six samples out.
+override LOD_LAND: bool = false;
 
 // Texture coordinate gradients for samples taken outside uniform control flow.
 struct Gradients {
@@ -273,7 +276,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
   // The top byte holds the distance fade (common.wgsl fadeDiscarded), bits 8-23 the draw's
   // light list, bits 5-6 its fade kind (lodFadeValue).
   let shaderType = draw.flags.w & 0x1fu;
-  if (fadeDiscarded(in.position.xy)) {
+  if (fadeDiscarded(in.position.xy) || reflectionClipped(in.worldPos)) {
     discard;
   }
   let multiPass = (drawFlags & DRAW_MULTI_PASS) != 0u;
@@ -370,7 +373,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
     if (shaderType == SHADER_LOD_LANDSCAPE_NOISE) {
       base *= lodLandNoise(base, sampleGrad(layerMap, in.uv * 3.0, uvGradients, 3.0).r);
     }
-    if (frame.worldMap.x > 0.0) {
+    if (LOD_LAND && frame.worldMap.x > 0.0) {
       n = worldMapRelief(n, in.worldPos, worldGradients[0], worldGradients[1], base);
     }
   }

@@ -75,6 +75,11 @@ export interface CellObject {
    */
   readonly dontHavokSettle?: boolean;
   /**
+   * REFR flag "Reflected By Auto Water", or a placed water reflects it (XPWR): drawn into the
+   * water's reflection.
+   */
+  readonly reflectedByWater?: boolean;
+  /**
    * Where the Creation Kit left its ragdoll's bodies (XRGD: armour on the floor, an open book,
    * a hanging pheasant): its articulated model lies so (src/world/ragdoll-data.ts).
    */
@@ -273,6 +278,20 @@ export interface CellObstacle {
 
 /** REFR record flag: "Don't Havok Settle". */
 const DONT_HAVOK_SETTLE = 0x20000000;
+/** REFR record flag: "Reflected By Auto Water" (xEdit; bit 28). */
+export const REFLECTED_BY_AUTO_WATER = 0x10000000;
+
+/**
+ * Whether a reference's XPWR entries (Reflected/Refracted By: a placed water and a type, bit 0
+ * reflection, bit 1 refraction) name a water that reflects it.
+ */
+export function xpwrReflected(entries: readonly Uint8Array[]): boolean {
+  return entries.some(
+    (entry) =>
+      entry.byteLength >= 8 &&
+      (new DataView(entry.buffer, entry.byteOffset, 8).getUint32(4, true) & 1) !== 0,
+  );
+}
 /** DOOR FNAM flag: "Automatic" (xEdit: Automatic Door). */
 const DOOR_AUTOMATIC = 0x02;
 
@@ -937,6 +956,8 @@ export async function loadCellData(
       ...leafAnimationOf(base),
       ...emittanceOf(record),
       ...((record.flags & DONT_HAVOK_SETTLE) !== 0 && { dontHavokSettle: true }),
+      ...(((record.flags & REFLECTED_BY_AUTO_WATER) !== 0 ||
+        xpwrReflected(record.fields.all('XPWR'))) && { reflectedByWater: true }),
       ...objectRagdollOf(record),
       // Distance fade by its kind, unless it has distant LOD or is full LOD (object-fade.ts).
       ...(!neverFades(base.type, base.flags, record.flags) && {
