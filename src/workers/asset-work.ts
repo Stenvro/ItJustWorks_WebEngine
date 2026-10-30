@@ -8,7 +8,7 @@ import { parseNif } from '../formats/nif/nif.ts';
 import { parseTri } from '../formats/nif/tri.ts';
 import { buildCollision } from '../physics/collision-data.ts';
 import { buildRig } from '../animation/skeleton.ts';
-import { blendWeight, swapTextures } from '../render/actor-model.ts';
+import { blendWeight, geometryOrder, swapTextures } from '../render/actor-model.ts';
 import { packMorphs } from '../render/face-morphs.ts';
 import { buildModel, type ModelData } from '../render/model-data.ts';
 import type { AssetRequest, AssetResponse } from './protocol.ts';
@@ -39,7 +39,7 @@ export function handleAssetRequest(request: AssetRequest): [AssetResponse, Array
       problems.push(...thin.problems);
       model = blendWeight(buildModel(thin), model, request.weight);
     }
-    model = swapTextures(model, request.swaps);
+    model = swapTextures(model, request.swaps, geometryOrder(nif));
     ownModel(model);
     const response: AssetResponse = {
       id: request.id,
@@ -85,7 +85,7 @@ export function handleAssetRequest(request: AssetRequest): [AssetResponse, Array
       ...(request.switchChild !== undefined && { switchChild: request.switchChild }),
       ...(request.damageStage !== undefined && { damageStage: request.damageStage }),
     });
-    const model = request.swaps ? swapTextures(built, request.swaps) : built;
+    const model = request.swaps ? swapTextures(built, request.swaps, geometryOrder(nif)) : built;
     const collision = buildCollision(nif, request.damageStage ?? 0);
     for (const body of collision.bodies) {
       for (const shape of body.shapes) {

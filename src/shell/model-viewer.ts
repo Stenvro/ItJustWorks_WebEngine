@@ -2017,6 +2017,7 @@ export class ModelViewer {
         lightShadows: true,
         ...(rooms && { rooms: () => rooms }),
         ...(roomAt && { roomAt }),
+        particleBodies: () => this.#play?.particleBodies,
         // The cell's decals and the hits' blood (src/shell/combat-impacts.ts).
         decals: () => [...(decals ? [decals] : []), ...(this.#stage?.combat.decals() ?? [])],
         backdrop: false,

@@ -23,6 +23,7 @@ import {
   type FloatSource,
   type Timing,
 } from './animation.ts';
+import { buildCollision, type CollisionData } from '../physics/collision-data.ts';
 import { invert } from './frustum.ts';
 import { identity, multiply, transformPoint, type Mat4 } from './math.ts';
 import type { AlphaState, PartMaterial } from './model-data.ts';
@@ -332,6 +333,11 @@ export interface MeshParticles {
     readonly restitution: number;
     readonly gravityFactor: number;
   };
+  /**
+   * The node's collision as the physics world places it (its body and shapes): one copy per
+   * particle when the scene has a physics world (ParticleContext.bodies).
+   */
+  readonly collision?: CollisionData;
 }
 
 export interface ParticleBillboard {
@@ -542,6 +548,7 @@ function meshParticles(file: NifFile, poolSize: number, havokNode: Ref): MeshPar
     poolSize: Math.max(0, poolSize),
     node: havokNode,
     ...(rigid?.kind === 'rigid-body' && {
+      collision: buildCollision(file, 0, [havokNode]),
       body: {
         linearDamping: rigid.linearDamping,
         angularDamping: rigid.angularDamping,

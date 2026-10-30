@@ -35,6 +35,7 @@ import type {
   PlacedCollision,
   TrapTouch,
 } from '../physics/physics-world.ts';
+import { PhysicsParticleBodies } from '../physics/particle-bodies.ts';
 import { objectWorld, playSequence, type Playback } from '../render/animation.ts';
 import type { FlyCamera } from '../render/fly-camera.ts';
 import { invert, project } from '../render/frustum.ts';
@@ -675,6 +676,8 @@ const THROWN_REST_SPEED = 150;
 
 export class PlaySession {
   readonly physics: PhysicsWorld;
+  /** Mesh particles' rigid bodies in the physics world (the dragon crash's rocks). */
+  readonly particleBodies: PhysicsParticleBodies;
   readonly player: Player;
   /** Water's physics (buoyancy, currents, splashes), when the play has water. */
   readonly water: WaterPhysics | undefined;
@@ -852,6 +855,7 @@ export class PlaySession {
     waterRules?: WaterRules;
   }) {
     this.physics = init.physics;
+    this.particleBodies = new PhysicsParticleBodies(init.physics);
     this.player = init.player;
     this.displacement = new WaterDisplacement(displacementSettings(init.player.ini));
     if (init.waterAt) {
@@ -889,7 +893,7 @@ export class PlaySession {
     if (init.hud) {
       const hud = init.hud;
       init.player.onPress = (name) => {
-        hud.userEvent(name);
+        if (init.player.pressTaken?.(name) !== true) hud.userEvent(name);
       };
     }
     this.#notice = init.notice;
@@ -1994,6 +1998,7 @@ export class PlaySession {
     this.#queue.length = 0;
     this.#groups.clear();
     this.player.free();
+    this.particleBodies.clear();
     this.physics.free();
   }
 }

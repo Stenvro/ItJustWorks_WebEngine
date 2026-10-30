@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import type { NifFile } from '../formats/nif/nif.ts';
 import {
   blendWeight,
+  geometryOrder,
+  NO_3D_INDEX,
   partPositions,
   swapTextures,
   thinModelPath,
@@ -110,6 +113,62 @@ describe('actor models', () => {
     ]);
     expect(textures(1)).toEqual(['textures\\red.dds', 'textures\\a_n.dds']);
     expect(textures(2)).toEqual(['textures\\a.dds', 'textures\\a_n.dds']);
+  });
+
+  it('puts alternate textures into shapes by 3D index, whole sets, and hides by the null set', () => {
+    const data = model([
+      { ...part('Rock:0', 0, 0), block: 3 },
+      { ...part('Rock:8', 0, 0), block: 5 },
+      { ...part('Moss', 0, 0), block: 7 },
+    ]);
+    // The geometry blocks in their 3D order.
+    const order = new Map([
+      [3, 0],
+      [5, 1],
+      [7, 2],
+    ]);
+    const swapped = swapTextures(
+      data,
+      {
+        alternates: [
+          // A stale name does not matter: index 1 is the shape the set goes to.
+          { index: 1, textures: ['textures\\old.dds'] },
+          { index: 1, textures: ['textures\\moss.dds'] },
+          { index: NO_3D_INDEX, textures: ['textures\\none.dds'] },
+          { index: 2, textures: undefined },
+          { index: 9, textures: ['textures\\beyond.dds'] },
+        ],
+      },
+      order,
+    );
+    const textures = (i: number): readonly string[] => {
+      const m = swapped.parts[i]?.material;
+      return m?.kind === 'lighting' ? m.textures : [];
+    };
+    expect(swapped.parts.map((p) => p.name)).toEqual(['Rock:0', 'Rock:8']);
+    expect(textures(0)).toEqual(['textures\\a.dds', 'textures\\a_n.dds']);
+    // The later entry for an index wins; the slots the set leaves empty have no texture.
+    expect(textures(1)).toEqual(['textures\\moss.dds', '']);
+  });
+
+  it('counts geometry depth first through nodes, leaving other leaves out', () => {
+    const node = (children: number[]) => ({ kind: 'node', children }) as const;
+    const blocks = [
+      node([1, 4, -1, 6]),
+      node([2, 3]),
+      { kind: 'tri-shape' },
+      { kind: 'camera' },
+      { kind: 'particle-system' },
+      { kind: 'ni-tri-shape' },
+      node([7]),
+      { kind: 'tri-shape' },
+    ];
+    const file = { blocks, roots: [0] } as unknown as NifFile;
+    expect([...geometryOrder(file)]).toEqual([
+      [2, 0],
+      [4, 1],
+      [7, 2],
+    ]);
   });
 
   it('puts the dynamic positions of a BSDynamicTriShape in front of its vertices', () => {

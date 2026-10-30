@@ -703,10 +703,16 @@ export class BehaviorRuntime {
    */
   headTurn: ArrayLike<number> | undefined;
   /**
-   * The camera's distance at this update (bone LOD, setBoneLod); undefined: every bone
-   * animates.
+   * The bone LOD's distance at this update (setBoneLod: the camera's across the ground, by the
+   * skeleton's scale: animationRate); undefined: every bone animates.
    */
-  cameraDistance: number | undefined = undefined;
+  boneLodDistance: number | undefined = undefined;
+  /**
+   * The fewest bones that animate whatever the bone LOD (observed in the original: every bone
+   * for a hovering flier and one knocked down or ragdolled, iMinBonesToGenerateWhileSitting
+   * for one sitting); set by the actor's state each update.
+   */
+  minimumBones = 0;
   /** The bone LOD's levels: beyond `squared` distance, only the first `count` bones animate. */
   #boneLod: readonly { readonly squared: number; readonly count: number }[] | undefined;
   /** The head bone the line's turn goes to (−1: none). */
@@ -1398,8 +1404,9 @@ export class BehaviorRuntime {
    * distance. Beyond a level's distance from the camera that bone and every bone after it in
    * the skeleton's order no longer animate: they keep the pose they had (a human's camera
    * bones beyond 128 units, its fingers beyond 768, its magic and weapon nodes beyond 2048).
-   * TODO(M13): the per-frame choice of the level is inferred (the deepest level whose distance
-   * the camera is beyond).
+   * Each update the last level whose distance the camera is beyond (across the ground, by the
+   * skeleton's scale: animationRate) gives the count, no fewer than minimumBones. TODO(M13): an
+   * actor the camera does not see animates only its minimum bones in the original.
    */
   setBoneLod(levels: readonly { readonly distance: number; readonly bone: string }[]): void {
     const index = new Map(this.skeleton.bones.map((bone, i) => [bone.name.toLowerCase(), i]));
@@ -1414,12 +1421,13 @@ export class BehaviorRuntime {
   /** How many bones animate at the camera's distance (bone LOD). */
   #animatedBones(): number {
     const levels = this.#boneLod;
-    const distance = this.cameraDistance;
+    const distance = this.boneLodDistance;
     if (!levels || distance === undefined) return this.#boneCount;
+    // The last level the distance is beyond names the count, never below the minimum.
     let count = this.#boneCount;
     const squared = distance * distance;
-    for (const level of levels) if (squared > level.squared) count = Math.min(count, level.count);
-    return count;
+    for (const level of levels) if (squared > level.squared) count = level.count;
+    return Math.min(this.#boneCount, Math.max(count, this.minimumBones));
   }
 
   /** The float slots' values and weights from a generated pose's slot blocks. */

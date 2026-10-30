@@ -1058,7 +1058,9 @@ female u8, weight slider male u8, female u8 (0x2: `_0` and `_1` models blended b
 2 unknown, detection sound value u8, unknown u8, weapon adjust f32; MOD2 / MOD3 world model
 male / female (MOD2 for both without MOD3), MOD4 / MOD5 first person; MO2S..MO5S texture swaps
 (count u32, then per swap the shape name as u32 length + text, the TXST and the shape index
-u32); NAM0..NAM3 skin texture sets (male, female, first person male, female). **OTFT** INAM:
+u32; observed in the original, every MODS-like swap goes by that 3D index, the shape's place
+among the model's geometry depth first, and never by the name: 0xffffffff swaps nothing, a TXST
+of form 0x28, the engine's built-in NullTextureSet, hides the shape); NAM0..NAM3 skin texture sets (male, female, first person male, female). **OTFT** INAM:
 form ids (ARMO or LVLI). **LVLN / LVLI:** LVLD chance none u8, LVLF flags u8 (0x1 all levels
 up to the actor's, 0x2 each item of the count, LVLI 0x4 use all), LVLG chance global, LVLO
 12 bytes (level u16, unused u16, form id, count u16, unused u16). **CLFM** CNAM RGBA bytes.

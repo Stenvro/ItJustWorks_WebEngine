@@ -107,7 +107,7 @@ import { ProjectileAim } from './projectile-aim.ts';
 import { ActorAmbientIdles } from './actor-ambient-idles.ts';
 import { ActorAnimObjects } from './actor-anim-objects.ts';
 import { outOfSight } from '../ai/followers.ts';
-import { fliesByRace } from '../ai/flight.ts';
+import { fliesByRace, FlyingState } from '../ai/flight.ts';
 
 /** Actors this near an object destroyed look at it (units; ours, TODO(M13)). */
 const REACT_DESTROYED_RADIUS = 1024;
@@ -2305,6 +2305,23 @@ export class ActorStage {
       forward: camera.forward,
       fov: camera.fovY === undefined ? 80 : fovAcross(camera.fovY),
     };
+    // The fewest bones each animates whatever its bone LOD (observed in the original): all of a
+    // hovering flier's and a knocked down one's, iMinBonesToGenerateWhileSitting of one seated.
+    const sitting = this.#options.session.ini.number(
+      'Animation',
+      'iMinBonesToGenerateWhileSitting',
+    );
+    for (const staged of this.#actors.values()) {
+      const behavior = staged.placed.behavior;
+      if (!behavior) continue;
+      const reference = staged.reference;
+      behavior.minimumBones =
+        this.flight.state(reference) === FlyingState.hovering || this.knockdowns.holds(reference)
+          ? Infinity
+          : this.furniture.holds(reference)
+            ? sitting
+            : 0;
+    }
     animateSkeletons(
       this.#animating(),
       seconds,
@@ -2315,6 +2332,8 @@ export class ActorStage {
             world ? [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0] : view.position,
             view,
             settings,
+            // The skeleton's scale (its placement's): a large creature's LOD comes nearer.
+            world ? Math.hypot(world[0] ?? 0, world[1] ?? 0, world[2] ?? 0) || 1 : 1,
           );
         }),
     );

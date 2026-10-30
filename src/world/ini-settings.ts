@@ -33,6 +33,10 @@ export const INI_DEFAULTS = {
     fAnimInterpNearDist: 400,
     fAnimInterpFarDist: 800,
     fAnimInterpSlop: 0.25,
+    // Bone LOD (src/animation/behavior-runtime.ts, setBoneLod): its distances are measured
+    // times this; a seated actor animates at least this many bones. The engine's built-in values.
+    fBoneLODDistanceScale: 1,
+    iMinBonesToGenerateWhileSitting: 5,
   },
   Audio: {
     fASFadeInTime: 3,
@@ -283,6 +287,10 @@ export const INI_DEFAULTS = {
     iDifficulty: 2,
     // At most this many dismemberments are cut a frame (src/shell/actor-dismemberment.ts).
     iActorsDismemberedPerFrame: 2,
+    // Riding a dragon: the targets its lock picks from stand this near (units), and the lock's
+    // button toggles it (0: held). The engine's built-in values (src/shell/dragon-target-lock.ts).
+    fTargetLockXYRange: 7500,
+    bTargetLockIsToggle: 1,
   },
   // Grass fades out from fGrassStartFadeDistance; the settings menu's Grass Fade runs from
   // fGrassMinStartFadeDistance (Skyrim_Default.ini: 0) to fGrassMaxStartFadeDistance.
