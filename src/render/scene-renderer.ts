@@ -70,7 +70,13 @@ import {
 import { waterFogFar, waterFogPower } from './water-color.ts';
 import type { DisplacementFrame } from './water-displacement.ts';
 import { DisplacementSimulation } from './water-displacement-gpu.ts';
-import { REFLECTION_FACES, reflectionLookupMatrices } from './water-reflection.ts';
+import {
+  MAX_INTERIOR_REFLECTIONS,
+  planReflections,
+  REFLECTION_FACES,
+  reflectionLookupMatrices,
+} from './water-reflection.ts';
+import type { ReflectionPlan, ReflectionRules } from './water-reflection.ts';
 import type {
   AlphaState,
   EffectMaterial,
@@ -617,6 +623,27 @@ export interface WaterFrame {
    * there: the cube reads black). Undefined outdoors (the reflection faces, else the sky).
    */
   readonly environment?: GPUTexture | null;
+  /**
+   * Which water gets which reflection (water-reflection.ts planReflections); without: no
+   * reflection is rendered.
+   */
+  readonly reflections?: ReflectionRules;
+  /** The player's eyes: where the cube rendered with cube map reflections sits (else the camera). */
+  readonly eye?: Vec3 | undefined;
+}
+
+/** A water frame's reflection: its faces (water-reflection.ts) and whether they hold one. */
+export interface WaterReflectionFaces {
+  readonly faces: GPUTexture;
+  readonly active: boolean;
+}
+
+/** One water frame binding: its uniforms and the reflection faces it binds. */
+interface WaterFrameSlot {
+  readonly buffer: GPUBuffer;
+  bindGroup: GPUBindGroup | undefined;
+  faces: GPUTexture | undefined;
+  active: boolean;
 }
 
 /**
@@ -1758,15 +1785,17 @@ export class SceneRenderer {
   };
   readonly #waterTypeLayout: GPUBindGroupLayout;
   readonly #waterPipelineLayout: GPUPipelineLayout;
-  readonly #waterFrameBuffer: GPUBuffer;
   readonly #waterFrameLayout: GPUBindGroupLayout;
-  #waterFrameBindGroup: GPUBindGroup;
+  /**
+   * The water frame's bindings: one per reflection (planReflections, at most four), and the last
+   * for water that takes none.
+   */
+  readonly #waterSlots: WaterFrameSlot[];
+  /** Which water takes which reflection this frame (waterReflectionPlan). */
+  #reflectionPlan: ReflectionPlan | undefined;
   /** The water's displacement field (water-displacement-gpu.ts). */
   readonly #displacement: DisplacementSimulation;
   readonly #waterFrameData = new Float32Array(WATER_FRAME_FLOATS);
-  /** The water's reflection faces (setWaterReflection), and whether they hold this frame's. */
-  #waterReflection: GPUTexture | undefined;
-  #waterReflectionActive = false;
   /** No reflection: one black texel per face. */
   readonly #noReflection: GPUTexture;
   /** Black cube: the water's environment map where it has none. */
@@ -1951,6 +1980,7 @@ export class SceneRenderer {
         texture2d(9),
         texture2d(10),
         texture2d(11),
+        texture2d(12),
       ],
     });
     this.#pipelineLayout = device.createPipelineLayout({
@@ -2069,11 +2099,16 @@ export class SceneRenderer {
       label: 'water',
       bindGroupLayouts: [frameLayout, this.#drawLayout, this.#waterTypeLayout, waterFrameLayout],
     });
-    this.#waterFrameBuffer = device.createBuffer({
-      label: 'water-frame',
-      size: WATER_FRAME_FLOATS * 4,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
+    this.#waterSlots = Array.from({ length: MAX_INTERIOR_REFLECTIONS + 1 }, (_, i) => ({
+      buffer: device.createBuffer({
+        label: `water-frame-${i}`,
+        size: WATER_FRAME_FLOATS * 4,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      }),
+      bindGroup: undefined,
+      faces: undefined,
+      active: false,
+    }));
     this.#displacement = new DisplacementSimulation(device);
     this.#noReflection = device.createTexture({
       label: 'no-water-reflection',
@@ -2088,7 +2123,6 @@ export class SceneRenderer {
       usage: GPUTextureUsage.TEXTURE_BINDING,
       textureBindingViewDimension: 'cube',
     });
-    this.#waterFrameBindGroup = this.#createWaterFrameBindGroup();
     this.#noSceneColor = device.createTexture({
       label: 'no-scene-color',
       format: 'rgba16float',
@@ -3780,10 +3814,14 @@ export class SceneRenderer {
 
   /**
    * The water's reflection (water-reflection.ts) of the current frame (useFrame): the sky's
-   * objects, object LOD and the references reflected by the water, of the opaque draws. Returns
-   * how many it drew.
+   * objects, object LOD and the references reflected by the water, of the opaque draws, as far as
+   * the reflection draws them (water-reflection.ts reflectionContent). Returns how many it drew.
    */
-  drawReflected(pass: GPURenderPassEncoder, scenes: Iterable<GpuScene>): number {
+  drawReflected(
+    pass: GPURenderPassEncoder,
+    scenes: Iterable<GpuScene>,
+    content: { readonly sky: boolean; readonly lod: boolean; readonly references: boolean },
+  ): number {
     pass.setBindGroup(0, this.#frame.bindGroup);
     pass.setVertexBuffer(1, this.#fallbackVertices);
     const state = passState();
@@ -3791,7 +3829,12 @@ export class SceneRenderer {
     for (const scene of scenes) {
       if (!sceneInside(this.#frame.planes, scene)) continue;
       for (const draw of scene.reflected) {
-        if (!this.#visible(draw)) continue;
+        const wanted = draw.sky
+          ? content.sky
+          : draw.reflected === true
+            ? content.references
+            : content.lod;
+        if (!wanted || !this.#visible(draw)) continue;
         this.#drawPart(pass, scene, draw, state);
         count++;
       }
@@ -3801,26 +3844,34 @@ export class SceneRenderer {
   }
 
   /**
-   * The height of the water surface the reflection mirrors: of the water in view this frame
-   * (the world's view), the one nearest the camera; undefined without water in view.
+   * Which water takes which reflection this frame (water-reflection.ts planReflections), from
+   * the planes of the water in the scenes in the order they were added, and which of the
+   * reflections water in view takes (the world's view: call before another frame is used).
+   * drawWater binds each water's reflection by it.
    */
-  reflectedWaterHeight(scenes: Iterable<GpuScene>, camera: Vec3): number | undefined {
-    let best: number | undefined;
-    let bestDistance = Infinity;
+  waterReflectionPlan(
+    scenes: Iterable<GpuScene>,
+    rules: ReflectionRules | undefined,
+  ): { readonly plan: ReflectionPlan; readonly inView: readonly boolean[] } {
+    const heights: number[] = [];
+    const seen: number[] = [];
     for (const scene of scenes) {
       for (const draw of scene.water) {
-        if (!this.#visible(draw)) continue;
-        const dx = draw.center[0] - camera[0];
-        const dy = draw.center[1] - camera[1];
-        const dz = draw.center[2] - camera[2];
-        const distance = Math.max(0, Math.hypot(dx, dy, dz) - draw.radius);
-        if (distance < bestDistance) {
-          bestDistance = distance;
-          best = draw.center[2];
-        }
+        if (draw.visibility?.hidden) continue;
+        heights.push(draw.center[2]);
+        if (this.#visible(draw)) seen.push(draw.center[2]);
       }
     }
-    return best;
+    const plan: ReflectionPlan = rules
+      ? planReflections(heights, rules)
+      : { reflections: [], reflectionOf: () => undefined };
+    this.#reflectionPlan = plan;
+    const inView = plan.reflections.map(() => false);
+    for (const height of seen) {
+      const index = plan.reflectionOf(height);
+      if (index !== undefined) inView[index] = true;
+    }
+    return { plan, inView };
   }
 
   /**
@@ -4031,13 +4082,20 @@ export class SceneRenderer {
   /** Draws water surfaces (they read the opaque scene's copies, see setSceneCopies). */
   drawWater(pass: GPURenderPassEncoder, scenes: Iterable<GpuScene>): void {
     pass.setBindGroup(0, this.#frame.bindGroup);
-    pass.setBindGroup(3, this.#waterFrameBindGroup);
     pass.setVertexBuffer(1, this.#fallbackVertices);
+    const none = this.#waterSlots.length - 1;
+    let bound = -1;
     for (const scene of scenes) {
       for (const draw of scene.water) {
         if (!this.#visible(draw)) continue;
         const type = draw.water ?? this.defaultWater;
         if (!type) continue;
+        // The reflection its plane takes (water-reflection.ts planReflections).
+        const slot = this.#reflectionPlan?.reflectionOf(draw.center[2]) ?? none;
+        if (slot !== bound) {
+          pass.setBindGroup(3, this.#waterFrameBindGroup(slot));
+          bound = slot;
+        }
         const { part } = draw;
         pass.setPipeline(part.pipeline);
         bindAt(pass, 1, scene.drawBindGroup, draw.uniformOffset);
@@ -4195,6 +4253,9 @@ export class SceneRenderer {
     );
     const buffer = createBuffer(device, data, GPUBufferUsage.UNIFORM, `water-${type.editorId}`);
     const noise = await Promise.all(type.noiseTextures.map((path) => textures.get(path)));
+    // The flow normals (NAM5) only rivers with a flow map draw.
+    const flowNormals =
+      flowTexture && type.flowNormals !== '' ? await textures.get(type.flowNormals) : undefined;
     const view = (index: number): GPUTextureView =>
       (noise[index] ?? noise[0] ?? textures.defaults.flatNormal).createView();
     const bindGroup = device.createBindGroup({
@@ -4207,6 +4268,7 @@ export class SceneRenderer {
         { binding: 9, resource: view(1) },
         { binding: 10, resource: view(2) },
         { binding: 11, resource: (flowTexture ?? this.#stillFlow).createView() },
+        { binding: 12, resource: (flowNormals ?? textures.defaults.flatNormal).createView() },
       ],
     });
     return new GpuWaterType(type, bindGroup, buffer);
@@ -4223,20 +4285,13 @@ export class SceneRenderer {
     data.set([...(frame?.horizon ?? [0.5, 0.6, 0.7]), source], 0);
     if ((environment ?? undefined) !== this.#waterEnvironment) {
       this.#waterEnvironment = environment ?? undefined;
-      this.#waterFrameBindGroup = this.#createWaterFrameBindGroup();
+      this.#resetWaterFrameBindGroups();
     }
     data.set([...(frame?.lower ?? [0.4, 0.5, 0.6]), 1], 4);
     data.set([...(frame?.upper ?? [0.3, 0.4, 0.5]), 1], 8);
     data.set([...(frame?.multiplier ?? [1, 1, 1]), 1], 12);
-    data.set(
-      [
-        1 / Math.max(width, 1),
-        1 / Math.max(height, 1),
-        frame?.profile ? 1 : 0,
-        this.#waterReflectionActive ? 1 : 0,
-      ],
-      16,
-    );
+    // w: whether the reflection faces hold a reflection (each binding its own, below).
+    data.set([1 / Math.max(width, 1), 1 / Math.max(height, 1), frame?.profile ? 1 : 0, 0], 16);
     data.set(REFLECTION_LOOKUP, WATER_FRAME_FACES);
     if (frame?.profile) {
       data.set(frame.profile.subarray(0, 128), 20);
@@ -4246,28 +4301,33 @@ export class SceneRenderer {
     }
     // The displacement field: its passes run first, then the shader reads it around its centre.
     const displacement = frame?.displacement;
-    if (this.#displacement.run(displacement)) {
-      this.#waterFrameBindGroup = this.#createWaterFrameBindGroup();
-    }
+    if (this.#displacement.run(displacement)) this.#resetWaterFrameBindGroups();
     if (displacement) {
       const [x, y] = displacement.center;
       data.set([x, y, 1 / displacement.quadSize, 1], 148);
     }
-    this.#device.queue.writeBuffer(this.#waterFrameBuffer, 0, data);
+    const used = this.#reflectionPlan?.reflections.length ?? 0;
+    this.#waterSlots.forEach((slot, index) => {
+      if (index < used || index === this.#waterSlots.length - 1) {
+        data[19] = slot.active ? 1 : 0;
+        this.#device.queue.writeBuffer(slot.buffer, 0, data);
+      }
+    });
   }
 
-  #createWaterFrameBindGroup(): GPUBindGroup {
-    return this.#device.createBindGroup({
-      label: 'water-frame',
+  /** The water frame's binding `index` (made when first bound after a change). */
+  #waterFrameBindGroup(index: number): GPUBindGroup {
+    const slot = this.#waterSlots[index] ?? this.#waterSlots[this.#waterSlots.length - 1];
+    if (!slot) throw new Error('No water frame binding');
+    slot.bindGroup ??= this.#device.createBindGroup({
+      label: `water-frame-${index}`,
       layout: this.#waterFrameLayout,
       entries: [
-        { binding: 0, resource: { buffer: this.#waterFrameBuffer } },
+        { binding: 0, resource: { buffer: slot.buffer } },
         { binding: 1, resource: this.#displacement.slopes.createView() },
         {
           binding: 2,
-          resource: (this.#waterReflection ?? this.#noReflection).createView({
-            dimension: '2d-array',
-          }),
+          resource: (slot.faces ?? this.#noReflection).createView({ dimension: '2d-array' }),
         },
         {
           binding: 3,
@@ -4277,18 +4337,27 @@ export class SceneRenderer {
         },
       ],
     });
+    return slot.bindGroup;
+  }
+
+  #resetWaterFrameBindGroups(): void {
+    for (const slot of this.#waterSlots) slot.bindGroup = undefined;
   }
 
   /**
-   * The water's reflection faces (water-reflection.ts) the water shader looks its reflection up
-   * in, and whether they hold this frame's reflection (call before updateWaterFrame).
+   * The reflections' faces (water-reflection.ts) the water shader looks its reflection up in,
+   * by the index of the reflection in this frame's plan (waterReflectionPlan), and whether they
+   * hold one (call before updateWaterFrame).
    */
-  setWaterReflection(faces: GPUTexture | undefined, active: boolean): void {
-    if (faces !== this.#waterReflection) {
-      this.#waterReflection = faces;
-      this.#waterFrameBindGroup = this.#createWaterFrameBindGroup();
-    }
-    this.#waterReflectionActive = active && faces !== undefined;
+  setWaterReflections(reflections: readonly (WaterReflectionFaces | undefined)[]): void {
+    this.#waterSlots.forEach((slot, index) => {
+      const reflection = index < this.#waterSlots.length - 1 ? reflections[index] : undefined;
+      if (reflection?.faces !== slot.faces) {
+        slot.faces = reflection?.faces;
+        slot.bindGroup = undefined;
+      }
+      slot.active = reflection?.active ?? false;
+    });
   }
 
   /** Material bind group layout (group 2 of object shaders), shared with grass. */

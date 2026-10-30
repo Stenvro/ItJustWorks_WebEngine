@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { flatAmbient } from '../render/scene-lighting.ts';
 import { Fields } from '../formats/esm/fields.ts';
-import { isUnderwater, underwaterFog, underwaterLight, UnderwaterView } from './underwater.ts';
+import {
+  isUnderwater,
+  underwaterCrossing,
+  underwaterFog,
+  underwaterLight,
+  UnderwaterView,
+} from './underwater.ts';
 import { parseWater } from './water.ts';
 
 // DefaultWater (Skyrim.esm): underwater fog amount 0.9, near -500, far 1600.
@@ -21,6 +27,21 @@ describe('underwater view', () => {
     expect(isUnderwater(0, 0)).toBe(false);
     expect(isUnderwater(10, 0)).toBe(false);
     expect(isUnderwater(-10, undefined)).toBe(false);
+  });
+
+  it('measures the near plane corners against the surface: above, under or across', () => {
+    const plane = (low: number, high: number): [number, number, number][] => [
+      [0, 0, low],
+      [1, 0, low],
+      [0, 1, high],
+      [1, 1, high],
+    ];
+    expect(underwaterCrossing(plane(10, 20), 5, 15).state).toBe('above');
+    expect(underwaterCrossing(plane(10, 20), 25, 15)).toEqual({ state: 'under', share: 1 });
+    expect(underwaterCrossing(plane(10, 20), 12.5, 15)).toEqual({ state: 'across', share: 0.25 });
+    // A level near plane (looking straight down) takes the camera's own side.
+    expect(underwaterCrossing(plane(10, 10), 10.5, 10).state).toBe('under');
+    expect(underwaterCrossing(plane(10, 10), 9.5, 10).state).toBe('above');
   });
 
   it('takes the water type underwater fog planes and amount', () => {

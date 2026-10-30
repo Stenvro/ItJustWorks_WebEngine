@@ -43,8 +43,10 @@ describe('parseWater', () => {
           }),
         },
         { type: 'NAM2', data: text('Data\\Textures\\Water\\DefaultWater.dds') },
+        { type: 'NAM5', data: text('Data\\Textures\\Water\\RiverFlow.dds') },
       ]),
     });
+    expect(type.flowNormals).toBe('textures\\water\\riverflow.dds');
     expect(type.opacity).toBe(0.5);
     expect(type.flags & WaterFlag.flowmap).toBe(WaterFlag.flowmap);
     expect(type.sunSpecularPower).toBe(1021);
