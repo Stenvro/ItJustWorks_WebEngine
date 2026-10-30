@@ -1236,6 +1236,8 @@ export class GpuScene {
   #bound: SceneBound | null = null;
   #boundStale = true;
   #shadowCasters: Draw[] | undefined;
+  #reflected: Draw[] | undefined;
+  #water: Draw[] | undefined;
 
   constructor(
     draws: readonly Draw[],
@@ -1301,6 +1303,26 @@ export class GpuScene {
     );
     this.#shadowCasters = casters;
     return casters;
+  }
+
+  /**
+   * The opaque draws the water reflects (water-reflection.ts): the sky's, object and land LOD
+   * and the references reflected by the water; picked once, so the reflection pass does not walk
+   * every draw of the scene for each face.
+   */
+  get reflected(): readonly Draw[] {
+    this.#reflected ??= this.draws.filter(
+      (draw) =>
+        draw.part.pass === 'opaque' &&
+        (draw.sky || draw.reflected === true || isLod(draw.part.part.material)),
+    );
+    return this.#reflected;
+  }
+
+  /** Its water draws (the reflected plane is chosen among them each frame). */
+  get water(): readonly Draw[] {
+    this.#water ??= this.draws.filter((draw) => draw.part.pass === 'water');
+    return this.#water;
   }
 
   /** A draw's bounding sphere moved: the scene's bound is worked out again when next asked. */
@@ -3666,21 +3688,24 @@ export class SceneRenderer {
 
   /**
    * The water's reflection (water-reflection.ts) of the current frame (useFrame): the sky's
-   * objects, object LOD and the references reflected by the water, of the opaque draws.
+   * objects, object LOD and the references reflected by the water, of the opaque draws. Returns
+   * how many it drew.
    */
-  drawReflected(pass: GPURenderPassEncoder, scenes: Iterable<GpuScene>): void {
+  drawReflected(pass: GPURenderPassEncoder, scenes: Iterable<GpuScene>): number {
     pass.setBindGroup(0, this.#frame.bindGroup);
     pass.setVertexBuffer(1, this.#fallbackVertices);
     const state = passState();
+    let count = 0;
     for (const scene of scenes) {
       if (!sceneInside(this.#frame.planes, scene)) continue;
-      for (const draw of scene.draws) {
-        if (draw.part.pass !== 'opaque') continue;
-        if (!draw.sky && draw.reflected !== true && !isLod(draw.part.part.material)) continue;
-        if (this.#visible(draw)) this.#drawPart(pass, scene, draw, state);
+      for (const draw of scene.reflected) {
+        if (!this.#visible(draw)) continue;
+        this.#drawPart(pass, scene, draw, state);
+        count++;
       }
     }
     this.#flushLights(scenes);
+    return count;
   }
 
   /**
@@ -3691,8 +3716,8 @@ export class SceneRenderer {
     let best: number | undefined;
     let bestDistance = Infinity;
     for (const scene of scenes) {
-      for (const draw of scene.draws) {
-        if (draw.part.pass !== 'water' || !this.#visible(draw)) continue;
+      for (const draw of scene.water) {
+        if (!this.#visible(draw)) continue;
         const dx = draw.center[0] - camera[0];
         const dy = draw.center[1] - camera[1];
         const dz = draw.center[2] - camera[2];
@@ -3917,8 +3942,8 @@ export class SceneRenderer {
     pass.setBindGroup(3, this.#waterFrameBindGroup);
     pass.setVertexBuffer(1, this.#fallbackVertices);
     for (const scene of scenes) {
-      for (const draw of scene.draws) {
-        if (draw.part.pass !== 'water' || !this.#visible(draw)) continue;
+      for (const draw of scene.water) {
+        if (!this.#visible(draw)) continue;
         const type = draw.water ?? this.defaultWater;
         if (!type) continue;
         const { part } = draw;
