@@ -58,14 +58,26 @@ describe('the water reflection', () => {
     expect(down.v).toBe(1);
   });
 
-  it('draws every face when the plane changes, then one a frame', () => {
+  it('redraws the faces of a new plane two a frame (the rate of the original), then one a frame', () => {
     const schedule = new ReflectionSchedule();
-    expect(schedule.facesFor(100)).toHaveLength(REFLECTION_FACES);
+    expect(REFLECTION_FACES).toBe(5);
+    expect(schedule.facesFor(100)).toEqual([0, 1]);
+    expect(schedule.complete).toBe(false);
+    expect(schedule.facesFor(100)).toEqual([2, 3]);
+    expect(schedule.facesFor(100.5)).toEqual([4]);
+    expect(schedule.complete).toBe(true);
     expect(schedule.facesFor(100)).toEqual([0]);
-    expect(schedule.facesFor(100.5)).toEqual([1]);
-    expect(schedule.facesFor(-250)).toHaveLength(REFLECTION_FACES);
+    expect(schedule.facesFor(100)).toEqual([1]);
+    // Another plane: every face due again, never more than two a frame.
+    expect(schedule.facesFor(-250)).toEqual([0, 1]);
+    // Away and back: the faces still due first, then the rest again.
     expect(schedule.facesFor(undefined)).toEqual([]);
-    expect(schedule.facesFor(-250)).toHaveLength(REFLECTION_FACES);
+    expect(schedule.facesFor(-250)).toEqual([2, 3]);
+    expect(schedule.facesFor(-250)).toEqual([4, 0]);
+    expect(schedule.facesFor(-250)).toEqual([1]);
+    expect(schedule.facesFor(-250)).toEqual([2]);
+    // The faces drawn before still hold a drawing.
+    expect(schedule.complete).toBe(true);
   });
 
   it('reads which placed water reflects a reference (XPWR type bit 0)', () => {
