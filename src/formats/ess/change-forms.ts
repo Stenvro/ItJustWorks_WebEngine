@@ -10,7 +10,15 @@ import { EssReader, RefIdKind } from './ess-reader.ts';
 import type { RefIdResolver } from './global-data.ts';
 import { CombatUnknown, readCombatController, type EssCombatController } from './combat.ts';
 import { MovementUnknown, PathingStream, readMovement, type EssMovement } from './movement.ts';
+import { readStoryEvent, type SavedStoryEvent } from './global-data-tables.ts';
 import { readPlayerData, type EssPlayerData } from './player.ts';
+import {
+  ProcessUnknown,
+  readCreatedPackage,
+  readPackageData,
+  readProcess,
+  type EssProcess,
+} from './process.ts';
 
 const bit = (n: number): number => (1 << n) >>> 0;
 
@@ -187,6 +195,8 @@ export interface EssValueModifiers {
 export interface EssActorData {
   /** The AI process level (0 high to 3 low), or −1: none. */
   readonly processLevel: number;
+  /** Its AI process's state (process.ts), when it has a process. */
+  readonly process?: EssProcess;
   readonly values?: EssActorValues;
   /** Spells added to the actor (AddSpell). */
   readonly addedSpells?: readonly number[];
@@ -239,6 +249,8 @@ export interface EssQuestChanges {
   readonly objectives?: readonly { readonly index: number; readonly status: number }[];
   /** The aliases' references (runtime data). */
   readonly aliases?: readonly { readonly id: number; readonly reference: number }[];
+  /** The story manager event that started it (runtime data). */
+  readonly event?: SavedStoryEvent;
   readonly alreadyRun?: boolean;
 }
 
@@ -377,6 +389,25 @@ const EXTRA_NAMES: Readonly<Record<number, string>> = {
 class Unknown extends Error {}
 
 /** One extra data entry's data, by its type (the original's layouts). */
+/** The procedure type of the trespass packages the game makes. */
+const TRESPASS_PROCEDURE = 23;
+
+/** A package's data inside an extra, read through a pathing stream of its own. */
+function readPackageExtra(
+  reader: EssReader,
+  resolve: RefIdResolver,
+  read: (stream: PathingStream) => void,
+): void {
+  try {
+    read(new PathingStream(reader, resolve));
+  } catch (error) {
+    if (error instanceof ProcessUnknown || error instanceof MovementUnknown) {
+      throw new Unknown(error.message);
+    }
+    throw error;
+  }
+}
+
 function readExtra(
   reader: EssReader,
   type: number,
@@ -403,8 +434,11 @@ function readExtra(
     }
     case 0x1a: {
       const value = ref();
-      // A package the game made has its own data after the id.
-      if (value >>> 24 === 0xff) throw new Unknown('a trespass package the game made');
+      // A trespass package the game made writes its definition after the id.
+      if (value >>> 24 === 0xff)
+        readPackageExtra(reader, resolve, (stream) => {
+          readCreatedPackage(stream, TRESPASS_PROCEDURE);
+        });
       return { value };
     }
     case 0x1b:
@@ -535,9 +569,15 @@ function readExtra(
         list(ref);
       });
       return {};
-    case 0x6c:
-      if (reader.u8() !== 0xff) throw new Unknown("a package's running data");
-      return {};
+    case 0x6c: {
+      // The running data of the package the Package extra names (a kind byte, 0xFF: none).
+      const kind = reader.u8();
+      if (kind !== 0xff)
+        readPackageExtra(reader, resolve, (stream) => {
+          readPackageData(stream, kind);
+        });
+      return kind === 0xff ? {} : { value: kind };
+    }
     case 0x6f:
       return {
         value: list(() => {
@@ -1160,16 +1200,8 @@ function readQuest(reader: EssReader, flags: number, resolve: RefIdResolver): Es
     quest.aliases = aliases;
     const locations = reader.u32();
     reader.skip(locations * 7);
-    if (reader.u8() !== 0) {
-      reader.u32();
-      reader.skip(4);
-      const params = reader.u32();
-      for (let i = 0; i < params; i++) {
-        const type = reader.u32();
-        if (type === 3) reader.u32();
-        else if (type <= 4) reader.refId();
-      }
-    }
+    // The story manager event that started it (a byte says there is one).
+    if (reader.u8() !== 0) quest.event = readStoryEvent(reader, resolve);
   }
   if (has(ChangeQuest.instanceData)) {
     reader.u32();
@@ -1289,30 +1321,34 @@ function readActor(
   resolve: RefIdResolver,
 ): string | undefined {
   const ref = (): number => resolve(reader.refId());
-  if (actor.processLevel === -1) {
-    reader.u8();
-    reader.skip(13 * 4); // timers, counters and the time since its last update
-    ref();
-    reader.skip(18); // its state bits
-    ref();
-    const casters = reader.u8();
-    for (let i = 0; i < 4; i++) {
-      if ((casters & (1 << i)) === 0) continue;
-      readCaster(reader, resolve);
-      reader.u32();
-      ref();
-      reader.u32();
-      reader.skip(reader.vsval()); // the caster's animation state
+  // One pathing stream for the actor's save: the AI process, the movement controller and the
+  // combat controller share the objects they write.
+  const stream = new PathingStream(reader, resolve);
+  if (actor.processLevel !== -1) {
+    try {
+      actor.process = readProcess(stream, actor.processLevel);
+    } catch (error) {
+      if (error instanceof ProcessUnknown || error instanceof MovementUnknown) {
+        return 'AI process data: ' + error.message;
+      }
+      throw error;
     }
-    for (let i = 0; i < 5; i++) ref(); // the spells and the power in hand
-  } else {
-    // TODO(M13): the AI process's data has no decoded layout yet: the actor values that follow
-    // it are found by their fixed shape (four modifier sets of three values) and taken where
-    // the storage after them reads as actor values.
-    const at = findActorValues(reader);
-    if (at === undefined) return 'AI process data';
-    reader.seek(at);
   }
+  reader.u8();
+  reader.skip(13 * 4); // timers, counters and the time since its last update
+  ref();
+  reader.skip(18); // its state bits
+  ref();
+  const casters = reader.u8();
+  for (let i = 0; i < 4; i++) {
+    if ((casters & (1 << i)) === 0) continue;
+    readCaster(reader, resolve);
+    reader.u32();
+    ref();
+    reader.u32();
+    reader.skip(reader.vsval()); // the caster's animation state
+  }
+  for (let i = 0; i < 5; i++) ref(); // the spells and the power in hand
   const values = readActorValues(reader);
   if (!values) return 'actor values';
   actor.values = values;
@@ -1320,9 +1356,6 @@ function readActor(
   const n = reader.u32();
   for (let i = 0; i < n; i++) added.push(ref());
   actor.addedSpells = added;
-  // One pathing stream for the actor's save: the movement and combat controllers share the
-  // objects they write.
-  const stream = new PathingStream(reader, resolve, actor.processLevel === -1);
   if (reader.u8() !== 0) {
     try {
       actor.movement = readMovement(stream);
@@ -1395,27 +1428,4 @@ function readActorValues(reader: EssReader): EssActorValues | undefined {
     others.push({ av, permanent, temporary, damage });
   }
   return { modifiers, base, others };
-}
-
-/** Where the actor values start after an AI process's data, found by their shape. */
-function findActorValues(reader: EssReader): number | undefined {
-  const start = reader.offset;
-  const end = start + reader.remaining;
-  const word = (at: number): number => {
-    reader.seek(at);
-    return reader.u32();
-  };
-  for (let at = start; at + 64 <= end; at++) {
-    if (word(at) !== 3 || word(at + 16) !== 3 || word(at + 32) !== 3 || word(at + 48) !== 3) {
-      continue;
-    }
-    reader.seek(at);
-    try {
-      if (readActorValues(reader)) return at;
-    } catch (error) {
-      if (!(error instanceof FormatError)) throw error;
-    }
-  }
-  reader.seek(start);
-  return undefined;
 }

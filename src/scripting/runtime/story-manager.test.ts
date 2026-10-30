@@ -199,6 +199,33 @@ describe('the story manager', () => {
     expect(started).toEqual([0x100, 0x200]);
   });
 
+  it('saves the events not yet processed and tells them again after a load', async () => {
+    const { runtime, started } = stubRuntime([questNode(0x10, 0, 0, [[0x100, 0]])]);
+    const quests = (
+      runtime as unknown as { quests: { start: (quest: number) => Promise<boolean> } }
+    ).quests;
+    const start = quests.start;
+    quests.start = async (quest) => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return start(quest);
+    };
+    const manager = new StoryManager(runtime);
+    const first = manager.event(event());
+    void manager.event(event('KILL'));
+    // The first is being processed; the second waits, and the save keeps it.
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    const saved = manager.saveData() as { pending?: StoryEventData[] };
+    expect(saved.pending?.map((waiting) => waiting.type)).toEqual(['KILL']);
+    await first;
+    const loaded = new StoryManager(runtime);
+    loaded.loadData({ pending: [event()] });
+    expect(started).toEqual([0x100]);
+    loaded.resume();
+    await loaded.idle();
+    // Told again after the load: the quest started once already ran (hours until reset 0).
+    expect((loaded.saveData() as { pending?: unknown }).pending).toBeUndefined();
+  });
+
   it('leaves quests of another event type alone', async () => {
     const { runtime, started } = stubRuntime(
       [

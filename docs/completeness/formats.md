@@ -35,14 +35,14 @@ a master or the plugin and its string ids resolve. Nothing depends on names in s
 Beside it the census lists, per record type, the subrecords no engine code outside
 `src/formats` names (by source text): parsed, used by: open, which is the other areas' work.
 
-## Summary (2026-10-30, round 8)
+## Summary (2026-10-30, round 9)
 
 The checklist has **157 items**: 37 format items below and the 120 record types of the load
 order (the table at the end). **155 are done** (35 format items, all 120 record types). Open:
-the save game's change forms (every one of both saves reads to its end since round 8, but an
-actor's AI process data is found by its shape, not decoded) and global data (every entry of
-both saves reads to its last byte since round 8, but the weather's tail and two types no save
-holds are kept as bytes).
+the save game's change forms (every one of both saves reads to its end by its layout since
+round 9, the AI process included; open are layouts no save holds: a created package as a PACK
+change form, a grenade's constraints, the combat paths) and global data (every entry by its
+layout since round 9; open: the combat search's detail, in neither save).
 
 Round 8 (the two real saves): the player's data read to its end (camera, quest log, perks,
 tints, ...), the combat AI's objects (30 classes and the templates, the combat controller with
@@ -224,17 +224,20 @@ and imports the first of them when it is there.
 - [ ] Change forms: every one of both saves (21,599) is read to its end, all 4,727 actors
       included (round 7: the movement controller, `src/formats/ess/movement.ts`; round 8: the
       player's data to its end, `player.ts`, and the combat AI's objects in 12 combat
-      controllers and 6 combat pathing requests, `combat.ts`). Open: the AI process data
-      (found by its shape, not decoded: its top level is known, the packages' running data by
-      procedure and the animation stream's variables are not), a package the game made (in
-      PACK and in the trespass and package-data extras), a grenade's constraints and the
-      combat paths' classes (none in the saves; built from the original's layouts).
+      controllers and 6 combat pathing requests, `combat.ts`; round 9: the AI process data by
+      its layout, `process.ts`: every process level's part, the running packages with their
+      data by kind, a custom package's changed parameters and its procedure tree's states, the
+      packages the game makes and the package extras; nothing is found by its shape). Open, none
+      in the saves: a package the game made as a PACK change form (its kind is not written
+      there) and one with its own package data, a grenade's constraints and the combat paths'
+      classes (built from the original's layouts).
 - [ ] Global data: every one of the 30 types has a reader, and `readGlobalData` (run by
       `ess-info` and the save test) says what each leaves. Round 8: every entry of both saves
       reads to its last byte (the combat table's threats are combat objects; temp effects
-      have three lists). Open: kept as bytes where nothing documents them: 104 (in neither
-      save), the story event manager's entries (none in the saves), the weather's tail; the
-      combat search's detail is UESP's layout (none in the saves).
+      have three lists). Round 9: the weather's tail (the sky's values and its two sky
+      effects) and the story event manager's events are read by the original's layout; 104
+      has none (the original neither writes nor reads it). Open: the combat search's detail is
+      UESP's layout (none in the saves).
 
 ## Files the original does not load
 

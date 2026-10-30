@@ -6,6 +6,7 @@
 // stops (an undocumented temp effect type, the story event manager's entries, type 104), the
 // rest is kept as bytes. Platform-independent.
 
+import { FormatError } from '../binary-reader.ts';
 import { EssReader, essReader, type EssSource } from './ess-reader.ts';
 import {
   readAnimObjects,
@@ -567,17 +568,72 @@ export function readPlayerControls(data: EssSource): {
   };
 }
 
-/** 111 Story Event Manager: its entries' format is undocumented, kept as bytes. */
-export function readStoryEventManager(data: EssSource): {
-  unknown: number;
-  count: number;
-  entries: Uint8Array;
-} {
+/**
+ * The kinds of a story event's data members, as the saves read show them (Keyword.SendStoryEvent's
+ * keyword, location, two references and two numbers): their members are numbered by kind in
+ * their order (R1, R2, ...). TODO(M13): kind 1 (the other forms, F) is not in the saves read.
+ */
+export const StoryParameterKind = {
+  reference: 0,
+  form: 1,
+  location: 2,
+  value: 3,
+  keyword: 4,
+} as const;
+
+/** A story manager event's data member as the save writes it: its kind and value. */
+export interface SavedStoryParameter {
+  /** `StoryParameterKind`. */
+  readonly kind: number;
+  /** The form id (kinds 0, 1, 2, 4) or the number (kind 3, as its u32). */
+  readonly value: number;
+}
+
+/** A story manager event (BGSStoryEvent) as the original saves it. */
+export interface SavedStoryEvent {
+  /** Its number (the manager counts the events it was told). */
+  readonly id: number;
+  /** Its type, as SMEN's ENAM ("SCPT", "KILL", ...). */
+  readonly type: string;
+  readonly parameters: readonly SavedStoryParameter[];
+}
+
+/** A story event's type code (a u32 of four characters, first in the low byte) as text. */
+function eventType(code: number): string {
+  return String.fromCharCode(code & 0xff, (code >>> 8) & 0xff, (code >>> 16) & 0xff, code >>> 24);
+}
+
+/**
+ * A story event as the story event manager and a quest's runtime data write it, as observed in
+ * the original: its number, its type, a u32 count of its data members, each a kind u32 and its
+ * value by kind.
+ */
+export function readStoryEvent(reader: EssReader, resolve: RefIdResolver): SavedStoryEvent {
+  const id = reader.u32();
+  const type = eventType(reader.u32());
+  const parameters: SavedStoryParameter[] = [];
+  for (let n = reader.u32(), i = 0; i < n; i++) {
+    const kind = reader.u32();
+    if (kind === 3) parameters.push({ kind, value: reader.u32() });
+    else if (kind <= 4) parameters.push({ kind, value: resolve(reader.refId()) });
+    else throw new FormatError(`Unknown story event member kind ${String(kind)}`, reader.offset);
+  }
+  return { id, type, parameters };
+}
+
+/**
+ * 111 Story Event Manager, as observed in the original: the next event's number, then the
+ * events told and not yet processed.
+ */
+export function readStoryEventManager(
+  data: EssSource,
+  resolve: RefIdResolver,
+): { nextId: number; events: SavedStoryEvent[] } {
   const reader = essReader(data);
-  const unknown = reader.u32();
-  const count = reader.vsval();
-  // TODO(M12): the entries' layout (UESP: possibly the quest static data's run data).
-  return { unknown, count, entries: reader.bytes(reader.remaining).slice() };
+  const nextId = reader.u32();
+  const events: SavedStoryEvent[] = [];
+  for (let n = reader.vsval(), i = 0; i < n; i++) events.push(readStoryEvent(reader, resolve));
+  return { nextId, events };
 }
 
 /** 112 Ingredient Shared: the ingredient pairs alchemy found to share no effect. */
@@ -845,7 +901,11 @@ function readTempEffect(
 
 // --- 104 and 1005 Main ---------------------------------------------------------------------------
 
-/** 104: undocumented; kept as bytes (TODO(M12): its layout, from a real save). */
+/**
+ * 104: observed in the original, its save writes no entry of this type and its load takes
+ * nothing from one: there is no layout. Bytes an entry of it holds (a save of another
+ * program) are kept as they are, as the original would ignore them.
+ */
 export function readUnknown104(data: EssSource): Uint8Array {
   const reader = essReader(data);
   return reader.bytes(reader.remaining).slice();
@@ -882,7 +942,7 @@ export const GLOBAL_DATA_READERS: Readonly<
   108: (data) => readStoryTeller(data),
   109: readMagicFavorites,
   110: (data) => readPlayerControls(data),
-  111: (data) => readStoryEventManager(data),
+  111: readStoryEventManager,
   112: readIngredientShared,
   113: (data) => readMenuControls(data),
   114: readMenuTopicManager,

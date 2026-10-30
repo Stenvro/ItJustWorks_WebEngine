@@ -13,10 +13,10 @@ done and the actor values must come out as the save holds them.
 Two real saves (2026-10-30, the same load order with Survival Mode, Curios, Fishing and AdvDSGS)
 read with `ess-info`: every global data entry with its reader and to its last byte, the
 Papyrus data to its last byte (40k script instances, 430 arrays, the running stacks with their
-frames, the registrations), and every change form to its end: all 4,727 actors with their
-movement controllers, the 12 combat controllers and 6 combat pathing requests of the second
-save (a fight at Helgen) with the combat AI's objects, and the player's own data. One part is
-still found rather than read: an actor's AI process data (see "Change forms", TODO(M13)).
+frames, the registrations), and every change form to its end: all 4,727 actors with their AI
+processes (see "AI process"), movement controllers, the 12 combat controllers and 6 combat
+pathing requests of the second save (a fight at Helgen) with the combat AI's objects, and the
+player's own data. Nothing is found by its shape any more.
 
 ## The file
 
@@ -65,9 +65,12 @@ id. 2 is a created form (`0xFF000000 | value`). 3 is unknown.
 Read: 0 misc stats (count u32; name, category u8, value i32), 1 player location (next object id
 u32, worldspace, cell x and y i32, worldspace, position; one more byte from form version 73), 2
 TES, 3 global variables (vsval count; id, value f32), 4 created objects (weapon and armour
-enchantments, potions, poisons), 5 effects, 6 weather (climate, weather, previous, two unknown,
-region weather; the hour, the transition's start and how far it is; the rest kept as bytes), 7
-audio, 8 sky cells, 1001 Papyrus, 1002 anim objects, 1003 timer, 1004 synchronised animations.
+enchantments, potions, poisons), 5 effects, 6 weather (as observed in the original, CommonLibSSE's
+Sky members: climate, weather, previous, default and forced weather, region; the hour, the last
+weather change and how far the transition is; the sky's flags, the last moon phase update, three
+u32, a u32 and the fog power, the sky mode; a byte of which of the current and last weather's sky
+effects follow, each a model reference effect as the temp effects' type 9), 7 audio, 8 sky
+cells, 1001 Papyrus, 1002 anim objects, 1003 timer, 1004 synchronised animations.
 
 Tables 2 and 3's other types (`global-data-tables.ts`, after UESP's pages for each; built from
 the documented layouts and tested by round trip, waiting on a real save, TODO(M12)): 100 process
@@ -84,13 +87,19 @@ spells and shouts; an extra part UESP sees "in certain situations", read when by
 metadata, 107 quest static data (two lists of quest run data: a value's type 1, 2 and 4 are
 references, 3 a number; three reference lists; per quest a list of number pairs; a flag), 108
 story teller (a flag), 109 magic favourites (the favourites, then the hotkeys by position), 110
-player controls, 111 story event manager (its entries' layout is undocumented: kept as bytes),
-112 ingredient pairs found to share no effect, 113 menu controls, 114 menu topic manager (two
+player controls, 111 story event manager (as observed in the original: the next event's number
+u32, then a vsval count of the events told and not yet processed, each as a quest's runtime
+data writes its event: its number u32, its type as SMEN's ENAM (four characters in a u32, first
+in the low byte), a u32 count of data members, each a kind u32 and its value: 0 a reference, 2 a
+location, 4 a keyword (refIds), 3 a number u32, 1 another form; the members are numbered by kind
+in their order, as Keyword.SendStoryEvent's K1, L1, R1, R2, V1, V2 show), 112 ingredient pairs found to share no effect, 113 menu controls, 114 menu topic manager (two
 references), 1000 temp effects (the effect entries, a u32, then three lists of typed effects,
 as observed in the original (UESP knows two: the byte left after them was the third's empty
 count): types 0, 1, 3 to 11 documented; an undocumented type, such as 2, stops the read and
 keeps the rest), 1005
-main (always empty; the table 3 count leaves it out). 104 has no documentation: kept as bytes.
+main (always empty; the table 3 count leaves it out). 104: observed in the original, its save
+writes no entry of this type and its load reads nothing from one, so there is no layout (an
+entry another program wrote is kept as bytes, as the original ignores it).
 `GLOBAL_DATA_READERS` maps every type to its reader; `readGlobalData` runs one and says how
 many bytes it left, and `ess-info` prints every entry not read to its end. Type 1 has one more
 byte from form version 73 (read when there). Measured on the two saves: every reader ends
@@ -174,8 +183,8 @@ everywhere (the original reserves one byte and widens it when the count is known
   (Ghost, MapMarker, Hotkey, HasNoRumors, CanTalkToPlayer, ShouldWear, Soul); 4 bytes
   (LevCreaModifier, Rank, Health, TimeLeft, Charge, Scale, ObjectHealth, Radius, ActorCause,
   ActivateRefChildren, Flags); Count i16; UniqueID u16 + u32; PackageStartLocation (refId, xyz,
-  u32); Package (two refIds, u32, three flag bytes); TresPassPackage (refId; a package the game
-  made has its own data after it: open); RunOncePacks (vsval × refId + u8); Lock (level u8,
+  u32); Package (two refIds, u32, three flag bytes); TresPassPackage (refId; a trespass package the
+  game made writes its definition after it, see "AI process"); RunOncePacks (vsval × refId + u8); Lock (level u8,
   flags u8, key, two u32); Teleport (position, rotation, u8, door); LeveledCreature (base,
   template, u32 change flags, then the base's NPC\_ change data by those flags); LeveledItem
   (i32 + u8); MagicCaster (the caster's common part: u32, refId, two u32, refId, u32; then two
@@ -184,7 +193,8 @@ everywhere (the original reserves one byte and widens it when the count is known
   FriendHits (vsval × f32); InfoGeneralTopic (wstring, 5 bytes, 4 refIds); TerminalState (2
   bytes); FactionChanges (vsval × faction refId + rank i8, a crime faction refId, u8);
   DismemberedLimbs (u16, two u32, u8, refId, vsval × 4 bytes + vsval × refId); PackageData (a
-  type byte, 0xFF: none; else the package's running data: open); SayTopicInfoOnceADay (vsval ×
+  kind byte, 0xFF: none; else the running data of the package the Package extra names, see "AI
+  process"); SayTopicInfoOnceADay (vsval ×
   refId + two u32); SayTopicInfo (refId, u8, u32, refId, vsval × (two wstrings, two u32, u8,
   three refIds, u8), i16, four refIds); GuardedRefData (vsval × refId, u32, u8);
   FollowerSwimBreadcrumbs (12 bytes, refId, u32, vsval × (12 bytes, refId, 12 bytes, refId,
@@ -208,20 +218,7 @@ everywhere (the original reserves one byte and widens it when the count is known
   count of its Havok constraints (TODO(M13): their layout; none in the saves read). **PHZD**
   (hazards): six u32 and two refIds.
 - **Actors** (ACHR): the AI process level i32 (−1: none) and the state flags u32 come first,
-  then the reference data. With a process, its data follows: it is not decoded (TODO(M13)),
-  and the reader finds what comes after it by its shape (the four modifier sets below, each
-  starting with 3). What is known of it, as observed in the original: two u32, a byte and
-  when set 12 u32 and two lists; the current package (the package's reference, then when it
-  is one the game keeps a byte and the package's own data, a byte (−1: none) and the
-  package's running data, three u32, u16, two bytes and a target reference); a byte, u32, a
-  reference, three u32, a byte, u16, a timer, a reference, a list of references, a u32 count
-  of reference pairs, three references and a byte. Then by the process level: the middle-low
-  process's u32, the middle-high process's (some sixty values and references, the package
-  stack, a count of known objects each with its own size, a list counted after it) and the
-  high process's (switches and timers, references, six held objects, the path's points
-  through the pathing stream, a part sized in bytes, two lists, the animation graph's state
-  through the animation stream). The parts the reader would need beyond sizes are the
-  packages' running data by procedure and the animation stream's variables. Then, for every
+  then the reference data. With a process, its data follows (see "AI process"). Then, for every
   actor: a byte, 13 u32 (timers and counters), a
   refId, the actor state (18 bytes), a refId, a byte of which of the four magic casters follow
   (each: the common part, u32, refId, u32, a vsval-sized animation block), the four spells and
@@ -240,8 +237,8 @@ everywhere (the original reserves one byte and widens it when the count is known
   index u32, state u32: 1 displayed, 2 completed, 3 completed and displayed, 4 failed, 5 failed
   and displayed; dormant ones are not written), runtime data (a byte, the aliases: u32 count ×
   (alias id u32, a created flag u8, the reference; when created four more refIds), the
-  location map: u32 count × (u32, refId), the story event: a byte, then its type, u32 count of
-  parameters, each a type u32 and a refId, or for type 3 a u32), instance data (u32, vsval ×
+  location map: u32 count × (u32, refId), the story event that started it: a byte, then the event as the story event manager writes
+  its events (global data 111)), instance data (u32, vsval ×
   (id u32, vsval × (alias u32 + refId), vsval × (refId + u32), u16, u8)), already run u8. The
   current stage is not written.
 - **NPC\_**: form flags, ACBS (24), factions (vsval × refId + rank i8), spell list (spells,
@@ -267,14 +264,97 @@ everywhere (the original reserves one byte and widens it when the count is known
   its whole definition (open, TODO(M13); none in the saves read). INFO, CONT, DOOR, STAT, ALCH,
   IDLM, NOTE, NAVM, WOOP, MGEF, ENCH, CLAS: the form flags only.
 
+## AI process
+
+As observed in the original (`src/formats/ess/process.ts`), through the actor's pathing stream.
+Every process: two u32, a byte and when set its cached values (12 u32 and two u32-counted lists
+of an actor value, a u32 and a byte); the **current package** (below); a byte, u32, a reference,
+three u32, a byte, u16, a timer, a reference, a vsval count of references, a u32 count of
+reference pairs, two references, a byte and a reference. Then by the process level (0 high to 3
+low): from middle-low (2) a u32; from middle-high (1) its part: about sixty switches, values and
+positions, five references, a u32, a vsval count of references, a second package slot (as the
+current one), the objects it knows (a vsval count: a reference, a byte, a vsval and the object's
+data prefixed by its size), a reference, the items equipped by hand (a vsval count: a reference,
+u32, u8, u32, two references, five bytes), switches and timers; for the high process (0) inside
+it, before the middle-high part's last byte: switches, values, positions and timers, eight
+references, six held objects with a byte each, the dialogue it is in (a byte; lines with two
+names, two u32, a byte, three references and a byte; a u16 and four references), points through
+the pathing stream (eight values, two u32 and a reference each), a byte and when set a u32, a
+point, a time stamp and a reference, the character controller's state prefixed by its size, two
+bytes, a vsval count of (two u32, two references), a vsval count of reference effects (a
+reference, two handles, a u32, a time stamp, a byte and when set a u32, three bytes, three points
+and three time stamps), values, references and time stamps, a name, and a byte: whether it is
+loaded (then its animation callbacks: two bytes, a byte and when set a name and a u32, a byte and
+when set a name; the fourth and fifth of its five animation graphs' states through the animation
+stream, as the movement controller writes one; two u16, a u32 and a byte); five bytes, values, two
+references, a timer, values and a reference, two bytes, a u32, a time stamp and two bytes.
+
+A **running package**: the package (0: none, and nothing follows); for a package the game made
+(0xFF000000 and up) its procedure type (−1: none) and its definition: PKDT (12 bytes), a byte of
+which follow (1 a package location, 2 a package target, 4 its own data: none the game makes), those,
+a u32, then by procedure type: an alarm (21) a vsval count of (a byte, a u16) and a byte; a
+dialogue (15, 28) three references and two bytes; a flee (22) two bytes, a point, a u32, three
+bytes, two references and a vsval count of references; a trespass (23) five u32 and a reference;
+a spectator (24) four u32, a byte, a point and a vsval count of (three u32, two points, two
+bytes, two references); the others nothing. Then its running data's kind byte (0xFF: none) and
+that data; three values (a u32, a game time f32, a u32), a u16, two bytes and its target.
+
+The running data by kind: escort (2) a reference; sandbox (12) eight u32, four bytes, a u32, a
+byte, a frame count, four u32, seven bytes, three references and a vsval count of (a point, a
+reference); patrol (13) three u32, two bytes, a u32 and a vsval count of its points
+(references); guard (14) three u32, a reference, three u32, a byte and a byte that says a
+package target follows; use weapon (16) nothing; **custom** (18) the parameters it changed (a
+vsval count: the parameter's index u8, its type's name and its value: Bool a byte, Int and Float
+four bytes, SingleRef a package target, ObjectList a vsval count of items (two references, four
+u32), Location a package location, LocWrapper a place (below), TargetSelector, Topic and Ref
+nothing; a package of a plugin writes those that differ from the package's, one the game made all
+of them), then its procedure tree's running state: the name of its root's kind ('' when none) and
+that state.
+
+A package target (PTDA): a kind byte, a u32, then by kind a reference (0, 1, 3) or a u32 (2, 4,
+5). A package location (PLDT): a kind byte, the radius u32, then a reference (0 to 4), a u32 (5,
+8, 9, 10), a byte (11) or nothing. A place a procedure goes to (a byte: whether there is one):
+its kind's name, then LocRef (a reference, three u32, a byte), LocPt (a point, two references, two
+u32, two bytes) or LocCell (an interior cell, a point).
+
+The **procedure states**, by name (each a procedure of the package's tree): Sequence and Stacked
+(the child's name and state, a u32), Simultaneous (a vsval count of (u32, child)), Random (child,
+u32, a vsval count of u32), Acquire (u32, reference, u32, reference, a byte and when set an
+Activate state), Activate (the parameter it uses (0xFF: none), a reference, a place, two u32, two
+bytes, a pathing request), DialogueActivate (two places, a reference, a dialogue target (a u32
+kind, then a reference for 0, else a u32), a byte and when set a Dialogue state, a byte, a
+request), Dialogue (u32, two references, a dialogue target, a byte), Done (nothing), Eat (a
+reference, u32, two bytes), Escort (a place, a vsval count of references, two bytes, a request,
+u32, a byte, two u32), Find (a place, u32), Flee (a place, a byte and when set a Travel state, a
+point, six u32, a vsval count of references, two references, four bytes, a request), FlightGrab (a
+reference, a request, two bytes), Follow (a reference, three places, three u32, a request, five
+bytes), Guard and HoldPosition (a place), Hover (a place, a byte), KeepAnEyeOn (two places),
+LockUnlock (a place, two bytes), Orbit (a byte, a place, a byte), Patrol (u32, a patrol's running
+data as above, a byte and when set a UseIdleMarker state, a byte and when set a SitSleep state, a
+request, three bytes), Sandbox (four u32, a byte, a time stamp, u32, a time stamp, four bytes,
+u32, a byte, five u32, seven bytes, three references, a vsval count of (a point, a reference), a
+place, a child (name and state), u32, a request, u32, a byte), Say (a byte), Shout (a place, a
+byte and when set a Travel state, a reference, u32, a reference, three u32, a reference),
+SitSleep (the parameter it uses, a byte, a byte and when set an Activate state), Travel (three
+bytes, a place, the parameter it uses, a request), UseIdleMarker (a byte, two references, u32, a
+request, a byte), UseMagic (two places, a byte and when set a Travel state, a reference, two u32,
+two references, a u16, four u32), UseWeapon (two places, a byte and when set a Travel state, a
+reference, u32, a reference, three u16, u32), Wait (u32), Wander (a place, u32, a byte, u32, a
+request). A request is a shared object of the pathing stream (see "Movement").
+
+Measured on the two saves: every actor's process reads to its end, 2,362 and 2,365 actors with
+the AI process, movement and combat data after it. The custom packages' trees in them: Sequence,
+Stacked, Simultaneous and SitSleep at the root, Travel, Sandbox, Activate and the others below.
+TODO(M13): a created package with its own package data (bit 4: none in the saves; the game makes
+its packages without one).
+
 ## Movement
 
 As observed in the original (`src/formats/ess/movement.ts`). The movement controller writes
 through a pathing stream: values as usual, references as refIds, and **shared objects** by an
 8-byte id (the object's address); the first time an object is written in an actor's save its
-type and data follow the id, later only the id (0: none). The AI process's data writes some
-before (the reader then takes an id followed by no known type as written there: TODO(M13),
-from the AI process's decoded data). A type is the CRC-32 (reflected, start 0, no final
+type and data follow the id, later only the id (0: none). The AI process's procedure states
+write some before (their pathing requests), through the same stream. A type is the CRC-32 (reflected, start 0, no final
 inversion) of the class name (`PathingRequest` 0x330EB0E3); the combat AI's generic requests
 mix in their goal and search policies' ids by exclusive or.
 
@@ -369,15 +449,27 @@ as for a new game, then the state is applied. Form ids move from the save's load
 plugin name, and forms of plugins not loaded are left out. What it applies:
 
 - actors: their actor values (base values that changed, modifiers, damage) and the factions
-  a script put them in or took them out of;
+  a script put them in or took them out of; the package each ran (its AI process's current
+  package) and whom it fought (its combat controller's target), for the actors the save has
+  moved: our world save's actors (`GameSave.world`, docs/formats/save.md), so those of the
+  loaded area go on with that package as they are placed (from its procedure tree's root:
+  TODO(M13), the procedures' running states into ours; an actor at its record's place keeps
+  the package its AI chooses);
 - the player: where they stand (their ACHR's moved place, else the player location table),
   level, name, race, the 18 skills and DNAM's health, magicka and stamina (TODO(M13): checked
   against a real save), factions, the base's spells and shouts; their inventory changes; the
   experience towards the next level (the character's and each skill's), the times each skill
-  was made legendary, and the perks they have;
+  was made legendary, and the perks they have; the quest log's entries (each quest's stages'
+  log entries, oldest first, and the journal's order by the newest); the camera: first person
+  (its state 0) or third (9 to 12), and the world and first person fields of view (our world
+  save's player; TODO(M13): a save made in another camera state goes back to the one under it);
 - globals (GameDaysPassed sets the clock) and misc stats;
 - quests: running, completed, failed and active flags, the stages done (the current stage is
-  the highest done: TODO(M13)), objectives (shown, completed, failed), alias references;
+  the highest done: TODO(M13)), objectives (shown, completed, failed), alias references, the
+  story event that started each (its members numbered by kind, R1, L1, K1, V1, ...);
+- the story event manager's events told and not yet processed: told again once the game has
+  loaded (our saves keep them too; none in the saves read; TODO(M13): the started quest's
+  OnStory arguments in the members' order, checked on Script Event only);
 - the entries scripts added to leveled lists;
 - references: moved (cell or world by the record's type), enabled or disabled, deleted, scale,
   owner, inventory changes (`GameSave.inventoryDeltas`, added to the records' inventories after
@@ -399,9 +491,9 @@ code positions, not the compiled script's), the function messages, suspended sta
 the other registrations (sleep and tracked stats events, inventory filters, animation events);
 the projectiles and hazards in flight; the base objects' other changes (values, names, known
 ingredient effects, location keyword data, scenes' running state); the movement controller's
-state (the engine plans its paths anew); the combat controllers and the combat table (the
-fights the loaded actors were in, their targets and searches: M13); the player's camera
-state, quest log entries and other lists (M13).
+state (the engine plans its paths anew); the AI processes beyond the package (the procedures'
+running states, the high process's timers and held objects: M13); the combat controllers' and
+the combat table's searches and objects (M13); the player's other lists (M13).
 
 Everything else is counted by change form type and flag (`REFR: lockExtra x 12`) and by where a
 read stopped, then logged under `save` as not imported.
