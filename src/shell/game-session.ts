@@ -1285,7 +1285,10 @@ export class GameSession {
         const shown = new Set([...runtime.state.tutorialsShown, ...this.#lowStatsAsked]);
         const share = (stat: keyof typeof LOW_STAT_SETTINGS): number =>
           settings.number(LOW_STAT_SETTINGS[stat]) ?? LOW_STAT_SHARE_DEFAULT;
-        for (const use of lowStatTutorials({ health, magicka, stamina }, shown, share)) {
+        // Observed in the original: not while a save loads (ours: behind a loading screen,
+        // where a save is read in), nor with the main four off (the scripts' abMenu).
+        const gate = { saveLoading: this.loading, mainFourEnabled: runtime.controls.menu };
+        for (const use of lowStatTutorials({ health, magicka, stamina }, shown, share, gate)) {
           this.#lowStatsAsked.add(use);
           this.hud.menus?.tutorial?.(use);
         }

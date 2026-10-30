@@ -1524,8 +1524,10 @@ WerewolfChange player"` (twice: the first cast only ends the Companions' "virgin
   (AVVP: DLC1VampirePerkPoints) name, which the feeding scripts raise
   (DLC1WerewolfFeedPointsScript, DLC1PlayerVampireChangeScript); the same scripts set the actor
   values WerewolfPerks and VampirePerks to the progress to the next point (feed or blood points
-  over the next perk's, × 100), the tree's meter. TODO(M13): the number shown as the tree's level
-  is not read (ours: that progress).
+  over the next perk's, × 100), the tree's meter. Observed in the original: in a beast form the
+  skills menu sends no skill list and writes a beast skill element (its label the actor value's
+  name, its bar that progress) that the game's statsmenu.swf does not have, so a beast tree shows
+  no level number, no name and no bar (docs/ui.md, the skills menu).
 - **Actor.SetRace** makes the actor again in the race (the player's avatar, an NPC where it
   stands), its graph starting at its beginning (the werewolf's begins with its change howl);
   once the new 3D stands its scripts hear **OnRaceSwitchComplete** (Node: at once).

@@ -314,4 +314,38 @@ describe.skipIf(!hasGamedata())('the interface movies on the local game data', (
     expect(grids).toBeGreaterThan(100);
     expect(turned).toEqual([]);
   }, 120_000);
+
+  it('cuts the grids CLIK sets at run time: the movies that set one get the property first, their attachable shapes wrapped', async () => {
+    const DO_INIT_ACTION = 59;
+    const setters: string[] = [];
+    for (const path of menus) {
+      const out = patchMovie(path, await vfs.read(path));
+      const movie = readSwf(out);
+      const text = (tag: SwfTag): string => new TextDecoder('latin1').decode(tagBody(movie, tag));
+      const init = movie.tags.findIndex(
+        (tag) => tag.code === DO_INIT_ACTION && text(tag).includes('__itjwScale9Set'),
+      );
+      if (init < 0) continue;
+      setters.push(path.split('\\').pop() ?? path);
+      // Before every other script of the movie.
+      const firstScript = movie.tags.findIndex(
+        (tag, i) => i !== init && (tag.code === DO_INIT_ACTION || tag.code === SwfTagCode.doAction),
+      );
+      expect(init, path).toBeLessThan(firstScript);
+    }
+    expect(setters.sort()).toEqual(['quest_journal.swf', 'tutorialmenu.swf']);
+  }, 120_000);
+
+  it('has no beast skill element in the skills menu (a beast tree shows no level number)', async () => {
+    // The engine writes StatsMenuBaseInstance.BeastSkillHolder.BeastSkillInstance's label and
+    // short bar in a beast form; the game's statsmenu.swf has no clip of that name.
+    const movie = readSwf(await vfs.read('interface\\statsmenu.swf'));
+    const names = [...allTags(movie.tags)]
+      .filter((tag) => tag.code === SwfTagCode.placeObject2 || tag.code === SwfTagCode.placeObject3)
+      .map((tag) => readPlacement(tagBody(movie, tag), tag.code).name);
+    expect(names).toContain('ShortBar');
+    expect(names.some((name) => name === 'BeastSkillHolder' || name === 'BeastSkillInstance')).toBe(
+      false,
+    );
+  });
 });
