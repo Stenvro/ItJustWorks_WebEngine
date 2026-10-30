@@ -30,17 +30,21 @@ function actorData(w: EssWriter): EssWriter {
 }
 
 function papyrus(): Uint8Array {
-  const strings = ['MyQuestScript', 'Quest', 'count', 'Int', 'target', 'Actor'];
-  const w = new EssWriter().u16(4).u16(strings.length);
+  const strings = ['MyQuestScript', 'Quest', 'count', 'Int', 'target', 'Actor', 'Waiting', ''];
+  const w = new EssWriter().u16(6).u32(strings.length);
   for (const s of strings) w.wstring(s);
-  w.u32(1).u16(0).u16(1).u32(2).u16(2).u16(3).u16(4).u16(5);
+  w.u32(1).u32(0).u32(1).u32(2).u32(2).u32(3).u32(4).u32(5);
   w.u32(2);
-  w.u32(0x10).u16(0).u16(0).u16(0x4d).refId(1, QUEST).u8(0);
-  w.u32(0x11).u16(5).u16(0).u16(0x3e).refId(1, 0x14).u8(0);
-  w.u32(0).u32(0).u32(1).u32(0);
-  w.u32(0x10).u8(0).u16(0).u32(0).u32(2).u8(PapyrusType.Int).i32(3);
-  w.u8(PapyrusType.Object).u16(5).u32(0x11);
-  w.u32(0x11).u8(0).u16(5).u32(0).u32(0);
+  w.u64(0x10n).u32(0).u16(0).u16(0x4d).refId(1, QUEST).u8(0);
+  w.u64(0x11n).u32(5).u16(0).u16(0x3e).refId(1, 0x14).u8(0);
+  w.u32(0).u32(0).u32(1).u32(0); // no detached objects, arrays or stacks
+  w.u64(0x10n).u8(0).u32(6).u32(0).u32(2).u8(PapyrusType.Int).i32(3); // in state Waiting
+  w.u8(PapyrusType.Object).u32(5).u64(0x11n);
+  w.u64(0x11n).u8(0).u32(7).u32(0).u32(0);
+  // No messages or suspended stacks; the registrations (version 5), all empty.
+  for (let i = 0; i < 6; i++) w.u32(0);
+  w.u16(5);
+  for (let i = 0; i < 21; i++) w.u32(0);
   return w.done();
 }
 
@@ -194,7 +198,7 @@ describe('ess import', () => {
       formId: QUEST,
       alias: -1,
       script: 'MyQuestScript',
-      state: '',
+      state: 'Waiting',
       vars: [
         [
           'MyQuestScript',

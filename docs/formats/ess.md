@@ -5,7 +5,17 @@ xEdit's `wbDefinitionsTES5Saves.pas` (layouts and their order), CommonLibSSE's `
 enums (flag bits). Code: `src/formats/ess/` (parser, platform-independent), `src/save/ess-import.ts`
 (the importer), `tools/ess-info.ts` (the CLI). No real save is in the repo; the tests write
 synthetic ones (`ess-test-writer.ts`), and `tests/sim-ess-import.int.test.ts` reads the first save in
-`Documents\My Games\Skyrim Special Edition\Saves` when there is one.
+`Documents\My Games\Skyrim Special Edition\Saves` when there is one, and a known one (a file
+named `Save1_*.ess` there, or `SKYRIM_ESS`: a New Game save on the cart into Helgen) which it
+checks section by section and imports: the player's place, the items gained, every MQ101 stage
+done and the actor values must come out as the save holds them.
+
+Two real saves (2026-10-30, the same load order with Survival Mode, Curios, Fishing and AdvDSGS)
+read with `ess-info`: every global data entry with its reader, the Papyrus data to its last byte
+(40k script instances, 430 arrays, the running stacks with their frames, the registrations),
+and every change form to its end but the actors after their movement data (2,235 and 2,238
+of 2,362 and 2,365 ACHR: the movement controller's layout is open, TODO(M13)); every actor's
+actor values and added spells are read.
 
 ## The file
 
@@ -77,18 +87,55 @@ references), 1000 temp effects (the effect entries, then two lists of typed effe
 main (always empty; the table 3 count leaves it out). 104 has no documentation: kept as bytes.
 `GLOBAL_DATA_READERS` maps every type to its reader; `ess-info` runs them on a save.
 
-**Papyrus**: version u16, strings (u16 count), script types (name, parent, members: name and
-type as string indices), objects (VM handle u32, script, u16 flags, i16 high word, reference id,
-u8), detached objects, arrays (handle, type, the element script for object arrays, length),
-the next active script id, the stacks (id, type). Then each object's data (handle, flags u8,
-script, u32, a second u32 when flags & 4, the variables) and each array's elements. A variable
-is a type byte and its value: null u32, object (script, handle), string (index), int, float,
-bool u32, arrays (an array handle; object arrays have a script first).
+**Papyrus** (read to its last byte on real saves: `ess-info`): version u16 (6 in Special
+Edition saves), strings, script types (name, parent, members: name and type as string indices),
+objects (VM handle, script, u16 flags, i16 high word, reference id, u8), detached objects,
+arrays (handle, type, the element script for object arrays, length), the next active script
+id, the stacks (id u32, type). Then each object's data (handle, flags u8, **its state name**,
+u32, a second u32 when flags & 4, the variables) and each array's elements. A variable is a
+type byte and its value: null u32, object (script, handle), string (index), int, float, bool
+u32, arrays (an array handle; object arrays have a script first).
 
-The stacks' frames, function messages, suspended stacks and the registrations after them are not
-read yet (TODO(M12)). Mapping them onto our resumable frames (`vm.restoreThreads`) needs each
-frame's opcodes and arguments read. Until then imported scripts start with no running stacks and
-no update registrations.
+Special Edition saves (header version 12) widen two things the original release keeps narrow:
+the string table's count and every string index are **u32** (u16 before), and the VM's object
+and array handles are **u64** (u32 before; the stack ids stay u32). The original release's
+layout is still read when the header says so.
+
+Then, in order:
+
+- Each running stack: id u32, two version bytes, its return value (a variable), flags u8, a
+  byte, a u32 when flags bit 0 is set, a kind byte (1: a callback, 2: a value, 3: both; the
+  callback is a u32-length name, QuestStage: reference id, u16, u8; ScenePhaseResults and
+  SceneActionResults: reference id, u32; SceneResults: reference id; TopicInfo: nothing), the
+  frames (u32 count, outermost call first), and a last byte when flags bit 1 is set and bit 0
+  is not. A frame: its variable count u32, flags u8, function type u8, the script, the script
+  the function was found on and the function's name (string indices), the state name (only for
+  a function, not a property's getter or setter, and flags bit 0 clear), the opcode version
+  (two bytes), the function itself as a compiled script writes it (return type, doc string,
+  user flags u32, flags u8, u16 counts of parameters, locals and instructions; instruction
+  arguments are a type byte and a value, with string indices), the instruction to run next
+  u32, Self (a variable) and the parameters' and locals' values.
+- The function messages (u32 count: a byte, u32, and when a byte says so a queued call: a byte,
+  the script, the function, Self and the arguments) and the two suspended stack tables (u32
+  count: u32, and the same optional queued call).
+- A u32 (and a second when it is not 0), a u32 list, the queued unbinds (u32 count: handle,
+  u32), and the registrations' version i16 (5).
+- The game's registrations (CommonLibSSE's SkyrimVM members, read in that order): the
+  Utility.Wait, WaitMenuMode and WaitGameTime calls (three u32 lists of stack id and i32 time);
+  OnUpdate and OnUpdateGameTime registrations (u32 count: single-update byte, the time to send
+  u32, the interval i32, then the game handle: u16, i16 high word, reference id: the object
+  table's seven bytes without its last); Debug.OpenUserLog's logs (u32-length names); the four
+  queues of latent functions' work (MoveTo, Enable, AddItem, ...: a type byte and the fields
+  xEdit lists for it); the LOS events (viewer, target, two bytes); the sleep events and, from
+  version 4, the tracked stats events (u32 lists of game handles); from version 5 the inventory
+  event filters (handle, two u32 counts, then the items' and the lists' reference ids); a list
+  of (reference id, byte); the animation event registrations (u32 count: reference id, then u32
+  count of events: a u32-length name, a list of u32 pairs, the handles waiting on it); a list of
+  u32 pairs; three lists by reference id; a list of (u32, u32 list).
+
+Not seen in the two saves read, so their sizes are taken from xEdit's layouts and wait on a save
+that holds them (TODO(M13)): queued unbinds, the latent functions' queues, LOS events, and the
+last five lists.
 
 ## Change forms
 
@@ -134,22 +181,37 @@ everywhere (the original reserves one byte and widens it when the count is known
   FollowerSwimBreadcrumbs (12 bytes, refId, u32, vsval × (12 bytes, refId, 12 bytes, refId,
   u8)); AliasInstanceArray (vsval × quest refId + alias id u32); PromotedRef (vsval × refId);
   AttachedArrows3D (vsval × arrows: a refId, and when it is not null a bone u16, and when that
-  is not 0xFFFF 56 more bytes (TODO(M13): the transform's size); then two u16);
+  is not 0xFFFF the time it has been stuck u32, its translation (12 bytes), its rotation (the
+  original writes the matrix as a quaternion: 16 bytes) and its scale f32; then two u16);
   TextDisplayData (two refIds, i32; when both are null and it is −2, the name as a wstring);
   Enchantment (refId + u16); RefrPath (88 bytes); GroupConstraint (u32, refId, two wstrings, 32
-  bytes); ScriptedAnimDependence (u32 count × refId + u32); CachedScale (8 bytes). Interaction
-  is open. Every other type is its type byte alone.
-- **Actors** (ACHR, after the reference data): when there is no AI process: a byte, 13 u32
-  (timers and counters), a refId, 18 bytes of state bits, a refId, a byte of which of the four
-  magic casters follow (each: the common part, u32, refId, u32, a vsval-sized animation block),
-  and the five spells in hand (refIds). With a process, its data comes first: its layout is not
-  decoded (TODO(M13)), and the reader finds what follows by its shape. Then the modifier sets
-  of health, magicka, stamina and voice points (each u32 3, then permanent, temporary and
-  damage f32; damage is negative), the actor value storage (vsval × (actor value i32, base
-  f32); vsval × (actor value i32, the three modifiers)), the added spells (u32 count ×
-  refId), the movement data (a byte: 0 none; else open), u32, the combat data (a byte: 0 none;
-  else open), u32 count × (refId, u32), two u32, a refId and a byte. The player's own data
-  follows (TODO(M13)).
+  bytes); ScriptedAnimDependence (u32 count × refId + u32); CachedScale (8 bytes); Interaction
+  (its kind u32, the two references, a byte: both kinds the original has, a mount's and a
+  reference's, add nothing of their own). Every other type is its type byte alone.
+- **Projectiles** (PMIS, PGRE, PBEA, PFLA, PBAR, PCON, PARW, after the reference data, as
+  observed in the original): 9 u32, the source and ammo, the shooter and target (refIds), the
+  velocity (12 bytes), two u32, the rotation as a quaternion (16 bytes), 12 bytes, three u32, a
+  form id u32 as is (−1: none), a byte and when it is set the item it carries (an inventory
+  entry: refId, i32, vsval × extra data lists), the impacts (vsval × (position, normal, the
+  reference hit, u32, u8, two u16, a material refId, two u32, u8)), 12 bytes, a refId, u32, a
+  refId, u32. Then each kind's own: a missile and a barrier one u32; an arrow the missile's and
+  two refIds; a flame two u32; a cone four u32 and 12 bytes; a beam a byte; a grenade a vsval
+  count of its Havok constraints (TODO(M13): their layout; none in the saves read). **PHZD**
+  (hazards): six u32 and two refIds.
+- **Actors** (ACHR): the AI process level i32 (−1: none) and the state flags u32 come first,
+  then the reference data. With a process, its data follows: its layout is not decoded
+  (TODO(M13)), and the reader finds what comes after it by its shape (the four modifier sets
+  below, each starting with 3). Then, for every actor: a byte, 13 u32 (timers and counters), a
+  refId, the actor state (18 bytes), a refId, a byte of which of the four magic casters follow
+  (each: the common part, u32, refId, u32, a vsval-sized animation block), the four spells and
+  the power in hand (refIds), the modifier sets of health, magicka, stamina and voice points
+  (each u32 3, then permanent, temporary and damage f32; damage is negative), the actor value
+  storage (vsval × (actor value, base f32); vsval × (actor value, the three modifiers); the
+  actor value is a signed byte widened to i32, so indices from 128 up read negative), the
+  added spells (u32 count × refId). Then the movement controller's data (a byte: 0 none; else
+  its movement agents, path, interfaces and planner, each type with its own layout: open,
+  TODO(M13)), u32, the combat controller's data (a byte; else open), u32 count × (refId, u32),
+  two u32, a refId and a byte. The player's own data follows (TODO(M13)).
 - **QUST**: form flags, quest flags u16 (CommonLibSSE: enabled 0x1, completed 0x2, failed 0x40,
   active 0x800), script delay f32, stages (vsval; stage u16, done bit 0), objectives (vsval;
   index u32, state u32: 1 displayed, 2 completed, 3 completed and displayed, 4 failed, 5 failed
@@ -163,14 +225,24 @@ everywhere (the original reserves one byte and widens it when the count is known
   leveled spells, shouts), AIDT (20), full name, DNAM (52: 18 skills, 18 skill offsets, health,
   magicka and stamina u16, 2 bytes, a f32, a byte and 3 bytes), class, race (current,
   original), face, gender, outfits. The attributes flag carries no data.
-- **CELL**: form flags, flags u16, seen data, full name, owner.
+- **CELL**: form flags, flags u16, seen data, full name, owner. The seen data is an exterior
+  cell's one 32-byte map or an interior cell's vsval × (two bytes, 32 bytes); the save does not
+  say which the cell is unless its detach data does, so the layout that ends the data is taken.
 - **FACT**: form flags, reactions (vsval × refId, modifier i32, group combat reaction u32),
   flags u32, crime (two u32 counts, a time f32, u32).
 - **LVLN, LVLI, LVSP**: form flags, then for added objects a u8 count × (refId, level u16,
   count u16).
-- **CONT** and the other base objects: form flags. Their own flags (BOOK teaches, INGR use,
-  FLST added form, ECZN, LCTN, SMQN, RELA, SCEN, PACK, INFO said once, NOTE read, ...) are not
-  read yet (TODO(M13)): what they hold is counted as undecoded.
+- **Base objects** (as observed in the original; `EssChangeForm.base`): ACTI, FURN, TACT: the
+  full name (flag 2), TACT also its voice type (flag 23). ARMO, BOOK, LIGH, MISC, APPA, WEAP,
+  AMMO, KEYM: the value u32 (flag 1); BOOK then its flags byte (flag 5 or 6). INGR: which
+  effects are known, 4 bytes (flag 31). ECZN: a byte (flag 1) and four u32 (flag 31). RELA: a
+  relationship the game made writes its two NPCs and association, then the rank u32 (flag 1).
+  FLST: u32 count × refId (flag 31). LCTN: two bytes (flag 31), vsval × (keyword refId, f32)
+  (flag 30). SMQN: u32 count × u32. SCEN, whatever its flags: playing u8, u32, two bytes, the
+  actions (u32 count: type u32, u32, a timer's two bytes, two flag bytes), two bytes, its time
+  u32, the phases (u32 count × three bytes), four bytes. PACK: a package the game made writes
+  its whole definition (open, TODO(M13); none in the saves read). INFO, CONT, DOOR, STAT, ALCH,
+  IDLM, NOTE, NAVM, WOOP, MGEF, ENCH, CLAS: the form flags only.
 
 ## Import
 
@@ -194,8 +266,16 @@ plugin name, and forms of plugins not loaded are left out. What it applies:
 - books read and locations cleared;
 - the weather;
 - Papyrus: each script instance's variables, by script level (a type's members follow its
-  parents'), with object variables as handles to the instances' forms. The instance's state name
-  and an alias script's alias id are TODO(M13).
+  parents'), with object variables as handles to the instances' forms, and the state each
+  instance is in. An alias script's alias id is TODO(M13).
+
+Read but not imported yet (M12): the running stacks (onto our resumable frames,
+`vm.restoreThreads`: each frame's function, instruction and variables are read), the function
+messages and suspended stacks, and the registrations (waits, OnUpdate and OnUpdateGameTime with
+the time each fires: the VM's clock they count from is not in the Papyrus data, sleep and tracked
+stats events, inventory filters, animation events); the projectiles and hazards in flight; the
+base objects' own changes (values, names, known ingredient effects, form lists'
+added forms, location keyword data, scenes' running state).
 
 Everything else is counted by change form type and flag (`REFR: lockExtra x 12`) and by where a
 read stopped, then logged under `save` as not imported.

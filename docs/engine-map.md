@@ -75,7 +75,7 @@ These run through every area and explain most of what breaks in play.
 | Script events               | partial  | all 98 sent and checked by an engine-level test (docs/completeness/papyrus.md); 38 checked in the simulation, 60 not yet                                                                                                                                                            |
 | Event sources               | partial  | 7 sources without a kind; the stats' sources besides kills (every hub kind has a producer: 2026-10-27; resets/traps done)                                                                                                                                                           |
 | Story manager               | partial  | most raised types not yet checked in the simulation; a start asked while an event is processed does not queue (TODO(M13))                                                                                                                                                           |
-| Save and load               | partial  | own format (docs/formats/save.md); whether a native in flight is called again on load; .ess import (M12) (threads in a native's promise, translations, hazards, projectiles, actor graphs: done)                                                                                    |
+| Save and load               | partial  | own format (docs/formats/save.md); whether a native in flight is called again on load; .ess import (M12): checked on a real save; stacks, update registrations, projectiles, base object changes read, not applied (threads, translations, hazards, actor graphs: done)             |
 | Stats, skills, actor values | complete | tracked-stats event                                                                                                                                                                                                                                                                 |
 | Audio                       | partial  | (the skills menu's SMSC mute, pause categories by DOBJ, sounds held in menus and on the loading screen, Slow Time by DOBJ TSSC: done)                                                                                                                                               |
 | Load order, settings        | partial  | a master loading after its dependent is only reported; the launcher's detail presets (plugin screen, Plugins.txt import, missing masters, plugin archives, layered INI files: done)                                                                                                 |
@@ -198,7 +198,7 @@ The item-by-item checklist (shader types, flags, texture slots, blocks, records,
 ### File formats
 
 The checklist is docs/completeness/formats.md (`node tools/format-census.ts` and the per-format
-sweeps): 156 items, 153 done (2026-10-30, round 4).
+sweeps): 157 items, 154 done (2026-10-30, round 6).
 
 | System                    | Status   | Main gaps                                                                                                                                                                           |
 | ------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -208,7 +208,7 @@ sweeps): 156 items, 153 done (2026-10-30, round 4).
 | NIF                       | complete | (every block type parsed; the fields read past reviewed, the usable ones kept: 2026-10-29)                                                                                          |
 | DDS, PEX, audio, TRI, LOD | complete |                                                                                                                                                                                     |
 | HKX                       | complete | (every member set in the data read, the ones that change a graph's run wired in: 2026-10-30); read, not applied yet: sync points, the powered ragdoll's world-from-model mode (M13) |
-| ESS                       | partial  | every global data type has a reader (17 built from UESP's layouts, waiting on a real save: M12); change forms by layout (the AI process data, a few base types open)                |
+| ESS                       | partial  | two real saves: Papyrus, every change form type read to the end but an actor's movement, combat, AI process, player data (M13); global readers' exact ends unmeasured               |
 | SEQ                       | partial  | read (2026-10-29); its use when a plugin is new to a save (M12)                                                                                                                     |
 
 ## Order of work

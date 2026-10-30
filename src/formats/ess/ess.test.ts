@@ -1,6 +1,8 @@
 import { deflateSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import {
+  ChangeBase,
+  ChangeCell,
   ChangeFaction,
   ChangeQuest,
   ChangeRefr,
@@ -226,26 +228,57 @@ describe('global data', () => {
 });
 
 describe('papyrus', () => {
-  it("reads types, objects, arrays and each object's variables", () => {
-    const strings = ['MyQuestScript', 'Quest', 'count', 'Int', 'items', 'Form[]'];
-    const w = new EssWriter().u16(4).u16(strings.length);
+  it('reads the original release layout: u16 strings and u32 handles', () => {
+    const w = new EssWriter().u16(4).u16(2).wstring('A').wstring('');
+    w.u32(1).u16(0).u16(1).u32(0); // a type with no members
+    w.u32(1).u32(0x1000).u16(0).u16(0).u16(0x4d).refId(1, 0x14).u8(0);
+    w.u32(0).u32(0).u32(1).u32(0); // no detached objects, arrays or stacks
+    w.u32(0x1000).u8(0).u16(0).u32(0).u32(0); // the object's data
+    w.u32(0).u32(0).u32(0).u32(0).u32(0).u32(0).u16(3); // messages, stacks, ..., version 3
+    for (let i = 0; i < 3 + 2 + 1 + 4 + 2; i++) w.u32(0); // waits to sleep events
+    w.u32(0).u32(0).u32(0).u32(0).u32(0).u32(0).u32(0); // no stats or filters before version 4: 06 to 0A
+    const papyrus = readPapyrus(w.done(), false);
+    expect(papyrus.objects[0]).toMatchObject({ handle: 0x1000, script: 'A' });
+    expect(papyrus.unread).toBe(0);
+  });
+
+  it("reads types, objects, arrays, each object's variables, stacks and registrations", () => {
+    const strings = ['MyQuestScript', 'Quest', 'count', 'Int', 'items', 'Form[]', 'OnUpdate', ''];
+    const w = new EssWriter().u16(6).u32(strings.length);
     for (const s of strings) w.wstring(s);
-    w.u32(1).u16(0).u16(1).u32(2).u16(2).u16(3).u16(4).u16(5); // the type and its members
-    w.u32(1).u32(0x1000).u16(0).u16(0).u16(0x4d).refId(1, 0x3372b).u8(0); // one object
+    w.u32(1).u32(0).u32(1).u32(2).u32(2).u32(3).u32(4).u32(5); // the type and its members
+    w.u32(1).u64(0x24100001000n).u32(0).u16(0).u16(0x4d).refId(1, 0x3372b).u8(0); // one object
     w.u32(0); // no detached objects
-    w.u32(1).u32(0x2000).u8(PapyrusType.Int).u32(2); // an int array of 2
-    w.u32(7).u32(0); // next active script id, no stacks
-    w.u32(0x1000)
+    w.u32(1).u64(0x2000n).u8(PapyrusType.Int).u32(2); // an int array of 2
+    w.u32(7).u32(1).u32(5).u8(0); // next active script id, one stack
+    w.u64(0x24100001000n)
       .u8(0)
-      .u16(0)
+      .u32(7)
       .u32(0)
       .u32(2)
       .u8(PapyrusType.Int)
       .i32(42)
       .u8(PapyrusType.IntArray)
-      .u32(0x2000);
-    w.u32(0x2000).u8(PapyrusType.Int).i32(1).u8(PapyrusType.Int).i32(2);
-    w.u32(0); // the rest (function messages, ...) is not read yet
+      .u64(0x2000n);
+    w.u64(0x2000n).u8(PapyrusType.Int).i32(1).u8(PapyrusType.Int).i32(2);
+    // The stack: versions, its return value (None), flags 2, no callback, one frame.
+    w.u32(5).u8(0).u8(1).u8(PapyrusType.Null).u32(0).u8(2).u8(0).u8(0).u32(1);
+    w.u32(1).u8(0).u8(0).u32(0).u32(0).u32(6).u32(7).u8(3).u8(2); // the frame: names, state
+    w.u32(7).u32(7).u32(0).u8(0).u16(0).u16(1).u32(2).u32(3); // the function: one local
+    w.u16(2).u8(13).u8(1).u32(2).u8(3).i32(5); // assign count 5
+    w.u8(26).u8(0); // return None
+    w.u32(1).u8(PapyrusType.Object).u32(0).u64(0x24100001000n).u8(PapyrusType.Int).i32(5);
+    w.u8(0); // the stack's trailing byte (flags bit 1)
+    w.u32(0).u32(0).u32(0); // no function messages, no suspended stacks
+    w.u32(0).u32(0).u32(0).u16(5); // unknowns, no queued unbinds, registration version 5
+    w.u32(0).u32(0).u32(0); // no waits
+    w.u32(1).u8(1).u32(1841).i32(30000).u16(0).u16(0xffff).refId(0, 0x147c); // one update
+    w.u32(0).u32(1).u32(8).bytes([0x63, 0x77, 0x73, 0x63, 0x72, 0x69, 0x70, 0x74]); // a user log: cwscript
+    w.u32(0).u32(0).u32(0).u32(0).u32(0); // functors, LOS events
+    w.u32(0).u32(0).u32(0).u32(0); // sleep, stats, filters, unknown 06
+    w.u32(1).refId(1, 0x14).u32(1).u32(5).bytes([66, 101, 103, 105, 110]).u32(0); // Begin
+    w.u32(1).u16(0).u16(0xffff).refId(1, 0x14);
+    w.u32(0).u32(0).u32(0).u32(0).u32(0); // unknown 08, 09 (three), 0A
     const papyrus = readPapyrus(w.done());
     expect(papyrus.types[0]).toEqual({
       name: 'MyQuestScript',
@@ -256,7 +289,7 @@ describe('papyrus', () => {
       ],
     });
     expect(papyrus.objects[0]).toMatchObject({
-      handle: 0x1000,
+      handle: 0x24100001000,
       script: 'MyQuestScript',
       high: 0x4d,
     });
@@ -268,7 +301,27 @@ describe('papyrus', () => {
       { type: PapyrusType.Int, value: 1 },
       { type: PapyrusType.Int, value: 2 },
     ]);
-    expect(papyrus.unread).toBe(4);
+    const frame = papyrus.stackData[0]?.frames[0];
+    expect(frame).toMatchObject({
+      script: 'MyQuestScript',
+      functionName: 'OnUpdate',
+      state: '',
+      instruction: 1,
+      variables: [{ type: PapyrusType.Int, value: 5 }],
+    });
+    expect(frame?.function.code.map((code) => code.op)).toEqual(['assign', 'return']);
+    expect(papyrus.stackData[0]?.tail).toBe(0);
+    expect(papyrus.registrations.updates).toEqual([
+      {
+        single: true,
+        time: 1841,
+        interval: 30000,
+        handle: { flags: 0, high: -1, refId: 0x147c },
+      },
+    ]);
+    expect(papyrus.registrations.userLogs).toEqual(['cwscript']);
+    expect(papyrus.registrations.animationEvents[0]?.events[0]).toMatchObject({ name: 'Begin' });
+    expect(papyrus.unread).toBe(0);
   });
 });
 
@@ -326,11 +379,59 @@ describe('change forms', () => {
     ]);
   });
 
-  it('stops at an extra whose layout is not known, and says so', () => {
-    const data = new EssWriter().vsval(1).u8(0xa9).u32(0).done();
+  it('reads an interaction: its kind, the two references and a flag byte', () => {
+    const data = new EssWriter().vsval(1).u8(0xa9).u32(0).refId(1, 0x14).refId(1, 0x15).u8(1);
+    const form = readChangeForm(entry(0, ChangeRefr.ownershipExtra, data.done()), resolve);
+    expect(form.extras).toEqual([{ type: 0xa9, name: 'Interaction', value: [0, 0x14, 0x15, 1] }]);
+    expect(form.undecoded).toBe(0);
+  });
+
+  it('stops at a part whose layout is not known, and says so', () => {
+    const data = new EssWriter().vsval(1).u8(0x1a).refId(2, 0x10).u32(0).done();
     const form = readChangeForm(entry(0, ChangeRefr.ownershipExtra, data), resolve);
-    expect(form.stoppedAt).toBe('extra data type 0xa9 (interaction)');
+    expect(form.stoppedAt).toBe('a trespass package the game made');
     expect(form.undecoded).toBe(4);
+  });
+
+  it('reads base objects, form lists, locations, quest nodes and scenes', () => {
+    const base = (type: number, flags: number, w: EssWriter) =>
+      readChangeForm(entry(type, flags, w.done()), resolve);
+    expect(base(43, ChangeBase.last, new EssWriter().u32(1).refId(1, 0x99)).base).toEqual({
+      formListAdded: [0x99],
+    });
+    const location = base(
+      38,
+      ChangeBase.last | ChangeBase.locationKeywordData,
+      new EssWriter().u8(1).u8(0).vsval(1).refId(1, 0x5).f32(2),
+    );
+    expect(location.base).toEqual({
+      location: { cleared: [1, 0], keywordData: [{ keyword: 5, value: 2 }] },
+    });
+    expect(base(36, 0, new EssWriter().u32(2).u32(7).u32(8)).base).toEqual({ questNode: [7, 8] });
+    const scene = new EssWriter().u8(1).u32(5).u8(0).u8(0).u32(1).u32(2).u32(9).u8(1).u8(0);
+    scene.u8(1).u8(0).u8(0).u8(0).u32(1234).u32(1).u8(1).u8(0).u8(0).u8(0).u8(0).u8(0).u8(0);
+    const read = base(37, 0, scene);
+    expect(read.undecoded).toBe(0);
+    expect(read.base?.scene).toMatchObject({
+      playing: true,
+      actions: [{ type: 2, values: [9, 1, 0, 1, 0] }],
+      time: 1234,
+      phases: [[1, 0, 0]],
+    });
+    expect(
+      base(13, ChangeBase.value | ChangeBase.bookRead, new EssWriter().u32(25).u8(4)).base,
+    ).toEqual({ value: 25, bookFlags: 4 });
+  });
+
+  it("reads an interior cell's seen data when nothing says it is one", () => {
+    const seen = new EssWriter().vsval(1).bytes(new Uint8Array(34)).refId(1, 0x7);
+    const form = readChangeForm(
+      entry(6, ChangeCell.seenData | ChangeCell.ownership, seen.done()),
+      resolve,
+    );
+    expect(form).toMatchObject({ undecoded: 0, cell: { owner: 7 } });
+    const exterior = readChangeForm(entry(6, ChangeCell.seenData, new Uint8Array(32)), resolve);
+    expect(exterior.undecoded).toBe(0);
   });
 
   it("reads a quest's stages, objectives and alias references", () => {
