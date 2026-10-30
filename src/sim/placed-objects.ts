@@ -120,6 +120,7 @@ export function placeObject(
       ...(object.emittance !== undefined && {
         emittance: session.emittance(object.emittance),
       }),
+      ...(object.reflectedByWater === true && { reflected: true }),
     },
   };
 }
