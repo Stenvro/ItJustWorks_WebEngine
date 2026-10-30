@@ -45,7 +45,7 @@ describe('ConsoleCommands', () => {
   });
 
   it('gives the player every control back with epc, takes them with dpc', async () => {
-    const controls = { movement: false, menu: false, journalTabs: false, disablePov: 1 };
+    const controls = { movement: false, menu: false, journalTabs: false, povLocks: [1] };
     let changed = 0;
     const commands = new ConsoleCommands(
       fakeContext(
@@ -62,7 +62,7 @@ describe('ConsoleCommands', () => {
       movement: true,
       menu: true,
       journalTabs: true,
-      disablePov: 0,
+      povLocks: [],
     });
     expect(await commands.run('dpc')).toEqual([]);
     expect(controls.menu).toBe(false);

@@ -4,7 +4,7 @@
 // Beyond the loaded cells: the worldspace's distant LOD (terrain, water, objects, trees).
 
 import { FlyCamera } from '../render/fly-camera.ts';
-import { disabledControlFlags } from '../scripting/runtime/natives/game.ts';
+import { disabledControlFlags, povSwitchAllowed } from '../scripting/runtime/natives/game.ts';
 import { identity } from '../render/math.ts';
 import type { Mat4, Vec3 } from '../render/math.ts';
 import type { Camera, FocusBody, Renderer } from '../render/renderer.ts';
@@ -1333,13 +1333,18 @@ export class WorldViewer {
     );
     // Game.DisablePlayerControls' abCamSwitch keeps the camera as it is, as does an animation
     // object the player holds; the controls the scripts switch off do nothing meanwhile.
-    player.povSwitchAllowed = () =>
-      this.#session?.scriptsReady?.controls.camSwitch !== false &&
-      this.#stage?.animObjects.playerHolds !== true;
+    player.povSwitchAllowed = () => {
+      const runtime = this.#session?.scriptsReady;
+      return (
+        (!runtime || povSwitchAllowed(runtime.controls)) &&
+        this.#stage?.animObjects.playerHolds !== true
+      );
+    };
     player.disabledControls = () => {
       const runtime = this.#session?.scriptsReady;
       return runtime ? disabledControlFlags(runtime.controls) : 0;
     };
+    player.activationAllowed = () => this.#session?.scriptsReady?.controls.activate !== false;
     player.character.walkable = (px, py, pz) =>
       this.#cells
         .get(cellKey(Math.floor(px / CELL_SIZE), Math.floor(py / CELL_SIZE)))

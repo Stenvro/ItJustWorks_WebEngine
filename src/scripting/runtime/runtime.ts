@@ -726,7 +726,8 @@ export interface Controls {
   menu: boolean;
   activate: boolean;
   journalTabs: boolean;
-  disablePov: number;
+  /** The aiDisablePOVType of each DisablePlayerControls lock on the camera switch. */
+  povLocks: number[];
   aiDriven: boolean;
 }
 
@@ -917,7 +918,7 @@ export class ScriptRuntime implements VmHost {
     menu: true,
     activate: true,
     journalTabs: true,
-    disablePov: 0,
+    povLocks: [],
     aiDriven: false,
   };
   chargen = { noSaving: false, noWaiting: false, controlsMessage: false };
