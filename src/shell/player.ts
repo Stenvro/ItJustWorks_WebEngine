@@ -428,6 +428,8 @@ export class Player implements Camera {
    * stick follow their groups. Undefined: none.
    */
   disabledControls: (() => number) | undefined;
+  /** Whether the player may activate (Game.DisablePlayerControls' abActivate). Undefined: yes. */
+  activationAllowed: (() => boolean) | undefined;
   /**
    * Game.SetCameraTarget: the feet of the actor the third-person camera hangs on instead of the
    * player's (undefined, or answering undefined: the player's).
@@ -851,6 +853,8 @@ export class Player implements Camera {
    * left out of the question).
    */
   allows(name: string, ignore = 0): boolean {
+    // Activation is the player controls' own switch, no group of the control map.
+    if (name === 'Activate' && this.activationAllowed?.() === false) return false;
     const disabled = (this.disabledControls?.() ?? 0) & ~ignore;
     if (disabled === 0) return true;
     this.#current();
@@ -1572,7 +1576,7 @@ export class Player implements Camera {
       if (!this.#held.has(name)) {
         this.#pressed.add(name);
         // The menus' keys are the menus' to refuse (the journal opens while the menus are off).
-        if (this.allows(name, UserEventFlag.menu)) this.onPress?.(name);
+        if (this.allows(name, UserEventFlag.menu | UserEventFlag.mainFour)) this.onPress?.(name);
       }
       this.#held.add(name);
     } else {

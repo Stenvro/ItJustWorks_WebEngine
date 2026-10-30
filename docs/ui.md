@@ -759,14 +759,19 @@ While scripts keep the menus from the player (`Game.DisablePlayerControls`' abMe
 opening does) only the journal opens, and with abJournalTabs its system page alone
 (`RestoreSavedSettings(tab, abTabsDisabled)`).
 
-The other controls the scripts switch off go by the control map's user event groups (its last
-column, CommonLib's USER_EVENT_FLAG: movement 0x1, looking 0x2, activate 0x4, menu 0x8, POV
-switch 0x20, fighting 0x40, sneaking 0x80, wheel zoom 0x200, jumping 0x400): an event works
-only while none of its groups is off (`src/shell/player.ts` `allows`). abMovement takes movement
-and jumping (auto-move and the stick stop too), abCamSwitch the POV switch and the wheel's zoom,
-abLooking the mouse and the right stick, abActivate activation and its prompt on the HUD,
-abMenu the menus' keys and the hotkeys (the journal still opens), abFighting the attacks, the
-weapon, shouts and casting, abSneaking sneaking. A press while its group is off is lost.
+The controls the scripts switch off go, observed in the original, partly by the control map's
+user event groups (its last column, CommonLib's USER_EVENT_FLAG: movement 0x1, looking 0x2,
+fighting 0x40, sneaking 0x80, main four 0x100, jumping 0x400): an event works only while none
+of its groups is off (`src/shell/player.ts` `allows`). abMovement takes movement and jumping
+(auto-move and the stick stop too), abLooking the mouse and the right stick, abFighting the
+attacks, the weapon, shouts and casting, abSneaking sneaking, and abMenu the main four alone
+(the tween menu, the quick keys, the hotkeys), not the menu group: the journal and the wait
+menu (0x808) still open. The other two are the player controls' own: abActivate switches
+activation off (and its prompt on the HUD), and abCamSwitch sets a lock on the camera's switch
+for its aiDisablePOVType, which EnablePlayerControls with abCamSwitch clears for that type
+alone; the POV switch (and the wheel's zoom across it) works while no type holds a lock
+(`natives/game.ts` povSwitchAllowed). A press while its group is off is lost. TODO(M13): what
+abMovement does to the player controls besides, and which six menus abMenu hides, not read.
 Holding an animation object keeps the camera switch off as well, apart from the scripts' own
 switch (letting go of the object does not give back a camera switch a script took).
 
