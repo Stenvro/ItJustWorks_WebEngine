@@ -8,6 +8,7 @@ import type { PartMaterial } from './model-data.ts';
 const SHADER_GLOW = 2;
 const SHADER_PARALLAX = 3;
 const SHADER_FACEGEN = 4;
+const SHADER_PARALLAX_OCCLUSION = 7;
 const SHADER_MULTI_LAYER_PARALLAX = 11;
 const SHADER_EYE_ENVIRONMENT_MAP = 16;
 const SHADER_LOD_LANDSCAPE_NOISE = 18;
@@ -74,5 +75,56 @@ export function materialTextures(
     texture(5),
     material.shaderType === SHADER_LOD_LANDSCAPE_NOISE ? LOD_LANDSCAPE_NOISE : texture(6),
     texture(7),
+  ];
+}
+
+/**
+ * The engine's built-in textures a lighting material takes for a texture it lacks (observed in
+ * the original): `normal` its default normal map (128, 128, 255, 255: flat, full specular; also
+ * what a missing diffuse map shows, the familiar lavender), `white`, `black` (also its default
+ * height map), `grey` (128), `detail` (its FaceGen detail default, 64 in every channel) and
+ * `cube` (its default cube map, black). `none`: the slot is left empty (it reads 0).
+ */
+export type MissingTexture = 'normal' | 'white' | 'black' | 'grey' | 'detail' | 'cube' | 'none';
+
+/**
+ * Which built-in texture each of a lighting material's bindings (materialTextures order) takes
+ * when its texture is missing. Every material: diffuse and normal map the default normal map;
+ * rim or soft lighting's map and the back light map too; a model-space normals material's
+ * specular map black. Glow maps take white, the parallax height maps black, the FaceGen tint
+ * grey, its detail map the detail default and its skin map black; the environment cube map the
+ * default cube; an environment-mapped material's mask stays empty, an eye's and a multi-layer
+ * parallax material's mask and the multi-layer inner layer take the default normal map.
+ */
+export function missingTextures(
+  shaderType: number,
+  flags1: number,
+  flags2: number,
+): MissingTexture[] {
+  const multiLayer = shaderType === SHADER_MULTI_LAYER_PARALLAX;
+  const eye = shaderType === SHADER_EYE_ENVIRONMENT_MAP;
+  const facegen = shaderType === SHADER_FACEGEN;
+  const rimSoft = (flags2 & (SLSF2_SOFT_LIGHTING | SLSF2_RIM_LIGHTING)) !== 0;
+  const backLight = (flags2 & SLSF2_BACK_LIGHTING) !== 0;
+  const specularMap = (flags1 & SLSF1_MODEL_SPACE_NORMALS) !== 0 && (flags1 & SLSF1_SPECULAR) !== 0;
+  const glow = shaderType === SHADER_GLOW && (flags2 & SLSF2_GLOW_MAP) !== 0;
+  const slot2: MissingTexture = glow ? 'white' : facegen ? 'black' : rimSoft ? 'normal' : 'none';
+  const slot7: MissingTexture = backLight ? 'normal' : specularMap ? 'black' : 'none';
+  const binding6: MissingTexture = facegen
+    ? 'grey'
+    : multiLayer
+      ? 'normal'
+      : shaderType === SHADER_PARALLAX || shaderType === SHADER_PARALLAX_OCCLUSION
+        ? 'black'
+        : 'none';
+  return [
+    'normal',
+    'normal',
+    slot2,
+    'cube',
+    eye || multiLayer ? 'normal' : 'none',
+    slot7,
+    binding6,
+    facegen ? 'detail' : 'none',
   ];
 }
