@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
   clipDepthSlice,
+  compositeScale,
   densityNoise,
+  ditherNoise,
+  jitterCorner,
+  simplexSum,
   distanceClipDepth,
   noiseDrift,
   sliceClipDepth,
   sliceDistance,
-  sliceJitter,
   volumeSize,
+  DITHER_SIZE,
   NOISE_SIZE,
 } from './volumetric-data.ts';
 
@@ -34,12 +38,18 @@ describe('volumetric froxel volume', () => {
     expect(clipDepthSlice(distanceClipDepth(sliceDistance(0.3, 40)), 40)).toBeCloseTo(0.3, 5);
   });
 
-  it('jitters the slices through an eight-frame cycle', () => {
-    const offsets = Array.from({ length: 8 }, (_, i) => sliceJitter(i));
-    expect(new Set(offsets).size).toBe(8);
-    expect(sliceJitter(8)).toBe(sliceJitter(0));
-    expect(Math.min(...offsets)).toBeGreaterThan(0);
-    expect(Math.max(...offsets)).toBeLessThan(1);
+  it('jitters the froxels towards a corner of a unit cube each of eight frames', () => {
+    const corners = Array.from({ length: 8 }, (_, i) => jitterCorner(i).join());
+    expect(new Set(corners).size).toBe(8);
+    expect(jitterCorner(1)).toEqual([0, 0, 1]);
+    expect(jitterCorner(2)).toEqual([0, 1, 0]);
+    expect(jitterCorner(4)).toEqual([1, 0, 0]);
+    expect(jitterCorner(9)).toEqual(jitterCorner(1));
+  });
+
+  it('averages the slices: the intensity over the slice count', () => {
+    expect(compositeScale(2, 70)).toBeCloseTo(2 / 70);
+    expect(compositeScale(1, 0)).toBe(0);
   });
 
   it('drifts the noise with the wind and lets it fall', () => {
@@ -49,11 +59,22 @@ describe('volumetric froxel volume', () => {
     expect(drift[2]).toBeCloseTo(0.5 * 300 * 0.3);
   });
 
-  it('fills a tileable 32³ density noise', () => {
+  it('fills its noise with simplex noise scaled about one half', () => {
+    let largest = 0;
+    for (let i = 0; i < 2000; i++) {
+      const v = simplexSum(i * 0.37, i * 0.61 + 3, i * 0.13 - 7);
+      largest = Math.max(largest, Math.abs(v));
+    }
+    // 42 × the sum stays within about ±1, so 21 × the sum + 0.5 within about 0..1.
+    expect(largest).toBeGreaterThan(0.005);
+    expect(largest).toBeLessThan(1.1 / 42);
     const noise = densityNoise();
     expect(noise.length).toBe(NOISE_SIZE ** 3);
-    const values = new Set(noise);
-    expect(values.size).toBeGreaterThan(64);
+    const mean = noise.reduce((sum, v) => sum + v, 0) / noise.length;
+    expect(mean).toBeGreaterThan(110);
+    expect(mean).toBeLessThan(146);
+    expect(new Set(noise).size).toBeGreaterThan(64);
     expect(densityNoise()).toEqual(noise);
+    expect(ditherNoise().length).toBe(DITHER_SIZE ** 2);
   });
 });

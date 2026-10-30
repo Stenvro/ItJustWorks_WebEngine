@@ -15,14 +15,6 @@ type Vec3 = readonly [number, number, number];
 
 /** At most this many flare sprites are drawn. */
 const MAX_SPRITES = 16;
-/**
- * The scattered light per unit of the weather's strength (VOLI intensity ×
- * fVolumetricLightingIntensity) and phase: a dawn's 4 × 2 adds about a tenth of the light's
- * colour to open air towards the sun, a day's less (the original's scattering is a faint haze
- * with shafts, never a glare). TODO(M13): the original's scale of its scattered light (its
- * composite shader's terms are unread).
- */
-const RAY_SCALE = 0.05;
 
 export interface SunEffectsFrame {
   /** Towards the directional light (the sun by day, the night light by night). */
@@ -141,7 +133,7 @@ export class SunEffects {
         {
           lightDirection: frame.lightDirection,
           color: rays.color,
-          strength: rays.strength * RAY_SCALE,
+          strength: rays.strength,
           scattering: phaseAsymmetry(rays.scattering ?? 0),
           phaseContribution: rays.phaseContribution ?? 0,
           densityContribution: rays.densityContribution ?? 0,

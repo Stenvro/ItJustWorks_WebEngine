@@ -579,6 +579,7 @@ export class WorldSky {
       {
         enabled: ini.bool('Display', 'bVolumetricLightingEnable'),
         intensity: ini.number('Display', 'fVolumetricLightingIntensity'),
+        updateWeather: ini.bool('Display', 'bVolumetricLightingUpdateWeather'),
       },
       state.sunlight,
       Math.abs(state.sunDirection[2]),
