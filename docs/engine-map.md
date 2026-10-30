@@ -159,7 +159,7 @@ These run through every area and explain most of what breaks in play.
 | Constraints          | partial | script-made joints across a cell reload; a census of types                                                        |
 | Character controller | partial | leaving a moving platform keeps no velocity; Havok's proxy push response                                          |
 | Falling, swimming    | partial | the drowning sound and gasp (NPCs swim where their package allows: done)                                          |
-| Water physics        | partial | the splash model; Havok's own buoyancy and drag rule (ours from the data)                                         |
+| Water physics        | partial | the shader's terms (shader cache), its reflection cube (sky, land, LOD, flagged references; within the original's cost), underwater fog and imagespace, the displacement field: done; which WATR value feeds which constant, the flow-normal noise (NAM5), interiors' and several planes' reflection |
 | Physics damage       | partial | the listener's damage to destructibles (no vanilla impact reaches it)                                             |
 | Traps                | partial | hits on actors: done; material, initial flag, cloud traps unchecked                                               |
 | Gameplay impulses    | partial | the rules from settings, not read from the engine (TODO(M13)); ragdoll hit time                                   |
@@ -168,11 +168,11 @@ These run through every area and explain most of what breaks in play.
 ### Rendering and camera
 
 The item-by-item checklist (shader types, flags, texture slots, blocks, records, systems):
-[completeness/rendering.md](completeness/rendering.md), 470 of 540 done (2026-10-30).
+[completeness/rendering.md](completeness/rendering.md), 483 of 540 done (2026-10-30).
 
 | System                                  | Status   | Main gaps                                                                                                                                                                                                                                                                                                  |
 | --------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Object shader                           | partial  | character light luminance source, the default texture per slot, Fire_Refraction's normal falloff, Screendoor_Alpha_Fade's blended fade; eye reflection centres, sparkle snow (type 14), alternate textures (MODS) and eye cube maps: done                                                                  |
+| Object shader                           | partial  | the character light's luminance source; eye reflection centres, sparkle snow, alternate textures (MODS), eye cube maps, the built-in texture per missing slot, Fire_Refraction's falloff, Screendoor_Alpha_Fade's blended fade: done                                                                       |
 | Lights                                  | partial  | land's lists of seven per quad (lights that do not light landscape left out: done); per-object lists in the scene's order, shadow lights first, effects' four, particle systems' own: done                                                                                                                 |
 | Shadows                                 | partial  | shadow lights (all cells), focus shadows done; focus maps draw every caster                                                                                                                                                                                                                                |
 | Fade, LOD                               | partial  | object fade, its fade-in and fade-out over time, the shader features' distance fades and full LOD references' sky-cell fade by the original's rules: done; LOD not culled by rooms, bone LOD                                                                                                               |
