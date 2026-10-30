@@ -21,6 +21,7 @@ import {
   INERT_NATIVES,
   PLACEHOLDER_NATIVES,
 } from '../src/scripting/runtime/natives/placeholders.ts';
+import { NONE_ARGUMENT_CHECKS } from '../src/scripting/runtime/natives/none-arguments.ts';
 import { STORY_EVENTS } from '../src/scripting/runtime/story-manager.ts';
 import { ScriptLibrary } from '../src/scripting/script-library.ts';
 import { ScriptRuntime } from '../src/scripting/runtime/runtime.ts';
@@ -142,6 +143,16 @@ try {
     else nativeRows.push({ key, status: 'done', why: inert ?? '' });
   }
 
+  // Each native's own checks of a None argument (natives/none-arguments.ts): every native
+  // there must be one the scripts declare and the runtime registers.
+  const noneUnknown = [...NONE_ARGUMENT_CHECKS.keys()].filter((key) => {
+    const [script = '', fn = ''] = key.split('.');
+    return !declared.has(key) || runtime.native(script, fn) === undefined;
+  });
+  const noneLines = new Set(
+    [...NONE_ARGUMENT_CHECKS.values()].flatMap((entry) => entry.checks.map((check) => check.line)),
+  );
+
   // --- Events ------------------------------------------------------------------------------
   const usage = await scriptEventUsage(vfs);
   const events = new Map(usage.names);
@@ -201,6 +212,11 @@ try {
       `${String(eventsDone)} sent and checked by a test, ` +
       `${String(eventRows.filter((row) => row.sim).length)} of them in the simulation`,
   );
+  console.log(
+    `none-argument checks: ${String(NONE_ARGUMENT_CHECKS.size)} natives, ` +
+      `${String(noneLines.size)} of the original's lines` +
+      (noneUnknown.length > 0 ? `; not declared or registered: ${noneUnknown.join(', ')}` : ''),
+  );
   console.log('\nOpen natives:');
   for (const row of nativeRows) {
     if (all || row.status === 'open')
@@ -214,6 +230,11 @@ try {
       `- [${done ? 'x' : ' '}] ${row.name} (${String(row.handlers)})  sent: ${row.sent || 'NO'}` +
         `  checked: ${row.checked || 'NO'}`,
     );
+  }
+  console.log('\nEvents checked by an engine-level test but not in the simulation:');
+  for (const row of eventRows) {
+    if (row.sent !== '' && row.checked !== '' && !row.sim)
+      console.log(`- ${row.name} (${String(row.handlers)})`);
   }
 } finally {
   await vfs.close();

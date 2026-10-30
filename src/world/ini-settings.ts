@@ -361,11 +361,15 @@ export const INI_DEFAULTS = {
   },
   // The Papyrus VM's share of each frame (src/scripting/scheduler.ts: its update gets 0.9 of
   // fUpdateBudgetMS, the tasklets after it fExtraTaskletBudgetMS) and how long it runs on its
-  // own once a saved game has loaded (Skyrim_Default.ini: 500); the original's defaults.
+  // own once a saved game has loaded (Skyrim_Default.ini: 500), and its stack memory's pages
+  // (src/scripting/stack-memory.ts); the original's defaults.
   Papyrus: {
     fUpdateBudgetMS: 1.2,
     fExtraTaskletBudgetMS: 1.2,
     fPostLoadUpdateTimeMS: 2000,
+    iMinMemoryPageSize: 128,
+    iMaxMemoryPageSize: 512,
+    iMaxAllocatedMemoryBytes: 153600,
   },
   // The kill cameras of the player's shots and casts (src/shell/actor-combat.ts: whether one
   // plays; the original's defaults).

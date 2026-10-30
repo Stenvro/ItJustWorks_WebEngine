@@ -49,7 +49,7 @@ describe('PapyrusScheduler', () => {
     const begun: string[] = [];
     const calls = Promise.all(
       ['a', 'b', 'c'].map(async (name) => {
-        await scheduler.mainThread();
+        (await scheduler.suspend())(0);
         begun.push(name);
       }),
     );
@@ -98,7 +98,7 @@ describe('PapyrusScheduler', () => {
     now = 400;
     // Within the window: no budget, and frame waits and handed calls go on at once.
     expect(scheduler.overBudget).toBe(false);
-    await scheduler.mainThread();
+    await scheduler.suspend();
     await scheduler.nextFrame();
     now = 501;
     expect(scheduler.overBudget).toBe(true);
@@ -106,5 +106,66 @@ describe('PapyrusScheduler', () => {
     void scheduler.nextFrame().then(() => (waited = true));
     await Promise.resolve();
     expect(waited).toBe(false);
+  });
+
+  /** Suspends threads named by numbers; resolves with the order their turns came. */
+  const suspendAll = (scheduler: PapyrusScheduler, count: number, cost = 0): number[] => {
+    const order: number[] = [];
+    for (let i = 0; i < count; i++) {
+      void scheduler.suspend().then((turn) => {
+        order.push(i);
+        turn(cost);
+      });
+    }
+    return order;
+  };
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 1000; i++) await Promise.resolve();
+  };
+
+  it('resumes the suspended threads in order, the overflow too while overstressed', async () => {
+    const scheduler = new PapyrusScheduler();
+    scheduler.framed = true;
+    const order = suspendAll(scheduler, 130);
+    // Over 100 suspended at the update: overstressed, so the overflow behind the fixed queue's
+    // 128 goes oldest first too.
+    scheduler.advance(1 / 60, 0);
+    await settle();
+    expect(scheduler.overstressed).toBe(true);
+    expect(order).toEqual([...Array(130).keys()]);
+    // The next update counts none: calm again.
+    scheduler.advance(1 / 60, 0);
+    expect(scheduler.overstressed).toBe(false);
+    expect(scheduler.memory.ignoreLimit).toBe(false);
+  });
+
+  it("resumes them while the update's share of fUpdateBudgetMS lasts, the rest later", async () => {
+    const scheduler = new PapyrusScheduler();
+    scheduler.framed = true;
+    scheduler.configure(1, 1);
+    // Each turn takes 0.4 ms of the 0.9 ms share: three fit (the third passes it).
+    const order = suspendAll(scheduler, 5, 0.4);
+    scheduler.advance(1 / 60, 0);
+    await settle();
+    expect(order).toEqual([0, 1, 2]);
+    // The ones left wait for the update after next (the queues swap at each update).
+    scheduler.advance(1 / 60, 0);
+    await settle();
+    expect(order).toEqual([0, 1, 2]);
+    scheduler.advance(1 / 60, 0);
+    await settle();
+    expect(order).toEqual([0, 1, 2, 3, 4]);
+  });
+
+  it('resumes all of the fixed queue regardless of the budget while overstressed', async () => {
+    const scheduler = new PapyrusScheduler();
+    scheduler.framed = true;
+    scheduler.configure(1, 1);
+    const order = suspendAll(scheduler, 101, 1);
+    scheduler.advance(1 / 60, 0);
+    await settle();
+    expect(scheduler.overstressed).toBe(true);
+    expect(scheduler.memory.ignoreLimit).toBe(true);
+    expect(order).toHaveLength(101);
   });
 });

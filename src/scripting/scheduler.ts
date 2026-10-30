@@ -7,7 +7,12 @@
 // runs the scripts' tasklets for [Papyrus] fExtraTaskletBudgetMS more; once a
 // saved game has loaded, the VM runs on its own, update after update, for
 // fPostLoadUpdateTimeMS before the game goes on. Without frames (Node tools) nothing waits for
-// one. Platform-independent. Notes: docs/scripting.md ("Threads").
+// one. The threads the VM suspends (a call handed to the main thread, a frame waiting for stack
+// memory) are resumed in its update in the original's order, while the update's share lasts;
+// more than OVERSTRESSED_STACKS of them make the VM overstressed. Platform-independent. Notes:
+// docs/scripting.md ("Threads", "Stack memory").
+
+import { MemoryPagePolicy } from './stack-memory.ts';
 
 /** The VM's clocks: real seconds (outside menus), game days, real seconds menus included. */
 export type Clock = 'real' | 'game' | 'wall';
@@ -31,6 +36,36 @@ interface Waiter {
 /** The VM's update's share of [Papyrus] fUpdateBudgetMS (the engine's main loop). */
 const UPDATE_SHARE = 0.9;
 
+/**
+ * Suspended threads past which the VM is overstressed (observed in the original: its count of
+ * suspended stacks at an update, over 100): the stack memory's limit is ignored, the threads
+ * queued for the update all resume regardless of the budget, and the overflow's order turns to
+ * first come, first served.
+ */
+export const OVERSTRESSED_STACKS = 100;
+/** The suspended threads the VM's fixed queue holds; more go to its overflow. */
+const SUSPEND_QUEUE_SIZE = 128;
+/** After this long overstressed the VM dumps its stacks to the log, at most once a minute. */
+const STACK_DUMP_AFTER_MS = 5000;
+const STACK_DUMP_EVERY_MS = 60000;
+
+/**
+ * A suspended thread's turn in the VM's update: called once its work on the main thread (the
+ * handed native, the frame it asked memory for) has run, with the milliseconds it took.
+ */
+export type SuspendedTurn = (ms: number) => void;
+
+/** Threads suspended, as the original queues them: a fixed queue and an overflow behind it. */
+interface SuspendQueue {
+  fixed: ((turn: SuspendedTurn) => void)[];
+  overflow: ((turn: SuspendedTurn) => void)[];
+}
+
+const emptyQueue = (): SuspendQueue => ({ fixed: [], overflow: [] });
+const queueSize = (queue: SuspendQueue): number => queue.fixed.length + queue.overflow.length;
+/** The turn of a thread that did not wait for an update. */
+const NO_TURN: SuspendedTurn = () => undefined;
+
 /** The built-in budgets ([Papyrus] fUpdateBudgetMS and fExtraTaskletBudgetMS, 1.2 ms each). */
 const DEFAULT_UPDATE_MS = 1.2;
 const DEFAULT_EXTRA_TASKLET_MS = 1.2;
@@ -51,8 +86,26 @@ export class PapyrusScheduler {
   #gameWaiters: Waiter[] = [];
   #wallWaiters: Waiter[] = [];
   #frameWaiters: (() => void)[] = [];
-  /** Calls handed to the main thread, in the order they came. */
-  #handed: (() => void)[] = [];
+  /**
+   * The suspended threads: those suspended since the last update, and those this update
+   * resumes (the original's two queues, swapped at each update).
+   */
+  #toSuspend = emptyQueue();
+  #toResume = emptyQueue();
+  /** The update's share of fUpdateBudgetMS the suspended threads resume in (milliseconds). */
+  #updateShareMs = DEFAULT_UPDATE_MS * UPDATE_SHARE;
+  /** Milliseconds the suspended threads' turns took in this update. */
+  #updateSpent = 0;
+  /** Which update the turns belong to (a turn of an earlier one ends nothing now). */
+  #update = 0;
+  /** Whether the VM is overstressed (set at each update). */
+  #overstressed = false;
+  #overstressedSince: number | undefined;
+  #lastDump = -Infinity;
+  /** The stack memory of every thread (iMaxAllocatedMemoryBytes). */
+  readonly memory = new MemoryPagePolicy();
+  /** Set to log the threads when the VM has been overstressed for long (the original's dump). */
+  dumpStacks: (() => void) | undefined;
   #frameStart = 0;
   /** Until when (on the budget's clock) the VM runs on its own after a load. */
   #postLoadUntil = -Infinity;
@@ -72,6 +125,12 @@ export class PapyrusScheduler {
   /** The INI's budgets: [Papyrus] fUpdateBudgetMS and fExtraTaskletBudgetMS (milliseconds). */
   configure(updateMs: number, extraTaskletMs: number): void {
     this.budgetMs = Math.max(0, updateMs) * UPDATE_SHARE + Math.max(0, extraTaskletMs);
+    this.#updateShareMs = Math.max(0, updateMs) * UPDATE_SHARE;
+  }
+
+  /** Whether the VM is overstressed: more than OVERSTRESSED_STACKS threads suspended. */
+  get overstressed(): boolean {
+    return this.#overstressed;
   }
 
   /**
@@ -100,10 +159,7 @@ export class PapyrusScheduler {
     this.#realWaiters = this.#release(this.#realWaiters, this.realTime);
     this.#gameWaiters = this.#release(this.#gameWaiters, this.gameTime);
     this.#wallWaiters = this.#release(this.#wallWaiters, this.wallTime);
-    // The VM's update: the calls handed to the main thread begin, in the order they came.
-    const handed = this.#handed;
-    this.#handed = [];
-    for (const resume of handed) resume();
+    this.#vmUpdate();
     const frame = this.#frameWaiters;
     this.#frameWaiters = [];
     for (const resume of frame) resume();
@@ -210,16 +266,29 @@ export class PapyrusScheduler {
   }
 
   /**
-   * A call handed to the main thread: resolves when it begins, in the next frame's VM update,
-   * in the order the calls came (after a load, at once while the VM runs on its own).
-   * TODO(M13): the engine begins them only while the update's share of fUpdateBudgetMS lasts;
-   * our natives cost far more time than the engine's, so a share of wall time would starve the
-   * scripts (and make the headless sim depend on the machine): all begin in the next frame.
+   * Whether suspended threads wait for the VM's update: not without frames (Node tools) nor
+   * while the VM runs on its own after a load (there they go on at once, and a frame short of
+   * stack memory is given its pages: no update would come to give them later).
    */
-  mainThread(): Promise<void> {
-    if (!this.framed || this.#postLoading) return Promise.resolve();
+  get suspending(): boolean {
+    return this.framed && !this.#postLoading;
+  }
+
+  /**
+   * Suspends a thread until its turn in a VM update (observed in the original): a call handed
+   * to the main thread (the original's retried call) or a frame waiting for stack memory.
+   * Resolves with the turn, which the thread ends once that work has run. Each update resumes
+   * the threads suspended before it: the first SUSPEND_QUEUE_SIZE in the order they came, then
+   * the rest newest first (oldest first while overstressed), one after another while the
+   * update's share of fUpdateBudgetMS lasts (always at least one; while overstressed, all of the
+   * first SUSPEND_QUEUE_SIZE); those left over wait for the update after next, behind the
+   * threads suspended meanwhile, as the original's two queues swap. Without updates: at once.
+   */
+  suspend(): Promise<SuspendedTurn> {
+    if (!this.suspending) return Promise.resolve(NO_TURN);
     return new Promise((resume) => {
-      this.#handed.push(resume);
+      const queue = this.#toSuspend;
+      (queue.fixed.length < SUSPEND_QUEUE_SIZE ? queue.fixed : queue.overflow).push(resume);
     });
   }
 
@@ -228,8 +297,59 @@ export class PapyrusScheduler {
     return {
       real: this.#realWaiters.length,
       game: this.#gameWaiters.length,
-      frame: this.#frameWaiters.length + this.#handed.length,
+      frame: this.#frameWaiters.length + queueSize(this.#toSuspend) + queueSize(this.#toResume),
     };
+  }
+
+  /**
+   * The VM's update: the suspended threads counted (more than OVERSTRESSED_STACKS: the VM is
+   * overstressed, and the stack memory's limit is ignored), the queues swapped, and the
+   * threads due resumed one after another.
+   */
+  #vmUpdate(): void {
+    this.#setOverstressed(
+      queueSize(this.#toSuspend) + queueSize(this.#toResume) > OVERSTRESSED_STACKS,
+    );
+    [this.#toSuspend, this.#toResume] = [this.#toResume, this.#toSuspend];
+    this.#update++;
+    this.#updateSpent = 0;
+    this.#resumeNext(this.#update);
+  }
+
+  /** Resumes the next suspended thread of an update; its turn's end resumes the one after. */
+  #resumeNext(update: number): void {
+    const queue = this.#toResume;
+    const resume =
+      queue.fixed.shift() ?? (this.#overstressed ? queue.overflow.shift() : queue.overflow.pop());
+    if (!resume) return;
+    let ended = false;
+    resume((ms) => {
+      if (ended || update !== this.#update) return;
+      ended = true;
+      this.#updateSpent += Math.max(0, ms);
+      // Overstressed, the fixed queue's threads all go on: the budget starts again.
+      if (this.#overstressed && this.#toResume.fixed.length > 0) this.#updateSpent = 0;
+      else if (this.#updateSpent > this.#updateShareMs) return;
+      this.#resumeNext(update);
+    });
+  }
+
+  #setOverstressed(overstressed: boolean): void {
+    this.#overstressed = overstressed;
+    this.memory.ignoreLimit = overstressed;
+    if (!overstressed) {
+      this.#overstressedSince = undefined;
+      return;
+    }
+    const now = this.#now();
+    this.#overstressedSince ??= now;
+    if (
+      now - this.#overstressedSince > STACK_DUMP_AFTER_MS &&
+      now - this.#lastDump > STACK_DUMP_EVERY_MS
+    ) {
+      this.#lastDump = now;
+      this.dumpStacks?.();
+    }
   }
 
   /** When the next real-time wait ends (tools jump the clock to it). */

@@ -15,7 +15,8 @@
 
 import type { PexFunction, PexValue } from '../formats/pex/pex.ts';
 import { nativeWaitsForFrame } from './native-timing.ts';
-import { PapyrusScheduler, type ClockWait } from './scheduler.ts';
+import { PapyrusScheduler, type ClockWait, type SuspendedTurn } from './scheduler.ts';
+import { StackMemory, type PageStrategy } from './stack-memory.ts';
 import { chainOf, extendsScript, type LoadedScript, type ScriptLibrary } from './script-library.ts';
 import {
   defaultValue,
@@ -162,8 +163,8 @@ export class PapyrusError extends Error {
 /**
  * The original has no call-depth limit (observed in the original: its stacks grow page by page
  * while the VM's stack memory lasts, iMaxAllocatedMemoryBytes, and a stack over it waits for
- * memory). This guard only keeps an endless recursion from taking the browser's memory.
- * TODO(M13): the stack memory's accounting and the wait of a stack over the limit.
+ * memory: stack-memory.ts). This guard only keeps an endless recursion from taking the
+ * browser's memory.
  */
 const MAX_DEPTH = 4096;
 /** The most elements an array may have (observed in the original). */
@@ -209,14 +210,18 @@ class Thread {
   origin: ThreadOrigin | undefined;
   /** While it waits where a save can hold it: how it resumes (ThreadWait). */
   resume: ThreadWait | undefined;
+  /** Its stack's memory: the pages its frames take (stack-memory.ts). */
+  readonly memory: StackMemory;
 
   constructor(
     id: number,
     initializing: boolean,
     changed: () => void,
     origin: ThreadOrigin | undefined,
+    memory: StackMemory,
   ) {
     this.id = id;
+    this.memory = memory;
     this.initializing = initializing;
     this.#changed = changed;
     this.origin = origin;
@@ -394,6 +399,11 @@ export class PapyrusVm {
     this.library = library;
     this.host = host;
     this.scheduler = scheduler;
+    // Overstressed for long, the original dumps its stacks to the Papyrus log.
+    scheduler.dumpStacks ??= () => {
+      this.host.warn('Suspended stack count is over our warning threshold, dumping stacks:');
+      for (const thread of this.#threads) this.host.warn(`  ${this.#where(thread)}`);
+    };
   }
 
   warn(message: string): void {
@@ -789,6 +799,9 @@ export class PapyrusVm {
       return null;
     }
     return this.#within(thread, frame.instance, async () => {
+      // A stack loaded from a save gets its pages with the memory's limit ignored (observed in
+      // the original).
+      thread.memory.push(frameVariables(frame.fn), 'ignoreLimit');
       thread.frames.push(frame);
       try {
         if (index + 1 < frames.length) {
@@ -804,6 +817,7 @@ export class PapyrusVm {
         return await this.#execute(frame);
       } finally {
         thread.frames.pop();
+        thread.memory.pop();
       }
     });
   }
@@ -871,6 +885,7 @@ export class PapyrusVm {
         this.#signal();
       },
       origin,
+      new StackMemory(this.scheduler.memory),
     );
     this.#threads.add(thread);
     try {
@@ -891,6 +906,7 @@ export class PapyrusVm {
     } finally {
       this.#release(thread);
       thread.state = 'done';
+      thread.memory.release();
       this.#threads.delete(thread);
     }
   }
@@ -1333,18 +1349,30 @@ export class PapyrusVm {
       // Threads waiting meanwhile count the VM's patience with this native.
       this.#watchNative();
       // A native the game hands to its main thread runs in the next frame's VM update, after
-      // the calls handed before it (native-timing.ts, scheduler.ts mainThread); the thread
+      // the calls handed before it (native-timing.ts, scheduler.ts suspend); the thread
       // waits meanwhile, keeping the lock of its own object's script. It has not begun then: a
       // save restarts its call.
+      // Its turn in the update ends once the native's own work has run (the update's share
+      // counts that), not when what the native started is done.
       const run = nativeWaitsForFrame(level.name, name)
         ? async (): Promise<Value> => {
-            await this.#latent(thread, this.scheduler.mainThread(), RESTART);
-            return native(call);
+            const turn = await this.#latent(thread, this.scheduler.suspend(), RESTART);
+            const start = this.scheduler.now();
+            const timed = (): Value | Promise<Value> => {
+              try {
+                return native(call);
+              } finally {
+                turn(this.scheduler.now() - start);
+              }
+            };
+            return timed();
           }
         : (): Promise<Value> => Promise.resolve(native(call));
+      await this.#pushFrame(thread, fn.params.length);
       try {
         return await (own ? run() : this.#within(thread, null, run));
       } finally {
+        thread.memory.pop();
         thread.native = undefined;
         thread.inNative--;
         // Let go while the native took long: the thread runs again when its turn comes.
@@ -1354,14 +1382,36 @@ export class PapyrusVm {
     if (depth >= MAX_DEPTH)
       throw new PapyrusError(`call depth over ${String(MAX_DEPTH)} in ${name}`);
     const frame = this.#frame(level, fn, name, self, instance, args, depth, thread, engineNones);
-    return this.#within(thread, instance, async () => {
-      thread.frames.push(frame);
-      try {
-        return await this.#execute(frame);
-      } finally {
-        thread.frames.pop();
-      }
-    });
+    await this.#pushFrame(thread, frameVariables(fn));
+    try {
+      return await this.#within(thread, instance, async () => {
+        thread.frames.push(frame);
+        try {
+          return await this.#execute(frame);
+        } finally {
+          thread.frames.pop();
+        }
+      });
+    } finally {
+      thread.memory.pop();
+    }
+  }
+
+  /**
+   * Makes a call's frame in the thread's stack memory (observed in the original): with memory
+   * short the thread is suspended until the next VM update and asks again then (a save
+   * restarts the call). There is no error for a deep stack: while overstressed, and without
+   * updates to wait for, the pages are given over the limit.
+   */
+  async #pushFrame(thread: Thread, variables: number): Promise<void> {
+    const strategy: PageStrategy = this.scheduler.suspending ? 'normal' : 'ignoreLimit';
+    let turn: SuspendedTurn | undefined;
+    for (;;) {
+      const made = thread.memory.push(variables, strategy);
+      turn?.(0);
+      if (made) return;
+      turn = await this.#latent(thread, this.scheduler.suspend(), RESTART);
+    }
   }
 
   /** A new call frame: its parameters from `args`, its locals at their defaults, at pc 0. */
@@ -2039,6 +2089,11 @@ function compare(a: Value, b: Value): number {
     return a.toLowerCase().localeCompare(b.toLowerCase());
   }
   return num(a) - num(b);
+}
+
+/** A function's frame size in variables: its parameters and locals (temporaries included). */
+function frameVariables(fn: PexFunction): number {
+  return fn.params.length + fn.locals.length;
 }
 
 function changeSignal(): { promise: Promise<void>; resolve: () => void } {
