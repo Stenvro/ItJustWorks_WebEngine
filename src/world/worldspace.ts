@@ -2,7 +2,12 @@
 // and LOD (child worlds such as WhiterunWorld borrow them from Tamriel), and where the
 // persistent references are. Layout: docs/formats/esm.md ("Worldspaces").
 
-import { enabledAtGameStart, parseReference, parseTeleport } from './cell-records.ts';
+import {
+  enabledAtGameStart,
+  environmentMap,
+  parseReference,
+  parseTeleport,
+} from './cell-records.ts';
 import { CELL_SIZE, parseLand, type LandData } from './land.ts';
 import { parseLargeReferences, type LargeReference } from './large-references.ts';
 import type { GameRecord, RecordDatabase } from './record-db.ts';
@@ -63,6 +68,12 @@ export interface WorldspaceRecord {
   readonly cloudModel: string | undefined;
   /** LTMP: the worldspace's lighting template (LGTM; the sky shows only its dome there). */
   readonly lightingTemplate: number | undefined;
+  /**
+   * XWEM: the cube map the world's water reflects in place of the reflection it renders
+   * (observed in the original, with bUseCubeMapReflections, where the file exists): the
+   * Forebears' Holdout, the Ancestors' Glade and Apocrypha name one.
+   */
+  readonly waterEnvironmentMap: string | undefined;
 }
 
 /**
@@ -116,6 +127,7 @@ export function parseWorldspace(record: GameRecord): WorldspaceRecord {
     },
     cloudModel: nonEmpty(record.text('MODL')),
     lightingTemplate: nonZeroForm(record.formIdField('LTMP')),
+    waterEnvironmentMap: environmentMap(record.fields.zstring('XWEM')),
   };
 }
 

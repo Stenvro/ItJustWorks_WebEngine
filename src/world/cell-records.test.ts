@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Fields } from '../formats/esm/fields.ts';
 import { RecordFlag } from '../formats/esm/record.ts';
-import { enabledAtGameStart } from './cell-records.ts';
+import { enabledAtGameStart, parseCell } from './cell-records.ts';
 import { GameRecord, type Plugin, type RecordDatabase } from './record-db.ts';
 
 /** Form ids are stored as they are (one plugin). */
@@ -50,5 +50,24 @@ describe('references enabled at the start of a new game', () => {
     expect(await enabledAtGameStart(all, 1)).toBe(false);
     expect(await enabledAtGameStart(all, 2)).toBe(false);
     expect(await enabledAtGameStart(all, 3)).toBe(false);
+  });
+});
+
+describe("a cell's water environment map", () => {
+  const cell = (xwem?: string): GameRecord => {
+    const fields = [{ type: 'DATA', data: Uint8Array.of(0x3, 0) }];
+    if (xwem !== undefined)
+      fields.push({ type: 'XWEM', data: new TextEncoder().encode(`${xwem}\0`) });
+    return new GameRecord(db, plugin, 'CELL', 1, 0, new Fields(fields));
+  };
+
+  it('names the cube under Data as the file system knows it', () => {
+    const named = cell('Data\\Textures\\Cubemaps\\CaveGreenCube_e.dds');
+    expect(parseCell(named).waterEnvironmentMap).toBe('textures\\cubemaps\\cavegreencube_e.dds');
+  });
+
+  it('has none where the cell names none', () => {
+    expect(parseCell(cell()).waterEnvironmentMap).toBeUndefined();
+    expect(parseCell(cell('')).waterEnvironmentMap).toBeUndefined();
   });
 });

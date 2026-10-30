@@ -511,7 +511,7 @@ const SUBRECORD_NOTES: Record<string, readonly [Status, string]> = {
   'WATR GNAM': ['n/a', 'empty in every vanilla water'],
   'WATR NAM5': [
     'open',
-    "flow normals noise texture (RiverFlow.dds): sampled on the flow map's staggered grid by per-geometry constants that are unread",
+    "flow normals noise texture (RiverFlow.dds): the flow-map techniques' terms are read (docs/rendering.md, rivers' flow normals); the cell water's texture coordinates and the composite flow map's placement constants are unread",
   ],
   'WTHR LNAM': ['done', 'weather.ts: the cloud layer count (29, 4)'],
   'WTHR NAM2': ['done', 'weather.ts: moon glare colours (FX)'],

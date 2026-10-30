@@ -58,6 +58,7 @@ const data: CellData = {
     hasWater: false,
     waterHeight: undefined,
     waterType: undefined,
+    waterEnvironmentMap: undefined,
     acousticSpace: undefined,
     musicType: undefined,
   },

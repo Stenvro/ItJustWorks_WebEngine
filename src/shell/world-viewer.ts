@@ -353,6 +353,8 @@ export class WorldViewer {
   /** The name of the worldspace being opened, until the player stands in it. */
   #opening: string | undefined;
   #world: Worldspace | undefined;
+  /** The cube the world's water reflects (WRLD XWEM), where it names one. */
+  #waterEnvironment: GPUTexture | undefined;
   #sky: WorldSky | undefined;
 
   /** Whether the open world has no sky (WRLD DATA flag 0x20). */
@@ -1289,6 +1291,15 @@ export class WorldViewer {
     this.#world = world;
     this.#sky = sky;
     this.#lod = lod;
+    // A world naming a water environment map reflects that cube (observed in the original).
+    const environment = world.record.waterEnvironmentMap;
+    const cube =
+      session.ini.number('Water', 'bUseCubeMapReflections') !== 0 &&
+      environment !== undefined &&
+      session.vfs.has(environment)
+        ? await session.textures.get(environment)
+        : undefined;
+    this.#waterEnvironment = cube?.depthOrArrayLayers === 6 ? cube : undefined;
     this.#lodSettings = await this.#readLodSettings(world, session);
     this.#renderer.scene.defaultWater = await session.waterType(
       world.waterWorld.water ?? DEFAULT_WATER,
@@ -2767,6 +2778,7 @@ export class WorldViewer {
       multiplier: state.waterMultiplier,
       profile: frame.sky.profile,
       displacement,
+      ...(this.#waterEnvironment && { environment: this.#waterEnvironment }),
     };
   }
 

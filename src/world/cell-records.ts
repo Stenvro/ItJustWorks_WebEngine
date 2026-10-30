@@ -121,6 +121,12 @@ export interface CellRecord {
   readonly waterHeight: number | undefined;
   /** XCWT: the cell's water type (WATR). */
   readonly waterType: number | undefined;
+  /**
+   * XWEM: the cube map an interior's water reflects (textures\cubemaps\...), if it names one.
+   * Observed in the original: interior water whose cell names one that exists reflects that
+   * cube (with bUseCubeMapReflections); interior water without one has no reflection cube.
+   */
+  readonly waterEnvironmentMap: string | undefined;
   /** XCAS: the cell's acoustic space (ASPC: ambience, region sounds, reverb). */
   readonly acousticSpace: number | undefined;
   /** XCMO: the cell's music type (MUSC). */
@@ -128,6 +134,20 @@ export interface CellRecord {
 }
 
 const nonZero = (id: number | undefined): number | undefined => (id === 0 ? undefined : id);
+
+/** A texture path as a record names it, as the path under Data the file system knows. */
+export const textureOf = (value: string): string => {
+  if (value === '') return '';
+  // "Data\Textures\Water\DefaultWater.dds": everything up to Data\ is dropped.
+  let normalized = value.replaceAll('/', '\\').toLowerCase();
+  const data = normalized.lastIndexOf('data\\');
+  if (data >= 0) normalized = normalized.slice(data + 5);
+  return normalized.startsWith('textures\\') ? normalized : `textures\\${normalized}`;
+};
+
+/** XWEM: a water environment map's texture path, undefined where the record names none. */
+export const environmentMap = (value: string | undefined): string | undefined =>
+  value === undefined || value === '' ? undefined : textureOf(value);
 
 function cellImageSpace(record: GameRecord): number | undefined {
   return nonZero(record.formIdField('XCIM'));
@@ -158,6 +178,7 @@ export function parseCell(record: GameRecord): CellRecord {
     hasWater: ((data?.[0] ?? 0) & 0x2) !== 0,
     waterHeight: record.fields.f32('XCLW'),
     waterType: nonZero(record.formIdField('XCWT')),
+    waterEnvironmentMap: environmentMap(record.fields.zstring('XWEM')),
     acousticSpace: nonZero(record.formIdField('XCAS')),
     musicType: nonZero(record.formIdField('XCMO')),
   };

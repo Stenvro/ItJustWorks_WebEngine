@@ -10,13 +10,16 @@
 struct WaterParams {
   // Shallow colour (rgb), opacity (a).
   shallow: vec4f,
-  // Deep colour (rgb), reflectivity (a).
+  // Deep colour (rgb), reflectivity amount (a: how much of the reflected scene shows over the
+  // reflection colour).
   deep: vec4f,
   // Reflection colour (rgb), fresnel (a).
   reflection: vec4f,
-  // x refraction magnitude, y reflection magnitude, z noise falloff, w flowmap scale.
+  // x refraction magnitude, y reflection magnitude (how far the normal the reflection is taken
+  // about leaves the up axis), z noise falloff (1..8191), w flowmap scale.
   surface: vec4f,
-  // x fog near, y fog far, z fog amount, w displacement dampener (how much the field shows).
+  // x fog range (far - near), y fog far (at least 1), z fog exponent (4 x the Fog Amount, at least
+  // 1), w displacement dampener (how much the field shows).
   fog: vec4f,
   // x sun specular power, y sun specular magnitude, z sun sparkle power, w sparkle magnitude.
   sun: vec4f,
@@ -41,6 +44,8 @@ struct WaterParams {
 @group(2) @binding(11) var flowMap: texture_2d<f32>;
 
 struct WaterFrame {
+  // The sky's horizon colour (rgb); w what the water reflects: 0 the reflection faces (else the
+  // sky), 1 the interior's environment cube, 2 nothing.
   horizon: vec4f,
   lower: vec4f,
   upper: vec4f,
@@ -65,6 +70,8 @@ struct WaterFrame {
 // What the water reflects (water-reflection.ts): the scene seen from the camera mirrored under
 // the water's plane, one layer per cube face, looked up by the reflected view direction.
 @group(3) @binding(2) var reflectionFaces: texture_2d_array<f32>;
+// An interior's water environment map (CELL XWEM): the static cube its water reflects.
+@group(3) @binding(3) var environmentCube: texture_cube<f32>;
 
 // The reflection along a direction: the face of its largest axis (no face looks down; the lower
 // directions take the side faces' bottom rows).
@@ -180,8 +187,8 @@ fn screenReflection(origin: vec3f, direction: vec3f) -> vec4f {
 const SPARKLE_DIRECTION = vec3f(-0.099, -0.099, 0.99);
 // Distance where the noise's detail has faded to its floor (the original's 8192 units).
 const DETAIL_FADE_END = 8192.0;
-// The detail's floor past that distance. TODO(M13): a per-frame value the original keeps in its
-// shared constants, unread; 0 lets distant water show only its first noise layer, mirror-like.
+// The detail's floor past that distance: a frame constant of the original, 1 only in passes the
+// engine flags for it and 0 in every pass that draws the world (observed in the original).
 const DETAIL_FLOOR = 0.0;
 
 // A view-space distance from the camera along `view` (the unit vector from the camera) to the
@@ -201,8 +208,8 @@ fn fs_water(input: VertexOut) -> @location(0) vec4f {
   let toCamera = frame.cameraPos.xyz - input.worldPos;
   let distance = length(toCamera);
   let view = toCamera / max(distance, 1e-3);
-  let fogNear = water.fog.x;
-  let fogFar = max(water.fog.y, 1e-3);
+  let fogRange = water.fog.x;
+  let fogFar = water.fog.y;
 
   // How deep the water is here: the way the view ray goes through it to the scene below (for
   // the reflections and refraction) and how far that scene lies under the surface (for the
@@ -225,14 +232,15 @@ fn fs_water(input: VertexOut) -> @location(0) vec4f {
   );
 
   // Normal: the first layer by its amplitude around the up axis, the other two added by
-  // theirs, flattened by the normals' depth property; rivers take their flow's waves over it,
-  // the displacement field's ripples bend it, and far away only the first layer stays.
+  // theirs, flattened by the normals' depth property; rivers take their flow's waves over it
+  // and, far away, the first layer's own normal alone; the displacement field's ripples bend it.
   var first = vec3f(0.0, 0.0, 1.0);
   var waves = vec3f(0.0);
   if (water.flow.z > 0.5) {
     // Rivers: the waves travel along the flow map, in two phases half a period apart.
-    // TODO(M13): the original samples WATR NAM5's flow-normal texture on a staggered grid of
-    // the flow map from per-geometry constants that are unread; ours moves the noise layers.
+    // TODO(M13): the original lays WATR NAM5's flow normals over the noise from four taps of
+    // the flow map on a half-texel staggered grid (docs/rendering.md, rivers' flow normals);
+    // the cell water's texture coordinates that place it are unread, so ours moves the noise.
     let local = (input.worldPos.xy - water.flow.xy) / 4096.0;
     let flowTexel = textureSampleLevel(flowMap, waterSampler, vec2f(local.x, 1.0 - local.y), 0.0);
     let direction = normalize(flowTexel.rg * 2.0 - 1.0 + vec2f(1e-4, 0.0));
@@ -262,8 +270,11 @@ fn fs_water(input: VertexOut) -> @location(0) vec4f {
   waves += vec3f(0.0, 0.0, 1.0 - water.amplitude.x);
   let up = vec3f(0.0, 0.0, 1.0);
   var normal = safeNormalize(mix(up, safeNormalize(waves), depthControl.z));
-  let firstNormal = select(up, first / water.amplitude.x, water.amplitude.x > 0.0);
-  normal = safeNormalize(mix(firstNormal, normal, detail));
+  if (water.flow.z > 0.5) {
+    // Only the flow-map techniques fade the normal with distance (observed in the original).
+    let firstNormal = select(up, first / water.amplitude.x, water.amplitude.x > 0.0);
+    normal = safeNormalize(mix(firstNormal, normal, detail));
+  }
   // The ripples: the field's tilt as a normal, the waves' normal taken over by how flat it is.
   let ripple = normalize(vec3f(displacementSlope(input.worldPos.xy), 1.0));
   normal = normalize(mix(ripple, normal, ripple.z));
@@ -282,23 +293,28 @@ fn fs_water(input: VertexOut) -> @location(0) vec4f {
   let multiplier = waterFrame.multiplier.rgb;
   let deep = saturate(rayDepth / fogFar);
   let body = mix(water.shallow.rgb, water.deep.rgb, deep) * multiplier;
-  let clear = saturate((fogFar - min(rayDepth, fogFar)) / max(fogFar - fogNear, 1e-3));
-  let fog = 1.0 - pow(clear, max(water.fog.z, 1e-3));
+  let clear = saturate((fogFar - min(rayDepth, fogFar)) / fogRange);
+  let fog = 1.0 - pow(clear, water.fog.z);
   let refracted = mix(below, body, fog);
 
   // Reflection: the reflection cube (else the sky) by the view reflected about the normal
-  // flattened towards the up axis by the reflectivity, the screen-space reflection over it
-  // where it finds the scene, then the reflection colour taken over by it by the reflection
-  // magnitude.
-  let reflectNormal = mix(up, normal, water.deep.a);
+  // flattened towards the up axis by the reflection magnitude, the screen-space reflection over
+  // it where it finds the scene, then the reflection colour taken over by it by the
+  // reflectivity amount.
+  let reflectNormal = mix(up, normal, water.surface.y);
   let reflected = reflect(-view, reflectNormal);
   var environment = skyColorAt(reflected);
-  if (waterFrame.screen.w > 0.5) {
+  if (waterFrame.horizon.w > 1.5) {
+    environment = vec3f(0.0);
+  } else if (waterFrame.horizon.w > 0.5) {
+    // The cube's faces are laid out y-up (as the lighting shader's environment maps).
+    environment = textureSampleLevel(environmentCube, waterSampler, reflected.xzy, 0.0).rgb;
+  } else if (waterFrame.screen.w > 0.5) {
     environment = reflectionAt(reflected);
   }
   let hit = screenReflection(input.worldPos, reflect(-view, normal));
   let scene = mix(environment, hit.rgb, saturate(detail * hit.a));
-  let reflection = mix(water.reflection.rgb * multiplier, scene, water.surface.y);
+  let reflection = mix(water.reflection.rgb * multiplier, scene, water.deep.a);
   // Schlick's fresnel from the Fresnel Amount, less in shallow water; far away the reflection
   // takes over.
   let facing = saturate(dot(view, normal));
