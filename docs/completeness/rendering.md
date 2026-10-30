@@ -38,6 +38,10 @@ their particle. LOD is in no cell's portal graph, so rooms and portals never cul
 A ridden dragon's target lock: Jump locks the nearest of the actors within fTargetLockXYRange
 (bTargetLockIsToggle: a press locks, the next lets go), Hotkey1 and Hotkey2 step back and on
 through the list gathered at the lock, a target that no longer does gives way to the next one on.
+Bone LOD's level per update: the camera's distance across the ground over the skeleton's scale
+(times fBoneLODDistanceScale), never below the bones a hovering, knocked down or seated actor
+needs (a far dragon measured in space with every bone after its toe frozen stalled the opening's
+tower climb).
 
 Done in round 7, part B (scene graph, physics-driven, LOD): the Havok float slots. Behavior
 graphs now blend their clips' float tracks (a slot's value from the clips that have a track
@@ -109,7 +113,7 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 
 1. **Shader terms only the shader cache holds**: the volumetric generate shader's scattering, its
    blur and noise; the map overlay's weights and snow mask (inferred now).
-2. **Bone LOD's level per frame** and the kill cameras' own turns and the bone a shot's
+2. **Bone LOD for actors the camera does not see** and the kill cameras' own turns and the bone a shot's
    location is measured from (camera and animation rules still inferred).
 3. **IBLF lens flare** (its textures are Effects\LensFlares\Ramps.dds and Masks.dds);
    **WATR NAM5**; the water constants' sources and interiors' reflection; Fire_Refraction's

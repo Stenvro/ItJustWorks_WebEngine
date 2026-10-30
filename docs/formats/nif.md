@@ -175,7 +175,12 @@ particle (`src/physics/particle-bodies.ts`). The rocks' body is a convex hull of
 DEBRIS_LARGE, mass 50, so they collide with the world's shapes and each other by the layer table. Bone LOD (BSBoneLODExtraData on 52 skeletons): pairs of a
 distance and a bone name; observed in the original, the bones are looked up in the Havok
 skeleton (pairs whose bone is missing or whose distance is not above 0 are dropped) and the
-levels are sorted by distance. NiBSBoneLODController (the centaur's, wolf's and werewolf's old
+levels are sorted by distance. Each update (observed in the original) the camera's distance
+across the ground (height left out), times `[Animation] fBoneLODDistanceScale` over the
+skeleton's scale, picks the last level it is beyond; that level's bone index is how many bones
+animate, never fewer than the actor needs: all of a hovering flier and of one knocked down,
+`iMinBonesToGenerateWhileSitting` (5) of one seated. (The dragon's one level, NPC LLegToe1 at
+2048, leaves it ten bones beyond that distance.) NiBSBoneLODController (the centaur's, wolf's and werewolf's old
 exports) gets its levels from string extra data named `BSBoneLOD#Bone#<n>`, which no vanilla
 file has.
 `TwistOverride`, `Pauldron Override` and `Orientation` (on skeleton bones) are named nowhere
