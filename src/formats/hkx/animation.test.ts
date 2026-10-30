@@ -120,7 +120,7 @@ function blocks(): { data: number[]; offsets: number[]; floatOffsets: number[] }
 function buildClip(): Uint8Array {
   const b = new PackfileBuilder();
   const container = b.object('hkaAnimationContainer', 64);
-  const skeleton = b.object('hkaSkeleton', 104);
+  const skeleton = b.object('hkaSkeleton', 120);
   const animation = b.object('hkaSplineCompressedAnimation', 176);
   const binding = b.object('hkaAnimationBinding', 72);
   const motion = b.object('hkaDefaultAnimatedReferenceFrame', 72);
@@ -266,7 +266,7 @@ describe('Havok animations', () => {
 describe('ragdoll mapping', () => {
   /** A skeleton of named bones at an object (hkaSkeleton: name, parents, bones, pose). */
   const skeleton = (b: PackfileBuilder, name: string, bones: string[]): number => {
-    const at = b.object('hkaSkeleton', 104);
+    const at = b.object('hkaSkeleton', 120);
     b.string(at + 16, name);
     const parents = b.array(at + 24, 2, bones.length);
     bones.forEach((_, i) => b.i16(parents + i * 2, i === 0 ? -1 : 0));

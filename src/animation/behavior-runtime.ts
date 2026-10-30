@@ -18,6 +18,7 @@ import {
 import {
   activeChildren,
   BLENDER_FLAGS,
+  EVENT_FLAGS,
   TRANSITION_FLAGS,
   type BehaviorEvent,
   type BehaviorGenerator,
@@ -345,6 +346,23 @@ interface CyclicState {
   readonly mode: 'frozen' | 'cross';
   readonly frozen: number;
   elapsed: number;
+}
+
+const SILENT_EVENTS = new WeakMap<BehaviorGraph, ReadonlySet<string>>();
+
+/** The lower-case names of the events a graph file flags silent (EVENT_FLAGS.silent). */
+function silentEvents(graph: BehaviorGraph): ReadonlySet<string> {
+  let silent = SILENT_EVENTS.get(graph);
+  if (!silent) {
+    const flags = graph.eventFlags ?? [];
+    silent = new Set(
+      graph.events
+        .filter((_, id) => ((flags[id] ?? 0) & EVENT_FLAGS.silent) !== 0)
+        .map((name) => name.toLowerCase()),
+    );
+    SILENT_EVENTS.set(graph, silent);
+  }
+  return silent;
 }
 
 /** A graph file's names: its local variable, event and property indices → the character's. */
@@ -777,7 +795,13 @@ export class BehaviorRuntime {
   #read(bindable: Bindable, scope: Scope): number {
     if (bindable.variable !== undefined) {
       const index = scope.variables[bindable.variable];
-      if (index !== undefined && index >= 0) return this.#values[index] ?? bindable.value;
+      if (index !== undefined && index >= 0) {
+        const value = this.#values[index] ?? bindable.value;
+        // A bit binding: the bool variable sets or clears one bit of the member's own value.
+        if (bindable.bit === undefined) return value;
+        const mask = 1 << bindable.bit;
+        return value !== 0 ? bindable.value | mask : bindable.value & ~mask;
+      }
     }
     if (bindable.property !== undefined) {
       const name = scope.properties[bindable.property];
@@ -1394,9 +1418,14 @@ export class BehaviorRuntime {
           return;
         }
         // The root moves by the children that move the root bone (bone 0), by their weight on
-        // it: camera bobs and other partial poses (bone weights) leave it alone.
+        // it: camera bobs and other partial poses (bone weights) leave it alone, as do children
+        // whose world-from-model weight is 0 (Havok's blend of the world-from-model).
         const weighted = activeChildren(node, this.#blenderRead(node, scope)).map(
-          ([child, w]) => [child, Math.max(0, w) * (child.boneWeights?.[0] ?? 1)] as const,
+          ([child, w]) =>
+            [
+              child,
+              Math.max(0, w) * (child.worldFromModelWeight ?? 1) * (child.boneWeights?.[0] ?? 1),
+            ] as const,
         );
         const total = weighted.reduce((all, [, w]) => all + w, 0);
         if (total <= 0) return;
@@ -2978,13 +3007,18 @@ export class BehaviorRuntime {
         ? time > previous || time <= state.time
         : (first ? time >= previous : time > previous) && time <= state.time;
     if (state.time === previous && !wrapped && !first) return;
+    // A clip does not raise an event its graph flags silent (EVENT_FLAGS.silent: the horse's,
+    // troll's, vampire lord's and werewolf's SyncLeft and SyncRight annotations).
+    const flags = scope.graph.eventFlags ?? [];
     for (const trigger of node.triggers ?? []) {
       const time = trigger.relativeToEndOfClip ? duration + trigger.localTime : trigger.localTime;
+      if (((flags[trigger.event.id] ?? 0) & EVENT_FLAGS.silent) !== 0) continue;
       if (passed(time)) this.#raise(trigger.event, scope);
     }
     if (((node.flags ?? 0) & CLIP_FLAGS.dontConvertAnnotationsToTriggers) === 0) {
       for (const annotation of animation.annotations) {
         if (!passed(annotation.time - (node.cropStart ?? 0))) continue;
+        if (silentEvents(scope.graph).has(annotation.text.toLowerCase())) continue;
         // A graph declares an annotation's whole text as its event (SoundPlay.NPCCowMoo); the
         // engine hears it as tag and payload (graphEvent: AnimObjLoad.DecapitationHeadGore).
         this.#emit(annotation.text);
@@ -3156,7 +3190,10 @@ export class BehaviorRuntime {
         });
         return;
       case 'damping': {
-        // A PID controller per update (TODO(M13): Havok's exact discretisation).
+        // A PID controller per update (TODO(M13): Havok's exact discretisation). Without
+        // enableScalarDamping the value is left alone (every vanilla damping modifier sets it;
+        // none damps a vector: TODO(M13) rawVector when a file asks for it).
+        if (this.#read(modifier.enableScalarDamping, scope) === 0) return;
         const raw = this.#read(modifier.rawValue, scope);
         const damped = state.values[0] ?? raw;
         const error = raw - damped;
@@ -3234,6 +3271,8 @@ export class BehaviorRuntime {
         }
         return;
       case 'powered-ragdoll': {
+        // TODO(M13): its worldFromModelMode (the character placed by the ragdoll, mode 4, or by
+        // its pose matching bones, mode 2) and per-bone weights are read but not applied yet.
         const maxForce = this.#read(modifier.maxForce, scope);
         if (this.#powered === undefined || maxForce > this.#poweredForce) {
           this.#powered = {

@@ -86,6 +86,12 @@ export interface HavokMotion {
   readonly centerOfMassLocal: Vec3;
   /** The swept transform's rotation (a quaternion x, y, z, w). */
   readonly rotation: Vec4;
+  /**
+   * The swept transform's first sample (centerOfMass0, rotation0): where the body was at the
+   * start of the step the file was saved in; the same as the second for a body at rest.
+   */
+  readonly previousCenterOfMass: Vec3;
+  readonly previousRotation: Vec4;
   readonly deltaAngle: Vec4;
   readonly objectRadius: number;
   readonly linearDamping: number;
@@ -503,6 +509,8 @@ function readRigidBody(pack: Packfile, at: number): HavokRigidBody {
       // both samples equal, so the second of each is the body's state.
       centerOfMass: vec3(pack, state + 64 + 16),
       rotation: vec4(pack, state + 64 + 48),
+      previousCenterOfMass: vec3(pack, state + 64),
+      previousRotation: vec4(pack, state + 64 + 32),
       centerOfMassLocal: vec3(pack, state + 64 + 64),
       deltaAngle: vec4(pack, state + 144),
       objectRadius: pack.f32(state + 160),

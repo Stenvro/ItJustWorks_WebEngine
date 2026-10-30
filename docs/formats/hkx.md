@@ -100,14 +100,71 @@ keeps useTrackData), and five object sizes (the skeleton mapper 144, its data 12
 animated reference frame 80, BSIStateManagerModifier 128, BSRagdollContactListenerModifier 136).
 
 `node tools/format-census.ts hkx-members` runs every reader over every Havok file with every
-read recorded, then looks up each serialized member of each object: 653 of the 753 are read.
-Of the other 100, 40 are zero or null in every file (runtime caches such as a clip's binding
-index, the damping modifier's error sums, null pointers) and 60 are set somewhere: the objects
-found by class rather than through the root and animation containers' arrays, the spline
-clips' per-block offsets (the decoder walks the blocks itself), the skeleton mappers' chain
-mappings and the character and project files' other names, the events' flags and variables'
-roles, binding bit indices, a blender child's world-from-model weight, the powered ragdoll's
-world-from-model mode.
+read recorded, then looks up each serialized member of each object: 723 of the 753 are read,
+every member set anywhere in the data among them. Of the other 30, 27 are zero or null in every
+file (the damping and foot IK modifiers' runtime state, null pointers such as the hand IK
+driver, the start state chooser and the state listeners, the empty attachment and skin
+arrays) and 3 carry no data: the two clip generators' animation binding index (−1 in every
+file; the runtime binds the clip as it activates) and the stabilization atom's padding.
+
+What the members read in round 4 hold, and who takes them:
+
+- **The contents** (hkRootLevelContainer's named variants): each file's top-level objects by
+  name and class (`Packfile.namedVariants`, `contents`); the animation container and the
+  behavior files' objects are taken from there, as the original finds them.
+- **Animation containers**: `animations` lists every animation; each binding's is one of them
+  (every vanilla file).
+- **Spline clips**: `maskAndQuantizationSize` is where a block's track data starts after its
+  masks; `transformOffsets` and `floatOffsets` (434 clips, block-major: block × tracks) are
+  where each track's data starts in each block. The decoder seeks to them, as random access
+  into a block; over all 6,130 clips they equal the positions a sequential walk finds.
+- **Skeleton mappers** (`readSkeletonMappings`): both mappers of a skeleton file (ragdoll →
+  animation and back) with each simple mapping's A-from-B transform (a ragdoll body's offset
+  from its bone), the chain mappings (four mappers: 2 or 4 chains), the unmapped bones, the
+  extracted motion mapping (identity everywhere), keepUnmappedLocal (true everywhere) and the
+  mapping type (0, ragdoll, everywhere). For the ragdoll (src/physics).
+- **Skeletons' local frames**: none in the data; read (bone and frame class) for mods.
+- **Character files**: the character controller's capsule (1.7 by 0.4, filter info 1 in
+  every character), the model's up, forward and right axes (up +z; forward +x and right −y in
+  342 characters, forward +y and right +x in 19), the scale (1), the bone weights of the pointer
+  properties (the value set's variants), and the empty skin, LOD, retargeting, animation file
+  and mirrored sync point name lists. For physics (the controller) and the procedural
+  modifiers (the axes).
+- **Project files**: the world's up (+z), the file lists (the character list is what the
+  original follows), the folders (empty) and the editor's source path.
+- **Graph data**: each event's flags (`EVENT_FLAGS`: 297 sync points, 10 silent sync points,
+  2 silent), each variable's role and flags (0/0 for every variable of the vanilla graphs), the
+  editor's word min and max values (three graphs; uninitialized values among them, so not a
+  clamp), the graph's own character property types (their role flags are uninitialized).
+- **Bindings**: the bit index (−1 in every binding: no bit bindings; the runtime sets or clears
+  the bit when one has it) and the index of the enable binding (it names `enable` in each of
+  the 290 sets that have one).
+- **Nodes**: hkbNode.userData, set per class by the authoring tool (1, 2 or 3; what the
+  original does with it is TODO(M13)).
+- **Blender children**: worldFromModelWeight (1 in 6,057 children, 0 in 475); **damping**:
+  enableScalarDamping (set in all 43) and enableVectorDamping (in none); **powered ragdoll**:
+  its world-from-model mode (2 compute from the pose matching bones, or 4 from the ragdoll) and
+  bone weights; **foot IK**: the driver's isQuadrupedNarrow (7 of 16 characters) and the
+  modifier legs' original ankle transforms; **physics bodies**: the swept transform's first
+  sample.
+
+Wired into the behavior runtime: a clip does not raise the triggers and annotations of an
+event its graph flags silent (Havok's FLAG_SILENT: the horse's, troll's, vampire lord's and
+werewolf's SyncLeft and SyncRight); a blender's root motion takes each child's
+world-from-model weight; a damping modifier without enableScalarDamping leaves its value; a bit
+binding sets one bit. Read, not applied yet (TODO(M13)): the sync point flag (blenders sync
+by normalized time, not by sync points), the powered ragdoll's world-from-model mode and bone
+weights, the narrow quadruped foot IK.
+
+### Projects without a character
+
+Seven project files under meshes\magic give no graph. Six (fireball01handeffects,
+frostbolthandfx01, frosthandfx01, fxfirecloakhandeffects, fxicecloakhandeffects,
+summonhandfx01) name meshes\magic\magicbehaviors\characters\fireball01handeffects\, which is
+in no archive; no mesh and no record names these six, so the original never opens them.
+shoutimod.hkx lists no character at all and fxshoutimoddismay.nif names it: a graph runs on a
+character (it names the behavior file and the skeleton), so the mesh shows without a graph, as
+ours does (`projectHasCharacter`; the census counts them apart from failures).
 
 ## Ragdoll physics
 

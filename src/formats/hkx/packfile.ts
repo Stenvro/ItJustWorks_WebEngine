@@ -34,6 +34,15 @@ export interface HkxObject {
   readonly className: string;
 }
 
+/** A top-level object of the file (hkRootLevelContainerNamedVariant). */
+export interface NamedVariant {
+  readonly name: string;
+  readonly className: string;
+  readonly object: HkxObject | undefined;
+}
+
+const NAMED_VARIANT_SIZE = 24;
+
 interface Section {
   readonly name: string;
   readonly start: number;
@@ -169,6 +178,33 @@ export class Packfile {
   /** Objects of a class, in file order. */
   objectsOf(className: string): HkxObject[] {
     return [...this.objects.values()].filter((object) => object.className === className);
+  }
+
+  /**
+   * The contents' named variants (hkRootLevelContainer.namedVariants: name 0, className 8,
+   * variant 16, 24 bytes each): the file's top-level objects ("Merged Animation Container",
+   * "hkbBehaviorGraph", "Physics Data", ...), as the original finds them.
+   */
+  namedVariants(): NamedVariant[] {
+    if (this.root?.className !== 'hkRootLevelContainer') return [];
+    const { data, size } = this.array(this.root.offset);
+    return Array.from({ length: size }, (_, i) => {
+      const at = data + i * NAMED_VARIANT_SIZE;
+      return {
+        name: this.string(at) ?? '',
+        className: this.string(at + 8) ?? '',
+        object: this.object(at + 16),
+      };
+    });
+  }
+
+  /**
+   * The top-level object of a class: the first named variant naming the class, else (a file
+   * without a contents container) the first object of the class.
+   */
+  contents(className: string): HkxObject | undefined {
+    const variant = this.namedVariants().find((entry) => entry.className === className);
+    return variant?.object ?? this.objectsOf(className)[0];
   }
 
   u8(offset: number): number {

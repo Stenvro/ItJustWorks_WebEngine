@@ -35,16 +35,20 @@ a master or the plugin and its string ids resolve. Nothing depends on names in s
 Beside it the census lists, per record type, the subrecords no engine code outside
 `src/formats` names (by source text): parsed, used by: open, which is the other areas' work.
 
-## Summary (2026-10-29, round 3)
+## Summary (2026-10-30, round 4)
 
-The checklist has **156 items**: 36 format items below (one new: the Havok class item is split
-into layouts and members read) and the 120 record types of the load order (the table at the
-end). **152 are done** (32 format items, all 120 record types). Open:
-the 60 Havok members set in the data that no reader reads yet, the save game's global data
-(every type has a reader now: built, waiting on a real save) and change forms (no save is in the
-installation to build them against), and SEQ use (M12).
+The checklist has **156 items**: 36 format items below and the 120 record types of the load
+order (the table at the end). **153 are done** (33 format items, all 120 record types). Open:
+the save game's global data (every type has a reader: built, waiting on a real save) and
+change forms (no save is in the installation to build them against), and SEQ use (M12).
 
-Done this round: the ragdoll physics of the 48 skeleton files (every serialized member of the
+Done this round: every Havok member set in the data is read (the 60 that were not: 723 of 753
+read now, the rest zero in every file or not data), and the ones that change how a graph runs
+are wired into the behavior runtime (silent events, the blender children's world-from-model
+weight, the damping modifier's enable, bit bindings). The seven magic projects that failed to
+load are projects without a loadable character: they give no graph, as in the original.
+
+Round 3: the ragdoll physics of the 48 skeleton files (every serialized member of the
 20 classes), every Havok class laid out as the original's class reflection says (which fixed the
 foot IK driver info's flags and five object sizes), the member census (`format-census
 hkx-members`), and readers for the 17 global data types that had none.
@@ -128,7 +132,10 @@ rod's clips), SEQ files, the marketplace's archive and the census tool.
       interleaved uncompressed ones (the fishing rod's cast and ready clips).
       `src/formats/hkx/animation.ts`, `format-census hkx`.
 - [x] Behavior graphs: 363 of the 366 graphs meshes name load; the other 3 are faults of the
-      data (two missing files, one project without a character). `hkx-info --audit`.
+      data (two missing files, one project without a character). `hkx-info --audit`. The 7
+      project files without a loadable character (6 under meshes\magic name a character file that
+      is in no archive and are named by nothing; shoutimod.hkx names none) give no graph, as in
+      the original (`projectHasCharacter`, docs/formats/hkx.md "Projects without a character").
 - [x] The ragdoll physics of the 48 skeleton files (hkaRagdollInstance, hkpPhysicsData and the
       18 other classes: bodies, motions, shapes, constraints, motors, the resource container
       tree): 1,040 bodies, 1,922 constraint instances, 0 problems, every serialized member.
@@ -139,15 +146,13 @@ rod's clips), SEQ files, the marketplace's archive and the census tool.
       structs with them) match the original's class reflection member for member
       (`layouts.ts`). Fixed: hkbFootIkDriverInfo's flags (no useTrackData; lockFeetWhenPlanted
       at 64, which our reader took from 65), five object sizes, the mapper's chain mappings.
-- [ ] Class members read: 653 of 753 (`format-census hkx-members`). 40 of the others are zero
-      or null in every file (runtime caches); 60 are set but no reader reads them: the
-      character files' controller capsule, model axes, scale, LOD and skin names, mirrored sync
-      point names; the projects' paths; events' flags and variables' roles and word ranges;
-      binding bit indices and the binding to enable; the blender child's world-from-model
-      weight; the powered ragdoll's world-from-model mode; the mappers' chain mappings,
-      unmapped bones and extracted motion; skeleton local frames; the spline clips' per-block
-      offsets (the decoder finds the blocks itself); the containers' arrays (objects are found
-      by class); hkbNode user data.
+- [x] Class members read: 723 of 753, every member set anywhere in the data
+      (`format-census hkx-members`); 27 are zero or null in every file (runtime state, null
+      pointers, empty arrays) and 3 are not data (two runtime binding indices, padding).
+      Wired into the behavior runtime: silent events, world-from-model weights, the damping
+      enable, bit bindings. Read but not applied yet (TODO(M13)): sync points, the powered
+      ragdoll's world-from-model mode and bone weights, narrow quadruped foot IK, hkbNode user
+      data. docs/formats/hkx.md, "Class members".
 
 ## Scripts (PEX)
 
