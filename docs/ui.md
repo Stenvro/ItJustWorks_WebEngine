@@ -267,11 +267,22 @@ TODO(M13), ruffle-rs/ruffle#16618.
   (empty) outlines as the movie loads (`patchDeviceFonts`, `src/ui/movie-patches.ts`). The
   game's movies have one: hudmenu.swf's "Times New Roman", an unnamed, empty field on its root
   (`tests/interface.int.test.ts` sweeps every movie).
-- **scale9Grid.** About 100 sprites carry a DefineScalingGrid (68 in map.swf; the
-  item menus' frames, the journal's, the message box's), and the journal's CLIK lists set
-  `scale9Grid` on their item containers in ActionScript. Whether Ruffle 0.7.1 slices them is not
-  checked on screen; slicing them in the bridge needs the sprite's shapes cut along the grid and
-  kept unscaled as the clip scales (a script each frame). TODO(M13).
+- **scale9Grid.** About 100 sprites carry a DefineScalingGrid (68 in map.swf, its markers; the
+  item menus', start menu's and journal's scroll bar thumbs, the journal's border, the message
+  box's and the item card's frames, the text entry's), and the journal's CLIK lists set
+  `scale9Grid` on their item containers in ActionScript. Ruffle 0.7.1 does not slice them (seen
+  on screen: a sprite with a grid scaled 4 × 2 had its borders scaled with it), so the movies do
+  it themselves (`src/ui/scale9.ts`): as a movie loads, every shape placed in a grid sprite or in a
+  sprite under it is wrapped in a clip, with a piece symbol (the shape under a unit-square mask)
+  exported to attach; each frame, a grid sprite whose scale on the stage changed maps its
+  content's bounds along each axis in three parts (before and after the grid by 1 / scale, the
+  grid's part stretched over the rest) and shows each wrapper as nine masked pieces, one per cell.
+  Shapes of nested clips are cut too, as Scaleform does (CLIK's lists rely on it: a 1 × 1 grid at
+  the origin keeps a scaled list's items unscaled); text is not cut. Unscaled, the shapes show as
+  they are and no piece is made. Mouse.getTopMostEntity takes a wrapper for its parent's shape.
+  TODO(M13): a sprite scaled below its corners' size (the middle shrinks to nothing), rotated
+  clips, nested content that moves while the sprite's scale stays, and grids set at run time on
+  clips with no shapes of their own (the journal lists' item containers, never scaled).
 
 ## Videos
 
