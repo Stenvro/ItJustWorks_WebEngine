@@ -18,10 +18,10 @@ counts holds what a name sweep cannot see.
 | Part                             | Items | Done | Open | n/a |
 | -------------------------------- | ----: | ---: | ---: | --: |
 | Movies                           |    50 |   35 |    2 |  13 |
-| GameDelegate calls and callbacks |   425 |  368 |   18 |  39 |
+| GameDelegate calls and callbacks |   425 |  374 |   11 |  40 |
 | Menu names the original opens    |    41 |   30 |    1 |  10 |
-| Behaviour items (below)          |    37 |   21 |   13 |   3 |
-| All                              |   553 |  454 |   34 |  65 |
+| Behaviour items (below)          |    37 |   23 |   11 |   3 |
+| All                              |   553 |  462 |   25 |  66 |
 
 Some behaviour items name calls the sweep also lists (they say what is still missing around
 them). The movies' `ExternalInterface.call("__handleEvent")` (CLIK's sound and focus events) is answered
@@ -48,9 +48,9 @@ path (GFx Invoke and SetVariable), keys and gamepad paths, and the player's own 
 | Save screenshots (PrepSaveGameScreenshot, ScreenshotReady)                            | done   | src/shell/save-screenshot.ts, src/shell/save-list.ts, src/render/renderer.ts (captureFrame)                                                                                                                                                                                                                                                |
 | The map's relief overlay                                                              | open   | the map's LOD land shader: how the original tells snow and blends the two normals is not read (docs/ui.md, "The map")                                                                                                                                                                                                                      |
 | The lockpicking strings the maintainer saw                                            | open   | to check on screen which text; the bar's labels are translation keys ($Lock Level, $Lockpicks Left)                                                                                                                                                                                                                                        |
-| Lockpicking debug display (UpdatePickAngle, UpdateLockAngle, UpdateSweetSpot, ...)    | open   | the original sends them to a display hidden unless toggled; not sent                                                                                                                                                                                                                                                                       |
+| Lockpicking debug display (UpdatePickAngle, UpdateLockAngle, UpdateSweetSpot, ...)    | done   | src/shell/lockpicking-menu.ts: SetPickMinMax as it is made, UpdateSweetSpot as it shows, the angles and the pick's health as they change (the display shows only after ToggleDebugMode, which the engine never sends)                                                                                                                      |
 | Controls page: the left/right swap the maintainer saw                                 | open   | the data path is as the original's: Left Attack/Block is the right mouse button (Mouse2), as the movie's own default table has it; to check on screen which side looks swapped                                                                                                                                                             |
-| Ruffle: scale9Grid not drawn                                                          | open   | about 100 sprites carry a DefineScalingGrid (68 in map.swf); whether Ruffle slices them is not checked on screen; slicing in the bridge (shapes cut along the grid, kept unscaled as the clip scales) is not built (docs/ui.md, "Ruffle's limits")                                                                                         |
+| Ruffle: scale9Grid not drawn                                                          | done   | Ruffle 0.7.1 does not slice them (seen on screen); src/ui/scale9.ts cuts every grid sprite's shapes, nested clips' too, as it scales (docs/ui.md, "Ruffle's limits")                                                                                                                                                                       |
 | Ruffle: the "Times New Roman" device font                                             | done   | src/ui/movie-patches.ts (patchDeviceFonts): a device font the font library lacks draws no text, as the original has no system font provider; hudmenu.swf's one empty field is the only one                                                                                                                                                 |
 | Item menus' ToggleMenuFade (the menu fades out and back)                              | done   | src/shell/item-3d.ts: as a zoom starts (ZoomItemModel from rest, Item Zoom, Cancel while zoomed in), as the original                                                                                                                                                                                                                       |
 | Map over the journal (ShowJournal: the map's bar hidden while the journal shows)      | done   | src/shell/map-menu.ts (showJournal), src/shell/game-menus.ts: the map stays open under the journal                                                                                                                                                                                                                                         |
@@ -60,7 +60,7 @@ path (GFx Invoke and SetVariable), keys and gamepad paths, and the player's own 
 | Main menu Load's import of an original save (.ess)                                    | done   | src/shell/play-mode.ts (pickImport), src/shell/save-list.ts: the picker opens as the entry is pressed                                                                                                                                                                                                                                      |
 | Favorites StartFadeOut, SetSelectedItem; dialogue Cancel                              | open   | not sent                                                                                                                                                                                                                                                                                                                                   |
 | Book PrepForClose                                                                     | done   | src/shell/book-menu.ts                                                                                                                                                                                                                                                                                                                     |
-| Message box setIsVertical; HUD FadeOutChargeMeters, ValidateCrosshair                 | open   | not sent                                                                                                                                                                                                                                                                                                                                   |
+| Message box setIsVertical; HUD FadeOutChargeMeters, ValidateCrosshair                 | open   | FadeOutChargeMeters: src/shell/hud-controller.ts (the tween, inventory, magic and container menus as they open); ValidateCrosshair: sent while a spell is aimed (each effect checked at the aim point), not built; setIsVertical not sent                                                                                                  |
 | HUD SetCompassTemperature (Survival Mode)                                             | open   | the engine has no such name: Survival Mode's own scripts would drive it; not checked                                                                                                                                                                                                                                                       |
 | Quantity Menu as a menu of its own                                                    | n/a    | no menu of the original is made under the name: the item menus' quantity slider plays inside their movie                                                                                                                                                                                                                                   |
 | Top Menu, Overlay Menu, Overlay Interaction Menu                                      | n/a    | no menu of the original is made under these names (they are only looked up)                                                                                                                                                                                                                                                                |
@@ -352,39 +352,39 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-30).
 
 ### hudmenu.swf
 
-| Kind     | Name                        | Status | Where / reason                                |
-| -------- | --------------------------- | ------ | --------------------------------------------- |
-| call     | GetButtonFromUserEvent      | done   | src/shell/play-mode.ts                        |
-| call     | PlaySound                   | done   | src/shell/play-mode.ts                        |
-| call     | RegisterHUDComponents       | done   | src/shell/hud-controller.ts                   |
-| call     | myLog                       | done   | src/shell/play-mode.ts                        |
-| callback | FadeOutChargeMeters         | open   |                                               |
-| callback | FadeOutStamina              | done   | src/shell/hud-controller.ts                   |
-| callback | FlashShoutMeter             | done   | src/shell/hud-controller.ts                   |
-| callback | HideSubtitle                | done   | src/shell/hud-controller.ts                   |
-| callback | SetChargeMeterPercent       | done   | src/shell/hud-controller.ts                   |
-| callback | SetCompassAngle             | done   | src/shell/hud-controller.ts                   |
-| callback | SetCompassMarkers           | done   | src/shell/hud-controller.ts                   |
-| callback | SetCompassTemperature       | open   |                                               |
-| callback | SetCrosshairEnabled         | done   | src/shell/hud-controller.ts                   |
-| callback | SetCrosshairTarget          | done   | src/shell/hud-controller.ts                   |
-| callback | SetEnemyHealthPercent       | done   | src/shell/hud-controller.ts                   |
-| callback | SetEnemyHealthTargetPercent | done   | src/shell/hud-controller.ts                   |
-| callback | SetHealthMeterPercent       | done   | src/shell/hud-controller.ts (SetMeterPercent) |
-| callback | SetLoadDoorInfo             | done   | src/shell/hud-controller.ts                   |
-| callback | SetLocationName             | done   | src/shell/hud-controller.ts                   |
-| callback | SetMagickaMeterPercent      | done   | src/shell/hud-controller.ts (SetMeterPercent) |
-| callback | SetShoutMeterPercent        | done   | src/shell/hud-controller.ts                   |
-| callback | SetStaminaMeterPercent      | done   | src/shell/hud-controller.ts (SetMeterPercent) |
-| callback | SetSubtitlesEnabled         | done   | src/shell/hud-controller.ts                   |
-| callback | ShowElements                | done   | src/shell/hud-controller.ts                   |
-| callback | ShowMessage                 | done   | src/shell/hud-controller.ts                   |
-| callback | ShowNotification            | done   | src/shell/hud-controller.ts                   |
-| callback | ShowSubtitle                | done   | src/shell/hud-controller.ts                   |
-| callback | ShowTutorialHintText        | done   | src/shell/hud-controller.ts                   |
-| callback | StartMagickaMeterBlinking   | done   | src/shell/hud-controller.ts                   |
-| callback | StartStaminaMeterBlinking   | done   | src/shell/hud-controller.ts                   |
-| callback | ValidateCrosshair           | open   |                                               |
+| Kind     | Name                        | Status | Where / reason                                                                          |
+| -------- | --------------------------- | ------ | --------------------------------------------------------------------------------------- |
+| call     | GetButtonFromUserEvent      | done   | src/shell/play-mode.ts                                                                  |
+| call     | PlaySound                   | done   | src/shell/play-mode.ts                                                                  |
+| call     | RegisterHUDComponents       | done   | src/shell/hud-controller.ts                                                             |
+| call     | myLog                       | done   | src/shell/play-mode.ts                                                                  |
+| callback | FadeOutChargeMeters         | done   | src/shell/hud-controller.ts                                                             |
+| callback | FadeOutStamina              | done   | src/shell/hud-controller.ts                                                             |
+| callback | FlashShoutMeter             | done   | src/shell/hud-controller.ts                                                             |
+| callback | HideSubtitle                | done   | src/shell/hud-controller.ts                                                             |
+| callback | SetChargeMeterPercent       | done   | src/shell/hud-controller.ts                                                             |
+| callback | SetCompassAngle             | done   | src/shell/hud-controller.ts                                                             |
+| callback | SetCompassMarkers           | done   | src/shell/hud-controller.ts                                                             |
+| callback | SetCompassTemperature       | open   | the engine has no such name; whether Survival Mode's scripts send it is not checked     |
+| callback | SetCrosshairEnabled         | done   | src/shell/hud-controller.ts                                                             |
+| callback | SetCrosshairTarget          | done   | src/shell/hud-controller.ts                                                             |
+| callback | SetEnemyHealthPercent       | done   | src/shell/hud-controller.ts                                                             |
+| callback | SetEnemyHealthTargetPercent | done   | src/shell/hud-controller.ts                                                             |
+| callback | SetHealthMeterPercent       | done   | src/shell/hud-controller.ts (SetMeterPercent)                                           |
+| callback | SetLoadDoorInfo             | done   | src/shell/hud-controller.ts                                                             |
+| callback | SetLocationName             | done   | src/shell/hud-controller.ts                                                             |
+| callback | SetMagickaMeterPercent      | done   | src/shell/hud-controller.ts (SetMeterPercent)                                           |
+| callback | SetShoutMeterPercent        | done   | src/shell/hud-controller.ts                                                             |
+| callback | SetStaminaMeterPercent      | done   | src/shell/hud-controller.ts (SetMeterPercent)                                           |
+| callback | SetSubtitlesEnabled         | done   | src/shell/hud-controller.ts                                                             |
+| callback | ShowElements                | done   | src/shell/hud-controller.ts                                                             |
+| callback | ShowMessage                 | done   | src/shell/hud-controller.ts                                                             |
+| callback | ShowNotification            | done   | src/shell/hud-controller.ts                                                             |
+| callback | ShowSubtitle                | done   | src/shell/hud-controller.ts                                                             |
+| callback | ShowTutorialHintText        | done   | src/shell/hud-controller.ts                                                             |
+| callback | StartMagickaMeterBlinking   | done   | src/shell/hud-controller.ts                                                             |
+| callback | StartStaminaMeterBlinking   | done   | src/shell/hud-controller.ts                                                             |
+| callback | ValidateCrosshair           | open   | sent while a spell is aimed (the caster checks each effect at the aim point), not built |
 
 ### inventory components\bottombar.swf
 
@@ -473,13 +473,13 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-30).
 | -------- | ----------------------------- | ------ | ------------------------------------------------------- |
 | call     | myLog                         | done   | src/shell/play-mode.ts                                  |
 | callback | SetLockInfo                   | done   | src/shell/lockpicking-menu.ts                           |
-| callback | SetPickMinMax                 | open   |                                                         |
+| callback | SetPickMinMax                 | done   | src/shell/lockpicking-menu.ts                           |
 | callback | ToggleDebugMode               | n/a    | the original engine has no such name: it never sends it |
-| callback | UpdateLockAngle               | open   |                                                         |
+| callback | UpdateLockAngle               | done   | src/shell/lockpicking-menu.ts                           |
 | callback | UpdateLockPickingButtonPrompt | n/a    | the Switch only (its NXArt)                             |
-| callback | UpdatePickAngle               | open   |                                                         |
-| callback | UpdatePickHealth              | open   |                                                         |
-| callback | UpdateSweetSpot               | open   |                                                         |
+| callback | UpdatePickAngle               | done   | src/shell/lockpicking-menu.ts                           |
+| callback | UpdatePickHealth              | done   | src/shell/lockpicking-menu.ts                           |
+| callback | UpdateSweetSpot               | done   | src/shell/lockpicking-menu.ts                           |
 
 ### magicmenu.swf
 
@@ -698,7 +698,7 @@ Printed by `node tools/menu-inventory.ts --markdown` (2026-10-30).
 | callback | OnSaveDataEventLoadCANCEL        | n/a    | consoles only (PlayStation, Xbox, Switch)                                    |
 | callback | OnSaveDataEventLoadSUCCESS       | n/a    | consoles only (PlayStation, Xbox, Switch)                                    |
 | callback | ScreenshotReady                  | done   | src/shell/save-list.ts                                                       |
-| callback | SetFirstExitedMenu               | open   |                                                                              |
+| callback | SetFirstExitedMenu               | n/a    | the original engine has no such name: it never sends it                      |
 | callback | ShowGamerTagAndIcon              | n/a    | consoles only (PlayStation, Xbox, Switch)                                    |
 | callback | StartLoadingDLC                  | n/a    | an online service (Bethesda.net): never reached from localhost (hard rule 4) |
 | callback | onFillCharacterListComplete      | done   | src/shell/save-list.ts                                                       |
