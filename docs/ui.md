@@ -1360,10 +1360,19 @@ lockpicks)`; the rest is the menus' 3D. `meshes\interface\lockpicking\lockpicksh
   pick the strain breaks it after fLockpickBreak<Novice..Master> (2, 1, 0.75, 0.5, 0.25 s) ×
   (fLockpickBreakSkillBase 1 + fLockpickBreakSkillMult 0.005 × skill) (Unbreakable and the
   Skeleton Key: never; Make Lockpicks Unbreakable). Locksmith starts the
-  pick within its starting arc (45°) about the opening (Set Lockpick Starting Arc). A lock's
-  sweet spot stays where it is until the game is loaded again. Opened, Wax Key gives its key
-  (Mod Lockpicking Key Reward Chance); Quick Hands keeps it unnoticed (Mod Lockpicking Crime
-  Chance).
+  pick anywhere within its starting arc (45°) on either side of the opening, kept within where
+  the sweet spot's middle may lie (Set Lockpick Starting Arc); else, and after a broken pick, it
+  starts in the middle. The sweet spot is placed anew, at random, each time the menu opens
+  (observed in the original: as the menu shows). Opened, Wax Key gives its key (Mod Lockpicking
+  Key Reward Chance); Quick Hands keeps it unnoticed (Mod Lockpicking Crime Chance).
+- A lock that needs its key, or a broken one (ObjectReference.IsLockBroken: its failed tries),
+  is not picked: sImpossibleLock. What raises a lock's failed tries is not found in the original
+  (a broken pick does not; TODO(M13)).
+- The debug display: the engine sends SetPickMinMax (−90, 90: the sweep about its middle) as
+  the menu is made, UpdateSweetSpot (the sweet spot's middle in that sweep, its width, the
+  partial zones' width) as it shows, UpdatePickAngle, UpdateLockAngle (0..90) and
+  UpdatePickHealth (100 down to 0 under strain) as they change; the movie shows them only once
+  ToggleDebugMode is called, which the engine never does.
 - Sounds: UILockpickingEnter, PickMovement, CylinderTurn, CylinderStop, PickTensionLPM (while
   strained), PickBreak, Unlock. The opened lock sends OnLockStateChanged.
 
