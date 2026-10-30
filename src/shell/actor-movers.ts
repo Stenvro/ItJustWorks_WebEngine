@@ -1046,8 +1046,7 @@ export class ActorMovers {
    * (undefined: no override; the AI's).
    */
   steering:
-    | ((reference: number) => { readonly request: MoveRequest | undefined } | undefined)
-    | undefined;
+    ((reference: number) => { readonly request: MoveRequest | undefined } | undefined) | undefined;
 
   request(reference: number, request: MoveRequest | undefined): void {
     if (request) this.#requests.set(reference, request);
