@@ -14,16 +14,23 @@ import type { PhysicsWorld } from '../physics/physics-world.ts';
 import type { GpuDecals } from '../render/decals.ts';
 import type { RenderPort } from '../render/render-port.ts';
 import { invert } from '../render/frustum.ts';
+import type { GpuModel } from '../render/gpu-model.ts';
 import { multiply, transformPoint, type Mat4, type Vec3 } from '../render/math.ts';
+import type { GpuScene, ModelInstance } from '../render/scene-renderer.ts';
+import { skinnedDecalModel, type DecalPose, type DecalTarget } from '../render/skinned-decal.ts';
 import {
   expireDecals,
   parseTextureSet,
   placeDecal,
+  TextureSetFlag,
   type DecalData,
   type TextureSet,
 } from '../world/decal.ts';
 import { impactFacing, type Impact } from '../world/impact-records.ts';
 import type { GameSession } from './game-session.ts';
+
+/** SLSF1 Decal: a shape that is itself a decal takes none. */
+const SLSF1_DECAL = 0x4000000;
 
 /** How far behind a hit its blood lands (game units). */
 const SPLATTER_REACH = 160;
@@ -40,6 +47,20 @@ interface LivingDecal {
 export interface BleedingBody {
   readonly world: Mat4;
   readonly pose: { readonly worlds: Float32Array };
+}
+
+/** An actor's body as drawn: the instances of its models, posed by its skeleton. */
+export interface DecalBody extends BleedingBody {
+  readonly pose: DecalPose;
+  readonly instances: readonly ModelInstance[];
+}
+
+/** A hit's blood on an actor's skin: its decal shapes, drawn with the actor's pose. */
+interface SkinDecal {
+  readonly actor: number;
+  readonly model: GpuModel;
+  readonly scene: GpuScene;
+  readonly until: number;
 }
 
 /** An impact's decal (IPCT DODT and DNAM). */
@@ -71,6 +92,9 @@ export class CombatImpacts {
   readonly #session: GameSession;
   readonly #renderer: RenderPort;
   readonly #decals: LivingDecal[] = [];
+  /** Skinned decals on actors (oldest first), and how many were made this frame. */
+  readonly #skin: SkinDecal[] = [];
+  #skinMadeThisFrame = 0;
   readonly #decalData = new Map<number, Promise<ImpactDecal | undefined>>();
   /** Seconds now (the decals' lifetimes run on it). */
   readonly #now: () => number;
@@ -104,33 +128,53 @@ export class CombatImpacts {
     }
   }
 
+  /** The skinned decals on actors (drawn with their actors' poses), those past their time gone. */
+  *scenes(): Iterable<GpuScene> {
+    this.#expire();
+    // A new frame: the skinned decals made per frame are counted again.
+    this.#skinMadeThisFrame = 0;
+    for (const decal of this.#skin) yield decal.scene;
+  }
+
   /**
    * The impact's blood decal on the body it struck (an actor's skin, as its pose moves): its box
-   * at the hit, facing along the blow, kept on the body's nearest node. TODO(M13): the engine
-   * builds skinned decals into the hit shape's own triangles; this projects the decal onto
-   * whatever of the body lies in its box, which follows the node it was put on.
+   * at the hit, facing along the blow. With `actor` and the body's drawn instances, it is made
+   * as the original makes skinned decals (skinned-decal.ts): the triangles of the skinned shapes
+   * in its box copied into decal shapes skinned to the same bones. Where no skinned shape lies
+   * in the box, the decal is projected onto whatever of the body does, following the body's
+   * nearest node. TODO(M13): the original puts geometry decals on rigid worn shapes; ours
+   * project.
    */
   async bodyDecal(
     impact: Impact,
     point: Vec3,
     direction: Vec3,
-    body: () => BleedingBody | undefined,
+    body: () => BleedingBody | DecalBody | undefined,
+    actor?: number,
   ): Promise<void> {
     const data = await this.#decal(impact.formId);
     const now = body();
-    if (!data || !now) return;
-    const node = nearestNode(now, point);
-    if (node < 0) return;
-    const nodeWorld = (b: BleedingBody): Mat4 =>
-      multiply(b.world, b.pose.worlds.subarray(node * 16, node * 16 + 16));
-    const inverse = invert(nodeWorld(now));
-    if (!inverse) return;
+    if (!data || !now || !this.#withinDecalReach(point)) return;
     const way = normalize(direction);
     const placed = placeDecal(
       data.decal,
       this.#seed++,
       decalFrame(point, [-way[0], -way[1], -way[2]]),
     );
+    if (
+      actor !== undefined &&
+      'instances' in now &&
+      this.#session.ini.bool('Decals', 'bSkinnedDecals')
+    ) {
+      const made = await this.#skinDecal(data, placed, now, actor);
+      if (made !== 'none') return;
+    }
+    const node = nearestNode(now, point);
+    if (node < 0) return;
+    const nodeWorld = (b: BleedingBody): Mat4 =>
+      multiply(b.world, b.pose.worlds.subarray(node * 16, node * 16 + 16));
+    const inverse = invert(nodeWorld(now));
+    if (!inverse) return;
     const local = multiply(inverse, placed.box);
     const gpu = await this.#renderer.decals.createDecals(
       [
@@ -158,9 +202,113 @@ export class CombatImpacts {
     this.#expire();
   }
 
+  /**
+   * A skinned decal on an actor, under the original's limits (observed in the original): none
+   * once [Decals] uMaxSkinDecals live, once [Display] iMaxSkinDecalsPerFrame were made this
+   * frame, or once the actor carries [Decals] uMaxSkinDecalPerActor; the decal is then not made
+   * (the older ones stay). Shapes hidden, shapes that are decals themselves and, without
+   * [Decals] bAllowDecalsOnAlpha, alpha-blended or alpha-tested shapes take none.
+   * 'none': no skinned shape lies in the box.
+   */
+  async #skinDecal(
+    data: ImpactDecal,
+    placed: { readonly box: Mat4; readonly rect: readonly [number, number, number, number] },
+    body: DecalBody,
+    actor: number,
+  ): Promise<'made' | 'refused' | 'none'> {
+    const ini = this.#session.ini;
+    this.#expire();
+    if (
+      this.#skin.length >= ini.number('Decals', 'uMaxSkinDecals') ||
+      this.#skinMadeThisFrame >= ini.number('Display', 'iMaxSkinDecalsPerFrame') ||
+      this.#skin.filter((d) => d.actor === actor).length >=
+        ini.number('Decals', 'uMaxSkinDecalPerActor')
+    ) {
+      return 'refused';
+    }
+    const onAlpha = ini.bool('Decals', 'bAllowDecalsOnAlpha');
+    const targets: { readonly instance: ModelInstance; readonly target: DecalTarget }[] = [];
+    for (const instance of body.instances) {
+      if (!instance.pose) continue;
+      for (const { part } of instance.model.parts) {
+        if (!part.skin || part.weaponBlood) continue;
+        if (instance.partShown && !instance.partShown(part)) continue;
+        if (((part.material?.flags1 ?? 0) & SLSF1_DECAL) !== 0) continue;
+        if (!onAlpha && ((part.alpha?.flags ?? 0) & 0x201) !== 0) continue;
+        const visible = instance.partitionVisible;
+        targets.push({
+          instance,
+          target: {
+            part,
+            world: instance.world,
+            pose: body.pose,
+            ...(visible && { partitionVisible: (bodyPart: number) => visible(bodyPart, part) }),
+          },
+        });
+      }
+    }
+    const textureSet = data.textureSet;
+    const model = skinnedDecalModel(
+      targets.map((t) => t.target),
+      placed.box,
+      placed.rect,
+      {
+        textures: textureSet.textures,
+        flags: data.decal.flags,
+        shininess: data.decal.shininess,
+        color: data.decal.color,
+        noSpecular: (textureSet.flags & TextureSetFlag.noSpecularMap) !== 0,
+        modelSpaceNormals: (textureSet.flags & TextureSetFlag.modelSpaceNormals) !== 0,
+      },
+    );
+    if (!model) return 'none';
+    this.#skinMadeThisFrame++;
+    const gpu = await this.#renderer.scene.createModel(model, this.#session.textures);
+    // Drawn as the body is: its placement, motion, visibility and pose.
+    const first = targets[0]?.instance;
+    const scene =
+      first &&
+      this.#renderer.scene.createScene([
+        {
+          model: gpu,
+          world: first.world,
+          ...(first.motion && { motion: first.motion }),
+          ...(first.visibility && { visibility: first.visibility }),
+          ...(first.pose && { pose: first.pose }),
+          ...(first.partitionVisible && { partitionVisible: first.partitionVisible }),
+        },
+      ]);
+    if (!scene) {
+      gpu.destroy();
+      return 'made';
+    }
+    const lifetime = ini.number('Display', 'fDecalLifetime');
+    this.#skin.push({ actor, model: gpu, scene, until: this.#now() + lifetime });
+    return 'made';
+  }
+
+  /**
+   * Whether a dynamic decal at a point is made: within [Display] fDecalLOD0 of the camera
+   * (observed in the original; farther ones are not made at all). Without a view, always.
+   */
+  #withinDecalReach(point: Vec3): boolean {
+    const camera = this.#renderer.view?.camera.position;
+    if (!camera) return true;
+    const reach = this.#session.ini.number('Display', 'fDecalLOD0');
+    return Math.hypot(point[0] - camera[0], point[1] - camera[1], point[2] - camera[2]) <= reach;
+  }
+
   #expire(): void {
     const max = this.#session.ini.number('Decals', 'uMaxDecals');
     for (const gone of expireDecals(this.#decals, this.#now(), max)) gone.gpu.destroy();
+    const now = this.#now();
+    for (let i = this.#skin.length - 1; i >= 0; i--) {
+      const decal = this.#skin[i];
+      if (!decal || decal.until > now) continue;
+      this.#skin.splice(i, 1);
+      decal.scene.destroy();
+      decal.model.destroy();
+    }
   }
 
   /** Sounds a hit and leaves its decal; resolves the impact (IPCT) it was. */
@@ -206,7 +354,7 @@ export class CombatImpacts {
     // Along the blow and down: where the blood falls.
     const way = normalize([hit.direction[0], hit.direction[1], hit.direction[2] - 1]);
     const surface = physics.raycast(hit.position, way, SPLATTER_REACH, Layer.static);
-    if (!surface) return;
+    if (!surface || !this.#withinDecalReach(surface.point)) return;
     const placed = placeDecal(data.decal, this.#seed++, decalFrame(surface.point, surface.normal));
     const gpu = await this.#renderer.decals.createDecals(
       [
@@ -255,6 +403,10 @@ export class CombatImpacts {
 
   clear(): void {
     for (const decal of this.#decals.splice(0)) decal.gpu.destroy();
+    for (const decal of this.#skin.splice(0)) {
+      decal.scene.destroy();
+      decal.model.destroy();
+    }
   }
 }
 

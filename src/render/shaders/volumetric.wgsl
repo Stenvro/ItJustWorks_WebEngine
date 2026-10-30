@@ -4,7 +4,7 @@
 //   frame's froxel at the same place in the world;
 // - raymarch: slice by slice from the camera, each column gathers the light scattered towards
 //   the eye up to each slice;
-// - blur: horizontal, then vertical, within each slice;
+// - blur: horizontal, then vertical, within each slice (one pass through workgroup memory);
 // - composite: each pixel reads the volume at its place and depth, times the weather's
 //   intensity and colour, added to the scene.
 // The slices are spread over the original camera's clip depth (near plane 15, far at infinity):
@@ -184,35 +184,54 @@ fn raymarch(@builtin(global_invocation_id) id: vec3u) {
 @group(0) @binding(9) var blurSource: texture_3d<f32>;
 @group(0) @binding(10) var blurTarget: texture_storage_3d<r32float, write>;
 
-fn blurPass(id: vec3u, direction: vec2i) {
+/** A group's 8 x 8 texels with the kernel's reach of 2 around them, as read (edges clamped). */
+var<workgroup> blurTile: array<f32, 144>;
+/** The tile's 12 rows blurred horizontally over the group's 8 columns. */
+var<workgroup> blurRows: array<f32, 96>;
+
+// A five-tap binomial kernel, horizontal then vertical within each slice (TODO(M13): the
+// original's blur kernel is unread). One pass: each group reads its tile once into workgroup
+// memory and blurs it both ways there (the same sums as two passes through a texture).
+@compute @workgroup_size(8, 8, 1)
+fn blur(
+  @builtin(workgroup_id) group: vec3u,
+  @builtin(local_invocation_id) local: vec3u,
+  @builtin(local_invocation_index) index: u32,
+) {
+  var weights = array<f32, 5>(1.0, 4.0, 6.0, 4.0, 1.0);
   let size = vec3i(volume.size.xyz);
-  if (any(vec3i(id) >= size)) {
+  let slice = i32(group.z);
+  let origin = vec2i(group.xy) * 8 - 2;
+  for (var i = index; i < 144u; i += 64u) {
+    let at = clamp(origin + vec2i(i32(i % 12u), i32(i / 12u)), vec2i(0), size.xy - 1);
+    blurTile[i] = textureLoad(blurSource, vec3i(at, slice), 0).r;
+  }
+  workgroupBarrier();
+  for (var i = index; i < 96u; i += 64u) {
+    let row = (i / 8u) * 12u + i % 8u;
+    var sum = 0.0;
+    for (var k = 0u; k < 5u; k++) {
+      sum += blurTile[row + k] * weights[k];
+    }
+    blurRows[i] = sum / 16.0;
+  }
+  workgroupBarrier();
+  let id = vec2i(group.xy) * 8 + vec2i(local.xy);
+  if (any(id >= size.xy)) {
     return;
   }
-  // A five-tap binomial kernel (TODO(M13): the original's blur kernel is unread).
-  var weights = array<f32, 5>(1.0, 4.0, 6.0, 4.0, 1.0);
   var sum = 0.0;
-  for (var i = -2; i <= 2; i++) {
-    let at = clamp(vec2i(id.xy) + direction * i, vec2i(0), size.xy - 1);
-    sum += textureLoad(blurSource, vec3i(at, i32(id.z)), 0).r * weights[i + 2];
+  for (var k = 0u; k < 5u; k++) {
+    sum += blurRows[(local.y + k) * 8u + local.x] * weights[k];
   }
-  textureStore(blurTarget, id, vec4f(sum / 16.0, 0.0, 0.0, 1.0));
-}
-
-@compute @workgroup_size(8, 8, 1)
-fn blurHorizontal(@builtin(global_invocation_id) id: vec3u) {
-  blurPass(id, vec2i(1, 0));
-}
-
-@compute @workgroup_size(8, 8, 1)
-fn blurVertical(@builtin(global_invocation_id) id: vec3u) {
-  blurPass(id, vec2i(0, 1));
+  textureStore(blurTarget, vec3i(id, slice), vec4f(sum / 16.0, 0.0, 0.0, 1.0));
 }
 
 // --- Composite ---
 
 @group(0) @binding(11) var scattered: texture_3d<f32>;
 @group(0) @binding(12) var sceneDepth: texture_2d<f32>;
+@group(0) @binding(13) var scatteredSampler: sampler;
 
 struct FullscreenOut {
   @builtin(position) position: vec4f,
@@ -238,15 +257,30 @@ fn gatheredAt(xy: vec2i, slice: i32) -> f32 {
   return textureLoad(scattered, vec3i(clamp(xy, vec2i(0), size.xy - 1), min(slice, size.z - 1)), 0).r;
 }
 
-@fragment
-fn fs_composite(in: FullscreenOut) -> @location(0) vec4f {
+/** A pixel's slice texel coordinate in the volume (-1 at the camera). */
+fn compositeSlice(uv: vec2f) -> f32 {
   let depthSize = vec2i(textureDimensions(sceneDepth));
-  let pixel = clamp(vec2i(in.uv * vec2f(depthSize)), vec2i(0), depthSize - 1);
+  let pixel = clamp(vec2i(uv * vec2f(depthSize)), vec2i(0), depthSize - 1);
   let d = textureLoad(sceneDepth, pixel, 0).r;
   // Our reversed depth is near / distance (0: the sky).
   let distance = select(MAX_DISTANCE, volume.camera.w / max(d, 1e-9), d > 0.0);
   // Texel k holds the light up to slice k's far side: slice coordinate (k + 1) / slices.
-  let z = distanceSlice(distance) * volume.size.z - 1.0;
+  return distanceSlice(distance) * volume.size.z - 1.0;
+}
+
+// The same read as one trilinear sample where the GPU filters 32-bit floats: clamped at the
+// volume's edges as gatheredAt is, and before the first slice faded to 0 at the camera.
+@fragment
+fn fs_compositeFiltered(in: FullscreenOut) -> @location(0) vec4f {
+  let z = compositeSlice(in.uv);
+  let at = vec3f(in.uv, (max(z, 0.0) + 0.5) / volume.size.z);
+  let light = textureSampleLevel(scattered, scatteredSampler, at, 0.0).r * clamp(z + 1.0, 0.0, 1.0);
+  return vec4f(light * volume.color.rgb * volume.color.w, 1.0);
+}
+
+@fragment
+fn fs_composite(in: FullscreenOut) -> @location(0) vec4f {
+  let z = compositeSlice(in.uv);
   let xy = in.uv * volume.size.xy - 0.5;
   let x0 = vec2i(floor(xy));
   let z0 = i32(floor(z));

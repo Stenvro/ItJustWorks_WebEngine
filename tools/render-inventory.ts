@@ -311,7 +311,7 @@ const BLOCKS: Record<string, readonly [Status, string]> = {
   NiFloatExtraDataController: ['open', 'parsed; not animated'],
   BSLagBoneController: [
     'open',
-    'skeletons trail in world space (lag-bone.ts); effect and worn models not',
+    'skeletons and placed or held models trail; armour hung on a skeleton not',
   ],
   NiPathInterpolator: ['open', 'motion along a path not read'],
   NiLookAtInterpolator: ['open', 'look-at rotation not read'],

@@ -17,6 +17,7 @@ import type {
   TransformDataBlock,
   Vec3,
 } from '../formats/nif/types.ts';
+import { lagBone, type LagBone } from './lag-bone.ts';
 import { fromNifTransform, multiply, type Mat4 } from './math.ts';
 
 export interface Timing {
@@ -82,6 +83,8 @@ export interface ModelAnimation {
   readonly parents: ReadonlyMap<Ref, Ref>;
   readonly transforms: ReadonlyMap<Ref, NifTransform>;
   readonly roots: readonly Ref[];
+  /** Nodes that trail their parent's motion (BSLagBoneController), per instance. */
+  readonly lagBones?: readonly LagBone[];
 }
 
 /**
@@ -681,7 +684,14 @@ export function objectWorld(
  */
 export function buildAnimation(file: NifFile, graphDriven = false): ModelAnimation | undefined {
   const tracks: AnimationTrack[] = [];
+  // Lag bones (BSLagBoneController on a node): each instance trails its own motion
+  // (lag-bone.ts ModelLagBones, kept per instance by the scene renderer).
+  const lagBones: LagBone[] = [];
   file.blocks.forEach((block) => {
+    if (block.kind === 'lag-bone-controller') {
+      if (block.target >= 0) lagBones.push(lagBone(block, block.target));
+      return;
+    }
     if (block.kind === 'controller-manager') {
       if (graphDriven) return;
       const idle = idleSequence(file, block.sequences);
@@ -695,8 +705,13 @@ export function buildAnimation(file: NifFile, graphDriven = false): ModelAnimati
     const track = trackFor(file, block, block.target, block.interpolator, timingOf(block));
     if (track) tracks.push(track);
   });
-  if (tracks.length === 0) return undefined;
-  return { tracks, ...sceneGraph(file), roots: file.roots };
+  if (tracks.length === 0 && lagBones.length === 0) return undefined;
+  return {
+    tracks,
+    ...sceneGraph(file),
+    roots: file.roots,
+    ...(lagBones.length > 0 && { lagBones }),
+  };
 }
 
 /** Quaternion (w, x, y, z) to a row-major 3×3 rotation (as NIF transforms store it). */

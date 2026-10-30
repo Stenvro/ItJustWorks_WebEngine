@@ -17,6 +17,12 @@ export class GpuUnavailableError extends Error {
 const REQUIRED_FEATURES: readonly GPUFeatureName[] = ['texture-compression-bc'];
 
 /**
+ * Taken where the adapter has them: GPU timestamps (the volumetric passes' profile) and
+ * filtering of 32-bit float textures (the volumetric composite's one trilinear read).
+ */
+const OPTIONAL_FEATURES: readonly GPUFeatureName[] = ['timestamp-query', 'float32-filterable'];
+
+/**
  * Sampled textures per shader stage: the terrain blends 8 diffuse + 8 normal maps and reads
  * the sun's shadow map (17); WebGPU's default is 16. Desktop GPUs offer 32 and more.
  */
@@ -50,7 +56,10 @@ export async function initGpu(canvas: HTMLCanvasElement): Promise<GpuContext> {
   }
   const device = await adapter.requestDevice({
     label: 'itjustworks-webengine',
-    requiredFeatures: [...REQUIRED_FEATURES],
+    requiredFeatures: [
+      ...REQUIRED_FEATURES,
+      ...OPTIONAL_FEATURES.filter((feature) => adapter.features.has(feature)),
+    ],
     requiredLimits: { maxSampledTexturesPerShaderStage: Math.min(sampledTextures, 32) },
   });
   device.addEventListener('uncapturederror', (event) => {

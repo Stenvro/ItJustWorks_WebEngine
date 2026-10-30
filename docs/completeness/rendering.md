@@ -20,11 +20,19 @@ not sample, flags xEdit and nif.xml call unused).
 
 | Part       | Items | Done | Open | n/a |
 | ---------- | ----- | ---- | ---- | --- |
-| Systems    | 76    | 56   | 20   | 0   |
+| Systems    | 76    | 57   | 19   | 0   |
 | Data sweep | 462   | 405  | 25   | 32  |
-| **Total**  | 538   | 461  | 45   | 32  |
+| **Total**  | 538   | 462  | 44   | 32  |
 
-Done this round (4): volumetric lighting as the original's froxel volume (its size by quality,
+Done this round (5): skinned decals on actors (the hit shape's triangles in the decal's box
+copied into a decal shape skinned to the same bones, under the original's limits: 100 living,
+25 made a frame, 25 per actor, none beyond 800 units of the camera); lag bones on placed and
+held models (effects, spells, torches: a lag state per instance, the parts and particle emitters
+under a lag node trailing that instance's motion; BSLagBoneController stays open for armour hung
+on a skeleton); the volumetric volume's cost (GPU timestamps per pass, bind groups kept between
+frames, the blur in one pass through workgroup memory, the composite's one trilinear sample).
+
+Round 4: volumetric lighting as the original's froxel volume (its size by quality,
 the slices spread over clip depth by the range factor, the noise drifting with the wind and
 falling, the first two cascades' shadows, the jitter, the temporal blend of 0.75, gathered slice
 by slice, blurred and composited by each pixel's depth) in place of the screen-space god rays;
@@ -35,16 +43,13 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 
 ## Next biggest open items
 
-1. **Skinned decals** (blood on actors: the original copies the hit shape's triangles inside the
-   decal's box into a decal shape skinned to the same bones; not built).
-2. **Lag bones on effect and worn models** (torches', spells' and armour's trailing emitters:
-   the scene renderer's node animation keeps no state per instance).
-3. **Shader terms only the shader cache holds**: the volumetric generate shader's scattering, its
+1. **Shader terms only the shader cache holds**: the volumetric generate shader's scattering, its
    blur and noise; the map overlay's weights and snow mask (inferred now).
-4. **The dragon-riding camera**, **first-person particles and near plane**.
-5. **Light-list order** for land and particles; **IBLF lens flare**; **WATR NAM5**; **planar
+2. **The dragon-riding camera**, **first-person particles and near plane**.
+3. **Light-list order** for land and particles; **IBLF lens flare**; **WATR NAM5**; **planar
    water reflection**; mesh particles; Fire_Refraction; fLODFadeOutMultSkyCell (one entry of
    the fade multipliers by fade-node type: which nodes get it is unread).
+4. Lag bones on armour hung on a skeleton; geometry decals on rigid worn shapes (ours project).
 
 ## Systems
 
@@ -102,7 +107,7 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 | 50  | Water: the original shader's exact terms                           | open   | ours by Community Shaders' reading                                                                  |
 | 51  | Static decals (TXST placed in cells)                               | done   | decals.ts                                                                                           |
 | 52  | Impact decals (IPCT)                                               | done   | decal-projection.ts                                                                                 |
-| 53  | Skinned decals on actors                                           | open   | not built                                                                                           |
+| 53  | Skinned decals on actors                                           | done   | skinned-decal.ts, combat-impacts.ts (the original's limits per actor, frame and in all)             |
 | 54  | Screen blood                                                       | done   | screen-blood.ts                                                                                     |
 | 55  | Weapon blood                                                       | done   | effect.wgsl                                                                                         |
 | 56  | Motion vectors of moving instances and animated parts              | done   | velocity.wgsl                                                                                       |
@@ -419,7 +424,7 @@ entry's 3D index, is unread.
 | BSMultiBoundOBB (240 files)                         | 240    | done   | culling by bounding spheres draws the same image                         |
 | NiPSysEmitterSpeedCtlr (133 files)                  | 234    | done   | particle-data.ts                                                         |
 | NiPSysGravityStrengthCtlr (125 files)               | 230    | done   | particle-data.ts                                                         |
-| BSLagBoneController (108 files)                     | 221    | open   | skeletons trail in world space (lag-bone.ts); effect and worn models not |
+| BSLagBoneController (108 files)                     | 221    | open   | skeletons and placed or held models trail; armour hung on a skeleton not |
 | NiFloatExtraDataController (71 files)               | 188    | open   | parsed; not animated                                                     |
 | BSPSysInheritVelocityModifier (104 files)           | 188    | done   |                                                                          |
 | BSStripPSysData (151 files)                         | 179    | done   |                                                                          |

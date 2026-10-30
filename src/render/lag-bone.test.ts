@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LagBoneState } from './lag-bone.ts';
+import { LagBoneState, ModelLagBones } from './lag-bone.ts';
 
 /** A column-major translation matrix. */
 const translation = (x: number, y: number, z: number): Float32Array => {
@@ -62,5 +62,43 @@ describe('lag bones', () => {
     expect(out[1]).toBeCloseTo(-Math.SQRT1_2);
     // Its translation stays the animated one (velocity 0).
     expect(out[13]).toBeCloseTo(10);
+  });
+
+  it("trails each placed model's own motion, with the nodes under it", () => {
+    const rest = (z: number) => ({
+      translation: [0, 0, z] as const,
+      rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      scale: 1,
+    });
+    const graph = {
+      parents: new Map([
+        [1, 0],
+        [2, 1],
+      ]),
+      transforms: new Map([
+        [0, rest(0)],
+        [1, rest(10)],
+        [2, rest(5)],
+      ]),
+      roots: [0],
+      lagBones: [{ node: 1, linearVelocity: 2, linearRotation: 0, maximumDistance: 1000 }],
+    };
+    const placed = (x: number) =>
+      Float32Array.from([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, 0, 1]);
+    const torch = new ModelLagBones(graph);
+    const other = new ModelLagBones(graph);
+    torch.update(undefined, placed(0), 0);
+    other.update(undefined, placed(0), 0);
+    // Moved 100 along X in 0.1 s: velocity 2 covers 0.2 of the way, 80 left behind.
+    const worlds = torch.update(undefined, placed(100), 0.1);
+    expect(worlds.get(1)?.[12]).toBeCloseTo(-80);
+    expect(worlds.get(1)?.[14]).toBeCloseTo(10);
+    expect(worlds.get(2)?.[12]).toBeCloseTo(-80);
+    expect(worlds.get(2)?.[14]).toBeCloseTo(15);
+    // The same frame again: the same matrices.
+    expect(torch.update(undefined, placed(200), 0.1)).toBe(worlds);
+    // Another instance that stood still keeps its rest.
+    const still = other.update(undefined, placed(0), 0.1).get(1);
+    expect([still?.[12], still?.[13], still?.[14]]).toEqual([0, 0, 10]);
   });
 });
