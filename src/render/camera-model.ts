@@ -7,7 +7,12 @@
 // up). The FOV controller animates the frustum's right edge (its value at time 0 is the
 // frustum's own: the tangent of half the horizontal field of view); the top edge keeps its
 // ratio to it. Each controller runs on its own clock from the shot's start (all vanilla ones
-// clamp at their end). Platform-free.
+// clamp at their end). Observed in the original: the shot takes the root's local translation as
+// its place and, when the root's controller has rotation keys (177 of the 191 vanilla shots
+// with a model: `node tools/camera-models.ts --summary`), the root's local rotation as a turn
+// within the frame that looks at the shot's target (shotAxes); a root with constant keys
+// (KillCam_FrontSideFarA.nif) looks straight at it, as do the path roots (Base.nif,
+// BaseLeft.nif), whose paths do not turn them. Platform-free.
 
 import type { NifFile } from '../formats/nif/nif.ts';
 import type { NifTransform, Ref, Vec3 } from '../formats/nif/types.ts';
@@ -26,6 +31,7 @@ import { fromNifTransform, multiply, type Mat4 } from './math.ts';
 
 /** One node of the chain from the root to the camera: its rest transform and its motion. */
 interface ChainNode {
+  readonly name: string;
   readonly rest: NifTransform;
   readonly motion: { readonly source: TransformSource; readonly timing: Timing } | undefined;
 }
@@ -41,6 +47,8 @@ export interface CameraModel {
   readonly fov: { readonly source: FloatSource; readonly timing: Timing } | undefined;
   /** Seconds until every controller has run (the longest stop time). */
   readonly duration: number;
+  /** Whether the shot turns the camera by the root's own rotation (it has rotation keys). */
+  readonly turns: boolean;
 }
 
 /** The camera of a camera model at a moment. */
@@ -84,7 +92,9 @@ export function readCameraModel(file: NifFile): CameraModel | undefined {
   };
   const chain = refs.flatMap((ref): ChainNode[] => {
     const node = file.blocks[ref];
-    return node && 'transform' in node ? [{ rest: node.transform, motion: motionOf(ref) }] : [];
+    return node && 'transform' in node
+      ? [{ name: node.name, rest: node.transform, motion: motionOf(ref) }]
+      : [];
   });
   let fov: CameraModel['fov'];
   for (let c = block.controller; c >= 0;) {
@@ -107,23 +117,34 @@ export function readCameraModel(file: NifFile): CameraModel | undefined {
     near: Math.max(0.1, near),
     fov,
     duration,
+    turns: hasRotationKeys(chain[0]?.motion?.source),
   };
+}
+
+/** Whether a node's motion has rotation keys. */
+function hasRotationKeys(source: TransformSource | undefined): boolean {
+  const data = source?.data;
+  if (!data) return false;
+  return data.quaternionKeys.length > 0 || data.xyzRotations.some((group) => group.keys.length > 0);
+}
+
+/** A chain node's local transform at `seconds` (its rest, moved by its controller). */
+function localAt(node: ChainNode, seconds: number): NifTransform {
+  let { translation, rotation, scale } = node.rest;
+  if (node.motion) {
+    const sample = sampleTransform(node.motion.source, controllerTime(node.motion.timing, seconds));
+    if (sample.translation) translation = sample.translation;
+    if (sample.rotation) rotation = quaternionRows(sample.rotation);
+    if (sample.scale !== undefined) scale = sample.scale;
+  }
+  return { translation, rotation, scale };
 }
 
 /** The camera of a model at `seconds` since its shot began. */
 export function sampleCameraModel(model: CameraModel, seconds: number): CameraSample {
   let world: Mat4 | undefined;
   for (const node of model.chain) {
-    let { translation, rotation, scale } = node.rest;
-    if (node.motion) {
-      const sample = sampleTransform(
-        node.motion.source,
-        controllerTime(node.motion.timing, seconds),
-      );
-      if (sample.translation) translation = sample.translation;
-      if (sample.rotation) rotation = quaternionRows(sample.rotation);
-      if (sample.scale !== undefined) scale = sample.scale;
-    }
+    const { translation, rotation, scale } = localAt(node, seconds);
     const local = fromNifTransform(translation, rotation, scale);
     world = world ? multiply(world, local) : local;
   }
@@ -144,6 +165,52 @@ export function sampleCameraModel(model: CameraModel, seconds: number): CameraSa
     up: axis(1),
     fovY: 2 * Math.atan(tanY),
   };
+}
+
+/** The model root's own rotation at `seconds` (row-major 3×3, x right, y forward, z up). */
+export function rootRotation(model: CameraModel, seconds: number): readonly number[] {
+  const root = model.chain[0];
+  return root ? localAt(root, seconds).rotation : [1, 0, 0, 0, 1, 0, 0, 0, 1];
+}
+
+/**
+ * A kill camera's view axes, as observed in the original: a frame looking from `position` at
+ * `target` (x right, y forward, z up, the world's up kept), then turned within it by `turn`
+ * (the model root's own rotation, row-major; none: no turn), so a shot looks a little past its
+ * target as its model's camera was turned.
+ */
+export function shotAxes(
+  position: Vec3,
+  target: Vec3,
+  turn?: readonly number[],
+): { readonly forward: Vec3; readonly up: Vec3 } {
+  let f: Vec3 = [target[0] - position[0], target[1] - position[1], target[2] - position[2]];
+  const length = Math.hypot(f[0], f[1], f[2]);
+  f = length > 1e-6 ? [f[0] / length, f[1] / length, f[2] / length] : [0, 1, 0];
+  // Right: forward × up (the world's z); straight up or down, the world's x.
+  let r: Vec3 = [f[1], -f[0], 0];
+  const across = Math.hypot(r[0], r[1]);
+  r = across > 1e-6 ? [r[0] / across, r[1] / across, 0] : [1, 0, 0];
+  const u: Vec3 = [r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]];
+  if (!turn) return { forward: f, up: u };
+  // The frame's columns (r, f, u) times the turn's y and z columns.
+  const axis = (column: number): Vec3 => {
+    const a = turn[column] ?? 0;
+    const b = turn[3 + column] ?? 0;
+    const c = turn[6 + column] ?? 0;
+    return [
+      r[0] * a + f[0] * b + u[0] * c,
+      r[1] * a + f[1] * b + u[1] * c,
+      r[2] * a + f[2] * b + u[2] * c,
+    ];
+  };
+  return { forward: axis(1), up: axis(2) };
+}
+
+/** How far a rotation turns (radians). */
+export function turnAngle(m: readonly number[]): number {
+  const trace = (m[0] ?? 1) + (m[4] ?? 1) + (m[8] ?? 1);
+  return Math.acos(Math.max(-1, Math.min(1, (trace - 1) / 2)));
 }
 
 /** Quaternion (w, x, y, z) to a row-major 3×3 rotation (as NIF transforms store it). */

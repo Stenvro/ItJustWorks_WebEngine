@@ -39,7 +39,7 @@ const DRAW_MULTI_PASS = 0x80000u;
 // sunbeam went white with it, the dust in its shaft a white blob.
 fn effectLight(n: vec3f, worldPos: vec3f) -> vec3f {
   let sun = 0.5 + 0.5 * max(dot(n, frame.sunDir.xyz), 0.0);
-  var light = directionalAmbient(n) + frame.sunColor.rgb * sun * sunShadow(worldPos, n);
+  var light = directionalAmbient(n) + frame.sunColor.rgb * sun * sunShadow(worldPos, n, sceneFocus());
   if (draw.effect.w > 0.5) {
     light = draw.effect.rgb;
   }

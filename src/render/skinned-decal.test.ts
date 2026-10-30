@@ -3,6 +3,7 @@ import { fromHalf, type PartSkin } from './skinning.ts';
 import { identity, toHalf } from './math.ts';
 import type { ModelPart } from './model-data.ts';
 import {
+  rigidDecalPart,
   skinnedDecalMaterial,
   skinnedDecalModel,
   skinnedDecalPart,
@@ -173,6 +174,63 @@ describe('skinned decals', () => {
         material,
         alpha,
       ),
+    ).toBeUndefined();
+  });
+});
+
+describe('decals on rigid shapes', () => {
+  /** The strip as a rigid shape hung on a skeleton node (a helmet, a shield). */
+  const rigid = (): ModelPart => {
+    const part: ModelPart = { ...strip(10) };
+    delete (part as { skin?: unknown }).skin;
+    const local = identity();
+    local[13] = 7;
+    return { ...part, node: 2, local };
+  };
+
+  it("copies the shape's triangles in the box, unskinned, on the node it hangs on", () => {
+    const { material, alpha } = skinnedDecalMaterial(look);
+    // The node stands 3 units along X: the box at 5 meets the shape's columns about 2.
+    const world = identity();
+    world[12] = 3;
+    const part = rigidDecalPart(
+      { part: rigid(), world },
+      box(5),
+      [0, 0, 1, 1],
+      material,
+      alpha,
+      look.color,
+      0,
+    );
+    expect(part).toBeDefined();
+    if (!part) return;
+    const view = new DataView(part.vertices.buffer);
+    const xs = Array.from({ length: part.vertexCount }, (_, v) =>
+      view.getFloat32(v * STRIDE, true),
+    );
+    // Copied as the shape has them (its own space), not where they stand.
+    expect(Math.min(...xs)).toBe(0);
+    expect(Math.max(...xs)).toBe(4);
+    for (let v = 0; v < part.vertexCount; v++) {
+      const u = fromHalf(view.getUint16(v * STRIDE + 16, true));
+      expect(u).toBeCloseTo((view.getFloat32(v * STRIDE, true) + 3 - 5) / 2 + 0.5, 2);
+    }
+    expect(part.skin).toBeUndefined();
+    expect(part.node).toBe(0);
+    expect(part.local?.[13]).toBe(7);
+    const flags1 = part.material?.kind === 'lighting' ? part.material.flags1 : 0;
+    // A decal, not skinned.
+    expect(flags1 & 0xc000000).toBe(0xc000000);
+    expect(flags1 & 0x2).toBe(0);
+  });
+
+  it('makes none for a skinned shape or a box beside the shape', () => {
+    const { material, alpha } = skinnedDecalMaterial(look);
+    expect(
+      rigidDecalPart({ part: strip(10), world: identity() }, box(5), [0, 0, 1, 1], material, alpha),
+    ).toBeUndefined();
+    expect(
+      rigidDecalPart({ part: rigid(), world: identity() }, box(20), [0, 0, 1, 1], material, alpha),
     ).toBeUndefined();
   });
 });

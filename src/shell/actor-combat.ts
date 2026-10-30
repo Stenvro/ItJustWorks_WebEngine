@@ -142,7 +142,7 @@ import type { PlaySession } from './play-session.ts';
 import type { PlayerAvatar } from './player-avatar.ts';
 import type { CombatBridge } from './script-world.ts';
 import type { Terminal } from './terminal.ts';
-import { KillmoveCamera } from './killmove-camera.ts';
+import { KillmoveCamera, type KillmoveSubjects } from './killmove-camera.ts';
 import { PlayerCombat, type CastingButtons } from './player-combat.ts';
 import type { ActorTalk } from './actor-talk.ts';
 import type { ActorSenses } from './actor-senses.ts';
@@ -1052,16 +1052,38 @@ export class ActorCombat implements CombatBridge {
    * block anticipation turns toward (BSDirectAtModifier userInfo 1, src/shell/actor-looks.ts).
    */
   weaponPoint(reference: number): Vec3 | undefined {
+    return this.#nodePoint(reference, 'WEAPON');
+  }
+
+  /**
+   * Where a node of a fighter's third-person body is in the world: a name, or 'torso' (its
+   * race's body part data's torso part node); undefined without it.
+   */
+  #nodePoint(reference: number, name: string): Vec3 | undefined {
     const fighter = this.#fighters.get(reference);
     if (!fighter) return undefined;
-    const pose = fighter.player ? this.#avatar?.body.pose : fighter.body?.pose;
+    const body = fighter.player ? this.#avatar?.body : fighter.body;
+    const pose = body?.pose;
     const world = fighter.player
       ? this.#avatar?.placement.world
       : fighter.body?.instances[0]?.world;
-    const node = pose?.world('WEAPON');
+    const nodeName = name === 'torso' ? body?.look.torsoNode : name;
+    const node = nodeName === undefined ? undefined : pose?.world(nodeName);
     return node && world
       ? transformPoint(world, [node[12] ?? 0, node[13] ?? 0, node[14] ?? 0])
       : undefined;
+  }
+
+  /** The kill camera's view of the fighters' bodies (killmove-camera.ts KillmoveSubjects). */
+  #killCameraBodies(): Pick<KillmoveSubjects, 'node' | 'height'> {
+    return {
+      node: (reference, which) =>
+        this.#nodePoint(reference, which === 'torso' ? 'torso' : 'WEAPON'),
+      height: (reference) => {
+        const fighter = this.#fighters.get(reference);
+        return fighter ? this.#size(fighter).height : 0;
+      },
+    };
   }
 
   /** A fighter's combat state (the player's input reads it). */
@@ -3185,6 +3207,7 @@ export class ActorCombat implements CombatBridge {
       targetRef: victim.reference,
       physics: play.physics,
       maxSeconds: this.#settings.vatsSafetyMaxTime,
+      ...this.#killCameraBodies(),
     }).then((camera) => {
       if (camera && leader.state.paired === 'lead') this.#camera = camera;
     });
@@ -3275,6 +3298,7 @@ export class ActorCombat implements CombatBridge {
       projectile,
       projectileType: gear.projectile.type,
       maxSeconds: this.#settings.vatsSafetyMaxTimeRanged,
+      ...this.#killCameraBodies(),
       fatal,
       attackerRef: fighter.reference,
       targetRef: victim.reference,

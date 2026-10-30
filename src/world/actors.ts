@@ -28,7 +28,7 @@ import {
 } from './actor-records.ts';
 import { resolveActorTemplates } from './actor-templates.ts';
 import { pickLeveled, seededRandom } from './leveled.ts';
-import { headNode, parseBodyPartData } from './body-part-data.ts';
+import { headNode, parseBodyPartData, torsoNode, type BodyPart } from './body-part-data.ts';
 import type { RecordDatabase } from './record-db.ts';
 
 export { pickLeveled, seededRandom } from './leveled.ts';
@@ -118,6 +118,8 @@ export interface ActorLook {
   readonly raceFlags: number;
   /** Its head's skeleton node (its race's body part data: src/world/body-part-data.ts). */
   readonly headNode: string | undefined;
+  /** Its torso's skeleton node (the same body part data's torso part; a kill camera's spot). */
+  readonly torsoNode?: string | undefined;
   /** Skeleton model and behavior project (meshes\ paths). */
   readonly skeleton: string | undefined;
   readonly behavior: string | undefined;
@@ -323,7 +325,7 @@ const faceGenId = (objectId: number): string =>
 /** Reads the records of an actor's look. */
 export class ActorResolver {
   /** Each body part data's head node (by BPTD form id). */
-  readonly #headNodes = new Map<number, Promise<string | undefined>>();
+  readonly #bodyPartLists = new Map<number, Promise<readonly BodyPart[]>>();
   readonly #db: RecordDatabase;
   readonly #races = new Map<number, RaceRecord | undefined>();
   readonly #addons = new Map<number, ArmorAddonRecord | undefined>();
@@ -362,15 +364,15 @@ export class ActorResolver {
    * The expression TRI files of an NPC's head parts (its own, its race's and the parts they
    * bring along) by lower-case editor id: the FaceGen head's shapes are named after them.
    */
-  /** The head node of a body part data (BPTD), read once per record. */
-  #headNode(bodyPartData: number | undefined): Promise<string | undefined> {
-    if (bodyPartData === undefined) return Promise.resolve(undefined);
-    let known = this.#headNodes.get(bodyPartData);
+  /** The parts of a body part data (BPTD), read once per record. */
+  #bodyParts(bodyPartData: number | undefined): Promise<readonly BodyPart[]> {
+    if (bodyPartData === undefined) return Promise.resolve([]);
+    let known = this.#bodyPartLists.get(bodyPartData);
     if (!known) {
       known = this.#db
         .get(bodyPartData)
-        .then((record) => (record ? headNode(parseBodyPartData(record)) : undefined));
-      this.#headNodes.set(bodyPartData, known);
+        .then((record) => (record ? parseBodyPartData(record) : []));
+      this.#bodyPartLists.set(bodyPartData, known);
     }
     return known;
   }
@@ -617,7 +619,8 @@ export class ActorResolver {
       race: race.formId,
       raceEditorId: race.editorId,
       raceFlags: race.flags,
-      headNode: await this.#headNode(race.bodyPartData),
+      headNode: headNode(await this.#bodyParts(race.bodyPartData)),
+      torsoNode: torsoNode(await this.#bodyParts(race.bodyPartData)),
       skeleton: skeleton === undefined ? undefined : meshPath(skeleton),
       behavior: behavior === undefined ? undefined : meshPath(behavior),
       scale: race.height[sex] * traits.height,

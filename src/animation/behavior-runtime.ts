@@ -713,6 +713,11 @@ export class BehaviorRuntime {
    * one sitting; a flier's flying state is not among them); set by the actor's state each update.
    */
   minimumBones = 0;
+  /**
+   * Whether the camera saw the actor in the last frame (AnimationRate.seen): one not seen
+   * animates only its minimum bones; undefined: not known, its bone LOD's distance decides.
+   */
+  seen: boolean | undefined = undefined;
   /** The bone LOD's levels: beyond `squared` distance, only the first `count` bones animate. */
   #boneLod: readonly { readonly squared: number; readonly count: number }[] | undefined;
   /** The head bone the line's turn goes to (−1: none). */
@@ -1405,8 +1410,12 @@ export class BehaviorRuntime {
    * the skeleton's order no longer animate: they keep the pose they had (a human's camera
    * bones beyond 128 units, its fingers beyond 768, its magic and weapon nodes beyond 2048).
    * Each update the last level whose distance the camera is beyond (across the ground, by the
-   * skeleton's scale: animationRate) gives the count, no fewer than minimumBones. TODO(M13): an
-   * actor the camera does not see animates only its minimum bones in the original.
+   * skeleton's scale: animationRate) gives the count, no fewer than minimumBones. An actor the
+   * camera did not see (`seen` false: its 3D culled, not drawn this frame; one with no 3D
+   * counts as seen) animates its minimum bones alone, bone LOD or not.
+   * TODO(M13): with no minimum the original still animates the first bone when the animation's
+   * root has left the 3D's bound (here none animates), and an actor flag it reads (unread which)
+   * counts an unseen actor as seen.
    */
   setBoneLod(levels: readonly { readonly distance: number; readonly bone: string }[]): void {
     const index = new Map(this.skeleton.bones.map((bone, i) => [bone.name.toLowerCase(), i]));
@@ -1420,6 +1429,7 @@ export class BehaviorRuntime {
 
   /** How many bones animate at the camera's distance (bone LOD). */
   #animatedBones(): number {
+    if (this.seen === false) return Math.min(this.#boneCount, this.minimumBones);
     const levels = this.#boneLod;
     const distance = this.boneLodDistance;
     if (!levels || distance === undefined) return this.#boneCount;

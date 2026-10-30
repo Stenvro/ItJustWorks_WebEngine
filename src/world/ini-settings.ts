@@ -243,6 +243,8 @@ export const INI_DEFAULTS = {
     fDecalLOD0: 800,
     fDecalLifetime: 30,
     iMaxSkinDecalsPerFrame: 25,
+    // Dynamic decals (a hit's blood on rigid shapes included) made in one frame at most.
+    iMaxDecalsPerFrame: 100,
     fDefault1stPersonFOV: 80,
     fDefaultWorldFOV: 80,
     // The settings menu's DDOF Intensity and Brightness: the settings and their sliders' ends.
@@ -260,9 +262,12 @@ export const INI_DEFAULTS = {
     // Point lights fade out from this distance: the executable starts it at
     // fLightLODDefaultStartFade (1000), Skyrim_Default.ini gives 3500.
     fLightLODStartFade: 1000,
-    // The sun's focus shadows round the bodies near the player (src/render/focus-shadows.ts).
+    // The sun's focus shadows round the bodies near the player (src/render/focus-shadows.ts):
+    // how many, how far, where they start fading and how their maps' size halves with distance.
     fMaxFocusShadowMapDistance: 450,
     iNumFocusShadow: 4,
+    fFadingFracStart: 0.25,
+    fFocusShadowMapDoubleEveryXUnit: 450,
     fNearDistance: 15,
     // The low-health modifier's pulses (src/gameplay/low-health.ts).
     bLowHealthIModEnabled: 1,
