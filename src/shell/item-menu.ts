@@ -22,6 +22,12 @@ import type { GameSession } from './game-session.ts';
 
 /** The items list (InventoryLists_mc.ItemsList). */
 const LIST = '_root.Menu_mc.InventoryLists_mc.ItemsListHolder.List_mc';
+/** The item menus that fade the HUD's charge meters out as they open (not barter's, gift's). */
+const FADE_CHARGE_METERS: ReadonlySet<string> = new Set([
+  'inventorymenu.swf',
+  'magicmenu.swf',
+  'containermenu.swf',
+]);
 
 /**
  * The hands the menus' slots name (AttemptEquip's and ItemSelect's aiSlot, which the engine
@@ -136,6 +142,7 @@ export class ItemMenu {
    * the player went back to the tween menu.
    */
   async open(model: ItemMenuModel, closed: (toTween: boolean) => void): Promise<Menu> {
+    if (FADE_CHARGE_METERS.has(model.movie)) this.#session.hud.fadeOutChargeMeters();
     const [categories, first] = await Promise.all([model.categories(), model.view()]);
     let view = first;
     let toTween = false;
