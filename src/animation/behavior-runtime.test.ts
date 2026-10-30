@@ -1428,13 +1428,17 @@ describe('bone LOD', () => {
       { distance: 768, bone: 'finger' },
       { distance: 100, bone: 'NoSuchBone' },
     ]);
-    runtime.cameraDistance = 500;
+    runtime.boneLodDistance = 500;
     runtime.update(1);
     expect([runtime.pose[0], runtime.pose[10]]).toEqual([1, 1]);
-    runtime.cameraDistance = 1000;
+    runtime.boneLodDistance = 1000;
     runtime.update(1);
     // The root moves on; the finger keeps where it was.
     expect([runtime.pose[0], runtime.pose[10]]).toEqual([2, 1]);
+    // A hovering flier (or one knocked down) animates every bone, however far.
+    runtime.minimumBones = Infinity;
+    runtime.update(1);
+    expect([runtime.pose[0], runtime.pose[10]]).toEqual([3, 3]);
   });
 });
 

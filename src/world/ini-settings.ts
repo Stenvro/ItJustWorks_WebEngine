@@ -33,6 +33,10 @@ export const INI_DEFAULTS = {
     fAnimInterpNearDist: 400,
     fAnimInterpFarDist: 800,
     fAnimInterpSlop: 0.25,
+    // Bone LOD (src/animation/behavior-runtime.ts, setBoneLod): its distances are measured
+    // times this; a seated actor animates at least this many bones. The engine's built-in values.
+    fBoneLODDistanceScale: 1,
+    iMinBonesToGenerateWhileSitting: 5,
   },
   Audio: {
     fASFadeInTime: 3,
