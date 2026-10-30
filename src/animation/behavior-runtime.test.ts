@@ -1435,7 +1435,7 @@ describe('bone LOD', () => {
     runtime.update(1);
     // The root moves on; the finger keeps where it was.
     expect([runtime.pose[0], runtime.pose[10]]).toEqual([2, 1]);
-    // A hovering flier (or one knocked down) animates every bone, however far.
+    // One knocked down (or paralyzed, dead, unconscious) animates every bone, however far.
     runtime.minimumBones = Infinity;
     runtime.update(1);
     expect([runtime.pose[0], runtime.pose[10]]).toEqual([3, 3]);

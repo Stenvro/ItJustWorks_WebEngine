@@ -709,8 +709,8 @@ export class BehaviorRuntime {
   boneLodDistance: number | undefined = undefined;
   /**
    * The fewest bones that animate whatever the bone LOD (observed in the original: every bone
-   * for a hovering flier and one knocked down or ragdolled, iMinBonesToGenerateWhileSitting
-   * for one sitting); set by the actor's state each update.
+   * for one paralyzed, dead, knocked down or unconscious, iMinBonesToGenerateWhileSitting for
+   * one sitting; a flier's flying state is not among them); set by the actor's state each update.
    */
   minimumBones = 0;
   /** The bone LOD's levels: beyond `squared` distance, only the first `count` bones animate. */
