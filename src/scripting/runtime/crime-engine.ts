@@ -546,6 +546,30 @@ export class CrimeEngine {
     return count;
   }
 
+  /**
+   * SetContainerAllowStolenItems. Observed in the original: the flag is the base's container's
+   * (an NPC_'s or a CONT's; with any other base nothing changes), so it holds for every
+   * reference of that base, and only the container menu reads it (refusesStolen).
+   */
+  async allowStolen(container: number, allow: boolean): Promise<void> {
+    const base = await this.#runtime.baseOf(container);
+    const type = base === undefined ? undefined : (await this.#runtime.forms.record(base))?.type;
+    const refusing = this.#runtime.state.crime.noStolenContainers;
+    if (base === undefined || (type !== 'CONT' && type !== 'NPC_') || !refusing) return;
+    if (allow) refusing.delete(base);
+    else refusing.add(base);
+  }
+
+  /**
+   * Whether a container takes no stolen items. Observed in the original: while it takes none,
+   * the container menu leaves the stolen stacks out of both its lists (the player's, so none
+   * can be stored there, and the container's).
+   */
+  async refusesStolen(container: number): Promise<boolean> {
+    const base = await this.#runtime.baseOf(container);
+    return base !== undefined && (this.#runtime.state.crime.noStolenContainers?.has(base) ?? false);
+  }
+
   /** The stolen items a container holds, by base. */
   stolenItems(container: number): Map<number, number> {
     const found = new Map<number, number>();

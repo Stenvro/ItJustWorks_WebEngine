@@ -63,6 +63,22 @@ export function entryStack(entry: ItemEntry): number | undefined {
   return typeof entry.stack === 'number' ? entry.stack : undefined;
 }
 
+/**
+ * Rows without their stolen items: of each item, its stolen count is taken off its rows (its
+ * plain stack first, then its improved ones), and rows left empty go.
+ */
+export function withoutStolen(rows: readonly Row[], stolen: (formId: number) => number): Row[] {
+  const left = new Map<number, number>();
+  const out: Row[] = [];
+  for (const row of rows) {
+    const remaining = left.get(row.formId) ?? stolen(row.formId);
+    const taken = Math.min(remaining, row.count);
+    left.set(row.formId, remaining - taken);
+    if (row.count - taken > 0) out.push({ ...row, count: row.count - taken });
+  }
+  return out;
+}
+
 /** The other side's entry for a row: its bits moved up, marked as the container's. */
 export function otherSideEntry(row: Row): ItemEntry {
   const entry = itemEntry(row);
@@ -266,7 +282,13 @@ export function containerModel(
       close = closeMenu;
     },
     view: async () => {
-      const [all, mine] = await Promise.all([shelf.rows(container), shelf.rows(PLAYER_REF)]);
+      let [all, mine] = await Promise.all([shelf.rows(container), shelf.rows(PLAYER_REF)]);
+      // A container that takes no stolen items (SetContainerAllowStolenItems): neither side
+      // lists its stolen ones (crime-engine.ts refusesStolen).
+      if (await shelf.runtime.crime.refusesStolen(container)) {
+        all = withoutStolen(all, (formId) => shelf.runtime.crime.stolenCount(container, formId));
+        mine = withoutStolen(mine, (formId) => shelf.runtime.crime.stolenCount(PLAYER_REF, formId));
+      }
       // Pockets: what it wears or holds only with the perks (Can Pickpocket Equipped Item:
       // Misdirection its weapons, Perfect Touch anything but an essential's).
       const theirs: typeof all = [];

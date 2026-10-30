@@ -5,6 +5,7 @@
 // Notes: docs/scripting.md ("Game state").
 
 import type { CorpsePose } from '../../animation/corpse-pose.ts';
+import type { KeepOffset } from '../../ai/movement-overrides.ts';
 import type { SavedGraph } from '../../animation/script-graphs.ts';
 import type { PlayerAppearance } from '../../gameplay/chargen.ts';
 import type { DismemberedLimb } from '../../gameplay/combat/dismemberment.ts';
@@ -189,6 +190,13 @@ export interface ActorState {
   level?: number;
   voiceRecoveryTime?: number;
   forcedLandingMarker?: number;
+  /** SetPlayerControls(true): its movement controller takes the player's controls. */
+  playerControls?: boolean;
+  /**
+   * KeepOffsetFromActor: its movement keeps this offset from another actor
+   * (src/ai/movement-overrides.ts) until ClearKeepOffsetFromActor.
+   */
+  keepOffset?: KeepOffset;
   /** SetAllowFlying: false keeps a flier on the ground (src/shell/actor-flight.ts). */
   allowFlying?: boolean;
   /** SetAllowFlyingEx: whether it may crash-land when hurt, and fly while it searches. */
@@ -380,6 +388,12 @@ export interface CrimeState {
   readonly stolenHorses: Set<number>;
   /** The trespass warnings the player was given where they trespass now (GetTrespassWarningLevel). */
   trespassWarnings: number;
+  /**
+   * Container bases that take no stolen items (SetContainerAllowStolenItems(false): a flag of
+   * the base's container, so every reference of it): the container menu lists no stolen stacks
+   * on either side (crime-engine.ts refusesStolen).
+   */
+  readonly noStolenContainers?: Set<number>;
 }
 
 /**
@@ -450,6 +464,7 @@ export class GameState {
     reportCrimeAgainstPlayer: true,
     stolenHorses: new Set(),
     trespassWarnings: 0,
+    noStolenContainers: new Set(),
   };
   /** Entries scripts added to leveled lists (LeveledItem.AddForm, ...), by list. */
   readonly leveledAdditions = new Map<number, { level: number; formId: number; count: number }[]>();
