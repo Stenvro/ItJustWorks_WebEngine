@@ -41,7 +41,11 @@ import {
   type StringTableKind,
 } from '../src/formats/esm/strings.ts';
 import { HAVOK_LAYOUTS, inlineSize, type InlineType } from '../src/formats/hkx/layouts.ts';
-import { loadCharacterInfo, parseBehaviorGraph } from '../src/formats/hkx/behavior.ts';
+import {
+  loadCharacterInfo,
+  parseBehaviorGraph,
+  projectHasCharacter,
+} from '../src/formats/hkx/behavior.ts';
 import { readHavokPhysics } from '../src/formats/hkx/physics.ts';
 import { observePackfileReads, Packfile } from '../src/formats/hkx/packfile.ts';
 import {
@@ -538,6 +542,22 @@ if (run('hkx')) {
   for (const failure of failures.slice(0, 20)) console.log(`    ${failure}`);
 }
 
+/**
+ * Serialized members that carry no data: the runtime's caches the files store as their
+ * "unset" value, and padding.
+ */
+const NOT_DATA = new Map([
+  [
+    'hkbClipGenerator.animationBindingIndex',
+    "-1 in every file: the runtime binds the clip to the character's animation as it activates",
+  ],
+  [
+    'BSSynchronizedClipGenerator.sAnimationBindingIndex',
+    "-1 in every file: the runtime's, as the clip generator's",
+  ],
+  ['hkpSetupStabilizationAtom.padding', 'padding (leftover bytes in 44 of 1,922)'],
+]);
+
 if (run('hkx-members')) {
   // Every reader runs over every Havok file (animation containers, ragdoll physics, behavior
   // graphs, and each project's character) while every read of every packfile is recorded; then
@@ -561,6 +581,8 @@ if (run('hkx-members')) {
   const read = (file: string): Promise<Uint8Array> => vfs.read(file);
   const havokFiles = vfs.list('meshes').filter((file) => /.(hkx|hkt)$/.test(file));
   const failures: string[] = [];
+  /** Projects without a loadable character: they give no graph (projectHasCharacter). */
+  const withoutCharacter: string[] = [];
   for (const file of havokFiles) {
     try {
       const pack = Packfile.parse(await vfs.read(file));
@@ -573,7 +595,10 @@ if (run('hkx-members')) {
       }
       readHavokPhysics(pack);
       if (pack.objectsOf('hkbBehaviorGraph').length > 0) parseBehaviorGraph(pack);
-      if (pack.objectsOf('hkbProjectData').length > 0) await loadCharacterInfo(file, read);
+      if (pack.objectsOf('hkbProjectData').length > 0) {
+        if (await projectHasCharacter(file, read)) await loadCharacterInfo(file, read);
+        else withoutCharacter.push(file);
+      }
     } catch (error) {
       failures.push(`${file}: ${message(error)}`);
     }
@@ -632,13 +657,27 @@ if (run('hkx-members')) {
     for (const object of pack.objects.values())
       visit(pack, bits, object.className, object.offset, 0);
   }
-  const unread = [...members].filter(([, [, readCount]]) => readCount === 0);
+  const unread = [...members].filter(
+    ([key, [, readCount]]) => readCount === 0 && !NOT_DATA.has(key),
+  );
+  const notData = [...members].filter(
+    ([key, [, readCount]]) => readCount === 0 && NOT_DATA.has(key),
+  );
+  const zero = unread.filter(([, [, , set]]) => set === 0).length;
   console.log(
-    `HKX members: ${havokFiles.length} files, ${failures.length} failures, ${members.size} serialized members of the classes the files hold, ${members.size - unread.length} read, ${unread.length} never read`,
+    `HKX members: ${havokFiles.length} files, ${failures.length} failures, ${members.size} serialized members of the classes the files hold, ${members.size - unread.length - notData.length} read, ${notData.length} not data, ${unread.length} never read (${String(zero)} zero or null in every file, ${String(unread.length - zero)} set)`,
   );
   for (const [key, [objects, , set]] of unread.sort((a, b) => a[0].localeCompare(b[0]))) {
     console.log(
       `  ${key.padEnd(64)} ${String(objects).padStart(7)} objects, ${set === 0 ? 'zero or null in all' : `set in ${String(set)}`}`,
+    );
+  }
+  console.log(
+    `  ${String(withoutCharacter.length)} projects without a loadable character (no graph, as in the original): ${withoutCharacter.join(', ')}`,
+  );
+  for (const [key, [objects]] of notData) {
+    console.log(
+      `  ${key.padEnd(64)} ${String(objects).padStart(7)} objects, not data: ${NOT_DATA.get(key) ?? ''}`,
     );
   }
   for (const failure of failures.slice(0, 20)) console.log(`    ${failure}`);

@@ -3,9 +3,12 @@ import { PackfileBuilder } from '../../../tests/helpers/hkx-builder.ts';
 import {
   characterBehaviorFile,
   graphStart,
+  EVENT_FLAGS,
   loadBehaviorGraph,
+  loadCharacterInfo,
   parseBehaviorGraph,
   projectCharacterFile,
+  projectHasCharacter,
   type BehaviorGraph,
 } from './behavior.ts';
 import { Packfile } from './packfile.ts';
@@ -25,14 +28,21 @@ function sequenceLeaf(
 }
 
 /** Binds a member of an hkbBindable to a variable. */
-function bind(builder: PackfileBuilder, bindable: number, member: string, variable: number): void {
+function bind(
+  builder: PackfileBuilder,
+  bindable: number,
+  member: string,
+  variable: number,
+  bit = 0xff,
+): void {
   const set = builder.object('hkbVariableBindingSet', 40);
   builder.pointer(bindable + 16, set);
+  builder.i32(set + 32, -1);
   const binding = builder.array(set + 16, 40, 1);
   builder
     .string(binding, member)
     .i32(binding + 28, variable)
-    .u8(binding + 32, 0xff);
+    .u8(binding + 32, bit);
 }
 
 /** Transitions (event → state) as an hkbStateMachineTransitionInfoArray. */
@@ -85,14 +95,14 @@ function buildGraph(): Uint8Array {
   builder.string(blender + 56, 'Blend').f32(blender + 76, 1);
   const children = builder.array(blender + 96, 8, 2);
   [
-    { weight: 1, leaf: sequenceLeaf(builder, 'partA', 1, 0) },
-    { weight: 0, leaf: sequenceLeaf(builder, 'partB', 2, 0) },
-  ].forEach(({ weight, leaf }, i) => {
+    { weight: 1, leaf: sequenceLeaf(builder, 'partA', 1, 0), worldFromModel: 1 },
+    { weight: 0, leaf: sequenceLeaf(builder, 'partB', 2, 0), worldFromModel: 0 },
+  ].forEach(({ weight, leaf, worldFromModel }, i) => {
     const child = builder.object('hkbBlenderGeneratorChild', 72);
     builder
       .pointer(child + 48, leaf)
       .f32(child + 64, weight)
-      .f32(child + 68, 1);
+      .f32(child + 68, worldFromModel);
     builder.pointer(children + i * 8, child);
   });
   const states = builder.array(machine + 144, 8, 2);
@@ -110,6 +120,16 @@ function buildGraph(): Uint8Array {
     .u8(infos + 4, 4)
     .u8(infos + 10, 4)
     .u8(infos + 16, 3);
+  // Event flags (the second event silent), the editor's ranges of the variables, and a role.
+  builder.i32(builder.array(data + 64, 4, 2) + 4, 1);
+  const minimum = builder.array(data + 80, 4, 3);
+  const maximum = builder.array(data + 96, 4, 3);
+  builder
+    .f32(minimum, 0)
+    .f32(maximum, 1)
+    .i32(minimum + 8, 0)
+    .i32(maximum + 8, 10);
+  builder.i16(infos + 12, 2).i16(infos + 14, 16);
   const values = builder.object('hkbVariableValueSet', 64);
   builder.pointer(data + 112, values);
   const words = builder.array(values + 16, 4, 3);
@@ -132,10 +152,41 @@ function buildGraph(): Uint8Array {
 describe('behavior graphs', () => {
   const graph: BehaviorGraph = parseBehaviorGraph(Packfile.parse(buildGraph()));
 
+  it('reads event flags, variable roles and ranges, and world-from-model weights', () => {
+    expect(graph.eventFlags).toEqual([0, EVENT_FLAGS.silent]);
+    expect(graph.variables[0]?.range).toEqual({ min: 0, max: 1 });
+    expect(graph.variables[2]).toMatchObject({
+      role: 2,
+      roleFlags: 16,
+      range: { min: 0, max: 10 },
+    });
+    const root = graph.root;
+    const blender = root?.kind === 'state-machine' ? root.states[1]?.generator : undefined;
+    expect(
+      blender?.kind === 'blender'
+        ? blender.children.map((child) => child.worldFromModelWeight)
+        : [],
+    ).toEqual([1, 0]);
+  });
+
+  it("reads a bit binding's bit index", () => {
+    const builder = new PackfileBuilder();
+    const root = builder.object('hkbBehaviorGraph', 160);
+    const leaf = sequenceLeaf(builder, 'Seq');
+    builder.pointer(root + 128, leaf);
+    bind(builder, leaf, 'fPercent', 0, 3);
+    const read = parseBehaviorGraph(Packfile.parse(builder.build(root))).root;
+    expect(read?.kind === 'gamebryo-sequence' ? read.percent : undefined).toEqual({
+      value: 1,
+      variable: 0,
+      bit: 3,
+    });
+  });
+
   it('reads the variables with their initial values and the event names', () => {
     expect(graph.name).toBe('Behavior.hkb');
     expect(graph.events).toEqual(['End', 'StopEffect']);
-    expect(graph.variables).toEqual([
+    expect(graph.variables).toMatchObject([
       { name: 'fToggle', type: 4, initial: 0.25 },
       { name: 'fDamp', type: 4, initial: 0.5 },
       { name: 'iState', type: 3, initial: 1 },
@@ -184,6 +235,7 @@ describe('behavior graphs', () => {
     const characterData = character.object('hkbCharacterData', 176);
     const characterStrings = character.object('hkbCharacterStringData', 192);
     character.pointer(characterData + 152, characterStrings);
+    character.f32(characterData + 16, 1.7).f32(characterData + 68, 1);
     character.string(characterStrings + 184, 'Behaviors\\..\\Behaviors\\Fire.hkx');
     const files = new Map([
       ['meshes\\fx\\fire.hkx', project.build(projectData)],
@@ -204,5 +256,13 @@ describe('behavior graphs', () => {
     };
     const loaded = await loadBehaviorGraph('Meshes\\FX\\Fire.hkx', read);
     expect(loaded.events).toEqual(['End', 'StopEffect']);
+    expect(await projectHasCharacter('meshes\\fx\\fire.hkx', read)).toBe(true);
+    const info = await loadCharacterInfo('meshes\\fx\\fire.hkx', read);
+    expect(info.controller.capsuleHeight).toBeCloseTo(1.7);
+    expect(info.modelForward).toEqual([0, 1, 0, 0]);
+    expect(info.project.characterFilenames).toEqual(['Characters\\Fire.hkx']);
+    // A project naming a character that is not there gives no graph.
+    files.delete('meshes\\fx\\characters\\fire.hkx');
+    expect(await projectHasCharacter('meshes\\fx\\fire.hkx', read)).toBe(false);
   });
 });
