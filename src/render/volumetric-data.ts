@@ -33,12 +33,18 @@ export const DEPTH_TABLE_SIZE = 4096;
 /** The noise volume's size ([Display] iVolumetricLightingNoiseTexture{Width,Height,Depth}). */
 export const NOISE_SIZE = 32;
 /**
- * The share of the last frame kept in each froxel: [Display]
- * fVolumetricLightingTemporalAccumulationFactor (bVolumetricLightingEnableTemporalAccumulation).
+ * The share of the last frame's composite kept at each pixel (where its depth there agrees):
+ * [Display] fVolumetricLightingTemporalAccumulationFactor
+ * (bVolumetricLightingEnableTemporalAccumulation). Observed in the original: the blend is in
+ * screen space, in the composite, never in the froxels.
  */
 export const TEMPORAL_FACTOR = 0.75;
-/** Frames of the slice jitter's cycle (the frame index modulo 8). */
+/** Frames of the jitter's cycle (the frame index & 7). */
 export const JITTER_FRAMES = 8;
+/** The noise's coordinate per world unit, over the density size (observed in the original). */
+export const NOISE_SCALE = 0.0125;
+/** The composite's dither noise, texels a side (TODO(M13): the original's size is unread). */
+export const DITHER_SIZE = 32;
 
 /**
  * The clip depth (0 at the near plane, 1 at infinity) of a slice coordinate s (0..1): s to the
@@ -75,11 +81,22 @@ export function sliceDistance(s: number, rangeFactor: number): number {
 }
 
 /**
- * Where the k-th slice is sampled this frame: the frame index modulo 8 moves the samples
- * through the slice (the temporal blend averages them).
+ * The generate pass's jitter (observed in the original): the frame index & 7 picks a corner of a
+ * unit cube (x by its bit 2, y by bit 1, z by bit 0), and each froxel is sampled a thousandth of
+ * the volume from its corner towards it (the volume's coordinate is its index over its size,
+ * without a half texel).
  */
-export function sliceJitter(frame: number): number {
-  return ((frame % JITTER_FRAMES) + 0.5) / JITTER_FRAMES;
+export function jitterCorner(frame: number): Vec3 {
+  const i = frame & (JITTER_FRAMES - 1);
+  return [(i >> 2) & 1, (i >> 1) & 1, i & 1];
+}
+
+/**
+ * The composite's scale of the slices' sum (observed in the original): the intensity over the
+ * volume's slice count, so the sum becomes the average of the froxels in front of a pixel.
+ */
+export function compositeScale(intensity: number, slices: number): number {
+  return slices > 0 ? intensity / slices : 0;
 }
 
 /**
@@ -106,44 +123,83 @@ export function noiseDrift(
 }
 
 /**
- * The density noise: a 32³ volume of tileable value noise in two octaves (bytes, 0..255),
- * the same each session (a fixed seed). TODO(M13): the original fills its noise volume on the
- * GPU at load; its function is unread.
+ * Three-dimensional simplex noise as the original's noise passes compute it (the common
+ * mod-289 permutation with the 7 × 7 gradient grid and the 0.6 falloff), returning the
+ * corners' sum before any scaling (within about ±1/42).
  */
-export function densityNoise(size = NOISE_SIZE, seed = 0x5eed): Uint8Array {
-  let state = seed >>> 0;
-  const next = (): number => {
-    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
-    return state / 0x100000000;
-  };
-  const octave = (cells: number): Float32Array => {
-    const lattice = Float32Array.from({ length: cells * cells * cells }, next);
-    const out = new Float32Array(size * size * size);
-    const at = (x: number, y: number, z: number): number =>
-      lattice[(x % cells) + (y % cells) * cells + (z % cells) * cells * cells] ?? 0;
-    const smooth = (t: number): number => t * t * (3 - 2 * t);
-    for (let z = 0; z < size; z++) {
-      for (let y = 0; y < size; y++) {
-        for (let x = 0; x < size; x++) {
-          const [fx, fy, fz] = [(x * cells) / size, (y * cells) / size, (z * cells) / size];
-          const [x0, y0, z0] = [Math.floor(fx), Math.floor(fy), Math.floor(fz)];
-          const [tx, ty, tz] = [smooth(fx - x0), smooth(fy - y0), smooth(fz - z0)];
-          const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
-          const plane = (zz: number): number =>
-            lerp(
-              lerp(at(x0, y0, zz), at(x0 + 1, y0, zz), tx),
-              lerp(at(x0, y0 + 1, zz), at(x0 + 1, y0 + 1, zz), tx),
-              ty,
-            );
-          out[x + y * size + z * size * size] = lerp(plane(z0), plane(z0 + 1), tz);
-        }
+export function simplexSum(x: number, y: number, z: number): number {
+  // The integer steps in single precision, as the GPU takes them (in double precision 147 / 49
+  // floors to 2).
+  const single = Math.fround;
+  const inv289 = single(1 / 289);
+  const inv7 = single(1 / 7);
+  const mod289 = (v: number): number => v - Math.floor(single(v * inv289)) * 289;
+  const permute = (v: number): number => mod289((v * 34 + 1) * v);
+  const skew = (x + y + z) / 3;
+  const i = [Math.floor(x + skew), Math.floor(y + skew), Math.floor(z + skew)] as const;
+  const unskew = (i[0] + i[1] + i[2]) / 6;
+  const x0 = [x - i[0] + unskew, y - i[1] + unskew, z - i[2] + unskew] as const;
+  // The simplex's other corners by the order of x0's components.
+  const g = [x0[0] >= x0[1] ? 1 : 0, x0[1] >= x0[2] ? 1 : 0, x0[2] >= x0[0] ? 1 : 0] as const;
+  const l = [1 - g[0], 1 - g[1], 1 - g[2]] as const;
+  const i1 = [Math.min(g[0], l[2]), Math.min(g[1], l[0]), Math.min(g[2], l[1])] as const;
+  const i2 = [Math.max(g[0], l[2]), Math.max(g[1], l[0]), Math.max(g[2], l[1])] as const;
+  const corners = [[0, 0, 0], i1, i2, [1, 1, 1]] as const;
+  const m = [mod289(i[0]), mod289(i[1]), mod289(i[2])] as const;
+  let sum = 0;
+  corners.forEach((o, k) => {
+    const p = permute(permute(permute(m[2] + o[2]) + m[1] + o[1]) + m[0] + o[0]);
+    // The gradient: p on a 7 × 7 grid folded onto an octahedron.
+    const j = p - 49 * Math.floor(single(single(p * inv7) * inv7));
+    const gx0 = Math.floor(single(j * inv7));
+    const gy0 = Math.floor(j - 7 * gx0);
+    let gx = gx0 * (2 / 7) - 13 / 14;
+    let gy = gy0 * (2 / 7) - 13 / 14;
+    const gz = 1 - Math.abs(gx) - Math.abs(gy);
+    if (gz <= 0) {
+      gx -= Math.floor(gx) * 2 + 1;
+      gy -= Math.floor(gy) * 2 + 1;
+    }
+    const norm = 1.79284291400159 - 0.85373472095314 * (gx * gx + gy * gy + gz * gz);
+    const d = [x0[0] - o[0] + k / 6, x0[1] - o[1] + k / 6, x0[2] - o[2] + k / 6] as const;
+    const t = Math.max(0.6 - (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]), 0);
+    sum += t * t * t * t * norm * (gx * d[0] + gy * d[1] + gz * d[2]);
+  });
+  return sum;
+}
+
+/**
+ * The density noise (observed in the original, which fills it on the GPU at load): a 32³ volume
+ * of simplex noise at 80 cells across (each texel at (x + 0.2, y, z) over the size), stored as
+ * 21 × the sum + 0.5 (bytes, 0..255).
+ */
+export function densityNoise(size = NOISE_SIZE): Uint8Array {
+  const out = new Uint8Array(size * size * size);
+  for (let z = 0; z < size; z++) {
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const v = simplexSum(((x + 0.2) / size) * 80, (y / size) * 80, (z / size) * 80);
+        out[x + y * size + z * size * size] = toByte(v * 21 + 0.5);
       }
     }
-    return out;
-  };
-  const coarse = octave(4);
-  const fine = octave(8);
-  return Uint8Array.from(coarse, (value, i) =>
-    Math.round(Math.max(0, Math.min(1, value * 0.65 + (fine[i] ?? 0) * 0.35)) * 255),
-  );
+  }
+  return out;
+}
+
+/**
+ * The composite's dither noise (observed in the original's two-dimensional noise pass):
+ * simplex noise at (x, y) × 8, stored as 21 × the sum + 0.5 (bytes).
+ */
+export function ditherNoise(size = DITHER_SIZE): Uint8Array {
+  const out = new Uint8Array(size * size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      out[x + y * size] = toByte(simplexSum(x * 8, y * 8, 0) * 21 + 0.5);
+    }
+  }
+  return out;
+}
+
+function toByte(v: number): number {
+  return Math.round(Math.max(0, Math.min(1, v)) * 255);
 }

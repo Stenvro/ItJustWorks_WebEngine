@@ -113,14 +113,14 @@ describe('VOLI', () => {
     expect(voli.rangeFactor).toBe(40);
   });
 
-  it('blends by the time of day and scales by the settings', () => {
+  it("blends by the time of day; the weather's intensity replaces the setting", () => {
     const blended = blendVolumetricLighting([
       { lighting: parseVolumetricLighting(record(4)), weight: 0.25 },
       { lighting: parseVolumetricLighting(record(2)), weight: 0.75 },
     ]);
     expect(blended.intensity).toBeCloseTo(2.5);
     const rays = godRays(blended, { enabled: true, intensity: 2 }, [1, 1, 1], 0.5);
-    expect(rays.strength).toBeCloseTo(2.5 * 2);
+    expect(rays.strength).toBeCloseTo(2.5);
     expect(rays.phaseContribution).toBeCloseTo(0.85);
     expect(rays.color).toEqual([1, 0.75, 0.5]);
     expect(godRays(blended, { enabled: false, intensity: 2 }, [1, 1, 1], 0.5).strength).toBe(0);
