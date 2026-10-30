@@ -74,7 +74,11 @@ gameplay events bound on the mouse, then those on the keyboard, with the art of 
 bottom bar) turns the default art their hints name (its own table: Activate E, Tween Menu Tab,
 ...) into the key bound now. The menu host sends it before the menu's setup (again after it
 when the movie registered only then) and to every open movie when a remap or a reset changes
-the controls. TODO(M13): with a gamepad the original sends the gamepad's bindings.
+the controls. With a gamepad in use the original sends the gamepad's bindings alone (each
+gameplay event remappable on it, with its button's name), and the names are the gamepad
+device's: `interface\controls\pc\gamepad.txt` (name, tab, hardware value: `360_A` 0x1000,
+`360_LT` 0x0009, ...; `parseButtonNames`); the mapping goes again to every open movie as the
+device in use changes.
 
 Checked in the browser on `hudmenu.swf`: its own calls reach the page tagged with the menu, and
 `InitExtensions` then `call("SetLocationName", "Whiterun")` set the location text.
@@ -88,7 +92,9 @@ Checked in the browser on `hudmenu.swf`: its own calls reach the page tagged wit
 `SetCompassAngle`, `SetCompassMarkers`, `SetHealthMeterPercent`, `SetMagickaMeterPercent`,
 `SetStaminaMeterPercent`, `SetCrosshairTarget`, `SetLocationName`, `ShowNotification`,
 `ShowMessage`, `ShowSubtitle`, `SetLoadDoorInfo`, `ShowElements` and more. The start menu asks
-`NEW`, `CONTINUE`, `StartState`, `EndPressStartState`, `PlaySound`, ... and offers
+`NEW`, `CONTINUE`, `StartState`, `EndPressStartState` (the consoles' "press start": the
+engine's start-button process, then `onStartButtonProcessFinished`, which ends that state),
+`PlaySound`, ... and offers
 `ConfirmNewGame`, `FadeInMenu`, `FadeOutMenu`, ...
 
 Keyboard and mouse reach the movies as Flash input (the Key and Mouse objects; CLIK's
@@ -280,9 +286,14 @@ TODO(M13), ruffle-rs/ruffle#16618.
   Shapes of nested clips are cut too, as Scaleform does (CLIK's lists rely on it: a 1 × 1 grid at
   the origin keeps a scaled list's items unscaled); text is not cut. Unscaled, the shapes show as
   they are and no piece is made. Mouse.getTopMostEntity takes a wrapper for its parent's shape.
-  TODO(M13): a sprite scaled below its corners' size (the middle shrinks to nothing), rotated
-  clips, nested content that moves while the sprite's scale stays, and grids set at run time on
-  clips with no shapes of their own (the journal lists' item containers, never scaled).
+  Scaled below the size of its corners, the corners shrink together to fit and the middle is
+  nothing (Flash's rule for a scale9Grid, which Scaleform follows: `scale9Axis`). A turned or
+  mirrored grid sprite is measured along its own axes on the stage (the lengths of its x and y
+  axes there), so its corners keep their size turned too. A cut sprite whose scale stays has the
+  wrappers that moved in it placed again each frame (a list scrolling, a nested clip playing).
+  TODO(M13): a shape turned within its grid sprite (its pieces are cut along its own axes, not
+  the sprite's), and grids set at run time on clips with no shapes of their own (the journal
+  lists' item containers, never scaled).
 
 ## Videos
 
@@ -578,7 +589,10 @@ away, no blow for a while: AcceptYield), then the arrest follows.
 
 `messagebox.swf` shows Debug.MessageBox and Message.Show (`src/shell/message-boxes.ts`), one at
 a time: `_root.InitExtensions()`, `_root.SetPlatform(0, false)`, then the callbacks
-`setMessageText(text, html)`, `setIsCancellable(cancellable, cancelIndex)` and
+`setMessageText(text, html)`, `setIsVertical(vertical)` (whether its buttons stand in a
+column: a flag of the box's own, observed in the original after the text; off for every box
+here, TODO(M13): which of the engine's boxes set it is not found),
+`setIsCancellable(cancellable, cancelIndex)` and
 `setButtons(focusFirst, ...labels)` (a box without buttons of its own shows `sOk`); the menu
 answers `buttonPress(index)`. On PC the buttons take no keyboard focus (the movie sets
 `disableFocus` for platform 0) and the movie's CLIK input does not reach them in Ruffle: they
@@ -608,7 +622,10 @@ allowed; `src/shell/load-wait-spinner.ts`) shows while a save is written: the mo
 in the bottom right corner (`InitExtensions` locks it there), with its `FadeInMenu` and
 `FadeOutMenu`. Quantity Menu, Top Menu, Overlay Menu and Overlay Interaction Menu are names no
 menu of the original is made under; SafeZoneMenu is the consoles' safe-zone screen.
-TODO(M13): the Debug Text Menu's flags and when it opens.
+TODO(M13): the Debug Text Menu: the console's ToggleDebugText (TDT) shows the engine's debug text
+pages (the control map's DebugText context); the pages and the menu's flags are not built.
+Two movies of the interface folder are loaded by nothing (neither the engine nor any movie names
+them): sharedcomponents.swf and widgetoverlay.swf.
 
 Lockpicking keeps the failed tries on each lock (the picks broken on it, the count the original
 keeps with the lock: `failedLockTries` in `src/shell/lockpicking-menu.ts`) for the lock queries
@@ -622,6 +639,27 @@ map and the crafting menu use their modes (the crafting menu `InventoryMode`; TO
 own is not recorded) instead of hiding the HUD, so their notices show. The skills, the race
 menu, lockpicking, credits and the loading menu hide the HUD. Quest notices wait in the queue
 while the HUD is hidden or in a mode without them.
+
+### The crosshair of a Target Location spell, Survival Mode's HUD
+
+Observed in the original (observed in the original; `src/shell/hud-crosshair.ts`): the player's magic
+casters keep a list of the hands whose current spell is delivered at a Target Location (a hand
+joins as such a spell becomes its spell, leaves as another does or it is cleared). For the first
+hand on that list, at most every 200 ms, the caster aims the spell (a pick on the spell layer as
+far as the spell's range in feet × fMagicUnitsPerFoot after the perks' Mod Spell Range (Target
+Loc.), 5000 units without a range) and checks each of its effects at the point met: an effect
+delivered at a Target Location with a projectile (a summon, a rune) needs a surface it can stand
+on, the collision layers Static, Terrain or Ground. The HUD's base clip
+(`HUDMovieBaseInstance`) goes to its frame `Normal` when every effect holds, else to `Alert` (the
+frame with its other crosshair clip, `CrosshairAlert`), and then hears `ValidateCrosshair` (the
+movie shows that frame's crosshair as its mode allows); a pick that meets nothing is Alert, and
+the list becoming empty sets Normal once more. Ours sends it as it changes (the original on every
+check, to the same frame) and aims along the camera's ray (TODO(M13): the original's pick starts
+at the caster's magic node along the actor's aim).
+
+Survival Mode's HUD (`src/gameplay/survival-hud.ts`): the engine's survival message invokes
+`ShowSurvivalElements(show, data, force)`, and the movie's own ShowSurvivalElements calls its
+`SetCompassTemperature(level, force)` (no engine sends that name).
 
 ### Meters, ammo, the floating marker, the game's notices
 
@@ -675,10 +713,18 @@ The map keeps the same way under the journal opened from it (J, its bar's button
 movie hears `ShowJournal(true)` as the journal opens (its bottom bar hidden) and
 `ShowJournal(false)` as it closes, takes no input meanwhile, and is back once the journal has
 closed; Show on Map from that journal closes it for the map on the target. Observed in the
-original's journal: `ShowMenu` answers the engine's "Show Journal" message,
-`RefreshSystemButtons` its "RefreshMenu", `SettingsSaved` its "Journal Settings Saved", and
-`StartCloseMenu` its hiding of the journal. TODO(M13): who sends the first two, and the tween
-kept under a map that has the journal over it (ours keeps one menu under).
+original's journal: `ShowMenu` answers the engine's "Show Journal" message (the movie's
+DoShowMenu: its fade in), `RefreshSystemButtons` its "RefreshMenu", `SettingsSaved` its
+"Journal Setttings Saved" (so spelled), and `StartCloseMenu` its hiding of the journal
+(`JournalMenu.message` answers the first two). A load that does not go ahead while the journal
+is open (the engine's cancelled load: with the journal open it hides the fader and mist menus and
+sends the journal `BackOutFromLoadGame`, else it tells the main menu "RefreshMenu" or
+"CancelLoading") backs the system page out of its load list; ours: a save that cannot be read.
+The gamepad's right stick, held off centre, reaches the journal's page shown
+(`onRightStickInput(x, y)`, which the page takes if it has a use for it) at most every [MapMenu]
+iRightStickRepeatRate (250) ms; back in the centre the wait starts over. TODO(M13): who posts
+"Show Journal" and "RefreshMenu" to the journal (not found), and the tween kept under a map that
+has the journal over it (ours keeps one menu under).
 The movie plays no sounds; choosing plays the engine's UITweenSelectSD (silence in the vanilla
 data), highlighting nothing.
 
@@ -928,7 +974,9 @@ which goes on (no menu mode; the HUD in `DialogueMode`, the mouse on the menu): 
 `PopulateDialogueList(text, isNew, index, ..., selected)` (triples, then the topic to select or -1)
 and `ShowDialogueList(slideAnim, copyVisible)`. The menu asks `TopicClicked(index)`; the actor says
 the topic's info, and its choices (or the actor's topics again) are listed; a Goodbye info, or
-no topics left, ends it with `StartHideMenu()`. Tab: the menu fades, asks `CloseMenu`, and
+no topics left, ends it with `StartHideMenu()`. Tab or Esc (the control map's Cancel) is the
+movie's `Cancel` (its onCancelPress: the greeting skipped, else the menu fading out;
+TODO(M13): that the engine sends the user event so is inferred). The menu fades, asks `CloseMenu`, and
 `FadeDone` once faded. A menu the conversation opens (barter, gift, training) hides it; back, the
 conversation's menu has the keys again. An actor with no topics to offer (Nazeem; Camilla before
 The Golden Claw) opens no menu: it says its greeting where it stands, as a line outside a
@@ -1056,7 +1104,11 @@ spells and shouts marked with F. Its own `PopulateItems` names a function the mo
 have, so the engine sets `_root.MenuHolder.Menu_mc.itemList.entryList` itself (`{text, hotkey,
 equipState, index}`; index the form id) and invokes its `InvalidateData()`. On `ItemSelect` the
 engine reads `_root.GetSelectedIndex()` and acts as the inventory or the magic menu would; the
-menu closes itself with its fade (Tab, Esc, Q) and `FadeDone`. 1-8 (the control map's
+menu closes itself with its fade (Tab, Esc, Q) and `FadeDone`. Observed in the original: as
+it opens, the entry chosen last is selected again (`SetSelectedItem(index)`; if it is gone, the
+entry now where it stood, or the last); while it is open the player's inventory changing (a
+potion drunk) makes the list again, and a list left empty fades the menu out (`StartFadeOut`).
+1-8 (the control map's
 Hotkey1..8: the digits and the keypad's) give the highlighted entry that hotkey (`hotkey` 0..7:
 the movie's AppendHotkeyText shows "1. Iron Sword"), taken from the favorite that had it; its
 own hotkey again takes it off (`GameState.hotkeys`). In the game Hotkey1..8 equip their favorite

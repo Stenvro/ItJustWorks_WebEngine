@@ -14,6 +14,7 @@ import { assignHotkey, hotkeyOfKey, hotkeyUse } from '../gameplay/hotkeys.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import type { GameSession } from './game-session.ts';
+import { reselect, type LastSelected } from './favorites-select.ts';
 import { mouseEquipSlot, type ItemMenuModel } from './item-menu.ts';
 
 const LIST = '_root.MenuHolder.Menu_mc.itemList';
@@ -23,6 +24,8 @@ export class FavoritesMenu {
   readonly #session: GameSession;
   /** What selecting does for an item or a spell (the inventory's and the magic menu's). */
   readonly #select: (formId: number, slot: number | undefined) => Promise<void>;
+  /** The entry chosen last (its form and where it stood in the list), selected on opening. */
+  #lastSelected: LastSelected | undefined;
 
   constructor(host: MenuHost, session: GameSession, items: ItemMenuModel, magic: ItemMenuModel) {
     this.#host = host;
@@ -84,34 +87,35 @@ export class FavoritesMenu {
   async open(closed: () => void, depth: number): Promise<Menu> {
     const entries = await this.#entries();
     let done = false;
+    let stop: (() => void) | undefined;
     const close = (menu: Menu): void => {
       if (done) return;
       done = true;
+      stop?.();
       this.#host.close(menu);
       closed();
+    };
+    /**
+     * Shows the list as it is now. As the original does on the player's inventory changing
+     * while the menu is open, a list left with no entry fades the menu out (StartFadeOut: the
+     * movie's own fade, whose end is FadeDone).
+     */
+    const refresh = async (menu: Menu): Promise<void> => {
+      const now = await this.#entries();
+      if (done) return;
+      menu.set(`${LIST}.entryList`, now);
+      menu.invoke(`${LIST}.InvalidateData`);
+      if (now.length === 0) menu.call('StartFadeOut');
     };
     /** Equips the selected entry (to a hand), then shows the list as it is now. */
     const choose = (menu: Menu, slot: number | undefined): void => {
       const index = menu.invoke('_root.GetSelectedIndex');
       if (typeof index !== 'number') return;
+      const position = entries.findIndex((entry) => entry.index === index);
+      this.#lastSelected = { formId: index, position: Math.max(0, position) };
       void this.#select(index, slot)
-        .then(() => this.#entries())
-        .then((now) => {
-          if (done) return;
-          menu.set(`${LIST}.entryList`, now);
-          menu.invoke(`${LIST}.InvalidateData`);
-        })
+        .then(() => refresh(menu))
         // A game ended meanwhile: nothing left to show.
-        .catch(() => undefined);
-    };
-    /** Shows the list as it is now. */
-    const refresh = (menu: Menu): void => {
-      void this.#entries()
-        .then((now) => {
-          if (done) return;
-          menu.set(`${LIST}.entryList`, now);
-          menu.invoke(`${LIST}.InvalidateData`);
-        })
         .catch(() => undefined);
     };
     return this.#host.open('favoritesmenu.swf', {
@@ -128,7 +132,7 @@ export class FavoritesMenu {
         const runtime = this.#session.scriptsReady;
         if (!event.repeat && typeof index === 'number' && runtime) {
           assignHotkey(runtime.state.hotkeys, index, hotkey);
-          refresh(menu);
+          void refresh(menu).catch(() => undefined);
         }
         return true;
       },
@@ -150,6 +154,18 @@ export class FavoritesMenu {
         menu.tellPlatform('_root.SetPlatform');
         menu.set(`${LIST}.entryList`, entries);
         menu.invoke(`${LIST}.InvalidateData`);
+        // The entry chosen last time is selected again (SetSelectedItem, by its index: ours are
+        // form IDs); if it is gone, the one now where it stood (or the last).
+        const selected = reselect(entries, this.#lastSelected);
+        if (selected !== undefined) menu.call('SetSelectedItem', selected);
+        // The player's inventory changing while it is open (a potion drunk, an item taken):
+        // the list is made again.
+        const runtime = this.#session.scriptsReady;
+        if (runtime && !done) {
+          stop = runtime.events.on('containerChanged', ({ from, to }) => {
+            if (from === PLAYER_REF || to === PLAYER_REF) void refresh(menu).catch(() => undefined);
+          });
+        }
       },
     });
   }
