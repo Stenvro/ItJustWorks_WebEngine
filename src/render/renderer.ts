@@ -151,6 +151,7 @@ import depthResolveShader from './shaders/depth-resolve.wgsl?raw';
 import { HDR_FORMAT, PostProcessor } from './post.ts';
 import { SkyRenderer, type SkyFrame } from './sky.ts';
 import type { ImageSpace } from '../world/image-space.ts';
+import { nearPlaneWater, type NearPlaneWater, type UnderwaterFrame } from '../world/underwater.ts';
 import { TerrainRenderer, type GpuTerrainCell } from './terrain.ts';
 import { TreeLodRenderer, type TreeLodFrame } from './tree-lod.ts';
 import { SnowScattering } from './snow-sss.ts';
@@ -215,6 +216,14 @@ export interface SceneView {
   readonly water?: () => WaterFrame | undefined;
   /** Imagespace of the frame (eye adaptation, bloom, grading); none: the image as rendered. */
   readonly imageSpace?: () => ImageSpace | undefined;
+  /**
+   * The underwater view of the water at the camera (src/world/underwater.ts), called before
+   * `lighting` each frame with what measures the camera's near plane against a water height;
+   * undefined where the near plane is above the water.
+   */
+  readonly underwater?: (
+    nearPlane: (waterHeight: number) => NearPlaneWater,
+  ) => UnderwaterFrame | undefined;
   /** The world map's relief overlay on LOD land (the map menu's 3D only). */
   readonly worldMapOverlay?: () => WorldMapOverlay | undefined;
   /** The sun's volumetric lighting and lens flare this frame (exteriors). */
@@ -632,6 +641,7 @@ export class Renderer {
     /** Cascades to render into the shadow map this frame. */
     const dueCascades: number[] = [];
     let frameLighting: SceneLighting | undefined;
+    let underwater: UnderwaterFrame | undefined;
     if (view) {
       view.camera.update(delta);
       view.camera.viewProjection(targets.width / targets.height, this.#viewProjection);
@@ -648,6 +658,13 @@ export class Renderer {
         const pixels = jitterPixels(this.#taaFrame++);
         jitterProjection(this.#viewProjection, pixels, targets.width, targets.height);
         if (firstPerson) jitterProjection(firstPerson, pixels, targets.width, targets.height);
+      }
+      // Where the near plane reaches below the water at the camera: the underwater view.
+      if (view.underwater) {
+        const inverseView = invert(this.#unjittered);
+        const cameraZ = view.camera.position[2];
+        underwater =
+          inverseView && view.underwater((height) => nearPlaneWater(inverseView, height, cameraZ));
       }
       const lighting = view.lighting(view.camera);
       frameLighting = lighting;
@@ -819,8 +836,10 @@ export class Renderer {
     }
 
     const imageSpace = view?.imageSpace?.();
-    // The imagespace's depth of field reads the opaque scene's depth.
-    const depthOfField = view !== undefined && (imageSpace?.depthOfField.strength ?? 0) > 0;
+    // The imagespace's depth of field and the underwater view read the opaque scene's depth.
+    const depthOfField =
+      view !== undefined &&
+      ((imageSpace?.depthOfField.strength ?? 0) > 0 || underwater !== undefined);
     if (view) {
       const decals = view.decals ? [...view.decals()] : [];
       const decalsInView = this.decals.visible(decals, this.scene.viewPlanes);
@@ -990,6 +1009,7 @@ export class Renderer {
       imageSpace,
       delta,
       depthOfField ? { view: targets.sceneDepthView, near: view.camera.near } : undefined,
+      underwater,
     );
     const blood = view?.screenBlood?.();
     if (blood) this.#screenBlood.draw(encoder, canvasView, targets.width, targets.height, blood);

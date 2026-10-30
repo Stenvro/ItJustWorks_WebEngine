@@ -1,25 +1,35 @@
 import { describe, expect, it } from 'vitest';
-import { flatAmbient } from '../render/scene-lighting.ts';
 import { Fields } from '../formats/esm/fields.ts';
+import { invert } from '../render/frustum.ts';
+import { lookAt, multiply, perspectiveReversedZ, type Vec3 } from '../render/math.ts';
 import {
+  inUnderwaterMask,
   isUnderwater,
+  nearPlaneWater,
   underwaterCrossing,
-  underwaterFog,
-  underwaterLight,
+  underwaterFogColor,
+  underwaterFogShare,
   UnderwaterView,
+  type NearPlaneWater,
 } from './underwater.ts';
 import { parseWater } from './water.ts';
 
-// DefaultWater (Skyrim.esm): underwater fog amount 0.9, near -500, far 1600.
-const DEFAULT_WATER = {
-  underwaterFogAmount: 0.9,
-  underwaterFogNear: -500,
-  underwaterFogFar: 1600,
-  shallowColor: [37 / 255, 52 / 255, 37 / 255] as const,
-  deepColor: [5 / 255, 16 / 255, 5 / 255] as const,
-};
-const DAY = { sunColor: [1, 1, 1] as const, ambient: flatAmbient([0.3, 0.3, 0.3]) };
-const NIGHT = { sunColor: [0, 0, 0] as const, ambient: flatAmbient([0.02, 0.02, 0.03]) };
+const NEAR = 15;
+const FOV_Y = Math.PI / 2;
+/** Half the near plane's height: near × tan(fov / 2). */
+const HALF = NEAR * Math.tan(FOV_Y / 2);
+
+/** A camera at `eye` looking along `forward`, with `up`, as the renderer's inverse matrix. */
+function inverseCamera(eye: Vec3, forward: Vec3, up: Vec3 = [0, 0, 1]): Float32Array {
+  const target: Vec3 = [eye[0] + forward[0], eye[1] + forward[1], eye[2] + forward[2]];
+  const viewProjection = multiply(perspectiveReversedZ(FOV_Y, 1, NEAR), lookAt(eye, target, up));
+  const inverse = invert(viewProjection);
+  if (!inverse) throw new Error('singular camera');
+  return inverse;
+}
+
+const level = (z: number, waterHeight: number): NearPlaneWater =>
+  nearPlaneWater(inverseCamera([0, 0, z], [1, 0, 0]), waterHeight, z);
 
 describe('underwater view', () => {
   it('is under water only below the surface it stands in', () => {
@@ -44,35 +54,60 @@ describe('underwater view', () => {
     expect(underwaterCrossing(plane(10, 10), 9.5, 10).state).toBe('above');
   });
 
-  it('takes the water type underwater fog planes and amount', () => {
-    const fog = underwaterFog(DEFAULT_WATER, DAY);
-    expect(fog.near).toBe(-500);
-    expect(fog.far).toBe(1600);
-    expect(fog.max).toBeCloseTo(0.9);
-    expect(fog.power).toBe(1);
-    // Shallow colour near the camera, deep colour far away, in full daylight.
-    expect(fog.nearColor[1]).toBeCloseTo(52 / 255);
-    expect(fog.farColor[1]).toBeCloseTo(16 / 255);
-  });
-
-  it('keeps a far plane past the near one and some fog where the amount is 0', () => {
-    const fog = underwaterFog(
-      {
-        ...DEFAULT_WATER,
-        underwaterFogNear: -1000,
-        underwaterFogFar: -1200,
-        underwaterFogAmount: 0,
-      },
-      DAY,
+  it("measures the camera's own near plane: wholly above, wholly under or across", () => {
+    expect(level(100, 0).state).toBe('above');
+    expect(level(-100, 0).state).toBe('under');
+    const across = level(0, 0);
+    expect(across.state).toBe('across');
+    expect(across.share).toBeCloseTo(0.5);
+    // Looking straight down the near plane is level: the camera's own side.
+    expect(nearPlaneWater(inverseCamera([0, 0, 1], [0, 0, -1], [1, 0, 0]), 0, 1).state).toBe(
+      'above',
     );
-    expect(fog.far).toBeGreaterThan(fog.near);
-    expect(fog.max).toBeGreaterThan(0);
   });
 
-  it('is darker at night', () => {
-    expect(underwaterLight(NIGHT)).toBeLessThan(underwaterLight(DAY));
-    const night = underwaterFog(DEFAULT_WATER, NIGHT);
-    expect(night.nearColor[1]).toBeLessThan(underwaterFog(DEFAULT_WATER, DAY).nearColor[1]);
+  it('masks the screen below the line where the water cuts the near plane', () => {
+    // At the surface, looking level: the lower half of the screen is under the water.
+    const half = level(0, 0).mask;
+    expect(inUnderwaterMask(half, 0, -0.5)).toBe(true);
+    expect(inUnderwaterMask(half, 0, 0.5)).toBe(false);
+    expect(inUnderwaterMask(half, 0.9, -0.01)).toBe(true);
+    // A third of the near plane's half height above the water: the line a third down.
+    const third = level(HALF / 3, 0).mask;
+    expect(inUnderwaterMask(third, 0, -0.3)).toBe(false);
+    expect(inUnderwaterMask(third, 0, -0.37)).toBe(true);
+  });
+
+  it("turns the mask's line with the camera's roll", () => {
+    // Rolled so that the screen's right side dips toward the water.
+    const roll = 0.3;
+    const up: Vec3 = [0, Math.sin(roll), Math.cos(roll)];
+    const mask = nearPlaneWater(inverseCamera([0, 0, 0], [1, 0, 0], up), 0, 0).mask;
+    expect(mask[0]).not.toBeCloseTo(0);
+    // The line runs through the centre, rising on one side and falling on the other.
+    const leftUnder = inUnderwaterMask(mask, -1, 0.2);
+    const rightUnder = inUnderwaterMask(mask, 1, 0.2);
+    expect(leftUnder).not.toBe(rightUnder);
+    expect(Math.abs(mask[0] / mask[1])).toBeCloseTo(Math.tan(roll));
+  });
+
+  it("colours the fog by the water's shallow colour and the weather's water multiplier", () => {
+    const type = { shallowColor: [0.2, 0.4, 0.6] as const };
+    expect(underwaterFogColor(type)).toEqual([0.2, 0.4, 0.6]);
+    const night = underwaterFogColor(type, [0.25, 0.5, 0.5]);
+    expect(night[0]).toBeCloseTo(0.05);
+    expect(night[1]).toBeCloseTo(0.2);
+    expect(night[2]).toBeCloseTo(0.3);
+  });
+
+  it('fogs from none at the near plane to all at the far plane', () => {
+    expect(underwaterFogShare(-10, -10, 150)).toBe(0);
+    expect(underwaterFogShare(70, -10, 150)).toBeCloseTo(0.5);
+    expect(underwaterFogShare(500, -10, 150)).toBe(1);
+    // A far plane before the near one fogs what is nearer than it fully.
+    expect(underwaterFogShare(10, 400, 100)).toBe(1);
+    expect(underwaterFogShare(500, 400, 100)).toBe(0);
+    expect(underwaterFogShare(5, 5, 5)).toBe(1);
   });
 });
 
@@ -92,17 +127,36 @@ describe('underwater imagespace', () => {
       ),
   );
   const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+  const surface = { height: 0, type: 0x18 };
+  const under = (): NearPlaneWater => ({ state: 'under', share: 1, mask: [0, 1, -20] });
+  const across = (): NearPlaneWater => ({ state: 'across', share: 0.5, mask: [0, 1, 0] });
+  const above = (): NearPlaneWater => ({ state: 'above', share: 0, mask: [0, 1, 20] });
 
-  it("takes the water's own imagespace (WATR INAM) only under its surface", async () => {
+  it("takes the water's own imagespace (WATR INAM) only with the near plane wholly under", async () => {
     expect(water.imageSpace).toBe(IMAGE_SPACE);
-    const surface = { height: 0, type: 0x18 };
-    view.fog(-10, surface, DAY);
+    view.frame(surface, under);
     await settle();
-    view.fog(-10, surface, DAY);
+    view.frame(surface, under);
     expect(view.imageSpace()).toBeUndefined(); // still loading
     await settle();
     expect(view.imageSpace()).toBeDefined();
-    view.fog(10, surface, DAY);
+    view.frame(surface, across);
     expect(view.imageSpace()).toBeUndefined();
+    view.frame(surface, above);
+    expect(view.imageSpace()).toBeUndefined();
+  });
+
+  it('fogs the whole image wholly under, the masked part across, nothing above', () => {
+    const whole = view.frame(surface, under, [0.5, 0.5, 0.5]);
+    expect(whole?.mask).toBeUndefined();
+    expect(whole?.near).toBe(water.underwaterFogNear);
+    expect(whole?.far).toBe(water.underwaterFogFar);
+    expect(whole?.color[0]).toBeCloseTo(water.shallowColor[0] * 0.5);
+    const split = view.frame(surface, across);
+    expect(split?.mask).toEqual([0, 1, 0]);
+    // Inside the mask: the water's imagespace's depth of field.
+    expect(split?.depthOfField).toBeDefined();
+    expect(view.frame(surface, above)).toBeUndefined();
+    expect(view.frame(undefined, under)).toBeUndefined();
   });
 });

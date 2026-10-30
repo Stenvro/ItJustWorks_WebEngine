@@ -2010,27 +2010,32 @@ export class ModelViewer {
           ...(this.#destruction?.scenes() ?? []),
         ],
         camera,
-        lighting: () =>
-          this.#withUnderwater(camera.position, {
-            ...lighting(),
-            lights: [
-              // A menu's lights (the race menu's) first: they light what it shows.
-              ...(this.#play?.extraLights ?? []),
-              ...pointLights(
-                [
-                  ...lights.filter((light) => this.#isEnabled(light.reference)),
-                  ...(this.#created?.lights() ?? []),
-                  // Magic's: effects on actors, casts in hands, what flies and bursts.
-                  ...(this.#stage?.lights() ?? []),
-                ],
-                this.#tickClock(),
-                camera.position,
-                (id) => this.#emittanceRgb(id),
-                this.#session?.ini.number('Display', 'fLightLODStartFade'),
-              ),
-            ],
-          }),
+        lighting: () => ({
+          ...lighting(),
+          lights: [
+            // A menu's lights (the race menu's) first: they light what it shows.
+            ...(this.#play?.extraLights ?? []),
+            ...pointLights(
+              [
+                ...lights.filter((light) => this.#isEnabled(light.reference)),
+                ...(this.#created?.lights() ?? []),
+                // Magic's: effects on actors, casts in hands, what flies and bursts.
+                ...(this.#stage?.lights() ?? []),
+              ],
+              this.#tickClock(),
+              camera.position,
+              (id) => this.#emittanceRgb(id),
+              this.#session?.ini.number('Display', 'fLightLODStartFade'),
+            ),
+          ],
+        }),
         imageSpace,
+        // The underwater view where the near plane reaches below the cell's water (no weather
+        // indoors: the fog colour is the water's shallow colour).
+        underwater: (nearPlane) => {
+          const at = camera.position;
+          return this.#underwaterView.frame(this.#waterAt(at[0], at[1], at[2]), nearPlane);
+        },
         // No sky indoors; the water's displacement field follows the camera.
         water: () => {
           const at = this.#renderer.view?.camera.position;
@@ -2087,20 +2092,13 @@ export class ModelViewer {
     return undefined;
   };
 
-  /** Whether the camera is under the interior's water. */
-  /** The view below water surfaces: the water type's underwater fog (underwater.ts). */
+  /** The view below water surfaces: the underwater fog and imagespace (underwater.ts). */
   readonly #underwaterView = new UnderwaterView(
     (formId) => this.#session?.waterType(formId).then((gpu) => gpu?.type),
     (formId) => this.#session?.db.then((db) => db.get(formId)),
   );
 
-  /** A cell's lighting, with the water type's underwater fog when the camera is under water. */
-  #withUnderwater(camera: Vec3, lighting: SceneLighting): SceneLighting {
-    const water = this.#waterAt(camera[0], camera[1], camera[2]);
-    const fog = this.#underwaterView.fog(camera[2], water, lighting);
-    return fog ? { ...lighting, fog } : lighting;
-  }
-
+  /** Whether the camera is under the interior's water. */
   #underwater(): boolean {
     const camera = this.#renderer.view?.camera.position;
     if (!camera) return false;
