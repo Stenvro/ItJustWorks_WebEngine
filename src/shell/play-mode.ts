@@ -41,12 +41,12 @@ import { CreditsMenu } from './credits-menu.ts';
 import { TitleSequence } from './title-sequence.ts';
 import {
   CELL_NO_FAST_TRAVEL,
-  fastTravelHours,
   noFastTravelReason,
   WORLD_NO_FAST_TRAVEL,
 } from '../gameplay/fast-travel.ts';
 import { ActorValue } from '../world/actor-values.ts';
 import { carriedWeight } from './inventory-menu.ts';
+import { fastTravelJourney, fastTravelWay } from './fast-travel-journey.ts';
 import type { LocalMapContent } from './local-map.ts';
 import { HudController } from './hud-controller.ts';
 import { spellAim } from './hud-crosshair.ts';
@@ -990,28 +990,11 @@ export class PlayMode {
     const here = session.scriptWorld.livePlacement(PLAYER_REF);
     if (here?.world !== undefined && here.world === at.world && this.#world.flyMountTo(at.position))
       return;
-    let way = distance;
-    if (way === undefined) {
-      const from = session.scriptWorld.livePlacement(PLAYER_REF);
-      way =
-        from?.world !== undefined && from.world === at.world
-          ? Math.hypot(at.position[0] - from.position[0], at.position[1] - from.position[1])
-          : 0;
-    }
-    const player = await session.playerData();
-    const settings = await session.settings();
-    const hours = fastTravelHours(
-      way,
-      player.movement.normal.walk.forward,
-      settings.number('fFastTravelSpeedMult') ?? 1,
-      session.timeScale,
+    // The hours pass, the sky changes, the player goes there behind a loading screen, and the
+    // arrival is told (fast-travel-journey.ts).
+    await fastTravelJourney(session, at, distance ?? fastTravelWay(session, at), (place) =>
+      this.#loadInto(place),
     );
-    if (hours > 0) session.advanceClock(hours);
-    // The sky takes the next weather at once, without a change.
-    session.sky.fastTravel();
-    await this.#loadInto(at);
-    // Arrived: the hub tells the time it took (TESFastTravelEndEvent: OnPlayerFastTravelEnd).
-    runtime.events.emit('fastTravelEnd', { hours });
   }
 
   /** Goes to a place behind the loading menu and a loading screen, the HUD away. */

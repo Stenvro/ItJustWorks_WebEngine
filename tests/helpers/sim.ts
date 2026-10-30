@@ -13,15 +13,20 @@
 import { findPath } from '../../src/ai/pathfinding.ts';
 import { WeaponState } from '../../src/gameplay/combat/combat-state.ts';
 import { Layer } from '../../src/physics/collision-layers.ts';
-import { fastTravelHours } from '../../src/gameplay/fast-travel.ts';
 import { readGameSave, saveGame } from '../../src/save/game-save.ts';
 import type { SpokenInfo, TopicChoice } from '../../src/scripting/runtime/dialogue-engine.ts';
 import { afterInfo } from '../../src/scripting/runtime/dialogue-rules.ts';
 import type { GameEvents } from '../../src/scripting/runtime/event-hub.ts';
 import { PLAYER_REF } from '../../src/scripting/runtime/forms.ts';
-import type { ScriptRuntime } from '../../src/scripting/runtime/runtime.ts';
+import type { Placement, ScriptRuntime } from '../../src/scripting/runtime/runtime.ts';
 import type { ObjectHandle, Value } from '../../src/scripting/values.ts';
 import type { StagedActor } from '../../src/shell/actor-stage.ts';
+import { barterModel } from '../../src/shell/barter-menu.ts';
+import { openBookUnseen } from '../../src/shell/book-reading.ts';
+import { fastTravelJourney, fastTravelWay } from '../../src/shell/fast-travel-journey.ts';
+import { giftModel } from '../../src/shell/gift-menu.ts';
+import { inventoryModel } from '../../src/shell/inventory-menu.ts';
+import { passHours } from '../../src/shell/sleep-wait-menu.ts';
 import type { SimRecord } from '../../src/sim/sim-log.ts';
 import { SIM_STEP, SimWorld } from '../../src/sim/sim-world.ts';
 import { Vfs } from '../../src/vfs/vfs.ts';
@@ -236,24 +241,14 @@ export class Sim {
     const session = this.world.session;
     const at = await this.runtime.placement(await this.runtime.fastTravelArrival(destination));
     if (!at) throw new Error(`No place for ${destination.toString(16)}`);
-    const from = await this.runtime.placement(PLAYER_REF);
-    const way =
-      from?.world !== undefined && from.world === at.world
-        ? Math.hypot(at.position[0] - from.position[0], at.position[1] - from.position[1])
-        : 0;
-    const settings = await session.settings();
-    const hours = fastTravelHours(
-      way,
-      (await session.playerData()).movement.normal.walk.forward,
-      settings.number('fFastTravelSpeedMult') ?? 1,
-      session.timeScale,
-    );
-    if (passTime && hours > 0) session.advanceClock(hours);
-    if (passTime) session.sky.fastTravel();
-    const arrival: Arrival = { position: at.position, heading: at.rotation[2] };
-    if (at.world !== undefined) await this.world.openExterior(at.world, { arrival });
-    else if (at.cell !== undefined) await this.world.openInterior(at.cell, arrival);
-    if (passTime) this.runtime.events.emit('fastTravelEnd', { hours });
+    const enter = async (place: Placement): Promise<void> => {
+      const arrival: Arrival = { position: place.position, heading: place.rotation[2] };
+      if (place.world !== undefined) await this.world.openExterior(place.world, { arrival });
+      else if (place.cell !== undefined) await this.world.openInterior(place.cell, arrival);
+    };
+    // Play's journey (src/shell/fast-travel-journey.ts): the hours, the sky, the arrival told.
+    if (passTime) await fastTravelJourney(session, at, fastTravelWay(session, at), enter);
+    else await enter(at);
     await this.world.settle();
   }
 
@@ -692,6 +687,141 @@ export class Sim {
     const cast = this.world.stage.launchSpell(spell, PLAYER_REF, target, PLAYER_REF);
     await this.world.settle();
     return cast;
+  }
+
+  /**
+   * The player uses their right hand (a spell equipped there, a bow): drawn if it is not, the
+   * attack button held `seconds` (a concentration spell's stream, a bow's draw) and let go.
+   */
+  async attack(seconds: number): Promise<void> {
+    if (this.world.stage.combat.weaponState(PLAYER_REF) !== WeaponState.drawn) {
+      this.press(READY_WEAPON, true);
+      await this.step(SIM_STEP);
+      this.press(READY_WEAPON, false);
+      await this.step(DRAW_WAIT);
+    }
+    this.press(RIGHT_ATTACK, true);
+    await this.step(seconds);
+    this.press(RIGHT_ATTACK, false);
+    await this.step(BREAK_PAUSE);
+  }
+
+  /** The player turns to look at a point (from their eyes). */
+  look(at: Vec3): void {
+    const [x, y, z] = this.world.player.feet;
+    const dx = at[0] - x;
+    const dy = at[1] - y;
+    this.world.look(Math.atan2(dx, dy), Math.atan2(at[2] - (z + EYE_HEIGHT), Math.hypot(dx, dy)));
+  }
+
+  /**
+   * The player takes hold of a loose object before them (Activate held past fZKeyDelay), holds
+   * it `seconds` and lets it go.
+   */
+  async grab(reference: number, seconds: number): Promise<void> {
+    const at = await this.position(reference);
+    if (at) this.look(at);
+    await this.step(SIM_STEP);
+    this.press('Activate', true);
+    await this.step(seconds);
+    this.press('Activate', false);
+    await this.step(SIM_STEP);
+    this.world.look(this.world.player.yaw);
+  }
+
+  /**
+   * The player reads a book (the book menu as it opens a book: src/shell/book-reading.ts; the
+   * simulation shows nothing and closes it at once). A reference read lying in the world, else
+   * the book from the inventory. Whether it opened.
+   */
+  async read(book: number, reference?: number): Promise<boolean> {
+    let opened = false;
+    await this.#stepUntil(
+      openBookUnseen(this.runtime, { book, ...(reference !== undefined && { reference }) }).then(
+        (open) => {
+          opened = open;
+        },
+      ),
+    );
+    return opened;
+  }
+
+  /**
+   * The player sells items to a merchant through the barter menu's model (bartermenu.swf's
+   * ItemSelect on one of the player's entries: src/shell/barter-menu.ts), at the price it shows.
+   * False if the merchant does not buy it.
+   */
+  async sell(vendor: number, item: number, count = 1): Promise<boolean> {
+    const model = await barterModel(this.world.session, this.world.terminal, vendor);
+    const view = await model.view();
+    const index = view.entries.findIndex((entry) => entry.formId === item && !entry.container);
+    const entry = view.entries[index];
+    if (!entry || !model.trade) return false;
+    const price = view.cards[index]?.value;
+    await this.#stepUntil(
+      model.trade(entry, [count, typeof price === 'number' ? price : 0, false]),
+    );
+    return true;
+  }
+
+  /**
+   * The player sleeps or waits some hours (the sleep and wait menu's OK: src/shell/
+   * sleep-wait-menu.ts passHours), the world stepping meanwhile.
+   */
+  async rest(hours: number, sleeping: boolean): Promise<void> {
+    await this.#stepUntil(passHours(this.world.session, hours, sleeping), 120);
+  }
+
+  /**
+   * The player buys one of a merchant's goods through the barter menu's model (ItemSelect on a
+   * vendor's entry), at the price it shows. False if the merchant does not have it.
+   */
+  async buy(vendor: number, item: number): Promise<boolean> {
+    const model = await barterModel(this.world.session, this.world.terminal, vendor);
+    const view = await model.view();
+    const index = view.entries.findIndex((entry) => entry.formId === item && entry.container);
+    const entry = view.entries[index];
+    if (!entry || !model.trade) return false;
+    const price = view.cards[index]?.value;
+    await this.#stepUntil(model.trade(entry, [1, typeof price === 'number' ? price : 0, true]));
+    return true;
+  }
+
+  /** The merchant's goods as the barter menu lists them (their form ids). */
+  async goods(vendor: number): Promise<number[]> {
+    const model = await barterModel(this.world.session, this.world.terminal, vendor);
+    return (await model.view()).entries
+      .filter((entry) => entry.container)
+      .map((entry) => entry.formId);
+  }
+
+  /** The player drops items from the inventory menu (its Drop). False if they have none. */
+  async drop(item: number, count = 1): Promise<boolean> {
+    const model = inventoryModel(this.world.session, this.world.terminal, async (book) => {
+      await openBookUnseen(this.runtime, { book });
+    });
+    const entry = (await model.view()).entries.find((candidate) => candidate.formId === item);
+    if (!entry || !model.drop) return false;
+    await this.#stepUntil(model.drop(entry, count));
+    return true;
+  }
+
+  /**
+   * The player gives an item to an actor through the gift menu's model (Actor.ShowGiftMenu with
+   * favor points: ItemSelect on one of the player's entries). False if it cannot be given.
+   */
+  async gift(actor: number, item: number): Promise<boolean> {
+    const model = await giftModel(this.world.session, actor, {
+      giving: true,
+      filter: undefined,
+      useFavorPoints: true,
+    });
+    const entry = (await model.view()).entries.find(
+      (candidate) => candidate.formId === item && !candidate.container,
+    );
+    if (!entry || !model.trade) return false;
+    await this.#stepUntil(model.trade(entry, [1]));
+    return true;
   }
 
   // --- Conversations (the dialogue menu's rules, src/shell/dialogue-menu.ts, headless) -------

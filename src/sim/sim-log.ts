@@ -317,10 +317,11 @@ export class SimLog {
 
   /**
    * The recording menus: a message box answers with the next of `answers` (else its first
-   * button); the others are logged and close at once. TODO(sim): the container, barter, gift
-   * and training menus have no headless runner yet: a trade a test needs is driven
-   * through the runtime's inventory directly; a conversation through the simulation's talk
-   * (tests/helpers/sim.ts), which holds it by the dialogue menu's rules.
+   * button); the others are logged and close at once. A trade, a gift, a drop, a book read and
+   * a rest a test needs go through the menus' own engine sides (their models, book-reading.ts,
+   * passHours: the simulation's helpers, tests/helpers/sim.ts); a conversation through the
+   * simulation's talk, which holds it by the dialogue menu's rules. TODO(sim): the container,
+   * training, crafting and lockpicking menus have no headless runner yet.
    */
   readonly menus: MenuSink = {
     messageBox: (text, buttons) => {
