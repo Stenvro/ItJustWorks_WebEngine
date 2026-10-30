@@ -73,9 +73,10 @@ fn lightListIndex(list: LightList, i: u32) -> u32 {
 @group(2) @binding(6) var backLightMap: texture_2d<f32>;
 // Lighting: multi-layer parallax inner layer (slot 6); LOD landscape: the terrain noise.
 @group(2) @binding(7) var layerMap: texture_2d<f32>;
-// The engine's directional material textures: diffuse, normal map (sparkle noise), noise.
+// The engine's directional material textures: diffuse, normal detail map (the sparkle noise),
+// noise.
 @group(2) @binding(8) var projectedDiffuse: texture_2d<f32>;
-@group(2) @binding(9) var projectedNormal: texture_2d<f32>;
+@group(2) @binding(9) var projectedNormalDetail: texture_2d<f32>;
 @group(2) @binding(10) var projectedNoise: texture_2d<f32>;
 // FaceGen heads: the detail map (slot 3).
 @group(2) @binding(11) var detailMap: texture_2d<f32>;
@@ -99,6 +100,8 @@ struct VertexOut {
   @location(3) tangent: vec3f,
   @location(4) bitangent: vec3f,
   @location(5) color: vec4f,
+  // Eyes (shader type 16): from the eye's reflection centre to the vertex (eyeNormal).
+  @location(6) eyeNormal: vec3f,
 };
 
 // Distance fade (object-fade.ts): how far the draw's reference has faded out (0..255 in the top
@@ -183,7 +186,26 @@ fn vs_main(in: VertexIn) -> VertexOut {
   if ((draw.flags.z & DRAW_TREE_ANIM) != 0u) {
     position += (in.normal.xyz * 2.0 - 1.0) * leafShift(in.position, in.color.a);
   }
-  return objectVertex(in, draw.world * vec4f(position, 1.0), worldRotation());
+  var out = objectVertex(in, draw.world * vec4f(position, 1.0), worldRotation());
+  out.eyeNormal = eyeNormal(position, draw.world, out.worldPos);
+  return out;
+}
+
+// Eyes (shader type 16), observed in the original: the direction from the vertex's eye's
+// reflection centre (the material's left centre for eye data 0, the right for 1, moved as the
+// vertex is) to the vertex; the eye reflects and takes its ambient light about it. Every eye
+// vertex of the data holds 0 or 1, the nearer centre's, so the nearer centre stands for it here;
+// vertices without eye data take the left. writeMaterial puts the centres in layer.xyz and
+// sparkle.xyz (eyes use neither), sparkle.w set when the vertices carry eye data.
+fn eyeNormal(modelPos: vec3f, toWorld: mat4x4f, world: vec3f) -> vec3f {
+  if ((draw.flags.w & 0x1fu) != 16u) {
+    return vec3f(0.0, 0.0, 1.0);
+  }
+  let left = draw.layer.xyz;
+  let right = draw.sparkle.xyz;
+  let rightEye = draw.sparkle.w > 0.5 && distance(modelPos, right) < distance(modelPos, left);
+  let center = toWorld * vec4f(select(left, right, rightEye), 1.0);
+  return safeNormalize(world - center.xyz);
 }
 
 // A vertex at its world position, its normal frame turned by `rotation` (model to world).
