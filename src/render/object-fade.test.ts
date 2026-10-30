@@ -80,11 +80,16 @@ describe('object fade', () => {
     expect(state.alpha).toBeCloseTo(0.05);
   });
 
-  it('never fades references with distant LOD or placed as full LOD', () => {
+  it('never fades references with distant LOD; full LOD ones fade far as the sky cell', () => {
     expect(neverFades('STAT', HAS_DISTANT_LOD, 0)).toBe(true);
     expect(neverFades('TREE', HAS_DISTANT_LOD, 0)).toBe(true);
     expect(neverFades('STAT', 0, 0)).toBe(false);
-    expect(neverFades('MISC', 0, IS_FULL_LOD)).toBe(true);
+    expect(neverFades('MISC', 0, IS_FULL_LOD)).toBe(false);
+    expect(neverFades('STAT', HAS_DISTANT_LOD, IS_FULL_LOD)).toBe(false);
+    expect(fadeKind('STAT', false, IS_FULL_LOD)).toBe('skyCell');
+    // fSkyCellRefFadeDistance whatever its size, by fLODFadeOutMultSkyCell.
+    const settings = { actors: 6, items: 3, objects: 5, skyCell: 2 };
+    expect(fadeRange('skyCell', 10, settings)).toEqual({ start: 180000, end: 300000 });
     // 0x8000 means something else on items: they still fade.
     expect(neverFades('MISC', HAS_DISTANT_LOD, 0)).toBe(false);
   });

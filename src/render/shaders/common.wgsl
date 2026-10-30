@@ -155,7 +155,8 @@ const DRAW_SKINNED = 0x800000u;
 // engine draws first person in a pass of its own over the world; the band does the same in one
 // pass: the arms and weapon never sink into a wall, and still hide their own far sides.
 const DRAW_FIRST_PERSON = 0x8000u;
-const FIRST_PERSON_DEPTH = 0.98;
+// [Display] f1stPersonFarDepthRange: the band's share of the depth range (observed in the original).
+const FIRST_PERSON_DEPTH = 0.99;
 const LEAF_DAMPEN_START = 3600.0;
 const LEAF_DAMPEN_END = 4600.0;
 

@@ -9,7 +9,10 @@ import { CameraShake } from './camera-shake.ts';
 import {
   AutoVanity,
   cameraState,
+  DragonCamera,
+  dragonShoulder,
   horseShoulder,
+  lookAngles,
   zoomRange,
   type CameraConditions,
   type CameraState,
@@ -89,6 +92,11 @@ export interface PlayerData {
   readonly baseControls: ControlMap;
   controls: ControlMap;
   readonly movement: PlayerMovement;
+  /**
+   * GMST fOverShoulderRangedDragonPosX, ...AddY, ...PosZ: the dragon camera's shoulder offset
+   * with a weapon or spell drawn.
+   */
+  readonly dragonRangedShoulder: readonly [number, number, number];
   /** GMST fJumpHeightMin: how high a jump goes (game units). */
   readonly jumpHeight: number;
   /**
@@ -224,6 +232,12 @@ export async function readPlayerData(
       swim: type('NPCSwimming'),
     },
     jumpHeight: settings.number('fJumpHeightMin') ?? JUMP_HEIGHT_MIN,
+    // The engine's built-in values where no plugin sets them.
+    dragonRangedShoulder: [
+      settings.number('fOverShoulderRangedDragonPosX') ?? 0,
+      settings.number('fOverShoulderRangedDragonAddY') ?? -150,
+      settings.number('fOverShoulderRangedDragonPosZ') ?? 90,
+    ],
     fallVelocityMin: settings.number('fJumpFallVelocityMin') ?? FALL_VELOCITY_MIN,
     grab: grabSettings(settings),
     grabLimits: {
@@ -375,6 +389,17 @@ export interface PlayerMotion {
   readonly moving: boolean;
   readonly running: boolean;
   readonly sprinting: boolean;
+}
+
+/** The ridden dragon as its camera follows it (src/shell/actor-mounts.ts). */
+export interface DragonRideView {
+  /** Its heading (compass radians) and where it stands (its feet). */
+  readonly heading: number;
+  readonly feet: Vec3;
+  /** It moves and is horse-like: the view is held against its turns (no vanilla dragon). */
+  readonly holds: boolean;
+  /** The target the player locked it on, and where that stands. */
+  readonly locked?: { readonly reference: number; readonly position: Vec3 } | undefined;
 }
 
 /** An animated camera the player's graph starts (src/shell/actor-graph-events.ts). */
@@ -555,6 +580,14 @@ export class Player implements Camera {
   #input = false;
   /** What the player rides (the mount's and the dragon's camera states); undefined: none. */
   mount: (() => 'horse' | 'dragon' | undefined) | undefined;
+  /** The ridden dragon the dragon's camera follows (src/shell/camera-states.ts). */
+  dragonRide: (() => DragonRideView | undefined) | undefined;
+  /** The dragon's camera state: the view turning with the dragon, its lock on a target. */
+  readonly dragonCamera = new DragonCamera();
+  /** The dragon camera's view (heading, pitch) this frame; undefined: not on a dragon. */
+  #dragonView: readonly [number, number] | undefined;
+  /** The dragon's feet when the camera hangs on it this frame (bDragonCameraTargetPlayer 0). */
+  #dragonAnchor: Vec3 | undefined;
   /** Whether the vanity camera may start (no combat, no menu); undefined: always. */
   vanityAllowed: (() => boolean) | undefined;
 
@@ -735,11 +768,17 @@ export class Player implements Camera {
 
   /** The camera's heading: the player's, or the vanity camera's about them. */
   #viewYaw(): number {
+    if (this.#dragonView) return this.#dragonView[0];
     return this.vanity.active ? this.vanity.yaw : this.yaw;
   }
 
   /** Where the camera looks (the vanity camera: at the player, from its heading). */
   #viewForward(): Vec3 {
+    const dragon = this.#dragonView;
+    if (dragon) {
+      const c = Math.cos(dragon[1]);
+      return [Math.sin(dragon[0]) * c, Math.cos(dragon[0]) * c, Math.sin(dragon[1])];
+    }
     if (!this.vanity.active) return this.forward;
     const yaw = this.vanity.yaw;
     const c = Math.cos(this.pitch);
@@ -883,6 +922,7 @@ export class Player implements Camera {
     const { ini } = this.#setup;
     const mount = this.mount?.();
     if (mount === 'dragon' && this.pov === 'first') this.setPov('third');
+    this.#stepDragonCamera(mount === 'dragon' ? this.dragonRide?.() : undefined, deltaSeconds);
     const input = this.#input;
     this.#input = false;
     const idle = !input && this.#held.size === 0 && !this.motion.moving && this.pilot === undefined;
@@ -911,6 +951,38 @@ export class Player implements Camera {
       this.pov = this.#vanityPov;
       this.#vanityPov = undefined;
     }
+  }
+
+  /**
+   * The dragon's camera (DragonCameraState, observed in the original): the player's heading
+   * turns with the dragon, a locked target is looked at from the player, eased in and out over
+   * fDragonCameraDollyTime; bDragonCameraTargetPlayer 0 hangs the camera on the dragon.
+   */
+  #stepDragonCamera(ride: DragonRideView | undefined, deltaSeconds: number): void {
+    if (!ride) {
+      this.#dragonView = undefined;
+      this.#dragonAnchor = undefined;
+      return;
+    }
+    const ini = this.#setup.ini;
+    if (this.#dragonView === undefined) this.dragonCamera.reset(ride.heading, this.yaw, this.pitch);
+    const feet = this.feet;
+    const locked = ride.locked && {
+      reference: ride.locked.reference,
+      ...lookAngles(feet, ride.locked.position),
+    };
+    const { yaw, view } = this.dragonCamera.step(
+      { yaw: this.yaw, pitch: this.pitch, heading: ride.heading, holds: ride.holds, locked },
+      deltaSeconds,
+      {
+        maxAngle: (ini.number('Camera', 'fDragonMaxAngleBeforeTurn') * Math.PI) / 180,
+        dollyTime: ini.number('Camera', 'fDragonCameraDollyTime'),
+      },
+    );
+    this.yaw = yaw;
+    this.#dragonView = view;
+    this.#dragonAnchor =
+      ini.bool('Camera', 'bDragonCameraTargetPlayer') || locked ? undefined : ride.feet;
   }
 
   /** Seconds Toggle POV has been held (undefined: it is up), and whether the hold switched. */
@@ -960,21 +1032,28 @@ export class Player implements Camera {
   #moveShoulder(deltaSeconds: number): void {
     const ini = this.#setup.ini;
     const drawn = this.weaponDrawn?.() === true;
-    // The mount's camera state: the horse's shoulder offsets, drawn or not.
+    // The mount's camera state: the horse's shoulder offsets, drawn or not; the dragon's own.
+    const mount = this.mount?.();
     const target: [number, number, number] =
-      this.mount?.() === 'horse'
+      mount === 'horse'
         ? horseShoulder((key) => ini.number('Camera', key))
-        : drawn
-          ? [
-              ini.number('Camera', 'fOverShoulderCombatPosX'),
-              -ini.number('Camera', 'fOverShoulderCombatAddY'),
-              ini.number('Camera', 'fOverShoulderCombatPosZ'),
-            ]
-          : [
-              ini.number('Camera', 'fOverShoulderPosX'),
-              0,
-              ini.number('Camera', 'fOverShoulderPosZ'),
-            ];
+        : mount === 'dragon'
+          ? dragonShoulder(
+              (key) => ini.number('Camera', key),
+              this.#setup.dragonRangedShoulder,
+              drawn,
+            )
+          : drawn
+            ? [
+                ini.number('Camera', 'fOverShoulderCombatPosX'),
+                -ini.number('Camera', 'fOverShoulderCombatAddY'),
+                ini.number('Camera', 'fOverShoulderCombatPosZ'),
+              ]
+            : [
+                ini.number('Camera', 'fOverShoulderPosX'),
+                0,
+                ini.number('Camera', 'fOverShoulderPosZ'),
+              ];
     const now = this.#shoulder;
     if (!now || this.pov === 'first') {
       this.#shoulder = target;
@@ -1266,7 +1345,7 @@ export class Player implements Camera {
     // Camera3rd hangs on the skeleton's root, not on its animated bones: a seated body (a cart's
     // rider, its root at the cart's) takes it along where the body is.
     // Another actor the camera follows (SetCameraTarget) takes the player's place.
-    const followed = this.cameraTargetFeet?.();
+    const followed = this.cameraTargetFeet?.() ?? this.#dragonAnchor;
     const [sx, sy, sz] = followed ? [0, 0, 0] : (this.bodyShift?.() ?? [0, 0, 0]);
     const anchor = followed ?? feet;
     const target: Vec3 = [

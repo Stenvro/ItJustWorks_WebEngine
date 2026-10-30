@@ -119,10 +119,19 @@ export const INI_DEFAULTS = {
     fOverShoulderPosX: 30,
     fOverShoulderPosZ: -10,
     // Riding a horse the third-person camera takes these shoulder offsets instead (the mount's
-    // camera state: src/shell/camera-states.ts). TODO(M13): the engine's built-in values.
-    fOverShoulderHorseAddY: -80,
+    // camera state: src/shell/camera-states.ts); the engine's built-in values.
+    fOverShoulderHorseAddY: -300,
     fOverShoulderHorsePosX: 0,
-    fOverShoulderHorsePosZ: 20,
+    fOverShoulderHorsePosZ: 0,
+    // On a dragon's back (the dragon's camera state: src/shell/camera-states.ts), the engine's
+    // built-in values: its shoulder offsets, the view's limit from a moving horse-like mount
+    // (degrees), the ease to and from a locked target (seconds), whether it hangs on the player.
+    fOverShoulderDragonAddY: -600,
+    fOverShoulderDragonPosX: 0,
+    fOverShoulderDragonPosZ: 0,
+    fDragonMaxAngleBeforeTurn: 90,
+    fDragonCameraDollyTime: 0.75,
+    bDragonCameraTargetPlayer: 1,
     // Looking down, the third-person camera pulls back up to this far (src/shell/player.ts).
     fPitchZoomOutMaxDist: 100,
     // How fast the third-person camera moves to its shoulder offsets (a share a second).
@@ -297,6 +306,8 @@ export const INI_DEFAULTS = {
     fLODFadeOutMultActors: 6,
     fLODFadeOutMultItems: 3,
     fLODFadeOutMultObjects: 5,
+    // Full LOD references (the sky cell's fade type: src/render/object-fade.ts).
+    fLODFadeOutMultSkyCell: 1,
     fObjectLODMax: 30,
     fObjectLODMin: 5,
   },

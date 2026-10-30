@@ -9,7 +9,7 @@
 // does not stop the object fade. The shaders compute the value per draw (common.wgsl
 // lodFadeValue) from the scales and ranges written here into the frame. Platform-independent.
 
-import type { FadeKind, FadeSettings } from './object-fade.ts';
+import { fadeMultiplier, type FadeKind, type FadeSettings } from './object-fade.ts';
 
 /** The camera distance a fade value of 1 stands for, at a multiplier of 1. */
 export const LOD_FADE_DISTANCE = 7200;
@@ -40,7 +40,7 @@ export const DEFAULT_SHADER_FADES: ShaderFadeSettings = {
 
 /** A fade kind's index in the frame's scales (common.wgsl lodFadeValue: flags.w bits 5-6). */
 export function fadeKindIndex(kind: FadeKind | undefined): number {
-  return kind === 'actor' ? 1 : kind === 'item' ? 2 : 0;
+  return kind === 'actor' ? 1 : kind === 'item' ? 2 : kind === 'skyCell' ? 3 : 0;
 }
 
 /** The scale from camera distance to fade value at a multiplier (0 or less: a fifth). */
@@ -50,9 +50,7 @@ function fadeScale(multiplier: number): number {
 
 /** A geometry's fade value at a camera distance. */
 export function lodFadeValue(distance: number, kind: FadeKind, settings: FadeSettings): number {
-  const multiplier =
-    kind === 'actor' ? settings.actors : kind === 'item' ? settings.items : settings.objects;
-  return distance * fadeScale(multiplier);
+  return distance * fadeScale(fadeMultiplier(kind, settings));
 }
 
 /** How much of a feature is left at a fade value: 1 up to `start`, 0 from `end`. */
@@ -64,7 +62,7 @@ export function featureFade(value: number, start: number, end: number): number {
 
 /**
  * The frame's twelve floats (frame.wgsl lodFadeScale, specularFades, decalFades): the scale
- * from distance to fade value per kind (object, actor, item), then the four features' start
+ * from distance to fade value per kind (object, actor, item, sky cell), then the four features' start
  * and end.
  */
 export function shaderFadeFrame(objectFade: FadeSettings, fades: ShaderFadeSettings): number[] {
@@ -72,7 +70,7 @@ export function shaderFadeFrame(objectFade: FadeSettings, fades: ShaderFadeSetti
     fadeScale(objectFade.objects),
     fadeScale(objectFade.actors),
     fadeScale(objectFade.items),
-    0,
+    fadeScale(objectFade.skyCell ?? 1),
     fades.specularStart,
     fades.specularEnd,
     fades.envmapStart,
