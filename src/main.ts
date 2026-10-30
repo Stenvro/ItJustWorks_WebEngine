@@ -957,6 +957,14 @@ async function main(): Promise<void> {
         // The launcher's anti-aliasing, volumetric lighting and lens flare.
         renderer.antiAliasing = session.ini.bool('Display', 'bUseTAA');
         renderer.sunEffects.rays = session.ini.bool('Display', 'bVolumetricLightingEnable');
+        renderer.sunEffects.volume.quality = session.ini.number(
+          'Display',
+          'iVolumetricLightingQuality',
+        );
+        renderer.sunEffects.volume.temporal = session.ini.bool(
+          'Display',
+          'bVolumetricLightingEnableTemporalAccumulation',
+        );
         renderer.sunEffects.flare = session.ini.bool('ImageSpace', 'bLensFlare');
       }
       lastScriptTick = now;

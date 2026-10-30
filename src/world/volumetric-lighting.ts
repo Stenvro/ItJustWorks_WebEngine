@@ -92,9 +92,8 @@ export interface VolumetricSettings {
  * The god rays' strength and colour this frame: the weather's intensity scaled by the settings,
  * the sun's colour mixed with its custom colour, faded as the sun sets below the horizon
  * (`sunHeight`: the sun direction's up component). The phase contribution is not a strength:
- * it weighs the phase function against even scattering (godRayPhase). TODO(M13): the original
- * scatters through a froxel volume lit by the shadow map; we gather the light's way through
- * the sky radially from the sun.
+ * it weighs the phase function against even scattering (godRayPhase). The froxel volume
+ * (render/volumetric-volume.ts) scatters it through the view, lit by the shadow cascades.
  */
 export function godRays(
   lighting: VolumetricLighting,
@@ -104,7 +103,6 @@ export function godRays(
 ): {
   readonly strength: number;
   readonly color: Rgb;
-  readonly decay: number;
   /** The phase function's asymmetry g (0..0.95): godRayPhase. */
   readonly scattering: number;
   /** The phase function's share against even scattering (0..1): godRayPhase. */
@@ -115,12 +113,9 @@ export function godRays(
   const custom = Math.max(0, Math.min(1, lighting.customColorContribution));
   const channel = (i: 0 | 1 | 2): number => sunColor[i] * (1 - custom) + lighting.color[i] * custom;
   const color: Rgb = [channel(0), channel(1), channel(2)];
-  // Tighter scattering keeps the rays near the sun: the samples fade faster along the blur.
-  const decay = 0.9 + 0.09 * Math.max(0, Math.min(1, lighting.phaseScattering));
   return {
     strength,
     color,
-    decay,
     scattering: phaseAsymmetry(lighting.phaseScattering),
     phaseContribution: Math.max(0, Math.min(1, lighting.phaseContribution)),
   };

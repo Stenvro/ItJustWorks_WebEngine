@@ -44,6 +44,9 @@ struct Frame {
   lodFadeScale: vec4f,
   specularFades: vec4f,
   decalFades: vec4f,
+  // The world map's relief overlay on LOD land (scene-renderer.ts WorldMapOverlay): the normal
+  // map's scale per world unit (0: off) and strength, the snow normal map's scale and strength.
+  worldMap: vec4f,
 };
 
 struct PointLight {
@@ -106,6 +109,9 @@ fn lightCone(light: PointLight, offset: vec3f) -> f32 {
 @group(0) @binding(6) var screenSampler: sampler;
 @group(0) @binding(7) var<uniform> lightShadows: LightShadows;
 @group(0) @binding(8) var lightShadowMap: texture_depth_2d_array;
+@group(0) @binding(9) var worldMapOverlay: texture_2d<f32>;
+@group(0) @binding(10) var worldMapOverlaySnow: texture_2d<f32>;
+@group(0) @binding(11) var worldMapSampler: sampler;
 
 // How much of a shadow light reaches a point (0 in shadow, 1 lit), faded by how much of its
 // shadow shows: the cube face (omni) or the one frustum (spot, hemisphere) that holds the point,

@@ -68,6 +68,7 @@ import {
   type PointLight,
   type SceneLighting,
   type WaterFrame,
+  type WorldMapOverlay,
 } from './scene-renderer.ts';
 import backdropShader from './shaders/backdrop.wgsl?raw';
 import depthResolveShader from './shaders/depth-resolve.wgsl?raw';
@@ -135,7 +136,9 @@ export interface SceneView {
   readonly water?: () => WaterFrame | undefined;
   /** Imagespace of the frame (eye adaptation, bloom, grading); none: the image as rendered. */
   readonly imageSpace?: () => ImageSpace | undefined;
-  /** The sun's god rays and lens flare this frame (exteriors). */
+  /** The world map's relief overlay on LOD land (the map menu's 3D only). */
+  readonly worldMapOverlay?: () => WorldMapOverlay | undefined;
+  /** The sun's volumetric lighting and lens flare this frame (exteriors). */
   readonly sunEffects?: () => SunEffectsFrame | undefined;
   /** Blood on the screen (the player hit: screen-blood-data.ts), over the finished image. */
   readonly screenBlood?: () => ScreenBloodFrame | undefined;
@@ -435,6 +438,7 @@ export class Renderer {
         focus = this.#fitFocusShadows(view, lighting.sunDirection);
       }
       this.scene.updateFocusShadows(focus);
+      this.scene.setWorldMapOverlay(view.worldMapOverlay?.());
       lightShadowSlots = this.#selectShadowLights(view, lighting.lights, delta);
       this.scene.updateFrame(
         this.#viewProjection,
@@ -701,7 +705,14 @@ export class Renderer {
       }
       const sun = view.sunEffects?.();
       if (sun) {
-        this.sunEffects.run(encoder, hdrTexture, targets.sceneDepth, this.#unjittered, sun);
+        this.sunEffects.run(
+          encoder,
+          hdrTexture,
+          targets.sceneDepth,
+          this.#unjittered,
+          sun,
+          shadows && { map: this.scene.shadowMap, cascades: shadows.cascades },
+        );
       }
     }
 

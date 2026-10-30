@@ -16,113 +16,116 @@ An item is **done** only when every use in the data is drawn as the original dra
 items say why; **n/a** items draw nothing (data for other systems, slots the type and flags do
 not sample, flags xEdit and nif.xml call unused).
 
-## Count (2026-10-29)
+## Count (2026-10-30)
 
 | Part       | Items | Done | Open | n/a |
 | ---------- | ----- | ---- | ---- | --- |
-| Systems    | 74    | 54   | 20   | 0   |
-| Data sweep | 462   | 405  | 26   | 31  |
-| **Total**  | 536   | 459  | 46   | 31  |
+| Systems    | 76    | 56   | 20   | 0   |
+| Data sweep | 462   | 405  | 25   | 32  |
+| **Total**  | 538   | 461  | 45   | 32  |
 
-Done this round (3): the lighting shader's own distance fades (specular, environment map, decals,
-refraction; No_Fade spares decals and refraction), references fading in and out over time by the
-original's thresholds (fFadeInThreshold, fFadeOutThreshold, fFadeInTime, fFadeOutTime) in place of
-a dither by distance, LOD levels switching as the original switches them (no fade), and lag bones
-trailing in world space (an actor's walk swings its tail). The froxel volume of volumetric lighting
-is read (docs/rendering.md), not built.
+Done this round (4): volumetric lighting as the original's froxel volume (its size by quality,
+the slices spread over clip depth by the range factor, the noise drifting with the wind and
+falling, the first two cascades' shadows, the jitter, the temporal blend of 0.75, gathered slice
+by slice, blurred and composited by each pixel's depth) in place of the screen-space god rays;
+the world map's relief overlay on its LOD land. BSDecalPlacementVectorExtraData turned out to be
+editor data (0-2 points per file, on bodies, armour, furniture and walls) the original loads and
+never reads: n/a. Round 3 did the lighting shader's own distance fades, the fades over time by
+the original's thresholds, LOD switching and lag bones on skeletons.
 
 ## Next biggest open items
 
-1. ~~Inventory 3D orientation~~ (done by the menus round 3: item-3d-view.ts).
-2. **Volumetric lighting** as the original's froxel volume: read (its size by quality, the depth
-   repartition, the shader's constants and passes, docs/rendering.md), not built; god rays are
-   screen-space now.
-3. **Skinned decals** (blood on actors; BSDecalPlacementVectorExtraData in 61 models).
-4. **Lag bones on effect and worn models** (torches', spells' and armour's trailing emitters:
+1. **Skinned decals** (blood on actors: the original copies the hit shape's triangles inside the
+   decal's box into a decal shape skinned to the same bones; not built).
+2. **Lag bones on effect and worn models** (torches', spells' and armour's trailing emitters:
    the scene renderer's node animation keeps no state per instance).
-5. **The map's relief overlay** on its LOD land shader (the menus' area needs it).
-6. **The dragon-riding camera**, **first-person particles and near plane**.
-7. **Light-list order** for land and particles; **IBLF lens flare**; **WATR NAM5**; **planar
-   water reflection**; mesh particles; Fire_Refraction.
+3. **Shader terms only the shader cache holds**: the volumetric generate shader's scattering, its
+   blur and noise; the map overlay's weights and snow mask (inferred now).
+4. **The dragon-riding camera**, **first-person particles and near plane**.
+5. **Light-list order** for land and particles; **IBLF lens flare**; **WATR NAM5**; **planar
+   water reflection**; mesh particles; Fire_Refraction; fLODFadeOutMultSkyCell (one entry of
+   the fade multipliers by fade-node type: which nodes get it is unread).
 
 ## Systems
 
-| #   | Item                                                             | Status | Where / why                                                                                         |
-| --- | ---------------------------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------- |
-| 1   | Per-object light lists (7 point lights, 4 shadow lights)         | done   | light-lists.ts                                                                                      |
-| 2   | The order of a geometry's own light list                         | open   | strongest first is ours (TODO(M13))                                                                 |
-| 3   | Land's own light lists (lights flagged to light land)            | open   | land takes every light of the frame                                                                 |
-| 4   | Particle systems' own light lists                                | open   | particles take every light of the frame                                                             |
-| 5   | Effect shaders' light list (shadow lights left out)              | open   | the engine's list unread                                                                            |
-| 6   | Spot lights' cones (LIGH FOV, XLIG offsets)                      | done   | cell-loader lightCone                                                                               |
-| 7   | Light flicker and pulse                                          | done   | light-flicker.ts                                                                                    |
-| 8   | Sun shadow cascades                                              | done   | shadow-cascades.ts                                                                                  |
-| 9   | Focus shadows                                                    | done   | focus-shadows.ts                                                                                    |
-| 10  | Whether focus maps draw only their actor                         | open   | ours draw every caster in their column                                                              |
-| 11  | Shadow lights: omnidirectional, spot, hemisphere                 | done   | light-shadows.ts                                                                                    |
-| 12  | Fog: weather, XCLL and LGTM (near, far, power, max)              | done   | frame.wgsl                                                                                          |
-| 13  | Underwater fog                                                   | done   | underwater.ts                                                                                       |
-| 14  | Underwater imagespace (WATR INAM)                                | done   | underwater.ts, world-sky.ts                                                                         |
-| 15  | Underwater colour (how the water's colours are lit, the tint)    | open   | the water's imagespace is the one path (no tint over it); how the fog colours are lit is inferred   |
-| 16  | Terrain LOD                                                      | done   | terrain.ts                                                                                          |
-| 17  | Object LOD (.bto, HD LOD)                                        | done   | scene-renderer LOD materials                                                                        |
-| 18  | Tree LOD billboards                                              | done   | tree-lod.ts                                                                                         |
-| 19  | LOD fade between levels                                          | done   | levels switch without a fade once the replacing blocks are loaded, as the original (trees inferred) |
-| 20  | fLODFadeOutMultSkyCell                                           | open   | unread                                                                                              |
-| 21  | LOD culled by rooms and portals                                  | open   | LOD is not culled by them                                                                           |
-| 22  | Object distance fade                                             | done   | object-fade.ts: the original's thresholds and fade times; shader-fades.ts                           |
-| 23  | Rooms and portals culling                                        | done   | room-culler.ts                                                                                      |
-| 24  | Rooms' lighting templates and imagespaces                        | done   | model-viewer lightingInRoom                                                                         |
-| 25  | Occlusion planes and boxes                                       | done   | cell-rooms.ts                                                                                       |
-| 26  | Eye adaptation                                                   | done   | post.ts                                                                                             |
-| 27  | Bloom                                                            | done   | post.ts                                                                                             |
-| 28  | Tone curve and cinematic grading (saturation, contrast, tint)    | done   | post.wgsl                                                                                           |
-| 29  | Depth of field (IMGS and IMAD)                                   | done   | dof.wgsl                                                                                            |
-| 30  | IMAD screen effects: blur, double vision, radial and motion blur | done   | screen-effects.wgsl                                                                                 |
-| 31  | IMAD fade and tint, HDR and cinematic channels                   | done   | image-space-modifier.ts                                                                             |
-| 32  | Sun lens flare (LENS)                                            | done   | lens-flare.ts                                                                                       |
-| 33  | Image-based lens flare of bright lights (bIBLFEnable)            | open   | the values the engine feeds it are unread                                                           |
-| 34  | Temporal anti-aliasing                                           | done   | taa.ts                                                                                              |
-| 35  | Ambient occlusion                                                | done   | sao.ts                                                                                              |
-| 36  | Refraction (heat haze, barriers)                                 | done   | refraction.ts                                                                                       |
-| 37  | God rays (screen-space, the VOLI phase function)                 | done   | sun-effects.ts                                                                                      |
-| 38  | Volumetric lighting as a froxel volume (density noise, shadows)  | open   | read (docs/rendering.md); not built                                                                 |
-| 39  | Clouds (layers, speeds, colours, alphas)                         | done   | sky.ts                                                                                              |
-| 40  | Sun, sun glare, sun damage                                       | done   | sky.ts, sun-effects.ts                                                                              |
-| 41  | Moons and their phases, stars                                    | done   | sky.ts                                                                                              |
-| 42  | Aurora                                                           | done   | sky.ts                                                                                              |
-| 43  | Lightning: procedural bolts and the flash                        | done   | lightning.ts                                                                                        |
-| 44  | Precipitation (SPGD rain and snow)                               | done   | precipitation.ts                                                                                    |
-| 45  | Weather transitions                                              | done   | sky-state.ts                                                                                        |
-| 46  | Water: the planar reflection pass                                | open   | not built                                                                                           |
-| 47  | Water: displacement (wading, splashes, projectiles, rain)        | done   | water-displacement.ts                                                                               |
-| 48  | Water: colours and depth properties                              | done   | water.wgsl                                                                                          |
-| 49  | Water: river flow maps                                           | done   | flow-map.ts                                                                                         |
-| 50  | Water: the original shader's exact terms                         | open   | ours by Community Shaders' reading                                                                  |
-| 51  | Static decals (TXST placed in cells)                             | done   | decals.ts                                                                                           |
-| 52  | Impact decals (IPCT)                                             | done   | decal-projection.ts                                                                                 |
-| 53  | Skinned decals on actors                                         | open   | not built                                                                                           |
-| 54  | Screen blood                                                     | done   | screen-blood.ts                                                                                     |
-| 55  | Weapon blood                                                     | done   | effect.wgsl                                                                                         |
-| 56  | Motion vectors of moving instances and animated parts            | done   | velocity.wgsl                                                                                       |
-| 57  | Motion vectors of skinned limbs                                  | done   | velocity.wgsl: the last frame's bone palettes                                                       |
-| 58  | First person: its own view and depth band                        | done   | first-person-view.ts                                                                                |
-| 59  | First person: the engine's near plane                            | open   | unread                                                                                              |
-| 60  | First person: particles                                          | open   | not drawn in the first-person band                                                                  |
-| 61  | Eye reflection centres                                           | open   | ours reflect about the eye mesh's normal                                                            |
-| 62  | Character light: its luminance source                            | open   | ours from the directional ambient                                                                   |
-| 63  | Default texture per slot for a missing file                      | open   | ours: white, flat normal, black                                                                     |
-| 64  | Grass                                                            | done   | grass.ts                                                                                            |
-| 65  | Terrain texture blending                                         | done   | terrain.wgsl                                                                                        |
-| 66  | Directional materials (snow, moss, ice on statics)               | done   | material-object.ts                                                                                  |
-| 67  | Snow subsurface scattering                                       | done   | snow-sss.ts                                                                                         |
-| 68  | Alternate textures on placed objects (MODS)                      | done   | cell-loader objectModelKey, GameSession.model                                                       |
-| 69  | The map's world view                                             | done   | world-map-view.ts                                                                                   |
-| 70  | The race menu's 3D (lights, camera)                              | done   | race-menu.ts                                                                                        |
-| 71  | Inventory 3D: placement, lights, turning, zoom                   | done   | item-3d.ts                                                                                          |
-| 72  | Inventory 3D: the item's own orientation (BSInvMarker)           | done   | item-3d-view.ts (the marker's rotation and zoom)                                                    |
-| 73  | The dragon-riding camera                                         | open   | not built                                                                                           |
-| 74  | Enchantment glow and effect shaders on references                | done   | actor-effects.ts                                                                                    |
+| #   | Item                                                               | Status | Where / why                                                                                         |
+| --- | ------------------------------------------------------------------ | ------ | --------------------------------------------------------------------------------------------------- |
+| 1   | Per-object light lists (7 point lights, 4 shadow lights)           | done   | light-lists.ts                                                                                      |
+| 2   | The order of a geometry's own light list                           | open   | strongest first is ours (TODO(M13))                                                                 |
+| 3   | Land's own light lists (lights flagged to light land)              | open   | land takes every light of the frame                                                                 |
+| 4   | Particle systems' own light lists                                  | open   | particles take every light of the frame                                                             |
+| 5   | Effect shaders' light list (shadow lights left out)                | open   | the engine's list unread                                                                            |
+| 6   | Spot lights' cones (LIGH FOV, XLIG offsets)                        | done   | cell-loader lightCone                                                                               |
+| 7   | Light flicker and pulse                                            | done   | light-flicker.ts                                                                                    |
+| 8   | Sun shadow cascades                                                | done   | shadow-cascades.ts                                                                                  |
+| 9   | Focus shadows                                                      | done   | focus-shadows.ts                                                                                    |
+| 10  | Whether focus maps draw only their actor                           | open   | ours draw every caster in their column                                                              |
+| 11  | Shadow lights: omnidirectional, spot, hemisphere                   | done   | light-shadows.ts                                                                                    |
+| 12  | Fog: weather, XCLL and LGTM (near, far, power, max)                | done   | frame.wgsl                                                                                          |
+| 13  | Underwater fog                                                     | done   | underwater.ts                                                                                       |
+| 14  | Underwater imagespace (WATR INAM)                                  | done   | underwater.ts, world-sky.ts                                                                         |
+| 15  | Underwater colour (how the water's colours are lit, the tint)      | open   | the water's imagespace is the one path (no tint over it); how the fog colours are lit is inferred   |
+| 16  | Terrain LOD                                                        | done   | terrain.ts                                                                                          |
+| 17  | Object LOD (.bto, HD LOD)                                          | done   | scene-renderer LOD materials                                                                        |
+| 18  | Tree LOD billboards                                                | done   | tree-lod.ts                                                                                         |
+| 19  | LOD fade between levels                                            | done   | levels switch without a fade once the replacing blocks are loaded, as the original (trees inferred) |
+| 20  | fLODFadeOutMultSkyCell                                             | open   | the 11th of the fade multipliers by fade-node type; which nodes get that type unread                |
+| 21  | LOD culled by rooms and portals                                    | open   | LOD is not culled by them                                                                           |
+| 22  | Object distance fade                                               | done   | object-fade.ts: the original's thresholds and fade times; shader-fades.ts                           |
+| 23  | Rooms and portals culling                                          | done   | room-culler.ts                                                                                      |
+| 24  | Rooms' lighting templates and imagespaces                          | done   | model-viewer lightingInRoom                                                                         |
+| 25  | Occlusion planes and boxes                                         | done   | cell-rooms.ts                                                                                       |
+| 26  | Eye adaptation                                                     | done   | post.ts                                                                                             |
+| 27  | Bloom                                                              | done   | post.ts                                                                                             |
+| 28  | Tone curve and cinematic grading (saturation, contrast, tint)      | done   | post.wgsl                                                                                           |
+| 29  | Depth of field (IMGS and IMAD)                                     | done   | dof.wgsl                                                                                            |
+| 30  | IMAD screen effects: blur, double vision, radial and motion blur   | done   | screen-effects.wgsl                                                                                 |
+| 31  | IMAD fade and tint, HDR and cinematic channels                     | done   | image-space-modifier.ts                                                                             |
+| 32  | Sun lens flare (LENS)                                              | done   | lens-flare.ts                                                                                       |
+| 33  | Image-based lens flare of bright lights (bIBLFEnable)              | open   | the values the engine feeds it are unread                                                           |
+| 34  | Temporal anti-aliasing                                             | done   | taa.ts                                                                                              |
+| 35  | Ambient occlusion                                                  | done   | sao.ts                                                                                              |
+| 36  | Refraction (heat haze, barriers)                                   | done   | refraction.ts                                                                                       |
+| 37  | God rays (the VOLI phase function)                                 | done   | volumetric-volume.ts (the froxel volume in place of screen-space rays)                              |
+| 38  | Volumetric lighting as a froxel volume (density noise, shadows)    | done   | volumetric-volume.ts, volumetric-data.ts, shaders/volumetric.wgsl                                   |
+| 39  | Clouds (layers, speeds, colours, alphas)                           | done   | sky.ts                                                                                              |
+| 40  | Sun, sun glare, sun damage                                         | done   | sky.ts, sun-effects.ts                                                                              |
+| 41  | Moons and their phases, stars                                      | done   | sky.ts                                                                                              |
+| 42  | Aurora                                                             | done   | sky.ts                                                                                              |
+| 43  | Lightning: procedural bolts and the flash                          | done   | lightning.ts                                                                                        |
+| 44  | Precipitation (SPGD rain and snow)                                 | done   | precipitation.ts                                                                                    |
+| 45  | Weather transitions                                                | done   | sky-state.ts                                                                                        |
+| 46  | Water: the planar reflection pass                                  | open   | not built                                                                                           |
+| 47  | Water: displacement (wading, splashes, projectiles, rain)          | done   | water-displacement.ts                                                                               |
+| 48  | Water: colours and depth properties                                | done   | water.wgsl                                                                                          |
+| 49  | Water: river flow maps                                             | done   | flow-map.ts                                                                                         |
+| 50  | Water: the original shader's exact terms                           | open   | ours by Community Shaders' reading                                                                  |
+| 51  | Static decals (TXST placed in cells)                               | done   | decals.ts                                                                                           |
+| 52  | Impact decals (IPCT)                                               | done   | decal-projection.ts                                                                                 |
+| 53  | Skinned decals on actors                                           | open   | not built                                                                                           |
+| 54  | Screen blood                                                       | done   | screen-blood.ts                                                                                     |
+| 55  | Weapon blood                                                       | done   | effect.wgsl                                                                                         |
+| 56  | Motion vectors of moving instances and animated parts              | done   | velocity.wgsl                                                                                       |
+| 57  | Motion vectors of skinned limbs                                    | done   | velocity.wgsl: the last frame's bone palettes                                                       |
+| 58  | First person: its own view and depth band                          | done   | first-person-view.ts                                                                                |
+| 59  | First person: the engine's near plane                              | open   | unread                                                                                              |
+| 60  | First person: particles                                            | open   | not drawn in the first-person band                                                                  |
+| 61  | Eye reflection centres                                             | open   | ours reflect about the eye mesh's normal                                                            |
+| 62  | Character light: its luminance source                              | open   | ours from the directional ambient                                                                   |
+| 63  | Default texture per slot for a missing file                        | open   | ours: white, flat normal, black                                                                     |
+| 64  | Grass                                                              | done   | grass.ts                                                                                            |
+| 65  | Terrain texture blending                                           | done   | terrain.wgsl                                                                                        |
+| 66  | Directional materials (snow, moss, ice on statics)                 | done   | material-object.ts                                                                                  |
+| 67  | Snow subsurface scattering                                         | done   | snow-sss.ts                                                                                         |
+| 68  | Alternate textures on placed objects (MODS)                        | done   | cell-loader objectModelKey, GameSession.model                                                       |
+| 69  | The map's world view                                               | done   | world-map-view.ts                                                                                   |
+| 70  | The race menu's 3D (lights, camera)                                | done   | race-menu.ts                                                                                        |
+| 71  | Inventory 3D: placement, lights, turning, zoom                     | done   | item-3d.ts                                                                                          |
+| 72  | Inventory 3D: the item's own orientation (BSInvMarker)             | done   | item-3d-view.ts (the marker's rotation and zoom)                                                    |
+| 73  | The dragon-riding camera                                           | open   | not built                                                                                           |
+| 74  | Enchantment glow and effect shaders on references                  | done   | actor-effects.ts                                                                                    |
+| 75  | The map's relief overlay on its LOD land                           | done   | lighting.wgsl worldMapRelief, world-map-view.ts                                                     |
+| 76  | Shader terms only the shader cache holds (volumetric, map overlay) | open   | volumetric generate/blur/noise, the overlay's weights and snow mask inferred (TODO(M13))            |
 
 ## Data sweep
 
@@ -434,7 +437,7 @@ entry's 3D index, is unread.
 | NiPSysEmitterLifeSpanCtlr (60 files)                | 76     | done   | particle-data.ts                                                         |
 | NiPathInterpolator (25 files)                       | 73     | open   | motion along a path not read                                             |
 | BSTreeNode (71 files)                               | 71     | done   | leaf flutter                                                             |
-| BSDecalPlacementVectorExtraData (61 files)          | 61     | open   | blood decal placement on actors (skinned decals)                         |
+| BSDecalPlacementVectorExtraData (61 files)          | 61     | n/a    | editor data (0-2 points each); the original loads it, nothing reads it   |
 | BSBound (57 files)                                  | 57     | done   | bounds                                                                   |
 | BSFrustumFOVController (54 files)                   | 54     | open   | parsed; the camera FOV animation unused                                  |
 | BSBoneLODExtraData (52 files)                       | 52     | open   | bone LOD unread                                                          |

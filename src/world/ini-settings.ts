@@ -253,6 +253,8 @@ export const INI_DEFAULTS = {
     bVolumetricLightingDisableInterior: 1,
     bVolumetricLightingEnable: 1,
     fVolumetricLightingIntensity: 2,
+    iVolumetricLightingQuality: 1,
+    bVolumetricLightingEnableTemporalAccumulation: 1,
   },
   // The sun's lens flare (LENS): on, and the strength of all flares.
   ImageSpace: {
@@ -571,6 +573,10 @@ export const INI_DEFAULTS = {
     fMapLookMouseSpeed: 3,
     fMapLoopFadeTimeSeconds: 1,
     fMapMenuNearClipPlane: 128,
+    fMapMenuOverlayNormalSnowStrength: 0.4,
+    fMapMenuOverlayNormalStrength: 1.1,
+    fMapMenuOverlayScale: 0.000035,
+    fMapMenuOverlaySnowScale: 0.000045,
     fMapMoveKeyboardSpeed: 0.02,
     fMapTransitionSpeed: 0.75,
     fMapWorldCursorMoveArea: 0.9,
