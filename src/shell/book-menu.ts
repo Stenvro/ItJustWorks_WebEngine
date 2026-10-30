@@ -24,7 +24,6 @@
 // note's text is wider: NOTE_WIDTH 400 from the visible rect's left plus NOTE_X_OFFSET 20).
 // Notes: docs/ui.md ("Books").
 
-import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
 import { multiply, type Mat4, type Vec3 } from '../render/math.ts';
 import type { OverlayView } from '../render/menu-overlay.ts';
@@ -41,11 +40,11 @@ import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import { referenceMatrix } from '../world/cell-loader.ts';
 import { baseModelPath } from '../world/cell-records.ts';
 import { BookFlag, parseItem } from '../world/item-records.ts';
+import { bookRead } from './book-reading.ts';
 import type { GameSession } from './game-session.ts';
 import { startObjectGraph, startPlacedSkeleton } from './object-graphs.ts';
 import { MenuCamera, menuLighting, menuPlacement, type MenuLight } from './menu-3d.ts';
 import type { Terminal } from './terminal.ts';
-import { ActorValue } from '../world/actor-values.ts';
 import { bookText } from '../ui/book-text.ts';
 import type { IniSettings, INI_DEFAULTS } from '../world/ini-settings.ts';
 
@@ -99,9 +98,6 @@ const CLOSED_AFTER = new Set(['closeout', 'closestop']);
 const CLOSE_TIMEOUT_MS = 2500;
 /** The menus' depth among the game's menus. */
 const BOOK_DEPTH = 7;
-
-/** The 18 skills. */
-const SKILLS = 18;
 
 const SOUND_PLAY = 'soundplay.';
 /** book.swf's BookMenu instance. */
@@ -204,32 +200,9 @@ export class BookMenu {
       closed,
     });
     await reading.start();
-    await this.#firstRead(runtime, read, item.book);
+    // Read: told, and a skill book teaches the first time (book-reading.ts).
+    await bookRead(runtime, read, item.book);
     return reading;
-  }
-
-  /** A skill book raises its skill the first time it is read; the book's scripts hear OnRead. */
-  async #firstRead(
-    runtime: ScriptRuntime,
-    read: BookToRead,
-    book: { readonly flags: number; readonly teaches: number },
-  ): Promise<void> {
-    const first = !runtime.state.booksRead.has(read.book);
-    runtime.state.booksRead.add(read.book);
-    // The hub tells it (TESBookReadEvent: the reference's OnRead).
-    await runtime.events.emitted('bookRead', {
-      book: read.book,
-      reader: PLAYER_REF,
-      reference: read.reference,
-    });
-    if (!first || (book.flags & BookFlag.teachesSkill) === 0 || book.teaches < 0) return;
-    // The experience the skill lacks to its next level (UESP "Skill Books"); the HUD announces
-    // it (sSkillIncreased); the reader's perks may add levels (Adjust Book Skill Points:
-    // Scholar's Insight's second).
-    const skill = book.teaches;
-    if (skill < ActorValue.firstSkill || skill >= ActorValue.firstSkill + SKILLS) return;
-    const levels = await runtime.perks.apply(EntryPoint.adjustBookSkillPoints, PLAYER_REF, 1);
-    await runtime.progression.incrementSkill(skill, Math.max(0, Math.round(levels)));
   }
 }
 

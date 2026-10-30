@@ -8,7 +8,7 @@ The natives and events parts come from the sweep `node tools/papyrus-completenes
 for every item); the VM part is kept by hand against `src/scripting/papyrus-vm.ts` and
 docs/scripting.md ("Threads", "Properties", "The log").
 
-## Count (2026-10-30, round 5)
+## Count (2026-10-30, round 6)
 
 | Part    | Items | Done | Open |
 | ------- | ----: | ---: | ---: |
@@ -19,8 +19,8 @@ docs/scripting.md ("Threads", "Properties", "The log").
 
 Round 4 counts the None-argument sweep as a natives item and the simulation's share of the
 events as an events item (both were listed, not counted). The sweep reports the simulation's
-share separately: 55 of the 98 events are checked in the headless simulation (38 after round 4,
-27 before).
+share separately: 93 of the 98 events are checked in the headless simulation (55 after round 5,
+38 after round 4, 27 before).
 
 ## Natives
 
@@ -82,8 +82,8 @@ its COVERED list. The four story events the original never raises (Bribe, Flatte
 Player Gets Favor) count as sent; the story manager's test sends each type's event to the
 quest it starts.
 
-All 98 are sent and checked by an engine-level test. Of them 55 are checked in the headless
-simulation (the sweep's count); the other 43 by the runtime's, the relay's, the VM's or the
+All 98 are sent and checked by an engine-level test. Of them 93 are checked in the headless
+simulation (the sweep's count); the other 5 by the runtime's, the relay's, the VM's or the
 story manager's tests (src/scripting/runtime/engine-events.test.ts, script-events.test.ts,
 story-manager.test.ts, src/scripting/papyrus-vm-errors.test.ts, tests/effect-events.int.test.ts).
 
@@ -96,8 +96,38 @@ package left), the vampirism, lycanthropy and feeding events, onBeginState/onEnd
 compiled GotoState), OnUnequipped, and the story manager's 30 events. Fixed: OnRead reaches a
 book read from an inventory when its base carries scripts (it reached only book references).
 
-- [ ] In the simulation: 43 events still have an engine-level test only (the sweep lists
-      them). Round 5 added 17 (tests/conformance/scripting/script-events-items.test.ts, one
+- [ ] In the simulation: 5 events still have an engine-level test only (the sweep lists
+      them): the story manager's Arrest (a guard reaching the player: no guard's pursuit is set
+      up in a simulation yet), Craft Item (the crafting menu, whose engine side is not split
+      from its movie yet), Pick Lock (likewise the lockpicking menu's), Trespass (an actor
+      seeing the player in a private place past its warnings) and Infection (a disease
+      carrier's hit on the player). Round 6 added 38, in two simulations in the Bannered Mare,
+      each raised by the engine path that raises it.
+      tests/conformance/scripting/script-events-actions.test.ts: OnInit (a scripted urn
+      placed: the VM now tells OnInit as it tells the other events), OnRead (a skill book read
+      as the book menu opens it), OnSell (an apple sold through the barter menu's model),
+      OnSleepStart / OnSleepStop (the sleep menu's passing of the hours), OnClose (a strongbox
+      searched), OnGrab / OnRelease (Activate held on a bowl), OnSpellCast and OnWardHit (a ward
+      cast by the player's hand, met by Hulda's firebolt), OnPlayerBowShot, OnTranslationFailed
+      (a reference not loaded asked to move), OnPackageChange (Carlotta's inn package left at
+      22:00 by the AI's own evaluation; round 5's note that no package changes in a short
+      simulation was wrong), OnPlayerFastTravelEnd (fast travel's journey).
+      tests/conformance/scripting/story-events.test.ts: 24 story event types, each event's data
+      checked and every quest a node starts told its OnStory event: Script (CR01 started),
+      Increase Skill (WISkillIncrease01, 02), Increase Level, Player Add Item (a purchase),
+      Player Remove Item (a drop from the inventory menu), Relationship Change (a gift:
+      FavorJarlsMakeFriendsTrackEvent), Cast Magic, New Voice Power (WINewVoicePower01), Player
+      Cured, Player Activate Actor, Actor Hello, Actor Dialogue, Assault Actor
+      (WIAssaultRemember), Kill Actor, Crime Gold, Dead Body, Jail (JailQuest), Served Time,
+      Escape Jail (EscapeJailQuest and its achievement's quest), Pay Fine; Bribe, Flatter,
+      Intimidate and Player Gets Favor checked as never raised (a bribe, an intimidation and a
+      favor raise none). Fixed in the engine on the way: the engine sides of the book menu
+      (src/shell/book-reading.ts), the sleep and wait menu (passHours) and fast travel's
+      journey (src/shell/fast-travel-journey.ts: the hours, the sky, the arrival told; the
+      simulation's fast travel had told the end itself) are split from their movies and Play,
+      so the simulation runs the same code; its helpers read, sell, buy, drop, give, rest, grab
+      and attack through them (tests/helpers/sim.ts).
+      Round 5 added 17 (tests/conformance/scripting/script-events-items.test.ts, one
       simulation in the Bannered Mare, each raised by the engine path that raises it: a potion
       drunk, a sword equipped and unequipped, a treasure map taken, natives called through the
       VM, the player walking; save-load.test.ts for the load):
@@ -110,11 +140,7 @@ book read from an inventory when its base carries scripts (it reached only book 
       event registrations and tells them (OnAnimationEventUnregistered: only a cell detaching
       did); a created object disabled or enabled is told as a cell's own (OnUnload / OnLoad);
       OnPlayerLoadGame is sent once the loaded world is up (the first frame the game runs), as
-      the original sends it, not as the scripts are. Left: the story manager's 29 (each needs a
-      quest node of its type that starts in the sim), OnRead and OnSell (the book and barter
-      menus, which the sim has not), OnSpellCast and OnWardHit (a cast by an actor's hands),
-      OnPlayerBowShot, OnGrab / OnRelease, OnSleepStart / OnSleepStop, OnClose,
-      OnTranslationFailed, OnPlayerFastTravelEnd, OnInit (named in no sim case), OnPackageChange (no package left for another in a short simulation: an hour set ahead and EvaluatePackage moved no patron on). Round 4 added 11 (tests/conformance/scripting/script-events-registered.test.ts, one
+      the original sends it, not as the scripts are. (Round 6 covered what it left.) Round 4 added 11 (tests/conformance/scripting/script-events-registered.test.ts, one
       simulation): OnUpdate, OnUpdateGameTime, OnGainLOS, OnLostLOS, OnTranslationAlmostComplete,
       OnTranslationComplete, OnObjectUnequipped, OnItemRemoved, OnCombatStateChanged,
       OnPackageEnd, OnTrackedStatsEvent. Left: those whose trigger needs data of their own (a
