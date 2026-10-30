@@ -59,7 +59,7 @@ struct TreePixel {
 @fragment
 fn fs_tree(input: TreeOut) -> TreePixel {
   let texel = textureSample(treeAtlas, treeSampler, input.uv);
-  if (texel.a < 0.5 || lodHidden(input.worldPos)) {
+  if (texel.a < 0.5 || lodHidden(input.worldPos) || reflectionClipped(input.worldPos)) {
     discard;
   }
   let toCamera = safeNormalize(frame.cameraPos.xyz - input.worldPos);

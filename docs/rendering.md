@@ -799,19 +799,57 @@ sea at Solitude the world's DefaultWater at Tamriel's −14000 (DefaultWaterFlow
 Karth meets it). All three share DefaultWater's colours: shallow 38,39,24, deep 5,14,18,
 reflection 119,140,157, fog −10..150 at 0.7, fresnel 0.1, reflectivity 0.8.
 
-**Colour** (`water-color.ts` is the shader's colour model, for tests). The distance the view
-ray travels through the water to the scene below gives its fog: 0 at the fog near distance,
-the fog amount at the far one. The scene below (shifted by the waves where that is still
-under water) sinks into the water's body, shallow towards deep colour by that fog. The
-reflection (the scene in screen space, else the sky, mixed with the reflection colour by the
-reflection magnitude) lays over it by Schlick's fresnel from the Fresnel Amount, times the
-reflectivity. The sun's specular and sparkle follow. The **depth properties** (WATR 52–55)
-are how much of the reflections, refraction, normals and specular shallow water loses: each
-is kept at `property × (deepness − 1) + 1`, deepness 0 at the fog near distance to 1 at the
-far one (DefaultWater at the shore: 70 % of its reflections, 5 % of its refraction's shift,
-90 % of its normals, 10 % of its specular). TODO(M13): the original's shader is not
-readable; these terms are our model of it (whether deepness includes the fog amount, how
-opacity enters).
+**The shader's terms** (`water-color.ts` is its colour model, for tests). The original's
+shader cache (`shadersfx\shaders011.fxp` in Skyrim - Shaders.bsa: DirectX 11 bytecode, its
+techniques' names stripped) holds 400 water pixel shaders; their terms, observed in the
+original:
+
+- **Depth.** From the scene's depth behind the water: the distance the view ray goes through
+  the water, and how far that point lies under the surface's plane. Each as a share of the fog's
+  far distance (saturated) drives the depth properties: the ray's for the reflections and the
+  refraction, the vertical one for the normals and the specular (`property × (share − 1) + 1`).
+- **Normal.** The first noise layer around the up axis by its amplitude (`a₁(n₁ − up) + up`),
+  the other two added by theirs, normalized, then flattened towards up by the normals' depth
+  share. Rivers lay their flow-map normal over it by the flow's strength. Far away the full
+  normal gives way to the first layer alone: `saturate((d − 8192) / (F − 8192))` with F the
+  water's noise falloff (inferred: 0 in DefaultWater, so the detail fades over 8192 units)
+  towards a floor the frame's constants hold (unread; ours 0). The ripple field's normal
+  (`normalize(slope × dampener, 0.04)`) takes the waves over by its own z.
+- **Refraction.** The surface point moved along the normal's xy by the refraction magnitude
+  (world units) times the refraction's depth share, projected; if what lies there is above the
+  water, the unmoved point. The body colour is shallow towards deep by the ray's depth share;
+  the fog over the scene below is `1 − ((far − depth) / (far − near))^amount`.
+- **Reflection.** The cube (below) along the view reflected about the normal flattened towards
+  up by the reflectivity (inferred source of that constant), the screen-space reflection over
+  it by its own alpha (and the detail), then the reflection colour taken over by that by the
+  Reflection Magnitude (DefaultWater 0.42: 58 % reflection colour). The reflection lays over
+  the refraction by Schlick's fresnel from the Fresnel Amount, times the reflections' depth
+  share (far away it goes to 1).
+- **Sun.** `pow(saturate(reflected view · sun), specular power) × specular magnitude` plus the
+  sparkle `pow(saturate(normal · (−0.099, −0.099, 0.99)), sparkle power) × sparkle magnitude`
+  (a fixed slant of the up axis, not the sun), times the sun's colour and the specular's depth
+  share; then the air's fog.
+
+The scene colours the shader samples (refraction, cube, screen-space reflection) are scaled by
+one constant and the result by another (the original's HDR scaling; ours keeps linear colour
+throughout). TODO(M13): which WATR value feeds which of the shader's constants is our reading of
+xEdit's names against the terms (the engine's material setup is unread), as are the detail
+floor and the flow normals (WATR NAM5, sampled on a staggered grid of the flow map by
+per-geometry constants: ours moves the noise layers along the flow).
+
+**Reflections** (`water-reflection.ts`). Every water technique in the cache samples a cube;
+none samples a planar reflection texture. The cube holds what [Water] in the INI reflects, all
+on by default: the sky (bReflectSky), land and its LOD (bReflectLODLand), tree LOD
+(bReflectLODTrees), object LOD (bReflectLODObjects) and the references flagged Reflected By
+Auto Water (REFR flag bit 28: 17 in the load order, 16 of them in exteriors; XPWR entries name
+only refracting waters). Ours renders it from the camera mirrored under the nearest water's
+plane (seen from there, the straight line through a water point continues as the reflected
+view ray), five faces (none looks down) as layers of a 2D array with their matrices for the
+lookup, 256 texels a side, what lies under the plane clipped (`frame.wgsl reflectionClipped`).
+All faces are drawn when the plane changes, then one a frame. TODO(M13): the cube's size and
+refresh (fCubeMapRefreshRate 0), several planes (uMaxExteriorWaterReflections 2, interiors 4,
+fExteriorWaterReflectionThreshold 300), interiors (ours reflect the sky colours there) and
+whether the reflection is fogged (ours leaves deferred lit objects unfogged).
 
 **Displacement** (`water-displacement.ts`, `water-displacement-gpu.ts`,
 `shaders/water-displacement.wgsl`): the surface's interactive ripples, as observed in the
@@ -988,6 +1026,11 @@ about 90. What keeps it down (`scene-renderer.ts`):
 - An animated draw's uniforms go up only when its matrix, its hidden state or its animated
   material changed (an actor standing still keeps its parts' matrices; its pose goes to the
   bone palette).
+- The world map's relief overlay (six samples of two normal maps) is compiled into LOD land's
+  pipelines only (`LOD_LAND`, an override constant of `lighting.wgsl`): a branch skipped at run
+  time still sizes the registers of the whole shader, and every other lit pipeline (all the
+  objects of the Whiterun exterior) now compiles without it. The water's reflection costs
+  one 256² face a frame (sky, land, LOD, a few references) once all five are drawn.
 
 ## The lighting technique's flags and the fades (observed in the original)
 

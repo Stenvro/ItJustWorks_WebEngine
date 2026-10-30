@@ -5,6 +5,8 @@
 //   node tools/water-info.ts DefaultWater        one water type in full
 //   node tools/water-info.ts --cell Tamriel 4 -13  a cell's water: its height and type
 //   node tools/water-info.ts --area Tamriel 2 -14 8 -9  the cells' water over an area
+//   node tools/water-info.ts --reflected         references the water reflects (REFR flag bit 28,
+//                                                XPWR), exterior and interior, by base type
 
 import { parseCell } from '../src/world/cell-records.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
@@ -17,6 +19,7 @@ import {
 } from '../src/world/water.ts';
 import type { Rgb } from '../src/world/weather.ts';
 import { Worldspace } from '../src/world/worldspace.ts';
+import { REFLECTED_BY_AUTO_WATER, xpwrReflected } from '../src/world/cell-loader.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { openGameFolder } from './gamedata-path.ts';
 
@@ -84,6 +87,38 @@ if (process.argv[2] === '--area') {
     }
     console.log(row.join(' | '));
   }
+} else if (process.argv[2] === '--reflected') {
+  // Every placed reference flagged Reflected By Auto Water, and the ones a placed water names in
+  // XPWR: where they stand (an exterior or an interior cell) and their base's type.
+  const counts = new Map<string, number>();
+  const count = (key: string): void => void counts.set(key, (counts.get(key) ?? 0) + 1);
+  const flagged: number[] = [];
+  const named: number[] = [];
+  await db.scan(
+    ['REFR'],
+    () => true,
+    (record) => {
+      if ((record.flags & REFLECTED_BY_AUTO_WATER) !== 0) flagged.push(record.formId);
+      if (xpwrReflected(record.fields.all('XPWR'))) named.push(record.formId);
+    },
+  );
+  for (const id of named) {
+    const cell = db.cellOfReference(id);
+    count(
+      `XPWR ${cell !== undefined && db.worldOfCell(cell) !== undefined ? 'exterior' : 'interior'}`,
+    );
+  }
+  for (const id of flagged) {
+    const record = await db.get(id);
+    const base = record ? await db.get(record.formIdField('NAME') ?? 0) : undefined;
+    const cell = db.cellOfReference(id);
+    const where =
+      cell !== undefined && db.worldOfCell(cell) !== undefined ? 'exterior' : 'interior';
+    count(`${where} ${base?.type ?? '?'}`);
+  }
+  console.log(`${flagged.length} references flagged Reflected By Auto Water`);
+  for (const [key, n] of [...counts].sort((a, b) => b[1] - a[1])) console.log(`  ${n} ${key}`);
+  console.log(`${named.length} references a placed water reflects (XPWR type bit 0)`);
 } else if (process.argv[2] === '--cell') {
   const [, worldId = 'Tamriel', xs = '0', ys = '0'] = process.argv.slice(2);
   const world = (await db.worldspaces()).find((w) => w.editorId === worldId);

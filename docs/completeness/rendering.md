@@ -20,11 +20,24 @@ not sample, flags xEdit and nif.xml call unused).
 
 | Part       | Items | Done | Open | n/a |
 | ---------- | ----- | ---- | ---- | --- |
-| Systems    | 76    | 57   | 19   | 0   |
+| Systems    | 77    | 58   | 19   | 0   |
 | Data sweep | 462   | 405  | 25   | 32  |
-| **Total**  | 538   | 462  | 44   | 32  |
+| **Total**  | 539   | 463  | 44   | 32  |
 
-Done this round (5): skinned decals on actors (the hit shape's triangles in the decal's box
+Done this round (6, part A): the water's reflection pass. The original's shader cache
+(shadersfx\shaders011.fxp, DirectX 11 bytecode) turned out readable: every one of its 400 water
+pixel shaders looks its reflection up in a cube by the reflected view direction (with the
+screen-space reflection over it) and none samples a planar texture, so the pass is a cube rendered
+from the camera mirrored under the nearest water's plane: the sky, the land and its LOD, tree and
+object LOD and the 17 references flagged Reflected By Auto Water (`node tools/water-info.ts
+--reflected`; no XPWR entry names a reflecting water). The water shader now has the cache's
+terms (fog, body colour, depth properties by the fog's far distance, the normal's layering,
+refraction by the shifted surface point, the reflection mix, Schlick's fresnel, the sun's
+specular along the reflected view, the sparkle from a fixed slant). The world map's relief
+overlay is compiled into LOD land's pipelines only (an override constant), so no other pipeline
+carries its six samples.
+
+Round 5: skinned decals on actors (the hit shape's triangles in the decal's box
 copied into a decal shape skinned to the same bones, under the original's limits: 100 living,
 25 made a frame, 25 per actor, none beyond 800 units of the camera); lag bones on placed and
 held models (effects, spells, torches: a lag state per instance, the parts and particle emitters
@@ -46,8 +59,8 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 1. **Shader terms only the shader cache holds**: the volumetric generate shader's scattering, its
    blur and noise; the map overlay's weights and snow mask (inferred now).
 2. **The dragon-riding camera**, **first-person particles and near plane**.
-3. **Light-list order** for land and particles; **IBLF lens flare**; **WATR NAM5**; **planar
-   water reflection**; mesh particles; Fire_Refraction; fLODFadeOutMultSkyCell (one entry of
+3. **Light-list order** for land and particles; **IBLF lens flare**; **WATR NAM5**; the water
+   constants' sources; mesh particles; Fire_Refraction; fLODFadeOutMultSkyCell (one entry of
    the fade multipliers by fade-node type: which nodes get it is unread).
 4. Lag bones on armour hung on a skeleton; geometry decals on rigid worn shapes (ours project).
 
@@ -100,11 +113,11 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 | 43  | Lightning: procedural bolts and the flash                          | done   | lightning.ts                                                                                        |
 | 44  | Precipitation (SPGD rain and snow)                                 | done   | precipitation.ts                                                                                    |
 | 45  | Weather transitions                                                | done   | sky-state.ts                                                                                        |
-| 46  | Water: the planar reflection pass                                  | open   | not built                                                                                           |
+| 46  | Water: the reflection pass (exteriors)                             | done   | water-reflection.ts: the cube the original's water shaders sample (no planar pass in its cache)     |
 | 47  | Water: displacement (wading, splashes, projectiles, rain)          | done   | water-displacement.ts                                                                               |
 | 48  | Water: colours and depth properties                                | done   | water.wgsl                                                                                          |
 | 49  | Water: river flow maps                                             | done   | flow-map.ts                                                                                         |
-| 50  | Water: the original shader's exact terms                           | open   | ours by Community Shaders' reading                                                                  |
+| 50  | Water: the original shader's exact terms                           | open   | terms read from the shader cache (water.wgsl); which WATR value feeds which constant inferred       |
 | 51  | Static decals (TXST placed in cells)                               | done   | decals.ts                                                                                           |
 | 52  | Impact decals (IPCT)                                               | done   | decal-projection.ts                                                                                 |
 | 53  | Skinned decals on actors                                           | done   | skinned-decal.ts, combat-impacts.ts (the original's limits per actor, frame and in all)             |
@@ -130,7 +143,8 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 | 73  | The dragon-riding camera                                           | open   | not built                                                                                           |
 | 74  | Enchantment glow and effect shaders on references                  | done   | actor-effects.ts                                                                                    |
 | 75  | The map's relief overlay on its LOD land                           | done   | lighting.wgsl worldMapRelief, world-map-view.ts                                                     |
-| 76  | Shader terms only the shader cache holds (volumetric, map overlay) | open   | volumetric generate/blur/noise, the overlay's weights and snow mask inferred (TODO(M13))            |
+| 76  | Shader terms only the shader cache holds (volumetric, map overlay) | open   | the cache is readable (water read); the volumetric and map-overlay techniques not yet found in it   |
+| 77  | Water: the reflection in interiors and of several planes           | open   | interiors reflect the sky colours; one plane (the nearest), the original up to 2 / 4 by height      |
 
 ## Data sweep
 
@@ -617,23 +631,23 @@ entry's 3D index, is unread.
 
 ### Records: WATR (58)
 
-| Item | Uses | Status | Where / why                                       |
-| ---- | ---- | ------ | ------------------------------------------------- |
-| ANAM | 58   | done   | read                                              |
-| DATA | 58   | done   | read                                              |
-| DNAM | 58   | done   | read                                              |
-| FNAM | 58   | done   | read                                              |
-| FULL | 3    | n/a    | name                                              |
-| GNAM | 58   | n/a    | empty in every vanilla water                      |
-| INAM | 53   | done   | read                                              |
-| NAM0 | 58   | done   | read                                              |
-| NAM1 | 58   | done   | read                                              |
-| NAM2 | 58   | done   | read                                              |
-| NAM3 | 58   | done   | read                                              |
-| NAM4 | 58   | done   | read                                              |
-| NAM5 | 10   | open   | flow normals noise texture (RiverFlow.dds) unread |
-| SNAM | 26   | n/a    | its sound                                         |
-| TNAM | 7    | done   | read                                              |
+| Item | Uses | Status | Where / why                                                                                                                    |
+| ---- | ---- | ------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| ANAM | 58   | done   | read                                                                                                                           |
+| DATA | 58   | done   | read                                                                                                                           |
+| DNAM | 58   | done   | read                                                                                                                           |
+| FNAM | 58   | done   | read                                                                                                                           |
+| FULL | 3    | n/a    | name                                                                                                                           |
+| GNAM | 58   | n/a    | empty in every vanilla water                                                                                                   |
+| INAM | 53   | done   | read                                                                                                                           |
+| NAM0 | 58   | done   | read                                                                                                                           |
+| NAM1 | 58   | done   | read                                                                                                                           |
+| NAM2 | 58   | done   | read                                                                                                                           |
+| NAM3 | 58   | done   | read                                                                                                                           |
+| NAM4 | 58   | done   | read                                                                                                                           |
+| NAM5 | 10   | open   | flow normals noise texture (RiverFlow.dds): sampled on the flow map's staggered grid by per-geometry constants that are unread |
+| SNAM | 26   | n/a    | its sound                                                                                                                      |
+| TNAM | 7    | done   | read                                                                                                                           |
 
 ### Records: WTHR (108)
 
