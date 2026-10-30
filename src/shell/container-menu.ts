@@ -20,6 +20,7 @@
 
 import { INVENTORY_CATEGORIES, ItemCategory, itemSound } from '../gameplay/inventory.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
+import { withoutStolen } from '../scripting/runtime/crime-engine.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { questItemCount, questItems } from '../scripting/runtime/quest-items.ts';
 import { referenceName } from '../scripting/runtime/quest-text.ts';
@@ -61,22 +62,6 @@ export function sideCategories(settings: GameSettings): unknown[] {
 /** An entry's stack of improved items (ItemEntry.stack), if it is one. */
 export function entryStack(entry: ItemEntry): number | undefined {
   return typeof entry.stack === 'number' ? entry.stack : undefined;
-}
-
-/**
- * Rows without their stolen items: of each item, its stolen count is taken off its rows (its
- * plain stack first, then its improved ones), and rows left empty go.
- */
-export function withoutStolen(rows: readonly Row[], stolen: (formId: number) => number): Row[] {
-  const left = new Map<number, number>();
-  const out: Row[] = [];
-  for (const row of rows) {
-    const remaining = left.get(row.formId) ?? stolen(row.formId);
-    const taken = Math.min(remaining, row.count);
-    left.set(row.formId, remaining - taken);
-    if (row.count - taken > 0) out.push({ ...row, count: row.count - taken });
-  }
-  return out;
 }
 
 /** The other side's entry for a row: its bits moved up, marked as the container's. */

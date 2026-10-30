@@ -106,6 +106,26 @@ const LAST_ARREST = 'Variable03';
 const stolenKey = (faction: number | undefined, witnessed: boolean): string =>
   `${String(faction ?? 0)}:${witnessed ? '1' : '0'}`;
 
+/**
+ * An item list without its stolen items (a container that takes none: refusesStolen): of each
+ * item, its stolen count is taken off its rows (its plain stack first, then its improved ones),
+ * and rows left empty go.
+ */
+export function withoutStolen<T extends { readonly formId: number; readonly count: number }>(
+  rows: readonly T[],
+  stolen: (formId: number) => number,
+): T[] {
+  const left = new Map<number, number>();
+  const out: T[] = [];
+  for (const row of rows) {
+    const remaining = left.get(row.formId) ?? stolen(row.formId);
+    const taken = Math.min(remaining, row.count);
+    left.set(row.formId, remaining - taken);
+    if (row.count - taken > 0) out.push({ ...row, count: row.count - taken });
+  }
+  return out;
+}
+
 export class CrimeEngine {
   readonly #runtime: ScriptRuntime;
   readonly ledger = new CrimeLedger();
