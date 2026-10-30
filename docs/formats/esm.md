@@ -92,9 +92,16 @@ quests carry index 01 rather than 02 (found by their object index under the plug
 Not every start-game-enabled quest is listed (Update.esm lists 3 of 25), and Fish lists one
 quest without the flag (ccBGSSSE001_Start_MQ1). Observed in the original: as each plugin
 loads, it reads `SEQ\<plugin>.SEQ` (the plugin's name without its extension), moves each id
-into the load order by that plugin and adds it to one set of quests. TODO(M13): where the set
-is read (starting a plugin's quests in a save that did not have it). Reader: `src/formats/esm/seq.ts`,
-`node tools/seq-info.ts`.
+into the load order by that plugin and adds it to one set of quests (HearthFires.esm's ids so
+name Update.esm forms, not its quests). The set is read as the plugins' records load: a topic's
+infos (its topic children group) are read with the game when the topic is a shared-info topic
+(DIAL subtype 90) or its quest is in the set; the others are skipped then and read when their
+quest starts. So the set is the quests whose dialogue is in memory from the start; it changes
+no behaviour (a topic's infos are only said while its quest runs). Ours:
+`RecordDatabase.startGameQuests()` builds the set as the original does, and
+`DialogueIndex.loadsWithGame(topic)` says whether the original reads a topic's infos with the
+game; our dialogue index still reads every info at once (TODO(M13): read the rest as their
+quests start, for memory). Reader: `src/formats/esm/seq.ts`, `node tools/seq-info.ts`.
 
 ## Subrecord layouts
 

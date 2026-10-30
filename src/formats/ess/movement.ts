@@ -3,33 +3,15 @@
 // they point at (pathing requests, paths), and while the actor is loaded its animation
 // graph's state. Platform-independent.
 
+import { readCombatObject, type CombatStream } from './combat.ts';
 import type { EssReader } from './ess-reader.ts';
 import type { RefIdResolver } from './global-data.ts';
+import { pathingTypeId } from './pathing-type.ts';
+
+export { pathingTypeId } from './pathing-type.ts';
 
 /** A part of the movement data whose layout is not known: where the read stopped, and why. */
 export class MovementUnknown extends Error {}
-
-/**
- * The type a pathing object is saved with: the CRC-32 (reflected, no final inversion) of its
- * class name, as the original's pathing factories key their classes.
- */
-export function pathingTypeId(name: string): number {
-  let crc = 0;
-  for (let i = 0; i < name.length; i++) {
-    crc = (CRC_TABLE[(crc ^ name.charCodeAt(i)) & 0xff] ?? 0) ^ (crc >>> 8);
-  }
-  return crc >>> 0;
-}
-
-const CRC_TABLE = ((): Uint32Array => {
-  const table = new Uint32Array(256);
-  for (let n = 0; n < 256; n++) {
-    let c = n;
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    table[n] = c >>> 0;
-  }
-  return table;
-})();
 
 /** The pathing classes the movement data names by type id. */
 const PATHING_TYPES = new Map(
@@ -127,16 +109,11 @@ export interface EssMovement {
 }
 
 /**
- * Reads one movement controller's data (after the byte that says it is there). `written`:
- * the shared objects the actor's save wrote before it (its AI process writes some), or
- * undefined when those parts were not read.
+ * Reads one movement controller's data (after the byte that says it is there), through the
+ * actor's pathing stream (which knows the shared objects the actor's save wrote before).
  */
-export function readMovement(
-  reader: EssReader,
-  resolve: RefIdResolver,
-  written?: Set<bigint>,
-): EssMovement {
-  const stream = new PathingStream(reader, resolve, written);
+export function readMovement(stream: PathingStream): EssMovement {
+  const reader = stream.reader;
   // The messages waiting for the next update.
   for (let n = reader.u32(), i = 0; i < n; i++)
     stream.object((type) => {
@@ -187,20 +164,27 @@ function readGraphState(reader: EssReader): void {
   reader.skip(12 * reader.u32());
 }
 
-/** The original's pathing stream: values, forms, and shared objects written once each. */
-class PathingStream {
+/**
+ * The original's pathing stream, one per actor's save: values, forms, and shared objects
+ * written once each (the AI process, the movement controller and the combat controller write
+ * through the same one).
+ */
+export class PathingStream implements CombatStream {
   readonly reader: EssReader;
   readonly resolve: RefIdResolver;
   /** The shared objects already written (by the id the original gives them). */
-  readonly #seen: Set<bigint>;
+  readonly #seen = new Set<bigint>();
   /** Whether `#seen` holds every object written before (else some are not known). */
   readonly #complete: boolean;
 
-  constructor(reader: EssReader, resolve: RefIdResolver, written: Set<bigint> | undefined) {
+  /**
+   * `complete`: whether every part the actor's save wrote before is read through this stream
+   * (else an id may stand for an object a part not read wrote).
+   */
+  constructor(reader: EssReader, resolve: RefIdResolver, complete = true) {
     this.reader = reader;
     this.resolve = resolve;
-    this.#seen = written ?? new Set();
-    this.#complete = written !== undefined;
+    this.#complete = complete;
   }
 
   floats(count: number): void {
@@ -472,15 +456,9 @@ class PathingStream {
     }
   }
 
-  /**
-   * A combat object (the combat AI's: a cover search, a path, ...), written once: a u32 id with
-   * bit 0 set when its type and data follow.
-   */
+  /** A combat object (the combat AI's: a cover search, a path, ...; combat.ts). */
   combatObject(): void {
-    if ((this.reader.u32() & 1) === 0) return;
-    const type = this.reader.u32();
-    // TODO(M13): the combat AI's objects each have their own layout (CombatCoverSearch, ...).
-    throw new MovementUnknown(`combat object ${typeName(type)}`);
+    readCombatObject(this);
   }
 
   /** What a request holds locked (a door, a furniture marker): the reference, if it has one. */
