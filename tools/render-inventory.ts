@@ -84,14 +84,14 @@ const LIGHTING_SLSF1: Record<number, Entry> = {
   16: [
     'Fire_Refraction',
     'done',
-    'refraction.wgsl: the falloff variant (strength × normal · direction to the eye)',
+    'refraction.wgsl: its falloff variant, the strength × normal · direction to the viewer',
   ],
   17: ['Eye_Environment_Mapping', 'done', 'lighting.wgsl'],
   18: ['Hair_Soft_Lighting', 'done', 'lighting.wgsl: picks the hair technique (the hair tint)'],
   19: [
     'Screendoor_Alpha_Fade',
     'done',
-    'lighting.wgsl blendedFade, scene-renderer fadeBlend: blended while fading, no shadow mask',
+    'lighting.wgsl blendedFade: blended while fading, no shadow mask',
   ],
   20: ['Localmap_Hide_Secret', 'open', 'unread by the local map'],
   21: ['FaceGen_RGB_Tint', 'done', 'lighting.wgsl skin tint'],
@@ -510,9 +510,9 @@ const SUBRECORD_NOTES: Record<string, readonly [Status, string]> = {
     'open',
     "flow normals noise texture (RiverFlow.dds): sampled on the flow map's staggered grid by per-geometry constants that are unread",
   ],
-  'WTHR LNAM': ['done', 'weather.ts: the cloud layer count (layers past it not drawn)'],
-  'WTHR NAM2': ['done', "weather.ts: the moon glare's four colours (old FX weathers)"],
-  'WTHR NAM3': ['done', "weather.ts: the sun glare's four colours (old FX weathers)"],
+  'WTHR LNAM': ['done', 'weather.ts: the cloud layer count (29, 4)'],
+  'WTHR NAM2': ['done', 'weather.ts: moon glare colours (FX)'],
+  'WTHR NAM3': ['done', 'weather.ts: sun glare colours (FX)'],
 };
 
 /** Whether a reader names the subrecord (IMAD's channel subrecords are built from an index). */

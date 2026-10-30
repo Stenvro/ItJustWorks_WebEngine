@@ -363,17 +363,25 @@ constants of Nukem9's decompiled `BSLightingShader`:
    (rolloff + n·l) / (1 + rolloff) minus that of n·l; for point lights the engine passes the
    unnormalized light vector), rim lighting (`0x4000000`, (1 − n·v)^power · saturate(v·−l)),
    both times the rim / soft map (slot 2), and back lighting (`0x8000000`, saturate(−n·l)
-   times the back light map, slot 7). Missing maps are black (the engine binds no texture).
-   A texture a model names that no file holds draws the slot's default, as the engine does (its
-   renderer keeps default black, white, grey and normal textures and per-slot defaults:
-   BSShader_DefNormalMap, DefHeightMap, DefCubeMap, DefFacegenDetail, DefTexEffectMap, by
-   CommonLibSSE's BSGraphics::State and the original's strings). Vanilla meshes name a few
+   times the back light map, slot 7).
+   A texture a model names that no file holds, or a slot it leaves empty, takes the engine's
+   built-in texture for that slot (`material-slots.ts missingTextures`, observed in the
+   original). The engine makes them at start-up: its default normal map (128, 128, 255, 255:
+   flat, with full specular in its alpha), black (also its default height map), white, grey
+   (128), the FaceGen detail default (64 in every channel), a black cube map, a texture-effect
+   map and a dithering noise. Each lighting material fills only its own slots: every material's
+   diffuse and normal map take the default normal map (a missing diffuse map shows its lavender);
+   the rim / soft light map (with rim or soft lighting) and the back light map (with back
+   lighting) take it too, and a model-space normals material's specular map black; glow maps
+   white; the parallax height maps black; FaceGen's tint grey, its detail map the detail default
+   and its skin map black; eyes' and multi-layer parallax's environment mask and the inner layer
+   the default normal map; every environment cube map the default cube. An environment-mapped
+   material's mask is left empty (it reads 0, Direct3D's rule for an unbound slot: no
+   reflection). Vanilla meshes name a few
    textures the game never shipped (Windhelm's whicedecal01 and its normal map, Alduin's eyes'
    normal map): a missing texture named by a model of the game's own archives
    (`Vfs.isGameContent`, `TextureCache` failures' `gameLacks`) is logged as info; one a mod's or
-   a loose model names, or a file that does not decode, as a warning; each once. TODO(M13): which
-   default each shader slot takes for a missing file (ours: white diffuse, flat normal, black
-   glow and cube map).
+   a loose model names, or a file that does not decode, as a warning; each once.
 3. Colour: (directional ambient + emit + lights) × diffuse, then × vertex colours (hair: the
    tint by the vertex green, `(g · (tint − 1) + 1)`; skin tint: the facegen RGB tint formula).
    Emit is the emissive colour with Own_Emit, or the emissive colour × the glow map (type 2
@@ -625,11 +633,16 @@ strength × (normal − 0.5), x mirrored; past 0.15 and 0.85 of the screen the s
 coordinate moves at 0.78 of the rate (blended in by the strength); the mask is read where the
 shifted coordinate lands, so nothing in front of a shape is pulled into it; the result is
 the scene lerped to the shifted scene by that mask. Their UV controllers scroll the noise.
-Fire_Refraction (`0x10000`): observed in the original, it is read only when a refraction shape's
-pass is built, where it picks the falloff variant of the pass that writes the refraction normals
-(the utility shader's normal output). TODO(M13): that variant's term is not yet read from the
-shader cache; ours draws such shapes as plain refraction. Fire_Refraction without Refraction
-(about 50 shapes) builds no refraction pass and is drawn as a regular surface.
+The pass that writes the refraction buffer, as the original's shader cache has it (its utility
+shader's normal techniques): the shift it stores is the normal map's xy about 0.5 times 1.8 plus
+the geometry normal's view-space xy, divided by `max(depth × 0.001333 + 0.8, 1)` (the shift
+shrinks with distance past 150 units), halved about 0.5; the strength goes into the third
+channel. Fire_Refraction (`0x10000`): observed in the original, it is read only when a
+refraction shape's pass is built, where it picks the falloff variant of that pass: the vertex
+shader multiplies the strength by the geometry normal · the normalized direction from the vertex
+to the eye (`refraction.wgsl`; TODO(M13): the refraction target's format is unread, a negative
+product is stored as 0 here). Fire_Refraction without Refraction (about 50 shapes) builds no
+refraction pass and is drawn as a regular surface.
 
 ## Weapon blood
 
@@ -788,6 +801,17 @@ change begins and one under way waits, while game time passes; out again, the ho
 the change is over at once. Most town interiors have Show Sky (Breezehome, the Sleeping
 Giant Inn, Dragonsreach), so their weather runs on with their sky region's list.
 
+**The record's colours and cloud layers** (`src/world/weather.ts parseWeather`, observed in
+the original's WTHR loading). Every colour starts black and NAM0 fills what it holds (17
+colours × 4 times of day in 98 vanilla weathers; 14 in the ten old FX weathers, form version
+35). A NAM0 of at most twelve colours gives the far fog the near fog's colours; a record older
+than form version 36 has a white water multiplier; NAM3 then gives the sun glare's four colours
+and NAM2 the moon glare's (only the ten FX weathers carry them, all white). An effect lighting
+colour whose four bytes are all zero takes the sunlight's colour of that time (six weathers).
+LNAM is the weather's cloud layer count (29 in every weather with clouds, 4 in the FX weathers,
+which have none); no vanilla weather names a cloud texture past it, and ours leaves such layers
+out.
+
 **Conditions:** `GetIsCurrentWeather` (a weather, or any of a form list's),
 `GetCurrentWeatherPercent` (the transition), `GetWindSpeed`; `IsRaining` / `IsSnowing` hold
 once the current weather of that class is past its precipitation fade-in (DATA byte 6) or
@@ -868,10 +892,23 @@ only refracting waters). Ours renders it from the camera mirrored under the near
 plane (seen from there, the straight line through a water point continues as the reflected
 view ray), five faces (none looks down) as layers of a 2D array with their matrices for the
 lookup, 256 texels a side, what lies under the plane clipped (`frame.wgsl reflectionClipped`).
-All faces are drawn when the plane changes, then one a frame. TODO(M13): the cube's size and
-refresh (fCubeMapRefreshRate 0), several planes (uMaxExteriorWaterReflections 2, interiors 4,
-fExteriorWaterReflectionThreshold 300), interiors (ours reflect the sky colours there) and
-whether the reflection is fogged (ours leaves deferred lit objects unfogged).
+The original's cube, observed in the original: 512 texels a side in half floats with one
+sample, six faces, two of them redrawn each frame (fCubeMapRefreshRate 0: no pause between
+rounds), so the whole cube every three frames; after each round its faces are reordered by the
+time each took, so a frame pairs a costly face with a cheap one; at most six cubes are redrawn
+in a frame. What it draws: the sky, LOD land, LOD objects and tree LOD by the [Water] switches.
+Ours keeps its cost at or under that: five faces of 256 texels with four samples (as many
+samples a face as the original's), one face a frame; when the mirrored plane changes, the new
+plane's faces are redrawn two a frame (the original's rate, never all five in one frame) and
+the water shows the reflection once every face holds a drawing. Each face draws only what lies
+in its own view: the land's quadrants, the tree LOD blocks (each block with a sphere round its
+trees, grown by its largest billboard), the sky and the reflected draws, listed once per scene
+(`GpuScene.reflected`, as the water draws are, `GpuScene.water`) instead of walking every draw
+of every scene for each face. `Renderer.reflectionStats` counts each frame's faces, land
+quadrants, tree blocks, draws and recording time. TODO(M13): several planes
+(uMaxExteriorWaterReflections 2, interiors 4, fExteriorWaterReflectionThreshold 300), interiors
+(ours reflect the sky colours there) and whether the reflection is fogged (ours leaves deferred
+lit objects unfogged).
 
 **Displacement** (`water-displacement.ts`, `water-displacement-gpu.ts`,
 `shaders/water-displacement.wgsl`): the surface's interactive ripples, as observed in the
@@ -1098,8 +1135,12 @@ up at the blended surface where the original reads the opaque scene's mask (TODO
 
 Screendoor_Alpha_Fade: a shape fading out (its fade value under 1) is stippled when
 bEnableStippleFade is on, unless it carries this flag; then it is drawn blended by its fade
-alpha instead, without the shadow mask. The ten uses (the falling rocks of the rock hazard,
-fxhavokrockhazard.nif) dither here (TODO(M13): draw them blended while they fade).
+alpha instead, without the shadow mask. The ten uses are the falling rocks of the rock hazard
+(fxhavokrockhazard.nif). Here an opaque lighting shape with the flag keeps a blended copy
+(`Draw.fadeBlend`: source alpha over, its alpha test kept); while its reference fades it is
+left out of the opaque pass and the copy is drawn in the blended pass, its alpha times one minus
+the fade, taking no shadows unless it carries Assume_Shadowmask or a decal flag
+(`lighting.wgsl blendedFade`).
 
 The sparkle technique (shader type 14, and the second pass of multi-index snow), as its pixel
 shaders in the cache have it: the noise is the engine's projected normal detail map
