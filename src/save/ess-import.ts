@@ -13,6 +13,7 @@ import {
   FormFlag,
   QuestFlag,
   readChangeForm,
+  type EssActorValues,
   type EssChangeForm,
 } from '../formats/ess/change-forms.ts';
 import { changeFormTypeName, globalData, type EssFile } from '../formats/ess/ess.ts';
@@ -31,7 +32,7 @@ import {
   type EssVariable,
 } from '../formats/ess/papyrus.ts';
 import type { SavedInstance } from '../scripting/papyrus-vm.ts';
-import { GameState } from '../scripting/runtime/game-state.ts';
+import { GameState, type ActorValueState } from '../scripting/runtime/game-state.ts';
 import { gameStateData, type RuntimeSave } from '../scripting/runtime/runtime-save.ts';
 import type { Placement } from '../scripting/runtime/runtime.ts';
 import { ObjectHandle, PapyrusArray, type Value } from '../scripting/values.ts';
@@ -237,11 +238,13 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
         applied |= ChangeQuest.stages;
       }
       if (q.objectives) {
+        // The objective's state (CommonLibSSE QUEST_OBJECTIVE_STATE): 1 displayed, 2 completed,
+        // 3 completed and displayed, 4 failed, 5 failed and displayed.
         for (const objective of q.objectives) {
           quest.objectives.set(objective.index, {
             displayed: (objective.status & 1) !== 0,
-            completed: (objective.status & 2) !== 0,
-            failed: false,
+            completed: objective.status === 2 || objective.status === 3,
+            failed: objective.status === 4 || objective.status === 5,
           });
         }
         applied |= ChangeQuest.objectives;
@@ -257,6 +260,14 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       if (q.scriptDelay !== undefined) applied |= ChangeQuest.scriptDelay;
     } else if (entry.type === 9 && form.npc && formId === PLAYER_BASE) {
       applied |= applyPlayerBase(form);
+    } else if (entry.type >= 44 && entry.type <= 46 && form.leveledAdded) {
+      // LVLN, LVLI, LVSP: the entries scripts added (AddForm).
+      const added = form.leveledAdded.flatMap(({ form: item, level, count }) => {
+        const id = ours(item);
+        return id === undefined ? [] : [{ level, formId: id, count }];
+      });
+      state.leveledAdditions.set(formId, added);
+      applied |= ChangeBase.last;
     } else if (entry.type === 13 && flags & ChangeBase.bookRead) {
       state.booksRead.add(formId);
       applied |= ChangeBase.bookRead;
@@ -319,7 +330,16 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
           applied |= ChangeRefr.ownershipExtra;
         }
       }
+      // The factions a script put the actor in or took it out of (rank −1: out; ours: −2).
+      if (extra.factions) {
+        const factions = state.actor(formId).factions;
+        for (const { faction, rank } of extra.factions) {
+          const id = ours(faction);
+          if (id !== undefined) factions.set(id, rank < 0 ? -2 : rank);
+        }
+      }
     }
+    if (form.actor?.values) applyActorValues(formId, form.actor.values);
     if (form.inventory) {
       const deltas = inventoryDeltas.get(formId) ?? new Map<number, number>();
       for (const item of form.inventory) {
@@ -336,6 +356,31 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     }
     if (formId === PLAYER_REF) state.actor(PLAYER_REF).level = ess.header.playerLevel;
     return applied;
+  }
+
+  function valueOf(reference: number, av: number): ActorValueState {
+    const values = state.actor(reference).values;
+    let value = values.get(av);
+    if (!value) {
+      value = { modifier: 0, damage: 0 };
+      values.set(av, value);
+    }
+    return value;
+  }
+
+  /**
+   * An actor's actor values: base values that changed (they win over the base record's, as the
+   * player's skills from its NPC_ change form), and the modifiers. The game keeps damage as a
+   * negative modifier; ours is the amount taken (TODO(M13): checked against a real save).
+   */
+  function applyActorValues(reference: number, values: EssActorValues): void {
+    for (const { av, value } of values.base) valueOf(reference, av).base = value;
+    for (const modifiers of [...values.modifiers, ...values.others]) {
+      const value = valueOf(reference, modifiers.av);
+      value.modifier = modifiers.permanent;
+      if (modifiers.temporary !== 0) value.temporary = modifiers.temporary;
+      value.damage = -modifiers.damage;
+    }
   }
 
   function applyPlayerBase(form: EssChangeForm): number {
@@ -356,12 +401,12 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     if (npc.skills) {
       const view = new DataView(npc.skills.buffer, npc.skills.byteOffset, npc.skills.byteLength);
       for (let i = 0; i < 18; i++) {
-        actor.values.set(FIRST_SKILL_AV + i, { base: view.getUint8(i), modifier: 0, damage: 0 });
+        valueOf(PLAYER_REF, FIRST_SKILL_AV + i).base ??= view.getUint8(i);
       }
       // TODO(M13): DNAM's health, magicka and stamina as the player's base values.
       for (let i = 0; i < 3; i++) {
         const value = view.getUint16(36 + i * 2, true);
-        if (value > 0) actor.values.set(HEALTH_AV + i, { base: value, modifier: 0, damage: 0 });
+        if (value > 0) valueOf(PLAYER_REF, HEALTH_AV + i).base ??= value;
       }
       applied |= ChangeNpc.skills;
     }

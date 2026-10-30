@@ -79,6 +79,9 @@ if (papyrusData) {
 }
 const resolve = refIdResolver(ess.formIds);
 const byType = new Map<string, { count: number; partial: number }>();
+// Why reads stopped (numbers left out), and how many actors' values were read.
+const reasons = new Map<string, number>();
+let actorValues = 0;
 for (const entry of ess.changeForms) {
   const form = readChangeForm(entry, resolve);
   const name = changeFormTypeName(entry.type);
@@ -86,8 +89,11 @@ for (const entry of ess.changeForms) {
   counts.count++;
   if (form.stoppedAt !== undefined) {
     counts.partial++;
+    const reason = form.stoppedAt.replace(/[0-9]+/g, '#');
+    reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
     if (values.forms) console.log(`  ${name} ${hex(form.formId)}: ${form.stoppedAt}`);
   }
+  if (form.actor?.values) actorValues++;
   byType.set(name, counts);
 }
 console.log(
@@ -98,3 +104,5 @@ for (const [name, { count, partial }] of byType) {
     `  ${name}: ${String(count)}${partial ? ` (${String(partial)} not read to the end)` : ''}`,
   );
 }
+console.log(`actors with their actor values read: ${String(actorValues)}`);
+for (const [reason, count] of reasons) console.log(`  stopped at ${reason}: ${String(count)}`);
