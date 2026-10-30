@@ -959,11 +959,13 @@ export async function loadCellData(
       ...(((record.flags & REFLECTED_BY_AUTO_WATER) !== 0 ||
         xpwrReflected(record.fields.all('XPWR'))) && { reflectedByWater: true }),
       ...objectRagdollOf(record),
-      // Distance fade by its kind, unless it has distant LOD or is full LOD (object-fade.ts).
+      // Distance fade by its kind (full LOD: the sky cell's), unless it has distant LOD
+      // (object-fade.ts).
       ...(!neverFades(base.type, base.flags, record.flags) && {
         fade: fadeKind(
           base.type,
           base.type === 'LIGH' && (parseLight(base).flags & LightFlag.canCarry) !== 0,
+          record.flags,
         ),
       }),
       ...(base.type === 'DOOR' && { teleport: parseTeleport(record) }),

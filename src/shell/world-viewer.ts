@@ -1351,6 +1351,8 @@ export class WorldViewer {
       if (mounts?.horseOf(PLAYER_REF) === undefined) return undefined;
       return mounts.flyingMount(PLAYER_REF) ? 'dragon' : 'horse';
     };
+    // The ridden dragon its camera follows (DragonCameraState: src/shell/camera-states.ts).
+    player.dragonRide = () => this.#stage?.mounts.dragonView(PLAYER_REF);
     // The vanity camera waits while a menu is open or the player fights.
     player.vanityAllowed = () => {
       const session = this.#session;

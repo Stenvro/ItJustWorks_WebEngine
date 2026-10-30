@@ -1,9 +1,10 @@
 // The kill camera (docs/animation.md, "Killmoves"): a killmove the player leads is shown by the
 // kill cameras' tree (CPTH, KillmoveCamera.choose: the engine's search), first person or third;
-// its shots (CAMS) play in turn, each its Max Time: the camera at its model's ExportCam node
-// (meshes\cameras\*.nif) in the frame of the shot's location (the attacker, the target),
-// looking at its target, the world's clock at the shot's global time multiplier (the slow
-// motion), the shot's image-space modifier cross-faded in (fVATSImageSpaceTransitionTime). A
+// its shots (CAMS) play in turn, each its Max Time: the camera where its model puts it
+// (meshes\cameras\*.nif: the root node's place moved by its keys or along its path, the field of
+// view by the NiCamera's BSFrustumFOVController; src/render/camera-model.ts), from the shot's
+// start, in the frame of the shot's location (the attacker, the target), looking at its target,
+// the world's clock at the shot's global time multiplier (the slow motion), the shot's image-space modifier cross-faded in (fVATSImageSpaceTransitionTime). A
 // first-person shot leaves the player's own view. The conditions run on the attacker (the
 // victim their target) with the kill (KillCameraContext): GetVATSValue's weapon, action and
 // distance, and the VATS sides' functions (GetVATS{Left,Right,Back,Front}AreaFree: the free
@@ -32,6 +33,7 @@ import type { KillCameraContext } from '../scripting/runtime/condition-values.ts
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { ObjectHandle } from '../scripting/values.ts';
 import { meshPath } from '../world/actors.ts';
+import { readCameraModel, sampleCameraModel, type CameraModel } from '../render/camera-model.ts';
 import type { GameSession } from './game-session.ts';
 
 /** CPTH DATA bit 7: the path does not need shots ("Default", not "..., Must Have Camera Shots"). */
@@ -40,6 +42,9 @@ const SHOTS_OPTIONAL = 0x80;
 const AREA_REACH = 10000;
 /** A chest's height over the feet (game units). */
 const CHEST = 96;
+/** A shot without a readable model: its camera's place and field of view. */
+const DEFAULT_OFFSET: Vec3 = [0, -200, 80];
+const DEFAULT_FOV = (50 * Math.PI) / 180;
 /** How far a ray steps on through the body it started in (game units). */
 const SELF_STEP = 8;
 /** GetVATSValue's actions (xEdit wbConditionVATSValueParameters, VATS Action). */
@@ -66,17 +71,18 @@ export interface KillmoveSubjects {
   readonly physics: PhysicsWorld;
 }
 
-/** A shot to play: where its camera sits in its subject's frame, for how long. */
+/** A shot to play: its camera model (where it sits in its subject's frame), for how long. */
 interface Shot {
   readonly record: CameraShot;
-  readonly offset: Vec3;
-  readonly fovY: number;
+  readonly model: CameraModel | undefined;
 }
 
 let paths: Promise<CameraPathRecord[]> | undefined;
 
 export class KillmoveCamera implements Camera {
   readonly near = 5;
+  /** The current shot's vertical field of view (radians), as its model animates it. */
+  fovY = DEFAULT_FOV;
   position: Vec3 = [0, 0, 0];
   forward: Vec3 = [0, 1, 0];
   readonly #shots: readonly Shot[];
@@ -166,18 +172,7 @@ export class KillmoveCamera implements Camera {
       if (shot.model === undefined) return undefined;
       const path = meshPath(shot.model);
       if (!session.vfs.has(path)) continue;
-      const file = parseNif(await session.vfs.read(path));
-      let offset: Vec3 = [0, -200, 80];
-      let fovY = (50 * Math.PI) / 180;
-      for (const block of file.blocks) {
-        if (block.kind === 'node' && block.name === 'ExportCam') {
-          const [x, y, z] = block.transform.translation;
-          offset = [x, y, z];
-        } else if (block.kind === 'camera') {
-          fovY = 2 * Math.atan(Math.abs(block.frustum.top));
-        }
-      }
-      made.push({ record: shot, offset, fovY });
+      made.push({ record: shot, model: readCameraModel(parseNif(await session.vfs.read(path))) });
     }
     return made.length > 0 ? new KillmoveCamera(made, subjects, chosen.editorId) : undefined;
   }
@@ -225,7 +220,12 @@ export class KillmoveCamera implements Camera {
       current.record.location === CameraSubject.projectile && projectile
         ? projectile.heading
         : subjects.attackerHeading();
-    const [ox, oy, oz] = current.offset;
+    // The model's camera at the shot's time (every vanilla camera model has an NiCamera).
+    // TODO(M13): the model's own turn (small turns of its root about looking at the target) and
+    // the bone its location is measured from are not applied; it looks at its target.
+    const sample = current.model && sampleCameraModel(current.model, this.#time);
+    this.fovY = sample?.fovY ?? DEFAULT_FOV;
+    const [ox, oy, oz] = sample?.position ?? DEFAULT_OFFSET;
     // The offset in the location's frame (x right, y forward), turned to its heading.
     const cos = Math.cos(heading);
     const sin = Math.sin(heading);
@@ -271,14 +271,13 @@ export class KillmoveCamera implements Camera {
   }
 
   viewProjection(aspect: number, out: Mat4 = new Float32Array(16)): Mat4 {
-    const shot = this.#shots[Math.min(this.#shot, this.#shots.length - 1)];
     const target: Vec3 = [
       this.position[0] + this.forward[0],
       this.position[1] + this.forward[1],
       this.position[2] + this.forward[2],
     ];
     const view = lookAt(this.position, target, [0, 0, 1]);
-    const projection = perspectiveReversedZ(shot?.fovY ?? 0.9, aspect, this.near);
+    const projection = perspectiveReversedZ(this.fovY, aspect, this.near);
     return multiply(projection, view, out);
   }
 

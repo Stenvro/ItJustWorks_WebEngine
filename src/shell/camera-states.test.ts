@@ -3,7 +3,10 @@ import {
   AutoVanity,
   CameraState,
   cameraState,
+  DragonCamera,
+  dragonShoulder,
   horseShoulder,
+  lookAngles,
   zoomRange,
   type VanitySettings,
 } from './camera-states.ts';
@@ -47,6 +50,56 @@ describe('the camera states', () => {
     expect(zoomRange(number, undefined)).toEqual([155, 600]);
     expect(zoomRange(number, 'horse')).toEqual([155, 600]);
     expect(zoomRange(number, 'dragon')).toEqual([1200, 2400]);
+  });
+});
+
+describe('the dragon camera', () => {
+  const settings = {
+    maxAngle: (number('fDragonMaxAngleBeforeTurn') * Math.PI) / 180,
+    dollyTime: number('fDragonCameraDollyTime'),
+  };
+
+  it('sits farther back, closer with a weapon drawn', () => {
+    expect(dragonShoulder(number, [0, -150, 90], false)).toEqual([0, 600, 0]);
+    expect(dragonShoulder(number, [0, -150, 90], true)).toEqual([0, 150, 90]);
+  });
+
+  it('turns the view with the dragon', () => {
+    const camera = new DragonCamera();
+    camera.reset(0, 0.3, 0.1);
+    const step = camera.step(
+      { yaw: 0.3, pitch: 0.1, heading: 0.5, holds: false },
+      1 / 60,
+      settings,
+    );
+    expect(step.yaw).toBeCloseTo(0.8);
+    expect(step.view[0]).toBeCloseTo(0.8);
+    expect(step.view[1]).toBeCloseTo(0.1);
+  });
+
+  it('holds the view of a horse-like mount in the world, up to the angle', () => {
+    const camera = new DragonCamera();
+    camera.reset(0, 0, 0);
+    expect(camera.step({ yaw: 0, pitch: 0, heading: 0.5, holds: true }, 0.1, settings).yaw).toBe(0);
+    const far = camera.step({ yaw: 0, pitch: 0, heading: 2.5, holds: true }, 0.1, settings);
+    expect(far.yaw).toBeCloseTo(2.5 - Math.PI / 2);
+  });
+
+  it('eases to a locked target and back over the dolly time', () => {
+    const camera = new DragonCamera();
+    camera.reset(0, 0, 0);
+    const at = lookAngles([0, 0, 0], [100, 0, 100]);
+    expect(at.yaw).toBeCloseTo(Math.PI / 2);
+    expect(at.pitch).toBeCloseTo(Math.PI / 4);
+    const locked = { reference: 7, ...at };
+    const input = { yaw: 0, pitch: 0, heading: 0, holds: false, locked };
+    expect(camera.step(input, 0.375, settings).view[0]).toBe(0);
+    expect(camera.step(input, 0.375, settings).view[0]).toBeCloseTo(Math.PI / 4);
+    expect(camera.step(input, 0.375, settings).view[0]).toBeCloseTo(Math.PI / 2);
+    // Let go: back to the player's own view the same way.
+    const free = { yaw: 0, pitch: 0, heading: 0, holds: false };
+    expect(camera.step(free, 0.375, settings).view[0]).toBeCloseTo(Math.PI / 2);
+    expect(camera.step(free, 0.375, settings).view[1]).toBeCloseTo(Math.PI / 8);
   });
 });
 

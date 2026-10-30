@@ -8,23 +8,40 @@
 // ...Objects), so the multiplier stretches them. Over that range its fade value goes from 1 to 0;
 // the reference then fades out over time once the value drops below fFadeOutThreshold and in
 // again once it rises past fFadeInThreshold (stepFade), dithered away while it fades. References
-// that have distant LOD (the base's "Has Distant LOD" flag) or are placed as
-// full LOD ("Is Full LOD") never fade: the LOD takes over at the grid's edge. Platform-independent.
+// that have distant LOD (the base's "Has Distant LOD" flag) never fade: the LOD takes over at the
+// grid's edge. References placed as full LOD ("Is Full LOD") are the sky cell's kind (observed in
+// the original: the 11th fade type): their distance is fSkyCellRefFadeDistance (150000) whatever
+// their size, by fLODFadeOutMultSkyCell (1). Platform-independent.
 //
 // TODO(M13): the engine also scales the camera's distance by a per-camera factor (one at the
-// default view, as far as read) and gives sky-cell references fLODFadeOutMultSkyCell with
-// fSkyCellRefFadeDistance (150000); a multiplier of 0 or less leaves the shaders' fade value
+// default view, as far as read); a multiplier of 0 or less leaves the shaders' fade value
 // at a fifth of the distance (shader-fades.ts); scripted fades toward a target
 // alpha (the camera's fade of what stands in front of it) are not built.
 
-/** Which of the settings a reference fades by. */
-export type FadeKind = 'actor' | 'item' | 'object';
+/** Which of the settings a reference fades by (the sky cell's: full LOD references). */
+export type FadeKind = 'actor' | 'item' | 'object' | 'skyCell';
 
 /** The fade multipliers (INI [LOD]). */
 export interface FadeSettings {
   readonly actors: number;
   readonly items: number;
   readonly objects: number;
+  /** fLODFadeOutMultSkyCell (1 by default). */
+  readonly skyCell?: number;
+}
+
+/** GMST fSkyCellRefFadeDistance's default: a full LOD reference's fade distance. */
+export const SKY_CELL_FADE_DISTANCE = 150000;
+
+/** A kind's multiplier among the settings. */
+export function fadeMultiplier(kind: FadeKind, settings: FadeSettings): number {
+  return kind === 'actor'
+    ? settings.actors
+    : kind === 'item'
+      ? settings.items
+      : kind === 'skyCell'
+        ? (settings.skyCell ?? 1)
+        : settings.objects;
 }
 
 /** INI [LOD] fLODBoundRadiusMult's default: the fade distance in bound radii. */
@@ -70,16 +87,20 @@ export const HAS_DISTANT_LOD = 0x8000;
 /** REFR record flag: the reference is drawn in full at any distance ("Is Full LOD"). */
 export const IS_FULL_LOD = 0x10000;
 
-/** The fade kind of a placed reference's base (a carryable light is an item). */
-export function fadeKind(baseType: string, carryable = false): FadeKind {
+/**
+ * The fade kind of a placed reference's base (a carryable light is an item); a reference placed
+ * as full LOD (`referenceFlags`) fades as the sky cell's.
+ */
+export function fadeKind(baseType: string, carryable = false, referenceFlags = 0): FadeKind {
+  if ((referenceFlags & IS_FULL_LOD) !== 0) return 'skyCell';
   if (baseType === 'NPC_' || baseType === 'CREA') return 'actor';
   if (ITEM_TYPES.has(baseType) || (baseType === 'LIGH' && carryable)) return 'item';
   return 'object';
 }
 
-/** Whether a reference never fades (its base has distant LOD, or it is placed as full LOD). */
+/** Whether a reference never fades: its base has distant LOD (a full LOD one fades far). */
 export function neverFades(baseType: string, baseFlags: number, referenceFlags: number): boolean {
-  if ((referenceFlags & IS_FULL_LOD) !== 0) return true;
+  if ((referenceFlags & IS_FULL_LOD) !== 0) return false;
   return DISTANT_LOD_TYPES.has(baseType) && (baseFlags & HAS_DISTANT_LOD) !== 0;
 }
 
@@ -90,13 +111,15 @@ export function fadeRange(
   settings: FadeSettings,
   gridsToLoad = GRIDS_TO_LOAD,
 ): { readonly start: number; readonly end: number } {
-  const multiplier =
-    kind === 'actor' ? settings.actors : kind === 'item' ? settings.items : settings.objects;
+  const multiplier = fadeMultiplier(kind, settings);
   // A multiplier of 0 or less: the kind never fades.
   if (!(multiplier > 0)) return { start: Infinity, end: Infinity };
-  let distance = gridsToLoad * CELL_SIZE * 0.5 - (radius + CELL_SIZE / 2);
-  if (Math.abs(radius) > 0.0001 && LOD_BOUND_RADIUS_MULT * radius < distance) {
-    distance = LOD_BOUND_RADIUS_MULT * radius;
+  let distance = SKY_CELL_FADE_DISTANCE;
+  if (kind !== 'skyCell') {
+    distance = gridsToLoad * CELL_SIZE * 0.5 - (radius + CELL_SIZE / 2);
+    if (Math.abs(radius) > 0.0001 && LOD_BOUND_RADIUS_MULT * radius < distance) {
+      distance = LOD_BOUND_RADIUS_MULT * radius;
+    }
   }
   let start = FADE_START_PERCENT * distance;
   let end = distance;
