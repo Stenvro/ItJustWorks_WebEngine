@@ -200,6 +200,11 @@ export class GameMenus {
     this.#journal.rightStick(x, y);
   }
 
+  /** A save written: the open journal hears it (a save hides it, an autosave redraws it). */
+  saveWritten(kind: 'save' | 'quicksave' | 'autosave'): void {
+    this.#journal.saveWritten(kind);
+  }
+
   /** A gamepad came or went: the open journal redraws its system page's buttons. */
   gamepadChanged(): void {
     this.#journal.gamepadChanged();

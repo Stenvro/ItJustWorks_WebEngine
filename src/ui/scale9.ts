@@ -25,16 +25,35 @@
 // mirrored grid sprite is measured along its own axes on the stage. With its scale as it was, a
 // cut sprite's wrappers that moved in it (a list's items scrolling, a clip playing) are placed
 // again. TODO(M13): a shape turned within its grid sprite (its pieces are cut along the shape's
-// own axes, not the sprite's), and grids set at run time on clips with no shapes of their own (the
-// journal lists' item containers: they are not scaled, so nothing shows). Platform-independent.
-// Notes: docs/ui.md ("Ruffle's limits").
+// own axes, not the sprite's; no movie does it).
+//
+// Grids set at run time (`clip.scale9Grid = new flash.geom.Rectangle(...)`): MovieClip's
+// scale9Grid property is ours (`__itjwScale9Set` registers the clip as a grid sprite, null takes
+// its grid away; the getter gives the rectangle, a grid from the movie's file as one too). CLIK's
+// CoreList and TextArea set a 1 × 1 grid on the empty container they create, then attach their
+// item renderers and scroll bar into it (quest_journal.swf and tutorialmenu.swf). So that those
+// are cut as Scaleform cuts them, a movie whose scripts set scale9Grid has the shapes of every
+// sprite it exports (what attachMovie can put under such a clip) and of the sprites under them
+// wrapped as well, and the property is defined by an init action ahead of its own scripts (the
+// components set it as they are constructed, before the bridge's frame script runs). The
+// components counter-scale the container against their own scale, so only a scaled ancestor
+// shows the grid. Platform-independent. Notes: docs/ui.md ("Ruffle's limits").
 
 import { Avm1Writer, Function2Flag, Op, type PushValue } from '../formats/swf/avm1-writer.ts';
 import { characterOffset } from '../formats/swf/place-object.ts';
-import { readSwf, SwfTagCode, type SwfMovie, type SwfTag } from '../formats/swf/swf.ts';
+import {
+  allTags,
+  readSwf,
+  swfExports,
+  SwfTagCode,
+  type SwfMovie,
+  type SwfTag,
+} from '../formats/swf/swf.ts';
 import { concatBytes, encodeSwfString, encodeTag } from '../formats/swf/swf-writer.ts';
 
 const DEFINE_SCALING_GRID = 78;
+/** The property the scripts set a grid with, as it stands (null-terminated) in their actions. */
+const SCALE9_GRID_NAME = new TextEncoder().encode('scale9Grid\0');
 const SHAPES: ReadonlySet<number> = new Set([2, 22, 32, 83]);
 /** Tags whose body starts with the id of the character they define (or name). */
 const DEFINITIONS: ReadonlySet<number> = new Set([
@@ -48,6 +67,8 @@ const HAS_CLIP_DEPTH = 0x40;
 
 /** _global's functions and the list of grid sprites on stage. */
 const GRID = '__itjwScale9Grid';
+const SET = '__itjwScale9Set';
+const GET = '__itjwScale9Get';
 const WRAP = '__itjwScale9Wrap';
 const TICK = '__itjwScale9Tick';
 const WALK = '__itjwScale9Walk';
@@ -64,6 +85,9 @@ const SCALE_Y = '__itjwS9y';
 const BOUNDS = '__itjwS9n';
 const DIRTY = '__itjwS9d';
 const CUT = '__itjwS9c';
+/** A grid sprite's members: the rectangle set at run time; whether it is in the list. */
+const GRID_RECT = '__itjwS9g';
+const LISTED = '__itjwS9i';
 /** A grid sprite's member: only its content may have moved (its scale is as it was). */
 const MOVED = '__itjwS9m';
 /** A wrapper's member: where it stood and its scale in its sprite as it was last placed. */
@@ -102,11 +126,18 @@ export function patchScalingGrids(bytes: Uint8Array): Uint8Array | undefined {
     if (tag.code === DEFINE_SCALING_GRID) grids.set(u16(body, 0), readRectPixels(body, 2));
   }
   const gridSprites = [...grids.keys()].filter((id) => sprites.has(id));
-  if (gridSprites.length === 0) return undefined;
+  // A movie whose scripts set grids: every sprite attachMovie can place under one.
+  const runTime = setsGridsAtRunTime(movie);
+  const attachable = runTime
+    ? swfExports(movie)
+        .map((symbol) => symbol.id)
+        .filter((id) => sprites.has(id))
+    : [];
+  if (gridSprites.length === 0 && !runTime) return undefined;
 
   // The sprites under a grid sprite (shared ones too: their wrappers find no grid elsewhere).
   const under = new Set<number>();
-  const queue = [...gridSprites];
+  const queue = [...gridSprites, ...attachable];
   for (let id = queue.pop(); id !== undefined; id = queue.pop()) {
     if (under.has(id)) continue;
     under.add(id);
@@ -140,11 +171,31 @@ export function patchScalingGrids(bytes: Uint8Array): Uint8Array | undefined {
   }
   const maskShape = nextId();
   const mask = nextId();
+  const initSprite = runTime ? nextId() : 0;
 
   const parts: Uint8Array[] = [movie.bytes.subarray(0, headerLength(movie))];
   let maskDefined = false;
+  let initDone = !runTime;
   for (const tag of movie.tags) {
     if (tag.code === DEFINE_SCALING_GRID) continue;
+    if (!initDone && RUNS_CODE.has(tag.code)) {
+      // The grids' functions and the property, before any script of the movie runs (an init
+      // action of an empty sprite of its own).
+      const init = new Avm1Writer();
+      scale9Actions(init);
+      parts.push(encodeTag(SwfTagCode.defineSprite, sprite(initSprite, [])));
+      parts.push(
+        encodeTag(
+          SwfTagCode.doInitAction,
+          concatBytes([
+            Uint8Array.of(initSprite & 0xff, initSprite >> 8),
+            init.bytes(),
+            Uint8Array.of(0),
+          ]),
+        ),
+      );
+      initDone = true;
+    }
     const body = tagBodyOf(movie, tag);
     const id = u16(body, 0);
     if (tag.code === SwfTagCode.defineSprite && under.has(id)) {
@@ -193,6 +244,29 @@ export function patchScalingGrids(bytes: Uint8Array): Uint8Array | undefined {
   out.set([0x46, 0x57, 0x53], 0);
   new DataView(out.buffer).setUint32(4, out.length, true);
   return out;
+}
+
+/** Tags before which the init action goes: the first code, placement or frame of the movie. */
+const RUNS_CODE: ReadonlySet<number> = new Set([
+  SwfTagCode.doAction,
+  SwfTagCode.doInitAction,
+  SwfTagCode.showFrame,
+  4,
+  PLACE_OBJECT2,
+  PLACE_OBJECT3,
+]);
+
+/** Whether any script of the movie (its sprites' too) names the scale9Grid property. */
+function setsGridsAtRunTime(movie: SwfMovie): boolean {
+  const first = SCALE9_GRID_NAME[0] ?? 0;
+  for (const tag of allTags(movie.tags)) {
+    if (tag.code !== SwfTagCode.doAction && tag.code !== SwfTagCode.doInitAction) continue;
+    const body = tagBodyOf(movie, tag);
+    for (let at = body.indexOf(first); at >= 0; at = body.indexOf(first, at + 1)) {
+      if (SCALE9_GRID_NAME.every((byte, i) => body[at + i] === byte)) return true;
+    }
+  }
+  return false;
 }
 
 /** A sprite under a grid sprite: its shapes placed as their wrappers, a grid sprite registered. */
@@ -401,6 +475,7 @@ export function scale9Actions(w: Avm1Writer): void {
   w.getPath('_global').push(CLIPS, 0).op(Op.initArray).op(Op.setMember);
   w.label('scale9Listed');
   defineGrid(w);
+  defineProperty(w);
   defineWrap(w);
   defineTick(w);
   defineWalk(w);
@@ -408,11 +483,27 @@ export function scale9Actions(w: Avm1Writer): void {
   defineAxis(w);
 }
 
-/** __itjwScale9Grid(clip, left, top, right, bottom): a grid sprite registered (once). */
+/**
+ * __itjwScale9Grid(clip, left, top, right, bottom): a grid sprite registered (listed once; its
+ * grid as given, marked changed when it is new).
+ */
 function defineGrid(w: Avm1Writer): void {
   w.getPath('_global').push(GRID);
   w.function2('', ['clip', 'left', 'top', 'right', 'bottom'], 6, FLAGS, (body) => {
-    member(body, 1, LEFT).push(null).op(Op.equals2).op(Op.not).ifTo('done');
+    member(body, 1, LISTED).op(Op.not).ifTo('list');
+    for (const [name, register] of [
+      [LEFT, 2],
+      [TOP, 3],
+      [RIGHT, 4],
+      [BOTTOM, 5],
+    ] as const) {
+      member(body, 1, name).push(reg(register)).op(Op.equals2).op(Op.not).ifTo('set');
+    }
+    body.jumpTo('done');
+    body.label('list');
+    body.push(reg(1), LISTED, true).op(Op.setMember);
+    body.push(reg(1), 1).getPath(`_global.${CLIPS}`).push('push').op(Op.callMethod).op(Op.pop);
+    body.label('set');
     for (const [name, register] of [
       [LEFT, 2],
       [TOP, 3],
@@ -422,10 +513,61 @@ function defineGrid(w: Avm1Writer): void {
       body.push(reg(1), name, reg(register)).op(Op.setMember);
     }
     body.push(reg(1), DIRTY, true).op(Op.setMember);
-    body.push(reg(1), 1).getPath(`_global.${CLIPS}`).push('push').op(Op.callMethod).op(Op.pop);
     body.label('done');
   });
   w.op(Op.setMember);
+}
+
+/**
+ * MovieClip's scale9Grid, ours: __itjwScale9Set(rect) (this: the clip) keeps the rectangle and
+ * registers the clip with its grid (null: its grid taken away, the frame clock shows it uncut);
+ * __itjwScale9Get() gives the rectangle, a grid from the movie's file as a new one.
+ */
+function defineProperty(w: Avm1Writer): void {
+  const THIS = Function2Flag.preloadThis | Function2Flag.suppressArguments;
+  w.getPath('_global').push(SET);
+  w.function2(
+    '',
+    ['rect'],
+    7,
+    THIS,
+    (body) => {
+      body.push(reg(1), GRID_RECT, reg(2)).op(Op.setMember);
+      body.push(reg(2), null).op(Op.equals2).op(Op.not).ifTo('grid');
+      body.push(reg(1), LEFT, null).op(Op.setMember);
+      body.push(0).op(Op.return);
+      body.label('grid');
+      // left, top, right, bottom: x, y, x + width, y + height.
+      store(member(body, 2, 'x'), 3);
+      store(member(body, 2, 'y'), 4);
+      store(member(body, 2, 'x').push(reg(2), 'width').op(Op.getMember).op(Op.add2), 5);
+      store(member(body, 2, 'y').push(reg(2), 'height').op(Op.getMember).op(Op.add2), 6);
+      callGlobal(body, GRID, [1, 3, 4, 5, 6]);
+    },
+    2,
+  );
+  w.op(Op.setMember);
+  w.getPath('_global').push(GET);
+  w.function2('', [], 2, THIS, (body) => {
+    member(body, 1, GRID_RECT).push(null).op(Op.equals2).ifTo('file');
+    member(body, 1, GRID_RECT).op(Op.return);
+    body.label('file');
+    member(body, 1, LEFT).push(null).op(Op.equals2).ifTo('none');
+    // new flash.geom.Rectangle(left, top, right − left, bottom − top)
+    member(body, 1, BOTTOM);
+    member(body, 1, TOP).op(Op.subtract);
+    member(body, 1, RIGHT);
+    member(body, 1, LEFT).op(Op.subtract);
+    member(body, 1, TOP);
+    member(body, 1, LEFT);
+    body.push(4).getPath('flash.geom').push('Rectangle').op(Op.newMethod).op(Op.return);
+    body.label('none');
+    member(body, 1, GRID_RECT).op(Op.return);
+  });
+  w.op(Op.setMember);
+  // MovieClip.prototype.addProperty("scale9Grid", get, set)
+  w.getPath(`_global.${SET}`).getPath(`_global.${GET}`).push('scale9Grid', 3);
+  w.getPath('MovieClip.prototype').push('addProperty').op(Op.callMethod).op(Op.pop);
 }
 
 /**
@@ -486,6 +628,14 @@ function defineTick(w: Avm1Writer): void {
     member(body, 3, '_xscale').push(null).op(Op.equals2).op(Op.not).ifTo('alive');
     body.push(1, reg(2), 2, reg(1), 'splice').op(Op.callMethod).op(Op.pop).jumpTo('next');
     body.label('alive');
+    // Its grid taken away: shown uncut, out of the list.
+    member(body, 3, LEFT).push(null).op(Op.equals2).op(Op.not).ifTo('gridded');
+    store(body.push(1), 6);
+    callGlobal(body, WALK, [3, 3, 6, 6]);
+    body.push(reg(3), CUT, false).op(Op.setMember);
+    body.push(reg(3), LISTED, false).op(Op.setMember);
+    body.push(1, reg(2), 2, reg(1), 'splice').op(Op.callMethod).op(Op.pop).jumpTo('next');
+    body.label('gridded');
     for (const [register, x, y] of [
       [4, 0, 0],
       [5, 100, 0],

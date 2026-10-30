@@ -75,6 +75,8 @@ export class JournalMenu {
   readonly #saveList: SaveList<Menu>;
   /** Closes the journal open now. */
   #close: ((menu: Menu) => void) | undefined;
+  /** The engine hiding the open journal (its movie asked to close first). */
+  #hide: ((menu: Menu) => void) | undefined;
   /** Show on Map: the journal closes, the map opens on a quest target (its reference). */
   onShowOnMap: ((reference: number) => void) | undefined;
   /** The objectives' targets on the map ("quest:objective" → the first target's reference). */
@@ -178,6 +180,7 @@ export class JournalMenu {
         close(menu);
       }, HIDE_WAIT_MS);
     };
+    this.#hide = hide;
     void this.#playSound('UIJournalOpen');
     return this.#host.open('quest_journal.swf', {
       depth,
@@ -331,6 +334,20 @@ export class JournalMenu {
    */
   message(name: 'Show Journal' | 'RefreshMenu'): void {
     this.#shown?.call(name === 'Show Journal' ? 'ShowMenu' : 'RefreshSystemButtons');
+  }
+
+  /**
+   * A save the save system has written, as observed in the original: a save the player made
+   * (the journal's Save, over a save or new; the console's) hides the journal if it is still
+   * open, an autosave redraws its system page's buttons ("RefreshMenu"); a quicksave (and the
+   * engine's own fifth kind of save) tells it nothing.
+   */
+  saveWritten(kind: 'save' | 'quicksave' | 'autosave'): void {
+    if (kind === 'save') {
+      if (this.#shown) this.#hide?.(this.#shown);
+    } else if (kind === 'autosave') {
+      this.message('RefreshMenu');
+    }
   }
 
   /**
