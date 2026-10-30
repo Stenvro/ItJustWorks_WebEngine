@@ -20,6 +20,7 @@
 
 import { INVENTORY_CATEGORIES, ItemCategory, itemSound } from '../gameplay/inventory.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
+import { withoutStolen } from '../scripting/runtime/crime-engine.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { questItemCount, questItems } from '../scripting/runtime/quest-items.ts';
 import { referenceName } from '../scripting/runtime/quest-text.ts';
@@ -266,7 +267,13 @@ export function containerModel(
       close = closeMenu;
     },
     view: async () => {
-      const [all, mine] = await Promise.all([shelf.rows(container), shelf.rows(PLAYER_REF)]);
+      let [all, mine] = await Promise.all([shelf.rows(container), shelf.rows(PLAYER_REF)]);
+      // A container that takes no stolen items (SetContainerAllowStolenItems): neither side
+      // lists its stolen ones (crime-engine.ts refusesStolen).
+      if (await shelf.runtime.crime.refusesStolen(container)) {
+        all = withoutStolen(all, (formId) => shelf.runtime.crime.stolenCount(container, formId));
+        mine = withoutStolen(mine, (formId) => shelf.runtime.crime.stolenCount(PLAYER_REF, formId));
+      }
       // Pockets: what it wears or holds only with the perks (Can Pickpocket Equipped Item:
       // Misdirection its weapons, Perfect Touch anything but an essential's).
       const theirs: typeof all = [];

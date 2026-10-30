@@ -96,6 +96,8 @@ import type { DoorObject } from './actor-doors.ts';
 import { PlayerFurniture, sittingAngleLimit } from './player-furniture.ts';
 import type { AdoptedVehicle } from './actor-vehicles.ts';
 import { stageObject, type StageObject } from './actor-furniture.ts';
+import type { MoveRequest } from '../ai/locomotion.ts';
+import { controlsRequest, keepOffsetRequest } from '../ai/movement-overrides.ts';
 import { summonPlace, type NavmeshSet } from '../ai/pathfinding.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement } from '../scripting/runtime/runtime.ts';
@@ -913,6 +915,18 @@ export class WorldViewer {
     },
     furnitureInUse: (reference, marker) => this.#stage?.furniture.inUse(reference, marker) ?? false,
     addRagdoll: (reference) => this.#stage?.addRagdoll(reference) ?? Promise.resolve(),
+    removeRagdoll: (reference) => this.#stage?.removeRagdoll(reference) ?? Promise.resolve(),
+    terrainEffectAt: (model, at) => {
+      const fx = this.#stage?.fx;
+      fx?.show(model, undefined, at, { kind: 'impact' });
+      return fx !== undefined;
+    },
+    cameraTarget: (actor) => {
+      const player = this.#play?.player;
+      if (!player) return;
+      player.cameraTargetFeet =
+        actor === undefined ? undefined : () => this.#stage?.get(actor)?.position;
+    },
     sittingRotation: (radians) => this.#seat?.setSittingRotation(radians),
     evaluatePackage: (reference, restart) => {
       this.#stage?.evaluatePackage(reference, restart);
@@ -937,6 +951,28 @@ export class WorldViewer {
       return;
     }
     await this.#stage?.lookChanged(reference);
+  }
+
+  /**
+   * A script's override of an actor's movement controller, each step (the game state's, so a
+   * loaded save keeps it): the player's controls (SetPlayerControls), else the offset it keeps
+   * from another actor while both are here (KeepOffsetFromActor; src/ai/movement-overrides.ts).
+   */
+  #scriptSteering(reference: number): { readonly request: MoveRequest | undefined } | undefined {
+    const actor = this.#session?.scriptsReady?.state.actors.get(reference);
+    const play = this.#play;
+    if (actor?.playerControls && play) {
+      return { request: controlsRequest(play.player.controlsWish(), play.player.yaw) };
+    }
+    const keep = actor?.keepOffset;
+    if (!keep) return undefined;
+    const self = this.#stage?.get(reference);
+    const target =
+      keep.target === PLAYER_REF && play
+        ? { position: play.player.feet, heading: play.player.yaw }
+        : this.#stage?.get(keep.target);
+    if (!self || !target) return undefined;
+    return { request: keepOffsetRequest(keep, self, target) };
   }
 
   /**
@@ -1185,6 +1221,7 @@ export class WorldViewer {
       player: () => this.playerView,
       adoptVehicle: (reference) => this.#adoptVehicle(reference),
     });
+    this.#stage.movers.steering = (reference) => this.#scriptSteering(reference);
     this.#landTextures.clear();
     const db = await session.db;
     this.#db = db;

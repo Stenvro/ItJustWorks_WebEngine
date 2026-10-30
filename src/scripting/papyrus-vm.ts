@@ -479,9 +479,12 @@ export class PapyrusVm {
         } else if (property.setter) {
           instance.bound.push({ level, name: property.name, value: retype(value, property.type) });
         } else {
-          // TODO(M13): what the engine does with a value for a property without a Set function
-          // (no vanilla plugin gives one).
-          this.warn(`${script.displayName}: property ${property.name} cannot be set`);
+          // A full property without a Set function is read-only. Observed in the original:
+          // its binding of the plugin's values skips it with a warning in the game's log (no
+          // vanilla plugin gives one a value).
+          this.gameLog(
+            `Property ${property.name} on object ${script.displayName} is read-only, property skipped.`,
+          );
         }
       }
       instances.push(instance);

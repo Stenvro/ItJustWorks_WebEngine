@@ -7,7 +7,8 @@
 import { gameplayImpulse } from '../../../gameplay/magic/explosions.ts';
 import { EntryPoint } from '../../../gameplay/perk-entry-points.ts';
 import { ActorValue } from '../../../world/actor-values.ts';
-import { ObjectHandle, type Value } from '../../values.ts';
+import type { NativeCall } from '../../papyrus-vm.ts';
+import { formatValue, ObjectHandle, type Value } from '../../values.ts';
 import { PLAYER_REF } from '../forms.ts';
 import type { ScriptRuntime } from '../runtime.ts';
 import { questItems } from '../quest-items.ts';
@@ -358,7 +359,12 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
   n('objectreference.removeallinventoryeventfilters', (call) =>
     runtime.inventoryFilter(call.self, undefined, 'clear'),
   );
-  n('objectreference.setcontainerallowstolenitems', () => null);
+  // The base's container takes stolen items or not (crime-engine.ts allowStolen).
+  n('objectreference.setcontainerallowstolenitems', async (call) => {
+    const reference = self(call);
+    if (reference !== undefined) await runtime.crime.allowStolen(reference, bool(call.args[0]));
+    return null;
+  });
 
   // --- Placing ---------------------------------------------------------------------------
   n('objectreference.placeatme', async (call) => {
@@ -651,7 +657,13 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
     if (reference !== undefined) await world.addRagdoll?.(reference);
     return null;
   });
-  n('objectreference.forceremoveragdollfromworld', () => null);
+  // ForceRemoveRagdollFromWorld: observed in the original, its counterpart (latent too: the
+  // thread waits while the main thread takes the actor's ragdoll out of the physics world).
+  n('objectreference.forceremoveragdollfromworld', async (call) => {
+    const reference = self(call);
+    if (reference !== undefined) await world.removeRagdoll?.(reference);
+    return null;
+  });
   for (const [name, added] of [
     ['objectreference.adddependentanimatedobjectreference', true],
     ['objectreference.removedependentanimatedobjectreference', false],
@@ -687,9 +699,71 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
       false
     );
   });
-  n('objectreference.playterraineffect', () => null);
-  n('objectreference.playsyncedanimationss', () => false);
-  n('objectreference.playsyncedanimationandwaitss', () => false);
+  // PlayTerrainEffect(asEffectModelName, asAttachBoneName): observed in the original, a
+  // temporary terrain effect of the model at the reference (an actor's own kind of ground
+  // under it), attached to the named node of its 3D where it has one; one it cannot set up is
+  // the original's error "Could not set up terrain effect."
+  n('objectreference.playterraineffect', (call) => {
+    const reference = self(call);
+    if (reference === undefined) return null;
+    const shown = world.terrainEffect?.(reference, str(call.args[0]), str(call.args[1]));
+    if (shown === false)
+      runtime.warn(`${call.where()}: ${formatValue(call.self)} Could not set up terrain effect.`);
+    return null;
+  });
+  // PlaySyncedAnimationSS(asAnimation1, akObj2, asAnimation2) and ...AndWaitSS(asAnimation1,
+  // asEvent1, akObj2, asAnimation2, asEvent2): observed in the original, two references that
+  // are no actors are sent an animation event each in the same call; true when either took.
+  // A None second object, or an actor on either side, is the original's error and false. The
+  // waiting one then waits for the events (asEvent1 from the first, asEvent2 from the second)
+  // of those whose animation took.
+  const synced = async (
+    call: NativeCall,
+    first: string,
+    other: Value | undefined,
+    second: string,
+  ): Promise<readonly [number, number, boolean, boolean] | undefined> => {
+    const reference = self(call);
+    const partner = ref(other);
+    if (reference === undefined) return undefined;
+    if (partner === undefined) {
+      runtime.warn(`${call.where()}: Cannot play an animation on a None object`);
+      return undefined;
+    }
+    const isActor = async (value: Value): Promise<boolean> =>
+      value instanceof ObjectHandle && (await runtime.formType(value)) === 'actor';
+    if (await isActor(call.self)) {
+      runtime.warn(
+        `${call.where()}: ${formatValue(call.self)} is an Actor, and PlaySyncedAnimationSS should not be called on it.`,
+      );
+      return undefined;
+    }
+    if (await isActor(other ?? null)) {
+      runtime.warn(
+        `${call.where()}: ${formatValue(other ?? null)} is an Actor, and should not be passed to PlaySyncedAnimationSS.`,
+      );
+      return undefined;
+    }
+    const firstTook = world.animationEvent?.(reference, first) ?? false;
+    const secondTook = world.animationEvent?.(partner, second) ?? false;
+    return [reference, partner, firstTook, secondTook];
+  };
+  n('objectreference.playsyncedanimationss', async (call) => {
+    const played = await synced(call, str(call.args[0]), call.args[1], str(call.args[2]));
+    return played !== undefined && (played[2] || played[3]);
+  });
+  n('objectreference.playsyncedanimationandwaitss', async (call) => {
+    const played = await synced(call, str(call.args[0]), call.args[2], str(call.args[3]));
+    if (played === undefined || !(played[2] || played[3])) return false;
+    const [reference, partner, firstTook, secondTook] = played;
+    await call.latent(
+      Promise.all([
+        firstTook ? runtime.animationEventRaised(reference, str(call.args[1])) : undefined,
+        secondTook ? runtime.animationEventRaised(partner, str(call.args[4])) : undefined,
+      ]),
+    );
+    return true;
+  });
   // A cart hitched to a horse: the horse pulls it (src/shell/actor-vehicles.ts).
   n('objectreference.tethertohorse', (call) => {
     const cart = self(call);

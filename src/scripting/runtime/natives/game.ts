@@ -225,7 +225,12 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
     );
     return null;
   });
-  n('game.setcameratarget', () => null);
+  // SetCameraTarget(arTarget): the third-person camera follows that actor (None: the player).
+  n('game.setcameratarget', ({ args }) => {
+    const target = runtime.reference(args[0] ?? null);
+    world.cameraTarget?.(target === PLAYER_REF ? undefined : target);
+    return null;
+  });
   // TriggerScreenBlood(aiValue): that many splatters of blood on the screen.
   n('game.triggerscreenblood', ({ args }) => {
     world.screenBlood?.(Math.max(0, Math.floor(num(args[0], 0))));
