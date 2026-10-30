@@ -73,6 +73,12 @@ export interface ReferenceState {
   locked?: boolean;
   lockLevel?: number;
   /**
+   * An item reference's health (1 whole, 1.1 and up improved): an improved item dropped from
+   * an inventory keeps its improvement on the reference, and taken again its stack has it
+   * (observed in the original: the item's extra data goes with it). Else the plugin's (XHLT).
+   */
+  health?: number;
+  /**
    * The failed tries on its lock (the lock data's tries), which ObjectReference.IsLockBroken
    * reads. TODO(M13): what adds to them in the original is not read (broken lockpicks do not).
    */
@@ -296,6 +302,12 @@ export interface CellState {
 export interface ActiveEffectState {
   /** MGEF. */
   readonly effect: number;
+  /**
+   * Its number on its target (observed in the original: an effect whose base carries scripts
+   * takes the lowest number from 1 that none of its target's other effects has; its script
+   * object's handle and its string, "Active effect <n> on ...", carry it). None: no scripts.
+   */
+  readonly number?: number;
   readonly target: number;
   readonly caster: number | undefined;
   /** Seconds it has lasted, and lasts in all (0: at once, or until dispelled when lasting). */

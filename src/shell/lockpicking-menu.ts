@@ -20,25 +20,11 @@
 // next level, the lock's level and the lockpicks left (SetLockInfo). A lock opened is
 // fSkillUsageLockPick<level> uses of Lockpicking, a broken pick fSkillUsageLockPickBroken (the
 // progression engine). Cancel (Tab, Esc) leaves. An owned lock picked where someone sees it is
-// trespassing (crime-engine.ts lockPicked).
+// trespassing (crime-engine.ts lockPicked). What the lock and the pick do apart from showing them
+// is the menu's engine side (lock-picking.ts), which the headless simulation runs without it.
 // Notes: docs/ui.md ("Lockpicking").
 
-import {
-  BROKEN_PICK_SKILL_USE,
-  lockDifficulty,
-  lockLevelSetting,
-  LOCKPICK_SKILL_USES,
-  lockpickSkillUseSetting,
-  lockpickSettings,
-  lockShape,
-  lockTurnLimit,
-  LOCK_OPEN_ANGLE,
-  LOCKPICK,
-  SKELETON_KEY,
-  PICK_RANGE,
-  type LockShape,
-} from '../gameplay/lockpicking.ts';
-import { EntryPoint } from '../gameplay/perk-entry-points.ts';
+import { LOCK_OPEN_ANGLE, LOCKPICK, PICK_RANGE } from '../gameplay/lockpicking.ts';
 import { clock } from './object-graphs.ts';
 import type { Playback } from '../render/animation.ts';
 import { multiply, type Mat4, type Vec3 } from '../render/math.ts';
@@ -48,18 +34,22 @@ import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { SoundInstance } from '../audio/sound-instance.ts';
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
-import { ActorValue } from '../world/actor-values.ts';
 import type { INI_DEFAULTS } from '../world/ini-settings.ts';
 import type { GameSession } from './game-session.ts';
+import {
+  LockPick,
+  LOCKPICKING,
+  lockOpened,
+  pickBroke,
+  pickSetup,
+  type PickSetup,
+} from './lock-picking.ts';
 import { MenuCamera, menuLighting, menuPlacement } from './menu-3d.ts';
 import type { Terminal } from './terminal.ts';
 
 const LOCK_MODEL = 'meshes\\interface\\lockpicking\\lockpickshiv01.nif';
 const PICK_MODEL = 'meshes\\interface\\lockpicking\\lockpick01.nif';
 const SKELETON_KEY_MODEL = 'meshes\\interface\\lockpicking\\lockpickskeletonkey01.nif';
-
-/** Lockpicking's actor value. */
-const LOCKPICKING = ActorValue.firstSkill + 8;
 
 /**
  * Where the models' parts turn (model space): the cylinder about its node (LockPickLockTumble
@@ -81,7 +71,6 @@ const DAMAGE_SECONDS = 0.97;
 /** Pick sounds come at most this often (s). */
 const PICK_SOUND_SECONDS = 0.15;
 /** GetPlayerAction's lock outcomes (xEdit wbPlayerActionEnum). */
-const PlayerAction = { lockpickSuccess: 3, lockpickBroken: 4 } as const;
 /** The opened lock shows a moment before the menu closes (s). */
 const OPENED_SECONDS = 0.8;
 /** The broken pick's sequence plays before the next comes in (s). */
@@ -116,53 +105,21 @@ export class LockpickingMenu {
     const session = this.#session;
     const runtime = session.scriptsReady;
     if (!runtime) return undefined;
-    const lock = await runtime.lock(reference);
-    const difficulty = lockDifficulty(lock.level);
-    if (difficulty === undefined) return undefined;
-    const skeletonKey = (await runtime.itemCount(PLAYER_REF, SKELETON_KEY)) > 0;
+    const settings = await session.settings();
+    const setup = await pickSetup(runtime, settings, reference);
+    if (!setup) return undefined;
     const [lockModel, pickModel] = await Promise.all([
       session.model(LOCK_MODEL),
-      session.model(skeletonKey ? SKELETON_KEY_MODEL : PICK_MODEL),
+      session.model(setup.skeletonKey ? SKELETON_KEY_MODEL : PICK_MODEL),
     ]);
     if (!lockModel || !pickModel) {
       this.#terminal.log('ui', 'the lockpicking models do not load', 'warn');
       return undefined;
     }
-    const settings = await session.settings();
-    const skill = (await runtime.actors.value(PLAYER_REF, LOCKPICKING)).current;
-    // The perks (Mod Lockpick Sweet Spot: the lock levels' perks by GetLockLevel on the lock,
-    // Fortify Lockpicking through the skill boost perks; Make Lockpicks Unbreakable; Set
-    // Lockpick Starting Arc: Locksmith).
-    const perks = runtime.perks;
-    const perk = await perks.apply(EntryPoint.modLockpickSweetSpot, PLAYER_REF, 1, [reference]);
-    const unbreakable =
-      (await perks.apply(EntryPoint.makeLockpicksUnbreakable, PLAYER_REF, 0)) !== 0;
-    const startArc = await perks.apply(EntryPoint.setLockpickStartingArc, PLAYER_REF, 0);
-    const shape = lockShape(difficulty, skill, {
-      perk,
-      random: Math.random(),
-      settings: lockpickSettings((name) => settings.number(name)),
-      // The original counts the picks broken in the menu itself (a count of its own, not the
-      // lock's), from none as it opens, and sets the sweet spot (widened by
-      // fLockpickBrokenPicksMult per pick) as it shows: so with none. Breaking picks does not
-      // add to the lock's own failed tries (ObjectReference.IsLockBroken).
-      brokenPicks: 0,
-    });
     const picking = new Picking(this.#host, session, runtime, {
-      reference,
-      shape,
+      lock: setup,
       lockModel,
       pickModel,
-      unbreakable: skeletonKey || unbreakable,
-      startArc,
-      levelName: settings.string(lockLevelSetting(difficulty)) ?? '',
-      skillUses: {
-        opened:
-          settings.number(lockpickSkillUseSetting(difficulty)) ??
-          LOCKPICK_SKILL_USES[difficulty - 1] ??
-          0,
-        broken: settings.number('fSkillUsageLockPickBroken') ?? BROKEN_PICK_SKILL_USE,
-      },
       closed,
     });
     const menu = await picking.start();
@@ -176,17 +133,10 @@ export class LockpickingMenu {
 }
 
 interface PickingSetup {
-  readonly reference: number;
-  readonly shape: LockShape;
+  /** The lock as picked (its shape, the perks' part, the level's name for SetLockInfo). */
+  readonly lock: PickSetup;
   readonly lockModel: GpuModel;
   readonly pickModel: GpuModel;
-  readonly unbreakable: boolean;
-  /** The arc (degrees) about the opening the pick starts in (0: the middle of its sweep). */
-  readonly startArc: number;
-  /** The lock's level name (SetLockInfo's after the skill, the next level and the progress). */
-  readonly levelName: string;
-  /** Lockpicking skill uses of opening the lock and of a pick breaking. */
-  readonly skillUses: { readonly opened: number; readonly broken: number };
   readonly closed: (unlocked: boolean) => void;
 }
 
@@ -206,9 +156,7 @@ class Picking {
   readonly #pickWorld = new Float32Array(16);
   #base: Mat4 = new Float32Array(16);
   /** The pick's angle in its sweep, the lock's turn (degrees), the strain on the pick (0..1). */
-  #pick = PICK_RANGE / 2;
-  #turn = 0;
-  #strain = 0;
+  readonly #lock: LockPick;
   #turning = false;
   /** Waiting: the pick broke (until a new one is in), or the lock opened. */
   #busyUntil = 0;
@@ -227,14 +175,7 @@ class Picking {
     this.#session = session;
     this.#runtime = runtime;
     this.#setup = setup;
-    if (setup.startArc > 0) {
-      // Near the opening position (Locksmith: 45°): anywhere within the arc on either side of
-      // it, kept where the sweet spot's middle could lie (observed in the original).
-      const { center, sweetSpot } = setup.shape;
-      const low = Math.max(center - setup.startArc, sweetSpot / 2);
-      const high = Math.min(center + setup.startArc, PICK_RANGE - sweetSpot / 2);
-      this.#pick = clampPick(low + Math.random() * Math.max(0, high - low));
-    }
+    this.#lock = new LockPick(setup.lock);
   }
 
   async start(): Promise<Menu> {
@@ -294,7 +235,7 @@ class Picking {
         await this.#showInfo(menu);
         // The debug display's values (in the original's terms: the pick's sweep −90..90°, the
         // sweet spot's middle there, its width and its partial zones' width).
-        const { center, sweetSpot, partial } = this.#setup.shape;
+        const { center, sweetSpot, partial } = this.#setup.lock.shape;
         menu.call('SetPickMinMax', -PICK_RANGE / 2, PICK_RANGE / 2);
         menu.call('UpdateSweetSpot', center - PICK_RANGE / 2, sweetSpot, partial);
         this.#reported = undefined;
@@ -317,7 +258,7 @@ class Picking {
       String(skill),
       String(skill + 1),
       progress * 100,
-      this.#setup.levelName,
+      this.#setup.lock.levelName,
       picks,
     );
   }
@@ -342,9 +283,7 @@ class Picking {
   readonly #moved = (event: PointerEvent): void => {
     if (this.#done || this.#turning || this.#busy() || event.movementX === 0) return;
     const speed = this.#session.ini.number('Interface', 'fPickMouseRotationSpeed') / 50;
-    const before = this.#pick;
-    this.#pick = clampPick(this.#pick + event.movementX * speed);
-    if (this.#pick === before) return;
+    if (!this.#lock.sweep(this.#lock.pick + event.movementX * speed)) return;
     this.#placePick();
     const now = clock();
     if (now - this.#lastPickSound > PICK_SOUND_SECONDS) {
@@ -366,38 +305,32 @@ class Picking {
       this.close(false);
       return;
     }
-    const { shape } = this.#setup;
     const speed = this.#session.ini.number('Interface', 'fLockRotationSpeed');
     const holding = this.#keys.size > 0 && !this.#busy() && !this.#opened;
-    const limit = lockTurnLimit(shape, this.#pick);
-    if (holding) {
-      if (!this.#turning) this.#sound('UILockpickingCylinderTurn');
-      this.#turning = true;
-      this.#turn = Math.min(limit, this.#turn + speed * dt);
-    } else {
-      this.#turning = false;
-      this.#turn = Math.max(0, this.#turn - speed * 2 * dt);
-    }
+    if (holding && !this.#turning) this.#sound('UILockpickingCylinderTurn');
+    this.#turning = holding;
+    const step = this.#lock.step(dt, holding, speed);
     // The cylinder (and the shiv) where the lock has turned: the Rotate sequence's moment.
     if (clock() - this.#lockPlayback.start >= 1.3 || this.#lockPlayback.sequence === 'rotate') {
       this.#lockPlayback.sequence = 'rotate';
       this.#lockPlayback.start =
-        clock() - (Math.min(this.#turn, LOCK_OPEN_ANGLE - 0.01) / LOCK_OPEN_ANGLE) * ROTATE_SECONDS;
+        clock() -
+        (Math.min(this.#lock.turn, LOCK_OPEN_ANGLE - 0.01) / LOCK_OPEN_ANGLE) * ROTATE_SECONDS;
     }
     this.#placePick();
-    if (this.#turn >= LOCK_OPEN_ANGLE - 0.01) {
+    if (step === 'opened') {
       this.#unlocked();
       return;
     }
-    const straining = holding && this.#turn >= limit - 0.01;
+    const straining = this.#lock.straining;
     if (straining && !this.#atLimit) this.#sound('UILockpickingCylinderStop');
     this.#atLimit = straining;
-    this.#strainPick(straining, dt);
+    this.#strainPick(straining);
+    if (step === 'broken') void this.#broken();
   }
 
   /** The pick under strain: it shakes, its tension sounds, and it breaks in time. */
-  #strainPick(straining: boolean, dt: number): void {
-    const { shape, unbreakable } = this.#setup;
+  #strainPick(straining: boolean): void {
     if (!straining) {
       // Back at the end of its Intro: in the keyhole.
       if (this.#pickPlayback.sequence === 'pickdamage') this.#restPick();
@@ -414,17 +347,10 @@ class Picking {
       this.#pickPlayback.start = clock();
     }
     this.#tension ??= this.#playing('UILockpickingPickTensionLPM');
-    if (unbreakable) return;
-    this.#strain += dt / Math.max(0.05, shape.breakSeconds);
-    if (this.#strain >= 1) void this.#broken();
   }
 
   /** The pick broke: one lockpick fewer; the next comes in, or the menu closes without any. */
   async #broken(): Promise<void> {
-    this.#strain = 0;
-    this.#turn = 0;
-    // The next pick starts in the middle of the sweep (observed in the original).
-    this.#pick = PICK_RANGE / 2;
     this.#keys.clear();
     this.#busyUntil = clock() + BREAK_SECONDS;
     void this.#tension?.then((sound) => sound?.stop());
@@ -432,12 +358,7 @@ class Picking {
     this.#pickPlayback.sequence = 'pickbreak';
     this.#pickPlayback.start = clock();
     this.#sound('UILockpickingPickBreak');
-    const runtime = this.#runtime;
-    // GetPlayerAction: a lockpick broken (those near may react).
-    runtime.playerActed(PlayerAction.lockpickBroken);
-    await runtime.removeItem(PLAYER_REF, runtime.formHandle(LOCKPICK), 1, true, undefined);
-    await runtime.progression.useSkill(PLAYER_REF, LOCKPICKING, this.#setup.skillUses.broken);
-    const left = await runtime.itemCount(PLAYER_REF, LOCKPICK);
+    const left = await pickBroke(this.#runtime, this.#setup.lock);
     if (this.#menu) await this.#showInfo(this.#menu);
     if (left <= 0) {
       const settings = await this.#session.settings();
@@ -461,36 +382,10 @@ class Picking {
     this.#keys.clear();
     this.#sound('UILockpickingUnlock');
     void this.#tension?.then((sound) => sound?.stop());
-    const { reference } = this.#setup;
-    this.#runtime.playerActed(PlayerAction.lockpickSuccess);
-    this.#runtime.state.reference(reference).locked = false;
-    this.#runtime.events.emit('lockChanged', { reference });
-    void this.#runtime.progression.useSkill(PLAYER_REF, LOCKPICKING, this.#setup.skillUses.opened);
-    // An owned lock picked in sight is a crime (crime-engine.ts lockPicked); Locks Picked.
-    this.#runtime.incrementStat('Locks Picked');
-    void this.#runtime.crime.lockPicked(PLAYER_REF, reference);
-    void this.#waxKey(reference);
+    this.#runtime.detach(lockOpened(this.#runtime, this.#setup.lock));
     setTimeout(() => {
       this.close(true);
     }, OPENED_SECONDS * 1000);
-  }
-
-  /**
-   * A lock picked open may give its key (Mod Lockpicking Key Reward Chance, percent: Wax Key,
-   * always), if the player has none of it.
-   */
-  async #waxKey(reference: number): Promise<void> {
-    const runtime = this.#runtime;
-    const { key } = await runtime.lock(reference);
-    if (key === undefined || (await runtime.itemCount(PLAYER_REF, key)) > 0) return;
-    const chance = await runtime.perks.apply(
-      EntryPoint.modLockpickingKeyRewardChance,
-      PLAYER_REF,
-      0,
-      [reference],
-    );
-    if (Math.random() * 100 < chance)
-      await runtime.addItem(PLAYER_REF, runtime.formHandle(key), 1, false);
   }
 
   /** The pick at the end of its Intro, in the keyhole. */
@@ -501,8 +396,8 @@ class Picking {
 
   /** The pick where it points, turned with the cylinder. */
   #placePick(): void {
-    const cylinder = aboutY(CYLINDER_PIVOT, this.#turn);
-    const pick = aboutY(PICK_PIVOT, this.#pick - PICK_RANGE / 2);
+    const cylinder = aboutY(CYLINDER_PIVOT, this.#lock.turn);
+    const pick = aboutY(PICK_PIVOT, this.#lock.pick - PICK_RANGE / 2);
     this.#pickWorld.set(multiply(this.#base, multiply(cylinder, pick)));
     this.#pickMotion.version++;
     if (this.#menu) this.#report(this.#menu);
@@ -510,7 +405,8 @@ class Picking {
 
   /** The pick's and the lock's angles and the pick's health (0..100) to the debug display. */
   #report(menu: Menu): void {
-    const now = { pick: this.#pick, turn: this.#turn, health: 100 * (1 - this.#strain) };
+    const lock = this.#lock;
+    const now = { pick: lock.pick, turn: lock.turn, health: 100 * (1 - lock.strain) };
     const last = this.#reported;
     if (now.pick !== last?.pick) menu.call('UpdatePickAngle', now.pick - PICK_RANGE / 2);
     if (now.turn !== last?.turn) menu.call('UpdateLockAngle', now.turn);
@@ -567,8 +463,4 @@ function aboutY(pivot: Vec3, degrees: number): Mat4 {
     pz - (-s * px + c * pz),
     1,
   ]);
-}
-
-function clampPick(angle: number): number {
-  return Math.max(0, Math.min(PICK_RANGE, angle));
 }
