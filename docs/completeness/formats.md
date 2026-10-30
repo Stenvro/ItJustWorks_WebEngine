@@ -35,14 +35,20 @@ a master or the plugin and its string ids resolve. Nothing depends on names in s
 Beside it the census lists, per record type, the subrecords no engine code outside
 `src/formats` names (by source text): parsed, used by: open, which is the other areas' work.
 
-## Summary (2026-10-30, round 4)
+## Summary (2026-10-30, round 5)
 
 The checklist has **156 items**: 36 format items below and the 120 record types of the load
 order (the table at the end). **153 are done** (33 format items, all 120 record types). Open:
-the save game's global data (every type has a reader: built, waiting on a real save) and
-change forms (no save is in the installation to build them against), and SEQ use (M12).
+the save game's global data and change forms (built, waiting on a real save: no .ess is in the
+installation to sweep), and SEQ use (M12).
 
-Done this round: every Havok member set in the data is read (the 60 that were not: 723 of 753
+Done this round: the change forms by the original's layouts for every flag UESP lists and every
+extra data type the original writes data for (but Interaction and two package cases), actors
+through their actor values, factions, leveled lists, the NPC attributes flag (no data), quest
+objectives' states; the import applies actors' actor values and faction changes, quest
+objectives (failed too) and leveled list additions.
+
+Round 4: every Havok member set in the data is read (the 60 that were not: 723 of 753
 read now, the rest zero in every file or not data), and the ones that change how a graph runs
 are wired into the behavior runtime (silent events, the blender children's world-from-model
 weight, the damping modifier's enable, bit bindings). The seven magic projects that failed to
@@ -190,11 +196,16 @@ rod's clips), SEQ files, the marketplace's archive and the census tool.
 There is no .ess in the installation, so these cannot be swept here: `ess-info` on a player's
 saves measures them (`tests/sim-ess-import.int.test.ts` reads one).
 
-- [ ] Change forms: references are read up to the actor data and animation parts (the actor
-      part stops the read), cells partly, quests and NPCs partly, the other base types only
-      their form flags (and factions' flags). `src/formats/ess/change-forms.ts`. xEdit's save
-      definitions keep these as bytes too; UESP's are partial. Open until a real save is at
-      hand to build them against.
+- [ ] Change forms: **built, waiting on a real save** (round trip tests in
+      `src/formats/ess/ess.test.ts` and `src/save/ess-import.test.ts`; `ess-info` measures a
+      player's saves). Read by the original's layouts: references and projectiles with every
+      extra data type the original writes data for, inventories, actors through their actor
+      value modifiers and storage and added spells, quests, NPCs (every flag), cells, factions,
+      leveled lists. `src/formats/ess/change-forms.ts`. Open: the AI process data (not decoded:
+      the actor values after it are found by their shape), the player's own data after the
+      actor's, an actor's movement and combat data, the Interaction extra, a package's running
+      data and a package the game made, the arrows' transform size, and the other base types'
+      own flags (BOOK, INGR, FLST, ECZN, LCTN, SMQN, RELA, SCEN, PACK, INFO, NOTE).
 - [ ] Global data: every one of the 30 types has a reader (`GLOBAL_DATA_READERS`, run by
       `ess-info`). The 17 new ones (process lists with their crimes, combat, interface, actor
       causes, detection manager, location metadata, quest static data, story teller, magic

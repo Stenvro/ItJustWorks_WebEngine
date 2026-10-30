@@ -208,7 +208,7 @@ sweeps): 156 items, 153 done (2026-10-30, round 4).
 | NIF                       | complete | (every block type parsed; the fields read past reviewed, the usable ones kept: 2026-10-29)                                                                                          |
 | DDS, PEX, audio, TRI, LOD | complete |                                                                                                                                                                                     |
 | HKX                       | complete | (every member set in the data read, the ones that change a graph's run wired in: 2026-10-30); read, not applied yet: sync points, the powered ragdoll's world-from-model mode (M13) |
-| ESS                       | partial  | every global data type has a reader (17 built from UESP's layouts, waiting on a real save: M12); change forms partly (actor data, base objects)                                     |
+| ESS                       | partial  | every global data type has a reader (17 built from UESP's layouts, waiting on a real save: M12); change forms by layout (the AI process data, a few base types open)                |
 | SEQ                       | partial  | read (2026-10-29); its use when a plugin is new to a save (M12)                                                                                                                     |
 
 ## Order of work
