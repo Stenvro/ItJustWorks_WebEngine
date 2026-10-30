@@ -154,6 +154,15 @@ export class DialogueMenu {
     this.#menu = await this.#host.open('dialoguemenu.swf', {
       depth: DIALOGUE_DEPTH,
       interactive: true,
+      // The control map's Cancel (Esc, Tab) goes to the movie's Cancel callback (its
+      // onCancelPress: the greeting skipped, else the menu fading out). TODO(M13): that the
+      // engine sends the user event's name to the movie is inferred (the callback is named after
+      // it); the sender is not found.
+      onKey: (menu, event) => {
+        if (event.code !== 'Escape' && event.code !== 'Tab') return false;
+        if (!event.repeat) menu.call('Cancel');
+        return true;
+      },
       handlers: {
         // The menu has left its list for the answer: a click with no topic under it or
         // highlighted (no index) gets the list back instead of leaving the menu waiting.

@@ -80,6 +80,10 @@ export class JournalMenu {
   /** The objectives' targets on the map ("quest:objective" → the first target's reference). */
   #targets = new Map<string, number>();
 
+  /** The journal's movie while it is open, and when the right stick was last passed on (ms). */
+  #shown: Menu | undefined;
+  #stickSent: number | undefined;
+
   /** The stats page's favorites, read as the journal opens. */
   #favorites: Awaited<ReturnType<ScriptRuntime['usage']['favorites']>> | undefined;
 
@@ -98,9 +102,14 @@ export class JournalMenu {
       // A game runs while the journal is open: its player's saves.
       character: () => session.scriptsReady?.state.playerName ?? DEFAULT_PLAYER_NAME,
       importText: () => (this.saves?.importEss ? IMPORT_ESS_TEXT : undefined),
+      // A load cancelled while the journal is open (observed in the original: the engine's
+      // CancelLoading with the journal open) backs the system page out of its load list
+      // (BackOutFromLoadGame); a load that goes ahead closes the journal.
       load: (menu, name) => {
-        this.#close?.(menu);
-        this.saves?.load(name);
+        void this.saves?.load(name).then((loading) => {
+          if (loading) this.#close?.(menu);
+          else menu.call('BackOutFromLoadGame');
+        });
       },
       importSave: (menu) => {
         this.#close?.(menu);
@@ -140,6 +149,7 @@ export class JournalMenu {
     const close = (menu: Menu): void => {
       if (done) return;
       done = true;
+      if (this.#shown === menu) this.#shown = undefined;
       this.#host.close(menu);
       closed();
     };
@@ -271,8 +281,37 @@ export class JournalMenu {
         menu.invoke('_root.InitExtensions');
         menu.tellPlatform('_root.SetPlatform');
         menu.call('RestoreSavedSettings', tab, tabsDisabled);
+        if (!done) this.#shown = menu;
       },
     });
+  }
+
+  /**
+   * The gamepad's right stick while the journal is open (x, y: -1..1, up positive). Observed in
+   * the original: held off centre it is passed on (onRightStickInput, which the page shown
+   * takes if it has a use for it) at most every [MapMenu] iRightStickRepeatRate ms; back in the
+   * centre the wait starts over.
+   */
+  rightStick(x: number, y: number, now = performance.now()): void {
+    const menu = this.#shown;
+    if (!menu) return;
+    if (x === 0 && y === 0) {
+      this.#stickSent = undefined;
+      return;
+    }
+    const rate = this.#session.ini.number('MapMenu', 'iRightStickRepeatRate');
+    if (this.#stickSent !== undefined && now - this.#stickSent <= rate) return;
+    this.#stickSent = now;
+    menu.call('onRightStickInput', x, y);
+  }
+
+  /**
+   * The engine's messages to the open journal, as observed in the original: "Show Journal"
+   * fades it back in (ShowMenu: the movie's DoShowMenu), "RefreshMenu" redraws the system page's
+   * buttons (RefreshSystemButtons: which entries the game allows now).
+   */
+  message(name: 'Show Journal' | 'RefreshMenu'): void {
+    this.#shown?.call(name === 'Show Journal' ? 'ShowMenu' : 'RefreshSystemButtons');
   }
 
   /**
@@ -409,7 +448,8 @@ export interface JournalSaves {
   /** A new save, or over the save of this name. */
   save(overwrite?: string): Promise<unknown>;
   quicksave(): void;
-  load(name: string): void;
+  /** Loads a save: resolves false when the load does not go ahead (it is cancelled). */
+  load(name: string): Promise<boolean>;
   delete(name: string): Promise<void>;
   /** Picks an original save (.ess), imports it and loads it. */
   importEss?(): void;

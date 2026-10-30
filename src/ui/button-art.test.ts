@@ -6,6 +6,7 @@ import {
   keyArt,
   keyLabel,
   mouseArt,
+  parseButtonNames,
   UNKNOWN_KEY,
   withKeyLabels,
 } from './button-art.ts';
@@ -105,5 +106,37 @@ describe('button mappings (SetButtonMapping)', () => {
       { mapName: 'Forward', buttonName: 'W' },
     ]);
     expect(buttonMappings(undefined)).toEqual([]);
+  });
+
+  it("reads a device's button names: name, tab, hardware value; comments left out", () => {
+    const names = parseButtonNames(
+      '// 1st field: name\r\nUp\t0x0001\r\n360_A\t0x1000\r\n\r\nMouse1\t0x0\t0\r\n',
+    );
+    expect([...names]).toEqual([
+      [0x1, 'Up'],
+      [0x1000, '360_A'],
+      [0, 'Mouse1'],
+    ]);
+  });
+
+  it("sends the gamepad's bindings alone while a gamepad is in use, by their names", () => {
+    const pad = (name: string, button: number, remappable = true): UserEvent => ({
+      ...event([[0x12]], [1]),
+      name,
+      gamepad: [button],
+      remappable: [true, true, remappable],
+    });
+    const controls = {
+      contexts: [[pad('Activate', 0x1000), pad('Jump', 0x8000), pad('Pause', 0x10, false)]],
+    };
+    const names = new Map([
+      [0x1000, '360_A'],
+      [0x8000, '360_Y'],
+      [0x10, '360_Start'],
+    ]);
+    expect(buttonMappings(controls, names)).toEqual([
+      { mapName: 'Activate', buttonName: '360_A' },
+      { mapName: 'Jump', buttonName: '360_Y' },
+    ]);
   });
 });
