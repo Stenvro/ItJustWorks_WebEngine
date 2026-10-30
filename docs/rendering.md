@@ -664,6 +664,26 @@ Dynamic decals (a hit's blood: `src/shell/combat-impacts.ts`) last `[Display]` f
 first (observed in the original: each is made with the lifetime, the count capped by the
 setting; `expireDecals`). TODO(M13): whether one fades at its end or vanishes.
 
+**Skinned decals** (`skinned-decal.ts`; blood on an actor, `combat-impacts.ts bodyDecal`). The
+original walks the shapes in the decal's box: a hidden shape or one flagged no-decals is skipped
+with what lies under it, a shape whose shader is itself a Decal takes none, an alpha-blended or
+alpha-tested one only with `[Decals]` bAllowDecalsOnAlpha. A skinned shape gets a skinned decal,
+made only while fewer than `[Decals]` uMaxSkinDecals (100) live, fewer than `[Display]`
+iMaxSkinDecalsPerFrame (25) were made this frame and the actor carries fewer than `[Decals]`
+uMaxSkinDecalPerActor (25; Skyrim_Default.ini sets 60): otherwise the new one is not made and
+the older stay. No dynamic decal is made farther than `[Display]` fDecalLOD0 (800) from the
+camera (observed in the original). Ours: the actor's skinned shapes are skinned on the CPU in
+the pose of the hit, their triangles that overlap the box (a separating-axis test against the
+unit cube) are copied with their bone weights and partitions (equipment that hides a body part
+hides its blood), their texture coordinates projected across the box (u along its X, v down its
+Z, in the decal's atlas quarter) and their tangent frames made again for those coordinates in the
+files' convention (the stored tangent along +v, the bitangent along +u, measured on the vanilla
+bodies); the shape is drawn with the lighting shader as a Decal and Dynamic_Decal (depth bias),
+the texture set's textures, the decal's shininess and colour (on the vertex colours) and its
+alpha mode, with the actor's pose. It lasts fDecalLifetime as the other dynamic decals. Where
+no skinned shape lies in the box the decal is projected onto what does, following the nearest
+node (TODO(M13): the original's geometry decals on rigid worn shapes).
+
 ## Weather
 
 Which weather the sky shows, and how scripts, the console and conditions control it
@@ -1062,4 +1082,18 @@ Lag bones (lag-bone.ts): each update the bone covers linear velocity × dt of th
 parent would put it (at its rest translation), the part beyond the maximum distance at once; it
 keeps its last world rotation and turns back toward its rest rotation by linear rotation × dt.
 Skeletons (ActorPose) trail in world space when placed (ActorPose.space: the actor's instance
-world), so the actor's own walk and turns swing a tail; effect and worn models are TODO(M13).
+world), so the actor's own walk and turns swing a tail. Other models with lag bones (the scan of
+the meshes: spells' hand effects and projectiles, shouts, torches, a few creatures' effect
+models) keep them in their animation (ModelAnimation.lagBones) and the scene renderer keeps a
+`ModelLagBones` per placed instance (by its world matrix): each frame the lag nodes trail that
+instance's motion in world space, and the parts and particle emitters under them follow, so a
+swung torch's flame and a moving hand's spell trail. Rigid worn pieces hung on a skeleton node
+(the knuckles, the Akaviri sword: 4 files) do not yet (TODO(M13)).
+
+Measured cost (headless Chrome, 1280 × 720, Whiterun by day, Medium: GPU timestamps): generate
+0.07 ms, raymarch 0.03 ms, the blur 0.05 ms, the composite 0.015 ms. To keep it there the passes
+keep their bind groups between frames (made again only when the shadow map or depth texture
+changes), the two blur directions run in one pass through workgroup memory (the same sums
+without writing and reading the volume between them), and where the GPU filters 32-bit floats
+(float32-filterable) the composite reads the volume with one trilinear sample instead of eight
+loads. `engineDev.renderer.sunEffects.volume.profile = true` fills its `timings` (ms per pass).

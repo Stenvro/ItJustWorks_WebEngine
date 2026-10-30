@@ -653,6 +653,8 @@ export class ActorCombat implements CombatBridge {
       if (first) yield first;
     }
     yield* this.#projectiles.scenes();
+    // The hits' blood on actors' skin (skinned decals).
+    yield* this.#impacts.scenes();
   }
 
   /** The hits' decals (blood). */
@@ -2422,11 +2424,19 @@ export class ActorCombat implements CombatBridge {
         if (!impact || blocks || !(await this.#impacts.bleeds(impact))) return;
         // A blow that drew blood (its impact leaves a blood decal) bloodies the body it struck,
         // and the player's screen when it struck the player (src/render/screen-blood-data.ts).
-        void this.#impacts.bodyDecal(impact, hit.point, hit.direction, () => {
-          const body = target.body;
-          const first = body?.instances[0];
-          return body && first && { world: first.world, pose: body.pose };
-        });
+        void this.#impacts.bodyDecal(
+          impact,
+          hit.point,
+          hit.direction,
+          () => {
+            const body = target.body;
+            const first = body?.instances[0];
+            return (
+              body && first && { world: first.world, pose: body.pose, instances: body.instances }
+            );
+          },
+          targetRef,
+        );
         if (targetRef === PLAYER_REF) {
           this.#options.session.screenBlood.splatter(splattersForHit(hit.power));
         }
