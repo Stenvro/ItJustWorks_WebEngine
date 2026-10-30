@@ -265,7 +265,11 @@ export interface EssChangeForm {
   readonly quest?: EssQuestChanges;
   readonly cell?: EssCellChanges;
   readonly actor?: EssActorData;
+  /** A projectile's or hazard's own state after its reference data. */
+  readonly projectile?: EssProjectileData;
   readonly faction?: EssFactionChanges;
+  /** The other base types' own data (books, ingredients, form lists, locations, scenes, ...). */
+  readonly base?: EssBaseChanges;
   /** LVLN, LVLI, LVSP: the entries a script added (AddForm). */
   readonly leveledAdded?: readonly {
     readonly form: number;
@@ -276,6 +280,8 @@ export interface EssChangeForm {
   readonly undecoded: number;
   /** Why reading stopped before the end (a part whose layout is not known). */
   readonly stoppedAt?: string;
+  /** Where in the (inflated) data reading stopped. */
+  readonly stoppedOffset?: number;
 }
 
 /**
@@ -574,8 +580,9 @@ function readExtra(
     case 0x98:
       list(() => {
         if (reader.refId() === 0) return;
-        // TODO(M13): the arrow's transform is taken as 36 bytes (a 3x3 matrix).
-        if (reader.u16() !== 0xffff) reader.skip(4 + 12 + 36 + 4);
+        // On a bone: the time it has been stuck, its translation, its rotation (the original
+        // writes the 3x3 matrix as a quaternion: 16 bytes) and its scale.
+        if (reader.u16() !== 0xffff) reader.skip(4 + 12 + 16 + 4);
       });
       reader.skip(4);
       return {};
@@ -594,8 +601,13 @@ function readExtra(
     case 0xa1:
       reader.skip(88);
       return {};
-    case 0xa9:
-      throw new Unknown('extra data type 0xa9 (interaction)');
+    case 0xa9: {
+      // The interaction (a mount and its rider, or a reference's): its kind, the two
+      // references and a flag byte. Both kinds the original has add nothing of their own.
+      const kind = reader.u32();
+      const value = [kind, ref(), ref(), reader.u8()];
+      return { value };
+    }
     case 0xae:
       reader.u32();
       ref();
@@ -642,15 +654,311 @@ function readExtras(reader: EssReader, resolve: RefIdResolver): EssExtra[] {
 function readInventory(reader: EssReader, resolve: RefIdResolver): EssInventoryEntry[] {
   const count = reader.vsval();
   const entries: EssInventoryEntry[] = [];
-  for (let i = 0; i < count; i++) {
-    const item = resolve(reader.refId());
-    const delta = reader.i32();
-    const lists = reader.vsval();
-    const extras: EssExtra[][] = [];
-    for (let j = 0; j < lists; j++) extras.push(readExtras(reader, resolve));
-    entries.push({ item, delta, extras });
-  }
+  for (let i = 0; i < count; i++) entries.push(readInventoryEntry(reader, resolve));
   return entries;
+}
+
+/** One item: the form, the count's change, and its extra data lists. */
+function readInventoryEntry(reader: EssReader, resolve: RefIdResolver): EssInventoryEntry {
+  const item = resolve(reader.refId());
+  const delta = reader.i32();
+  const lists = reader.vsval();
+  const extras: EssExtra[][] = [];
+  for (let j = 0; j < lists; j++) extras.push(readExtras(reader, resolve));
+  return { item, delta, extras };
+}
+
+/** A scene's running state (SCEN: written whatever its change flags). */
+export interface EssSceneChanges {
+  readonly playing: boolean;
+  /** The other state bytes and words in the original's order (their meaning is not known). */
+  readonly state: readonly number[];
+  /** Per action: its type (0 dialogue, 1 package, 2 timer), a u32, the timer's two bytes,
+   * then its two flag bits (ended, started). */
+  readonly actions: readonly { readonly type: number; readonly values: readonly number[] }[];
+  /** The time the scene's clock stood at when saved. */
+  readonly time: number;
+  /** Per phase: three state bytes. */
+  readonly phases: readonly (readonly number[])[];
+}
+
+/** The base objects' own change data, by the original's layout for each type. */
+export interface EssBaseChanges {
+  readonly fullName?: string;
+  /** TESValueForm: the item's gold value (ARMO, BOOK, LIGH, MISC, APPA, WEAP, AMMO, KEYM). */
+  readonly value?: number;
+  /** BOOK: its flags byte (teaches a skill or spell, read). */
+  readonly bookFlags?: number;
+  /** TACT: the voice type it talks with. */
+  readonly voiceType?: number;
+  /** INGR: which of its effects the player knows (4 bytes). */
+  readonly knownEffects?: number;
+  /** ECZN: never resets (bit 0), then its detach, attach and reset times and level. */
+  readonly encounterZone?: { readonly flags?: number; readonly times?: readonly number[] };
+  /** RELA: a relationship the game made (its two NPCs and association), and its rank. */
+  readonly relationship?: { readonly forms?: readonly number[]; readonly rank?: number };
+  /** FLST: the forms scripts added. */
+  readonly formListAdded?: readonly number[];
+  /** LCTN: the two cleared bytes and the keyword data scripts set. */
+  readonly location?: {
+    readonly cleared?: readonly [number, number];
+    readonly keywordData?: readonly { readonly keyword: number; readonly value: number }[];
+  };
+  /** SMQN: the node's run data (u32 each). */
+  readonly questNode?: readonly number[];
+  readonly scene?: EssSceneChanges;
+}
+
+/** Base type change flags beyond ChangeBase's (the original's per-type bits). */
+const TALKING_VOICE = bit(23);
+
+/**
+ * The base types' own data after the form flags (docs/formats/ess.md "Base objects"): what the
+ * original writes for each type. Types not named here write nothing more.
+ */
+function readBaseChanges(
+  reader: EssReader,
+  entry: ChangeFormEntry,
+  resolve: RefIdResolver,
+): EssBaseChanges | undefined {
+  const flags = entry.changeFlags;
+  const has = (mask: number): boolean => (flags & mask) !== 0;
+  const value = (): { value?: number } => (has(ChangeBase.value) ? { value: reader.u32() } : {});
+  const name = changeFormTypeName(entry.type);
+  switch (name) {
+    case 'ACTI':
+    case 'FURN':
+    case 'TACT': {
+      const fullName = has(ChangeBase.fullName) ? reader.wstring() : undefined;
+      const voiceType = name === 'TACT' && has(TALKING_VOICE) ? resolve(reader.refId()) : undefined;
+      return {
+        ...(fullName !== undefined && { fullName }),
+        ...(voiceType !== undefined && { voiceType }),
+      };
+    }
+    case 'ARMO':
+    case 'LIGH':
+    case 'MISC':
+    case 'APPA':
+    case 'WEAP':
+    case 'AMMO':
+    case 'KEYM':
+      return value();
+    case 'BOOK': {
+      const result = value();
+      if (has(ChangeBase.bookTeaches | ChangeBase.bookRead))
+        return { ...result, bookFlags: reader.u8() };
+      return result;
+    }
+    case 'INGR':
+      return has(ChangeBase.last) ? { knownEffects: reader.u32() } : {};
+    case 'ECZN': {
+      const zoneFlags = has(ChangeBase.value) ? reader.u8() : undefined;
+      const times = has(ChangeBase.last)
+        ? [reader.u32(), reader.u32(), reader.u32(), reader.u32()]
+        : undefined;
+      return {
+        encounterZone: {
+          ...(zoneFlags !== undefined && { flags: zoneFlags }),
+          ...(times && { times }),
+        },
+      };
+    }
+    case 'RELA': {
+      const forms =
+        entry.refId >>> 22 === RefIdKind.Created
+          ? [resolve(reader.refId()), resolve(reader.refId()), resolve(reader.refId())]
+          : undefined;
+      const rank = has(ChangeBase.value) ? reader.u32() : undefined;
+      return {
+        relationship: { ...(forms && { forms }), ...(rank !== undefined && { rank }) },
+      };
+    }
+    case 'FLST': {
+      if (!has(ChangeBase.last)) return {};
+      const added: number[] = [];
+      const n = reader.u32();
+      for (let i = 0; i < n; i++) added.push(resolve(reader.refId()));
+      return { formListAdded: added };
+    }
+    case 'LCTN': {
+      const cleared = has(ChangeBase.last) ? ([reader.u8(), reader.u8()] as const) : undefined;
+      let keywordData: { keyword: number; value: number }[] | undefined;
+      if (has(ChangeBase.locationKeywordData)) {
+        keywordData = [];
+        const n = reader.vsval();
+        for (let i = 0; i < n; i++) {
+          keywordData.push({ keyword: resolve(reader.refId()), value: reader.f32() });
+        }
+      }
+      return { location: { ...(cleared && { cleared }), ...(keywordData && { keywordData }) } };
+    }
+    case 'SMQN': {
+      const data: number[] = [];
+      const n = reader.u32();
+      for (let i = 0; i < n; i++) data.push(reader.u32());
+      return { questNode: data };
+    }
+    case 'SCEN':
+      return { scene: readScene(reader) };
+    case 'PACK':
+      // A package the game made writes its whole definition (its data, locations and
+      // targets); a package from a plugin writes nothing. TODO(M13): read a made one.
+      if (entry.refId >>> 22 === RefIdKind.Created) throw new Unknown('a package the game made');
+      return undefined;
+    default:
+      return undefined;
+  }
+}
+
+function readScene(reader: EssReader): EssSceneChanges {
+  const playing = reader.u8() !== 0;
+  const state = [reader.u32(), reader.u8(), reader.u8()];
+  const actions: { type: number; values: number[] }[] = [];
+  const actionCount = reader.u32();
+  for (let i = 0; i < actionCount; i++) {
+    const type = reader.u32();
+    const values = [reader.u32()];
+    if (type === 2) values.push(reader.u8(), reader.u8());
+    values.push(reader.u8(), reader.u8());
+    actions.push({ type, values });
+  }
+  state.push(reader.u8(), reader.u8());
+  const time = reader.u32();
+  const phases: number[][] = [];
+  const phaseCount = reader.u32();
+  for (let i = 0; i < phaseCount; i++) phases.push([reader.u8(), reader.u8(), reader.u8()]);
+  state.push(reader.u8(), reader.u8(), reader.u8(), reader.u8());
+  return { playing, state, actions, time, phases };
+}
+
+/**
+ * A projectile's (PMIS, PGRE, PBEA, PFLA, PBAR, PCON, PARW) or a hazard's (PHZD) state, as the
+ * original writes it after the reference's data. The numbers are kept in the original's order
+ * (their meaning beyond what is named here is not documented).
+ */
+export interface EssProjectileData {
+  /** The words, floats and vectors in the original's order. */
+  readonly values: readonly number[];
+  /** The forms and references it names (shooter, weapon, ammo, target, ...), in order. */
+  readonly refs: readonly number[];
+  /** The rotation as a quaternion (projectiles). */
+  readonly rotation?: readonly number[];
+  /** The item it carries, with its extra data (an arrow's ammo, a thrown item). */
+  readonly item?: EssInventoryEntry;
+  /** Where it hit: position, normal, the reference hit, and the impact's data. */
+  readonly impacts?: readonly {
+    readonly values: readonly number[];
+    readonly refs: readonly number[];
+  }[];
+}
+
+function readHazard(reader: EssReader, resolve: RefIdResolver): EssProjectileData {
+  const values = [
+    reader.u32(),
+    reader.u32(),
+    reader.u32(),
+    reader.u32(),
+    reader.u32(),
+    reader.u32(),
+  ];
+  return { values, refs: [resolve(reader.refId()), resolve(reader.refId())] };
+}
+
+function readProjectile(
+  reader: EssReader,
+  type: number,
+  resolve: RefIdResolver,
+): EssProjectileData {
+  const values: number[] = [];
+  const refs: number[] = [];
+  const words = (n: number): void => {
+    for (let i = 0; i < n; i++) values.push(reader.u32());
+  };
+  const floats = (n: number): void => {
+    for (let i = 0; i < n; i++) values.push(reader.f32());
+  };
+  const ref = (): void => {
+    refs.push(resolve(reader.refId()));
+  };
+  words(9);
+  ref(); // the source (weapon or spell) and the ammo
+  ref();
+  ref(); // the shooter and the desired target
+  ref();
+  floats(3); // the velocity
+  words(2);
+  const rotation = [reader.f32(), reader.f32(), reader.f32(), reader.f32()];
+  floats(3);
+  words(3);
+  values.push(reader.i32()); // a form id as is (−1: none)
+  const item = reader.u8() !== 0 ? readInventoryEntry(reader, resolve) : undefined;
+  const impacts: { values: number[]; refs: number[] }[] = [];
+  const impactCount = reader.vsval();
+  for (let i = 0; i < impactCount; i++) {
+    const position = reader.vec3();
+    const normal = reader.vec3();
+    const hit = resolve(reader.refId());
+    const data = [...position, ...normal, reader.u32(), reader.u8(), reader.u16(), reader.u16()];
+    const material = resolve(reader.refId());
+    data.push(reader.u32(), reader.u32(), reader.u8());
+    impacts.push({ values: data, refs: [hit, material] });
+  }
+  floats(3);
+  ref();
+  words(1);
+  ref();
+  words(1);
+  switch (changeFormTypeName(type)) {
+    case 'PMIS':
+    case 'PBAR':
+      words(1);
+      break;
+    case 'PARW':
+      words(1);
+      ref();
+      ref();
+      break;
+    case 'PFLA':
+      words(2);
+      break;
+    case 'PCON':
+      words(4);
+      floats(3);
+      break;
+    case 'PBEA':
+      values.push(reader.u8());
+      break;
+    case 'PGRE': {
+      // The grenade's attached constraints: a vsval count of serialized Havok objects.
+      // TODO(M13): their layout (none in the saves seen).
+      if (reader.vsval() !== 0) throw new Unknown("a grenade's constraints");
+      break;
+    }
+  }
+  return {
+    values,
+    refs,
+    rotation,
+    ...(item && { item }),
+    ...(impacts.length > 0 && { impacts }),
+  };
+}
+
+/** Whether an interior cell's seen data, then `rest`, read the data exactly to its end. */
+function fitsInteriorSeenData(reader: EssReader, rest: () => void): boolean {
+  const start = reader.offset;
+  try {
+    const n = reader.vsval();
+    reader.skip(n * (2 + 32));
+    rest();
+    return reader.remaining === 0;
+  } catch (error) {
+    if (error instanceof FormatError) return false;
+    throw error;
+  } finally {
+    reader.seek(start);
+  }
 }
 
 function readInitial(
@@ -747,21 +1055,31 @@ export function readChangeForm(entry: ChangeFormEntry, resolve: RefIdResolver): 
         out.actor = actor;
         const stopped = readActor(reader, actor, out.formId === PLAYER_REF, resolve);
         if (stopped !== undefined) throw new Unknown(stopped);
-      }
+      } else if (type === 40) out.projectile = readHazard(reader, resolve);
+      else if (type !== 0) out.projectile = readProjectile(reader, type, resolve);
     } else if (type === 6) {
       formFlags();
       const cell: { -readonly [K in keyof EssCellChanges]: EssCellChanges[K] } = {};
       if (has(ChangeCell.flags)) cell.flags = reader.u16();
+      // The seen data: an exterior cell's is one 32-byte map of what was seen, an interior
+      // cell's a vsval count of (two bytes, 32 bytes) per part. The save does not say which the
+      // cell is unless its detach data does; else the layout that ends the data is the one.
+      const rest = (): void => {
+        if (has(ChangeCell.fullName)) cell.fullName = reader.wstring();
+        if (has(ChangeCell.ownership)) cell.owner = resolve(reader.refId());
+      };
       if (has(ChangeCell.seenData)) {
-        const exterior = initial?.kind === 'detached cell' && initial.x !== undefined;
+        const exterior =
+          initial?.kind === 'detached cell'
+            ? initial.x !== undefined
+            : !fitsInteriorSeenData(reader, rest);
         if (exterior) reader.skip(32);
         else {
           const n = reader.vsval();
           for (let i = 0; i < n; i++) reader.skip(2 + 32);
         }
       }
-      if (has(ChangeCell.fullName)) cell.fullName = reader.wstring();
-      if (has(ChangeCell.ownership)) cell.owner = resolve(reader.refId());
+      rest();
       out.cell = cell;
     } else if (type === 8) {
       formFlags();
@@ -784,17 +1102,17 @@ export function readChangeForm(entry: ChangeFormEntry, resolve: RefIdResolver): 
       }
     } else {
       formFlags();
-      // TODO(M13): the other base types' own flags (book teaches, ingredient use, form list
-      // added forms, encounter zone and location data, ...): their layouts are not read yet;
-      // what they hold is counted as undecoded.
+      out.base = readBaseChanges(reader, entry, resolve);
     }
   } catch (error) {
+    out.stoppedOffset = reader.offset;
     if (error instanceof Unknown) out.stoppedAt = error.message;
     else if (error instanceof FormatError) out.stoppedAt = `corrupt: ${error.message}`;
     else throw error;
   }
   out.undecoded = reader.remaining;
   if (out.undecoded > 0 && out.stoppedAt === undefined) {
+    out.stoppedOffset = reader.offset;
     out.stoppedAt = `${String(out.undecoded)} bytes of ${changeFormTypeName(entry.type)} data`;
   }
   return out;
@@ -1011,6 +1329,12 @@ function readActor(
 }
 
 /** The four modifier sets and the actor value storage, or undefined where they do not fit. */
+/**
+ * An actor value index as the storage writes it: a signed byte widened to 32 bits, so the
+ * indices from 128 up come out negative (the player's values past 127, such as 134).
+ */
+const actorValueIndex = (raw: number): number => (raw < 0 && raw >= -128 ? raw & 0xff : raw);
+
 function readActorValues(reader: EssReader): EssActorValues | undefined {
   const modifiers: EssValueModifiers[] = [];
   for (const av of MODIFIED_VALUES) {
@@ -1025,7 +1349,7 @@ function readActorValues(reader: EssReader): EssActorValues | undefined {
   const n = reader.vsval();
   if (n > ACTOR_VALUE_COUNT) return undefined;
   for (let i = 0; i < n; i++) {
-    const av = reader.i32();
+    const av = actorValueIndex(reader.i32());
     const value = reader.f32();
     if (!valid(av, value)) return undefined;
     base.push({ av, value });
@@ -1034,7 +1358,7 @@ function readActorValues(reader: EssReader): EssActorValues | undefined {
   const m = reader.vsval();
   if (m > ACTOR_VALUE_COUNT) return undefined;
   for (let i = 0; i < m; i++) {
-    const av = reader.i32();
+    const av = actorValueIndex(reader.i32());
     const [permanent, temporary, damage] = reader.vec3();
     if (!valid(av, permanent, temporary, damage)) return undefined;
     others.push({ av, permanent, temporary, damage });
