@@ -901,6 +901,8 @@ interface AnimatedDraw {
   readonly hung?: { readonly pose: ActorPose; readonly node: number };
   /** A FaceGen head part: the face's weights written to its active morphs. */
   readonly face?: FaceDraw;
+  /** A mesh particle's copy of its system's mesh: drawn where that particle is. */
+  readonly meshParticle?: { readonly holder: MeshParticleHolder; readonly index: number };
   /**
    * A part its skeleton moves (skinned, or hung on a node): its draws' culling spheres follow
    * the pose, not the instance's root (a cart's riders sit 200 units behind their root).
@@ -945,7 +947,7 @@ function nearestBone(skin: NonNullable<ModelPart['skin']>, centre: readonly numb
  */
 function followBound(draw: AnimatedDraw, follows: FollowedBound, world: Mat4): void {
   let centre: [number, number, number];
-  if (draw.hung) {
+  if (draw.hung || draw.meshParticle) {
     centre = transformPoint(world, follows.local);
   } else if (draw.posed) {
     const node = draw.posed.nodes[follows.bone] ?? -1;
@@ -968,7 +970,7 @@ function followBound(draw: AnimatedDraw, follows: FollowedBound, world: Mat4): v
 function followedBound(
   part: ModelPart,
   posed: PosedDraw | undefined,
-  hung: AnimatedDraw['hung'],
+  hung: AnimatedDraw['hung'] | AnimatedDraw['meshParticle'],
 ): FollowedBound | undefined {
   const skin = part.skin;
   if (posed && skin) {
@@ -978,6 +980,11 @@ function followedBound(
   }
   const inverse = hung && invert(part.world);
   return inverse ? { draws: [], bone: -1, local: transformPoint(inverse, part.center) } : undefined;
+}
+
+/** The simulation of a mesh particle system of an instance (set once the system is made). */
+interface MeshParticleHolder {
+  simulation: ParticleSource | undefined;
 }
 
 /** A head part's active morphs, rewritten when its face changes. */
@@ -2340,6 +2347,8 @@ export class SceneRenderer {
       nodes: data.nodes,
       nodeWorlds: data.nodeWorlds,
       attachTo: data.attachTo,
+      visibilitySlots: data.visibilitySlots,
+      nodeLagBones: data.nodeLagBones,
       treeBones: data.treeBones,
     });
   }
@@ -2394,6 +2403,8 @@ export class SceneRenderer {
       nodes: source.nodes,
       nodeWorlds: source.nodeWorlds,
       attachTo: source.attachTo,
+      visibilitySlots: source.visibilitySlots,
+      nodeLagBones: source.nodeLagBones,
     });
   }
 
@@ -2538,6 +2549,8 @@ export class SceneRenderer {
     let slot = 0;
     for (const [instanceIndex, instance] of placed.entries()) {
       const animation = instance.model.animation;
+      // Its mesh particle systems' simulations, for the parts that copy their meshes.
+      const meshHolders = new Map<number, MeshParticleHolder>();
       const directional = instance.directional;
       const material = directional?.material;
       const fadeGroup = fades.get(instance);
@@ -2595,10 +2608,31 @@ export class SceneRenderer {
             : -1;
         const hung =
           instance.pose && poseNode >= 0 ? { pose: instance.pose, node: poseNode } : undefined;
-        const follows = followedBound(part.part, posed, hung);
-        if (animation || part.part.billboard || sky || playback || graph || posed || hung || face) {
+        const meshPart = part.part.meshParticle;
+        let meshParticle: AnimatedDraw['meshParticle'];
+        if (meshPart) {
+          let holder = meshHolders.get(meshPart.system);
+          if (!holder) {
+            holder = { simulation: undefined };
+            meshHolders.set(meshPart.system, holder);
+          }
+          meshParticle = { holder, index: meshPart.index };
+        }
+        const follows = followedBound(part.part, posed, hung ?? meshParticle);
+        if (
+          animation ||
+          part.part.billboard ||
+          sky ||
+          playback ||
+          graph ||
+          posed ||
+          hung ||
+          face ||
+          meshParticle
+        ) {
           animated.push({
             ...(follows && { follows }),
+            ...(meshParticle && { meshParticle }),
             offset,
             instanceWorld: instance.world,
             part: part.part,
@@ -2813,13 +2847,16 @@ export class SceneRenderer {
           (Math.round(origin[2]) * 83492791) ^ (index + 1),
         );
         const graph = graphDraw(instance);
+        const simulation =
+          instance.particleSource?.(system.data) ??
+          (system.data.lightning
+            ? new LightningSimulation(system.data, seed)
+            : new ParticleSimulation(system.data, seed));
+        const holder = meshHolders.get(system.data.block);
+        if (holder) holder.simulation = simulation;
         particles.push({
           system,
-          simulation:
-            instance.particleSource?.(system.data) ??
-            (system.data.lightning
-              ? new LightningSimulation(system.data, seed)
-              : new ParticleSimulation(system.data, seed)),
+          simulation,
           instanceWorld: instance.world,
           animation,
           ...(graph && { graph }),
@@ -3379,7 +3416,11 @@ export class SceneRenderer {
         // Uploaded only when something in it changed: an actor standing still keeps its
         // parts' matrices (its pose goes to the bone palette), and so does a door at rest.
         let changed = frame !== undefined;
-        if (frame?.hidden.has(draw.part.block)) {
+        if (
+          frame?.hidden.has(draw.part.block) ||
+          (draw.hung && draw.hung.pose.hidden?.[draw.hung.node] === 1)
+        ) {
+          // Hidden by its animation, or on a node the graph's visibility slots hide.
           floats.fill(0, 0, 16);
           changed = true;
         } else if (billboard) {
@@ -3391,6 +3432,15 @@ export class SceneRenderer {
           const local = animated && inverse ? multiply(inverse, animated) : billboard.local;
           multiply(billboardWorld(node, billboard.mode, camera), local, world);
           changed = writeMatrix(floats, world) || changed;
+        } else if (draw.meshParticle) {
+          // A mesh particle's copy: where its particle is (none: not drawn).
+          const { holder, index } = draw.meshParticle;
+          if (holder.simulation?.meshWorld?.(index, world)) {
+            changed = writeMatrix(floats, world) || changed;
+          } else {
+            floats.fill(0, 0, 16);
+            changed = true;
+          }
         } else if (draw.hung) {
           // On a skeleton: the node's pose, then the part under it.
           const { pose, node } = draw.hung;

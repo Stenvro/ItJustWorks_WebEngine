@@ -962,7 +962,12 @@ export class ActorPlacer {
     ];
     const dressed = wearOnRig(
       rig,
-      models.map(({ model }) => ({ nodes: model.nodes ?? [], attachTo: model.attachTo })),
+      models.map(({ model }) => ({
+        nodes: model.nodes ?? [],
+        attachTo: model.attachTo,
+        lagBones: model.nodeLagBones,
+        visibilitySlots: model.visibilitySlots,
+      })),
     );
     const skeleton = new ActorSkeleton(dressed.rig, havok);
     const pose = new ActorPose(skeleton);

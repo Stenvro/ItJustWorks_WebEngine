@@ -23,6 +23,7 @@ import {
 import { buildLightningSystem, lightningShapes } from './lightning.ts';
 import { buildParticleSystem, type ParticleSystemData } from './particle-data.ts';
 import { invert } from './frustum.ts';
+import { lagBone, type LagBone } from './lag-bone.ts';
 import { skinnedGeometry, withDynamicPositions, type PartSkin } from './skinning.ts';
 import {
   fromNifTransform,
@@ -161,6 +162,11 @@ export interface ModelPart {
    * blood (ModelInstance.weaponBlood; docs/rendering.md, "Weapon blood").
    */
   readonly weaponBlood?: boolean;
+  /**
+   * A mesh particle's copy of its system's mesh (NiMeshParticleSystem): drawn where particle
+   * `index` of the system (its block) is, hidden while there is none.
+   */
+  readonly meshParticle?: { readonly system: Ref; readonly index: number };
 }
 
 /** A node of a model worn on a skeleton (an actor merges them into its own by name). */
@@ -228,6 +234,16 @@ export interface ModelData {
   readonly nodeWorlds?: ReadonlyMap<string, Mat4>;
   /** NiStringExtraData "Prn" on the root: the skeleton node it hangs on (shields: SHIELD). */
   readonly attachTo?: string;
+  /**
+   * The Havok visibility slots the model has a controller for (its NiFloatExtraData named
+   * , lower case): src/animation/skeleton.ts ActorPose.showBySlots.
+   */
+  readonly visibilitySlots?: readonly string[];
+  /**
+   * Its lag bones (BSLagBoneController) by node (ModelData.nodes), for a model worn on a
+   * skeleton: they trail in the actor's pose (src/animation/skeleton.ts wearOnRig).
+   */
+  readonly nodeLagBones?: readonly LagBone[];
   /** BSTreeNode: the nodes (ModelData.nodes) of its trunk and branch bones. */
   readonly treeBones?: { readonly trunk: readonly number[]; readonly branches: readonly number[] };
   /**
@@ -585,6 +601,20 @@ function layoutOf(desc: VertexDesc): VertexLayout {
 }
 
 /** Walks the scene graph from the roots and collects every drawable shape. */
+/**
+ * The Havok visibility slots a model has controllers for: the engine makes one for each of its
+ * NiFloatExtraData named  (lower case, as the skeleton's float slots are matched).
+ */
+export function hkVisibilitySlots(file: NifFile): string[] {
+  const slots = new Set<string>();
+  for (const block of file.blocks) {
+    if (block.kind !== 'value-extra-data' || block.type !== 'NiFloatExtraData') continue;
+    const name = block.name.toLowerCase();
+    if (name.startsWith('hkvis:')) slots.add(name);
+  }
+  return [...slots];
+}
+
 export function buildModel(file: NifFile, options: BuildOptions = {}): ModelData {
   const parts: ModelPart[] = [];
   const skipped: string[] = [];
@@ -612,6 +642,8 @@ export function buildModel(file: NifFile, options: BuildOptions = {}): ModelData
   let switches = 0;
   /** The shape being visited is a weapon's blood. */
   let currentWeaponBlood = false;
+  /** The mesh particle the shapes being visited are a copy for. */
+  let currentMeshParticle: { system: Ref; index: number } | undefined;
 
   const visit = (ref: Ref, parentWorld: Mat4, depth: number): void => {
     if (depth > 64) return; // guards against reference cycles in broken files
@@ -838,6 +870,7 @@ export function buildModel(file: NifFile, options: BuildOptions = {}): ModelData
       node: currentNode,
       local: currentLocal,
       ...(currentWeaponBlood && { weaponBlood: true }),
+      ...(currentMeshParticle && { meshParticle: currentMeshParticle }),
     });
   };
 
@@ -884,6 +917,23 @@ export function buildModel(file: NifFile, options: BuildOptions = {}): ModelData
       if (built) particles.push(built);
     }
   }
+  // Mesh particles: one copy of the system's mesh (the shapes below its Havok node) per
+  // particle it may have, each drawn where its particle is (their flight is far: no bound).
+  for (const system of particles) {
+    const mesh = system.mesh;
+    const node = mesh && getBlock(file, mesh.node, 'node');
+    if (!mesh || !node) continue;
+    const copies = Math.min(
+      system.maxParticles,
+      mesh.poolSize > 0 ? mesh.poolSize : system.maxParticles,
+    );
+    for (let index = 0; index < copies; index++) {
+      currentMeshParticle = { system: system.block, index };
+      // The node itself is culled in the files (the engine copies it): its shapes are drawn.
+      for (const child of node.children) visit(child, identity(), 1);
+    }
+    currentMeshParticle = undefined;
+  }
   for (const shape of lightningRefs) {
     worlds ??= nodeWorlds(file);
     const block = getBlock(file, shape, 'tri-shape');
@@ -923,11 +973,19 @@ export function buildModel(file: NifFile, options: BuildOptions = {}): ModelData
     file.blocks.filter((block) => block.kind === 'collision-object').length > 1;
   const skeletal =
     attachTo !== undefined || graphDriven || articulated || parts.some((part) => part.skin);
+  const visibilitySlots = hkVisibilitySlots(file);
+  const nodeLagBones = file.blocks.flatMap((block) => {
+    if (block.kind !== 'lag-bone-controller') return [];
+    const node = nodeOfBlock.get(block.target);
+    return node === undefined ? [] : [lagBone(block, node)];
+  });
   return {
     parts,
     ...(skeletal && { nodes }),
     nodeWorlds: namedNodes,
     ...(attachTo !== undefined && { attachTo }),
+    ...(skeletal && visibilitySlots.length > 0 && { visibilitySlots }),
+    ...(skeletal && nodeLagBones.length > 0 && { nodeLagBones }),
     center,
     radius,
     skipped,
