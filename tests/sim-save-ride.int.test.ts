@@ -113,16 +113,10 @@ describe.skipIf(!hasGamedata())(
       sims.push(before);
       await before.step(1);
       // The breach's rubble and floor chunk, as MQ101 enables them: the player on the chunk.
-      const enable = before.runtime.native('objectreference', 'enable');
       for (const parent of TOWER_RUBBLE) {
-        await enable?.({
-          vm: before.runtime.vm,
-          self: before.runtime.referenceHandle(parent),
-          args: [false],
-          name: 'objectreference.enable',
-          latent: (promise) => promise,
-          where: () => '',
-        });
+        await before.native(before.runtime.referenceHandle(parent), 'ObjectReference', 'Enable', [
+          false,
+        ]);
       }
       await before.step(1);
       before.world.player.teleport([...FLOOR_CHUNK]);

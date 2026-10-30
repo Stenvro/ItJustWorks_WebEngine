@@ -14,8 +14,8 @@ docs/scripting.md ("Threads", "Properties", "The log").
 | ------- | ----: | ---: | ---: |
 | Natives |   687 |  687 |    0 |
 | Events  |    99 |   98 |    1 |
-| VM      |    30 |   29 |    1 |
-| Total   |   816 |  814 |    2 |
+| VM      |    30 |   30 |    0 |
+| Total   |   816 |  815 |    1 |
 
 Round 4 counts the None-argument sweep as a natives item and the simulation's share of the
 events as an events item (both were listed, not counted). The sweep reports the simulation's
@@ -145,7 +145,7 @@ book read from an inventory when its base carries scripts (it reached only book 
       one), the time counted being the main thread's work of each (ours: the native's own run,
       not what it started); while overstressed all of the fixed queue resumes, the budget
       starting again after each.
-- [ ] The latent calls' render-safe and post-render queues (round 5, observed in the
+- [x] The latent calls' render-safe and post-render queues (round 5, observed in the
       original; src/scripting/latent-queues.ts, docs/scripting.md "Threads"). The render-safe
       queue takes Spell.Cast and RemoteCast, Scroll.Cast and TetherToHorse; the post-render
       queue 27 (AddItem, RemoveItem, DropObject, the five MoveTo natives, SetPosition, SetAngle,
@@ -159,7 +159,7 @@ book read from an inventory when its base carries scripts (it reached only book 
       fading Enable / Disable goes back for the next run (until the fade is over or 5 s; ours:
       its work waits for the fade). Ours runs both as a frame begins (the render-safe point
       against the VM's update inferred); a latent native's thread waits for its
-      work, its script unlocked. Open: built and tested (latent-queues.test.ts) but not wired to the natives (natives/index.ts nativeWork): with the work queued the opening's simulations stall (the tower save never gets there), cause not found; until then the work is done in the call.
+      work, its script unlocked. Wired to the natives (natives/index.ts); the opening, MQ102 to MQ104 and the saves run with it in the simulation (a test awaiting a native itself must step the world: the sim helper native()).
 - [x] A loaded game's VM runs on its own for fPostLoadUpdateTimeMS.
 - [x] No call-depth limit and no error for it (observed in the original: a stack grows page by
       page while memory lasts). Ours keeps a guard of 4096 calls for the browser's memory.

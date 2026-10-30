@@ -17,13 +17,6 @@ import { registerReference } from './reference.ts';
 import type { Register } from './args.ts';
 import { withNoneChecks } from './none-arguments.ts';
 
-/**
- * Whether the natives' work goes through the latent queues. TODO(M13): off: with it on, the
- * opening's simulations stall (the tower save in tests/sim-save-ride.int.test.ts never gets
- * there; the cause is not found yet), so the work is still done in the call.
- */
-export const nativeWork: { queued: boolean } = { queued: false };
-
 export function registerNatives(registry: NativeRegistry, runtime: ScriptRuntime): void {
   const register: Register = (name, fn) => {
     // Each native's own checks of a None argument come first (none-arguments.ts): their lines
@@ -53,7 +46,7 @@ export function registerNatives(registry: NativeRegistry, runtime: ScriptRuntime
  */
 function queuedWork(name: string, fn: NativeFunction, runtime: ScriptRuntime): NativeFunction {
   const queued = QUEUED_NATIVES.get(name);
-  if (!queued || !nativeWork.queued) return fn;
+  if (!queued) return fn;
   return (call: NativeCall) => {
     const queues = runtime.vm.scheduler.latent;
     // Without frames the work is done in the call, as before the queues.

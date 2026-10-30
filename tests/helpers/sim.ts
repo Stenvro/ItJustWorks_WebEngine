@@ -20,6 +20,7 @@ import { afterInfo } from '../../src/scripting/runtime/dialogue-rules.ts';
 import type { GameEvents } from '../../src/scripting/runtime/event-hub.ts';
 import { PLAYER_REF } from '../../src/scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../../src/scripting/runtime/runtime.ts';
+import type { ObjectHandle, Value } from '../../src/scripting/values.ts';
 import type { StagedActor } from '../../src/shell/actor-stage.ts';
 import type { SimRecord } from '../../src/sim/sim-log.ts';
 import { SIM_STEP, SimWorld } from '../../src/sim/sim-world.ts';
@@ -652,6 +653,31 @@ export class Sim {
     );
     if (await this.world.until(() => done, seconds)) await settled;
     await this.world.settle();
+  }
+
+  /**
+   * Calls a native on an object as a script does, the world stepping meanwhile: a native whose
+   * work the original queues for a point of the frame (src/scripting/latent-queues.ts) returns
+   * once a frame has done it. Its result (None if it never returned within 30 s).
+   */
+  async native(target: ObjectHandle, script: string, fn: string, args: Value[]): Promise<Value> {
+    const native = this.runtime.native(script.toLowerCase(), fn.toLowerCase());
+    if (!native) throw new Error(`No native ${script}.${fn}`);
+    let result: Value = null;
+    const work = Promise.resolve(
+      native({
+        vm: this.runtime.vm,
+        self: target,
+        args,
+        name: `${script}.${fn}`.toLowerCase(),
+        latent: (promise) => promise,
+        where: () => '',
+      }),
+    ).then((value) => {
+      result = value;
+    });
+    await this.#stepUntil(work);
+    return result;
   }
 
   /** The player equips an item (Actor.EquipItem). */
