@@ -88,6 +88,14 @@ describe('ConsoleCommands', () => {
     expect(runtime.debug).toEqual({ ai: false, combatAi: false, detection: false });
   });
 
+  it('takes the debug text commands and, as the original, does nothing with them', async () => {
+    const commands = new ConsoleCommands(fakeContext({}));
+    expect(await commands.run('tdt')).toEqual([]);
+    expect(await commands.run('ToggleDebugText')).toEqual([]);
+    expect(await commands.run('sdt VATS 1')).toEqual([]);
+    expect(await commands.run('SaveDTP')).toEqual([]);
+  });
+
   it('toggles collision, the free camera and the menus through the world', async () => {
     let collision = true;
     let free = false;

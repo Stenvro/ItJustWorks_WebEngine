@@ -291,9 +291,13 @@ TODO(M13), ruffle-rs/ruffle#16618.
   mirrored grid sprite is measured along its own axes on the stage (the lengths of its x and y
   axes there), so its corners keep their size turned too. A cut sprite whose scale stays has the
   wrappers that moved in it placed again each frame (a list scrolling, a nested clip playing).
-  TODO(M13): a shape turned within its grid sprite (its pieces are cut along its own axes, not
-  the sprite's), and grids set at run time on clips with no shapes of their own (the journal
-  lists' item containers, never scaled).
+  No movie turns a shape or clip within a grid sprite (tests/interface.int.test.ts sweeps them
+  all; the scripts turn only whole clips at or above their grid sprites: the map's markers, CLIK's
+  scroll bars), so cutting along the shape's own axes never differs from the sprite's.
+  TODO(M13): grids set at run time on clips with no shapes of their own. Two CLIK classes do it
+  (ScrollingList and TextArea, in quest_journal.swf and tutorialmenu.swf): each gives the empty
+  container it fills a 1 × 1 grid, sets its own scale back to 100 and counter-scales the
+  container, so only a scaled ancestor would show the grid; they are not registered here.
 
 ## Videos
 
@@ -622,8 +626,11 @@ allowed; `src/shell/load-wait-spinner.ts`) shows while a save is written: the mo
 in the bottom right corner (`InitExtensions` locks it there), with its `FadeInMenu` and
 `FadeOutMenu`. Quantity Menu, Top Menu, Overlay Menu and Overlay Interaction Menu are names no
 menu of the original is made under; SafeZoneMenu is the consoles' safe-zone screen.
-TODO(M13): the Debug Text Menu: the console's ToggleDebugText (TDT) shows the engine's debug text
-pages (the control map's DebugText context); the pages and the menu's flags are not built.
+The Debug Text Menu is never shown: observed in the original, the console's ToggleDebugText (TDT),
+SetDebugText (sdt) and SaveDebugTextPages (SaveDTP) return at once, and the code that would post
+the menu (shown while one of two debug switches nothing sets is on) or draw its lines is never
+called; the control map's DebugText context (the arrows and Page Up/Down) is never entered. Our
+console takes the three commands and prints nothing.
 Two movies of the interface folder are loaded by nothing (neither the engine nor any movie names
 them): sharedcomponents.swf and widgetoverlay.swf.
 
@@ -719,12 +726,23 @@ DoShowMenu: its fade in), `RefreshSystemButtons` its "RefreshMenu", `SettingsSav
 (`JournalMenu.message` answers the first two). A load that does not go ahead while the journal
 is open (the engine's cancelled load: with the journal open it hides the fader and mist menus and
 sends the journal `BackOutFromLoadGame`, else it tells the main menu "RefreshMenu" or
-"CancelLoading") backs the system page out of its load list; ours: a save that cannot be read.
+"CancelLoading") backs the system page out of its load list; ours: a save that is not there.
+Who posts "Show Journal" and "RefreshMenu" to the journal, observed in the original: its system
+page itself, as it hears the save system's results and the input devices' gamepad event. A
+delete done is "RefreshMenu" (so is one kind of write done, another hides the journal: which
+writes the two kinds are is not named, TODO(M13)); a save, load or delete the system could not do
+shows sSaveGameDeviceError ("There
+was an error accessing the device.", with sOk; unless the failure was already answered) and then
+"Show Journal", a failed read also hiding the Fader Menu (ours shows none before the read);
+the control map's file is left alone. A gamepad event is "RefreshMenu" too. On the PC the movie
+closes itself as it asks SaveGame (its Sony consoles wait for the engine), so a failed save's
+box shows over the game. Ours: `src/shell/journal-menu.ts` (`#deviceError`, `gamepadChanged`)
+with the save list's `deleted` and `failed`; the browser's gamepadconnected and
+gamepaddisconnected stand for the gamepad event (TODO(M13): what raises it on the PC is not
+read).
 The gamepad's right stick, held off centre, reaches the journal's page shown
 (`onRightStickInput(x, y)`, which the page takes if it has a use for it) at most every [MapMenu]
-iRightStickRepeatRate (250) ms; back in the centre the wait starts over. TODO(M13): who posts
-"Show Journal" and "RefreshMenu" to the journal (not found), and the tween kept under a map that
-has the journal over it (ours keeps one menu under).
+iRightStickRepeatRate (250) ms; back in the centre the wait starts over. TODO(M13): the tween kept under a map that has the journal over it (ours keeps one menu under).
 The movie plays no sounds; choosing plays the engine's UITweenSelectSD (silence in the vanilla
 data), highlighting nothing.
 
@@ -1688,7 +1706,10 @@ its button; `CloseMenu`).
   journal. HBSK: the skills. HBLU: levelling up. HBBR: bartering. HBFS: favorites. HBFG: the forge.
   HBCO: cooking. HBML: the smelter. HBTA: the tanning rack. HBEC: enchanting. HBSM: the
   grindstone. HBSA: the armor bench. HBAL: alchemy. HBLH, HBLM, HBLS: health, magicka or stamina
-  low. HBHJ: jail. HBFT: follower commands. HBWC: weapon charge. Dragonborn adds dragon riding's.
+  low (observed in the original: as one of the player's three changes, below its share of its
+  maximum, fLowHealthTutorialPercentage, fLowMagickaTutorialPercentage,
+  fLowStaminaTutorialPercentage, 0.25 each; health's only while above 0; once each:
+  `src/gameplay/low-stat-tutorials.ts`). HBHJ: jail. HBFT: follower commands. HBWC: weapon charge. Dragonborn adds dragon riding's.
   CommonLib's `TutorialMenu::OpenTutorialMenu` takes such a default object.
 - **The box.** The message's name is the box's title (`Menu_mc.HelpTitle`), its text the help
   (`Menu_mc.HelpScrollingText`, a CLIK text: set through its `__set__text`, which keeps it as

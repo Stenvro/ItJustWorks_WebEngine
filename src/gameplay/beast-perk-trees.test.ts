@@ -1,27 +1,42 @@
 import { describe, expect, it } from 'vitest';
 import { actorValueIndex } from '../world/actor-values.ts';
-import { beastTree } from './beast-perk-trees.ts';
+import { beastTree, WEREWOLF_TREE } from './beast-perk-trees.ts';
 import { survivalHud, survivalHudKey, SURVIVAL_GLOBALS } from './survival-hud.ts';
 
 describe('beast perk trees', () => {
-  it("shows the werewolf's tree (AVHealRatePowerMod) to a werewolf", () => {
-    const tree = beastTree(true, 'WerewolfBeastRace');
+  // The load order's default objects: WerewolfRace, VampireRace (Dawnguard's).
+  const defaults = new Map([
+    ['RIWR', 0xcdd84],
+    ['RIVR', 0x200283a],
+  ]);
+  const dobj = (use: string): number | undefined => defaults.get(use);
+
+  it("shows the werewolf's tree (AVHealRatePowerMod) to the werewolf race", () => {
+    const tree = beastTree(true, 0xcdd84, dobj);
     expect(tree?.form).toBe('werewolf');
     expect(tree?.avif).toBe('AVHealRatePowerMod');
-    expect(tree?.points).toBe(actorValueIndex('WerewolfPerks'));
+    // Its points are WerewolfAvailablePerks' global, its meter the scripts' WerewolfPerks.
+    expect(tree?.pointsGlobal).toBe('AVWP');
+    expect(tree?.progress).toBe(actorValueIndex('WerewolfPerks'));
   });
 
-  it("shows the vampire lord's tree (AVMagickaRateMod) to a vampire lord", () => {
-    const tree = beastTree(true, 'DLC1VampireBeastRace');
+  it("shows the vampire lord's tree (AVMagickaRateMod) to the vampire lord race", () => {
+    const tree = beastTree(true, 0x200283a, dobj);
     expect(tree?.form).toBe('vampireLord');
     expect(tree?.avif).toBe('AVMagickaRateMod');
-    expect(tree?.points).toBe(actorValueIndex('VampirePerks'));
+    expect(tree?.pointsGlobal).toBe('AVVP');
+    expect(tree?.progress).toBe(actorValueIndex('VampirePerks'));
+  });
+
+  it("gives the werewolf race the werewolf's tree, a werebear none", () => {
+    expect(beastTree(true, 0xcdd84, dobj)).toBe(WEREWOLF_TREE);
+    expect(beastTree(true, 0x4000001, dobj)).toBeUndefined();
   });
 
   it('shows the ring out of a beast form and to other races', () => {
-    expect(beastTree(false, 'WerewolfBeastRace')).toBeUndefined();
-    expect(beastTree(true, 'NordRace')).toBeUndefined();
-    expect(beastTree(true, undefined)).toBeUndefined();
+    expect(beastTree(false, 0xcdd84, dobj)).toBeUndefined();
+    expect(beastTree(true, 0x13746, dobj)).toBeUndefined();
+    expect(beastTree(true, undefined, dobj)).toBeUndefined();
   });
 });
 

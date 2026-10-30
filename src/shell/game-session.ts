@@ -53,7 +53,11 @@ import {
 } from '../world/material-object.ts';
 import { GameSettings } from '../world/game-settings.ts';
 import { ScreenBloodView } from './screen-blood-view.ts';
-import { lowStatTutorials } from '../gameplay/low-stat-tutorials.ts';
+import {
+  LOW_STAT_SETTINGS,
+  LOW_STAT_SHARE_DEFAULT,
+  lowStatTutorials,
+} from '../gameplay/low-stat-tutorials.ts';
 import { WorldBorder } from '../world/border.ts';
 import { parseWater, WaterFlag, type WaterType } from '../world/water.ts';
 import {
@@ -1275,10 +1279,13 @@ export class GameSession {
       runtime.actors.value(PLAYER_REF, ActorValue.health),
       runtime.actors.value(PLAYER_REF, ActorValue.magicka),
       runtime.actors.value(PLAYER_REF, ActorValue.stamina),
+      this.settings(),
     ])
-      .then(([health, magicka, stamina]) => {
+      .then(([health, magicka, stamina, settings]) => {
         const shown = new Set([...runtime.state.tutorialsShown, ...this.#lowStatsAsked]);
-        for (const use of lowStatTutorials({ health, magicka, stamina }, shown)) {
+        const share = (stat: keyof typeof LOW_STAT_SETTINGS): number =>
+          settings.number(LOW_STAT_SETTINGS[stat]) ?? LOW_STAT_SHARE_DEFAULT;
+        for (const use of lowStatTutorials({ health, magicka, stamina }, shown, share)) {
           this.#lowStatsAsked.add(use);
           this.hud.menus?.tutorial?.(use);
         }

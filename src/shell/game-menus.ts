@@ -200,6 +200,11 @@ export class GameMenus {
     this.#journal.rightStick(x, y);
   }
 
+  /** A gamepad came or went: the open journal redraws its system page's buttons. */
+  gamepadChanged(): void {
+    this.#journal.gamepadChanged();
+  }
+
   /** What the journal's Save, Load and Quicksave do (Play's save manager). */
   set saves(saves: JournalSaves | undefined) {
     this.#journal.saves = saves;

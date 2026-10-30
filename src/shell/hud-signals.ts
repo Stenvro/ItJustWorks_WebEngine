@@ -108,6 +108,8 @@ export interface MenuSink {
   keyRepeat?(): { readonly long: number; readonly short: number };
   /** The gamepad's right stick while a menu has the input (x, y: -1..1, up positive). */
   menuStick?(x: number, y: number): void;
+  /** A gamepad was connected or disconnected. */
+  gamepadChanged?(): void;
 }
 
 /** What covers the screen (Play, from its main menu on: a new game's opening uses them). */

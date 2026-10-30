@@ -5,9 +5,9 @@ const full = { current: 100, max: 100 };
 const low = { current: 10, max: 100 };
 
 describe('low-stat tutorials', () => {
-  it('counts a stat as low below a fifth of its maximum', () => {
-    expect(statIsLow({ current: 19, max: 100 })).toBe(true);
-    expect(statIsLow({ current: 20, max: 100 })).toBe(false);
+  it('counts a stat as low below a quarter of its maximum (the settings’ default)', () => {
+    expect(statIsLow({ current: 24, max: 100 })).toBe(true);
+    expect(statIsLow({ current: 25, max: 100 })).toBe(false);
     expect(statIsLow({ current: 0, max: 0 })).toBe(false);
   });
 
@@ -22,8 +22,18 @@ describe('low-stat tutorials', () => {
     expect(lowStatTutorials({ health: low, magicka: low, stamina: low }, shown)).toEqual(['HBLM']);
   });
 
-  it('shows none to the dead', () => {
+  it('takes each stat’s share from its game setting', () => {
+    const third = { current: 30, max: 100 };
+    const share = (stat: string): number => (stat === 'stamina' ? 0.5 : 0.25);
+    expect(
+      lowStatTutorials({ health: third, magicka: third, stamina: third }, new Set(), share),
+    ).toEqual(['HBLS']);
+  });
+
+  it('shows the health tutorial only to the living, the others still', () => {
     const dead = { current: 0, max: 100 };
-    expect(lowStatTutorials({ health: dead, magicka: low, stamina: low }, new Set())).toEqual([]);
+    expect(lowStatTutorials({ health: dead, magicka: low, stamina: full }, new Set())).toEqual([
+      'HBLM',
+    ]);
   });
 });

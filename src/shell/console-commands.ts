@@ -428,6 +428,12 @@ export class ConsoleCommands {
       }
       case 'togglemenus':
         return [`Menus -> ${onOff(context.toggleMenus())}`];
+      // Observed in the original: the debug text commands do nothing and print nothing (their
+      // actions return at once; the Debug Text Menu is never opened).
+      case 'toggledebugtext':
+      case 'setdebugtext':
+      case 'savedebugtextpages':
+        return [];
       case 'togglesky':
         return [`Sky -> ${onOff(context.toggleSky())}`];
       case 'togglegrass':
