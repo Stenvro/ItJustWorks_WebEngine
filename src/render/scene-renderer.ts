@@ -130,8 +130,22 @@ const IDENTITY = identity();
 const PALETTE_BYTES = MAX_PALETTE_BONES * PALETTE_BONE_FLOATS * 4;
 /** Palettes start at storage buffer offset alignment. */
 const PALETTE_ALIGNMENT = 256;
-/** WGSL `Frame` struct: 204 floats. */
-const FRAME_FLOATS = 204;
+/** WGSL `Frame` struct: 208 floats. */
+const FRAME_FLOATS = 208;
+
+/**
+ * The world map's relief overlay on its LOD land (the map menu's 3D): two tiling normal maps
+ * ([MapMenu] sWorldMapOverlayNormalTexture, sWorldMapOverlayNormalSnowTexture), each with its
+ * scale per world unit and strength (fMapMenuOverlay...).
+ */
+export interface WorldMapOverlay {
+  readonly normal: GPUTexture;
+  readonly snow: GPUTexture;
+  readonly scale: number;
+  readonly strength: number;
+  readonly snowScale: number;
+  readonly snowStrength: number;
+}
 /** Sun shadow map: one layer per cascade. */
 export const SHADOW_MAP_SIZE = 2048;
 export const SHADOW_MAP_LAYERS = 4;
@@ -1598,6 +1612,12 @@ export class SceneRenderer {
   #fadeTime = 0;
   /** Where the lighting shader's features fade out with distance (shader-fades.ts). */
   shaderFades: ShaderFadeSettings = DEFAULT_SHADER_FADES;
+  /** The world map's relief overlay while the map's 3D is drawn (setWorldMapOverlay). */
+  #worldMapOverlay: WorldMapOverlay | undefined;
+  readonly #flatOverlay: GPUTexture;
+  readonly #overlaySampler: GPUSampler;
+  /** The main frame's copies of the opaque scene (setSceneCopies). */
+  #sceneCopies: [GPUTextureView, GPUTextureView] | undefined;
   /**
    * The room (1-255; 0: none) holding a point of the cell drawn, if it has rooms: the draws of
    * moving instances (actors walking from room to room) take the room they are in each frame,
@@ -1718,8 +1738,32 @@ export class SceneRenderer {
           visibility: GPUShaderStage.FRAGMENT,
           texture: { sampleType: 'depth', viewDimension: '2d-array' },
         },
+        { binding: 9, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+        { binding: 10, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+        { binding: 11, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
       ],
     }));
+    // The world map's relief overlay (none: a flat normal) and its tiling sampler.
+    this.#flatOverlay = device.createTexture({
+      label: 'world-map-overlay-flat',
+      size: [1, 1],
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+    device.queue.writeTexture(
+      { texture: this.#flatOverlay },
+      new Uint8Array([128, 128, 255, 255]),
+      { bytesPerRow: 4 },
+      [1, 1],
+    );
+    this.#overlaySampler = device.createSampler({
+      label: 'world-map-overlay',
+      magFilter: 'linear',
+      minFilter: 'linear',
+      mipmapFilter: 'linear',
+      addressModeU: 'repeat',
+      addressModeV: 'repeat',
+    });
     this.#lightShadowMap = device.createTexture({
       label: 'light-shadow-map',
       size: [LIGHT_SHADOW_MAP_SIZE, LIGHT_SHADOW_MAP_SIZE, LIGHT_SHADOW_LAYERS],
@@ -2117,6 +2161,9 @@ export class SceneRenderer {
         { binding: 6, resource: this.#screenSampler },
         { binding: 7, resource: { buffer: this.#lightShadowBuffer } },
         { binding: 8, resource: this.#lightShadowMap.createView({ dimension: '2d-array' }) },
+        { binding: 9, resource: (this.#worldMapOverlay?.normal ?? this.#flatOverlay).createView() },
+        { binding: 10, resource: (this.#worldMapOverlay?.snow ?? this.#flatOverlay).createView() },
+        { binding: 11, resource: this.#overlaySampler },
       ],
     });
   }
@@ -2126,7 +2173,23 @@ export class SceneRenderer {
    * reads: water, soft effects and particles. Called when the render targets change.
    */
   setSceneCopies(sceneColor: GPUTextureView, sceneDepth: GPUTextureView): void {
+    this.#sceneCopies = [sceneColor, sceneDepth];
     this.#main.bindGroup = this.#createFrameBindGroup(this.#main, sceneColor, sceneDepth);
+  }
+
+  /**
+   * The world map's relief overlay for the frames to come (undefined: none, every view but
+   * the map's). The main frame's bind group is made again when its textures change.
+   */
+  setWorldMapOverlay(overlay: WorldMapOverlay | undefined): void {
+    const old = this.#worldMapOverlay;
+    this.#worldMapOverlay = overlay;
+    if (old?.normal === overlay?.normal && old?.snow === overlay?.snow) return;
+    const [color, depth] = this.#sceneCopies ?? [
+      this.#noSceneColor.createView(),
+      this.#noSceneDepth.createView(),
+    ];
+    this.#main.bindGroup = this.#createFrameBindGroup(this.#main, color, depth);
   }
 
   /** Uploads a model; resolves once all its textures are loaded (missing ones use defaults). */
@@ -2929,6 +2992,13 @@ export class SceneRenderer {
     data.set(invert(viewProjection) ?? viewProjection, 160);
     data.set(firstPersonViewProjection ?? viewProjection, 176);
     data.set(shaderFadeFrame(this.objectFade, this.shaderFades), 192);
+    const overlay = this.#worldMapOverlay;
+    data.set(
+      overlay
+        ? [overlay.scale, overlay.strength, overlay.snowScale, overlay.snowStrength]
+        : [0, 0, 0, 0],
+      204,
+    );
     this.#device.queue.writeBuffer(this.#frame.buffer, 0, data);
 
     // A new light frame: each draw drawn chooses its lights again (#chooseLights).

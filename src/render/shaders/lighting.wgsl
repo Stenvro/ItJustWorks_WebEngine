@@ -211,6 +211,40 @@ fn lodLandNoise(color: vec3f, noise: f32) -> f32 {
   return 0.8333333 * (p * (0.37 - noise) + noise) + 0.37;
 }
 
+// The world map's relief overlay on LOD land (the map menu's 3D; frame.worldMap): the overlay's
+// normal map ([MapMenu] sWorldMapOverlayNormalTexture) projected along the three world axes at
+// its scale, weighed by the surface's normal, the snow overlay at its own scale where the land
+// is bright (snow, by the LOD land's blend parameter), bent into the normal by the strength of
+// the one or the other on slopes; ground that is almost flat keeps its own normal.
+// TODO(M13): the original shader's exact weights and snow mask are unread (this follows
+// Community Shaders' reading of the world-map path).
+fn worldMapRelief(n: vec3f, worldPos: vec3f, dx: vec3f, dy: vec3f, base: vec3f) -> vec3f {
+  var w = pow(abs(n), vec3f(4.0));
+  w /= max(w.x + w.y + w.z, 1e-4);
+  let land = worldMapOverlayAt(worldMapOverlay, worldPos, dx, dy, frame.worldMap.x, w);
+  let snow = worldMapOverlayAt(worldMapOverlaySnow, worldPos, dx, dy, frame.worldMap.z, w);
+  var snowy = saturate(2.6666667 * (max(base.r, max(base.g, base.b)) - 0.75));
+  snowy = snowy * snowy * (3.0 - 2.0 * snowy);
+  let overlay = safeNormalize(mix(land, snow, snowy) * 2.0 - 1.0);
+  let strength = mix(frame.worldMap.y, frame.worldMap.w, snowy);
+  let slope = 1.0 - saturate(20.0 * (n.z - 0.95));
+  return safeNormalize(n + vec3f(overlay.xy, 0.0) * strength * slope);
+}
+
+fn worldMapOverlayAt(
+  t: texture_2d<f32>,
+  p: vec3f,
+  dx: vec3f,
+  dy: vec3f,
+  scale: f32,
+  w: vec3f,
+) -> vec3f {
+  let a = textureSampleGrad(t, worldMapSampler, p.yz * scale, dx.yz * scale, dy.yz * scale);
+  let b = textureSampleGrad(t, worldMapSampler, p.xz * scale, dx.xz * scale, dy.xz * scale);
+  let c = textureSampleGrad(t, worldMapSampler, p.xy * scale, dx.xy * scale, dy.xy * scale);
+  return a.xyz * w.x + b.xyz * w.y + c.xyz * w.z;
+}
+
 // The lit colour and the G-buffer (written by opaque parts; blended parts' pipelines have no
 // second target).
 // The character light (Community Shaders' Lighting.hlsl CHARACTER_LIGHT, with the INI's
@@ -259,7 +293,8 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
   // Gradients and samples in uniform control flow; the rest samples with these gradients.
   let uvGradients = Gradients(dpdx(in.uv), dpdy(in.uv));
   let noiseGradients = Gradients(dpdx(noiseUv), dpdy(noiseUv));
-  let faceNormalRaw = cross(dpdx(in.worldPos), dpdy(in.worldPos));
+  let worldGradients = array<vec3f, 2>(dpdx(in.worldPos), dpdy(in.worldPos));
+  let faceNormalRaw = cross(worldGradients[0], worldGradients[1]);
   // Parallax: the height map (slot 3, bound in the layer map's place) shifts the texture.
   // FaceGen heads keep their tint in the same slot (6).
   let layerSample = textureSample(layerMap, linearSampler, in.uv);
@@ -334,6 +369,9 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
     glossiness = 0.0;
     if (shaderType == SHADER_LOD_LANDSCAPE_NOISE) {
       base *= lodLandNoise(base, sampleGrad(layerMap, in.uv * 3.0, uvGradients, 3.0).r);
+    }
+    if (frame.worldMap.x > 0.0) {
+      n = worldMapRelief(n, in.worldPos, worldGradients[0], worldGradients[1], base);
     }
   }
   if (shaderType == SHADER_FACEGEN) {
