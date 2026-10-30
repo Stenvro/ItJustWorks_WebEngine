@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { EssReader } from './ess-reader.ts';
 import { EssWriter } from './ess-test-writer.ts';
-import { MovementUnknown, pathingTypeId, readMovement } from './movement.ts';
+import { MovementUnknown, PathingStream, pathingTypeId, readMovement } from './movement.ts';
 
 const resolve = (raw: number): number => raw;
 
@@ -61,7 +61,7 @@ describe('movement controller', () => {
       .u8(0) // not loaded
       .done();
     const reader = new EssReader(data);
-    expect(readMovement(reader, resolve, new Set())).toEqual({
+    expect(readMovement(new PathingStream(reader, resolve))).toEqual({
       arbiters: [1, 2],
       agents: [0x0e],
       loaded: false,
@@ -82,12 +82,14 @@ describe('movement controller', () => {
       .u8(0) // no object
       .done();
     const reader = new EssReader(data);
-    expect(readMovement(reader, resolve, new Set()).loaded).toBe(true);
+    expect(readMovement(new PathingStream(reader, resolve)).loaded).toBe(true);
     expect(reader.remaining).toBe(0);
   });
 
   it('names a part whose layout is not known', () => {
     const data = controller().u32(0).u32(1).u8(0x7f).done();
-    expect(() => readMovement(new EssReader(data), resolve, new Set())).toThrow(MovementUnknown);
+    expect(() => readMovement(new PathingStream(new EssReader(data), resolve))).toThrow(
+      MovementUnknown,
+    );
   });
 });

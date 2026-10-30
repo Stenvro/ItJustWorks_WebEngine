@@ -35,14 +35,20 @@ a master or the plugin and its string ids resolve. Nothing depends on names in s
 Beside it the census lists, per record type, the subrecords no engine code outside
 `src/formats` names (by source text): parsed, used by: open, which is the other areas' work.
 
-## Summary (2026-10-30, round 6)
+## Summary (2026-10-30, round 8)
 
 The checklist has **157 items**: 37 format items below and the 120 record types of the load
-order (the table at the end). **154 are done** (34 format items, all 120 record types). Open:
-the save game's change forms (the combat AI's objects, the AI process and the player's data
-after its skills; the movement controller reads to its end since round 7), global data (temp
-effects' last byte, combat with combats running), and SEQ use (where the original reads its
-set of quests).
+order (the table at the end). **155 are done** (35 format items, all 120 record types). Open:
+the save game's change forms (every one of both saves reads to its end since round 8, but an
+actor's AI process data is found by its shape, not decoded) and global data (every entry of
+both saves reads to its last byte since round 8, but the weather's tail and two types no save
+holds are kept as bytes).
+
+Round 8 (the two real saves): the player's data read to its end (camera, quest log, perks,
+tints, ...), the combat AI's objects (30 classes and the templates, the combat controller with
+its blackboard and behaviour tree state, `src/formats/ess/combat.ts`), the combat table's
+threats, the temp effects' third list; the import restores the player's experience, legendary
+counts and perks; the SEQ files' quest set is built and its use known.
 
 Round 6 (two real saves): the Papyrus data read to its last byte (u32 string indices and u64
 handles in Special Edition saves, the stacks' frames, messages, suspended stacks and the
@@ -99,9 +105,12 @@ rod's clips), SEQ files, the marketplace's archive and the census tool.
       `record-layouts.ts`, `format-census esm`, `tests/record-layouts.int.test.ts`.
 - [x] SEQ files: 7, every form id a quest of its plugin (HearthFires.esm's file predates its
       Update.esm master: its ids carry the old index). `src/formats/esm/seq.ts`, `seq-info`.
-- [ ] SEQ use: observed in the original: as each plugin loads it reads `SEQ\<plugin>.SEQ`,
-      moves every id into the load order by that plugin and adds it to one set of quests.
-      Open (M13): where that set is read (starting a plugin's quests in a save without it).
+- [x] SEQ use: observed in the original: as each plugin loads it reads `SEQ\<plugin>.SEQ`,
+      moves every id into the load order by that plugin and adds it to one set of quests,
+      which decides whose topics' infos load with the game (shared-info topics' and the set's
+      quests'; the rest as their quest starts). `RecordDatabase.startGameQuests()`,
+      `DialogueIndex.loadsWithGame()`, `tests/records.int.test.ts`. Ours reads every info at
+      once, which changes no behaviour (TODO(M13): the deferred read, for memory).
 - [x] VMAD (script properties, fragments, aliases): all 24,631 of the load order read to their
       last byte (every script, property, fragment and alias script). `src/formats/esm/vmad.ts`,
       `format-census esm`.
@@ -212,21 +221,20 @@ and imports the first of them when it is there.
       registrations are read (`src/formats/ess/papyrus.ts`). Their sizes for the parts no save
       held yet (queued unbinds, latent function queues, LOS events, the last five lists) are
       xEdit's (TODO(M13)).
-- [ ] Change forms: every type in both saves (21,599 change forms) is read to its end but
-      ACHR; 4,713 of the 4,727 actors read to their end (round 7: the movement controller with
-      its messages, arbiters, 34 agent kinds, shared pathing objects, 18 pathing request
-      kinds, paths and a loaded actor's animation graph state, `src/formats/ess/movement.ts`;
-      the player's skills' experience, `player.ts`). Open: the player's data after its skills
-      (both saves), the combat AI's objects (6 combat controllers and 6 combat requests in the
-      second save), the AI process data (found by shape, not decoded), a package the game made
-      (in PACK and in the trespass and package-data extras) and a grenade's constraints (none
-      in the saves).
+- [ ] Change forms: every one of both saves (21,599) is read to its end, all 4,727 actors
+      included (round 7: the movement controller, `src/formats/ess/movement.ts`; round 8: the
+      player's data to its end, `player.ts`, and the combat AI's objects in 12 combat
+      controllers and 6 combat pathing requests, `combat.ts`). Open: the AI process data
+      (found by its shape, not decoded: its top level is known, the packages' running data by
+      procedure and the animation stream's variables are not), a package the game made (in
+      PACK and in the trespass and package-data extras), a grenade's constraints and the
+      combat paths' classes (none in the saves; built from the original's layouts).
 - [ ] Global data: every one of the 30 types has a reader, and `readGlobalData` (run by
-      `ess-info` and the save test) says what each leaves. Round 7: 28 entries of each save
-      read to their last byte (player location's form version 73 byte added). Open: temp
-      effects' last byte (both saves) and combat in the second save (112 bytes, with combats
-      running); kept as bytes where nothing documents them: 104 (in neither save), the story
-      event manager's entries (none in the saves), the weather's tail.
+      `ess-info` and the save test) says what each leaves. Round 8: every entry of both saves
+      reads to its last byte (the combat table's threats are combat objects; temp effects
+      have three lists). Open: kept as bytes where nothing documents them: 104 (in neither
+      save), the story event manager's entries (none in the saves), the weather's tail; the
+      combat search's detail is UESP's layout (none in the saves).
 
 ## Files the original does not load
 

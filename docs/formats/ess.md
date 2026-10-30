@@ -11,14 +11,12 @@ checks section by section and imports: the player's place, the items gained, eve
 done and the actor values must come out as the save holds them.
 
 Two real saves (2026-10-30, the same load order with Survival Mode, Curios, Fishing and AdvDSGS)
-read with `ess-info`: every global data entry with its reader, the Papyrus data to its last byte
-(40k script instances, 430 arrays, the running stacks with their frames, the registrations),
-every global data entry to its last byte but the temp effects' (one byte left, TODO(M13)) and
-the second save's combat table (112 bytes left, TODO(M13)), and every change form to its end
-but: the player's own data after its skills' experience (both saves), and in the second save
-(a fight at Helgen) 6 actors' combat controllers and 6 actors' combat pathing requests, which
-hold the combat AI's objects (their layouts are open, TODO(M13)). Every other actor (2,361 and
-2,352 of 2,362 and 2,365) reads to its end, its movement controller included.
+read with `ess-info`: every global data entry with its reader and to its last byte, the
+Papyrus data to its last byte (40k script instances, 430 arrays, the running stacks with their
+frames, the registrations), and every change form to its end: all 4,727 actors with their
+movement controllers, the 12 combat controllers and 6 combat pathing requests of the second
+save (a fight at Helgen) with the combat AI's objects, and the player's own data. One part is
+still found rather than read: an actor's AI process data (see "Change forms", TODO(M13)).
 
 ## The file
 
@@ -76,8 +74,11 @@ the documented layouts and tested by round trip, waiting on a real save, TODO(M1
 lists (three floats, the next crime number, then the crimes of each of 7 types: witness and
 serial numbers, type, stolen quantity, time, victim, criminal, item, owner, witnesses, bounty,
 faction, cleared), 101 combat (the next combat number, combat groups with their members' five
-positions, targets, fifteen float pairs and an optional search with an optional detail block,
-then the actors' entries and a tail), 102 interface (help messages shown, the last used weapons,
+positions, targets, fifteen float pairs and an optional search with an optional detail block;
+then, as observed in the original, the threats: a vsval count of a form and its combat object
+(`CombatThreat`, see "Combat"), their time stamp, a count always 0, a list of references, a
+time stamp and two timers; the search's detail is the original's object written through the
+pathing stream, kept in UESP's layout until a save holds one, TODO(M13)), 102 interface (help messages shown, the last used weapons,
 spells and shouts; an extra part UESP sees "in certain situations", read when bytes are left),
 103 actor causes (position, serial number, actor), 105 detection manager, 106 location
 metadata, 107 quest static data (two lists of quest run data: a value's type 1, 2 and 4 are
@@ -85,15 +86,15 @@ references, 3 a number; three reference lists; per quest a list of number pairs;
 story teller (a flag), 109 magic favourites (the favourites, then the hotkeys by position), 110
 player controls, 111 story event manager (its entries' layout is undocumented: kept as bytes),
 112 ingredient pairs found to share no effect, 113 menu controls, 114 menu topic manager (two
-references), 1000 temp effects (the effect entries, then two lists of typed effects: types 0,
-1, 3 to 11 documented; an undocumented type, such as 2, stops the read and keeps the rest), 1005
+references), 1000 temp effects (the effect entries, a u32, then three lists of typed effects,
+as observed in the original (UESP knows two: the byte left after them was the third's empty
+count): types 0, 1, 3 to 11 documented; an undocumented type, such as 2, stops the read and
+keeps the rest), 1005
 main (always empty; the table 3 count leaves it out). 104 has no documentation: kept as bytes.
 `GLOBAL_DATA_READERS` maps every type to its reader; `readGlobalData` runs one and says how
 many bytes it left, and `ess-info` prints every entry not read to its end. Type 1 has one more
 byte from form version 73 (read when there). Measured on the two saves: every reader ends
-exactly but temp effects (one byte after the second list, both saves: its meaning is open) and
-combat in the second save (112 bytes left where combats were running: the combat groups'
-layout after UESP needs checking against the original's, TODO(M13)); 104 is in neither save.
+exactly, combat with nine combats running included; 104 is in neither save.
 
 **Papyrus** (read to its last byte on real saves: `ess-info`): version u16 (6 in Special
 Edition saves), strings, script types (name, parent, members: name and type as string indices),
@@ -207,9 +208,21 @@ everywhere (the original reserves one byte and widens it when the count is known
   count of its Havok constraints (TODO(M13): their layout; none in the saves read). **PHZD**
   (hazards): six u32 and two refIds.
 - **Actors** (ACHR): the AI process level i32 (−1: none) and the state flags u32 come first,
-  then the reference data. With a process, its data follows: its layout is not decoded
-  (TODO(M13)), and the reader finds what comes after it by its shape (the four modifier sets
-  below, each starting with 3). Then, for every actor: a byte, 13 u32 (timers and counters), a
+  then the reference data. With a process, its data follows: it is not decoded (TODO(M13)),
+  and the reader finds what comes after it by its shape (the four modifier sets below, each
+  starting with 3). What is known of it, as observed in the original: two u32, a byte and
+  when set 12 u32 and two lists; the current package (the package's reference, then when it
+  is one the game keeps a byte and the package's own data, a byte (−1: none) and the
+  package's running data, three u32, u16, two bytes and a target reference); a byte, u32, a
+  reference, three u32, a byte, u16, a timer, a reference, a list of references, a u32 count
+  of reference pairs, three references and a byte. Then by the process level: the middle-low
+  process's u32, the middle-high process's (some sixty values and references, the package
+  stack, a count of known objects each with its own size, a list counted after it) and the
+  high process's (switches and timers, references, six held objects, the path's points
+  through the pathing stream, a part sized in bytes, two lists, the animation graph's state
+  through the animation stream). The parts the reader would need beyond sizes are the
+  packages' running data by procedure and the animation stream's variables. Then, for every
+  actor: a byte, 13 u32 (timers and counters), a
   refId, the actor state (18 bytes), a refId, a byte of which of the four magic casters follow
   (each: the common part, u32, refId, u32, a vsval-sized animation block), the four spells and
   the power in hand (refIds), the modifier sets of health, magicka, stamina and voice points
@@ -217,9 +230,11 @@ everywhere (the original reserves one byte and widens it when the count is known
   storage (vsval × (actor value, base f32); vsval × (actor value, the three modifiers); the
   actor value is a signed byte widened to i32, so indices from 128 up read negative), the
   added spells (u32 count × refId). Then the movement controller's data (a byte: 0 none; else
-  see "Movement" below), u32, the combat controller's data (a byte; else the combat AI's
-  state, open: TODO(M13)), a u32 count (0: none; else that many refId and u32), two u32, a
-  refId and a byte. The player's own data follows (see "The player").
+  see "Movement" below), u32, the combat controller's data (a byte: 0 none; else see
+  "Combat"), a u32 count (0: none; else that many refId and u32), two u32, a refId and a
+  byte. The player's own data follows (see "The player"). The AI process, the movement
+  controller and the combat controller write through one stream per actor: an object they
+  share is written once.
 - **QUST**: form flags, quest flags u16 (CommonLibSSE: enabled 0x1, completed 0x2, failed 0x40,
   active 0x800), script delay f32, stages (vsval; stage u16, done bit 0), objectives (vsval;
   index u32, state u32: 1 displayed, 2 completed, 3 completed and displayed, 4 failed, 5 failed
@@ -279,17 +294,72 @@ points with what to do there (a door message), two i32, two lists of smoothed po
 bytes. A pathing request: its start and goal points, the spaces to avoid, limits, what it
 holds locked (`PathingLockData`), its movement parameters (five floats), the forms it may use,
 then what its kind adds (16 kinds, `PathingRequestFlyLand` and the others). A combat request
-adds its actor, two words, its path and its combat objects (a u32 id with bit 0 set when the
-type and data follow: their layouts are open, TODO(M13)).
+adds its actor, two words, its path and its combat objects (see "Combat").
+
+## Combat
+
+As observed in the original (`src/formats/ess/combat.ts`). The combat AI writes its objects
+once per actor (and once in the combat table): a u32 id (0: none) with bit 0 set the first
+time, then the object's type u32 and its data; later only the id. A type is the CRC-32 of the
+class name as for the pathing objects; a template's is its own name's with its arguments'
+mixed in by exclusive or (`CombatInventoryItemMagicT` with the item kind and the caster,
+`CombatPathT` with the request and the destination; the generic combat path request's own id
+is the hover request's name's with its goal and search policies' mixed in). In the data, a
+**timer** is a game time and a duration (8 bytes), a **time stamp** a game time (4), a
+**location** a point and its cell's refId, a **navmesh triangle** the navmesh's refId, a u16
+and a u32.
+
+The classes (data after the type): the aim controllers (a point, the target, three u32, a
+timer; track target: a u32 and a byte more; melee: those and a u32; projectile: the
+projectile's form, five more points, three u32, time stamps, a node name); the areas (a form,
+u32, two bytes, a timer; radius and standard: a location and a u32; reference and hold
+position: a reference and a timer more); the inventory items (the item and its count, a form
+and a u32; melee, shield, one-handed block and torch: a u32; ranged: the ammo and two u32; the
+magic items: six u32); the magic casters (their item, and offensive two timers, ward a timer,
+restore a time stamp and two u32, reanimate a second object and a reference); the cover
+search, its results and locations; the target location search, its results and locations; the
+flanking search data; the target selectors (a reference, two u32; standard: a timer more); the
+threats; the speed and disable controllers (a reference); the combat paths (a reference, three
+u32, two timers, an object, then the request through the pathing stream, what the goal adds
+(the search policy's state: its request and four flags) and the destination: none, a
+location, locations, a reference (with its location, a u32 and a timer) or references).
+Measured on the second save: cover searches, aim controllers (track target, projectile),
+areas (standard, hold position), target selectors, inventory items (melee, ranged, one-handed
+block, magic and shouts) and threats; the combat paths' layouts wait on a save that holds one.
+
+The **combat controller**: the attacker and its target (references), the combat group's id
+u32, six switches, a float, a timer; the aim controllers, the current and previous one's
+indices; the areas and the current one's index; the target selectors and the current and
+previous one (objects); the combat state (switches, positions, timers, the positions it saw its
+target at, forms, timers); the inventory (ratings, seven lists of items by kind, two equipped
+sets, the items dropped with their time stamps, two form lists and a map); the **blackboard**,
+a vsval count of named entries whose value's layout the name gives (the original's keys: the
+`Magic…RestrictionTimer`s and `AcquireWeaponTimer` timers, the `CombatDisarmedTimeStamp`,
+`CoverSearchFailedTimeStamp` and `FindAttackLocationFailedTimeStamp` time stamps,
+`LastFleeDoor` a reference and a time stamp, `TargetUnreachableDistance` a float) and a u32;
+and the behaviour tree controller: a u32, a byte, the running tree's state prefixed by its size
+in bytes, a list of tree ids and the named trees' states.
 
 ## The player
 
-After the actor's data (`src/formats/ess/player.ts`, as observed in the original): switches and
-timers, a list of (u32, u64 milliseconds), game times relative to the save's, then the
-**skills' experience** (CommonLibSSE's PlayerSkills: the level's experience and threshold, a
-count of 18, each skill's level, experience, threshold and legendary count), a vector, a game
-time and a list of (12 bytes, a game time). What follows (eight refIds, then lists in the
-original's order) does not read to its end yet (TODO(M13)).
+After the actor's data (`src/formats/ess/player.ts`, as observed in the original, read to its
+end): switches and timers, a list of (u32, u64 milliseconds), game times relative to the
+save's, then the **skills' experience** (CommonLibSSE's PlayerSkills: the level's experience
+and threshold, a count of 18, each skill's level, experience, threshold and legendary count), a
+vector, a game time and a list of (12 bytes, a game time). Then eight refIds; the last actions
+(u32, u32, refId); the **quest log** (quest, stage u16, flags u8); the **objectives** held
+(quest, index u32, instance u32, u32); five u32; the **camera** (two bytes, the world and first
+person fields of view, every camera state's own data in the original's order: first person,
+third person, mount, bleedout, animated, dragon; the current state's index u32, the states
+under it, two floats and a byte); a list of (refId, four u32); a refId, two u32, a refId, a
+u32; a list of (refId, two u32); the **perks** (refId and rank u8), the same perks as refIds, a
+list of (refId, u32); a byte, a byte (0xFF: none; else a u16), a refId, a point, a u32, three
+refIds; the face's tints (three refIds, u32, two u32-counted lists of (index u16, colour u32,
+alpha f32), a refId); u32 and a refId; a list of (refId, four u16); six bytes; a list of u32;
+two refIds, a byte; a list of (refId, two u32); u32, three bytes, u32, refId, byte; a byte and
+when set eight refIds (the forms before a transformation); u32, three bytes, u32 and a byte.
+Every count written after its entries is a vsval like the others (the original reserves its
+byte and widens it).
 
 ## Import
 
@@ -302,7 +372,9 @@ plugin name, and forms of plugins not loaded are left out. What it applies:
   a script put them in or took them out of;
 - the player: where they stand (their ACHR's moved place, else the player location table),
   level, name, race, the 18 skills and DNAM's health, magicka and stamina (TODO(M13): checked
-  against a real save), factions, the base's spells and shouts; their inventory changes;
+  against a real save), factions, the base's spells and shouts; their inventory changes; the
+  experience towards the next level (the character's and each skill's), the times each skill
+  was made legendary, and the perks they have;
 - globals (GameDaysPassed sets the clock) and misc stats;
 - quests: running, completed, failed and active flags, the stages done (the current stage is
   the highest done: TODO(M13)), objectives (shown, completed, failed), alias references;
@@ -327,7 +399,9 @@ code positions, not the compiled script's), the function messages, suspended sta
 the other registrations (sleep and tracked stats events, inventory filters, animation events);
 the projectiles and hazards in flight; the base objects' other changes (values, names, known
 ingredient effects, location keyword data, scenes' running state); the movement controller's
-state (the engine plans its paths anew) and the player's skills' experience.
+state (the engine plans its paths anew); the combat controllers and the combat table (the
+fights the loaded actors were in, their targets and searches: M13); the player's camera
+state, quest log entries and other lists (M13).
 
 Everything else is counted by change form type and flag (`REFR: lockExtra x 12`) and by where a
 read stopped, then logged under `save` as not imported.

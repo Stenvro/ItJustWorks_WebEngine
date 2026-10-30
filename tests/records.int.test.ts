@@ -152,6 +152,15 @@ describe.skipIf(!hasGamedata())('record database on the local game data', () => 
     expect(listed).toBeGreaterThan(400);
   });
 
+  it('builds the start-game quest set the SEQ files fill, mapped as the original maps them', async () => {
+    const quests = await db.startGameQuests();
+    let named = 0;
+    for (const quest of quests) if ((await db.get(quest))?.type === 'QUST') named++;
+    // Every id names a quest but HearthFires.esm's (its file names Update.esm forms).
+    expect(named).toBeGreaterThan(400);
+    expect(quests.size - named).toBeLessThan(20);
+  });
+
   it('maps form ids between plugins and the load order', () => {
     const update = db.plugins[1];
     if (!update) throw new Error('Update.esm missing');
