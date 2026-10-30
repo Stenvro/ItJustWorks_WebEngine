@@ -324,6 +324,20 @@ export class MagicEngine {
     return false;
   }
 
+  /**
+   * The lowest number from 1 that none of a target's effects has (observed in the original: the
+   * numbers in use on that actor gathered, the first gap taken; numbered per actor, not for the
+   * game).
+   */
+  #freeNumber(target: number): number {
+    const used = new Set<number>();
+    for (const [, entry] of this.effectsOn(target))
+      if (entry.number !== undefined) used.add(entry.number);
+    let number = 1;
+    while (used.has(number)) number++;
+    return number;
+  }
+
   effectsOn(target: number): [string, ActiveEffectState][] {
     const found: [string, ActiveEffectState][] = [];
     for (const entry of this.#runtime.state.activeEffects) {
@@ -787,8 +801,12 @@ export class MagicEngine {
 
     const handle = new ObjectHandle(runtime.state.nextEffect++, 'activemagiceffect');
     const key = handle.key;
+    const number = (await runtime.forms.record(effect.formId))?.fields.has('VMAD')
+      ? this.#freeNumber(target)
+      : undefined;
     const entry: ActiveEffectState = {
       effect: effect.formId,
+      ...(number !== undefined && { number }),
       target,
       caster,
       elapsed: 0,
@@ -1388,8 +1406,9 @@ export class MagicEngine {
    */
   async #dropWeapon(actor: number, weapon: number): Promise<void> {
     const runtime = this.#runtime;
-    await runtime.removeItem(actor, runtime.formHandle(weapon), 1, true, undefined);
+    const health = await runtime.removeItem(actor, runtime.formHandle(weapon), 1, true, undefined);
     const dropped = await runtime.placeAt(weapon, actor, 1);
+    runtime.dropped(dropped, health);
     const hand = runtime.world.nodePlacement?.(actor, 'WEAPON');
     const at = hand?.position ?? (await runtime.placement(actor))?.position;
     if (!at) return;

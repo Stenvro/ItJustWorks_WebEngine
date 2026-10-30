@@ -22,10 +22,18 @@ import type { Placement, ScriptRuntime } from '../../src/scripting/runtime/runti
 import type { ObjectHandle, Value } from '../../src/scripting/values.ts';
 import type { StagedActor } from '../../src/shell/actor-stage.ts';
 import { barterModel } from '../../src/shell/barter-menu.ts';
+import { craftingModel, workbenchOf } from '../../src/shell/crafting-models.ts';
 import { openBookUnseen } from '../../src/shell/book-reading.ts';
 import { fastTravelJourney, fastTravelWay } from '../../src/shell/fast-travel-journey.ts';
 import { giftModel } from '../../src/shell/gift-menu.ts';
 import { inventoryModel } from '../../src/shell/inventory-menu.ts';
+import {
+  LockPick,
+  lockOpened,
+  pickBroke,
+  pickSetup,
+  tryLock,
+} from '../../src/shell/lock-picking.ts';
 import { passHours } from '../../src/shell/sleep-wait-menu.ts';
 import type { SimRecord } from '../../src/sim/sim-log.ts';
 import { SIM_STEP, SimWorld } from '../../src/sim/sim-world.ts';
@@ -787,6 +795,72 @@ export class Sim {
     return true;
   }
 
+  /**
+   * The player makes an item at a workbench through the crafting menu's model (craftingmenu.swf's
+   * ChooseItem on the recipe's entry: src/shell/crafting-models.ts); a smithing bench improves
+   * the item. Message boxes are answered Yes. False if the bench lists no entry of it.
+   */
+  async craft(bench: number, item: number): Promise<boolean> {
+    const { session, terminal } = this.world;
+    const runtime = this.runtime;
+    const base = await runtime.baseOf(bench);
+    const found = base === undefined ? undefined : await workbenchOf(runtime, base);
+    if (!found) return false;
+    const settings = await session.settings();
+    const model = await craftingModel(found.type, {
+      log: (message) => {
+        terminal.log('ui', message, 'warn');
+      },
+      session,
+      runtime,
+      settings,
+      text: (label) => settings.string(label) ?? label,
+      game: {
+        confirm: () => Promise.resolve(0),
+        notify: (text) => {
+          session.hud.notification(text);
+        },
+      },
+      bench: found.bench,
+      reference: bench,
+    });
+    const entry = (await model.entries()).find(
+      (candidate) => candidate.formId === item && candidate.enabled !== false,
+    );
+    if (!entry) return false;
+    const view = { slider: () => undefined, rename: () => undefined };
+    await this.#stepUntil(model.choose(entry, view));
+    return true;
+  }
+
+  /**
+   * The player picks a lock as the lockpicking menu has it (src/shell/lock-picking.ts): the pick
+   * swept to the middle of the sweet spot, the rotate keys held until the lock opens, the world
+   * stepping meanwhile. The attempt's outcome: 'opened', or why it was not picked ('open',
+   * 'key', a refusal's message setting).
+   */
+  async pickLock(reference: number, seconds = 10): Promise<string> {
+    const { session } = this.world;
+    const runtime = this.runtime;
+    const attempt = await tryLock(runtime, reference, session.crimeWatch?.pursued === true);
+    if (attempt.kind !== 'pick') return attempt.kind === 'refused' ? attempt.setting : attempt.kind;
+    const setup = await pickSetup(runtime, await session.settings(), reference);
+    if (!setup) return 'sImpossibleLock';
+    const lock = new LockPick(setup);
+    lock.sweep(setup.shape.center);
+    const speed = session.ini.number('Interface', 'fLockRotationSpeed');
+    for (let time = 0; time < seconds; time += SIM_STEP) {
+      const step = lock.step(SIM_STEP, true, speed);
+      if (step === 'opened') {
+        await this.#stepUntil(lockOpened(runtime, setup));
+        return 'opened';
+      }
+      if (step === 'broken') await this.#stepUntil(pickBroke(runtime, setup));
+      await this.step(SIM_STEP);
+    }
+    return 'held';
+  }
+
   /** The merchant's goods as the barter menu lists them (their form ids). */
   async goods(vendor: number): Promise<number[]> {
     const model = await barterModel(this.world.session, this.world.terminal, vendor);
@@ -795,12 +869,18 @@ export class Sim {
       .map((entry) => entry.formId);
   }
 
-  /** The player drops items from the inventory menu (its Drop). False if they have none. */
-  async drop(item: number, count = 1): Promise<boolean> {
+  /**
+   * The player drops items from the inventory menu (its Drop); `stack`: the row of an improved
+   * stack of them (the crafting engine's index), else the first. False if they have none.
+   */
+  async drop(item: number, count = 1, stack?: number): Promise<boolean> {
     const model = inventoryModel(this.world.session, this.world.terminal, async (book) => {
       await openBookUnseen(this.runtime, { book });
     });
-    const entry = (await model.view()).entries.find((candidate) => candidate.formId === item);
+    const entry = (await model.view()).entries.find(
+      (candidate) =>
+        candidate.formId === item && (stack === undefined || candidate.stack === stack),
+    );
     if (!entry || !model.drop) return false;
     await this.#stepUntil(model.drop(entry, count));
     return true;

@@ -407,7 +407,7 @@ export class CraftingEngine {
   /**
    * Items left a container (ScriptRuntime.removeItem; `had` of the base before): the stack
    * asked for first (a menu's row), then the plain ones, then the least improved; the stacks
-   * that leave join `to`'s.
+   * that leave join `to`'s. What left of the stacks (their health and count).
    */
   itemsMoved(
     from: number,
@@ -416,25 +416,28 @@ export class CraftingEngine {
     moved: number,
     had: number,
     stack?: number,
-  ): void {
+  ): { readonly health: number; readonly count: number }[] {
     const list = this.#list(from, base);
-    if (!list || moved <= 0) return;
+    const left: { health: number; count: number }[] = [];
+    if (!list || moved <= 0) return left;
     const stacked = list.reduce((sum, entry) => sum + entry.count, 0);
-    let left = moved;
+    let remaining = moved;
     const take = (entry: ItemStack, count: number): void => {
       if (count <= 0) return;
       entry.count -= count;
-      left -= count;
+      remaining -= count;
+      left.push({ health: entry.health, count });
       if (to !== undefined) this.addStack(to, base, entry.health, count, false, entry.charge);
     };
     const chosen = stack === undefined ? undefined : list[stack];
-    if (chosen) take(chosen, Math.min(chosen.count, left));
-    left -= Math.min(left, Math.max(0, had - stacked));
+    if (chosen) take(chosen, Math.min(chosen.count, remaining));
+    remaining -= Math.min(remaining, Math.max(0, had - stacked));
     for (const entry of [...list].sort((a, b) => a.health - b.health)) {
-      if (left <= 0) break;
-      take(entry, Math.min(entry.count, left));
+      if (remaining <= 0) break;
+      take(entry, Math.min(entry.count, remaining));
     }
     this.#prune(from, base);
+    return left;
   }
 
   /** A container's items are gone (its inventory reset). */

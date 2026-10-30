@@ -337,18 +337,23 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
     const item = formOf(call.args[0]);
     if (reference === undefined || item === undefined) return null;
     const count = Math.max(1, int(call.args[1], 1));
-    await runtime.removeItem(reference, call.args[0] ?? null, count, true, undefined);
-    return runtime.referenceHandle(await runtime.placeAt(item, reference, count));
+    const health = await runtime.removeItem(
+      reference,
+      call.args[0] ?? null,
+      count,
+      true,
+      undefined,
+    );
+    const dropped = await runtime.placeAt(item, reference, count);
+    runtime.dropped(dropped, health);
+    return runtime.referenceHandle(dropped);
   });
-  // An item reference's health as a fraction (1: whole; a tempered one's 1.1 and up): what the
-  // plugin placed it with (REFR XHLT, a percent), else whole. TODO(M13): a tempered stack
-  // dropped into the world keeps its health on the reference.
+  // An item reference's health as a fraction (1: whole; a tempered one's 1.1 and up): its own
+  // (an improved item dropped from an inventory keeps it), else what the plugin placed it with
+  // (REFR XHLT, a percent), else whole.
   n('objectreference.getitemhealthpercent', async (call) => {
     const reference = self(call);
-    if (reference === undefined) return 1;
-    const health = (await runtime.forms.record(reference))?.fields.first('XHLT');
-    if (!health || health.length < 4) return 1;
-    return new DataView(health.buffer, health.byteOffset, 4).getInt32(0, true) / 100;
+    return reference === undefined ? 1 : runtime.itemHealth(reference);
   });
   n('objectreference.addinventoryeventfilter', (call) =>
     runtime.inventoryFilter(call.self, formOf(call.args[0]), 'add'),
