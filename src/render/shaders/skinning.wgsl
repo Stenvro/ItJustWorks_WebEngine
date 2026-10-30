@@ -73,6 +73,7 @@ fn vs_skinned(in: VertexIn, skin: SkinIn, @builtin(vertex_index) vertex: u32) ->
   let rotation = worldRotation() * mat3x3f(model[0].xyz, model[1].xyz, model[2].xyz);
   let position = morphed(in.position, vertex);
   var out = objectVertex(in, draw.world * (model * vec4f(position, 1.0)), rotation);
+  out.eyeNormal = eyeNormal(position, draw.world * model, out.worldPos);
   // Model-space normal maps (FaceGen heads) are in skin space: the fragment turns them with
   // the vertex's bones, passed as its frame.
   if ((draw.flags.x & 0x1000u) != 0u) {

@@ -308,10 +308,9 @@ fn sunLightAt(n: vec3f, toCamera: vec3f, glossiness: f32, specular: bool, shadow
   return result;
 }
 
-// Ambient, the directional light and point lights (brightness falls off as 1 - d^2/r^2): land,
-// tree LOD and decals, which take every light of the frame. Objects light by their own lists
-// (lighting.wgsl, light-lists.ts). TODO(M13): the engine's land gets per-quad lists too (and
-// only lights flagged to affect land reach it).
+// Ambient, the directional light and point lights (brightness falls off as 1 - d^2/r^2): tree LOD
+// and decals, which take every light of the frame. Objects light by their own lists
+// (lighting.wgsl, light-lists.ts).
 fn lightAt(
   n: vec3f,
   worldPos: vec3f,
@@ -320,9 +319,38 @@ fn lightAt(
   specular: bool,
   shadow: f32,
 ) -> Lighting {
+  return pointLitAt(n, worldPos, toCamera, glossiness, specular, shadow, false);
+}
+
+// The same for land: the original leaves the lights whose reference does not light landscape
+// (shadow.z) out of land's lists. TODO(M13): land's own lists (at most seven per quad, in the
+// order the lights joined the scene) are not kept; land takes every other light of the frame.
+fn landLightAt(
+  n: vec3f,
+  worldPos: vec3f,
+  toCamera: vec3f,
+  glossiness: f32,
+  specular: bool,
+  shadow: f32,
+) -> Lighting {
+  return pointLitAt(n, worldPos, toCamera, glossiness, specular, shadow, true);
+}
+
+fn pointLitAt(
+  n: vec3f,
+  worldPos: vec3f,
+  toCamera: vec3f,
+  glossiness: f32,
+  specular: bool,
+  shadow: f32,
+  land: bool,
+) -> Lighting {
   var result = sunLightAt(n, toCamera, glossiness, specular, shadow);
   for (var i = 0u; i < frame.counts.x; i++) {
     let light = pointLights[i];
+    if (land && light.shadow.z > 0.5) {
+      continue;
+    }
     let offset = light.position - worldPos;
     let distanceSquared = dot(offset, offset);
     let radiusSquared = light.radius * light.radius;

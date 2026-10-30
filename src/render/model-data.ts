@@ -10,6 +10,7 @@ import type {
   NifBlock,
   NiTriShapeDataBlock,
   Ref,
+  Vec3,
   VertexDesc,
 } from '../formats/nif/types.ts';
 import { normalizePath } from '../formats/paths.ts';
@@ -77,6 +78,8 @@ export interface LightingMaterial {
   readonly multiLayer: readonly [number, number, number, number] | undefined;
   /** Sparkle snow (type 14): sparkle parameters. */
   readonly sparkle: readonly [number, number, number, number] | undefined;
+  /** Eyes (type 16): the left and right eye's reflection centres in model space. */
+  readonly eyeCenters?: readonly [Vec3, Vec3] | undefined;
 }
 
 export interface EffectMaterial {
@@ -352,6 +355,7 @@ function lightingMaterial(file: NifFile, shader: BSLightingShaderPropertyBlock):
       ...shader.multiLayer.innerTextureScale,
     ],
     sparkle: shader.sparkleParameters,
+    eyeCenters: shader.eye && [shader.eye.leftReflectionCenter, shader.eye.rightReflectionCenter],
   };
 }
 
