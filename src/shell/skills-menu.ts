@@ -563,6 +563,31 @@ class Viewing {
   }
 
   async #showSkills(menu: Menu): Promise<void> {
+    if (this.#beast) await this.#showBeastSkill(menu);
+    else await this.#showRingSkills(menu);
+    menu.call('SetDirection', this.#camera.yaw);
+    menu.call('SetStatsMode', !this.#setup.levelUp, await this.#perkPoints());
+  }
+
+  /**
+   * A beast form's tree, as observed in the original: no skill list (SkillStatsA and
+   * UpdateSkillList are not sent, so no skill's name, level or meter shows on the ring); the
+   * engine writes the beast skill element instead, its label the actor value's name and its short
+   * bar at frame 200 − progress × 1.99 (the actor value, 0..100). The game's own statsmenu.swf
+   * has no such element (StatsMenuBaseInstance.BeastSkillHolder), so with it nothing shows: a
+   * beast tree has no level number. TODO(M13): the original also fills the bar when the tree's
+   * perks and the form's points meet a rule that is not read (ours: the actor value alone).
+   */
+  async #showBeastSkill(menu: Menu): Promise<void> {
+    const tree = this.#trees[0];
+    if (!tree) return;
+    const holder = '_root.StatsMenuBaseInstance.BeastSkillHolder.BeastSkillInstance';
+    const progress = (await this.#progress(tree.skill)) * 100;
+    menu.set(`${holder}.LabelInstance.text`, tree.record.name);
+    menu.invoke(`${holder}.ShortBar.gotoAndStop`, Math.trunc(200 - progress * 1.99));
+  }
+
+  async #showRingSkills(menu: Menu): Promise<void> {
     const data: unknown[] = [];
     for (const tree of this.#trees) {
       const value = await this.#runtime.actors.value(PLAYER_REF, tree.skill);
@@ -577,14 +602,11 @@ class Viewing {
     }
     menu.set('_global.StatsMenu.SkillStatsA', data);
     menu.call('UpdateSkillList', true);
-    menu.call('SetDirection', this.#camera.yaw);
-    menu.call('SetStatsMode', !this.#setup.levelUp, await this.#perkPoints());
   }
 
   /**
    * A tree's progress (0..1): a skill's to its next level; a beast form's to its next perk point,
-   * which the feeding scripts keep in its actor value (0..100). TODO(M13): the number the
-   * original shows as a beast tree's level is not read (ours: that actor value).
+   * which the feeding scripts keep in its actor value (0..100; the beast skill element's bar).
    */
   async #progress(skill: number): Promise<number> {
     if (!this.#beast) return this.#runtime.progression.skillProgress(skill);
