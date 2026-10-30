@@ -896,7 +896,7 @@ export class ConsoleCommands {
         controls.menu = enabled;
         controls.activate = enabled;
         controls.journalTabs = enabled;
-        controls.disablePov = 0;
+        controls.povLocks = [];
         context.controlsChanged();
         return [];
       }

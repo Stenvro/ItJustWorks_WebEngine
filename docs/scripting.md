@@ -63,13 +63,32 @@ As the Creation Kit wiki's "Threading Notes (Papyrus)" describe them (`papyrus-v
   2.28 ms a frame); a thread past it goes on in the next frame, keeping its lock. Once a saved
   game has loaded, the VM runs on its own, update after update, for
   **fPostLoadUpdateTimeMS** (Skyrim_Default.ini: 500 ms) before the game goes on: no budget,
-  and its frame waits go on at once. The engine also runs two queues of latent calls' work
-  (render-safe and post-render; observed in the original): a latent native queues its
-  main-thread work there (saved with the game); each frame a queue runs the work queued before
-  it, first come first served, until it is empty or 0.05 of fUpdateBudgetMS is spent (at least
-  one each frame); work still waiting (Utility.Wait's) goes back for the next frame, and work
-  done returns its result to the waiting thread. Ours starts a latent native's work in the call
-  itself (TODO(M13): each latent native split into its start and its queued work). Without frames (Node tools)
+  and its frame waits go on at once.
+- **The latent natives' queued work** (`latent-queues.ts`; observed in the original): the
+  natives that change the world do not do it in the call. Once the call has its turn on the
+  main thread, the native checks its arguments (its None lines) and queues its work, saved with
+  the game, in one of two queues. The **render-safe** queue takes Spell.Cast and RemoteCast,
+  Scroll.Cast and TetherToHorse; the **post-render** queue the 27 others: AddItem, RemoveItem,
+  DropObject, MoveTo, MoveToNode, MoveToInteractionLocation, MoveToMyEditorLocation,
+  MoveToPackageLocation, SetPosition, SetAngle, SetScale, SetMotionType, ApplyHavokImpulse,
+  DamageObject, Delete, Reset, Enable, Disable and their NoWait variants, Resurrect,
+  AttachAshPile, SendPlayerToJail, ForceAddRagdollToWorld / ForceRemoveRagdollFromWorld,
+  AddHavokBallAndSocketConstraint and RemoveHavokConstraints. The post-render queue runs once a
+  frame after it is drawn; the render-safe one at a point of the frame before it is drawn. A
+  queue is two lists swapped as it runs: a run takes the work queued before it, first come
+  first served, until none is left or its budget is spent, always at least one (the budget
+  given, else 0.05 of [Papyrus] fUpdateBudgetMS: 0.06 ms, so mostly one a frame); work a run
+  leaves over waits for the run after next, behind what was queued meanwhile. Only Enable and
+  Disable go back for the next run on their own: with a fade, every run until the fade is over
+  or 5 s have passed (ours: their work waits for the fade). A latent native's thread waits for
+  its work (its script unlocked, as for any latent call) and gets its result; EnableNoWait and
+  DisableNoWait queue the same work and return at once. No run takes work while the VM is
+  frozen (ours: while a load runs only the post-render queue goes on, 0.5 ms an update, as two runs the original makes outside the frame's; that they are the load's is inferred). Ours runs both queues as a frame begins (natives/index.ts queues each native's work; a test calling a native directly steps the world meanwhile: the sim's native()) (`scheduler.ts` advance: the post-render run
+  for the frame just drawn, then the render-safe one; TODO(M13): the render-safe point against
+  the VM's update is inferred), the time counted being each one's work up to its first wait.
+  A save keeps the thread at its call, so on load the call is made and its work queued again
+  (the original keeps the queued work and finishes it; the difference shows only as a None
+  line logged twice). Without frames (Node tools) the work is done in the call, and
   threads run straight through, and one that runs two million instructions without ever
   waiting is stopped as an endless loop; the headless sim runs so, deterministically.
 - **Natives wait for the frame** (`native-timing.ts`; observed in the original): the game
@@ -667,7 +686,7 @@ stats go to every object registered for them. What each kind becomes:
   OnLocationChange.
 - Trap hits come from the traps' contacts with actors ("Traps" below), resets from the cells
   that reset as they come back ("Cell reset and cleared locations").
-- Loading a game (`game-session.ts`: OnPlayerLoadGame as the loaded game's scripts are up).
+- Loading a game (`game-session.ts`: OnPlayerLoadGame at the first frame the loaded game runs, once its world is up, as the original sends it).
 - Scenes (`scene-runtime.ts` through `scene-host.ts`): a scene's begin and end, each phase's
   begin and end, each action as it starts. Topic infos (`dialogue-engine.ts` runFragment):
   each said line's begin and end, however it is said (menu, scene, world). Quest init
