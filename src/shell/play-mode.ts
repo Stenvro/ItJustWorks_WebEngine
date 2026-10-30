@@ -6,12 +6,9 @@
 // player (MQ101: the cart to Helgen) and the world there has loaded.
 // In the game the HUD (hud-controller.ts) and the game's menus (game-menus.ts).
 
-import { lockDifficulty, LOCKPICK, SKELETON_KEY } from '../gameplay/lockpicking.ts';
 import type { Renderer } from '../render/renderer.ts';
 import type { Vec3 } from '../render/math.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
-import { lockBroken } from '../scripting/runtime/natives/reference.ts';
-import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { CellObject } from '../world/cell-loader.ts';
 import { parseItem } from '../world/item-records.ts';
@@ -70,6 +67,7 @@ import { lockNow } from './object-locks.ts';
 import { tellSwing } from './open-close.ts';
 import { SaveManager } from './save-manager.ts';
 import { LoadWaitSpinner } from './load-wait-spinner.ts';
+import { tryLock } from './lock-picking.ts';
 import { gameDaysText, IMPORT_ESS_TEXT, SAVE_SCREENSHOT_IMAGE, SaveList } from './save-list.ts';
 import type { GameSave } from '../save/game-save.ts';
 import { essWorld } from '../save/ess-import.ts';
@@ -1286,42 +1284,20 @@ export class PlayMode {
     const session = this.#session;
     const runtime = session.scriptsReady;
     if (!runtime) return;
-    const lock = await runtime.lock(reference);
-    if (!lock.locked) {
+    const attempt = await tryLock(runtime, reference, session.crimeWatch?.pursued === true);
+    if (attempt.kind === 'open') {
       then();
       return;
     }
     const settings = await session.settings();
-    const say = (setting: string): void => {
-      session.hud.notification(settings.string(setting) ?? '');
-    };
-    if (lock.key !== undefined && (await runtime.itemCount(PLAYER_REF, lock.key)) > 0) {
-      runtime.state.reference(reference).locked = false;
-      runtime.events.emit('lockChanged', { reference });
-      const key = (await runtime.forms.record(lock.key))?.text('FULL') ?? '';
+    if (attempt.kind === 'key') {
+      const key = (await runtime.forms.record(attempt.key))?.text('FULL') ?? '';
       session.hud.notification((settings.string('sOpenWithKey') ?? '%s').replace('%s', key));
       then();
       return;
     }
-    // Only the key opens a lock that needs one, or one broken (ObjectReference.IsLockBroken), as
-    // observed in the original.
-    const tries = runtime.state.references.get(reference)?.lockTries ?? 0;
-    const broken =
-      tries > 0 &&
-      lockBroken(tries, await runtime.perks.apply(EntryPoint.ignoreBrokenLock, PLAYER_REF, 0));
-    if (lockDifficulty(lock.level) === undefined || broken) {
-      say('sImpossibleLock');
-      return;
-    }
-    if (session.crimeWatch?.pursued === true) {
-      say('sNoLockPickIfCrimeAlert');
-      return;
-    }
-    const picks =
-      (await runtime.itemCount(PLAYER_REF, LOCKPICK)) +
-      (await runtime.itemCount(PLAYER_REF, SKELETON_KEY));
-    if (picks <= 0) {
-      say('sOutOfLockpicks');
+    if (attempt.kind === 'refused') {
+      session.hud.notification(settings.string(attempt.setting) ?? '');
       return;
     }
     // Those near comment on the player at a lock (LockedObject).

@@ -1113,9 +1113,8 @@ export class ScriptRuntime implements VmHost {
    * What an object is in its string (observed in the original): a form's editor ID where the
    * original keeps one at run time (KEEPS_EDITOR_ID; references and most forms keep none) and
    * its id; an alias by its name on its quest; an active effect by its number (the 16 bits of
-   * its handle that tell the effect apart: ours, the effect's own number) on its actor's shown
-   * name (an alias's name, else its base's) and id. TODO(M13): how the original numbers its
-   * active effects (for the game or per actor) is not read; ours counts them for the game.
+   * its handle that tell the effect apart: its number on its actor, the lowest free one there,
+   * magic-engine.ts) on its actor's shown name (an alias's name, else its base's) and id.
    */
   async describeObject(target: ObjectHandle): Promise<string> {
     const hex = (formId: number): string => formId.toString(16).toUpperCase().padStart(8, '0');
@@ -1126,7 +1125,7 @@ export class ScriptRuntime implements VmHost {
         this.aliasDisplayName(effect.target) ??
         (base === undefined ? undefined : (await this.forms.record(base))?.text('FULL')) ??
         '';
-      return `Active effect ${String(target.formId & 0xffff)} on ${name} (${hex(effect.target)})`;
+      return `Active effect ${String(effect.number ?? 0)} on ${name} (${hex(effect.target)})`;
     }
     const editorId = async (formId: number): Promise<string> => {
       const record = await this.forms.record(formId);
@@ -2831,9 +2830,29 @@ export class ScriptRuntime implements VmHost {
     this.world.enableChanged?.(reference, false);
     const items = await this.inventory(container);
     items.set(base, (items.get(base) ?? 0) + count);
+    // An improved item taken keeps its improvement (its stack's health).
+    const health = await this.itemHealth(reference);
+    if (health !== 1) this.crafting.addStack(container, base, health, count, false);
     if (!silent && container === PLAYER_REF) this.detach(this.#itemMessage(base, count, true));
     this.events.emit('containerChanged', { from, to: container, item: base, count, reference });
     await this.equipment.itemsGiven(container, base);
+  }
+
+  /**
+   * An item reference's health as a fraction (1: whole; an improved one's 1.1 and up): its own
+   * (an improved item dropped), else what the plugin placed it with (REFR XHLT, a percent).
+   */
+  async itemHealth(reference: number): Promise<number> {
+    const own = this.state.references.get(reference)?.health;
+    if (own !== undefined) return own;
+    const health = (await this.forms.record(reference))?.fields.first('XHLT');
+    if (!health || health.length < 4) return 1;
+    return view(health).getInt32(0, true) / 100;
+  }
+
+  /** An item placed in the world from an inventory keeps the health it left it with. */
+  dropped(reference: number, health: number): void {
+    if (health !== 1) this.state.reference(reference).health = health;
   }
 
   async itemCountOf(container: number, form: Value): Promise<number> {
@@ -2888,14 +2907,17 @@ export class ScriptRuntime implements VmHost {
     to: number | undefined,
     /** Which of the item's stacks (improved ones: the crafting engine's) leaves first. */
     stack?: number,
-  ): Promise<void> {
+  ): Promise<number> {
     const items = await this.inventory(container);
+    let health = 1;
     for (const item of await this.#expand(form)) {
       const have = items.get(item) ?? 0;
       const moved = Math.min(have, count);
       if (moved <= 0) continue;
-      // Items with data of their own leave as asked, else after the plain ones.
-      this.crafting.itemsMoved(container, to, item, moved, have, stack);
+      // Items with data of their own leave as asked, else after the plain ones; all of one
+      // improved stack: their health (what is dropped keeps it).
+      const improved = this.crafting.itemsMoved(container, to, item, moved, have, stack);
+      if (improved.length === 1 && improved[0]?.count === moved) health = improved[0].health;
       items.set(item, have - moved);
       const references = this.#referencesMoved(container, to, item, moved, have);
       // Stolen items leave last and stay stolen where they go (crime-engine.ts).
@@ -2925,6 +2947,7 @@ export class ScriptRuntime implements VmHost {
       }
       if (to !== undefined) await this.equipment.itemsGiven(to, item);
     }
+    return health;
   }
 
   /** The reference of an item a container holds that leaves it first (#referencesMoved), if any. */
@@ -2985,6 +3008,9 @@ export class ScriptRuntime implements VmHost {
     this.state.reference(reference).container = { holder: by, base, count: Math.max(1, count) };
     this.world.enableChanged?.(reference, false);
     items.set(base, (items.get(base) ?? 0) + Math.max(1, count));
+    // An improved item taken keeps its improvement (its stack's health).
+    const health = await this.itemHealth(reference);
+    if (health !== 1) this.crafting.addStack(by, base, health, Math.max(1, count), false);
     this.events.emit('containerChanged', {
       from: undefined,
       to: by,

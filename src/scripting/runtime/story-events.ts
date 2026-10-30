@@ -9,7 +9,8 @@
 //   activates an actor (activate).
 // - Raised at their places, where the engine raises them (they are not hub kinds): Player Add
 //   Item (AIPL) and Player Remove Item (REMP), Cast Magic (CAST), Dead Body (DEAD), Arrest
-//   (ARRT), Actor Hello (AHEL), New Voice Power (NVPE). Those places call the methods here.
+//   (ARRT), Craft Item (CRFT), Actor Hello (AHEL), New Voice Power (NVPE), Player Infected
+//   (INFC). Those places call the methods here.
 //
 // The story manager queues what it is told and works through it in order (story-manager.ts).
 // Platform-independent.
@@ -315,6 +316,26 @@ export class StoryEvents {
       if (open.criminal === criminal && open.faction === faction) crime = open.type;
     }
     return this.arrest(guard, criminal, crime);
+  }
+
+  /**
+   * Craft Item (CRFT): the player made an item at a workbench (a recipe, a potion, an enchanted
+   * item) or improved one (its tempered item). Members: R1 the workbench, L1 its location, O1
+   * the item (OnStoryCraftItem(akBench, akLocation, akCreatedItem); the vanilla nodes read
+   * R1's keywords and GetEventData O1).
+   */
+  async craftItem(bench: number, created: number): Promise<boolean> {
+    const runtime = this.#runtime;
+    const location = await runtime.locationOf(bench);
+    return this.#raise(
+      'CRFT',
+      [
+        ['R1', bench],
+        ['L1', location],
+        ['O1', created],
+      ],
+      [runtime.referenceHandle(bench), this.#location(location), runtime.formHandle(created)],
+    );
   }
 
   /**
