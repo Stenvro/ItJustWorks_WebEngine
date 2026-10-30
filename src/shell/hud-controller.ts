@@ -23,7 +23,9 @@
 // shows its ammo and count (ShowArrowCount); the floating quest marker stands over the nearest
 // quest target near enough (FloatingQuestMarkerInstance). Notices of the game's own: a word of
 // power learned (sShoutAdded over the word in the dragon letters), a dragon soul absorbed
-// (sDragonSoulAcquired), a location cleared (its name, sCleared).
+// (sDragonSoulAcquired), a location cleared (its name, sCleared). A Target Location spell in a
+// hand is checked where it is aimed (the crosshair's Normal or Alert frame, ValidateCrosshair):
+// hud-crosshair.ts.
 
 import type { CastEvent } from '../scripting/runtime/casting-engine.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -32,6 +34,9 @@ import type { QuestUpdate, ScriptRuntime } from '../scripting/runtime/runtime.ts
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import { MenuName } from '../ui/menu-stack.ts';
 import { ActorValue } from '../world/actor-values.ts';
+import { Delivery } from '../world/magic-records.ts';
+import { parseSpell } from '../world/spell-records.ts';
+import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import type { GameSettings } from '../world/game-settings.ts';
 import type { IniSettings } from '../world/ini-settings.ts';
 import {
@@ -46,6 +51,13 @@ import {
 } from './hud-elements.ts';
 import type { HelpMessage, HudSignals, HudSink, HudTarget } from './hud-signals.ts';
 import { StealthMeter } from './hud-stealth.ts';
+import {
+  AimedHands,
+  CROSSHAIR_CHECK_MS,
+  crosshairReach,
+  crosshairValid,
+  type CrosshairEffect,
+} from './hud-crosshair.ts';
 import {
   SURVIVAL_GLOBALS,
   SURVIVAL_PLUGIN,
@@ -72,6 +84,11 @@ export interface HudSource {
   readonly floating?: () => FloatingMarker | undefined;
   /** Whether a menu is open by the original's name ("Dialogue Menu"). */
   readonly menuOpen?: (name: string) => boolean;
+  /**
+   * A spell aimed from the player within `reach` (units): the collision layer it meets (undefined:
+   * nothing), or undefined when it cannot be aimed now (hud-crosshair.ts).
+   */
+  readonly spellAim?: (reach: number) => { readonly layer: number | undefined } | undefined;
 }
 
 /** The image the engine writes before a prompt's third line (InterfaceStrings). */
@@ -160,6 +177,10 @@ export class HudController implements HudSink {
   readonly #helpDone = new Set<string>();
   /** The stealth meter (hud-stealth.ts). */
   readonly #stealth = new StealthMeter();
+  /** The hands holding a Target Location spell, when they were last checked, the frame shown. */
+  readonly #aimedHands = new AimedHands();
+  #crosshairChecked = Number.NEGATIVE_INFINITY;
+  #crosshairNormal: boolean | undefined;
 
   constructor(host: MenuHost, signals: HudSignals, source: HudSource) {
     this.#host = host;
@@ -777,6 +798,7 @@ export class HudController implements HudSink {
     await this.#updateSouls(runtime);
     await this.#updateArrows(menu, runtime);
     await this.#updateSurvival(menu, runtime);
+    await this.#validateCrosshair(menu, runtime);
     // Each hand's enchanted weapon: its charge (shown while it holds one).
     for (const hand of ['left', 'right'] as const) {
       const weapon = await runtime.equipment.weapon(PLAYER_REF, hand);
@@ -787,5 +809,60 @@ export class HudController implements HudSink {
       this.#chargeShown[hand] = shown;
       menu.call('SetChargeMeterPercent', Math.max(0, shown), false, hand === 'left', shown >= 0);
     }
+  }
+
+  /**
+   * The crosshair's check of the Target Location spell aimed (hud-crosshair.ts), every 200 ms:
+   * the HUD's base clip to "Normal" or "Alert", then ValidateCrosshair.
+   */
+  async #validateCrosshair(menu: Menu, runtime: ScriptRuntime): Promise<void> {
+    const now = performance.now();
+    if (now - this.#crosshairChecked < CROSSHAIR_CHECK_MS) return;
+    this.#crosshairChecked = now;
+    const spells = new Map<number, number>();
+    const aimed = new Map<number, boolean>();
+    for (const [source, hand] of [
+      [0, 'left'],
+      [1, 'right'],
+    ] as const) {
+      const held = await runtime.equipment.inHand(PLAYER_REF, hand);
+      const item = held === undefined ? undefined : await runtime.magic.item(held);
+      const on =
+        item !== undefined &&
+        (item.type === 'SPEL' || item.type === 'SCRL') &&
+        item.delivery === Delivery.targetLocation;
+      aimed.set(source, on);
+      if (on && held !== undefined) spells.set(source, held);
+    }
+    const { hand, emptied } = this.#aimedHands.update(aimed);
+    let normal: boolean | undefined = emptied ? true : undefined;
+    const spell = hand === undefined ? undefined : spells.get(hand);
+    if (spell !== undefined) {
+      const record = await runtime.forms.record(spell);
+      const item = await runtime.magic.item(spell);
+      if (!record || !item) return;
+      const range = await runtime.perks.apply(
+        EntryPoint.modSpellRangeTargetLoc,
+        PLAYER_REF,
+        parseSpell(record).range,
+        [spell],
+        { spell },
+      );
+      const settings = await this.#source.settings;
+      const reach = crosshairReach(range, settings.number('fMagicUnitsPerFoot') ?? 22);
+      const aim = this.#source.spellAim?.(reach);
+      if (!aim) return;
+      const effects: CrosshairEffect[] = [];
+      for (const entry of item.effects) {
+        const effect = await runtime.magic.effect(entry.effect);
+        if (effect) effects.push(effect);
+      }
+      normal = crosshairValid(effects, aim.layer);
+    }
+    // Sent as it changes (the original sends it on every check, to the same frame).
+    if (normal === undefined || menu !== this.#menu || normal === this.#crosshairNormal) return;
+    this.#crosshairNormal = normal;
+    menu.invoke(`${BASE}.gotoAndPlay`, normal ? 'Normal' : 'Alert');
+    menu.call('ValidateCrosshair');
   }
 }

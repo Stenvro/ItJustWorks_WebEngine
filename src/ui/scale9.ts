@@ -20,10 +20,13 @@
 //   by 1 / scale (they keep their size), the grid's part stretched over the rest. Each wrapper
 //   under it shows nine pieces, each the shape masked to one cell and placed by that cell's map;
 //   unscaled, the shape shows as it is and no piece is made.
-// Text fields are not cut (as in Flash). TODO(M13): Scaleform's exact rule for a sprite scaled
-// below its corners' size (here the middle shrinks to nothing and the corners overlap), for
-// rotated clips, and for grids set at run time on clips with no shapes of their own (the journal
-// lists' item containers: they are not scaled, so nothing shows). Platform-independent.
+// Text fields are not cut (as in Flash). Scaled below the size of its corners, the corners
+// shrink together to fit and the middle is nothing (Flash's rule, scale9Axis). A turned or
+// mirrored grid sprite is measured along its own axes on the stage. With its scale as it was, a
+// cut sprite's wrappers that moved in it (a list's items scrolling, a clip playing) are placed
+// again. TODO(M13): a shape turned within its grid sprite (its pieces are cut along the shape's
+// own axes, not the sprite's), and grids set at run time on clips with no shapes of their own (the
+// journal lists' item containers: they are not scaled, so nothing shows). Platform-independent.
 // Notes: docs/ui.md ("Ruffle's limits").
 
 import { Avm1Writer, Function2Flag, Op, type PushValue } from '../formats/swf/avm1-writer.ts';
@@ -61,6 +64,10 @@ const SCALE_Y = '__itjwS9y';
 const BOUNDS = '__itjwS9n';
 const DIRTY = '__itjwS9d';
 const CUT = '__itjwS9c';
+/** A grid sprite's member: only its content may have moved (its scale is as it was). */
+const MOVED = '__itjwS9m';
+/** A wrapper's member: where it stood and its scale in its sprite as it was last placed. */
+const PLACED = '__itjwS9w';
 /** A wrapper's member: the linkage name of its piece symbol (what marks a clip as a wrapper). */
 const PIECE = '__itjwS9p';
 export const SCALE9_WRAPPER = PIECE;
@@ -442,13 +449,33 @@ function defineWrap(w: Avm1Writer): void {
 }
 
 /**
+ * The length of the line from one point (an object in register `from`) to another, / 100, into
+ * register `out` (registers 9 and 10 used on the way): a clip's scale along one of its axes
+ * from its points (0, 0) and (100, 0) or (0, 100) on the stage, whether it is turned or not.
+ */
+function scaleAlong(body: Avm1Writer, from: number, to: number, out: number): void {
+  member(body, to, 'x');
+  member(body, from, 'x').op(Op.subtract);
+  store(body, 9);
+  member(body, to, 'y');
+  member(body, from, 'y').op(Op.subtract);
+  store(body, 10);
+  body.push(reg(9), reg(9)).op(Op.multiply).push(reg(10), reg(10)).op(Op.multiply).op(Op.add2);
+  body.push(1).getPath('Math').push('sqrt').op(Op.callMethod).push(100).op(Op.divide);
+  store(body, out);
+}
+
+/**
  * __itjwScale9Tick(): each grid sprite on stage whose scale on the stage changed (or that got
- * new wrappers) placed again; those gone dropped. Registers: 1 list, 2 index, 3 sprite, 4 and 5
- * two of its points on the stage, 6 and 7 its scale.
+ * new wrappers) placed again; a cut one whose scale stayed has its wrappers that moved in it
+ * placed again (MOVED); those gone dropped. Its scale on the stage is measured along each of
+ * its own axes (as long as its axes are on the stage), so a turned or mirrored sprite keeps its
+ * corners. Registers: 1 list, 2 index, 3 sprite, 4, 5 and 8 its points (0, 0), (100, 0) and
+ * (0, 100) on the stage, 6 and 7 its scale, 9 and 10 for the lengths.
  */
 function defineTick(w: Avm1Writer): void {
   w.getPath('_global').push(TICK);
-  w.function2('', [], 8, FLAGS, (body) => {
+  w.function2('', [], 11, FLAGS, (body) => {
     store(body.getPath(`_global.${CLIPS}`), 1);
     body.push(reg(1), null).op(Op.equals2).ifTo('end');
     store(member(body, 1, 'length'), 2);
@@ -459,26 +486,28 @@ function defineTick(w: Avm1Writer): void {
     member(body, 3, '_xscale').push(null).op(Op.equals2).op(Op.not).ifTo('alive');
     body.push(1, reg(2), 2, reg(1), 'splice').op(Op.callMethod).op(Op.pop).jumpTo('next');
     body.label('alive');
-    for (const [register, at] of [
-      [4, 0],
-      [5, 100],
+    for (const [register, x, y] of [
+      [4, 0, 0],
+      [5, 100, 0],
+      [8, 0, 100],
     ] as const) {
-      store(body.push('x', at, 'y', at, 2).op(Op.initObject), register);
+      store(body.push('x', x, 'y', y, 2).op(Op.initObject), register);
       body.push(reg(register), 1, reg(3), 'localToGlobal').op(Op.callMethod).op(Op.pop);
     }
-    for (const [register, axis] of [
-      [6, 'x'],
-      [7, 'y'],
-    ] as const) {
-      member(body, 5, axis);
-      member(body, 4, axis).op(Op.subtract).push(100).op(Op.divide);
-      store(body, register);
-    }
+    scaleAlong(body, 4, 5, 6);
+    scaleAlong(body, 4, 8, 7);
     member(body, 3, DIRTY).ifTo('changed');
     member(body, 3, SCALE_X).push(reg(6)).op(Op.equals2).op(Op.not).ifTo('changed');
     member(body, 3, SCALE_Y).push(reg(7)).op(Op.equals2).op(Op.not).ifTo('changed');
-    body.jumpTo('next');
+    // Its scale as it was: once cut and scaled, the wrappers that moved in it are placed again.
+    member(body, 3, CUT).op(Op.not).ifTo('next');
+    body.push(reg(6), 1).op(Op.equals2).op(Op.not).ifTo('moved');
+    body.push(reg(7), 1).op(Op.equals2).ifTo('next');
+    body.label('moved');
+    body.push(reg(3), MOVED, true).op(Op.setMember);
+    callGlobal(body, WALK, [3, 3, 6, 7]).jumpTo('next');
     body.label('changed');
+    body.push(reg(3), MOVED, false).op(Op.setMember);
     body.push(reg(3), SCALE_X, reg(6)).op(Op.setMember);
     body.push(reg(3), SCALE_Y, reg(7)).op(Op.setMember);
     body.push(reg(3), DIRTY, false).op(Op.setMember);
@@ -565,6 +594,15 @@ function defineApply(w: Avm1Writer): void {
     store(member(body, 5, 'y'), 10);
     body.push(reg(7), 0).op(Op.equals2).ifTo('end');
     body.push(reg(8), 0).op(Op.equals2).ifTo('end');
+    // Where it stands and its scale in the sprite, as text; with the sprite's scale as it was
+    // (MOVED), a wrapper that has not moved is left as it is.
+    body.push(reg(9), ',').op(Op.add2).push(reg(10)).op(Op.add2).push(',').op(Op.add2);
+    body.push(reg(7)).op(Op.add2).push(',').op(Op.add2).push(reg(8)).op(Op.add2);
+    store(body, 16);
+    member(body, 2, MOVED).op(Op.not).ifTo('place');
+    member(body, 1, PLACED).push(reg(16)).op(Op.equals2).ifTo('end');
+    body.label('place');
+    body.push(reg(1), PLACED, reg(16)).op(Op.setMember);
     store(member(body, 2, BOUNDS), 17);
     // The axes' maps: __itjwScale9Axis(boundsMin, boundsMax, gridMin, gridMax, scale).
     for (const [register, scale, min, max, from, to] of [
@@ -626,19 +664,64 @@ function defineApply(w: Avm1Writer): void {
   w.op(Op.setMember);
 }
 
+/** One cell of an axis's map: a point x in [from, to] goes to scale × x + offset. */
+export interface Scale9Cell {
+  readonly scale: number;
+  readonly offset: number;
+  readonly from: number;
+  readonly to: number;
+}
+
+/**
+ * One axis of a grid sprite scaled by `scale` on the stage, in its own space (what
+ * __itjwScale9Axis computes in the movies): the parts before and after the grid keep their size
+ * on the stage (1 / scale here), the grid's part takes the rest. Scaled below the size of those
+ * two parts, they shrink together to fit and the grid's part is nothing (Flash's rule for a
+ * scale9Grid, which Scaleform follows).
+ */
+export function scale9Axis(
+  min: number,
+  max: number,
+  gridMin: number,
+  gridMax: number,
+  scale: number,
+): [Scale9Cell, Scale9Cell, Scale9Cell] {
+  const fixed = gridMin - min + (max - gridMax);
+  const keep = fixed > 0 && scale * (max - min) < fixed ? (max - min) / fixed : 1 / scale;
+  const start = min + (gridMin - min) * keep;
+  const end = max - (max - gridMax) * keep;
+  const middle = gridMin < gridMax ? Math.max(0, (end - start) / (gridMax - gridMin)) : 0;
+  return [
+    { scale: keep, offset: min - min * keep, from: min, to: gridMin },
+    { scale: middle, offset: start - gridMin * middle, from: gridMin, to: gridMax },
+    { scale: keep, offset: max - max * keep, from: gridMax, to: max },
+  ];
+}
+
 /**
  * __itjwScale9Axis(min, max, gridMin, gridMax, scale): one axis's map, as an array of three
  * cells (before, on and after the grid), each [scale, offset, from, to]: a point x of the cell
- * goes to scale × x + offset. Registers: 6 where the grid's part starts, 7 where it ends, 8 its
- * scale.
+ * goes to scale × x + offset (scale9Axis says the same in TypeScript). Registers: 6 where the
+ * grid's part starts (first the fixed parts' size), 7 where it ends, 8 its scale, 9 the fixed
+ * parts' scale.
  */
 function defineAxis(w: Avm1Writer): void {
   w.getPath('_global').push(AXIS);
-  w.function2('', ['min', 'max', 'gridMin', 'gridMax', 'scale'], 9, FLAGS, (body) => {
-    // start = min + (gridMin − min) / scale; end = max − (max − gridMax) / scale
-    body.push(reg(1), reg(3), reg(1)).op(Op.subtract).push(reg(5)).op(Op.divide).op(Op.add2);
+  w.function2('', ['min', 'max', 'gridMin', 'gridMax', 'scale'], 10, FLAGS, (body) => {
+    // keep = 1 / scale; below the fixed parts' size (gridMin − min + max − gridMax) on the
+    // stage, keep = (max − min) / that size.
+    store(body.push(1, reg(5)).op(Op.divide), 9);
+    body.push(reg(3), reg(1)).op(Op.subtract).push(reg(2), reg(4)).op(Op.subtract).op(Op.add2);
     store(body, 6);
-    body.push(reg(2), reg(2), reg(4)).op(Op.subtract).push(reg(5)).op(Op.divide);
+    body.push(reg(6), 0).op(Op.greater).op(Op.not).ifTo('fits');
+    body.push(reg(5), reg(2), reg(1)).op(Op.subtract).op(Op.multiply).push(reg(6)).op(Op.less2);
+    body.op(Op.not).ifTo('fits');
+    store(body.push(reg(2), reg(1)).op(Op.subtract).push(reg(6)).op(Op.divide), 9);
+    body.label('fits');
+    // start = min + (gridMin − min) × keep; end = max − (max − gridMax) × keep
+    body.push(reg(1), reg(3), reg(1)).op(Op.subtract).push(reg(9)).op(Op.multiply).op(Op.add2);
+    store(body, 6);
+    body.push(reg(2), reg(2), reg(4)).op(Op.subtract).push(reg(9)).op(Op.multiply);
     store(body.op(Op.subtract), 7);
     // The grid's part: (end − start) / (gridMax − gridMin), never below 0.
     store(body.push(0), 8);
@@ -648,15 +731,15 @@ function defineAxis(w: Avm1Writer): void {
     body.push(reg(8), 0).op(Op.less2).op(Op.not).ifTo('flat');
     store(body.push(0), 8);
     body.label('flat');
-    // [1/s, min − min/s, min, gridMin,  k, start − gridMin·k, gridMin, gridMax,
-    //  1/s, max − max/s, gridMax, max], pushed last first (the cells end at the bounds: masks
-    // reaching past them would widen the sprite).
-    body.push(reg(2), reg(4), reg(2), reg(2), reg(5)).op(Op.divide).op(Op.subtract);
-    body.push(1, reg(5)).op(Op.divide);
+    // [keep, min − min·keep, min, gridMin,  k, start − gridMin·k, gridMin, gridMax,
+    //  keep, max − max·keep, gridMax, max], pushed last first (the cells end at the bounds:
+    // masks reaching past them would widen the sprite).
+    body.push(reg(2), reg(4), reg(2), reg(2), reg(9)).op(Op.multiply).op(Op.subtract);
+    body.push(reg(9));
     body.push(reg(4), reg(3), reg(6), reg(3), reg(8)).op(Op.multiply).op(Op.subtract);
     body.push(reg(8));
-    body.push(reg(3), reg(1), reg(1), reg(1), reg(5)).op(Op.divide).op(Op.subtract);
-    body.push(1, reg(5)).op(Op.divide);
+    body.push(reg(3), reg(1), reg(1), reg(1), reg(9)).op(Op.multiply).op(Op.subtract);
+    body.push(reg(9));
     body.push(12).op(Op.initArray).op(Op.return);
   });
   w.op(Op.setMember);

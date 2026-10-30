@@ -17,6 +17,7 @@ import {
 } from '../src/formats/swf/swf.ts';
 import { parseTranslations, type Translations } from '../src/formats/swf/translation.ts';
 import { decodeUtf16le, decodeWindows1252 } from '../src/formats/text.ts';
+import { GAMEPAD_NAMES_FILE, parseButtonNames } from '../src/ui/button-art.ts';
 import { buildFontLibrary, libraryFontNames } from '../src/ui/font-library.ts';
 import { patchMovie } from '../src/ui/movie-patches.ts';
 import { withBridge } from '../src/ui/menu-bridge.ts';
@@ -63,6 +64,13 @@ describe.skipIf(!hasGamedata())('the interface movies on the local game data', (
   it('reads the English translations', () => {
     expect(translations.size).toBeGreaterThan(800);
     expect(translations.translate('$NEW')).toBe('NEW');
+  });
+
+  it("reads the gamepad's button names, the art its button hints show", async () => {
+    const names = parseButtonNames(decodeWindows1252(await vfs.read(GAMEPAD_NAMES_FILE)));
+    expect(names.get(0x1000)).toBe('360_A');
+    expect(names.get(0x000a)).toBe('360_RT');
+    expect(names.size).toBeGreaterThanOrEqual(18);
   });
 
   it('translates every menu without breaking its scripts', async () => {

@@ -594,6 +594,8 @@ export const INI_DEFAULTS = {
     fWorldMapFocalDepth: 45000,
     fWorldMapMaximumDepthBlur: 0.45,
     fWorldMapNearDepthBlurScale: 4,
+    // The journal passes the right stick on at most this often (ms).
+    iRightStickRepeatRate: 250,
     uLockedObjectMapLOD: 16,
     uLockedTerrainLOD: 32,
   },

@@ -160,16 +160,49 @@ export interface ButtonMapping {
   readonly buttonName: string;
 }
 
+/** Where the gamepad's button names are (the device reads them as it starts). */
+export const GAMEPAD_NAMES_FILE = 'interface\\controls\\pc\\gamepad.txt';
+
+/**
+ * A device's button names (interface\controls\pc\gamepad.txt, mouse.txt, keyboard_*.txt): one
+ * button a line, its name, a tab, its hardware value (hex), and for some a Flash key code;
+ * `//` lines are comments. The names are the art the menus show ("360_A").
+ */
+export function parseButtonNames(text: string): Map<number, string> {
+  const names = new Map<number, string>();
+  for (const line of text.split(/\r?\n/)) {
+    if (line.trimStart().startsWith('//')) continue;
+    const [name, value] = line.trim().split(/\s+/);
+    if (!name || !value) continue;
+    const code = Number.parseInt(value, value.toLowerCase().startsWith('0x') ? 16 : 10);
+    if (Number.isFinite(code) && !names.has(code)) names.set(code, name);
+  }
+  return names;
+}
+
 /**
  * What every movie that registers SetButtonMapping gets as it loads, observed in the original:
  * each gameplay event the player may remap on the mouse, then on the keyboard, with the art of
  * its binding there (bindings without art left out). The movies' Shared.ButtonMapping turns the
- * default art their button hints name ("E" for Activate) into the art bound now.
- * TODO(M13): with a gamepad the original sends the gamepad's bindings (their art names).
+ * default art their button hints name ("E" for Activate) into the art bound now. With a gamepad
+ * in use (`gamepad`: its button names) the original sends the gamepad's bindings alone, each
+ * event the player may remap on it with its button's name ("360_A").
  */
-export function buttonMappings(controls: ControlMap | undefined): ButtonMapping[] {
+export function buttonMappings(
+  controls: ControlMap | undefined,
+  gamepad?: ReadonlyMap<number, string>,
+): ButtonMapping[] {
   const events = controls?.contexts[InputContext.gameplay] ?? [];
   const mappings: ButtonMapping[] = [];
+  if (gamepad) {
+    for (const event of events) {
+      const button = event.gamepad[0];
+      if (!event.remappable[2] || button === undefined) continue;
+      const art = gamepad.get(button);
+      if (art !== undefined) mappings.push({ mapName: event.name, buttonName: art });
+    }
+    return mappings;
+  }
   for (const event of events) {
     const button = event.mouse[0];
     if (!event.remappable[1] || button === undefined) continue;

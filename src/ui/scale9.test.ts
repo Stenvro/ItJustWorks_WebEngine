@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readPlacement } from '../formats/swf/place-object.ts';
 import { readSwf, swfExports, SwfTagCode, tagBody, type SwfMovie } from '../formats/swf/swf.ts';
 import { concatBytes, encodeTag, writeSwf } from '../formats/swf/swf-writer.ts';
-import { patchScalingGrids } from './scale9.ts';
+import { patchScalingGrids, scale9Axis, type Scale9Cell } from './scale9.ts';
 
 /** A RECT of 12-bit fields: left, right, top, bottom in twips. */
 function rect(values: readonly number[]): Uint8Array {
@@ -69,5 +69,30 @@ describe('scaling grids', () => {
     expect(clip && readPlacement(tagBody(movie, clip), clip.code).name).toBe('o');
     // The shape's piece, exported to attach.
     expect(swfExports(movie).map((symbol) => symbol.name)).toEqual(['__itjwScale9Piece1']);
+  });
+});
+
+describe("a scaling grid's axis", () => {
+  /** Where a point lands: by the cell it falls in. */
+  const map = (cells: readonly Scale9Cell[], x: number): number => {
+    const cell = cells.find((c) => x >= c.from && x <= c.to) ?? cells[0];
+    return cell ? cell.scale * x + cell.offset : Number.NaN;
+  };
+
+  it('keeps the parts before and after the grid at their size on the stage', () => {
+    // 0..100 with its grid at 10..90, twice as wide on the stage.
+    const cells = scale9Axis(0, 100, 10, 90, 2);
+    expect(map(cells, 10) * 2).toBeCloseTo(10);
+    expect((100 - map(cells, 90)) * 2).toBeCloseTo(10);
+    expect(map(cells, 100)).toBeCloseTo(100);
+  });
+
+  it('shrinks the corners together, the middle to nothing, below their size', () => {
+    // A quarter of its size: 25 on the stage, less than the corners' 20 + 20.
+    const cells = scale9Axis(0, 100, 20, 80, 0.25);
+    expect(map(cells, 20)).toBeCloseTo(map(cells, 80));
+    expect(map(cells, 20) * 0.25).toBeCloseTo(12.5);
+    expect(map(cells, 100)).toBeCloseTo(100);
+    expect(cells[1].scale).toBe(0);
   });
 });

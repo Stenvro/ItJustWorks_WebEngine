@@ -128,7 +128,9 @@ export class InterfaceFiles {
       name.toLowerCase(),
       new OffscreenCanvas(1, 1)
         .convertToBlob({ type: 'image/png' })
-        .then(async (blob) => new Uint8Array(await blob.arrayBuffer())),
+        .then(async (blob) => new Uint8Array(await blob.arrayBuffer()))
+        // A canvas that cannot encode (seen in headless Chrome): no bytes, not a rejection.
+        .catch(() => new Uint8Array(0)),
     );
   }
 

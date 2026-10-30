@@ -35,6 +35,8 @@ export interface GamepadSink {
   menuKey(type: 'keyDown' | 'keyHold' | 'keyUp', code: number): boolean;
   /** Seconds before a held direction repeats in a menu, then between repeats. */
   keyRepeat?(): { readonly long: number; readonly short: number };
+  /** The right stick while a menu has the input (x, y: -1..1, up positive), every read. */
+  menuStick?(x: number, y: number): void;
 }
 
 /** Whoever waits for the next gamepad button (the Controls page's remap). */
@@ -141,7 +143,10 @@ export function attachGamepad(sink: GamepadSink): () => void {
     if (moving || looking) setInputPlatform(Platform.pcGamepad);
     player.stick = inMenu ? [0, 0] : state.leftStick;
     if (!inMenu) player.lookStick(state.rightStick[0], state.rightStick[1], seconds);
-    else Item3D.shown?.stick(state.rightStick[0], state.rightStick[1], seconds);
+    else {
+      Item3D.shown?.stick(state.rightStick[0], state.rightStick[1], seconds);
+      sink.menuStick?.(state.rightStick[0], state.rightStick[1]);
+    }
   };
 
   const tick = (): void => {

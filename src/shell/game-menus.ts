@@ -195,6 +195,11 @@ export class GameMenus {
     this.#journal.onQuit = quit;
   }
 
+  /** The gamepad's right stick while a menu has the input: the journal's, while it is open. */
+  rightStick(x: number, y: number): void {
+    this.#journal.rightStick(x, y);
+  }
+
   /** What the journal's Save, Load and Quicksave do (Play's save manager). */
   set saves(saves: JournalSaves | undefined) {
     this.#journal.saves = saves;
