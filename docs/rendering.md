@@ -857,32 +857,61 @@ original:
   refraction, the vertical one for the normals and the specular (`property × (share − 1) + 1`).
 - **Normal.** The first noise layer around the up axis by its amplitude (`a₁(n₁ − up) + up`),
   the other two added by theirs, normalized, then flattened towards up by the normals' depth
-  share. Rivers lay their flow-map normal over it by the flow's strength. Far away the full
-  normal gives way to the first layer alone: `saturate((d − 8192) / (F − 8192))` with F the
-  water's noise falloff (inferred: 0 in DefaultWater, so the detail fades over 8192 units)
-  towards a floor the frame's constants hold (unread; ours 0). The ripple field's normal
+  share. Rivers lay their flow-map normal over it by the flow's strength, and only their
+  techniques fade with distance: far away the normal gives way to the first layer's own
+  normal by `saturate((d − 8192) / (F − 8192) × (1 − floor) + floor)`, F the water's noise
+  falloff (clamped to 1..8191), the floor a frame constant that is 1 only in passes the engine
+  flags for it and 0 in every pass that draws the world. The ripple field's normal
   (`normalize(slope × dampener, 0.04)`) takes the waves over by its own z.
 - **Refraction.** The surface point moved along the normal's xy by the refraction magnitude
   (world units) times the refraction's depth share, projected; if what lies there is above the
   water, the unmoved point. The body colour is shallow towards deep by the ray's depth share;
-  the fog over the scene below is `1 − ((far − depth) / (far − near))^amount`.
+  the fog over the scene below is `1 − ((far − depth) / (far − near))^p`, p = max(4 × Fog
+  Amount, 1).
 - **Reflection.** The cube (below) along the view reflected about the normal flattened towards
-  up by the reflectivity (inferred source of that constant), the screen-space reflection over
-  it by its own alpha (and the detail), then the reflection colour taken over by that by the
-  Reflection Magnitude (DefaultWater 0.42: 58 % reflection colour). The reflection lays over
-  the refraction by Schlick's fresnel from the Fresnel Amount, times the reflections' depth
-  share (far away it goes to 1).
+  up by the Reflection Magnitude (DefaultWater 0.42), the screen-space reflection over it by
+  its own alpha (and the detail), then the reflection colour taken over by that by the
+  Reflectivity Amount (DefaultWater 0.8: 20 % reflection colour). The reflection lays over the
+  refraction by Schlick's fresnel from the Fresnel Amount, times the reflections' depth share
+  (far away it goes to 1).
 - **Sun.** `pow(saturate(reflected view · sun), specular power) × specular magnitude` plus the
   sparkle `pow(saturate(normal · (−0.099, −0.099, 0.99)), sparkle power) × sparkle magnitude`
   (a fixed slant of the up axis, not the sun), times the sun's colour and the specular's depth
   share; then the air's fog.
 
-The scene colours the shader samples (refraction, cube, screen-space reflection) are scaled by
-one constant and the result by another (the original's HDR scaling; ours keeps linear colour
-throughout). TODO(M13): which WATR value feeds which of the shader's constants is our reading of
-xEdit's names against the terms (the engine's material setup is unread), as are the detail
-floor and the flow normals (WATR NAM5, sampled on a staggered grid of the flow map by
-per-geometry constants: ours moves the noise layers along the flow).
+**The material setup** (observed in the original): which WATR value the engine's water material
+hands each of the shader's constants. DNAM by xEdit's names:
+
+| Shader constant           | From                                                                                                                                                       |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| shallow, deep, reflection | Shallow, Deep, Reflection Color (/255), times a colour the frame sets (ours: the weather's water multiplier); w: Sun Sparkle Power, Sun Specular Magnitude |
+| fresnel                   | Fresnel Amount; Specular Power, max(0.1 × DNAM 41, 1) for the lights' specular                                                                             |
+| blend radius              | the flow map scale (Noise Flowmap Scale), Specular Radius                                                                                                  |
+| amounts                   | Sun Specular Power, Reflectivity Amount, ANAM / 100 (opacity), Refraction Magnitude                                                                        |
+| amplitudes                | the three Amplitude Scales, the Displacement Dampener                                                                                                      |
+| water parameters          | Noise Falloff (clamped 1..8191), Reflection Magnitude, Sun Sparkle Magnitude, the scene colour scale                                                       |
+| fog                       | Fog Far (at least 1) and far − near (1e-5 if 0); the exponent max(4 × Fog Amount, 1); the air's fog colours                                                |
+| depth control             | the four Depth Properties                                                                                                                                  |
+| (vertex) noise layers     | the three UV Scales; the wind scrolls them                                                                                                                 |
+
+Specular Brightness (DNAM 42) is copied into the material and handed to no constant. The opacity
+takes part only in the techniques without the scene's depth (there it stands for the water's
+deepness). The scene colours the shader samples (refraction, cube, screen-space reflection) are
+scaled by one constant and the result by another (the original's frame buffer range; ours keeps
+linear colour throughout).
+
+**Rivers' flow normals** (WATR NAM5, observed in the original's flow-map techniques): the flow
+map is read four times on a grid staggered by half a texel (64 texels a cell), each tap blended
+by tent weights `1 − |2 frac(64·u) − 1|` across and down; each tap's direction (red, green
+around 128) turns the NAM5 texture's coordinate into the flow's frame, which moves along it by
+time × the tap's alpha × its own rate (8, 8.48, 10.64 and 9.92 a second, at offsets 0, 0.62,
+0.27, 0), the coordinate being the mesh's texture coordinate × 32 × √(1.01 − flowmap scale);
+the four NAM5 normals' xy (−0.5) are blended by the tents and rescaled by
+`√(w² + (1 − w)²)` per axis, their xy times max(normals' depth share, 0.4), and the result
+takes the noise normal over by the taps' blended blue (the flow's strength). TODO(M13): the
+cell water's own texture coordinates and the composite flow map's placement constants (the
+engine joins the cells' maps into one texture around the player) are unread; ours moves the
+noise layers along the flow.
 
 **Reflections** (`water-reflection.ts`). Every water technique in the cache samples a cube;
 none samples a planar reflection texture. The cube holds what [Water] in the INI reflects, all
@@ -906,10 +935,18 @@ in its own view: the land's quadrants, the tree LOD blocks (each block with a sp
 trees, grown by its largest billboard), the sky and the reflected draws, listed once per scene
 (`GpuScene.reflected`, as the water draws are, `GpuScene.water`) instead of walking every draw
 of every scene for each face. `Renderer.reflectionStats` counts each frame's faces, land
-quadrants, tree blocks, draws and recording time. TODO(M13): several planes
-(uMaxExteriorWaterReflections 2, interiors 4, fExteriorWaterReflectionThreshold 300), interiors
-(ours reflect the sky colours there) and whether the reflection is fogged (ours leaves deferred
-lit objects unfogged).
+quadrants, tree blocks, draws and recording time.
+
+**Cube maps in place of the reflection** (observed in the original, with [Water]
+bUseCubeMapReflections, on by default): water reflects a cube map file instead of a rendered
+cube where its world (WRLD XWEM: the Forebears' Holdout, the Ancestors' Glade, Apocrypha) or
+its interior cell (CELL XWEM: 81 cells, 78 of whose files exist; `node tools/water-info.ts
+--environment`) names one that exists. Interior water without one gets no reflection cube at
+all (ours: the cube reads black, so the reflection colour shows by 1 − reflectivity); outdoors
+without one, the rendered cube. TODO(M13): several planes (the original keeps one cube per
+water height, within 0.01; uMaxExteriorWaterReflections 2, fExteriorWaterReflectionThreshold
+300; ours mirrors the nearest), what the interior mode without a cube binds (ours black) and
+whether the reflection is fogged (ours leaves deferred lit objects unfogged).
 
 **Displacement** (`water-displacement.ts`, `water-displacement-gpu.ts`,
 `shaders/water-displacement.wgsl`): the surface's interactive ripples, as observed in the
