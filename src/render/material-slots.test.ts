@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LOD_LANDSCAPE_NOISE, lightingSlots } from './material-slots.ts';
+import { LOD_LANDSCAPE_NOISE, lightingSlots, missingTextures } from './material-slots.ts';
 
 describe('lightingSlots', () => {
   it('binds an eye’s cube map and mask by Eye_Environment_Mapping alone', () => {
@@ -27,5 +27,34 @@ describe('lightingSlots', () => {
     expect([face[6], face[7]]).toEqual([6, 3]);
     expect(lightingSlots(3, 0, 0)[6]).toBe(3);
     expect(LOD_LANDSCAPE_NOISE).toBe('textures\\terrain\\noise.dds');
+  });
+});
+
+describe('missingTextures', () => {
+  it('gives a missing diffuse and normal map the default normal map', () => {
+    const plain = missingTextures(0, 0x80000101, 0x21);
+    expect(plain.slice(0, 2)).toEqual(['normal', 'normal']);
+    // An environment-mapped material without a mask reflects nothing; its cube is the black one.
+    const env = missingTextures(1, 0x80, 0);
+    expect([env[3], env[4]]).toEqual(['cube', 'none']);
+  });
+
+  it('takes the built-in glow, rim / soft, back light and specular defaults', () => {
+    expect(missingTextures(2, 0, 0x40)[2]).toBe('white');
+    expect(missingTextures(0, 0, 0x2000000)[2]).toBe('normal');
+    expect(missingTextures(0, 0, 0x8000000)[5]).toBe('normal');
+    // Model-space normals with Specular: the specular map in slot 7 is black.
+    expect(missingTextures(0, 0x1001, 0)[5]).toBe('black');
+    // Back lighting wins over the specular map.
+    expect(missingTextures(0, 0x1001, 0x8000000)[5]).toBe('normal');
+  });
+
+  it('gives FaceGen a grey tint, the detail default and a black skin map', () => {
+    const face = missingTextures(4, 0x400, 0x2000000);
+    expect([face[2], face[6], face[7]]).toEqual(['black', 'grey', 'detail']);
+    expect(missingTextures(3, 0x800, 0)[6]).toBe('black');
+    const layered = missingTextures(11, 0, 0x1000000);
+    expect([layered[4], layered[6]]).toEqual(['normal', 'normal']);
+    expect(missingTextures(16, 0x20000, 0)[4]).toBe('normal');
   });
 });

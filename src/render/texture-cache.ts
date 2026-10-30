@@ -18,6 +18,13 @@ export interface DefaultTextures {
   readonly blackCube: GPUTexture;
   /** A FaceGen detail map that leaves the face as it is (64 grey: 3.984375 · 64/255 ≈ 1). */
   readonly blankDetail: GPUTexture;
+  /**
+   * The engine's default normal map (0.5, 0.5, 1, alpha 1: flat, full specular), also what a
+   * lighting material shows for a missing diffuse map (material-slots.ts missingTextures).
+   */
+  readonly defaultNormal: GPUTexture;
+  /** Mid grey (128): the default FaceGen tint. */
+  readonly grey: GPUTexture;
 }
 
 const isCompressed = (format: string): boolean => format.startsWith('bc');
@@ -119,7 +126,9 @@ export class TextureCache {
       black: solid(device, 'default-black', [0, 0, 0, 255]),
       flatNormal: solid(device, 'default-normal', [128, 128, 255, 0]),
       blackCube: solid(device, 'default-cube', [0, 0, 0, 255], 6),
-      blankDetail: solid(device, 'default-detail', [64, 64, 64, 255]),
+      blankDetail: solid(device, 'default-detail', [64, 64, 64, 64]),
+      defaultNormal: solid(device, 'default-normal-map', [128, 128, 255, 255]),
+      grey: solid(device, 'default-grey', [128, 128, 128, 255]),
     };
   }
 

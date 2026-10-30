@@ -83,15 +83,15 @@ const LIGHTING_SLSF1: Record<number, Entry> = {
   15: ['Refraction', 'done', 'refraction.ts'],
   16: [
     'Fire_Refraction',
-    'open',
-    "picks the falloff variant of the refraction's normal pass; that variant's term unread",
+    'done',
+    'refraction.wgsl: its falloff variant, the strength × normal · direction to the viewer',
   ],
   17: ['Eye_Environment_Mapping', 'done', 'lighting.wgsl'],
   18: ['Hair_Soft_Lighting', 'done', 'lighting.wgsl: picks the hair technique (the hair tint)'],
   19: [
     'Screendoor_Alpha_Fade',
-    'open',
-    'a fading shape with it blends in place of the stipple; ours dithers every shape',
+    'done',
+    'lighting.wgsl blendedFade: blended while fading, no shadow mask',
   ],
   20: ['Localmap_Hide_Secret', 'open', 'unread by the local map'],
   21: ['FaceGen_RGB_Tint', 'done', 'lighting.wgsl skin tint'],
@@ -512,9 +512,9 @@ const SUBRECORD_NOTES: Record<string, readonly [Status, string]> = {
     'open',
     "flow normals noise texture (RiverFlow.dds): sampled on the flow map's staggered grid by per-geometry constants that are unread",
   ],
-  'WTHR LNAM': ['open', 'unknown u32 in xEdit (cloud layer count?)'],
-  'WTHR NAM2': ['open', 'unknown in xEdit'],
-  'WTHR NAM3': ['open', 'unknown in xEdit'],
+  'WTHR LNAM': ['done', 'weather.ts: the cloud layer count (29, 4)'],
+  'WTHR NAM2': ['done', 'weather.ts: moon glare colours (FX)'],
+  'WTHR NAM3': ['done', 'weather.ts: sun glare colours (FX)'],
 };
 
 /** Whether a reader names the subrecord (IMAD's channel subrecords are built from an index). */

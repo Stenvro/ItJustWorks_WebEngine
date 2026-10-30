@@ -1,6 +1,8 @@
 // Draws distant trees (tree LOD): billboards from a worldspace's tree atlas, one instance per
 // tree of the loaded tree blocks.
 
+import { sphereVisible } from './frustum.ts';
+import type { Plane } from './frustum.ts';
 import { gbufferTarget } from './gbuffer.ts';
 import type { TreeLodInstance, TreeLodType } from '../formats/lod/lod.ts';
 import { DEPTH_FORMAT, SAMPLE_COUNT } from './scene-renderer.ts';
@@ -13,10 +15,13 @@ const INSTANCE_STRIDE = 20;
 /** A worldspace's tree types and atlas on the GPU. */
 export class GpuTreeTypes {
   readonly bindGroup: GPUBindGroup;
+  /** The largest billboard's width plus height (a block's bound grows by it times the scale). */
+  readonly extent: number;
   readonly #buffer: GPUBuffer;
 
-  constructor(bindGroup: GPUBindGroup, buffer: GPUBuffer) {
+  constructor(bindGroup: GPUBindGroup, buffer: GPUBuffer, extent = 0) {
     this.bindGroup = bindGroup;
+    this.extent = extent;
     this.#buffer = buffer;
   }
 
@@ -25,14 +30,27 @@ export class GpuTreeTypes {
   }
 }
 
-/** The trees of one tree LOD block. */
+/** The trees of one tree LOD block, with a sphere round their positions. */
 export class GpuTreeBlock {
   readonly instances: GPUBuffer;
   readonly count: number;
+  readonly center: readonly [number, number, number];
+  readonly radius: number;
+  /** The largest scale of its trees. */
+  readonly maxScale: number;
 
-  constructor(instances: GPUBuffer, count: number) {
+  constructor(
+    instances: GPUBuffer,
+    count: number,
+    center: readonly [number, number, number] = [0, 0, 0],
+    radius = Infinity,
+    maxScale = 1,
+  ) {
     this.instances = instances;
     this.count = count;
+    this.center = center;
+    this.radius = radius;
+    this.maxScale = maxScale;
   }
 
   destroy(): void {
@@ -128,7 +146,8 @@ export class TreeLodRenderer {
         { binding: 2, resource: atlas.createView() },
       ],
     });
-    return new GpuTreeTypes(bindGroup, buffer);
+    const extent = Math.max(0, ...types.map((type) => type.width + type.height));
+    return new GpuTreeTypes(bindGroup, buffer, extent);
   }
 
   createBlock(trees: readonly TreeLodInstance[]): GpuTreeBlock | undefined {
@@ -148,16 +167,56 @@ export class TreeLodRenderer {
     });
     new Uint8Array(buffer.getMappedRange()).set(new Uint8Array(data));
     buffer.unmap();
-    return new GpuTreeBlock(buffer, trees.length);
+    const bound = treeBound(trees);
+    return new GpuTreeBlock(buffer, trees.length, bound.center, bound.radius, bound.maxScale);
   }
 
-  draw(pass: GPURenderPassEncoder, frameBindGroup: GPUBindGroup, frame: TreeLodFrame): void {
+  /** Draws the blocks inside `planes` (all without planes); returns how many it drew. */
+  draw(
+    pass: GPURenderPassEncoder,
+    frameBindGroup: GPUBindGroup,
+    frame: TreeLodFrame,
+    planes?: readonly Plane[],
+  ): number {
     pass.setPipeline(this.#pipeline);
     pass.setBindGroup(0, frameBindGroup);
     pass.setBindGroup(1, frame.types.bindGroup);
+    let drawn = 0;
     for (const block of frame.blocks) {
+      const radius = block.radius + block.maxScale * frame.types.extent;
+      if (planes && !sphereVisible(planes, block.center, radius)) continue;
       pass.setVertexBuffer(0, block.instances);
       pass.draw(6, block.count);
+      drawn++;
     }
+    return drawn;
   }
+}
+
+/** A sphere round the trees' positions (their billboards' size is added when drawn). */
+export function treeBound(trees: readonly TreeLodInstance[]): {
+  center: [number, number, number];
+  radius: number;
+  maxScale: number;
+} {
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  let maxScale = 0;
+  for (const tree of trees) {
+    for (let i = 0; i < 3; i++) {
+      const v = tree.position[i] ?? 0;
+      min[i] = Math.min(min[i] ?? v, v);
+      max[i] = Math.max(max[i] ?? v, v);
+    }
+    maxScale = Math.max(maxScale, tree.scale);
+  }
+  if (trees.length === 0) return { center: [0, 0, 0], radius: 0, maxScale: 0 };
+  const mid = (i: number): number => ((min[i] ?? 0) + (max[i] ?? 0)) / 2;
+  const center: [number, number, number] = [mid(0), mid(1), mid(2)];
+  let radius = 0;
+  for (const tree of trees) {
+    const [x, y, z] = tree.position;
+    radius = Math.max(radius, Math.hypot(x - center[0], y - center[1], z - center[2]));
+  }
+  return { center, radius, maxScale };
 }

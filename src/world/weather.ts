@@ -6,7 +6,8 @@ import { view } from '../formats/esm/fields.ts';
 import type { GameRecord } from './record-db.ts';
 
 /** What the parsers need of a record. */
-export type WeatherSource = Pick<GameRecord, 'formId' | 'editorId' | 'fields' | 'formIdAt'>;
+export type WeatherSource = Pick<GameRecord, 'formId' | 'editorId' | 'fields' | 'formIdAt'> &
+  Partial<Pick<GameRecord, 'formVersion'>>;
 
 export type Rgb = readonly [number, number, number];
 
@@ -149,14 +150,40 @@ export const cloudTextureField = (layer: number): string =>
 /** Cloud speed byte: 0 → −0.1, 127 → 0, 254 → 0.1 (xEdit). */
 const cloudSpeed = (value: number): number => (value - 127) / 1270;
 
-/** Colours the engine uses when NAM0 is shorter than 17 entries (UESP). */
-const COLOR_DEFAULTS: Partial<Record<number, Rgb>> = {
-  [WeatherColor.fogFar]: [0, 0, 0],
-  [WeatherColor.skyStatics]: [0, 0, 0],
-  [WeatherColor.waterMultiplier]: [1, 1, 1],
-  [WeatherColor.sunGlare]: [1, 1, 1],
-  [WeatherColor.moonGlare]: [1, 1, 1],
-};
+/**
+ * The colours a weather lacks, as the original reads NAM0 (observed in the original): every
+ * colour starts black; a NAM0 of at most twelve colours (192 bytes) gives the far fog the near
+ * fog's colours; a record older than form version 36 has a white water multiplier. NAM3 then
+ * gives the sun glare's four colours and NAM2 the moon glare's (the ten old FX weathers, whose
+ * NAM0 holds fourteen). An effect lighting colour that is all zero takes the sunlight's.
+ */
+function weatherColor(
+  nam0: DataView | undefined,
+  glare: { readonly sun: DataView | undefined; readonly moon: DataView | undefined },
+  formVersion: number | undefined,
+  color: number,
+  t: number,
+): Rgb {
+  const glareData =
+    color === WeatherColor.sunGlare
+      ? glare.sun
+      : color === WeatherColor.moonGlare
+        ? glare.moon
+        : undefined;
+  if (glareData && t * 4 + 4 <= glareData.byteLength) return rgbAt(glareData, t * 4);
+  const offset = color * 16 + t * 4;
+  if (nam0 && offset + 4 <= nam0.byteLength) {
+    if (color === WeatherColor.effectLighting && nam0.getUint32(offset, true) === 0) {
+      return weatherColor(nam0, glare, formVersion, WeatherColor.sunlight, t);
+    }
+    return rgbAt(nam0, offset);
+  }
+  if (color === WeatherColor.fogFar && nam0 && nam0.byteLength <= 192) {
+    return weatherColor(nam0, glare, formVersion, WeatherColor.fogNear, t);
+  }
+  if (color === WeatherColor.waterMultiplier && (formVersion ?? 44) < 36) return [1, 1, 1];
+  return [0, 0, 0];
+}
 
 export function parseWeather(record: WeatherSource): WeatherRecord {
   const { fields } = record;
@@ -175,6 +202,9 @@ export function parseWeather(record: WeatherSource): WeatherRecord {
   const pnam = bytes('PNAM');
   const jnam = bytes('JNAM');
   const disabled = fields.u32('NAM1') ?? 0;
+  // LNAM: how many cloud layers the weather has (29 in every weather with clouds, 4 in the old
+  // FX weathers); layers past it are not drawn.
+  const layerCount = fields.u32('LNAM') ?? CLOUD_LAYERS;
   const clouds = Array.from({ length: CLOUD_LAYERS }, (_, layer): CloudLayer => {
     const speed = (data: DataView | undefined): number =>
       data && layer < data.byteLength ? cloudSpeed(data.getUint8(layer)) : 0;
@@ -189,17 +219,16 @@ export function parseWeather(record: WeatherSource): WeatherRecord {
           ? jnam.getFloat32(layer * 16 + t * 4, true)
           : 1,
       ),
-      enabled: (disabled & (1 << layer)) === 0,
+      enabled: (disabled & (1 << layer)) === 0 && layer < layerCount,
     };
   });
 
   const nam0 = bytes('NAM0');
+  const glare = { sun: bytes('NAM3'), moon: bytes('NAM2') };
   const colors = Array.from({ length: WEATHER_COLORS }, (_, color) =>
-    Array.from({ length: TIMES_OF_DAY }, (_, t): Rgb => {
-      const offset = color * 16 + t * 4;
-      if (nam0 && offset + 4 <= nam0.byteLength) return rgbAt(nam0, offset);
-      return COLOR_DEFAULTS[color] ?? [0, 0, 0];
-    }),
+    Array.from({ length: TIMES_OF_DAY }, (_, t): Rgb =>
+      weatherColor(nam0, glare, record.formVersion, color, t),
+    ),
   );
 
   const fnam = bytes('FNAM');

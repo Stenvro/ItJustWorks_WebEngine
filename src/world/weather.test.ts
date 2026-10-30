@@ -78,13 +78,37 @@ describe('parseWeather', () => {
     expect(weather.clouds[0]?.speed).toEqual([0, 0]);
   });
 
-  it('reads NAM0 colours per time of day and fills the defaults of short tables', () => {
-    const nam0 = new Uint8Array(13 * 16);
+  it('reads NAM0 colours per time of day and fills short tables as the original', () => {
+    const nam0 = new Uint8Array(14 * 16);
     nam0.set([10, 20, 30, 0], WeatherColor.sunlight * 16 + 3 * 4); // night sunlight
-    const weather = parseWeather(record([['NAM0', nam0]]));
-    expect(weather.colors[WeatherColor.sunlight]?.[3]).toEqual([10 / 255, 20 / 255, 30 / 255]);
-    expect(weather.colors[WeatherColor.waterMultiplier]?.[1]).toEqual([1, 1, 1]);
-    expect(weather.colors[WeatherColor.fogFar]?.[1]).toEqual([0, 0, 0]);
+    nam0.set([40, 50, 60, 0], WeatherColor.fogNear * 16 + 1 * 4);
+    nam0.set([1, 2, 3, 0], WeatherColor.effectLighting * 16 + 1 * 4);
+    // The old FX weathers: fourteen colours, form version 35, the glares in NAM3 and NAM2.
+    const old = parseWeather({
+      ...record([
+        ['NAM0', nam0],
+        ['NAM3', new Uint8Array(16).fill(255)],
+        ['NAM2', new Uint8Array([0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0])],
+        ['LNAM', new Uint8Array([4, 0, 0, 0])],
+      ]),
+      formVersion: 35,
+    });
+    expect(old.colors[WeatherColor.sunlight]?.[3]).toEqual([10 / 255, 20 / 255, 30 / 255]);
+    expect(old.colors[WeatherColor.waterMultiplier]?.[1]).toEqual([1, 1, 1]);
+    expect(old.colors[WeatherColor.sunGlare]?.[2]).toEqual([1, 1, 1]);
+    expect(old.colors[WeatherColor.moonGlare]?.[0]).toEqual([0, 0, 1]);
+    // An all-zero effect lighting colour takes the sunlight's.
+    expect(old.colors[WeatherColor.effectLighting]?.[3]).toEqual([10 / 255, 20 / 255, 30 / 255]);
+    expect(old.colors[WeatherColor.effectLighting]?.[1]).toEqual([1 / 255, 2 / 255, 3 / 255]);
+    // Fourteen colours hold the far fog (black); twelve or fewer take the near fog's.
+    expect(old.colors[WeatherColor.fogFar]?.[1]).toEqual([0, 0, 0]);
+    const short = parseWeather(record([['NAM0', nam0.slice(0, 12 * 16)]]));
+    expect(short.colors[WeatherColor.fogFar]?.[1]).toEqual([40 / 255, 50 / 255, 60 / 255]);
+    // A newer record lacking the water multiplier has none (black).
+    expect(short.colors[WeatherColor.waterMultiplier]?.[1]).toEqual([0, 0, 0]);
+    // LNAM: the old FX weathers have four cloud layers.
+    expect(old.clouds[3]?.enabled).toBe(true);
+    expect(old.clouds[4]?.enabled).toBe(false);
   });
 
   it('reads fog, DATA, image spaces and directional ambient', () => {

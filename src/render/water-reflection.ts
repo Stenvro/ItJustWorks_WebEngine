@@ -11,9 +11,14 @@
 // (frame.wgsl reflectionClipped). The faces are layers of a 2D array (+X, −X, +Y, −Y, +Z; no
 // face looks down), each with the matrix the water shader projects a direction with.
 //
-// TODO(M13): unread of the original: the cube's size and how often its faces are redrawn
-// (fCubeMapRefreshRate 0; ours one face a frame, all of them when the plane moves), which water
-// plane it mirrors when several are in view (uMaxExteriorWaterReflections 2,
+// Cost, against the original's: its cube faces are 512 texels a side in half floats with one
+// sample; ours are 256 a side with four samples (as many samples a face). It redraws two faces a
+// frame without a pause; ours one (two while a new plane's faces are due, ReflectionSchedule).
+// Each face draws only what lies inside its own view: the sky, the land's quadrants, the tree
+// LOD blocks, the reflected draws (LOD, sky objects, flagged references; listed once per scene,
+// GpuScene.reflected); Renderer.reflectionStats counts them.
+//
+// TODO(M13): unread of the original: which water plane it mirrors when several are in view (uMaxExteriorWaterReflections 2,
 // fExteriorWaterReflectionThreshold 300; ours the nearest), whether the reflection is fogged
 // (ours leaves the deferred lit objects unfogged) and interiors (ours reflect the sky colours).
 
@@ -91,12 +96,25 @@ export function reflectionLookup(direction: Vec3): { face: number; u: number; v:
 }
 
 /**
- * Which face to redraw this frame: all of them (−1) when the mirrored plane changed or nothing
- * is drawn yet, else one after another.
+ * At most this many faces are redrawn in a frame: the original redraws its cube two faces a
+ * frame (the whole cube every three frames, fCubeMapRefreshRate 0 meaning without a pause).
+ */
+export const REFLECTION_FACES_PER_FRAME_MAX = 2;
+
+/**
+ * Which faces to redraw this frame. In the steady state one face a frame, one after another
+ * (half the original's rate: the faces are mirrored views whose content barely moves between
+ * frames). When the mirrored plane changes, every face is due again and the due faces are
+ * redrawn two a frame (the original's rate) instead of all in one frame, so a new plane costs
+ * no frame more than the original's refresh does.
  */
 export class ReflectionSchedule {
   #height: number | undefined;
   #next = 0;
+  /** Faces due again (drawn for another plane). */
+  readonly #due = new Set<number>();
+  /** Faces drawn at least once (a face never drawn holds nothing to show). */
+  readonly #filled = new Set<number>();
 
   /** The faces to draw for a plane at `height` (undefined: no reflection this frame). */
   facesFor(height: number | undefined): readonly number[] {
@@ -106,11 +124,27 @@ export class ReflectionSchedule {
     }
     if (this.#height === undefined || Math.abs(this.#height - height) > 1) {
       this.#height = height;
-      this.#next = 0;
-      return Array.from({ length: REFLECTION_FACES }, (_, i) => i);
+      for (let face = 0; face < REFLECTION_FACES; face++) this.#due.add(face);
     }
-    const face = this.#next;
-    this.#next = (this.#next + 1) % REFLECTION_FACES;
-    return [face];
+    const faces: number[] = [];
+    if (this.#due.size > 0) {
+      for (const face of this.#due) {
+        if (faces.length >= REFLECTION_FACES_PER_FRAME_MAX) break;
+        faces.push(face);
+      }
+    } else {
+      faces.push(this.#next);
+    }
+    for (const face of faces) {
+      this.#due.delete(face);
+      this.#filled.add(face);
+      this.#next = (face + 1) % REFLECTION_FACES;
+    }
+    return faces;
+  }
+
+  /** Whether every face holds a drawing (the water shows the reflection only then). */
+  get complete(): boolean {
+    return this.#filled.size === REFLECTION_FACES;
   }
 }

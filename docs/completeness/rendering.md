@@ -20,9 +20,9 @@ not sample, flags xEdit and nif.xml call unused).
 
 | Part       | Items | Done | Open | n/a |
 | ---------- | ----- | ---- | ---- | --- |
-| Systems    | 79    | 68   | 11   | 0   |
-| Data sweep | 463   | 414  | 11   | 38  |
-| **Total**  | 542   | 482  | 22   | 38  |
+| Systems    | 79    | 69   | 10   | 0   |
+| Data sweep | 463   | 419  | 6    | 38  |
+| **Total**  | 542   | 488  | 16   | 38  |
 
 Done in round 7, part B (scene graph, physics-driven, LOD): the Havok float slots. Behavior
 graphs now blend their clips' float tracks (a slot's value from the clips that have a track
@@ -37,6 +37,18 @@ the mesh per particle, moved as a rigid body (gravity, damping, bouncing and sli
 ground under the effect by its body's restitution and friction); the physics world's shapes
 are a new open row. Lag bones on models worn on a skeleton (the Daedric armour's and the
 spriggans' trailing effects). NiBSBoneLODController is an old export's: n/a.
+
+Done in round 8, part A, all observed in the original: the built-in texture each slot of each
+lighting material takes when its texture is missing (a missing diffuse map shows the default
+normal map's lavender; glow maps white, FaceGen tint grey, ...); Screendoor_Alpha_Fade's shapes
+blend while they fade, without the shadow mask; the refraction normal pass's terms and
+Fire_Refraction's falloff variant (read from the shader cache's utility techniques, which carry
+their technique ids in the cache's entry headers); WTHR LNAM (the cloud layer count) and NAM3 /
+NAM2 (the sun and moon glare colours of the old FX weathers), with NAM0's missing colours filled
+as the original does. The water reflection's cost against the original's cube (512² half-float
+faces, two redrawn a frame): ours redraws one 256² face a frame and a new plane's faces two a
+frame (never all five at once), culls the tree LOD blocks per face and lists each scene's
+reflected and water draws once, with per-face counts in `Renderer.reflectionStats`.
 
 Done in round 7, part A (lights, shader terms, flags), all observed in the original: a
 geometry's light list names lights in the order they joined the scene (never by strength), shadow
@@ -93,12 +105,16 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 ## Next biggest open items
 
 1. **Shader terms only the shader cache holds**: the volumetric generate shader's scattering, its
-   blur and noise; the map overlay's weights and snow mask (inferred now).
+   blur and noise; the map overlay's weights and snow mask (inferred now). The cache's entries
+   carry their technique ids (the utility and water techniques are identified by them); the
+   image-space shaders at its end, one per technique, are still to be matched.
 2. **LOD culled by rooms and portals** (DLC1HunterHQWorld only); mesh particles against the
    physics world's shapes; the alternate textures naming a shape the model lacks.
-3. **IBLF lens flare** (its textures are Effects\LensFlares\Ramps.dds and Masks.dds);
-   **WATR NAM5**; the water constants' sources and interiors' reflection; Fire_Refraction's
-   normal falloff; land's lists of seven per quad; Screendoor_Alpha_Fade's blended fade.
+3. **IBLF lens flare** (its textures are Effectsensflaresramps.dds and Masks.dds);
+   **WATR NAM5** (read at load into the water form as a texture; the per-geometry constants that
+   place it on the flow map unread); the water constants' sources and interiors' reflection;
+   land's lists of seven per quad; focus maps of their actor alone; the character light's
+   luminance source; the underwater colour.
 4. Geometry decals on rigid worn shapes (ours project).
 
 ## Systems
@@ -150,11 +166,11 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 | 43  | Lightning: procedural bolts and the flash                          | done   | lightning.ts                                                                                                                                                                           |
 | 44  | Precipitation (SPGD rain and snow)                                 | done   | precipitation.ts                                                                                                                                                                       |
 | 45  | Weather transitions                                                | done   | sky-state.ts                                                                                                                                                                           |
-| 46  | Water: the reflection pass (exteriors)                             | done   | water-reflection.ts: the cube the original's water shaders sample (no planar pass in its cache)                                                                                        |
+| 46  | Water: the reflection pass (exteriors)                             | done   | water-reflection.ts: the cube the original's water shaders sample; a face a frame, a new plane's faces two a frame                                                                     |
 | 47  | Water: displacement (wading, splashes, projectiles, rain)          | done   | water-displacement.ts                                                                                                                                                                  |
 | 48  | Water: colours and depth properties                                | done   | water.wgsl                                                                                                                                                                             |
 | 49  | Water: river flow maps                                             | done   | flow-map.ts                                                                                                                                                                            |
-| 50  | Water: the original shader's exact terms                           | open   | terms read from the shader cache (water.wgsl); which WATR value feeds which constant inferred                                                                                          |
+| 50  | Water: the original shader's exact terms                           | open   | terms read from the shader cache (water.wgsl); which WATR value feeds which constant inferred (the material setup unread)                                                              |
 | 51  | Static decals (TXST placed in cells)                               | done   | decals.ts                                                                                                                                                                              |
 | 52  | Impact decals (IPCT)                                               | done   | decal-projection.ts                                                                                                                                                                    |
 | 53  | Skinned decals on actors                                           | done   | skinned-decal.ts, combat-impacts.ts (the original's limits per actor, frame and in all)                                                                                                |
@@ -167,7 +183,7 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 | 60  | First person: particles                                            | done   | particle.wgsl: the first-person instance's systems in its view and band                                                                                                                |
 | 61  | Eye reflection centres                                             | done   | common.wgsl eyeNormal: the centre by the vertex's eye data; reflection and ambient about it                                                                                            |
 | 62  | Character light: its luminance source                              | open   | ours from the directional ambient                                                                                                                                                      |
-| 63  | Default texture per slot for a missing file                        | open   | ours: white, flat normal, black; the original's defaults are named (BSShader_DefNormalMap, DefaultWhiteMap, DefaultGreyMap, BSShader_DefHeightMap, ...), which slot takes which unread |
+| 63  | Default texture per slot for a missing file                        | done   | material-slots.ts missingTextures: the built-in texture each slot of each material takes (diffuse, normal, rim / soft, back light: the default normal map; glows white; the tint grey) |
 | 64  | Grass                                                              | done   | grass.ts                                                                                                                                                                               |
 | 65  | Terrain texture blending                                           | done   | terrain.wgsl                                                                                                                                                                           |
 | 66  | Directional materials (snow, moss, ice on statics)                 | done   | material-object.ts                                                                                                                                                                     |
@@ -180,8 +196,8 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 | 73  | The dragon-riding camera                                           | done   | camera-states.ts DragonCamera (target lock list order and buttons TODO(M13))                                                                                                           |
 | 74  | Enchantment glow and effect shaders on references                  | done   | actor-effects.ts                                                                                                                                                                       |
 | 75  | The map's relief overlay on its LOD land                           | done   | lighting.wgsl worldMapRelief, world-map-view.ts                                                                                                                                        |
-| 76  | Shader terms only the shader cache holds (volumetric, map overlay) | open   | the cache is readable (water read); the volumetric and map-overlay techniques not yet found in it                                                                                      |
-| 77  | Water: the reflection in interiors and of several planes           | open   | interiors reflect the sky colours; one plane (the nearest), the original up to 2 / 4 by height                                                                                         |
+| 76  | Shader terms only the shader cache holds (volumetric, map overlay) | open   | the cache's image-space shaders (its last techniques, one shader each) not yet matched to the volumetric and overlay passes                                                            |
+| 77  | Water: the reflection in interiors and of several planes           | open   | interiors reflect the sky colours; one plane (the nearest), the original a cube per reflecting water, six redrawn a frame at most                                                      |
 | 78  | Havok float slots: hkVis visibility, hkPhoneme                     | done   | behavior-runtime.ts float slot blocks, skeleton.ts showBySlots; hkPhoneme: no skeleton has the slots                                                                                   |
 | 79  | Mesh particles' Havok bodies against the world's shapes            | open   | particle-sim.ts: gravity, damping, the ground under the effect; not the physics world's shapes                                                                                         |
 
@@ -222,10 +238,10 @@ entry's 3D index, is unread.
 | SLSF1 Parallax (0x800)                        | 11    | done   | with shader type 3                                                                    |
 | SLSF1 Model_Space_Normals (0x1000)            | 4188  | done   | lighting.wgsl                                                                         |
 | SLSF1 Refraction (0x8000)                     | 362   | done   | refraction.ts                                                                         |
-| SLSF1 Fire_Refraction (0x10000)               | 252   | open   | picks the falloff variant of the refraction's normal pass; that variant's term unread |
+| SLSF1 Fire_Refraction (0x10000)               | 252   | done   | refraction.wgsl: its falloff variant, the strength × normal · direction to the viewer |
 | SLSF1 Eye_Environment_Mapping (0x20000)       | 3320  | done   | lighting.wgsl                                                                         |
 | SLSF1 Hair_Soft_Lighting (0x40000)            | 11070 | done   | lighting.wgsl: picks the hair technique (the hair tint)                               |
-| SLSF1 Screendoor_Alpha_Fade (0x80000)         | 10    | open   | a fading shape with it blends in place of the stipple; ours dithers every shape       |
+| SLSF1 Screendoor_Alpha_Fade (0x80000)         | 10    | done   | lighting.wgsl blendedFade: blended while fading, no shadow mask                       |
 | SLSF1 FaceGen_RGB_Tint (0x200000)             | 1684  | done   | lighting.wgsl skin tint                                                               |
 | SLSF1 Own_Emit (0x400000)                     | 74833 | done   | lighting.wgsl                                                                         |
 | SLSF1 Remappable_Textures (0x2000000)         | 73726 | n/a    | the lighting technique never reads it                                                 |
@@ -727,14 +743,14 @@ entry's 3D index, is unread.
 | JNAM | 108  | done   | read                                      |
 | K0TX | 40   | done   | read                                      |
 | L0TX | 92   | done   | read                                      |
-| LNAM | 108  | open   | unknown u32 in xEdit (cloud layer count?) |
+| LNAM | 108  | done   | weather.ts: the cloud layer count (29, 4) |
 | MNAM | 108  | done   | read                                      |
 | MODL | 38   | done   | read                                      |
 | MODT | 38   | n/a    | texture hashes                            |
 | NAM0 | 108  | done   | read                                      |
 | NAM1 | 108  | done   | read                                      |
-| NAM2 | 10   | open   | unknown in xEdit                          |
-| NAM3 | 10   | open   | unknown in xEdit                          |
+| NAM2 | 10   | done   | weather.ts: moon glare colours (FX)       |
+| NAM3 | 10   | done   | weather.ts: sun glare colours (FX)        |
 | NNAM | 108  | done   | read                                      |
 | PNAM | 108  | done   | read                                      |
 | QNAM | 108  | done   | read                                      |

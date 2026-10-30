@@ -117,7 +117,7 @@ import { CELL_SIZE } from '../world/land.ts';
 export { GpuModel, type ModelAddon };
 export { flatAmbient, type PointLight, type SceneFog, type SceneLighting };
 import { gbufferTarget } from './gbuffer.ts';
-import { materialTextures } from './material-slots.ts';
+import { materialTextures, missingTextures } from './material-slots.ts';
 import { projectedUVParams, type MaterialObject } from '../world/material-object.ts';
 import type { WaterType } from '../world/water.ts';
 
@@ -866,6 +866,12 @@ interface Draw {
   readonly fade?: FadeGroup;
   /** Its instance is reflected by the water (ModelInstance.reflected). */
   readonly reflected?: boolean;
+  /**
+   * Screendoor_Alpha_Fade (observed in the original): an opaque shape with it fades by blending
+   * rather than the stipple; while its fade is under way this blended copy is drawn in the
+   * blended pass instead (lighting.wgsl blendedFade).
+   */
+  readonly fadeBlend?: GpuPart;
 }
 
 /**
@@ -1243,6 +1249,8 @@ export class GpuScene {
   #bound: SceneBound | null = null;
   #boundStale = true;
   #shadowCasters: Draw[] | undefined;
+  #reflected: Draw[] | undefined;
+  #water: Draw[] | undefined;
 
   constructor(
     draws: readonly Draw[],
@@ -1308,6 +1316,26 @@ export class GpuScene {
     );
     this.#shadowCasters = casters;
     return casters;
+  }
+
+  /**
+   * The opaque draws the water reflects (water-reflection.ts): the sky's, object and land LOD
+   * and the references reflected by the water; picked once, so the reflection pass does not walk
+   * every draw of the scene for each face.
+   */
+  get reflected(): readonly Draw[] {
+    this.#reflected ??= this.draws.filter(
+      (draw) =>
+        draw.part.pass === 'opaque' &&
+        (draw.sky || draw.reflected === true || isLod(draw.part.part.material)),
+    );
+    return this.#reflected;
+  }
+
+  /** Its water draws (the reflected plane is chosen among them each frame). */
+  get water(): readonly Draw[] {
+    this.#water ??= this.draws.filter((draw) => draw.part.pass === 'water');
+    return this.#water;
   }
 
   /** A draw's bounding sphere moved: the scene's bound is worked out again when next asked. */
@@ -1441,6 +1469,16 @@ function graphDraw(instance: ModelInstance): GraphDraw | undefined {
   return instance.graph && sequences
     ? { player: instance.graph, sequences, animation: instance.model.animation }
     : undefined;
+}
+
+/** NiAlphaProperty flags of plain blending: on, source alpha, one minus source alpha. */
+const ALPHA_BLEND_OVER = 1 | (6 << 1) | (7 << 5);
+/** SLSF1 Screendoor_Alpha_Fade: the shape fades by blending (Draw.fadeBlend). */
+const SLSF1_SCREENDOOR_ALPHA_FADE = 0x80000;
+
+/** Whether a draw is fading by blending this frame (Draw.fadeBlend). */
+function blendFading(draw: Draw): boolean {
+  return draw.fadeBlend !== undefined && (draw.fade?.level ?? 0) > 0;
 }
 
 function blendState(alpha: AlphaState | undefined): GPUBlendState | undefined {
@@ -1730,6 +1768,7 @@ export class SceneRenderer {
   readonly #pipelines = new Map<string, GPURenderPipeline>();
   /** Second passes of multi-pass directional materials, per part and material. */
   readonly #passParts = new WeakMap<GpuPart, Map<GpuDirectionalMaterial, GpuPart>>();
+  readonly #fadeBlendParts = new WeakMap<GpuPart, GpuPart>();
   readonly #fallbackVertices: GPUBuffer;
   /** The last frame's palettes of scenes without skinned draws (never read). */
   readonly #noPreviousBones: GPUBuffer;
@@ -2765,6 +2804,7 @@ export class SceneRenderer {
           }
         }
         const ranges = visibleRanges(part.part, instance.partitionVisible);
+        const fadeBlend = fadeGroup ? this.#fadeBlendPart(part) : undefined;
         const draw: Draw = {
           part,
           uniformOffset: offset,
@@ -2780,6 +2820,7 @@ export class SceneRenderer {
           ...(firstPerson && { firstPerson }),
           ...(fadeGroup && { fade: fadeGroup }),
           ...(instance.reflected === true && { reflected: true }),
+          ...(fadeBlend && { fadeBlend }),
         };
         draws.push(draw);
         if (fadeGroup) {
@@ -3706,7 +3747,7 @@ export class SceneRenderer {
     for (const scene of scenes) {
       if (!sceneInside(this.#frame.planes, scene)) continue;
       for (const draw of scene.draws) {
-        if (draw.part.pass === 'opaque' && this.#visible(draw)) {
+        if (draw.part.pass === 'opaque' && !blendFading(draw) && this.#visible(draw)) {
           this.#drawPart(pass, scene, draw, state);
         }
       }
@@ -3716,21 +3757,24 @@ export class SceneRenderer {
 
   /**
    * The water's reflection (water-reflection.ts) of the current frame (useFrame): the sky's
-   * objects, object LOD and the references reflected by the water, of the opaque draws.
+   * objects, object LOD and the references reflected by the water, of the opaque draws. Returns
+   * how many it drew.
    */
-  drawReflected(pass: GPURenderPassEncoder, scenes: Iterable<GpuScene>): void {
+  drawReflected(pass: GPURenderPassEncoder, scenes: Iterable<GpuScene>): number {
     pass.setBindGroup(0, this.#frame.bindGroup);
     pass.setVertexBuffer(1, this.#fallbackVertices);
     const state = passState();
+    let count = 0;
     for (const scene of scenes) {
       if (!sceneInside(this.#frame.planes, scene)) continue;
-      for (const draw of scene.draws) {
-        if (draw.part.pass !== 'opaque') continue;
-        if (!draw.sky && draw.reflected !== true && !isLod(draw.part.part.material)) continue;
-        if (this.#visible(draw)) this.#drawPart(pass, scene, draw, state);
+      for (const draw of scene.reflected) {
+        if (!this.#visible(draw)) continue;
+        this.#drawPart(pass, scene, draw, state);
+        count++;
       }
     }
     this.#flushLights(scenes);
+    return count;
   }
 
   /**
@@ -3741,8 +3785,8 @@ export class SceneRenderer {
     let best: number | undefined;
     let bestDistance = Infinity;
     for (const scene of scenes) {
-      for (const draw of scene.draws) {
-        if (draw.part.pass !== 'water' || !this.#visible(draw)) continue;
+      for (const draw of scene.water) {
+        if (!this.#visible(draw)) continue;
         const dx = draw.center[0] - camera[0];
         const dy = draw.center[1] - camera[1];
         const dz = draw.center[2] - camera[2];
@@ -3967,8 +4011,8 @@ export class SceneRenderer {
     pass.setBindGroup(3, this.#waterFrameBindGroup);
     pass.setVertexBuffer(1, this.#fallbackVertices);
     for (const scene of scenes) {
-      for (const draw of scene.draws) {
-        if (draw.part.pass !== 'water' || !this.#visible(draw)) continue;
+      for (const draw of scene.water) {
+        if (!this.#visible(draw)) continue;
         const type = draw.water ?? this.defaultWater;
         if (!type) continue;
         const { part } = draw;
@@ -4038,7 +4082,8 @@ export class SceneRenderer {
     for (const scene of scenes) {
       const draws = sceneInside(this.#frame.planes, scene) ? scene.draws : NO_DRAWS;
       for (const draw of draws) {
-        if (draw.part.pass !== 'transparent' || !this.#visible(draw)) continue;
+        if (draw.part.pass !== 'transparent' && !blendFading(draw)) continue;
+        if (!this.#visible(draw)) continue;
         // Sky objects behind everything, the largest (farthest) first.
         const behind = draw.sky ? SKY_DISTANCE + draw.radius : distance(draw.center);
         transparent.push({ scene, draw, distance: behind });
@@ -4054,7 +4099,8 @@ export class SceneRenderer {
     for (const item of transparent) {
       if (item.draw) {
         pass.setVertexBuffer(1, this.#fallbackVertices);
-        this.#drawPart(pass, item.scene, item.draw);
+        const fadeBlend = blendFading(item.draw) ? item.draw.fadeBlend : undefined;
+        this.#drawPart(pass, item.scene, fadeBlend ? { ...item.draw, part: fadeBlend } : item.draw);
         continue;
       }
       const { system, uniformOffset, first, count } = item.particles;
@@ -4426,6 +4472,39 @@ export class SceneRenderer {
   }
 
   /**
+   * The blended copy of an opaque lighting part with Screendoor_Alpha_Fade (Draw.fadeBlend),
+   * drawn over the scene by its alpha (source alpha, one minus source alpha; its alpha test
+   * kept); cached per part.
+   */
+  #fadeBlendPart(base: GpuPart): GpuPart | undefined {
+    const material = base.part.material;
+    if (
+      base.pass !== 'opaque' ||
+      material?.kind !== 'lighting' ||
+      (material.flags1 & SLSF1_SCREENDOOR_ALPHA_FADE) === 0
+    ) {
+      return undefined;
+    }
+    let part = this.#fadeBlendParts.get(base);
+    if (!part) {
+      const alpha: AlphaState = {
+        flags: ((base.part.alpha?.flags ?? 0) & ~0x1ff) | ALPHA_BLEND_OVER,
+        threshold: base.part.alpha?.threshold ?? 0,
+      };
+      const model: ModelPart = { ...base.part, alpha };
+      part = {
+        ...base,
+        part: model,
+        pipeline: this.#pipeline(model, blendState(alpha)),
+        pass: 'transparent',
+        shadowPipeline: undefined,
+      };
+      this.#fadeBlendParts.set(base, part);
+    }
+    return part;
+  }
+
+  /**
    * The second pass of a multi-pass directional material over a part: the part's geometry
    * with the material's shader (opaque lighting parts only, like the engine's
    * BSMultiIndexTriShape); cached per part and material.
@@ -4605,6 +4684,28 @@ export class SceneRenderer {
           ])
         : [undefined, undefined, undefined];
     const cube = env?.depthOrArrayLayers === 6 ? env : defaults.blackCube;
+    // A lighting material's missing textures take the engine's built-in ones (missingTextures).
+    const missing =
+      material?.kind === 'lighting'
+        ? missingTextures(material.shaderType, material.flags1, material.flags2)
+        : undefined;
+    const builtIn = (binding: number, fallback: GPUTexture): GPUTexture => {
+      switch (missing?.[binding]) {
+        case 'normal':
+          return defaults.defaultNormal;
+        case 'white':
+          return defaults.white;
+        case 'grey':
+          return defaults.grey;
+        case 'detail':
+          return defaults.blankDetail;
+        case 'black':
+        case 'none':
+          return defaults.black;
+        default:
+          return fallback;
+      }
+    };
 
     const clampMode = material?.kind === 'effect' ? material.textureClampMode & 3 : 3;
     // A few meshes name a cube map in a 2D slot (e.g. an env mask): those slots get defaults.
@@ -4615,27 +4716,30 @@ export class SceneRenderer {
       layout: this.#materialLayout,
       entries: [
         { binding: 0, resource: this.#samplers[clampMode] ?? this.#repeatSampler },
-        { binding: 1, resource: (flat(diffuse) ?? defaults.white).createView() },
-        { binding: 2, resource: (flat(normal) ?? defaults.flatNormal).createView() },
+        { binding: 1, resource: (flat(diffuse) ?? builtIn(0, defaults.white)).createView() },
+        {
+          binding: 2,
+          resource: (flat(normal) ?? builtIn(1, defaults.flatNormal)).createView(),
+        },
         {
           binding: 3,
           resource: (
-            flat(glow) ?? (material?.kind === 'effect' ? defaults.white : defaults.black)
+            flat(glow) ??
+            (material?.kind === 'effect' ? defaults.white : builtIn(2, defaults.black))
           ).createView(),
         },
         { binding: 4, resource: cube.createView({ dimension: 'cube' }) },
-        { binding: 5, resource: (flat(envMask) ?? defaults.white).createView() },
-        // Missing back light, rim / soft light and layer maps are black (an empty slot).
-        { binding: 6, resource: (flat(slot7) ?? defaults.black).createView() },
-        { binding: 7, resource: (flat(slot6) ?? defaults.black).createView() },
+        { binding: 5, resource: (flat(envMask) ?? builtIn(4, defaults.white)).createView() },
+        { binding: 6, resource: (flat(slot7) ?? builtIn(5, defaults.black)).createView() },
+        { binding: 7, resource: (flat(slot6) ?? builtIn(6, defaults.black)).createView() },
         { binding: 8, resource: (flat(projectedDiffuse) ?? defaults.white).createView() },
         {
           binding: 9,
           resource: (flat(projectedNormalDetail) ?? defaults.flatNormal).createView(),
         },
         { binding: 10, resource: (flat(projectedNoise) ?? defaults.black).createView() },
-        // A missing detail map leaves the face as it is (the engine's blank detail map).
-        { binding: 11, resource: (flat(detail) ?? defaults.blankDetail).createView() },
+        // A missing detail map leaves the face as it is (the engine's default detail map).
+        { binding: 11, resource: (flat(detail) ?? builtIn(7, defaults.blankDetail)).createView() },
       ],
     });
   }

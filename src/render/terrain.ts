@@ -275,18 +275,21 @@ export class TerrainRenderer {
     frameBindGroup: GPUBindGroup,
     cells: Iterable<GpuTerrainCell>,
     planes: readonly Plane[],
-  ): void {
+  ): number {
     pass.setPipeline(this.#pipeline);
     pass.setBindGroup(0, frameBindGroup);
     pass.setIndexBuffer(this.#indices, 'uint16');
+    let drawn = 0;
     for (const cell of cells) {
       for (const quadrant of cell.quadrants) {
         if (!sphereVisible(planes, quadrant.center, quadrant.radius)) continue;
         pass.setBindGroup(1, quadrant.bindGroup);
         pass.setVertexBuffer(0, quadrant.vertices);
         pass.drawIndexed(this.#indexCount);
+        drawn++;
       }
     }
+    return drawn;
   }
 
   /** Draws the cells into a shadow cascade (bind group with the cascade's dynamic offset). */
