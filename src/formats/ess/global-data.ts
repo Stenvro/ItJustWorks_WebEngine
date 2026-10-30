@@ -4,7 +4,7 @@
 // papyrus.ts, anim objects, timer, synchronised animations, main). Reference ids are resolved
 // with the save's form id array. Platform-independent.
 
-import { EssReader, resolveRefId, type RawRefId } from './ess-reader.ts';
+import { essReader, resolveRefId, type EssSource, type RawRefId } from './ess-reader.ts';
 
 /** The global data types by number (UESP). */
 export const GLOBAL_DATA_TYPES: Readonly<Record<number, string>> = {
@@ -58,8 +58,8 @@ export interface MiscStat {
   readonly value: number;
 }
 
-export function readMiscStats(data: Uint8Array): MiscStat[] {
-  const reader = new EssReader(data);
+export function readMiscStats(data: EssSource): MiscStat[] {
+  const reader = essReader(data);
   const count = reader.u32();
   const stats: MiscStat[] = [];
   for (let i = 0; i < count; i++) {
@@ -75,10 +75,12 @@ export interface PlayerLocation {
   readonly coordY: number;
   readonly worldspace2: number;
   readonly position: [number, number, number];
+  /** A byte saves from form version 73 add (UESP: unknown); undefined in older saves. */
+  readonly unknown?: number;
 }
 
-export function readPlayerLocation(data: Uint8Array, resolve: RefIdResolver): PlayerLocation {
-  const reader = new EssReader(data);
+export function readPlayerLocation(data: EssSource, resolve: RefIdResolver): PlayerLocation {
+  const reader = essReader(data);
   return {
     nextObjectId: reader.u32(),
     worldspace1: resolve(reader.refId()),
@@ -86,6 +88,7 @@ export function readPlayerLocation(data: Uint8Array, resolve: RefIdResolver): Pl
     coordY: reader.i32(),
     worldspace2: resolve(reader.refId()),
     position: reader.vec3(),
+    ...(reader.remaining > 0 && { unknown: reader.u8() }),
   };
 }
 
@@ -96,8 +99,8 @@ export interface TesData {
   readonly unknown2: readonly number[];
 }
 
-export function readTes(data: Uint8Array, resolve: RefIdResolver): TesData {
-  const reader = new EssReader(data);
+export function readTes(data: EssSource, resolve: RefIdResolver): TesData {
+  const reader = essReader(data);
   const unknown0: { formId: number; unknown: number }[] = [];
   const count0 = reader.vsval();
   for (let i = 0; i < count0; i++) {
@@ -112,8 +115,8 @@ export function readTes(data: Uint8Array, resolve: RefIdResolver): TesData {
   return { unknown0, unknown1, unknown2 };
 }
 
-export function readGlobalVariables(data: Uint8Array, resolve: RefIdResolver): Map<number, number> {
-  const reader = new EssReader(data);
+export function readGlobalVariables(data: EssSource, resolve: RefIdResolver): Map<number, number> {
+  const reader = essReader(data);
   const globals = new Map<number, number>();
   const count = reader.vsval();
   for (let i = 0; i < count; i++) globals.set(resolve(reader.refId()), reader.f32());
@@ -141,8 +144,8 @@ export interface CreatedObjects {
   readonly poisons: readonly CreatedEnchantment[];
 }
 
-export function readCreatedObjects(data: Uint8Array, resolve: RefIdResolver): CreatedObjects {
-  const reader = new EssReader(data);
+export function readCreatedObjects(data: EssSource, resolve: RefIdResolver): CreatedObjects {
+  const reader = essReader(data);
   const table = (): CreatedEnchantment[] => {
     const count = reader.vsval();
     const out: CreatedEnchantment[] = [];
@@ -180,10 +183,10 @@ export interface ImageSpaceEffect {
 }
 
 export function readEffects(
-  data: Uint8Array,
+  data: EssSource,
   resolve: RefIdResolver,
 ): { effects: ImageSpaceEffect[]; unknown1: number; unknown2: number } {
-  const reader = new EssReader(data);
+  const reader = essReader(data);
   const count = reader.vsval();
   const effects: ImageSpaceEffect[] = [];
   for (let i = 0; i < count; i++) {
@@ -213,8 +216,8 @@ export interface WeatherData {
   readonly rest: Uint8Array;
 }
 
-export function readWeather(data: Uint8Array, resolve: RefIdResolver): WeatherData {
-  const reader = new EssReader(data);
+export function readWeather(data: EssSource, resolve: RefIdResolver): WeatherData {
+  const reader = essReader(data);
   return {
     climate: resolve(reader.refId()),
     weather: resolve(reader.refId()),
@@ -230,10 +233,10 @@ export function readWeather(data: Uint8Array, resolve: RefIdResolver): WeatherDa
 }
 
 export function readAudio(
-  data: Uint8Array,
+  data: EssSource,
   resolve: RefIdResolver,
 ): { unknown: number; tracks: number[]; music: number } {
-  const reader = new EssReader(data);
+  const reader = essReader(data);
   const unknown = resolve(reader.refId());
   const count = reader.vsval();
   const tracks: number[] = [];
@@ -242,10 +245,10 @@ export function readAudio(
 }
 
 export function readSkyCells(
-  data: Uint8Array,
+  data: EssSource,
   resolve: RefIdResolver,
 ): { first: number; second: number }[] {
-  const reader = new EssReader(data);
+  const reader = essReader(data);
   const count = reader.vsval();
   const cells: { first: number; second: number }[] = [];
   for (let i = 0; i < count; i++) {
@@ -255,10 +258,10 @@ export function readSkyCells(
 }
 
 export function readAnimObjects(
-  data: Uint8Array,
+  data: EssSource,
   resolve: RefIdResolver,
 ): { reference: number; animObject: number; unknown: number }[] {
-  const reader = new EssReader(data);
+  const reader = essReader(data);
   const count = reader.u32();
   const objects: { reference: number; animObject: number; unknown: number }[] = [];
   for (let i = 0; i < count; i++) {
@@ -271,8 +274,8 @@ export function readAnimObjects(
   return objects;
 }
 
-export function readTimer(data: Uint8Array): { unknown1: number; unknown2: number } {
-  const reader = new EssReader(data);
+export function readTimer(data: EssSource): { unknown1: number; unknown2: number } {
+  const reader = essReader(data);
   return { unknown1: reader.u32(), unknown2: reader.u32() };
 }
 
@@ -283,10 +286,10 @@ export interface SynchronizedAnimation {
 }
 
 export function readSynchronizedAnimations(
-  data: Uint8Array,
+  data: EssSource,
   resolve: RefIdResolver,
 ): SynchronizedAnimation[] {
-  const reader = new EssReader(data);
+  const reader = essReader(data);
   const count = reader.u32();
   const out: SynchronizedAnimation[] = [];
   for (let i = 0; i < count; i++) {

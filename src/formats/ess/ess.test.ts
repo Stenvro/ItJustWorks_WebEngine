@@ -146,6 +146,7 @@ describe('global data', () => {
       coordY: 2,
       worldspace2: 0x3c,
       position: [1, 2, 3],
+      unknown: 0,
     });
     expect(
       readTes(

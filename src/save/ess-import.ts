@@ -33,7 +33,11 @@ import {
 } from '../formats/ess/papyrus.ts';
 import type { SavedInstance } from '../scripting/papyrus-vm.ts';
 import { GameState, type ActorValueState } from '../scripting/runtime/game-state.ts';
-import { gameStateData, type RuntimeSave } from '../scripting/runtime/runtime-save.ts';
+import {
+  gameStateData,
+  type RuntimeSave,
+  type SavedUpdate,
+} from '../scripting/runtime/runtime-save.ts';
 import type { Placement } from '../scripting/runtime/runtime.ts';
 import { ObjectHandle, PapyrusArray, type Value } from '../scripting/values.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
@@ -164,6 +168,8 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   const state = new GameState();
   const stats = new Map<string, number>();
   const inventoryDeltas = new Map<number, Map<number, number>>();
+  const formListAdded = new Map<number, number[]>();
+  const updates: SavedUpdate[] = [];
 
   // Global variables, the clock.
   const globals = globalData(ess, 3);
@@ -274,6 +280,15 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     } else if (entry.type === 38 && flags & ChangeBase.last) {
       state.location(formId).cleared = true;
       state.location(formId).everCleared = true;
+      applied |= ChangeBase.last;
+    } else if (form.base?.formListAdded) {
+      // FLST: the forms scripts added (AddForm), in the order they were added.
+      const added: number[] = [];
+      for (const item of form.base.formListAdded) {
+        const id = ours(item);
+        if (id !== undefined && id !== 0) added.push(id);
+      }
+      formListAdded.set(formId, added);
       applied |= ChangeBase.last;
     }
     if (form.formFlags !== undefined && entry.type > 5) applied |= CHANGE_FORM_FLAGS;
@@ -447,12 +462,35 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     try {
       const papyrus = readPapyrus(papyrusData, ess.header.version >= 12);
       instances = scriptInstances(papyrus, resolve, ours, skips);
+      // The update registrations, each with the time left until it fires. The original saves
+      // the time to send relative to the VM's clock, which the saves read keep at 0 (the
+      // timer table): so the time is what is left (TODO(M13): confirmed on a save whose
+      // timer is not 0). Real time is in milliseconds, game time in thousandths of an hour.
+      const { registrations } = papyrus;
+      for (const [list, gameTime] of [
+        [registrations.updates, false],
+        [registrations.gameTimeUpdates, true],
+      ] as const) {
+        for (const update of list) {
+          const formId = ours(resolve(update.handle.refId));
+          if (formId === undefined || formId === 0) continue;
+          updates.push({
+            // The handle's high word: the alias the registration is on (−1: the form).
+            target: new ObjectHandle(formId, 'form', update.handle.high),
+            interval: update.interval / 1000,
+            gameTime,
+            repeat: !update.single,
+            left: update.time / 1000,
+          });
+        }
+      }
+      // TODO(M13): the running stacks (our resumable frames keep their own code positions,
+      // not the compiled script's), the function messages and suspended stacks, the waits,
+      // and the other registrations (animation, sleep, tracked stats, inventory filters).
       if (papyrus.stacks.length) {
-        skips.add(`papyrus: ${String(papyrus.stacks.length)} running stacks (TODO(M12))`);
+        skips.add(`papyrus: ${String(papyrus.stacks.length)} running stacks (TODO(M13))`);
       }
-      if (papyrus.unread > 0) {
-        skips.add('papyrus: function messages, suspended stacks and registrations (TODO(M12))');
-      }
+      skips.add('papyrus: messages, waits and the registrations but updates (TODO(M13))');
     } catch (error) {
       skips.add(`papyrus: unreadable (${error instanceof Error ? error.message : String(error)})`);
     }
@@ -474,12 +512,12 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     stats,
     wordsLearned: new Map(),
     iniOverrides: new Map(),
-    updates: [],
+    updates,
     animationEvents: undefined,
     registrations: undefined,
     lineOfSight: undefined,
     inventoryFilters: undefined,
-    formListAdded: undefined,
+    formListAdded,
     mapMarkers: undefined,
     initialized: [],
     seeded: [],

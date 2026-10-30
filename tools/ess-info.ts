@@ -12,7 +12,7 @@ import { parseArgs } from 'node:util';
 import { readChangeForm } from '../src/formats/ess/change-forms.ts';
 import { changeFormTypeName, globalData, readEss } from '../src/formats/ess/ess.ts';
 import { globalDataName, readMiscStats, refIdResolver } from '../src/formats/ess/global-data.ts';
-import { GLOBAL_DATA_READERS } from '../src/formats/ess/global-data-tables.ts';
+import { readGlobalData } from '../src/formats/ess/global-data-tables.ts';
 import { readPapyrus } from '../src/formats/ess/papyrus.ts';
 
 const SAVES = join(homedir(), 'Documents', 'My Games', 'Skyrim Special Edition', 'Saves');
@@ -50,14 +50,15 @@ for (const table of [ess.globalData1, ess.globalData2, ess.globalData3]) {
     table.map((entry) => `${globalDataName(entry.type)} ${String(entry.data.length)}`).join(', '),
   );
 }
-// Every global data entry through its reader: whether it reads (the readers of tables 2 and 3
-// are built from the documented layouts and wait on real saves to be checked).
+// Every global data entry through its reader: whether it reads, and to its last byte.
 const resolveGlobal = refIdResolver(ess.formIds);
 for (const entry of [...ess.globalData1, ...ess.globalData2, ...ess.globalData3]) {
-  const reader = GLOBAL_DATA_READERS[entry.type];
   try {
-    if (reader) reader(entry.data, resolveGlobal);
-    else console.log(`  ${globalDataName(entry.type)}: no reader`);
+    const read = readGlobalData(entry.type, entry.data, resolveGlobal);
+    if (!read) console.log(`  ${globalDataName(entry.type)}: no reader`);
+    else if (read.unread > 0) {
+      console.log(`  ${globalDataName(entry.type)}: ${String(read.unread)} bytes not read`);
+    }
   } catch (error) {
     console.log(
       `  ${globalDataName(entry.type)}: ${error instanceof Error ? error.message : String(error)}`,

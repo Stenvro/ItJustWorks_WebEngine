@@ -6,7 +6,7 @@
 // stops (an undocumented temp effect type, the story event manager's entries, type 104), the
 // rest is kept as bytes. Platform-independent.
 
-import { EssReader } from './ess-reader.ts';
+import { EssReader, essReader, type EssSource } from './ess-reader.ts';
 import {
   readAnimObjects,
   readAudio,
@@ -62,8 +62,8 @@ export interface ProcessLists {
   readonly crimes: readonly (readonly SavedCrime[])[];
 }
 
-export function readProcessLists(data: Uint8Array, resolve: RefIdResolver): ProcessLists {
-  const reader = new EssReader(data);
+export function readProcessLists(data: EssSource, resolve: RefIdResolver): ProcessLists {
+  const reader = essReader(data);
   const unknown = reader.vec3();
   const nextNum = reader.u32();
   const crimes: SavedCrime[][] = [];
@@ -237,8 +237,8 @@ function pair(reader: EssReader): FloatPair {
   return [reader.f32(), reader.f32()];
 }
 
-export function readCombat(data: Uint8Array, resolve: RefIdResolver): CombatData {
-  const reader = new EssReader(data);
+export function readCombat(data: EssSource, resolve: RefIdResolver): CombatData {
+  const reader = essReader(data);
   const nextNum = reader.u32();
   const combats: SavedCombat[] = [];
   for (let count = reader.vsval(), i = 0; i < count; i++) {
@@ -390,8 +390,8 @@ export interface InterfaceData {
   };
 }
 
-export function readInterface(data: Uint8Array, resolve: RefIdResolver): InterfaceData {
-  const reader = new EssReader(data);
+export function readInterface(data: EssSource, resolve: RefIdResolver): InterfaceData {
+  const reader = essReader(data);
   const shownHelpMessages = u32s(reader, reader.u32());
   const unknown0 = reader.u8();
   const lastUsedWeapons = refIds(reader, reader.vsval(), resolve);
@@ -427,8 +427,8 @@ export interface ActorCauses {
   }[];
 }
 
-export function readActorCauses(data: Uint8Array, resolve: RefIdResolver): ActorCauses {
-  const reader = new EssReader(data);
+export function readActorCauses(data: EssSource, resolve: RefIdResolver): ActorCauses {
+  const reader = essReader(data);
   const nextNum = reader.u32();
   const causes: ActorCauses['causes'][number][] = [];
   for (let n = reader.vsval(), i = 0; i < n; i++) {
@@ -442,10 +442,10 @@ export function readActorCauses(data: Uint8Array, resolve: RefIdResolver): Actor
 }
 
 export function readDetectionManager(
-  data: Uint8Array,
+  data: EssSource,
   resolve: RefIdResolver,
 ): { reference: number; unknown0: number; unknown1: number }[] {
-  const reader = new EssReader(data);
+  const reader = essReader(data);
   const out: { reference: number; unknown0: number; unknown1: number }[] = [];
   for (let n = reader.vsval(), i = 0; i < n; i++) {
     out.push({
@@ -458,10 +458,10 @@ export function readDetectionManager(
 }
 
 export function readLocationMetaData(
-  data: Uint8Array,
+  data: EssSource,
   resolve: RefIdResolver,
 ): { location: number; unknown: number }[] {
-  const reader = new EssReader(data);
+  const reader = essReader(data);
   const out: { location: number; unknown: number }[] = [];
   for (let n = reader.vsval(), i = 0; i < n; i++) {
     out.push({ location: resolve(reader.refId()), unknown: reader.u32() });
@@ -509,8 +509,8 @@ export function readQuestRunData(reader: EssReader, resolve: RefIdResolver): Que
   return { unknown1, unknown2, values };
 }
 
-export function readQuestStaticData(data: Uint8Array, resolve: RefIdResolver): QuestStaticData {
-  const reader = new EssReader(data);
+export function readQuestStaticData(data: EssSource, resolve: RefIdResolver): QuestStaticData {
+  const reader = essReader(data);
   const runs = (): QuestRunData[] => {
     const out: QuestRunData[] = [];
     for (let n = reader.u32(), i = 0; i < n; i++) out.push(readQuestRunData(reader, resolve));
@@ -544,29 +544,29 @@ export function readQuestStaticData(data: Uint8Array, resolve: RefIdResolver): Q
 // --- 108 to 114 ----------------------------------------------------------------------------------
 
 /** 108 StoryTeller: a flag (0 or 1). */
-export function readStoryTeller(data: Uint8Array): { flag: number } {
-  return { flag: new EssReader(data).u8() };
+export function readStoryTeller(data: EssSource): { flag: number } {
+  return { flag: essReader(data).u8() };
 }
 
 /** 109 Magic Favorites: favourited spells, shouts and powers, and the hotkeyed ones by key. */
 export function readMagicFavorites(
-  data: Uint8Array,
+  data: EssSource,
   resolve: RefIdResolver,
 ): { favorites: number[]; hotkeys: number[] } {
-  const reader = new EssReader(data);
+  const reader = essReader(data);
   const favorites = refIds(reader, reader.vsval(), resolve);
   return { favorites, hotkeys: refIds(reader, reader.vsval(), resolve) };
 }
 
 /** 110 PlayerControls. */
-export function readPlayerControls(data: Uint8Array): {
+export function readPlayerControls(data: EssSource): {
   unknown0: number;
   unknown1: number;
   unknown2: number;
   unknown3: number;
   unknown4: number;
 } {
-  const reader = new EssReader(data);
+  const reader = essReader(data);
   return {
     unknown0: reader.u8(),
     unknown1: reader.u8(),
@@ -577,12 +577,12 @@ export function readPlayerControls(data: Uint8Array): {
 }
 
 /** 111 Story Event Manager: its entries' format is undocumented, kept as bytes. */
-export function readStoryEventManager(data: Uint8Array): {
+export function readStoryEventManager(data: EssSource): {
   unknown: number;
   count: number;
   entries: Uint8Array;
 } {
-  const reader = new EssReader(data);
+  const reader = essReader(data);
   const unknown = reader.u32();
   const count = reader.vsval();
   // TODO(M12): the entries' layout (UESP: possibly the quest static data's run data).
@@ -590,8 +590,8 @@ export function readStoryEventManager(data: Uint8Array): {
 }
 
 /** 112 Ingredient Shared: the ingredient pairs alchemy found to share no effect. */
-export function readIngredientShared(data: Uint8Array, resolve: RefIdResolver): [number, number][] {
-  const reader = new EssReader(data);
+export function readIngredientShared(data: EssSource, resolve: RefIdResolver): [number, number][] {
+  const reader = essReader(data);
   const out: [number, number][] = [];
   for (let n = reader.u32(), i = 0; i < n; i++) {
     out.push([resolve(reader.refId()), resolve(reader.refId())]);
@@ -600,17 +600,17 @@ export function readIngredientShared(data: Uint8Array, resolve: RefIdResolver): 
 }
 
 /** 113 MenuControls. */
-export function readMenuControls(data: Uint8Array): { unknown0: number; unknown1: number } {
-  const reader = new EssReader(data);
+export function readMenuControls(data: EssSource): { unknown0: number; unknown1: number } {
+  const reader = essReader(data);
   return { unknown0: reader.u8(), unknown1: reader.u8() };
 }
 
 /** 114 MenuTopicManager: two references. */
 export function readMenuTopicManager(
-  data: Uint8Array,
+  data: EssSource,
   resolve: RefIdResolver,
 ): { unknown0: number; unknown1: number } {
-  const reader = new EssReader(data);
+  const reader = essReader(data);
   return { unknown0: resolve(reader.refId()), unknown1: resolve(reader.refId()) };
 }
 
@@ -708,8 +708,8 @@ export interface TempEffects {
   readonly unread?: { readonly type: number; readonly bytes: Uint8Array };
 }
 
-export function readTempEffects(data: Uint8Array, resolve: RefIdResolver): TempEffects {
-  const reader = new EssReader(data);
+export function readTempEffects(data: EssSource, resolve: RefIdResolver): TempEffects {
+  const reader = essReader(data);
   const entries: TempEffectEntry[] = [];
   for (let n = reader.vsval(), i = 0; i < n; i++) {
     const flag = reader.u8();
@@ -851,18 +851,21 @@ function readTempEffect(
 // --- 104 and 1005 Main ---------------------------------------------------------------------------
 
 /** 104: undocumented; kept as bytes (TODO(M12): its layout, from a real save). */
-export function readUnknown104(data: Uint8Array): Uint8Array {
-  return data.slice();
+export function readUnknown104(data: EssSource): Uint8Array {
+  const reader = essReader(data);
+  return reader.bytes(reader.remaining).slice();
 }
 
 /** 1005 Main: always empty (UESP); the table 3 count leaves it out, so the game never reads it. */
-export function readMain(data: Uint8Array): { empty: boolean; bytes: Uint8Array } {
-  return { empty: data.length === 0, bytes: data.slice() };
+export function readMain(data: EssSource): { empty: boolean; bytes: Uint8Array } {
+  const reader = essReader(data);
+  const bytes = reader.bytes(reader.remaining).slice();
+  return { empty: bytes.length === 0, bytes };
 }
 
 /** The reader of every global data type (the save's three tables), by type number. */
 export const GLOBAL_DATA_READERS: Readonly<
-  Record<number, (data: Uint8Array, resolve: RefIdResolver) => unknown>
+  Record<number, (data: EssSource, resolve: RefIdResolver) => unknown>
 > = {
   0: (data) => readMiscStats(data),
   1: readPlayerLocation,
@@ -889,9 +892,36 @@ export const GLOBAL_DATA_READERS: Readonly<
   113: (data) => readMenuControls(data),
   114: readMenuTopicManager,
   1000: readTempEffects,
-  1001: (data) => readPapyrus(data),
+  1001: (data) => {
+    const reader = essReader(data);
+    return readPapyrus(reader.bytes(reader.remaining));
+  },
   1002: readAnimObjects,
   1003: (data) => readTimer(data),
   1004: readSynchronizedAnimations,
   1005: (data) => readMain(data),
 };
+
+/** A global data entry read by its type's reader: what it read, and the bytes it left. */
+export interface GlobalDataRead {
+  readonly value: unknown;
+  /** Bytes after where the reader stopped (0: read to its end). */
+  readonly unread: number;
+}
+
+/** Reads a global data entry with its type's reader (undefined: no reader for the type). */
+export function readGlobalData(
+  type: number,
+  data: Uint8Array,
+  resolve: RefIdResolver,
+): GlobalDataRead | undefined {
+  // Papyrus says itself what it left.
+  if (type === 1001) {
+    const papyrus = readPapyrus(data);
+    return { value: papyrus, unread: papyrus.unread };
+  }
+  const read = GLOBAL_DATA_READERS[type];
+  if (!read) return undefined;
+  const reader = new EssReader(data);
+  return { value: read(reader, resolve), unread: reader.remaining };
+}
