@@ -24,6 +24,8 @@ export interface WaterType {
   readonly flags: number;
   /** Normal maps of the three noise layers (textures\...). */
   readonly noiseTextures: readonly string[];
+  /** NAM5: the flow normals rivers with a flow map move along it ('' none). */
+  readonly flowNormals: string;
   readonly shallowColor: Rgb;
   readonly deepColor: Rgb;
   readonly reflectionColor: Rgb;
@@ -116,6 +118,7 @@ export function parseWater(
     opacity: (fields.first('ANAM')?.[0] ?? 100) / 100,
     flags: fields.first('FNAM')?.[0] ?? 0,
     noiseTextures: noise.map((path, i) => (path === '' ? (nnam[i] ?? '') : path)),
+    flowNormals: textureOf(fields.zstring('NAM5') ?? ''),
     sunSpecularPower: f(4),
     reflectivity: f(5),
     fresnel: f(6),

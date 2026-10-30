@@ -18,6 +18,7 @@ const water: WaterType = {
   opacity: 0.5,
   flags: 0,
   noiseTextures: [],
+  flowNormals: '',
   shallowColor: [38 / 255, 39 / 255, 24 / 255],
   deepColor: [5 / 255, 14 / 255, 18 / 255],
   reflectionColor: [119 / 255, 140 / 255, 157 / 255],

@@ -485,8 +485,8 @@ colours (times the weather's water multiplier), screen-space reflections of the 
 the sky dome as fallback, fresnel, and the sun's specular and sparkle; the depth properties
 take reflections, refraction, normals and specular back in shallow water, and the
 displacement field bends the normals ([rendering.md](../rendering.md#water), which also lists
-which WATR value feeds which of the shader's constants). Approximated (TODO(M13)): the rivers'
-flow normals (NAM5; ours move the noise along the flow at 160 units/s at full strength).
+which WATR value feeds which of the shader's constants), and the rivers' flow normals (NAM5)
+the flow maps move (`node tools/flow-maps.ts`).
 CELL and WRLD XWEM name the cube map their water reflects in place of a rendered one.
 `node tools/water-info.ts` lists the water types and a cell's water (`--environment`: the XWEM
 cube maps).

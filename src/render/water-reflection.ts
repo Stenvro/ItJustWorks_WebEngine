@@ -5,24 +5,29 @@
 // (bReflectSky), the land and its LOD (bReflectLODLand), tree LOD (bReflectLODTrees), object LOD
 // (bReflectLODObjects) and the references flagged "Reflected By Auto Water" (REFR flag bit 28).
 //
-// Here the cube is rendered from the camera mirrored under the water's plane: from there the
-// straight line through a water point continues as the reflected view ray, so a lookup by the
-// reflected direction finds what the mirror shows. What lies under the plane is clipped
-// (frame.wgsl reflectionClipped). The faces are layers of a 2D array (+X, −X, +Y, −Y, +Z; no
-// face looks down), each with the matrix the water shader projects a direction with.
+// Which water gets which reflection follows the original (docs/rendering.md, "Which water
+// gets which reflection"), planReflections. With [Water] bUseCubeMapReflections (on by default)
+// all water shares one: a cube map file its world or interior cell names, else one cube rendered
+// around the player's eyes that draws the sky and the LOD (outdoors; indoors it has nothing to
+// draw). With it off, the reflections are of planes: outdoors the world's water height with the
+// sky, the LOD and the flagged references, every other height one shared reflection of the sky
+// alone (two at most, uMaxExteriorWaterReflections); indoors one per plane of the flagged
+// references (four at most, uMaxInteriorWaterReflections).
+//
+// A plane's reflection is rendered from the camera mirrored under it: from there the straight
+// line through a water point continues as the reflected view ray, so a lookup by the reflected
+// direction finds what the mirror shows; what lies under the plane is clipped (frame.wgsl
+// reflectionClipped). The faces are layers of a 2D array (+X, −X, +Y, −Y, +Z; no face looks
+// down), each with the matrix the water shader projects a direction with.
 //
 // Cost, against the original's: its cube faces are 512 texels a side in half floats with one
-// sample; ours are 256 a side with four samples (as many samples a face). It redraws two faces a
-// frame without a pause; ours one (two while a new plane's faces are due, ReflectionSchedule).
-// Each face draws only what lies inside its own view: the sky, the land's quadrants, the tree
-// LOD blocks, the reflected draws (LOD, sky objects, flagged references; listed once per scene,
-// GpuScene.reflected); Renderer.reflectionStats counts them.
-//
-// The original keeps two reflections outdoors (docs/rendering.md, "Which water gets which
-// reflection"): the world's water height mirrored with the sky, LOD and flagged references, and
-// one of the sky alone shared by water at every other height; indoors one per plane (at most
-// four) of the flagged references. TODO(M13): ours mirrors the nearest plane for all water;
-// whether the reflection is fogged is unread (ours leaves the deferred lit objects unfogged).
+// sample; ours are 256 a side with four samples (as many samples a face). It redraws two faces
+// of each cube a frame without a pause; ours one a frame in all (two while faces are due,
+// ReflectionSchedule), shared out among the reflections in view. Each face draws only what lies
+// inside its own view: the sky, the land's quadrants, the tree LOD blocks, the reflected draws
+// (LOD, sky objects, flagged references; listed once per scene, GpuScene.reflected);
+// Renderer.reflectionStats counts them. TODO(M13): whether the reflection is fogged is unread
+// (ours leaves the deferred lit objects unfogged).
 
 import { lookAt, multiply, perspectiveReversedZ } from './math.ts';
 import type { Mat4, Vec3 } from './math.ts';
@@ -118,8 +123,11 @@ export class ReflectionSchedule {
   /** Faces drawn at least once (a face never drawn holds nothing to show). */
   readonly #filled = new Set<number>();
 
-  /** The faces to draw for a plane at `height` (undefined: no reflection this frame). */
-  facesFor(height: number | undefined): readonly number[] {
+  /**
+   * The faces to draw for a plane at `height` (undefined: no reflection this frame), at most
+   * `limit` (the frame's faces left).
+   */
+  facesFor(height: number | undefined, limit = REFLECTION_FACES_PER_FRAME_MAX): readonly number[] {
     if (height === undefined) {
       this.#height = undefined;
       return [];
@@ -131,10 +139,10 @@ export class ReflectionSchedule {
     const faces: number[] = [];
     if (this.#due.size > 0) {
       for (const face of this.#due) {
-        if (faces.length >= REFLECTION_FACES_PER_FRAME_MAX) break;
+        if (faces.length >= Math.min(limit, REFLECTION_FACES_PER_FRAME_MAX)) break;
         faces.push(face);
       }
-    } else {
+    } else if (limit > 0) {
       faces.push(this.#next);
     }
     for (const face of faces) {
@@ -145,8 +153,125 @@ export class ReflectionSchedule {
     return faces;
   }
 
+  /** Whether faces are due (drawn for another plane, or never drawn). */
+  get pending(): boolean {
+    return this.#due.size > 0 || !this.complete;
+  }
+
   /** Whether every face holds a drawing (the water shows the reflection only then). */
   get complete(): boolean {
     return this.#filled.size === REFLECTION_FACES;
   }
+}
+
+/**
+ * What a reflection draws. `probe`: the cube rendered around the player's eyes (with cube map
+ * reflections), the sky and the LOD; `world`: the world's water height mirrored, the sky, the
+ * LOD and the flagged references; `sky`: another height mirrored, the sky alone;
+ * `references`: an interior plane mirrored, the flagged references alone.
+ */
+export type ReflectionKind = 'probe' | 'world' | 'sky' | 'references';
+
+/** A reflection the water's planes share: what it draws and the plane it mirrors. */
+export interface PlannedReflection {
+  readonly kind: ReflectionKind;
+  /** The plane's height (a probe: the first water's; it mirrors nothing). */
+  readonly height: number;
+}
+
+/** What decides which water gets which reflection. */
+export interface ReflectionRules {
+  /** [Water] bUseCubeMapReflections (on by default). */
+  readonly cubeMaps: boolean;
+  /** The water is in an interior cell. */
+  readonly interior: boolean;
+  /**
+   * The world's water height the full reflection mirrors (the world's LOD water height, WRLD
+   * NAM4); undefined indoors.
+   */
+  readonly worldWaterHeight?: number | undefined;
+}
+
+/** [Water] uMaxExteriorWaterReflections: reflections outdoors. */
+export const MAX_EXTERIOR_REFLECTIONS = 2;
+/** [Water] uMaxInteriorWaterReflections: reflections indoors. */
+export const MAX_INTERIOR_REFLECTIONS = 4;
+/** Planes nearer than this share a reflection (observed in the original). */
+export const REFLECTION_PLANE_TOLERANCE = 0.01;
+
+/** The reflections of a set of water planes and which plane takes which. */
+export interface ReflectionPlan {
+  readonly reflections: readonly PlannedReflection[];
+  /** The reflection water at `height` takes (an index of `reflections`), if any. */
+  readonly reflectionOf: (height: number) => number | undefined;
+}
+
+/**
+ * Which water gets which reflection, as the original assigns them while water is added
+ * (`heights`: the water planes in the order they came). With cube map reflections, one
+ * reflection for all water outdoors (a cube map file the world names takes its place, see
+ * WaterFrame.environment) and none rendered indoors (the cell's file, else nothing: the cube
+ * the original renders there has no world to draw). Without, outdoors the planes at the world's
+ * water height share the full reflection and every other plane one of the sky alone (the first
+ * such plane's); indoors each plane its own of the flagged references, at most four.
+ * TODO(M13): what a plane past the interior's four takes is unread (ours: none).
+ */
+export function planReflections(heights: Iterable<number>, rules: ReflectionRules): ReflectionPlan {
+  const reflections: PlannedReflection[] = [];
+  const near = (a: number, b: number): boolean => Math.abs(a - b) <= REFLECTION_PLANE_TOLERANCE;
+  if (rules.cubeMaps) {
+    if (!rules.interior) {
+      for (const height of heights) {
+        reflections.push({ kind: 'probe', height });
+        break;
+      }
+    }
+    return { reflections, reflectionOf: () => (reflections.length > 0 ? 0 : undefined) };
+  }
+  if (rules.interior) {
+    for (const height of heights) {
+      if (reflections.length >= MAX_INTERIOR_REFLECTIONS) break;
+      if (!reflections.some((r) => near(r.height, height))) {
+        reflections.push({ kind: 'references', height });
+      }
+    }
+    return {
+      reflections,
+      reflectionOf: (height) => {
+        const index = reflections.findIndex((r) => near(r.height, height));
+        return index < 0 ? undefined : index;
+      },
+    };
+  }
+  const world = rules.worldWaterHeight;
+  const atWorld = (height: number): boolean => world !== undefined && near(height, world);
+  for (const height of heights) {
+    const kind: ReflectionKind = atWorld(height) ? 'world' : 'sky';
+    if (!reflections.some((r) => r.kind === kind)) reflections.push({ kind, height });
+    if (reflections.length >= MAX_EXTERIOR_REFLECTIONS) break;
+  }
+  return {
+    reflections,
+    reflectionOf: (height) => {
+      const kind: ReflectionKind = atWorld(height) ? 'world' : 'sky';
+      const index = reflections.findIndex((r) => r.kind === kind);
+      return index < 0 ? undefined : index;
+    },
+  };
+}
+
+/** What a reflection of `kind` draws besides being cleared. */
+export function reflectionContent(kind: ReflectionKind): {
+  readonly sky: boolean;
+  readonly lod: boolean;
+  readonly references: boolean;
+  /** Mirrored under its plane (a probe sits at the eyes). */
+  readonly mirrored: boolean;
+} {
+  return {
+    sky: kind !== 'references',
+    lod: kind === 'probe' || kind === 'world',
+    references: kind === 'world' || kind === 'references',
+    mirrored: kind !== 'probe',
+  };
 }
