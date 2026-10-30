@@ -58,8 +58,8 @@ A ridden dragon's target lock: Jump locks the nearest of the actors within fTarg
 (bTargetLockIsToggle: a press locks, the next lets go), Hotkey1 and Hotkey2 step back and on
 through the list gathered at the lock, a target that no longer does gives way to the next one on.
 Bone LOD's level per update: the camera's distance across the ground over the skeleton's scale
-(times fBoneLODDistanceScale), never below the bones a hovering, knocked down or seated actor
-needs (a far dragon measured in space with every bone after its toe frozen stalled the opening's
+(times fBoneLODDistanceScale), never below the bones a paralyzed, dead, knocked down,
+unconscious or seated actor needs (a hovering flier has no floor) (a far dragon measured in space with every bone after its toe frozen stalled the opening's
 tower climb).
 
 Done in round 7, part B (scene graph, physics-driven, LOD): the Havok float slots. Behavior
