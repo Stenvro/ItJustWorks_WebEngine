@@ -57,7 +57,7 @@ fn fs_composite(
   let snowSpecular = (g.a - 1.0) * snowMask;
   var sparkles = vec3f(0.0);
   if (snowMask > 1e-5) {
-    sparkles = snowSparkles(world, sunShadow(world, octahedralDecode(g.xy))) * snowMask;
+    sparkles = snowSparkles(world, sunShadow(world, octahedralDecode(g.xy), 0u)) * snowMask;
   }
   return vec4f(vec3f(snowSpecular * keep) + fog.rgb * fog.a + sparkles, keep);
 }

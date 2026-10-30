@@ -23,16 +23,26 @@ How a frame is put together (`src/render/renderer.ts`). Everything is drawn in H
    original: each frame it keys the actors whose 3D is loaded and shown by their squared
    distance to the player less the square of their bound's larger horizontal half extent (at
    least 1), keeps those below the distance squared, sorts them nearest first and hands out
-   the focus maps in that order after the player's own body (when shown). Here the four maps
-   are the quarters (1024² each) of one more layer of the sun's shadow map, rendered every
-   frame (actors move), each an orthographic view along the cascades' light view, fitted round
-   the bound of the body's casting parts plus 24 units, snapped to whole texels (about 0.2
-   units a texel for a person, against 0.7 for the first cascade), reaching as far towards the
-   sun as the cascades and 4000 units behind the body. A focus map holds every caster in its
-   column (terrain too), so a receiver inside its square takes its shadow from it alone; the
-   cascades fade in over the square's outer tenth and take over outside it. Its depth bias is
-   two of its texels. TODO(M13): whether the engine's focus maps draw only their actor (and
-   the cascades leave it out), and their resolution; the engine also checks a cell flag before
+   the focus maps in that order after the player's own body (key 0, when shown). Also observed
+   in the original: each focus map has a render list of its own that holds its actor's 3D
+   alone (no land, no object, no other actor), drawn through an orthographic camera along the
+   sun round the actor's world bound: its radius to each side, the camera 1.1 radii towards
+   the sun, its near plane 0.1 and its far plane 2.2 radii out. Its size in texels is
+   50 × 2^max(0, (4X − d) / X), X being [Display] fFocusShadowMapDoubleEveryXUnit (450) and d
+   the actor's distance to the camera, at most iShadowMapResolution: 800 at the camera,
+   halving every 450 units to 50 from 1800 on. Before the shadow mask the focus actors are
+   drawn again into the scene's stencil with their map's number, so a focus map shades its
+   own actor's pixels and nothing else: the actor's shadow on the world and on other actors
+   is the cascades' (which keep it). The mask takes per map a fade by its key, 1 below
+   fFadingFracStart (0.25) of fMaxFocusShadowMapDistance², falling linearly to 0 at it. Here
+   the four maps are the quarters (1024² each) of one more layer of the sun's shadow map,
+   rendered every frame (actors move), each from its body's own casting parts into a corner
+   of its quarter as large as its size, fitted round the bound of those parts (the size
+   measured from the bound's centre, the original from the actor's root). In place of the
+   stencil the draws of a focus body's scene name its map (the entry past their light lists,
+   `sceneFocus` in `common.wgsl`), and only they sample it. Its depth bias is two of its
+   texels. TODO(M13): how the mask mixes a fading map with the cascades (here the focus
+   result is mixed into the cascades' by the fade); the engine also checks a cell flag before
    it renders them, read as "exteriors" here.
 
    **Shadow lights** (`light-shadows.ts`), interiors and exteriors: lights whose LIGH carries
@@ -562,7 +572,10 @@ How a geometry's own list is kept, observed in the original:
   scene, never by strength: the eighth candle is left out however bright it is.
 - **Land.** A light created from a reference flagged Doesn't Light Landscape (REFR `0x20000`;
   Doesn't Light Water is `0x100`) is not added to land geometry (the shader flags Landscape or
-  No_LOD_Land_Blend).
+  No_LOD_Land_Blend), and the same test leaves it out of the frame's shadow lights a land pass
+  names. Each quadrant of a cell's land is a geometry of its own (with its own texture set and
+  bound), so it keeps its own list as any geometry does: at most seven lights a quadrant, the
+  shadow lights first.
 - **Effects.** An effect shader's pass takes lights only with Effect_Lighting, into an array of
   five: the directional light (the sun, not its shadow light) and at most four of its list's
   lights; it never names shadow lights. Particle systems are effect geometry: they keep lists by
@@ -578,9 +591,11 @@ in a list when its sphere touches the bound and it is not a portal-strict light 
 a lighting draw names the frame's shadow lights first (at most four, in the frame's order), then
 the others in the order they joined the scene (`PointLight.order`: the world viewer numbers the
 loaded cells' lights as the cells loaded, then magic's lights), seven in all; an effect draw
-names no shadow light and four at most. Land takes every light of the frame except those that do
-not light landscape (`landLightAt` in `frame.wgsl`; TODO(M13): land's own lists of seven per
-quad); tree LOD and decals take every light of the frame. Grass takes no point lights: [Grass]
+names no shadow light and four at most. Each land quadrant chooses its list as it is drawn in
+the frame's main view (`SceneRenderer.chooseLandLights`, light-lists.ts 'land': the lights that
+light landscape, by the quadrant's bound) into its material's uniforms (`TerrainMaterial.lights`,
+`landLightAt` in `frame.wgsl`); the water's reflection keeps the lists the frame chose. Tree LOD
+and decals take every light of the frame. Grass takes no point lights: [Grass]
 bGrassPointLighting is off by default.
 
 ### Rooms' lighting
@@ -751,7 +766,11 @@ alpha-tested one only with `[Decals]` bAllowDecalsOnAlpha. A skinned shape gets 
 made only while fewer than `[Decals]` uMaxSkinDecals (100) live, fewer than `[Display]`
 iMaxSkinDecalsPerFrame (25) were made this frame and the actor carries fewer than `[Decals]`
 uMaxSkinDecalPerActor (25; Skyrim_Default.ini sets 60): otherwise the new one is not made and
-the older stay. No dynamic decal is made farther than `[Display]` fDecalLOD0 (800) from the
+the older stay. Each shape's decal counts against these. A rigid shape in the box (a helmet, a
+shield, a worn weapon: no skin) gets a plain decal of its own, hung under that shape's parent
+node so it moves with it, made while fewer than `[Display]` iMaxDecalsPerFrame (100) were made
+this frame; one too near a decal already on that node is skipped (TODO(M13): the spacing
+factor is unread). No dynamic decal is made farther than `[Display]` fDecalLOD0 (800) from the
 camera (observed in the original). Ours: the actor's skinned shapes are skinned on the CPU in
 the pose of the hit, their triangles that overlap the box (a separating-axis test against the
 unit cube) are copied with their bone weights and partitions (equipment that hides a body part
@@ -760,9 +779,14 @@ Z, in the decal's atlas quarter) and their tangent frames made again for those c
 files' convention (the stored tangent along +v, the bitangent along +u, measured on the vanilla
 bodies); the shape is drawn with the lighting shader as a Decal and Dynamic_Decal (depth bias),
 the texture set's textures, the decal's shininess and colour (on the vertex colours) and its
-alpha mode, with the actor's pose. It lasts fDecalLifetime as the other dynamic decals. Where
-no skinned shape lies in the box the decal is projected onto what does, following the nearest
-node (TODO(M13): the original's geometry decals on rigid worn shapes).
+alpha mode, with the actor's pose. A rigid shape's triangles in the box are copied the same way
+but as the shape has them (its own space, no skin) into a decal shape that hangs on the same
+skeleton node under the same transform (`rigidDecalPart`), so the blood stays on the helmet or
+the shield as it moves; these count against iMaxDecalsPerFrame and, with the projected decals,
+uMaxDecals. A hit's decal shapes are one model drawn with the actor. It lasts fDecalLifetime as
+the other dynamic decals. Where no shape lies in the box there is none (a body known only by
+its pose, without its drawn models, takes the decal projected onto what of it lies in the box,
+following its nearest node).
 
 ## Weather
 

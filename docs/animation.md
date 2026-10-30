@@ -378,6 +378,18 @@ animated objects alike.
   early (`BehaviorRuntime.nextEventIn`).
 - **Not for a frame or two.** An interval no longer than (1 + fAnimInterpSlop) frames is not worth
   it: the graph updates every frame. bAnimInterpEnable 0 turns it all off.
+- **Bones of an actor not seen.** At each update the graph generates as many bones as its bone
+  LOD allows (BSBoneLODExtraData by the camera's distance across the ground, never fewer than
+  the bones its state needs: every bone for a hovering flier or one knocked down,
+  iMinBonesToGenerateWhileSitting for one seated). An actor the camera did not see (its 3D
+  flagged culled and not drawn this frame, within fMaxFrameCounterDifferenceToConsiderVisible)
+  generates only that minimum, bone LOD or not; one without 3D counts as seen. The other bones
+  keep their pose. Ours: `AnimationRate.seen` from the renderer (`ScenePort.seen`: a draw of the
+  actor's scene within the last frame's view; rooms and occlusion are not asked), into
+  `BehaviorRuntime.seen`; the headless simulation has no camera, so it leaves `seen` unknown and
+  every actor animates by its bone LOD's distance alone. TODO(M13): with no minimum the original
+  still generates the first bone when the animation's root has left the 3D's bound, and an
+  actor flag it reads (unread which) counts an unseen actor as seen.
 
 Ours besides: a skeleton behind the camera beyond the far distance is not interpolated (it steps:
 nothing of it is seen), a nearer one is (its shadow is). A graph whose variable bDisableInterp is
@@ -799,8 +811,22 @@ a path whose shots are optional but has shots gives none, as does one with a sho
 time. Under PairedKillTest the dragons' paths come first, then 1stPRandom (33% in first
 person), IsBackClear02 (16%), the close and slow cameras, 1stPFailsafeCam, FailSafeCamera. A
 first-person shot (no model) leaves the player's own view. Each shot plays its Max Time (real
-seconds) from its camera model's ExportCam node in its location's frame, looking at its target;
-the world's clock runs at the shot's global time multiplier (the slow motion: the slow shots'
+seconds). Where its camera stands and looks (observed in the original): its model root's local
+translation (as the root's controller moves it) turned by the attacker's facing (the target's
+for a shot at the target that follows its bone), from its location's node: the attacker's
+WEAPON node for a shot that follows the bone (no CAMS flag 0x4), else its torso (its race's body
+part data's torso part node: NPC COM [COM ] for most creatures), the target's torso (the VATS
+part aimed at, none in a killmove), the projectile; an actor without that node is measured from
+its root. Without Position Follows Location (0x1) the spot is where that node was as the shot
+began. It looks at its target's node the same way (held from the shot's start without Rotation
+Follows Target, 0x2), or, with Target % Between Actors, at that share of the way from the
+attacker's middle (half its height over its feet) to the target's (11 shots), the world's up
+kept; then the root's own local rotation turns the view within that frame when the root's
+controller has rotation keys (177 of the 191 shots with a model, their roots turned 10 to 24
+degrees: the camera looks a little past its target as the shot's camera was set;
+`node tools/camera-models.ts`). Ours in `KillmoveCamera.#shotPoint` and `shotAxes`
+(`src/render/camera-model.ts`); the lead actor (5 shots) is taken as the attacker. The world's
+clock runs at the shot's global time multiplier (the slow motion: the slow shots'
 0.2 and 0.4), and its image-space modifier (VATSImodDOF) is cross-faded in over
 fVATSImageSpaceTransitionTime (0.15 s), faded out as the camera ends. The VATS side functions
 measure from the reference they run on: GetVATS*AreaFree how far a ray at
@@ -812,8 +838,12 @@ another actor only within 256 units). Between shots (observed in the original): 
 next shot's camera sits more than fVATSCameraDollyMin (256) from where the last ended, the
 camera dollies there in a straight line over fVATSCameraDollyTime (1 s) instead of cutting,
 under a radial blur of fVATSCamTransRBStrengthCap (0.5) × a triangle of the move's progress
-(`transitionBlur`). TODO(M13): the engine cuts some shots and dollies others over the shot's own
-time by a start mode not yet tied to a CAMS field (ours dollies every shot after the first); the
+(`transitionBlur`). The start mode the playback hands a shot decides (observed in the
+original): 0 dollies over fVATSCameraDollyTime, 1 cuts, 2 dollies a Zoom shot (CAMS action 3)
+over its Min Time (fVATSCameraDollyTime when that is 0) and cuts the others. A shot whose camera
+comes within fVATSCameraCutAwayDistance (25) of its target is ended. TODO(M13): which mode the
+playback hands each shot (ours dollies every shot after the first), and the condition on the
+player under which the cut-away ends a shot (not applied); the
 blur's strength is computed but the image-space stack takes no free radial blur yet; which
 distance TargetVisible returns (inferred: the last clear step's); the magic kill camera ([gameplay.md](gameplay.md#killmoves)). The ranged kill camera
 plays the same tree on the player's bow and crossbow shots (its rules: gameplay.md).

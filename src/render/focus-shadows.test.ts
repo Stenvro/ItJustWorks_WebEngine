@@ -3,6 +3,8 @@ import {
   boundingSphere,
   fitFocusShadow,
   FOCUS_SHADOW_DISTANCE,
+  focusFade,
+  focusMapSize,
   MAX_FOCUS_SHADOWS,
   selectFocusShadows,
   type FocusCandidate,
@@ -70,17 +72,42 @@ describe('boundingSphere', () => {
   });
 });
 
+describe('focusFade and focusMapSize', () => {
+  it('fades a map from a quarter of the distance squared to nothing at it', () => {
+    const max = FOCUS_SHADOW_DISTANCE ** 2;
+    expect(focusFade(0)).toBe(1);
+    expect(focusFade(0.24 * max)).toBe(1);
+    expect(focusFade(0.625 * max)).toBeCloseTo(0.5, 6);
+    expect(focusFade(max)).toBe(0);
+  });
+
+  it('gives the player key 0, so its map never fades', () => {
+    const chosen = selectFocusShadows([body('player', 0, true), body('npc', 300)], [0, 0, 64]);
+    expect(chosen.map((entry) => entry.key)).toEqual([0, 300 ** 2 - 30 ** 2]);
+  });
+
+  it('halves a map every 450 units from the camera, from 800 down to 50', () => {
+    expect(focusMapSize(0, 2048)).toBe(800);
+    expect(focusMapSize(450, 2048)).toBe(400);
+    expect(focusMapSize(900, 2048)).toBe(200);
+    expect(focusMapSize(1800, 2048)).toBe(50);
+    expect(focusMapSize(5000, 2048)).toBe(50);
+    // Never past iShadowMapResolution.
+    expect(focusMapSize(0, 512)).toBe(512);
+  });
+});
+
 describe('fitFocusShadow', () => {
   const toLight: Vec3 = [0.3, -0.4, 0.866];
   const center: Vec3 = [1200, 2400, 560];
-  const focus = fitFocusShadow(center, 70, toLight, 1024);
+  const focus = fitFocusShadow(center, 70, toLight, 800);
 
-  it('holds the body and its shadow on the ground behind it in its square', () => {
+  it("holds the body's bound and nothing past it along the sun", () => {
     for (const point of [
       center,
-      [center[0] + 60, center[1], center[2] + 60],
-      // Down the sun's ray from the body's centre to the ground 500 units below.
-      [center[0] - 0.3 * 577, center[1] + 0.4 * 577, center[2] - 0.866 * 577],
+      [center[0] + 40, center[1], center[2] + 40],
+      [center[0] + 0.3 * 69, center[1] - 0.4 * 69, center[2] + 0.866 * 69],
+      [center[0] - 0.3 * 69, center[1] + 0.4 * 69, center[2] - 0.866 * 69],
     ] as Vec3[]) {
       const [x, y, z] = project(focus.viewProj, point);
       expect(Math.abs(x)).toBeLessThan(1);
@@ -88,9 +115,18 @@ describe('fitFocusShadow', () => {
       expect(z).toBeGreaterThan(0);
       expect(z).toBeLessThan(1);
     }
+    // The ground 500 units down the sun's ray: past the far plane (the cascades shade it).
+    const ground = project(focus.viewProj, [
+      center[0] - 0.3 * 577,
+      center[1] + 0.4 * 577,
+      center[2] - 0.866 * 577,
+    ]);
+    expect(ground[2]).toBeGreaterThan(1);
     // Beside the body, out of its square.
-    const aside = project(focus.viewProj, [center[0] + 400, center[1], center[2]]);
+    const aside = project(focus.viewProj, [center[0] + 200, center[1], center[2]]);
     expect(Math.max(Math.abs(aside[0]), Math.abs(aside[1]))).toBeGreaterThan(1);
+    expect(focus.texelSize).toBeCloseTo(140 / 800, 6);
+    expect(focus.depthRange).toBeCloseTo(2.1 * 70, 4);
   });
 
   it('is much sharper than the nearest cascade', () => {
@@ -102,15 +138,5 @@ describe('fitFocusShadow', () => {
     if (!inverse) throw new Error('singular');
     const [first] = fitCascades(inverse, 4, toLight, 2048);
     expect(focus.texelSize * 3).toBeLessThan(first?.texelSize ?? 0);
-  });
-
-  it('snaps to whole texels, so a body moving less than a texel keeps its grid', () => {
-    const a = fitFocusShadow(center, 70, toLight, 1024);
-    const b = fitFocusShadow([center[0] + 0.01, center[1], center[2]], 70, toLight, 1024);
-    const point: Vec3 = [1210, 2390, 520];
-    const [ax, ay] = project(a.viewProj, point);
-    const [bx, by] = project(b.viewProj, point);
-    expect(bx).toBeCloseTo(ax, 6);
-    expect(by).toBeCloseTo(ay, 6);
   });
 });

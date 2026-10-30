@@ -30,6 +30,9 @@ struct TerrainMaterial {
   lodBlock: vec4f,
   // x: 1 if a texture of the quadrant is snow (the engine's snow technique).
   flags: vec4f,
+  // The quadrant's light list this frame (light-lists.ts): the count in x's low 16 bits, then
+  // seven indices into pointLights, 16 bits each.
+  lights: vec4u,
 };
 
 @group(1) @binding(0) var terrainSampler: sampler;
@@ -202,8 +205,8 @@ fn fs_main(in: TerrainOut) -> TerrainPixel {
 
   let albedo = base * in.color;
   let toCamera = safeNormalize(frame.cameraPos.xyz - in.worldPos);
-  let shadow = sunShadow(in.worldPos, in.normal);
-  let light = landLightAt(n, in.worldPos, toCamera, max(shininess, 1.0), true, shadow);
+  let shadow = sunShadow(in.worldPos, in.normal, 0u);
+  let light = landLightAt(n, in.worldPos, toCamera, max(shininess, 1.0), true, shadow, material.lights);
   var color = albedo * light.diffuse;
   // Snow has the rim highlight instead of its specular: the composite adds it (after the
   // snow's scattering), with the AO, fog and sparkles.

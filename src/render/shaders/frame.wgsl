@@ -69,7 +69,8 @@ struct PointLight {
 // rendered with; per slot near, far, omni (1: a cube, 0: one frustum) and the world size of a
 // texel at distance 1; then the map size, the bias along the light (world units) and along the
 // normal (texels). Then the sun's focus maps (focus-shadows.ts): each one's matrix, its texel
-// size (world units) and depth bias (x, y), and their count (focusParams.x).
+// size (world units), depth bias, the share of its quarter its size fills and its fade (x, y,
+// z, w), and their count (focusParams.x).
 struct LightShadows {
   matrices: array<mat4x4f, 24>,
   slots: array<vec4f, 4>,
@@ -180,48 +181,50 @@ fn depthToScene(fragCoord: vec4f) -> f32 {
   return viewDistance(scene) - viewDistance(fragCoord.z);
 }
 
-// How much of the sun reaches a point (0 in shadow, 1 lit): a focus map that holds it (sharp
-// shadows round the bodies near the player), the cascades fading in over its square's outer
-// tenth and taking over outside it.
-fn sunShadow(worldPos: vec3f, n: vec3f) -> f32 {
+// How much of the sun reaches a point (0 in shadow, 1 lit) of a draw shaded by focus map
+// `focus` (1 + its index; 0: none, focus-shadows.ts): that map (sharp shadows on the body near
+// the player it holds, by its fade), the cascades elsewhere.
+fn sunShadow(worldPos: vec3f, n: vec3f, focus: u32) -> f32 {
   if (frame.shadowParams.x < 0.5) {
     return 1.0;
   }
-  let focus = focusShadow(worldPos, n);
-  if (focus.y >= 1.0) {
-    return focus.x;
+  let shade = focusShadow(worldPos, n, focus);
+  if (shade.y >= 1.0) {
+    return shade.x;
   }
-  return mix(cascadeShadow(worldPos, n), focus.x, focus.y);
+  return mix(cascadeShadow(worldPos, n), shade.x, shade.y);
 }
 
-// The first focus map whose view holds a point: how lit it is (x, sampled 3x3 within its
-// quarter of the layer) and how much it counts (y: 1 inside, 0 at and beyond its square's edge).
-fn focusShadow(worldPos: vec3f, n: vec3f) -> vec2f {
+// Focus map `focus` (1 + its index) at a point of its body: how lit it is (x, sampled 3x3
+// within the corner of its quarter of the layer its size fills) and how much it counts (y: its
+// fade; 0 for no map, or a point outside its view).
+fn focusShadow(worldPos: vec3f, n: vec3f, focus: u32) -> vec2f {
   let count = min(u32(lightShadows.focusParams.x + 0.5), 4u);
-  for (var i = 0u; i < count; i++) {
-    let info = lightShadows.focusInfo[i];
-    let offset = n * info.x * frame.shadowParams.w;
-    let clip = lightShadows.focusMatrices[i] * vec4f(worldPos + offset, 1.0);
-    let edge = max(abs(clip.x), abs(clip.y));
-    if (edge >= 1.0 || clip.z < 0.0 || clip.z > 1.0) {
-      continue;
-    }
-    let quarter = vec2f(f32(i % 2u), f32(i / 2u)) * 0.5;
-    let uv = quarter + vec2f(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5) * 0.5;
-    let texel = 1.0 / frame.shadowParams.y;
-    let low = quarter + vec2f(texel);
-    let high = quarter + vec2f(0.5 - texel);
-    let depth = clip.z - info.y;
-    var lit = 0.0;
-    for (var y = -1; y <= 1; y++) {
-      for (var x = -1; x <= 1; x++) {
-        let at = clamp(uv + vec2f(f32(x), f32(y)) * texel, low, high);
-        lit += textureSampleCompareLevel(shadowMap, shadowSampler, at, FOCUS_LAYER, depth);
-      }
-    }
-    return vec2f(lit / 9.0, clamp((1.0 - edge) * 10.0, 0.0, 1.0));
+  if (focus == 0u || focus > count) {
+    return vec2f(1.0, 0.0);
   }
-  return vec2f(1.0, 0.0);
+  let i = focus - 1u;
+  let info = lightShadows.focusInfo[i];
+  let offset = n * info.x * frame.shadowParams.w;
+  let clip = lightShadows.focusMatrices[i] * vec4f(worldPos + offset, 1.0);
+  if (max(abs(clip.x), abs(clip.y)) >= 1.0 || clip.z < 0.0 || clip.z > 1.0) {
+    return vec2f(1.0, 0.0);
+  }
+  let quarter = vec2f(f32(i % 2u), f32(i / 2u)) * 0.5;
+  let share = info.z * 0.5;
+  let uv = quarter + vec2f(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5) * share;
+  let texel = 1.0 / frame.shadowParams.y;
+  let low = quarter + vec2f(texel);
+  let high = quarter + vec2f(share - texel);
+  let depth = clip.z - info.y;
+  var lit = 0.0;
+  for (var y = -1; y <= 1; y++) {
+    for (var x = -1; x <= 1; x++) {
+      let at = clamp(uv + vec2f(f32(x), f32(y)) * texel, low, high);
+      lit += textureSampleCompareLevel(shadowMap, shadowSampler, at, FOCUS_LAYER, depth);
+    }
+  }
+  return vec2f(lit / 9.0, clamp(info.w, 0.0, 1.0));
 }
 
 // How much of the sun reaches a point by the cascades: the first cascade that holds it,
@@ -319,12 +322,19 @@ fn lightAt(
   specular: bool,
   shadow: f32,
 ) -> Lighting {
-  return pointLitAt(n, worldPos, toCamera, glossiness, specular, shadow, false);
+  var result = sunLightAt(n, toCamera, glossiness, specular, shadow);
+  for (var i = 0u; i < frame.counts.x; i++) {
+    let term = pointLightTerm(pointLights[i], n, worldPos, toCamera, glossiness, specular);
+    result.diffuse += term.diffuse;
+    result.specular += term.specular;
+  }
+  return result;
 }
 
-// The same for land: the original leaves the lights whose reference does not light landscape
-// (shadow.z) out of land's lists. TODO(M13): land's own lists (at most seven per quad, in the
-// order the lights joined the scene) are not kept; land takes every other light of the frame.
+// The same for a land quadrant, over its own list (`lights`: the count in x's low 16 bits, then
+// seven indices, 16 bits each; light-lists.ts 'land'): the frame's shadow lights touching it,
+// then the lights of its list in the order they joined the scene, seven at most, none whose
+// reference does not light landscape.
 fn landLightAt(
   n: vec3f,
   worldPos: vec3f,
@@ -332,40 +342,47 @@ fn landLightAt(
   glossiness: f32,
   specular: bool,
   shadow: f32,
+  lights: vec4u,
 ) -> Lighting {
-  return pointLitAt(n, worldPos, toCamera, glossiness, specular, shadow, true);
+  var result = sunLightAt(n, toCamera, glossiness, specular, shadow);
+  let count = min(lights.x & 0xffffu, 7u);
+  for (var i = 0u; i < count; i++) {
+    let half = i + 1u;
+    let word = lights[half >> 1u];
+    let index = select(word >> 16u, word & 0xffffu, (half & 1u) == 0u);
+    let term = pointLightTerm(pointLights[index], n, worldPos, toCamera, glossiness, specular);
+    result.diffuse += term.diffuse;
+    result.specular += term.specular;
+  }
+  return result;
 }
 
-fn pointLitAt(
+// One point light's diffuse and specular at a point (none beyond its radius).
+fn pointLightTerm(
+  light: PointLight,
   n: vec3f,
   worldPos: vec3f,
   toCamera: vec3f,
   glossiness: f32,
   specular: bool,
-  shadow: f32,
-  land: bool,
 ) -> Lighting {
-  var result = sunLightAt(n, toCamera, glossiness, specular, shadow);
-  for (var i = 0u; i < frame.counts.x; i++) {
-    let light = pointLights[i];
-    if (land && light.shadow.z > 0.5) {
-      continue;
-    }
-    let offset = light.position - worldPos;
-    let distanceSquared = dot(offset, offset);
-    let radiusSquared = light.radius * light.radius;
-    if (distanceSquared >= radiusSquared) {
-      continue;
-    }
-    let toLight = offset * inverseSqrt(max(distanceSquared, 1e-4));
-    let attenuation = (1.0 - distanceSquared / radiusSquared) * lightCone(light, offset) *
-      pointShadow(light, worldPos, n);
-    let nDotL = max(dot(n, toLight), 0.0);
-    result.diffuse += light.color * nDotL * attenuation;
-    if (specular && nDotL > 0.0) {
-      let halfway = safeNormalize(toLight + toCamera);
-      result.specular += light.color * pow(max(dot(n, halfway), 0.0), glossiness) * attenuation;
-    }
+  var result: Lighting;
+  result.diffuse = vec3f(0.0);
+  result.specular = vec3f(0.0);
+  let offset = light.position - worldPos;
+  let distanceSquared = dot(offset, offset);
+  let radiusSquared = light.radius * light.radius;
+  if (distanceSquared >= radiusSquared) {
+    return result;
+  }
+  let toLight = offset * inverseSqrt(max(distanceSquared, 1e-4));
+  let attenuation = (1.0 - distanceSquared / radiusSquared) * lightCone(light, offset) *
+    pointShadow(light, worldPos, n);
+  let nDotL = max(dot(n, toLight), 0.0);
+  result.diffuse = light.color * nDotL * attenuation;
+  if (specular && nDotL > 0.0) {
+    let halfway = safeNormalize(toLight + toCamera);
+    result.specular = light.color * pow(max(dot(n, halfway), 0.0), glossiness) * attenuation;
   }
   return result;
 }

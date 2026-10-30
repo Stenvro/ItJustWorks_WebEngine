@@ -520,7 +520,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
   let maskAssumed = (flags2 & SLSF2_ASSUME_SHADOWMASK) != 0u || (flags1 & SLSF1_DECALS) != 0u;
   let receivesShadows = ((flags1 & SLSF1_RECEIVE_SHADOWS) != 0u || maskAssumed) &&
     (((drawFlags & DRAW_ALPHA_BLEND) == 0u && !blendedFade) || maskAssumed);
-  let shadow = select(1.0, sunShadow(in.worldPos, vertexNormal), receivesShadows);
+  let shadow = select(1.0, sunShadow(in.worldPos, vertexNormal, sceneFocus()), receivesShadows);
   let lights = objectLighting(
     shadingNormal,
     in.worldPos,

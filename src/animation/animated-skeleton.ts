@@ -45,6 +45,12 @@ export interface AnimationRate {
    * the ground, by its scale; undefined: not known.
    */
   readonly boneLodDistance?: number;
+  /**
+   * Whether the camera saw the skeleton's 3D in the last frame (BehaviorRuntime.seen: one not
+   * seen animates only its minimum bones); undefined: not known (the headless simulation has
+   * no camera), and it animates by its bone LOD's distance alone.
+   */
+  readonly seen?: boolean;
 }
 
 const EVERY_FRAME: AnimationRate = { interval: 0, interpolate: false, slop: 0 };
@@ -106,6 +112,7 @@ export function animateSkeletons(
         if (levels) behavior.setBoneLod(levels);
       }
       behavior.boneLodDistance = wanted.boneLodDistance;
+      behavior.seen = wanted.seen;
     }
     let interval = wanted.interval;
     // The graph may forbid it (bDisableInterp: inferred from the engine's variable names).

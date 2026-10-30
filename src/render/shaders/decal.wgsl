@@ -104,7 +104,7 @@ fn fs_decal(in: DecalOut) -> @location(0) vec4f {
   let m = mapped.xyz * 2.0 - 1.0;
   let bumped = safeNormalize(tangent * m.x - bitangent * m.y + n * m.z);
   let specular = in.params.y > 0.5 && in.color.a > 0.0;
-  let light = lightAt(bumped, world, toCamera, max(in.color.a, 1.0), specular, sunShadow(world, n));
+  let light = lightAt(bumped, world, toCamera, max(in.color.a, 1.0), specular, sunShadow(world, n, 0u));
   let albedo = diffuse.rgb * in.color.rgb;
   let color = albedo * light.diffuse + light.specular * select(0.0, mapped.a, specular);
   return vec4f(applyFog(color, world), alpha);
