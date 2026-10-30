@@ -47,15 +47,15 @@ const MQ101 = 0x3372b;
 const TAMRIEL = 0x3c;
 
 describe.skipIf(!hasGamedata() || known === undefined)('a known original save (local)', () => {
-  it("reads every section to its end but the player's data after its skills", () => {
+  it('reads every section and every change form to its end', () => {
     const ess = readEss(new Uint8Array(readFileSync(known ?? '')));
     const papyrus = readPapyrus(globalData(ess, 1001) ?? new Uint8Array(), true);
     expect(papyrus.unread).toBe(0);
     const resolve = refIdResolver(ess.formIds);
-    // Every global data entry reads to its last byte but the temp effects' (TODO(M13)).
+    // Every global data entry reads to its last byte.
     for (const entry of [...ess.globalData1, ...ess.globalData2, ...ess.globalData3]) {
       const read = readGlobalData(entry.type, entry.data, resolve);
-      expect([entry.type, read?.unread]).toEqual([entry.type, entry.type === 1000 ? 1 : 0]);
+      expect([entry.type, read?.unread]).toEqual([entry.type, 0]);
     }
     const stops = new Set<string>();
     let actorValues = 0;
@@ -64,16 +64,20 @@ describe.skipIf(!hasGamedata() || known === undefined)('a known original save (l
       if (form.actor?.values) actorValues++;
       if (form.stoppedAt !== undefined) stops.add(`${String(entry.type)} ${form.stoppedAt}`);
     }
-    // Every actor reads to its end, its movement controller's data included; the player's own
-    // data reads through its skills' experience (TODO(M13): the rest of it).
-    expect([...stops]).toEqual(['1 player data after its skills']);
+    // Every actor reads to its end, its movement controller's data and the player's own data
+    // included.
+    expect([...stops]).toEqual([]);
     expect(actorValues).toBe(ess.changeForms.filter((entry) => entry.type === 1).length);
     const player = ess.changeForms.find((entry) => entry.formId === PLAYER_REF);
-    const skills = player ? readChangeForm(player, resolve).actor?.player?.skills : undefined;
-    expect(skills?.length).toBe(18);
+    const data = player ? readChangeForm(player, resolve).actor?.player : undefined;
+    expect(data?.skills.length).toBe(18);
+    // On the cart into Helgen the player sits in the first person camera, with the camera's
+    // default fields of view.
+    expect(data?.camera.state).toBe(0);
+    expect(data?.camera.worldFov).toBe(80);
   });
 
-  it("restores the player's place, items, quest stages, actor values and updates", async () => {
+  it("restores the player's place, items, quests, actor values, experience, updates", async () => {
     const ess = readEss(new Uint8Array(readFileSync(known ?? '')));
     const resolve = refIdResolver(ess.formIds);
     const playerEntry = ess.changeForms.find((entry) => entry.formId === PLAYER_REF);
@@ -120,6 +124,17 @@ describe.skipIf(!hasGamedata() || known === undefined)('a known original save (l
       for (const { av, value } of playerForm.actor?.values?.base ?? []) {
         expect(values?.get(av)?.base).toBe(value);
       }
+      // The experience towards the next level, each skill's and the character's, and the
+      // perks the player has.
+      const progress = playerForm.actor?.player;
+      expect(sim.runtime.state.playerExperience).toBe(progress?.xp);
+      progress?.skills.forEach((skill, i) => {
+        expect(sim.runtime.state.skillExperience.get(6 + i) ?? 0).toBe(skill.xp);
+      });
+      const perks = sim.runtime.state.actors.get(PLAYER_REF)?.perks;
+      for (const { perk } of progress?.perks ?? []) {
+        if (perk !== 0) expect(perks?.get(perk)).toBe(true);
+      }
       // The OnUpdate and OnUpdateGameTime registrations go on, each from the time it had left.
       const papyrus = readPapyrus(globalData(ess, 1001) ?? new Uint8Array(), true);
       const registered =
@@ -137,24 +152,24 @@ describe.skipIf(!hasGamedata() || known === undefined)('a known original save (l
 });
 
 describe.skipIf(path === undefined)('every original save (local)', () => {
-  it('reads every actor to its end but the parts still open', () => {
+  it('reads every change form and global data entry to its end', () => {
     let names: string[] = [];
     try {
       names = readdirSync(SAVES).filter((file) => file.toLowerCase().endsWith('.ess'));
     } catch {
       // no saves folder
     }
-    // TODO(M13): the combat AI's objects (in a combat controller, or a combat pathing
-    // request's) and the player's data after its skills are the parts not read yet.
-    const open =
-      /^(player data after its skills|combat controller data|actor movement data: combat object .*)$/;
     for (const name of names) {
       const ess = readEss(new Uint8Array(readFileSync(join(SAVES, name))));
       const resolve = refIdResolver(ess.formIds);
       for (const entry of ess.changeForms) {
         const form = readChangeForm(entry, resolve);
-        if (form.stoppedAt !== undefined)
-          expect([name, form.stoppedAt]).toEqual([name, expect.stringMatching(open)]);
+        expect([name, entry.formId, form.stoppedAt]).toEqual([name, entry.formId, undefined]);
+      }
+      // The combat table included (with combats running, its threats are combat objects).
+      for (const entry of [...ess.globalData1, ...ess.globalData2, ...ess.globalData3]) {
+        const read = readGlobalData(entry.type, entry.data, resolve);
+        expect([name, entry.type, read?.unread]).toEqual([name, entry.type, 0]);
       }
     }
   });

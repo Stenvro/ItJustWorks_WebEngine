@@ -15,6 +15,9 @@ import {
 import { DIALOGUE_SUBTYPES } from './dialogue-subtypes.ts';
 import type { RecordDatabase } from './record-db.ts';
 
+/** The shared-info topics' subtype (DIAL DATA; CommonLibSSE's kSharedInfo). */
+const SHARED_INFO = 90;
+
 export class DialogueIndex {
   readonly #db: RecordDatabase;
   /** Topic → its infos (unordered until asked for). */
@@ -83,6 +86,18 @@ export class DialogueIndex {
       this.#topics.set(formId, pending);
     }
     return pending;
+  }
+
+  /**
+   * Whether the original loads a topic's infos with the game (observed in the original): a
+   * shared-info topic's always, another's when its quest is in the start-game quest set the SEQ
+   * files fill (RecordDatabase.startGameQuests); the rest it reads when their quest starts.
+   * Ours reads every info at once (build), which says nothing different: a topic's infos are
+   * only said while its quest runs. TODO(M13): read the rest as their quests start (memory).
+   */
+  async loadsWithGame(topic: TopicRecord): Promise<boolean> {
+    if (topic.subtype === SHARED_INFO) return true;
+    return topic.quest !== undefined && (await this.#db.startGameQuests()).has(topic.quest);
   }
 
   /** A quest's topics (after build). */

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { EssReader } from './ess-reader.ts';
 import { EssWriter } from './ess-test-writer.ts';
 import { refIdResolver } from './global-data.ts';
+import { pathingTypeId } from './pathing-type.ts';
 import {
   readActorCauses,
   readCombat,
@@ -90,13 +92,15 @@ describe('ESS global data, tables 2 and 3 (built from the documented layouts)', 
     ref(w, 0x19).u16(1).u8(2).u8(3).f32(4).f32(5);
     // the combat's tail
     w.f32(1).f32(2).f32(3).f32(4).f32(5).f32(6).f32(7).f32(8).u8(9);
-    // actors, then the tail
-    w.vsval(1);
-    ref(w, 0x14).f32(1);
+    // the threats (a form and its combat object, written the first time: id | 1, type, data;
+    // the second time: the id alone), then the tail
+    w.vsval(2);
+    ref(w, 0x14).u32(0x1001).u32(pathingTypeId('CombatThreat'));
     ref(ref(w, 0x15), 0x16);
-    for (let i = 0; i < 14; i++) w.f32(i);
+    for (let i = 0; i < 3 + 6 + 2 + 3; i++) w.f32(i);
     ref(w, 0x17);
-    w.f32(1).vsval(3).vsval(1);
+    ref(w, 0x15).u32(0x1000);
+    w.f32(1).vsval(0).vsval(1);
     ref(w, 0x14).f32(2).f32(3).f32(4).f32(5).f32(6);
     const combat = readCombat(w.done(), resolve);
     expect(combat.nextNum).toBe(5);
@@ -110,7 +114,7 @@ describe('ESS global data, tables 2 and 3 (built from the documented layouts)', 
       new Uint8Array([0xaa, 0xbb]),
     );
     expect(combat.combats[0]?.unknown1).toBe(9);
-    expect(combat.actors[0]?.position).toEqual([3, 4, 5]);
+    expect(combat.threats).toEqual([0x14, 0x15]);
     expect(combat.references).toEqual([0x14]);
     expect(combat.pair1).toEqual([5, 6]);
   });
@@ -243,5 +247,16 @@ describe('ESS global data, tables 2 and 3 (built from the documented layouts)', 
     expect(nine?.type === 9 && nine.data).toEqual(new Uint8Array([0xcd, 0xef]));
     expect(effects.effects2).toEqual([]);
     expect(effects.unread).toEqual({ type: 2, bytes: new Uint8Array([0x99]) });
+  });
+
+  it('reads the three lists of temp effects to the end', () => {
+    // As the saves read hold it: no entries, a u32, three empty lists, nothing after them.
+    const reader = new EssReader(
+      new EssWriter().vsval(0).u32(79).vsval(0).vsval(0).vsval(0).done(),
+    );
+    const effects = readTempEffects(reader, resolve);
+    expect(effects.unknown).toBe(79);
+    expect(effects.effects3).toEqual([]);
+    expect(reader.remaining).toBe(0);
   });
 });

@@ -31,6 +31,7 @@ import {
   type EssPapyrus,
   type EssVariable,
 } from '../formats/ess/papyrus.ts';
+import type { EssPlayerData } from '../formats/ess/player.ts';
 import type { SavedInstance } from '../scripting/papyrus-vm.ts';
 import { GameState, type ActorValueState } from '../scripting/runtime/game-state.ts';
 import {
@@ -370,7 +371,28 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       applied |= ChangeRefr.openState;
     }
     if (formId === PLAYER_REF) state.actor(PLAYER_REF).level = ess.header.playerLevel;
+    if (formId === PLAYER_REF && form.actor?.player) applyPlayerData(form.actor.player);
     return applied;
+  }
+
+  /**
+   * The player's own data: the experience towards the next character level and each skill's
+   * towards its next level, the times each skill was made legendary, and the perks taken.
+   */
+  function applyPlayerData(data: EssPlayerData): void {
+    state.playerExperience = data.xp;
+    data.skills.forEach((skill, i) => {
+      const av = FIRST_SKILL_AV + i;
+      state.skillExperience.set(av, skill.xp);
+      if (skill.legendary > 0) state.legendary.set(av, skill.legendary);
+    });
+    const perks = state.actor(PLAYER_REF).perks;
+    for (const { perk } of data.perks) {
+      const id = ours(perk);
+      if (id !== undefined && id !== 0) perks.set(id, true);
+    }
+    // TODO(M13): the camera state (first or third person, the third person offset), the
+    // quest log's entries and the player's other lists (docs/formats/ess.md "The player").
   }
 
   function valueOf(reference: number, av: number): ActorValueState {

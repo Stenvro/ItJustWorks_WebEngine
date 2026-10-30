@@ -6,6 +6,7 @@ import { BlockCache } from '../formats/block-cache.ts';
 import type { ByteSource } from '../formats/byte-source.ts';
 import { Fields, view, zstring } from '../formats/esm/fields.ts';
 import { parsePluginInfo, type PluginInfo } from '../formats/esm/plugin-header.ts';
+import { parseSeq, seqPath } from '../formats/esm/seq.ts';
 import {
   findRecord,
   forEachRecord,
@@ -247,6 +248,33 @@ export class RecordDatabase {
     }
     return pending;
   }
+
+  /**
+   * The quests whose dialogue the original loads with the game (docs/formats/esm.md "SEQ
+   * files"): as each plugin loads, every id of its `seq\<plugin>.seq` moved into the load order
+   * by that plugin's masters, into one set. Ids the plugin's file does not map to a quest stay
+   * in the set as the original keeps them (HearthFires.esm's file, older than its Update.esm
+   * master, names Update.esm forms).
+   */
+  startGameQuests(): Promise<ReadonlySet<number>> {
+    this.#startGameQuests ??= (async () => {
+      const quests = new Set<number>();
+      for (const plugin of this.plugins) {
+        const file = seqPath(plugin.entry.name);
+        if (!this.#vfs.has(file)) continue;
+        try {
+          for (const id of parseSeq(await this.#vfs.read(file)))
+            quests.add(this.toGlobal(plugin, id));
+        } catch {
+          // A broken SEQ file loads no quest's dialogue early; the dialogue loads as it starts.
+        }
+      }
+      return quests;
+    })();
+    return this.#startGameQuests;
+  }
+
+  #startGameQuests: Promise<ReadonlySet<number>> | undefined;
 
   // --- Form ids ---------------------------------------------------------------
 
