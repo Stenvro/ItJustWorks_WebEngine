@@ -139,6 +139,17 @@ export function readPlacement(body: Uint8Array, code: number): Placement {
   return { depth, character, name };
 }
 
+/** Where a PlaceObject2/3's character id sits, or undefined if it places none (a move). */
+export function characterOffset(body: Uint8Array, code: number): number | undefined {
+  const flags = body[0] ?? 0;
+  if ((flags & 0x02) === 0) return undefined;
+  const third = code === SwfTagCode.placeObject3;
+  const flags2 = third ? (body[1] ?? 0) : 0;
+  const at = third ? 4 : 3;
+  // A class name: HasClassName, or HasImage with HasCharacter (as readPlacement reads it).
+  return third && flags2 & 0x18 ? skipString(body, at) : at;
+}
+
 /** Where a PlaceObject2/3's clip actions start, or undefined if it has none. */
 export function clipActionsOffset(body: Uint8Array, code: number): number | undefined {
   const flags = body[0] ?? 0;
