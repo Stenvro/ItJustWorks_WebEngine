@@ -105,6 +105,33 @@ describe('the menus’ save list', () => {
     expect(fake.entries.map((entry) => entry.text)).toEqual(['Save 1  Whiterun']);
   });
 
+  it('tells whether a delete went through (the journal: RefreshMenu or the device error)', async () => {
+    const outcomes: string[] = [];
+    let refuse = false;
+    const source: SaveListSource = {
+      list: () => Promise.resolve(saves),
+      delete: () => (refuse ? Promise.reject(new Error('locked')) : Promise.resolve()),
+    };
+    const list = new SaveList<FakeMenu>({
+      source: () => source,
+      playTime: () => '',
+      load: () => undefined,
+      log: () => undefined,
+      deleted: () => outcomes.push('deleted'),
+      failed: () => outcomes.push('failed'),
+    });
+    const handlers = list.handlers();
+    const menu = new FakeMenu();
+    handlers.CharacterSelected?.(menu, [0, 0, false, 'list', 10]);
+    await settle();
+    handlers.DeleteSave?.(menu, [0]);
+    await settle();
+    refuse = true;
+    handlers.DeleteSave?.(menu, [0]);
+    await settle();
+    expect(outcomes).toEqual(['deleted', 'failed']);
+  });
+
   it('gives the highlighted save’s screenshot, then says ScreenshotReady', async () => {
     const asked: (string | undefined)[] = [];
     const shown: (number | undefined)[] = [];

@@ -643,10 +643,8 @@ export class PlayMode {
     menus.saves = {
       list: () => this.#saves.list(),
       save: (overwrite) => this.#saves.save('save', overwrite),
-      quicksave: () => {
-        void this.#saves.save('quicksave');
-      },
-      load: (name) => this.#startLoad(name),
+      quicksave: () => this.#saves.save('quicksave'),
+      load: (name) => this.#startLoad(name, true),
       delete: (name) => this.#saves.delete(name),
       importEss: () => {
         this.#importEss();
@@ -680,6 +678,9 @@ export class PlayMode {
       keyRepeat: () => this.#host.keyRepeat,
       menuStick: (x, y) => {
         menus.rightStick(x, y);
+      },
+      gamepadChanged: () => {
+        menus.gamepadChanged();
       },
       userEvent: (name) => {
         if (!dialogue.isOpen) menus.userEvent(name);
@@ -909,10 +910,12 @@ export class PlayMode {
   }
 
   /**
-   * Starts loading a save: resolves once it is read, false when it cannot be (the load is
-   * cancelled: the journal backs out of its load list), true as the world starts loading.
+   * Starts loading a save: resolves once it is read, false when there is none (the load is
+   * cancelled: the journal backs out of its load list), true as the world starts loading. A
+   * save that cannot be read resolves false too, or with `rejectUnread` rejects (the journal
+   * answers it with the device error).
    */
-  async #startLoad(name: string): Promise<boolean> {
+  async #startLoad(name: string, rejectUnread = false): Promise<boolean> {
     const failed = (error: unknown): false => {
       this.#terminal.log(
         'save',
@@ -925,7 +928,9 @@ export class PlayMode {
     try {
       load = await this.#saves.read(name);
     } catch (error) {
-      return failed(error);
+      failed(error);
+      if (rejectUnread) throw error;
+      return false;
     }
     if (!load) {
       this.#terminal.log('save', `no save named ${name}`, 'warn');

@@ -14,6 +14,7 @@ import {
   SwfTagCode,
   tagBody,
   type SwfMovie,
+  type SwfTag,
 } from '../src/formats/swf/swf.ts';
 import { parseTranslations, type Translations } from '../src/formats/swf/translation.ts';
 import { decodeUtf16le, decodeWindows1252 } from '../src/formats/text.ts';
@@ -23,6 +24,7 @@ import { patchMovie } from '../src/ui/movie-patches.ts';
 import { withBridge } from '../src/ui/menu-bridge.ts';
 import { translateMovie } from '../src/ui/translate-movie.ts';
 import { linkImports } from '../src/formats/swf/swf-link.ts';
+import { readPlacement } from '../src/formats/swf/place-object.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
 
@@ -272,4 +274,44 @@ describe.skipIf(!hasGamedata())('the interface movies on the local game data', (
     // The game's only device font the library lacks.
     expect(patched).toEqual(['hudmenu.swf: Times New Roman']);
   }, 60_000);
+
+  it('turns no shape or clip within a scaling-grid sprite (the grid is cut along the sprite)', async () => {
+    const DEFINE_SCALING_GRID = 78;
+    const turned: string[] = [];
+    let grids = 0;
+    // Every movie with its exported .gfx (the font libraries have no sprites of their own).
+    const movies = vfs
+      .list('interface')
+      .filter((path) => /\.(swf|gfx)$/i.test(path) && !/\\fonts_/i.test(path));
+    for (const path of movies) {
+      const movie = readSwf(await vfs.read(path));
+      const sprites = new Map<number, readonly SwfTag[]>();
+      const gridIds: number[] = [];
+      for (const tag of movie.tags) {
+        const body = tagBody(movie, tag);
+        const id = (body[0] ?? 0) | ((body[1] ?? 0) << 8);
+        if (tag.code === SwfTagCode.defineSprite) sprites.set(id, tag.children ?? []);
+        if (tag.code === DEFINE_SCALING_GRID) gridIds.push(id);
+      }
+      // Every placement in a grid sprite or in a sprite under one.
+      const queue = gridIds.filter((id) => sprites.has(id));
+      grids += queue.length;
+      const seen = new Set<number>();
+      for (let id = queue.pop(); id !== undefined; id = queue.pop()) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        for (const child of sprites.get(id) ?? []) {
+          if (child.code !== SwfTagCode.placeObject2 && child.code !== SwfTagCode.placeObject3)
+            continue;
+          const placed = readPlacement(tagBody(movie, child), child.code);
+          if (placed.turned)
+            turned.push(`${path}: sprite ${String(id)}, depth ${String(placed.depth)}`);
+          if (placed.character !== undefined && sprites.has(placed.character))
+            queue.push(placed.character);
+        }
+      }
+    }
+    expect(grids).toBeGreaterThan(100);
+    expect(turned).toEqual([]);
+  }, 120_000);
 });

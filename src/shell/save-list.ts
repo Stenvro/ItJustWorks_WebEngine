@@ -110,6 +110,10 @@ export interface SaveListOptions<M extends SaveListMenu> {
   /** Gives the movie its screenshot picture (img://BGSSaveLoadHeader_Screenshot). */
   readonly screenshotImage?: (png: Uint8Array | undefined) => void;
   readonly log: (message: string) => void;
+  /** A save was deleted (the journal hears the save system's result: RefreshMenu). */
+  readonly deleted?: (menu: M) => void;
+  /** A save could not be deleted (the journal: the device error, then Show Journal). */
+  readonly failed?: (menu: M) => void;
 }
 
 /** The save list's requests, answered for one movie at a time. */
@@ -189,11 +193,17 @@ export class SaveList<M extends SaveListMenu = SaveListMenu> {
         const character = listed.headers[index]?.playerName;
         source
           .delete(name)
-          .catch((error: unknown) => {
-            this.#options.log(
-              `${name} could not be deleted: ${error instanceof Error ? error.message : String(error)}`,
-            );
-          })
+          .then(
+            () => {
+              this.#options.deleted?.(menu);
+            },
+            (error: unknown) => {
+              this.#options.log(
+                `${name} could not be deleted: ${error instanceof Error ? error.message : String(error)}`,
+              );
+              this.#options.failed?.(menu);
+            },
+          )
           .then(() => this.#fill(menu, listed.list, listed.saving, character))
           .catch(() => undefined);
       },

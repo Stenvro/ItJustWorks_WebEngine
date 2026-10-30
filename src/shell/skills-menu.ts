@@ -60,6 +60,7 @@ import type { GameSettings } from '../world/game-settings.ts';
 import { parsePerk, type PerkRecord } from '../world/perk-records.ts';
 import { parseSkill, type PerkTreeNode, type SkillRecord } from '../world/perk-trees.ts';
 import { beastTree, type BeastTree } from '../gameplay/beast-perk-trees.ts';
+import { DefaultObjects } from '../world/default-objects.ts';
 import type { GameSession } from './game-session.ts';
 import { clock, startObjectGraph } from './object-graphs.ts';
 import type { Terminal } from './terminal.ts';
@@ -280,6 +281,8 @@ class Viewing {
   #tree: Tree | undefined;
   /** The beast form whose tree shows instead of the ring (undefined: the ring). */
   #beast: BeastTree | undefined;
+  /** The global counting the beast form's perk points (its default object's). */
+  #beastPoints: number | undefined;
   #selected: PerkStar | undefined;
   /** 0 the ring, 1 up in a tree. */
   #up = 0;
@@ -313,8 +316,11 @@ class Viewing {
   async start(): Promise<Menu> {
     const renderer = this.#session.renderer;
     const race = await this.#runtime.actors.raceOf(PLAYER_REF);
-    const raceRecord = race === undefined ? undefined : await this.#runtime.forms.record(race);
-    this.#beast = beastTree(this.#runtime.beastForm, raceRecord?.editorId);
+    const defaults = this.#runtime.beastForm
+      ? await DefaultObjects.read(this.#runtime.forms.db)
+      : undefined;
+    this.#beast = beastTree(this.#runtime.beastForm, race, (use) => defaults?.get(use));
+    this.#beastPoints = this.#beast ? defaults?.get(this.#beast.pointsGlobal) : undefined;
     if (this.#beast) {
       this.#targetYaw = 0;
       this.#camera.yaw = 0;
@@ -402,7 +408,7 @@ class Viewing {
     };
     // In a beast form, its tree alone (src/gameplay/beast-perk-trees.ts), shown with its points.
     const beast = this.#beast;
-    const skills = beast ? [beast.points] : RING_SKILLS;
+    const skills = beast ? [beast.progress] : RING_SKILLS;
     for (const [ring, skill] of skills.entries()) {
       const record = beast
         ? await runtime.forms.actorValueFormNamed(beast.avif)
@@ -564,7 +570,7 @@ class Viewing {
         Math.floor(value.current),
         tree.record.name,
         // The skill's progress to its next level (0..100).
-        (await this.#runtime.progression.skillProgress(tree.skill)) * 100,
+        (await this.#progress(tree.skill)) * 100,
         valueColour(value.current, value.base),
         this.#runtime.state.legendary.get(tree.skill) ?? 0,
       );
@@ -575,6 +581,17 @@ class Viewing {
     menu.call('SetStatsMode', !this.#setup.levelUp, await this.#perkPoints());
   }
 
+  /**
+   * A tree's progress (0..1): a skill's to its next level; a beast form's to its next perk point,
+   * which the feeding scripts keep in its actor value (0..100). TODO(M13): the number the
+   * original shows as a beast tree's level is not read (ours: that actor value).
+   */
+  async #progress(skill: number): Promise<number> {
+    if (!this.#beast) return this.#runtime.progression.skillProgress(skill);
+    const value = await this.#runtime.actors.value(PLAYER_REF, skill);
+    return Math.min(1, Math.max(0, value.current / 100));
+  }
+
   /** The card of the skill faced, or of the perk selected. */
   #showCard(): void {
     const menu = this.#menu;
@@ -583,7 +600,7 @@ class Viewing {
     const runtime = this.#runtime;
     void Promise.all([
       runtime.actors.value(PLAYER_REF, tree.skill),
-      runtime.progression.skillProgress(tree.skill),
+      this.#progress(tree.skill),
     ]).then(([value, progress]) => {
       const level = Math.floor(value.current);
       const legendary = runtime.state.legendary.get(tree.skill) ?? 0;
@@ -857,7 +874,7 @@ class Viewing {
 
   /** The points perks are bought with: the player's, or the beast form's. */
   #perkPoints(): Promise<number> {
-    return this.#runtime.progression.perkPointsOf(this.#beast?.points);
+    return this.#runtime.progression.perkPointsOf(this.#beastPoints);
   }
 
   #select(star: PerkStar): void {
@@ -909,7 +926,7 @@ class Viewing {
     const next = star.ranks[star.owned];
     if (
       !next ||
-      (await runtime.progression.perkAvailability(next.formId, this.#beast?.points)) !== 'available'
+      (await runtime.progression.perkAvailability(next.formId, this.#beastPoints)) !== 'available'
     )
       return;
     this.#asking = true;
@@ -924,7 +941,7 @@ class Viewing {
     if (
       answer !== 0 ||
       this.#done ||
-      !(await runtime.progression.takePerk(next.formId, this.#beast?.points))
+      !(await runtime.progression.takePerk(next.formId, this.#beastPoints))
     )
       return;
     star.graph?.send('Own', clock());
