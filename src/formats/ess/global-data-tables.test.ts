@@ -194,10 +194,21 @@ describe('ESS global data, tables 2 and 3 (built from the documented layouts)', 
       unknown3: 4,
       unknown4: 5,
     });
-    expect(readStoryEventManager(new EssWriter().u32(1).vsval(2).u8(7).done())).toEqual({
-      unknown: 1,
-      count: 2,
-      entries: new Uint8Array([7]),
+    // One event waiting: number 4, Script Event (SCPT), a reference and a number.
+    const events = new EssWriter().u32(5).vsval(1).u32(4).u32(0x54504353).u32(2);
+    ref(events.u32(0), 0x14).u32(3).u32(7);
+    expect(readStoryEventManager(events.done(), resolve)).toEqual({
+      nextId: 5,
+      events: [
+        {
+          id: 4,
+          type: 'SCPT',
+          parameters: [
+            { kind: 0, value: 0x14 },
+            { kind: 3, value: 7 },
+          ],
+        },
+      ],
     });
     const pairs = new EssWriter().u32(1);
     expect(readIngredientShared(ref(ref(pairs, 0x34cdd), 0x3ad56).done(), resolve)).toEqual([

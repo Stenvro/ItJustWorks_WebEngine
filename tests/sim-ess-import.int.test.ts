@@ -68,6 +68,20 @@ describe.skipIf(!hasGamedata() || known === undefined)('a known original save (l
     // included.
     expect([...stops]).toEqual([]);
     expect(actorValues).toBe(ess.changeForms.filter((entry) => entry.type === 1).length);
+    // Every actor with an AI process has it read by its layout (no search for what follows):
+    // the package each runs, with a custom package's procedure states.
+    let processes = 0;
+    let running = 0;
+    for (const entry of ess.changeForms) {
+      if (entry.type !== 1) continue;
+      const actor = readChangeForm(entry, resolve).actor;
+      if (actor?.processLevel === -1) continue;
+      expect(actor?.process).toBeDefined();
+      processes++;
+      if (actor?.process?.package) running++;
+    }
+    expect(processes).toBeGreaterThan(0);
+    expect(running).toBeGreaterThan(0);
     const player = ess.changeForms.find((entry) => entry.formId === PLAYER_REF);
     const data = player ? readChangeForm(player, resolve).actor?.player : undefined;
     expect(data?.skills.length).toBe(18);
@@ -145,6 +159,19 @@ describe.skipIf(!hasGamedata() || known === undefined)('a known original save (l
         expect(update.left).toBeGreaterThanOrEqual(0);
         if (!update.gameTime) expect(update.left).toBeLessThanOrEqual(update.interval);
       }
+      // The camera as the original left it: first person, its fields of view.
+      expect(imported.save.world?.player).toEqual({ pov: 'first', fov: [80, 80] });
+      // The actors' running packages, where the save has them stand: those of the loaded
+      // area go on with them.
+      const runs = imported.save.world?.actors.filter((actor) => actor.package) ?? [];
+      expect(runs.length).toBeGreaterThan(0);
+      await sim.step(1);
+      const going = runs.filter(
+        (saved) =>
+          sim.actor(saved.reference) !== undefined &&
+          sim.package(saved.reference)?.id === saved.package?.id,
+      );
+      expect(going.length).toBeGreaterThan(0);
     } finally {
       await sim.close();
     }
@@ -174,6 +201,53 @@ describe.skipIf(path === undefined)('every original save (local)', () => {
     }
   });
 });
+
+describe.skipIf(!hasGamedata() || path === undefined)(
+  'every original save, imported (local)',
+  () => {
+    it("imports the quest log, the quests' story events and the waiting events", async () => {
+      let names: string[] = [];
+      try {
+        names = readdirSync(SAVES).filter((file) => file.toLowerCase().endsWith('.ess'));
+      } catch {
+        // no saves folder
+      }
+      const probe = await openSim();
+      const world = essWorld(probe.db);
+      await probe.close();
+      for (const name of names) {
+        const ess = readEss(new Uint8Array(readFileSync(join(SAVES, name))));
+        const resolve = refIdResolver(ess.formIds);
+        const imported = importEss(ess, world, { name: 'Imported', number: 1, now: 0 });
+        const state = imported.save.runtime.state as {
+          quests: Map<number, { log: { stage: number; entry: number }[]; event?: unknown }>;
+        };
+        const player = ess.changeForms.find((entry) => entry.formId === PLAYER_REF);
+        const data = player ? readChangeForm(player, resolve).actor?.player : undefined;
+        // Each quest log entry, oldest first per quest.
+        for (const entry of [...(data?.questLog ?? [])].reverse()) {
+          expect(state.quests.get(entry.quest)?.log).toContainEqual({
+            stage: entry.stage,
+            entry: entry.flags,
+          });
+        }
+        // The quests a story event started keep its data.
+        for (const entry of ess.changeForms) {
+          if (entry.type !== 8) continue;
+          const event = readChangeForm(entry, resolve).quest?.event;
+          const quest = state.quests.get(entry.formId ?? 0);
+          if (event) expect([name, quest?.event]).not.toEqual([name, undefined]);
+        }
+        // The events the story manager had not processed yet (none in the saves read).
+        const sem = readGlobalData(111, globalData(ess, 111) ?? new Uint8Array(), resolve);
+        const waiting = (sem?.value as { events: unknown[] } | undefined)?.events.length ?? 0;
+        const pending = (imported.save.runtime.storyManager as { pending?: unknown[] } | undefined)
+          ?.pending;
+        expect(pending?.length ?? 0).toBe(waiting);
+      }
+    }, 300_000);
+  },
+);
 
 describe.skipIf(!hasGamedata() || path === undefined)('an original save (local)', () => {
   it('reads its header and change forms, and loads into a simulation', async () => {

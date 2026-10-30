@@ -93,8 +93,20 @@ const byType = new Map<string, { count: number; partial: number }>();
 // Why reads stopped (numbers left out), and how many actors' values were read.
 const reasons = new Map<string, number>();
 let actorValues = 0;
+// The actors' AI processes: how many, and the procedure each custom package's tree runs.
+let processes = 0;
+const procedures = new Map<string, number>();
 for (const entry of ess.changeForms) {
   const form = readChangeForm(entry, resolve);
+  const process = form.actor?.process;
+  if (process) {
+    processes++;
+    const running = process.package;
+    if (running) {
+      const name = running.procedure ?? `package data ${String(running.dataKind ?? 'none')}`;
+      procedures.set(name || 'no procedure', (procedures.get(name || 'no procedure') ?? 0) + 1);
+    }
+  }
   const name = changeFormTypeName(entry.type);
   const counts = byType.get(name) ?? { count: 0, partial: 0 };
   counts.count++;
@@ -116,4 +128,9 @@ for (const [name, { count, partial }] of byType) {
   );
 }
 console.log(`actors with their actor values read: ${String(actorValues)}`);
+console.log(
+  `AI processes: ${String(processes)}; running packages by procedure: ${[...procedures]
+    .map(([name, count]) => `${name} ${String(count)}`)
+    .join(', ')}`,
+);
 for (const [reason, count] of reasons) console.log(`  stopped at ${reason}: ${String(count)}`);

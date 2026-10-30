@@ -152,7 +152,7 @@ export function readMovement(stream: PathingStream): EssMovement {
  * graph's (a byte, and its variables: 12 bytes each; 4 zero bytes when the graph was not
  * found) or every graph's of a list (a byte, a count, 12 bytes each).
  */
-function readGraphState(reader: EssReader): void {
+export function readGraphState(reader: EssReader): void {
   if (reader.u8() === 0) return;
   const many = reader.u8() !== 0;
   if (!many) {
@@ -174,17 +174,10 @@ export class PathingStream implements CombatStream {
   readonly resolve: RefIdResolver;
   /** The shared objects already written (by the id the original gives them). */
   readonly #seen = new Set<bigint>();
-  /** Whether `#seen` holds every object written before (else some are not known). */
-  readonly #complete: boolean;
 
-  /**
-   * `complete`: whether every part the actor's save wrote before is read through this stream
-   * (else an id may stand for an object a part not read wrote).
-   */
-  constructor(reader: EssReader, resolve: RefIdResolver, complete = true) {
+  constructor(reader: EssReader, resolve: RefIdResolver) {
     this.reader = reader;
     this.resolve = resolve;
-    this.#complete = complete;
   }
 
   floats(count: number): void {
@@ -200,15 +193,6 @@ export class PathingStream implements CombatStream {
     const reader = this.reader;
     const id = reader.u64();
     if (id === 0n || this.#seen.has(id)) return;
-    // An object a part not read wrote (the AI process's data) is not written again here:
-    // what follows is then no type of the pathing classes.
-    // TODO(M13): pass what the AI process's data wrote once that is decoded.
-    if (!this.#complete && reader.remaining >= 4) {
-      const at = reader.offset;
-      const type = reader.u32();
-      reader.seek(at);
-      if (!PATHING_TYPES.has(type) && !COMBAT_REQUESTS.has(type)) return;
-    }
     this.#seen.add(id);
     this.object(read);
   }
