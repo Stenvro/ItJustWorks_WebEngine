@@ -1973,6 +1973,7 @@ export class PlaySession {
       menuKey: (type, code) => this.#hud?.menus?.padKey?.(type, code) === true,
       keyRepeat: () => this.#hud?.menus?.keyRepeat?.() ?? { long: 0.5, short: 0.1 },
       menuStick: (x, y) => this.#hud?.menus?.menuStick?.(x, y),
+      gamepadChanged: () => this.#hud?.menus?.gamepadChanged?.(),
     });
     this.#detach = () => {
       keys();

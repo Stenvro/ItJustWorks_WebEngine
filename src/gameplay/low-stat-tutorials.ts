@@ -1,13 +1,23 @@
 // The low-stat tutorials: the first time the player's health, magicka or stamina runs low, the game
 // explains it with a help message (the default objects HBLH HelpBarsHealthLow, HBLM
 // HelpBarsMagickaLow, HBLS HelpBarsStaminaLow: MESG records), shown through the tutorials
-// (src/shell/tutorial-menu.ts) once in a game. Platform-independent.
+// (src/shell/tutorial-menu.ts) once in a game. Observed in the original: as one of the player's
+// three stats changes, it is low below its game setting's share of its maximum
+// (fLowHealthTutorialPercentage, fLowMagickaTutorialPercentage, fLowStaminaTutorialPercentage:
+// 0.25 each), health only while above 0; each stat's tutorial shows once. Platform-independent.
 //
-// TODO(M13): the engine's "low" is not a game setting; the share below which a meter counts as low
-// is taken from the slow heartbeat's (fPlayerHealthHeartbeatSlow, 0.2) for all three.
+// TODO(M13): two engine states the original checks first (one of the game's, one of the
+// player's) are not named.
 
-/** Below this share of its maximum a stat is low. */
-export const LOW_STAT_SHARE = 0.2;
+/** The share of its maximum below which a stat is low (the settings' built-in values). */
+export const LOW_STAT_SHARE_DEFAULT = 0.25;
+
+/** Each stat's game setting for its share. */
+export const LOW_STAT_SETTINGS = {
+  health: 'fLowHealthTutorialPercentage',
+  magicka: 'fLowMagickaTutorialPercentage',
+  stamina: 'fLowStaminaTutorialPercentage',
+} as const;
 
 /** Each stat's tutorial (DOBJ use). */
 export const LOW_STAT_TUTORIALS = {
@@ -23,25 +33,26 @@ export interface StatValue {
   readonly max: number;
 }
 
-/** Whether a stat is low: alive (above 0 health), with a maximum, below the share of it. */
-export function statIsLow(value: StatValue, share = LOW_STAT_SHARE): boolean {
-  return value.max > 0 && value.current < value.max * share;
+/** Whether a stat is low: with a maximum, below the share of it. */
+export function statIsLow(value: StatValue, share = LOW_STAT_SHARE_DEFAULT): boolean {
+  return value.max > 0 && value.current / value.max < share;
 }
 
 /**
- * The tutorials to show now: those of the low stats not shown yet. None while the player is dead
- * (their health at 0 or below).
+ * The tutorials to show now: those of the low stats not shown yet (health's only while the
+ * player's health is above 0). `share` gives each stat's game setting.
  */
 export function lowStatTutorials(
   values: Readonly<Record<LowStat, StatValue>>,
   shown: ReadonlySet<string>,
-  share = LOW_STAT_SHARE,
+  share: (stat: LowStat) => number = () => LOW_STAT_SHARE_DEFAULT,
 ): string[] {
-  if (!(values.health.current > 0)) return [];
   const out: string[] = [];
   for (const stat of ['health', 'magicka', 'stamina'] as const) {
     const use = LOW_STAT_TUTORIALS[stat];
-    if (!shown.has(use) && statIsLow(values[stat], share)) out.push(use);
+    if (shown.has(use)) continue;
+    if (stat === 'health' && !(values.health.current > 0)) continue;
+    if (statIsLow(values[stat], share(stat))) out.push(use);
   }
   return out;
 }

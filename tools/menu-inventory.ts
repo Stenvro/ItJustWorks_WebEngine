@@ -27,6 +27,8 @@ const ONLINE = 'an online service (Bethesda.net): never reached from localhost (
 const UNSENT = 'the original engine has no such name: it never sends it';
 const NO_MENU = 'no menu of the original is made under this name (it is only looked up)';
 const SAFE_ZONE = "the consoles' safe-zone setting: the PC's display page has none";
+const NEVER_SHOWN =
+  'the original never opens it: ToggleDebugText and SetDebugText return at once, the code that would show it is never called';
 const UNLOADED = 'nothing loads it: neither the engine nor any movie names it';
 
 /** Names the PC game never sends or answers, and why. */
@@ -246,7 +248,7 @@ const ORIGINAL_MENUS: readonly (readonly [string, string?])[] = [
   ['Creation Club Menu', ONLINE],
   ['Credits Menu'],
   ['Cursor Menu'],
-  ['Debug Text Menu'],
+  ['Debug Text Menu', NEVER_SHOWN],
   ['Dialogue Menu'],
   ['Fader Menu'],
   ['FavoritesMenu'],

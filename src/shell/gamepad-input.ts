@@ -37,6 +37,8 @@ export interface GamepadSink {
   keyRepeat?(): { readonly long: number; readonly short: number };
   /** The right stick while a menu has the input (x, y: -1..1, up positive), every read. */
   menuStick?(x: number, y: number): void;
+  /** A gamepad was connected or disconnected. */
+  gamepadChanged?(): void;
 }
 
 /** Whoever waits for the next gamepad button (the Controls page's remap). */
@@ -171,10 +173,18 @@ export function attachGamepad(sink: GamepadSink): () => void {
   };
   window.addEventListener('keydown', keyboard, true);
   window.addEventListener('mousedown', keyboard, true);
+  // A gamepad coming or going (the input devices' gamepad event: the journal hears it).
+  const changed = (): void => {
+    sink.gamepadChanged?.();
+  };
+  window.addEventListener('gamepadconnected', changed);
+  window.addEventListener('gamepaddisconnected', changed);
   return () => {
     cancelAnimationFrame(frame);
     window.removeEventListener('keydown', keyboard, true);
     window.removeEventListener('mousedown', keyboard, true);
+    window.removeEventListener('gamepadconnected', changed);
+    window.removeEventListener('gamepaddisconnected', changed);
     for (const [input, to] of held) release(input, to);
     held.clear();
     sink.player.stick = [0, 0];

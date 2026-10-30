@@ -106,10 +106,23 @@ export class JournalMenu {
       // CancelLoading with the journal open) backs the system page out of its load list
       // (BackOutFromLoadGame); a load that goes ahead closes the journal.
       load: (menu, name) => {
-        void this.saves?.load(name).then((loading) => {
-          if (loading) this.#close?.(menu);
-          else menu.call('BackOutFromLoadGame');
-        });
+        this.saves?.load(name).then(
+          (loading) => {
+            if (loading) this.#close?.(menu);
+            else menu.call('BackOutFromLoadGame');
+          },
+          () => {
+            this.#deviceError();
+          },
+        );
+      },
+      // The save system's results reach the journal's system page (observed in the original):
+      // a save deleted redraws its buttons, one that could not be is the device error.
+      deleted: () => {
+        this.message('RefreshMenu');
+      },
+      failed: () => {
+        this.#deviceError();
       },
       importSave: (menu) => {
         this.#close?.(menu);
@@ -259,12 +272,18 @@ export class JournalMenu {
           const index = typeof args[0] === 'number' ? args[0] : 0;
           // The first entry is the new save; the others are saved over.
           const over = index > 0 ? this.#saveList.listed?.headers[index - 1]?.name : undefined;
+          // The movie closes itself on the PC as it asks (its Sony consoles wait for the
+          // engine); a save that cannot be written is the device error.
           hide(menu);
-          void this.saves?.save(over);
+          this.saves?.save(over).catch(() => {
+            this.#deviceError();
+          });
         },
         QuickSave: (menu) => {
           hide(menu);
-          this.saves?.quicksave();
+          this.saves?.quicksave().catch(() => {
+            this.#deviceError();
+          });
         },
         SetSaveDisabled: () => undefined,
         QuitToMainMenu: (menu) => {
@@ -312,6 +331,26 @@ export class JournalMenu {
    */
   message(name: 'Show Journal' | 'RefreshMenu'): void {
     this.#shown?.call(name === 'Show Journal' ? 'ShowMenu' : 'RefreshSystemButtons');
+  }
+
+  /**
+   * A gamepad came or went (the input devices' gamepad event): the open journal's system page
+   * redraws its buttons, as observed in the original ("RefreshMenu").
+   */
+  gamepadChanged(): void {
+    this.message('RefreshMenu');
+  }
+
+  /**
+   * A save, load or delete the save system could not do, as observed in the original: the box
+   * sSaveGameDeviceError (with sOk), then "Show Journal" to the journal if it is still open.
+   */
+  #deviceError(): void {
+    void this.#session.settings().then(async (settings) => {
+      const text = settings.string('sSaveGameDeviceError') ?? '';
+      await this.#session.hud.menus?.messageBox(text, [settings.string('sOk') ?? 'Ok']);
+      this.message('Show Journal');
+    });
   }
 
   /**
@@ -447,8 +486,11 @@ export interface JournalSaves {
   list(): Promise<SaveHeader[]>;
   /** A new save, or over the save of this name. */
   save(overwrite?: string): Promise<unknown>;
-  quicksave(): void;
-  /** Loads a save: resolves false when the load does not go ahead (it is cancelled). */
+  quicksave(): Promise<unknown>;
+  /**
+   * Loads a save: resolves false when the load does not go ahead (it is cancelled), rejects
+   * when the save cannot be read.
+   */
   load(name: string): Promise<boolean>;
   delete(name: string): Promise<void>;
   /** Picks an original save (.ess), imports it and loads it. */
