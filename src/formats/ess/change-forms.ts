@@ -8,7 +8,8 @@ import { FormatError } from '../binary-reader.ts';
 import { changeFormData, changeFormTypeName, type ChangeFormEntry } from './ess.ts';
 import { EssReader, RefIdKind } from './ess-reader.ts';
 import type { RefIdResolver } from './global-data.ts';
-import { MovementUnknown, readMovement, type EssMovement } from './movement.ts';
+import { CombatUnknown, readCombatController, type EssCombatController } from './combat.ts';
+import { MovementUnknown, PathingStream, readMovement, type EssMovement } from './movement.ts';
 import { readPlayerData, type EssPlayerData } from './player.ts';
 
 const bit = (n: number): number => (1 << n) >>> 0;
@@ -191,6 +192,8 @@ export interface EssActorData {
   readonly addedSpells?: readonly number[];
   /** Its movement controller's state (movement.ts). */
   readonly movement?: EssMovement;
+  /** Its combat controller's state, when it is in combat (combat.ts). */
+  readonly combat?: EssCombatController;
   /** The player's own data (player.ts). */
   readonly player?: EssPlayerData;
 }
@@ -1317,20 +1320,30 @@ function readActor(
   const n = reader.u32();
   for (let i = 0; i < n; i++) added.push(ref());
   actor.addedSpells = added;
+  // One pathing stream for the actor's save: the movement and combat controllers share the
+  // objects they write.
+  const stream = new PathingStream(reader, resolve, actor.processLevel === -1);
   if (reader.u8() !== 0) {
     try {
-      actor.movement = readMovement(
-        reader,
-        resolve,
-        actor.processLevel === -1 ? new Set() : undefined,
-      );
+      actor.movement = readMovement(stream);
     } catch (error) {
-      if (error instanceof MovementUnknown) return 'actor movement data: ' + error.message;
+      if (error instanceof MovementUnknown || error instanceof CombatUnknown) {
+        return 'actor movement data: ' + error.message;
+      }
       throw error;
     }
   }
   reader.u32();
-  if (reader.u8() !== 0) return 'combat controller data';
+  if (reader.u8() !== 0) {
+    try {
+      actor.combat = readCombatController(stream);
+    } catch (error) {
+      if (error instanceof MovementUnknown || error instanceof CombatUnknown) {
+        return 'combat controller data: ' + error.message;
+      }
+      throw error;
+    }
+  }
   const entries = reader.u32();
   for (let i = 0; i < entries; i++) {
     ref();
@@ -1340,8 +1353,8 @@ function readActor(
   ref();
   reader.u8();
   if (player) {
-    actor.player = readPlayerData(reader);
-    if (reader.remaining > 0) return 'player data after its skills';
+    actor.player = readPlayerData(reader, resolve);
+    if (reader.remaining > 0) return 'player data';
   }
   return undefined;
 }

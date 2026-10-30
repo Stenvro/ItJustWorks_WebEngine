@@ -22,6 +22,8 @@ import {
   readWeather,
   type RefIdResolver,
 } from './global-data.ts';
+import { readCombatObject } from './combat.ts';
+import { PathingStream } from './movement.ts';
 import { readPapyrus } from './papyrus.ts';
 
 type Vec3 = [number, number, number];
@@ -205,23 +207,17 @@ export interface SavedCombat {
   readonly unknown1: number;
 }
 
-/** UESP's Unknown1: an actor's combat entry. */
-export interface CombatActor {
-  readonly actor: number;
-  readonly unknown0: number;
-  readonly reference0: number;
-  readonly reference1: number;
-  readonly unknown1: readonly number[];
-  readonly position: Vec3;
-  readonly unknown2: readonly number[];
-  readonly reference2: number;
-}
-
 export interface CombatData {
   readonly nextNum: number;
   readonly combats: readonly SavedCombat[];
-  readonly actors: readonly CombatActor[];
+  /**
+   * The threats the combat AI keeps (UESP's Unknown1), as observed in the original: by form,
+   * each a combat object (combat.ts's CombatThreat).
+   */
+  readonly threats: readonly number[];
+  /** The threats' time stamp. */
   readonly unknown0: number;
+  /** A count the original always writes as 0. */
   readonly unknown1: number;
   readonly references: readonly number[];
   readonly unknown2: number;
@@ -283,18 +279,13 @@ export function readCombat(data: EssSource, resolve: RefIdResolver): CombatData 
       unknown1: reader.u8(),
     });
   }
-  const actors: CombatActor[] = [];
+  // The threats: a form and its combat object each (written through the combat AI's stream,
+  // which writes each object once).
+  const stream = new PathingStream(reader, resolve);
+  const threats: number[] = [];
   for (let count = reader.vsval(), i = 0; i < count; i++) {
-    actors.push({
-      actor: resolve(reader.refId()),
-      unknown0: reader.f32(),
-      reference0: resolve(reader.refId()),
-      reference1: resolve(reader.refId()),
-      unknown1: floats(reader, 3),
-      position: reader.vec3(),
-      unknown2: floats(reader, 8),
-      reference2: resolve(reader.refId()),
-    });
+    threats.push(resolve(reader.refId()));
+    readCombatObject(stream);
   }
   const unknown0 = reader.f32();
   const unknown1 = reader.vsval();
@@ -302,7 +293,7 @@ export function readCombat(data: EssSource, resolve: RefIdResolver): CombatData 
   return {
     nextNum,
     combats,
-    actors,
+    threats,
     unknown0,
     unknown1,
     references,
@@ -704,6 +695,7 @@ export interface TempEffects {
   readonly unknown: number;
   readonly effects1: readonly TempEffect[];
   readonly effects2: readonly TempEffect[];
+  readonly effects3: readonly TempEffect[];
   /** Set when an undocumented effect type stopped the read: the type and the bytes left. */
   readonly unread?: { readonly type: number; readonly bytes: Uint8Array };
 }
@@ -750,9 +742,12 @@ export function readTempEffects(data: EssSource, resolve: RefIdResolver): TempEf
     }
     return out;
   };
+  // Observed in the original: three lists of the process lists' temp effects (UESP knows two),
+  // each a vsval count of (type u32, the effect's data).
   const effects1 = list();
   const effects2 = list();
-  return { entries, unknown, effects1, effects2, ...(unread && { unread }) };
+  const effects3 = list();
+  return { entries, unknown, effects1, effects2, effects3, ...(unread && { unread }) };
 }
 
 function readTempEffectBase(reader: EssReader): TempEffectBase {
