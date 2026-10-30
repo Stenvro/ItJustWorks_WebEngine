@@ -1,6 +1,7 @@
 import { deflateSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import {
+  ChangeFaction,
   ChangeQuest,
   ChangeRefr,
   ChangeNpc,
@@ -326,9 +327,9 @@ describe('change forms', () => {
   });
 
   it('stops at an extra whose layout is not known, and says so', () => {
-    const data = new EssWriter().vsval(1).u8(0x99).u32(0).done();
+    const data = new EssWriter().vsval(1).u8(0xa9).u32(0).done();
     const form = readChangeForm(entry(0, ChangeRefr.ownershipExtra, data), resolve);
-    expect(form.stoppedAt).toBe('extra data type 0x99');
+    expect(form.stoppedAt).toBe('extra data type 0xa9 (interaction)');
     expect(form.undecoded).toBe(4);
   });
 
@@ -367,6 +368,119 @@ describe('change forms', () => {
       alreadyRun: true,
     });
     expect(form.undecoded).toBe(0);
+  });
+
+  /** An actor's data after its reference data, from its modifier sets to the end. */
+  const actorTail = (w: EssWriter): EssWriter => {
+    w.u32(3).f32(10).f32(0).f32(-25); // health: permanent, temporary, damage
+    for (let i = 0; i < 3; i++) w.u32(3).f32(0).f32(0).f32(0);
+    w.vsval(1).i32(7).f32(35); // a base value: Two-handed 35
+    w.vsval(1).i32(40).f32(0).f32(5).f32(0); // a temporary modifier
+    w.u32(1).refId(1, 0x12fcd); // an added spell
+    w.u8(0).u32(0).u8(0).u32(0).u32(0).u32(0).refId(0, 0).u8(0);
+    return w;
+  };
+
+  it('reads extra data by the layouts the original writes', () => {
+    const data = new EssWriter()
+      .vsval(5)
+      .u8(0x5b) // faction changes: one faction at rank 2, no crime faction
+      .vsval(1)
+      .refId(1, 0x13794)
+      .u8(2)
+      .refId(0, 0)
+      .u8(0)
+      .u8(0x2b) // teleport: position, rotation, a flag, the door
+      .f32(1)
+      .f32(2)
+      .f32(3)
+      .f32(0)
+      .f32(0)
+      .f32(0)
+      .u8(0)
+      .refId(1, 0x1a26f)
+      .u8(0x2a) // lock: level 50, flags, key, two words
+      .u8(50)
+      .u8(1)
+      .refId(1, 0xf)
+      .u32(0)
+      .u32(0)
+      .u8(0x0c) // a type the original writes without data
+      .u8(0x99) // a name given at the enchanter
+      .refId(0, 0)
+      .refId(0, 0)
+      .i32(-2)
+      .wstring('Frostbite')
+      .done();
+    const form = readChangeForm(entry(0, ChangeRefr.ownershipExtra, data), resolve);
+    expect(form.undecoded).toBe(0);
+    expect(form.extras?.map((extra) => extra.name)).toEqual([
+      'FactionChanges',
+      'Teleport',
+      'Lock',
+      '0xc',
+      'TextDisplayData',
+    ]);
+    expect(form.extras?.[0]?.factions).toEqual([{ faction: 0x13794, rank: 2 }]);
+    expect(form.extras?.[1]?.value).toEqual([0x1a26f, 1, 2, 3, 0, 0, 0]);
+    expect(form.extras?.[2]?.value).toEqual([50, 1, 0xf]);
+    expect(form.extras?.[4]?.text).toBe('Frostbite');
+  });
+
+  it("reads an actor's values without an AI process", () => {
+    const w = new EssWriter().u32(0xffffffff).u32(0); // no process, state flags
+    w.u8(0).bytes(new Uint8Array(52)).refId(0, 0).bytes(new Uint8Array(18)).refId(0, 0);
+    w.u8(1); // one magic caster
+    w.u32(0).refId(0, 0).u32(0).u32(0).refId(0, 0).u32(0); // its common part
+    w.u32(0).refId(0, 0).u32(0).vsval(2).u16(0); // its own, with 2 bytes of animation state
+    for (let i = 0; i < 5; i++) w.refId(0, 0);
+    const form = readChangeForm(entry(1, 0, actorTail(w).done(), (1 << 22) | 0x1a67c), resolve);
+    expect(form.stoppedAt).toBeUndefined();
+    expect(form.actor?.processLevel).toBe(-1);
+    expect(form.actor?.values?.modifiers[0]).toEqual({
+      av: 24,
+      permanent: 10,
+      temporary: 0,
+      damage: -25,
+    });
+    expect(form.actor?.values?.base).toEqual([{ av: 7, value: 35 }]);
+    expect(form.actor?.values?.others).toEqual([{ av: 40, permanent: 0, temporary: 5, damage: 0 }]);
+    expect(form.actor?.addedSpells).toEqual([0x12fcd]);
+  });
+
+  it("finds an actor's values after AI process data", () => {
+    const w = new EssWriter().u32(0).u32(0); // high process
+    w.bytes([7, 3, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]); // process data (not decoded)
+    const form = readChangeForm(entry(1, 0, actorTail(w).done(), (1 << 22) | 0x1a67c), resolve);
+    expect(form.stoppedAt).toBeUndefined();
+    expect(form.actor?.values?.base).toEqual([{ av: 7, value: 35 }]);
+  });
+
+  it("reads a faction's reactions and crime, a leveled list's added entries and NPC attributes", () => {
+    const faction = new EssWriter()
+      .vsval(1)
+      .refId(1, 0x13794)
+      .i32(-50)
+      .u32(1) // reactions
+      .u32(0x10) // flags
+      .u32(2)
+      .u32(1)
+      .f32(0.5)
+      .u32(0) // crime
+      .done();
+    const flags = ChangeFaction.reactions | ChangeFaction.flags | ChangeFaction.crimeCounts;
+    expect(readChangeForm(entry(31, flags, faction), resolve)).toMatchObject({
+      faction: { flags: 0x10, reactions: [{ faction: 0x13794, modifier: -50, reaction: 1 }] },
+      undecoded: 0,
+    });
+    const list = new EssWriter().u8(1).refId(1, 0xf).u16(5).u16(100).done();
+    expect(readChangeForm(entry(45, 0x80000000, list), resolve)).toMatchObject({
+      leveledAdded: [{ form: 0xf, level: 5, count: 100 }],
+      undecoded: 0,
+    });
+    const npc = new EssWriter().wstring('Lydia').done();
+    const form = readChangeForm(entry(9, ChangeNpc.attributes | ChangeNpc.fullName, npc), resolve);
+    expect(form).toMatchObject({ npc: { fullName: 'Lydia' }, undecoded: 0 });
   });
 
   it("reads the player base's skills, race, name and sex", () => {

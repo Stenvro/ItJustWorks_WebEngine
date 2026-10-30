@@ -17,6 +17,17 @@ const BREEZEHOME = 0x165a7;
 const QUEST = 0x3372b;
 /** Dawnguard.esm's form, and its plugin's slot in each load order. */
 const DAWNGUARD_FORM = 0x000d62;
+const COMPANIONS = 0x48362;
+
+/** An actor's own data without an AI process: 25 health damage, Two-handed (7) at 35. */
+function actorData(w: EssWriter): EssWriter {
+  w.u8(0).bytes(new Uint8Array(52)).refId(0, 0).bytes(new Uint8Array(18)).refId(0, 0).u8(0);
+  for (let i = 0; i < 5; i++) w.refId(0, 0);
+  w.u32(3).f32(0).f32(0).f32(-25);
+  for (let i = 0; i < 3; i++) w.u32(3).f32(0).f32(0).f32(0);
+  w.vsval(1).i32(7).f32(35).vsval(0).u32(0);
+  return w.u8(0).u32(0).u8(0).u32(0).u32(0).u32(0).refId(0, 0).u8(0);
+}
 
 function papyrus(): Uint8Array {
   const strings = ['MyQuestScript', 'Quest', 'count', 'Int', 'target', 'Actor'];
@@ -62,22 +73,31 @@ function save(): Uint8Array {
         // The player: moved into Breezehome, with 50 more gold (Skyrim.esm's 0xF).
         refId: [1, 0x14],
         type: 1,
-        flags: ChangeRefr.moved | ChangeRefr.inventory,
-        data: new EssWriter()
-          .refId(1, BREEZEHOME)
-          .f32(10)
-          .f32(20)
-          .f32(30)
-          .f32(0)
-          .f32(0)
-          .f32(1)
-          .u32(0)
-          .u32(0)
-          .vsval(1)
-          .refId(1, 0xf)
-          .i32(50)
-          .vsval(0)
-          .done(),
+        // In the Companions (rank 1), with 25 health damage and Two-handed raised to 35.
+        flags: ChangeRefr.moved | ChangeRefr.inventory | ChangeRefr.ownershipExtra,
+        data: actorData(
+          new EssWriter()
+            .refId(1, BREEZEHOME)
+            .f32(10)
+            .f32(20)
+            .f32(30)
+            .f32(0)
+            .f32(0)
+            .f32(1)
+            .u32(0xffffffff) // no AI process
+            .u32(0)
+            .vsval(1)
+            .u8(0x5b)
+            .vsval(1)
+            .refId(1, COMPANIONS)
+            .u8(1)
+            .refId(0, 0)
+            .u8(0)
+            .vsval(1)
+            .refId(1, 0xf)
+            .i32(50)
+            .vsval(0),
+        ).done(),
       },
       {
         refId: [1, 0x7],
@@ -88,8 +108,19 @@ function save(): Uint8Array {
       {
         refId: [1, QUEST],
         type: 8,
-        flags: CHANGE_FORM_FLAGS | ChangeQuest.flags | ChangeQuest.stages,
-        data: new EssWriter().u32(0).u16(0).u16(1).vsval(1).u16(10).u8(1).done(),
+        flags: CHANGE_FORM_FLAGS | ChangeQuest.flags | ChangeQuest.stages | ChangeQuest.objectives,
+        // Stage 10 done; objective 0 failed (and shown).
+        data: new EssWriter()
+          .u32(0)
+          .u16(0)
+          .u16(1)
+          .vsval(1)
+          .u16(10)
+          .u8(1)
+          .vsval(1)
+          .u32(0)
+          .u32(5)
+          .done(),
       },
       {
         // A Dawnguard reference disabled (by its index in the form id array).
@@ -150,9 +181,13 @@ describe('ess import', () => {
     expect(state.gameDaysPassed).toBe(12.5);
     expect(state.actors.get(0x14)?.level).toBe(9);
     expect(state.actors.get(0x14)?.values.get(6)?.base).toBe(20);
+    expect(state.actors.get(0x14)?.values.get(7)?.base).toBe(35);
+    expect(state.actors.get(0x14)?.values.get(24)).toMatchObject({ modifier: 0, damage: 25 });
+    expect(state.actors.get(0x14)?.factions.get(COMPANIONS)).toBe(1);
     const quest = state.quests.get(QUEST);
     expect(quest?.running).toBe(true);
     expect([...(quest?.stagesDone ?? [])]).toEqual([10]);
+    expect(quest?.objectives.get(0)).toEqual({ displayed: true, completed: false, failed: true });
     expect(state.references.get(0x03000d62)?.enabled).toBe(false);
     expect(game.runtime.stats.get('Locations Discovered')).toBe(4);
     expect(game.runtime.instances).toContainEqual({
