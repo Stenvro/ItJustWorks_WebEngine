@@ -789,6 +789,22 @@ export class ModelViewer {
   #allObjectSkeletons: readonly { reference: number; skeleton: AnimatedSkeleton }[] = [];
   /** The cell's lighting with its enabled lights (see #refreshEnabled). */
   #cellLighting: ReturnType<typeof cellSceneLighting> | undefined;
+  /** The cube the cell's water reflects (WaterFrame.environment): null where it has none. */
+  #waterEnvironment: GPUTexture | null = null;
+
+  /**
+   * The cell's water environment map (CELL XWEM), as the original takes it: with
+   * bUseCubeMapReflections, a cube file the cell names that exists; else no reflection cube.
+   */
+  async #loadWaterEnvironment(path: string | undefined): Promise<void> {
+    const session = this.#session;
+    const use = session?.ini.number('Water', 'bUseCubeMapReflections') !== 0;
+    const cube =
+      use && path !== undefined && session?.vfs.has(path)
+        ? await session.textures.get(path)
+        : undefined;
+    this.#waterEnvironment = cube?.depthOrArrayLayers === 6 ? cube : null;
+  }
   /** The lighting in a room with its own template, for the cell's lighting it is of. */
   #roomLighting:
     { room: number; of: SceneLighting | undefined; lighting: SceneLighting } | undefined;
@@ -1269,6 +1285,7 @@ export class ModelViewer {
         session?.waterType(DEFAULT_WATER).then((type) => {
           this.#renderer.scene.defaultWater = type;
         }),
+        this.#loadWaterEnvironment(data.cell.waterEnvironmentMap),
       ]);
     const toggles = findToggles(data, actions.controlled);
     // Homes open as the running game has them: bought, built and furnished only as far as its
@@ -2011,7 +2028,7 @@ export class ModelViewer {
         water: () => {
           const at = this.#renderer.view?.camera.position;
           const displacement = at && this.#play?.displacement.frame(at, performance.now() / 1000);
-          return displacement && { profile: undefined, displacement };
+          return { profile: undefined, displacement, environment: this.#waterEnvironment };
         },
         // The cell's shadow lights cast shadows (interiors have no sun shadow).
         lightShadows: true,

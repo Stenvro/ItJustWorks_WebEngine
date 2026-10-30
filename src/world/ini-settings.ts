@@ -644,6 +644,8 @@ export const INI_DEFAULTS = {
     bUseBulletWaterDisplacements: 1,
     fWadingWaterQuadSize: 2048,
     fWadingWaterTextureRes: 512,
+    // Water reflects a cube map file where its interior cell or world names one.
+    bUseCubeMapReflections: 1,
   },
 } as const;
 

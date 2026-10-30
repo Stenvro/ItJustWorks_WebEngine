@@ -4,20 +4,31 @@
 // term; the depth properties take reflections, refraction, normals and the sun's specular back
 // where the water is shallow. Platform-independent.
 //
-// These are the original water shader's terms (observed in the original): how deep the water
-// is counts as a share of the fog's far distance (WATR DNAM Fog Distance - Far Plane); the body
-// goes from the shallow to the deep colour over it; the fog over the scene below is
-// 1 - ((far - depth) / (far - near))^amount; the reflection is the reflection colour taken over
-// by the reflected scene by the Reflection Magnitude; the fresnel is Schlick's from the Fresnel
-// Amount. TODO(M13): which WATR value feeds which of the shader's constants is our reading
-// (xEdit's names against the terms), the engine's material setup is unread.
+// These are the original water shader's terms, with the WATR values the engine's water material
+// hands each of them (both observed in the original): how deep the water is counts as a share
+// of the fog's far distance (DNAM Fog Distance - Far Plane, at least 1); the body goes from the
+// shallow to the deep colour over it; the fog over the scene below is
+// 1 - ((far - depth) / (far - near))^max(4 × Fog Amount, 1); the reflection is the reflection
+// colour taken over by the reflected scene by the Reflectivity Amount (DNAM 5; the Reflection
+// Magnitude, DNAM 49, flattens the normal the reflection is taken about instead); the fresnel is
+// Schlick's from the Fresnel Amount.
 
 import type { WaterType } from '../world/water.ts';
 import type { Rgb } from '../world/weather.ts';
 
 /** How deep water is by a depth: 0 at the surface .. 1 at the fog's far distance and beyond. */
 export function waterDeepness(depth: number, type: Pick<WaterType, 'fogFar'>): number {
-  return Math.max(0, Math.min(1, depth / Math.max(type.fogFar, 1e-3)));
+  return Math.max(0, Math.min(1, depth / waterFogFar(type.fogFar)));
+}
+
+/** The fog's exponent the engine hands the shader: four times the Fog Amount, at least 1. */
+export function waterFogPower(amount: number): number {
+  return Math.max(amount * 4, 1);
+}
+
+/** The fog's far distance the engine hands the shader: at least 1. */
+export function waterFogFar(far: number): number {
+  return Math.max(far, 1);
 }
 
 /** The water fog over a distance through the water: 0 at fog near .. 1 at fog far. */
@@ -25,10 +36,11 @@ export function waterFog(
   depth: number,
   type: Pick<WaterType, 'fogNear' | 'fogFar' | 'fogAmount'>,
 ): number {
-  const far = Math.max(type.fogFar, 1e-3);
-  const range = Math.max(far - type.fogNear, 1e-3);
+  const far = waterFogFar(type.fogFar);
+  // The engine's range is the record's own (far - near), nudged off 0.
+  const range = type.fogFar - type.fogNear === 0 ? 1e-5 : type.fogFar - type.fogNear;
   const clear = Math.max(0, Math.min(1, (far - Math.min(depth, far)) / range));
-  return 1 - clear ** Math.max(type.fogAmount, 1e-3);
+  return 1 - clear ** waterFogPower(type.fogAmount);
 }
 
 /**
@@ -80,7 +92,7 @@ export function waterColor(type: WaterType, input: WaterColorInput): Rgb {
   const reflection = mix(
     times(type.reflectionColor, input.multiplier),
     input.reflected,
-    type.reflectionMagnitude,
+    type.reflectivity,
   );
   const [reflections] = depthControl(type, deepness);
   const share = waterFresnel(type.fresnel, input.facing) * reflections;

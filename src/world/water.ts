@@ -3,6 +3,7 @@
 // Platform-independent. Layout: docs/formats/esm.md ("Water").
 
 import { view } from '../formats/esm/fields.ts';
+import { textureOf } from './cell-records.ts';
 import type { GameRecord } from './record-db.ts';
 import type { Rgb } from './weather.ts';
 
@@ -82,15 +83,6 @@ export interface SimulatorValues {
 
 /** DefaultWater (Skyrim.esm): the type of water meshes nothing else assigns one to. */
 export const DEFAULT_WATER = 0x18;
-
-const textureOf = (value: string): string => {
-  if (value === '') return '';
-  // "Data\Textures\Water\DefaultWater.dds": everything up to Data\ is dropped.
-  let normalized = value.replaceAll('/', '\\').toLowerCase();
-  const data = normalized.lastIndexOf('data\\');
-  if (data >= 0) normalized = normalized.slice(data + 5);
-  return normalized.startsWith('textures\\') ? normalized : `textures\\${normalized}`;
-};
 
 const underwaterImageSpace = (id: number | undefined): { imageSpace?: number } =>
   id === undefined || id === 0 ? {} : { imageSpace: id };

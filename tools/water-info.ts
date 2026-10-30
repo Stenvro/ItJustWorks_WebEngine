@@ -7,8 +7,9 @@
 //   node tools/water-info.ts --area Tamriel 2 -14 8 -9  the cells' water over an area
 //   node tools/water-info.ts --reflected         references the water reflects (REFR flag bit 28,
 //                                                XPWR), exterior and interior, by base type
+//   node tools/water-info.ts --environment       the cube maps cells and worlds reflect (XWEM)
 
-import { parseCell } from '../src/world/cell-records.ts';
+import { environmentMap, parseCell } from '../src/world/cell-records.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
 import {
   cellWater,
@@ -119,6 +120,26 @@ if (process.argv[2] === '--area') {
   console.log(`${flagged.length} references flagged Reflected By Auto Water`);
   for (const [key, n] of [...counts].sort((a, b) => b[1] - a[1])) console.log(`  ${n} ${key}`);
   console.log(`${named.length} references a placed water reflects (XPWR type bit 0)`);
+} else if (process.argv[2] === '--environment') {
+  // The cube maps water reflects in place of a rendered reflection (CELL and WRLD XWEM): how
+  // many name one, and whether its file exists (where it does not, the water has no cube).
+  for (const type of ['WRLD', 'CELL']) {
+    const maps = new Map<string, number>();
+    for (const id of db.formIdsOfType(type)) {
+      const record = await db.get(id);
+      if (!record) continue;
+      const path =
+        type === 'CELL'
+          ? parseCell(record).waterEnvironmentMap
+          : environmentMap(record.fields.zstring('XWEM'));
+      if (path !== undefined) maps.set(path, (maps.get(path) ?? 0) + 1);
+    }
+    const total = [...maps.values()].reduce((a, b) => a + b, 0);
+    const found = [...maps].filter(([path]) => vfs.has(path)).reduce((a, [, c]) => a + c, 0);
+    console.log(`${type}: ${String(total)} name a water environment map, ${String(found)} exist`);
+    for (const [path, c] of [...maps].sort((a, b) => b[1] - a[1]))
+      console.log(`  ${String(c)} ${path}${vfs.has(path) ? '' : ' (missing: no cube)'}`);
+  }
 } else if (process.argv[2] === '--cell') {
   const [, worldId = 'Tamriel', xs = '0', ys = '0'] = process.argv.slice(2);
   const world = (await db.worldspaces()).find((w) => w.editorId === worldId);
