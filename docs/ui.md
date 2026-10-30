@@ -1548,11 +1548,16 @@ engine's.
   (`textures\terrain\worldmapoverlay_n.dds`) at fMapMenuOverlayScale (0.000035) a world unit,
   strength fMapMenuOverlayNormalStrength (1.1); on snow sWorldMapOverlayNormalSnowTexture
   (`worldmapoverlaysnow_n.dds`) at fMapMenuOverlaySnowScale (0.000045), strength
-  fMapMenuOverlayNormalSnowStrength (0.4). Ours projects each along the three world axes,
-  weighed by the land's normal, takes the snow one where the land is bright (the LOD land's
-  blend parameter), and bends the normal by its strength on slopes (almost flat ground keeps its
-  own). TODO(M13): the original shader's exact weights and snow mask (this follows Community
-  Shaders' reading of the world-map path).
+  fMapMenuOverlayNormalSnowStrength (0.4). As the original's LOD land shaders built for the
+  world map do it (observed in the original's shader cache): each map is projected along the
+  three world axes, weighed by max(((|n| − 0.2) × 7)³, 0.01) normalized; the snow map takes over
+  by the land's snow share (smoothstep of (colour · 0.55 − 0.4) × 1.667, the LOD land blend
+  parameter); the overlay's normal is laid into the surface's tangent frame (the tangent
+  (n.z, 0, −n.x), the bitangent across) and the normal moves to it by saturate(1.5 −
+  smoothstep(saturate((n.z − 0.95) × 20))): fully on slopes, halfway on almost flat ground. The
+  same shaders pull the land's colour 30 % (50 % on snow) towards a floor on red and green that
+  rises with the snow share, and on blue towards a floor (snowy) or a ceiling (bare)
+  (`lighting.wgsl` worldMapColor). The strengths reach the constants; the shader reads neither.
 - **Which map.** A world shows its map world's map: its parent's when it uses the parent's map
   data (WRLD PNAM 0x4, as Whiterun's world uses Tamriel's), else its own (WRLD MNAM). Its places
   are moved onto that map by WRLD ONAM: position × scale + offset. Blackreach is scaled 2.5 under

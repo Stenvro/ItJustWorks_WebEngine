@@ -274,6 +274,7 @@ export const INI_DEFAULTS = {
     bVolumetricLightingDisableInterior: 1,
     bVolumetricLightingEnable: 1,
     fVolumetricLightingIntensity: 2,
+    bVolumetricLightingUpdateWeather: 1,
     iVolumetricLightingQuality: 1,
     bVolumetricLightingEnableTemporalAccumulation: 1,
   },

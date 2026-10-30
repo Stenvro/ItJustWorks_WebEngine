@@ -20,7 +20,12 @@ const lighting: VolumetricLighting = {
 describe('god rays from VOLI', () => {
   it('scale the weather intensity by the settings', () => {
     const rays = godRays(lighting, { enabled: true, intensity: 1.5 }, [0, 0, 1], 0.5);
-    expect(rays.strength).toBeCloseTo(2 * 1.5);
+    // The weather's intensity replaces the setting's, unless the weather does not update it.
+    expect(rays.strength).toBeCloseTo(2);
+    expect(
+      godRays(lighting, { enabled: true, intensity: 1.5, updateWeather: false }, [0, 0, 1], 0.5)
+        .strength,
+    ).toBeCloseTo(1.5);
     expect(rays.color).toEqual([0.5, 0, 0.5]);
     expect(rays.scattering).toBeCloseTo(0.6);
     expect(rays.phaseContribution).toBeCloseTo(0.5);

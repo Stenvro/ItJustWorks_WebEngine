@@ -84,12 +84,21 @@ export function blendVolumetricLighting(
 export interface VolumetricSettings {
   /** bVolumetricLightingEnable. */
   readonly enabled: boolean;
-  /** fVolumetricLightingIntensity: the strength of all of it. */
+  /**
+   * fVolumetricLightingIntensity: the intensity the engine starts with, in effect only while
+   * the weather does not set it (bVolumetricLightingUpdateWeather off).
+   */
   readonly intensity: number;
+  /**
+   * bVolumetricLightingUpdateWeather (on by default): the weather's VOLI values replace the
+   * engine's each frame, its intensity among them (observed in the original).
+   */
+  readonly updateWeather?: boolean;
 }
 
 /**
- * The god rays' strength and colour this frame: the weather's intensity scaled by the settings,
+ * The god rays' strength and colour this frame: the weather's intensity (or, where the weather
+ * does not update the volume, fVolumetricLightingIntensity),
  * the sun's colour mixed with its custom colour, faded as the sun sets below the horizon
  * (`sunHeight`: the sun direction's up component). The phase contribution is not a strength:
  * it weighs the phase function against even scattering (godRayPhase). The froxel volume
@@ -109,7 +118,8 @@ export function godRays(
   readonly phaseContribution: number;
 } {
   const above = Math.max(0, Math.min(1, (sunHeight + 0.02) / 0.1));
-  const strength = settings.enabled ? lighting.intensity * settings.intensity * above : 0;
+  const intensity = settings.updateWeather === false ? settings.intensity : lighting.intensity;
+  const strength = settings.enabled ? intensity * above : 0;
   const custom = Math.max(0, Math.min(1, lighting.customColorContribution));
   const channel = (i: 0 | 1 | 2): number => sunColor[i] * (1 - custom) + lighting.color[i] * custom;
   const color: Rgb = [channel(0), channel(1), channel(2)];

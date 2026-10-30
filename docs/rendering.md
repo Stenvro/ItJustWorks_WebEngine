@@ -84,8 +84,9 @@ not (TODO(M13): the last frame's bone palettes). Opaque draws only; blended part
 are reprojected by the depth behind them.
 
 **Volumetric lighting** (`volumetric-volume.ts`, `shaders/volumetric.wgsl`,
-bVolumetricLightingEnable): the weather's volumetric lighting (VOLI by time of day: intensity ×
-[Display] fVolumetricLightingIntensity, the sun's colour mixed with its custom colour,
+bVolumetricLightingEnable): the weather's volumetric lighting (VOLI by time of day: its
+intensity, which replaces [Display] fVolumetricLightingIntensity while
+bVolumetricLightingUpdateWeather is on; the sun's colour mixed with its custom colour,
 `world/volumetric-lighting.ts`) scattered through the original's froxel volume over the view
 ("Volumetric lighting" below). The phase function is the original's,
 `(1 − g²) / (4π (1 − g cos))` with g = the phase scattering, mixed with 1 by the phase
@@ -1201,7 +1202,10 @@ The original scatters the sun's light through a froxel volume over the view, in 
 - The volume: [Display] iVolumetricLightingQuality picks Low 160 × 96 × 50, Medium (1, the
   default) 224 × 128 × 70, High 320 × 192 × 90 froxels (width, height, depth slices). A 32³ noise
   volume (iVolumetricLightingNoiseTexture*) holds the density noise; the original fills it on the
-  GPU at load (its function unread: ours is a tileable two-octave value noise, TODO(M13)).
+  GPU at load, observed in the original: three-dimensional simplex noise (the common mod-289
+  permutation, the 7 × 7 gradient grid, the 0.6 falloff) at ((x + 0.2, y, z) / 32) × 80, stored
+  as 21 × the corners' sum + 0.5. Ours fills it the same on the CPU (the integer steps in single
+  precision, as the GPU takes them; `densityNoise`).
 - The depth repartition: two 4096-entry tables, one of x to the range factor (VOLI NNAM; 40 in
   vanilla), one of x to 1 / the range factor (a second mode, (3^(x r) − 1) / (3^r − 1) and its
   inverse, exists for tests). The generate pass binds the second: a slice coordinate s (0..1)
@@ -1212,28 +1216,45 @@ The original scatters the sun's light through a froxel volume over the view, in 
   units and the last reach tens of thousands. Ours computes the same powers in the shader (the
   table's 4096 steps are finer than the slices) and keeps the original's near plane for the
   slices whatever our camera's is.
-- Generate (32 × 32 groups over the width and height, a group per slice): each froxel's density
-  and light, from the sun's direction, the camera's view-projection and its inverse, the first
-  two shadow cascades' matrices and their split depths (with the cascade count and whether
-  shadows are cast at all), the noise scaled by 1 / the density size and offset by its drift plus
-  the camera's place, the phase contribution and scattering, the density contribution, and the
-  frame index modulo 8 (a jitter through the slice). The noise drifts each frame by the frame time
-  × the density size × the wind's direction × the wind speed (against the wind's x, with its y),
-  and falls by the falling speed × the frame time × the density size, each times a random share
-  of 0..1. Ours: the light is the share of the sun the cascades let through (lit beyond the
-  second) times the phase function; the density is 1 mixed with the noise (mean 1) by the
-  density contribution. TODO(M13): the generate shader's exact terms are unread.
-- Temporal accumulation (bVolumetricLightingEnableTemporalAccumulation): each froxel keeps 0.75
-  of the last frame's (fVolumetricLightingTemporalAccumulationFactor); ours reads the last
-  frame's froxel at the same place in the world (its uv and slice under the last camera).
-- Raymarch: slice by slice from the camera, each slice adding the light it scatters towards the
-  eye to what the slices before gathered (the original runs a dispatch per slice with two
-  textures in turn; ours one pass per column). Ours scatters by Beer's law, the density over an
-  air depth of 8000 units (TODO(M13): the original's coefficient).
-- Then the blur (horizontal and vertical passes within each slice; ours a five-tap binomial
-  kernel, TODO(M13)) and the composite, which reads the volume at a pixel's place and its depth
-  through the inverse table, times the intensity (VOLI CNAM × fVolumetricLightingIntensity) and
-  the colour (the sun's mixed with the custom colour), added to the scene. Interiors have none
+- Generate (32 × 32 groups over the width and height, a group per slice): each froxel's light,
+  observed in the original. The froxel is read at its index over the volume's size (no half
+  texel) moved by a thousandth of the volume towards a corner of a unit cube that the frame index
+  & 7 picks (x by its bit 2, y by bit 1, z by bit 0); its slice coordinate goes through the table
+  to a clip depth and with the inverse view-projection to a place. Its view depth picks the
+  cascade: the first up to the first split, the second up to the last (only the first two
+  cascades' matrices are filled), beyond: lit. One lookup in the cascade's map, the first
+  cascade's biased (0.01 in the original's depth), the second's not; while
+  iEnableShadowCastingFlag is not 1 a second shadow array is looked up at the same place and the
+  smaller of the two taken (ours has one sun map). The noise is read at (the place + the drift
+  and the camera's start) / the density size × 0.0125 (`NOISE_SCALE`) and thinned with height:
+  × (1 − 0.75 × smoothstep of the height above the camera over 150 units); the density is 1
+  mixed with that by the density contribution. The phase is `(1 − g²) / (4π (1 − g cos))` mixed
+  with 1 by the phase contribution. The froxel holds lit × phase × density (one value, in two
+  textures). The noise drifts each frame by the frame time × the density size × the wind's
+  direction × the wind speed (against the wind's x, with its y), and falls by the falling speed ×
+  the frame time × the density size, each times a random share of 0..1.
+- Raymarch (observed in the original): a dispatch per slice adds each slice's froxel to the sum
+  of those before it: each texel holds the plain sum of the froxels from the camera to its slice
+  (no extinction, no slice thickness). Ours sums each column in one pass.
+- Composite (observed in the original): a pixel's depth goes through the inverse table to its
+  slice coordinate (at most 0.9999), the summed volume is read there (filtered) and scaled by the
+  intensity over the slice count (so the average of the froxels in front of it, times the
+  intensity: `compositeScale`), plus a dither: a 2D simplex noise (the same function at (x, y)
+  × 8) read at the pixel's place over 8, / 32 − 1/128. Then the temporal accumulation
+  (bVolumetricLightingEnableTemporalAccumulation): the pixel's motion leads to where it was, the
+  last frame's composite is read there and blended in by fVolumetricLightingTemporalAccumulation
+  Factor (0.75) × (1 − smoothstep(saturate(|depth − the last frame's depth there| × 100))), none
+  where that place is off the screen; the first frame after a change has no history. Ours
+  reprojects the pixel's point with the last frame's camera (the volume's own motion vectors)
+  and keeps the depth (our near-plane-15 depth: VOLUME_NEAR / distance) beside the amount in the
+  same target (TODO(M13): whether the history the original reads is the blurred result is
+  unread; ours keeps the unblurred composite; the dither's size is unread, ours 32²).
+- Blur (two compute passes, across then down; observed in the original): five taps at 0, ±6 and
+  ±12 pixels weighted 0.222338, 0.210431 and 0.1784; where the depths there are uneven
+  (|4 × the pixel's − the four others'| > 0.002) the pixel keeps its value. TODO(M13): the depth
+  the blur reads is a linear depth whose scale is unread (ours: VOLUME_NEAR / distance).
+- Apply: the amount times the colour (the sun's mixed with the custom colour by the custom colour
+  contribution) added to the scene (ours with the vertical blur in one pass). Interiors have none
   (bVolumetricLightingDisableInterior).
 
 Lag bones (lag-bone.ts): each update the bone covers linear velocity × dt of the way to where its
@@ -1248,10 +1269,9 @@ instance's motion in world space, and the parts and particle emitters under them
 swung torch's flame and a moving hand's spell trail. Rigid worn pieces hung on a skeleton node
 (the knuckles, the Akaviri sword: 4 files) do not yet (TODO(M13)).
 
-Measured cost (headless Chrome, 1280 × 720, Whiterun by day, Medium: GPU timestamps): generate
-0.07 ms, raymarch 0.03 ms, the blur 0.05 ms, the composite 0.015 ms. To keep it there the passes
-keep their bind groups between frames (made again only when the shadow map or depth texture
-changes), the two blur directions run in one pass through workgroup memory (the same sums
-without writing and reading the volume between them), and where the GPU filters 32-bit floats
-(float32-filterable) the composite reads the volume with one trilinear sample instead of eight
-loads. `engineDev.renderer.sunEffects.volume.profile = true` fills its `timings` (ms per pass).
+Measured cost before the screen-space blur (headless Chrome, 1280 × 720, Whiterun by day,
+Medium: GPU timestamps): generate 0.07 ms, raymarch 0.03 ms, the composite 0.015 ms; the blur
+and apply now run across the screen (to be measured). The passes keep their bind groups between
+frames (made again only when the shadow map, depth texture or screen size changes), and where
+the GPU filters 32-bit floats (float32-filterable) the composite reads the volume with one
+trilinear sample instead of eight loads. `engineDev.renderer.sunEffects.volume.profile = true` fills its `timings` (ms per pass).
