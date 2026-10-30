@@ -489,9 +489,14 @@ function inertiaOf(body: RigidBodyBlock): Vec3 {
 
 /**
  * Reads the collision of a model. The root node's own transform is replaced by placement;
- * `damageStage`: a destructible object's model damage stage (BSDamageStage nodes).
+ * `damageStage`: a destructible object's model damage stage (BSDamageStage nodes); `roots`:
+ * the nodes to read from (a mesh particle's node, outside the scene graph, is read alone).
  */
-export function buildCollision(file: NifFile, damageStage = 0): CollisionData {
+export function buildCollision(
+  file: NifFile,
+  damageStage = 0,
+  roots: readonly Ref[] = file.roots,
+): CollisionData {
   const bodies: CollisionBody[] = [];
   const skipped: string[] = [];
   /** Rigid body blocks: their body's index and its scale (Havok units to game units). */
@@ -762,7 +767,7 @@ export function buildCollision(file: NifFile, damageStage = 0): CollisionData {
     }
     if (block.kind === 'node') for (const child of block.children) visit(child, world, depth + 1);
   };
-  for (const root of file.roots) visit(root, identity(), 0);
+  for (const root of roots) visit(root, identity(), 0);
 
   // The constraints the bodies name, between bodies of this model (a chain as its links).
   const constraints: CollisionConstraint[] = [];

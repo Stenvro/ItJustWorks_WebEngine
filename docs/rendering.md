@@ -970,8 +970,13 @@ one (a lock, a new target, the lock let go) eases over `fDragonCameraDollyTime` 
 heading and pitch each a straight blend from where the view was going. A locked target that
 dies, is disabled or unloaded gives way to the next, none left lets the lock go.
 `bDragonCameraTargetPlayer` (1) keeps the camera on the player; at 0 it hangs on the dragon while
-nothing is locked. TODO(M13): the original's list of targets (its order) and the buttons that
-cycle it and let it go; here Right Attack locks the actor nearest the view.
+nothing is locked. The lock itself (src/shell/dragon-target-lock.ts, observed in the original):
+Jump locks, gathering the actors within `[Gameplay] fTargetLockXYRange` (7500) of the rider across
+the ground (living, loaded and enabled, not the rider or their mount) nearest first by their
+distance in space, and takes the first; with `bTargetLockIsToggle` (1) the next press lets go,
+at 0 the lock holds while Jump does. Hotkey1 and Hotkey2 step back and on through that list
+round its ends (in place of their favorites) while the lock holds. TODO(M13): the engine also
+leaves out children, the unconscious and the essential who are down.
 
 The kill cameras' shots play their camera models (meshes\cameras\*.nif, src/render/camera-model.ts):
 an NiCamera under its root, the root's place in the shot's frame moved by its own

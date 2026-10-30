@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CycleType } from '../formats/nif/animation-blocks.ts';
-import { identity, type Mat4 } from './math.ts';
+import type { CollisionData } from '../physics/collision-data.ts';
+import { identity, type Mat4, type Vec3 } from './math.ts';
 import type { ParticleEmitter, ParticleSystemData } from './particle-data.ts';
 import {
   evenKeys,
@@ -8,6 +9,7 @@ import {
   ParticleSimulation,
   simpleColor,
   subTextureFrame,
+  type ParticleBodies,
   type ParticleContext,
 } from './particle-sim.ts';
 
@@ -311,5 +313,58 @@ describe('mesh particles', () => {
     }
     // Emitted 50 units above the placement at z 1000: fallen to it, not through it.
     expect(lowest).toBeCloseTo(1000, 0);
+  });
+
+  it('puts a body per particle into the physics world, follows it and takes it out', () => {
+    const collision: CollisionData = { bodies: [], skipped: [] };
+    const data = rocks();
+    const withCollision: ParticleSystemData = {
+      ...data,
+      emitters: [emitter({ speed: 600, lifeSpan: 0.5, radius: 1, emissionAxis: [1, 0, 0] })],
+      ...(data.mesh && { mesh: { ...data.mesh, collision } }),
+    };
+    const added: { linear: Vec3; world: Mat4 }[] = [];
+    const removed: number[] = [];
+    const bodies: ParticleBodies = {
+      add: (_collision, world, linear) => {
+        added.push({ linear: [...linear], world: new Float32Array(world) });
+        return added.length - 1;
+      },
+      // Every body is at (5, 6, 7), turned by nothing.
+      pose: (_handle, out) => {
+        out.set(translated(5, 6, 7));
+        return true;
+      },
+      remove: (handle) => void removed.push(handle),
+    };
+    const simulation = new ParticleSimulation(withCollision, 7);
+    let context: ParticleContext = {
+      seconds: 0,
+      dt: 0,
+      instanceWorld: identity(),
+      animated: undefined,
+      camera: [0, -500, 0],
+      wind: [0, 0, 0],
+      bodies,
+    };
+    simulation.update(context);
+    for (let t = 1 / 60; t <= 0.25; t += 1 / 60) {
+      context = { ...context, seconds: t, dt: 1 / 60 };
+      simulation.update(context);
+    }
+    expect(simulation.count).toBeGreaterThan(0);
+    expect(added.length).toBeGreaterThanOrEqual(simulation.count);
+    // Started at the particle's speed along the emitter's direction.
+    expect(Math.hypot(...(added.at(-1)?.linear ?? [0, 0, 0]))).toBeCloseTo(600, 0);
+    // Drawn where its body is.
+    const out = identity();
+    expect(simulation.meshWorld(0, out)).toBe(true);
+    expect([out[12], out[13], out[14]]).toEqual([5, 6, 7]);
+    // Dead particles' bodies leave the world.
+    for (let t = 0.25; t <= 2; t += 1 / 60) {
+      context = { ...context, seconds: t, dt: 1 / 60 };
+      simulation.update(context);
+    }
+    expect(removed.length).toBeGreaterThan(0);
   });
 });

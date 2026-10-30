@@ -167,7 +167,12 @@ its NiMeshPSysData keeps a pool of copies (defaultPoolSize 52) of the node its
 BSPSysHavokUpdateModifier names, a culled NewRoot holding the rock shape and a bhkRigidBody; the
 modifier's own reference is the NiPSysRotationModifier that starts each copy's turn (random axis,
 12.6 ± 3.1 rad/s), which is not in the system's modifier list. The system has no position
-modifier: Havok moves the bodies. Bone LOD (BSBoneLODExtraData on 52 skeletons): pairs of a
+modifier: Havok moves the bodies. Observed in the original, as a particle is born the modifier
+puts its copy of the node, with its rigid body, into the scene's physics world at the particle's
+place, the body's linear velocity the particle's and its angular velocity the rotation axis times
+the rotation speed; each update the copy follows its body, and it leaves the world with its
+particle (`src/physics/particle-bodies.ts`). The rocks' body is a convex hull of layer
+DEBRIS_LARGE, mass 50, so they collide with the world's shapes and each other by the layer table. Bone LOD (BSBoneLODExtraData on 52 skeletons): pairs of a
 distance and a bone name; observed in the original, the bones are looked up in the Havok
 skeleton (pairs whose bone is missing or whose distance is not above 0 are dropped) and the
 levels are sorted by distance. NiBSBoneLODController (the centaur's, wolf's and werewolf's old

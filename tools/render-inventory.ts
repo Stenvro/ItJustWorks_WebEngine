@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { parseNifHeader } from '../src/formats/nif/header.ts';
 import { parseNif } from '../src/formats/nif/nif.ts';
+import { geometryOrder } from '../src/render/actor-model.ts';
 import { lightingSlots } from '../src/render/material-slots.ts';
 import { alternateTextures } from '../src/world/actor-records.ts';
 import { baseModelPath } from '../src/world/cell-records.ts';
@@ -528,8 +529,9 @@ function subrecordRead(type: string, signature: string): boolean {
   return files.some((path) => source(path).includes(`'${escaped}'`));
 }
 
-// Alternate textures (MODS; ARMO MO2S) of placeable base objects: whether the shape each one
-// names is in the base's world model (the swap goes into the shape of that name).
+// Alternate textures (MODS; ARMO MO2S) of placeable base objects: whether the 3D index of each
+// one is a shape of the base's world model (the swap goes into the shape at that index, as the
+// original's; the name it carries is the Creation Kit's and may be stale).
 const swapsFound = new Map<string, number>();
 const swapsMissing: string[] = [];
 const PLACEABLE = ['STAT', 'MSTT', 'FURN', 'ACTI', 'CONT', 'DOOR', 'FLOR', 'MISC', 'WEAP', 'ARMO'];
@@ -540,24 +542,29 @@ for (const type of [...PLACEABLE, 'BOOK', 'ALCH', 'INGR', 'TREE', 'LIGH', 'KEYM'
     const swaps = alternateTextures(record, record.fields.first(type === 'ARMO' ? 'MO2S' : 'MODS'));
     const model = baseModelPath(record);
     if (swaps.length === 0 || !model || !vfs.has(model)) continue;
-    let names: Set<string>;
+    let names: Map<number, string>;
     try {
       const nif = parseNif(await vfs.read(model));
-      names = new Set(
-        nif.blocks.flatMap((block) =>
-          block.kind === 'tri-shape' || block.kind === 'ni-tri-shape'
-            ? [block.name.toLowerCase()]
-            : [],
-        ),
+      names = new Map(
+        [...geometryOrder(nif)].map(([ref, index]) => {
+          const block = nif.blocks[ref];
+          return [index, block && 'name' in block ? block.name.toLowerCase() : ''];
+        }),
       );
     } catch {
       continue;
     }
     for (const swap of swaps) {
-      const found = names.has(swap.shape.toLowerCase());
-      count(swapsFound, `${type} ${found ? 'shape found' : 'shape missing'}`);
-      if (!found && swapsMissing.length < 10)
-        swapsMissing.push(`${record.editorId ?? ''} ${swap.shape}`);
+      const name = names.get(swap.index);
+      const kind =
+        name === undefined
+          ? 'no shape at the index'
+          : name === swap.shape.toLowerCase()
+            ? 'shape at the index'
+            : 'shape at the index (other name)';
+      count(swapsFound, `${type} ${kind}`);
+      if (name === undefined && swapsMissing.length < 10)
+        swapsMissing.push(`${record.editorId ?? ''} ${swap.shape} at ${String(swap.index)}`);
     }
   }
 }
@@ -650,9 +657,9 @@ for (const [key, n] of [...swapsFound].sort())
     'Alternate textures (MODS)',
     key,
     n,
-    key.endsWith('found')
-      ? ['done', 'objectModelKey, GameSession.model']
-      : ['open', 'no shape of that name'],
+    key.endsWith('no shape at the index')
+      ? ['done', 'swaps nothing, as the original']
+      : ['done', 'swapTextures by 3D index'],
   );
 
 const used = rows.filter((row) => row.status !== 'n/a');
@@ -663,7 +670,7 @@ console.log(
     ` ${String(done)} done, ${String(used.length - done)} open`,
 );
 if (swapsMissing.length > 0)
-  console.log(`alternate textures naming no shape: ${swapsMissing.join('; ')}`);
+  console.log(`alternate textures at no shape: ${swapsMissing.join('; ')}`);
 let section = '';
 for (const row of rows) {
   if (values.open && row.status !== 'open') continue;

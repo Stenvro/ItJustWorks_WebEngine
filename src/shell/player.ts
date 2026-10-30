@@ -1565,6 +1565,12 @@ export class Player implements Camera {
   /** Told of each user event the player presses (help messages wait for one). */
   onPress: ((name: string) => void) | undefined;
 
+  /**
+   * Whether a press is another system's, not the menus' (a ridden dragon's target lock takes
+   * Hotkey1 and Hotkey2: src/shell/dragon-target-lock.ts).
+   */
+  pressTaken: ((name: string) => boolean) | undefined;
+
   /** Presses or releases a user event by its control map name ("Forward", "Jump", ...). */
   press(name: string, down: boolean): void {
     if (down) {

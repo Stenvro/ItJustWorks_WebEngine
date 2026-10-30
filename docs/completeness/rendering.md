@@ -20,9 +20,24 @@ not sample, flags xEdit and nif.xml call unused).
 
 | Part       | Items | Done | Open | n/a |
 | ---------- | ----- | ---- | ---- | --- |
-| Systems    | 79    | 68   | 11   | 0   |
-| Data sweep | 463   | 414  | 11   | 38  |
-| **Total**  | 542   | 482  | 22   | 38  |
+| Systems    | 79    | 70   | 9    | 0   |
+| Data sweep | 465   | 421  | 6    | 38  |
+| **Total**  | 544   | 491  | 15   | 38  |
+
+Done in round 8, part B (scene graph, physics-driven, LOD), all observed in the original:
+alternate textures (MODS, ARMO and ARMA's, DMDS) go into a model's shapes by their 3D index, not
+by the name they carry: the model's geometry counted depth first from its root (every shape and
+particle system, through every node's children in order), entries without an index skipped and
+a later entry for an index winning; a shape with a lighting shader takes the texture set whole
+(its empty slots become the slot's default), the engine's NullTextureSet (form 0x28) hides the
+shape. A sweep of every record's swaps (ARMA's included) finds the index naming the shape of the
+entry's name for 3,475 of 3,551; the rest carry stale names. Mesh particles' rigid bodies are the physics world's: a copy of the
+particle node's body per particle, started at the particle's velocity and its rotation axis times
+its speed, collide with the world's shapes and each other by their layers and leave the world with
+their particle. LOD is in no cell's portal graph, so rooms and portals never cull it (as ours).
+A ridden dragon's target lock: Jump locks the nearest of the actors within fTargetLockXYRange
+(bTargetLockIsToggle: a press locks, the next lets go), Hotkey1 and Hotkey2 step back and on
+through the list gathered at the lock, a target that no longer does gives way to the next one on.
 
 Done in round 7, part B (scene graph, physics-driven, LOD): the Havok float slots. Behavior
 graphs now blend their clips' float tracks (a slot's value from the clips that have a track
@@ -94,8 +109,8 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 
 1. **Shader terms only the shader cache holds**: the volumetric generate shader's scattering, its
    blur and noise; the map overlay's weights and snow mask (inferred now).
-2. **LOD culled by rooms and portals** (DLC1HunterHQWorld only); mesh particles against the
-   physics world's shapes; the alternate textures naming a shape the model lacks.
+2. **Bone LOD's level per frame** and the kill cameras' own turns and the bone a shot's
+   location is measured from (camera and animation rules still inferred).
 3. **IBLF lens flare** (its textures are Effects\LensFlares\Ramps.dds and Masks.dds);
    **WATR NAM5**; the water constants' sources and interiors' reflection; Fire_Refraction's
    normal falloff; land's lists of seven per quad; Screendoor_Alpha_Fade's blended fade.
@@ -125,7 +140,7 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 | 18  | Tree LOD billboards                                                | done   | tree-lod.ts                                                                                                                                                                            |
 | 19  | LOD fade between levels                                            | done   | levels switch without a fade once the replacing blocks are loaded, as the original (trees inferred)                                                                                    |
 | 20  | fLODFadeOutMultSkyCell                                             | done   | object-fade.ts: full LOD references take the sky cell's type (fSkyCellRefFadeDistance)                                                                                                 |
-| 21  | LOD culled by rooms and portals                                    | open   | LOD is not culled by them; which worldspaces have rooms and LOD both unchecked                                                                                                         |
+| 21  | LOD culled by rooms and portals                                    | done   | as the original: a cell's portal graph culls only its own objects (those in no room always drawn); LOD land, objects and trees are in no cell's graph                                  |
 | 22  | Object distance fade                                               | done   | object-fade.ts: the original's thresholds and fade times; shader-fades.ts                                                                                                              |
 | 23  | Rooms and portals culling                                          | done   | room-culler.ts                                                                                                                                                                         |
 | 24  | Rooms' lighting templates and imagespaces                          | done   | model-viewer lightingInRoom                                                                                                                                                            |
@@ -183,15 +198,15 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 | 76  | Shader terms only the shader cache holds (volumetric, map overlay) | open   | the cache is readable (water read); the volumetric and map-overlay techniques not yet found in it                                                                                      |
 | 77  | Water: the reflection in interiors and of several planes           | open   | interiors reflect the sky colours; one plane (the nearest), the original up to 2 / 4 by height                                                                                         |
 | 78  | Havok float slots: hkVis visibility, hkPhoneme                     | done   | behavior-runtime.ts float slot blocks, skeleton.ts showBySlots; hkPhoneme: no skeleton has the slots                                                                                   |
-| 79  | Mesh particles' Havok bodies against the world's shapes            | open   | particle-sim.ts: gravity, damping, the ground under the effect; not the physics world's shapes                                                                                         |
+| 79  | Mesh particles' Havok bodies against the world's shapes            | done   | particle-bodies.ts: per particle a copy of the node's body in the physics world, started at its velocity and spin, its mesh following it                                               |
 
 ## Data sweep
 
 Generated by `node tools/render-inventory.ts --markdown` (a lighting shader's slot counts as
 sampled where its type and flags bind it, `src/render/material-slots.ts`). Alternate textures
-whose shape name the model no longer has (stale swaps, for example RockShelf01:8 against a model
-whose shapes are RockShelf01:0, :9 and :3) stay open: which shape the engine then picks, by the
-entry's 3D index, is unread.
+go by their 3D index, as the original's (a stale name such as RockShelf01:8 against a model whose
+shapes are RockShelf01:0, :9 and :3 still swaps the shape at its index); an index beyond the
+model's shapes swaps nothing.
 
 ### Lighting shader types
 
@@ -744,23 +759,25 @@ entry's 3D index, is unread.
 
 ### Alternate textures (MODS)
 
-| Item               | Uses | Status | Where / why                       |
-| ------------------ | ---- | ------ | --------------------------------- |
-| ACTI shape found   | 570  | done   | objectModelKey, GameSession.model |
-| ACTI shape missing | 7    | open   | no shape of that name             |
-| ALCH shape found   | 45   | done   | objectModelKey, GameSession.model |
-| ALCH shape missing | 12   | open   | no shape of that name             |
-| ARMO shape found   | 148  | done   | objectModelKey, GameSession.model |
-| BOOK shape found   | 6    | done   | objectModelKey, GameSession.model |
-| CONT shape found   | 26   | done   | objectModelKey, GameSession.model |
-| DOOR shape found   | 13   | done   | objectModelKey, GameSession.model |
-| DOOR shape missing | 5    | open   | no shape of that name             |
-| FLOR shape found   | 22   | done   | objectModelKey, GameSession.model |
-| FURN shape found   | 63   | done   | objectModelKey, GameSession.model |
-| INGR shape found   | 6    | done   | objectModelKey, GameSession.model |
-| INGR shape missing | 1    | open   | no shape of that name             |
-| MISC shape found   | 14   | done   | objectModelKey, GameSession.model |
-| MSTT shape found   | 138  | done   | objectModelKey, GameSession.model |
-| STAT shape found   | 2115 | done   | objectModelKey, GameSession.model |
-| STAT shape missing | 8    | open   | no shape of that name             |
-| WEAP shape found   | 4    | done   | objectModelKey, GameSession.model |
+| Item                                 | Uses | Status | Where / why                    |
+| ------------------------------------ | ---- | ------ | ------------------------------ |
+| ACTI shape at the index (other name) | 7    | done   | swapTextures by 3D index       |
+| ACTI shape at the index              | 570  | done   | swapTextures by 3D index       |
+| ALCH shape at the index (other name) | 12   | done   | swapTextures by 3D index       |
+| ALCH shape at the index              | 45   | done   | swapTextures by 3D index       |
+| ARMO shape at the index              | 148  | done   | swapTextures by 3D index       |
+| BOOK shape at the index              | 6    | done   | swapTextures by 3D index       |
+| CONT shape at the index              | 26   | done   | swapTextures by 3D index       |
+| DOOR shape at the index (other name) | 5    | done   | swapTextures by 3D index       |
+| DOOR shape at the index              | 13   | done   | swapTextures by 3D index       |
+| FLOR shape at the index              | 22   | done   | swapTextures by 3D index       |
+| FURN shape at the index              | 63   | done   | swapTextures by 3D index       |
+| INGR shape at the index (other name) | 1    | done   | swapTextures by 3D index       |
+| INGR shape at the index              | 6    | done   | swapTextures by 3D index       |
+| MISC shape at the index              | 14   | done   | swapTextures by 3D index       |
+| MSTT shape at the index (other name) | 1    | done   | swapTextures by 3D index       |
+| MSTT shape at the index              | 137  | done   | swapTextures by 3D index       |
+| STAT no shape at the index           | 6    | done   | swaps nothing, as the original |
+| STAT shape at the index (other name) | 17   | done   | swapTextures by 3D index       |
+| STAT shape at the index              | 2100 | done   | swapTextures by 3D index       |
+| WEAP shape at the index              | 4    | done   | swapTextures by 3D index       |
