@@ -51,6 +51,8 @@ export class GameRecord {
   readonly fields: Fields;
   /** The plugin this version comes from. */
   readonly plugin: Plugin;
+  /** The record header's form version (undefined where not read from a file). */
+  readonly formVersion: number | undefined;
   readonly #db: RecordDatabase;
 
   constructor(
@@ -60,7 +62,9 @@ export class GameRecord {
     formId: number,
     flags: number,
     fields: Fields,
+    formVersion?: number,
   ) {
+    this.formVersion = formVersion;
     this.#db = db;
     this.plugin = plugin;
     this.type = type;
@@ -77,7 +81,15 @@ export class GameRecord {
     const fields = new Fields(
       this.fields.list.map((field) => ({ type: field.type, data: field.data.slice() })),
     );
-    return new GameRecord(this.#db, this.plugin, this.type, this.formId, this.flags, fields);
+    return new GameRecord(
+      this.#db,
+      this.plugin,
+      this.type,
+      this.formId,
+      this.flags,
+      fields,
+      this.formVersion,
+    );
   }
 
   get editorId(): string | undefined {
@@ -396,6 +408,7 @@ export class RecordDatabase {
       this.toGlobal(plugin, loaded.header.formId),
       loaded.header.flags,
       new Fields(parseFields(loaded.data)),
+      loaded.header.formVersion,
     );
   }
 
@@ -424,6 +437,7 @@ export class RecordDatabase {
               this.toGlobal(plugin, loaded.header.formId),
               loaded.header.flags,
               new Fields(parseFields(loaded.data)),
+              loaded.header.formVersion,
             ),
           );
         },
