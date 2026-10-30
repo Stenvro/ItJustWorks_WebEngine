@@ -1995,7 +1995,6 @@ export class SceneRenderer {
         texture2d(9),
         texture2d(10),
         texture2d(11),
-        texture2d(12),
       ],
     });
     this.#pipelineLayout = device.createPipelineLayout({
@@ -2093,6 +2092,7 @@ export class SceneRenderer {
         texture2d(9),
         texture2d(10),
         texture2d(11),
+        texture2d(12),
       ],
     });
     // The frame's sky and the displacement field's slopes.
