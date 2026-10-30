@@ -8,8 +8,14 @@
 // That imagespace is the only colour over the whole image below the surface, as in the original:
 // no tint of the fog's colour is laid over it.
 //
-// TODO(M13): the engine's exact underwater colour (how it lights the water's colours) is not
-// observed in the original yet.
+// Where the view crosses the surface (observed in the original): the four corners of the
+// camera's near plane are measured against the water's height; all above, the view is above
+// water; all below, the underwater view covers the whole image; across, the engine draws the
+// part of the screen under the surface (cut by the line where the water's plane meets the near
+// plane, turned by the camera's roll) into its underwater mask, and the underwater view applies
+// there alone (underwaterCrossing). TODO(M13): ours takes the underwater view by the camera's
+// height alone (no mask: a split screen shows one or the other), and how the engine lights the
+// underwater fog's colours is still unread.
 
 import type { SceneFog, SceneLighting } from '../render/scene-lighting.ts';
 import { parseImageSpace, type ImageSpace } from './image-space.ts';
@@ -19,6 +25,28 @@ import type { GameRecord } from './record-db.ts';
 type ImageSpaceSource = Pick<GameRecord, 'type' | 'fields'>;
 import type { Vec3 } from '../render/math.ts';
 import type { WaterType } from './water.ts';
+
+/**
+ * How the camera's near plane lies against water at `waterHeight` (observed in the original):
+ * its four corners' heights give the submerged share of its height range; `above` (no corner
+ * under), `under` (every corner under) or `across` (the underwater mask splits the screen). A
+ * level near plane (looking straight up or down) takes the camera's own side.
+ */
+export function underwaterCrossing(
+  corners: readonly (readonly [number, number, number])[],
+  waterHeight: number,
+  cameraZ: number,
+): { readonly state: 'above' | 'across' | 'under'; readonly share: number } {
+  const heights = corners.map((corner) => corner[2]);
+  const low = Math.min(...heights);
+  const high = Math.max(...heights);
+  if (!(high > low)) {
+    const under = cameraZ < waterHeight;
+    return { state: under ? 'under' : 'above', share: under ? 1 : 0 };
+  }
+  const share = Math.min(1, Math.max(0, (waterHeight - low) / (high - low)));
+  return { state: share <= 0 ? 'above' : share >= 1 ? 'under' : 'across', share };
+}
 
 /** Whether a camera at height `z` is below the surface of water at `waterHeight`. */
 export function isUnderwater(z: number, waterHeight: number | undefined): boolean {

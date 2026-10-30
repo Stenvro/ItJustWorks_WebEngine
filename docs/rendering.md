@@ -901,7 +901,15 @@ The water shader (`shaders/water.wgsl`; the WATR values it reads:
 
 **Under water** the view takes the water type's own imagespace (WATR INAM: UnderwaterImageSpace,
 Dawnguard's DLC1_UnderwaterImageSpace, the Soul Cairn's DLC01UnderLava01) in place of the
-weather's or the cell's, the screen modifiers on top (`src/world/underwater.ts`).
+weather's or the cell's, the screen modifiers on top (`src/world/underwater.ts`). Where the view
+crosses the surface (observed in the original): each frame the four corners of the camera's near
+plane are measured against the water's height (`underwaterCrossing`); all above, the view is
+above water; all below, the underwater view covers the image; across, the engine draws the part
+of the screen under the surface into its underwater mask (the ISUnderwaterMask pass: cleared,
+then a quad from the line where the water's plane meets the near plane, turned by the camera's
+roll, down to the screen's lower edge) and the underwater view applies there alone. TODO(M13):
+ours switches the whole view by the camera's height (no mask), and how the engine lights the
+underwater fog's colours is unread (ours: the shallow and deep colours by the scene's light).
 
 **Which water.** A cell's water is its XCWT type, else its world's water (NAM2, from the
 parent world when the world takes its water from it), at its XCLW height, else the world's
@@ -925,9 +933,10 @@ original:
   refraction, the vertical one for the normals and the specular (`property × (share − 1) + 1`).
 - **Normal.** The first noise layer around the up axis by its amplitude (`a₁(n₁ − up) + up`),
   the other two added by theirs, normalized, then flattened towards up by the normals' depth
-  share. Rivers lay their flow-map normal over it by the flow's strength, and only their
-  techniques fade with distance: far away the normal gives way to the first layer's own
-  normal by `saturate((d − 8192) / (F − 8192) × (1 − floor) + floor)`, F the water's noise
+  share. Rivers (the flow-map techniques, which draw the first layer alone) take their flow
+  normal (below) near the camera, and only they fade with distance: far away the normal
+  gives way to the first layer's own normal by
+  `saturate((d − 8192) / (F − 8192) × (1 − floor) + floor)`, F the water's noise
   falloff (clamped to 1..8191), the floor a frame constant that is 1 only in passes the engine
   flags for it and 0 in every pass that draws the world. The ripple field's normal
   (`normalize(slope × dampener, 0.04)`) takes the waves over by its own z.
@@ -968,42 +977,47 @@ deepness). The scene colours the shader samples (refraction, cube, screen-space 
 scaled by one constant and the result by another (the original's frame buffer range; ours keeps
 linear colour throughout).
 
-**Rivers' flow normals** (WATR NAM5, observed in the original's flow-map techniques): the flow
-map is read four times on a grid staggered by half a texel (64 texels a cell), each tap blended
-by tent weights `1 − |2 frac(64·u) − 1|` across and down; each tap's direction (red, green
-around 128) turns the NAM5 texture's coordinate into the flow's frame, which moves along it by
-time × the tap's alpha × its own rate (8, 8.48, 10.64 and 9.92 a second, at offsets 0, 0.62,
-0.27, 0), the coordinate being the mesh's texture coordinate × 32 × √(1.01 − flowmap scale);
-the four NAM5 normals' xy (−0.5) are blended by the tents and rescaled by
-`√(w² + (1 − w)²)` per axis, their xy times max(normals' depth share, 0.4), and the result
-takes the noise normal over by the taps' blended blue (the flow's strength). TODO(M13): the
-cell water's own texture coordinates and the composite flow map's placement constants (the
-engine joins the cells' maps into one texture around the player) are unread; ours moves the
-noise layers along the flow.
+**Rivers' flow normals** (WATR NAM5, observed in the original's flow-map techniques; ours
+`water.wgsl flowNormal`, `flow-map.ts flowTaps`). Where the flow map lies: the engine joins the
+flow maps of the loaded grid (uGridsToLoad cells a side, 64 texels a cell: all 641 maps of the
+data are 64 × 64, `node tools/flow-maps.ts`) into one texture, a cell's slot by its column from
+the west and its row from the south; the cell water's own coordinate runs 0..1 over the cell with
+north at the top, and reads the composite at ((u + column) / cells, (v + cells − 1 − row) / cells)
+(`flowCompositeAt`). The flow normals' coordinate is the cell's coordinate plus its grid position
+(x, −y): it runs on across cells. What is drawn: the flow map is read four times, at the point
+and half a texel east, south and south-east, each tap weighted by the tents
+`1 − |2 frac(64·u) − 1|` across and down (a tap counts most at its texel's centre); each tap's
+direction (red, green around 128) turns the flow normals' coordinate, 64 a cell times
+√(1.01 − the tap's blue), into the flow's frame, where it moves by the time (seconds) × the tap's
+alpha × its own rate (8, 8.48, 10.64, 9.92 at offsets 0, 0.62, 0.27, 0); the four NAM5 normals' xy
+(− 0.5) are blended by the tents, divided by `√(w² + (1 − w)²)` per axis, times max(normals'
+depth share, 0.4), z completing the unit normal. Those techniques draw one noise layer: near the
+camera the water's normal is the flow normal, giving way to the first noise layer's own normal
+by the noise falloff (the distance fade above). Ours binds each cell's own map clamped to its
+texels: the same texels, except along a cell's north and east edges, where the original's taps
+half a texel over read the neighbouring cell's.
 
 **Reflections** (`water-reflection.ts`). Every water technique in the cache samples a cube;
-none samples a planar reflection texture. The cube holds what [Water] in the INI reflects, all
-on by default: the sky (bReflectSky), land and its LOD (bReflectLODLand), tree LOD
-(bReflectLODTrees), object LOD (bReflectLODObjects) and the references flagged Reflected By
-Auto Water (REFR flag bit 28: 17 in the load order, 16 of them in exteriors; XPWR entries name
-only refracting waters). Ours renders it from the camera mirrored under the nearest water's
-plane (seen from there, the straight line through a water point continues as the reflected
-view ray), five faces (none looks down) as layers of a 2D array with their matrices for the
-lookup, 256 texels a side, what lies under the plane clipped (`frame.wgsl reflectionClipped`).
-The original's cube, observed in the original: 512 texels a side in half floats with one
-sample, six faces, two of them redrawn each frame (fCubeMapRefreshRate 0: no pause between
-rounds), so the whole cube every three frames; after each round its faces are reordered by the
-time each took, so a frame pairs a costly face with a cheap one; at most six cubes are redrawn
-in a frame. What it draws: the sky, LOD land, LOD objects and tree LOD by the [Water] switches.
-Ours keeps its cost at or under that: five faces of 256 texels with four samples (as many
-samples a face as the original's), one face a frame; when the mirrored plane changes, the new
-plane's faces are redrawn two a frame (the original's rate, never all five in one frame) and
-the water shows the reflection once every face holds a drawing. Each face draws only what lies
-in its own view: the land's quadrants, the tree LOD blocks (each block with a sphere round its
-trees, grown by its largest billboard), the sky and the reflected draws, listed once per scene
-(`GpuScene.reflected`, as the water draws are, `GpuScene.water`) instead of walking every draw
-of every scene for each face. `Renderer.reflectionStats` counts each frame's faces, land
-quadrants, tree blocks, draws and recording time.
+none samples a planar reflection texture. The rendered cube holds what [Water] in the INI
+reflects, all on by default: the sky (bReflectSky), land and its LOD (bReflectLODLand), tree LOD
+(bReflectLODTrees), object LOD (bReflectLODObjects); the references flagged Reflected By Auto
+Water (REFR flag bit 28: 17 in the load order, 16 of them in exteriors; XPWR entries name only
+refracting waters) are drawn only by the plane reflections (below). The original's cube, observed
+in the original: 512 texels a side in half floats with one sample, six faces, two of them redrawn
+each frame (fCubeMapRefreshRate 0: no pause between rounds), so the whole cube every three
+frames; after each round its faces are reordered by the time each took, so a frame pairs a
+costly face with a cheap one; at most six cubes are redrawn in a frame. Ours: five faces (none
+looks down) as layers of a 2D array with their matrices for the lookup, 256 texels a side with
+four samples (as many samples a face as the original's); one face a frame in all, two while a
+reflection has faces due (a new plane's, never all five in one frame), the frame's faces shared
+out among the reflections in view in turn; the water shows a reflection once every face holds a
+drawing. A plane's reflection is drawn from the camera mirrored under its plane (seen from there,
+the straight line through a water point continues as the reflected view ray), what lies under the
+plane clipped (`frame.wgsl reflectionClipped`). Each face draws only what lies in its own view:
+the land's quadrants, the tree LOD blocks (each block with a sphere round its trees, grown by its
+largest billboard), the sky and the reflected draws, listed once per scene (`GpuScene.reflected`,
+as the water draws are, `GpuScene.water`). `Renderer.reflectionStats` counts each frame's faces,
+land quadrants, tree blocks, draws and recording time.
 
 **Cube maps in place of the reflection** (observed in the original, with [Water]
 bUseCubeMapReflections, on by default): water reflects a cube map file instead of a rendered
@@ -1011,21 +1025,26 @@ cube where its world (WRLD XWEM: the Forebears' Holdout, the Ancestors' Glade, A
 its interior cell (CELL XWEM: 81 cells, 78 of whose files exist; `node tools/water-info.ts
 --environment`) names one that exists. Interior water without one gets no reflection cube at
 all (ours: the cube reads black, so the reflection colour shows by 1 − reflectivity); outdoors
-without one, the rendered cube.
+without one, the rendered cube (below).
 
-**Which water gets which reflection** (observed in the original, as water is added): outdoors,
-water at its world's water height (within 0.01) shares one reflection of that plane that draws
-the sky, the LOD scene and the references flagged to be reflected; all water at any other
-height shares a single second reflection that draws the sky alone (the first such water's
-plane); so two at most, which is uMaxExteriorWaterReflections (2). Indoors each plane (its
-normal and height, within 0.01) has its own reflection, at most uMaxInteriorWaterReflections
-(4): with a cube map file it shows that, without one a rendered reflection of the flagged
-references alone (no sky, no LOD). fExteriorWaterReflectionThreshold and
-fInteriorWaterReflectionThreshold are read from the INI and used by nothing. [Water]
-bForceHighDetailReflections draws the full scene in all of them. TODO(M13): ours mirrors the
-nearest plane for all water and binds black indoors without a cube; the sky-only second
-reflection, the interior planes' reflections of their flagged references and whether the
-reflection is fogged (ours leaves deferred lit objects unfogged) are still to build.
+**Which water gets which reflection** (observed in the original, as water is added;
+`planReflections`). With [Water] bUseCubeMapReflections (on by default) all water shares one
+reflection: the cube map file its world or cell names (above), else one cube rendered around the
+player's eyes (their head, not mirrored), drawing the sky and the LOD by the switches above; the
+water's height plays no part. Indoors that cube has no world to draw (the water shows its clear
+colour; ours: black). With the setting off the reflections are of planes: outdoors, water at its
+world's LOD water height (WRLD NAM4, within 0.01) shares one reflection of that plane that draws
+the sky, the LOD scene and the references flagged to be reflected; all water at any other height
+shares a single second reflection that draws the sky alone (the first such water's plane); so two
+at most, which is uMaxExteriorWaterReflections (2). Indoors each plane (its normal and height,
+within 0.01) has its own reflection of the flagged references alone (no sky, no LOD), at most
+uMaxInteriorWaterReflections (4); the cell's cube file is not used then.
+fExteriorWaterReflectionThreshold and fInteriorWaterReflectionThreshold are read from the INI and
+used by nothing. [Water] bForceHighDetailReflections draws the full scene in all of them. Ours
+builds both: each reflection has its own faces and the water frame a binding per reflection, each
+water binding its plane's. TODO(M13): what a plane past the interior's four takes, whether a
+world using its parent's data takes the parent's LOD water height, whether the reflection is
+fogged (ours leaves deferred lit objects unfogged) and bForceHighDetailReflections are open.
 
 **Displacement** (`water-displacement.ts`, `water-displacement-gpu.ts`,
 `shaders/water-displacement.wgsl`): the surface's interactive ripples, as observed in the

@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { xpwrReflected } from '../world/cell-loader.ts';
 import {
+  MAX_INTERIOR_REFLECTIONS,
   mirroredCamera,
+  planReflections,
+  reflectionContent,
   REFLECTION_FACES,
   reflectionFaceViewProjection,
   reflectionLookup,
@@ -78,6 +81,79 @@ describe('the water reflection', () => {
     expect(schedule.facesFor(-250)).toEqual([2]);
     // The faces drawn before still hold a drawing.
     expect(schedule.complete).toBe(true);
+  });
+
+  it("shares the frame's faces out: never more than the limit", () => {
+    const schedule = new ReflectionSchedule();
+    expect(schedule.pending).toBe(true);
+    expect(schedule.facesFor(0, 1)).toEqual([0]);
+    expect(schedule.facesFor(0, 0)).toEqual([]);
+    expect(schedule.facesFor(0)).toEqual([1, 2]);
+    expect(schedule.facesFor(0)).toEqual([3, 4]);
+    expect(schedule.pending).toBe(false);
+    expect(schedule.facesFor(0, 0)).toEqual([]);
+    expect(schedule.facesFor(0, 2)).toEqual([0]);
+  });
+
+  it("gives all water one cube around the eyes with cube map reflections (the original's default)", () => {
+    const outdoors = planReflections([-250, 600, -14000], {
+      cubeMaps: true,
+      interior: false,
+      worldWaterHeight: -14000,
+    });
+    expect(outdoors.reflections).toEqual([{ kind: 'probe', height: -250 }]);
+    expect([-250, 600, -14000].map(outdoors.reflectionOf)).toEqual([0, 0, 0]);
+    expect(reflectionContent('probe')).toEqual({
+      sky: true,
+      lod: true,
+      references: false,
+      mirrored: false,
+    });
+    // Indoors the cube has no world to draw: none is rendered (a file, else nothing).
+    const indoors = planReflections([0, 100], { cubeMaps: true, interior: true });
+    expect(indoors.reflections).toEqual([]);
+    expect(indoors.reflectionOf(0)).toBeUndefined();
+  });
+
+  it("mirrors the world's water height in full and every other height by the sky alone without cube maps", () => {
+    const plan = planReflections([-250, -14000.005, 600, -14000], {
+      cubeMaps: false,
+      interior: false,
+      worldWaterHeight: -14000,
+    });
+    expect(plan.reflections).toEqual([
+      { kind: 'sky', height: -250 },
+      { kind: 'world', height: -14000.005 },
+    ]);
+    expect(plan.reflectionOf(600)).toBe(0);
+    expect(plan.reflectionOf(-14000)).toBe(1);
+    expect(plan.reflectionOf(-13999.9)).toBe(0);
+    expect(reflectionContent('world')).toEqual({
+      sky: true,
+      lod: true,
+      references: true,
+      mirrored: true,
+    });
+    expect(reflectionContent('sky')).toEqual({
+      sky: true,
+      lod: false,
+      references: false,
+      mirrored: true,
+    });
+  });
+
+  it('gives each interior plane its own reflection of the flagged references, four at most', () => {
+    const heights = [10, 10.005, 20, 30, 40, 50];
+    const plan = planReflections(heights, { cubeMaps: false, interior: true });
+    expect(plan.reflections.map((r) => r.height)).toEqual([10, 20, 30, 40]);
+    expect(plan.reflections.length).toBe(MAX_INTERIOR_REFLECTIONS);
+    expect(heights.map(plan.reflectionOf)).toEqual([0, 0, 1, 2, 3, undefined]);
+    expect(reflectionContent('references')).toEqual({
+      sky: false,
+      lod: false,
+      references: true,
+      mirrored: true,
+    });
   });
 
   it('reads which placed water reflects a reference (XPWR type bit 0)', () => {

@@ -8,10 +8,68 @@ import { CELL_SIZE } from './land.ts';
 import type { Worldspace } from './worldspace.ts';
 
 /**
- * How fast a river flows at full strength (game units a second): the water shader's speed.
- * TODO(M13): the engine's own speed for the flow map is not documented.
+ * How fast a river carries what floats in it at full strength (game units a second).
+ * TODO(M13): the engine's own current for the flow map is not read (its flow normals move at
+ * 8 to 10.6 of their tiles a second times the map's alpha, shaders/water.wgsl flowNormal).
  */
 export const FLOW_SPEED = 160;
+
+/**
+ * Texels a cell's flow map has along a side: the original joins the loaded cells' maps into one
+ * texture of uGridsToLoad cells a side at this many texels each (observed in the original), and
+ * its flow-map techniques read it at that rate (shaders/water.wgsl flowNormal).
+ */
+export const FLOW_TEXELS_PER_CELL = 64;
+
+/**
+ * The four flow map taps the flow normals blend at a point of a cell (`u`, `v`: the cell's own
+ * coordinate, v from the north edge), observed in the original's flow-map techniques: the point
+ * and the point half a texel east, south and south-east, each weighted by the tents
+ * `1 − |2 frac(64·u) − 1|` across and down (a tap counts most at its texel's centre); each with
+ * the rate (a second, times its alpha) and offset its flow normals move by. The weights sum to
+ * 1. shaders/water.wgsl flowNormal draws the same.
+ */
+export function flowTaps(
+  u: number,
+  v: number,
+): readonly {
+  readonly u: number;
+  readonly v: number;
+  readonly weight: number;
+  readonly rate: number;
+  readonly offset: number;
+}[] {
+  const tent = (x: number): number => {
+    const f = FLOW_TEXELS_PER_CELL * x - Math.floor(FLOW_TEXELS_PER_CELL * x);
+    return 1 - Math.abs(2 * f - 1);
+  };
+  const wu = tent(u);
+  const wv = tent(v);
+  const stagger = 0.5 / FLOW_TEXELS_PER_CELL;
+  return [
+    { u, v, weight: wu * wv, rate: 8, offset: 0 },
+    { u: u + stagger, v, weight: (1 - wu) * wv, rate: 8.48, offset: 0.62 },
+    { u, v: v + stagger, weight: wu * (1 - wv), rate: 10.64, offset: 0.27 },
+    { u: u + stagger, v: v + stagger, weight: (1 - wu) * (1 - wv), rate: 9.92, offset: 0 },
+  ];
+}
+
+/**
+ * Where a cell's flow map lies in the original's composite of the loaded grid (`cells` a side,
+ * uGridsToLoad): its column from the west and row from the south. A point of the cell at its
+ * own coordinate (`u`, `v` from the north edge) reads the composite at
+ * ((u + column) / cells, (v + cells − 1 − row) / cells); the flow normals' coordinate runs on
+ * across cells: (u + cell x, v − cell y).
+ */
+export function flowCompositeAt(
+  u: number,
+  v: number,
+  column: number,
+  row: number,
+  cells: number,
+): readonly [number, number] {
+  return [(u + column) / cells, (v + cells - 1 - row) / cells];
+}
 
 export interface FlowMap {
   readonly width: number;

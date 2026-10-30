@@ -16,13 +16,31 @@ An item is **done** only when every use in the data is drawn as the original dra
 items say why; **n/a** items draw nothing (data for other systems, slots the type and flags do
 not sample, flags xEdit and nif.xml call unused).
 
-## Count (2026-10-30, round 11)
+## Count (2026-10-30, round 12)
 
 | Part       | Items | Done | Open | n/a |
 | ---------- | ----- | ---- | ---- | --- |
-| Systems    | 84    | 77   | 7    | 0   |
-| Data sweep | 465   | 426  | 1    | 38  |
-| **Total**  | 549   | 503  | 8    | 38  |
+| Systems    | 84    | 78   | 6    | 0   |
+| Data sweep | 465   | 427  | 0    | 38  |
+| **Total**  | 549   | 505  | 6    | 38  |
+
+Done in round 12, observed in the original: which water gets which reflection (#77), read again
+whole: with [Water] bUseCubeMapReflections (on by default) every water shares one reflection, a
+cube map file its world or cell names, else one cube rendered around the player's eyes (not
+mirrored) of the sky and the LOD by the [Water] switches, refreshed two faces a frame; indoors
+that cube has no world to draw. The plane rules round 11 read (the world's LOD water height,
+NAM4, mirrored with the sky, the LOD and the flagged references; every other height one
+sky-only reflection; indoors one per plane of the flagged references, at most four) hold only
+with that setting off; both are built, each water binding its own reflection. The rivers' flow
+normals (WATR NAM5): the engine joins the loaded grid's flow maps (uGridsToLoad cells a side, 64
+texels each, all 641 maps 64 × 64: `node tools/flow-maps.ts`) into one texture, a cell's slot by
+its column and its row from the south; the cell water's own coordinate runs 0..1 over the cell
+with north at the top, and the flow normals' coordinate is that plus the cell's grid position.
+The flow-map techniques draw four staggered taps whose coordinate is 64 a cell times
+√(1.01 − the tap's blue), moved by its alpha times its rate; near the camera the flow normal is
+the water's normal, giving way to the first noise layer's by the noise falloff. Where the view
+crosses the surface: the near plane's corners against the water, the underwater mask drawn by
+the line where the water's plane cuts the near plane (#15, read; ours not yet split).
 
 Done in round 11, observed in the original: the image-based lens flare of bright lights
 (bIBLFEnable, #33) as the engine's passes and its shader cache's shaders draw it: no list of
@@ -185,10 +203,8 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 
 ## Next biggest open items
 
-1. **WATR NAM5** (the flow-map techniques' terms are read; the cell water's texture coordinates
-   and the composite flow map's placement unread); the sky-only second reflection and the
-   interior planes' reflections of their flagged references; the character light's slot 11 by
-   the draw order; the underwater colour.
+1. The underwater mask where the view crosses the surface and how the underwater fog's colours
+   are lit (#15); the character light's slot 11 by the draw order (#62).
 2. The details rows 80 and 82 to 84 leave unread: how the shadow mask mixes a fading focus map,
    the kill cameras' lead actor and near-target cut-away, the plain decals' spacing on a node,
    the first bone of an unseen actor whose root left its bound.
@@ -211,7 +227,7 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 | 12  | Fog: weather, XCLL and LGTM (near, far, power, max)                | done   | frame.wgsl                                                                                                                                                                                                                                                                                                                                     |
 | 13  | Underwater fog                                                     | done   | underwater.ts                                                                                                                                                                                                                                                                                                                                  |
 | 14  | Underwater imagespace (WATR INAM)                                  | done   | underwater.ts, world-sky.ts                                                                                                                                                                                                                                                                                                                    |
-| 15  | Underwater colour (how the water's colours are lit, the tint)      | open   | the water's imagespace is the one path; how the fog colours are lit is inferred; the engine has an underwater mask image-space shader (ISUnderwaterMask) whose use is unread                                                                                                                                                                   |
+| 15  | Underwater colour (how the water's colours are lit, the tint)      | open   | the water's imagespace is the one path; read: across the surface the original's underwater mask (ISUnderwaterMask) keeps the underwater view to the screen below the water line (underwater.ts underwaterCrossing); ours switches by the camera's height; how the fog colours are lit is inferred                                              |
 | 16  | Terrain LOD                                                        | done   | terrain.ts                                                                                                                                                                                                                                                                                                                                     |
 | 17  | Object LOD (.bto, HD LOD)                                          | done   | scene-renderer LOD materials                                                                                                                                                                                                                                                                                                                   |
 | 18  | Tree LOD billboards                                                | done   | tree-lod.ts                                                                                                                                                                                                                                                                                                                                    |
@@ -273,7 +289,7 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 | 74  | Enchantment glow and effect shaders on references                  | done   | actor-effects.ts                                                                                                                                                                                                                                                                                                                               |
 | 75  | The map's relief overlay on its LOD land                           | done   | lighting.wgsl worldMapRelief, world-map-view.ts                                                                                                                                                                                                                                                                                                |
 | 76  | Shader terms only the shader cache holds (volumetric, map overlay) | done   | volumetric.wgsl, volumetric-data.ts, lighting.wgsl worldMapRelief / worldMapColor: the cache's image-space volumetric shaders (generate, sum, composite with its screen-space temporal blend and dither, blur, apply) and the world map's LOD land shaders                                                                                     |
-| 77  | Water: the reflection in interiors and of several planes           | open   | cube maps in place of the reflection are done; the rules are read (outdoors the world's water height with sky, LOD and flagged references, every other height one shared sky-only reflection; indoors one per plane of the flagged references): ours still mirrors the nearest plane and binds black indoors without a map                     |
+| 77  | Water: the reflection in interiors and of several planes           | done   | water-reflection.ts planReflections: with cube map reflections (default) one cube around the eyes of the sky and LOD for all water outdoors; without, the world's water height in full, other heights sky-only, indoors one per plane of the flagged references; a binding per reflection                                                      |
 | 78  | Havok float slots: hkVis visibility, hkPhoneme                     | done   | behavior-runtime.ts float slot blocks, skeleton.ts showBySlots; hkPhoneme: no skeleton has the slots                                                                                                                                                                                                                                           |
 | 79  | Mesh particles' Havok bodies against the world's shapes            | done   | particle-bodies.ts: per particle a copy of the node's body in the physics world, started at its velocity and spin, its mesh following it                                                                                                                                                                                                       |
 | 80  | Bone LOD of actors the camera does not see                         | open   | done: an unseen actor (no draw in the last frame's view; headless: unknown) animates its minimum bones alone (behavior-runtime.ts seen); unread: the first bone kept animating when the root left the 3D's bound, the actor flag that counts one as seen                                                                                       |
@@ -767,23 +783,23 @@ model's shapes swaps nothing.
 
 ### Records: WATR (58)
 
-| Item | Uses | Status | Where / why                                                                                                                                                                                                                     |
-| ---- | ---- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ANAM | 58   | done   | read                                                                                                                                                                                                                            |
-| DATA | 58   | done   | read                                                                                                                                                                                                                            |
-| DNAM | 58   | done   | read                                                                                                                                                                                                                            |
-| FNAM | 58   | done   | read                                                                                                                                                                                                                            |
-| FULL | 3    | n/a    | name                                                                                                                                                                                                                            |
-| GNAM | 58   | n/a    | empty in every vanilla water                                                                                                                                                                                                    |
-| INAM | 53   | done   | read                                                                                                                                                                                                                            |
-| NAM0 | 58   | done   | read                                                                                                                                                                                                                            |
-| NAM1 | 58   | done   | read                                                                                                                                                                                                                            |
-| NAM2 | 58   | done   | read                                                                                                                                                                                                                            |
-| NAM3 | 58   | done   | read                                                                                                                                                                                                                            |
-| NAM4 | 58   | done   | read                                                                                                                                                                                                                            |
-| NAM5 | 10   | open   | flow normals noise texture (RiverFlow.dds): the flow-map techniques' terms are read (docs/rendering.md, rivers' flow normals); the cell water's texture coordinates and the composite flow map's placement constants are unread |
-| SNAM | 26   | n/a    | its sound                                                                                                                                                                                                                       |
-| TNAM | 7    | done   | read                                                                                                                                                                                                                            |
+| Item | Uses | Status | Where / why                                                                                                  |
+| ---- | ---- | ------ | ------------------------------------------------------------------------------------------------------------ |
+| ANAM | 58   | done   | read                                                                                                         |
+| DATA | 58   | done   | read                                                                                                         |
+| DNAM | 58   | done   | read                                                                                                         |
+| FNAM | 58   | done   | read                                                                                                         |
+| FULL | 3    | n/a    | name                                                                                                         |
+| GNAM | 58   | n/a    | empty in every vanilla water                                                                                 |
+| INAM | 53   | done   | read                                                                                                         |
+| NAM0 | 58   | done   | read                                                                                                         |
+| NAM1 | 58   | done   | read                                                                                                         |
+| NAM2 | 58   | done   | read                                                                                                         |
+| NAM3 | 58   | done   | read                                                                                                         |
+| NAM4 | 58   | done   | read                                                                                                         |
+| NAM5 | 10   | done   | water.wgsl flowNormal: the flow normals as the original's flow-map techniques draw them (tools/flow-maps.ts) |
+| SNAM | 26   | n/a    | its sound                                                                                                    |
+| TNAM | 7    | done   | read                                                                                                         |
 
 ### Records: WTHR (108)
 

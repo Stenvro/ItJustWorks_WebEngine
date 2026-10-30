@@ -17,20 +17,14 @@ import {
  * multisampled colour, G-buffer and depth one face is drawn into (the opaque pass's formats, so
  * the sky, land, tree LOD and objects draw with their own pipelines).
  */
+/** The water reflections' render targets: shared by every reflection's faces in turn. */
 class ReflectionTargets {
-  readonly faces: GPUTexture;
   readonly color: GPUTextureView;
   readonly gbuffer: GPUTextureView;
   readonly depth: GPUTextureView;
 
   constructor(device: GPUDevice) {
     const size = [REFLECTION_SIZE, REFLECTION_SIZE];
-    this.faces = device.createTexture({
-      label: 'water-reflection',
-      format: HDR_FORMAT,
-      size: [REFLECTION_SIZE, REFLECTION_SIZE, REFLECTION_FACES],
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-    });
     const multisampled = (label: string, format: GPUTextureFormat): GPUTextureView =>
       device
         .createTexture({
@@ -44,6 +38,30 @@ class ReflectionTargets {
     this.color = multisampled('water-reflection-color', HDR_FORMAT);
     this.gbuffer = multisampled('water-reflection-gbuffer', GBUFFER_FORMAT);
     this.depth = multisampled('water-reflection-depth', DEPTH_FORMAT);
+  }
+}
+
+/**
+ * One reflection's faces (water-reflection.ts): the texture the water samples, a frame state per
+ * face, and the schedule its faces are redrawn by.
+ */
+class ReflectionCube {
+  readonly faces: GPUTexture;
+  readonly frames: SceneFrame[];
+  readonly schedule = new ReflectionSchedule();
+  /** What it reflects: a cube drawn for another kind is drawn again. */
+  kind: ReflectionKind | undefined;
+
+  constructor(device: GPUDevice, scene: SceneRenderer, index: number) {
+    this.faces = device.createTexture({
+      label: `water-reflection-${index}`,
+      format: HDR_FORMAT,
+      size: [REFLECTION_SIZE, REFLECTION_SIZE, REFLECTION_FACES],
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.frames = Array.from({ length: REFLECTION_FACES }, (_, face) =>
+      scene.createFrame(`water-reflection-${index}-${face}`),
+    );
   }
 }
 
@@ -101,9 +119,12 @@ import {
   REFLECTION_FACES,
   REFLECTION_NEAR,
   REFLECTION_SIZE,
+  reflectionContent,
   reflectionFaceViewProjection,
+  REFLECTION_FACES_PER_FRAME_MAX,
   ReflectionSchedule,
 } from './water-reflection.ts';
+import type { ReflectionKind } from './water-reflection.ts';
 import {
   DEPTH_FORMAT,
   SAMPLE_COUNT,
@@ -285,9 +306,12 @@ export class Renderer {
   showWater = true;
   /** The water reflects the sky, land, LOD and flagged references ([Water] bUseWaterReflections). */
   waterReflections = true;
-  /** The water reflection's faces and targets (made when first needed), one frame per face. */
-  #reflection: { targets: ReflectionTargets; frames: SceneFrame[] } | undefined;
-  readonly #reflectionSchedule = new ReflectionSchedule();
+  /** The water reflections' targets (made when first needed). */
+  #reflectionTargets: ReflectionTargets | undefined;
+  /** The reflections' cubes, by their index in the frame's plan (made when first needed). */
+  readonly #reflectionCubes: ReflectionCube[] = [];
+  /** Which reflection draws first this frame (they take turns at the frame's faces). */
+  #reflectionTurn = 0;
   /**
    * The water reflection's work in the last frame (the terminal's stats): faces redrawn, and
    * of them the land quadrants, tree LOD blocks and reflected draws drawn, and the CPU time spent
@@ -455,12 +479,13 @@ export class Renderer {
 
   /** `timeSeconds` drives animation; `pixelScale` is the devicePixelRatio. */
   /**
-   * The water's reflection (water-reflection.ts): with water in view outdoors and the camera
-   * above it, the faces due this frame drawn from the camera mirrored under the nearest water's
-   * plane: the sky, the land and its LOD, tree LOD, object LOD and the references reflected by
-   * the water, what lies under the plane clipped. Each face has its own frame state (the frame's
-   * uniforms are written once before the passes run); the draws keep the lights they chose in
-   * the world's view.
+   * The water's reflections (water-reflection.ts): which water takes which (planReflections, by
+   * the frame's rules), then of the reflections water in view takes, the faces due this frame:
+   * the probe from the player's eyes (the sky and the LOD), a plane's from the camera mirrored
+   * under it while the camera is above it (what lies under the plane clipped). The frame's
+   * faces are shared out among them in turn, at most two a frame. Each face has its own frame
+   * state (the frame's uniforms are written once before the passes run); the draws keep the
+   * lights they chose in the world's view.
    */
   #waterReflection(
     encoder: GPUCommandEncoder,
@@ -468,87 +493,121 @@ export class Renderer {
     lighting: SceneLighting,
     scenes: readonly GpuScene[],
     sky: SkyFrame | undefined,
+    water: WaterFrame | undefined,
     timeSeconds: number,
     shadows: FrameShadows | undefined,
   ): void {
-    const camera = view.camera.position;
-    const height =
-      this.waterReflections && this.showWater && sky !== undefined
-        ? this.scene.reflectedWaterHeight(scenes, camera)
-        : undefined;
-    const above = height !== undefined && camera[2] > height;
-    const faces = this.#reflectionSchedule.facesFor(above ? height : undefined);
     const stats = { faces: 0, land: 0, trees: 0, draws: 0, ms: 0 };
     this.reflectionStats = stats;
-    if (!above || sky === undefined) {
-      this.scene.setWaterReflection(this.#reflection?.targets.faces, false);
-      return;
+    // A cube map file in place of the rendered reflection (or none), see WaterFrame.environment.
+    const rendered = this.waterReflections && this.showWater && water?.environment === undefined;
+    const { plan, inView } = this.scene.waterReflectionPlan(
+      scenes,
+      rendered ? water?.reflections : undefined,
+    );
+    const camera = view.camera.position;
+    const device = this.#gpu.device;
+    const reflections: ({ faces: GPUTexture; active: boolean } | undefined)[] = [];
+    const due: { cube: ReflectionCube; index: number; eye: Vec3; clip: number | undefined }[] = [];
+    plan.reflections.forEach((reflection, index) => {
+      const cube = (this.#reflectionCubes[index] ??= new ReflectionCube(device, this.scene, index));
+      const { mirrored } = reflectionContent(reflection.kind);
+      // A plane's reflection is of no use seen from below it.
+      const drawn = inView[index] === true && (!mirrored || camera[2] > reflection.height);
+      if (cube.kind !== reflection.kind) {
+        cube.kind = reflection.kind;
+        cube.schedule.facesFor(undefined);
+      }
+      if (drawn) {
+        const eye = mirrored ? mirroredCamera(camera, reflection.height) : (water?.eye ?? camera);
+        due.push({ cube, index, eye, clip: mirrored ? reflection.height : undefined });
+      } else {
+        // Its faces wait; a plane's are due again when it comes back in view.
+        if (mirrored) cube.schedule.facesFor(undefined);
+      }
+      reflections[index] = { faces: cube.faces, active: drawn && cube.schedule.complete };
+    });
+    if (due.length > 0) {
+      this.#reflectionTargets ??= new ReflectionTargets(device);
+      const targets = this.#reflectionTargets;
+      const terrain = this.showLod ? view.terrain?.() : undefined;
+      const trees = this.showLod && this.showTrees ? view.trees?.() : undefined;
+      const started = performance.now();
+      // One face a frame in all, two while a reflection has faces due.
+      let left = due.some((item) => item.cube.schedule.pending)
+        ? REFLECTION_FACES_PER_FRAME_MAX
+        : 1;
+      this.#reflectionTurn = (this.#reflectionTurn + 1) % due.length;
+      for (let n = 0; n < due.length && left > 0; n++) {
+        const item = due[(this.#reflectionTurn + n) % due.length];
+        if (!item) continue;
+        const { cube, index, eye, clip } = item;
+        const kind = cube.kind ?? 'probe';
+        const content = reflectionContent(kind);
+        // The probe moves with the eyes: its faces are redrawn in turn, never all due at once.
+        const faces = cube.schedule.facesFor(content.mirrored ? (clip ?? 0) : 0, left);
+        left -= faces.length;
+        for (const face of faces) {
+          const frame = cube.frames[face];
+          if (!frame) continue;
+          this.scene.useFrame(frame);
+          this.scene.updateFrame(
+            reflectionFaceViewProjection(face, eye),
+            eye,
+            lighting,
+            timeSeconds,
+            view.lodMask?.(),
+            shadows,
+            { width: REFLECTION_SIZE, height: REFLECTION_SIZE, near: REFLECTION_NEAR },
+            view.largeRefMask?.(),
+            undefined,
+            undefined,
+            { ...(clip !== undefined && { clipHeight: clip }), chooseLights: false },
+          );
+          const pass = encoder.beginRenderPass({
+            label: `water-reflection-${index}-${face}`,
+            colorAttachments: [
+              {
+                view: targets.color,
+                resolveTarget: cube.faces.createView({
+                  dimension: '2d',
+                  baseArrayLayer: face,
+                  arrayLayerCount: 1,
+                }),
+                clearValue:
+                  sky && content.sky
+                    ? SkyRenderer.clearColor(sky.state)
+                    : { r: 0, g: 0, b: 0, a: 1 },
+                loadOp: 'clear',
+                storeOp: 'discard',
+              },
+              { view: targets.gbuffer, loadOp: 'clear', storeOp: 'discard' },
+            ],
+            depthStencilAttachment: {
+              view: targets.depth,
+              depthClearValue: 0,
+              depthLoadOp: 'clear',
+              depthStoreOp: 'discard',
+            },
+          });
+          if (sky && content.sky) this.sky.draw(pass, this.scene.frameBindGroup, sky);
+          const planes = this.scene.viewPlanes;
+          if (content.lod && terrain) {
+            stats.land += this.terrain.draw(pass, this.scene.frameBindGroup, terrain, planes);
+          }
+          if (content.lod && trees) {
+            stats.trees += this.treeLod.draw(pass, this.scene.frameBindGroup, trees, planes);
+          }
+          stats.draws += this.scene.drawReflected(pass, scenes, content);
+          stats.faces++;
+          pass.end();
+        }
+        reflections[index] = { faces: cube.faces, active: cube.schedule.complete };
+      }
+      stats.ms = performance.now() - started;
+      this.scene.useFrame(undefined);
     }
-    if (!this.#reflection) {
-      this.#reflection = {
-        targets: new ReflectionTargets(this.#gpu.device),
-        frames: Array.from({ length: REFLECTION_FACES }, (_, i) =>
-          this.scene.createFrame(`water-reflection-${i}`),
-        ),
-      };
-    }
-    const { targets, frames } = this.#reflection;
-    const eye = mirroredCamera(camera, height);
-    const terrain = this.showLod ? view.terrain?.() : undefined;
-    const trees = this.showLod && this.showTrees ? view.trees?.() : undefined;
-    const started = performance.now();
-    for (const face of faces) {
-      const frame = frames[face];
-      if (!frame) continue;
-      this.scene.useFrame(frame);
-      this.scene.updateFrame(
-        reflectionFaceViewProjection(face, eye),
-        eye,
-        lighting,
-        timeSeconds,
-        view.lodMask?.(),
-        shadows,
-        { width: REFLECTION_SIZE, height: REFLECTION_SIZE, near: REFLECTION_NEAR },
-        view.largeRefMask?.(),
-        undefined,
-        undefined,
-        { clipHeight: height, chooseLights: false },
-      );
-      const pass = encoder.beginRenderPass({
-        label: `water-reflection-${face}`,
-        colorAttachments: [
-          {
-            view: targets.color,
-            resolveTarget: targets.faces.createView({
-              dimension: '2d',
-              baseArrayLayer: face,
-              arrayLayerCount: 1,
-            }),
-            clearValue: SkyRenderer.clearColor(sky.state),
-            loadOp: 'clear',
-            storeOp: 'discard',
-          },
-          { view: targets.gbuffer, loadOp: 'clear', storeOp: 'discard' },
-        ],
-        depthStencilAttachment: {
-          view: targets.depth,
-          depthClearValue: 0,
-          depthLoadOp: 'clear',
-          depthStoreOp: 'discard',
-        },
-      });
-      this.sky.draw(pass, this.scene.frameBindGroup, sky);
-      const planes = this.scene.viewPlanes;
-      if (terrain)
-        stats.land += this.terrain.draw(pass, this.scene.frameBindGroup, terrain, planes);
-      if (trees) stats.trees += this.treeLod.draw(pass, this.scene.frameBindGroup, trees, planes);
-      stats.draws += this.scene.drawReflected(pass, scenes);
-      stats.faces++;
-      pass.end();
-    }
-    stats.ms = performance.now() - started;
-    this.scene.useFrame(undefined);
-    this.scene.setWaterReflection(targets.faces, this.#reflectionSchedule.complete);
+    this.scene.setWaterReflections(reflections);
   }
 
   render(timeSeconds: number, pixelScale: number): void {
@@ -743,15 +802,26 @@ export class Renderer {
       this.scene.drawOpaque(opaque, scenes);
     }
     opaque.end();
+    // The water's frame (the sky's colours, the displacement field's turn), once a frame.
+    const water = view !== undefined && this.showWater && this.scene.hasWater(scenes);
+    const waterFrame = water ? view.water?.() : undefined;
     if (view && frameLighting) {
-      this.#waterReflection(encoder, view, frameLighting, scenes, sky, timeSeconds, shadows);
+      this.#waterReflection(
+        encoder,
+        view,
+        frameLighting,
+        scenes,
+        sky,
+        waterFrame,
+        timeSeconds,
+        shadows,
+      );
     }
 
     const imageSpace = view?.imageSpace?.();
     // The imagespace's depth of field reads the opaque scene's depth.
     const depthOfField = view !== undefined && (imageSpace?.depthOfField.strength ?? 0) > 0;
     if (view) {
-      const water = this.showWater && this.scene.hasWater(scenes);
       const decals = view.decals ? [...view.decals()] : [];
       const decalsInView = this.decals.visible(decals, this.scene.viewPlanes);
       // The opaque scene is finished as the engine does it: the snow's scattering on the lit,
@@ -806,7 +876,7 @@ export class Renderer {
           hdrView,
         );
         copyScene();
-        this.scene.updateWaterFrame(view.water?.(), targets.width, targets.height);
+        this.scene.updateWaterFrame(waterFrame, targets.width, targets.height);
       }
       // Refraction shapes are depth-tested after the blended pass: it keeps the depth then.
       const refraction = this.scene.hasRefraction(scenes);
