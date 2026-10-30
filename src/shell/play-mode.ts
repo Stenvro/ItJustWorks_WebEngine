@@ -16,7 +16,16 @@ import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { CellObject } from '../world/cell-loader.ts';
 import { parseItem } from '../world/item-records.ts';
 import { itemSound } from '../gameplay/inventory.ts';
-import { buttonArt, buttonMappings, userEvent, withKeyLabels } from '../ui/button-art.ts';
+import {
+  buttonArt,
+  buttonMappings,
+  GAMEPAD_NAMES_FILE,
+  parseButtonNames,
+  userEvent,
+  withKeyLabels,
+} from '../ui/button-art.ts';
+import { inputPlatform, onInputPlatform, Platform } from '../ui/input-platform.ts';
+import { decodeWindows1252 } from '../formats/text.ts';
 import { menuKeys } from '../ui/menu-keys.ts';
 import {
   parseLoadingScreen,
@@ -40,6 +49,7 @@ import { ActorValue } from '../world/actor-values.ts';
 import { carriedWeight } from './inventory-menu.ts';
 import type { LocalMapContent } from './local-map.ts';
 import { HudController } from './hud-controller.ts';
+import { spellAim } from './hud-crosshair.ts';
 import { MessageBoxes } from './message-boxes.ts';
 import { GameMenus } from './game-menus.ts';
 import { ActivationFacts } from './activation-facts.ts';
@@ -229,6 +239,9 @@ export class PlayMode {
    * shortcuts act on the game's keys (Ctrl+W, sneaking forward, closes the tab; F5, Quicksave,
    * reloads it) and the game would go with it. Vite reloading the page in development passes.
    */
+  /** Stops sending the button hints again as the device in use changes. */
+  readonly #stopPlatform: () => void;
+
   readonly #leaving = (event: BeforeUnloadEvent): void => {
     if (!viteReloading) event.preventDefault();
   };
@@ -313,8 +326,26 @@ export class PlayMode {
     );
     // The menus' navigation keys as the player's bindings say (W, A, S, D as the arrows).
     this.#host.menuKeys = () => menuKeys(this.#playerData?.controls);
-    // The menus' button hints as the player's bindings say.
-    this.#host.buttonMapping = () => buttonMappings(this.#playerData?.controls);
+    // The menus' button hints as the player's bindings say: with a gamepad in use its own, by
+    // the names its device reads (interface\controls\pc\gamepad.txt), sent again as the device
+    // in use changes.
+    let padNames: ReadonlyMap<number, string> | undefined;
+    if (session.vfs.has(GAMEPAD_NAMES_FILE)) {
+      void session.vfs
+        .read(GAMEPAD_NAMES_FILE)
+        .then((bytes) => {
+          padNames = parseButtonNames(decodeWindows1252(bytes));
+        })
+        .catch(() => undefined);
+    }
+    this.#host.buttonMapping = () =>
+      buttonMappings(
+        this.#playerData?.controls,
+        inputPlatform() === Platform.pcGamepad ? padNames : undefined,
+      );
+    this.#stopPlatform = onInputPlatform(() => {
+      this.#host.sendButtonMapping();
+    });
     this.#host.passKey = isConsoleKey;
     // A held direction key repeats at the engine's pace.
     this.#host.keyRepeat = {
@@ -432,9 +463,14 @@ export class PlayMode {
             menu.call('OnDeleteSaveUISanityCheck', saves.length > 0, saves.length > 0);
           });
         },
-        // The consoles' "press start" screen: a PC menu passes it at once.
+        // The consoles' "press start" screen: a PC menu passes it at once. Should the movie
+        // stand in it, its press ends it as the original's does: the engine's start-button
+        // process (the player's profile and settings, here nothing to wait for), then
+        // onStartButtonProcessFinished, which ends the movie's press-start state.
         StartState: () => undefined,
-        EndPressStartState: () => undefined,
+        EndPressStartState: (menu) => {
+          menu.call('onStartButtonProcessFinished');
+        },
         currentState: () => undefined,
         // The menu tells as its fade out starts (before it calls what comes after it).
         fadeOutStarted: () => undefined,
@@ -573,6 +609,7 @@ export class PlayMode {
       plugins: () => session.vfs.loadOrder.map((entry) => entry.name),
       keyLabels: (text) => withKeyLabels(text, this.#playerData?.controls),
       menuOpen: (name) => session.menuStack.isOpen(name),
+      spellAim: (reach) => spellAim(this.#world.player(), reach),
       floating: () => {
         const at = session.scriptWorld.livePlacement(PLAYER_REF);
         return at
@@ -609,9 +646,7 @@ export class PlayMode {
       quicksave: () => {
         void this.#saves.save('quicksave');
       },
-      load: (name) => {
-        this.#loadSaved(name);
-      },
+      load: (name) => this.#startLoad(name),
       delete: (name) => this.#saves.delete(name),
       importEss: () => {
         this.#importEss();
@@ -643,6 +678,9 @@ export class PlayMode {
       padKey: (type, code) => this.#host.pressPadKey(type, code),
       openMenus: () => session.menuStack.names,
       keyRepeat: () => this.#host.keyRepeat,
+      menuStick: (x, y) => {
+        menus.rightStick(x, y);
+      },
       userEvent: (name) => {
         if (!dialogue.isOpen) menus.userEvent(name);
       },
@@ -867,20 +905,34 @@ export class PlayMode {
 
   /** Loads a save by name: the world rebuilt behind the loading screen, then the save applied. */
   #loadSaved(name: string): void {
-    void (async () => {
-      const load = await this.#saves.read(name);
-      if (!load) {
-        this.#terminal.log('save', `no save named ${name}`, 'warn');
-        return;
-      }
-      await this.#newGame(undefined, load);
-    })().catch((error: unknown) => {
+    void this.#startLoad(name);
+  }
+
+  /**
+   * Starts loading a save: resolves once it is read, false when it cannot be (the load is
+   * cancelled: the journal backs out of its load list), true as the world starts loading.
+   */
+  async #startLoad(name: string): Promise<boolean> {
+    const failed = (error: unknown): false => {
       this.#terminal.log(
         'save',
         `${name} does not load: ${error instanceof Error ? error.message : String(error)}`,
         'error',
       );
-    });
+      return false;
+    };
+    let load: Awaited<ReturnType<SaveManager['read']>>;
+    try {
+      load = await this.#saves.read(name);
+    } catch (error) {
+      return failed(error);
+    }
+    if (!load) {
+      this.#terminal.log('save', `no save named ${name}`, 'warn');
+      return false;
+    }
+    void this.#newGame(undefined, load).catch(failed);
+    return true;
   }
 
   /** Why the player may not fast travel now (src/gameplay/fast-travel.ts), if not. */
@@ -1456,6 +1508,7 @@ export class PlayMode {
     this.#mist?.hide();
     this.#mist = undefined;
     this.#host.dispose();
+    this.#stopPlatform();
     this.#startMenu = undefined;
     this.#loadingMenu = undefined;
   }

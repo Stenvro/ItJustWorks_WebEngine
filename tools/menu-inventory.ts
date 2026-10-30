@@ -27,6 +27,7 @@ const ONLINE = 'an online service (Bethesda.net): never reached from localhost (
 const UNSENT = 'the original engine has no such name: it never sends it';
 const NO_MENU = 'no menu of the original is made under this name (it is only looked up)';
 const SAFE_ZONE = "the consoles' safe-zone setting: the PC's display page has none";
+const UNLOADED = 'nothing loads it: neither the engine nor any movie names it';
 
 /** Names the PC game never sends or answers, and why. */
 const NOT_ON_PC: ReadonlyMap<string, string> = new Map([
@@ -82,6 +83,10 @@ const BY_HAND: ReadonlyMap<string, string> = new Map([
   ['hudmenu.swf:SetHealthMeterPercent', 'src/shell/hud-controller.ts (SetMeterPercent)'],
   ['hudmenu.swf:SetMagickaMeterPercent', 'src/shell/hud-controller.ts (SetMeterPercent)'],
   ['hudmenu.swf:SetStaminaMeterPercent', 'src/shell/hud-controller.ts (SetMeterPercent)'],
+  [
+    'hudmenu.swf:SetCompassTemperature',
+    "the movie's own ShowSurvivalElements calls it (src/shell/hud-controller.ts sends that)",
+  ],
 ]);
 
 /** Movies the PC game never opens, and why. */
@@ -93,6 +98,8 @@ const MOVIES_NOT_ON_PC: ReadonlyMap<string, string> = new Map([
   ['kinectmenu.swf', CONSOLE],
   ['streaminginstall.swf', CONSOLE],
   ['safezone.swf', SAFE_ZONE],
+  ['sharedcomponents.swf', UNLOADED],
+  ['widgetoverlay.swf', UNLOADED],
 ]);
 
 /** Our menu code: src/ui and the shell's files (comments stripped). */

@@ -106,6 +106,8 @@ export interface MenuSink {
   openMenus?(): readonly string[];
   /** How a held direction repeats in a menu (seconds). */
   keyRepeat?(): { readonly long: number; readonly short: number };
+  /** The gamepad's right stick while a menu has the input (x, y: -1..1, up positive). */
+  menuStick?(x: number, y: number): void;
 }
 
 /** What covers the screen (Play, from its main menu on: a new game's opening uses them). */

@@ -117,6 +117,10 @@ export class MessageBoxes {
         menu.invoke('_root.InitExtensions');
         menu.tellPlatform('_root.SetPlatform');
         menu.call('setMessageText', pending.text, false);
+        // Whether its buttons stand in a column (observed in the original: a flag of the box's
+        // own, sent after its text; the scripts' and the game's boxes here keep it off).
+        // TODO(M13): which of the engine's boxes, if any, set it is not found.
+        menu.call('setIsVertical', false);
         // A box with one button closes by Esc (or Tab) as by that button (inferred: the game's
         // single-button boxes close so).
         menu.call('setIsCancellable', cancellable, 0);
