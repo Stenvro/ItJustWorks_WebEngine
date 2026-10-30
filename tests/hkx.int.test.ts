@@ -3,7 +3,14 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ObjectGraph } from '../src/animation/object-graph.ts';
-import { graphStart, loadBehaviorGraph } from '../src/formats/hkx/behavior.ts';
+import { readAnimationContainer, readRagdollMapping } from '../src/formats/hkx/animation.ts';
+import {
+  EVENT_FLAGS,
+  graphStart,
+  loadBehaviorGraph,
+  loadCharacterInfo,
+  projectHasCharacter,
+} from '../src/formats/hkx/behavior.ts';
 import { Packfile } from '../src/formats/hkx/packfile.ts';
 import { parseNif } from '../src/formats/nif/nif.ts';
 import { behaviorGraphPath, buildSequences } from '../src/render/animation.ts';
@@ -103,5 +110,35 @@ describe.skipIf(!hasGamedata())('behavior graphs on the local game data', () => 
     expect(plant.playing.map((playing) => playing.sequence)).toEqual(['ready']);
     expect(plant.send('Harvest', 1)).toBe(true);
     expect(plant.playing.map((playing) => playing.sequence)).toEqual(['harvested']);
+  });
+
+  it('reads the members the runtime and the ragdoll take: events, mappers, characters, projects', async () => {
+    // The horse's SyncLeft is silent and a sync point; its FootLeft only a sync point.
+    const horse = await loadBehaviorGraph('meshes\\actors\\horse\\horseproject.hkx', read);
+    const flag = (name: string): number => horse.eventFlags?.[horse.events.indexOf(name)] ?? -1;
+    expect(flag('SyncLeft')).toBe(EVENT_FLAGS.silent | EVENT_FLAGS.syncPoint);
+    // Both mappers of the human skeleton, with each ragdoll body's offset from its bone.
+    const skeleton = Packfile.parse(
+      await vfs.read('meshes\\actors\\character\\character assets\\skeleton.hkx'),
+    );
+    const mapping = readRagdollMapping(skeleton, 'NPC Root [Root]');
+    expect(mapping?.toAnimation.simple.length).toBeGreaterThan(0);
+    expect(mapping?.fromAnimation?.skeletonA).toBe('NPC Root [Root]');
+    expect(mapping?.toAnimation.extractedMotion[6]).toBe(1);
+    // A paired animation carries its tracks' offsets per block; the container lists it.
+    const paired = readAnimationContainer(
+      Packfile.parse(
+        await vfs.read('meshes\\actors\\character\\animations\\paired_1hmkillmove.hkx'),
+      ),
+    );
+    expect(paired.animations[0]).toBe(paired.bindings[0]?.animation);
+    const character = await loadCharacterInfo('meshes\\actors\\character\\defaultmale.hkx', read);
+    expect(character.controller.capsuleRadius).toBeCloseTo(0.4);
+    expect(character.modelUp).toEqual([0, 0, 1, 0]);
+    expect(character.project.worldUp).toEqual([0, 0, 1, 0]);
+    expect(character.boneWeights.size).toBeGreaterThan(0);
+    // Six hand effect projects name a character that is not there; the shout's names none.
+    expect(await projectHasCharacter('meshes\\magic\\fireball01handeffects.hkx', read)).toBe(false);
+    expect(await projectHasCharacter('meshes\\magic\\shoutimod.hkx', read)).toBe(false);
   });
 });

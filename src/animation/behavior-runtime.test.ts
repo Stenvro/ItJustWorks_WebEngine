@@ -201,6 +201,30 @@ describe('the behavior runtime', () => {
     expect(runtime.pose[0]).toBeCloseTo(0.2);
   });
 
+  it('does not raise the triggers and annotations of events its graph flags silent', () => {
+    const looping: BehaviorGenerator = {
+      ...(clip('step') as Extract<BehaviorGenerator, { kind: 'clip' }>),
+      triggers: [
+        {
+          localTime: 0.5,
+          event: { id: 0 },
+          relativeToEndOfClip: false,
+          acyclic: false,
+          isAnnotation: false,
+        },
+      ],
+    };
+    const runtime = new BehaviorRuntime({
+      root: { ...graph(looping, ['SyncLeft', 'FootLeft']), eventFlags: [3, 1] },
+      host: host({ step: animation(0, 1, [{ time: 0.9, text: 'FootLeft' }]) }),
+      skeleton,
+    });
+    runtime.update(0);
+    runtime.update(0.6);
+    runtime.update(0.6);
+    expect(names(runtime.takeRaised())).toEqual([]);
+  });
+
   it("raises a clip's trigger at its start as the clip starts, once", () => {
     const once: BehaviorGenerator = {
       ...(clip('open') as Extract<BehaviorGenerator, { kind: 'clip' }>),
