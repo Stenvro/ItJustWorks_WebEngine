@@ -284,6 +284,28 @@ export interface WorldBridge {
    * once (not waiting for the ground under it); resolves once it is.
    */
   addRagdoll?(actor: number): Promise<void>;
+  /** ObjectReference.ForceRemoveRagdollFromWorld: its ragdoll leaves the physics world. */
+  removeRagdoll?(actor: number): Promise<void>;
+  /**
+   * ObjectReference.PlayTerrainEffect: a temporary terrain effect of a model at a reference,
+   * on a node of its 3D (none: its root); false when it cannot be set up.
+   */
+  terrainEffect?(reference: number, model: string, node: string): boolean;
+  /**
+   * Game.SetCameraTarget: the third-person camera follows an actor other than the player
+   * (none: the player again).
+   */
+  cameraTarget?(actor: number | undefined): void;
+  /**
+   * Actor.SetPlayerControls: an actor's movement controller takes the player's controls
+   * (its AI off meanwhile) or its AI's again.
+   */
+  playerControls?(actor: number, on: boolean): void;
+  /**
+   * Actor.KeepOffsetFromActor and ClearKeepOffsetFromActor: the actor's movement keeps an
+   * offset from another actor (the game state's keepOffset), or no longer.
+   */
+  keepOffsetChanged?(actor: number): void;
   /** Game.SetSittingRotation: the seated player's view turned from the seat (radians). */
   sittingRotation?(radians: number): void;
   currentPackage?(actor: number): number | undefined;

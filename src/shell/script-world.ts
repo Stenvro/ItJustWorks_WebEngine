@@ -187,6 +187,16 @@ export interface ScriptView {
   evaluatePackage?(reference: number, restart?: boolean): void;
   /** ForceAddRagdollToWorld: a dead actor's ragdoll in the world now (ActorStage.addRagdoll). */
   addRagdoll?(reference: number): Promise<void>;
+  /** ForceRemoveRagdollFromWorld: an actor's ragdoll leaves the physics world. */
+  removeRagdoll?(reference: number): Promise<void>;
+  /** PlayTerrainEffect: the view shows an effect model at a point (false: it shows none). */
+  terrainEffectAt?(model: string, at: Vec3): boolean;
+  /** SetCameraTarget: the view's camera follows another actor (undefined: the player). */
+  cameraTarget?(actor: number | undefined): void;
+  /** SetPlayerControls: an actor of the view moves by the player's controls, or by its AI. */
+  playerControls?(actor: number, on: boolean): void;
+  /** KeepOffsetFromActor: an actor of the view keeps its offset (the game state's), or not. */
+  keepOffsetChanged?(actor: number): void;
   /** Game.SetSittingRotation: the seated player's view turned from the seat (radians). */
   sittingRotation?(radians: number): void;
   /** What an actor of the view uses now (its furniture), if anything. */
@@ -700,6 +710,37 @@ export class ScriptWorld implements WorldBridge {
 
   async addRagdoll(actor: number): Promise<void> {
     for (const view of this.#views) await view.addRagdoll?.(actor);
+  }
+
+  async removeRagdoll(actor: number): Promise<void> {
+    for (const view of this.#views) await view.removeRagdoll?.(actor);
+  }
+
+  /**
+   * PlayTerrainEffect: the model at the node of the reference's 3D (its root without one).
+   * TODO(M13): the engine's terrain effect takes the look of the ground under it (its
+   * material); the model shows as modelled.
+   */
+  terrainEffect(reference: number, model: string, node: string): boolean {
+    const at =
+      (node === '' ? undefined : this.nodePlacement(reference, node)?.position) ??
+      this.livePlacement(reference)?.position;
+    if (!at || model === '') return false;
+    let shown = false;
+    for (const view of this.#views) shown = (view.terrainEffectAt?.(model, at) ?? false) || shown;
+    return shown;
+  }
+
+  cameraTarget(actor: number | undefined): void {
+    for (const view of this.#views) view.cameraTarget?.(actor);
+  }
+
+  playerControls(actor: number, on: boolean): void {
+    for (const view of this.#views) view.playerControls?.(actor, on);
+  }
+
+  keepOffsetChanged(actor: number): void {
+    for (const view of this.#views) view.keepOffsetChanged?.(actor);
   }
 
   interaction(actor: number): ActorInteraction | undefined {

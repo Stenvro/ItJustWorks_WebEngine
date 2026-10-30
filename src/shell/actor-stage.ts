@@ -1285,6 +1285,15 @@ export class ActorStage {
       await this.bodies.kill(staged, true);
   }
 
+  /**
+   * ObjectReference.ForceRemoveRagdollFromWorld: the actor's ragdoll leaves the physics world
+   * (a dead one lies as it lay, without bodies, until something adds them again).
+   */
+  removeRagdoll(reference: number): Promise<void> {
+    this.bodies.remove(reference);
+    return Promise.resolve();
+  }
+
   evaluatePackage(reference: number, restart = false): void {
     if (this.#actors.has(reference)) this.ai.evaluate(reference, restart);
     // A loaded save's actor not placed yet has its package as the save left it, as the

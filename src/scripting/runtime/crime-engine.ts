@@ -106,6 +106,26 @@ const LAST_ARREST = 'Variable03';
 const stolenKey = (faction: number | undefined, witnessed: boolean): string =>
   `${String(faction ?? 0)}:${witnessed ? '1' : '0'}`;
 
+/**
+ * An item list without its stolen items (a container that takes none: refusesStolen): of each
+ * item, its stolen count is taken off its rows (its plain stack first, then its improved ones),
+ * and rows left empty go.
+ */
+export function withoutStolen<T extends { readonly formId: number; readonly count: number }>(
+  rows: readonly T[],
+  stolen: (formId: number) => number,
+): T[] {
+  const left = new Map<number, number>();
+  const out: T[] = [];
+  for (const row of rows) {
+    const remaining = left.get(row.formId) ?? stolen(row.formId);
+    const taken = Math.min(remaining, row.count);
+    left.set(row.formId, remaining - taken);
+    if (row.count - taken > 0) out.push({ ...row, count: row.count - taken });
+  }
+  return out;
+}
+
 export class CrimeEngine {
   readonly #runtime: ScriptRuntime;
   readonly ledger = new CrimeLedger();
@@ -544,6 +564,30 @@ export class CrimeEngine {
     for (const n of this.#runtime.state.crime.stolen.get(container)?.get(base)?.values() ?? [])
       count += n;
     return count;
+  }
+
+  /**
+   * SetContainerAllowStolenItems. Observed in the original: the flag is the base's container's
+   * (an NPC_'s or a CONT's; with any other base nothing changes), so it holds for every
+   * reference of that base, and only the container menu reads it (refusesStolen).
+   */
+  async allowStolen(container: number, allow: boolean): Promise<void> {
+    const base = await this.#runtime.baseOf(container);
+    const type = base === undefined ? undefined : (await this.#runtime.forms.record(base))?.type;
+    const refusing = this.#runtime.state.crime.noStolenContainers;
+    if (base === undefined || (type !== 'CONT' && type !== 'NPC_') || !refusing) return;
+    if (allow) refusing.delete(base);
+    else refusing.add(base);
+  }
+
+  /**
+   * Whether a container takes no stolen items. Observed in the original: while it takes none,
+   * the container menu leaves the stolen stacks out of both its lists (the player's, so none
+   * can be stored there, and the container's).
+   */
+  async refusesStolen(container: number): Promise<boolean> {
+    const base = await this.#runtime.baseOf(container);
+    return base !== undefined && (this.#runtime.state.crime.noStolenContainers?.has(base) ?? false);
   }
 
   /** The stolen items a container holds, by base. */

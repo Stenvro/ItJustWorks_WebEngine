@@ -403,6 +403,11 @@ export class Player implements Camera {
    * stick follow their groups. Undefined: none.
    */
   disabledControls: (() => number) | undefined;
+  /**
+   * Game.SetCameraTarget: the feet of the actor the third-person camera hangs on instead of the
+   * player's (undefined, or answering undefined: the player's).
+   */
+  cameraTargetFeet: (() => Vec3 | undefined) | undefined;
   /** Compass heading in radians: 0 looks along +Y (north), π/2 along +X (east). */
   yaw = 0;
   pitch = 0;
@@ -984,6 +989,24 @@ export class Player implements Camera {
   }
 
   /** One physics step of movement. */
+  /**
+   * The movement the controls ask for now, in the view's frame (x right, y forward, each -1..1)
+   * and whether it runs: what an actor under the player's controls (Actor.SetPlayerControls)
+   * is moved by. Nothing while movement is switched off.
+   */
+  controlsWish(): { readonly x: number; readonly y: number; readonly running: boolean } {
+    if (!this.allows('Move')) return { x: 0, y: 0, running: false };
+    let x = 0;
+    let y = this.#autoMove ? 1 : 0;
+    if (this.#event('Forward')) y += 1;
+    if (this.#event('Back')) y -= 1;
+    if (this.#event('Strafe Right')) x += 1;
+    if (this.#event('Strafe Left')) x -= 1;
+    x = Math.max(-1, Math.min(1, x + this.stick[0]));
+    y = Math.max(-1, Math.min(1, y + this.stick[1]));
+    return { x, y, running: this.#alwaysRun !== this.#event('Run') };
+  }
+
   #move(seconds: number): void {
     const jump = this.#jumpRequested;
     this.#jumpRequested = false;
@@ -1242,11 +1265,14 @@ export class Player implements Camera {
     }
     // Camera3rd hangs on the skeleton's root, not on its animated bones: a seated body (a cart's
     // rider, its root at the cart's) takes it along where the body is.
-    const [sx, sy, sz] = this.bodyShift?.() ?? [0, 0, 0];
+    // Another actor the camera follows (SetCameraTarget) takes the player's place.
+    const followed = this.cameraTargetFeet?.();
+    const [sx, sy, sz] = followed ? [0, 0, 0] : (this.bodyShift?.() ?? [0, 0, 0]);
+    const anchor = followed ?? feet;
     const target: Vec3 = [
-      feet[0] + sx + body.thirdPersonTarget[0],
-      feet[1] + sy + body.thirdPersonTarget[1],
-      feet[2] + sz + body.thirdPersonTarget[2],
+      anchor[0] + sx + body.thirdPersonTarget[0],
+      anchor[1] + sy + body.thirdPersonTarget[1],
+      anchor[2] + sz + body.thirdPersonTarget[2],
     ];
     // A dragon's back widens the zoom's ends (src/shell/camera-states.ts).
     const [min, max] = zoomRange((key) => ini.number('Camera', key), this.mount?.());

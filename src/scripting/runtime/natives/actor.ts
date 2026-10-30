@@ -5,6 +5,7 @@
 // Platform-independent. Notes: docs/scripting.md ("Actors").
 
 import { hostileTo } from '../../../ai/combat-ai.ts';
+import { keepOffsetOf } from '../../../ai/movement-overrides.ts';
 import { NpcFlag } from '../../../world/actor-records.ts';
 import { ActorValue } from '../../../world/actor-values.ts';
 import type { NativeCall } from '../../papyrus-vm.ts';
@@ -12,6 +13,7 @@ import type { Value } from '../../values.ts';
 import { PLAYER_REF } from '../forms.ts';
 import type { ScriptRuntime } from '../runtime.ts';
 import { bool, formOf, int, num, object, str, type Register } from './args.ts';
+import { UNBOUND_NATIVES } from './placeholders.ts';
 
 /** The gold item (Gold001), counted by GetGoldAmount. */
 const GOLD = 0xf;
@@ -387,8 +389,24 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   flag('setalert', 'alerted');
   ask('isalarmed', false, (actor) => world.alarmed?.(actor) ?? false);
   ask('isplayerslastriddenhorse', false, (actor) => runtime.lastHorse === actor);
-  ask('getplayercontrols', false, (actor) => actor === PLAYER_REF);
-  act('setplayercontrols', () => undefined);
+  // Under the player's controls: the player, or an actor SetPlayerControls gave them to.
+  ask(
+    'getplayercontrols',
+    false,
+    (actor) => actor === PLAYER_REF || (state.actors.get(actor)?.playerControls ?? false),
+  );
+  // Observed in the original: SetPlayerControls(on) turns the actor's AI off (on) or on
+  // (off) as EnableAI does, then its movement controller takes the player's controls or its
+  // AI's again (src/shell/script-world.ts playerControls).
+  act('setplayercontrols', (actor, call) => {
+    const on = bool(call.args[0]);
+    const actorState = state.actor(actor);
+    actorState.aiEnabled = !on;
+    world.aiEnabled?.(actor, !on);
+    if (on) actorState.playerControls = true;
+    else delete actorState.playerControls;
+    world.playerControls?.(actor, on);
+  });
   act('enableai', (actor, call) => {
     state.actor(actor).aiEnabled = bool(call.args[0], true);
     world.aiEnabled?.(actor, bool(call.args[0], true));
@@ -504,23 +522,31 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     if (speaker !== undefined && actor === PLAYER_REF) return runtime.actorHandle(speaker);
     return runtime.actorHandleOrNone(runtime.scenes.lookOf(actor)?.target);
   });
-  // No vanilla script calls these (tools/papyrus-natives.ts --placeholders). TODO(M13): the
-  // offsets and forced movements of the engine's movement controller.
-  act('keepoffsetfromactor', () => undefined);
-  act('clearkeepoffsetfromactor', () => undefined);
-  for (const name of [
-    'forcemovementdirection',
-    'forcemovementdirectionramp',
-    'forcemovementrotationspeed',
-    'forcemovementrotationspeedramp',
-    'forcemovementspeed',
-    'forcemovementspeedramp',
-    'forcetargetangle',
-    'forcetargetdirection',
-    'forcetargetspeed',
-    'clearforcedmovement',
-  ]) {
-    act(name, () => undefined);
+  // KeepOffsetFromActor(arTarget, afOffsetX..Z, afOffsetAngleX..Z, afCatchUpRadius,
+  // afFollowRadius): the movement controller keeps the offset (src/ai/movement-overrides.ts).
+  act('keepoffsetfromactor', (actor, call) => {
+    const target = ref(call.args[0]);
+    if (target === undefined) return;
+    state.actor(actor).keepOffset = keepOffsetOf(
+      target,
+      [num(call.args[1]), num(call.args[2]), num(call.args[3])],
+      [num(call.args[4]), num(call.args[5]), num(call.args[6])],
+      num(call.args[7], 20),
+      num(call.args[8], 5),
+    );
+    world.keepOffsetChanged?.(actor);
+  });
+  act('clearkeepoffsetfromactor', (actor) => {
+    delete state.actor(actor).keepOffset;
+    world.keepOffsetChanged?.(actor);
+  });
+  // Declared by Actor.psc but bound by no native in the original (placeholders.ts
+  // UNBOUND_NATIVES): a call is its VM's error and returns None.
+  for (const [key, name] of UNBOUND_NATIVES) {
+    n(key, (call) => {
+      runtime.warn(`${call.where()}: error: Unbound native function "${name}" called`);
+      return null;
+    });
   }
   ask('isrunning', false, (actor) => world.motion?.(actor)?.running ?? false);
   ask('issprinting', false, (actor) => world.motion?.(actor)?.sprinting ?? false);
