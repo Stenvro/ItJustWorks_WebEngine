@@ -277,6 +277,17 @@ export const INI_DEFAULTS = {
     bVolumetricLightingUpdateWeather: 1,
     iVolumetricLightingQuality: 1,
     bVolumetricLightingEnableTemporalAccumulation: 1,
+    // The image-based lens flare of bright lights (src/render/image-lens-flare-data.ts).
+    bIBLFEnable: 1,
+    fIBLFLightsRangeDownshift: 1,
+    fIBLFGlobalIntensity: 0.7,
+    uIBLFLateralRepeat: 0,
+    uIBLFBlurRadiusX: 7,
+    uIBLFBlurRadiusY: 2,
+    uIBLFBloomRadius: 2,
+    fIBLFBloomIntensity: 0,
+    fIBLFAnamorphicsIntensity: 0.1,
+    fIBLFAnamorphicsIntensityFar: 1,
   },
   // The sun's lens flare (LENS): on, and the strength of all flares.
   ImageSpace: {
