@@ -8,6 +8,8 @@ import { FormatError } from '../binary-reader.ts';
 import { changeFormData, changeFormTypeName, type ChangeFormEntry } from './ess.ts';
 import { EssReader, RefIdKind } from './ess-reader.ts';
 import type { RefIdResolver } from './global-data.ts';
+import { MovementUnknown, readMovement, type EssMovement } from './movement.ts';
+import { readPlayerData, type EssPlayerData } from './player.ts';
 
 const bit = (n: number): number => (1 << n) >>> 0;
 
@@ -187,6 +189,10 @@ export interface EssActorData {
   readonly values?: EssActorValues;
   /** Spells added to the actor (AddSpell). */
   readonly addedSpells?: readonly number[];
+  /** Its movement controller's state (movement.ts). */
+  readonly movement?: EssMovement;
+  /** The player's own data (player.ts). */
+  readonly player?: EssPlayerData;
 }
 
 export interface EssInventoryEntry {
@@ -1311,8 +1317,18 @@ function readActor(
   const n = reader.u32();
   for (let i = 0; i < n; i++) added.push(ref());
   actor.addedSpells = added;
-  // TODO(M13): the movement controller's and the combat controller's data, when present.
-  if (reader.u8() !== 0) return 'actor movement data';
+  if (reader.u8() !== 0) {
+    try {
+      actor.movement = readMovement(
+        reader,
+        resolve,
+        actor.processLevel === -1 ? new Set() : undefined,
+      );
+    } catch (error) {
+      if (error instanceof MovementUnknown) return 'actor movement data: ' + error.message;
+      throw error;
+    }
+  }
   reader.u32();
   if (reader.u8() !== 0) return 'combat controller data';
   const entries = reader.u32();
@@ -1323,8 +1339,10 @@ function readActor(
   reader.skip(8);
   ref();
   reader.u8();
-  // TODO(M13): the player's own data follows the actor's.
-  if (player && reader.remaining > 0) return 'player data';
+  if (player) {
+    actor.player = readPlayerData(reader);
+    if (reader.remaining > 0) return 'player data after its skills';
+  }
   return undefined;
 }
 

@@ -90,8 +90,10 @@ Fish and Saints & Seducers Creations have theirs, the other Creations none). The
 plugin's own form id space. HearthFires.esm's file predates its Update.esm master: its own
 quests carry index 01 rather than 02 (found by their object index under the plugin's own).
 Not every start-game-enabled quest is listed (Update.esm lists 3 of 25), and Fish lists one
-quest without the flag (ccBGSSSE001_Start_MQ1). TODO(M12): what the original does with them
-(starting a plugin's quests in a save that did not have it). Reader: `src/formats/esm/seq.ts`,
+quest without the flag (ccBGSSSE001_Start_MQ1). Observed in the original: as each plugin
+loads, it reads `SEQ\<plugin>.SEQ` (the plugin's name without its extension), moves each id
+into the load order by that plugin and adds it to one set of quests. TODO(M13): where the set
+is read (starting a plugin's quests in a save that did not have it). Reader: `src/formats/esm/seq.ts`,
 `node tools/seq-info.ts`.
 
 ## Subrecord layouts
