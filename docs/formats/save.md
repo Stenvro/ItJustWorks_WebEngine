@@ -124,7 +124,8 @@ player's cell loads.
 - `initialized`: references whose scripts had their OnInit (none runs again on load);
   `seeded`: containers whose inventories were filled from their records.
 - `dialogue` (infos said once, topics chosen, topics' infos said before repeating) and
-  `storyManager` (when quests were last started, what each node started).
+  `storyManager` (when quests were last started, what each node started, and the events told
+  and not yet processed: told again once the game has loaded, as the original saves its queue).
 - `instances`: every script instance (quests, aliases, references, active magic effects): its
   object, script, state and variables per script level.
 
@@ -230,7 +231,8 @@ each kind. Ours:
   "Animation graphs"), so it is out at once, in its hand, without drawing again. A save made
   before graphs were kept draws it again as it is loaded.
 - The player's (`WorldSave.player`, `SavedPlayer`): sneaking, the weapon out, getting out of
-  their vehicle; with their graphs, as an NPC's.
+  their vehicle; with their graphs, as an NPC's. The camera: first or third person and the
+  world's and first person's fields of view (the original's player camera keeps both).
 - `flying` (a flier in the air: cruising, hovering, landing): as it loads it is not set on the
   ground but stays where it was saved, and its flight, finding it high above the ground, has it
   cruise on from there (before, MQ104's dragon circling the Western Watchtower came down at

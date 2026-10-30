@@ -1637,6 +1637,8 @@ export class ActorStage {
       ...(view.play.player.sneaking && { sneaking: true }),
       ...(weaponOut(this.combat.weaponState(PLAYER_REF)) && { weaponDrawn: true }),
       ...(exit && { vehicleExit: exit }),
+      pov: view.play.player.pov,
+      fov: view.play.player.fov,
     };
   }
 
@@ -1654,6 +1656,9 @@ export class ActorStage {
     if (graphs) avatar.restoreGraphs(graphs);
     const player = restoring.takePlayer();
     if (!player) return;
+    // The camera as it was: first or third person, the fields of view.
+    if (player.fov) view.play.player.setFov(player.fov[0], player.fov[1]);
+    if (player.pov) view.play.player.setPov(player.pov);
     if (player.sneaking === true) view.play.player.sneaking = true;
     if (player.weaponDrawn === true) {
       this.#restoredDraws.set(PLAYER_REF, { left: 5, resumed: graphs?.body !== undefined });

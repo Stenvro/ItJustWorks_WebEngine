@@ -197,7 +197,15 @@ describe('global data', () => {
       .f32(8)
       .f32(7.5)
       .f32(1)
+      .u32(4)
+      .u32(2)
       .u32(0)
+      .u32(0)
+      .u32(0)
+      .u32(0)
+      .f32(1)
+      .u32(3)
+      .u8(0)
       .done();
     expect(readWeather(weatherBytes, resolve)).toMatchObject({
       climate: 1,
@@ -205,6 +213,10 @@ describe('global data', () => {
       previousWeather: 3,
       currentTime: 8,
       weatherPercent: 1,
+      flags: 4,
+      moonPhaseUpdate: 2,
+      mode: 3,
+      referenceEffects: [false, false],
     });
     expect(
       readAudio(new EssWriter().refId(1, 1).vsval(1).refId(1, 2).refId(1, 3).done(), resolve),
@@ -388,9 +400,10 @@ describe('change forms', () => {
   });
 
   it('stops at a part whose layout is not known, and says so', () => {
-    const data = new EssWriter().vsval(1).u8(0x1a).refId(2, 0x10).u32(0).done();
+    // A package's running data of a kind no package has.
+    const data = new EssWriter().vsval(1).u8(0x6c).u8(99).u32(0).done();
     const form = readChangeForm(entry(0, ChangeRefr.ownershipExtra, data), resolve);
-    expect(form.stoppedAt).toBe('a trespass package the game made');
+    expect(form.stoppedAt).toBe('package data of kind 99');
     expect(form.undecoded).toBe(4);
   });
 
@@ -550,11 +563,19 @@ describe('change forms', () => {
     expect(form.actor?.addedSpells).toEqual([0x12fcd]);
   });
 
-  it("finds an actor's values after AI process data", () => {
-    const w = new EssWriter().u32(0).u32(0); // high process
-    w.bytes([7, 3, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]); // process data (not decoded)
+  it("reads an actor's values after its AI process data", () => {
+    const w = new EssWriter().u32(3).u32(0); // a low process, state flags
+    // The process: two values, no cached values, no package, the rest empty (process.test.ts).
+    w.u32(0).u32(0).u8(0).refId(0, 0);
+    w.u8(0).u32(0).refId(0, 0).u32(0).u32(0).u32(0).u8(0).u16(0).f32(0).f32(0).refId(0, 0);
+    w.vsval(0).u32(0).refId(0, 0).refId(0, 0).u8(0).refId(0, 0);
+    // The actor's own data, no magic caster.
+    w.u8(0).bytes(new Uint8Array(52)).refId(0, 0).bytes(new Uint8Array(18)).refId(0, 0).u8(0);
+    for (let i = 0; i < 5; i++) w.refId(0, 0);
     const form = readChangeForm(entry(1, 0, actorTail(w).done(), (1 << 22) | 0x1a67c), resolve);
     expect(form.stoppedAt).toBeUndefined();
+    expect(form.actor?.processLevel).toBe(3);
+    expect(form.actor?.process).toEqual({ graphStates: 0 });
     expect(form.actor?.values?.base).toEqual([{ av: 7, value: 35 }]);
   });
 

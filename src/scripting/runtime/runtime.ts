@@ -3859,6 +3859,8 @@ export class ScriptRuntime implements VmHost {
     // The player's abilities, diseases and worn enchantments act again (magic-engine.ts).
     await this.magic.prepare(PLAYER_REF);
     await this.vm.idle();
+    // The story manager's events that waited are told again (the original saves its queue).
+    this.storyManager.resume();
     return problems;
   }
 

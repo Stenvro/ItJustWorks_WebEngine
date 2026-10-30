@@ -154,16 +154,38 @@ export class StoryManager {
     this.#runtime = runtime;
   }
 
-  /** What the save keeps: when quests were last started, what each node started. */
+  /**
+   * What the save keeps: when quests were last started, what each node started, and the events
+   * told and not yet processed (the original saves its event queue).
+   */
   saveData(): unknown {
-    return { lastStarted: this.#lastStarted, startedBy: this.#startedBy };
+    return {
+      lastStarted: this.#lastStarted,
+      startedBy: this.#startedBy,
+      ...(this.#waiting.length > 0 && { pending: [...this.#waiting] }),
+    };
   }
 
   loadData(data: unknown): void {
-    const saved = data as { lastStarted?: unknown; startedBy?: unknown } | undefined;
+    const saved = data as
+      | { lastStarted?: unknown; startedBy?: unknown; pending?: readonly StoryEventData[] }
+      | undefined;
     refill(this.#lastStarted, saved?.lastStarted);
     refill(this.#startedBy, saved?.startedBy);
+    this.#restored = saved?.pending ?? [];
   }
+
+  /** A loaded save's events that waited: told again, in their order, once the game has loaded. */
+  resume(): void {
+    const events = this.#restored;
+    this.#restored = [];
+    for (const event of events) void this.quests(event);
+  }
+
+  /** The events told and not yet processed, in their order. */
+  readonly #waiting: StoryEventData[] = [];
+  /** A loaded save's waiting events, until `resume`. */
+  #restored: readonly StoryEventData[] = [];
 
   #load(): Promise<Map<string, StoryNode>> {
     this.#trees ??= (async () => {
@@ -192,8 +214,11 @@ export class StoryManager {
 
   /** An event, queued as `event`: the quests it started (none: no quest node answered). */
   quests(event: StoryEventData): Promise<readonly number[]> {
+    this.#waiting.push(event);
     const processed = this.#queue.then(async () => {
       this.#processing++;
+      const at = this.#waiting.indexOf(event);
+      if (at >= 0) this.#waiting.splice(at, 1);
       try {
         const started = await this.#run(event);
         this.onProcessed?.(event, started);

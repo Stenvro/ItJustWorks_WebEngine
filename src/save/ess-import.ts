@@ -31,6 +31,11 @@ import {
   type EssPapyrus,
   type EssVariable,
 } from '../formats/ess/papyrus.ts';
+import {
+  readStoryEventManager,
+  StoryParameterKind,
+  type SavedStoryEvent,
+} from '../formats/ess/global-data-tables.ts';
 import type { EssPlayerData } from '../formats/ess/player.ts';
 import type { SavedInstance } from '../scripting/papyrus-vm.ts';
 import { GameState, type ActorValueState } from '../scripting/runtime/game-state.ts';
@@ -40,10 +45,14 @@ import {
   type SavedUpdate,
 } from '../scripting/runtime/runtime-save.ts';
 import type { Placement } from '../scripting/runtime/runtime.ts';
+import type { StoryEventData } from '../scripting/runtime/story-manager.ts';
 import { ObjectHandle, PapyrusArray, type Value } from '../scripting/values.ts';
+import { CELL_SIZE } from '../world/land.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
+import { cellKey } from '../world/worldspace.ts';
 import type { GameSave } from './game-save.ts';
 import { SAVE_VERSION, type SaveHeader } from './save-codec.ts';
+import type { SavedActor, SavedPlayer } from './world-save.ts';
 
 const PLAYER_REF = 0x14;
 const PLAYER_BASE = 0x7;
@@ -171,6 +180,37 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   const inventoryDeltas = new Map<number, Map<number, number>>();
   const formListAdded = new Map<number, number[]>();
   const updates: SavedUpdate[] = [];
+  /** The actors with the package each ran (and whom it fought), where the save has them. */
+  const savedActors: SavedActor[] = [];
+  let savedPlayer: SavedPlayer | undefined;
+
+  /**
+   * A story event as ours (story-manager.ts): its members numbered by kind in their order (R1,
+   * L1, K1, V1, ...), and the started quest's OnStory arguments in that order.
+   * TODO(M13): the arguments' order checked on the events other than Script Event (SCPT).
+   */
+  const storyEvent = (saved: SavedStoryEvent): StoryEventData => {
+    const forms = new Map<string, number>();
+    const values = new Map<string, number>();
+    const counts = new Map<number, number>();
+    const args: Value[] = [];
+    const letter = ['R', 'F', 'L', 'V', 'K'] as const;
+    const handleType = ['objectreference', 'form', 'location', '', 'keyword'] as const;
+    for (const { kind, value } of saved.parameters) {
+      const n = (counts.get(kind) ?? 0) + 1;
+      counts.set(kind, n);
+      const key = `${letter[kind] ?? 'F'}${String(n)}`;
+      if (kind === StoryParameterKind.value) {
+        values.set(key, value);
+        args.push(value);
+        continue;
+      }
+      const id = value === 0 ? undefined : ours(value);
+      if (id !== undefined && id !== 0) forms.set(key, id);
+      args.push(id ? new ObjectHandle(id, handleType[kind] ?? 'form') : null);
+    }
+    return { type: saved.type, forms, values, args };
+  };
 
   // Global variables, the clock.
   const globals = globalData(ess, 3);
@@ -263,6 +303,8 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
         }
         applied |= ChangeQuest.runtimeData;
       }
+      // The story event that started it (its conditions and aliases read its data).
+      if (q.event) quest.event = storyEvent(q.event);
       if (q.alreadyRun !== undefined) applied |= ChangeQuest.alreadyRun;
       if (q.scriptDelay !== undefined) applied |= ChangeQuest.scriptDelay;
     } else if (entry.type === 9 && form.npc && formId === PLAYER_BASE) {
@@ -356,6 +398,10 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       }
     }
     if (form.actor?.values) applyActorValues(formId, form.actor.values);
+    if (form.actor && formId !== PLAYER_REF) {
+      const saved = savedActor(form, formId);
+      if (saved) savedActors.push(saved);
+    }
     if (form.inventory) {
       const deltas = inventoryDeltas.get(formId) ?? new Map<number, number>();
       for (const item of form.inventory) {
@@ -376,8 +422,51 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   }
 
   /**
+   * An actor's running package (its AI process's current one) and whom it fought (its combat
+   * controller's target), where the save has it stand: it goes on with them as it is placed
+   * (src/save/world-save.ts). The package starts again from its procedure tree's root.
+   * TODO(M13): the procedures' running states (process.ts reads them) into ours; the actors
+   * standing where their records put them (no moved place in the save) keep the package
+   * their AI chooses.
+   */
+  function savedActor(form: EssChangeForm, formId: number): SavedActor | undefined {
+    const actor = form.actor;
+    if (actor?.process) skips.add('ACHR: the AI process beyond its package (TODO(M13))');
+    const pkg = actor?.process?.package?.package;
+    const id = pkg === undefined ? undefined : ours(pkg);
+    const target = actor?.combat ? ours(actor.combat.target) : undefined;
+    if (!id && !target) return undefined;
+    const initial = form.initial;
+    if (!initial || initial.kind === 'detached cell') {
+      skips.add('ACHR: a running package of an actor at its record place (TODO(M13))');
+      return undefined;
+    }
+    const place = placeOf(initial.kind === 'changed cell' ? initial.newCell : initial.cell);
+    // The stage's key for the loaded cell (actor-stage.ts): an exterior's grid, an interior.
+    const [x, y] = initial.position;
+    const cell =
+      place.world !== undefined
+        ? cellKey(Math.floor(x / CELL_SIZE), Math.floor(y / CELL_SIZE))
+        : place.cell !== undefined
+          ? String(place.cell)
+          : undefined;
+    if (cell === undefined) return undefined;
+    return {
+      reference: formId,
+      cell,
+      position: initial.position,
+      heading: initial.rotation[2],
+      ...(id && {
+        package: { id, completed: false, ended: false, path: [], found: [], ranOn: [] },
+      }),
+      ...(target && { combatTarget: target }),
+    };
+  }
+
+  /**
    * The player's own data: the experience towards the next character level and each skill's
-   * towards its next level, the times each skill was made legendary, and the perks taken.
+   * towards its next level, the times each skill was made legendary, and the perks taken; the
+   * quest log's entries; the camera.
    */
   function applyPlayerData(data: EssPlayerData): void {
     state.playerExperience = data.xp;
@@ -391,8 +480,24 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       const id = ours(perk);
       if (id !== undefined && id !== 0) perks.set(id, true);
     }
-    // TODO(M13): the camera state (first or third person, the third person offset), the
-    // quest log's entries and the player's other lists (docs/formats/ess.md "The player").
+    // The quest log: newest first, each the stage and its log entry (the entry's index in the
+    // stage). Ours keeps each quest's entries oldest first, and the journal's order by when
+    // each quest was last updated.
+    const log = [...data.questLog].reverse();
+    for (const { quest: questId, stage, flags: entry } of log) {
+      const id = ours(questId);
+      if (id === undefined || id === 0) continue;
+      const quest = state.quest(id);
+      quest.log.push({ stage, entry });
+      quest.updated = ++state.questClock;
+    }
+    // The camera: first person (its state 0) or third (the third person, mount, bleedout and
+    // dragon states, 9 to 12), and the fields of view. TODO(M13): the other states (vanity,
+    // furniture, a menu's) go back to the one under them; that is not read yet.
+    const { camera } = data;
+    const pov = camera.state === 0 ? 'first' : camera.state >= 9 ? 'third' : undefined;
+    savedPlayer = { ...(pov && { pov }), fov: [camera.worldFov, camera.firstPersonFov] };
+    // TODO(M13): the player's other lists (docs/formats/ess.md "The player").
   }
 
   function valueOf(reference: number, av: number): ActorValueState {
@@ -517,9 +622,23 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       skips.add(`papyrus: unreadable (${error instanceof Error ? error.message : String(error)})`);
     }
   }
+  // The story event manager: the events told and not yet processed, told again after the load.
+  let pending: StoryEventData[] = [];
+  const events = globalData(ess, 111);
+  if (events) {
+    try {
+      pending = readStoryEventManager(events, resolve).events.map(storyEvent);
+    } catch (error) {
+      skips.add(
+        `story events: unreadable (${error instanceof Error ? error.message : String(error)})`,
+      );
+    }
+  }
   for (const table of [ess.globalData1, ess.globalData2, ess.globalData3]) {
     for (const entry of table) {
-      if (![0, 1, 3, 6, 1001].includes(entry.type)) skips.add(`global data ${String(entry.type)}`);
+      if (![0, 1, 3, 6, 111, 1001].includes(entry.type)) {
+        skips.add(`global data ${String(entry.type)}`);
+      }
     }
   }
   for (const plugin of missing) skips.add(`forms of ${plugin}: the plugin is not loaded`);
@@ -544,7 +663,7 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     initialized: [],
     seeded: [],
     dialogue: undefined,
-    storyManager: undefined,
+    storyManager: pending.length > 0 ? { pending } : undefined,
     instances,
   };
   const skipped = skips.lines();
@@ -553,6 +672,7 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     player,
     weather,
     unsaved: [],
+    world: { actors: savedActors, graphs: [], ...(savedPlayer && { player: savedPlayer }) },
     inventoryDeltas: [...inventoryDeltas].map(([container, items]) => [container, [...items]]),
   };
   const header: SaveHeader = {
