@@ -1111,13 +1111,22 @@ export class ScriptRuntime implements VmHost {
   /**
    * What an object is in its string (observed in the original): a form's editor ID where the
    * original keeps one at run time (KEEPS_EDITOR_ID; references and most forms keep none) and
-   * its id; an alias by its name on its quest; an active effect on its actor (the original's
-   * index of the effect on the actor: TODO(M13), ours counts none).
+   * its id; an alias by its name on its quest; an active effect by its number (the 16 bits of
+   * its handle that tell the effect apart: ours, the effect's own number) on its actor's shown
+   * name (an alias's name, else its base's) and id. TODO(M13): how the original numbers its
+   * active effects (for the game or per actor) is not read; ours counts them for the game.
    */
   async describeObject(target: ObjectHandle): Promise<string> {
     const hex = (formId: number): string => formId.toString(16).toUpperCase().padStart(8, '0');
     const effect = this.magic.scriptEffect(target.key);
-    if (effect) return `Active effect 0 on  (${hex(effect.target)})`;
+    if (effect) {
+      const base = await this.baseOf(effect.target);
+      const name =
+        this.aliasDisplayName(effect.target) ??
+        (base === undefined ? undefined : (await this.forms.record(base))?.text('FULL')) ??
+        '';
+      return `Active effect ${String(target.formId & 0xffff)} on ${name} (${hex(effect.target)})`;
+    }
     const editorId = async (formId: number): Promise<string> => {
       const record = await this.forms.record(formId);
       return record && KEEPS_EDITOR_ID.has(record.type) ? (record.editorId ?? '') : '';
@@ -1325,6 +1334,9 @@ export class ScriptRuntime implements VmHost {
    * has once enabled (a model, an editor marker, a primitive, an actor).
    */
   async referenceShown(reference: number, shown: boolean): Promise<void> {
+    // Its 3D gone (disabled), its behavior graph goes with it, and the animation events
+    // registered on it (OnAnimationEventUnregistered), as when its cell detaches.
+    if (!shown) this.animationGraphUnloaded(reference);
     if (await this.#hearsEvents(reference)) {
       this.events.emit('objectLoaded', { reference, loaded: shown });
     }

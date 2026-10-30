@@ -178,6 +178,8 @@ function setEmittance(color: MutableEmittance, rgb: readonly [number, number, nu
 export const MEMORY_BUDGET = 4096 * 1024 * 1024;
 /** Freed down to this share of the budget, so trimming does not run every frame. */
 const TRIM_TARGET = 0.85;
+/** The post-render queue's budget while a load runs (observed in the original, ms). */
+const LOADING_QUEUE_MS = 0.5;
 /** Models and textures used in the last 10 seconds stay (cells may be about to place them). */
 const EVICTION_GRACE_MS = 10_000;
 const describe = (error: unknown): string =>
@@ -1183,9 +1185,9 @@ export class GameSession {
       );
       this.scriptsReady = runtime;
       // A loaded game: the scripts that listen hear it (OnPlayerLoadGame, to the player and
-      // its aliases). TODO(M13): the original sends it once the loaded world is up; here as
-      // the scripts are, before the player's cell has loaded.
-      if (load) void runtime.events.emitted('loadGame', {});
+      // its aliases) once the loaded world is up, as the original sends it: at the first frame
+      // the game runs after the load (tickScripts).
+      this.#loadGameDue = load !== undefined;
       // Sounds and music read the running game's globals from now on.
       if (!this.#voices)
         void this.sounds().then((sounds) => {
@@ -1214,6 +1216,9 @@ export class GameSession {
     this.#pendingLoad = { save, header };
     return this.resetStates(false);
   }
+
+  /** A loaded game's OnPlayerLoadGame, sent at the first frame the game runs. */
+  #loadGameDue = false;
 
   /** A saved game the next runtime loads instead of starting a new game. */
   #pendingLoad: { readonly save: GameSave; readonly header: SaveHeader } | undefined;
@@ -1329,7 +1334,16 @@ export class GameSession {
     if (!runtime) return;
     runtime.inMenuMode = this.menuMode;
     runtime.menuOpen ??= (name) => this.menuStack.isOpen(name);
-    if (this.loading) return;
+    if (this.loading) {
+      // While a load runs, the original still takes the post-render queue's work, for 0.5 ms
+      // each update (src/scripting/latent-queues.ts): a script moving the player waits on it.
+      runtime.vm.scheduler.latent.run('postRender', LOADING_QUEUE_MS);
+      return;
+    }
+    if (this.#loadGameDue) {
+      this.#loadGameDue = false;
+      void runtime.events.emitted('loadGame', {});
+    }
     if (this.menuMode) {
       runtime.updateInMenu(realSeconds);
       return;

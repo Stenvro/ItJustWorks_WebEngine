@@ -12,6 +12,7 @@
 // more than OVERSTRESSED_STACKS of them make the VM overstressed. Platform-independent. Notes:
 // docs/scripting.md ("Threads", "Stack memory").
 
+import { LatentQueues } from './latent-queues.ts';
 import { MemoryPagePolicy } from './stack-memory.ts';
 
 /** The VM's clocks: real seconds (outside menus), game days, real seconds menus included. */
@@ -104,6 +105,11 @@ export class PapyrusScheduler {
   #lastDump = -Infinity;
   /** The stack memory of every thread (iMaxAllocatedMemoryBytes). */
   readonly memory = new MemoryPagePolicy();
+  /** The latent natives' queued work: the render-safe and post-render queues (latent-queues.ts). */
+  readonly latent = new LatentQueues(
+    () => this.suspending,
+    () => this.#now(),
+  );
   /** Set to log the threads when the VM has been overstressed for long (the original's dump). */
   dumpStacks: (() => void) | undefined;
   #frameStart = 0;
@@ -126,6 +132,7 @@ export class PapyrusScheduler {
   configure(updateMs: number, extraTaskletMs: number): void {
     this.budgetMs = Math.max(0, updateMs) * UPDATE_SHARE + Math.max(0, extraTaskletMs);
     this.#updateShareMs = Math.max(0, updateMs) * UPDATE_SHARE;
+    this.latent.configure(updateMs);
   }
 
   /** Whether the VM is overstressed: more than OVERSTRESSED_STACKS threads suspended. */
@@ -152,6 +159,12 @@ export class PapyrusScheduler {
    * menu only `menuSeconds` pass (the wall clock's), the game's clocks stand still.
    */
   advance(realSeconds: number, gameDays: number, menuSeconds = 0): void {
+    // The latent natives' queued work (latent-queues.ts): the post-render queue's run for the
+    // frame drawn since the last advance, then the render-safe queue's in this one; both take
+    // the work the last update's calls queued. TODO(M13): the render-safe run's point against
+    // the VM's update is inferred (the original runs it as a job of the frame, not read).
+    this.latent.run('postRender');
+    this.latent.run('renderSafe');
     this.realTime += Math.max(0, realSeconds);
     this.gameTime += Math.max(0, gameDays);
     this.wallTime += Math.max(0, realSeconds) + Math.max(0, menuSeconds);
@@ -297,7 +310,12 @@ export class PapyrusScheduler {
     return {
       real: this.#realWaiters.length,
       game: this.#gameWaiters.length,
-      frame: this.#frameWaiters.length + queueSize(this.#toSuspend) + queueSize(this.#toResume),
+      frame:
+        this.#frameWaiters.length +
+        queueSize(this.#toSuspend) +
+        queueSize(this.#toResume) +
+        this.latent.waiting.renderSafe +
+        this.latent.waiting.postRender,
     };
   }
 
