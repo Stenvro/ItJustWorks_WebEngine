@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readPlacement } from '../formats/swf/place-object.ts';
 import { readSwf, swfExports, SwfTagCode, tagBody, type SwfMovie } from '../formats/swf/swf.ts';
-import { concatBytes, encodeTag, writeSwf } from '../formats/swf/swf-writer.ts';
+import { concatBytes, encodeSwfString, encodeTag, writeSwf } from '../formats/swf/swf-writer.ts';
 import { patchScalingGrids, scale9Axis, type Scale9Cell } from './scale9.ts';
 
 /** A RECT of 12-bit fields: left, right, top, bottom in twips. */
@@ -69,6 +69,64 @@ describe('scaling grids', () => {
     expect(clip && readPlacement(tagBody(movie, clip), clip.code).name).toBe('o');
     // The shape's piece, exported to attach.
     expect(swfExports(movie).map((symbol) => symbol.name)).toEqual(['__itjwScale9Piece1']);
+  });
+});
+
+/**
+ * A movie whose script sets scale9Grid (as CLIK's lists do on their item container): an
+ * exported sprite (2, "Item") with a shape (1), and a frame script naming the property.
+ */
+function runTimeGridMovie(): Uint8Array {
+  const placeShape = encodeTag(SwfTagCode.placeObject2, Uint8Array.of(0x02, 1, 0, 1, 0));
+  const frame = encodeTag(SwfTagCode.showFrame, new Uint8Array(0));
+  const end = encodeTag(SwfTagCode.end, new Uint8Array(0));
+  // ActionPush "scale9Grid", then the end of the actions.
+  const name = encodeSwfString('scale9Grid');
+  const push = concatBytes([Uint8Array.of(0x96, name.length + 1, 0, 0), name, Uint8Array.of(0)]);
+  return writeSwf([
+    { code: SwfTagCode.defineShape, body: Uint8Array.of(1, 0, 0, 0, 0, 0, 0) },
+    {
+      code: SwfTagCode.defineSprite,
+      body: concatBytes([Uint8Array.of(2, 0, 1, 0), placeShape, frame, end]),
+    },
+    {
+      code: SwfTagCode.exportAssets,
+      body: concatBytes([Uint8Array.of(1, 0, 2, 0), encodeSwfString('Item')]),
+    },
+    { code: SwfTagCode.doAction, body: push },
+    { code: SwfTagCode.showFrame, body: new Uint8Array(0) },
+  ]);
+}
+
+describe('scaling grids set at run time', () => {
+  it('defines the property before the movie’s scripts and wraps what attachMovie can place', () => {
+    const out = patchScalingGrids(runTimeGridMovie());
+    if (!out) throw new Error('not patched');
+    const movie = readSwf(out);
+    // An init action (of an empty sprite of its own) comes before the movie's first script.
+    const codes = movie.tags.map((tag) => tag.code);
+    const init = codes.indexOf(SwfTagCode.doInitAction);
+    expect(init).toBeGreaterThan(0);
+    expect(init).toBeLessThan(codes.indexOf(SwfTagCode.doAction));
+    const initTag = movie.tags[init];
+    if (!initTag) throw new Error('no init action');
+    const actions = new TextDecoder().decode(tagBody(movie, initTag));
+    expect(actions).toContain('addProperty');
+    expect(actions).toContain('__itjwScale9Set');
+    // The exported sprite's shape is placed as a wrapper, its piece exported.
+    const placed = sprite(movie, 2).find((tag) => tag.code === SwfTagCode.placeObject2);
+    const wrapper = placed && readPlacement(tagBody(movie, placed), placed.code).character;
+    expect(wrapper).toBeGreaterThan(2);
+    expect(swfExports(movie).map((symbol) => symbol.name)).toContain('__itjwScale9Piece1');
+  });
+
+  it('leaves a movie whose scripts set no grid alone', () => {
+    const bytes = runTimeGridMovie();
+    // The same movie with the property's name changed in its script.
+    const at = new TextDecoder('latin1').decode(bytes).indexOf('scale9Grid');
+    const changed = bytes.slice();
+    changed[at] = 'x'.charCodeAt(0);
+    expect(patchScalingGrids(changed)).toBeUndefined();
   });
 });
 

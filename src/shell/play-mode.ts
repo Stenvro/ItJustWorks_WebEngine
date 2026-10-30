@@ -651,6 +651,9 @@ export class PlayMode {
       },
       screenshot: (name) => this.#saves.screenshot(name),
     };
+    this.#saves.written = (kind) => {
+      menus.saveWritten(kind);
+    };
     menus.onPassed = (slept) => {
       void this.#saves.autosave(slept ? 'rest' : 'wait');
     };

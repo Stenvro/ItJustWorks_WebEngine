@@ -30,6 +30,17 @@ describe('low-stat tutorials', () => {
     ).toEqual(['HBLS']);
   });
 
+  it('shows none while a save loads or while the scripts keep the main four off', () => {
+    const stats = { health: low, magicka: low, stamina: low };
+    const gate = (saveLoading: boolean, mainFourEnabled: boolean) => ({
+      saveLoading,
+      mainFourEnabled,
+    });
+    expect(lowStatTutorials(stats, new Set(), undefined, gate(true, true))).toEqual([]);
+    expect(lowStatTutorials(stats, new Set(), undefined, gate(false, false))).toEqual([]);
+    expect(lowStatTutorials(stats, new Set(), undefined, gate(false, true))).toHaveLength(3);
+  });
+
   it('shows the health tutorial only to the living, the others still', () => {
     const dead = { current: 0, max: 100 };
     expect(lowStatTutorials({ health: dead, magicka: low, stamina: full }, new Set())).toEqual([

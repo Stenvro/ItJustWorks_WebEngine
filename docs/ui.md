@@ -294,10 +294,18 @@ TODO(M13), ruffle-rs/ruffle#16618.
   No movie turns a shape or clip within a grid sprite (tests/interface.int.test.ts sweeps them
   all; the scripts turn only whole clips at or above their grid sprites: the map's markers, CLIK's
   scroll bars), so cutting along the shape's own axes never differs from the sprite's.
-  TODO(M13): grids set at run time on clips with no shapes of their own. Two CLIK classes do it
-  (ScrollingList and TextArea, in quest_journal.swf and tutorialmenu.swf): each gives the empty
-  container it fills a 1 × 1 grid, sets its own scale back to 100 and counter-scales the
-  container, so only a scaled ancestor would show the grid; they are not registered here.
+  Grids set at run time: MovieClip's `scale9Grid` property is ours (`__itjwScale9Set` registers
+  the clip as a grid sprite with the rectangle's x, y, x + width and y + height; null takes its
+  grid away and the frame clock shows it uncut; the getter gives the rectangle, a grid from the
+  file as a new flash.geom.Rectangle). Two CLIK classes set one (CoreList, under ScrollingList,
+  and TextArea, in quest_journal.swf and tutorialmenu.swf): each gives the empty container it
+  creates a 1 × 1 grid (TextArea's at 20, 20), attaches its item renderers or scroll bar into it
+  and counter-scales it against its own scale (10000 / _xscale), so only a scaled ancestor shows
+  the grid. A movie whose scripts name `scale9Grid` gets the shapes of every sprite it exports
+  (what attachMovie can put in such a container) and of the sprites under them wrapped, and the
+  property and the grids' functions in an init action of an empty sprite of its own, before its
+  first script or placement (the components set the grid as they are constructed, before the
+  bridge's frame script runs).
 
 ## Videos
 
@@ -729,8 +737,10 @@ sends the journal `BackOutFromLoadGame`, else it tells the main menu "RefreshMen
 "CancelLoading") backs the system page out of its load list; ours: a save that is not there.
 Who posts "Show Journal" and "RefreshMenu" to the journal, observed in the original: its system
 page itself, as it hears the save system's results and the input devices' gamepad event. A
-delete done is "RefreshMenu" (so is one kind of write done, another hides the journal: which
-writes the two kinds are is not named, TODO(M13)); a save, load or delete the system could not do
+delete done is "RefreshMenu"; a write done is by its kind: a save the player made (the journal's
+Save, new or over a save, the console's save) hides the journal, an autosave is "RefreshMenu" (the
+list shows it), a quicksave and the engine's fifth kind tell it nothing (ours: the save manager's
+`written`, the journal's `saveWritten`); a save, load or delete the system could not do
 shows sSaveGameDeviceError ("There
 was an error accessing the device.", with sOk; unless the failure was already answered) and then
 "Show Journal", a failed read also hiding the Fader Menu (ours shows none before the read);
@@ -738,8 +748,10 @@ the control map's file is left alone. A gamepad event is "RefreshMenu" too. On t
 closes itself as it asks SaveGame (its Sony consoles wait for the engine), so a failed save's
 box shows over the game. Ours: `src/shell/journal-menu.ts` (`#deviceError`, `gamepadChanged`)
 with the save list's `deleted` and `failed`; the browser's gamepadconnected and
-gamepaddisconnected stand for the gamepad event (TODO(M13): what raises it on the PC is not
-read).
+gamepaddisconnected stand for the gamepad event. Observed in the original: it is the input device
+manager's remote gamepad event (the HUD hears it too), which the manager sends at the end of its
+per-frame poll when a flag it keeps has been set since; TODO(M13): what sets that flag on the PC
+was not found (no direct store of it in the code searched).
 The gamepad's right stick, held off centre, reaches the journal's page shown
 (`onRightStickInput(x, y)`, which the page takes if it has a use for it) at most every [MapMenu]
 iRightStickRepeatRate (250) ms; back in the centre the wait starts over. TODO(M13): the tween kept under a map that has the journal over it (ours keeps one menu under).
@@ -1472,6 +1484,11 @@ Quick Stats key, and after a level up in its LEVEL_UP state: `SetStatsMode(false
   Conjuration, Destruction, Restoration, Alteration. The movie's names follow the same ring
   (`_global.StatsMenu.SkillStatsA`: level, name, progress, colour, legendary count, five a skill,
   then `UpdateSkillList(true)`; `SetDirection(degrees)` turns them with the camera; SKILL_ANGLE 20).
+  In a beast form (observed in the original) neither is sent: the engine writes
+  `StatsMenuBaseInstance.BeastSkillHolder.BeastSkillInstance` instead (`LabelInstance.text` the
+  actor value's name, `ShortBar` at frame 200 − progress × 1.99, the progress clamped to 0..100),
+  an element the game's statsmenu.swf does not have, so a beast tree shows no level number, name
+  or bar (ours: `#showBeastSkill`; what else fills that bar is not read, TODO(M13)).
 - A perk's star (`intperkstars01.nif`, its graph Interface\INTPerkStars01.hkx: Locked (lavender),
   Unlocked, Owned (golden), Selected, Own as it is taken; the engine sends reset, UnlockedWild,
   OwnedWild, SelectedWild) stands on its constellation's image: fStatsStarXIncrement (5) a grid
@@ -1708,7 +1725,9 @@ its button; `CloseMenu`).
   grindstone. HBSA: the armor bench. HBAL: alchemy. HBLH, HBLM, HBLS: health, magicka or stamina
   low (observed in the original: as one of the player's three changes, below its share of its
   maximum, fLowHealthTutorialPercentage, fLowMagickaTutorialPercentage,
-  fLowStaminaTutorialPercentage, 0.25 each; health's only while above 0; once each:
+  fLowStaminaTutorialPercentage, 0.25 each; health's only while above 0; none while a save game
+  loads or while the control map's main four are off, which Game.DisablePlayerControls' abMenu
+  switches; once each:
   `src/gameplay/low-stat-tutorials.ts`). HBHJ: jail. HBFT: follower commands. HBWC: weapon charge. Dragonborn adds dragon riding's.
   CommonLib's `TutorialMenu::OpenTutorialMenu` takes such a default object.
 - **The box.** The message's name is the box's title (`Menu_mc.HelpTitle`), its text the help

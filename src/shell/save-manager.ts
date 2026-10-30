@@ -34,6 +34,8 @@ export class SaveManager {
   readonly #frames: FrameSource | undefined;
   /** Shown while a save is written (the LoadWaitSpinner); returns what ends it. */
   busy: (() => () => void) | undefined;
+  /** A save written (the save system's result, which the journal hears). */
+  written: ((kind: SaveHeader['kind']) => void) | undefined;
 
   constructor(session: GameSession, terminal: Terminal, frames?: FrameSource) {
     this.#session = session;
@@ -113,6 +115,7 @@ export class SaveManager {
       const header = await store.write(bytes);
       this.#lastSave = performance.now();
       this.#terminal.log('save', `saved ${name} (${(bytes.length / 1024).toFixed(0)} KB)`, 'ok');
+      this.written?.(kind);
       return header;
     } finally {
       this.#saving = false;
