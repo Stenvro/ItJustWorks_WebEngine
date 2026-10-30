@@ -13,10 +13,18 @@ import { registerGame } from './game.ts';
 import { registerQuest } from './quest.ts';
 import { registerReference } from './reference.ts';
 import type { Register } from './args.ts';
+import { withNoneChecks } from './none-arguments.ts';
 
 export function registerNatives(registry: NativeRegistry, runtime: ScriptRuntime): void {
   const register: Register = (name, fn) => {
-    registry.set(name, fn);
+    // Each native's own checks of a None argument come first (none-arguments.ts): their lines
+    // are the game's own faults, logged as the original's.
+    registry.set(
+      name,
+      withNoneChecks(name, fn, (message) => {
+        runtime.gameLog(message);
+      }),
+    );
   };
   registerCore(register, runtime);
   registerQuest(register, runtime);

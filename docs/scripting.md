@@ -28,9 +28,9 @@ As the Creation Kit wiki's "Threading Notes (Papyrus)" describe them (`papyrus-v
 - **One thread runs at a time** (the VM's run token, `#runner`), as the game's VM runs one
   stack at a time: a thread keeps running until it waits (a latent call, a lock another thread
   holds, another script's OnInit, the frame's budget) or ends, and the threads waiting to run
-  take turns in the order they came (inferred from the wiki's threading notes, which name
-  these as the points where another thread gets in; TODO(M13): the VM's own scheduling of its
-  stacks was not read from the engine). The awaits JavaScript needs inside a step (a property of
+  take turns in the order they got back in line (the wiki's threading notes name these as the
+  points where another thread gets in). The original runs its stacks side by side on tasklets;
+  the order it keeps is that of its suspended stacks ("Suspended threads" below). The awaits JavaScript needs inside a step (a property of
   another object, an engine native that reads records) are no switch points: the game's
   natives return at once. An engine native that is still not done after 1000 microtask turns (it
   reads files, or waits for another thread, which no native of the game does) lets the next
@@ -64,8 +64,12 @@ As the Creation Kit wiki's "Threading Notes (Papyrus)" describe them (`papyrus-v
   game has loaded, the VM runs on its own, update after update, for
   **fPostLoadUpdateTimeMS** (Skyrim_Default.ini: 500 ms) before the game goes on: no budget,
   and its frame waits go on at once. The engine also runs two queues of latent calls' work
-  (render-safe and post-render) for 0.05 of fUpdateBudgetMS each; ours runs latent natives
-  through their own systems (TODO(M13): those queues' timing). Without frames (Node tools)
+  (render-safe and post-render; observed in the original): a latent native queues its
+  main-thread work there (saved with the game); each frame a queue runs the work queued before
+  it, first come first served, until it is empty or 0.05 of fUpdateBudgetMS is spent (at least
+  one each frame); work still waiting (Utility.Wait's) goes back for the next frame, and work
+  done returns its result to the waiting thread. Ours starts a latent native's work in the call
+  itself (TODO(M13): each latent native split into its start and its queued work). Without frames (Node tools)
   threads run straight through, and one that runs two million instructions without ever
   waiting is stopped as an endless loop; the headless sim runs so, deterministically.
 - **Natives wait for the frame** (`native-timing.ts`; observed in the original): the game
@@ -75,7 +79,8 @@ As the Creation Kit wiki's "Threading Notes (Papyrus)" describe them (`papyrus-v
   fills and registrations, the inventory event filters, Enable / DisableNoWait, the profiling
   switches); every other call is handed to the main thread, and its thread waits for the next
   frame (keeping its own object's lock), so a loop of object natives runs a frame a call. The
-  handed calls begin in that frame's VM update in the order they came. TODO(M13): the engine begins them only while the update's share (0.9 of fUpdateBudgetMS) lasts; our natives cost far more time than its own, so a share of wall time would starve the scripts and make the headless sim depend on the machine: all begin in the next frame. Latent natives (Wait, AddItem,
+  handed calls are suspended threads: they begin in the next VM update, in the original's order
+  and while the update's share lasts ("Suspended threads" below). Latent natives (Wait, AddItem,
   Disable, Cast, ...) then wait for what they started. Without frames (Node tools) nothing
   waits. MQ101's dunCGDragonVoiceStormCall
   (magicProjectileStormScript: an OnUpdate with some ten such natives, then fRecast) sent a
@@ -93,7 +98,40 @@ As the Creation Kit wiki's "Threading Notes (Papyrus)" describe them (`papyrus-v
   float with six decimals of its single-precision value ("1.500000", "-0.250000"), an int as it
   is, by the type of the variable or literal it comes from.
 
-TODO(M12): save the threads, variables and registrations.
+### Suspended threads
+
+Observed in the original (`scheduler.ts` suspend): the VM suspends a thread whose call it hands
+to the main thread (a retried call) or whose frame waits for stack memory, and resumes it in its
+next update. The suspended threads go in a fixed queue of 128, then an overflow; the update
+swaps the queue it fills with the one it empties, so those an update leaves over wait for the
+update after next, behind the ones suspended meanwhile. An update first counts the suspended
+threads: more than 100, and the VM is **overstressed** until the next update. It then resumes
+them one after another, from the fixed queue in the order they came, then the overflow newest
+first (oldest first while overstressed), while 0.9 of fUpdateBudgetMS lasts, always at least
+one; the time counted is each one's work on the main thread (ours: the native's own run, not
+what it started). While overstressed the fixed queue's threads all resume, the budget starting
+again after each. Overstressed for 5 seconds, the original dumps its stacks to the log
+("Suspended stack count is over our warning threshold, dumping stacks:"), at most once a
+minute. Without frames (Node tools), and while a loaded game's VM runs on its own, suspended
+threads go on at once.
+
+### Stack memory
+
+Observed in the original (`stack-memory.ts`): every call (a script function or a native) takes a
+frame on its thread's stack, 64 bytes and 16 for each variable (its parameters and locals:
+CommonLibSSE's StackFrame and Variable). A stack keeps its frames in pages from the VM's page
+policy, which keeps all stacks under [Papyrus] **iMaxAllocatedMemoryBytes** (153600): a page is
+the size asked but at least **iMinMemoryPageSize** (128); it is given while it fits in the room
+left; the largest page still to be had is that room, at most **iMaxMemoryPageSize** (512). A
+frame goes after the frame below it in the last page if its 64 bytes fit there, else in a new
+page of its whole size, and its variables fill what is left, going on in new pages. A page
+refused is replaced by the largest page to be had if the part fits in it; else everything taken
+for the frame is given back and the thread waits for memory, asking again at its turn in the
+next update. A popped frame gives back the pages it began. The limit is ignored for a stack
+loaded from a save and while the VM is overstressed (the overrun's peak kept); there is no
+error for a deep or large stack. Ours gives pages past the limit where no update comes (Node
+tools, a loaded game's VM running on its own), and keeps its guard of 4096 calls for the
+browser's memory.
 
 ## Properties
 

@@ -1161,6 +1161,11 @@ export class GameSession {
       );
       scheduler.framed = true;
       scheduler.yieldTask = nextTask;
+      scheduler.memory.configure(
+        this.ini.number('Papyrus', 'iMinMemoryPageSize'),
+        this.ini.number('Papyrus', 'iMaxMemoryPageSize'),
+        this.ini.number('Papyrus', 'iMaxAllocatedMemoryBytes'),
+      );
       if (load) scheduler.postLoad(this.ini.number('Papyrus', 'fPostLoadUpdateTimeMS'));
       // A new game's clock: the plugins' day and hour.
       this.gameDaysPassed = Math.floor(runtime.state.gameDaysPassed);

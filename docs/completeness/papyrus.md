@@ -8,14 +8,18 @@ The natives and events parts come from the sweep `node tools/papyrus-completenes
 for every item); the VM part is kept by hand against `src/scripting/papyrus-vm.ts` and
 docs/scripting.md ("Threads", "Properties", "The log").
 
-## Count (2026-10-30, round 3)
+## Count (2026-10-30, round 4)
 
 | Part    | Items | Done | Open |
 | ------- | ----: | ---: | ---: |
-| Natives |   686 |  686 |    0 |
-| Events  |    98 |   98 |    0 |
-| VM      |    30 |   25 |    5 |
-| Total   |   814 |  809 |    5 |
+| Natives |   687 |  687 |    0 |
+| Events  |    99 |   98 |    1 |
+| VM      |    30 |   29 |    1 |
+| Total   |   816 |  814 |    2 |
+
+Round 4 counts the None-argument sweep as a natives item and the simulation's share of the
+events as an events item (both were listed, not counted). The sweep reports the simulation's
+share separately: 38 of the 98 events are checked in the headless simulation (27 before).
 
 ## Natives
 
@@ -54,13 +58,17 @@ Round 1 and 2: Quest.UpdateCurrentInstanceGlobal (77 calls), ObjectReference.
 CalculateEncounterLevel (19 calls), Game.UsingGamepad, ObjectReference.GetItemHealthPercent (a
 tempered stack dropped into the world: TODO(M13)), Quest.IsStarting and IsStopping.
 
-- [ ] Not yet swept: each native's answer to a None argument. Read from the original: there
-      is no one rule. A call on a None object is the VM's ("Cannot call X() on a None object,
-      aborting function call", the function's default returned); a None argument is each
-      native's own check, many with their own line ("Cannot play a visual effect on a None
-      object", "Cannot cast a None form", "Cannot play an animation on a None object").
-      Arguments of a wrong type cannot reach a native (the compiler types them; a failed cast
-      gives None). Not counted in the table (a sweep per native still to write).
+- [x] Each native's answer to a None argument (round 4). Read from the original: there is no
+      one rule. A call on a None object is the VM's ("Cannot call X() on a None object, aborting
+      function call", the function's default returned); a None argument is each native's own
+      check with its own line. The executable's lines naming a None (105) were each tied to the
+      natives logging them, with what those return after the line: 85 are checks of an
+      argument, made by 107 natives (natives/none-arguments.ts, wrapped around every
+      registration; the sweep checks each is declared and registered). They return their type's
+      default except FormList.Find (-1) and GetDistance (the largest float). The other lines
+      are checks of the native's own object (a None self, which the VM's own line catches
+      first) or of a value that is no argument (SetActorValue's name). Arguments of a wrong type
+      cannot reach a native (the compiler types them; a failed cast gives None).
 
 ## Events
 
@@ -87,36 +95,64 @@ package left), the vampirism, lycanthropy and feeding events, onBeginState/onEnd
 compiled GotoState), OnUnequipped, and the story manager's 30 events. Fixed: OnRead reaches a
 book read from an inventory when its base carries scripts (it reached only book references).
 
-- [ ] In the simulation: the 71 events with an engine-level test only (the conformance list's
-      TO_WRITE).
+- [ ] In the simulation: 60 events still have an engine-level test only (the sweep lists
+      them). Round 4 added 11 (tests/conformance/scripting/script-events-registered.test.ts, one
+      simulation): OnUpdate, OnUpdateGameTime, OnGainLOS, OnLostLOS, OnTranslationAlmostComplete,
+      OnTranslationComplete, OnObjectUnequipped, OnItemRemoved, OnCombatStateChanged,
+      OnPackageEnd, OnTrackedStatsEvent. Left: those whose trigger needs data of their own (a
+      scripted item, book or magic effect, a bed, a destructible) and the story manager's (each
+      needs a quest node of its type), and OnAnimationEvent (a wolf's attack came too late to be
+      reliable in one simulation).
 
 ## VM
 
 - [x] One thread runs at a time; a thread yields only where it waits (latent call, lock,
       another script's OnInit, the frame's budget).
-- [ ] The order in which waiting threads take turns: inferred (first come, first served), the
-      VM's own scheduling of its stacks not read (TODO(M13)).
+- [x] The order in which waiting threads take turns (round 4, observed in the original): the
+      VM suspends a stack whose call it hands to the main thread (a retried call) or which
+      waits for memory, and resumes them in its update: from a fixed queue of 128 in the order
+      they came, then the overflow newest first (oldest first while overstressed). The queues
+      are two, swapped at each update: those an update leaves over wait for the update after
+      next, behind the ones suspended meanwhile (scheduler.ts suspend). The original runs its
+      stacks side by side on tasklets; ours runs one at a time, its run token passed in the
+      order the threads got back in line.
 - [x] A script instance is locked while a thread runs in it; external calls unlock it.
 - [x] Until a script's OnInit has finished, its other events and calls into it wait.
 - [x] Latent natives suspend their thread and unlock its script.
 - [x] Natives wait for the frame by their registration (latent, callable on the script's
       thread: native-timing.ts).
 - [x] The frame's budget: 0.9 of fUpdateBudgetMS for the update, fExtraTaskletBudgetMS more.
-- [ ] The handed calls' share of the update budget (all begin in the next frame: TODO(M13)).
-- [ ] The latent calls' render-safe and post-render queues (0.05 of fUpdateBudgetMS each).
+- [x] The handed calls' share of the update budget (round 4, observed in the original): the
+      suspended stacks resume one after another while 0.9 of fUpdateBudgetMS lasts (at least
+      one), the time counted being the main thread's work of each (ours: the native's own run,
+      not what it started); while overstressed all of the fixed queue resumes, the budget
+      starting again after each.
+- [ ] The latent calls' render-safe and post-render queues. Read in round 4: a latent native
+      queues its main-thread work (a delay functor, saved with the game) in one of the two; each
+      frame a queue runs the work queued before it, first come first served, until it is empty
+      or its budget is spent (the budget given, else 0.05 of fUpdateBudgetMS; at least one
+      each frame); work that waits on (Utility.Wait's) goes back for the next frame, and work
+      done returns its result to the waiting stack. Not built: ours starts a latent native's
+      work in the call itself; it needs each latent native split into its start and its queued
+      work, and which of the two queues each uses read.
 - [x] A loaded game's VM runs on its own for fPostLoadUpdateTimeMS.
 - [x] No call-depth limit and no error for it (observed in the original: a stack grows page by
       page while memory lasts). Ours keeps a guard of 4096 calls for the browser's memory.
-- [ ] Stack memory (iMaxAllocatedMemoryBytes, 153600): read from the original, there is no
-      error. The VM's page policy (read in round 3): a page is the size asked but at least
-      iMinMemoryPageSize; it is given while it fits under the limit (the memory in use grows by
-      it, and shrinks by a page's size when a stack gives it back); one that does not fit is
-      refused and the stack waits for memory, unless the page is asked for with the limit
-      ignored or the VM is overstressed (then it is given, and the overrun's peak kept). The
-      largest page a stack can get is the room left under the limit, at most
-      iMaxMemoryPageSize. Not built: a frame is 64 bytes and 16 per variable (CommonLibSSE's
-      StackFrame and Variable; how the stack fits frames into its pages, and when it asks with
-      the limit ignored, not read), and our VM has no overstressed state yet.
+- [x] Stack memory (round 4, src/scripting/stack-memory.ts): there is no error. The page
+      policy as round 3 read it (iMinMemoryPageSize, iMaxMemoryPageSize,
+      iMaxAllocatedMemoryBytes). A frame is 64 bytes and 16 per variable (its parameters and
+      locals); it goes after the frame below it in the last page if its 64 bytes fit there,
+      else in a new page of its whole size; its variables fill what is left and go on in new
+      pages. A page refused is replaced by the largest page still to be had if the part fits
+      (64 bytes, one variable); else everything taken for the frame is given back and the
+      thread waits for memory, asking again at its turn in the next update. A popped frame
+      gives back the pages it began. The limit is ignored for a stack loaded from a save and
+      while the VM is overstressed. Overstressed (observed in the original): more than 100
+      stacks suspended at an update; set at each update; it lets pages past the limit, resumes
+      all of the fixed queue regardless of the budget, takes the overflow oldest first, and
+      after 5 s overstressed dumps the stacks to the log (at most once a minute). Ours, without
+      frames (Node tools) and while a loaded game's VM runs on its own, gives pages past the
+      limit (no update would come).
 - [x] Properties: plugin values bound by name, full properties through Set before OnInit, the
       original's line for a property the script no longer has.
 - [x] A plugin value for a full property without a Set function (read-only): observed in the
@@ -150,5 +186,10 @@ book read from an inventory when its base carries scripts (it reached only book 
       promise resume on load (docs/formats/save.md).
 - [x] Saves: every registration (updates, game time, LOS, sleep, tracked stats, animation
       events, menus).
-- [ ] On load, whether a native in flight is called again (the original's rule not read;
-      CommonLibSSE's stack states include a retried call, which suggests it is).
+- [x] On load, whether a native in flight is called again (round 4, observed in the
+      original): a call handed to the main thread and not yet made is a suspended stack with a
+      retried call; the suspended stacks are saved and the call is made on load, as ours does
+      (the thread is saved at its call). A latent native's queued work is saved with the game
+      and finishes after the load, its result going to the waiting stack, without calling the
+      native again: ours keeps a clock wait as data the same way and calls the other latent
+      natives again (their work is not queued apart: the latent queues' item).
