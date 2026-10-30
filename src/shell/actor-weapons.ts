@@ -294,8 +294,11 @@ export class HeldWeapons {
     const pose = this.#pose;
     if (!pose) return;
     const body = this.#body.pose.worlds;
+    const hidden = this.#body.pose.hidden;
     places.forEach((name, slot) => {
-      const node = this.#node(name);
+      const found = this.#node(name);
+      // A node the graph's visibility slots hide (hkVis:Weapon, hkVis:Shield) shows nothing.
+      const node = found !== undefined && hidden?.[found] === 1 ? undefined : found;
       this.#nodes[slot] = node;
       let world = this.#driven.get(slot);
       if (!world) {

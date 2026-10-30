@@ -146,7 +146,7 @@ These run through every area and explain most of what breaks in play.
 | Paired animations    | partial | the support's mark from the clip (engine's, set once), its side kept to the clip's end, death limp at the end: done; events not routed per side                                                 |
 | Ragdolls, death      | partial | the paralysed's stiff fall; the powered ragdoll's root (world-from-model mode); a corpse's kept Havok state beyond its pose (motors, cone, placed poses of objects, corpses across loads: done) |
 | Dismemberment        | partial | the engine's re-dressing rule (which limb's record, whether it takes off) not read (re-dressing a reloaded corpse: done)                                                                        |
-| Actor build          | partial | bone LOD, Havok float slots (hkVis, hkPhoneme)                                                                                                                                                  |
+| Actor build          | partial | Havok's fill of a float slot no clip sets (its reference value assumed); the bone LOD level's per-frame choice inferred (bone LOD, hkVis visibility, worn lag bones: done)                      |
 | Faces                | partial | expression change rate                                                                                                                                                                          |
 | Graph state in saves | partial | objects' graphs (sequences, skeletal machines) saved; actors' rebuilt from furniture and packages; behavior references                                                                          |
 
@@ -168,7 +168,7 @@ These run through every area and explain most of what breaks in play.
 ### Rendering and camera
 
 The item-by-item checklist (shader types, flags, texture slots, blocks, records, systems):
-[completeness/rendering.md](completeness/rendering.md), 470 of 540 done (2026-10-30).
+[completeness/rendering.md](completeness/rendering.md), 482 of 542 done (2026-10-30).
 
 | System                                  | Status   | Main gaps                                                                                                                                                                                                                                                                                                  |
 | --------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

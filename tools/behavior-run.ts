@@ -418,6 +418,15 @@ for (let time = 0, frame = 0; time <= total; time += step, frame++) {
     for (const { animation, time: at } of runtime.playing()) {
       console.log(`  plays ${animation} at ${at.toFixed(2)}`);
     }
+    // The float slots the pose sets (hkVis: a node shown or hidden; weight 0: no clip sets it).
+    if (args.includes('--slots')) {
+      const slots = runtime.skeleton.floatSlots.map(
+        (name, i) =>
+          `${name}=${(runtime.floatSlots[i] ?? 0).toFixed(2)}` +
+          ` (${(runtime.floatSlotWeights[i] ?? 0).toFixed(2)})`,
+      );
+      console.log(`  slots ${slots.join(', ')}`);
+    }
     const raised = runtime.takeRaised();
     if (raised.length > 0) {
       const shownEvents = raised

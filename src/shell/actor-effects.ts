@@ -510,7 +510,7 @@ export class ActorEffects {
     // Its own pose: its nodes (those the actor's skeleton has follow them each frame).
     const dressed = wearOnRig(
       { names: ['ArtRoot'], parents: Int16Array.from([-1]), local: new Float32Array(identity()) },
-      [{ nodes: model.nodes ?? [], attachTo: model.attachTo }],
+      [{ nodes: model.nodes ?? [], attachTo: model.attachTo, lagBones: model.nodeLagBones }],
     );
     const pose = new ActorPose(new ActorSkeleton(dressed.rig, undefined));
     // An object's art stands at its origin (no skeleton to follow).

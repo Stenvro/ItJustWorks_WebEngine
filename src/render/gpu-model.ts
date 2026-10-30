@@ -74,6 +74,10 @@ export class GpuModel {
   /** Worn on a skeleton: the model's node tree and the node it hangs on (ModelData). */
   readonly nodes: readonly ModelNode[] | undefined;
   readonly attachTo: string | undefined;
+  /** The Havok visibility slots it has controllers for (ModelData.visibilitySlots). */
+  readonly visibilitySlots: readonly string[] | undefined;
+  /** Its lag bones by node, for wearing it on a skeleton (ModelData.nodeLagBones). */
+  readonly nodeLagBones: ModelData['nodeLagBones'];
   /** Each named node's model-space matrix at rest, by lower-case name (ModelData.nodeWorlds). */
   readonly nodeWorlds: ReadonlyMap<string, Mat4>;
   /** BSTreeNode: its trunk and branch bones (ModelData.treeBones). */
@@ -99,6 +103,8 @@ export class GpuModel {
     nodes?: readonly ModelNode[] | undefined;
     nodeWorlds?: ReadonlyMap<string, Mat4> | undefined;
     attachTo?: string | undefined;
+    visibilitySlots?: readonly string[] | undefined;
+    nodeLagBones?: ModelData['nodeLagBones'];
     treeBones?: ModelData['treeBones'];
   }) {
     this.leafAnimation = init.leafAnimation;
@@ -106,6 +112,8 @@ export class GpuModel {
     this.nodes = init.nodes;
     this.nodeWorlds = init.nodeWorlds ?? new Map();
     this.attachTo = init.attachTo;
+    this.visibilitySlots = init.visibilitySlots;
+    this.nodeLagBones = init.nodeLagBones;
     this.treeBones = init.treeBones;
     this.center = init.center;
     this.radius = init.radius;

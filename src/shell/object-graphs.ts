@@ -25,7 +25,12 @@ export function startObjectGraph(model: GpuModel, seed: number): ObjectGraph | u
  */
 export function startPlacedSkeleton(model: GpuModel, seed: number): ObjectSkeleton | undefined {
   if (!model.skeletal || !model.nodes) return undefined;
-  return startObjectSkeleton(model.nodes, model.skeletal, seededRandom(seed));
+  return startObjectSkeleton(
+    model.nodes,
+    model.skeletal,
+    seededRandom(seed),
+    model.visibilitySlots,
+  );
 }
 
 /** Mulberry32: a small deterministic generator in [0, 1). */
