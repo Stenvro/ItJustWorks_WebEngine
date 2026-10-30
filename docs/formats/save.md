@@ -179,8 +179,11 @@ logged under `save`.
 
 A thread in a native whose JavaScript promise is in flight (Quest.Start, SetStage, a story event,
 an animation event, a latent native waiting on the world) is saved at its call instruction and
-calls the native again as it loads (TODO(M13): whether the original calls it again or hands the
-caller the native's default result is not read).
+calls the native again as it loads. Observed in the original: a call handed to the main thread
+and not yet made is saved with its suspended stack and made on load, as ours; a latent native's
+queued work is saved and finishes after the load without calling the native again (ours keeps a
+clock wait as data that way; TODO(M13): the other latent natives' work queued apart,
+docs/scripting.md "Threads").
 
 Not held (logged as not saved, by where they are): a thread between a callee's return and its
 caller taking the result, or in the full properties' Set functions before an OnInit
