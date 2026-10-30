@@ -18,9 +18,10 @@ export const MAX_EFFECT_LIGHTS = 4;
 export const LIGHT_LIST_WORDS = 4;
 /**
  * Floats per light key: position, radius, luminance, shadow (1: casts this frame), room, the
- * light's index among the frame's lights (what a list names) and when it joined the scene.
+ * light's index among the frame's lights (what a list names), when it joined the scene and
+ * whether it leaves land unlit (1).
  */
-export const LIGHT_KEY_FLOATS = 9;
+export const LIGHT_KEY_FLOATS = 10;
 
 /** What selection needs of one light (packLightKey). */
 export interface LightKeySource {
@@ -31,10 +32,15 @@ export interface LightKeySource {
   readonly room?: number | undefined;
   /** When it joined the scene, lower first (undefined: before every ordered light). */
   readonly order?: number | undefined;
+  /** False for a light whose reference does not light landscape (REFR 0x20000). */
+  readonly lightsLand?: boolean | undefined;
 }
 
-/** Whose list: a lighting shader's geometry, or an effect shader's (lit effects, particles). */
-export type LightListKind = 'lighting' | 'effect';
+/**
+ * Whose list: a lighting shader's geometry, a land quadrant's (lighting geometry with the
+ * landscape's shader), or an effect shader's (lit effects, particles).
+ */
+export type LightListKind = 'lighting' | 'land' | 'effect';
 
 /**
  * Writes a light's key at `index` (`shadowed`: it casts a shadow this frame; `lightIndex`: its
@@ -58,6 +64,7 @@ export function packLightKey(
   keys[at + 6] = light.room ?? 0;
   keys[at + 7] = lightIndex;
   keys[at + 8] = light.order ?? -1;
+  keys[at + 9] = light.lightsLand === false ? 1 : 0;
 }
 
 const shadowIndex = new Int32Array(MAX_OBJECT_SHADOW_LIGHTS);
@@ -101,7 +108,10 @@ function insert(
  * lights, named first in the frame's order (at most four); the list's lights follow in the
  * order they joined the scene, and the pass keeps the first seven in all, whatever their
  * strength. An effect (`kind` 'effect': lit effects and particle systems) names no shadow
- * light and at most four of its list's lights.
+ * light and at most four of its list's lights. A land quadrant (`kind` 'land': each quadrant of
+ * a cell's landscape is a geometry of its own, with its own texture set and bound) is lighting
+ * geometry whose shader is the landscape's: a light whose reference does not light landscape
+ * neither joins its list nor reaches it as one of the frame's shadow lights.
  */
 export function selectObjectLights(
   keys: Float32Array,
@@ -122,6 +132,7 @@ export function selectObjectLights(
     const k = i * LIGHT_KEY_FLOATS;
     const lightRoom = keys[k + 6] ?? 0;
     if (lightRoom > 0 && room !== 0 && lightRoom !== room) continue;
+    if (kind === 'land' && (keys[k + 9] ?? 0) > 0) continue;
     const dx = (keys[k] ?? 0) - center[0];
     const dy = (keys[k + 1] ?? 0) - center[1];
     const dz = (keys[k + 2] ?? 0) - center[2];

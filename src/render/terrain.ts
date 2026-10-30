@@ -1,9 +1,11 @@
 // Draws landscape cells built by terrain-data.ts: one draw per quadrant with its 8 blended
-// textures and normal maps, the land textures' specular exponents and snow flags, and the LOD
-// terrain texture its cell blends into near the edge of the loaded cells.
+// textures and normal maps, the land textures' specular exponents and snow flags, the LOD
+// terrain texture its cell blends into near the edge of the loaded cells, and its own light
+// list (each quadrant is a geometry of its own in the original, lit by at most seven lights).
 
 import { gbufferTarget } from './gbuffer.ts';
 import { sphereVisible, type Plane } from './frustum.ts';
+import { LIGHT_LIST_WORDS } from './light-lists.ts';
 import { DEPTH_FORMAT, SAMPLE_COUNT } from './scene-renderer.ts';
 import frameShader from './shaders/frame.wgsl?raw';
 import snowShader from './shaders/snow.wgsl?raw';
@@ -38,7 +40,20 @@ export interface TerrainLodBlock {
 /** The engine's terrain noise (LOD blend mask). */
 const TERRAIN_NOISE = 'textures\\terrain\\noise.dds';
 /** Floats of a quadrant's material uniforms (TerrainMaterial in terrain.wgsl). */
-const MATERIAL_FLOATS = 24;
+const MATERIAL_FLOATS = 28;
+/** Where a quadrant's light list (TerrainMaterial.lights, light-lists.ts) starts, in words. */
+const LIGHTS_WORD = 24;
+
+/**
+ * Writes a land quadrant's light list for this frame at `out[at..at + 4]`, by its bound
+ * (SceneRenderer.chooseLandLights).
+ */
+export type LandLightChooser = (
+  center: readonly [number, number, number],
+  radius: number,
+  out: Uint32Array,
+  at: number,
+) => void;
 
 interface GpuQuadrant {
   readonly vertices: GPUBuffer;
@@ -46,6 +61,8 @@ interface GpuQuadrant {
   readonly bindGroup: GPUBindGroup;
   readonly center: readonly [number, number, number];
   readonly radius: number;
+  /** The light list last uploaded (LIGHT_LIST_WORDS words). */
+  readonly lights: Uint32Array;
 }
 
 /** A cell's landscape on the GPU. Destroy it when the cell unloads. */
@@ -72,6 +89,8 @@ export class TerrainRenderer {
   readonly #indexCount: number;
   readonly #sampler: GPUSampler;
   readonly #shadowPipeline: GPURenderPipeline;
+  /** Scratch for a quadrant's light list (draw). */
+  readonly #lightList = new Uint32Array(LIGHT_LIST_WORDS);
 
   /** `shadow`: the cascade uniform layout and shadow shader shared with the scene renderer. */
   constructor(
@@ -228,7 +247,7 @@ export class TerrainRenderer {
         const uniforms = device.createBuffer({
           label: `terrain-q${String(q)}-material`,
           size: material.byteLength,
-          usage: GPUBufferUsage.UNIFORM,
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
           mappedAtCreation: true,
         });
         new Float32Array(uniforms.getMappedRange()).set(material);
@@ -263,26 +282,41 @@ export class TerrainRenderer {
           bindGroup,
           center: quadrant.center,
           radius: quadrant.radius,
+          lights: new Uint32Array(LIGHT_LIST_WORDS),
         };
       }),
     );
     return new GpuTerrainCell(gpuQuadrants);
   }
 
-  /** Draws the cells' quadrants inside the view (`planes`: the camera frustum). */
+  /**
+   * Draws the cells' quadrants inside the view (`planes`: the camera frustum). With
+   * `chooseLights` each quadrant drawn takes its light list for the frame (seven lights at most,
+   * light-lists.ts); without (another view of the same frame) it keeps the one it has.
+   */
   draw(
     pass: GPURenderPassEncoder,
     frameBindGroup: GPUBindGroup,
     cells: Iterable<GpuTerrainCell>,
     planes: readonly Plane[],
+    chooseLights?: LandLightChooser,
   ): number {
     pass.setPipeline(this.#pipeline);
     pass.setBindGroup(0, frameBindGroup);
     pass.setIndexBuffer(this.#indices, 'uint16');
     let drawn = 0;
+    const list = this.#lightList;
     for (const cell of cells) {
       for (const quadrant of cell.quadrants) {
         if (!sphereVisible(planes, quadrant.center, quadrant.radius)) continue;
+        if (chooseLights) {
+          chooseLights(quadrant.center, quadrant.radius, list, 0);
+          const held = quadrant.lights;
+          if (list.some((word, i) => word !== held[i])) {
+            held.set(list);
+            this.#device.queue.writeBuffer(quadrant.uniforms, LIGHTS_WORD * 4, held);
+          }
+        }
         pass.setBindGroup(1, quadrant.bindGroup);
         pass.setVertexBuffer(0, quadrant.vertices);
         pass.drawIndexed(this.#indexCount);

@@ -1157,9 +1157,13 @@ class SceneLightLists {
   #dirtyFrom = Infinity;
   #dirtyTo = -1;
 
+  /** The scene's focus map (1 + its index; 0: none), the last entry's first word. */
+  focus = 0;
+
   constructor(device: GPUDevice, slots: number, uniforms: ArrayBuffer) {
     this.uniformUints = new Uint32Array(uniforms);
-    this.data = new Uint32Array(slots * LIGHT_LIST_WORDS);
+    // One entry past the draws' slots holds the scene's own words (common.wgsl sceneFocus).
+    this.data = new Uint32Array((slots + 1) * LIGHT_LIST_WORDS);
     this.chosen = new Uint32Array(slots);
     this.buffer = device.createBuffer({
       label: 'draw-lights',
@@ -1171,6 +1175,15 @@ class SceneLightLists {
   markDirty(slot: number): void {
     if (slot < this.#dirtyFrom) this.#dirtyFrom = slot;
     if (slot > this.#dirtyTo) this.#dirtyTo = slot;
+  }
+
+  /** Names the focus map that shades the scene's draws (1 + its index; 0: none). */
+  setFocus(focus: number): void {
+    if (focus === this.focus) return;
+    this.focus = focus;
+    const slot = this.chosen.length;
+    this.data[slot * LIGHT_LIST_WORDS] = focus;
+    this.markDirty(slot);
   }
 
   flush(device: GPUDevice): void {
@@ -1734,6 +1747,8 @@ export class SceneRenderer {
   readonly #lightData = new Float32Array(MAX_LIGHTS * LIGHT_FLOATS);
   /** The frame's lights as selection keys (light-lists.ts), and how many. */
   readonly #lightKeys = new Float32Array(MAX_LIGHTS * LIGHT_KEY_FLOATS);
+  /** The scenes the focus maps were fitted round last (updateFocusScenes). */
+  #focusScenes: GpuScene[] = [];
   #lightKeyCount = 0;
   /** Counts the frames' light uploads: a draw's list is chosen once per light frame. */
   #lightFrame = 1;
@@ -3224,9 +3239,8 @@ export class SceneRenderer {
   /** A light's shadow slot and fade for the shader (slot −1: it casts none this frame). */
   #lightShadowOf(light: PointLight): [number, number, number, number] {
     const held = light.shadow && this.#lightShadowSlots.get(light.shadow.id);
-    // z: the light leaves land unlit (its reference's Doesn't Light Landscape flag).
-    const land = light.lightsLand === false ? 1 : 0;
-    return held ? [held.slot, held.fade, land, 0] : [-1, 0, land, 0];
+    // (Whether it lights land is in the light keys: land quadrants' lists leave it out.)
+    return held ? [held.slot, held.fade, 0, 0] : [-1, 0, 0, 0];
   }
 
   /**
@@ -3272,7 +3286,8 @@ export class SceneRenderer {
   /**
    * The sun's focus maps of the frame (before updateFrame): each one's view into its cascade
    * slot (to render it) and into the shaders' `LightShadows` (to sample it), with its texel
-   * size and depth bias; none turns them off.
+   * size, depth bias, the share of its quarter its size fills and its fade; none turns them
+   * off.
    */
   updateFocusShadows(focus: readonly FocusShadow[]): void {
     const data = this.#lightShadowData;
@@ -3282,7 +3297,12 @@ export class SceneRenderer {
       if (!shadow) continue;
       data.set(shadow.viewProj, FOCUS_FLOATS_START + i * 16);
       data.set(
-        [shadow.texelSize, (FOCUS_DEPTH_BIAS_TEXELS * shadow.texelSize) / shadow.depthRange, 0, 0],
+        [
+          shadow.texelSize,
+          (FOCUS_DEPTH_BIAS_TEXELS * shadow.texelSize) / shadow.depthRange,
+          shadow.size / FOCUS_MAP_SIZE,
+          shadow.fade,
+        ],
         FOCUS_FLOATS_START + MAX_FOCUS_SHADOWS * 16 + i * 4,
       );
       this.#device.queue.writeBuffer(
@@ -3301,6 +3321,19 @@ export class SceneRenderer {
       FOCUS_FLOATS_START,
       LIGHT_SHADOW_FLOATS - FOCUS_FLOATS_START,
     );
+  }
+
+  /**
+   * The bodies of the frame's focus maps, in their order: the draws of each scene take its
+   * map (the original marks the actor's pixels in the stencil with the map's number, so a
+   * focus map shades its actor alone); every other scene takes none.
+   */
+  updateFocusScenes(scenes: readonly GpuScene[]): void {
+    for (const scene of this.#focusScenes) {
+      if (!scenes.includes(scene)) scene.lightLists?.setFocus(0);
+    }
+    this.#focusScenes = scenes.slice(0, MAX_FOCUS_SHADOWS);
+    this.#focusScenes.forEach((scene, i) => scene.lightLists?.setFocus(i + 1));
   }
 
   /**
@@ -4505,6 +4538,19 @@ export class SceneRenderer {
   }
 
   /**
+   * Whether the last frame's view held one of a scene's shown draws (its bound within the
+   * camera's frustum; the bone LOD's test of an actor seen, animated-skeleton.ts).
+   */
+  seen(scene: GpuScene): boolean {
+    const planes = this.#frame.planes;
+    for (const draw of scene.draws) {
+      if (draw.visibility?.hidden) continue;
+      if (draw.firstPerson || sphereVisible(planes, draw.center, draw.radius)) return true;
+    }
+    return false;
+  }
+
+  /**
    * Fades a scene's parts (sky objects during weather changes): their material alpha times
    * `fade`.
    */
@@ -4667,6 +4713,19 @@ export class SceneRenderer {
     ) {
       lists.markDirty(slot);
     }
+  }
+
+  /**
+   * A land quadrant's lights this frame (light-lists.ts 'land'), by its bound, from the lights
+   * the last updateFrame took as candidates; written as a list at `out[at..at + 4]`.
+   */
+  chooseLandLights(
+    center: readonly [number, number, number],
+    radius: number,
+    out: Uint32Array,
+    at = 0,
+  ): void {
+    selectObjectLights(this.#lightKeys, this.#lightKeyCount, center, radius, 0, out, at, 'land');
   }
 
   /** Uploads the light lists the draws of these scenes chose (#chooseLights). */

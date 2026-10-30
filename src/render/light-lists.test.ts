@@ -99,4 +99,20 @@ describe('selectObjectLights', () => {
     // An object in no room keeps every light.
     expect(select(lights, [0, 0, 0], 10, 0)).toHaveLength(3);
   });
+
+  it("keeps a land quadrant's own list of seven, without the lights that leave land unlit", () => {
+    const unlit = { ...candle(0), lightsLand: false };
+    const lights = [
+      unlit,
+      { ...unlit, shadowed: true },
+      { ...candle(0), shadowed: true },
+      ...Array.from({ length: 8 }, (_, i) => candle(i)),
+    ];
+    const out = new Uint32Array(LIGHT_LIST_WORDS);
+    selectObjectLights(keysOf(lights), lights.length, [0, 0, 0], 10, 0, out, 0, 'land');
+    // The shadow light that lights land first, then the list's first six that do.
+    expect(unpackObjectLights(out)).toEqual([2, 3, 4, 5, 6, 7, 8]);
+    // Objects keep the lights that leave land unlit.
+    expect(select(lights, [0, 0, 0], 10).slice(0, 3)).toEqual([1, 2, 0]);
+  });
 });

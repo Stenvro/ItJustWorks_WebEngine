@@ -16,13 +16,27 @@ An item is **done** only when every use in the data is drawn as the original dra
 items say why; **n/a** items draw nothing (data for other systems, slots the type and flags do
 not sample, flags xEdit and nif.xml call unused).
 
-## Count (2026-10-30, round 10)
+## Count (2026-10-30, round 11, part B)
 
 | Part       | Items | Done | Open | n/a |
 | ---------- | ----- | ---- | ---- | --- |
-| Systems    | 79    | 73   | 6    | 0   |
+| Systems    | 84    | 76   | 8    | 0   |
 | Data sweep | 465   | 426  | 1    | 38  |
-| **Total**  | 544   | 499  | 7    | 38  |
+| **Total**  | 549   | 502  | 9    | 38  |
+
+Done in round 11, part B (lights, shadows, actors), all observed in the original: land's own
+light lists (each quadrant a geometry of its own: seven lights by its bound, the shadow lights
+first, none whose reference does not light landscape, shadow lights included); focus maps hold
+their actor alone and shade only its pixels (the original marks them in the stencil; ours names
+the map in the actor's scene), sized by the actor's distance to the camera
+(fFocusShadowMapDoubleEveryXUnit) and faded by its key (fFadingFracStart), the cascades keeping
+its shadow on everything else; an actor the camera did not see animates its minimum bones alone;
+the kill cameras' shots measured from the attacker's WEAPON or torso node and the target's torso
+node, held at the shot's start without the follow flags, the look between the actors by Target %
+Between Actors, and turned by the model root's own rotation where its keys turn it; a hit's
+decal on an actor's rigid shapes (helmet, shield) is its own on each shape, hung on its node,
+under the plain decals' limits, and every skinned shape's decal counts against the skin limits.
+New open rows: 80 and 82 to 84 (each with what of it stays unread).
 
 Done in round 10, all observed in the original: the water material's setup, which WATR value
 the engine hands each of the water shader's constants (docs/rendering.md, "The material
@@ -158,14 +172,14 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 
 ## Next biggest open items
 
-1. **Bone LOD for actors the camera does not see** and the kill cameras' own turns and the bone a shot's
-   location is measured from (camera and animation rules still inferred).
-2. **IBLF lens flare** (its textures are Effects\LensFlares\Ramps.dds and Masks.dds);
+1. **IBLF lens flare** (its textures are Effects\LensFlares\Ramps.dds and Masks.dds);
    **WATR NAM5** (the flow-map techniques' terms are read; the cell water's texture coordinates
-   and the composite flow map's placement unread); several water planes' cubes; land's lists of
-   seven per quad; focus maps of their actor alone; the character light's luminance texture
-   (slot 11, read at (1, 1): which target fills it); the underwater colour.
-3. Geometry decals on rigid worn shapes (ours project).
+   and the composite flow map's placement unread); several water planes' cubes; the character
+   light's luminance texture (slot 11, read at (1, 1): which target fills it); the underwater
+   colour.
+2. The details rows 80 and 82 to 84 leave unread: how the shadow mask mixes a fading focus map,
+   the kill cameras' lead actor and near-target cut-away, the plain decals' spacing on a node,
+   the first bone of an unseen actor whose root left its bound.
 
 ## Systems
 
@@ -173,14 +187,14 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 | --- | ------------------------------------------------------------------ | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | Per-object light lists (7 point lights, 4 shadow lights)           | done   | light-lists.ts                                                                                                                                                                                                                                                                                                              |
 | 2   | The order of a geometry's own light list                           | done   | light-lists.ts: the order lights joined the scene (PointLight.order), shadow lights first                                                                                                                                                                                                                                   |
-| 3   | Land's own light lists (lights flagged to light land)              | open   | the flag is read (frame.wgsl landLightAt); land keeps no lists of seven per quad yet                                                                                                                                                                                                                                        |
+| 3   | Land's own light lists (lights flagged to light land)              | done   | light-lists.ts 'land', terrain.ts: each land quadrant its own list of seven by its bound, shadow lights first, no light that does not light landscape (list or shadow)                                                                                                                                                      |
 | 4   | Particle systems' own light lists                                  | done   | scene-renderer #chooseSlotLights by the particles' bound (an effect's list)                                                                                                                                                                                                                                                 |
 | 5   | Effect shaders' light list (shadow lights left out)                | done   | light-lists.ts 'effect': four lights at most, never a shadow light                                                                                                                                                                                                                                                          |
 | 6   | Spot lights' cones (LIGH FOV, XLIG offsets)                        | done   | cell-loader lightCone                                                                                                                                                                                                                                                                                                       |
 | 7   | Light flicker and pulse                                            | done   | light-flicker.ts                                                                                                                                                                                                                                                                                                            |
 | 8   | Sun shadow cascades                                                | done   | shadow-cascades.ts                                                                                                                                                                                                                                                                                                          |
 | 9   | Focus shadows                                                      | done   | focus-shadows.ts                                                                                                                                                                                                                                                                                                            |
-| 10  | Whether focus maps draw only their actor                           | open   | ours draw every caster in their column                                                                                                                                                                                                                                                                                      |
+| 10  | Whether focus maps draw only their actor                           | done   | focus-shadows.ts: only their actor, and they shade only its pixels (its scene's draws name the map); the cascades keep its shadow on the rest; each map's size by its distance to the camera                                                                                                                                |
 | 11  | Shadow lights: omnidirectional, spot, hemisphere                   | done   | light-shadows.ts                                                                                                                                                                                                                                                                                                            |
 | 12  | Fog: weather, XCLL and LGTM (near, far, power, max)                | done   | frame.wgsl                                                                                                                                                                                                                                                                                                                  |
 | 13  | Underwater fog                                                     | done   | underwater.ts                                                                                                                                                                                                                                                                                                               |
@@ -250,6 +264,11 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 | 77  | Water: the reflection in interiors and of several planes           | open   | cube maps in place of the reflection are done (CELL and WRLD XWEM, bUseCubeMapReflections); open: several planes (the original a cube per water height; ours the nearest) and what an interior without a map binds (ours black)                                                                                             |
 | 78  | Havok float slots: hkVis visibility, hkPhoneme                     | done   | behavior-runtime.ts float slot blocks, skeleton.ts showBySlots; hkPhoneme: no skeleton has the slots                                                                                                                                                                                                                        |
 | 79  | Mesh particles' Havok bodies against the world's shapes            | done   | particle-bodies.ts: per particle a copy of the node's body in the physics world, started at its velocity and spin, its mesh following it                                                                                                                                                                                    |
+| 80  | Bone LOD of actors the camera does not see                         | open   | done: an unseen actor (no draw in the last frame's view; headless: unknown) animates its minimum bones alone (behavior-runtime.ts seen); unread: the first bone kept animating when the root left the 3D's bound, the actor flag that counts one as seen                                                                    |
+| 81  | Kill cameras: the model's own turn                                 | done   | camera-model.ts shotAxes: the look at the target turned by the root's local rotation where its controller has rotation keys (177 of 191 shots; tools/camera-models.ts)                                                                                                                                                      |
+| 82  | Kill cameras: the node a shot is measured from and looks at        | open   | done: the attacker's WEAPON or torso node, the target's torso node, the projectile, the follow flags, Target % Between Actors (killmove-camera.ts #shotPoint); open: the lead actor's side (5 shots; ours the attacker), the near-target cut-away's condition                                                               |
+| 83  | Decals on actors' rigid shapes                                     | open   | done: a plain decal of its own per rigid shape in the box, its triangles copied onto its node (skinned-decal.ts rigidDecalPart), iMaxDecalsPerFrame; open: the spacing that skips one too near a decal on the same node (factor unread)                                                                                     |
+| 84  | Focus shadows: a fading map against the cascades                   | open   | each map's fade by its key (fFadingFracStart) is read; how the shadow mask mixes it is not (ours: mixes the focus result into the cascades' by it)                                                                                                                                                                          |
 
 ## Data sweep
 

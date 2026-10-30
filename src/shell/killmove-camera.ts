@@ -3,8 +3,11 @@
 // its shots (CAMS) play in turn, each its Max Time: the camera where its model puts it
 // (meshes\cameras\*.nif: the root node's place moved by its keys or along its path, the field of
 // view by the NiCamera's BSFrustumFOVController; src/render/camera-model.ts), from the shot's
-// start, in the frame of the shot's location (the attacker, the target), looking at its target,
-// the world's clock at the shot's global time multiplier (the slow motion), the shot's image-space modifier cross-faded in (fVATSImageSpaceTransitionTime). A
+// start, measured from its location's node (the attacker's torso or WEAPON node, the target's
+// torso, the projectile) in the attacker's frame, looking at its target's node and turned by the
+// model root's own rotation (#shotPoint, shotAxes), the world's clock at the shot's global time
+// multiplier (the slow motion), the shot's image-space modifier cross-faded in
+// (fVATSImageSpaceTransitionTime). A
 // first-person shot leaves the player's own view. The conditions run on the attacker (the
 // victim their target) with the kill (KillCameraContext): GetVATSValue's weapon, action and
 // distance, and the VATS sides' functions (GetVATS{Left,Right,Back,Front}AreaFree: the free
@@ -16,6 +19,7 @@ import {
   type ShotTransition,
 } from '../gameplay/combat/kill-camera-transition.ts';
 import {
+  CameraShotFlag,
   CameraSubject,
   parseCameraPath,
   parseCameraShot,
@@ -33,7 +37,13 @@ import type { KillCameraContext } from '../scripting/runtime/condition-values.ts
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { ObjectHandle } from '../scripting/values.ts';
 import { meshPath } from '../world/actors.ts';
-import { readCameraModel, sampleCameraModel, type CameraModel } from '../render/camera-model.ts';
+import {
+  readCameraModel,
+  rootRotation,
+  sampleCameraModel,
+  shotAxes,
+  type CameraModel,
+} from '../render/camera-model.ts';
 import type { GameSession } from './game-session.ts';
 
 /** CPTH DATA bit 7: the path does not need shots ("Default", not "..., Must Have Camera Shots"). */
@@ -69,6 +79,14 @@ export interface KillmoveSubjects {
   readonly attackerRef: number;
   readonly targetRef: number;
   readonly physics: PhysicsWorld;
+  /**
+   * Where a node of one of the kill is in the world: its torso (its race's body part data's
+   * torso part's node) or its WEAPON node; undefined when it has none (its feet stand in, as
+   * the original's 3D root). Absent: no skeleton is known (the feet, the look at chest height).
+   */
+  readonly node?: (reference: number, which: 'torso' | 'weapon') => Vec3 | undefined;
+  /** An actor's height (its middle is a between-actors look's height; none: a chest's). */
+  readonly height?: (reference: number) => number;
 }
 
 /** A shot to play: its camera model (where it sits in its subject's frame), for how long. */
@@ -85,6 +103,8 @@ export class KillmoveCamera implements Camera {
   fovY = DEFAULT_FOV;
   position: Vec3 = [0, 0, 0];
   forward: Vec3 = [0, 1, 0];
+  /** The view's up (a shot's own turn may roll it). */
+  up: Vec3 = [0, 0, 1];
   readonly #shots: readonly Shot[];
   readonly #subjects: KillmoveSubjects;
   #shot = 0;
@@ -93,6 +113,8 @@ export class KillmoveCamera implements Camera {
   #elapsed = 0;
   /** The move into the current shot: where the last shot ended, the seconds of it so far. */
   #dolly: { readonly from: Vec3; seconds: number } | undefined;
+  /** The current shot's location and target where they were as it began (its follow flags). */
+  #spots: { readonly shot: number; location?: Vec3; target?: Vec3 } | undefined;
   /**
    * The radial blur's strength now (the move between shots), 0 when none. TODO(M13): the
    * image-space stack takes no free radial blur yet (it needs a neutral modifier frame).
@@ -208,21 +230,33 @@ export class KillmoveCamera implements Camera {
       return;
     }
     this.#projectile = subjects.projectile?.() ?? this.#projectile;
-    const projectile = this.#projectile;
-    const location =
-      current.record.location === CameraSubject.target
-        ? target
-        : current.record.location === CameraSubject.projectile && projectile
-          ? projectile.position
-          : attacker;
-    // The frame: the projectile's flight for a shot that rides it, else the attacker's facing.
+    const record = current.record;
+    // Where the shot is measured from and what it looks at (shotPoint); without the follow
+    // flags, where they were as the shot began.
+    if (this.#spots?.shot !== this.#shot) this.#spots = { shot: this.#shot };
+    const spots = this.#spots;
+    const follows = (flag: number): boolean => (record.flags & flag) !== 0;
+    const live = (subject: number, follow: boolean, held: Vec3 | undefined): Vec3 =>
+      follow || !held ? this.#shotPoint(subject, record.flags, attacker, target) : held;
+    const location = live(
+      record.location,
+      follows(CameraShotFlag.positionFollowsLocation),
+      spots.location,
+    );
+    spots.location ??= location;
+    const held = live(record.target, follows(CameraShotFlag.rotationFollowsTarget), spots.target);
+    spots.target ??= held;
+    // Target % Between Actors: a point that share of the way from the attacker's middle to the
+    // target's (observed in the original: each at half its height over its feet).
+    const share = record.targetPercentBetweenActors / 100;
+    const looked = share > 0 ? this.#between(attacker, target, share) : held;
+    // The frame the model's place turns with: the attacker's facing, but the target's for a
+    // shot at the target that follows its bone (observed in the original).
     const heading =
-      current.record.location === CameraSubject.projectile && projectile
-        ? projectile.heading
+      record.location === CameraSubject.target && !follows(CameraShotFlag.dontFollowBone)
+        ? subjects.targetHeading()
         : subjects.attackerHeading();
     // The model's camera at the shot's time (every vanilla camera model has an NiCamera).
-    // TODO(M13): the model's own turn (small turns of its root about looking at the target) and
-    // the bone its location is measured from are not applied; it looks at its target.
     const sample = current.model && sampleCameraModel(current.model, this.#time);
     this.fovY = sample?.fovY ?? DEFAULT_FOV;
     const [ox, oy, oz] = sample?.position ?? DEFAULT_OFFSET;
@@ -254,20 +288,51 @@ export class KillmoveCamera implements Camera {
         this.radialBlur = transitionBlur(progress, settings.blurCap);
       }
     }
-    const onProjectile = current.record.target === CameraSubject.projectile && projectile;
-    const look = onProjectile
-      ? projectile.position
-      : current.record.target === CameraSubject.attacker
-        ? attacker
-        : target;
-    const at: Vec3 = [look[0], look[1], look[2] + (onProjectile ? 0 : CHEST * 0.75)];
-    const way: Vec3 = [
-      at[0] - this.position[0],
-      at[1] - this.position[1],
-      at[2] - this.position[2],
+    // Looking at its target, turned by the model root's own rotation where its keys turn it.
+    const turn =
+      current.model?.turns === true ? rootRotation(current.model, this.#time) : undefined;
+    const axes = shotAxes(this.position, looked, turn);
+    this.forward = axes.forward;
+    this.up = axes.up;
+  }
+
+  /**
+   * A shot's location or target point (observed in the original): the projectile; the target's
+   * torso node (the original's VATS-chosen part, none in a killmove, else its torso part's
+   * node); the attacker's WEAPON node for a shot that follows the bone, else its torso node.
+   * An actor without that node is measured from its feet (its 3D root); with no skeleton known
+   * at all, the look goes to chest height. The lead actor is the attacker here.
+   * TODO(M13): the shot that ends once its camera comes within fVATSCameraCutAwayDistance of
+   * its target (the original's condition on the player is unread) is not applied.
+   */
+  #shotPoint(subject: number, flags: number, attacker: Vec3, target: Vec3): Vec3 {
+    const subjects = this.#subjects;
+    const projectile = this.#projectile;
+    if (subject === CameraSubject.projectile && projectile) return projectile.position;
+    const node = subjects.node;
+    const isTarget = subject === CameraSubject.target;
+    const reference = isTarget ? subjects.targetRef : subjects.attackerRef;
+    const feet = isTarget ? target : attacker;
+    if (!node) return [feet[0], feet[1], feet[2] + CHEST * 0.75];
+    const followBone = !isTarget && (flags & CameraShotFlag.dontFollowBone) === 0;
+    return (followBone ? node(reference, 'weapon') : undefined) ?? node(reference, 'torso') ?? feet;
+  }
+
+  /** The point `share` of the way from the attacker's middle to the target's. */
+  #between(attacker: Vec3, target: Vec3, share: number): Vec3 {
+    const subjects = this.#subjects;
+    const middle = (feet: Vec3, reference: number): Vec3 => [
+      feet[0],
+      feet[1],
+      feet[2] + (subjects.height ? subjects.height(reference) / 2 : CHEST * 0.75),
     ];
-    const length = Math.hypot(way[0], way[1], way[2]) || 1;
-    this.forward = [way[0] / length, way[1] / length, way[2] / length];
+    const from = middle(attacker, subjects.attackerRef);
+    const to = middle(target, subjects.targetRef);
+    return [
+      from[0] + (to[0] - from[0]) * share,
+      from[1] + (to[1] - from[1]) * share,
+      from[2] + (to[2] - from[2]) * share,
+    ];
   }
 
   viewProjection(aspect: number, out: Mat4 = new Float32Array(16)): Mat4 {
@@ -276,7 +341,7 @@ export class KillmoveCamera implements Camera {
       this.position[1] + this.forward[1],
       this.position[2] + this.forward[2],
     ];
-    const view = lookAt(this.position, target, [0, 0, 1]);
+    const view = lookAt(this.position, target, this.up);
     const projection = perspectiveReversedZ(this.fovY, aspect, this.near);
     return multiply(projection, view, out);
   }

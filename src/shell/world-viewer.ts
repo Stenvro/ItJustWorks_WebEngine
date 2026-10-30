@@ -1535,6 +1535,11 @@ export class WorldViewer {
       'Display',
       'fMaxFocusShadowMapDistance',
     );
+    this.#renderer.focusShadowFadeStart = session.ini.number('Display', 'fFadingFracStart');
+    this.#renderer.focusShadowDoubleEvery = session.ini.number(
+      'Display',
+      'fFocusShadowMapDoubleEveryXUnit',
+    );
     this.#renderer.setView({
       scenes: () => this.#readyScenes(),
       trees: () => this.#lod?.trees(),

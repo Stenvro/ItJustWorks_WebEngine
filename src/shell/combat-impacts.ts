@@ -15,9 +15,17 @@ import type { GpuDecals } from '../render/decals.ts';
 import type { RenderPort } from '../render/render-port.ts';
 import { invert } from '../render/frustum.ts';
 import type { GpuModel } from '../render/gpu-model.ts';
-import { multiply, transformPoint, type Mat4, type Vec3 } from '../render/math.ts';
+import { identity, multiply, transformPoint, type Mat4, type Vec3 } from '../render/math.ts';
 import type { GpuScene, ModelInstance } from '../render/scene-renderer.ts';
-import { skinnedDecalModel, type DecalPose, type DecalTarget } from '../render/skinned-decal.ts';
+import {
+  rigidDecalPart,
+  skinnedDecalMaterial,
+  skinnedDecalPart,
+  type DecalPose,
+  type DecalTarget,
+  type SkinnedDecalLook,
+} from '../render/skinned-decal.ts';
+import type { ModelData, ModelPart } from '../render/model-data.ts';
 import {
   expireDecals,
   parseTextureSet,
@@ -55,12 +63,17 @@ export interface DecalBody extends BleedingBody {
   readonly instances: readonly ModelInstance[];
 }
 
-/** A hit's blood on an actor's skin: its decal shapes, drawn with the actor's pose. */
+/**
+ * A hit's blood on an actor: its decal shapes on the skinned shapes (drawn with the actor's
+ * pose) and on the rigid ones (each on its shape's node), and how many of each.
+ */
 interface SkinDecal {
   readonly actor: number;
   readonly model: GpuModel;
   readonly scene: GpuScene;
   readonly until: number;
+  readonly skinned: number;
+  readonly rigid: number;
 }
 
 /** An impact's decal (IPCT DODT and DNAM). */
@@ -95,6 +108,8 @@ export class CombatImpacts {
   /** Skinned decals on actors (oldest first), and how many were made this frame. */
   readonly #skin: SkinDecal[] = [];
   #skinMadeThisFrame = 0;
+  /** Decal shapes on actors' rigid shapes made this frame (iMaxDecalsPerFrame). */
+  #rigidMadeThisFrame = 0;
   readonly #decalData = new Map<number, Promise<ImpactDecal | undefined>>();
   /** Seconds now (the decals' lifetimes run on it). */
   readonly #now: () => number;
@@ -131,19 +146,20 @@ export class CombatImpacts {
   /** The skinned decals on actors (drawn with their actors' poses), those past their time gone. */
   *scenes(): Iterable<GpuScene> {
     this.#expire();
-    // A new frame: the skinned decals made per frame are counted again.
+    // A new frame: the decals made per frame are counted again.
     this.#skinMadeThisFrame = 0;
+    this.#rigidMadeThisFrame = 0;
     for (const decal of this.#skin) yield decal.scene;
   }
 
   /**
    * The impact's blood decal on the body it struck (an actor's skin, as its pose moves): its box
    * at the hit, facing along the blow. With `actor` and the body's drawn instances, it is made
-   * as the original makes skinned decals (skinned-decal.ts): the triangles of the skinned shapes
-   * in its box copied into decal shapes skinned to the same bones. Where no skinned shape lies
-   * in the box, the decal is projected onto whatever of the body does, following the body's
-   * nearest node. TODO(M13): the original puts geometry decals on rigid worn shapes; ours
-   * project.
+   * as the original makes decals on an actor's shapes (#actorDecal, skinned-decal.ts): each
+   * shape in the box takes its own, a skinned shape's triangles in the box copied into a decal
+   * shape skinned to the same bones, a rigid shape's into one on that shape's node; where no
+   * shape lies in the box there is none. A body known only by its pose (no drawn instances)
+   * takes the decal projected onto whatever of it lies in the box, following its nearest node.
    */
   async bodyDecal(
     impact: Impact,
@@ -161,13 +177,9 @@ export class CombatImpacts {
       this.#seed++,
       decalFrame(point, [-way[0], -way[1], -way[2]]),
     );
-    if (
-      actor !== undefined &&
-      'instances' in now &&
-      this.#session.ini.bool('Decals', 'bSkinnedDecals')
-    ) {
-      const made = await this.#skinDecal(data, placed, now, actor);
-      if (made !== 'none') return;
+    if (actor !== undefined && 'instances' in now) {
+      await this.#actorDecal(data, placed, now, actor);
+      return;
     }
     const node = nearestNode(now, point);
     if (node < 0) return;
@@ -203,14 +215,20 @@ export class CombatImpacts {
   }
 
   /**
-   * A skinned decal on an actor, under the original's limits (observed in the original): none
-   * once [Decals] uMaxSkinDecals live, once [Display] iMaxSkinDecalsPerFrame were made this
-   * frame, or once the actor carries [Decals] uMaxSkinDecalPerActor; the decal is then not made
-   * (the older ones stay). Shapes hidden, shapes that are decals themselves and, without
-   * [Decals] bAllowDecalsOnAlpha, alpha-blended or alpha-tested shapes take none.
-   * 'none': no skinned shape lies in the box.
+   * A hit's decal on an actor's shapes, as the original makes them (observed in the original):
+   * it visits the shapes of the actor's 3D in its box, leaving out hidden shapes, shapes that
+   * are decals themselves and, without [Decals] bAllowDecalsOnAlpha, alpha-blended or
+   * alpha-tested ones. A skinned shape takes a skinned decal while fewer than [Decals]
+   * uMaxSkinDecals live, fewer than [Display] iMaxSkinDecalsPerFrame were made this frame and
+   * the actor carries fewer than [Decals] uMaxSkinDecalPerActor (each shape's decal counts;
+   * without [Decals] bSkinnedDecals, none); a rigid shape (a helmet, a shield, a worn weapon)
+   * takes a plain decal on its own geometry, hung on its node, while fewer than [Display]
+   * iMaxDecalsPerFrame were made this frame (and fewer than [Decals] uMaxDecals live). Past a
+   * limit the decal is not made (the older ones stay).
+   * TODO(M13): the original skips a plain decal too near one already on the same node (its
+   * spacing factor is unread). 'none': no shape lies in the box.
    */
-  async #skinDecal(
+  async #actorDecal(
     data: ImpactDecal,
     placed: { readonly box: Mat4; readonly rect: readonly [number, number, number, number] },
     body: DecalBody,
@@ -218,72 +236,135 @@ export class CombatImpacts {
   ): Promise<'made' | 'refused' | 'none'> {
     const ini = this.#session.ini;
     this.#expire();
-    if (
-      this.#skin.length >= ini.number('Decals', 'uMaxSkinDecals') ||
-      this.#skinMadeThisFrame >= ini.number('Display', 'iMaxSkinDecalsPerFrame') ||
-      this.#skin.filter((d) => d.actor === actor).length >=
-        ini.number('Decals', 'uMaxSkinDecalPerActor')
-    ) {
-      return 'refused';
-    }
+    const sum = (decals: readonly SkinDecal[], of: (d: SkinDecal) => number): number =>
+      decals.reduce((total, d) => total + of(d), 0);
+    let skinLeft = ini.bool('Decals', 'bSkinnedDecals')
+      ? Math.min(
+          ini.number('Decals', 'uMaxSkinDecals') - sum(this.#skin, (d) => d.skinned),
+          ini.number('Display', 'iMaxSkinDecalsPerFrame') - this.#skinMadeThisFrame,
+          ini.number('Decals', 'uMaxSkinDecalPerActor') -
+            sum(
+              this.#skin.filter((d) => d.actor === actor),
+              (d) => d.skinned,
+            ),
+        )
+      : 0;
+    let rigidLeft = Math.min(
+      ini.number('Display', 'iMaxDecalsPerFrame') - this.#rigidMadeThisFrame,
+      ini.number('Decals', 'uMaxDecals') - this.#decals.length - sum(this.#skin, (d) => d.rigid),
+    );
     const onAlpha = ini.bool('Decals', 'bAllowDecalsOnAlpha');
-    const targets: { readonly instance: ModelInstance; readonly target: DecalTarget }[] = [];
+    const textureSet = data.textureSet;
+    const look: SkinnedDecalLook = {
+      textures: textureSet.textures,
+      flags: data.decal.flags,
+      shininess: data.decal.shininess,
+      color: data.decal.color,
+      noSpecular: (textureSet.flags & TextureSetFlag.noSpecularMap) !== 0,
+      modelSpaceNormals: (textureSet.flags & TextureSetFlag.modelSpaceNormals) !== 0,
+    };
+    const { material, alpha } = skinnedDecalMaterial(look);
+    const parts: ModelPart[] = [];
+    /** The skeleton node each rigid decal shape hangs on (the decal instance's pose nodes). */
+    const hung: number[] = [];
+    let skinned = 0;
+    let rigid = 0;
+    let found = false;
+    let first: ModelInstance | undefined;
     for (const instance of body.instances) {
       if (!instance.pose) continue;
       for (const { part } of instance.model.parts) {
-        if (!part.skin || part.weaponBlood) continue;
+        if (part.weaponBlood) continue;
         if (instance.partShown && !instance.partShown(part)) continue;
         if (((part.material?.flags1 ?? 0) & SLSF1_DECAL) !== 0) continue;
         if (!onAlpha && ((part.alpha?.flags ?? 0) & 0x201) !== 0) continue;
-        const visible = instance.partitionVisible;
-        targets.push({
-          instance,
-          target: {
+        if (part.skin) {
+          const visible = instance.partitionVisible;
+          const target: DecalTarget = {
             part,
             world: instance.world,
             pose: body.pose,
             ...(visible && { partitionVisible: (bodyPart: number) => visible(bodyPart, part) }),
-          },
-        });
+          };
+          const made = skinnedDecalPart(
+            target,
+            placed.box,
+            placed.rect,
+            material,
+            alpha,
+            look.color,
+          );
+          if (!made) continue;
+          found = true;
+          if (skinLeft <= 0) continue;
+          skinLeft--;
+          skinned++;
+          parts.push(made);
+        } else {
+          // Where the shape is drawn now: on its skeleton node, or as its model places it.
+          const node = part.node !== undefined ? (instance.poseNodes?.[part.node] ?? -1) : -1;
+          const world =
+            node >= 0
+              ? multiply(
+                  multiply(
+                    instance.world,
+                    instance.pose.worlds.subarray(node * 16, node * 16 + 16),
+                  ),
+                  part.local ?? identity(),
+                )
+              : multiply(instance.world, part.world);
+          const made = rigidDecalPart(
+            { part, world },
+            placed.box,
+            placed.rect,
+            material,
+            alpha,
+            look.color,
+            node >= 0 ? hung.length : undefined,
+          );
+          if (!made) continue;
+          found = true;
+          if (rigidLeft <= 0) continue;
+          rigidLeft--;
+          rigid++;
+          if (node >= 0) hung.push(node);
+          parts.push(made);
+        }
+        first ??= instance;
       }
     }
-    const textureSet = data.textureSet;
-    const model = skinnedDecalModel(
-      targets.map((t) => t.target),
-      placed.box,
-      placed.rect,
-      {
-        textures: textureSet.textures,
-        flags: data.decal.flags,
-        shininess: data.decal.shininess,
-        color: data.decal.color,
-        noSpecular: (textureSet.flags & TextureSetFlag.noSpecularMap) !== 0,
-        modelSpaceNormals: (textureSet.flags & TextureSetFlag.modelSpaceNormals) !== 0,
-      },
-    );
-    if (!model) return 'none';
-    this.#skinMadeThisFrame++;
+    if (!found) return 'none';
+    if (parts.length === 0 || !first) return 'refused';
+    this.#skinMadeThisFrame += skinned;
+    this.#rigidMadeThisFrame += rigid;
+    const model: ModelData = {
+      parts,
+      center: parts[0]?.center ?? [0, 0, 0],
+      radius: Math.max(...parts.map((part) => part.radius)),
+      skipped: [],
+      editorMarker: false,
+      particles: [],
+      addons: [],
+    };
     const gpu = await this.#renderer.scene.createModel(model, this.#session.textures);
     // Drawn as the body is: its placement, motion, visibility and pose.
-    const first = targets[0]?.instance;
-    const scene =
-      first &&
-      this.#renderer.scene.createScene([
-        {
-          model: gpu,
-          world: first.world,
-          ...(first.motion && { motion: first.motion }),
-          ...(first.visibility && { visibility: first.visibility }),
-          ...(first.pose && { pose: first.pose }),
-          ...(first.partitionVisible && { partitionVisible: first.partitionVisible }),
-        },
-      ]);
+    const scene = this.#renderer.scene.createScene([
+      {
+        model: gpu,
+        world: first.world,
+        ...(first.motion && { motion: first.motion }),
+        ...(first.visibility && { visibility: first.visibility }),
+        ...(first.pose && { pose: first.pose }),
+        ...(hung.length > 0 && { poseNodes: Int16Array.from(hung) }),
+        ...(first.partitionVisible && { partitionVisible: first.partitionVisible }),
+      },
+    ]);
     if (!scene) {
       gpu.destroy();
       return 'made';
     }
     const lifetime = ini.number('Display', 'fDecalLifetime');
-    this.#skin.push({ actor, model: gpu, scene, until: this.#now() + lifetime });
+    this.#skin.push({ actor, model: gpu, scene, until: this.#now() + lifetime, skinned, rigid });
     return 'made';
   }
 
