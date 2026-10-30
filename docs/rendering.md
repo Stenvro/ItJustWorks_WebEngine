@@ -83,21 +83,17 @@ pose under both world matrices: the instance's move is followed, a limb's swing 
 not (TODO(M13): the last frame's bone palettes). Opaque draws only; blended parts and particles
 are reprojected by the depth behind them.
 
-**God rays** (`sun-effects.ts`, bVolumetricLightingEnable): the weather's volumetric lighting
-(VOLI by time of day: intensity × [Display] fVolumetricLightingIntensity, the sun's colour
-mixed with its custom colour, `world/volumetric-lighting.ts`) gathered at a quarter of the
-resolution: each pixel takes the share of open sky (the opaque depth) along its line to the
-light's place on the screen, fading along the way (reach: the range factor / 40), so what
-stands before the sky cuts the light into shafts; times the share of air in front of the pixel
-(its distance over 8000 units, the shadow distance; 1 for the sky) and the original's phase
-function, `(1 − g²) / (4π (1 − g cos))` with g = the phase scattering, mixed with 1 by the phase
+**Volumetric lighting** (`volumetric-volume.ts`, `shaders/volumetric.wgsl`,
+bVolumetricLightingEnable): the weather's volumetric lighting (VOLI by time of day: intensity ×
+[Display] fVolumetricLightingIntensity, the sun's colour mixed with its custom colour,
+`world/volumetric-lighting.ts`) scattered through the original's froxel volume over the view
+("Volumetric lighting" below). The phase function is the original's,
+`(1 − g²) / (4π (1 − g cos))` with g = the phase scattering, mixed with 1 by the phase
 contribution (`godRayPhase`; the phase contribution weighs the function, it is no strength).
 With the vanilla values that weight stays between about 0.15 and 0.3: an even haze, a little
-stronger towards the sun. The light does not depend on the sky's brightness (gathering the
-sky's colour, a bright sky made white streaks across it). TODO(M13): the engine scatters through a froxel volume
-lit by the shadow maps (ISVolumetricLighting*: density noise by size, wind and falling speed,
-the depth distribution by the range factor); the volume, the density noise and the shafts
-through openings in front of the camera (not only towards the sky) are not built.
+stronger towards the sun, cut into shafts by the shadows of the first two cascades (also
+through openings in front of the camera, not only towards the sky). The light does not depend
+on the sky's brightness.
 
 **Not yet:** the engine's image-based lens flare of bright lights (bIBLFEnable,
 ISIBLensFlare; vanilla SSE has no LENS records, so this is its only lens flare of lights other
@@ -1018,34 +1014,49 @@ level's distance (fBlockLevel0Distance, fBlockLevel1Distance) times a camera fac
 default view, as far as read). Ours does the same (formats/lod.md). Tree LOD is taken to switch the
 same way (not read).
 
-## Volumetric lighting (read from the original; not built)
+## Volumetric lighting
 
-The original scatters the sun's light through a froxel volume over the view, in compute passes:
+The original scatters the sun's light through a froxel volume over the view, in compute passes
+(observed in the original); ours does the same (`volumetric-volume.ts`, `volumetric-data.ts`,
+`shaders/volumetric.wgsl`):
 
 - The volume: [Display] iVolumetricLightingQuality picks Low 160 × 96 × 50, Medium (1, the
   default) 224 × 128 × 70, High 320 × 192 × 90 froxels (width, height, depth slices). A 32³ noise
-  volume (iVolumetricLightingNoiseTexture*) holds the density noise.
-- The depth repartition: a 4096-entry table maps the slice coordinate s (0..1) to the depth along
-  the view, s raised to the range factor (VOLI NNAM; 40 in vanilla), and its inverse (d to the power
-  1 / range factor) for the lookup; a second mode, (3^(s r) − 1) / (3^r − 1), exists for tests.
-  TODO(M13): what depth the table's output stands for (clip depth or a fraction of a distance).
-- Generate (one dispatch, 32 × 32 groups over the width and height, a group per slice): each
-  froxel's density and light, from the sun's direction, the first two shadow cascades' matrices
-  (relative to the camera) and their split depths, the noise scaled by 1 / the density size and
-  offset by its drift, the phase contribution and scattering, the density contribution, and the
-  frame index modulo 8 (a jitter). The noise drifts each frame by the frame time × the density size
-  × the wind's direction × the wind speed, and falls by the falling speed, each times a random
-  share of 0..1.
-- Raymarch: slice by slice from the second, each dispatch adding the slice before into the next
-  (two textures in turn), so each froxel holds the light gathered from the camera to it.
-- Then the blur (horizontal and vertical passes) and the composite, which reads the volume at a
-  pixel's place and its depth through the inverse table, times the intensity (VOLI CNAM ×
-  fVolumetricLightingIntensity) and the colour (the sun's mixed with the custom colour).
-  Temporal accumulation (bVolumetricLightingEnableTemporalAccumulation) blends with the last frame
-  by 0.75. Interiors have none (bVolumetricLightingDisableInterior).
-
-TODO(M13): build it in place of the screen-space god rays (sun-effects.ts); the generate shader's
-exact scattering terms are unread.
+  volume (iVolumetricLightingNoiseTexture*) holds the density noise; the original fills it on the
+  GPU at load (its function unread: ours is a tileable two-octave value noise, TODO(M13)).
+- The depth repartition: two 4096-entry tables, one of x to the range factor (VOLI NNAM; 40 in
+  vanilla), one of x to 1 / the range factor (a second mode, (3^(x r) − 1) / (3^r − 1) and its
+  inverse, exists for tests). The generate pass binds the second: a slice coordinate s (0..1)
+  stands at clip depth s^(1/r) of the camera's projection (D3D's 0 at the near plane, 1 at the
+  far one; the cascades' split distances are handed to the shader as clip depths of the same
+  projection), and the composite finds a pixel's slice by its clip depth to the power r. With the
+  near plane of 15 ([Display] fNearDistance) and r = 40 half the slices lie within some 900
+  units and the last reach tens of thousands. Ours computes the same powers in the shader (the
+  table's 4096 steps are finer than the slices) and keeps the original's near plane for the
+  slices whatever our camera's is.
+- Generate (32 × 32 groups over the width and height, a group per slice): each froxel's density
+  and light, from the sun's direction, the camera's view-projection and its inverse, the first
+  two shadow cascades' matrices and their split depths (with the cascade count and whether
+  shadows are cast at all), the noise scaled by 1 / the density size and offset by its drift plus
+  the camera's place, the phase contribution and scattering, the density contribution, and the
+  frame index modulo 8 (a jitter through the slice). The noise drifts each frame by the frame time
+  × the density size × the wind's direction × the wind speed (against the wind's x, with its y),
+  and falls by the falling speed × the frame time × the density size, each times a random share
+  of 0..1. Ours: the light is the share of the sun the cascades let through (lit beyond the
+  second) times the phase function; the density is 1 mixed with the noise (mean 1) by the
+  density contribution. TODO(M13): the generate shader's exact terms are unread.
+- Temporal accumulation (bVolumetricLightingEnableTemporalAccumulation): each froxel keeps 0.75
+  of the last frame's (fVolumetricLightingTemporalAccumulationFactor); ours reads the last
+  frame's froxel at the same place in the world (its uv and slice under the last camera).
+- Raymarch: slice by slice from the camera, each slice adding the light it scatters towards the
+  eye to what the slices before gathered (the original runs a dispatch per slice with two
+  textures in turn; ours one pass per column). Ours scatters by Beer's law, the density over an
+  air depth of 8000 units (TODO(M13): the original's coefficient).
+- Then the blur (horizontal and vertical passes within each slice; ours a five-tap binomial
+  kernel, TODO(M13)) and the composite, which reads the volume at a pixel's place and its depth
+  through the inverse table, times the intensity (VOLI CNAM × fVolumetricLightingIntensity) and
+  the colour (the sun's mixed with the custom colour), added to the scene. Interiors have none
+  (bVolumetricLightingDisableInterior).
 
 Lag bones (lag-bone.ts): each update the bone covers linear velocity × dt of the way to where its
 parent would put it (at its rest translation), the part beyond the maximum distance at once; it

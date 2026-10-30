@@ -316,7 +316,10 @@ const BLOCKS: Record<string, readonly [Status, string]> = {
   NiPathInterpolator: ['open', 'motion along a path not read'],
   NiLookAtInterpolator: ['open', 'look-at rotation not read'],
   BSFrustumFOVController: ['open', 'parsed; the camera FOV animation unused'],
-  BSDecalPlacementVectorExtraData: ['open', 'blood decal placement on actors (skinned decals)'],
+  BSDecalPlacementVectorExtraData: [
+    'n/a',
+    'editor data (0-2 points each); the original loads it, nothing reads it',
+  ],
   BSBoneLODExtraData: ['open', 'bone LOD unread'],
   NiBSBoneLODController: ['open', 'bone LOD unread'],
   NiMeshParticleSystem: ['open', 'mesh particles not drawn'],

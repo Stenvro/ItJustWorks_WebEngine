@@ -587,7 +587,19 @@ export class WorldSky {
     return {
       lightDirection: state.lightDirection,
       ...(rays.strength > 0 && {
-        rays: { ...rays, reach: Math.min(1, lighting.rangeFactor / 40) },
+        rays: {
+          ...rays,
+          densityContribution: lighting.densityContribution,
+          densitySize: lighting.densitySize,
+          windSpeed: lighting.densityWindSpeed,
+          fallingSpeed: lighting.densityFallingSpeed,
+          rangeFactor: lighting.rangeFactor,
+          // The weather's wind (its direction in degrees, clockwise from north).
+          wind: [
+            Math.sin((state.windDirection * Math.PI) / 180) * state.windSpeed,
+            Math.cos((state.windDirection * Math.PI) / 180) * state.windSpeed,
+          ],
+        },
       }),
       ...(lens &&
         ini.bool('ImageSpace', 'bLensFlare') && {

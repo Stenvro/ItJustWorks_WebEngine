@@ -1451,13 +1451,16 @@ engine's.
   unless bWorldMapNoSkyDepthBlur. The clouds are the map world's WRLD MODL
   (Solstheim: `DLC02\Sky\DLC2WorldMapCloudBank_Low.nif`). Tamriel has none and gets
   `meshes\sky\skyrimworldmapcloudbank.nif`, which no record names.
-- **The relief overlay** (TODO(M13), not drawn yet). The engine lays a tiling normal map over
-  the map's LOD land: [MapMenu] sWorldMapOverlayNormalTexture
+- **The relief overlay** (`lighting.wgsl` worldMapRelief, bound by `world-map-view.ts`). A tiling
+  normal map over the map's LOD land: [MapMenu] sWorldMapOverlayNormalTexture
   (`textures\terrain\worldmapoverlay_n.dds`) at fMapMenuOverlayScale (0.000035) a world unit,
   strength fMapMenuOverlayNormalStrength (1.1); on snow sWorldMapOverlayNormalSnowTexture
   (`worldmapoverlaysnow_n.dds`) at fMapMenuOverlaySnowScale (0.000045), strength
-  fMapMenuOverlayNormalSnowStrength (0.4). Still to read: how the lighting shader's world-map
-  path tells snow and blends the two normals into the LOD land's.
+  fMapMenuOverlayNormalSnowStrength (0.4). Ours projects each along the three world axes,
+  weighed by the land's normal, takes the snow one where the land is bright (the LOD land's
+  blend parameter), and bends the normal by its strength on slopes (almost flat ground keeps its
+  own). TODO(M13): the original shader's exact weights and snow mask (this follows Community
+  Shaders' reading of the world-map path).
 - **Which map.** A world shows its map world's map: its parent's when it uses the parent's map
   data (WRLD PNAM 0x4, as Whiterun's world uses Tamriel's), else its own (WRLD MNAM). Its places
   are moved onto that map by WRLD ONAM: position × scale + offset. Blackreach is scaled 2.5 under

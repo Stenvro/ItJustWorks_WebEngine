@@ -1,31 +1,28 @@
-// The sun's effects over the HDR scene before post-processing (shaders/sun-effects.wgsl): the
-// weather's volumetric lighting as god rays from the light's place on the screen, gathered at a
-// quarter of the resolution and added to the scene, and the weather's lens flare (LENS) as
-// sprites along the sun's screen line, faded by how much of the sun is covered.
+// The sun's effects over the HDR scene before post-processing: the weather's volumetric
+// lighting as the original's froxel volume (volumetric-volume.ts), and the weather's lens flare
+// (LENS, shaders/sun-effects.wgsl) as sprites along the sun's screen line, faded by how much of
+// the sun is covered.
 
 import sunShader from './shaders/sun-effects.wgsl?raw';
 import { HDR_FORMAT } from './post.ts';
 import type { Mat4 } from './math.ts';
-import { invert } from './frustum.ts';
 import { placeLensFlare, LensFlareSpriteFlag, type LensFlare } from '../world/lens-flare.ts';
 import type { Rgb } from '../world/weather.ts';
 import { phaseAsymmetry } from '../world/volumetric-lighting.ts';
+import { VolumetricVolume, type VolumeShadows } from './volumetric-volume.ts';
 
 type Vec3 = readonly [number, number, number];
 
-/** The god rays are gathered at a quarter of the resolution. */
-const RAYS_DIVISOR = 4;
 /** At most this many flare sprites are drawn. */
 const MAX_SPRITES = 16;
 /**
- * The rays' light per unit of the weather's strength (VOLI intensity ×
+ * The scattered light per unit of the weather's strength (VOLI intensity ×
  * fVolumetricLightingIntensity) and phase: a dawn's 4 × 2 adds about a tenth of the light's
  * colour to open air towards the sun, a day's less (the original's scattering is a faint haze
- * with shafts, never a glare). TODO(M13): the original's scale of its scattered light.
+ * with shafts, never a glare). TODO(M13): the original's scale of its scattered light (its
+ * composite shader's terms are unread).
  */
 const RAY_SCALE = 0.05;
-/** The rays' uniforms: light, colour, params, phase (4 floats each), clip to world (16). */
-const RAYS_UNIFORM_FLOATS = 32;
 
 export interface SunEffectsFrame {
   /** Towards the directional light (the sun by day, the night light by night). */
@@ -34,13 +31,19 @@ export interface SunEffectsFrame {
   readonly rays?: {
     readonly strength: number;
     readonly color: Rgb;
-    readonly decay: number;
-    /** Share of the way to the light the samples reach (0..1). */
-    readonly reach: number;
     /** The phase function's asymmetry g (VOLI phase scattering). */
     readonly scattering?: number;
     /** The phase function's share against even scattering (VOLI phase contribution). */
     readonly phaseContribution?: number;
+    /** VOLI's density noise: its share, size (world units), wind and falling speed. */
+    readonly densityContribution?: number;
+    readonly densitySize?: number;
+    readonly windSpeed?: number;
+    readonly fallingSpeed?: number;
+    /** VOLI's range factor: how the volume's slices spread along the view (40 in vanilla). */
+    readonly rangeFactor?: number;
+    /** The weather's wind on the ground: its direction (unit) times its speed (0..1). */
+    readonly wind?: readonly [number, number];
   };
   /** The sun's lens flare, with its sprites' textures by path (missing ones are not drawn). */
   readonly flare?: {
@@ -62,22 +65,15 @@ function projectDirection(m: Mat4, d: Vec3): { uv: [number, number]; front: bool
   return { uv: [(x / w + 1) / 2, (1 - y / w) / 2], front: true };
 }
 
-/** 1 on the screen, fading to 0 half a screen beyond its edges. */
-function edgeFade(uv: readonly [number, number]): number {
-  const outside = Math.max(Math.abs(uv[0] - 0.5), Math.abs(uv[1] - 0.5)) - 0.5;
-  return Math.max(0, Math.min(1, 1 - outside * 2));
-}
-
 export class SunEffects {
   /** bVolumetricLightingEnable / bLensFlare (main.ts sets them from the INI settings). */
   rays = true;
   flare = true;
+  /** The volumetric lighting's froxel volume ([Display] quality and temporal settings on it). */
+  readonly volume: VolumetricVolume;
   readonly #device: GPUDevice;
-  readonly #raysPipeline: GPURenderPipeline;
-  readonly #addPipeline: GPURenderPipeline;
   readonly #spritePipeline: GPURenderPipeline;
   readonly #sampler: GPUSampler;
-  readonly #raysUniforms: GPUBuffer;
   readonly #spriteUniforms: GPUBuffer[];
   #target: SunTarget | undefined;
   readonly #textureIds = new WeakMap<GPUTexture, number>();
@@ -85,50 +81,27 @@ export class SunEffects {
 
   constructor(device: GPUDevice) {
     this.#device = device;
+    this.volume = new VolumetricVolume(device);
     const module = device.createShaderModule({ label: 'sun-effects', code: sunShader });
-    const additive: GPUBlendState = {
-      color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
-      alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' },
-    };
-    const pipeline = (
-      label: string,
-      vertex: string,
-      fragment: string,
-      blend: GPUBlendState | undefined,
-      topology: GPUPrimitiveTopology,
-    ): GPURenderPipeline =>
-      device.createRenderPipeline({
-        label,
-        layout: 'auto',
-        vertex: { module, entryPoint: vertex },
-        fragment: {
-          module,
-          entryPoint: fragment,
-          targets: [{ format: HDR_FORMAT, ...(blend && { blend }) }],
-        },
-        primitive: { topology },
-      });
-    this.#raysPipeline = pipeline(
-      'god-rays',
-      'vs_fullscreen',
-      'fs_rays',
-      undefined,
-      'triangle-list',
-    );
-    this.#addPipeline = pipeline(
-      'god-rays-add',
-      'vs_fullscreen',
-      'fs_add',
-      additive,
-      'triangle-list',
-    );
-    this.#spritePipeline = pipeline(
-      'lens-flare',
-      'vs_sprite',
-      'fs_sprite',
-      additive,
-      'triangle-strip',
-    );
+    this.#spritePipeline = device.createRenderPipeline({
+      label: 'lens-flare',
+      layout: 'auto',
+      vertex: { module, entryPoint: 'vs_sprite' },
+      fragment: {
+        module,
+        entryPoint: 'fs_sprite',
+        targets: [
+          {
+            format: HDR_FORMAT,
+            blend: {
+              color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
+              alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' },
+            },
+          },
+        ],
+      },
+      primitive: { topology: 'triangle-strip' },
+    });
     this.#sampler = device.createSampler({
       label: 'sun-effects',
       magFilter: 'linear',
@@ -136,25 +109,19 @@ export class SunEffects {
       addressModeU: 'clamp-to-edge',
       addressModeV: 'clamp-to-edge',
     });
-    const uniforms = (label: string): GPUBuffer =>
+    this.#spriteUniforms = Array.from({ length: MAX_SPRITES }, (_, i) =>
       device.createBuffer({
-        label,
+        label: `lens-flare-${String(i)}`,
         size: 48,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      });
-    this.#raysUniforms = device.createBuffer({
-      label: 'god-rays',
-      size: RAYS_UNIFORM_FLOATS * 4,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    this.#spriteUniforms = Array.from({ length: MAX_SPRITES }, (_, i) =>
-      uniforms(`lens-flare-${String(i)}`),
+      }),
     );
   }
 
   /**
-   * Adds the frame's rays and flare to `hdr`. `depth`: the opaque scene's depth (r32float,
-   * reversed Z: 0 is the sky); `viewProj`: the camera's, without the TAA's jitter.
+   * Adds the frame's volumetric lighting and flare to `hdr`. `depth`: the opaque scene's depth
+   * (r32float, reversed Z: 0 is the sky); `viewProj`: the camera's, without the TAA's jitter;
+   * `shadows`: the sun's shadow map and cascades (exteriors).
    */
   run(
     encoder: GPUCommandEncoder,
@@ -162,91 +129,35 @@ export class SunEffects {
     depth: GPUTexture,
     viewProj: Mat4,
     frame: SunEffectsFrame,
+    shadows?: VolumeShadows,
   ): void {
     const rays = this.rays ? frame.rays : undefined;
-    if (rays && rays.strength > 0) this.#rays(encoder, hdr, depth, viewProj, frame, rays);
+    if (rays && rays.strength > 0) {
+      this.volume.run(
+        encoder,
+        hdr,
+        depth,
+        viewProj,
+        {
+          lightDirection: frame.lightDirection,
+          color: rays.color,
+          strength: rays.strength * RAY_SCALE,
+          scattering: phaseAsymmetry(rays.scattering ?? 0),
+          phaseContribution: rays.phaseContribution ?? 0,
+          densityContribution: rays.densityContribution ?? 0,
+          densitySize: rays.densitySize ?? 0,
+          windSpeed: rays.windSpeed ?? 0,
+          fallingSpeed: rays.fallingSpeed ?? 0,
+          rangeFactor: rays.rangeFactor ?? 0,
+          wind: rays.wind ?? [0, 0],
+        },
+        shadows,
+      );
+    } else {
+      this.volume.reset();
+    }
     const flare = this.flare ? frame.flare : undefined;
     if (flare) this.#flare(encoder, hdr, depth, viewProj, flare);
-  }
-
-  #rays(
-    encoder: GPUCommandEncoder,
-    hdr: GPUTexture,
-    depth: GPUTexture,
-    viewProj: Mat4,
-    frame: SunEffectsFrame,
-    rays: NonNullable<SunEffectsFrame['rays']>,
-  ): void {
-    const { uv, front } = projectDirection(viewProj, frame.lightDirection);
-    const fade = front ? edgeFade(uv) : 0;
-    if (fade <= 0) return;
-    const target = this.#ensureTarget(hdr, depth);
-    const aspect = hdr.width / Math.max(1, hdr.height);
-    const [lx, ly, lz] = frame.lightDirection;
-    const length = Math.hypot(lx, ly, lz) || 1;
-    const data = new Float32Array(RAYS_UNIFORM_FLOATS);
-    data.set([lx / length, ly / length, lz / length, phaseAsymmetry(rays.scattering ?? 0)], 12);
-    data.set(invert(viewProj) ?? viewProj, 16);
-    data.set(
-      [
-        uv[0],
-        uv[1],
-        Math.max(0.05, Math.min(1, rays.reach)),
-        rays.strength * RAY_SCALE,
-        ...rays.color,
-        Math.max(0, Math.min(0.999, rays.decay)),
-        1 / depth.width,
-        aspect,
-        fade,
-        Math.max(0, Math.min(1, rays.phaseContribution ?? 0)),
-      ],
-      0,
-    );
-    this.#device.queue.writeBuffer(this.#raysUniforms, 0, data);
-    const group = (
-      key: string,
-      pipeline: GPURenderPipeline,
-      entries: GPUBindGroupEntry[],
-    ): GPUBindGroup => {
-      let found = target.groups.get(key);
-      if (!found) {
-        found = this.#device.createBindGroup({
-          label: key,
-          layout: pipeline.getBindGroupLayout(0),
-          entries,
-        });
-        target.groups.set(key, found);
-      }
-      return found;
-    };
-    const gather = encoder.beginRenderPass({
-      label: 'god-rays',
-      colorAttachments: [{ view: target.texture.createView(), loadOp: 'clear', storeOp: 'store' }],
-    });
-    gather.setPipeline(this.#raysPipeline);
-    gather.setBindGroup(
-      0,
-      group('rays', this.#raysPipeline, [
-        { binding: 0, resource: { buffer: this.#raysUniforms } },
-        { binding: 3, resource: depth.createView() },
-      ]),
-    );
-    gather.draw(3);
-    gather.end();
-    const add = encoder.beginRenderPass({
-      label: 'god-rays-add',
-      colorAttachments: [{ view: hdr.createView(), loadOp: 'load', storeOp: 'store' }],
-    });
-    add.setPipeline(this.#addPipeline);
-    add.setBindGroup(
-      0,
-      group('add', this.#addPipeline, [
-        { binding: 1, resource: this.#sampler },
-        { binding: 2, resource: target.texture.createView() },
-      ]),
-    );
-    add.draw(3);
-    add.end();
   }
 
   #flare(
@@ -273,7 +184,7 @@ export class SunEffects {
       flare.intensity,
     ).slice(0, MAX_SPRITES);
     if (placed.length === 0) return;
-    const target = this.#ensureTarget(hdr, depth);
+    const target = this.#ensureTarget(depth);
     const pass = encoder.beginRenderPass({
       label: 'lens-flare',
       colorAttachments: [{ view: hdr.createView(), loadOp: 'load', storeOp: 'store' }],
@@ -319,33 +230,12 @@ export class SunEffects {
   }
 
   /**
-   * The rays' target for a frame of `hdr`'s size, and the bind groups made for it. The groups
-   * hold views of the frame's depth: when the renderer makes its targets anew (a resize) they
-   * are made again, also where the quarter size stays the same (bound to a destroyed texture,
-   * a group fails the frame's submit).
+   * The flare's bind groups for a frame's depth texture. The groups hold views of it: when the
+   * renderer makes its targets anew (a resize) they are made again (bound to a destroyed
+   * texture, a group fails the frame's submit).
    */
-  #ensureTarget(hdr: GPUTexture, depth: GPUTexture): SunTarget {
-    const width = Math.max(1, Math.ceil(hdr.width / RAYS_DIVISOR));
-    const height = Math.max(1, Math.ceil(hdr.height / RAYS_DIVISOR));
-    const old = this.#target;
-    if (old?.texture.width === width && old.texture.height === height) {
-      if (old.depth !== depth) {
-        old.groups.clear();
-        old.depth = depth;
-      }
-      return old;
-    }
-    old?.texture.destroy();
-    this.#target = {
-      texture: this.#device.createTexture({
-        label: 'god-rays',
-        size: [width, height],
-        format: HDR_FORMAT,
-        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-      }),
-      depth,
-      groups: new Map(),
-    };
+  #ensureTarget(depth: GPUTexture): SunTarget {
+    if (this.#target?.depth !== depth) this.#target = { depth, groups: new Map() };
     return this.#target;
   }
 
@@ -361,9 +251,8 @@ export class SunEffects {
 }
 
 interface SunTarget {
-  readonly texture: GPUTexture;
   /** The depth texture the groups were made with. */
-  depth: GPUTexture;
+  readonly depth: GPUTexture;
   readonly groups: Map<string, GPUBindGroup>;
 }
 
