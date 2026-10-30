@@ -284,8 +284,9 @@ fn worldMapOverlayAt(
 // luminance scale and maximum in time.zw): a light from the camera, and one from below and in
 // front of the actor (its model space), by the light around it. Observed in the original: that
 // luminance is one sample of the texture in the lighting shader's slot 11 at its corner (1, 1),
-// times the luminance scale, clamped to 0..the maximum. TODO(M13): which texture the engine binds
-// in that slot is unread; ours is the directional ambient's luminance there.
+// times the luminance scale, clamped to 0..the maximum. No target fills that slot for these
+// techniques: it holds nothing or the projected-UV draws' noise texture (docs/rendering.md).
+// TODO(M13): which, by the original's draw order, is unread; ours is the directional ambient's.
 fn characterLight(n: vec3f, toCamera: vec3f, ambient: vec3f) -> vec3f {
   let model = normalize(transpose(mat3x3f(draw.world[0].xyz, draw.world[1].xyz, draw.world[2].xyz)) * n);
   let amount = frame.ambient[4].w * saturate(dot(toCamera, n)) +

@@ -1,6 +1,7 @@
 import './style.css';
 import { GpuUnavailableError, initGpu, trackCanvasSize, type GpuContext } from './render/gpu.ts';
 import { Renderer } from './render/renderer.ts';
+import { imageLensFlareSettings } from './render/image-lens-flare-data.ts';
 import { findCustomBackdrop } from './shell/custom-backdrop.ts';
 import { GameSession, MEMORY_BUDGET } from './shell/game-session.ts';
 import { ModelViewer } from './shell/model-viewer.ts';
@@ -972,6 +973,9 @@ async function main(): Promise<void> {
           'bVolumetricLightingEnableTemporalAccumulation',
         );
         renderer.sunEffects.flare = session.ini.bool('ImageSpace', 'bLensFlare');
+        renderer.imageLensFlare.settings = imageLensFlareSettings((key) =>
+          ini.lookup('Display', key),
+        );
       }
       lastScriptTick = now;
       session?.soundSystem?.update(renderer.view?.camera);

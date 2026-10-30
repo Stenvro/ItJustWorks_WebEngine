@@ -18,9 +18,11 @@
 // LOD blocks, the reflected draws (LOD, sky objects, flagged references; listed once per scene,
 // GpuScene.reflected); Renderer.reflectionStats counts them.
 //
-// TODO(M13): unread of the original: which water plane it mirrors when several are in view (uMaxExteriorWaterReflections 2,
-// fExteriorWaterReflectionThreshold 300; ours the nearest), whether the reflection is fogged
-// (ours leaves the deferred lit objects unfogged) and interiors (ours reflect the sky colours).
+// The original keeps two reflections outdoors (docs/rendering.md, "Which water gets which
+// reflection"): the world's water height mirrored with the sky, LOD and flagged references, and
+// one of the sky alone shared by water at every other height; indoors one per plane (at most
+// four) of the flagged references. TODO(M13): ours mirrors the nearest plane for all water;
+// whether the reflection is fogged is unread (ours leaves the deferred lit objects unfogged).
 
 import { lookAt, multiply, perspectiveReversedZ } from './math.ts';
 import type { Mat4, Vec3 } from './math.ts';
