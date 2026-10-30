@@ -75,7 +75,7 @@ import { ActorTalk } from './actor-talk.ts';
 import { ActorMoods, type MoodFace } from './actor-moods.ts';
 import { ActorLooks } from './actor-looks.ts';
 import { ActorCombat } from './actor-combat.ts';
-import { WeaponState } from '../gameplay/combat/combat-state.ts';
+import { KnockState, WeaponState } from '../gameplay/combat/combat-state.ts';
 import { ActorCasting } from './actor-casting.ts';
 import { ActorFlight } from './actor-flight.ts';
 import { actorShape, MagicProjectiles, type ProjectileTarget } from './magic-projectiles.ts';
@@ -107,7 +107,7 @@ import { ProjectileAim } from './projectile-aim.ts';
 import { ActorAmbientIdles } from './actor-ambient-idles.ts';
 import { ActorAnimObjects } from './actor-anim-objects.ts';
 import { outOfSight } from '../ai/followers.ts';
-import { fliesByRace, FlyingState } from '../ai/flight.ts';
+import { fliesByRace } from '../ai/flight.ts';
 
 /** Actors this near an object destroyed look at it (units; ours, TODO(M13)). */
 const REACT_DESTROYED_RADIUS = 1024;
@@ -2310,22 +2310,26 @@ export class ActorStage {
       forward: camera.forward,
       fov: camera.fovY === undefined ? 80 : fovAcross(camera.fovY),
     };
-    // The fewest bones each animates whatever its bone LOD (observed in the original): all of a
-    // hovering flier's and a knocked down one's, iMinBonesToGenerateWhileSitting of one seated.
+    // The fewest bones each animates whatever its bone LOD (observed in the original): all of
+    // one paralyzed, dead, knocked down (not while it gets up) or unconscious,
+    // iMinBonesToGenerateWhileSitting of one seated, none otherwise. A flier's flying state
+    // (hovering included) does not count: in the air it keeps its bone LOD like anyone.
+    // TODO(M13): the engine's own "force minimum bone update" flag (3 bones) is not modelled.
     const sitting = this.#options.session.ini.number(
       'Animation',
       'iMinBonesToGenerateWhileSitting',
     );
+    const actors = this.#options.session.scriptsReady?.state.actors;
     for (const staged of this.#actors.values()) {
       const behavior = staged.placed.behavior;
       if (!behavior) continue;
       const reference = staged.reference;
-      behavior.minimumBones =
-        this.flight.state(reference) === FlyingState.hovering || this.knockdowns.holds(reference)
-          ? Infinity
-          : this.furniture.holds(reference)
-            ? sitting
-            : 0;
+      const allBones =
+        staged.dead ||
+        this.knockdowns.paralyzed(reference) ||
+        this.knockdowns.state(reference) === KnockState.down ||
+        actors?.get(reference)?.unconscious === true;
+      behavior.minimumBones = allBones ? Infinity : this.furniture.holds(reference) ? sitting : 0;
     }
     animateSkeletons(
       this.#animating(),

@@ -178,8 +178,11 @@ skeleton (pairs whose bone is missing or whose distance is not above 0 are dropp
 levels are sorted by distance. Each update (observed in the original) the camera's distance
 across the ground (height left out), times `[Animation] fBoneLODDistanceScale` over the
 skeleton's scale, picks the last level it is beyond; that level's bone index is how many bones
-animate, never fewer than the actor needs: all of a hovering flier and of one knocked down,
-`iMinBonesToGenerateWhileSitting` (5) of one seated. (The dragon's one level, NPC LLegToe1 at
+animate, never fewer than the actor needs: all of one paralyzed, dead (not one reanimated),
+knocked down (not while it gets up) or unconscious, `iMinBonesToGenerateWhileSitting` (5) of
+one seated, none otherwise. The flying state is not among them: a hovering dragon keeps its
+bone LOD like anyone (the unconscious life state is 3, as the hovering fly state is; they are
+different fields). (The dragon's one level, NPC LLegToe1 at
 2048, leaves it ten bones beyond that distance.) NiBSBoneLODController (the centaur's, wolf's and werewolf's old
 exports) gets its levels from string extra data named `BSBoneLOD#Bone#<n>`, which no vanilla
 file has.
