@@ -153,6 +153,8 @@ export class CreatedObjects {
       if (entry.visibility.hidden === !enabled) continue;
       entry.visibility.hidden = !enabled;
       play?.setReferenceEnabled(entry.reference, enabled);
+      // Its 3D comes or goes (OnLoad, OnUnload, its graph's registrations), as a cell's own.
+      runtime.detach(runtime.referenceShown(entry.reference, enabled));
     }
   }
 

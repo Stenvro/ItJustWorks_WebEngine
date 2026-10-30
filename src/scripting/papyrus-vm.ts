@@ -1895,6 +1895,17 @@ export class PapyrusVm {
           break;
         case 'callmethod': {
           const name = identifier(arg(0));
+          // The compiled GotoState sends its script onEndState and onBeginState as calls on
+          // self: told as the events they are (the headless simulation records them).
+          if (frame.self && frame.name.toLowerCase() === 'gotostate') {
+            const lower = name.toLowerCase();
+            if (lower === 'onbeginstate' || lower === 'onendstate')
+              this.onEventSent?.(
+                frame.self,
+                lower === 'onbeginstate' ? 'onBeginState' : 'onEndState',
+                [],
+              );
+          }
           set(
             2,
             await this.#callMethod(
