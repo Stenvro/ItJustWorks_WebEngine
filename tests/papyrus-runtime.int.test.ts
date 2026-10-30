@@ -7,6 +7,7 @@ import { ScriptLibrary } from '../src/scripting/script-library.ts';
 import { ScriptRuntime, type WorldBridge } from '../src/scripting/runtime/runtime.ts';
 import { Fn } from '../src/scripting/runtime/condition-values.ts';
 import { PLACEHOLDER_NATIVES } from '../src/scripting/runtime/natives/placeholders.ts';
+import { NONE_ARGUMENT_CHECKS } from '../src/scripting/runtime/natives/none-arguments.ts';
 import type { Condition } from '../src/scripting/conditions.ts';
 import { QuestFlag } from '../src/world/quest-records.ts';
 import { ActorValue, actorValueIndex } from '../src/world/actor-values.ts';
@@ -104,12 +105,18 @@ describe.skipIf(!hasGamedata())('the script runtime on the local game data', () 
   it("logs no warning of ours in a new game, only the game's own faults", () => {
     // docs/scripting.md "The log": what vanilla's own data gets wrong is logged as the game's.
     expect(warnings).toEqual([]);
+    const noneLines = [...NONE_ARGUMENT_CHECKS.values()].flatMap((entry) =>
+      entry.checks.map((check) => check.line),
+    );
     expect(gameLogged.length).toBeGreaterThan(0);
     expect(
       gameLogged.every(
         (line) =>
           line.includes('cannot be initialized because the script no longer contains') ||
-          line.includes('is not set in the plugin'),
+          line.includes('is not set in the plugin') ||
+          // A native's own line for a None argument the data passes (HearthFires' house
+          // building fragment adds an inventory filter from its BYOHMaterialLog property, None).
+          noneLines.some((none) => line.endsWith(none)),
       ),
     ).toBe(true);
   });
