@@ -274,6 +274,12 @@ export class Renderer {
   /** The water reflection's faces and targets (made when first needed), one frame per face. */
   #reflection: { targets: ReflectionTargets; frames: SceneFrame[] } | undefined;
   readonly #reflectionSchedule = new ReflectionSchedule();
+  /**
+   * The water reflection's work in the last frame (the terminal's stats): faces redrawn, and
+   * of them the land quadrants, tree LOD blocks and reflected draws drawn, and the CPU time spent
+   * recording them (ms).
+   */
+  reflectionStats = { faces: 0, land: 0, trees: 0, draws: 0, ms: 0 };
   readonly grass: GrassRenderer;
   readonly decals: DecalRenderer;
   readonly precipitation: PrecipitationRenderer;
@@ -450,6 +456,8 @@ export class Renderer {
         : undefined;
     const above = height !== undefined && camera[2] > height;
     const faces = this.#reflectionSchedule.facesFor(above ? height : undefined);
+    const stats = { faces: 0, land: 0, trees: 0, draws: 0, ms: 0 };
+    this.reflectionStats = stats;
     if (!above || sky === undefined) {
       this.scene.setWaterReflection(this.#reflection?.targets.faces, false);
       return;
@@ -466,6 +474,7 @@ export class Renderer {
     const eye = mirroredCamera(camera, height);
     const terrain = this.showLod ? view.terrain?.() : undefined;
     const trees = this.showLod && this.showTrees ? view.trees?.() : undefined;
+    const started = performance.now();
     for (const face of faces) {
       const frame = frames[face];
       if (!frame) continue;
@@ -507,14 +516,17 @@ export class Renderer {
         },
       });
       this.sky.draw(pass, this.scene.frameBindGroup, sky);
+      const planes = this.scene.viewPlanes;
       if (terrain)
-        this.terrain.draw(pass, this.scene.frameBindGroup, terrain, this.scene.viewPlanes);
-      if (trees) this.treeLod.draw(pass, this.scene.frameBindGroup, trees);
-      this.scene.drawReflected(pass, scenes);
+        stats.land += this.terrain.draw(pass, this.scene.frameBindGroup, terrain, planes);
+      if (trees) stats.trees += this.treeLod.draw(pass, this.scene.frameBindGroup, trees, planes);
+      stats.draws += this.scene.drawReflected(pass, scenes);
+      stats.faces++;
       pass.end();
     }
+    stats.ms = performance.now() - started;
     this.scene.useFrame(undefined);
-    this.scene.setWaterReflection(targets.faces, true);
+    this.scene.setWaterReflection(targets.faces, this.#reflectionSchedule.complete);
   }
 
   render(timeSeconds: number, pixelScale: number): void {
@@ -693,7 +705,7 @@ export class Renderer {
         this.terrain.draw(opaque, this.scene.frameBindGroup, terrain, this.scene.viewPlanes);
       }
       const trees = this.showLod && this.showTrees ? view.trees?.() : undefined;
-      if (trees) this.treeLod.draw(opaque, this.scene.frameBindGroup, trees);
+      if (trees) this.treeLod.draw(opaque, this.scene.frameBindGroup, trees, this.scene.viewPlanes);
       const grass = this.showGrass ? view.grass?.() : undefined;
       if (grass) this.grass.draw(opaque, grass, this.scene.viewPlanes, view.camera.position);
       this.scene.drawOpaque(opaque, scenes);
