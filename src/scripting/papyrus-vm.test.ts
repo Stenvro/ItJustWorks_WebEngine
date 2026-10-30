@@ -178,6 +178,12 @@ SCRIPTS.push({
         code: [['assign', id('open'), id('value')]],
       },
     },
+    // Read-only: no Set function (the plugin's value for it is skipped).
+    {
+      name: 'IsBroken',
+      type: 'Bool',
+      get: { name: 'Get', returnType: 'Bool', code: [['return', bool(false)]] },
+    },
   ],
   functions: [
     {
@@ -227,6 +233,7 @@ class TestHost implements VmHost {
           name: 'Gate',
           properties: new Map<string, Value>([
             ['isalreadyopen', true],
+            ['isbroken', true],
             ['triggertype', 2],
           ]),
         },
@@ -380,18 +387,21 @@ describe('Papyrus VM', () => {
     const gate = new ObjectHandle(0x30, 'Gate');
     await vm.initialize(gate);
     expect(await vm.getProperty(gate, 'IsAlreadyOpen')).toBe(true);
-    // A value for a property the script no longer has is the plugin's fault (the game logs it).
+    // A value for a read-only property is skipped; one for a property the script no longer
+    // has is the plugin's fault (the game logs both).
+    expect(await vm.getProperty(gate, 'IsBroken')).toBe(false);
     expect(host.gameLogged).toEqual([
+      'Property IsBroken on object Gate is read-only, property skipped.',
       'Property triggertype on script Gate attached to [gate < (00000030)>] cannot be initialized because the script no longer contains that property',
     ]);
     // A call through an auto property the plugin left empty: None, as in the game.
     await vm.call(gate, 'Pull');
-    expect(host.gameLogged[1]).toBe(
+    expect(host.gameLogged[2]).toBe(
       'Gate.Pull [gate < (00000030)>]: Cannot call Enable() on a None object, aborting function call (property Lever is not set in the plugin)',
     );
     // An event's None argument the script passes on unchecked: None in the game too.
     await vm.sendEvent(gate, 'OnHit', [null]);
-    expect(host.gameLogged[2]).toBe(
+    expect(host.gameLogged[3]).toBe(
       'Gate.Check [gate < (00000030)>] < Gate.OnHit [gate < (00000030)>]: Cannot call Enable() on a None object, aborting function call (other: None as the engine gave it, unchecked)',
     );
     expect(host.warnings).toEqual([]);
