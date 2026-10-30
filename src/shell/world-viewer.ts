@@ -34,7 +34,6 @@ import type { AmbientState } from '../audio/ambience.ts';
 import { waterAreaHeight } from '../audio/water-audio.ts';
 import { cellWater, DEFAULT_WATER } from '../world/water.ts';
 import { UnderwaterView } from '../world/underwater.ts';
-import type { SceneFog } from '../render/scene-lighting.ts';
 import { FlowMaps, waterPlugin } from '../world/flow-map.ts';
 import { surfaceOver, waterVolumes, type WaterVolume } from '../world/water-volumes.ts';
 import type { GpuTerrainCell, TerrainLodBlock, TerrainTexturePaths } from '../render/terrain.ts';
@@ -1559,6 +1558,16 @@ export class WorldViewer {
       water: () => this.#waterFrame(),
       // Under water the sky state hands out the water's own imagespace (WATR INAM).
       imageSpace: () => this.#sky?.imageSpace(),
+      // The underwater view where the near plane reaches below the water at the camera, its
+      // fog lit by the weather's water multiplier.
+      underwater: (nearPlane) => {
+        const camera = this.#view.position;
+        return this.#underwater.frame(
+          this.#waterAt(camera[0], camera[1], camera[2]),
+          nearPlane,
+          this.#sky?.skyFrame()?.state.waterMultiplier,
+        );
+      },
       // No sun in a world without a sky: no rays or flare either.
       sunEffects: () => (this.#noSky ? undefined : this.#sky?.sunEffects()),
       screenBlood: () => this.#session?.screenBlood.frame(),
@@ -2919,6 +2928,9 @@ export class WorldViewer {
       });
     }
     lights.sort((a, b) => a.distance - b.distance);
+    // With the near plane wholly under water the view takes the water's own imagespace (WATR
+    // INAM; the renderer measured the near plane before this).
+    this.#sky?.setUnderwaterImageSpace(this.#underwater.imageSpace());
     this.#sky?.frame(performance.now(), camera);
     // The surroundings once the camera's cell is known (else the world's music would start).
     const world = this.#sky;
@@ -2926,25 +2938,17 @@ export class WorldViewer {
     const sky = this.#sky?.lighting() ?? NO_SKY;
     // A menu's lights (the race menu's) first: they light what it shows.
     const extra = this.#play?.extraLights ?? [];
-    const under = this.#underwaterFog(camera, sky);
-    // Under water the view takes the water's own imagespace (WATR INAM) from the next frame.
-    this.#sky?.setUnderwaterImageSpace(this.#underwater.imageSpace());
     return {
       ...sky,
-      ...(under && { fog: under }),
       lights: [...extra, ...lights].slice(0, MAX_LIGHTS),
     };
   }
 
-  /** The view below water surfaces: the water type's underwater fog (underwater.ts). */
+  /** The view below water surfaces: the underwater fog and imagespace (underwater.ts). */
   readonly #underwater = new UnderwaterView(
     (formId) => this.#session?.waterType(formId).then((gpu) => gpu?.type),
     (formId) => this.#session?.db.then((db) => db.get(formId)),
   );
-
-  #underwaterFog(camera: Vec3, sky: Omit<SceneLighting, 'lights'>): SceneFog | undefined {
-    return this.#underwater.fog(camera[2], this.#waterAt(camera[0], camera[1], camera[2]), sky);
-  }
 
   // --- UI -------------------------------------------------------------------------------
 

@@ -7,6 +7,10 @@
 // mode's front and back flags pick the sides). Where the sky is not blurred, a sky pixel is
 // blurred only next to geometry (by the share of sky around it), so silhouettes soften against
 // the sky. The world map blurs its own way (ISWorldMap, below). Runs on the tone-mapped image.
+// The underwater view (src/world/underwater.ts), as the original's fogged and masked fogged
+// depth of field shaders do it: inside the underwater mask (the whole image when the near
+// plane is wholly under) the water's imagespace's depth of field, then the image turns toward
+// the fog colour by the view depth, from none at the fog's near plane to all at its far plane.
 // ASCII only.
 
 struct Dof {
@@ -18,6 +22,17 @@ struct Dof {
   map: vec4f,
   // x: 1 to blur in front of the focus, y: 1 to blur beyond it (imagespaces: beyond only).
   mode: vec4f,
+  // Inside the underwater mask where the view crosses the surface: the water's imagespace's
+  // params and mode (as above; strength 0 without one).
+  underParams: vec4f,
+  underMode: vec4f,
+  // The underwater fog: colour (rgb), w 1 when the underwater view is on.
+  fogColor: vec4f,
+  // x: the fog's near plane, y: its far plane (view depth).
+  fog: vec4f,
+  // The underwater mask: under the surface where x * ndc.x + y * ndc.y + z < 0; w 1: the
+  // whole image.
+  mask: vec4f,
 };
 
 @group(0) @binding(0) var<uniform> dof: Dof;
@@ -55,13 +70,42 @@ fn fs_dof(input: FullscreenOut) -> @location(0) vec4f {
     return worldMapBlur(input);
   }
   let color = textureSampleLevel(image, dofSampler, input.uv, 0.0).rgb;
-  let blur = textureSampleLevel(blurred, dofSampler, input.uv, 0.0).rgb;
   let pixel = vec2i(input.position.xy);
+  let ndc = vec2f(input.uv.x * 2.0 - 1.0, 1.0 - input.uv.y * 2.0);
+  let under = dof.mask.w > 0.5 || dot(dof.mask.xy, ndc) + dof.mask.z < 0.0;
+  // Wholly under, the scene's depth of field is already the water's (mask.w).
+  let inside = under && dof.mask.w < 0.5;
+  let params = select(dof.params, dof.underParams, inside);
+  let mode = select(dof.mode, dof.underMode, inside);
+  let scene = sceneDistance(pixel, params.w > 0.5);
+  var result = color;
+  if (params.x > 0.0 && scene.z < 0.5) {
+    let beyond = scene.x - params.y;
+    let side = select(mode.x, mode.y, beyond > 0.0);
+    let amount = clamp(abs(beyond) / max(params.z, 1.0), 0.0, 1.0) * side *
+      params.x * (1.0 - 0.5 * scene.y);
+    if (amount > 0.0) {
+      let blur = textureSampleLevel(blurred, dofSampler, input.uv, 0.0).rgb;
+      result = mix(color, blur, amount);
+    }
+  }
+  if (dof.fogColor.w > 0.5 && under) {
+    // Open sky where the sky is not blurred: the original's shader reads the raw depth there
+    // (the far end, 1) as the distance.
+    let distance = select(scene.x, 1.0, scene.z > 0.5);
+    result = mix(result, dof.fogColor.rgb, underwaterFogShare(distance));
+  }
+  return vec4f(result, 1.0);
+}
+
+// The view depth at a pixel (x), the share of sky around it (y) and whether it is open sky
+// where the sky is not blurred (z = 1). Where the sky is not blurred, a sky pixel takes the
+// depth averaged 3 pixels around (sky beside geometry), so silhouettes soften against the sky.
+fn sceneDistance(pixel: vec2i, skyBlurred: bool) -> vec3f {
   let center = dofDepthAt(pixel);
   var depth = center;
   var skyShare = 0.0;
-  if (center <= DOF_SKY_DEPTH && dof.params.w < 0.5) {
-    // The sky stays sharp except beside geometry: average the depth 3 pixels around.
+  if (center <= DOF_SKY_DEPTH && !skyBlurred) {
     skyShare = 1.0 / 9.0;
     var total = center;
     for (var y = -1; y <= 1; y++) {
@@ -78,16 +122,20 @@ fn fs_dof(input: FullscreenOut) -> @location(0) vec4f {
     }
     depth = total / 9.0;
     if (depth <= DOF_SKY_DEPTH) {
-      return vec4f(color, 1.0);
+      return vec3f(1e9, skyShare, 1.0);
     }
   }
   // Reversed Z with an infinite far plane: distance = near / depth (the sky is infinitely far).
-  let distance = select(1e9, dof.screen.z / depth, depth > DOF_SKY_DEPTH);
-  let beyond = distance - dof.params.y;
-  let side = select(dof.mode.x, dof.mode.y, beyond > 0.0);
-  let amount = clamp(abs(beyond) / max(dof.params.z, 1.0), 0.0, 1.0) * side *
-    dof.params.x * (1.0 - 0.5 * skyShare);
-  return vec4f(mix(color, blur, amount), 1.0);
+  return vec3f(select(1e9, dof.screen.z / depth, depth > DOF_SKY_DEPTH), skyShare, 0.0);
+}
+
+// The original's fogged shaders: saturate((depth - near) / (far - near)).
+fn underwaterFogShare(distance: f32) -> f32 {
+  let span = dof.fog.y - dof.fog.x;
+  if (span == 0.0) {
+    return select(0.0, 1.0, distance >= dof.fog.x);
+  }
+  return clamp((distance - dof.fog.x) / span, 0.0, 1.0);
 }
 
 // The world map's blur (Community Shaders' ISWorldMap.hlsl): a 7x7 box over the image, its step

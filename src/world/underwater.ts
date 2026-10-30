@@ -1,30 +1,49 @@
-// The view below a water surface: when the camera is under the water it stands in, the scene's
-// fog becomes the water type's underwater fog (WATR DNAM: underwater fog amount, near and far
-// plane), coloured by the water's shallow colour near the camera and its deep colour far away,
-// lit by the scene's light (dark water at night). Platform-independent.
+// The view below a water surface, as observed in the original. Platform-independent.
 //
-// Below the surface the view also takes the water type's own imagespace (WATR INAM) in place of
-// the weather's or the cell's: its desaturation, tint, dimmer sun and sky, and depth of field.
-// That imagespace is the only colour over the whole image below the surface, as in the original:
-// no tint of the fog's colour is laid over it.
+// Each frame the camera's near plane is measured against the water at the camera: its four
+// corners' heights against the surface's give the state (nearPlaneWater). All above: the view
+// is above water. All below: the underwater view covers the whole image. Across: the engine
+// draws the part of the screen under the surface into its underwater mask (a quad from the
+// line where the water's plane cuts the near plane, turned by the camera's roll, down to the
+// screen's lower edge) and the underwater view applies there alone. On the near plane a
+// point's height is linear in its screen position, so that line is a half-plane of the screen.
 //
-// Where the view crosses the surface (observed in the original): the four corners of the
-// camera's near plane are measured against the water's height; all above, the view is above
-// water; all below, the underwater view covers the whole image; across, the engine draws the
-// part of the screen under the surface (cut by the line where the water's plane meets the near
-// plane, turned by the camera's roll) into its underwater mask, and the underwater view applies
-// there alone (underwaterCrossing). TODO(M13): ours takes the underwater view by the camera's
-// height alone (no mask: a split screen shows one or the other), and how the engine lights the
-// underwater fog's colours is still unread.
+// The underwater view is an image pass, not the scene's fog: the depth of field's fogged
+// shaders turn the image toward the fog colour by the view depth, from none at the water
+// type's underwater fog near plane to all of it at its far plane (WATR DNAM), only inside the
+// mask where the view crosses the surface. The fog colour is the water's shallow colour times
+// the weather's water multiplier (sky colour 14; white indoors): the weather lights it, dark
+// at night. The water type's underwater fog amount reaches the shader but is not read by it.
+// Inside the mask the depth of field is the water's imagespace's (WATR INAM), outside it the
+// scene's; wholly under, the water's imagespace takes the scene's place.
+//
+// TODO(M13): where the engine swaps in the water's imagespace's colour terms (tint,
+// saturation, brightness) is unread; ours takes them over the whole image once the near plane
+// is wholly under, as its depth of field does.
 
-import type { SceneFog, SceneLighting } from '../render/scene-lighting.ts';
 import { parseImageSpace, type ImageSpace } from './image-space.ts';
 import type { GameRecord } from './record-db.ts';
+import type { Vec3 } from '../render/math.ts';
+import type { WaterType } from './water.ts';
 
 /** A record as the underwater view reads an imagespace from it. */
 type ImageSpaceSource = Pick<GameRecord, 'type' | 'fields'>;
-import type { Vec3 } from '../render/math.ts';
-import type { WaterType } from './water.ts';
+
+/** Which side of the water the camera's near plane is on. */
+export type NearPlaneState = 'above' | 'across' | 'under';
+
+/** The camera's near plane against water (nearPlaneWater). */
+export interface NearPlaneWater {
+  readonly state: NearPlaneState;
+  /** The submerged share of the near plane's height range (0..1). */
+  readonly share: number;
+  /**
+   * The underwater mask as a half-plane of the screen: the near plane's height over the water
+   * at normalized device coordinates (x, y) is x * mask[0] + y * mask[1] + mask[2]; the screen
+   * is under the surface where that is below 0.
+   */
+  readonly mask: readonly [number, number, number];
+}
 
 /**
  * How the camera's near plane lies against water at `waterHeight` (observed in the original):
@@ -36,7 +55,7 @@ export function underwaterCrossing(
   corners: readonly (readonly [number, number, number])[],
   waterHeight: number,
   cameraZ: number,
-): { readonly state: 'above' | 'across' | 'under'; readonly share: number } {
+): { readonly state: NearPlaneState; readonly share: number } {
   const heights = corners.map((corner) => corner[2]);
   const low = Math.min(...heights);
   const high = Math.max(...heights);
@@ -48,23 +67,88 @@ export function underwaterCrossing(
   return { state: share <= 0 ? 'above' : share >= 1 ? 'under' : 'across', share };
 }
 
+/**
+ * The near plane of a camera against water at `waterHeight`, from the inverse of the camera's
+ * view-projection (column-major, reversed Z: the near plane at depth 1): the state, and the
+ * mask's half-plane on the screen.
+ */
+export function nearPlaneWater(
+  inverseViewProjection: ArrayLike<number>,
+  waterHeight: number,
+  cameraZ: number,
+): NearPlaneWater {
+  const m = (i: number): number => inverseViewProjection[i] ?? 0;
+  const at = (x: number, y: number): [number, number, number] => {
+    const w = m(3) * x + m(7) * y + m(11) + m(15);
+    const scale = w === 0 ? 1 : 1 / w;
+    return [
+      (m(0) * x + m(4) * y + m(8) + m(12)) * scale,
+      (m(1) * x + m(5) * y + m(9) + m(13)) * scale,
+      (m(2) * x + m(6) * y + m(10) + m(14)) * scale,
+    ];
+  };
+  const corners = [at(-1, -1), at(1, -1), at(-1, 1), at(1, 1)];
+  const centre = at(0, 0)[2];
+  const right = at(1, 0)[2];
+  const top = at(0, 1)[2];
+  return {
+    ...underwaterCrossing(corners, waterHeight, cameraZ),
+    mask: [right - centre, top - centre, centre - waterHeight],
+  };
+}
+
+/** Whether the screen point at normalized device coordinates (x, y) is in the mask. */
+export function inUnderwaterMask(
+  mask: readonly [number, number, number],
+  x: number,
+  y: number,
+): boolean {
+  return x * mask[0] + y * mask[1] + mask[2] < 0;
+}
+
 /** Whether a camera at height `z` is below the surface of water at `waterHeight`. */
 export function isUnderwater(z: number, waterHeight: number | undefined): boolean {
   return waterHeight !== undefined && z < waterHeight;
 }
 
-const luminance = (color: Vec3): number =>
-  0.2126 * color[0] + 0.7152 * color[1] + 0.0722 * color[2];
-
-/** How lit the water is: the sun and the mean ambient, from a dim floor up to full light. */
-export function underwaterLight(lighting: Pick<SceneLighting, 'sunColor' | 'ambient'>): number {
-  const ambient = lighting.ambient.reduce((sum, color) => sum + luminance(color), 0) / 6;
-  return Math.min(1, Math.max(0.1, luminance(lighting.sunColor) + ambient));
+/** The underwater fog colour: the water's shallow colour times the weather's water multiplier. */
+export function underwaterFogColor(
+  type: Pick<WaterType, 'shallowColor'>,
+  multiplier: readonly number[] = [1, 1, 1],
+): Vec3 {
+  return [
+    type.shallowColor[0] * (multiplier[0] ?? 1),
+    type.shallowColor[1] * (multiplier[1] ?? 1),
+    type.shallowColor[2] * (multiplier[2] ?? 1),
+  ];
 }
 
 /**
- * A viewer's underwater fog: the water types it looks up (by form id, kept once loaded) and
- * the fog when the camera is under the water it stands in.
+ * How much of the fog colour a pixel at view depth `depth` takes: none at the near plane, all
+ * at the far plane, as the original's shader computes it (a far plane before the near one, as
+ * HelgenWater's, fogs what is nearer than it fully and leaves what is beyond the near plane).
+ */
+export function underwaterFogShare(depth: number, near: number, far: number): number {
+  if (far === near) return depth >= near ? 1 : 0;
+  return Math.min(1, Math.max(0, (depth - near) / (far - near)));
+}
+
+/** What the image passes need of the underwater view this frame (post.ts, shaders/dof.wgsl). */
+export interface UnderwaterFrame {
+  /** The fog colour (underwaterFogColor). */
+  readonly color: Vec3;
+  /** The water type's underwater fog near and far planes (view depth). */
+  readonly near: number;
+  readonly far: number;
+  /** The underwater mask where the view crosses the surface; undefined: the whole image. */
+  readonly mask?: readonly [number, number, number];
+  /** Inside the mask: the depth of field of the water's imagespace (where it has one). */
+  readonly depthOfField?: ImageSpace['depthOfField'];
+}
+
+/**
+ * A viewer's underwater view: the water types it looks up (by form id, kept once loaded) and
+ * their imagespaces, and what the image passes take from the water at the camera.
  */
 export class UnderwaterView {
   readonly #types = new Map<number, WaterType | undefined>();
@@ -72,7 +156,7 @@ export class UnderwaterView {
   readonly #records:
     ((formId: number) => Promise<ImageSpaceSource | undefined> | undefined) | undefined;
   readonly #imageSpaces = new Map<number, ImageSpace | undefined>();
-  /** The water type the camera was under at the last fog() call. */
+  /** The water type the near plane was wholly under at the last frame() call. */
   #under: WaterType | undefined;
 
   constructor(
@@ -84,11 +168,54 @@ export class UnderwaterView {
   }
 
   /**
-   * The imagespace of the water the camera was last found under (WATR INAM), once loaded;
-   * undefined above water or for a water type without one.
+   * The imagespace of the water the near plane was last found wholly under (WATR INAM), once
+   * loaded; undefined otherwise or for a water type without one.
    */
   imageSpace(): ImageSpace | undefined {
-    const formId = this.#under?.imageSpace;
+    return this.#imageSpaceOf(this.#under);
+  }
+
+  /**
+   * The underwater view of the water at the camera (`water`), with `nearPlane` measuring the
+   * camera's near plane against a height (nearPlaneWater) and the weather's water multiplier
+   * (none indoors); undefined above it (or while its water type loads).
+   */
+  frame(
+    water: { readonly height: number; readonly type: number } | undefined,
+    nearPlane: (height: number) => NearPlaneWater,
+    multiplier?: readonly number[],
+  ): UnderwaterFrame | undefined {
+    this.#under = undefined;
+    if (!water) return undefined;
+    const crossing = nearPlane(water.height);
+    if (crossing.state === 'above') return undefined;
+    const type = this.#type(water.type);
+    if (!type) return undefined;
+    const fog = {
+      color: underwaterFogColor(type, multiplier),
+      near: type.underwaterFogNear,
+      far: type.underwaterFogFar,
+    };
+    if (crossing.state === 'under') {
+      this.#under = type;
+      return fog;
+    }
+    const space = this.#imageSpaceOf(type);
+    return { ...fog, mask: crossing.mask, ...(space && { depthOfField: space.depthOfField }) };
+  }
+
+  #type(formId: number): WaterType | undefined {
+    if (!this.#types.has(formId)) {
+      this.#types.set(formId, undefined);
+      void this.#lookup(formId)?.then((type) => {
+        if (type) this.#types.set(formId, type);
+      });
+    }
+    return this.#types.get(formId);
+  }
+
+  #imageSpaceOf(type: WaterType | undefined): ImageSpace | undefined {
+    const formId = type?.imageSpace;
     if (formId === undefined) return undefined;
     if (!this.#imageSpaces.has(formId)) {
       this.#imageSpaces.set(formId, undefined);
@@ -98,49 +225,4 @@ export class UnderwaterView {
     }
     return this.#imageSpaces.get(formId);
   }
-
-  /** The fog below the surface; undefined above it (or while its water type loads). */
-  fog(
-    cameraZ: number,
-    water: { readonly height: number; readonly type: number } | undefined,
-    lighting: Pick<SceneLighting, 'sunColor' | 'ambient'>,
-  ): SceneFog | undefined {
-    this.#under = undefined;
-    if (!water || !isUnderwater(cameraZ, water.height)) return undefined;
-    if (!this.#types.has(water.type)) {
-      this.#types.set(water.type, undefined);
-      void this.#lookup(water.type)?.then((type) => {
-        if (type) this.#types.set(water.type, type);
-      });
-    }
-    const type = this.#types.get(water.type);
-    this.#under = type;
-    return type && underwaterFog(type, lighting);
-  }
-}
-
-/** The fog seen from under the water of a type, in the scene's light. */
-export function underwaterFog(
-  type: Pick<
-    WaterType,
-    'underwaterFogAmount' | 'underwaterFogNear' | 'underwaterFogFar' | 'shallowColor' | 'deepColor'
-  >,
-  lighting: Pick<SceneLighting, 'sunColor' | 'ambient'>,
-): SceneFog {
-  const light = underwaterLight(lighting);
-  const lit = (color: readonly number[]): Vec3 => [
-    (color[0] ?? 0) * light,
-    (color[1] ?? 0) * light,
-    (color[2] ?? 0) * light,
-  ];
-  return {
-    nearColor: lit(type.shallowColor),
-    farColor: lit(type.deepColor),
-    near: type.underwaterFogNear,
-    // A far plane before the near one (HelgenWater) fogs fully just past the near plane.
-    far: Math.max(type.underwaterFogFar, type.underwaterFogNear + 1),
-    power: 1,
-    // Amount 0 would mean "no limit" to the fog shader: keep a sliver of water fog.
-    max: Math.max(type.underwaterFogAmount, 0.01),
-  };
 }

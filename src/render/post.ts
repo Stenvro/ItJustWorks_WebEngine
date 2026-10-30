@@ -3,7 +3,8 @@
 // displayed image (shaders/post.wgsl, shaders/luminance.wgsl), and its depth of field blurs
 // the distance (shaders/dof.wgsl). Image-space modifiers add a fade colour (in the grading)
 // and screen effects after the depth of field: full-screen blur, double vision, radial blur
-// and motion blur (shaders/screen-effects.wgsl).
+// and motion blur (shaders/screen-effects.wgsl). The underwater view's fog and its depth of
+// field inside the underwater mask go in the depth of field's pass (src/world/underwater.ts).
 
 import dofShader from './shaders/dof.wgsl?raw';
 import luminanceShader from './shaders/luminance.wgsl?raw';
@@ -15,6 +16,7 @@ import {
   type DepthOfFieldMode,
   type ImageSpace,
 } from '../world/image-space.ts';
+import type { UnderwaterFrame } from '../world/underwater.ts';
 
 /** Format of the scene before post-processing. */
 export const HDR_FORMAT: GPUTextureFormat = 'rgba16float';
@@ -23,7 +25,7 @@ const BLOOM_DIVISOR = 4;
 /** The depth of field's blurred copy is made at half the resolution. */
 const DOF_DIVISOR = 2;
 const POST_FLOATS = 40;
-const DOF_FLOATS = 16;
+const DOF_FLOATS = 36;
 const EFFECT_FLOATS = 8;
 
 /**
@@ -308,7 +310,8 @@ export class PostProcessor {
   /**
    * Bloom, adaptation, tone curve, grading, depth of field and the modifiers' screen effects
    * from the HDR target into `output`. `depth`: the opaque scene's depth (r32float, reversed
-   * Z) with the camera's near plane, for the depth of field.
+   * Z) with the camera's near plane, for the depth of field. `underwater`: the underwater
+   * view where the camera's near plane reaches below a water surface (needs `depth`).
    */
   run(
     encoder: GPUCommandEncoder,
@@ -318,6 +321,7 @@ export class PostProcessor {
     space: ImageSpace | undefined,
     deltaSeconds: number,
     depth?: { readonly view: GPUTextureView; readonly near: number },
+    underwater?: UnderwaterFrame,
   ): void {
     const targets = this.#ensureTargets(width, height);
     this.#seconds += deltaSeconds;
@@ -380,16 +384,38 @@ export class PostProcessor {
 
     const field = image.depthOfField;
     const sides = DOF_SIDES[field.mode ?? 'back'];
-    const dof =
+    const blurs =
       space !== undefined && depth !== undefined && field.strength > 0 && sides.some(Boolean);
+    // Inside the underwater mask: the water's imagespace's depth of field (none without one).
+    const water = depth !== undefined ? underwater : undefined;
+    const inside = water?.mask ? water.depthOfField : undefined;
+    const insideSides = DOF_SIDES[inside?.mode ?? 'back'];
+    const insideBlurs = inside !== undefined && inside.strength > 0 && insideSides.some(Boolean);
+    const dof = depth !== undefined && (blurs || water !== undefined);
+    const dofBlur = blurs || insideBlurs;
     if (dof) {
-      writeBlur(3, dofBlurPixels(field.blurRadius));
-      this.#dofData.set([field.strength, field.distance, field.range, field.sky ? 1 : 0], 0);
-      this.#dofData.set([1 / width, 1 / height, depth.near, 0], 4);
+      // One blurred copy, at the scene's radius (the water's where only it blurs).
+      if (dofBlur) {
+        writeBlur(3, dofBlurPixels(blurs ? field.blurRadius : (inside?.blurRadius ?? 0)));
+      }
+      const data = this.#dofData;
+      data.fill(0);
+      data.set([field.strength, field.distance, field.range, field.sky ? 1 : 0], 0);
+      data.set([1 / width, 1 / height, depth.near, 0], 4);
       const map = field.worldMap;
-      this.#dofData.set(map ? [map.focal, map.maxBlur, map.scale, map.nearScale] : [0, 0, 0, 0], 8);
-      this.#dofData.set([sides[0], sides[1], 0, 0], 12);
-      queue.writeBuffer(this.#dofUniforms, 0, this.#dofData);
+      data.set(map ? [map.focal, map.maxBlur, map.scale, map.nearScale] : [0, 0, 0, 0], 8);
+      data.set([sides[0], sides[1], 0, 0], 12);
+      if (inside) {
+        data.set([inside.strength, inside.distance, inside.range, inside.sky ? 1 : 0], 16);
+        data.set([insideSides[0], insideSides[1], 0, 0], 20);
+      }
+      if (water) {
+        data.set([...water.color, 1], 24);
+        data.set([water.near, water.far, 0, 0], 28);
+        // No mask: the whole image (wholly under, the scene's depth of field is the water's).
+        data.set(water.mask ? [...water.mask, 0] : [0, 0, -1, 1], 32);
+      }
+      queue.writeBuffer(this.#dofUniforms, 0, data);
     }
 
     // The screen effects that act this frame, each from the image so far into the next.
@@ -464,7 +490,7 @@ export class PostProcessor {
       steps.push((_source, target) => {
         // The depth of field comes first: its copy reads the graded image (the world map's
         // blur reads the graded image itself).
-        if (!field.worldMap) {
+        if (dofBlur && !field.worldMap) {
           pass('dof-copy', targets.dofA.createView(), this.#bright, targets.dofDown);
           pass('dof-blur-h', targets.dofB.createView(), this.#blur, targets.dofBlurH);
           pass('dof-blur-v', targets.dofA.createView(), this.#blur, targets.dofBlurV);

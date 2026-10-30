@@ -8,8 +8,13 @@
 //   node tools/water-info.ts --reflected         references the water reflects (REFR flag bit 28,
 //                                                XPWR), exterior and interior, by base type
 //   node tools/water-info.ts --environment       the cube maps cells and worlds reflect (XWEM)
+//   node tools/water-info.ts --underwater        each type's underwater view: the fog colour
+//                                                (shallow colour, before the weather's water
+//                                                multiplier), its planes, the imagespace
+//                                                (INAM) and that imagespace's depth of field
 
 import { environmentMap, parseCell } from '../src/world/cell-records.ts';
+import { parseImageSpace } from '../src/world/image-space.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
 import {
   cellWater,
@@ -140,6 +145,22 @@ if (process.argv[2] === '--area') {
     for (const [path, c] of [...maps].sort((a, b) => b[1] - a[1]))
       console.log(`  ${String(c)} ${path}${vfs.has(path) ? '' : ' (missing: no cube)'}`);
   }
+} else if (process.argv[2] === '--underwater') {
+  // The underwater view's inputs (src/world/underwater.ts) for every water type.
+  let withoutSpace = 0;
+  for (const type of types.values()) {
+    const record = type.imageSpace === undefined ? undefined : await db.get(type.imageSpace);
+    const space = record?.type === 'IMGS' ? parseImageSpace(record) : undefined;
+    if (!space) withoutSpace++;
+    const field = space?.depthOfField;
+    console.log(
+      `${hex(type.formId)} ${type.editorId.padEnd(32)} fog ${rgb(type.shallowColor)}` +
+        ` ${n(type.underwaterFogNear)}..${n(type.underwaterFogFar)}` +
+        (record ? ` | ${record.editorId ?? hex(record.formId)}` : ' | no imagespace') +
+        (field ? ` dof ${n(field.strength)} at ${n(field.distance)} over ${n(field.range)}` : ''),
+    );
+  }
+  console.log(`${String(types.size)} water types, ${String(withoutSpace)} without an imagespace`);
 } else if (process.argv[2] === '--cell') {
   const [, worldId = 'Tamriel', xs = '0', ys = '0'] = process.argv.slice(2);
   const world = (await db.worldspaces()).find((w) => w.editorId === worldId);
