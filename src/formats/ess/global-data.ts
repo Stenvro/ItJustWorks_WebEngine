@@ -200,36 +200,78 @@ export function readEffects(
   return { effects, unknown1: reader.f32(), unknown2: reader.f32() };
 }
 
+/** The sky's state (CommonLibSSE's Sky members, in the order the original writes them). */
 export interface WeatherData {
   readonly climate: number;
   readonly weather: number;
   readonly previousWeather: number;
-  readonly unknownWeather1: number;
-  readonly unknownWeather2: number;
+  /** The climate's default weather and a weather a script forced (ForceActive). */
+  readonly defaultWeather: number;
+  readonly overrideWeather: number;
+  /** The region whose weather list was used. */
   readonly regionWeather: number;
-  /** The game hour now, and when the transition began. */
+  /** The game hour now, and when the weather last changed. */
   readonly currentTime: number;
   readonly beginTime: number;
   /** How far the transition to `weather` is (0..1). */
   readonly weatherPercent: number;
-  /** The rest (UESP: partly unknown), kept as bytes. */
-  readonly rest: Uint8Array;
+  /** The sky's flags, the last moon phase update (a day), three values the sky keeps. */
+  readonly flags: number;
+  readonly moonPhaseUpdate: number;
+  readonly values: readonly number[];
+  /** A u32 and the fog power the sky keeps, then its mode (0 none, 1 interior, 2 sky dome, 3 full). */
+  readonly fogValue: number;
+  readonly fogPower: number;
+  readonly mode: number;
+  /** The weathers' sky effects (visual effects with a model): whether the current and last have one. */
+  readonly referenceEffects: readonly [boolean, boolean];
 }
 
 export function readWeather(data: EssSource, resolve: RefIdResolver): WeatherData {
   const reader = essReader(data);
+  const ref = (): number => resolve(reader.refId());
+  const forms = [ref(), ref(), ref(), ref(), ref(), ref()] as const;
+  const [currentTime, beginTime, weatherPercent] = reader.vec3();
+  const flags = reader.u32();
+  const moonPhaseUpdate = reader.u32();
+  const values = [reader.u32(), reader.u32(), reader.u32()];
+  const fogValue = reader.u32();
+  const fogPower = reader.f32();
+  const mode = reader.u32();
+  // Which of the current and last weather's sky effect follow (bits 1 and 2): each a model
+  // reference effect as the temp effects write their type 9 (global-data-tables.ts).
+  const effects = reader.u8();
+  for (const bit of [1, 2]) if (effects & bit) skipModelReferenceEffect(reader);
   return {
-    climate: resolve(reader.refId()),
-    weather: resolve(reader.refId()),
-    previousWeather: resolve(reader.refId()),
-    unknownWeather1: resolve(reader.refId()),
-    unknownWeather2: resolve(reader.refId()),
-    regionWeather: resolve(reader.refId()),
-    currentTime: reader.f32(),
-    beginTime: reader.f32(),
-    weatherPercent: reader.f32(),
-    rest: reader.bytes(reader.remaining),
+    climate: forms[0],
+    weather: forms[1],
+    previousWeather: forms[2],
+    defaultWeather: forms[3],
+    overrideWeather: forms[4],
+    regionWeather: forms[5],
+    currentTime,
+    beginTime,
+    weatherPercent,
+    flags,
+    moonPhaseUpdate,
+    values,
+    fogValue,
+    fogPower,
+    mode,
+    referenceEffects: [(effects & 1) !== 0, (effects & 2) !== 0],
   };
+}
+
+/**
+ * A model reference effect's data: the temp effect's base (two floats, a byte, a u32), a byte,
+ * the target, a byte and when set four references, then the art object and a sized block.
+ */
+function skipModelReferenceEffect(reader: ReturnType<typeof essReader>): void {
+  reader.skip(4 + 4 + 1 + 4 + 1);
+  reader.refId();
+  if (reader.u8() !== 0) reader.skip(4 * 3);
+  reader.refId();
+  reader.skip(reader.vsval());
 }
 
 export function readAudio(

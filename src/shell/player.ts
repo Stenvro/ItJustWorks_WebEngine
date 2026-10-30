@@ -547,6 +547,11 @@ export class Player implements Camera {
   /** The view of the last viewProjection (the first-person view looks along it). */
   readonly #view = new Float32Array(16);
 
+  /** The world's and first person's fields of view (degrees across a 4:3 frame). */
+  get fov(): readonly [number, number] {
+    return [this.#fovDegrees, this.#firstPersonFov];
+  }
+
   /** The world's and first person's fields of view (degrees across a 4:3 frame): fov. */
   setFov(degrees: number, firstPerson?: number): void {
     this.#fovDegrees = degrees;

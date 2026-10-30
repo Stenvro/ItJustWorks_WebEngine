@@ -61,6 +61,10 @@ export interface SavedPlayer {
   readonly weaponDrawn?: boolean | undefined;
   /** Getting out of their vehicle. */
   readonly vehicleExit?: VehicleExit | undefined;
+  /** The camera: first or third person (the original's player camera keeps it in its saves). */
+  readonly pov?: 'first' | 'third' | undefined;
+  /** The world's and first person's fields of view (degrees). */
+  readonly fov?: readonly [number, number] | undefined;
 }
 
 /** The player's graphs as a save keeps them: the body's and the first-person one. */
