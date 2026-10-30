@@ -40,8 +40,11 @@ struct WaterParams {
 @group(2) @binding(8) var noise0: texture_2d<f32>;
 @group(2) @binding(9) var noise1: texture_2d<f32>;
 @group(2) @binding(10) var noise2: texture_2d<f32>;
-// Flow map: rg = flow direction (east, north), a = 1 - strength; row 0 is the north edge.
+// Flow map: rg = flow direction, b = how coarse the flow normals are, a = how fast they move;
+// row 0 is the north edge.
 @group(2) @binding(11) var flowMap: texture_2d<f32>;
+// The flow normals (WATR NAM5) the flow map moves.
+@group(2) @binding(12) var flowNormals: texture_2d<f32>;
 
 struct WaterFrame {
   // The sky's horizon colour (rgb); w what the water reflects: 0 the reflection faces (else the
@@ -121,17 +124,55 @@ fn waterDepthControl(properties: vec4f, deepness: vec4f) -> vec4f {
   return properties * (saturate(deepness) - 1.0) + 1.0;
 }
 
-// World units a river's surface moves per second at full flow strength.
-const FLOW_SPEED = 160.0;
-// Seconds between restarts of the flow offset (two phases hide the jump).
-const FLOW_PERIOD = 4.0;
+// Texels of a cell's flow map along a side (src/world/flow-map.ts FLOW_TEXELS_PER_CELL).
+const FLOW_TEXELS = 64.0;
 
-// One noise layer's normal (tangent space, z up), weighted by its amplitude, at a position
-// moved by `offset` world units (river flow).
-fn layerNormal(layer: u32, position: vec2f, offset: vec2f, time: f32) -> vec3f {
+// One tap of the flow map for the flow normals (observed in the original's flow-map
+// techniques): the flow normals' coordinate, 64 a cell times sqrt(1.01 - blue), turned into the
+// tap's flow direction and moved along it by its alpha times `rate` a second, plus `offset`;
+// the normal's xy there. The map is clamped to the cell's own texels (the original's composite
+// reads the neighbouring cell's along its north and east edges).
+fn flowTap(flowUv: vec2f, normalsUv: vec2f, rate: f32, offset: f32, time: f32) -> vec2f {
+  let edge = 0.5 / FLOW_TEXELS;
+  let at = clamp(flowUv, vec2f(edge), vec2f(1.0 - edge));
+  let tap = textureSampleLevel(flowMap, waterSampler, at, 0.0);
+  let direction = tap.rg * 2.0 - 1.0;
+  let coordinate = normalsUv * FLOW_TEXELS * sqrt(max(1.01 - tap.b, 0.0));
+  let turned = vec2f(
+    dot(vec2f(direction.x, -direction.y), coordinate),
+    dot(direction.yx, coordinate),
+  );
+  let moved = turned - vec2f(rate * tap.a * time, 0.0) + offset;
+  return textureSample(flowNormals, waterSampler, moved).rg;
+}
+
+// A river's flow normal at a world position (observed in the original's flow-map techniques):
+// four taps of the flow map on a grid staggered by half a texel, each with its own rate and
+// offset, blended by tent weights across and down (each tap counts most at its texel's centre)
+// and rescaled for the blend's loss of contrast; its slope times the normals' depth share (at
+// least 0.4). The flow map's coordinate is the cell's own (north at the top); the flow normals'
+// runs on across cells (the cell's coordinate plus its grid position).
+fn flowNormal(position: vec2f, normalsShare: f32, time: f32) -> vec3f {
+  let local = (position - water.flow.xy) / 4096.0;
+  let uv = vec2f(local.x, 1.0 - local.y);
+  let normalsUv = vec2f(position.x / 4096.0, 1.0 - position.y / 4096.0);
+  let stagger = 0.5 / FLOW_TEXELS;
+  let tent = 1.0 - abs(2.0 * fract(FLOW_TEXELS * uv) - 1.0);
+  let d = flowTap(uv, normalsUv, 8.0, 0.0, time);
+  let c = flowTap(uv + vec2f(stagger, 0.0), normalsUv, 8.48, 0.62, time);
+  let b = flowTap(uv + vec2f(0.0, stagger), normalsUv, 10.64, 0.27, time);
+  let a = flowTap(uv + vec2f(stagger), normalsUv, 9.92, 0.0, time);
+  let blended = mix(mix(a, b, tent.x), mix(c, d, tent.x), tent.y);
+  let spread = sqrt(tent * tent + (1.0 - tent) * (1.0 - tent));
+  let slope = (blended - 0.5) / (spread.x * spread.y) * max(normalsShare, 0.4);
+  return vec3f(slope, sqrt(max(1.0 - dot(slope, slope), 0.0)));
+}
+
+// One noise layer's normal (tangent space, z up), weighted by its amplitude.
+fn layerNormal(layer: u32, position: vec2f, time: f32) -> vec3f {
   let angle = water.windDirection[layer];
   let wind = vec2f(cos(angle), sin(angle)) * water.windSpeed[layer] * time;
-  let uv = (position - offset) / max(water.uvScale[layer], 1.0) + wind;
+  let uv = position / max(water.uvScale[layer], 1.0) + wind;
   var n: vec3f;
   switch (layer) {
     case 0u: { n = textureSample(noise0, waterSampler, uv).xyz; }
@@ -232,48 +273,24 @@ fn fs_water(input: VertexOut) -> @location(0) vec4f {
   );
 
   // Normal: the first layer by its amplitude around the up axis, the other two added by
-  // theirs, flattened by the normals' depth property; rivers take their flow's waves over it
-  // and, far away, the first layer's own normal alone; the displacement field's ripples bend it.
-  var first = vec3f(0.0, 0.0, 1.0);
-  var waves = vec3f(0.0);
-  if (water.flow.z > 0.5) {
-    // Rivers: the waves travel along the flow map, in two phases half a period apart.
-    // TODO(M13): the original lays WATR NAM5's flow normals over the noise from four taps of
-    // the flow map on a half-texel staggered grid (docs/rendering.md, rivers' flow normals);
-    // the cell water's texture coordinates that place it are unread, so ours moves the noise.
-    let local = (input.worldPos.xy - water.flow.xy) / 4096.0;
-    let flowTexel = textureSampleLevel(flowMap, waterSampler, vec2f(local.x, 1.0 - local.y), 0.0);
-    let direction = normalize(flowTexel.rg * 2.0 - 1.0 + vec2f(1e-4, 0.0));
-    let velocity = direction * (1.0 - flowTexel.a) * FLOW_SPEED * water.surface.w;
-    let phase0 = fract(time / FLOW_PERIOD);
-    let phase1 = fract(time / FLOW_PERIOD + 0.5);
-    let blend = abs(phase0 * 2.0 - 1.0);
-    for (var layer = 0u; layer < 3u; layer++) {
-      let a = layerNormal(layer, input.worldPos.xy, velocity * phase0 * FLOW_PERIOD, time);
-      let b = layerNormal(layer, input.worldPos.xy, velocity * phase1 * FLOW_PERIOD, time);
-      let n = mix(a, b, blend);
-      waves += n;
-      if (layer == 0u) {
-        first = n;
-      }
-    }
-  } else {
-    for (var layer = 0u; layer < 3u; layer++) {
-      let n = layerNormal(layer, input.worldPos.xy, vec2f(0.0), time);
-      waves += n;
-      if (layer == 0u) {
-        first = n;
-      }
-    }
-  }
-  // layerNormal weighs each layer by its amplitude; the first keeps the rest of the up axis.
-  waves += vec3f(0.0, 0.0, 1.0 - water.amplitude.x);
+  // theirs, flattened by the normals' depth property. Rivers (the flow-map techniques) take the
+  // flow normals near the camera and give way to the first layer's own normal by the noise
+  // falloff (observed in the original). The displacement field's ripples bend either.
   let up = vec3f(0.0, 0.0, 1.0);
-  var normal = safeNormalize(mix(up, safeNormalize(waves), depthControl.z));
+  var normal: vec3f;
   if (water.flow.z > 0.5) {
-    // Only the flow-map techniques fade the normal with distance (observed in the original).
+    let first = layerNormal(0u, input.worldPos.xy, time);
     let firstNormal = select(up, first / water.amplitude.x, water.amplitude.x > 0.0);
-    normal = safeNormalize(mix(firstNormal, normal, detail));
+    let flow = flowNormal(input.worldPos.xy, depthControl.z, time);
+    normal = safeNormalize(mix(firstNormal, flow, detail));
+  } else {
+    var waves = vec3f(0.0);
+    for (var layer = 0u; layer < 3u; layer++) {
+      waves += layerNormal(layer, input.worldPos.xy, time);
+    }
+    // layerNormal weighs each layer by its amplitude; the first keeps the rest of the up axis.
+    waves += vec3f(0.0, 0.0, 1.0 - water.amplitude.x);
+    normal = safeNormalize(mix(up, safeNormalize(waves), depthControl.z));
   }
   // The ripples: the field's tilt as a normal, the waves' normal taken over by how flat it is.
   let ripple = normalize(vec3f(displacementSlope(input.worldPos.xy), 1.0));

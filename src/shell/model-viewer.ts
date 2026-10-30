@@ -789,12 +789,18 @@ export class ModelViewer {
   #allObjectSkeletons: readonly { reference: number; skeleton: AnimatedSkeleton }[] = [];
   /** The cell's lighting with its enabled lights (see #refreshEnabled). */
   #cellLighting: ReturnType<typeof cellSceneLighting> | undefined;
-  /** The cube the cell's water reflects (WaterFrame.environment): null where it has none. */
-  #waterEnvironment: GPUTexture | null = null;
+  /**
+   * The cube the cell's water reflects (WaterFrame.environment): null where it has none,
+   * undefined without cube map reflections (the planes' reflections).
+   */
+  #waterEnvironment: GPUTexture | null | undefined = null;
+  /** [Water] bUseCubeMapReflections. */
+  #cubeMapReflections = true;
 
   /**
    * The cell's water environment map (CELL XWEM), as the original takes it: with
-   * bUseCubeMapReflections, a cube file the cell names that exists; else no reflection cube.
+   * bUseCubeMapReflections, a cube file the cell names that exists, else no reflection cube;
+   * without it, the reflections of the cell's water planes (water-reflection.ts).
    */
   async #loadWaterEnvironment(path: string | undefined): Promise<void> {
     const session = this.#session;
@@ -803,7 +809,8 @@ export class ModelViewer {
       use && path !== undefined && session?.vfs.has(path)
         ? await session.textures.get(path)
         : undefined;
-    this.#waterEnvironment = cube?.depthOrArrayLayers === 6 ? cube : null;
+    this.#cubeMapReflections = use;
+    this.#waterEnvironment = !use ? undefined : cube?.depthOrArrayLayers === 6 ? cube : null;
   }
   /** The lighting in a room with its own template, for the cell's lighting it is of. */
   #roomLighting:
@@ -2028,7 +2035,12 @@ export class ModelViewer {
         water: () => {
           const at = this.#renderer.view?.camera.position;
           const displacement = at && this.#play?.displacement.frame(at, performance.now() / 1000);
-          return { profile: undefined, displacement, environment: this.#waterEnvironment };
+          return {
+            profile: undefined,
+            displacement,
+            environment: this.#waterEnvironment,
+            reflections: { cubeMaps: this.#cubeMapReflections, interior: true },
+          };
         },
         // The cell's shadow lights cast shadows (interiors have no sun shadow).
         lightShadows: true,

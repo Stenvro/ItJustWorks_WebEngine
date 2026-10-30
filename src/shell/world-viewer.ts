@@ -2784,6 +2784,14 @@ export class WorldViewer {
       profile: frame.sky.profile,
       displacement,
       ...(this.#waterEnvironment && { environment: this.#waterEnvironment }),
+      // Which water takes which reflection (water-reflection.ts planReflections): the full one
+      // mirrors the world's LOD water height (observed in the original).
+      reflections: {
+        cubeMaps: this.#session?.ini.number('Water', 'bUseCubeMapReflections') !== 0,
+        interior: false,
+        worldWaterHeight: this.#world?.record.lodWaterHeight,
+      },
+      eye: this.#play?.spawned === true ? this.#play.player.eye : undefined,
     };
   }
 
