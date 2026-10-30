@@ -55,6 +55,14 @@ export class EssReader extends BinaryReader {
   }
 }
 
+/** What a reader of a part of the save takes: its bytes, or a reader standing at its start. */
+export type EssSource = Uint8Array | EssReader;
+
+/** A reader over the bytes, or the reader itself (so the caller can see where it stopped). */
+export function essReader(source: EssSource): EssReader {
+  return source instanceof EssReader ? source : new EssReader(source);
+}
+
 /**
  * A raw reference id as a form id in the save's load order: by the save's form id array, a
  * Skyrim.esm form, or one the game made. Undefined for a kind the format leaves unknown.

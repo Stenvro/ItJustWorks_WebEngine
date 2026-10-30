@@ -13,9 +13,12 @@ done and the actor values must come out as the save holds them.
 Two real saves (2026-10-30, the same load order with Survival Mode, Curios, Fishing and AdvDSGS)
 read with `ess-info`: every global data entry with its reader, the Papyrus data to its last byte
 (40k script instances, 430 arrays, the running stacks with their frames, the registrations),
-and every change form to its end but the actors after their movement data (2,235 and 2,238
-of 2,362 and 2,365 ACHR: the movement controller's layout is open, TODO(M13)); every actor's
-actor values and added spells are read.
+every global data entry to its last byte but the temp effects' (one byte left, TODO(M13)) and
+the second save's combat table (112 bytes left, TODO(M13)), and every change form to its end
+but: the player's own data after its skills' experience (both saves), and in the second save
+(a fight at Helgen) 6 actors' combat controllers and 6 actors' combat pathing requests, which
+hold the combat AI's objects (their layouts are open, TODO(M13)). Every other actor (2,361 and
+2,352 of 2,362 and 2,365) reads to its end, its movement controller included.
 
 ## The file
 
@@ -85,7 +88,12 @@ player controls, 111 story event manager (its entries' layout is undocumented: k
 references), 1000 temp effects (the effect entries, then two lists of typed effects: types 0,
 1, 3 to 11 documented; an undocumented type, such as 2, stops the read and keeps the rest), 1005
 main (always empty; the table 3 count leaves it out). 104 has no documentation: kept as bytes.
-`GLOBAL_DATA_READERS` maps every type to its reader; `ess-info` runs them on a save.
+`GLOBAL_DATA_READERS` maps every type to its reader; `readGlobalData` runs one and says how
+many bytes it left, and `ess-info` prints every entry not read to its end. Type 1 has one more
+byte from form version 73 (read when there). Measured on the two saves: every reader ends
+exactly but temp effects (one byte after the second list, both saves: its meaning is open) and
+combat in the second save (112 bytes left where combats were running: the combat groups'
+layout after UESP needs checking against the original's, TODO(M13)); 104 is in neither save.
 
 **Papyrus** (read to its last byte on real saves: `ess-info`): version u16 (6 in Special
 Edition saves), strings, script types (name, parent, members: name and type as string indices),
@@ -209,9 +217,9 @@ everywhere (the original reserves one byte and widens it when the count is known
   storage (vsval × (actor value, base f32); vsval × (actor value, the three modifiers); the
   actor value is a signed byte widened to i32, so indices from 128 up read negative), the
   added spells (u32 count × refId). Then the movement controller's data (a byte: 0 none; else
-  its movement agents, path, interfaces and planner, each type with its own layout: open,
-  TODO(M13)), u32, the combat controller's data (a byte; else open), u32 count × (refId, u32),
-  two u32, a refId and a byte. The player's own data follows (TODO(M13)).
+  see "Movement" below), u32, the combat controller's data (a byte; else the combat AI's
+  state, open: TODO(M13)), a u32 count (0: none; else that many refId and u32), two u32, a
+  refId and a byte. The player's own data follows (see "The player").
 - **QUST**: form flags, quest flags u16 (CommonLibSSE: enabled 0x1, completed 0x2, failed 0x40,
   active 0x800), script delay f32, stages (vsval; stage u16, done bit 0), objectives (vsval;
   index u32, state u32: 1 displayed, 2 completed, 3 completed and displayed, 4 failed, 5 failed
@@ -244,6 +252,45 @@ everywhere (the original reserves one byte and widens it when the count is known
   its whole definition (open, TODO(M13); none in the saves read). INFO, CONT, DOOR, STAT, ALCH,
   IDLM, NOTE, NAVM, WOOP, MGEF, ENCH, CLAS: the form flags only.
 
+## Movement
+
+As observed in the original (`src/formats/ess/movement.ts`). The movement controller writes
+through a pathing stream: values as usual, references as refIds, and **shared objects** by an
+8-byte id (the object's address); the first time an object is written in an actor's save its
+type and data follow the id, later only the id (0: none). The AI process's data writes some
+before (the reader then takes an id followed by no known type as written there: TODO(M13),
+from the AI process's decoded data). A type is the CRC-32 (reflected, start 0, no final
+inversion) of the class name (`PathingRequest` 0x330EB0E3); the combat AI's generic requests
+mix in their goal and search policies' ids by exclusive or.
+
+The controller: the waiting messages (u32 count, each a type and its data), the points of a
+static path (u32 count: a point, three floats, u32), u32, 7 switch bytes, the **arbiters** (u32
+count: a type byte; 0 handler, 1 path manager (u32, request, path), 2 planner (a byte), 3 post
+update (14 floats), 4 tweener (keys, a target, three transforms, four floats)), the **agents**
+(u32 count: a type byte, 0x00 to 0x13 and 0x80 to 0x8A, each with its own fields: the path
+followers' request and path, the avoiders' lists, the tweeners' targets, ...), then a byte:
+whether the actor is loaded, and then its animation graphs' state (a byte; a byte for one
+graph or a list; the graph's: a byte, a u32 count and 12 bytes each, or 4 zero bytes when it
+was not found) and a byte for one more object (none in the saves).
+
+A point: three floats, a cell (a type, then for `PathingCell` a worldspace refId and its grid
+as i32, or an interior's refId), a refId, u16 and two bytes. A path (`BSPathingSolution`):
+points with what to do there (a door message), two i32, two lists of smoothed points, two
+bytes. A pathing request: its start and goal points, the spaces to avoid, limits, what it
+holds locked (`PathingLockData`), its movement parameters (five floats), the forms it may use,
+then what its kind adds (16 kinds, `PathingRequestFlyLand` and the others). A combat request
+adds its actor, two words, its path and its combat objects (a u32 id with bit 0 set when the
+type and data follow: their layouts are open, TODO(M13)).
+
+## The player
+
+After the actor's data (`src/formats/ess/player.ts`, as observed in the original): switches and
+timers, a list of (u32, u64 milliseconds), game times relative to the save's, then the
+**skills' experience** (CommonLibSSE's PlayerSkills: the level's experience and threshold, a
+count of 18, each skill's level, experience, threshold and legendary count), a vector, a game
+time and a list of (12 bytes, a game time). What follows (eight refIds, then lists in the
+original's order) does not read to its end yet (TODO(M13)).
+
 ## Import
 
 `importEss(ess, world, request)` makes our `GameSave` (docs/formats/save.md). The Load page puts
@@ -268,14 +315,19 @@ plugin name, and forms of plugins not loaded are left out. What it applies:
 - Papyrus: each script instance's variables, by script level (a type's members follow its
   parents'), with object variables as handles to the instances' forms, and the state each
   instance is in. An alias script's alias id is TODO(M13).
+- the OnUpdate and OnUpdateGameTime registrations, each going on with the time it had left
+  (the original saves the time to send on the VM's clock, which the timer table keeps at 0 in
+  the saves read: so the time is what is left, TODO(M13) on a save where it is not; real time
+  in milliseconds, game time in thousandths of an hour), single or repeating, on the form or
+  the alias of the handle's high word;
+- the forms scripts added to form lists (FLST).
 
-Read but not imported yet (M12): the running stacks (onto our resumable frames,
-`vm.restoreThreads`: each frame's function, instruction and variables are read), the function
-messages and suspended stacks, and the registrations (waits, OnUpdate and OnUpdateGameTime with
-the time each fires: the VM's clock they count from is not in the Papyrus data, sleep and tracked
-stats events, inventory filters, animation events); the projectiles and hazards in flight; the
-base objects' own changes (values, names, known ingredient effects, form lists'
-added forms, location keyword data, scenes' running state).
+Read but not imported yet (TODO(M13)): the running stacks (our resumable frames keep their own
+code positions, not the compiled script's), the function messages, suspended stacks and waits,
+the other registrations (sleep and tracked stats events, inventory filters, animation events);
+the projectiles and hazards in flight; the base objects' other changes (values, names, known
+ingredient effects, location keyword data, scenes' running state); the movement controller's
+state (the engine plans its paths anew) and the player's skills' experience.
 
 Everything else is counted by change form type and flag (`REFR: lockExtra x 12`) and by where a
 read stopped, then logged under `save` as not imported.

@@ -39,9 +39,10 @@ Beside it the census lists, per record type, the subrecords no engine code outsi
 
 The checklist has **157 items**: 37 format items below and the 120 record types of the load
 order (the table at the end). **154 are done** (34 format items, all 120 record types). Open:
-the save game's change forms (an actor's movement controller, combat controller, AI process
-and the player's own data) and global data (whether the UESP-built readers end exactly), and
-SEQ use (M12).
+the save game's change forms (the combat AI's objects, the AI process and the player's data
+after its skills; the movement controller reads to its end since round 7), global data (temp
+effects' last byte, combat with combats running), and SEQ use (where the original reads its
+set of quests).
 
 Round 6 (two real saves): the Papyrus data read to its last byte (u32 string indices and u64
 handles in Special Edition saves, the stacks' frames, messages, suspended stacks and the
@@ -98,8 +99,9 @@ rod's clips), SEQ files, the marketplace's archive and the census tool.
       `record-layouts.ts`, `format-census esm`, `tests/record-layouts.int.test.ts`.
 - [x] SEQ files: 7, every form id a quest of its plugin (HearthFires.esm's file predates its
       Update.esm master: its ids carry the old index). `src/formats/esm/seq.ts`, `seq-info`.
-- [ ] SEQ use: which start-game-enabled quests the original starts from them (a plugin new to
-      a save): M12.
+- [ ] SEQ use: observed in the original: as each plugin loads it reads `SEQ\<plugin>.SEQ`,
+      moves every id into the load order by that plugin and adds it to one set of quests.
+      Open (M13): where that set is read (starting a plugin's quests in a save without it).
 - [x] VMAD (script properties, fragments, aliases): all 24,631 of the load order read to their
       last byte (every script, property, fragment and alias script). `src/formats/esm/vmad.ts`,
       `format-census esm`.
@@ -211,19 +213,20 @@ and imports the first of them when it is there.
       held yet (queued unbinds, latent function queues, LOS events, the last five lists) are
       xEdit's (TODO(M13)).
 - [ ] Change forms: every type in both saves (21,599 change forms) is read to its end but
-      ACHR, and every actor through its actor values and added spells (round 6: cells' seen
-      data, the base objects' own data by the original's layouts (FLST, LCTN, SMQN, SCEN,
-      BOOK, INGR, ECZN, RELA, TACT, ...), every projectile kind and hazards, the Interaction
-      extra, the arrows' transform, actor value indices from 128). Open: an actor's movement
-      controller data (2,235 and 2,238 actors stop there: its agents and interfaces each have
-      their own layout), the combat controller's and the player's own data after it, the AI
-      process data (found by shape, not decoded), a package the game made (in PACK and in the
-      trespass and package-data extras) and a grenade's constraints (none in the saves).
-- [ ] Global data: every one of the 30 types has a reader (`GLOBAL_DATA_READERS`, run by
-      `ess-info`), and every reader runs on both real saves without an error. Not yet measured:
-      whether each of the 17 built from UESP's layouts reads to its last byte (the readers do
-      not report what is left). Where UESP stops, the rest is kept as bytes: 104, the story
-      event manager's entries, temp effects of an undocumented type (2), the weather's tail.
+      ACHR; 4,713 of the 4,727 actors read to their end (round 7: the movement controller with
+      its messages, arbiters, 34 agent kinds, shared pathing objects, 18 pathing request
+      kinds, paths and a loaded actor's animation graph state, `src/formats/ess/movement.ts`;
+      the player's skills' experience, `player.ts`). Open: the player's data after its skills
+      (both saves), the combat AI's objects (6 combat controllers and 6 combat requests in the
+      second save), the AI process data (found by shape, not decoded), a package the game made
+      (in PACK and in the trespass and package-data extras) and a grenade's constraints (none
+      in the saves).
+- [ ] Global data: every one of the 30 types has a reader, and `readGlobalData` (run by
+      `ess-info` and the save test) says what each leaves. Round 7: 28 entries of each save
+      read to their last byte (player location's form version 73 byte added). Open: temp
+      effects' last byte (both saves) and combat in the second save (112 bytes, with combats
+      running); kept as bytes where nothing documents them: 104 (in neither save), the story
+      event manager's entries (none in the saves), the weather's tail.
 
 ## Files the original does not load
 
