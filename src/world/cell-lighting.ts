@@ -63,6 +63,7 @@ export function pointLights(
       color: [color[0] * brightness, color[1] * brightness, color[2] * brightness],
       ...(light.spot && { spot: light.spot }),
       ...(light.room !== undefined && { room: light.room }),
+      ...(light.unlitLand === true && { lightsLand: false }),
       ...lightShadow(light),
     });
   }

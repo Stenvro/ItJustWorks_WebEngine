@@ -278,6 +278,11 @@ export interface CellObstacle {
 
 /** REFR record flag: "Don't Havok Settle". */
 const DONT_HAVOK_SETTLE = 0x20000000;
+/**
+ * A light reference's "Doesn't Light Landscape" (REFR flag 0x20000): the original creates its
+ * light without the flag to light land, so land geometry leaves it out of its lists.
+ */
+const DOESNT_LIGHT_LANDSCAPE = 0x20000;
 /** REFR record flag: "Reflected By Auto Water" (xEdit; bit 28). */
 export const REFLECTED_BY_AUTO_WATER = 0x10000000;
 
@@ -463,6 +468,8 @@ export interface CellLight {
    * index in `CellData.rooms` plus one).
    */
   readonly room?: number;
+  /** The reference's Doesn't Light Landscape flag (REFR 0x20000): land is not lit by it. */
+  readonly unlitLand?: boolean;
 }
 
 /** What decides whether a reference is enabled. */
@@ -915,6 +922,7 @@ export async function loadCellData(
           ...emittanceOf(record),
           ...lightCone(light, ref),
           ...hemisphereAxis(light, ref),
+          ...((record.flags & DOESNT_LIGHT_LANDSCAPE) !== 0 && { unlitLand: true }),
         });
       }
     }

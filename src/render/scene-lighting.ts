@@ -18,6 +18,13 @@ export interface PointLight {
   readonly room?: number;
   /** A shadow-casting light (LIGH shadow flags): how it casts (light-shadows.ts). */
   readonly shadow?: LightShadow;
+  /**
+   * When the light joined the scene, lower first (the order a geometry's light list names
+   * lights in, light-lists.ts); undefined: before every ordered light.
+   */
+  readonly order?: number;
+  /** False for a light whose reference leaves land unlit (REFR flag 0x20000). */
+  readonly lightsLand?: boolean;
 }
 
 /** How a shadow light casts: LIGH Shadow Spotlight, Shadow Hemisphere, Shadow Omnidirectional. */

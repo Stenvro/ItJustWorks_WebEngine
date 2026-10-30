@@ -2856,6 +2856,9 @@ export class WorldViewer {
       for (const light of pointLights(cellLights, seconds, camera, this.#emittanceRgb, startFade)) {
         lights.push({
           ...light,
+          // The order lights joined the scene (cells as they loaded, then their references):
+          // a geometry's light list names them in it (light-lists.ts).
+          order: lights.length,
           distance: Math.hypot(
             light.position[0] - camera[0],
             light.position[1] - camera[1],
@@ -2875,6 +2878,7 @@ export class WorldViewer {
     )) {
       lights.push({
         ...light,
+        order: lights.length,
         distance: Math.hypot(
           light.position[0] - camera[0],
           light.position[1] - camera[1],
