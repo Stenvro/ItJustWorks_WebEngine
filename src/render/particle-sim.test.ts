@@ -275,3 +275,41 @@ describe('ParticleSimulation', () => {
     expect(out[14]).toBeGreaterThan(0);
   });
 });
+
+describe('mesh particles', () => {
+  const rocks = (): ParticleSystemData =>
+    system({
+      maxParticles: 4,
+      emitters: [emitter({ speed: 600, lifeSpan: 10, radius: 1, emissionAxis: [1, 0, 0] })],
+      mesh: {
+        poolSize: 4,
+        node: 9,
+        body: {
+          linearDamping: 0.1,
+          angularDamping: 0.05,
+          friction: 0.5,
+          restitution: 0.4,
+          gravityFactor: 1,
+        },
+      },
+    });
+
+  it('draws no quads, and places each particle mesh as a matrix', () => {
+    const { simulation, context } = run(rocks(), 0.1);
+    expect(simulation.write(new Float32Array(64 * PARTICLE_FLOATS), 0, context)).toBe(0);
+    const out = identity();
+    expect(simulation.meshWorld(0, out)).toBe(true);
+    expect(simulation.meshWorld(99, out)).toBe(false);
+  });
+
+  it('falls under the Havok gravity onto the ground it stands on, and stays there', () => {
+    const { simulation } = run(rocks(), 3, translated(0, 0, 1000));
+    const out = identity();
+    let lowest = Infinity;
+    for (let i = 0; i < simulation.count; i++) {
+      if (simulation.meshWorld(i, out)) lowest = Math.min(lowest, out[14] ?? 0);
+    }
+    // Emitted 50 units above the placement at z 1000: fallen to it, not through it.
+    expect(lowest).toBeCloseTo(1000, 0);
+  });
+});

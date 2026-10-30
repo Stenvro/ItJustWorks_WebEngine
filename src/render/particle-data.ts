@@ -226,6 +226,9 @@ export interface ParticleModifiers {
         readonly angle: number;
         readonly angleVariation: number;
         readonly randomSign: boolean;
+        /** The axis particles turn about (a random one per particle with randomAxis). */
+        readonly randomAxis?: boolean;
+        readonly axis?: readonly [number, number, number];
       }
     | undefined;
   readonly color: ParticleColor | undefined;
@@ -300,10 +303,35 @@ export interface ParticleSystemData {
   /** Model-space matrices (rest pose) of the system and the objects its modifiers use. */
   readonly objects: ReadonlyMap<Ref, Mat4>;
   /**
+   * NiMeshParticleSystem (NiMeshPSysData): each particle is a copy of a mesh, drawn as the
+   * model's parts made for it (ModelPart.meshParticle), not as a quad.
+   */
+  readonly mesh?: MeshParticles;
+  /**
    * Those objects below a NiBillboardNode: the node's mode and rest matrix, and the object
    * relative to it (they turn with the node every frame, e.g. torch flames stay upright).
    */
   readonly billboards: ReadonlyMap<Ref, ParticleBillboard>;
+}
+
+/**
+ * A mesh particle system's particles. With BSPSysHavokUpdateModifier (the dragon crash's rocks)
+ * each particle is a Havok rigid body made from the modifier's node (its bhkRigidBody: mass,
+ * damping, friction, restitution), started at the particle's place and speed with the turn the
+ * modifier's rotation modifier gives, and moved by the physics world from then on.
+ */
+export interface MeshParticles {
+  /** Parts kept per mesh (NiMeshPSysData default pool size). */
+  readonly poolSize: number;
+  /** The node whose shapes each particle draws (the Havok modifier's node). */
+  readonly node: Ref;
+  readonly body?: {
+    readonly linearDamping: number;
+    readonly angularDamping: number;
+    readonly friction: number;
+    readonly restitution: number;
+    readonly gravityFactor: number;
+  };
 }
 
 export interface ParticleBillboard {
@@ -490,6 +518,41 @@ function emitterMesh(
  * model-space matrix of every object (see buildModel); `material` and `alpha` are the
  * system's shader and alpha properties as model-data reads them.
  */
+function rotationOf(modifier: ParticleModifierBlock): NonNullable<ParticleModifiers['rotation']> {
+  const axis = list(modifier, 'axis');
+  return {
+    name: modifier.name,
+    speed: num(modifier, 'speed'),
+    speedVariation: num(modifier, 'speedVariation'),
+    angle: num(modifier, 'angle'),
+    angleVariation: num(modifier, 'angleVariation'),
+    randomSign: flag(modifier, 'randomSign'),
+    randomAxis: flag(modifier, 'randomAxis'),
+    axis: [axis[0] ?? 1, axis[1] ?? 0, axis[2] ?? 0],
+  };
+}
+
+/** A mesh particle system's pool and the node (and Havok body) its particles copy. */
+function meshParticles(file: NifFile, poolSize: number, havokNode: Ref): MeshParticles | undefined {
+  const node = file.blocks[havokNode];
+  if (node?.kind !== 'node') return undefined;
+  const collision = file.blocks[node.collision];
+  const rigid = collision?.kind === 'collision-object' ? file.blocks[collision.body] : undefined;
+  return {
+    poolSize: Math.max(0, poolSize),
+    node: havokNode,
+    ...(rigid?.kind === 'rigid-body' && {
+      body: {
+        linearDamping: rigid.linearDamping,
+        angularDamping: rigid.angularDamping,
+        friction: rigid.friction,
+        restitution: rigid.restitution,
+        gravityFactor: rigid.gravityFactor,
+      },
+    }),
+  };
+}
+
 export function buildParticleSystem(
   file: NifFile,
   systemRef: Ref,
@@ -528,6 +591,7 @@ export function buildParticleSystem(
   let wind = 0;
   let lod: ParticleModifiers['lod'];
   let stripDelta = 1 / 30;
+  let havokNode: Ref = -1;
 
   const modifiers = system.modifiers
     .map((m) => file.blocks[m])
@@ -623,15 +687,18 @@ export function buildParticleSystem(
         });
         break;
       case 'NiPSysRotationModifier':
-        rotation = {
-          name,
-          speed: num(modifier, 'speed'),
-          speedVariation: num(modifier, 'speedVariation'),
-          angle: num(modifier, 'angle'),
-          angleVariation: num(modifier, 'angleVariation'),
-          randomSign: flag(modifier, 'randomSign'),
-        };
+        rotation = rotationOf(modifier);
         break;
+      case 'BSPSysHavokUpdateModifier': {
+        // The rigid bodies' modifier: its node's body, and the rotation modifier it starts
+        // each body's turn with (not in the system's own list).
+        havokNode = list(modifier, 'nodes')[0] ?? -1;
+        const turn = file.blocks[ref(modifier, 'modifier')];
+        if (turn?.kind === 'particle-modifier' && turn.type === 'NiPSysRotationModifier') {
+          rotation = rotationOf(turn);
+        }
+        break;
+      }
       case 'NiPSysColliderManager':
         for (let at = ref(modifier, 'collider'), guard = 0; at >= 0 && guard < 16; guard++) {
           const collider = file.blocks[at];
@@ -753,6 +820,8 @@ export function buildParticleSystem(
     }
   }
 
+  const mesh = data.meshes && meshParticles(file, data.meshes.defaultPoolSize, havokNode);
+
   // Objects below billboard nodes turn with them.
   const parents = new Map<Ref, Ref>();
   file.blocks.forEach((block, ref) => {
@@ -781,6 +850,7 @@ export function buildParticleSystem(
   return {
     name: system.name,
     block: systemRef,
+    ...(mesh && { mesh }),
     worldSpace: system.worldSpace,
     maxParticles: Math.max(1, data.maxParticles),
     // Stored as u, width, v, height.

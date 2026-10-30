@@ -311,7 +311,11 @@ interface NpcShout {
 
 /** A skeleton a source's node is read from: its pose and its placement in the world. */
 interface Skeleton {
-  readonly pose: { world(node: string): Float32Array | undefined };
+  readonly pose: {
+    world(node: string): Float32Array | undefined;
+    /** Whether the graph's visibility slots hide a node (hkVis:NPC L MagicNode [LMag]). */
+    hiddenNode?(node: string): boolean;
+  };
   readonly world: Float32Array;
 }
 
@@ -322,6 +326,14 @@ function nodeOf(skeleton: Skeleton, source: number): Float32Array | undefined {
     if (local) return local;
   }
   return undefined;
+}
+
+/** Whether the graph's visibility slots hide a source's node (its art is then not drawn). */
+function nodeHidden(skeleton: Skeleton, source: number): boolean {
+  for (const node of NODES[source] ?? []) {
+    if (skeleton.pose.world(node)) return skeleton.pose.hiddenNode?.(node) === true;
+  }
+  return false;
 }
 
 const describe = (error: unknown): string =>
@@ -489,6 +501,12 @@ export class ActorCasting {
     const skeleton = this.#skeleton(actor, source);
     const local = skeleton && nodeOf(skeleton, source);
     return skeleton && local ? multiply(skeleton.world, local) : undefined;
+  }
+
+  /** Whether the graph's visibility slots hide a source's node (hkVis on a magic node). */
+  #hidden(actor: number, source: number): boolean {
+    const skeleton = this.#skeleton(actor, source);
+    return skeleton !== undefined && nodeHidden(skeleton, source);
   }
 
   /** Where an actor's feet are and which way it faces. */
@@ -734,7 +752,8 @@ export class ActorCasting {
   #placeArt(shown: Shown, instance: ModelInstance): void {
     const matrix = this.#node(shown.cast.actor, shown.cast.source);
     if (!matrix) return;
-    if (shown.scale !== 1) for (let i = 0; i < 12; i++) matrix[i] = (matrix[i] ?? 0) * shown.scale;
+    const scale = this.#hidden(shown.cast.actor, shown.cast.source) ? 0 : shown.scale;
+    if (scale !== 1) for (let i = 0; i < 12; i++) matrix[i] = (matrix[i] ?? 0) * scale;
     instance.world.set(matrix);
   }
 
@@ -1506,6 +1525,8 @@ export class ActorCasting {
   #placeHandArt(entry: HandArt): void {
     const matrix = entry.instance && this.#node(entry.actor, entry.source);
     if (!entry.instance || !matrix) return;
+    // Shrunk to nothing while the graph's visibility slots hide the hand's magic node.
+    if (this.#hidden(entry.actor, entry.source)) matrix.fill(0, 0, 12);
     entry.instance.world.set(matrix);
     entry.motion.version++;
   }

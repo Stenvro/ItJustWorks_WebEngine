@@ -308,7 +308,7 @@ const BLOCKS: Record<string, readonly [Status, string]> = {
   NiTriStripsData: ['n/a', 'collision geometry only (bhkNiTriStripsShape)'],
   NiFloatExtraData: [
     'n/a',
-    'names Havok float slots (hkVis, hkPhoneme: read from the pose); the rest exporter data',
+    'names Havok float slots (hkVis: a controller per name, skeleton.ts showBySlots); the rest exporter data',
   ],
   NiFloatExtraDataController: [
     'n/a',
@@ -317,19 +317,21 @@ const BLOCKS: Record<string, readonly [Status, string]> = {
   NiPathInterpolator: ['done', 'path-motion.ts (constant velocity, follow, flip)'],
   NiLookAtInterpolator: ['done', 'animation.ts look-at tracks'],
   BSFrustumFOVController: ['done', 'camera-model.ts (the kill cameras)'],
-  // Open.
   BSLagBoneController: [
-    'open',
-    'skeletons and placed or held models trail; armour hung on a skeleton not',
+    'done',
+    'lag-bone.ts: skeletons, worn models (wearOnRig), placed and held models trail',
   ],
+  BSBoneLODExtraData: ['done', 'BehaviorRuntime.setBoneLod: far bones keep their pose'],
+  NiBSBoneLODController: [
+    'n/a',
+    'old exports (centaur, wolf, werewolf); no BSBoneLOD#Bone# names give it levels',
+  ],
+  NiMeshParticleSystem: ['done', 'mesh parts per particle (meshParticle), particle-sim bodies'],
+  NiMeshPSysData: ['done', 'its pool: one copy of the mesh per particle (model-data.ts)'],
   BSDecalPlacementVectorExtraData: [
     'n/a',
     'editor data (0-2 points each); the original loads it, nothing reads it',
   ],
-  BSBoneLODExtraData: ['open', 'bone LOD (bones held beyond a distance) not built'],
-  NiBSBoneLODController: ['open', 'bone LOD (bones held beyond a distance) not built'],
-  NiMeshParticleSystem: ['open', 'the dragon crash rocks (Havok-driven mesh particles) not drawn'],
-  NiMeshPSysData: ['open', 'the dragon crash rocks (Havok-driven mesh particles) not drawn'],
 };
 
 // --- Sweep ----------------------------------------------------------------------------------
