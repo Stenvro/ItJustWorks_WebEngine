@@ -67,6 +67,7 @@ import {
 } from './shader-fades.ts';
 import type { DisplacementFrame } from './water-displacement.ts';
 import { DisplacementSimulation } from './water-displacement-gpu.ts';
+import { REFLECTION_FACES, reflectionLookupMatrices } from './water-reflection.ts';
 import type {
   AlphaState,
   EffectMaterial,
@@ -567,8 +568,15 @@ export interface WaterFlow {
   /** South-west corner of the cell the map covers. */
   readonly origin: readonly [number, number];
 }
-/** WGSL `WaterFrame`: 5 vec4 + 32 profile samples + the displacement field's placement. */
-const WATER_FRAME_FLOATS = 20 + 32 * 4 + 4;
+/**
+ * WGSL `WaterFrame`: 5 vec4 + 32 profile samples + the displacement field's placement + the
+ * reflection's five face matrices.
+ */
+const WATER_FRAME_FLOATS = 20 + 32 * 4 + 4 + REFLECTION_FACES * 16;
+/** The reflection faces' lookup matrices (water-reflection.ts). */
+const REFLECTION_LOOKUP = reflectionLookupMatrices();
+/** Where the face matrices start in it. */
+const WATER_FRAME_FACES = 20 + 32 * 4 + 4;
 
 /** A water type (WATR) on the GPU: its parameters and noise textures. */
 export class GpuWaterType {
@@ -656,6 +664,11 @@ export interface ModelInstance {
   readonly graph?: ObjectGraph;
   /** Water type of the model's water surfaces (the activator's WNAM); default otherwise. */
   readonly water?: GpuWaterType;
+  /**
+   * A reference flagged Reflected By Auto Water: drawn into the water's reflection
+   * (water-reflection.ts) besides the sky and the LOD.
+   */
+  readonly reflected?: boolean;
   /** A static's directional material (STAT DNAM). */
   readonly directional?: PlacedDirectional;
   /** A tree's leaf amplitude and frequency (TREE CNAM). */
@@ -721,6 +734,8 @@ export interface ActorTints {
 /** Lighting shader types that take an actor's colour: skin tint and hair tint. */
 const SHADER_SKIN_TINT = 5;
 const SHADER_HAIR_TINT = 6;
+const SHADER_LOD_LANDSCAPE = 9;
+const SHADER_LOD_LANDSCAPE_NOISE = 18;
 
 /**
  * The current colour of an emittance source (a light, or a region's weather by the hour),
@@ -846,6 +861,8 @@ interface Draw {
   readonly firstPerson?: boolean;
   /** Its instance's distance fade (ModelInstance.fade). */
   readonly fade?: FadeGroup;
+  /** Its instance is reflected by the water (ModelInstance.reflected). */
+  readonly reflected?: boolean;
 }
 
 /**
@@ -1595,6 +1612,17 @@ export interface SceneFrame {
   rooms?: RoomCuller | undefined;
 }
 
+/** How a view's frame differs from the world's own (SceneRenderer.updateFrame). */
+export interface FrameOptions {
+  /** The water reflection's plane: what lies below this height is clipped. */
+  readonly clipHeight?: number;
+  /**
+   * false: the draws keep the lights they chose in the world's view this frame (another view of
+   * the same frame: the frame's lights are written as they are).
+   */
+  readonly chooseLights?: boolean;
+}
+
 /** The fade multipliers before the settings are read (the executable's [LOD] defaults). */
 const DEFAULT_FADE: FadeSettings = { actors: 6, items: 3, objects: 5 };
 
@@ -1667,6 +1695,11 @@ export class SceneRenderer {
   /** The water's displacement field (water-displacement-gpu.ts). */
   readonly #displacement: DisplacementSimulation;
   readonly #waterFrameData = new Float32Array(WATER_FRAME_FLOATS);
+  /** The water's reflection faces (setWaterReflection), and whether they hold this frame's. */
+  #waterReflection: GPUTexture | undefined;
+  #waterReflectionActive = false;
+  /** No reflection: one black texel per face. */
+  readonly #noReflection: GPUTexture;
   readonly #screenSampler: GPUSampler;
   /** Stand-ins for the opaque scene's copies until the renderer provides them. */
   readonly #noSceneColor: GPUTexture;
@@ -1949,6 +1982,11 @@ export class SceneRenderer {
       entries: [
         { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: {} },
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+        {
+          binding: 2,
+          visibility: GPUShaderStage.FRAGMENT,
+          texture: { viewDimension: '2d-array' },
+        },
       ],
     });
     this.#waterFrameLayout = waterFrameLayout;
@@ -1962,6 +2000,12 @@ export class SceneRenderer {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.#displacement = new DisplacementSimulation(device);
+    this.#noReflection = device.createTexture({
+      label: 'no-water-reflection',
+      format: 'rgba16float',
+      size: [1, 1, REFLECTION_FACES],
+      usage: GPUTextureUsage.TEXTURE_BINDING,
+    });
     this.#waterFrameBindGroup = this.#createWaterFrameBindGroup();
     this.#noSceneColor = device.createTexture({
       label: 'no-scene-color',
@@ -2687,6 +2731,7 @@ export class SceneRenderer {
           ...(instance.visibility && { visibility: instance.visibility }),
           ...(firstPerson && { firstPerson }),
           ...(fadeGroup && { fade: fadeGroup }),
+          ...(instance.reflected === true && { reflected: true }),
         };
         draws.push(draw);
         if (fadeGroup) {
@@ -2920,6 +2965,7 @@ export class SceneRenderer {
     largeRefMask?: LargeRefMask,
     rooms?: RoomCuller,
     firstPersonViewProjection?: Mat4,
+    options: FrameOptions = {},
   ): void {
     this.#frame.planes = frustumPlanes(viewProjection);
     this.#frame.lodMask = lodMask;
@@ -2949,7 +2995,8 @@ export class SceneRenderer {
     data.set([...(fog?.farColor ?? [0, 0, 0]), 1], 56);
     data.set([fog?.near ?? 0, fog?.far ?? 1, fog?.power ?? 1, fog?.max ?? 0], 60);
     const lightCount = Math.min(MAX_LIGHTS, lighting.lights.length);
-    this.#frameUints.set([lightCount, fog ? 1 : 0, this.debugView, 0], 64);
+    const clip = options.clipHeight;
+    this.#frameUints.set([lightCount, fog ? 1 : 0, this.debugView, clip === undefined ? 0 : 1], 64);
     data.set(
       [timeSeconds, lighting.wind ?? 0, CHARACTER_LIGHT.lumScale, CHARACTER_LIGHT.lumMax],
       68,
@@ -2978,7 +3025,7 @@ export class SceneRenderer {
         1 / Math.max(1, screen?.width ?? 1),
         1 / Math.max(1, screen?.height ?? 1),
         screen?.near ?? 1,
-        0,
+        clip ?? 0,
       ],
       148,
     );
@@ -3007,6 +3054,19 @@ export class SceneRenderer {
     );
     this.#device.queue.writeBuffer(this.#frame.buffer, 0, data);
 
+    // Another view of the same frame (the water's reflection) keeps the lights the draws chose.
+    if (options.chooseLights === false) {
+      if (lightCount > 0) {
+        this.#device.queue.writeBuffer(
+          this.#frame.lights,
+          0,
+          this.#lightData,
+          0,
+          lightCount * LIGHT_FLOATS,
+        );
+      }
+      return;
+    }
     // A new light frame: each draw drawn chooses its lights again (#chooseLights).
     this.#lightFrame = (this.#lightFrame + 1) >>> 0 || 1;
     // Only lights that can reach what is in view are candidates (their sphere, grown by
@@ -3586,6 +3646,48 @@ export class SceneRenderer {
   }
 
   /**
+   * The water's reflection (water-reflection.ts) of the current frame (useFrame): the sky's
+   * objects, object LOD and the references reflected by the water, of the opaque draws.
+   */
+  drawReflected(pass: GPURenderPassEncoder, scenes: Iterable<GpuScene>): void {
+    pass.setBindGroup(0, this.#frame.bindGroup);
+    pass.setVertexBuffer(1, this.#fallbackVertices);
+    const state = passState();
+    for (const scene of scenes) {
+      if (!sceneInside(this.#frame.planes, scene)) continue;
+      for (const draw of scene.draws) {
+        if (draw.part.pass !== 'opaque') continue;
+        if (!draw.sky && draw.reflected !== true && !isLod(draw.part.part.material)) continue;
+        if (this.#visible(draw)) this.#drawPart(pass, scene, draw, state);
+      }
+    }
+    this.#flushLights(scenes);
+  }
+
+  /**
+   * The height of the water surface the reflection mirrors: of the water in view this frame
+   * (the world's view), the one nearest the camera; undefined without water in view.
+   */
+  reflectedWaterHeight(scenes: Iterable<GpuScene>, camera: Vec3): number | undefined {
+    let best: number | undefined;
+    let bestDistance = Infinity;
+    for (const scene of scenes) {
+      for (const draw of scene.draws) {
+        if (draw.part.pass !== 'water' || !this.#visible(draw)) continue;
+        const dx = draw.center[0] - camera[0];
+        const dy = draw.center[1] - camera[1];
+        const dz = draw.center[2] - camera[2];
+        const distance = Math.max(0, Math.hypot(dx, dy, dz) - draw.radius);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          best = draw.center[2];
+        }
+      }
+    }
+    return best;
+  }
+
+  /**
    * The TAA's motion vectors (shaders/velocity.wgsl): the opaque draws that move (moving
    * instances, animated parts) write, where they are what the opaque pass kept (`depth`: its
    * resolved depth), the offset from this frame's uv to the last frame's. The rest of the image
@@ -3961,7 +4063,16 @@ export class SceneRenderer {
     data.set([...(frame?.lower ?? [0.4, 0.5, 0.6]), 1], 4);
     data.set([...(frame?.upper ?? [0.3, 0.4, 0.5]), 1], 8);
     data.set([...(frame?.multiplier ?? [1, 1, 1]), 1], 12);
-    data.set([1 / Math.max(width, 1), 1 / Math.max(height, 1), frame?.profile ? 1 : 0, 0], 16);
+    data.set(
+      [
+        1 / Math.max(width, 1),
+        1 / Math.max(height, 1),
+        frame?.profile ? 1 : 0,
+        this.#waterReflectionActive ? 1 : 0,
+      ],
+      16,
+    );
+    data.set(REFLECTION_LOOKUP, WATER_FRAME_FACES);
     if (frame?.profile) {
       data.set(frame.profile.subarray(0, 128), 20);
     } else {
@@ -3987,8 +4098,26 @@ export class SceneRenderer {
       entries: [
         { binding: 0, resource: { buffer: this.#waterFrameBuffer } },
         { binding: 1, resource: this.#displacement.slopes.createView() },
+        {
+          binding: 2,
+          resource: (this.#waterReflection ?? this.#noReflection).createView({
+            dimension: '2d-array',
+          }),
+        },
       ],
     });
+  }
+
+  /**
+   * The water's reflection faces (water-reflection.ts) the water shader looks its reflection up
+   * in, and whether they hold this frame's reflection (call before updateWaterFrame).
+   */
+  setWaterReflection(faces: GPUTexture | undefined, active: boolean): void {
+    if (faces !== this.#waterReflection) {
+      this.#waterReflection = faces;
+      this.#waterFrameBindGroup = this.#createWaterFrameBindGroup();
+    }
+    this.#waterReflectionActive = active && faces !== undefined;
   }
 
   /** Material bind group layout (group 2 of object shaders), shared with grass. */
@@ -4583,6 +4712,15 @@ export class SceneRenderer {
     const decal = (flags1 & (SLSF1_DECAL | SLSF1_DYNAMIC_DECAL)) !== 0;
     const layout = part.layout;
     const skinned = part.skin !== undefined && (layout.skinning ?? -1) >= 0;
+    // LOD land (types 9 and 18) alone carries the world map's relief overlay (LOD_LAND).
+    const lodLand =
+      shader === 'lighting' &&
+      material?.kind === 'lighting' &&
+      (material.shaderType === SHADER_LOD_LANDSCAPE ||
+        material.shaderType === SHADER_LOD_LANDSCAPE_NOISE);
+    const constants: { DEFERRED?: number; LOD_LAND?: number } = {};
+    if (shader === 'lighting' && blend === undefined) constants.DEFERRED = 1;
+    if (lodLand) constants.LOD_LAND = 1;
     const key = [
       shader,
       layout.stride,
@@ -4596,6 +4734,7 @@ export class SceneRenderer {
       depthWrite,
       depthTest,
       decal,
+      lodLand,
     ].join('|');
 
     let pipeline = this.#pipelines.get(key);
@@ -4620,7 +4759,7 @@ export class SceneRenderer {
                 { format: this.#colorFormat, ...(blend && { blend }) },
                 ...(blend === undefined ? [gbufferTarget(true)] : []),
               ],
-          ...(shader === 'lighting' && blend === undefined && { constants: { DEFERRED: 1 } }),
+          ...(Object.keys(constants).length > 0 && { constants }),
         },
         primitive: { topology: 'triangle-list', cullMode, frontFace: 'ccw' },
         depthStencil: {

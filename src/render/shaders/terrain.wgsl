@@ -114,6 +114,9 @@ fn lodLandBlendParameter(color: vec3f) -> f32 {
 
 @fragment
 fn fs_main(in: TerrainOut) -> TerrainPixel {
+  if (reflectionClipped(in.worldPos)) {
+    discard;
+  }
   // Image up (-v) is north (+Y), image right is east (+X).
   let uv = vec2f(in.worldPos.x, -in.worldPos.y) / TILE_SIZE;
   let largeUv = uv * SNOW_NORMAL_TILING;

@@ -16,7 +16,7 @@ struct Frame {
   fogFarColor: vec4f,
   // Fog near, far, power, max.
   fogParams: vec4f,
-  // Point light count, fog enabled, debug view, unused.
+  // Point light count, fog enabled, debug view, 1 while the water reflection clips (screen.w).
   counts: vec4u,
   // Time in seconds, wind strength (0..1), the character light's luminance scale and maximum.
   time: vec4f,
@@ -28,7 +28,8 @@ struct Frame {
   shadowMatrices: array<mat4x4f, 4>,
   shadowSplits: vec4f,
   shadowParams: vec4f,
-  // 1 / width, 1 / height of the target, the camera's near plane, unused.
+  // 1 / width, 1 / height of the target, the camera's near plane, the water reflection's clip
+  // height (counts.w).
   screen: vec4f,
   // The camera's right and up axes in world space (camera-facing quads).
   cameraRight: vec4f,
@@ -91,6 +92,12 @@ fn lightOtherRoom(light: PointLight, room: u32) -> bool {
 // spotlights: sunbeams through a ceiling) lights only within its cone, its edge softened over
 // a tenth of the rest of the cosine range. `offset`: from the point to the light.
 // TODO(M13): the engine's spot edge (its shadow map's frustum) and what stands in the beam.
+// The water reflection's clip (water-reflection.ts): what lies under the reflected water's
+// plane is left out of the reflection.
+fn reflectionClipped(worldPos: vec3f) -> bool {
+  return frame.counts.w != 0u && worldPos.z < frame.screen.w;
+}
+
 fn lightCone(light: PointLight, offset: vec3f) -> f32 {
   if (light.coneCos < -1.0) {
     return 1.0;

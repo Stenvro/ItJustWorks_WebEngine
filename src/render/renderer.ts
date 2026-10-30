@@ -12,6 +12,41 @@ import {
   type ShadowSlot,
 } from './light-shadows.ts';
 
+/**
+ * The water reflection's render targets (water-reflection.ts): the faces as layers, and the
+ * multisampled colour, G-buffer and depth one face is drawn into (the opaque pass's formats, so
+ * the sky, land, tree LOD and objects draw with their own pipelines).
+ */
+class ReflectionTargets {
+  readonly faces: GPUTexture;
+  readonly color: GPUTextureView;
+  readonly gbuffer: GPUTextureView;
+  readonly depth: GPUTextureView;
+
+  constructor(device: GPUDevice) {
+    const size = [REFLECTION_SIZE, REFLECTION_SIZE];
+    this.faces = device.createTexture({
+      label: 'water-reflection',
+      format: HDR_FORMAT,
+      size: [REFLECTION_SIZE, REFLECTION_SIZE, REFLECTION_FACES],
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    const multisampled = (label: string, format: GPUTextureFormat): GPUTextureView =>
+      device
+        .createTexture({
+          label,
+          format,
+          size,
+          sampleCount: SAMPLE_COUNT,
+          usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        })
+        .createView();
+    this.color = multisampled('water-reflection-color', HDR_FORMAT);
+    this.gbuffer = multisampled('water-reflection-gbuffer', GBUFFER_FORMAT);
+    this.depth = multisampled('water-reflection-depth', DEPTH_FORMAT);
+  }
+}
+
 /** A frame asked for (Renderer.captureFrame): its size, and who takes it. */
 interface FrameCapture {
   readonly width: number;
@@ -51,10 +86,19 @@ const OCCLUSION_DEPTH = 8192;
 const OCCLUSION_REFRESH_FRAMES = 120;
 import type { Mat4, Vec3 } from './math.ts';
 import {
+  mirroredCamera,
+  REFLECTION_FACES,
+  REFLECTION_NEAR,
+  REFLECTION_SIZE,
+  reflectionFaceViewProjection,
+  ReflectionSchedule,
+} from './water-reflection.ts';
+import {
   DEPTH_FORMAT,
   SAMPLE_COUNT,
   SceneRenderer,
   type GpuScene,
+  type SceneFrame,
   SHADOW_MAP_LAYERS,
   PRECIPITATION_OCCLUSION_LAYER,
   SHADOW_MAP_SIZE,
@@ -225,6 +269,11 @@ export class Renderer {
   showTrees = true;
   /** Water is drawn (the console's tws). */
   showWater = true;
+  /** The water reflects the sky, land, LOD and flagged references ([Water] bUseWaterReflections). */
+  waterReflections = true;
+  /** The water reflection's faces and targets (made when first needed), one frame per face. */
+  #reflection: { targets: ReflectionTargets; frames: SceneFrame[] } | undefined;
+  readonly #reflectionSchedule = new ReflectionSchedule();
   readonly grass: GrassRenderer;
   readonly decals: DecalRenderer;
   readonly precipitation: PrecipitationRenderer;
@@ -377,6 +426,97 @@ export class Renderer {
   }
 
   /** `timeSeconds` drives animation; `pixelScale` is the devicePixelRatio. */
+  /**
+   * The water's reflection (water-reflection.ts): with water in view outdoors and the camera
+   * above it, the faces due this frame drawn from the camera mirrored under the nearest water's
+   * plane: the sky, the land and its LOD, tree LOD, object LOD and the references reflected by
+   * the water, what lies under the plane clipped. Each face has its own frame state (the frame's
+   * uniforms are written once before the passes run); the draws keep the lights they chose in
+   * the world's view.
+   */
+  #waterReflection(
+    encoder: GPUCommandEncoder,
+    view: SceneView,
+    lighting: SceneLighting,
+    scenes: readonly GpuScene[],
+    sky: SkyFrame | undefined,
+    timeSeconds: number,
+    shadows: FrameShadows | undefined,
+  ): void {
+    const camera = view.camera.position;
+    const height =
+      this.waterReflections && this.showWater && sky !== undefined
+        ? this.scene.reflectedWaterHeight(scenes, camera)
+        : undefined;
+    const above = height !== undefined && camera[2] > height;
+    const faces = this.#reflectionSchedule.facesFor(above ? height : undefined);
+    if (!above || sky === undefined) {
+      this.scene.setWaterReflection(this.#reflection?.targets.faces, false);
+      return;
+    }
+    if (!this.#reflection) {
+      this.#reflection = {
+        targets: new ReflectionTargets(this.#gpu.device),
+        frames: Array.from({ length: REFLECTION_FACES }, (_, i) =>
+          this.scene.createFrame(`water-reflection-${i}`),
+        ),
+      };
+    }
+    const { targets, frames } = this.#reflection;
+    const eye = mirroredCamera(camera, height);
+    const terrain = this.showLod ? view.terrain?.() : undefined;
+    const trees = this.showLod && this.showTrees ? view.trees?.() : undefined;
+    for (const face of faces) {
+      const frame = frames[face];
+      if (!frame) continue;
+      this.scene.useFrame(frame);
+      this.scene.updateFrame(
+        reflectionFaceViewProjection(face, eye),
+        eye,
+        lighting,
+        timeSeconds,
+        view.lodMask?.(),
+        shadows,
+        { width: REFLECTION_SIZE, height: REFLECTION_SIZE, near: REFLECTION_NEAR },
+        view.largeRefMask?.(),
+        undefined,
+        undefined,
+        { clipHeight: height, chooseLights: false },
+      );
+      const pass = encoder.beginRenderPass({
+        label: `water-reflection-${face}`,
+        colorAttachments: [
+          {
+            view: targets.color,
+            resolveTarget: targets.faces.createView({
+              dimension: '2d',
+              baseArrayLayer: face,
+              arrayLayerCount: 1,
+            }),
+            clearValue: SkyRenderer.clearColor(sky.state),
+            loadOp: 'clear',
+            storeOp: 'discard',
+          },
+          { view: targets.gbuffer, loadOp: 'clear', storeOp: 'discard' },
+        ],
+        depthStencilAttachment: {
+          view: targets.depth,
+          depthClearValue: 0,
+          depthLoadOp: 'clear',
+          depthStoreOp: 'discard',
+        },
+      });
+      this.sky.draw(pass, this.scene.frameBindGroup, sky);
+      if (terrain)
+        this.terrain.draw(pass, this.scene.frameBindGroup, terrain, this.scene.viewPlanes);
+      if (trees) this.treeLod.draw(pass, this.scene.frameBindGroup, trees);
+      this.scene.drawReflected(pass, scenes);
+      pass.end();
+    }
+    this.scene.useFrame(undefined);
+    this.scene.setWaterReflection(targets.faces, true);
+  }
+
   render(timeSeconds: number, pixelScale: number): void {
     const { device, context } = this.#gpu;
     const canvasTexture = context.getCurrentTexture();
@@ -398,6 +538,7 @@ export class Renderer {
     let wind: Vec3 = [0, 0, 0];
     /** Cascades to render into the shadow map this frame. */
     const dueCascades: number[] = [];
+    let frameLighting: SceneLighting | undefined;
     if (view) {
       view.camera.update(delta);
       view.camera.viewProjection(targets.width / targets.height, this.#viewProjection);
@@ -416,6 +557,7 @@ export class Renderer {
         if (firstPerson) jitterProjection(firstPerson, pixels, targets.width, targets.height);
       }
       const lighting = view.lighting(view.camera);
+      frameLighting = lighting;
       const inverse = view.shadows ? invert(this.#viewProjection) : undefined;
       if (inverse) {
         const fitted = fitCascades(
@@ -557,6 +699,9 @@ export class Renderer {
       this.scene.drawOpaque(opaque, scenes);
     }
     opaque.end();
+    if (view && frameLighting) {
+      this.#waterReflection(encoder, view, frameLighting, scenes, sky, timeSeconds, shadows);
+    }
 
     const imageSpace = view?.imageSpace?.();
     // The imagespace's depth of field reads the opaque scene's depth.

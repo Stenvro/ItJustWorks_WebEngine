@@ -492,7 +492,10 @@ const SUBRECORD_NOTES: Record<string, readonly [Status, string]> = {
   'WATR FULL': ['n/a', 'name'],
   'WATR SNAM': ['n/a', 'its sound'],
   'WATR GNAM': ['n/a', 'empty in every vanilla water'],
-  'WATR NAM5': ['open', 'flow normals noise texture (RiverFlow.dds) unread'],
+  'WATR NAM5': [
+    'open',
+    "flow normals noise texture (RiverFlow.dds): sampled on the flow map's staggered grid by per-geometry constants that are unread",
+  ],
   'WTHR LNAM': ['open', 'unknown u32 in xEdit (cloud layer count?)'],
   'WTHR NAM2': ['open', 'unknown in xEdit'],
   'WTHR NAM3': ['open', 'unknown in xEdit'],
