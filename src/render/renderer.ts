@@ -127,6 +127,7 @@ import { Sao } from './sao.ts';
 import { Composite } from './composite.ts';
 import { ScreenBloodRenderer, type ScreenBloodFrame } from './screen-blood.ts';
 import { SunEffects, type SunEffectsFrame } from './sun-effects.ts';
+import { ImageLensFlare, type ImageLensFlareMotion } from './image-lens-flare.ts';
 import { TemporalAA } from './taa.ts';
 import { jitterPixels, jitterProjection, reprojection } from './taa-data.ts';
 import { REFRACTION_FORMAT, RefractionComposite } from './refraction.ts';
@@ -289,6 +290,8 @@ export class Renderer {
   readonly post: PostProcessor;
   /** The weather's god rays and the sun's lens flare (sun-effects.ts). */
   readonly sunEffects: SunEffects;
+  /** The image-based lens flare of bright lights (image-lens-flare.ts, bIBLFEnable). */
+  readonly imageLensFlare: ImageLensFlare;
   /** Temporal anti-aliasing ([Display] bUseTAA; main.ts sets it). */
   antiAliasing = true;
   readonly #taa: TemporalAA;
@@ -356,6 +359,7 @@ export class Renderer {
     this.precipitation = new PrecipitationRenderer(device, HDR_FORMAT, this.scene.frameLayout);
     this.post = new PostProcessor(device, format);
     this.sunEffects = new SunEffects(device);
+    this.imageLensFlare = new ImageLensFlare(device);
     this.#taa = new TemporalAA(device);
     this.#menu = new MenuOverlay(device, format, this.scene, this.terrain);
     this.#screenBlood = new ScreenBloodRenderer(device, format);
@@ -813,6 +817,7 @@ export class Renderer {
       const hdrTexture = this.post.hdrTexture(targets.width, targets.height);
       // The history blended in (from the last frame's place of each pixel), then the sun's
       // rays and flare over the steady image.
+      let flareMotion: ImageLensFlareMotion | undefined;
       if (this.antiAliasing && !view.backdrop) {
         const previous = this.#previousUnjittered;
         // Unjittered both ways: a pixel's history lies where its point was in the last frame's
@@ -851,6 +856,7 @@ export class Renderer {
         }
         motion.end();
         this.#taa.resolve(encoder, hdrTexture, targets.sceneDepth, reproject);
+        flareMotion = { velocity, reproject };
         this.#previousUnjittered ??= new Float32Array(16);
         this.#previousUnjittered.set(this.#unjittered);
         if (this.#hasFirstPerson) {
@@ -863,6 +869,10 @@ export class Renderer {
         this.#previousFirstPerson = undefined;
         this.#previousUnjittered = undefined;
         this.#taa.reset();
+      }
+      // The image-based lens flare reads the scene before the volumetric light is added.
+      if (!view.backdrop) {
+        this.imageLensFlare.run(encoder, hdrTexture, targets.sceneDepth, flareMotion);
       }
       const sun = view.sunEffects?.();
       if (sun) {

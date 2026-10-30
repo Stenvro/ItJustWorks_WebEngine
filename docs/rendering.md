@@ -96,10 +96,48 @@ stronger towards the sun, cut into shafts by the shadows of the first two cascad
 through openings in front of the camera, not only towards the sky). The light does not depend
 on the sky's brightness.
 
-**Not yet:** the engine's image-based lens flare of bright lights (bIBLFEnable,
-ISIBLensFlare; vanilla SSE has no LENS records, so this is its only lens flare of lights other
-than the sun): TODO(M13). Its shader is known (Community Shaders), but the values the engine
-feeds it (the flare's ghosts and halo) are computed in the executable and documented nowhere.
+**Image-based lens flare** (`image-lens-flare.ts`, `image-lens-flare-data.ts`,
+`shaders/image-lens-flare.wgsl`; [Display] bIBLFEnable, on by default; vanilla SSE has no LENS
+records, so this is its only flare of lights other than the sun). Observed in the original
+(the passes from the engine's image-space code, each shader's terms from its shader cache):
+
+- No list of lights feeds it. It reads the HDR scene (after the ambient occlusion, before the
+  volumetric light is added) and every pixel with a channel above fIBLFLightsRangeDownshift (1)
+  is a light: lamps, candles, fires, the sun, glowing surfaces. Indoors and outdoors alike.
+- Downsample to a quarter (4 × 4): of four taps at (±1, ±1) source texels the one with the
+  highest luminance (0.3, 0.59, 0.11; black never wins), then averaged half and half with the
+  last frame's result where the pixel's motion vector leads (two targets swap each frame).
+- The lights filter (ISIBLensFlares): saturate(colour) where a channel is above the downshift,
+  else black, × fIBLFGlobalIntensity (0.7).
+- Downsample across to 16 × 4 (four taps at −1.5, −0.5, 0.5, 1.5 texels, the brightest, the same
+  temporal average); the filter again with the downshift 0 and uIBLFLateralRepeat (0) taps
+  either side summed, × the intensity again; downsample across to 32 × 4 (two taps at ±0.5).
+- The blurs: 2r + 1 taps of a normalised Gaussian with σ = r / 2 for r = 1..7, a 15-tap box for
+  8, radius 7 above. Each pass's weights are scaled by the square root of its strength, so a
+  blur across and down scales by the strength.
+- Near streaks: three times the 16 × 4 image blurred across by uIBLFBlurRadiusX (7) and down by
+  uIBLFBlurRadiusY (2) at fIBLFAnamorphicsIntensity (0.1: about a thousandth after three
+  rounds). Far streaks: three times the 32 × 4 image blurred down then across at
+  fIBLFAnamorphicsIntensityFar (1). A radius of 0 skips its pass. The count of three is fixed.
+- Bloom: the lights filter blurred across then down by uIBLFBloomRadius (held to 1..7) at
+  fIBLFBloomIntensity (0 in vanilla: black); the downward pass steps by its source's width.
+  The engine's second bloom (of the sum, downsampled to 16 × 16) is black with its compute
+  downsample (bEnableDownsampleComputeShader, the default: that path hands it no taps), so ours
+  leaves it out.
+- The far streaks are added to the near ones, those to the bloom (bilinear), and the sum is
+  added to the scene by ISCompositeLensFlare; with the volumetric light on, the engine draws
+  ISCompositeLensFlareVolumetricLighting instead, one additive pass of the volume's amount ×
+  its colour plus the flare (ours adds the flare in its own pass: the same sum).
+- The engine reads uIBLFLensesCount, fIBLFFlaresDispersal, fIBLFLightsBurn, the three channel
+  distortions, fIBLFHaloFetch and fIBLFHaloWidthPow (the console's ConfigureIBLF sets them) and
+  loads Effects\LensFlares\Ramps.dds and Masks.dds, but no pass it draws reads any of them: SE
+  draws no ghosts or halo.
+
+TODO(M13): the targets' sizes are named by their downsampling (a quarter, 16 × 4, 32 × 4); the
+rounding and the bloom targets' sizes are inferred. The passes' sampler uses an address mode
+the engine numbers 4 (ours: black outside, a border). Ours finds a still pixel's history by the
+depth and the camera's move (the TAA's), a moving draw's by its motion vector; without TAA the
+history is read in place.
 
 **Encoding cost:** each draw is a handful of calls into the browser's WebGPU, and Helgen's
 opening has some 4,400 draws a frame (its shadow cascades and opaque pass). The opaque and
@@ -407,8 +445,14 @@ constants of Nukem9's decompiled `BSLightingShader`:
    Character light (CHARACTER_LIGHT; [Display] bCharacterLighting, fCharacterLightPrimary /
    SecondaryLightIntensity 0.75 / 0.3, ...LumScale 2, ...LumMax 0.75): on actors' skin (FaceGen
    and skin tint shapes) primary × saturate(n·v) + secondary × saturate((0.1644, −0.9864) ·
-   n.yz in the actor's model space), times min(LumMax, LumScale × luminance). TODO(M13): the
-   engine takes the luminance from a texture it binds (ours: the directional ambient's).
+   n.yz in the actor's model space), times min(LumMax, LumScale × luminance). The luminance is
+   the red of one sample of slot 11 at (1, 1). Observed in the original: no render target fills
+   that slot for the character light, and its techniques bind nothing there. The only lighting
+   draws that bind slot 11 are the projected-UV ones (Data\Textures\Effects\ProjectedNoise.dds),
+   and the renderer's state reset empties it; so the slot holds nothing (the sample reads 0)
+   or that noise texture left by a projected-UV draw before it. TODO(M13): which of the two a
+   frame's actors see depends on the original's draw order, unread; ours keeps the directional
+   ambient's luminance.
    Eyes (type 16, 3,320 vanilla shapes, `node tools/effect-audit.ts --shaders`) carry
    Eye_Environment_Mapping (SLSF1 `0x20000`), not Environment_Mapping, and reflect their cube
    map (slot 4, with the mask of slot 5: both bound by that flag, `material-slots.ts`) by their
@@ -943,10 +987,21 @@ cube where its world (WRLD XWEM: the Forebears' Holdout, the Ancestors' Glade, A
 its interior cell (CELL XWEM: 81 cells, 78 of whose files exist; `node tools/water-info.ts
 --environment`) names one that exists. Interior water without one gets no reflection cube at
 all (ours: the cube reads black, so the reflection colour shows by 1 − reflectivity); outdoors
-without one, the rendered cube. TODO(M13): several planes (the original keeps one cube per
-water height, within 0.01; uMaxExteriorWaterReflections 2, fExteriorWaterReflectionThreshold
-300; ours mirrors the nearest), what the interior mode without a cube binds (ours black) and
-whether the reflection is fogged (ours leaves deferred lit objects unfogged).
+without one, the rendered cube.
+
+**Which water gets which reflection** (observed in the original, as water is added): outdoors,
+water at its world's water height (within 0.01) shares one reflection of that plane that draws
+the sky, the LOD scene and the references flagged to be reflected; all water at any other
+height shares a single second reflection that draws the sky alone (the first such water's
+plane); so two at most, which is uMaxExteriorWaterReflections (2). Indoors each plane (its
+normal and height, within 0.01) has its own reflection, at most uMaxInteriorWaterReflections
+(4): with a cube map file it shows that, without one a rendered reflection of the flagged
+references alone (no sky, no LOD). fExteriorWaterReflectionThreshold and
+fInteriorWaterReflectionThreshold are read from the INI and used by nothing. [Water]
+bForceHighDetailReflections draws the full scene in all of them. TODO(M13): ours mirrors the
+nearest plane for all water and binds black indoors without a cube; the sky-only second
+reflection, the interior planes' reflections of their flagged references and whether the
+reflection is fogged (ours leaves deferred lit objects unfogged) are still to build.
 
 **Displacement** (`water-displacement.ts`, `water-displacement-gpu.ts`,
 `shaders/water-displacement.wgsl`): the surface's interactive ripples, as observed in the
