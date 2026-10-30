@@ -87,6 +87,7 @@ import { REFRACTION_FORMAT } from './refraction.ts';
 import {
   PARTICLE_FLOATS,
   ParticleSimulation,
+  type ParticleBodies,
   type ParticleContext,
   type ParticleSource,
 } from './particle-sim.ts';
@@ -1679,6 +1680,8 @@ export class SceneRenderer {
    * so portal-strict lights of other rooms leave them unlit (ModelInstance.room).
    */
   roomAt: ((point: Vec3) => number) | undefined;
+  /** The physics world mesh particles' rigid bodies live in (ParticleContext.bodies). */
+  particleBodies: ParticleBodies | undefined;
   readonly #device: GPUDevice;
   readonly #colorFormat: GPUTextureFormat;
   readonly #frameData = new Float32Array(FRAME_FLOATS);
@@ -3638,6 +3641,7 @@ export class SceneRenderer {
           animated: frame?.worlds,
           camera,
           wind,
+          bodies: this.particleBodies,
           ...(draw.graph && { sequences: draw.graph.player.playing }),
         };
         simulation.update(context);

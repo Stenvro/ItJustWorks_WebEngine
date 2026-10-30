@@ -19,7 +19,7 @@ import { followWithHud, MenuStack } from '../ui/menu-stack.ts';
 import { HudSignals } from './hud-signals.ts';
 import { readPlayerData, type PlayerData } from './player.ts';
 import { readCollisionMatrix, type CollisionMatrix } from '../physics/collision-layers.ts';
-import type { ModelTextureSwaps } from '../render/actor-model.ts';
+import { alternateSwaps, type ModelTextureSwaps } from '../render/actor-model.ts';
 import type { Renderer } from '../render/renderer.ts';
 import type { RenderPort } from '../render/render-port.ts';
 import { Worldspace } from '../world/worldspace.ts';
@@ -593,18 +593,12 @@ export class GameSession {
     );
   }
 
-  /** Alternate textures (MODS) as texture sets by shape; sets that do not resolve are left out. */
+  /** Alternate textures (MODS) as texture sets by 3D index; sets that do not resolve are left out. */
   async #alternateSwaps(
     alternateTextures: readonly AlternateTexture[],
   ): Promise<ModelTextureSwaps | undefined> {
-    const shapes = await Promise.all(
-      alternateTextures.map(async (swap) => {
-        const textures = await this.textureSet(swap.textureSet);
-        return textures ? [{ shape: swap.shape, textures }] : [];
-      }),
-    );
-    const flat = shapes.flat();
-    return flat.length > 0 ? { shapes: flat } : undefined;
+    const alternates = await alternateSwaps(alternateTextures, (formId) => this.textureSet(formId));
+    return alternates.length > 0 ? { alternates } : undefined;
   }
 
   /** A texture set's textures (TXST TX00..TX07), read once. */

@@ -17,7 +17,7 @@ import { ActorPose, ActorSkeleton, wearOnRig, type RigData } from '../animation/
 import { parseLip, type LipFile } from '../formats/audio/lip.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
-import { thinModelPath, type ModelTextureSwaps } from '../render/actor-model.ts';
+import { alternateSwaps, thinModelPath, type ModelTextureSwaps } from '../render/actor-model.ts';
 import { transformPoint, type Vec3 } from '../render/math.ts';
 import type { ModelPart } from '../render/model-data.ts';
 import type { GpuModel, GpuMorphs, InstanceFade, ModelInstance } from '../render/scene-renderer.ts';
@@ -783,15 +783,12 @@ export class ActorPlacer {
         const path = meshPath(own.path);
         const thin = addon.weighted ? thinModelPath(path) : undefined;
         const skin = skinTexture === undefined ? undefined : await this.#textureSet(skinTexture);
-        const shapes = await Promise.all(
-          own.alternateTextures.map(async (swap) => {
-            const textures = await this.#textureSet(swap.textureSet);
-            return textures ? [{ shape: swap.shape, textures }] : [];
-          }),
+        const alternates = await alternateSwaps(own.alternateTextures, (formId) =>
+          this.#textureSet(formId),
         );
         const swaps: ModelTextureSwaps = {
           ...(skin && { skin }),
-          ...(shapes.flat().length > 0 && { shapes: shapes.flat() }),
+          ...(alternates.length > 0 && { alternates }),
         };
         if (!session.vfs.has(path)) return undefined;
         const model = await session.actorModel(

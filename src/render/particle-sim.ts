@@ -10,7 +10,7 @@ import { controllerTime, sampleBool, sampleFloat } from './animation.ts';
 import { billboardWorld } from './billboard.ts';
 import { invert } from './frustum.ts';
 import { identity, maxScale, multiply, type Mat4, type Vec3 } from './math.ts';
-import { HAVOK_SCALE } from '../physics/collision-data.ts';
+import { HAVOK_SCALE, type CollisionData } from '../physics/collision-data.ts';
 import type {
   ParticleEmitter,
   ParticleParam,
@@ -39,6 +39,27 @@ export interface ParticleContext {
    * clock as `seconds`): their tracks drive the manager-controlled controllers.
    */
   readonly sequences?: readonly { readonly sequence: string; readonly start: number }[];
+  /**
+   * The physics world mesh particles' rigid bodies live in (src/physics/particle-bodies.ts);
+   * none: they fall onto the ground under the effect (a scene without physics).
+   */
+  readonly bodies?: ParticleBodies | undefined;
+}
+
+/**
+ * Mesh particles' rigid bodies in a physics world (BSPSysHavokUpdateModifier): a copy of the
+ * particle node's collision per particle, moving by itself from its start.
+ */
+export interface ParticleBodies {
+  /**
+   * Puts a copy of `collision` into the world at `world` (game units, rotation and
+   * translation), moving at `linear` (units per second) and turning at `angular` (radians per
+   * second about a world axis); its handle, or undefined if it has no simulated body.
+   */
+  add(collision: CollisionData, world: Mat4, linear: Vec3, angular: Vec3): number | undefined;
+  /** The copy's placement now into `out`; false once it has left the world. */
+  pose(handle: number, out: Mat4): boolean;
+  remove(handle: number): void;
 }
 
 /**
@@ -87,6 +108,11 @@ const S_STRIP_HEAD = 22;
 const S_MESH_AXIS = 11;
 /** Mesh particles' rigid bodies: whether the body touched the ground in the last step. */
 const S_MESH_CONTACT = 14;
+
+/** A mesh particle without a rigid body in the physics world yet. */
+const NO_BODY = -1;
+/** A mesh particle whose body left the physics world (its system stopped updating). */
+const LOST_BODY = -2;
 
 /** The Havok world's gravity in game units per second² (9.8 m/s²). */
 const HAVOK_GRAVITY = 9.8 * HAVOK_SCALE;
@@ -233,6 +259,15 @@ export class ParticleSimulation implements ParticleSource {
   /** Where each object was last update (sim space), for BSPSysInheritVelocityModifier. */
   readonly #objectPositions = new Map<Ref, [number, number, number]>();
   readonly #objectVelocity: [number, number, number] = [0, 0, 0];
+  /**
+   * Mesh particles' rigid bodies in the physics world (ParticleContext.bodies): each
+   * particle's handle, NO_BODY before it has one, LOST_BODY once its body left the world (it
+   * falls on by itself then).
+   */
+  readonly #bodyOf: Int32Array;
+  /** The physics world the bodies are in (the last update's). */
+  #bodies: ParticleBodies | undefined;
+  readonly #pose = identity();
   // Scratch vectors.
   readonly #a: number[] = [0, 0, 0];
   readonly #b: number[] = [0, 0, 0];
@@ -246,6 +281,7 @@ export class ParticleSimulation implements ParticleSource {
       : undefined;
     this.#random = random(seed);
     this.#emitAccumulator = new Float64Array(data.emitters.length);
+    this.#bodyOf = new Int32Array(data.mesh?.collision ? data.maxParticles : 0).fill(NO_BODY);
   }
 
   /** Advances the system to `context.seconds` (the first call warms it up). */
@@ -510,6 +546,10 @@ export class ParticleSimulation implements ParticleSource {
       this.#lodSize = 1 + (lod.endSize - 1) * t;
     }
 
+    // Mesh particles' bodies: where the physics world has moved them.
+    this.#bodies = context.bodies;
+    if (this.#bodyOf.length > 0) this.#readBodies();
+
     // Age and death.
     const spawn = data.modifiers.spawn;
     for (let i = 0; i < this.count;) {
@@ -532,6 +572,7 @@ export class ParticleSimulation implements ParticleSource {
     const strip = data.strip;
     for (let i = 0; i < this.count; i++) {
       const o = i * STRIDE;
+      if (this.#hasBody(i)) continue;
       for (let k = 0; k < 3; k++)
         s[o + S_POS + k] = (s[o + S_POS + k] ?? 0) + (s[o + S_VEL + k] ?? 0) * dt;
       if (strip && this.#strip) {
@@ -563,13 +604,88 @@ export class ParticleSimulation implements ParticleSource {
     });
 
     this.#recycle(context);
+    if (this.#bodyOf.length > 0) this.#addBodies();
+  }
+
+  /** Whether particle `index` moves by its rigid body in the physics world. */
+  #hasBody(index: number): boolean {
+    return (this.#bodyOf[index] ?? NO_BODY) >= 0;
   }
 
   /**
-   * Mesh particles' rigid bodies: the world's gravity (times the body's gravity factor) and
-   * the body's damping on their speed and turn. TODO(M13): the original's bodies are Havok's,
-   * colliding with the world's shapes and each other; ours fall onto the ground plane the
-   * effect stands on (#ground).
+   * The particles' bodies' places now (simulation space); a body that left the world leaves
+   * its particle to fall by itself from there.
+   */
+  #readBodies(): void {
+    const bodies = this.#bodies;
+    const s = this.#state;
+    const toSim = this.data.worldSpace ? undefined : invert(this.#simToWorld);
+    const p = this.#a;
+    for (let i = 0; i < this.count; i++) {
+      const handle = this.#bodyOf[i] ?? NO_BODY;
+      if (handle < 0) continue;
+      if (!bodies?.pose(handle, this.#pose)) {
+        this.#bodyOf[i] = LOST_BODY;
+        continue;
+      }
+      const o = i * STRIDE;
+      const x = at(this.#pose, 12);
+      const y = at(this.#pose, 13);
+      const z = at(this.#pose, 14);
+      if (toSim) {
+        point(toSim, x, y, z, p);
+      } else {
+        p[0] = x;
+        p[1] = y;
+        p[2] = z;
+      }
+      for (let k = 0; k < 3; k++) s[o + S_POS + k] = p[k] ?? 0;
+    }
+  }
+
+  /**
+   * New mesh particles' rigid bodies (observed in the original): a copy of the node's body at
+   * the particle's place and turn, with the particle's velocity and its rotation axis times its
+   * rotation speed as the body's angular velocity.
+   */
+  #addBodies(): void {
+    const bodies = this.#bodies;
+    const collision = this.data.mesh?.collision;
+    if (!bodies || !collision) return;
+    const s = this.#state;
+    const world = this.#pose;
+    const linear: [number, number, number] = [0, 0, 0];
+    const angular: [number, number, number] = [0, 0, 0];
+    const v = this.#b;
+    for (let i = 0; i < this.count; i++) {
+      if (this.#bodyOf[i] !== NO_BODY) continue;
+      const o = i * STRIDE;
+      this.#placeMesh(i, 1, world);
+      rotate(this.#simToWorld, s[o + S_VEL] ?? 0, s[o + S_VEL + 1] ?? 0, s[o + S_VEL + 2] ?? 0, v);
+      for (let k = 0; k < 3; k++) linear[k] = v[k] ?? 0;
+      const spin = s[o + S_SPIN] ?? 0;
+      rotate(
+        this.#simToWorld,
+        s[o + S_MESH_AXIS] ?? 0,
+        s[o + S_MESH_AXIS + 1] ?? 0,
+        s[o + S_MESH_AXIS + 2] ?? 0,
+        v,
+      );
+      normalize(v);
+      for (let k = 0; k < 3; k++) angular[k] = (v[k] ?? 0) * spin;
+      // The body's frame is rigid: the system's scale stays out of it.
+      const scale = maxScale(world);
+      if (scale > 0 && Math.abs(scale - 1) > 1e-6) {
+        for (let k = 0; k < 12; k++) if (k % 4 !== 3) world[k] = (world[k] ?? 0) / scale;
+      }
+      this.#bodyOf[i] = bodies.add(collision, world, linear, angular) ?? LOST_BODY;
+    }
+  }
+
+  /**
+   * Mesh particles' rigid bodies without a physics world (a scene without one, or a body that
+   * left it): the world's gravity (times the body's gravity factor) and the body's damping on
+   * their speed and turn; they fall onto the ground plane the effect stands on (#ground).
    */
   #moveBodies(dt: number): void {
     const body = this.data.mesh?.body;
@@ -579,6 +695,7 @@ export class ParticleSimulation implements ParticleSource {
     const linear = Math.max(0, 1 - body.linearDamping * dt);
     const angular = Math.max(0, 1 - body.angularDamping * dt);
     for (let i = 0; i < this.count; i++) {
+      if (this.#hasBody(i)) continue;
       const o = i * STRIDE;
       s[o + S_VEL + 2] = (s[o + S_VEL + 2] ?? 0) - fall;
       for (let k = 0; k < 3; k++) s[o + S_VEL + k] = (s[o + S_VEL + k] ?? 0) * linear;
@@ -599,6 +716,7 @@ export class ParticleSimulation implements ParticleSource {
     const floor = this.#toSim[14] ?? 0;
     const dt = context.dt;
     for (let i = 0; i < this.count; i++) {
+      if (this.#hasBody(i)) continue;
       const o = i * STRIDE;
       const z = s[o + S_POS + 2] ?? 0;
       if (z > floor) {
@@ -656,8 +774,23 @@ export class ParticleSimulation implements ParticleSource {
     const t = life > 0 ? Math.min(1, age / life) : 1;
     const scales = this.data.modifiers.scales;
     const size = (s[o + S_RADIUS] ?? 1) * (scales ? evenKeys(scales, t) : 1);
+    // A particle with a body in the physics world is where its body is.
+    const handle = this.#bodyOf[index] ?? NO_BODY;
+    if (handle >= 0 && this.#bodies?.pose(handle, out)) {
+      for (let k = 0; k < 12; k++) if (k % 4 !== 3) out[k] = (out[k] ?? 0) * size;
+      return true;
+    }
+    this.#placeMesh(index, size, out);
+    return true;
+  }
+
+  /** Particle `index`'s mesh placement (world) at `size` by its own motion into `out`. */
+  #placeMesh(index: number, size: number, out: Mat4): void {
+    const s = this.#state;
+    const o = index * STRIDE;
+    const age = s[o + S_AGE] ?? 0;
     // The angle: a body's is integrated by #moveBodies; others turn at their spin.
-    const angle = this.data.mesh.body
+    const angle = this.data.mesh?.body
       ? (s[o + S_ANGLE] ?? 0)
       : (s[o + S_ANGLE] ?? 0) + (s[o + S_SPIN] ?? 0) * age;
     const x = s[o + S_MESH_AXIS] ?? 1;
@@ -681,11 +814,18 @@ export class ParticleSimulation implements ParticleSource {
     local[13] = s[o + S_POS + 1] ?? 0;
     local[14] = s[o + S_POS + 2] ?? 0;
     multiply(this.#simToWorld, local, out);
-    return true;
   }
 
   #kill(index: number): void {
     const last = this.count - 1;
+    // Its body leaves the physics world with it.
+    const bodyOf = this.#bodyOf;
+    if (bodyOf.length > 0) {
+      const handle = bodyOf[index] ?? NO_BODY;
+      if (handle >= 0) this.#bodies?.remove(handle);
+      bodyOf[index] = bodyOf[last] ?? NO_BODY;
+      bodyOf[last] = NO_BODY;
+    }
     if (index !== last) {
       this.#state.copyWithin(index * STRIDE, last * STRIDE, (last + 1) * STRIDE);
       const strip = this.#strip;
