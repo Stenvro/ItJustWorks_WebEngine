@@ -8,19 +8,19 @@ The natives and events parts come from the sweep `node tools/papyrus-completenes
 for every item); the VM part is kept by hand against `src/scripting/papyrus-vm.ts` and
 docs/scripting.md ("Threads", "Properties", "The log").
 
-## Count (2026-10-30, round 6)
+## Count (2026-10-30, round 7)
 
 | Part    | Items | Done | Open |
 | ------- | ----: | ---: | ---: |
 | Natives |   687 |  687 |    0 |
-| Events  |    99 |   98 |    1 |
+| Events  |    99 |   99 |    0 |
 | VM      |    30 |   30 |    0 |
-| Total   |   816 |  815 |    1 |
+| Total   |   816 |  816 |    0 |
 
 Round 4 counts the None-argument sweep as a natives item and the simulation's share of the
 events as an events item (both were listed, not counted). The sweep reports the simulation's
-share separately: 93 of the 98 events are checked in the headless simulation (55 after round 5,
-38 after round 4, 27 before).
+share separately: all 98 events are checked in the headless simulation (93 after round 6, 55
+after round 5, 38 after round 4, 27 before).
 
 ## Natives
 
@@ -56,8 +56,10 @@ script):
       container menu, which then lists no stolen stacks on either side.
 
 Round 1 and 2: Quest.UpdateCurrentInstanceGlobal (77 calls), ObjectReference.
-CalculateEncounterLevel (19 calls), Game.UsingGamepad, ObjectReference.GetItemHealthPercent (a
-tempered stack dropped into the world: TODO(M13)), Quest.IsStarting and IsStopping.
+CalculateEncounterLevel (19 calls), Game.UsingGamepad, ObjectReference.GetItemHealthPercent (round
+7: an improved stack dropped into the world keeps its health on the reference, observed in the
+original: the item's data goes with it; taken again, its stack has it), Quest.IsStarting and
+IsStopping.
 
 - [x] Each native's answer to a None argument (round 4). Read from the original: there is no
       one rule. A call on a None object is the VM's ("Cannot call X() on a None object, aborting
@@ -82,10 +84,8 @@ its COVERED list. The four story events the original never raises (Bribe, Flatte
 Player Gets Favor) count as sent; the story manager's test sends each type's event to the
 quest it starts.
 
-All 98 are sent and checked by an engine-level test. Of them 93 are checked in the headless
-simulation (the sweep's count); the other 5 by the runtime's, the relay's, the VM's or the
-story manager's tests (src/scripting/runtime/engine-events.test.ts, script-events.test.ts,
-story-manager.test.ts, src/scripting/papyrus-vm-errors.test.ts, tests/effect-events.int.test.ts).
+All 98 are sent and checked by an engine-level test, and all 98 in the headless simulation (the
+sweep's count).
 
 Round 2 (each with the moment and the arguments of the base scripts' declarations and the
 Creation Kit's pages): OnEffectFinish (the effect's end, akTarget and akCaster, on the data),
@@ -96,12 +96,26 @@ package left), the vampirism, lycanthropy and feeding events, onBeginState/onEnd
 compiled GotoState), OnUnequipped, and the story manager's 30 events. Fixed: OnRead reaches a
 book read from an inventory when its base carries scripts (it reached only book references).
 
-- [ ] In the simulation: 5 events still have an engine-level test only (the sweep lists
-      them): the story manager's Arrest (a guard reaching the player: no guard's pursuit is set
-      up in a simulation yet), Craft Item (the crafting menu, whose engine side is not split
-      from its movie yet), Pick Lock (likewise the lockpicking menu's), Trespass (an actor
-      seeing the player in a private place past its warnings) and Infection (a disease
-      carrier's hit on the player). Round 6 added 38, in two simulations in the Bannered Mare,
+- [x] In the simulation: all 98. Round 7 added the last 5
+      (tests/conformance/scripting/story-events-world.test.ts, three simulations, each raised
+      by the engine path that raises it): Craft Item (an iron dagger made at Warmaiden's forge,
+      an iron helmet improved at its armor workbench, through the crafting menu's model),
+      Arrest (a Whiterun guard seeing the wanted player comes up, the event as it reaches them,
+      then its force greet opens the conversation; submitting sends the player to jail), Pick
+      Lock (Belethor's strongbox picked through the lockpicking menu's engine side), Trespass
+      (the player staying in Belethor's shop, locked by its owner, past his warnings) and
+      Player Infected (a skeever's bite passing on Ataxia). Fixed in the engine on the way: the
+      crafting menu's engine side (src/shell/crafting-models.ts: what a bench lists, what
+      choosing and crafting do) and the lockpicking menu's (src/shell/lock-picking.ts: whether
+      a lock may be picked, its shape, the pick's sweep and turn, what opening a lock and
+      breaking a pick do) are split from their movies, so Play and the simulation share them
+      (its helpers craft and pick locks through them); Craft Item is raised by the story events
+      (its location L1 was left out) and for an improvement too (the tutorials'
+      TutorialBlacksmithingDaggerSharpen and ArmorTemper start on it at the improving benches:
+      the improved item as the created one); an improved item dropped keeps its improvement on
+      its reference and again once taken. Open: Trespass's victim (R1) for a place a faction
+      owns is none (the owner's reference only for an actor's place: TODO(M13)). Round 6 added
+      38, in two simulations in the Bannered Mare,
       each raised by the engine path that raises it.
       tests/conformance/scripting/script-events-actions.test.ts: OnInit (a scripted urn
       placed: the VM now tells OnInit as it tells the other events), OnRead (a skill book read
@@ -228,8 +242,9 @@ book read from an inventory when its base carries scripts (it reached only book 
       types, worldspaces; references and other forms none) and its id ("[Actor < (00000014)>]"),
       an alias "alias <name> on quest <quest> (<id>)", an active effect "Active effect <n> on
       <actor's shown name> (<id>)" (round 5, observed in the original: n is the 16 bits of the
-      effect's handle that tell it apart, ours the effect's own number; how the original counts
-      them is not read: TODO(M13). The actor's name was missing).
+      effect's handle that tell it apart; round 7, read from the original: numbered per actor,
+      an effect whose base carries scripts taking the lowest number from 1 that none of that
+      actor's other effects has, the others none. The actor's name was missing).
 - [x] Float arithmetic, negation and casts to Float in single precision.
 - [x] A call on None: "Cannot call X() on a None object, aborting function call"; a property on
       None: 'Cannot get/set property "X" on a None object.'

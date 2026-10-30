@@ -169,7 +169,7 @@ export function inventoryModel(
         await notify('sDropQuestItemWarning');
         return;
       }
-      await game.removeItem(
+      const health = await game.removeItem(
         PLAYER_REF,
         game.formHandle(formId),
         amount,
@@ -178,6 +178,7 @@ export function inventoryModel(
         typeof stack === 'number' ? stack : undefined,
       );
       const dropped = await dropAtFeet(game, formId, amount);
+      if (dropped !== undefined) game.dropped(dropped, health);
       // The story manager's Player Remove Item, with the item lying in the world.
       game.detach(game.storyEvents.removeFromPlayer(formId, RemoveType.drop, dropped));
     },
@@ -231,8 +232,8 @@ const DROP_HEIGHT = 40;
 /**
  * Items dropped (the inventory's R): a reference of the item with their count, in front of the
  * player's feet a little above the ground, from where it falls and settles (created-objects.ts).
- * TODO(M13): an improved item's improvement and a stolen item's owner stay with it in the game;
- * the reference made here has neither.
+ * Its caller gives it the improvement it left with (ScriptRuntime.dropped). TODO(M13): a stolen
+ * item's owner stays with it in the game; the reference made here has none.
  */
 export async function dropAtFeet(
   runtime: ScriptRuntime,
