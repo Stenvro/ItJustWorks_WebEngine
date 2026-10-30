@@ -8,14 +8,14 @@ The natives and events parts come from the sweep `node tools/papyrus-completenes
 for every item); the VM part is kept by hand against `src/scripting/papyrus-vm.ts` and
 docs/scripting.md ("Threads", "Properties", "The log").
 
-## Count (2026-10-29, round 2)
+## Count (2026-10-30, round 3)
 
 | Part    | Items | Done | Open |
 | ------- | ----: | ---: | ---: |
-| Natives |   686 |  666 |   20 |
+| Natives |   686 |  686 |    0 |
 | Events  |    98 |   98 |    0 |
-| VM      |    30 |   24 |    6 |
-| Total   |   814 |  788 |   26 |
+| VM      |    30 |   25 |    5 |
+| Total   |   814 |  809 |    5 |
 
 ## Natives
 
@@ -24,39 +24,43 @@ and is not registered as a bare constant, unless INERT_NATIVES gives the reason 
 nothing there either (profiling, the console's helpers, preloading, achievements, Topic.Add).
 The calls are the vanilla scripts' calls of a function by that name.
 
-Done this round: Quest.UpdateCurrentInstanceGlobal (77 calls; the quest's run holds its text
-globals' values), ObjectReference.CalculateEncounterLevel (19 calls; the encounter zone's level
-by the difficulty's fLeveledActorMult). Round 2: Game.UsingGamepad (the device last used, as
-the shell switches the menus' platform), ObjectReference.GetItemHealthPercent (the reference's
-XHLT; a tempered stack dropped into the world: TODO(M13)), Quest.IsStarting and IsStopping (a
-quest's start, its aliases filling and its start-up stage, and its stop are in progress over
-awaits; a Stop inside the stop's own shut-down is not run twice).
+All 686 are done; PLACEHOLDER_NATIVES is empty. Round 3 (none of them called by a vanilla
+script):
 
-Not yet swept: each native's answer to None and to arguments of the wrong type. Read from the
-original: there is no one rule. A call on a None object is the VM's ("Cannot call X() on a
-None object, aborting function call", the function's default returned); a None argument is
-each native's own check, many with their own line ("Cannot play a visual effect on a None
-object", "Cannot cast a None form", "Cannot cast a spell from a None source"). Arguments of a
-wrong type cannot reach a native (the compiler types them; a failed cast gives None).
-
-Open (none of them called by more than one vanilla script):
-
-- [ ] actor.forcemovementdirection, ...directionramp, ...rotationspeed, ...rotationspeedramp,
+- [x] actor.forcemovementdirection, ...directionramp, ...rotationspeed, ...rotationspeedramp,
       ...speed, ...speedramp, forcetargetangle, forcetargetdirection, forcetargetspeed,
-      clearforcedmovement (11; 0 calls): the movement controller's forced movement (M13).
-- [ ] actor.keepoffsetfromactor, clearkeepoffsetfromactor (2; 0 calls): the movement
-      controller's offsets (M13).
-- [ ] actor.setplayercontrols (0 calls): actors other than the player under player controls.
-- [ ] game.setcameratarget (0 calls): the camera's target other than the player.
-- [ ] objectreference.forceremoveragdollfromworld (0 calls): ragdolls a script removes.
-- [ ] objectreference.playterraineffect (0 calls): the terrain's effects at a node.
-- [ ] objectreference.playsyncedanimationss, playsyncedanimationandwaitss (2; 0 calls): synced
-      animations of two references.
-- [ ] objectreference.islockbroken (1 call): the original's rule is the lock's failed tries
-      against one or two (a perk entry point allows the second); the lockpicking menu (another
-      area) counts no tries yet.
-- [ ] objectreference.setcontainerallowstolenitems (0 calls): the container's flag that it
-      takes stolen items; what reads the flag is not read.
+      clearforcedmovement (10): observed in the original, no native of these names is bound;
+      a call is the VM's 'error: Unbound native function "<name>" called' on the calling
+      stack and returns None (placeholders.ts UNBOUND_NATIVES).
+- [x] actor.keepoffsetfromactor, clearkeepoffsetfromactor: the offset (the angles turned to
+      radians, the two radii) kept in the game state; the movers steer the actor to it each
+      step (src/ai/movement-overrides.ts; the speeds between the radii inferred: TODO(M13)).
+- [x] actor.setplayercontrols, getplayercontrols: the actor's AI off as EnableAI(false), its
+      movement controller driven by the player's controls (the movers' script steering).
+- [x] game.setcameratarget: the third-person camera hangs on that actor (None: the player).
+- [x] objectreference.forceremoveragdollfromworld: latent; the ragdoll leaves the physics world.
+- [x] objectreference.playterraineffect: the model at the node (none: the root); one not set
+      up is the original's error (the ground's own look: TODO(M13)).
+- [x] objectreference.playsyncedanimationss, playsyncedanimationandwaitss: both references'
+      events in one call, true when either took; the original's three errors (a None second
+      object, an actor on either side); the waiting one waits for the events of those whose
+      animation took.
+- [x] objectreference.islockbroken (menus round 3: the lock's failed tries).
+- [x] objectreference.setcontainerallowstolenitems: observed in the original, a flag of the
+      base's container (NPC_ or CONT, so every reference of the base), read only by the
+      container menu, which then lists no stolen stacks on either side.
+
+Round 1 and 2: Quest.UpdateCurrentInstanceGlobal (77 calls), ObjectReference.
+CalculateEncounterLevel (19 calls), Game.UsingGamepad, ObjectReference.GetItemHealthPercent (a
+tempered stack dropped into the world: TODO(M13)), Quest.IsStarting and IsStopping.
+
+- [ ] Not yet swept: each native's answer to a None argument. Read from the original: there
+      is no one rule. A call on a None object is the VM's ("Cannot call X() on a None object,
+      aborting function call", the function's default returned); a None argument is each
+      native's own check, many with their own line ("Cannot play a visual effect on a None
+      object", "Cannot cast a None form", "Cannot play an animation on a None object").
+      Arguments of a wrong type cannot reach a native (the compiler types them; a failed cast
+      gives None). Not counted in the table (a sweep per native still to write).
 
 ## Events
 
@@ -104,12 +108,20 @@ book read from an inventory when its base carries scripts (it reached only book 
 - [x] No call-depth limit and no error for it (observed in the original: a stack grows page by
       page while memory lasts). Ours keeps a guard of 4096 calls for the browser's memory.
 - [ ] Stack memory (iMaxAllocatedMemoryBytes, 153600): read from the original, there is no
-      error; a page (iMinMemoryPageSize to iMaxMemoryPageSize) that would take the VM's stacks
-      over the limit is refused and the stack waits for memory, unless the VM is overstressed
-      (then the limit is ignored). Not built: the frames' sizes in bytes are not read.
+      error. The VM's page policy (read in round 3): a page is the size asked but at least
+      iMinMemoryPageSize; it is given while it fits under the limit (the memory in use grows by
+      it, and shrinks by a page's size when a stack gives it back); one that does not fit is
+      refused and the stack waits for memory, unless the page is asked for with the limit
+      ignored or the VM is overstressed (then it is given, and the overrun's peak kept). The
+      largest page a stack can get is the room left under the limit, at most
+      iMaxMemoryPageSize. Not built: a frame is 64 bytes and 16 per variable (CommonLibSSE's
+      StackFrame and Variable; how the stack fits frames into its pages, and when it asks with
+      the limit ignored, not read), and our VM has no overstressed state yet.
 - [x] Properties: plugin values bound by name, full properties through Set before OnInit, the
       original's line for a property the script no longer has.
-- [ ] A plugin value for a full property without a Set function (TODO(M13)).
+- [x] A plugin value for a full property without a Set function (read-only): observed in the
+      original, its binding skips it with the warning "Property X on object Y is read-only,
+      property skipped." (round 3).
 - [x] A script starts in its auto state, or its nearest parent's.
 - [x] Object casts by the plugins' attachments; a failed cast gives None (logged on use).
 - [x] The original's casts: to String and Bool from anything; to Int from a String (strtol),
@@ -138,4 +150,5 @@ book read from an inventory when its base carries scripts (it reached only book 
       promise resume on load (docs/formats/save.md).
 - [x] Saves: every registration (updates, game time, LOS, sleep, tracked stats, animation
       events, menus).
-- [ ] On load, whether a native in flight is called again (the original's rule not read).
+- [ ] On load, whether a native in flight is called again (the original's rule not read;
+      CommonLibSSE's stack states include a retried call, which suggests it is).
