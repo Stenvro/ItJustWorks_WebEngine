@@ -34,7 +34,15 @@ import { actorValueIndex } from '../world/actor-values.ts';
 import { RecordFlag } from '../formats/esm/record.ts';
 import type { GaitMotion, SoundingWorld } from './actor-sounds.ts';
 import { ActorGraphEvents } from './actor-graph-events.ts';
-import { actorOnRay, groundActor, moveActor, ragdollsOf, type PlacedActor } from './actors.ts';
+import {
+  actorOnRay,
+  groundActor,
+  headPosition,
+  moveActor,
+  ragdollsOf,
+  type PlacedActor,
+} from './actors.ts';
+import { CreatureSounds } from './creature-sounds.ts';
 import { GROUND_ABOVE, GROUND_BELOW } from '../world/actor-ground.ts';
 import { corpsePose } from '../animation/corpse-pose.ts';
 import { createdEnabled } from './created-objects.ts';
@@ -310,6 +318,8 @@ export class ActorStage {
   readonly projectiles: MagicProjectiles;
   /** What magic shows for a moment (explosions, muzzle flashes, impacts, waves, trails). */
   readonly fx: MagicFx;
+  /** Creatures' conscious and movement loops (NPC_ CSDT). */
+  readonly creatureSounds: CreatureSounds;
   /** What magic shows on actors (effect shaders, art, lights, Detect Life). */
   readonly effects: ActorEffects;
   /** Casting and shouting, the player's and the NPCs' (src/shell/actor-casting.ts). */
@@ -662,6 +672,11 @@ export class ActorStage {
       detects: (observer, target) => this.senses.detects(observer, target),
       passByTarget: (reference) => this.flight.passByTarget(reference),
       weaponPoint: (reference) => this.combat.weaponPoint(reference),
+    });
+    this.creatureSounds = new CreatureSounds({
+      play: (descriptor, place, source) => options.session.playSound(descriptor, place, 0, source),
+      unconscious: (reference) =>
+        options.session.scriptsReady?.state.actors.get(reference)?.unconscious === true,
     });
     // Who greets and chatters: those that detect the player; a speaker looks at whom it
     // speaks to (a dialogue head track).
@@ -2269,6 +2284,16 @@ export class ActorStage {
     this.effects.frame(frame);
     this.#veil(frame);
     this.fx.frame(frame);
+    this.creatureSounds.frame(
+      [...this.#actors.values()].map((staged) => ({
+        reference: staged.reference,
+        sounds: staged.placed.look.creatureSounds,
+        position: staged.position,
+        dead: staged.dead,
+        place: () => headPosition(staged.placed),
+      })),
+      frame,
+    );
     for (const [key, guide] of this.#guides) {
       guide.wait -= frame;
       if (guide.wait > 0 || this.fx.trailing(key)) continue;
@@ -2579,6 +2604,7 @@ export class ActorStage {
     this.knockdowns.remove(staged.reference);
     this.bodies.remove(staged.reference);
     this.dismemberment.remove(staged.reference);
+    this.creatureSounds.remove(staged.reference);
     this.#actors.delete(staged.reference);
     staged.scene?.destroy();
     staged.scene = undefined;

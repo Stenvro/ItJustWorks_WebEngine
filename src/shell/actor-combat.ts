@@ -159,6 +159,7 @@ import type { Threat } from '../ai/combat-tactics.ts';
 import { cellLight, type MagicFx } from './magic-fx.ts';
 import type { CellLight } from '../world/cell-loader.ts';
 import { parseLight, type LightRecord } from '../world/cell-records.ts';
+import { EffectSound, effectSound } from '../world/magic-effects.ts';
 
 /** A human's shape for hits (its controller's radius and height at scale 1; game units). */
 /** The music type of a boss fight (MUSC; see #setMusic). */
@@ -1882,22 +1883,30 @@ export class ActorCombat implements CombatBridge {
       // plays them for draws without the begin events is inferred.
       case 'draw-begin':
         this.#playSound(gear?.rightRecord?.sounds.equip, fighter);
+        this.#spellDrawSounds(fighter);
         fighter.drawSounded = true;
         break;
       case 'sheathe-begin':
         this.#playSound(gear?.rightRecord?.sounds.unequip, fighter);
+        this.#spellDrawSounds(fighter);
         fighter.drawSounded = true;
         break;
       case 'hand':
         fighter.inHand = true;
         this.#handsEquipped(fighter);
-        if (!fighter.drawSounded) this.#playSound(gear?.rightRecord?.sounds.equip, fighter);
+        if (!fighter.drawSounded) {
+          this.#playSound(gear?.rightRecord?.sounds.equip, fighter);
+          this.#spellDrawSounds(fighter);
+        }
         fighter.drawSounded = false;
         break;
       case 'sheath':
         fighter.inHand = false;
         this.#handsEquipped(fighter);
-        if (!fighter.drawSounded) this.#playSound(gear?.rightRecord?.sounds.unequip, fighter);
+        if (!fighter.drawSounded) {
+          this.#playSound(gear?.rightRecord?.sounds.unequip, fighter);
+          this.#spellDrawSounds(fighter);
+        }
         fighter.drawSounded = false;
         break;
       case 'swing': {
@@ -4094,6 +4103,26 @@ export class ActorCombat implements CombatBridge {
       radius: BODY_RADIUS,
       height: BODY_HEIGHT * player.height,
     };
+  }
+
+  /**
+   * The spells in the hands sound as they are drawn and put away: each hand's spell's main
+   * effect's Sheathe/Draw sound (MGEF SNDD type 0: MAGDestructionFireDraw, ...), one sound for
+   * both draws and sheathes as the data has it.
+   */
+  #spellDrawSounds(fighter: Fighter): void {
+    const forms = fighter.gear?.spellForms;
+    const runtime = this.#options.session.scriptsReady;
+    if (!forms || !runtime) return;
+    const hands = [forms.right, forms.left].filter((form) => form !== undefined);
+    for (const form of new Set(hands)) {
+      void (async () => {
+        const item = await runtime.magic.item(form);
+        const main = item && (await runtime.casting.mainEffect(item));
+        const sound = main && effectSound(main, EffectSound.sheatheDraw);
+        this.#playSound(sound, fighter);
+      })().catch(() => undefined);
+    }
   }
 
   #playSound(sound: number | undefined, fighter: Fighter): void {

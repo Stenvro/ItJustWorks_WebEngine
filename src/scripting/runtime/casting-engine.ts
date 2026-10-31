@@ -993,6 +993,7 @@ export class CastingEngine {
       this.#wards.set(target, { state: 1, until });
       this.#emit({ actor: target, source: CastingSource.instant, kind: 'ward', ward: 1 });
       told(1);
+      void this.#wardSound(target, absorb > 0 ? 'WASN' : 'WDSN');
       // Observed in the original: a ward lowered (not broken) stops growing for a while.
       if (damage > 0) runtime.magic.holdWards(target);
       return 'absorbed';
@@ -1001,11 +1002,23 @@ export class CastingEngine {
     this.#wards.set(target, { state: 2, until });
     this.#emit({ actor: target, source: CastingSource.instant, kind: 'ward', ward: 2 });
     told(2);
+    void this.#wardSound(target, 'WBSN');
     // Observed in the original: a broken ward ends the ward spells its actor casts.
     for (const cast of this.castsOf(target)) {
       if (await this.#raisesWard(cast.castable.item)) this.interrupt(target, cast.source);
     }
     return (damage - power) / damage;
+  }
+
+  /**
+   * The ward's sound at its actor, by the default objects: WBSN as it breaks; as it holds,
+   * WASN when it gives magicka back (Ward Absorb), else WDSN (the spell deflected). TODO(M13):
+   * that absorbing means the perk's magicka is inferred from the names.
+   */
+  async #wardSound(target: number, use: 'WASN' | 'WBSN' | 'WDSN'): Promise<void> {
+    const runtime = this.#runtime;
+    const sound = await runtime.magic.defaultObject(use);
+    if (sound !== undefined) runtime.world.playSound?.(sound, target);
   }
 
   /** Whether a magic item raises a ward (an effect on WardPower). */
