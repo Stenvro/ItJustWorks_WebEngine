@@ -272,7 +272,8 @@ export class JournalMenu {
         // The save list: characters, saves, loading and deleting (src/shell/save-list.ts).
         ...this.#saveList.handlers(),
         SaveGame: (menu, args) => {
-          const index = typeof args[0] === 'number' ? args[0] : 0;
+          // (The request id, then the entry's index.)
+          const index = typeof args[1] === 'number' ? args[1] : 0;
           // The first entry is the new save; the others are saved over.
           const over = index > 0 ? this.#saveList.listed?.headers[index - 1]?.name : undefined;
           // The movie closes itself on the PC as it asks (its Sony consoles wait for the

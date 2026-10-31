@@ -949,7 +949,10 @@ deletes the save and fills the list again.
 ### Saves in the menus
 
 The main menu's Load and the journal's Save and Load are one class of the movies (SaveLoadPanel,
-in `startmenu.swf` and `quest_journal.swf`), answered by `src/shell/save-list.ts`:
+in `startmenu.swf` and `quest_journal.swf`), answered by `src/shell/save-list.ts`. Each call
+comes as every GameDelegate call does, its request id first and then the arguments below; the
+list the movie passes is an object reference (`__itjwRef:N`, the bridge's), read through
+`Menu.reference`, not a path:
 
 - `PopulateCharacterList(list, batch size)`: one entry per character `{text, id, flags}`, the one
   saved last first, then `onFillCharacterListComplete(true)`. The main menu's Load starts here; the
@@ -1504,8 +1507,11 @@ Quick Stats key, and after a level up in its LEVEL_UP state: `SetStatsMode(false
   `ringTurnSpeed`): the speed rises to 1 / fStatsRotationSpeedMax radians a second (0.5: 2,
   about 115°) over fStatsRotationRampTime (2000 ms, along a quarter sine), and toward the skill
   it goes no faster than that times the share of a skill's 20° left, a lower speed growing by 1.3
-  an update, stopping below 0.01 radians a second. TODO(M13): the ring's look-at point
-  fStatsSkillsLookAt* (0, 0, 5) over the skill's point (the ring's pitch here is fitted).
+  an update, stopping below 0.01 radians a second. On the ring (observed in the original) the
+  camera stands at the dome's middle and looks at the skill's point raised by fStatsSkillsLookAt
+  (0, 0, 5), about 3° up (`ringView`); after the CameraIntro it goes there from the
+  CameraPosition's end over 300 ms. So each tree's stars, seen from the middle, lie on their
+  constellation's image (the stars' frame below, the images upright about 92 out, 0 .. 37 up).
 - The ring (`src/gameplay/skills-ring.ts`): the dome's Point00 .. Point17 every 20° clockwise from
   +Y, each with its constellation image (cImage00 .. 17: its quad spans about ±9° about its point,
   7° .. 30° up, about 92 out). The images name the skills (Point01 the anvil: Smithing, Point09
@@ -1535,8 +1541,11 @@ Quick Stats key, and after a level up in its LEVEL_UP state: `SetStatsMode(false
   fStatsStarCameraOffset (0, −8, 0) in the point's frame from the star (toward the middle),
   looking at the star raised by fStatsStarLookAt (0, 0, 1); it goes there from where it was over
   a second as a star is selected (up into the tree from the ring, from star to star, and back
-  down to the ring as the tree is left), so the selected star and the rows over it fill the
-  screen. The perks' names stand where their stars are (`_global.StatsMenu.PerkNamesA`: text, x,
+  down to the ring as the tree is left; its place and rotation eased by half a cosine in a tree,
+  a quarter sine to the ring: `cameraMoveShare`). The selected star's glow (its model 1.7 across
+  at fStatsStarScale, 8 away) fills the middle; the rows over it rise toward 31° up (9 up for
+  every 15 out), near the top of the view's 26° half-height, and the rows under it are behind
+  the camera. The perks' names stand where their stars are (`_global.StatsMenu.PerkNamesA`: text, x,
   y in 0..1, then `StatsMenuInstance.UpdatePerkText(true)`; the movie scales a name by its y,
   lower ones larger, and hides those under its description card), only for stars in front of the
   camera and on the screen. The text is html: `<font color='#FFFFFF'>` when the next rank's
@@ -1552,10 +1561,12 @@ legendary count)`: a skill's card on the ring, a perk's in a tree (its rank, sRe
   player's (the next rank of a perk with ranks, NNAM). The card's requirement line is
   sRequirements or sStatsNextRank (which brings its own colon) with the skill levels.
 - Space at a skill of 100 makes it Legendary (sLegendaryResetConfirm,
-  sLegendaryResetSecondConfirm): back to 15, its perks' points returned. TODO(M13): the way the
-  camera moves between two poses (a smoothstep of its place and look-at point here) and the
-  lines' scale fStatsLineScale (0.1175). A star's model stands at fStatsStarScale (0.15: observed
-  in the original, its root's scale).
+  sLegendaryResetSecondConfirm): back to 15, its perks' points returned. A star's model stands at
+  fStatsStarScale (0.15: observed in the original, its root's scale); a line hangs under its
+  star, scaled by its length times fStatsLineScale (0.1175) inside the star's 0.15, which makes
+  the beam's 56.2 reach the next star (ours scales the beam to the distance directly).
+  TODO(M13): the camera's rotation is slerped in the original; ours eases its place and look-at
+  point.
 
 ## The map
 

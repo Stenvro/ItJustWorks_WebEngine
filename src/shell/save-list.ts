@@ -133,8 +133,21 @@ export class SaveList<M extends SaveListMenu = SaveListMenu> {
     return this.#listed;
   }
 
-  /** The handlers of the save list's calls. */
+  /**
+   * The handlers of the save list's calls, as the menus send them: GameDelegate.call's request
+   * id first, then the call's own arguments (which the handlers below read from 0).
+   */
   handlers(): Record<string, (menu: M, args: readonly unknown[]) => unknown> {
+    return Object.fromEntries(
+      Object.entries(this.#calls()).map(([name, handler]) => [
+        name,
+        (menu: M, args: readonly unknown[]) => handler(menu, args.slice(1)),
+      ]),
+    );
+  }
+
+  /** The save list's calls by their own arguments (without the request id). */
+  #calls(): Record<string, (menu: M, args: readonly unknown[]) => unknown> {
     return {
       // Save and Load from the journal: the current character's saves.
       SAVE: (menu, args) => {
@@ -276,5 +289,9 @@ export class SaveList<M extends SaveListMenu = SaveListMenu> {
 
 /** The path of a list the movie passed (a clip reference, or a path). */
 function listPath(menu: SaveListMenu, list: unknown): string | undefined {
-  return typeof list === 'string' && list.startsWith('_') ? list : menu.reference(list);
+  // The movie's own list comes as a reference ("__itjwRef:N", which starts with "_" too); a
+  // path ("_root....") is taken as it is.
+  return (
+    menu.reference(list) ?? (typeof list === 'string' && list.startsWith('_') ? list : undefined)
+  );
 }

@@ -8,11 +8,14 @@ for regressions.
 - Monitors: `src/shell/qa/` (development builds only, `engineDev.qa`).
 - Runner: `tools/qa-run.ts` (scenarios in `tools/qa-scenarios.ts`, CDP client in
   `tools/qa-cdp.ts`).
-- Menu tour: `tools/qa-menus.ts --out <folder> [--cell Riverwood|new] [--only a,b] [--keep]`
-  opens every original menu in turn in a running game (their keys where the player has one, the
-  engine's own paths otherwise) and screenshots each, with the movies open, the menu stack and
-  the page's errors in `tour.json` (Vite 5192, Chrome 9352 by default). What was seen is kept in
-  docs/completeness/menus.md ("On screen").
+- Menu tour: `tools/qa-menus.ts --out <folder> [--cell Riverwood|new] [--only a,b] [--keep]
+[--size 2000x1101]` opens every original menu in turn in a running game (their keys where the
+  player has one, the engine's own paths otherwise) and screenshots each, with the movies open,
+  the menu stack and the page's errors in `tour.json` (Vite 5192, Chrome 9352 by default; the
+  window 1280 × 720 unless `--size` gives another, its clicks scaled from the movies' stage).
+  What was seen is kept in docs/completeness/menus.md ("On screen"). The project's Vite config
+  does not watch `.claude/`: from a working copy there, Vite must be started again after an edit
+  (or with a config of its own that watches it) before the page shows the change.
 
 ## Running it
 
