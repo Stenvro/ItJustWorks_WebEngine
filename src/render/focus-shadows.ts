@@ -22,6 +22,14 @@
 // focus slot, SceneRenderer.updateFocusScenes) in place of the stencil. The shadow mask mixes
 // them as the original's does (focusMix, frame.wgsl sunShadow): on a focus actor's pixels the
 // map's result faded towards lit by its fade, then the darker of it and the cascades'.
+//
+// Which light holds them, observed in the original: the sun, where it casts shadows (a world
+// with a sky and without fixed dimensions). Anywhere else a shadow light does: the scene's
+// shadow lights are walked in their order (the first four active ones render), and one takes
+// the focus maps when it took them the frame before, or when none has yet and it is a spot
+// (frustum) or directional light (chooseFocusLights). Each light's focus maps are fitted the
+// same way, along its own direction: a spot light's axis (fitFocusShadow). Its shadow mask
+// mixes them into its term as the sun's does, with three times its own depth bias.
 // Platform-independent.
 
 import { project } from './frustum.ts';
@@ -86,6 +94,62 @@ export function selectFocusShadows<T>(
     chosen.push(...keyed);
   }
   return chosen.slice(0, limit);
+}
+
+/**
+ * Shadow lights that can hold focus maps in one frame: the one that kept them and one before it
+ * in the scene's order (chooseFocusLights).
+ */
+export const MAX_FOCUS_LIGHTS = 2;
+
+/** A shadow light of the scene, in the scene's order, as the focus maps' choice sees it. */
+export interface FocusLightCandidate<T = unknown> {
+  readonly id: T;
+  /** It renders its shadows this frame (in view, within reach, among the first four). */
+  readonly active: boolean;
+  /** A spot (frustum) or directional light: one that may take the focus maps anew. */
+  readonly frustum: boolean;
+}
+
+/** The lights that hold the focus maps this frame, and the one that keeps them for the next. */
+export interface FocusLightChoice<T = unknown> {
+  readonly holders: T[];
+  readonly kept: T | undefined;
+}
+
+/**
+ * Which shadow lights draw the focus maps where the sun casts none, observed in the original.
+ * The light that held them last (`kept`) is marked first: a walk over the scene's shadow lights
+ * in their order sets each one's mark to whether it is that light, from a running flag that
+ * starts clear, is set on that light and is cleared again by every light after it (so it ends
+ * set only when that light is the last of the list). Then a second walk over the active lights
+ * gives the maps to a light that is marked, or, while the running flag (as the first walk left
+ * it) is clear, to a spot or directional light, setting the flag. The last light given them is
+ * kept for the next frame (none: the next frame's first active spot light takes them).
+ * So the light that took them keeps them while it stays active; a spot light that became
+ * active before it in the order takes them as well, unless it is the last light of the list
+ * (at most two lights).
+ */
+export function chooseFocusLights<T>(
+  lights: readonly FocusLightCandidate<T>[],
+  kept: T | undefined,
+): FocusLightChoice<T> {
+  let flag = false;
+  const marked = lights.map((light) => {
+    flag = kept !== undefined && light.id === kept && !flag;
+    return flag;
+  });
+  const holders: T[] = [];
+  let last: T | undefined;
+  lights.forEach((light, i) => {
+    if (!light.active) return;
+    if (marked[i] === true || (!flag && light.frustum)) {
+      holders.push(light.id);
+      flag = true;
+      last = light.id;
+    }
+  });
+  return { holders: holders.slice(0, MAX_FOCUS_LIGHTS), kept: last };
 }
 
 /**

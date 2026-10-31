@@ -855,8 +855,14 @@ fVATSSmartCameraCheckStepDistance (128) apart toward that side (fVATSSmartCamera
 another actor only within 256 units). Between shots (observed in the original): where the
 next shot's camera sits more than fVATSCameraDollyMin (256) from where the last ended, the
 camera dollies there in a straight line over fVATSCameraDollyTime (1 s) instead of cutting,
-under a radial blur of fVATSCamTransRBStrengthCap (0.5) × a triangle of the move's progress
-(`transitionBlur`). The start mode the playback hands a shot decides (observed in the
+with a radial blur weighted by fVATSCamTransRBStrengthCap (0.5) × a triangle of the move's
+progress (`transitionBlur`). Observed in the original: the playback adds that radial blur as an
+image-space instance of its own as it starts (ramp up fVATSCamTransRBRampup 2, start
+fVATSCamTransRBStart 0, ramp down fVATSCamTransRBRampDown 0, down start
+fVATSCamTransRBDownStart 0, centred on the screen) and sets only the instance's weight each
+update; the blur's own strength stays the 0 it was made with, and the image-space stack takes
+the radial blur of its strongest contributor by that strength, so nothing is drawn. Ours draws
+none either. The start mode the playback hands a shot decides (observed in the
 original): 0 dollies over fVATSCameraDollyTime, 1 cuts, 2 dollies a Zoom shot (CAMS action 3)
 over its Min Time (fVATSCameraDollyTime when that is 0) and cuts the others. The mode is the
 chosen path's DATA (its low two bits: none 0, bit 0 1, bit 1 2; xEdit's Camera Zoom), handed
@@ -866,9 +872,12 @@ and no Zoom shot. A Shoot shot (action 0) is never dollied into. The cut-away (o
 original): when a shot's own camera spot (before the dolly) comes within
 fVATSCameraCutAwayDistance (25) of the point it looks at, from the next update the player's
 camera goes to first person, unless the player is dead (the camera then goes on); the flag is
-the shot's, cleared as it ends. Ours keeps the player's first-person view for the rest of the
-kill camera, its playback (time, image space) going on (`KillmoveCamera.cutAway`; whether a
-later shot takes the view back is unread: TODO(M13)). A ranged shot's Near Target Distance
+the shot's, cleared as it ends. The playback hands the view to the kill camera on every update
+of a shot that is not cut away (nor flagged First Person Camera), so the next shot takes the
+view back. Ours shows the player's first-person view for the rest of the shot, its playback
+(time, image space) going on, and the next shot takes the view back
+(`KillmoveCamera.cutAway`). TODO(M13): what the kill camera shows on the one vanilla shot
+flagged First Person Camera (1stPCam, no model) is unread; ours plays it as any other. A ranged shot's Near Target Distance
 (CAMS DATA, 18 shots; observed in the original): as the kill's projectile flies during the
 kill camera, once it is within the current shot's distance of the point it is aimed at on
 the target (the target's body part the shooter aims at; ours: its torso node, else its
@@ -876,8 +885,7 @@ feet) a flag of the projectile is set for good; while no shot of the playback ha
 shot with a distance ends on that flag as on its time (`KillmoveCamera` #flagNearTarget,
 #endsNearTarget). The original also trims the playback's later kills when the projectile has
 flown past its target by more than 300 units (600 in a Hit shot); with one kill per playback
-that changes nothing here. The
-blur's strength is computed but the image-space stack takes no free radial blur yet; which
+that changes nothing here. Still inferred: which
 distance TargetVisible returns (inferred: the last clear step's); the magic kill camera ([gameplay.md](gameplay.md#killmoves)). The ranged kill camera
 plays the same tree on the player's bow and crossbow shots (its rules: gameplay.md).
 

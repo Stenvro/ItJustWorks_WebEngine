@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   boundingSphere,
+  chooseFocusLights,
   fitFocusShadow,
   FOCUS_SHADOW_DISTANCE,
   focusFade,
@@ -9,6 +10,7 @@ import {
   MAX_FOCUS_SHADOWS,
   selectFocusShadows,
   type FocusCandidate,
+  type FocusLightCandidate,
 } from './focus-shadows.ts';
 import { invert, project } from './frustum.ts';
 
@@ -151,5 +153,60 @@ describe('fitFocusShadow', () => {
     if (!inverse) throw new Error('singular');
     const [first] = fitCascades(inverse, 4, toLight, 2048);
     expect(focus.texelSize * 3).toBeLessThan(first?.texelSize ?? 0);
+  });
+});
+
+describe('chooseFocusLights', () => {
+  const light = (id: string, active = true, frustum = true): FocusLightCandidate<string> => ({
+    id,
+    active,
+    frustum,
+  });
+
+  it('gives them to the first active spot light, which keeps them while it stays active', () => {
+    const lights = [light('omni', true, false), light('off', false), light('a'), light('b')];
+    const first = chooseFocusLights(lights, undefined);
+    expect(first).toEqual({ holders: ['a'], kept: 'a' });
+    // Another spot light after it never takes them over.
+    expect(chooseFocusLights(lights, first.kept)).toEqual({ holders: ['a'], kept: 'a' });
+    // Gone dark: the next spot light takes them.
+    const dark = [light('omni', true, false), light('a', false), light('b')];
+    expect(chooseFocusLights(dark, 'a')).toEqual({ holders: ['b'], kept: 'b' });
+  });
+
+  it('lets a spot light before the kept one take them too, unless the kept one ends the list', () => {
+    // The kept light is not the last of the list: the running mark ends clear, so the spot
+    // light that became active before it draws them as well; the kept light keeps them.
+    const lights = [light('new'), light('kept'), light('omni', false, false)];
+    expect(chooseFocusLights(lights, 'kept')).toEqual({ holders: ['new', 'kept'], kept: 'kept' });
+    // The kept light ends the list: the mark ends set, and it alone draws them.
+    const last = [light('new'), light('kept')];
+    expect(chooseFocusLights(last, 'kept')).toEqual({ holders: ['kept'], kept: 'kept' });
+    // The kept light, last of the list, gone inactive: no light draws them this frame.
+    const inactive = [light('new'), light('kept', false)];
+    expect(chooseFocusLights(inactive, 'kept')).toEqual({ holders: [], kept: undefined });
+  });
+
+  it('takes no light that is neither a spot nor a directional light anew', () => {
+    const lights = [light('omni', true, false), light('hemisphere', true, false)];
+    expect(chooseFocusLights(lights, undefined)).toEqual({ holders: [], kept: undefined });
+  });
+});
+
+describe("a spot light's focus maps", () => {
+  it('are fitted along its axis round the body, wherever the light stands', () => {
+    const axis: Vec3 = [0, 0.6, -0.8];
+    const toLight: Vec3 = [-axis[0], -axis[1], -axis[2]];
+    const center: Vec3 = [300, 200, 64];
+    const focus = fitFocusShadow(center, 60, toLight, 400, [0, -500, 900]);
+    // The body's centre in the middle of the map, a radius into its depth range of 2.1.
+    const [x, y, z] = project(focus.viewProj, center);
+    expect(x).toBeCloseTo(0, 5);
+    expect(y).toBeCloseTo(0, 5);
+    expect(z).toBeCloseTo(1 / 2.1, 5);
+    // Further along the axis is deeper, as the light sees it.
+    const below = project(focus.viewProj, [center[0], center[1] + 30, center[2] - 40]);
+    expect(below[2]).toBeGreaterThan(z);
+    expect(focus.depthRange).toBeCloseTo(2.1 * 60, 4);
   });
 });

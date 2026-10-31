@@ -51,10 +51,27 @@ How a frame is put together (`src/render/renderer.ts`). Everything is drawn in H
    (`focusMix`). Where they belong, observed in the original: the sun casts shadows (its
    cascades and its focus maps) only in an open world that has a sky and no fixed dimensions
    (WRLD DATA flags 0x20 and 0x40 clear; ours: `WorldViewer`'s `shadows`). Anywhere else
-   (interiors, worlds without a sky or with fixed dimensions) the focus maps go to one other
-   shadow light, the first active spot (frustum) or directional shadow light, which keeps them
-   from frame to frame while it stays active; with none, no focus maps are made. TODO(M13):
-   ours makes focus maps for the sun alone, not for a spot shadow light.
+   (interiors, worlds without a sky or with fixed dimensions) the focus maps go to a shadow
+   light, observed in the original: its shadow lights are walked in the scene's order (the first
+   four active ones render), and a light takes the focus maps when it held them the frame
+   before, or when none has yet and it is a spot (frustum: a LIGH whose angle is below 180°)
+   or directional light. Which light held them is marked by a first walk whose running flag is
+   set on that light and cleared by every light after it, so a spot light that became active
+   before the holder in the order takes them as well unless the holder ends the list (two
+   lights at most; `chooseFocusLights`). The last light given them keeps them for the next
+   frame; with none, no focus maps are made. A light's focus maps are fitted exactly as the
+   sun's, the light's own view direction in place of the sun's (a spot light's axis, wherever
+   the light stands): orthographic round the actor's bound, the camera 1.1 radii back along
+   the axis, near 0.1 and far 2.2 radii, the same sizes and fades. Its shadow mask mixes them as
+   the sun's does (the spot light's mask shaders with the stencil): on a focus actor's pixel
+   the map's comparison, against its depth less three times the light's own bias, faded towards
+   lit by the map's fade, and the darker of it and the light's own term kept. Ours: the light's
+   sets go into the sun's shadow map, which the sun leaves unused then (the first light's into
+   the focus layer, a second's into the first cascade's), and `pointShadow` in `frame.wgsl`
+   mixes them into the light's shadow term on the focus actor's draws. The original's spot
+   mask also holds the light's cone falloff, and the darker of the map and that product is
+   kept; ours keeps the cone out of the shadow term (lightCone), so a partly faded map darkens
+   a pixel at the cone's soft edge by the cone's share more.
 
    **Shadow lights** (`light-shadows.ts`), interiors and exteriors: lights whose LIGH carries
    Shadow Spotlight, Shadow Hemisphere or Shadow Omnidirectional (`cell-lighting.ts`
@@ -1232,8 +1249,9 @@ Jump locks, gathering the actors within `[Gameplay] fTargetLockXYRange` (7500) o
 the ground (living, loaded and enabled, not the rider or their mount) nearest first by their
 distance in space, and takes the first; with `bTargetLockIsToggle` (1) the next press lets go,
 at 0 the lock holds while Jump does. Hotkey1 and Hotkey2 step back and on through that list
-round its ends (in place of their favorites) while the lock holds. TODO(M13): the engine also
-leaves out children, the unconscious and the essential who are down.
+round its ends (in place of their favorites) while the lock holds. The engine's gathering also
+leaves out children (their race's flag), the unconscious and the essential who are down, and
+takes only actors in an attached cell with a high-level AI process (ours: those on the stage).
 
 The kill cameras' shots play their camera models (meshes\cameras\*.nif, src/render/camera-model.ts):
 an NiCamera under its root, the root's place in the shot's frame moved by its own

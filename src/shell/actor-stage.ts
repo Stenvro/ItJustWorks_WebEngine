@@ -85,7 +85,7 @@ import { ActorTalk } from './actor-talk.ts';
 import { ActorMoods, type MoodFace } from './actor-moods.ts';
 import { ActorLooks } from './actor-looks.ts';
 import { ActorCombat } from './actor-combat.ts';
-import { KnockState, WeaponState } from '../gameplay/combat/combat-state.ts';
+import { KnockState, LifeState, WeaponState } from '../gameplay/combat/combat-state.ts';
 import { ActorCasting } from './actor-casting.ts';
 import { ActorFlight } from './actor-flight.ts';
 import { actorShape, MagicProjectiles, type ProjectileTarget } from './magic-projectiles.ts';
@@ -619,6 +619,14 @@ export class ActorStage {
         this.combat.startCombat(actor, target);
       },
       actors: () => this.#actors.values(),
+      downed: (reference) => {
+        const life = this.combat.lifeState(reference);
+        return (
+          life === LifeState.unconscious ||
+          life === LifeState.essentialDown ||
+          options.session.scriptsReady?.state.actors.get(reference)?.unconscious === true
+        );
+      },
     });
     this.vehicles = new ActorVehicles({
       session: options.session,

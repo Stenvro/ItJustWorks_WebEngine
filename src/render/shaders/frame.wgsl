@@ -71,20 +71,25 @@ struct PointLight {
 // The shadow lights' maps (light-shadows.ts): six layers per slot, each with the matrix it was
 // rendered with; per slot near, far, omni (1: a cube, 0: one frustum) and the world size of a
 // texel at distance 1; then the map size, the bias along the light (world units) and along the
-// normal (texels). Then the sun's focus maps (focus-shadows.ts): each one's matrix, its texel
-// size (world units), depth bias, the share of its quarter its size fills and its fade (x, y,
-// z, w), and their count (focusParams.x).
+// normal (texels). Then the focus maps (focus-shadows.ts), a set of four per light that holds
+// them: each one's matrix, its offset along the normal (world units), depth bias, the share of
+// its quarter its size fills and its fade (x, y, z, w); then the maps per set (focusParams.x)
+// and which light holds each set (y, z: its shadow slot + 1; y 0: the sun, z 0: no second set).
 struct LightShadows {
   matrices: array<mat4x4f, 24>,
   slots: array<vec4f, 4>,
   params: vec4f,
-  focusMatrices: array<mat4x4f, 4>,
-  focusInfo: array<vec4f, 4>,
+  focusMatrices: array<mat4x4f, 8>,
+  focusInfo: array<vec4f, 8>,
   focusParams: vec4f,
 };
 
-// The layer of the sun's shadow map that holds the focus maps, one per quarter.
-const FOCUS_LAYER = 5;
+// The layer of the sun's shadow map that holds a set of focus maps, one per quarter: the focus
+// layer, and for a second light's set the first cascade's (the sun casts none then;
+// scene-renderer.ts focusLayer).
+fn focusLayer(mapSet: u32) -> i32 {
+  return select(5, 0, mapSet == 1u);
+}
 
 // Whether a portal-strict light leaves a draw of another room unlit (`room`: the draw's room,
 // 0 none).
@@ -127,12 +132,40 @@ fn lightCone(light: PointLight, offset: vec3f) -> f32 {
 // How much of a shadow light reaches a point (0 in shadow, 1 lit), faded by how much of its
 // shadow shows: the cube face (omni) or the one frustum (spot, hemisphere) that holds the point,
 // sampled 3x3. The receiver's distance along the view, less the bias, is compared as the depth
-// the map stores; points outside a single frustum are lit.
-fn pointShadow(light: PointLight, worldPos: vec3f, n: vec3f) -> f32 {
+// the map stores; points outside a single frustum are lit. On a pixel of a draw shaded by focus
+// map `focus` (1 + its index; 0: none) of a light that holds the focus maps, they mix in as the
+// original's shadow mask mixes them (as the sun's: focusMix).
+fn pointShadow(light: PointLight, worldPos: vec3f, n: vec3f, focus: u32) -> f32 {
   if (light.shadow.x < 0.0 || light.shadow.y <= 0.0) {
     return 1.0;
   }
   let slot = min(u32(light.shadow.x + 0.5), 3u);
+  var shadow = lightMapShadow(slot, light, worldPos, n);
+  let mapSet = focusSetOf(slot + 1u);
+  if (focus != 0u && mapSet < 2u) {
+    let shade = focusShadow(worldPos, n, focus, mapSet);
+    shadow = min(shadow, mix(1.0, shade.x, shade.y));
+  }
+  return mix(1.0, shadow, light.shadow.y);
+}
+
+// Which set of focus maps light `holder` (its shadow slot + 1; 0: the sun) holds this frame (2:
+// none).
+fn focusSetOf(holder: u32) -> u32 {
+  if (lightShadows.focusParams.x < 0.5) {
+    return 2u;
+  }
+  if (u32(lightShadows.focusParams.y + 0.5) == holder) {
+    return 0u;
+  }
+  if (holder != 0u && u32(lightShadows.focusParams.z + 0.5) == holder) {
+    return 1u;
+  }
+  return 2u;
+}
+
+// A shadow light's own map at a point (pointShadow, before its fade).
+fn lightMapShadow(slot: u32, light: PointLight, worldPos: vec3f, n: vec3f) -> f32 {
   let info = lightShadows.slots[slot];
   let v = worldPos - light.position;
   var face = 0u;
@@ -168,7 +201,7 @@ fn pointShadow(light: PointLight, worldPos: vec3f, n: vec3f) -> f32 {
       lit += textureSampleCompareLevel(lightShadowMap, shadowSampler, at, i32(layer), depth);
     }
   }
-  return mix(1.0, lit / 9.0, light.shadow.y);
+  return lit / 9.0;
 }
 
 // View distance of a reversed-Z depth value (infinite far plane: depth = near / distance).
@@ -193,40 +226,43 @@ fn sunShadow(worldPos: vec3f, n: vec3f, focus: u32) -> f32 {
     return 1.0;
   }
   let cascades = cascadeShadow(worldPos, n);
-  if (focus == 0u) {
+  let mapSet = focusSetOf(0u);
+  if (focus == 0u || mapSet != 0u) {
     return cascades;
   }
-  let shade = focusShadow(worldPos, n, focus);
+  let shade = focusShadow(worldPos, n, focus, mapSet);
   return min(cascades, mix(1.0, shade.x, shade.y));
 }
 
-// Focus map `focus` (1 + its index) at a point of its body: how lit it is (x, sampled 3x3
-// within the corner of its quarter of the layer its size fills) and how much it counts (y: its
-// fade; 0 for no map, or a point outside its view).
-fn focusShadow(worldPos: vec3f, n: vec3f, focus: u32) -> vec2f {
+// Focus map `focus` (1 + its index) of set `mapSet` at a point of its body: how lit it is (x,
+// sampled 3x3 within the corner of its quarter of the set's layer its size fills) and how much
+// it counts (y: its fade; 0 for no map, or a point outside its view).
+fn focusShadow(worldPos: vec3f, n: vec3f, focus: u32, mapSet: u32) -> vec2f {
   let count = min(u32(lightShadows.focusParams.x + 0.5), 4u);
-  if (focus == 0u || focus > count) {
+  if (focus == 0u || focus > count || mapSet > 1u) {
     return vec2f(1.0, 0.0);
   }
   let i = focus - 1u;
-  let info = lightShadows.focusInfo[i];
-  let offset = n * info.x * frame.shadowParams.w;
-  let clip = lightShadows.focusMatrices[i] * vec4f(worldPos + offset, 1.0);
+  let entry = mapSet * 4u + i;
+  let info = lightShadows.focusInfo[entry];
+  let offset = n * info.x;
+  let clip = lightShadows.focusMatrices[entry] * vec4f(worldPos + offset, 1.0);
   if (max(abs(clip.x), abs(clip.y)) >= 1.0 || clip.z < 0.0 || clip.z > 1.0) {
     return vec2f(1.0, 0.0);
   }
   let quarter = vec2f(f32(i % 2u), f32(i / 2u)) * 0.5;
   let share = info.z * 0.5;
   let uv = quarter + vec2f(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5) * share;
-  let texel = 1.0 / frame.shadowParams.y;
+  let texel = 1.0 / f32(textureDimensions(shadowMap).x);
   let low = quarter + vec2f(texel);
   let high = quarter + vec2f(share - texel);
   let depth = clip.z - info.y;
+  let layer = focusLayer(mapSet);
   var lit = 0.0;
   for (var y = -1; y <= 1; y++) {
     for (var x = -1; x <= 1; x++) {
       let at = clamp(uv + vec2f(f32(x), f32(y)) * texel, low, high);
-      lit += textureSampleCompareLevel(shadowMap, shadowSampler, at, FOCUS_LAYER, depth);
+      lit += textureSampleCompareLevel(shadowMap, shadowSampler, at, layer, depth);
     }
   }
   return vec2f(lit / 9.0, clamp(info.w, 0.0, 1.0));
@@ -382,7 +418,7 @@ fn pointLightTerm(
   }
   let toLight = offset * inverseSqrt(max(distanceSquared, 1e-4));
   let attenuation = (1.0 - distanceSquared / radiusSquared) * lightCone(light, offset) *
-    pointShadow(light, worldPos, n);
+    pointShadow(light, worldPos, n, 0u);
   let nDotL = max(dot(n, toLight), 0.0);
   result.diffuse = light.color * nDotL * attenuation;
   if (specular && nDotL > 0.0) {
