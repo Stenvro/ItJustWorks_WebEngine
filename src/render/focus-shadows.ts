@@ -19,9 +19,9 @@
 //
 // Here each focus map is a quarter of one layer of the sun's shadow map (an atlas of 2×2), its
 // size a corner of that quarter; the draws of the actor's scene name the map (their scene's
-// focus slot, SceneRenderer.updateFocusScenes) in place of the stencil.
-// TODO(M13): how the shadow mask mixes a fading focus map with the cascades (read: the fade
-// goes to the mask's constants; here the focus result is mixed into the cascades' by it).
+// focus slot, SceneRenderer.updateFocusScenes) in place of the stencil. The shadow mask mixes
+// them as the original's does (focusMix, frame.wgsl sunShadow): on a focus actor's pixels the
+// map's result faded towards lit by its fade, then the darker of it and the cascades'.
 // Platform-independent.
 
 import { project } from './frustum.ts';
@@ -102,6 +102,15 @@ export function focusFade(
   if (key < start) return 1;
   if (max <= start) return 0;
   return Math.max(0, Math.min(1, (max - key) / (max - start)));
+}
+
+/**
+ * The sun's light on a focus actor's pixel (observed in the original's shadow mask; frame.wgsl
+ * sunShadow does the same): the focus map's result (0 in shadow, 1 lit) faded towards lit by
+ * its fade, then the darker of it and the cascades'.
+ */
+export function focusMix(cascades: number, focus: number, fade: number): number {
+  return Math.min(cascades, 1 + (focus - 1) * fade);
 }
 
 /**

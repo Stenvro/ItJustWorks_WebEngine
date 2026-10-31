@@ -142,8 +142,10 @@ const IDENTITY = identity();
 const PALETTE_BYTES = MAX_PALETTE_BONES * PALETTE_BONE_FLOATS * 4;
 /** Palettes start at storage buffer offset alignment. */
 const PALETTE_ALIGNMENT = 256;
-/** WGSL `Frame` struct: 208 floats. */
-const FRAME_FLOATS = 208;
+/** WGSL `Frame` struct: 212 floats. */
+const FRAME_FLOATS = 212;
+/** Where the frame's `luminance` (the last frame's adapted luminance) lies in it (bytes). */
+const FRAME_LUMINANCE_OFFSET = 208 * 4;
 
 /**
  * The world map's relief overlay on its LOD land (the map menu's 3D): two tiling normal maps
@@ -1771,6 +1773,8 @@ export class SceneRenderer {
   readonly #colorFormat: GPUTextureFormat;
   readonly #frameData = new Float32Array(FRAME_FLOATS);
   readonly #frameUints = new Uint32Array(this.#frameData.buffer);
+  /** Every frame state's uniform buffer (each takes the adapted luminance: luminanceTargets). */
+  readonly #frameBuffers: GPUBuffer[] = [];
   readonly #lightData = new Float32Array(MAX_LIGHTS * LIGHT_FLOATS);
   /** The frame's lights as selection keys (light-lists.ts), and how many. */
   readonly #lightKeys = new Float32Array(MAX_LIGHTS * LIGHT_KEY_FLOATS);
@@ -2254,6 +2258,7 @@ export class SceneRenderer {
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       }),
     };
+    this.#frameBuffers.push(buffers.buffer);
     return {
       ...buffers,
       bindGroup: this.#createFrameBindGroup(
@@ -3218,7 +3223,8 @@ export class SceneRenderer {
         : [0, 0, 0, 0],
       204,
     );
-    this.#device.queue.writeBuffer(this.#frame.buffer, 0, data);
+    // All but the adapted luminance, which the GPU copies in (luminanceTargets).
+    this.#device.queue.writeBuffer(this.#frame.buffer, 0, data, 0, FRAME_LUMINANCE_OFFSET / 4);
 
     // Another view of the same frame (the water's reflection) keeps the lights the draws chose.
     if (options.chooseLights === false) {
@@ -3467,6 +3473,16 @@ export class SceneRenderer {
 
   get frameBindGroup(): GPUBindGroup {
     return this.#frame.bindGroup;
+  }
+
+  /**
+   * Where each frame state takes the eye adaptation's adapted luminance (Frame.luminance): the
+   * renderer copies the last frame's into them on the GPU before the scene's passes (the
+   * character light's luminance, observed in the original: its slot 11 is the adapted
+   * luminance target).
+   */
+  get luminanceTargets(): { readonly buffers: readonly GPUBuffer[]; readonly offset: number } {
+    return { buffers: this.#frameBuffers, offset: FRAME_LUMINANCE_OFFSET };
   }
 
   /**
