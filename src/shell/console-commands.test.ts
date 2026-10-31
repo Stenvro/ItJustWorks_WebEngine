@@ -66,6 +66,8 @@ describe('ConsoleCommands', () => {
     });
     expect(await commands.run('dpc')).toEqual([]);
     expect(controls.menu).toBe(false);
+    // The camera's switch locked as well (Toggle POV does nothing while the controls are off).
+    expect(controls.povLocks).toEqual([0]);
     expect(changed).toBe(2);
   });
 

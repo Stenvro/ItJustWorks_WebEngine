@@ -150,15 +150,17 @@ function ordinalSuffix(day: number, setting: (name: string) => string | undefine
 }
 
 /**
- * The date as the game's menus show it (the tween menu, the wait menu): "Sundas, 7:12 PM, 17th
- * of Last Seed, 4E 201", from the game settings' names of days, months, AM/PM and ordinal
- * suffixes. The era, 4E, has no setting of its own.
+ * The date as the game's menus show it: "Sundas, 7:12 PM, 17th of Last Seed, 4E 201", from the
+ * game settings' names of days, months, AM/PM and ordinal suffixes. The era, 4E, has no setting
+ * of its own. The year is written for the tween menu, the map and the journal; the wait menu's
+ * date has none (`withYear` false), observed in the original.
  */
 export function formatGameDate(
   date: GameDate,
   weekday: number,
   hour: number,
   setting: (name: string) => string | undefined,
+  withYear = true,
 ): string {
   const day = setting(DAY_SETTINGS[((weekday % 7) + 7) % 7] ?? 'sDaySunday') ?? '';
   const month = setting(MONTH_SETTINGS[date.month] ?? 'sMonthJanuary') ?? '';
@@ -168,5 +170,6 @@ export function formatGameDate(
   const half = hours24 < 12 ? (setting('sTimeAM') ?? 'AM') : (setting('sTimePM') ?? 'PM');
   const time = `${String(hours12)}:${String(minutes % 60).padStart(2, '0')} ${half}`;
   const ordinal = `${String(date.day)}${ordinalSuffix(date.day, setting)}`;
-  return `${day}, ${time}, ${ordinal}${setting('sOf') ?? ' of '}${month}, 4E ${String(date.year)}`;
+  const year = withYear ? `, 4E ${String(date.year)}` : '';
+  return `${day}, ${time}, ${ordinal}${setting('sOf') ?? ' of '}${month}${year}`;
 }

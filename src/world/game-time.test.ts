@@ -68,6 +68,12 @@ describe('formatGameDate', () => {
     );
   });
 
+  it('leaves the year out for the wait menu', () => {
+    expect(formatGameDate(DEFAULT_START_DATE, 0, 8.5, setting, false)).toBe(
+      'Sundas, 8:30 AM, 17th of Last Seed',
+    );
+  });
+
   it('gives each day of the month its suffix', () => {
     const day = (n: number): string =>
       formatGameDate({ year: 201, month: 7, day: n }, 0, 12, setting).split(', ')[2] ?? '';
