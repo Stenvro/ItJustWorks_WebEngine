@@ -40,14 +40,21 @@ How a frame is put together (`src/render/renderer.ts`). Everything is drawn in H
    of its quarter as large as its size, fitted round the bound of those parts (the size
    measured from the bound's centre, the original from the actor's root). In place of the
    stencil the draws of a focus body's scene name its map (the entry past their light lists,
-   `sceneFocus` in `common.wgsl`), and only they sample it. Its depth bias is two of its
-   texels. How the mask mixes them, observed in the original's shadow mask shaders: on a pixel
+   `sceneFocus` in `common.wgsl`), and only they sample it. Its depth bias is three times the
+   cascades' (observed in the original's shadow mask: a focus map compares against its own
+   depth less three times the bias of the cascade at the pixel; ours has one cascade bias).
+   How the mask mixes them, observed in the original's shadow mask shaders: on a pixel
    the stencil gives a map, the map's comparison (0 or 1) is faded towards lit by that map's
    fade, 1 + fade × (shadow − 1), and the darker of it and the cascades' result is kept (the
    cascades still darken the focus actor; a faded map only adds its own shadow); the shadow
    distance's fade then applies to the result. Ours: `sunShadow` in `frame.wgsl`
-   (`focusMix`). TODO(M13): the engine also checks a cell flag before it renders them, read as
-   "exteriors" here; its focus comparison's bias is three times the cascades' (ours: its own).
+   (`focusMix`). Where they belong, observed in the original: the sun casts shadows (its
+   cascades and its focus maps) only in an open world that has a sky and no fixed dimensions
+   (WRLD DATA flags 0x20 and 0x40 clear; ours: `WorldViewer`'s `shadows`). Anywhere else
+   (interiors, worlds without a sky or with fixed dimensions) the focus maps go to one other
+   shadow light, the first active spot (frustum) or directional shadow light, which keeps them
+   from frame to frame while it stays active; with none, no focus maps are made. TODO(M13):
+   ours makes focus maps for the sun alone, not for a spot shadow light.
 
    **Shadow lights** (`light-shadows.ts`), interiors and exteriors: lights whose LIGH carries
    Shadow Spotlight, Shadow Hemisphere or Shadow Omnidirectional (`cell-lighting.ts`
@@ -775,10 +782,25 @@ shield, a worn weapon: no skin) gets a plain decal of its own, hung under that s
 node so it moves with it, made while fewer than `[Display]` iMaxDecalsPerFrame (100) were made
 this frame; one too near a decal already on that node is skipped: within
 √((max(width, height) + the other's width)² / spacing) of where the other was made, the spacing
-16 in every caller that makes a dynamic decal (`decalTooNear` in `src/world/decal.ts`; the
-original applies it to every plain decal, the world's too: TODO(M13), ours project the world's
-over their box, not onto the struck shape's node). No dynamic decal is made farther than `[Display]` fDecalLOD0 (800) from the
-camera (observed in the original). Ours: the actor's skinned shapes are skinned on the CPU in
+16 for the impacts' decals (`decalTooNear` in `src/world/decal.ts`). No dynamic decal is made
+farther than `[Display]` fDecalLOD0 (800) from the camera (observed in the original).
+
+Dynamic decals on the world, observed in the original: a decal goes onto the node that holds
+the collision the hit struck (for the landscape, the land of the cell), one plain decal per
+shape under that node built from its triangles in the box, each spaced against the decals
+already beside it. A hit on the world (a shot or a blow into a wall) is spaced by 16; an actor
+hit leaves environment blood at fCombatEnvironmentBloodChance (0.75): a ray from the hit along
+the blow, its direction lowered by half before it is made a unit, 512 units long, and the
+first surface it meets that is not an actor or a projectile takes the decal, spaced by the
+impact's Placement Radius (IPCT DATA; none when 0). Both count against iMaxDecalsPerFrame and
+fDecalLOD0. ObjectReference.PlayImpactEffect's decal is forced: made past the spacing, the
+per-frame count and the distance. Ours (`#splatter`, `struckNodeKey`, `environmentBloodWay`)
+keys the struck node by the reference and the collision's node name (the land by its cell);
+TODO(M13): ours projects the box onto whatever lies in it rather than building the decal from
+the struck shapes' triangles, and which impact data set the environment blood uses is unread
+(ours: the hit's own impact).
+
+Ours, on actors: the actor's skinned shapes are skinned on the CPU in
 the pose of the hit, their triangles that overlap the box (a separating-axis test against the
 unit cube) are copied with their bone weights and partitions (equipment that hides a body part
 hides its blood), their texture coordinates projected across the box (u along its X, v down its

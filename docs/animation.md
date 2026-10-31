@@ -863,8 +863,14 @@ camera goes to first person, unless the player is dead (the camera then goes on)
 the shot's, cleared as it ends. Ours keeps the player's first-person view for the rest of the
 kill camera, its playback (time, image space) going on (`KillmoveCamera.cutAway`; whether a
 later shot takes the view back is unread: TODO(M13)). A ranged shot's Near Target Distance
-(CAMS DATA, 18 shots) ends it by a flag of its projectile whose setter is unread (TODO(M13):
-ours plays its time). The
+(CAMS DATA, 18 shots; observed in the original): as the kill's projectile flies during the
+kill camera, once it is within the current shot's distance of the point it is aimed at on
+the target (the target's body part the shooter aims at; ours: its torso node, else its
+feet) a flag of the projectile is set for good; while no shot of the playback has ended, a
+shot with a distance ends on that flag as on its time (`KillmoveCamera` #flagNearTarget,
+#endsNearTarget). The original also trims the playback's later kills when the projectile has
+flown past its target by more than 300 units (600 in a Hit shot); with one kill per playback
+that changes nothing here. The
 blur's strength is computed but the image-space stack takes no free radial blur yet; which
 distance TargetVisible returns (inferred: the last clear step's); the magic kill camera ([gameplay.md](gameplay.md#killmoves)). The ranged kill camera
 plays the same tree on the player's bow and crossbow shots (its rules: gameplay.md).

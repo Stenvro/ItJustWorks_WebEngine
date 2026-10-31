@@ -150,6 +150,16 @@ export class KillmoveCamera implements Camera {
   radialBlur = 0;
   /** Where its projectile was last (a shot that hit is gone). */
   #projectile: { readonly position: Vec3; readonly heading: number } | undefined;
+  /**
+   * Its projectile came within a shot's Near Target Distance of the target (observed in the
+   * original: a flag of the projectile, set as it flies, never cleared).
+   */
+  #nearTarget = false;
+  /**
+   * A shot of it has ended (observed in the original: from then on the playback no longer
+   * ends a shot by the projectile's nearness, only by its time).
+   */
+  #shotEnded = false;
   done = false;
   /** The kill cameras' path it plays (CPTH editor id: development, tools). */
   readonly path: string;
@@ -262,7 +272,8 @@ export class KillmoveCamera implements Camera {
       return;
     }
     if (this.#dolly) this.#dolly.seconds += deltaSeconds;
-    if (this.#time > Math.max(0.1, shot.record.maxTime)) {
+    if (this.#time > Math.max(0.1, shot.record.maxTime) || this.#endsNearTarget(shot.record)) {
+      this.#shotEnded = true;
       this.#shot++;
       this.#time = 0;
       if (this.#shot >= this.#shots.length) {
@@ -279,8 +290,10 @@ export class KillmoveCamera implements Camera {
       this.done = true;
       return;
     }
-    this.#projectile = subjects.projectile?.() ?? this.#projectile;
+    const flying = subjects.projectile?.();
+    this.#projectile = flying ?? this.#projectile;
     const record = current.record;
+    if (flying) this.#flagNearTarget(flying.position, record, target);
     // Where the shot is measured from and what it looks at (shotPoint); without the follow
     // flags, where they were as the shot began.
     if (this.#spots?.shot !== this.#shot) this.#spots = { shot: this.#shot };
@@ -357,6 +370,29 @@ export class KillmoveCamera implements Camera {
     const axes = shotAxes(this.position, looked, turn);
     this.forward = axes.forward;
     this.up = axes.up;
+  }
+
+  /**
+   * Whether a shot ends before its time by its Near Target Distance (observed in the original):
+   * while no shot of the playback has ended, one with a distance ends once the kill's
+   * projectile has come that near its target (#flagNearTarget).
+   */
+  #endsNearTarget(record: CameraShot): boolean {
+    return !this.#shotEnded && this.#nearTarget && record.nearTargetDistance > 0;
+  }
+
+  /**
+   * The projectile's nearness as it flies (observed in the original, in its own update during
+   * a kill camera): once it is within the current shot's Near Target Distance (when it has
+   * one) of the point it is aimed at on the target, the flag is set for good. The aimed point
+   * is the target's body part the shooter aims at (ours: its torso node, as #shotPoint's),
+   * else its position.
+   */
+  #flagNearTarget(at: Vec3, record: CameraShot, target: Vec3): void {
+    const near = record.nearTargetDistance;
+    if (this.#nearTarget || !(near > 0)) return;
+    const aim = this.#subjects.node?.(this.#subjects.targetRef, 'torso') ?? target;
+    if (Math.hypot(at[0] - aim[0], at[1] - aim[1], at[2] - aim[2]) < near) this.#nearTarget = true;
   }
 
   /**

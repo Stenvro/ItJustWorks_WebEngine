@@ -2,11 +2,12 @@
 // data set (WEAP INAM; fists: the race's NAM5; a block or bash: WEAP BIDS), which gives for the
 // material struck (an actor: its race's NAM4, MaterialSkin's blood; the world: the shape's
 // material) an impact (IPCT): its sound (SNAM, NAM1 for a heavy hit: a power attack) at the hit,
-// and its decal (DODT with the texture set DNAM: blood) on the surface behind the target, as far
-// as the blow carries it. A decal lasts [Display] fDecalLifetime seconds; at most [Decals]
-// uMaxDecals are kept, the oldest going first (observed in the original: each dynamic decal
-// is made with the lifetime, the count capped by the setting). TODO(M13): whether a decal fades
-// at its end or vanishes. Its effect model (MODL: the blood spray, the sparks) shows at the hit.
+// and its decal (DODT with the texture set DNAM: blood) on the surface behind the target (the
+// environment blood, #splatter; docs/rendering.md, "Decals"). A decal lasts [Display]
+// fDecalLifetime seconds; at most [Decals] uMaxDecals are kept, the oldest going first
+// (observed in the original: each dynamic decal is made with the lifetime, the count capped by
+// the setting). TODO(M13): whether a decal fades at its end or vanishes. Its effect model
+// (MODL: the blood spray, the sparks) shows at the hit.
 
 import { impactAgainst } from '../audio/impacts.ts';
 import { Layer } from '../physics/collision-layers.ts';
@@ -27,11 +28,15 @@ import {
 } from '../render/skinned-decal.ts';
 import type { ModelData, ModelPart } from '../render/model-data.ts';
 import {
+  DECAL_SPACING,
   decalTooNear,
+  ENVIRONMENT_BLOOD,
+  environmentBloodWay,
   expireDecals,
   parseTextureSet,
   placeDecal,
   placedSize,
+  struckNodeKey,
   TextureSetFlag,
   type DecalData,
   type DecalSpot,
@@ -43,7 +48,10 @@ import type { GameSession } from './game-session.ts';
 /** SLSF1 Decal: a shape that is itself a decal takes none. */
 const SLSF1_DECAL = 0x4000000;
 
-/** How far behind a hit its blood lands (game units). */
+/**
+ * How far a hit on the world looks along the blow (and down) for the surface its decal goes
+ * on (game units; the hit's point lies on it).
+ */
 const SPLATTER_REACH = 160;
 
 /** A hit's decal and when it goes (seconds on the impacts' clock). */
@@ -52,6 +60,8 @@ interface LivingDecal {
   readonly until: number;
   /** A decal on a body: its box where the body's node has it now (undefined: not shown). */
   readonly follow?: () => Mat4 | undefined;
+  /** A decal on the world: the node it is on (struckNodeKey), where it was made, its width. */
+  readonly spot?: DecalSpot & { readonly node: string };
 }
 
 /** A body a hit's blood lands on: its placement and its pose (node matrices, model space). */
@@ -104,6 +114,11 @@ export interface HitImpact {
    * living one: src/shell/magic-projectiles.ts); not: only its sound, no decal.
    */
   readonly placeable?: (impact: Impact) => boolean;
+  /**
+   * Its decal is made whatever the spacing, the decals made this frame and the distance
+   * (observed in the original: ObjectReference.PlayImpactEffect's).
+   */
+  readonly forced?: boolean;
 }
 
 export class CombatImpacts {
@@ -439,7 +454,7 @@ export class CombatImpacts {
     if (impact.model && this.#showModel) {
       this.#showModel(impact.model, hit.position, impactFacing(impact.orientation, hit.direction));
     }
-    if (physics) await this.#splatter(impact.formId, hit, physics);
+    if (physics) await this.#splatter(impact, hit, physics);
     return impact;
   }
 
@@ -453,15 +468,48 @@ export class CombatImpacts {
     return (await this.#decal(impact.formId)) !== undefined;
   }
 
-  /** The impact's decal on what lies behind the hit (blood on the floor or a wall). */
-  async #splatter(impact: number, hit: HitImpact, physics: PhysicsWorld): Promise<void> {
-    const data = await this.#decal(impact);
+  /**
+   * The impact's decal on the world: an actor hit's blood on what lies behind it (the
+   * environment blood, ENVIRONMENT_BLOOD: by its chance, along the blow lowered by half, 512
+   * units, spaced by the impact's Placement Radius), or a hit on the world where it struck
+   * (spaced by the impacts' 16). Observed in the original: the decal is made on the node that
+   * holds the struck collision (struckNodeKey), skipped where one on that node is too near
+   * (decalTooNear), past iMaxDecalsPerFrame plain decals this frame, or beyond fDecalLOD0; a
+   * forced one (PlayImpactEffect's) is made regardless. TODO(M13): the original builds it from
+   * the triangles of the shapes under that node within its box; ours projects its box onto
+   * whatever lies in it. Which impact data set the original picks for the environment blood
+   * is unread (ours: the hit's own impact).
+   */
+  async #splatter(impact: Impact, hit: HitImpact, physics: PhysicsWorld): Promise<void> {
+    const data = await this.#decal(impact.formId);
     if (!data || !physics.queriesCurrent) return;
-    // Along the blow and down: where the blood falls.
-    const way = normalize([hit.direction[0], hit.direction[1], hit.direction[2] - 1]);
-    const surface = physics.raycast(hit.position, way, SPLATTER_REACH, Layer.static);
-    if (!surface || !this.#withinDecalReach(surface.point)) return;
+    const blood = hit.materialForm !== undefined;
+    if (blood) {
+      const settings = await this.#session.settings();
+      const chance = settings.number('fCombatEnvironmentBloodChance') ?? ENVIRONMENT_BLOOD.chance;
+      if (Math.random() >= chance) return;
+    }
+    const way = blood
+      ? environmentBloodWay(hit.direction)
+      : normalize([hit.direction[0], hit.direction[1], hit.direction[2] - 1]);
+    const reach = blood ? ENVIRONMENT_BLOOD.reach : SPLATTER_REACH;
+    const surface = physics.raycast(hit.position, way, reach, Layer.static);
+    if (!surface) return;
+    const forced = hit.forced === true;
+    const ini = this.#session.ini;
+    if (!forced) {
+      if (!this.#withinDecalReach(surface.point)) return;
+      if (this.#rigidMadeThisFrame >= ini.number('Display', 'iMaxDecalsPerFrame')) return;
+    }
     const placed = placeDecal(data.decal, this.#seed++, decalFrame(surface.point, surface.normal));
+    const size = placedSize(placed);
+    const node = struckNodeKey(surface.owner, physics.nodeOf(surface.collider), surface.point);
+    if (!forced) {
+      const spacing = blood ? impact.placementRadius : DECAL_SPACING;
+      const near = this.#decals.flatMap((d) => (d.spot?.node === node ? [d.spot] : []));
+      if (decalTooNear(surface.point, size, near, spacing)) return;
+    }
+    this.#rigidMadeThisFrame++;
     const gpu = await this.#renderer.decals.createDecals(
       [
         {
@@ -476,8 +524,12 @@ export class CombatImpacts {
     );
     if (!gpu) return;
     gpu.select(() => true);
-    const lifetime = this.#session.ini.number('Display', 'fDecalLifetime');
-    this.#decals.push({ gpu, until: this.#now() + lifetime });
+    const lifetime = ini.number('Display', 'fDecalLifetime');
+    this.#decals.push({
+      gpu,
+      until: this.#now() + lifetime,
+      spot: { node, point: surface.point, width: size.width },
+    });
     this.#expire();
   }
 
