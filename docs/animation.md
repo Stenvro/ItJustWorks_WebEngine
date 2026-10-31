@@ -387,7 +387,13 @@ animated objects alike.
   0x80, the dragons) counts as seen whenever it has 3D. With no minimum, it still generates its
   first bone while that bone's place in the world lies outside its 3D's world bound sphere
   (farther from the bound's centre than its radius), so that a root an animation carried away
-  comes back. The other bones keep their pose. An update with the actor's one-shot "force one
+  comes back. The other bones keep their pose: the pose of their last update, with that
+  update's head turn and foot IK in it. Those passes work on the pose just generated; ours runs
+  them after the generate and puts the kept bones back as they were afterwards
+  (`BehaviorRuntime.update`). Run again over a kept pose they added up every update: an unseen
+  cart horse's foot IK leaned and lifted its root over and over until it stood thousands of
+  units from the horse, and the cart tethered to its spine was thrown after it (the opening's
+  carts flying through the air). An update with the actor's one-shot "force one
   graph update" flag generates every bone, bone LOD and sight aside, and clears it (observed in
   the original); ours starts every new graph with it (`BehaviorRuntime.forceOneUpdate`, kept
   while the graph gives no pose yet, its clips still loading), so an actor never seen since it
