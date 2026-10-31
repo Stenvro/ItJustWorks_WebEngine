@@ -19,9 +19,10 @@
 // sStatsPerkConfirm first). A skill at 100 can be made Legendary (Space;
 // sLegendaryResetConfirm, sLegendaryResetSecondConfirm): back to 15, its perks' points
 // returned. The skills' and the level's meters show their progress (their experience). The
-// camera's field of view is fStatsCameraFOV (50, of a 4:3 frame). A perk taken is the
-// player's through the perk system (src/scripting/runtime/perk-engine.ts: its abilities, its
-// quest stages, its entry points act at once).
+// camera's frustum comes from fStatsCameraFOV (50: its top at tan 50° × 0.4125). In a tree the
+// camera goes to the selected star (skills-ring.ts: starView). A perk taken is the player's
+// through the perk system (src/scripting/runtime/perk-engine.ts: its abilities, its quest
+// stages, its entry points act at once).
 // A skill above its base (a Fortify effect, the magic system's temporary modifiers) shows its
 // name and level in the interface's green (#189515, the item cards' better), one below it (a
 // Damage effect) in its red (#FF0000); the meters of magicka, health and stamina so by their
@@ -37,8 +38,10 @@ import {
   ringTurnSpeed,
   SKILL_ANGLE,
   starPlace,
-  STAR_DISTANCE,
+  STAR_CAMERA_DEFAULTS,
   STAR_GRID_DEFAULTS,
+  starView,
+  type StarCamera,
   type StarGrid,
 } from '../gameplay/skills-ring.ts';
 import { playSequence, type Playback } from '../render/animation.ts';
@@ -79,8 +82,11 @@ const INTRO_SECONDS = 0.63;
  * Fitted (the dome's camera node looks level; the menu shows the constellations above).
  */
 const RING_PITCH = 10;
-/** Seconds the camera takes to look up into a tree or back down. */
-const PITCH_SECONDS = 0.5;
+/**
+ * Seconds the camera takes to a selected star's camera point, up into a tree and back down to
+ * the ring (observed in the original: a second).
+ */
+const STAR_MOVE_SECONDS = 1;
 /** Degrees the view turns per pixel the mouse moves. */
 const MOUSE_DEGREES = 0.15;
 /** The skills' and meters' colours: as they are, fortified, damaged (the item cards' own). */
@@ -117,6 +123,8 @@ interface PerkStar {
   state: 'locked' | 'unlocked' | 'owned';
   /** Ranks owned. */
   owned: number;
+  /** Its next rank's conditions hold for the player (its last's once all are owned). */
+  meets: boolean;
 }
 
 interface Tree {
@@ -130,8 +138,12 @@ interface Tree {
     readonly to: PerkStar;
     readonly graph: ObjectGraph | undefined;
   }[];
-  /** The tree's middle, as the camera sees it (degrees up). */
-  readonly pitch: number;
+}
+
+/** Where a camera stands and what it looks at. */
+interface CameraPose {
+  readonly position: Vec3;
+  readonly target: Vec3;
 }
 
 /** The camera at the dome's middle, turned to a heading and pitched up. */
@@ -143,11 +155,15 @@ class SkillsCamera implements Camera {
   yaw = 0;
   pitch = RING_PITCH;
   z = CAMERA_REST_Z;
+  /** Where it stands in a tree (and on its way there and back); undefined: on the ring. */
+  pose: CameraPose | undefined;
   /** Vertical field of view (radians). */
   readonly #fovY: number;
 
   constructor(fovDegrees: number, near: number) {
-    this.#fovY = 2 * Math.atan(Math.tan((fovDegrees * Math.PI) / 360) * 0.75);
+    // Observed in the original: its frustum's top at tan(fStatsCameraFOV) × 0.75 × 0.55 (the
+    // setting a whole angle, not a half), its sides that times the screen's aspect.
+    this.#fovY = 2 * Math.atan(Math.tan((fovDegrees * Math.PI) / 180) * 0.75 * 0.55);
     this.near = near;
   }
 
@@ -155,17 +171,27 @@ class SkillsCamera implements Camera {
     // The menu moves it.
   }
 
-  viewProjection(aspect: number, out: Mat4 = new Float32Array(16)): Mat4 {
+  /** At the dome's middle, turned to its heading and pitched up. */
+  ringPose(): CameraPose {
     const yaw = (this.yaw * Math.PI) / 180;
     const pitch = (this.pitch * Math.PI) / 180;
-    this.position = [0, 0, this.z];
-    this.forward = [
-      Math.sin(yaw) * Math.cos(pitch),
-      Math.cos(yaw) * Math.cos(pitch),
-      Math.sin(pitch),
-    ];
-    const target: Vec3 = [this.forward[0], this.forward[1], this.z + this.forward[2]];
-    const view = lookAt(this.position, target, [0, 0, 1]);
+    return {
+      position: [0, 0, this.z],
+      target: [
+        Math.sin(yaw) * Math.cos(pitch),
+        Math.cos(yaw) * Math.cos(pitch),
+        this.z + Math.sin(pitch),
+      ],
+    };
+  }
+
+  viewProjection(aspect: number, out: Mat4 = new Float32Array(16)): Mat4 {
+    const { position, target } = this.pose ?? this.ringPose();
+    this.position = position;
+    const d: Vec3 = [target[0] - position[0], target[1] - position[1], target[2] - position[2]];
+    const length = Math.hypot(d[0], d[1], d[2]) || 1;
+    this.forward = [d[0] / length, d[1] / length, d[2] / length];
+    const view = lookAt(position, target, [0, 0, 1]);
     return multiply(perspectiveReversedZ(this.#fovY, aspect, this.near), view, out);
   }
 }
@@ -287,8 +313,13 @@ class Viewing {
   /** The global counting the beast form's perk points (its default object's). */
   #beastPoints: number | undefined;
   #selected: PerkStar | undefined;
-  /** 0 the ring, 1 up in a tree. */
-  #up = 0;
+  /**
+   * The camera's way to the selected star (or back to the ring: `to` undefined): from where it
+   * was, since `start` (seconds).
+   */
+  #view: { from: CameraPose; to: PerkStar | undefined; start: number } | undefined;
+  /** Where the camera stands in a tree (GMSTs). */
+  readonly #starCamera: StarCamera;
   #shownYaw = Number.NaN;
   #closing = false;
   #done = false;
@@ -314,6 +345,20 @@ class Viewing {
     this.#targetYaw = setup.ring * SKILL_ANGLE;
     this.#camera.yaw = this.#targetYaw;
     this.#camera.z = -3000;
+    const offset = STAR_CAMERA_DEFAULTS.offset;
+    const lookAt = STAR_CAMERA_DEFAULTS.lookAt;
+    this.#starCamera = {
+      offset: [
+        this.#setting('fStatsStarCameraOffsetX', offset[0]),
+        this.#setting('fStatsStarCameraOffsetY', offset[1]),
+        this.#setting('fStatsStarCameraOffsetZ', offset[2]),
+      ],
+      lookAt: [
+        this.#setting('fStatsStarLookAtX', lookAt[0]),
+        this.#setting('fStatsStarLookAtY', lookAt[1]),
+        this.#setting('fStatsStarLookAtZ', lookAt[2]),
+      ],
+    };
   }
 
   async start(): Promise<Menu> {
@@ -337,7 +382,10 @@ class Viewing {
     const instances: ModelInstance[] = [];
     for (const tree of this.#trees) {
       for (const star of tree.stars) {
+        // The star's model at fStatsStarScale (observed in the original: its root's scale).
+        const scale = Math.abs(this.#setting('fStatsStarScale', 0.15));
         const world = identity.slice();
+        world[0] = world[5] = world[10] = scale;
         world.set(star.place, 12);
         instances.push({
           model: this.#setup.star,
@@ -404,10 +452,10 @@ class Viewing {
   async #buildTrees(): Promise<void> {
     const runtime = this.#runtime;
     const grid: StarGrid = {
-      column: this.#settings.number('fStatsStarXIncrement') ?? STAR_GRID_DEFAULTS.column,
-      row:
-        (this.#settings.number('fStatsStarYIncrement') ?? 15) +
-        (this.#settings.number('fStatsStarZIncrement') ?? -9),
+      column: this.#setting('fStatsStarXIncrement', STAR_GRID_DEFAULTS.column),
+      out: this.#setting('fStatsStarYIncrement', STAR_GRID_DEFAULTS.out),
+      down: this.#setting('fStatsStarZIncrement', STAR_GRID_DEFAULTS.down),
+      base: this.#setting('fStatsStarZInitialOffset', STAR_GRID_DEFAULTS.base),
     };
     // In a beast form, its tree alone (src/gameplay/beast-perk-trees.ts), shown with its points.
     const beast = this.#beast;
@@ -438,6 +486,7 @@ class Viewing {
           graph,
           state: 'locked',
           owned: 0,
+          meets: false,
         });
       }
       const byIndex = new Map(stars.map((star) => [star.node.index, star]));
@@ -448,9 +497,6 @@ class Viewing {
           if (to) lines.push({ from, to, graph: startObjectGraph(this.#setup.line, child + 1) });
         }
       }
-      const heights = stars.map((star) => star.place[2]);
-      const middle =
-        heights.length > 0 ? (Math.min(...heights) + Math.max(...heights)) / 2 : CAMERA_REST_Z;
       this.#trees.push({
         ring,
         skill,
@@ -458,7 +504,6 @@ class Viewing {
         description: record.text('DESC') ?? '',
         stars,
         lines,
-        pitch: (Math.atan2(middle - CAMERA_REST_Z, STAR_DISTANCE) * 180) / Math.PI,
       });
     }
     await this.#updateOwnership();
@@ -480,6 +525,9 @@ class Viewing {
       for (const star of tree.stars) {
         if (star.owned >= star.ranks.length) {
           star.state = 'owned';
+          const last = star.ranks[star.ranks.length - 1];
+          star.meets =
+            last !== undefined && (await runtime.conditionsHold(last.conditions, player));
           continue;
         }
         // A perk follows one it is linked from in the tree (or starts the tree).
@@ -492,6 +540,7 @@ class Viewing {
           );
         const next = star.ranks[star.owned];
         const meets = next !== undefined && (await runtime.conditionsHold(next.conditions, player));
+        star.meets = meets;
         star.state = star.owned > 0 ? 'owned' : linked && meets ? 'unlocked' : 'locked';
       }
     }
@@ -736,15 +785,7 @@ class Viewing {
       this.#turning = 0;
       this.#turnSpeed = 0;
     }
-    // Up into a tree, or down to the ring.
-    const target = this.#tree ? 1 : 0;
-    if (this.#up !== target) {
-      const step = dt / PITCH_SECONDS;
-      this.#up = target > this.#up ? Math.min(1, this.#up + step) : Math.max(0, this.#up - step);
-    }
-    const eased = this.#up * this.#up * (3 - 2 * this.#up);
-    const treePitch = (this.#tree ?? this.#facedTree())?.pitch ?? RING_PITCH;
-    camera.pitch = RING_PITCH + (treePitch - RING_PITCH) * eased;
+    this.#moveView(seconds);
     const menu = this.#menu;
     if (!menu) return;
     const shown = ((camera.yaw % 360) + 360) % 360;
@@ -753,10 +794,51 @@ class Viewing {
       this.#shownYaw = shown;
       if (!this.#tree) menu.call('SetDirection', shown);
     }
-    if (this.#tree && this.#up > 0.95) this.#showPerkNames(menu);
+    if (this.#tree) this.#showPerkNames(menu);
   }
 
-  /** The perks' names where their stars are (the tree looked into). */
+  /**
+   * The camera up into a tree, from star to star, and back down to the ring (observed in the
+   * original): a selected star's camera point (starView) is where it goes, over
+   * STAR_MOVE_SECONDS from where it was.
+   */
+  #moveView(seconds: number): void {
+    const camera = this.#camera;
+    const goal = this.#tree ? this.#selected : undefined;
+    if (goal !== this.#view?.to && (goal || camera.pose)) {
+      this.#view = { from: camera.pose ?? camera.ringPose(), to: goal, start: seconds };
+    }
+    const moving = this.#view;
+    if (!moving) return;
+    const tree = this.#tree;
+    const to =
+      moving.to && tree
+        ? starView(moving.to.place, tree.ring, this.#starCamera)
+        : camera.ringPose();
+    const share = Math.min(1, Math.max(0, (seconds - moving.start) / STAR_MOVE_SECONDS));
+    const eased = share * share * (3 - 2 * share);
+    const mix = (a: Vec3, b: Vec3): Vec3 => [
+      a[0] + (b[0] - a[0]) * eased,
+      a[1] + (b[1] - a[1]) * eased,
+      a[2] + (b[2] - a[2]) * eased,
+    ];
+    camera.pose = {
+      position: mix(moving.from.position, to.position),
+      target: mix(moving.from.target, to.target),
+    };
+    // Back on the ring: it turns about the middle again.
+    if (share >= 1 && !moving.to) {
+      camera.pose = undefined;
+      this.#view = undefined;
+    }
+  }
+
+  /**
+   * The perks' names where their stars are (the tree looked into), as the original writes them:
+   * only stars in front of the camera and on the screen; white when the next rank's conditions
+   * hold for the player, grey (#999999) when not; a perk with ranks with those owned and its
+   * count ("Armsman (1/5)").
+   */
   #showPerkNames(menu: Menu): void {
     const tree = this.#tree;
     const canvas = document.querySelector('canvas');
@@ -766,9 +848,10 @@ class Viewing {
     const names: unknown[] = [];
     for (const star of tree.stars) {
       const [x, y, w] = project(viewProjection, star.place);
-      if (w <= 0) continue;
-      const rank = star.ranks[0];
-      names.push(rank?.name ?? '', (x + 1) / 2, (1 - y) / 2);
+      const across = (x + 1) / 2;
+      const down = (1 - y) / 2;
+      if (w <= 0 || across < 0 || across > 1 || down < 0 || down > 1) continue;
+      names.push(perkNameText(star), across, down);
     }
     menu.set('_global.StatsMenu.PerkNamesA', names);
     menu.invoke('_global.StatsMenu.StatsMenuInstance.UpdatePerkText', true);
@@ -1085,6 +1168,15 @@ function cross(a: Vec3, b: Vec3): Vec3 {
 function normalize(v: Vec3): Vec3 {
   const length = Math.hypot(v[0], v[1], v[2]) || 1;
   return [v[0] / length, v[1] / length, v[2] / length];
+}
+
+/** A star's name as the movie gets it (html: its colour, the ranks owned of a perk with ranks). */
+function perkNameText(star: PerkStar): string {
+  const name = star.ranks[0]?.name ?? '';
+  const colour = star.meets ? '#FFFFFF' : '#999999';
+  const text =
+    star.ranks.length > 1 ? `${name} (${String(star.owned)}/${String(star.ranks.length)})` : name;
+  return `<font color='${colour}'>${text}</font>`;
 }
 
 /** A point through a view-projection: clip x / w, y / w, and w. */

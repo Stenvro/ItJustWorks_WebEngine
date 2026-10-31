@@ -145,9 +145,25 @@ The menus lay themselves out with Scaleform's Stage extensions (their `Shared.Gl
 stage coordinates, and `Stage.safeRect`, whose x and y are the safe zone margins ([Interface]
 `fSafeZoneX` / `fSafeZoneY`, and the Wide pair on widescreen; 15 by default, per the STEP INI
 guide). Without them every locked position is NaN and the menu vanishes. The bridge sets both
-first in the menu's first frame, for its stage shown whole on the screen; the host sets them
-again once the menu has set its own scale mode and whenever the window resizes
+first in the menu's first frame, for its stage in the scale mode the game loads it with; the
+host sets them again once the menu has set its own scale mode and whenever the window resizes
 (`src/ui/stage-rects.ts`).
+
+How the game sizes a menu's movie (observed in the original): its viewport is the whole screen
+and its scale mode is the one each menu gives as it loads its movie; the movie may set
+`Stage.scaleMode` itself after. Most menus stretch their 1280 × 720 stage over the screen
+(exactFit: the HUD, inventory, magic, favorites, barter, container, crafting, dialogue,
+the journal, map, skills, level up, sleep and wait, training, tutorials, the tween menu,
+message boxes, lockpicking, loading, fader, titles, the race menu); the main menu, the
+cursor, the credits and the book's page keep their aspect (showAll); the gift and book menus
+fill the screen cropping their stage (noBorder); the console keeps one pixel a unit (noScale).
+The host loads each movie so (`MENU_SCALE_MODES`, Ruffle's `scale`). The safe zone is set as the
+movie loads: its stage less the margins on each side, whatever part of the screen it shows. On a
+16:9 screen every mode shows the stage one to one, so the menus' layout there is the movie's own:
+the item menus' category and item lists are centred lists whose selected entry stands below
+`numTopHalfEntries` (7) rows of 40.4 from the list's top (60) and whose border (656.5) reaches
+the bottom of the screen, so a long list runs on under the bottom bar (its band from 645) in the
+original as here; nothing in the engine's sizing moves it.
 
 ## Focus and keys
 
@@ -1281,6 +1297,12 @@ rendered with the player's gamma (the world's eye adaptation and grading do not 
 particles go after the world's in the frame's particle buffer. It runs on a clock of its own: the
 world's stands still in menu mode.
 
+A menu may close in the middle of a frame (its 3D view updates there: the skills menu's outro
+ending, a menu the engine closes at once), letting go of the scenes the frame has already listed.
+What is let go of while a frame is recorded (scenes, models, a book's page textures) is
+destroyed after that frame is submitted (`src/render/frame-release.ts`): WebGPU refuses a submit
+or a queue write that uses a destroyed buffer.
+
 Its space (`src/shell/menu-3d.ts`) is the one the [Interface] settings place things in: the
 camera at the origin looking along −Y with +Z up (the mist menu's camera looks along −Y too), so
 +X is the screen's left. The book lies fBookDistance (110) in front, tilted by fBookXRotation
@@ -1476,15 +1498,14 @@ Quick Stats key, and after a level up in its LEVEL_UP state: `SetStatsMode(false
   (the camera: it looks along its local X, here +Y) from z −3000 up to −16.44, CameraOutro back
   down as the menu closes; its own Idle animation moves the nebula meanwhile. While it is open the
   music type MUSSkillsMenu plays (30 s of silence that ducks the other music). The camera turns
-  about the dome's middle; its field of view is fStatsCameraFOV (50, of a 4:3 frame), its near
-  plane fStatsCameraNearDistance (1). Turning (observed in the original,
+  about the dome's middle; its frustum (observed in the original) has its top at
+  tan(fStatsCameraFOV) × 0.75 × 0.55 (50: 26° up, a vertical 52°) and its sides that times the
+  screen's aspect, its near plane fStatsCameraNearDistance (1). Turning (observed in the original,
   `ringTurnSpeed`): the speed rises to 1 / fStatsRotationSpeedMax radians a second (0.5: 2,
   about 115°) over fStatsRotationRampTime (2000 ms, along a quarter sine), and toward the skill
   it goes no faster than that times the share of a skill's 20° left, a lower speed growing by 1.3
-  an update, stopping below 0.01 radians a second. TODO(M13): the look-at points
-  fStatsSkillsLookAt* (0, 0, 5), fStatsStarCameraOffset* (0, −8, 0), fStatsStarLookAt* (0, 0, 1)
-  and the stars' and lines' scales fStatsStarScale (0.15), fStatsLineScale (0.1175) are in the
-  engine's own dome space, which the fitted ring here does not share yet.
+  an update, stopping below 0.01 radians a second. TODO(M13): the ring's look-at point
+  fStatsSkillsLookAt* (0, 0, 5) over the skill's point (the ring's pitch here is fitted).
 - The ring (`src/gameplay/skills-ring.ts`): the dome's Point00 .. Point17 every 20° clockwise from
   +Y, each with its constellation image (cImage00 .. 17: its quad spans about ±9° about its point,
   7° .. 30° up, about 92 out). The images name the skills (Point01 the anvil: Smithing, Point09
@@ -1500,15 +1521,28 @@ Quick Stats key, and after a level up in its LEVEL_UP state: `SetStatsMode(false
   or bar (ours: `#showBeastSkill`; what else fills that bar is not read, TODO(M13)).
 - A perk's star (`intperkstars01.nif`, its graph Interface\INTPerkStars01.hkx: Locked (lavender),
   Unlocked, Owned (golden), Selected, Own as it is taken; the engine sends reset, UnlockedWild,
-  OwnedWild, SelectedWild) stands on its constellation's image: fStatsStarXIncrement (5) a grid
-  column (AVIF XNAM + HNAM) along it, the tree's columns about the point; fStatsStarYIncrement +
-  fStatsStarZIncrement (15 − 9 = 6) a grid row (YNAM + VNAM) up it from its foot (z −2). These fit
-  the images (Smithing's twelve columns span its anvil's 35°, Lockpicking's five rows its key).
+  OwnedWild, SelectedWild) stands in its skill's point's frame (observed in the original; the
+  dome's PointNN: X along the ring, Y out from the middle, Z up): fStatsStarXIncrement (5) a grid
+  column (AVIF XNAM + HNAM) across, the tree's columns about the point; a grid row (YNAM + VNAM)
+  fStatsStarYIncrement (15) further out and −fStatsStarZIncrement (9) higher, row 0
+  fStatsStarZInitialOffset (5) over the point. The tree leans back, a ladder up the sky.
+  TODO(M13): the original counts the columns from half the skill's perk tree width (a value the
+  engine works out, not in the record) the other way along X; the middle of the tree's columns
+  this way puts the branches where the game has them (Smithing's Dwarven to Daedric at the left).
   Lines (`intperkline01.nif`: a beam along +Y to BeamEnd at 56.2, scaled to the distance; its
   graph: Locked, Unlocked) join a perk to those it leads to (CNAM), lit when both are owned.
-- In a tree the camera pitches up to the tree's middle; the perks' names stand where their stars
-  are (`_global.StatsMenu.PerkNamesA`: name, x, y in 0..1, then
-  `StatsMenuInstance.UpdatePerkText(true)`); `HideRing` hides the skill names.
+- In a tree the camera stands at the selected star's camera point (observed in the original):
+  fStatsStarCameraOffset (0, −8, 0) in the point's frame from the star (toward the middle),
+  looking at the star raised by fStatsStarLookAt (0, 0, 1); it goes there from where it was over
+  a second as a star is selected (up into the tree from the ring, from star to star, and back
+  down to the ring as the tree is left), so the selected star and the rows over it fill the
+  screen. The perks' names stand where their stars are (`_global.StatsMenu.PerkNamesA`: text, x,
+  y in 0..1, then `StatsMenuInstance.UpdatePerkText(true)`; the movie scales a name by its y,
+  lower ones larger, and hides those under its description card), only for stars in front of the
+  camera and on the screen. The text is html: `<font color='#FFFFFF'>` when the next rank's
+  conditions hold for the player (the last rank's once all are owned), `#999999` when not, and a
+  perk with ranks shows those owned of its count ("Armsman (1/5)"). `HideRing` hides the skill
+  names.
 - `SetPlayerInfo(name, level, level progress, race, magicka now, max, colour, health ..., stamina
 ...)`, `SetDescriptionCard(perkMode, name, meter, description, requirements, skill level, skill,
 legendary count)`: a skill's card on the ring, a perk's in a tree (its rank, sRequirements or
@@ -1517,13 +1551,11 @@ legendary count)`: a skill's card on the ring, a perk's in a tree (its rank, sRe
   conditions (the CTDA before its effects) hold: Accept asks sStatsPerkConfirm, then it is the
   player's (the next rank of a perk with ranks, NNAM). The card's requirement line is
   sRequirements or sStatsNextRank (which brings its own colon) with the skill levels.
-- TODO(M13): the camera in a tree. The original has settings the data does not set:
-  fStatsStarCameraOffsetX/Y/Z, fStatsStarLookAtX/Y/Z, fStatsSkillsLookAtX/Y/Z,
-  fStatsStarZInitialOffset, fStatsStarScale, fStatsLineScale (their defaults are in its
-  encrypted code). Without them the camera only pitches up to the tree from the dome's middle,
-  and a narrow tree's names (One-Handed: Armsman, Fighting Stance, Bladesman, Bone Breaker
-  within a few degrees) stand over each other. Space at a skill of 100 makes it Legendary
-  (sLegendaryResetConfirm, sLegendaryResetSecondConfirm): back to 15, its perks' points returned.
+- Space at a skill of 100 makes it Legendary (sLegendaryResetConfirm,
+  sLegendaryResetSecondConfirm): back to 15, its perks' points returned. TODO(M13): the way the
+  camera moves between two poses (a smoothstep of its place and look-at point here) and the
+  lines' scale fStatsLineScale (0.1175). A star's model stands at fStatsStarScale (0.15: observed
+  in the original, its root's scale).
 
 ## The map
 

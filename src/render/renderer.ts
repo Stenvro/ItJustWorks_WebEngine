@@ -166,6 +166,7 @@ import { REFRACTION_FORMAT, RefractionComposite } from './refraction.ts';
 import { GrassRenderer, type GpuGrassField } from './grass.ts';
 import { DecalRenderer, type GpuDecals } from './decals.ts';
 import { occlusionView, PrecipitationRenderer, type PrecipitationFrame } from './precipitation.ts';
+import { recordFrame } from './frame-release.ts';
 import { MenuOverlay, type OverlayView } from './menu-overlay.ts';
 
 /** Wind speed (world units per second) of a weather wind of 1 (WTHR wind speed 255). */
@@ -623,6 +624,14 @@ export class Renderer {
   }
 
   render(timeSeconds: number, pixelScale: number): void {
+    // What the frame's own updates let go of (a menu closing as its 3D animates) is destroyed
+    // after the submit (frame-release.ts).
+    recordFrame(() => {
+      this.#record(timeSeconds, pixelScale);
+    });
+  }
+
+  #record(timeSeconds: number, pixelScale: number): void {
     const { device, context } = this.#gpu;
     const canvasTexture = context.getCurrentTexture();
     const targets = this.#ensureTargets(canvasTexture.width, canvasTexture.height);

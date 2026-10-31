@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { safeRect, scaleMode, visibleRect } from './stage-rects.ts';
+import { menuScaleMode, safeRect, scaleMode, visibleRect } from './stage-rects.ts';
 
 describe('visibleRect', () => {
   it('is the stage on a screen of its own aspect', () => {
@@ -43,12 +43,31 @@ describe('visibleRect', () => {
 });
 
 describe('safeRect', () => {
-  it('takes the safe zone margins inside the visible part', () => {
-    expect(safeRect({ x: 0, y: 0, width: 1280, height: 720 }, true)).toEqual({
+  it('takes the safe zone margins inside the stage', () => {
+    expect(safeRect({ width: 1280, height: 720 }, true)).toEqual({
       x: 15,
       y: 15,
       width: 1250,
       height: 690,
+    });
+    expect(
+      safeRect({ width: 1280, height: 720 }, false, { x: 20, y: 10, xWide: 15, yWide: 15 }),
+    ).toEqual({ x: 20, y: 10, width: 1240, height: 700 });
+  });
+
+  it('loads each menu with the scale mode the game gives it', () => {
+    expect(menuScaleMode('inventorymenu.swf')).toBe('exactFit');
+    expect(menuScaleMode('HUDMenu.swf')).toBe('exactFit');
+    expect(menuScaleMode('startmenu.swf')).toBe('showAll');
+    expect(menuScaleMode('giftmenu.swf')).toBe('noBorder');
+    expect(menuScaleMode('console.swf')).toBe('noScale');
+    expect(menuScaleMode('textentry.swf')).toBe('showAll');
+    // Stretched to a 16:10 screen, the whole stage is what shows.
+    expect(visibleRect(1280, 720, 1280, 800, 'exactFit')).toEqual({
+      x: 0,
+      y: 0,
+      width: 1280,
+      height: 720,
     });
   });
 
