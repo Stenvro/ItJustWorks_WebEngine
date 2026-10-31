@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  cameraMoveShare,
   nearestRing,
   RING_SKILLS,
   ringTurnSpeed,
+  ringView,
+  STAR_BASE,
+  STAR_DISTANCE,
   starPlace,
   starView,
   treeMiddle,
@@ -78,5 +82,30 @@ describe('ringTurnSpeed', () => {
   it('slows as the skill nears and stops there', () => {
     expect(ringTurnSpeed(most, 2, 5, 1 / 60, settings)).toBeCloseTo(most / 4);
     expect(ringTurnSpeed(most, 2, 0.05, 1 / 60, settings)).toBe(0);
+  });
+});
+
+describe('the ring camera', () => {
+  it('stands at the middle, looking at the point faced raised by fStatsSkillsLookAt', () => {
+    const view = ringView(0);
+    expect(view.position).toEqual([0, 0, 0]);
+    expect(view.target[0]).toBeCloseTo(0, 5);
+    expect(view.target[1]).toBeCloseTo(STAR_DISTANCE, 5);
+    expect(view.target[2]).toBeCloseTo(STAR_BASE + 5, 5);
+    // About 3° up.
+    expect((Math.atan2(view.target[2], STAR_DISTANCE) * 180) / Math.PI).toBeCloseTo(2.84, 1);
+    // Point01 (Smithing), 20° clockwise; settling up from the CameraIntro's end.
+    const smithing = ringView(20, -16.44);
+    expect(smithing.position).toEqual([0, 0, -16.44]);
+    expect(smithing.target[0]).toBeCloseTo(STAR_DISTANCE * Math.sin(Math.PI / 9), 5);
+  });
+
+  it('eases a move by half a cosine in a tree and a quarter sine to the ring', () => {
+    expect(cameraMoveShare(0, true)).toBe(0);
+    expect(cameraMoveShare(0.5, true)).toBeCloseTo(0.5);
+    expect(cameraMoveShare(0.25, true)).toBeCloseTo((1 - Math.SQRT1_2) / 2);
+    expect(cameraMoveShare(1, true)).toBeCloseTo(1);
+    expect(cameraMoveShare(0.5, false)).toBeCloseTo(Math.SQRT1_2);
+    expect(cameraMoveShare(2, false)).toBe(1);
   });
 });

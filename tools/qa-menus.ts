@@ -6,9 +6,11 @@
 //
 //   node tools/qa-menus.ts --out <folder> [--vite-port 5192] [--chrome-port 9352]
 //                          [--url http://localhost:5192] [--cell Riverwood] [--only a,b,...]
-//                          [--keep]
+//                          [--keep] [--size 2000x1101]
 //
 // --cell new: a new game (the opening's cart) in place of coc.
+// --size: the window's size (default 1280x720, the movies' stage); a size of another aspect
+// shows the menus as a screen of that shape does.
 // --keep: the browser and the game stay up after the tour (until the runner is stopped), for
 // looking further over CDP on the same port.
 //
@@ -23,8 +25,9 @@ import type { ChildProcess } from 'node:child_process';
 import { Cdp, Page, sleep, startChrome, startVite, stopProcess, waitFor } from './qa-cdp.ts';
 
 const root = path.resolve(import.meta.dirname, '..');
-const WIDTH = 1280;
-const HEIGHT = 720;
+/** The movies' stage: the tour's clicks are given on it and scaled to the window. */
+const STAGE_WIDTH = 1280;
+const STAGE_HEIGHT = 720;
 
 /** Forms the tour places or reads (Skyrim.esm). */
 const FORMS = {
@@ -49,6 +52,8 @@ interface Options {
   readonly cell: string;
   readonly only: ReadonlySet<string> | undefined;
   readonly keep: boolean;
+  readonly width: number;
+  readonly height: number;
 }
 
 function parseOptions(argv: readonly string[]): Options {
@@ -59,6 +64,8 @@ function parseOptions(argv: readonly string[]): Options {
   let cell = 'Riverwood';
   let only: Set<string> | undefined;
   let keep = false;
+  let width = STAGE_WIDTH;
+  let height = STAGE_HEIGHT;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i] ?? '';
     const value = (): string => argv[++i] ?? '';
@@ -69,13 +76,18 @@ function parseOptions(argv: readonly string[]): Options {
     else if (arg === '--cell') cell = value();
     else if (arg === '--only') only = new Set(value().split(','));
     else if (arg === '--keep') keep = true;
-    else throw new Error(`unknown argument ${arg}`);
+    else if (arg === '--size') {
+      const size = /^(\d+)x(\d+)$/.exec(value());
+      if (!size) throw new Error('--size wants WIDTHxHEIGHT');
+      width = Number(size[1]);
+      height = Number(size[2]);
+    } else throw new Error(`unknown argument ${arg}`);
   }
   if (!out) throw new Error('--out <folder> is required (outside the repository)');
   const resolved = path.resolve(out);
   if (resolved.toLowerCase().startsWith(root.toLowerCase()))
     throw new Error(`--out must lie outside the repository: ${resolved}`);
-  return { out: resolved, url, vitePort, chromePort, cell, only, keep };
+  return { out: resolved, url, vitePort, chromePort, cell, only, keep, width, height };
 }
 
 /** What a step saw: the movies open, the menu stack, the errors and warnings meanwhile. */
@@ -94,10 +106,14 @@ class Tour {
   readonly results: StepResult[] = [];
   #problems: string[] = [];
   #index = 0;
+  readonly #width: number;
+  readonly #height: number;
 
-  constructor(page: Page, out: string) {
+  constructor(page: Page, out: string, width: number, height: number) {
     this.page = page;
     this.out = out;
+    this.#width = width;
+    this.#height = height;
     page.on('Runtime.consoleAPICalled', (params) => {
       const type = String(params.type);
       if (type !== 'error' && type !== 'warning') return;
@@ -124,6 +140,14 @@ class Tour {
 
   eval<T = unknown>(code: string, timeoutMs = 60000): Promise<T> {
     return this.page.eval<T>(code, timeoutMs);
+  }
+
+  /** A click at a point of the movies' 1280 × 720 stage (stretched over the window). */
+  click(x: number, y: number): Promise<void> {
+    return this.page.click(
+      Math.round((x * this.#width) / STAGE_WIDTH),
+      Math.round((y * this.#height) / STAGE_HEIGHT),
+    );
   }
 
   movies(): Promise<string[]> {
@@ -336,10 +360,15 @@ const STEPS: readonly (readonly [string, Step])[] = [
       await sleep(2500);
       await tour.tutorials('inventory');
       await tour.shot('inventory-categories');
-      // Into the category: its items list slides in (the movie's two panels), the first one's
-      // card and 3D.
+      // The movie starts on FAVORITES (the engine's saved category position, 0 at first), empty
+      // until something is favorited: ALL is the category with items. Into it: its items list
+      // slides in (the movie's two panels), then the next item's card and 3D.
+      await tour.page.key('ArrowDown');
+      await sleep(800);
       await tour.page.key('Enter');
-      await sleep(2500);
+      await sleep(2000);
+      await tour.page.key('ArrowDown');
+      await sleep(1500);
       await tour.shot('inventory');
       await tour.escape('inventorymenu.swf');
     },
@@ -380,10 +409,10 @@ const STEPS: readonly (readonly [string, Step])[] = [
       await tour.tutorials('journal');
       await tour.shot('journal-quests');
       // The tabs, clicked (at 1280 x 720).
-      await tour.page.click(642, 70);
+      await tour.click(642, 70);
       await sleep(1500);
       await tour.shot('journal-stats');
-      await tour.page.click(906, 70);
+      await tour.click(906, 70);
       await sleep(1500);
       await tour.shot('journal-system');
       await tour.escape('quest_journal.swf');
@@ -698,19 +727,19 @@ async function main(): Promise<void> {
     chrome = await startChrome({
       port: options.chromePort,
       profile: path.join(options.out, '.chrome-profile'),
-      width: WIDTH,
-      height: HEIGHT,
+      width: options.width,
+      height: options.height,
     });
     cdp = await Cdp.connect(options.chromePort);
-    const page = await Page.open(cdp, WIDTH, HEIGHT);
-    const tour = new Tour(page, options.out);
+    const page = await Page.open(cdp, options.width, options.height);
+    const tour = new Tour(page, options.out, options.width, options.height);
     const wanted = (name: string): boolean => !options.only || options.only.has(name);
     await toMainMenu(tour, base);
     await sleep(2500);
     if (wanted('main-menu')) await tour.shot('main-menu');
     if (wanted('credits')) {
       // The CREDITS entry clicked: the menu fades out, then the credits open.
-      await tour.page.click(1188, 574);
+      await tour.click(1188, 574);
       await tour.opened('creditsmenu.swf');
       await sleep(5000);
       await tour.shot('credits');

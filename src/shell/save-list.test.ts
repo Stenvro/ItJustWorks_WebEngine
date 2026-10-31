@@ -26,13 +26,14 @@ class FakeMenu implements SaveListMenu {
   readonly entries: Record<string, unknown>[] = [];
   readonly calls: unknown[][] = [];
   reference(argument: unknown): string | undefined {
-    return argument === 'list' ? '_global.list' : undefined;
+    // As the bridge hands the movie's objects over (src/ui/menu-bridge.ts BRIDGE_REFERENCE).
+    return argument === '__itjwRef:3' ? '_global.__itjwRefs.3' : undefined;
   }
-  set(): void {
-    this.entries.length = 0;
+  set(path: string): void {
+    if (path === '_global.__itjwRefs.3.length') this.entries.length = 0;
   }
-  invoke(_path: string, ...args: unknown[]): void {
-    this.entries.push(args[0] as Record<string, unknown>);
+  invoke(path: string, ...args: unknown[]): void {
+    if (path === '_global.__itjwRefs.3.push') this.entries.push(args[0] as Record<string, unknown>);
   }
   call(...args: unknown[]): void {
     this.calls.push(args);
@@ -80,25 +81,26 @@ describe('the menus’ save list', () => {
     const menu = new FakeMenu();
     const fake = menu;
 
-    handlers.PopulateCharacterList?.(menu, ['list', 10]);
+    // Each call as the movie sends it: GameDelegate's request id (7) first.
+    handlers.PopulateCharacterList?.(menu, [7, '__itjwRef:3', 10]);
     await settle();
     expect(fake.entries.map((entry) => entry.text)).toEqual(['Lydia', 'Ralof']);
     expect(fake.calls.at(-1)).toEqual(['onFillCharacterListComplete', true]);
 
     // CharacterSelected(id, flags, saving, list, batch size).
-    handlers.CharacterSelected?.(menu, [1, 0, false, 'list', 10]);
+    handlers.CharacterSelected?.(menu, [7, 1, 0, false, '__itjwRef:3', 10]);
     await settle();
     expect(fake.entries.map((entry) => entry.text)).toEqual(['Save 2  Whiterun']);
     expect(fake.calls.at(-1)).toEqual(['onSaveLoadBatchComplete', true, 1, 1]);
 
-    handlers.CharacterSelected?.(menu, [0, 0, false, 'list', 10]);
+    handlers.CharacterSelected?.(menu, [7, 0, 0, false, '__itjwRef:3', 10]);
     await settle();
     expect(fake.entries.map((entry) => entry.index)).toEqual([0, 1]);
-    handlers.LoadGame?.(menu, [1]);
+    handlers.LoadGame?.(menu, [7, 1]);
     expect(loaded).toEqual(['Save 1']);
 
     // A delete fills the character's list again without the save.
-    handlers.DeleteSave?.(menu, [0]);
+    handlers.DeleteSave?.(menu, [7, 0]);
     await settle();
     await settle();
     expect(deleted).toEqual(['Save 3']);
@@ -122,12 +124,12 @@ describe('the menus’ save list', () => {
     });
     const handlers = list.handlers();
     const menu = new FakeMenu();
-    handlers.CharacterSelected?.(menu, [0, 0, false, 'list', 10]);
+    handlers.CharacterSelected?.(menu, [7, 0, 0, false, '__itjwRef:3', 10]);
     await settle();
-    handlers.DeleteSave?.(menu, [0]);
+    handlers.DeleteSave?.(menu, [7, 0]);
     await settle();
     refuse = true;
-    handlers.DeleteSave?.(menu, [0]);
+    handlers.DeleteSave?.(menu, [7, 0]);
     await settle();
     expect(outcomes).toEqual(['deleted', 'failed']);
   });
@@ -153,11 +155,11 @@ describe('the menus’ save list', () => {
     const handlers = list.handlers();
     const menu = new FakeMenu();
     // Save: index -1 is the new save (the frame drawn now), 1 the second save listed.
-    handlers.SAVE?.(menu, ['list']);
+    handlers.SAVE?.(menu, [7, '__itjwRef:3']);
     await settle();
-    handlers.PrepSaveGameScreenshot?.(menu, [-1, {}]);
+    handlers.PrepSaveGameScreenshot?.(menu, [7, -1, {}]);
     await settle();
-    handlers.PrepSaveGameScreenshot?.(menu, [1, {}]);
+    handlers.PrepSaveGameScreenshot?.(menu, [7, 1, {}]);
     await settle();
     expect(asked).toEqual([undefined, 'Save 2']);
     expect(shown).toEqual([0, 1]);
@@ -176,10 +178,10 @@ describe('the menus’ save list', () => {
     });
     const handlers = list.handlers();
     const menu = new FakeMenu();
-    handlers.LOAD?.(menu, ['list']);
+    handlers.LOAD?.(menu, [7, '__itjwRef:3']);
     await settle();
-    handlers.IsOKtoLoad?.(menu, [0]);
-    handlers.IsOKtoLoad?.(menu, [3]);
+    handlers.IsOKtoLoad?.(menu, [7, 0]);
+    handlers.IsOKtoLoad?.(menu, [7, 3]);
     expect(menu.calls.filter((call) => call[0] === 'ConfirmOKToLoad')).toHaveLength(1);
     expect(picked).toEqual([3]);
   });
