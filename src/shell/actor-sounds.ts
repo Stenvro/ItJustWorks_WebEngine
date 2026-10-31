@@ -29,7 +29,7 @@ export interface SoundingActor {
 /** What actors' sounds play through (the session's SoundSystem). */
 export interface ActorSoundOutput {
   footstep(
-    set: number,
+    set: number | undefined,
     tag: string,
     gait: FootstepGait,
     position: Vec3,
@@ -73,8 +73,8 @@ export function actorSounds(
           void sounds.playNamed(event.payload, () => actor.feet(), actor.reference);
         continue;
       }
+      // Without a set of its own: the default one (the sound system's DFTS).
       const set = actor.look.footstepSet;
-      if (set === undefined) continue;
       const feet = actor.feet();
       // Feet under a water surface (a cave's puddle, a stream, the shallows) step in it.
       const water = world.water(feet);

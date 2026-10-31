@@ -105,6 +105,11 @@ export class PlayerDeath {
     const { play, avatar } = view;
     const player = play.player;
     play.dead = true;
+    // The death music (DOBJ DTMS, MUSSpecialDeath) over what plays.
+    const runtime = this.#options.session.scriptsReady;
+    void runtime?.magic.defaultObject('DTMS').then((music) => {
+      if (music !== undefined) runtime.world.music?.(music, true);
+    });
     play.seated = false;
     player.releaseAll();
     player.sneaking = false;

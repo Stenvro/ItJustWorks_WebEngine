@@ -128,7 +128,11 @@ export interface VoicePort {
   /** Whether a file holds the sound (any of its names). */
   hasFile(path: string): boolean;
   /** A spoken line: its length, its lip data, and its playing at a place. */
-  voiceLine(path: string, atListener?: boolean): Promise<VoiceLine | undefined>;
+  voiceLine(
+    path: string,
+    atListener?: boolean,
+    outputOverride?: number,
+  ): Promise<VoiceLine | undefined>;
 }
 
 export interface SessionPresentation {

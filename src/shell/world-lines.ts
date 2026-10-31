@@ -257,7 +257,11 @@ export class WorldLines {
     // Read anew after each wait (it may be ended meanwhile).
     const ended = (): boolean => control.stopped;
     if (ended()) return;
-    control.line = path ? await placer.say(placed, path, options.inPlayersHead) : undefined;
+    control.line = path
+      ? await placer.say(placed, path, options.inPlayersHead, spoken.info.audioOutputOverride)
+      : response.sound !== 0
+        ? await placer.saySound(placed, response.sound)
+        : undefined;
     if (ended()) {
       control.line?.stop();
       return;

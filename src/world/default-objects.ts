@@ -92,6 +92,11 @@ export class DefaultObjects {
     return this.#objects.size;
   }
 
+  /** Every use the load order sets, with its form. */
+  entries(): IterableIterator<[string, number]> {
+    return this.#objects.entries();
+  }
+
   /** Applies one version of the DOBJ record over what earlier plugins set. */
   apply(record: Pick<GameRecord, 'fields' | 'formIdAt'>): void {
     const dnam = record.fields.first('DNAM');
