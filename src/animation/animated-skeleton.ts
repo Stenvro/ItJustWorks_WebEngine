@@ -51,6 +51,26 @@ export interface AnimationRate {
    * no camera), and it animates by its bone LOD's distance alone.
    */
   readonly seen?: boolean;
+  /**
+   * Whether the skeleton's first bone has left its 3D's bound (BehaviorRuntime.rootAway: one
+   * not seen still animates that bone); undefined: not known (it has not).
+   */
+  readonly rootAway?: boolean;
+}
+
+/**
+ * Whether a skeleton's first bone, at `bone` in the world, lies outside its 3D's bounding
+ * sphere (observed in the original: the bone's distance from the bound's centre above its
+ * radius).
+ */
+export function boneLeftBound(
+  bone: readonly [number, number, number],
+  bound: { readonly center: readonly [number, number, number]; readonly radius: number },
+): boolean {
+  const dx = bone[0] - bound.center[0];
+  const dy = bone[1] - bound.center[1];
+  const dz = bone[2] - bound.center[2];
+  return dx * dx + dy * dy + dz * dz > bound.radius * bound.radius;
 }
 
 const EVERY_FRAME: AnimationRate = { interval: 0, interpolate: false, slop: 0 };
@@ -113,6 +133,7 @@ export function animateSkeletons(
       }
       behavior.boneLodDistance = wanted.boneLodDistance;
       behavior.seen = wanted.seen;
+      behavior.rootAway = wanted.rootAway === true;
     }
     let interval = wanted.interval;
     // The graph may forbid it (bDisableInterp: inferred from the engine's variable names).
