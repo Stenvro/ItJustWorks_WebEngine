@@ -22,22 +22,28 @@ for a form, SKSE's natives, the original's thread and cache tuning).
 
 ## Counts (2026-10-31, round 2)
 
-| Part                                 | Items | Done | Open | n/a |
-| ------------------------------------ | ----: | ---: | ---: | --: |
-| Audio records' subrecords            |    56 |   44 |    0 |  12 |
-| Sound fields of records              |    81 |   78 |    1 |   2 |
-| Descriptor types and values          |     6 |    5 |    1 |   0 |
-| Output models (SOPM)                 |    11 |    6 |    5 |   0 |
-| Categories, music, regions, weathers |    25 |   25 |    0 |   0 |
-| Creature and magic effect sounds     |     9 |    9 |    0 |   0 |
-| Condition functions (SNDR, MUST)     |    12 |   12 |    0 |   0 |
-| Default objects naming audio forms   |    46 |   41 |    4 |   1 |
-| `[Audio]` INI settings               |    56 |   30 |   18 |   8 |
-| Audio game settings                  |    26 |   18 |    6 |   2 |
-| Papyrus audio natives                |    21 |   12 |    0 |   9 |
-| Sound files                          |     6 |    6 |    0 |   0 |
-| Behaviour items (below)              |    44 |   30 |   13 |   1 |
-| All                                  |   399 |  316 |   48 |  35 |
+| Part                                      | Items | Done | Open | n/a |
+| ----------------------------------------- | ----: | ---: | ---: | --: |
+| Audio records' subrecords                 |    56 |   44 |    0 |  12 |
+| Sound fields of records                   |    81 |   79 |    0 |   2 |
+| Descriptor types (SNDR CNAM)              |     1 |    1 |    0 |   0 |
+| Descriptor values (SNDR LNAM, BNAM)       |     5 |    5 |    0 |   0 |
+| Output models (SOPM)                      |    11 |   11 |    0 |   0 |
+| Categories (SNCT FNAM)                    |     2 |    2 |    0 |   0 |
+| Music types (MUSC FNAM)                   |     6 |    6 |    0 |   0 |
+| Music tracks (MUST CNAM)                  |     9 |    9 |    0 |   0 |
+| Region sounds (REGN RDSA flags)           |     4 |    4 |    0 |   0 |
+| Weather sounds (WTHR SNAM)                |     4 |    4 |    0 |   0 |
+| Creature sounds (NPC_ CSDT)               |     3 |    3 |    0 |   0 |
+| Magic effect sounds (MGEF SNDD)           |     6 |    6 |    0 |   0 |
+| Condition functions (SNDR, MUST)          |    12 |   12 |    0 |   0 |
+| Default objects (DOBJ) naming audio forms |    46 |   44 |    1 |   1 |
+| [Audio] INI settings                      |    56 |   48 |    0 |   8 |
+| Audio game settings                       |    26 |   22 |    0 |   4 |
+| Papyrus audio natives                     |    21 |   12 |    0 |   9 |
+| Sound files                               |     6 |    6 |    0 |   0 |
+| Behaviour items (below)                   |    47 |   39 |    6 |   2 |
+| All                                       |   402 |  357 |    7 |  38 |
 
 Round 1 built: creatures' conscious and movement loops (NPC_ CSDT 7 and 6: the dragons', horses'
 and draugr's breathing, the dwarven machines' hum), the infos' Audio Output Override (1963
@@ -68,52 +74,55 @@ the crossbows' 2D attack sound for the player's shot (WEAP XNAM), and the mudcra
 
 What a sweep of the data cannot see: the engine's own rules around the records.
 
-| #   | Item                                                                               | Status | Where / why                                                                           |
-| --- | ---------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------- |
-| 1   | Categories as a tree, each a gain under its parent, the user's sliders             | done   | audio-engine.ts                                                                       |
-| 2   | Master volume settings (fDefaultMasterVolume, AudioMenu fAudioMasterVolume)        | open   | not read; the journal's master slider is ours                                         |
-| 3   | 3D placement: HRTF for HRTF models, fixed speaker levels for the others            | done   | sound-instance.ts                                                                     |
-| 4   | Distance attenuation by the output model's curve, min and max distance             | done   | attenuation.ts                                                                        |
-| 5   | Static attenuation, dB variance, frequency shift and variance per play             | done   | sound-instance.ts                                                                     |
-| 6   | Looping: loop region, envelope fast and slow (attack, loop, release)               | done   | sound-instance.ts                                                                     |
-| 7   | Occlusion and obstruction                                                          | n/a    | the original has none: no record, flag or setting names them                          |
-| 8   | Doppler                                                                            | open   | not applied; whether the original's 3D calculation shifts pitch by speed is not known |
-| 9   | Menu pause categories (fade, immediate, loading screen), the skills menu's mute    | done   | category-rules.ts                                                                     |
-| 10  | Slow Time's time-sensitive category                                                | done   | sound-system setTimeMultiplier                                                        |
-| 11  | Dialogue ducking of non-dialogue voices and effects                                | done   | sound-system duckForDialogue                                                          |
-| 12  | Speech highlighting                                                                | done   | sound-system                                                                          |
-| 13  | Under water: categories muted, the underwater loop                                 | done   | sound-system                                                                          |
-| 14  | Reverb by acoustic space (interior cell, exterior boxes, the map's)                | done   | sound-system, reverb.ts                                                               |
-| 15  | Reverb crossfade over fReverbTransitionTime                                        | done   | audio-engine setReverb (observed in the original)                                     |
-| 16  | Reverb sound (XAudio2's I3DL2 reverb)                                              | open   | an impulse response built from the parameters: an approximation (TODO(M13))           |
-| 17  | Acoustic space ambience loops (fASFadeInTime, fASFadeOutTime)                      | done   | sound-system                                                                          |
-| 18  | Region sounds: half-second update, chances, start limit, placement, fades          | done   | ambience.ts (observed in the original)                                                |
-| 19  | Weather loops and thunder after flashes                                            | done   | ambience.ts                                                                           |
-| 20  | Thunder's delay after a flash, the weather one-shots' chance                       | open   | inferred (0.5–3 s; 4 % a second): TODO(M13)                                           |
-| 21  | Music: priority, queueing, ducking, cue points and finales, palettes, silences     | done   | music.ts                                                                              |
-| 22  | Music: which fade applies to which change                                          | open   | inferred from the Creation Kit's descriptions (TODO(M13))                             |
-| 23  | Combat music: start, keep, stop rules                                              | done   | combat-music.ts                                                                       |
-| 24  | Combat music: a second group's threat ratio, the strength cap                      | done   | combat-music.ts (observed in the original; the cap is never read)                     |
-| 25  | Location music: cell, regions, worldspace, default; the location's (LCTN NAM1)     | done   | sound-system #locationMusic (the location's place inferred: TODO(M13))                |
-| 26  | Special music: dungeon cleared, death                                              | done   | location-clearing.ts, player-death.ts                                                 |
-| 27  | Special music: level up and success (LUMS, SCMS)                                   | open   | level up done (progression-engine); when the success music (SCMS) plays: not known    |
-| 28  | Spoken lines: voice files, lip sync, silent lines' length, padding                 | done   | sound-system voiceLine, world-lines.ts, actors.ts                                     |
-| 29  | Spoken lines through the info's output model, or the response's own sound          | done   | sound-system voiceLine, actors saySound                                               |
-| 30  | Head motion of lip sync scaled by fDialogueHead*Exaggeration                       | open   | not read                                                                              |
-| 31  | Speech delays (fDialogSpeechDelaySeconds, fSubtitleSpeechDelay, fSpeechDelay)      | open   | not read                                                                              |
-| 32  | Impacts, footsteps (with the default set), splashes, water ambience                | done   | impacts.ts, actor-sounds.ts, water-audio.ts                                           |
-| 33  | Creature loops (conscious, movement)                                               | done   | creature-sounds.ts                                                                    |
-| 34  | Creature one-shots (idle, aware, attack, hit, death)                               | done   | creature-sounds.ts: the idle with an ambient idle (inferred: TODO(M13)); no other     |
-| 35  | Placed sound markers and looping objects                                           | done   | cell-loader, sound-system emitters                                                    |
-| 36  | Sound markers placed at run time (PlaceAtMe, an explosion's placed object)         | open   | emitters come from cell loads only                                                    |
-| 37  | Spell draw sounds, corpse loot, activators, effect shaders, wards, harvest fail    | done   | actor-combat, actors.ts, play-session, actor-effects, casting-engine, harvest-engine  |
-| 38  | Telekinesis grab and throw sounds, activation refused (TKGS, TKTS, NASD)           | open   | not played                                                                            |
-| 39  | The player's own output models (POPM first person, P3OM third), the interface's    | done   | sound-system playerView, playInterface (per-object models observed; TODO(M13))        |
-| 40  | Kill camera sound (sDeathCameraEffect), hard landing (fHardLandingDamageThreshold) | open   | not played                                                                            |
-| 41  | Surround output (rear, side, LFE speakers of defined speaker models)               | open   | the output is stereo; rear and side fold to their side                                |
-| 42  | Sound-driven gamepad rumble (SNDR rumble send, SOPM Allows Rumble, fAudioRumble*)  | open   | not built                                                                             |
-| 43  | Streaming and the decoded-buffer budget                                            | done   | music streams (music-output.ts), effects in a 256 MB cache                            |
-| 44  | Bink videos' sound                                                                 | done   | bink-video.ts                                                                         |
+| #   | Item                                                                               | Status | Where / why                                                                          |
+| --- | ---------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------ |
+| 1   | Categories as a tree, each a gain under its parent, the user's sliders             | done   | audio-engine.ts                                                                      |
+| 2   | Master volume settings (fDefaultMasterVolume, AudioMenu fAudioMasterVolume)        | done   | audio-engine setMasterVolume, sound-system create; bEnableAudio off: silent          |
+| 3   | 3D placement: HRTF for HRTF models, fixed speaker levels for the others            | done   | sound-instance.ts                                                                    |
+| 4   | Distance attenuation by the output model's curve, min and max distance             | done   | attenuation.ts                                                                       |
+| 5   | Static attenuation, dB variance, frequency shift and variance per play             | done   | sound-instance.ts                                                                    |
+| 6   | Looping: loop region, envelope fast and slow (attack, loop, release)               | done   | sound-instance.ts                                                                    |
+| 7   | Occlusion and obstruction                                                          | n/a    | the original has none: no record, flag or setting names them                         |
+| 8   | Doppler                                                                            | n/a    | the original's 3D update asks for it but sets no pitch from it (docs/audio.md)       |
+| 9   | Menu pause categories (fade, immediate, loading screen), the skills menu's mute    | done   | category-rules.ts                                                                    |
+| 10  | Slow Time's time-sensitive category                                                | done   | sound-system setTimeMultiplier                                                       |
+| 11  | Dialogue ducking of non-dialogue voices and effects                                | done   | sound-system duckForDialogue                                                         |
+| 12  | Speech highlighting                                                                | done   | sound-system                                                                         |
+| 13  | Under water: categories muted, the underwater loop                                 | done   | sound-system                                                                         |
+| 14  | Reverb by acoustic space (interior cell, exterior boxes, the map's)                | done   | sound-system, reverb.ts                                                              |
+| 15  | Reverb crossfade over fReverbTransitionTime                                        | done   | audio-engine setReverb (observed in the original)                                    |
+| 16  | Reverb sound (XAudio2's I3DL2 reverb)                                              | open   | an impulse response built from the parameters: an approximation (TODO(M13))          |
+| 17  | Acoustic space ambience loops (fASFadeInTime, fASFadeOutTime)                      | done   | sound-system                                                                         |
+| 18  | Region sounds: half-second update, chances, start limit, placement, fades          | done   | ambience.ts (observed in the original)                                               |
+| 19  | Weather loops and thunder after flashes                                            | done   | ambience.ts                                                                          |
+| 20  | Thunder's delay after a flash, the weather one-shots' chance                       | open   | inferred (0.5–3 s; 4 % a second): TODO(M13)                                          |
+| 21  | Music: priority, queueing, ducking, cue points and finales, palettes, silences     | done   | music.ts                                                                             |
+| 22  | Music: which fade applies to which change                                          | open   | inferred from the Creation Kit's descriptions (TODO(M13))                            |
+| 23  | Combat music: start, keep, stop rules                                              | done   | combat-music.ts                                                                      |
+| 24  | Combat music: a second group's threat ratio, the strength cap                      | done   | combat-music.ts (observed in the original; the cap is never read)                    |
+| 25  | Location music: cell, regions, worldspace, default; the location's (LCTN NAM1)     | done   | sound-system #locationMusic (the location's place inferred: TODO(M13))               |
+| 26  | Special music: dungeon cleared, death                                              | done   | location-clearing.ts, player-death.ts                                                |
+| 27  | Special music: level up and success (LUMS, SCMS)                                   | open   | level up done (progression-engine); when the success music (SCMS) plays: not known   |
+| 28  | Spoken lines: voice files, lip sync, silent lines' length, padding                 | done   | sound-system voiceLine, world-lines.ts, actors.ts                                    |
+| 29  | Spoken lines through the info's output model, or the response's own sound          | done   | sound-system voiceLine, actors saySound                                              |
+| 30  | Head motion of lip sync scaled by fDialogueHead*Exaggeration                       | done   | face.ts (actors.ts reads the settings)                                               |
+| 31  | Speech delays (fDialogSpeechDelaySeconds, fSubtitleSpeechDelay, fSpeechDelay)      | done   | actors.ts say, world-lines.ts; fDialogSpeechDelaySeconds is never read               |
+| 32  | Impacts, footsteps (with the default set), splashes, water ambience                | done   | impacts.ts, actor-sounds.ts, water-audio.ts                                          |
+| 33  | Creature loops (conscious, movement)                                               | done   | creature-sounds.ts                                                                   |
+| 34  | Creature one-shots (idle, aware, attack, hit, death)                               | done   | creature-sounds.ts: the idle with an ambient idle (inferred: TODO(M13)); no other    |
+| 35  | Placed sound markers and looping objects                                           | done   | cell-loader, sound-system emitters                                                   |
+| 36  | Sound markers placed at run time (PlaceAtMe, an explosion's placed object)         | done   | created-objects.ts: loops as emitters ('created'), one-shot markers once             |
+| 37  | Spell draw sounds, corpse loot, activators, effect shaders, wards, harvest fail    | done   | actor-combat, actors.ts, play-session, actor-effects, casting-engine, harvest-engine |
+| 38  | Telekinesis grab and throw sounds, activation refused (TKGS, TKTS, NASD)           | done   | player-casting.ts; play-mode.ts (refused locks; TODO(M13): other refusals)           |
+| 39  | The player's own output models (POPM first person, P3OM third), the interface's    | done   | sound-system playerView, playInterface (per-object models observed; TODO(M13))       |
+| 40  | Kill camera sound (sDeathCameraEffect), hard landing (fHardLandingDamageThreshold) | done   | actor-combat.ts #killCamSound; time-flow.ts onLanded                                 |
+| 41  | Surround output (rear, side, LFE speakers of defined speaker models)               | done   | speakers.ts, audio-engine layout (5.1, 7.1; stereo folds; TODO(M13): the fold)       |
+| 42  | Sound-driven gamepad rumble (SNDR rumble send, SOPM Allows Rumble, fAudioRumble*)  | done   | rumble.ts, sound-instance, game-session (TODO(M13): which nibble is which motor)     |
+| 43  | Streaming and the decoded-buffer budget                                            | done   | music streams (music-output.ts), effects in a 256 MB cache                           |
+| 44  | Bink videos' sound                                                                 | done   | bink-video.ts                                                                        |
+| 45  | A death cry heard only within fDeathSoundMaxDistance of the player                 | done   | actor-graph-events.ts #deathCryHeard                                                 |
+| 46  | Distance low-pass (X3DAudio's direct-path filter by distance)                      | open   | not applied: its curve's distance scale in the original is not known (docs/audio.md) |
+| 47  | Reverb send by distance (X3DAudio's reverb level)                                  | open   | the model's reverb send is constant: the original scales it by X3DAudio's curve      |
 
 The next biggest open items: surround output (rear, side and LFE speakers), sound-driven
 rumble, sound markers placed at run time, telekinesis and activation-refused sounds, the
@@ -241,89 +250,89 @@ chance, and which music fade applies to which change.
 
 ### Sound fields of records
 
-| Item                                                    |  Uses | Status | Where / why                                                                       |
-| ------------------------------------------------------- | ----: | ------ | --------------------------------------------------------------------------------- |
-| ACTI SNAM@0 looping sound                               |    33 | done   | cell-loader loopingSoundOf → placed sounds                                        |
-| ACTI VNAM@0 activation sound                            |    96 | done   | play-session objectActivation                                                     |
-| ALCH ENIT@16 consume sound                              |   470 | done   | equipment-engine consumeSound                                                     |
-| ALCH YNAM@0 pick up sound                               |   358 | done   | inventory itemSound                                                               |
-| ALCH ZNAM@0 put down sound                              |   324 | done   | inventory itemSound                                                               |
-| AMMO YNAM@0 pick up sound                               |    62 | done   | inventory itemSound                                                               |
-| AMMO ZNAM@0 put down sound                              |    62 | done   | inventory itemSound                                                               |
-| ARMA SNDD@0 footstep set                                |   298 | done   | actor-sounds footsteps                                                            |
-| ARMO BIDS@0 block bash impact data set (shields)        |   316 | done   | actor-combat bash                                                                 |
-| ARMO YNAM@0 pick up sound                               |   494 | done   | inventory itemSound                                                               |
-| ARMO ZNAM@0 put down sound                              |   494 | done   | inventory itemSound                                                               |
-| ASPC BNAM@0 reverb                                      |    41 | done   | reverb.ts                                                                         |
-| ASPC SNAM@0 ambience loop                               |    41 | done   | sound-system acoustic spaces                                                      |
-| BOOK YNAM@0 pick up sound                               |   450 | done   | inventory itemSound                                                               |
-| BPTD BPND@68 impact data set (dismember)                |    12 | done   | body-part-data                                                                    |
-| BPTD BPND@72 impact data set (explode)                  |    12 | done   | body-part-data                                                                    |
-| CELL XCAS@0 acoustic space                              |   769 | done   | sound-system acoustic spaces                                                      |
-| CELL XCMO@0 music                                       |   820 | done   | music (location music)                                                            |
-| CONT QNAM@0 close sound                                 |   184 | done   | play-session container activation                                                 |
-| CONT SNAM@0 open sound                                  |   188 | done   | play-session container activation                                                 |
-| DOOR ANAM@0 close sound                                 |   132 | done   | play-session door activation                                                      |
-| DOOR BNAM@0 looping sound                               |     1 | done   | cell-loader loopingSoundOf                                                        |
-| DOOR SNAM@0 open sound                                  |   141 | done   | play-session door activation                                                      |
-| EFSH DATA@308 ambient sound                             |    92 | done   | actor-effects: at the body while it shows                                         |
-| EXPL DATA@12 impact data set                            |    94 | done   | magic-projectiles explosion                                                       |
-| EXPL DATA@16 placed object (a sound marker)             |     1 | open   | sound markers placed at run time do not play (emitters come from cell loads only) |
-| EXPL DATA@28 an older layout's float matching a form id |     1 | n/a    | not a form                                                                        |
-| EXPL DATA@4 sound 1                                     |   171 | done   | magic-projectiles explosion                                                       |
-| EXPL DATA@8 sound 2                                     |    99 | done   | magic-projectiles explosion                                                       |
-| FLOR SNAM@0 harvest sound                               |   109 | done   | harvest-engine                                                                    |
-| FSTP DATA@0 impact data set                             |   191 | done   | actor-sounds footsteps                                                            |
-| FSTS DATA@0 footsteps                                   |    52 | done   | footstep-records                                                                  |
-| HAZD DATA@36 sound                                      |    42 | done   | magic-fx hazards                                                                  |
-| INFO ONAM@0 audio output override                       |  1963 | done   | sound-system voiceLine                                                            |
-| INFO TRDT@16 response sound                             |   157 | done   | world-lines, dialogue-menu: lines without a voice file                            |
-| INGR YNAM@0 pick up sound                               |   113 | done   | inventory itemSound                                                               |
-| INGR ZNAM@0 put down sound                              |    76 | done   | inventory itemSound                                                               |
-| IPCT NAM1@0 heavy sound                                 |   298 | done   | impacts.ts                                                                        |
-| IPCT SNAM@0 sound                                       |   650 | done   | impacts.ts                                                                        |
-| IPDS PNAM@4 impact per material                         | 18184 | done   | impacts.ts                                                                        |
-| KEYM YNAM@0 pick up sound                               |   259 | done   | inventory itemSound                                                               |
-| KEYM ZNAM@0 put down sound                              |   259 | done   | inventory itemSound                                                               |
-| LCTN NAM1@0 music                                       |     8 | done   | sound-system: the location's music, after the cell's                              |
-| LIGH SNAM@0 looping sound                               |     4 | done   | cell-loader loopingSoundOf                                                        |
-| MATT HNAM@0 impact data set                             |    50 | done   | impacts.ts                                                                        |
-| MGEF DATA@0 flags matching a form id                    |     1 | n/a    | not a form                                                                        |
-| MGEF DATA@100 impact data set                           |   556 | done   | magic-projectiles impacts                                                         |
-| MGEF SNDD@12 sound (second entry)                       |   934 | done   | see "Magic effect sounds"                                                         |
-| MGEF SNDD@20 sound (third entry)                        |   908 | done   | see "Magic effect sounds"                                                         |
-| MGEF SNDD@28 sound (fourth entry)                       |   762 | done   | see "Magic effect sounds"                                                         |
-| MGEF SNDD@36 sound (fifth entry)                        |    10 | done   | see "Magic effect sounds"                                                         |
-| MGEF SNDD@4 sound (first entry)                         |  1075 | done   | see "Magic effect sounds"                                                         |
-| MISC YNAM@0 pick up sound                               |    12 | done   | inventory itemSound                                                               |
-| MISC ZNAM@0 put down sound                              |    12 | done   | inventory itemSound                                                               |
-| MSTT SNAM@0 looping sound                               |   115 | done   | cell-loader loopingSoundOf                                                        |
-| MUSC TNAM@0 tracks                                      |    64 | done   | music.ts                                                                          |
-| MUST SNAM@0 palette tracks                              |    21 | done   | music.ts                                                                          |
-| NPC_ CSDI@0 creature sound                              |    64 | done   | actor-records; see "Creature sounds"                                              |
-| PROJ DATA@40 sound (flight loop)                        |   174 | done   | magic-projectiles                                                                 |
-| RACE LNAM@0 close corpse (loot) sound                   |   155 | done   | actors.ts corpse search                                                           |
-| RACE NAM5@0 unarmed impact data set                     |   161 | done   | actor-combat                                                                      |
-| RACE ONAM@0 open corpse (loot) sound                    |   155 | done   | actors.ts corpse search                                                           |
-| REGN RDMO@0 region music                                |    36 | done   | music (location music)                                                            |
-| REGN RDSA@0 region sound                                |    70 | done   | ambience                                                                          |
-| SNCT PNAM@0 parent category                             |    17 | done   | audio-engine category tree                                                        |
-| SNDR GNAM@0 category                                    |  3176 | done   | sound-instance                                                                    |
-| SNDR ONAM@0 output model                                |  3186 | done   | sound-instance                                                                    |
-| SNDR SNAM@0 alternate sound for                         |   247 | done   | see SNDR SNAM                                                                     |
-| SOUN SDSC@0 descriptor                                  |  1191 | done   | cell-loader placed sounds                                                         |
-| TREE SNAM@0 harvest sound                               |    76 | done   | harvest-engine                                                                    |
-| WATR SNAM@0 open sound                                  |    26 | done   | water-audio                                                                       |
-| WEAP BIDS@0 block bash impact data set                  |  3268 | done   | actor-combat bash                                                                 |
-| WEAP INAM@0 impact data set                             |  3230 | done   | combat-impacts                                                                    |
-| WEAP NAM8@0 unequip sound                               |  3307 | done   | actor-combat sheathe, inventory unequip                                           |
-| WEAP NAM9@0 equip sound                                 |  3307 | done   | actor-combat draw, inventory equip                                                |
-| WEAP SNAM@0 attack sound                                |    49 | done   | actor-combat                                                                      |
-| WEAP TNAM@0 swing sound ("Attack Fail" in xEdit)        |  3244 | done   | actor-combat swing                                                                |
-| WEAP UNAM@0 idle sound (bound weapons' loop)            |    10 | done   | weapon-idle-sounds.ts: loops while drawn                                          |
-| WEAP XNAM@0 attack sound 2D (crossbows)                 |    36 | done   | actor-combat: the player's shot                                                   |
-| WRLD ZNAM@0 music                                       |    37 | done   | music (location music)                                                            |
-| WTHR SNAM@0 weather sound                               |    45 | done   | ambience (see "Weather sounds")                                                   |
+| Item                                                    |  Uses | Status | Where / why                                                                                      |
+| ------------------------------------------------------- | ----: | ------ | ------------------------------------------------------------------------------------------------ |
+| ACTI SNAM@0 looping sound                               |    33 | done   | cell-loader loopingSoundOf → placed sounds                                                       |
+| ACTI VNAM@0 activation sound                            |    96 | done   | play-session objectActivation                                                                    |
+| ALCH ENIT@16 consume sound                              |   470 | done   | equipment-engine consumeSound                                                                    |
+| ALCH YNAM@0 pick up sound                               |   358 | done   | inventory itemSound                                                                              |
+| ALCH ZNAM@0 put down sound                              |   324 | done   | inventory itemSound                                                                              |
+| AMMO YNAM@0 pick up sound                               |    62 | done   | inventory itemSound                                                                              |
+| AMMO ZNAM@0 put down sound                              |    62 | done   | inventory itemSound                                                                              |
+| ARMA SNDD@0 footstep set                                |   298 | done   | actor-sounds footsteps                                                                           |
+| ARMO BIDS@0 block bash impact data set (shields)        |   316 | done   | actor-combat bash                                                                                |
+| ARMO YNAM@0 pick up sound                               |   494 | done   | inventory itemSound                                                                              |
+| ARMO ZNAM@0 put down sound                              |   494 | done   | inventory itemSound                                                                              |
+| ASPC BNAM@0 reverb                                      |    41 | done   | reverb.ts                                                                                        |
+| ASPC SNAM@0 ambience loop                               |    41 | done   | sound-system acoustic spaces                                                                     |
+| BOOK YNAM@0 pick up sound                               |   450 | done   | inventory itemSound                                                                              |
+| BPTD BPND@68 impact data set (dismember)                |    12 | done   | body-part-data                                                                                   |
+| BPTD BPND@72 impact data set (explode)                  |    12 | done   | body-part-data                                                                                   |
+| CELL XCAS@0 acoustic space                              |   769 | done   | sound-system acoustic spaces                                                                     |
+| CELL XCMO@0 music                                       |   820 | done   | music (location music)                                                                           |
+| CONT QNAM@0 close sound                                 |   184 | done   | play-session container activation                                                                |
+| CONT SNAM@0 open sound                                  |   188 | done   | play-session container activation                                                                |
+| DOOR ANAM@0 close sound                                 |   132 | done   | play-session door activation                                                                     |
+| DOOR BNAM@0 looping sound                               |     1 | done   | cell-loader loopingSoundOf                                                                       |
+| DOOR SNAM@0 open sound                                  |   141 | done   | play-session door activation                                                                     |
+| EFSH DATA@308 ambient sound                             |    92 | done   | actor-effects: at the body while it shows                                                        |
+| EXPL DATA@12 impact data set                            |    94 | done   | magic-projectiles explosion                                                                      |
+| EXPL DATA@16 placed object (a sound marker)             |     1 | done   | created-objects: a sound marker placed at run time plays (a one-shot once, a loop as an emitter) |
+| EXPL DATA@28 an older layout's float matching a form id |     1 | n/a    | not a form                                                                                       |
+| EXPL DATA@4 sound 1                                     |   171 | done   | magic-projectiles explosion                                                                      |
+| EXPL DATA@8 sound 2                                     |    99 | done   | magic-projectiles explosion                                                                      |
+| FLOR SNAM@0 harvest sound                               |   109 | done   | harvest-engine                                                                                   |
+| FSTP DATA@0 impact data set                             |   191 | done   | actor-sounds footsteps                                                                           |
+| FSTS DATA@0 footsteps                                   |    52 | done   | footstep-records                                                                                 |
+| HAZD DATA@36 sound                                      |    42 | done   | magic-fx hazards                                                                                 |
+| INFO ONAM@0 audio output override                       |  1963 | done   | sound-system voiceLine                                                                           |
+| INFO TRDT@16 response sound                             |   157 | done   | world-lines, dialogue-menu: lines without a voice file                                           |
+| INGR YNAM@0 pick up sound                               |   113 | done   | inventory itemSound                                                                              |
+| INGR ZNAM@0 put down sound                              |    76 | done   | inventory itemSound                                                                              |
+| IPCT NAM1@0 heavy sound                                 |   298 | done   | impacts.ts                                                                                       |
+| IPCT SNAM@0 sound                                       |   650 | done   | impacts.ts                                                                                       |
+| IPDS PNAM@4 impact per material                         | 18184 | done   | impacts.ts                                                                                       |
+| KEYM YNAM@0 pick up sound                               |   259 | done   | inventory itemSound                                                                              |
+| KEYM ZNAM@0 put down sound                              |   259 | done   | inventory itemSound                                                                              |
+| LCTN NAM1@0 music                                       |     8 | done   | sound-system: the location's music, after the cell's                                             |
+| LIGH SNAM@0 looping sound                               |     4 | done   | cell-loader loopingSoundOf                                                                       |
+| MATT HNAM@0 impact data set                             |    50 | done   | impacts.ts                                                                                       |
+| MGEF DATA@0 flags matching a form id                    |     1 | n/a    | not a form                                                                                       |
+| MGEF DATA@100 impact data set                           |   556 | done   | magic-projectiles impacts                                                                        |
+| MGEF SNDD@12 sound (second entry)                       |   934 | done   | see "Magic effect sounds"                                                                        |
+| MGEF SNDD@20 sound (third entry)                        |   908 | done   | see "Magic effect sounds"                                                                        |
+| MGEF SNDD@28 sound (fourth entry)                       |   762 | done   | see "Magic effect sounds"                                                                        |
+| MGEF SNDD@36 sound (fifth entry)                        |    10 | done   | see "Magic effect sounds"                                                                        |
+| MGEF SNDD@4 sound (first entry)                         |  1075 | done   | see "Magic effect sounds"                                                                        |
+| MISC YNAM@0 pick up sound                               |    12 | done   | inventory itemSound                                                                              |
+| MISC ZNAM@0 put down sound                              |    12 | done   | inventory itemSound                                                                              |
+| MSTT SNAM@0 looping sound                               |   115 | done   | cell-loader loopingSoundOf                                                                       |
+| MUSC TNAM@0 tracks                                      |    64 | done   | music.ts                                                                                         |
+| MUST SNAM@0 palette tracks                              |    21 | done   | music.ts                                                                                         |
+| NPC_ CSDI@0 creature sound                              |    64 | done   | actor-records; see "Creature sounds"                                                             |
+| PROJ DATA@40 sound (flight loop)                        |   174 | done   | magic-projectiles                                                                                |
+| RACE LNAM@0 close corpse (loot) sound                   |   155 | done   | actors.ts corpse search                                                                          |
+| RACE NAM5@0 unarmed impact data set                     |   161 | done   | actor-combat                                                                                     |
+| RACE ONAM@0 open corpse (loot) sound                    |   155 | done   | actors.ts corpse search                                                                          |
+| REGN RDMO@0 region music                                |    36 | done   | music (location music)                                                                           |
+| REGN RDSA@0 region sound                                |    70 | done   | ambience                                                                                         |
+| SNCT PNAM@0 parent category                             |    17 | done   | audio-engine category tree                                                                       |
+| SNDR GNAM@0 category                                    |  3176 | done   | sound-instance                                                                                   |
+| SNDR ONAM@0 output model                                |  3186 | done   | sound-instance                                                                                   |
+| SNDR SNAM@0 alternate sound for                         |   247 | done   | see SNDR SNAM                                                                                    |
+| SOUN SDSC@0 descriptor                                  |  1191 | done   | cell-loader placed sounds                                                                        |
+| TREE SNAM@0 harvest sound                               |    76 | done   | harvest-engine                                                                                   |
+| WATR SNAM@0 open sound                                  |    26 | done   | water-audio                                                                                      |
+| WEAP BIDS@0 block bash impact data set                  |  3268 | done   | actor-combat bash                                                                                |
+| WEAP INAM@0 impact data set                             |  3230 | done   | combat-impacts                                                                                   |
+| WEAP NAM8@0 unequip sound                               |  3307 | done   | actor-combat sheathe, inventory unequip                                                          |
+| WEAP NAM9@0 equip sound                                 |  3307 | done   | actor-combat draw, inventory equip                                                               |
+| WEAP SNAM@0 attack sound                                |    49 | done   | actor-combat                                                                                     |
+| WEAP TNAM@0 swing sound ("Attack Fail" in xEdit)        |  3244 | done   | actor-combat swing                                                                               |
+| WEAP UNAM@0 idle sound (bound weapons' loop)            |    10 | done   | weapon-idle-sounds.ts: loops while drawn                                                         |
+| WEAP XNAM@0 attack sound 2D (crossbows)                 |    36 | done   | actor-combat: the player's shot                                                                  |
+| WRLD ZNAM@0 music                                       |    37 | done   | music (location music)                                                                           |
+| WTHR SNAM@0 weather sound                               |    45 | done   | ambience (see "Weather sounds")                                                                  |
 
 ### Descriptor types (SNDR CNAM)
 
@@ -333,29 +342,29 @@ chance, and which music fade applies to which change.
 
 ### Descriptor values (SNDR LNAM, BNAM)
 
-| Item                      | Uses | Status | Where / why                                          |
-| ------------------------- | ---: | ------ | ---------------------------------------------------- |
-| 0 looping: none           | 2631 | done   | sound-instance                                       |
-| 8 looping: Loop           |  452 | done   | sound-instance: the smpl region, else the whole file |
-| 16 looping: Envelope Fast |  102 | done   | sound-instance: attack, loop, release at once        |
-| 32 looping: Envelope Slow |    1 | done   | sound-instance: release after the pass               |
-| rumble send > 0           |  113 | open   | sound-driven gamepad rumble not built                |
+| Item                      | Uses | Status | Where / why                                                             |
+| ------------------------- | ---: | ------ | ----------------------------------------------------------------------- |
+| 0 looping: none           | 2631 | done   | sound-instance                                                          |
+| 8 looping: Loop           |  452 | done   | sound-instance: the smpl region, else the whole file                    |
+| 16 looping: Envelope Fast |  102 | done   | sound-instance: attack, loop, release at once                           |
+| 32 looping: Envelope Slow |    1 | done   | sound-instance: release after the pass                                  |
+| rumble send > 0           |  113 | done   | rumble.ts: sent to the motors' buses through a model that allows rumble |
 
 ### Output models (SOPM)
 
-| Item                                | Uses | Status | Where / why                                                          |
-| ----------------------------------- | ---: | ------ | -------------------------------------------------------------------- |
-| 0 Uses HRTF                         |   47 | done   | sound-instance: HRTF panner                                          |
-| 1 Defined Speaker Output            |   39 | done   | sound-instance: fixed speaker levels                                 |
-| bit 0 flag Attenuates With Distance |   76 | done   | attenuation.ts curve                                                 |
-| bit 1 flag Allows Rumble            |    2 | open   | sound-driven gamepad rumble not built                                |
-| speaker output to C                 |    3 | done   | sound-instance: left, right, centre at -3 dB to both                 |
-| speaker output to FL                |   35 | done   | sound-instance: left, right, centre at -3 dB to both                 |
-| speaker output to FR                |   35 | done   | sound-instance: left, right, centre at -3 dB to both                 |
-| speaker output to RL                |   35 | open   | rear and side speakers fold to their side: surround output not built |
-| speaker output to RR                |   35 | open   | rear and side speakers fold to their side: surround output not built |
-| speaker output to SL                |   35 | open   | rear and side speakers fold to their side: surround output not built |
-| speaker output to SR                |   35 | open   | rear and side speakers fold to their side: surround output not built |
+| Item                                | Uses | Status | Where / why                                                                                                 |
+| ----------------------------------- | ---: | ------ | ----------------------------------------------------------------------------------------------------------- |
+| 0 Uses HRTF                         |   47 | done   | sound-instance: HRTF panner                                                                                 |
+| 1 Defined Speaker Output            |   39 | done   | sound-instance: fixed speaker levels                                                                        |
+| bit 0 flag Attenuates With Distance |   76 | done   | attenuation.ts curve                                                                                        |
+| bit 1 flag Allows Rumble            |    2 | done   | rumble.ts: its sounds send their rumble                                                                     |
+| speaker output to C                 |    3 | done   | speakers.ts: its own speaker of a 7.1 output (5.1: rear and side share the surround pair); folded on stereo |
+| speaker output to FL                |   35 | done   | speakers.ts: its own speaker of a 7.1 output (5.1: rear and side share the surround pair); folded on stereo |
+| speaker output to FR                |   35 | done   | speakers.ts: its own speaker of a 7.1 output (5.1: rear and side share the surround pair); folded on stereo |
+| speaker output to RL                |   35 | done   | speakers.ts: its own speaker of a 7.1 output (5.1: rear and side share the surround pair); folded on stereo |
+| speaker output to RR                |   35 | done   | speakers.ts: its own speaker of a 7.1 output (5.1: rear and side share the surround pair); folded on stereo |
+| speaker output to SL                |   35 | done   | speakers.ts: its own speaker of a 7.1 output (5.1: rear and side share the surround pair); folded on stereo |
+| speaker output to SR                |   35 | done   | speakers.ts: its own speaker of a 7.1 output (5.1: rear and side share the surround pair); folded on stereo |
 
 ### Categories (SNCT FNAM)
 
@@ -463,7 +472,7 @@ chance, and which music fade applies to which change.
 | MDSC SNCT AudioCategoryMUS                   |    1 | done   | musicCategory                                                                              |
 | MFSN SNDR MAGFailSD                          |    1 | done   | magicFailSound                                                                             |
 | MMSD SNDR AMBrWindBedWorldMapLP              |    1 | done   | worldMapAmbient                                                                            |
-| NASD SNDR UIActivateFail                     |    1 | open   | not used                                                                                   |
+| NASD SNDR UIActivateFail                     |    1 | done   | activateFail                                                                               |
 | NDSC SNCT AudioCategoryNonVOC                |    1 | done   | nonDialogueCategory                                                                        |
 | P3OM SOPM SOMMono01400Player3rd              |    1 | done   | playerOutput3rd                                                                            |
 | PDLC SNCT AudioCategoryPausedDuringMenuLoad  |    1 | done   | pauseDuringLoadingMenu                                                                     |
@@ -486,8 +495,8 @@ chance, and which music fade applies to which change.
 | SFSN SNDR MAGFailShoutSD                     |    1 | done   | shoutFailSound                                                                             |
 | SMSC SNCT AudioCategoryAMBr                  |    1 | done   | statsMuteCategory                                                                          |
 | SSSC MUSC _NONE                              |    1 | n/a    | names the _NONE music type                                                                 |
-| TKGS SNDR MAGAlterationTelekinesisGrabSD     |    1 | open   | not used                                                                                   |
-| TKTS SNDR MAGAlterationTelekinesisThrowSD    |    1 | open   | not used                                                                                   |
+| TKGS SNDR MAGAlterationTelekinesisGrabSD     |    1 | done   | telekinesisGrabSound                                                                       |
+| TKTS SNDR MAGAlterationTelekinesisThrowSD    |    1 | done   | telekinesisThrowSound                                                                      |
 | TSSC SNCT AudioCategoryNPCKillMove           |    1 | done   | timeSensitiveCategory                                                                      |
 | UWLS SNDR AMBUnderwater2DLPM                 |    1 | done   | underwaterLoop                                                                             |
 | WASN SNDR MAGWardTestAbsorbSD                |    1 | done   | named in code                                                                              |
@@ -496,95 +505,95 @@ chance, and which music fade applies to which change.
 
 ### [Audio] INI settings
 
-| Item                                    | Uses | Status | Where / why                                                                      |
-| --------------------------------------- | ---: | ------ | -------------------------------------------------------------------------------- |
-| fDialogueHeadPitchExaggeration:Audio    |    1 | open   | not read                                                                         |
-| fDialogueHeadRollExaggeration:Audio     |    1 | open   | not read                                                                         |
-| fDialogueHeadYawExaggeration:Audio      |    1 | open   | not read                                                                         |
-| fMusicDuckingSeconds:Audio              |    1 | done   | read                                                                             |
-| fMusicUnDuckingSeconds:Audio            |    1 | done   | read                                                                             |
-| fMusicFinaleCrossFadeTimeIn:Audio       |    1 | done   | read                                                                             |
-| fMusicFinaleCrossFadeTimeOut:Audio      |    1 | done   | read                                                                             |
-| fMinSoundVel:Audio                      |    1 | done   | read                                                                             |
-| fWaterAudioFadeInSeconds:Audio          |    1 | done   | read                                                                             |
-| fWaterAudioFadeOutSeconds:Audio         |    1 | done   | read                                                                             |
-| uWaterAudioSamplePointsToUse:Audio      |    1 | done   | read                                                                             |
-| uWaterAudioAxisSamplePoints:Audio       |    1 | done   | read                                                                             |
-| uWaterAudioAmbientAttenuation:Audio     |    1 | done   | read                                                                             |
-| fAudioRumbleSmallExponent:Audio         |    1 | open   | sound-driven rumble (SNDR rumble send) not built                                 |
-| fAudioRumbleBigExponent:Audio           |    1 | open   | sound-driven rumble not built                                                    |
-| fAudioRumbleSmallLerpMin:Audio          |    1 | open   | sound-driven rumble not built                                                    |
-| fAudioRumbleSmallLerpMax:Audio          |    1 | open   | sound-driven rumble not built                                                    |
-| fAudioRumbleSmallDeadZone:Audio         |    1 | open   | sound-driven rumble not built                                                    |
-| fAudioRumbleBigLerpMin:Audio            |    1 | open   | sound-driven rumble not built                                                    |
-| fAudioRumbleBigLerpMax:Audio            |    1 | open   | sound-driven rumble not built                                                    |
-| fAudioRumbleBigDeadZone:Audio           |    1 | open   | sound-driven rumble not built                                                    |
-| fAudioRumblePowerAttackAdj:Audio        |    1 | open   | sound-driven rumble not built                                                    |
-| fRegionRandomSoundPlacementBase:Audio   |    1 | done   | read                                                                             |
-| fRegionSoundPlacementRandomOffset:Audio |    1 | done   | read                                                                             |
-| fRegionSoundPlacementZOffset:Audio      |    1 | done   | read                                                                             |
-| uRegionSoundsAllowedPerUpdate:Audio     |    1 | done   | read                                                                             |
-| fASFadeInTime:Audio                     |    1 | done   | read                                                                             |
-| fASFadeOutTime:Audio                    |    1 | done   | read                                                                             |
-| fRegionLoopFadeInTime:Audio             |    1 | done   | read                                                                             |
-| fRegionLoopFadeOutTime:Audio            |    1 | done   | read                                                                             |
-| fReverbTransitionTime:Audio             |    1 | done   | read                                                                             |
-| fMenuModeFadeOutTime:Audio              |    1 | done   | read                                                                             |
-| fMenuModeFadeInTime:Audio               |    1 | done   | read                                                                             |
-| fNonHighlightSpeechAtten:Audio          |    1 | done   | read                                                                             |
-| iHighlightSpeechOverlap:Audio           |    1 | n/a    | not read by the engine (fHighlightSpeechOverlap is)                              |
-| fMaxHighlightRadius:Audio               |    1 | done   | read                                                                             |
-| fHighlightSpeechOverlap:Audio           |    1 | done   | read                                                                             |
-| uAudioThreadSleepTimeMenuMode:Audio     |    1 | n/a    | the audio thread's pace: Web Audio runs its own                                  |
-| uAudioThreadSleepTimeGameMode:Audio     |    1 | n/a    | the audio thread's pace: Web Audio runs its own                                  |
-| fAudioMasterVolume:AudioMenu            |    1 | open   | not read                                                                         |
-| iCollisionSoundTimeDelta:Audio          |    1 | done   | read                                                                             |
-| fCollisionSoundHeavyThreshold:Audio     |    1 | done   | read                                                                             |
-| sAudioAPI:Audio                         |    1 | n/a    | XAudio2: the browser has Web Audio                                               |
-| bEnableAudio:Audio                      |    1 | open   | not read                                                                         |
-| bEnableAudioCache:Audio                 |    1 | n/a    | the decoded-buffer cache is ours (256 MB, sound-system)                          |
-| uMaxSizeForCachedSound:Audio            |    1 | n/a    | the decoded-buffer cache is ours (256 MB, sound-system)                          |
-| fDefaultMasterVolume:Audio              |    1 | open   | not read                                                                         |
-| sMissingAssetSoundFile:Audio            |    1 | n/a    | empty: a missing file plays nothing (as ours)                                    |
-| uStreamingThreshold:Audio               |    1 | open   | music always streams and effects load whole: not checked against the files sizes |
-| uAsyncReadPriorityThreshold:Audio       |    1 | n/a    | file read priority of the original's streamer                                    |
-| fHardLandingDamageThreshold:Audio       |    1 | open   | not read                                                                         |
-| sDeathCameraEffect:Audio                |    1 | open   | not read                                                                         |
-| fNonDialogVoiceDucking:Audio            |    1 | done   | read                                                                             |
-| fNonDialogVoiceDuckingFadeOut:Audio     |    1 | done   | read                                                                             |
-| fNonDialogVoiceDuckingFadeIn:Audio      |    1 | done   | read                                                                             |
-| bShowMissingAudioWarnings:MESSAGES      |    1 | done   | missing files are logged once (sound-system)                                     |
+| Item                                    | Uses | Status | Where / why                                             |
+| --------------------------------------- | ---: | ------ | ------------------------------------------------------- |
+| fDialogueHeadPitchExaggeration:Audio    |    1 | done   | read                                                    |
+| fDialogueHeadRollExaggeration:Audio     |    1 | done   | read                                                    |
+| fDialogueHeadYawExaggeration:Audio      |    1 | done   | read                                                    |
+| fMusicDuckingSeconds:Audio              |    1 | done   | read                                                    |
+| fMusicUnDuckingSeconds:Audio            |    1 | done   | read                                                    |
+| fMusicFinaleCrossFadeTimeIn:Audio       |    1 | done   | read                                                    |
+| fMusicFinaleCrossFadeTimeOut:Audio      |    1 | done   | read                                                    |
+| fMinSoundVel:Audio                      |    1 | done   | read                                                    |
+| fWaterAudioFadeInSeconds:Audio          |    1 | done   | read                                                    |
+| fWaterAudioFadeOutSeconds:Audio         |    1 | done   | read                                                    |
+| uWaterAudioSamplePointsToUse:Audio      |    1 | done   | read                                                    |
+| uWaterAudioAxisSamplePoints:Audio       |    1 | done   | read                                                    |
+| uWaterAudioAmbientAttenuation:Audio     |    1 | done   | read                                                    |
+| fAudioRumbleSmallExponent:Audio         |    1 | done   | read                                                    |
+| fAudioRumbleBigExponent:Audio           |    1 | done   | read                                                    |
+| fAudioRumbleSmallLerpMin:Audio          |    1 | done   | read                                                    |
+| fAudioRumbleSmallLerpMax:Audio          |    1 | done   | read                                                    |
+| fAudioRumbleSmallDeadZone:Audio         |    1 | done   | read                                                    |
+| fAudioRumbleBigLerpMin:Audio            |    1 | done   | read                                                    |
+| fAudioRumbleBigLerpMax:Audio            |    1 | done   | read                                                    |
+| fAudioRumbleBigDeadZone:Audio           |    1 | done   | read                                                    |
+| fAudioRumblePowerAttackAdj:Audio        |    1 | done   | read                                                    |
+| fRegionRandomSoundPlacementBase:Audio   |    1 | done   | read                                                    |
+| fRegionSoundPlacementRandomOffset:Audio |    1 | done   | read                                                    |
+| fRegionSoundPlacementZOffset:Audio      |    1 | done   | read                                                    |
+| uRegionSoundsAllowedPerUpdate:Audio     |    1 | done   | read                                                    |
+| fASFadeInTime:Audio                     |    1 | done   | read                                                    |
+| fASFadeOutTime:Audio                    |    1 | done   | read                                                    |
+| fRegionLoopFadeInTime:Audio             |    1 | done   | read                                                    |
+| fRegionLoopFadeOutTime:Audio            |    1 | done   | read                                                    |
+| fReverbTransitionTime:Audio             |    1 | done   | read                                                    |
+| fMenuModeFadeOutTime:Audio              |    1 | done   | read                                                    |
+| fMenuModeFadeInTime:Audio               |    1 | done   | read                                                    |
+| fNonHighlightSpeechAtten:Audio          |    1 | done   | read                                                    |
+| iHighlightSpeechOverlap:Audio           |    1 | n/a    | not read by the engine (fHighlightSpeechOverlap is)     |
+| fMaxHighlightRadius:Audio               |    1 | done   | read                                                    |
+| fHighlightSpeechOverlap:Audio           |    1 | done   | read                                                    |
+| uAudioThreadSleepTimeMenuMode:Audio     |    1 | n/a    | the audio thread's pace: Web Audio runs its own         |
+| uAudioThreadSleepTimeGameMode:Audio     |    1 | n/a    | the audio thread's pace: Web Audio runs its own         |
+| fAudioMasterVolume:AudioMenu            |    1 | done   | read                                                    |
+| iCollisionSoundTimeDelta:Audio          |    1 | done   | read                                                    |
+| fCollisionSoundHeavyThreshold:Audio     |    1 | done   | read                                                    |
+| sAudioAPI:Audio                         |    1 | n/a    | XAudio2: the browser has Web Audio                      |
+| bEnableAudio:Audio                      |    1 | done   | read                                                    |
+| bEnableAudioCache:Audio                 |    1 | n/a    | the decoded-buffer cache is ours (256 MB, sound-system) |
+| uMaxSizeForCachedSound:Audio            |    1 | n/a    | the decoded-buffer cache is ours (256 MB, sound-system) |
+| fDefaultMasterVolume:Audio              |    1 | done   | read                                                    |
+| sMissingAssetSoundFile:Audio            |    1 | n/a    | empty: a missing file plays nothing (as ours)           |
+| uStreamingThreshold:Audio               |    1 | done   | read                                                    |
+| uAsyncReadPriorityThreshold:Audio       |    1 | n/a    | file read priority of the original's streamer           |
+| fHardLandingDamageThreshold:Audio       |    1 | done   | read                                                    |
+| sDeathCameraEffect:Audio                |    1 | done   | read                                                    |
+| fNonDialogVoiceDucking:Audio            |    1 | done   | read                                                    |
+| fNonDialogVoiceDuckingFadeOut:Audio     |    1 | done   | read                                                    |
+| fNonDialogVoiceDuckingFadeIn:Audio      |    1 | done   | read                                                    |
+| bShowMissingAudioWarnings:MESSAGES      |    1 | done   | missing files are logged once (sound-system)            |
 
 ### Audio game settings
 
-| Item                                  | Uses | Status | Where / why                            |
-| ------------------------------------- | ---: | ------ | -------------------------------------- |
-| fCombatMusicUpdateTime                |    1 | done   | read                                   |
-| fCombatMusicStopTime                  |    1 | done   | read                                   |
-| fCombatMusicNearCombatInnerRadius     |    1 | done   | read                                   |
-| fCombatMusicNearCombatOuterRadius     |    1 | done   | read                                   |
-| fCombatMusicPlayerTargetedThreatRatio |    1 | done   | read                                   |
-| fCombatMusicGroupThreatRatioTimer     |    1 | done   | read                                   |
-| fCombatMusicGroupThreatRatioMin       |    1 | done   | read                                   |
-| fCombatMusicGroupThreatRatioMax       |    1 | done   | read                                   |
-| fCombatMusicPlayerNearStrengthMult    |    1 | done   | read                                   |
-| fCombatMusicPlayerCombatStrengthCap   |    1 | n/a    | the original never reads it            |
-| fSplashSoundHeavy                     |    1 | done   | read                                   |
-| fSplashSoundMedium                    |    1 | done   | read                                   |
-| fSplashSoundLight                     |    1 | done   | read                                   |
-| fSplashSoundTimer                     |    1 | done   | read                                   |
-| fSplashSoundVelocityMult              |    1 | done   | read                                   |
-| fSplashSoundOutMult                   |    1 | done   | read                                   |
-| fDeathSoundMaxDistance                |    1 | open   | not read                               |
-| fGameplayVoiceFilePadding             |    1 | done   | read                                   |
-| fAIDefaultSpeechMult                  |    1 | done   | read                                   |
-| fDialogSpeechDelaySeconds             |    1 | open   | not read                               |
-| fSubtitleSpeechDelay                  |    1 | open   | not read                               |
-| fSpeechDelay                          |    1 | open   | not read                               |
-| fLowPerfCombatantVoiceDistance        |    1 | open   | not read                               |
-| fActorAlertSoundTimer                 |    1 | open   | not read                               |
-| bEnableLipLookup                      |    1 | n/a    | lip files are always read when present |
-| iLipMorphCount                        |    1 | done   | read                                   |
+| Item                                  | Uses | Status | Where / why                                         |
+| ------------------------------------- | ---: | ------ | --------------------------------------------------- |
+| fCombatMusicUpdateTime                |    1 | done   | read                                                |
+| fCombatMusicStopTime                  |    1 | done   | read                                                |
+| fCombatMusicNearCombatInnerRadius     |    1 | done   | read                                                |
+| fCombatMusicNearCombatOuterRadius     |    1 | done   | read                                                |
+| fCombatMusicPlayerTargetedThreatRatio |    1 | done   | read                                                |
+| fCombatMusicGroupThreatRatioTimer     |    1 | done   | read                                                |
+| fCombatMusicGroupThreatRatioMin       |    1 | done   | read                                                |
+| fCombatMusicGroupThreatRatioMax       |    1 | done   | read                                                |
+| fCombatMusicPlayerNearStrengthMult    |    1 | done   | read                                                |
+| fCombatMusicPlayerCombatStrengthCap   |    1 | n/a    | the original never reads it                         |
+| fSplashSoundHeavy                     |    1 | done   | read                                                |
+| fSplashSoundMedium                    |    1 | done   | read                                                |
+| fSplashSoundLight                     |    1 | done   | read                                                |
+| fSplashSoundTimer                     |    1 | done   | read                                                |
+| fSplashSoundVelocityMult              |    1 | done   | read                                                |
+| fSplashSoundOutMult                   |    1 | done   | read                                                |
+| fDeathSoundMaxDistance                |    1 | done   | read                                                |
+| fGameplayVoiceFilePadding             |    1 | done   | read                                                |
+| fAIDefaultSpeechMult                  |    1 | done   | read                                                |
+| fDialogSpeechDelaySeconds             |    1 | n/a    | never read by the engine (observed in the original) |
+| fSubtitleSpeechDelay                  |    1 | done   | read                                                |
+| fSpeechDelay                          |    1 | done   | read                                                |
+| fLowPerfCombatantVoiceDistance        |    1 | n/a    | never read by the engine (observed in the original) |
+| fActorAlertSoundTimer                 |    1 | done   | read                                                |
+| bEnableLipLookup                      |    1 | n/a    | lip files are always read when present              |
+| iLipMorphCount                        |    1 | done   | read                                                |
 
 ### Papyrus audio natives
 

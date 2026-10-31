@@ -771,10 +771,10 @@ const OPENING_QUEST = 0x03372b;
 /** CommonLibSSE ATTACK_STATE_ENUM kBash (GetPlayerAction's bash). */
 const ATTACK_STATE_BASH = 6;
 /**
- * How long a lock's outcome is the player's action (real seconds). TODO(M13): the engine keeps
- * it until the next action; the reactions that ask (Flinch, ReactionToPlayer) come at once.
+ * How long a lock's outcome is the player's action (real seconds): fActorAlertSoundTimer's
+ * default, the action timer the original starts as an actor's action is set.
  */
-const PLAYER_ACTION_SECONDS = 2;
+const PLAYER_ACTION_SECONDS = 5;
 /** fRefTranslationAlmostDonePercent's built-in default: a translation's share "almost done". */
 const ALMOST_TRANSLATED = 0.9;
 /** The registrations' key prefix of a menu's (RegisterForMenu: `menu:` and its lowercase name). */
@@ -3422,14 +3422,19 @@ export class ScriptRuntime implements VmHost {
     return this.world.currentPackage?.(actor) ?? this.scenes.packageOf(actor);
   }
 
-  #playerActed: { readonly action: number; readonly at: number } | undefined;
+  #playerActed: { readonly action: number; readonly at: number; seconds: number } | undefined;
 
   /**
    * A lock's outcome as the player picks it (the lockpicking menu: 3 success, 4 a pick broke),
-   * which GetPlayerAction answers for a moment (PLAYER_ACTION_SECONDS).
+   * which GetPlayerAction answers for fActorAlertSoundTimer seconds (observed in the original:
+   * setting an actor's action starts its action timer at that setting).
    */
   playerActed(action: number): void {
-    this.#playerActed = { action, at: this.state.realTime };
+    const acted = { action, at: this.state.realTime, seconds: PLAYER_ACTION_SECONDS };
+    this.#playerActed = acted;
+    void this.gameSetting('fActorAlertSoundTimer').then((value) => {
+      if (typeof value === 'number') acted.seconds = value;
+    });
   }
 
   /**
@@ -3441,7 +3446,7 @@ export class ScriptRuntime implements VmHost {
     if (combat?.powerAttacking) return 1;
     if (combat?.attackState === ATTACK_STATE_BASH) return 2;
     const acted = this.#playerActed;
-    return acted && this.state.realTime - acted.at <= PLAYER_ACTION_SECONDS ? acted.action : 0;
+    return acted && this.state.realTime - acted.at <= acted.seconds ? acted.action : 0;
   }
 
   // --- Skills (src/scripting/runtime/progression-engine.ts), story events, finding references --

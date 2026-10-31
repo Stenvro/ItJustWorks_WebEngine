@@ -23,6 +23,7 @@ import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { WaterHazard, type WaterHarm, type WaterHarmStep } from '../gameplay/water-hazard.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
+import type { SoundSystem } from '../audio/sound-system.ts';
 import { ActorValue, actorValueIndex } from '../world/actor-values.ts';
 
 /** The player's part: their pace in slowed time, their falls (a viewer's player). */
@@ -43,6 +44,7 @@ export function connectPlayerTime(
         readonly time: TimeFlow;
         readonly scriptsReady: ScriptRuntime | undefined;
         readonly ini: { number(section: string, key: string): number };
+        readonly soundSystem?: Pick<SoundSystem, 'playNamed'> | undefined;
       }
     | undefined,
   physics?: { timeScale: (() => number) | undefined },
@@ -53,7 +55,18 @@ export function connectPlayerTime(
   player.onLanded = (height) => {
     const current = session();
     const runtime = current?.scriptsReady;
-    if (current && runtime) void current.time.fell(runtime, height);
+    if (!current || !runtime) return;
+    // Observed in the original: a landing that hurts the player sounds FSTLandHardHeavy above
+    // [Audio] fHardLandingDamageThreshold damage, else FSTLandHardLight.
+    void current.time.fell(runtime, height).then((damage) => {
+      if (damage <= 0) return;
+      const heavy = damage > current.ini.number('Audio', 'fHardLandingDamageThreshold');
+      void current.soundSystem?.playNamed(
+        heavy ? 'FSTLandHardHeavy' : 'FSTLandHardLight',
+        undefined,
+        PLAYER_REF,
+      );
+    });
   };
   const hazard = new WaterHazard();
   player.onSubmersion = (submersion, seconds, water) => {
@@ -216,8 +229,8 @@ export class TimeFlow {
     this.#breath = new Breath({ base, mult, damage, leaveWaterTimer });
   }
 
-  /** The player landed after falling `height` units (actorFell). */
-  fell(runtime: ScriptRuntime, height: number): Promise<void> {
+  /** The player landed after falling `height` units (actorFell): the damage the fall dealt. */
+  fell(runtime: ScriptRuntime, height: number): Promise<number> {
     return actorFell(runtime, PLAYER_REF, height);
   }
 }
@@ -236,13 +249,14 @@ export async function waterHarmed(
  * An actor landed after falling `height` units (`share`: of the minimum height that hurts;
  * RAGDOLL_FALL_SHARE getting up from a ragdoll): the fall's damage (the player's settings for the
  * player, the NPCs' for any other actor, horses too; its perks' Mod Falling Damage) on its health.
+ * Answers the fall's damage (0: it did not hurt; an invulnerable actor's counts).
  */
 export async function actorFell(
   runtime: ScriptRuntime,
   reference: number,
   height: number,
   share = 1,
-): Promise<void> {
+): Promise<number> {
   const npc = reference !== PLAYER_REF;
   const suffix = npc ? 'NPC' : '';
   const values = new Map<string, number | undefined>();
@@ -255,8 +269,10 @@ export async function actorFell(
     fallSettings((name) => values.get(name), npc),
     share,
   );
-  if (damage <= 0) return;
+  if (damage <= 0) return 0;
   const taken = await runtime.perks.apply(EntryPoint.modFallingDamage, reference, damage);
-  if (taken <= 0 || (await runtime.actors.isInvulnerable(reference))) return;
+  if (taken <= 0) return 0;
+  if (await runtime.actors.isInvulnerable(reference)) return taken;
   await runtime.actors.damage(reference, ActorValue.health, taken, undefined);
+  return taken;
 }

@@ -23,6 +23,7 @@ import { CastingSource } from '../scripting/runtime/casting-engine.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { ActorValue } from '../world/actor-values.ts';
+import { DefaultObjectUse } from '../world/default-objects.ts';
 import { EffectArchetype } from '../world/magic-effects.ts';
 import type { ActorCasting } from './actor-casting.ts';
 import type { GameSession } from './game-session.ts';
@@ -110,13 +111,23 @@ export class PlayerCasting implements CastingButtons {
     if (telekinetic !== undefined) this.#dualTelekinesis = telekinetic.dual;
     if (telekinetic && !this.#wasTelekinetic) this.#readTelekinesis(runtime);
     this.#wasTelekinetic = telekinetic !== undefined;
-    view.play.telekinesis(
+    const held = view.play.telekinesis(
       telekinetic !== undefined,
       this.#telekinesisReach,
       seconds,
       this.#dualTelekinesis,
       this.#telekinesisSettings,
     );
+    // Its grab and throw sounds (DOBJ TKGS, TKTS), the player's own.
+    if (held) {
+      const sound = session.soundSystem?.defaults.get(
+        held === 'grabbed'
+          ? DefaultObjectUse.telekinesisGrabSound
+          : DefaultObjectUse.telekinesisThrowSound,
+      );
+      const at = view.play.player;
+      if (sound !== undefined) void session.playSound(sound, () => at.position, 0, PLAYER_REF);
+    }
     const thrown = view.play.telekinesisThrown;
     if (thrown) void this.#strike(runtime, thrown);
   }
