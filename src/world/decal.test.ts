@@ -1,7 +1,43 @@
 import { describe, expect, it } from 'vitest';
 import { Fields } from '../formats/esm/fields.ts';
 import { identity } from '../render/math.ts';
-import { DecalFlag, expireDecals, parseTextureSet, placeDecal } from './decal.ts';
+import {
+  DecalFlag,
+  decalTooNear,
+  expireDecals,
+  parseTextureSet,
+  placeDecal,
+  placedSize,
+} from './decal.ts';
+
+describe('decalTooNear', () => {
+  it('skips a decal within (its larger side + the old width) / 4 of one on its node', () => {
+    const old = [{ point: [0, 0, 0] as const, width: 8 }];
+    // A 16 × 24 decal: (24 + 8) / 4 = 8 units.
+    const size = { width: 16, height: 24 };
+    expect(decalTooNear([8, 0, 0], size, old)).toBe(true);
+    expect(decalTooNear([0, 8.1, 0], size, old)).toBe(false);
+    expect(decalTooNear([8, 0, 0], size, [])).toBe(false);
+    // No spacing: never.
+    expect(decalTooNear([0, 0, 0], size, old, 0)).toBe(false);
+  });
+
+  it("reads a placed decal's width and height from its box", () => {
+    const decal = {
+      minWidth: 10,
+      maxWidth: 10,
+      minHeight: 20,
+      maxHeight: 20,
+      depth: 4,
+      shininess: 0,
+      parallaxScale: 0,
+      parallaxPasses: 0,
+      flags: 0,
+      color: [1, 1, 1] as const,
+    };
+    expect(placedSize(placeDecal(decal, 1, identity()))).toEqual({ width: 10, height: 20 });
+  });
+});
 
 describe('expireDecals', () => {
   it('lets the decals past their lifetime go, then the oldest beyond the cap', () => {
