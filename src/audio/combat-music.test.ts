@@ -3,6 +3,7 @@ import { actorStrength, strengthDamage } from '../ai/combat-ai.ts';
 import {
   CombatMusic,
   combatMusicWanted,
+  evenFight,
   readCombatMusicSettings,
   type CombatMusicThreat,
 } from './combat-music.ts';
@@ -52,6 +53,28 @@ describe('combat music', () => {
     expect(combatMusicWanted({ threats: [at(inner + 1)], player }, settings, false)).toBe('none');
     expect(combatMusicWanted({ threats: [at(outer - 1)], player }, settings, true)).toBe('combat');
     expect(combatMusicWanted({ threats: [at(outer + 1)], player }, settings, true)).toBe('none');
+  });
+
+  it('counts a fight not against the player only once it is even (fCombatMusicGroupThreatRatio*)', () => {
+    expect(evenFight(1000, 400, settings)).toBe(false); // guards against a mudcrab: 0.4
+    expect(evenFight(1000, 600, settings)).toBe(true);
+    expect(evenFight(1000, 1999, settings)).toBe(true);
+    expect(evenFight(1000, 2000, settings)).toBe(false); // a dragon over two guards
+    const player = 1000;
+    const near = { threats: [threat({ targetsPlayer: false, strength: 1500 })], player };
+    // Undecided until the group threat ratio timer: nothing.
+    const music = new CombatMusic(settings);
+    expect(music.update(0.1, { ...near, nearTargets: 1500 })).toBe('none');
+    expect(music.update(settings.groupThreatRatioTimer, { ...near, nearTargets: 1500 })).toBe(
+      'combat',
+    );
+    // A lopsided one never counts; it is decided once.
+    const lopsided = new CombatMusic(settings);
+    lopsided.update(0.1, { ...near, nearTargets: 100 });
+    expect(lopsided.update(settings.groupThreatRatioTimer, { ...near, nearTargets: 100 })).toBe(
+      'none',
+    );
+    expect(lopsided.update(settings.updateTime, { ...near, nearTargets: 1500 })).toBe('none');
   });
 
   it('weighs a lone wolf against the player by the engine’s strength', () => {

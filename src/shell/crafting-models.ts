@@ -183,7 +183,7 @@ function itemReader(runtime: ScriptRuntime): (formId: number) => Promise<ItemRec
 /** A UI sound by editor id, at no place (none where nothing is heard: the headless simulation). */
 function uiSound(session: GameSession, name: string): void {
   session.sounds().then(
-    (sounds) => sounds.playNamed(name, undefined),
+    (sounds) => sounds.playInterface(name),
     () => undefined,
   );
 }

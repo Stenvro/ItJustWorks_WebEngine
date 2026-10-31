@@ -2125,6 +2125,8 @@ export class ModelViewer {
       if (this.#cell) session.sky.frame();
       this.#sky?.sync();
       session.updateEmittance(session.gameHour);
+      // The player's sounds take the player's output model of the view (DOBJ POPM, P3OM).
+      if (session.soundSystem) session.soundSystem.playerView = this.#play?.player.pov;
       // Indoors the sound system plays the region of the cell's acoustic space.
       session.soundSystem?.setAmbience(
         this.#cell && {
@@ -2137,6 +2139,7 @@ export class ModelViewer {
           swimming: this.#play?.player.swimming ?? false,
           flash: undefined,
           cellMusic: this.#cell.data.cell.musicType,
+          location: this.#cell.data.cell.location,
           worldMusic: undefined,
           waterAt: this.#waterSurfaceAt,
           underwater: this.#underwater(),

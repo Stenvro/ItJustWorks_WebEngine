@@ -3,10 +3,12 @@
 // or an elk's breathing, a draugr's groan, a gargoyle's or a dwarven sphere's hum) plays at its
 // head while it is alive and conscious; its movement loop (type 6: the dwarven spheres' and
 // spiders' machinery, the flame atronach's fire, the carriage's wheels) while it also moves.
-// Both stop as it dies, falls unconscious or leaves the stage. TODO(M13): the one-shot types
-// (Idle 0, used by the mudcrab alone; Aware, Attack, Hit, Death, Weapon, Auxiliary, Jump: no
-// vanilla actor names them) and the loops' chance (CSDC) are not played: when the original
-// plays an idle and what its chance gates is not known.
+// Both stop as it dies, falls unconscious or leaves the stage. Its idle sound (type 0: only the
+// mudcrabs' AudioTemplateMudcrab names one, at 40 %) plays as it takes an ambient idle
+// (src/shell/actor-ambient-idles.ts), with its chance (CSDC). TODO(M13): that the idle sound
+// goes with the ambient idle, and that the chance gates each one, are inferred; the other
+// one-shot types (Aware, Attack, Hit, Death, Weapon, Auxiliary, Jump) no record in the load
+// order names.
 
 import type { Vec3 } from '../render/math.ts';
 import { CreatureSoundType, type CreatureSound } from '../world/actor-records.ts';
@@ -60,6 +62,10 @@ export interface CreatureSoundsOptions {
 }
 
 interface Tracked {
+  /** The actor as last seen (its sounds, where they play). */
+  actor: CreatureActor;
+  /** Whether it was conscious last frame. */
+  conscious: boolean;
   /** Where it stood last frame (its speed). */
   last: Vec3;
   /** The loops playing, by descriptor; a pending start is a promise. */
@@ -80,14 +86,16 @@ export class CreatureSounds {
       if (actor.sounds.length === 0) continue;
       let tracked = this.#actors.get(actor.reference);
       if (!tracked) {
-        tracked = { last: [...actor.position], loops: new Map() };
+        tracked = { actor, conscious: true, last: [...actor.position], loops: new Map() };
         this.#actors.set(actor.reference, tracked);
       }
+      tracked.actor = actor;
       const [x, y, z] = actor.position;
       const travelled = Math.hypot(x - tracked.last[0], y - tracked.last[1], z - tracked.last[2]);
       tracked.last = [x, y, z];
       const moving = seconds > 0 && travelled / seconds > MOVING_SPEED;
       const conscious = !actor.dead && !this.#options.unconscious(actor.reference);
+      tracked.conscious = conscious;
       const wanted = creatureLoops(actor.sounds, { conscious, moving });
       for (const [descriptor, loop] of tracked.loops) {
         if (wanted.has(descriptor)) continue;
@@ -105,6 +113,19 @@ export class CreatureSounds {
         });
       }
     }
+  }
+
+  /**
+   * An actor took an ambient idle: its idle sound (type 0; one of them at random) plays at its
+   * head with its chance (CSDC, percent).
+   */
+  idle(reference: number, random: () => number = Math.random): void {
+    const tracked = this.#actors.get(reference);
+    if (!tracked?.conscious) return;
+    const idles = tracked.actor.sounds.filter((sound) => sound.type === CreatureSoundType.idle);
+    const sound = idles[Math.min(idles.length - 1, Math.floor(random() * idles.length))];
+    if (!sound || random() * 100 >= sound.chance) return;
+    void this.#options.play(sound.sound, tracked.actor.place, reference);
   }
 
   /** An actor leaves the stage: its loops stop at once. */

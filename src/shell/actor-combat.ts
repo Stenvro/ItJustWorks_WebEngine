@@ -42,6 +42,7 @@ import {
   type CombatMusicInput,
   type CombatMusicThreat,
 } from '../audio/combat-music.ts';
+import { WeaponIdleSounds, type WeaponIdle } from './weapon-idle-sounds.ts';
 import type { ActorCombatState, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { ObjectHandle } from '../scripting/values.ts';
 import { EquippedItemType } from '../gameplay/equipment.ts';
@@ -479,6 +480,10 @@ export class ActorCombat implements CombatBridge {
   #music: number | undefined;
   #musicOn: CombatMusicChoice = 'none';
   readonly #combatMusic = new CombatMusic();
+  /** Drawn weapons' idle loops (WEAP UNAM: the bound weapons' hum). */
+  readonly #weaponIdles = new WeaponIdleSounds((descriptor, place, source) =>
+    this.#options.session.playSound(descriptor, place, 0, source),
+  );
   /** Whether a reference has the location reference type Boss (XLRT: DOBJ LRTB), once read. */
   readonly #bosses = new Map<number, boolean>();
   #equipListening: ScriptRuntime | undefined;
@@ -1283,6 +1288,21 @@ export class ActorCombat implements CombatBridge {
     }
     this.#enemyBar();
     this.#setMusic(this.#combatMusic.update(seconds, () => this.#musicInput(runtime)));
+    this.#weaponIdles.update(this.#idleWeapons());
+  }
+
+  /** The fighters alive with a weapon drawn whose record names an idle sound (WEAP UNAM). */
+  *#idleWeapons(): Generator<WeaponIdle> {
+    for (const fighter of this.#fighters.values()) {
+      if (!fighter.inHand || fighter.state.life !== LifeState.alive) continue;
+      const sound = fighter.gear?.rightRecord?.sounds.idle ?? fighter.gear?.leftRecord?.sounds.idle;
+      if (sound === undefined) continue;
+      yield {
+        reference: fighter.reference,
+        sound,
+        place: () => this.#weaponPlace(fighter) ?? [0, 0, 0],
+      };
+    }
   }
 
   /**
@@ -3038,7 +3058,11 @@ export class ActorCombat implements CombatBridge {
         this.#warn(`a shot's kill camera: ${describe(error)}`);
       });
     }
-    this.#playSound(gear.rightRecord?.sounds.attack, fighter);
+    // The player's own shot plays the weapon's 2D attack sound where it has one (WEAP XNAM: the
+    // crossbows' WPNCrossbowFire2D), anyone else's the 3D one (SNAM). TODO(M13): that the 2D
+    // sound is the player's is inferred from the Creation Kit's name for it.
+    const sounds = gear.rightRecord?.sounds;
+    this.#playSound((fighter.player ? sounds?.attack2D : undefined) ?? sounds?.attack, fighter);
     // The player's shot with a bow (not a crossbow) is told with its draw and whether they look
     // into the sun (TESPlayerBowShotEvent: OnPlayerBowShot; observed in the original).
     if (
@@ -3961,6 +3985,8 @@ export class ActorCombat implements CombatBridge {
   #musicInput(runtime: ScriptRuntime): CombatMusicInput {
     const feet = this.#play?.player.feet;
     const threats: CombatMusicThreat[] = [];
+    // What the fighters not against the player fight (each target once): their fight's odds.
+    const nearTargets = new Set<number>();
     const senses = this.#options.senses?.();
     for (const fighter of this.#fighters.values()) {
       if (fighter.player || fighter.state.life !== LifeState.alive) continue;
@@ -3969,6 +3995,7 @@ export class ActorCombat implements CombatBridge {
       if (!targetsPlayer) {
         if (this.#brain.combatState(reference) !== 1) continue;
         if (!this.#brain.hostile(reference, PLAYER_REF)) continue;
+        if (fighter.target !== undefined) nearTargets.add(fighter.target);
       }
       const at = this.#feet(fighter);
       threats.push({
@@ -3980,7 +4007,13 @@ export class ActorCombat implements CombatBridge {
         boss: this.#boss(reference, runtime),
       });
     }
-    return { threats, player: this.#brain.strength(PLAYER_REF) };
+    let targetStrength = 0;
+    for (const target of nearTargets) targetStrength += this.#brain.strength(target);
+    return {
+      threats,
+      player: this.#brain.strength(PLAYER_REF),
+      ...(nearTargets.size > 0 && { nearTargets: targetStrength }),
+    };
   }
 
   /** Whether a reference is a boss (location reference type DOBJ LRTB); false until read. */
@@ -4127,15 +4160,20 @@ export class ActorCombat implements CombatBridge {
 
   #playSound(sound: number | undefined, fighter: Fighter): void {
     if (sound === undefined) return;
+    const place = this.#weaponPlace(fighter);
+    if (!place) return;
+    void this.#options.session.playSound(sound, place, 0, fighter.reference);
+  }
+
+  /** Where a fighter's weapon sounds: its WEAPON node, else its feet. */
+  #weaponPlace(fighter: Fighter): Vec3 | undefined {
     const feet = this.#feet(fighter);
-    if (!feet) return;
+    if (!feet) return undefined;
     const at = fighter.body?.pose.world('WEAPON');
     const world = fighter.player
       ? this.#avatar?.placement.world
       : fighter.body?.instances[0]?.world;
-    const place: Vec3 =
-      at && world ? transformPoint(world, [at[12] ?? 0, at[13] ?? 0, at[14] ?? 0]) : feet;
-    void this.#options.session.playSound(sound, place, 0, fighter.reference);
+    return at && world ? transformPoint(world, [at[12] ?? 0, at[13] ?? 0, at[14] ?? 0]) : feet;
   }
 
   #difficulty(): number {
@@ -4168,6 +4206,7 @@ export class ActorCombat implements CombatBridge {
   }
 
   #drop(fighter: Fighter): void {
+    this.#weaponIdles.stop(fighter.reference);
     fighter.held?.destroy();
     fighter.firstHeld?.destroy();
     if (fighter.lookedAt !== undefined) {
@@ -4200,6 +4239,7 @@ export class ActorCombat implements CombatBridge {
     this.#impacts.clear();
     this.#combatMusic.reset();
     this.#setMusic('none');
+    this.#weaponIdles.clear();
   }
 
   /**
