@@ -492,10 +492,7 @@ const NATIVES = [
 const DEFAULT_NOTES: Record<string, Rating> = {
   RVBT: ['done', 'DefaultReverb is silent (-100 dB): as no reverb'],
   SSSC: ['n/a', 'names the _NONE music type'],
-  SCMS: [
-    'open',
-    "when the original plays the success music is not known (vanilla: LUMS's MUSSpecialSuccess)",
-  ],
+  SCMS: ['done', 'observed in the original: no code reads it, so it never plays'],
   ...Object.fromEntries(
     ['PUSA', 'PUSB', 'PUSG', 'PUSI', 'PUSW', 'PDSA', 'PDSB', 'PDSG', 'PDSI', 'PDSW'].map((use) => [
       use,

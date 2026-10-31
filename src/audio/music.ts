@@ -5,10 +5,13 @@
 // priority number; the latest of equals) plays:
 //
 // - A type that ducks the current track (combat, discoveries) plays over it while the other
-//   goes on quietly (its Ducking dB lower), coming back up once the ducking music has ended.
-// - Otherwise the current music leaves first: a track with cue points plays on to the next
-//   one, then crossfades into its finale (combat's ending) or fades out; then the new type
-//   starts. An abrupt transition starts it at once while the old fades.
+//   goes on quietly (its Ducking dB lower, over [Audio] fMusicDuckingSeconds), coming back up
+//   over fMusicUnDuckingSeconds once the ducking music has ended.
+// - Otherwise the current music finishes, observed in the original: a track with cue points
+//   plays on to the next one, then crossfades into its finale (combat's ending) or jumps to
+//   its last cue point and plays out, and the new type starts once it has ended; any other
+//   fades out over its own type's Fade Duration (at least 4 s) while the new type starts at
+//   once. The arriving type's Abrupt Transition flag changes nothing.
 // - A type's tracks play in order (Maintain Track Order) or shuffled, skipping those whose
 //   conditions do not hold (day, night, weather); after the list it plays on only if it
 //   cycles. Plays One Selection: one track, then the type ends. Doesn't Queue: dropped when
@@ -31,6 +34,8 @@ export interface MusicVoice {
   readonly ended: boolean;
   /** Fades out over `seconds`, then stops. */
   stop(seconds: number): void;
+  /** Goes on from `seconds` into the file. */
+  seek(seconds: number): void;
 }
 
 /** The output of one music type: its level follows ducking. */
@@ -82,11 +87,8 @@ export interface MusicState {
 const CLICK_FREE = 0.05;
 /** When no track's conditions hold, a type looks again this much later. */
 const RETRY_SECONDS = 1;
-
-/** The first value above zero. */
-function positive(...values: (number | undefined)[]): number | undefined {
-  return values.find((value) => value !== undefined && value > 0);
-}
+/** A finishing type fades out over its Fade Duration, at least this (observed in the original). */
+const MIN_FINISH_FADE = 4;
 
 /** The time base the music runs on (seconds) and what it needs to decide. */
 interface Clock {
@@ -163,7 +165,8 @@ export class Music {
     for (const run of this.#ducked) run.update(clock, true);
     const current = this.#current;
     if (current) {
-      const blocked = !current.abrupt && this.#leaving.length > 0;
+      // A finishing type with cue points holds the next one back until it has ended.
+      const blocked = this.#leaving.some((run) => run.holding);
       current.update(clock, !blocked);
       // Plays One Selection: the type ends with its track.
       if (current.finished && (current.type.flags & MusicTypeFlag.playsOneSelection) !== 0) {
@@ -206,7 +209,7 @@ export class Music {
     const inPlay = new Set([this.#location, ...this.#added]);
     for (const run of this.#ducked.filter((run) => !inPlay.has(run.type.formId))) {
       this.#ducked = this.#ducked.filter((other) => other !== run);
-      run.leave(clock, this.#fadeOut(run.type, undefined), false);
+      run.leave(clock, this.#fadeOut(run.type), false);
       this.#leaving.push(run);
     }
     // Doesn't Queue: an added type that cannot play now is dropped rather than waiting.
@@ -228,10 +231,10 @@ export class Music {
       // The ducking type ended: the ducked one comes back up.
       this.#ducked = this.#ducked.filter((run) => run !== returning);
       if (current) {
-        current.leave(clock, this.#fadeOut(current.type, desired), true);
+        current.leave(clock, this.#fadeOut(current.type), true);
         this.#leaving.push(current);
       }
-      const seconds = this.#unDuckSeconds(current?.type);
+      const seconds = this.#settings.unDuckingSeconds;
       if (current) this.#unducking.push({ run: returning, after: current, seconds });
       else returning.bus.fade(1, seconds);
       this.#current = returning;
@@ -239,7 +242,7 @@ export class Music {
     }
     if (!desired) {
       if (current) {
-        current.leave(clock, this.#fadeOut(current.type, undefined), true);
+        current.leave(clock, this.#fadeOut(current.type), true);
         this.#leaving.push(current);
       }
       this.#current = undefined;
@@ -251,35 +254,21 @@ export class Music {
       (desired.flags & MusicTypeFlag.ducksCurrentTrack) !== 0 &&
       desired.priority < current.type.priority;
     if (current && ducks) {
-      current.bus.fade(dbToGain(-desired.ducking), this.#duckSeconds(desired));
+      current.bus.fade(dbToGain(-desired.ducking), this.#settings.duckingSeconds);
       this.#ducked.push(current);
     } else if (current) {
-      const abrupt = (desired.flags & MusicTypeFlag.abruptTransition) !== 0;
-      current.leave(clock, this.#fadeOut(current.type, desired), !abrupt);
+      current.leave(clock, this.#fadeOut(current.type), true);
       this.#leaving.push(current);
     }
     this.#current = new TypeRun(desired, this.#output.bus(), this.#runContext());
   }
 
   /**
-   * How long music fades out for another type: the arriving type's Fade Duration (the Creation
-   * Kit: how long another type fades out or in for it), else the leaving one's; none: at once.
-   * TODO(M13): compare with the game.
+   * How long a finishing type's music fades out, observed in the original: its own Fade
+   * Duration, at least 4 s (the arriving type's plays no part).
    */
-  #fadeOut(leaving: MusicType, arriving: MusicType | undefined): number {
-    return positive(arriving?.fadeDuration, leaving.fadeDuration) ?? CLICK_FREE;
-  }
-
-  /**
-   * Ducking takes the ducking type's Fade Duration, else [Audio] fMusicDuckingSeconds (and
-   * fMusicUnDuckingSeconds coming back up). TODO(M13): compare with the game.
-   */
-  #duckSeconds(ducking: MusicType): number {
-    return positive(ducking.fadeDuration) ?? this.#settings.duckingSeconds;
-  }
-
-  #unDuckSeconds(ducking: MusicType | undefined): number {
-    return positive(ducking?.fadeDuration) ?? this.#settings.unDuckingSeconds;
+  #fadeOut(leaving: MusicType): number {
+    return Math.max(leaving.fadeDuration, MIN_FINISH_FADE);
   }
 
   #runContext(): RunContext {
@@ -345,8 +334,9 @@ class TypeRun {
     this.#run = run;
   }
 
-  get abrupt(): boolean {
-    return (this.type.flags & MusicTypeFlag.abruptTransition) !== 0;
+  /** Finishing at a cue point (into its finale, or playing out): the next type waits. */
+  get holding(): boolean {
+    return this.#leaving && this.track?.holding === true;
   }
 
   /** Left and fallen silent. */
@@ -368,8 +358,8 @@ class TypeRun {
   }
 
   /**
-   * Leaves: the track plays on to its next cue point (`atCue`) and crossfades into its finale
-   * or fades out over `seconds`; without cue points it fades out now.
+   * Leaves: a track with cue points (`atCue`) plays on to its next one and crossfades into
+   * its finale or jumps to its last one and plays out; any other fades out over `seconds`.
    */
   leave(clock: Clock, seconds: number, atCue: boolean): void {
     this.#leaving = true;
@@ -426,8 +416,11 @@ class TrackRun {
   /** Each palette layer's piece and the one after it. */
   #layers: { pieces: readonly number[]; piece: Piece | undefined; next: MusicTrack | undefined }[] =
     [];
-  /** Leaving: at a cue point (time), into the finale or fading over `seconds`. */
-  #leave: { at: number; seconds: number; finale: boolean } | undefined;
+  /**
+   * Leaving: at a time, into the finale, to the last cue point (`atCue`) or fading over
+   * `seconds`.
+   */
+  #leave: { at: number; seconds: number; finale: boolean; atCue: boolean } | undefined;
   /** A palette fading out: done at this time. */
   #fadingUntil: number | undefined;
   done = false;
@@ -468,17 +461,26 @@ class TrackRun {
       return;
     }
     const voice = this.#voice;
-    const cue =
-      atCue && voice
-        ? this.track.cuePoints.find((point) => point > voice.position + 0.01)
-        : undefined;
-    if (cue !== undefined && voice) {
+    const cues = this.track.cuePoints;
+    if (atCue && voice && cues.length > 0) {
+      // Observed in the original: from the next cue point on, into the finale or to the last
+      // cue point; past the last one, the track simply plays out.
+      const last = cues[cues.length - 1] ?? 0;
+      const next = cues.find((point) => point > voice.position + 0.01);
       const finale = this.track.finale !== undefined;
-      this.#leave = { at: clock.now + (cue - voice.position), seconds, finale };
+      this.#leave =
+        voice.position < last && next !== undefined
+          ? { at: clock.now + (next - voice.position), seconds, finale, atCue: true }
+          : { at: Infinity, seconds, finale: false, atCue: true };
       return;
     }
-    this.#leave = { at: clock.now, seconds, finale: false };
+    this.#leave = { at: clock.now, seconds, finale: false, atCue: false };
     this.#fadeAll(clock, seconds);
+  }
+
+  /** Finishing at a cue point: until it (and its finale) have ended. */
+  get holding(): boolean {
+    return !this.done && this.#leave?.atCue === true;
   }
 
   stopNow(): void {
@@ -527,6 +529,9 @@ class TrackRun {
         // Combat's ending: crossfade from the cue point into the finale.
         this.#finale = this.#run.output.play(finale, this.#bus, settings.finaleFadeIn, undefined);
         voice.stop(settings.finaleFadeOut);
+      } else if (leave.atCue) {
+        // No finale: on from the last cue point to the track's own end.
+        voice.seek(this.track.cuePoints[this.track.cuePoints.length - 1] ?? voice.position);
       } else {
         voice.stop(leave.seconds);
       }

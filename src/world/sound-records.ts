@@ -157,13 +157,20 @@ export interface Reverb {
   readonly reflections: number;
   readonly reverb: number;
   readonly decayHfRatio: number;
-  /** The record's "scaled" reflections delay byte. */
+  /**
+   * Milliseconds. The record's byte is "scaled": observed in the original, 1.2 ms a step (0–306
+   * ms, I3DL2's 0–0.3 s).
+   */
   readonly reflectionsDelay: number;
   /** Milliseconds. */
   readonly reverbDelay: number;
+  /** Percent (I3DL2's echo density and modal density of the late reverb). */
   readonly diffusion: number;
   readonly density: number;
 }
+
+/** REVB DATA reflections delay: milliseconds a step of its byte (observed in the original). */
+const REFLECTIONS_DELAY_STEP_MS = 1.2;
 
 const TRACK_TYPES = new Map<number, MusicTrackType>([
   [0x23f678c3, 'palette'],
@@ -391,7 +398,7 @@ export function parseReverb(record: GameRecord): Reverb | undefined {
     reflections: view.getInt8(6),
     reverb: view.getInt8(7),
     decayHfRatio: view.getUint8(8) / 100,
-    reflectionsDelay: view.getUint8(9),
+    reflectionsDelay: view.getUint8(9) * REFLECTIONS_DELAY_STEP_MS,
     reverbDelay: view.getUint8(10),
     diffusion: view.getUint8(11),
     density: view.getUint8(12),

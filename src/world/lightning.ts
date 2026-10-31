@@ -1,17 +1,21 @@
 // Lightning in thunderstorms (WTHR DATA thunder frequency, fade points and lightning colour):
-// when flashes come and how one looks over time. The thunder that follows a flash is played by
-// src/audio/ambience.ts. Platform-independent.
+// when thunder comes (src/audio/ambience.ts starts it, and the flash with it) and how a flash
+// looks over time. Platform-independent.
 // Notes: docs/formats/esm.md ("Climate and weather").
 
+/** Seconds between the checks for thunder (observed in the original: 30 ms). */
+export const THUNDER_CHECK_SECONDS = 0.03;
+
 /**
- * Mean seconds between flashes, or undefined for weathers without lightning. Thunder
- * frequency 255 (all calm weathers) means none; lower values come more often: vanilla storms
- * use 246 (rain) and 203 (snow), the Storm Call shout 15. Read as a mean interval of
- * value/255 × 30 seconds (about every half minute in a storm, every 2 s for Storm Call).
+ * Observed in the original: at each check, every thunder sound (WTHR SNAM type 3) of the
+ * current or the leaving weather that is not playing starts with a chance of one in its
+ * weather's thunder frequency × the thunder sounds of both weathers, and the lightning flash
+ * comes with it: a weather without thunder sounds never flashes.
+ * Vanilla storms (246 in rain, 203 in snow) thunder about every 7 s, Storm Call (15) about
+ * twice a second.
  */
-export function lightningInterval(frequency: number): number | undefined {
-  if (frequency >= 255) return undefined;
-  return Math.max(0.5, (frequency / 255) * 30);
+export function thunderChance(frequency: number, thunderSounds: number): number {
+  return 1 / Math.max(1, frequency * thunderSounds);
 }
 
 /** Seconds a flash lasts. */
@@ -27,22 +31,22 @@ export function flashIntensity(t: number): number {
 }
 
 /**
- * How much of a weather's thunder is on during a change of weather (like precipitation: the
- * new weather's from its Thunder Begin Fade In, the old one's until its End Fade Out).
+ * A weather's share of a fading effect during a change of weather (thunder: its Thunder Begin
+ * Fade In and End Fade Out; precipitation: its own), observed in the original: the arriving
+ * weather's from its begin point of the change, the leaving one's until its end point;
+ * without a change, all.
  */
-export function thunderAmount(
-  current: { readonly thunderFrequency: number; readonly thunderFadeIn: number },
-  previous: { readonly thunderFrequency: number; readonly thunderFadeOut: number } | undefined,
-  transition: number,
+export function fadeShare(
+  begin: number,
+  end: number,
+  leaving: boolean,
+  transition: number | undefined,
 ): number {
-  let amount = 0;
-  if (current.thunderFrequency < 255) {
-    const begin = Math.min(0.999, Math.max(0, current.thunderFadeIn));
-    amount = previous ? Math.max(0, Math.min(1, (transition - begin) / (1 - begin))) : 1;
+  if (transition === undefined) return leaving ? 0 : 1;
+  if (leaving) {
+    const until = end + 0.001;
+    return transition >= until ? 0 : 1 - transition / until;
   }
-  if (previous && previous.thunderFrequency < 255) {
-    const end = Math.max(0.001, previous.thunderFadeOut);
-    amount = Math.max(amount, 1 - transition / end);
-  }
-  return Math.max(0, Math.min(1, amount));
+  if (transition < begin || begin >= 1) return 0;
+  return (transition - begin) / (1 - begin);
 }

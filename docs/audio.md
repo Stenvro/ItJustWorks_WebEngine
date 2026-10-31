@@ -88,8 +88,11 @@ sound beside an existing voice file (no vanilla response has both).
   (4 MB) streams from the disk on each play instead of being kept; here it is decoded for the
   play and not kept in the decoded-buffer cache. Music always streams (`music-output.ts`).
 - **Distance:** the panner only pans; the volume follows the output model's curve
-  ([esm.md](formats/esm.md#sounds)), smoothed over 50 ms. Output models without distance
-  attenuation play at full volume wherever they play.
+  ([esm.md](formats/esm.md#sounds)), smoothed over 50 ms: observed in the original, its five
+  points spread evenly from the minimum to the maximum distance, the first point inside the
+  minimum, silence from the maximum on. Output models without distance attenuation play at
+  full volume wherever they play. HRTF models that attenuate also get the distance low-pass
+  and the reverb send by distance ("3D update" below).
 - **Looping** (descriptor LNAM): loop plays the file's loop region (WAV `smpl`, else the whole
   file) until stopped; envelope fast and slow also play the part before the loop once (attack)
   and, when stopped, the part after it (release): fast jumps there at once, slow finishes the
@@ -111,14 +114,23 @@ speakers is not known.
 
 ### 3D update and Doppler
 
-Observed in the original: each placed sound's 3D update asks
-X3DAudio for its speaker matrix, its direct-path and reverb low-pass coefficients, its reverb
-level and its Doppler factor. The matrix sets the voice's output, the reverb level scales its
-reverb send, and the direct-path coefficient becomes a low-pass filter on its output
-(cutoff = coefficient × sample rate / 6); the Doppler factor sets nothing: no pitch changes with
-speed, so here none is applied. Open: the distance low-pass and the reverb level by distance
-(X3DAudio's default curves: the low-pass from 1 down to 0.75, the reverb from 1 down to 0
-across the curve's distance; which distance the original scales the curves by is not known).
+Observed in the original: a placed sound whose output model uses HRTF and attenuates with
+distance is updated through X3DAudio while it is within the model's maximum distance (beyond
+it, silent). Its emitter carries the volume curve (the model's five points, as above) and no
+other curve, so X3DAudio's defaults apply, with the model's maximum distance as the curve
+distance scaler: over distance / maximum (0–1) the direct path's low-pass coefficient falls
+from 1 to 0.75 and the reverb level from 1 to 0. The matrix (with the volume curve) sets the
+voice's output; the reverb send is the model's reverb send × the reverb level, without the
+volume curve (a far sound in a hall keeps more reverb than direct sound); the low-pass
+coefficient becomes XAudio2's state-variable filter on the send to the output, at a radian
+frequency of 2·sin(π/6 · coefficient) with 1/Q = 1 (1 is XAudio2's documented bypass; at the
+maximum distance about −1 dB at 8 kHz, −5 dB at 12 kHz at 48 kHz). The Doppler factor sets
+nothing: no pitch changes with speed, so here none is applied. Here (`distance-filter.ts`,
+`sound-instance.ts`) a lowpass BiquadFilterNode fitted to that filter's response (within
+about 1 dB up to 16 kHz) sits before the panner, and the reverb send is taken before the
+distance curve and scaled by the reverb level. Models with defined speaker output take
+another path in the original: the volume curve on the whole voice, no filter, a constant
+reverb send.
 
 ### Rumble
 
@@ -185,14 +197,21 @@ effect inside their box. The space in effect gives the reverb (REVB) and its amb
 fASFadeOutTime 8 s, fASFadeInTime 3 s). The world map plays its own loop, the default object
 MMSD (AMBrWindBedWorldMapLP), in its acoustic space UIWorldMap. In interiors the space's region (RDAT) gives the
 region sounds (below); the Creation Kit offers that field for interiors only. The
-reverb is a convolver with an impulse response built from the I3DL2 parameters (decay, HF
-decay ratio at the HF reference, room and room HF level, reflections and reverb level and
-delay; `reverb.ts`). As I3DL2 defines them, the Reflections and Reverb levels are energies
-relative to the direct sound: each part of the response is scaled so that the sum of its squared
-samples is that level, however long the decay (the Palace of the Kings' IntRoomStoneLargeReverb,
-2.9 s, was otherwise 22 dB louder than the dry sound). XAudio2's own algorithm is not
-documented, so this is an approximation
-(TODO(M13): compare with the game). Spaces without reverb (DefaultReverb, −100 dB) have none.
+reverb is a convolver whose impulse response (`reverb.ts`, built once per REVB) follows the
+I3DL2 definitions the original hands to XAudio2 (observed: REVB's levels × 100 as millibels,
+the decay time and reverb delay in milliseconds, the HF ratio / 100, the reflections delay
+1.2 ms a step): the first early reflection at the reflections delay and the rest within 20 ms,
+the late part from the reverb delay after it; Room the level of both at low frequencies and
+Room HF their further cut at the HF reference; the late part falling 60 dB over the decay time
+at low frequencies and over the decay time × the HF ratio at the HF reference. The Reflections
+and Reverb levels are energies relative to the direct sound: each part's sum of squared samples
+is that level, however long the decay. Between low frequencies and the HF reference the HF
+effects grow with the square of the frequency and hold above it (I3DL2 fixes only the two
+points); they are applied to the spectrum frame by frame (2048-sample Hann frames, half
+overlapping), the low-frequency decay sample by sample. Diffusion thins the late part into
+separate echoes (from one each sample at 100 % to 1000 a second at 0 %), Density colours it
+with modes 100 Hz apart (none at 100 %). XAudio2's own network is not documented: TODO(M13):
+its exact echo and modal density. Spaces without reverb (DefaultReverb, −100 dB) have none.
 Observed in the original: a change of acoustic space moves to the new space's reverb over
 `[Audio]` fReverbTransitionTime (0.5 s); here two reverbs crossfade, the old one fading out as
 the new one fades in (`AudioEngine.setReverb`).
@@ -219,12 +238,19 @@ or not, and the last lightning flash.
   fRegionRandomSoundPlacementBase, and fRegionSoundPlacementZOffset (256) up. A pine forest
   gives a wind bed, cicadas in the morning and a bird call or gust every few seconds; a fort
   interior creaks.
-- **Weather sounds** (WTHR SNAM): looping ones (rain, wind) play 2D at the weather's share of
-  a change (the old weather's at the rest), so rain fades in as the clouds come. Thunder
-  (type 3) follows each lightning flash after 0.5–3 s (inferred: TODO(M13)); a weather's other
-  single sounds (gusts in a snowstorm, distant thunder in overcast rain, which has no
-  lightning) come at random with a 4 % chance a second (WTHR has no chance of its own; the
-  median of the region one-shots'; checked each half-second update at 2 %; TODO(M13)).
+- **Weather sounds** (WTHR SNAM), observed in the original: outdoors, the sounds of the current
+  and the leaving weather other than thunder play 2D at their weather's share of a change
+  (precipitation, type 1, by the weathers' precipitation Begin Fade In and End Fade Out; the
+  others by the change itself; a sound both name at the larger share), loops and single
+  sounds alike: a single one that has ended (gusts in a snowstorm, distant thunder in overcast
+  rain) starts again, checked once a second. Thunder (type 3) is checked every 30 ms: each
+  thunder sound of the two weathers that is not playing starts with one chance in its
+  weather's thunder frequency × the thunder sounds of both (a storm's single thunder, 246:
+  about every 7.4 s; Storm Call, 15: about twice a second), at its weather's thunder share
+  (Thunder Begin Fade In, End Fade Out) and only if that share is above zero; the lightning
+  flash starts with it, as bright as that share (`AmbientState.lightning`, the sky's
+  `flash`). No delay: flash and thunder come together, and a weather without thunder sounds
+  never flashes.
 - **Conditions** (`sound-conditions.ts`) of ambient sounds use GetCurrentTime (308 uses),
   GetIsCurrentWeather (96), IsInInterior (38), IsRaining and GetGlobalValue (one each: the
   distant catapults of SkyrimOvercastWar while CWDistantCatapultsAMB is 1). Globals have the
@@ -267,18 +293,18 @@ Riverwood's pine forest plays MUSExploreForestPine.
 
 - **Which type plays:** the most important in play (lowest priority number; the latest added
   of equals). One flagged Doesn't Queue is dropped when it cannot play at once.
-- **Ducking:** a more important type flagged Ducks Current Track (combat, discoveries) plays
-  over the current one, which goes on at its Ducking dB lower (combat 100 dB: silent;
-  MUSDiscoveryGeneric 3 dB) and comes back up once the ducking music has ended — combat after
-  its finale. The fade takes the ducking type's Fade Duration (combat 9 s), else `[Audio]`
-  fMusicDuckingSeconds / fMusicUnDuckingSeconds (6 and 8 s in Skyrim_Default.ini).
-- **Other changes:** the current music leaves first, then the new type starts. A track with
-  cue points (combat) plays on to its next one and crossfades into its finale
-  (fMusicFinaleCrossFadeTimeIn 3 s, fMusicFinaleCrossFadeTimeOut 6 s); else it fades out over
-  the arriving type's Fade Duration (the Creation Kit: how long another type fades for it),
-  else the leaving one's. An abrupt transition starts the new type at once while the old one
-  fades. Which fade applies where is inferred from the Creation Kit's descriptions:
-  TODO(M13): compare with the game.
+- **Ducking** (observed in the original): a more important type flagged Ducks Current Track
+  (combat, discoveries) plays over the current one, whose track goes down by its Ducking dB
+  (combat 100 dB: silent; MUSDiscoveryGeneric 3 dB) over `[Audio]` fMusicDuckingSeconds and
+  comes back up over fMusicUnDuckingSeconds (6 and 8 s in Skyrim_Default.ini) once the
+  ducking music has ended — combat after its finale. No type's Fade Duration plays a part.
+- **Other changes** (observed in the original): the current type finishes. A track with cue
+  points (combat) plays on to its next one, then crossfades into its finale
+  (fMusicFinaleCrossFadeTimeIn 3 s, fMusicFinaleCrossFadeTimeOut 6 s) or, without a finale,
+  jumps to its last cue point and plays out (past its last cue point it simply plays out);
+  the new type starts once it has ended. Any other track fades out over its own type's Fade
+  Duration, at least 4 s, while the new type starts at once, at full level. The arriving
+  type's Abrupt Transition flag is handed to the finish but changes nothing.
 - **Tracks:** in order (Maintain Track Order) or shuffled per pass; those whose conditions do
   not hold are skipped (day and night pieces, weathers); after the list a type plays on only
   if it cycles, and Plays One Selection ends it after one track. Silent tracks are pauses
@@ -367,9 +393,10 @@ idle sound goes with the ambient idle is inferred; no record names the other one
 - **Death:** the player's death adds the death music (DOBJ DTMS, MUSSpecialDeath). Observed in
   the original: a dying actor says its Death line only within `fDeathSoundMaxDistance` (1000) of
   the player (the player's own always).
-- **Level up:** a level-up becoming available (with the sLevelUpAvailable notice) adds the
-  level-up music (DOBJ LUMS, MUSSpecialSuccess: the mus_levelup stings). TODO(M13): the moment
-  is inferred; when the success music (SCMS, the same type in vanilla) plays is not known.
+- **Level up** (observed in the original): the level-up menu adds the level-up music (DOBJ
+  LUMS, MUSSpecialSuccess: the mus_levelup stings) as it opens, not the sLevelUpAvailable
+  notice. The success music (DOBJ SCMS, the same type in vanilla) is read by no code of the
+  original: it never plays.
 - **Weapons:** a drawn weapon's idle sound (WEAP UNAM: the bound weapons'
   MAGConjureBoundWeaponLP) loops at the weapon until it is sheathed or its holder dies
   (`weapon-idle-sounds.ts`); the player's own shot plays the weapon's 2D attack sound (WEAP
