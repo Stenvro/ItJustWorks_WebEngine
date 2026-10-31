@@ -1267,6 +1267,7 @@ export class ActorCombat implements CombatBridge {
     const play = this.#play;
     if (this.#camera?.done === true) this.#camera = undefined;
     this.#options.session.time.killCam = this.#camera?.timeMultiplier ?? 1;
+    this.#killCamSound(this.#camera !== undefined);
     this.#killCamModifier(this.#camera?.imageSpaceModifier);
     if (play) {
       play.heldByPair = player?.state.paired !== undefined;
@@ -1283,6 +1284,38 @@ export class ActorCombat implements CombatBridge {
     }
     this.#enemyBar();
     this.#setMusic(this.#combatMusic.update(seconds, () => this.#musicInput(runtime)));
+  }
+
+  /** The kill camera's sound while it plays (a stop function once started). */
+  #killCamLoop: { stop: (() => void) | undefined } | undefined;
+
+  /**
+   * The kill camera's sound (observed in the original): as its slow-motion playback starts it
+   * plays the descriptor [Audio] sDeathCameraEffect names (MAGShoutSlowTimeActiveLP), at the
+   * listener; it stops as the camera ends.
+   */
+  #killCamSound(playing: boolean): void {
+    if (playing === (this.#killCamLoop !== undefined)) return;
+    if (!playing) {
+      this.#killCamLoop?.stop?.();
+      this.#killCamLoop = undefined;
+      return;
+    }
+    const loop: { stop: (() => void) | undefined } = { stop: undefined };
+    this.#killCamLoop = loop;
+    const session = this.#options.session;
+    void session.soundSystem
+      ?.playNamed(session.ini.text('Audio', 'sDeathCameraEffect'), undefined, PLAYER_REF)
+      .then((instance) => {
+        if (!instance) return;
+        if (this.#killCamLoop !== loop) {
+          instance.stop();
+          return;
+        }
+        loop.stop = () => {
+          instance.stop();
+        };
+      });
   }
 
   /**

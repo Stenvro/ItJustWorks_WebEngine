@@ -176,8 +176,8 @@ const SOUND_FIELDS: Record<string, readonly [string, Status, string]> = {
   'EXPL DATA@12': ['impact data set', 'done', 'magic-projectiles explosion'],
   'EXPL DATA@16': [
     'placed object (a sound marker)',
-    'open',
-    'sound markers placed at run time do not play (emitters come from cell loads only)',
+    'done',
+    'created-objects: a sound marker placed at run time plays (a one-shot once, a loop as an emitter)',
   ],
   'EXPL DATA@28': ["an older layout's float matching a form id", 'n/a', 'not a form'],
   'MGEF DATA@0': ['flags matching a form id', 'n/a', 'not a form'],
@@ -385,15 +385,15 @@ const INI_SETTINGS: Record<string, Rating | undefined> = {
   'uWaterAudioSamplePointsToUse:Audio': undefined,
   'uWaterAudioAxisSamplePoints:Audio': undefined,
   'uWaterAudioAmbientAttenuation:Audio': undefined,
-  'fAudioRumbleSmallExponent:Audio': ['open', 'sound-driven rumble (SNDR rumble send) not built'],
-  'fAudioRumbleBigExponent:Audio': ['open', 'sound-driven rumble not built'],
-  'fAudioRumbleSmallLerpMin:Audio': ['open', 'sound-driven rumble not built'],
-  'fAudioRumbleSmallLerpMax:Audio': ['open', 'sound-driven rumble not built'],
-  'fAudioRumbleSmallDeadZone:Audio': ['open', 'sound-driven rumble not built'],
-  'fAudioRumbleBigLerpMin:Audio': ['open', 'sound-driven rumble not built'],
-  'fAudioRumbleBigLerpMax:Audio': ['open', 'sound-driven rumble not built'],
-  'fAudioRumbleBigDeadZone:Audio': ['open', 'sound-driven rumble not built'],
-  'fAudioRumblePowerAttackAdj:Audio': ['open', 'sound-driven rumble not built'],
+  'fAudioRumbleSmallExponent:Audio': undefined,
+  'fAudioRumbleBigExponent:Audio': undefined,
+  'fAudioRumbleSmallLerpMin:Audio': undefined,
+  'fAudioRumbleSmallLerpMax:Audio': undefined,
+  'fAudioRumbleSmallDeadZone:Audio': undefined,
+  'fAudioRumbleBigLerpMin:Audio': undefined,
+  'fAudioRumbleBigLerpMax:Audio': undefined,
+  'fAudioRumbleBigDeadZone:Audio': undefined,
+  'fAudioRumblePowerAttackAdj:Audio': undefined,
   'fRegionRandomSoundPlacementBase:Audio': undefined,
   'fRegionSoundPlacementRandomOffset:Audio': undefined,
   'fRegionSoundPlacementZOffset:Audio': undefined,
@@ -423,10 +423,7 @@ const INI_SETTINGS: Record<string, Rating | undefined> = {
   ],
   'fDefaultMasterVolume:Audio': undefined,
   'sMissingAssetSoundFile:Audio': ['n/a', 'empty: a missing file plays nothing (as ours)'],
-  'uStreamingThreshold:Audio': [
-    'open',
-    'music always streams and effects load whole: not checked against the files sizes',
-  ],
+  'uStreamingThreshold:Audio': undefined,
   'uAsyncReadPriorityThreshold:Audio': ['n/a', "file read priority of the original's streamer"],
   'fHardLandingDamageThreshold:Audio': undefined,
   'sDeathCameraEffect:Audio': undefined,
@@ -456,10 +453,10 @@ const GAME_SETTINGS: Record<string, Rating | undefined> = {
   fDeathSoundMaxDistance: undefined,
   fGameplayVoiceFilePadding: undefined,
   fAIDefaultSpeechMult: undefined,
-  fDialogSpeechDelaySeconds: undefined,
+  fDialogSpeechDelaySeconds: ['n/a', 'never read by the engine (observed in the original)'],
   fSubtitleSpeechDelay: undefined,
   fSpeechDelay: undefined,
-  fLowPerfCombatantVoiceDistance: undefined,
+  fLowPerfCombatantVoiceDistance: ['n/a', 'never read by the engine (observed in the original)'],
   fActorAlertSoundTimer: undefined,
   bEnableLipLookup: ['n/a', 'lip files are always read when present'],
   iLipMorphCount: undefined,
@@ -492,6 +489,10 @@ const NATIVES = [
 const DEFAULT_NOTES: Record<string, Rating> = {
   RVBT: ['done', 'DefaultReverb is silent (-100 dB): as no reverb'],
   SSSC: ['n/a', 'names the _NONE music type'],
+  MMSD: [
+    'open',
+    "the map's wind loop plays as UIWorldMap's acoustic space ambience (the same descriptor); whether the original starts it from this default object instead is not known",
+  ],
   ...Object.fromEntries(
     ['PUSA', 'PUSB', 'PUSG', 'PUSI', 'PUSW', 'PDSA', 'PDSB', 'PDSG', 'PDSI', 'PDSW'].map((use) => [
       use,
@@ -769,8 +770,8 @@ tableRows(
 );
 for (const [key, n] of rumble)
   add('Descriptor values (SNDR LNAM, BNAM)', key, n, [
-    'open',
-    'sound-driven gamepad rumble not built',
+    'done',
+    "rumble.ts: sent to the motors' buses through a model that allows rumble",
   ]);
 tableRows(
   'Output models (SOPM)',
@@ -786,21 +787,15 @@ tableRows(
   outputFlags,
   {
     0: ['flag Attenuates With Distance', 'done', 'attenuation.ts curve'],
-    1: ['flag Allows Rumble', 'open', 'sound-driven gamepad rumble not built'],
+    1: ['flag Allows Rumble', 'done', 'rumble.ts: its sounds send their rumble'],
   },
   (key) => `bit ${String(key)}`,
 );
 for (const [name, n] of [...channels].sort())
-  add(
-    'Output models (SOPM)',
-    `speaker output to ${name}`,
-    n,
-    ['FL', 'FR', 'C'].includes(name)
-      ? ['done', 'sound-instance: left, right, centre at -3 dB to both']
-      : name === 'LFE'
-        ? ['open', 'no subwoofer channel: the browser output is stereo (surround output not built)']
-        : ['open', 'rear and side speakers fold to their side: surround output not built'],
-  );
+  add('Output models (SOPM)', `speaker output to ${name}`, n, [
+    'done',
+    'speakers.ts: its own speaker of a 7.1 output (5.1: rear and side share the surround pair); folded on stereo',
+  ]);
 tableRows('Categories (SNCT FNAM)', categoryFlags, CATEGORY_FLAGS, (key) => `bit ${String(key)}`);
 tableRows('Music types (MUSC FNAM)', musicFlags, MUSIC_FLAGS, (key) => `bit ${String(key)}`);
 tableRows('Music tracks (MUST CNAM)', trackTypes, TRACK_TYPES);

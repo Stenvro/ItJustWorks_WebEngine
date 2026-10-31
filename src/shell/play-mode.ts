@@ -12,6 +12,7 @@ import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { CellObject } from '../world/cell-loader.ts';
 import { parseItem } from '../world/item-records.ts';
+import { DefaultObjectUse } from '../world/default-objects.ts';
 import { itemSound } from '../gameplay/inventory.ts';
 import {
   buttonArt,
@@ -1298,6 +1299,10 @@ export class PlayMode {
     }
     if (attempt.kind === 'refused') {
       session.hud.notification(settings.string(attempt.setting) ?? '');
+      // The No-Activation Sound (DOBJ NASD: UIActivateFail). TODO(M13): the other activations
+      // the original refuses with it are not known.
+      const refused = session.soundSystem?.defaults.get(DefaultObjectUse.activateFail);
+      if (refused !== undefined) void session.playSound(refused);
       return;
     }
     // Those near comment on the player at a lock (LockedObject).

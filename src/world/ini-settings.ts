@@ -75,6 +75,33 @@ export const INI_DEFAULTS = {
     uWaterAudioAmbientAttenuation: 2200,
     uWaterAudioAxisSamplePoints: 8,
     uWaterAudioSamplePointsToUse: 8,
+    // A spoken line's head motion (its lip file's head pitch, roll and yaw) times these, as
+    // the lip file is read (src/animation/face.ts).
+    fDialogueHeadPitchExaggeration: 2,
+    fDialogueHeadRollExaggeration: 2,
+    fDialogueHeadYawExaggeration: 2,
+    // The gamepad's rumble from the player's sounds (src/audio/rumble.ts).
+    fAudioRumbleSmallExponent: 0.4,
+    fAudioRumbleBigExponent: 0.5,
+    fAudioRumbleSmallLerpMin: 0,
+    fAudioRumbleSmallLerpMax: 1,
+    fAudioRumbleSmallDeadZone: 0,
+    fAudioRumbleBigLerpMin: 0,
+    fAudioRumbleBigLerpMax: 1,
+    fAudioRumbleBigDeadZone: 0,
+    fAudioRumblePowerAttackAdj: 0.15,
+    // The audio on at all, its starting master volume, and the size from which a sound file
+    // streams rather than being kept whole (bytes; src/audio/sound-system.ts).
+    bEnableAudio: 1,
+    fDefaultMasterVolume: 1,
+    uStreamingThreshold: 4194304,
+    // A player's landing that hurts more than this sounds FSTLandHardHeavy, else
+    // FSTLandHardLight (src/shell/time-flow.ts).
+    fHardLandingDamageThreshold: 500,
+  },
+  // The audio menu's master volume (SkyrimPrefs.ini), set as the game's audio starts.
+  AudioMenu: {
+    fAudioMasterVolume: 1,
   },
   Camera: {
     // Holding Toggle POV this long in first person goes to third person (src/shell/player.ts);
@@ -667,6 +694,10 @@ export const INI_DEFAULTS = {
 
 /** The text settings the engine uses, with the same defaults' source. */
 export const INI_TEXT_DEFAULTS = {
+  // The sound (an editor id) looping while the kill camera's slow motion plays.
+  Audio: {
+    sDeathCameraEffect: 'MAGShoutSlowTimeActiveLP',
+  },
   // The nodes a cart's tether joins: the horse's spine, its harness bones, the cart's pole.
   Cart: {
     sHarnessBoneCart: 'FrontHorseCarriage01',

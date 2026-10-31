@@ -14,6 +14,8 @@ export interface DecodedSound {
   readonly channels: readonly Float32Array[];
   readonly loop?: { readonly start: number; readonly end: number };
   readonly lip?: Uint8Array;
+  /** The file's size in bytes (its data as stored; [Audio] uStreamingThreshold compares it). */
+  readonly fileBytes?: number;
 }
 
 export class AudioLoader {
@@ -53,11 +55,13 @@ export class AudioLoader {
   async load(path: string): Promise<DecodedSound | undefined> {
     const found = this.find(path);
     if (found === undefined) return undefined;
-    const response = await this.#request(found, 'samples');
+    let fileBytes = 0;
+    const response = await this.#request(found, 'samples', (bytes) => (fileBytes = bytes));
     if (!response.ok) throw new Error(response.error);
     if (response.kind !== 'samples') throw new Error(`${found}: expected samples`);
     return {
       path: found,
+      fileBytes,
       sampleRate: response.sampleRate,
       channels: response.channels,
       ...(response.loop && { loop: response.loop }),
@@ -86,8 +90,13 @@ export class AudioLoader {
     return response.file;
   }
 
-  async #request(path: string, kind: 'samples' | 'stream' | 'video'): Promise<AudioResponse> {
+  async #request(
+    path: string,
+    kind: 'samples' | 'stream' | 'video',
+    size?: (bytes: number) => void,
+  ): Promise<AudioResponse> {
     const payload = await this.#vfs.readPayload(path);
+    size?.(payload.bytes.byteLength);
     const id = this.#nextId++;
     const request: AudioRequest = {
       id,

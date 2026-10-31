@@ -676,8 +676,18 @@ export class ActorPlacer {
       this.#terminal.log('lip', `${path}: ${describe(error)}`, 'warn');
     }
     const face = placed.face;
-    if (lip && face) face.speak(lip);
-    const lead = lip ? lipLeadIn(lip) : 0;
+    // Observed in the original: a line with lip-sync data starts its sound fSpeechDelay seconds
+    // (0 in vanilla) plus its lead-in after the line begins; its curves wait the delay too.
+    const delay = lip ? await this.#speechDelay() : 0;
+    const speaking =
+      lip &&
+      face &&
+      ((): void => {
+        face.speak(lip);
+      });
+    const faceTimer = speaking && delay > 0 ? setTimeout(speaking, delay * 1000) : undefined;
+    if (speaking && delay <= 0) speaking();
+    const lead = lip ? delay + lipLeadIn(lip) : 0;
     let instance: Promise<SoundInstance | undefined> | undefined;
     let stopped = false;
     const start = (): void => {
@@ -690,6 +700,7 @@ export class ActorPlacer {
       stop: () => {
         stopped = true;
         if (timer !== undefined) clearTimeout(timer);
+        if (faceTimer !== undefined) clearTimeout(faceTimer);
         face?.stopSpeaking();
         void instance?.then((playing) => playing?.stop());
       },
@@ -715,6 +726,16 @@ export class ActorPlacer {
         instance.stop();
       },
     };
+  }
+
+  #speechDelaySeconds: Promise<number> | undefined;
+
+  /** fSpeechDelay: how long a line with lip-sync data waits before it is heard (read once). */
+  #speechDelay(): Promise<number> {
+    this.#speechDelaySeconds ??= this.#session
+      .settings()
+      .then((settings) => Math.max(0, settings.number('fSpeechDelay') ?? 0));
+    return this.#speechDelaySeconds;
   }
 
   /** Blink timing and expression changes from the game settings, read once. */
@@ -749,9 +770,16 @@ export class ActorPlacer {
       }),
     );
     // Seeded apart from the behavior graph: placed together, faces blink at their own times.
+    const ini = this.#session.ini;
     const weights = new FaceAnimation(
       seededRandom(actor.reference ^ 0x5bd1e995),
       await this.#blinkSettings(),
+      undefined,
+      [
+        ini.number('Audio', 'fDialogueHeadPitchExaggeration'),
+        ini.number('Audio', 'fDialogueHeadRollExaggeration'),
+        ini.number('Audio', 'fDialogueHeadYawExaggeration'),
+      ],
     );
     return { weights, morphs: new Map(entries.flat()) };
   }

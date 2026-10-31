@@ -7,6 +7,8 @@ import type { Vec3 } from '../render/math.ts';
 import type { SoundDescriptor, SoundOutputModel } from '../world/sound-records.ts';
 import { distanceGain, instanceGain, instancePitch } from './attenuation.ts';
 import type { AudioEngine } from './audio-engine.ts';
+import { rumbleSends } from './rumble.ts';
+import { speakerGains } from './speakers.ts';
 
 /** A decoded sound file on the audio context, with its loop (seconds). */
 export interface SoundBuffer {
@@ -96,6 +98,7 @@ export class SoundInstance {
       this.#distance.connect(reverb);
       reverb.connect(engine.reverbSend);
     }
+    this.#rumbleSend();
     // One starting while a menu holds its category waits for the menu to close.
     this.#held = engine.held(descriptor.category) !== undefined;
     this.#source = this.#start(0, descriptor.looping !== 'none');
@@ -276,9 +279,9 @@ export class SoundInstance {
   }
 
   /**
-   * Fixed speaker levels (output models with defined speaker output, and 2D sounds): mono and
-   * the two stereo inputs onto left and right (centre at −3 dB to both, the rear pairs to their
-   * side; no surround output yet).
+   * Fixed speaker levels (output models with defined speaker output, and 2D sounds): mono, or
+   * the two stereo inputs, onto the output's speakers by the model's levels (speakers.ts:
+   * 5.1 and 7.1 outputs get the rear and side speakers, stereo folds them to their side).
    */
   #speakerOutput(output: AudioNode): void {
     const levels = this.model?.speakers;
@@ -287,25 +290,19 @@ export class SoundInstance {
       this.#distance.connect(output);
       return;
     }
-    const toStereo = (row: readonly number[] | undefined): [number, number] => {
-      const [l = 0, r = 0, c = 0, , rl = 0, rr = 0, bl = 0, br = 0] = row ?? [];
-      const half = Math.SQRT1_2;
-      return [(l + c * half + rl + bl) / 100, (r + c * half + rr + br) / 100];
-    };
+    const layout = this.#engine.layout;
     const mono = this.#sound.buffer.numberOfChannels === 1;
     const splitter = context.createChannelSplitter(2);
-    const merger = context.createChannelMerger(2);
+    const merger = context.createChannelMerger(layout);
     this.#distance.connect(splitter);
     const route = (input: number, row: readonly number[] | undefined): void => {
-      const [left, right] = toStereo(row);
-      const toLeft = context.createGain();
-      toLeft.gain.value = left;
-      const toRight = context.createGain();
-      toRight.gain.value = right;
-      splitter.connect(toLeft, input);
-      splitter.connect(toRight, input);
-      toLeft.connect(merger, 0, 0);
-      toRight.connect(merger, 0, 1);
+      speakerGains(row, layout).forEach((level, speaker) => {
+        if (level === 0) return;
+        const gain = context.createGain();
+        gain.gain.value = level;
+        splitter.connect(gain, input);
+        gain.connect(merger, 0, speaker);
+      });
     };
     if (mono) route(0, levels[0]);
     else {
@@ -313,5 +310,26 @@ export class SoundInstance {
       route(1, levels[2]);
     }
     merger.connect(output);
+  }
+
+  /**
+   * The gamepad's rumble (rumble.ts): through an output model that allows it, a descriptor
+   * with a rumble send sends its signal into the motors' buses at its two levels.
+   */
+  #rumbleSend(): void {
+    const value = this.descriptor.rumbleSend ?? 0;
+    if (value === 0 || this.model?.allowsRumble !== true) return;
+    const sends = rumbleSends(value);
+    const context = this.#engine.context;
+    for (const [level, bus] of [
+      [sends.small, this.#engine.rumble.small],
+      [sends.big, this.#engine.rumble.big],
+    ] as const) {
+      if (level === 0) continue;
+      const gain = context.createGain();
+      gain.gain.value = level;
+      this.#distance.connect(gain);
+      gain.connect(bus);
+    }
   }
 }

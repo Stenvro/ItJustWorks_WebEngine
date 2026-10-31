@@ -44,6 +44,33 @@ describe.skipIf(!hasGamedata())('sound records in the local game data', () => {
     await vfs.close();
   });
 
+  it("reads the rumble: the player's output models allow it, descriptors send it", async () => {
+    for (const editorId of ['SOMMono01400Player1st', 'SOMMono01400Player3rd']) {
+      expect(parseSoundOutputModel(await byEditorId('SOPM', editorId)).allowsRumble).toBe(true);
+    }
+    const defaults = await DefaultObjects.read(db);
+    const firstPerson = defaults.get('POPM');
+    const model = firstPerson === undefined ? undefined : await db.get(firstPerson);
+    expect(model?.editorId).toBe('SOMMono01400Player1st');
+    expect(parseSoundOutputModel(await byEditorId('SOPM', 'SOMMono01400')).allowsRumble).toBe(
+      undefined,
+    );
+    expect(parseSoundDescriptor(await byEditorId('SNDR', 'NPCKill1HMA')).rumbleSend).toBe(0x64);
+    expect(
+      parseSoundDescriptor(await byEditorId('SNDR', 'MAGDestructionFireStormExplosion')).rumbleSend,
+    ).toBe(0xa0);
+    // The speaker maps of defined speaker models: eight levels per input channel.
+    let defined = 0;
+    for (const formId of db.formIdsOfType('SOPM')) {
+      const record = await db.get(formId);
+      const speakers = record && parseSoundOutputModel(record).speakers;
+      if (!speakers) continue;
+      defined++;
+      for (const row of speakers) expect(row).toHaveLength(8);
+    }
+    expect(defined).toBeGreaterThan(30);
+  });
+
   it('finds the files of nearly every sound descriptor, as the engine does', async () => {
     let files = 0;
     let found = 0;

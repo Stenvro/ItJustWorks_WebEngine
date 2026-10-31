@@ -1393,7 +1393,8 @@ export class PlaySession {
    * in before the camera, `seconds` at a time; let go held, it is thrown along the view (`dual`:
    * dual cast), its turning stopped; let go still pulled in, it stops. The object thrown is
    * followed for TELEKINESIS_THROW_SECONDS (`telekinesisThrown`: what it strikes is hurt,
-   * src/shell/player-casting.ts).
+   * src/shell/player-casting.ts). Answers 'grabbed' as it takes hold, 'thrown' as it throws
+   * (the caller plays their sounds).
    */
   telekinesis(
     active: boolean,
@@ -1401,7 +1402,7 @@ export class PlaySession {
     seconds: number,
     dual: boolean,
     settings: TelekinesisSettings,
-  ): void {
+  ): 'grabbed' | 'thrown' | undefined {
     const grab = this.#grab;
     if (!active) {
       if (grab?.telekinesis) {
@@ -1430,15 +1431,16 @@ export class PlaySession {
             },
             true,
           );
+        return 'thrown';
       }
-      return;
+      return undefined;
     }
     if (grab?.telekinesis) {
       stepTelekinesis(grab.telekinesis, seconds, reach, settings);
-      return;
+      return undefined;
     }
     this.#followThrown(seconds);
-    if (grab || this.seated || this.held) return;
+    if (grab || this.seated || this.held) return undefined;
     const ray = this.#pickRay();
     const hit = this.physics.pick(
       ray.origin,
@@ -1449,7 +1451,7 @@ export class PlaySession {
       this.player.character.collider,
     );
     const body = hit && this.physics.grabbable(hit.collider);
-    if (!hit || !body) return;
+    if (!hit || !body) return undefined;
     this.physics.release(body);
     // Held at its middle (the engine's: its shapes' middle), from where the camera saw it.
     const middle = body.worldCom();
@@ -1462,6 +1464,7 @@ export class PlaySession {
       telekinesis: beginTelekinesis(distance),
       reference: ownReference(hit),
     });
+    return 'grabbed';
   }
 
   /**
