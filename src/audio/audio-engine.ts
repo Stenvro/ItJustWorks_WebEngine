@@ -15,6 +15,8 @@ import {
   type MenuAudio,
 } from './category-rules.ts';
 import { reverbImpulse } from './reverb.ts';
+import { RumbleBuses } from './rumble-buses.ts';
+import { speakerLayout, type SpeakerLayout } from './speakers.ts';
 
 /** A reverb: its convolver and its level (crossfading with the other). */
 interface ReverbSlot {
@@ -28,7 +30,14 @@ export class AudioEngine {
   readonly master: GainNode;
   /** Sounds send into this by their reverb send; it feeds the reverb. */
   readonly reverbSend: GainNode;
+  /** The output's speakers: stereo, 5.1 or 7.1, as many as the device takes (speakers.ts). */
+  readonly layout: SpeakerLayout;
+  /** The gamepad's two rumble buses (rumble.ts): the player's sounds send into them. */
+  readonly rumble: RumbleBuses;
+  /** The master volume ([Audio] fDefaultMasterVolume, then [AudioMenu] fAudioMasterVolume). */
+  readonly #volume: GainNode;
   readonly #output: GainNode;
+  #enabled = true;
   /** Two reverbs, the current one and the one it crossfades from (fReverbTransitionTime). */
   readonly #reverbs: readonly [ReverbSlot, ReverbSlot];
   #activeReverb = 0;
@@ -49,12 +58,32 @@ export class AudioEngine {
   /** Told when the held categories change (the sound system holds or frees its sounds). */
   onHoldChange: (() => void) | undefined;
 
-  constructor() {
+  /**
+   * `masterVolume`: the audio's starting master volume ([Audio] fDefaultMasterVolume; the game
+   * then sets [AudioMenu] fAudioMasterVolume: setMasterVolume).
+   */
+  constructor(masterVolume = 1) {
     this.context = new AudioContext({ latencyHint: 'interactive' });
+    // As many speakers as the device has (5.1, 7.1): the defined speaker models' rear and side
+    // levels play on their own speakers; the channels go to the device as they are.
+    const destination = this.context.destination;
+    this.layout = speakerLayout(destination.maxChannelCount);
+    if (this.layout > 2) {
+      try {
+        destination.channelCount = this.layout;
+        destination.channelInterpretation = 'discrete';
+      } catch {
+        this.layout = 2;
+      }
+    }
     this.#output = this.context.createGain();
-    this.#output.connect(this.context.destination);
+    this.#output.connect(destination);
+    this.#volume = this.context.createGain();
+    this.#volume.gain.value = masterVolume;
+    this.#volume.connect(this.#output);
     this.master = this.context.createGain();
-    this.master.connect(this.#output);
+    this.master.connect(this.#volume);
+    this.rumble = new RumbleBuses(this.context);
     this.reverbSend = this.context.createGain();
     // Until an acoustic space sets one, the reverbs are silent.
     const slot = (): ReverbSlot => {
@@ -299,7 +328,32 @@ export class AudioEngine {
 
   /** Mutes everything for a moment (loading) or brings it back. */
   setMuted(muted: boolean): void {
-    this.#output.gain.setTargetAtTime(muted ? 0 : 1, this.context.currentTime, 0.05);
+    this.#muted = muted;
+    this.#output.gain.setTargetAtTime(
+      muted || !this.#enabled ? 0 : 1,
+      this.context.currentTime,
+      0.05,
+    );
+  }
+
+  #muted = false;
+
+  /** The master volume (0–1) over every category: [AudioMenu] fAudioMasterVolume. */
+  setMasterVolume(volume: number): void {
+    this.#volume.gain.value = Math.max(0, volume);
+  }
+
+  /**
+   * The audio on or off ([Audio] bEnableAudio: the original makes no sound at all without it).
+   * Off, nothing is heard and the sound system starts no sound.
+   */
+  setEnabled(enabled: boolean): void {
+    this.#enabled = enabled;
+    this.setMuted(this.#muted);
+  }
+
+  get enabled(): boolean {
+    return this.#enabled;
   }
 
   #node(formId: number): GainNode {

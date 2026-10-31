@@ -148,4 +148,21 @@ describe('faces', () => {
     expect(face.speaking).toBe(false);
     expect(face.weights[at('Aah')]).toBe(0);
   });
+
+  it("turn the head by the line's pitch, roll and yaw times the exaggeration settings", () => {
+    // The last three of the 33 curves: the head's pitch, roll and yaw.
+    const values = new Float32Array(66);
+    for (const frame of [0, 33]) {
+      values[frame + 30] = 0.1;
+      values[frame + 31] = 0.2;
+      values[frame + 32] = -0.3;
+    }
+    const lip: LipFile = { frames: 2, first: 0, phonemes: 16, curves: 33, values };
+    const face = new FaceAnimation(() => 0.99, blink, undefined, [2, 2, 2]);
+    face.speak(lip);
+    face.update(0.5 / 30);
+    expect(face.headRotation[0]).toBeCloseTo(0.2);
+    expect(face.headRotation[1]).toBeCloseTo(0.4);
+    expect(face.headRotation[2]).toBeCloseTo(-0.6);
+  });
 });

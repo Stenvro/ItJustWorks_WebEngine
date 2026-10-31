@@ -89,6 +89,8 @@ const DEATH_WAIT = 8;
 const DEATH_TAKEN = 0.3;
 /** A death cry waiting for its graph's DeathEmote is said after this at the latest (seconds). */
 const DEATH_EMOTE_WAIT = 2;
+/** fDeathSoundMaxDistance's default: how near the player a death cry is said (units). */
+const DEATH_SOUND_MAX_DISTANCE = 1000;
 /** A killmove victim's clip this near its end (seconds) is at its last pose. */
 const PAIRED_END_SLACK = 0.05;
 /** The engine's death actions (AACT), as the idle tree has them: creatures', then humans'. */
@@ -509,14 +511,33 @@ export class ActorGraphEvents {
    * ragdoll (AddRagdollToWorld). Its Death line is said now, unless its graph has a DeathEmote
    * to say it by. A killmove's victim dies in its paired clip.
    */
+  /**
+   * Whether a dying actor says its Death line at all (observed in the original: the player
+   * always, another only within fDeathSoundMaxDistance of the player).
+   */
+  async #deathCryHeard(reference: number): Promise<boolean> {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime || reference === PLAYER_REF) return true;
+    const reach = await runtime.gameSetting('fDeathSoundMaxDistance');
+    const max = typeof reach === 'number' ? reach : DEATH_SOUND_MAX_DISTANCE;
+    const at = runtime.world.livePlacement?.(reference)?.position;
+    const player = runtime.world.livePlacement?.(PLAYER_REF)?.position;
+    if (!at || !player) return true;
+    return Math.hypot(at[0] - player[0], at[1] - player[1], at[2] - player[2]) <= max;
+  }
+
   async died(staged: StagedActor, killer: number | undefined, silent: boolean): Promise<void> {
     const { stage } = this.#options;
     const reference = staged.reference;
     const cry = silent
       ? undefined
       : (): void => {
-          stage.talk
-            .bark(reference, 'Death', killer ?? PLAYER_REF, { interrupt: true })
+          this.#deathCryHeard(reference)
+            .then((heard) =>
+              heard
+                ? stage.talk.bark(reference, 'Death', killer ?? PLAYER_REF, { interrupt: true })
+                : undefined,
+            )
             .catch((error: unknown) => {
               this.#options.terminal.log('actor', `a death cry: ${describe(error)}`, 'warn');
             });

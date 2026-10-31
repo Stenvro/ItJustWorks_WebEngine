@@ -52,9 +52,16 @@ sound beside an existing voice file (no vanilla response has both).
   shift ± a random variation, percent), a gain for its static attenuation and a random cut of
   up to its dB variance, a gain for the output model's distance curve, then a 3D panner (HRTF;
   output models that use HRTF) or fixed speaker levels (output models with defined speaker
-  output: the mono / stereo-left / stereo-right rows onto left and right, centre at −3 dB to
-  both, rear speakers to their side; no surround output yet), into its category. Its output
-  model's reverb send goes to the reverb bus (at its category's volume).
+  output: the mono / stereo-left / stereo-right rows onto the output's speakers, see "Surround
+  output"), into its category. Its output model's reverb send goes to the reverb bus (at its
+  category's volume).
+- **The master** (observed in the original): the audio starts at `[Audio] fDefaultMasterVolume`
+  and the game's start sets the audio menu's `[AudioMenu] fAudioMasterVolume` (SkyrimPrefs.ini)
+  over every category; `bEnableAudio=0` makes no sound at all (no sound starts). The journal's
+  master slider is the master category's user volume, on top of it.
+- **Streaming** (observed in the original): a file larger than `[Audio] uStreamingThreshold`
+  (4 MB) streams from the disk on each play instead of being kept; here it is decoded for the
+  play and not kept in the decoded-buffer cache. Music always streams (`music-output.ts`).
 - **Distance:** the panner only pans; the volume follows the output model's curve
   ([esm.md](formats/esm.md#sounds)), smoothed over 50 ms. Output models without distance
   attenuation play at full volume wherever they play.
@@ -63,6 +70,45 @@ sound beside an existing voice file (no vanilla response has both).
   and, when stopped, the part after it (release): fast jumps there at once, slow finishes the
   loop's pass first. Sounds stopped because their cell unloads stop at once.
 - **The listener** is at the camera, facing along it, Z up.
+
+### Surround output
+
+A defined speaker output model (SOPM ONAM) gives each input channel (mono, or stereo left and
+right) a level of 0–100 per speaker in the 7.1 order: front left, front right, centre, LFE,
+rear left, rear right, side left, side right; the original hands that matrix to XAudio2 for the
+device's speakers. Here (`speakers.ts`, `AudioEngine.layout`) the output takes as many channels
+as the device: 8 (7.1, each level on its speaker), 6 (5.1: Web Audio's L R C LFE SL SR, the rear
+and side levels together on the surround pair) or 2 (stereo: the centre at −3 dB on both, the
+rear and side levels on their side, the LFE dropped). With more than two channels the
+destination is discrete: the channels reach the device as they are; HRTF sounds stay on the
+front pair. TODO(M13): how the original folds rear and side levels onto a device without those
+speakers is not known.
+
+### 3D update and Doppler
+
+Observed in the original: each placed sound's 3D update asks
+X3DAudio for its speaker matrix, its direct-path and reverb low-pass coefficients, its reverb
+level and its Doppler factor. The matrix sets the voice's output, the reverb level scales its
+reverb send, and the direct-path coefficient becomes a low-pass filter on its output
+(cutoff = coefficient × sample rate / 6); the Doppler factor sets nothing: no pitch changes with
+speed, so here none is applied. Open: the distance low-pass and the reverb level by distance
+(X3DAudio's default curves: the low-pass from 1 down to 0.75, the reverb from 1 down to 0
+across the curve's distance; which distance the original scales the curves by is not known).
+
+### Rumble
+
+Observed in the original (`rumble.ts`): a sound whose output model allows rumble (SOPM NAM1
+flag 0x2: only the player's own first- and third-person models, DOBJ POPM and P3OM) sends its
+signal into two buses, one per gamepad motor, at its descriptor's rumble send (SNDR LNAM byte
+3: the low four bits the small motor's share in fifteenths, the high four the big motor's;
+TODO(M13): which half is which motor is inferred from the data). Each bus meters its loudest
+sample of every audio pass; once a frame each peak is raised to
+`fAudioRumbleSmallExponent` (0.4) / `fAudioRumbleBigExponent` (0.5), both lowered by
+`fAudioRumblePowerAttackAdj` (0.15, at least 0.01) while the player power attacks; below its
+dead zone a motor stops (a big motor below its dead zone silences the small one, as the original
+does), else it is lerped between its LerpMin and LerpMax. The shell drives the gamepad's
+dual-rumble effect with the result (with the Vibration setting on), a frame's strengths held
+0.1 s. The player's sounds reach those models once they play through POPM and P3OM.
 
 ## Mixing rules
 
@@ -100,6 +146,11 @@ the listener is within their output model's maximum distance (and stop 10 % beyo
 they do not flicker at the edge); those without distance attenuation play while their cell is
 loaded. Doors and containers play their open and close sounds when used; load doors their
 open sound as the player goes through.
+
+References the game creates after the cells loaded (PlaceAtMe, an explosion's placed object:
+`created-objects.ts`) sound the same way: their base's looping sound joins the sound system's
+emitters (the 'created' group, while enabled); a sound marker of a one-shot descriptor (the
+explosion's placed sound marker) plays once where it appears.
 
 ## Acoustic spaces
 
@@ -280,7 +331,27 @@ gates are not played: when the original plays them is not known.
   which is inferred from their names).
 - **Harvest:** a plant that gives nothing this season plays the default object HVFS
   (ITMGenericIngredientUpFailSD) instead of its harvest sound.
-- **Death:** the player's death adds the death music (DOBJ DTMS, MUSSpecialDeath).
+- **Death:** the player's death adds the death music (DOBJ DTMS, MUSSpecialDeath). Observed in
+  the original: a dying actor says its Death line only within `fDeathSoundMaxDistance` (1000) of
+  the player (the player's own always).
+- **Telekinesis:** taking hold of an object plays DOBJ TKGS (MAGAlterationTelekinesisGrabSD),
+  throwing it TKTS (…ThrowSD), at the player.
+- **Activation refused:** a lock the player cannot open (one that needs its key, no lockpicks,
+  a lock while pursued) plays the No-Activation Sound (DOBJ NASD, UIActivateFail) beside its
+  message. TODO(M13): the other activations the original refuses with it are not known.
+- **Hard landing** (observed in the original): a fall that hurts the player plays
+  FSTLandHardHeavy when its damage is above `[Audio] fHardLandingDamageThreshold` (500), else
+  FSTLandHardLight (by editor id, 2D).
+- **Kill camera** (observed in the original): as its slow-motion playback starts, the descriptor
+  `[Audio] sDeathCameraEffect` names (MAGShoutSlowTimeActiveLP) plays at the listener; it stops
+  as the camera ends.
+- **Spoken lines** (observed in the original): a line with lip-sync data starts its sound
+  `fSpeechDelay` (0) seconds plus its lead-in after the line begins; a line whose voice file is
+  there but fails to play lasts `fSubtitleSpeechDelay` (1.5 s); the lip file's head pitch, roll
+  and yaw are multiplied by `[Audio] fDialogueHead{Pitch,Roll,Yaw}Exaggeration` (2) as it is
+  read. `fDialogSpeechDelaySeconds` and `fLowPerfCombatantVoiceDistance` are never read.
+- **The player's action** (GetPlayerAction: a lock picked or a pick broken) holds for
+  `fActorAlertSoundTimer` (5 s), the action timer the original starts as an action is set.
 
 ## Water
 
