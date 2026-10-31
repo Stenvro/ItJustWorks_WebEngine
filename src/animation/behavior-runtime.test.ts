@@ -1459,6 +1459,44 @@ describe('bone LOD', () => {
     expect([runtime.pose[0], runtime.pose[10]]).toEqual([7, 7]);
   });
 
+  it('keeps the bones it leaves out as they were, not turned again by the passes after it', () => {
+    const headed: HkxSkeleton = {
+      ...skeleton,
+      bones: [
+        { name: 'Root', lockTranslation: false },
+        { name: 'NPC Head [Head]', lockTranslation: false },
+      ],
+      parents: Int16Array.of(-1, 0),
+      referencePose: Float32Array.of(0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1),
+    };
+    const still: AnimationBinding = {
+      ...animation(0, 10),
+      animation: {
+        ...animation(0, 10).animation,
+        trackCount: 2,
+        sample: (_time, out) => {
+          out.set(headed.referencePose);
+        },
+      },
+    };
+    const runtime = new BehaviorRuntime({
+      root: graph(clip('still'), []),
+      host: host({ still }),
+      skeleton: headed,
+    });
+    // A spoken line's head turn, applied over each pose generated.
+    runtime.headTurn = [0, 0, 0.5];
+    runtime.update(0.1);
+    const turned = Array.from(runtime.pose.subarray(10, 20));
+    expect(Math.hypot(turned[3] ?? 0, turned[4] ?? 0, turned[5] ?? 0)).toBeGreaterThan(0.1);
+    // Unseen: no bone animates; the head keeps its turned pose, not turned on and on.
+    runtime.seen = false;
+    for (let i = 0; i < 5; i++) runtime.update(0.1);
+    Array.from(runtime.pose.subarray(10, 20)).forEach((value, i) => {
+      expect(value).toBeCloseTo(turned[i] ?? 0, 6);
+    });
+  });
+
   it('poses every bone once for a graph never seen, then its minimum alone', () => {
     const oneBone: HkxSkeleton = {
       ...skeleton,
