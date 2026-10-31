@@ -127,6 +127,46 @@ export function starView(
   };
 }
 
+/** fStatsSkillsLookAtX/Y/Z: what the camera looks at on the ring, over the skill's point. */
+export const SKILLS_LOOK_AT_DEFAULTS: Vec3 = [0, 0, 5];
+
+/**
+ * The camera on the ring (observed in the original): at the dome's middle (raised by `z` while
+ * it settles after the dome's CameraIntro), looking at the point its heading faces (degrees
+ * clockwise from Point00) raised by fStatsSkillsLookAt (world axes). The ring's points face it
+ * at STAR_DISTANCE, so it looks up atan(4.93 / 99.34), about 3°.
+ */
+export function ringView(
+  yawDegrees: number,
+  z = 0,
+  lookAt: Vec3 = SKILLS_LOOK_AT_DEFAULTS,
+): { readonly position: Vec3; readonly target: Vec3 } {
+  const yaw = (yawDegrees * Math.PI) / 180;
+  return {
+    position: [0, 0, z],
+    target: [
+      Math.sin(yaw) * STAR_DISTANCE + lookAt[0],
+      Math.cos(yaw) * STAR_DISTANCE + lookAt[1],
+      STAR_BASE + lookAt[2],
+    ],
+  };
+}
+
+/** Seconds the camera takes to a selected star and back to the ring (observed: 1000 ms). */
+export const STAR_MOVE_SECONDS = 1;
+/** Seconds the camera takes from the end of the dome's CameraIntro to the ring (300 ms). */
+export const RING_SETTLE_SECONDS = 0.3;
+
+/**
+ * How far along its move the camera is at a share of the move's time (observed in the
+ * original): in a tree (to a star, from star to star) half a cosine, slow at both ends; to the
+ * ring a quarter sine, slowing as it arrives.
+ */
+export function cameraMoveShare(share: number, inTree: boolean): number {
+  const t = Math.min(1, Math.max(0, share));
+  return inTree ? (1 - Math.cos(t * Math.PI)) / 2 : Math.sin((t * Math.PI) / 2);
+}
+
 /** Below this speed (degrees a second; 0.01 radians) the ring stops turning. */
 const TURN_STOP = (0.01 * 180) / Math.PI;
 
