@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { Fields } from '../formats/esm/fields.ts';
 import { identity } from '../render/math.ts';
 import {
+  DECAL_FADE_SECONDS,
+  decalAlpha,
+  decalGoneAt,
   DecalFlag,
   decalTooNear,
+  squareDecal,
   ENVIRONMENT_BLOOD,
   environmentBloodWay,
   expireDecals,
@@ -59,6 +63,17 @@ describe('decalTooNear', () => {
       color: [1, 1, 1] as const,
     };
     expect(placedSize(placeDecal(decal, 1, identity()))).toEqual({ width: 10, height: 20 });
+  });
+});
+
+describe('decal fade', () => {
+  it('shows a decal whole for its lifetime, then fades it over one second', () => {
+    const gone = decalGoneAt(10, 30);
+    expect(gone).toBe(40 + DECAL_FADE_SECONDS);
+    expect(decalAlpha(gone, 10)).toBe(1);
+    expect(decalAlpha(gone, 40)).toBe(1);
+    expect(decalAlpha(gone, 40.25)).toBeCloseTo(0.75);
+    expect(decalAlpha(gone, 41)).toBe(0);
   });
 });
 
@@ -141,6 +156,13 @@ describe('placeDecal', () => {
     flags: DecalFlag.alphaBlending,
     color: [1, 1, 1] as const,
   };
+
+  it('makes the environment blood square: its height drawn as its width', () => {
+    const size = placedSize(placeDecal(squareDecal(decal), 0x77, identity()));
+    expect(size.height).toBeCloseTo(size.width);
+    expect(size.width).toBeGreaterThanOrEqual(100);
+    expect(size.width).toBeLessThanOrEqual(200);
+  });
 
   it('sizes the box between min and max, the same for the same reference', () => {
     const a = placeDecal(decal, 0x1234, identity());

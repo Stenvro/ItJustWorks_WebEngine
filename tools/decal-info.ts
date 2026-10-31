@@ -1,9 +1,12 @@
 // Placed decals (TXST references): which texture sets the load order places and how often,
 // with their decal data; with --cell, where a cell's decals land (the ray along their +Y
-// axis to the first surface).
+// axis to the first surface); with --impacts, the impacts (IPCT) that leave a decal on what they
+// strike: their angle threshold (which faces of the struck shapes take it) and their decal's
+// size and depth (the box its triangles are clipped to).
 //
 //   node tools/decal-info.ts
 //   node tools/decal-info.ts --cell WhiterunDragonsreachBasement
+//   node tools/decal-info.ts --impacts
 
 import { parseArgs } from 'node:util';
 import { parseNif } from '../src/formats/nif/nif.ts';
@@ -14,14 +17,48 @@ import type { PlacedPart } from '../src/render/raycast.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { loadCellData } from '../src/world/cell-loader.ts';
 import { parseTextureSet } from '../src/world/decal.ts';
+import { parseImpact } from '../src/world/impact-records.ts';
+import { worldDecalFaceLimit } from '../src/render/world-decal.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
 import { openGameFolder } from './gamedata-path.ts';
 
-const { values } = parseArgs({ options: { cell: { type: 'string' } } });
+const { values } = parseArgs({
+  options: { cell: { type: 'string' }, impacts: { type: 'boolean' } },
+});
 const vfs = await Vfs.mount(openGameFolder());
 const db = await RecordDatabase.open(vfs);
 
-if (values.cell) {
+if (values.impacts) {
+  // Impacts leave a decal unless DATA flag 0x1 (no decal data) is set or they name no set.
+  const angles = new Map<number, number>();
+  let made = 0;
+  for (const id of db.formIdsOfType('IPCT')) {
+    const record = await db.get(id);
+    if (!record) continue;
+    const impact = parseImpact(record);
+    if (((record.fields.first('DATA')?.[20] ?? 0) & 0x1) !== 0) continue;
+    const setId = record.formIdField('DNAM');
+    const setRecord = setId === undefined ? undefined : await db.get(setId);
+    if (!setRecord) continue;
+    const decal =
+      parseTextureSet({ fields: record.fields }).decal ?? parseTextureSet(setRecord).decal;
+    if (!decal) continue;
+    made++;
+    angles.set(impact.angleThreshold, (angles.get(impact.angleThreshold) ?? 0) + 1);
+    const faces = worldDecalFaceLimit(impact.angleThreshold);
+    console.log(
+      `${record.editorId ?? id.toString(16)}: angle ${String(impact.angleThreshold)}° ` +
+        `(faces within cos ${faces.toFixed(2)}), ${String(decal.minWidth)}–${String(decal.maxWidth)} × ` +
+        `${String(decal.minHeight)}–${String(decal.maxHeight)}, depth ±${String(decal.depth)}, ` +
+        `placement radius ${String(impact.placementRadius)}`,
+    );
+  }
+  const spread = [...angles].sort((a, b) => a[0] - b[0]);
+  console.log(
+    `${String(made)} impacts leave a decal; angle thresholds: ` +
+      spread.map(([angle, count]) => `${String(angle)}° ×${String(count)}`).join(', '),
+  );
+} else if (values.cell) {
   const wanted = values.cell.toLowerCase();
   const cell = (await db.interiorCells()).find((c) => c.editorId.toLowerCase() === wanted);
   if (!cell) throw new Error(`No interior cell ${values.cell}`);

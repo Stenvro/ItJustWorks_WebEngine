@@ -1230,6 +1230,20 @@ export class WorldViewer {
       obstacles: () => this.#stageObstacles(),
       light: (at) => this.#lightProbe(at),
       objectBody: (reference) => this.#objectBody(reference),
+      land: (x, y) => {
+        const cell = this.#cells.get(cellKey(Math.floor(x / CELL_SIZE), Math.floor(y / CELL_SIZE)));
+        const land = cell?.ready ? cell.land : undefined;
+        return (
+          cell &&
+          land && {
+            heights: land.heights,
+            normals: land.normals,
+            origin: [cell.x * CELL_SIZE, cell.y * CELL_SIZE],
+            grid: LAND_GRID,
+            spacing: CELL_SIZE / (LAND_GRID - 1),
+          }
+        );
+      },
       ragdollPoseReplaced: (from, to) => this.#play?.ragdollPoseReplaced(from, to),
       focus: () => this.#play?.player.feet,
       // Actors walking into trigger volumes tell their scripts.
