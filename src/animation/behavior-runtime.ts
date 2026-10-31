@@ -771,6 +771,7 @@ export class BehaviorRuntime {
     this.#properties = options.properties ?? {};
     this.#boneCount = options.skeleton.bones.length;
     this.pose = options.skeleton.referencePose.slice();
+    this.#keptBones = new Float32Array(this.pose.length);
     const slots = options.skeleton.floatSlots.length;
     this.#blockCount = this.#boneCount + slots;
     this.#referencePose = new Float32Array(this.#blockCount * TRANSFORM_FLOATS);
@@ -1414,10 +1415,20 @@ export class BehaviorRuntime {
     } else {
       this.pose.set(generated.pose.subarray(0, animated));
     }
+    // The bones bone LOD left out keep the pose they had, the head's turn and the foot IK's
+    // lean, lift and legs of their last update included: those passes act on a pose just
+    // generated, and run again over a kept one they added up every update (an unseen horse's
+    // foot IK carried its root thousands of units away, and the cart it pulls with it).
+    const kept = generated && !generated.additive && animated < bones;
+    if (kept) this.#keptBones.set(this.pose.subarray(animated, bones), animated);
     this.#readFloatSlots(generated && !generated.additive ? generated.pose : undefined);
     this.#turnHead();
     this.#driveFootIk();
+    if (kept) this.pose.set(this.#keptBones.subarray(animated, bones), animated);
   }
+
+  /** The bones bone LOD keeps this update, as they were before its head turn and foot IK. */
+  readonly #keptBones: Float32Array;
 
   /**
    * The skeleton model's bone LOD (BSBoneLODExtraData: a distance and a bone per level), as
