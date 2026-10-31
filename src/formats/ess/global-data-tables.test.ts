@@ -84,12 +84,17 @@ describe('ESS global data, tables 2 and 3 (built from the documented layouts)', 
     ref(w.f32(7).f32(8).f32(9), 0x3c).u32(1).f32(2);
     w.vsval(1);
     ref(ref(w, 0x14), 0x15).u8(1).u8(2).u8(3);
-    w.u8(1).u32(1).u32(2).u32(1).u8(5).u32(2).u8(0xaa).u8(0xbb);
+    // its line-of-sight grid map: two grids (a key; cells: a switch, its bytes, a navmesh and a
+    // u32; the grid's navmesh), a u32, a path point in an exterior cell, two u32
+    w.u8(1).u32(2);
+    w.u32(2).u32(1).u8(5).u32(2).u8(0xaa).u8(0xbb);
     ref(w, 0x16).u32(3);
     ref(w, 0x17);
-    for (let i = 0; i < 5; i++) w.f32(i);
-    ref(w, 0x18).f32(1);
-    ref(w, 0x19).u16(1).u8(2).u8(3).f32(4).f32(5);
+    w.u32(7).u32(0);
+    ref(w, 0x17);
+    w.u32(4).f32(1).f32(2).f32(3).u32(pathingTypeId('PathingCell'));
+    ref(w, 0x3c).i32(0x00010002);
+    ref(w, 0x19).u16(1).u8(2).u8(3).u32(4).u32(5);
     // the combat's tail
     w.f32(1).f32(2).f32(3).f32(4).f32(5).f32(6).f32(7).f32(8).u8(9);
     // the threats (a form and its combat object, written the first time: id | 1, type, data;
@@ -110,9 +115,17 @@ describe('ESS global data, tables 2 and 3 (built from the documented layouts)', 
       cell: 0x3c,
     });
     expect(combat.combats[0]?.pairs).toHaveLength(15);
-    expect(combat.combats[0]?.search?.detail?.entries[0]?.bytes).toEqual(
-      new Uint8Array([0xaa, 0xbb]),
-    );
+    expect(combat.combats[0]?.search?.detail).toEqual({
+      grids: [
+        {
+          key: 2,
+          cells: [{ flag: 5, bits: new Uint8Array([0xaa, 0xbb]), navmesh: 0x16, value: 3 }],
+          navmesh: 0x17,
+        },
+        { key: 7, cells: [], navmesh: 0x17 },
+      ],
+      values: [4, 4, 5],
+    });
     expect(combat.combats[0]?.unknown1).toBe(9);
     expect(combat.threats).toEqual([0x14, 0x15]);
     expect(combat.references).toEqual([0x14]);
@@ -194,9 +207,12 @@ describe('ESS global data, tables 2 and 3 (built from the documented layouts)', 
       unknown3: 4,
       unknown4: 5,
     });
-    // One event waiting: number 4, Script Event (SCPT), a reference and a number.
-    const events = new EssWriter().u32(5).vsval(1).u32(4).u32(0x54504353).u32(2);
+    // One event waiting: number 4, Script Event (SCPT), a reference, a number, another form
+    // (kind 1, written by its form as a reference id) and a kind the original writes no
+    // value for.
+    const events = new EssWriter().u32(5).vsval(1).u32(4).u32(0x54504353).u32(4);
     ref(events.u32(0), 0x14).u32(3).u32(7);
+    ref(events.u32(1), 0x12eb7).u32(9);
     expect(readStoryEventManager(events.done(), resolve)).toEqual({
       nextId: 5,
       events: [
@@ -206,6 +222,8 @@ describe('ESS global data, tables 2 and 3 (built from the documented layouts)', 
           parameters: [
             { kind: 0, value: 0x14 },
             { kind: 3, value: 7 },
+            { kind: 1, value: 0x12eb7 },
+            { kind: 9, value: 0 },
           ],
         },
       ],

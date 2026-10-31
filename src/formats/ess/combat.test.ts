@@ -48,6 +48,119 @@ describe('combat AI objects', () => {
     }).toThrow(CombatUnknown);
   });
 
+  it('knows the 26 combat paths the original has, and no other request and destination', () => {
+    const mix = (...names: string[]): number =>
+      names.reduce((type, name) => type ^ pathingTypeId(name), 0) >>> 0;
+    expect(
+      combatTypeName(mix('CombatPathT', 'CombatPathRequestHover', 'CombatPathDestinationNone')),
+    ).toBe('CombatPathT<Hover, None>');
+    // The generic request's id: the hover request's name's with its two policies mixed in.
+    const generic = mix(
+      'CombatPathRequestHover',
+      'CombatPathingGoalPolicyFindTargetLocation',
+      'CombatPathingSearchPolicyStandard',
+    );
+    expect(combatTypeName(generic ^ mix('CombatPathT', 'CombatPathDestinationRef'))).toBe(
+      'CombatPathT<FindTargetLocation, Ref>',
+    );
+    // A pairing no template of the original makes.
+    expect(
+      combatTypeName(mix('CombatPathT', 'CombatPathRequestHover', 'CombatPathDestinationRef')),
+    ).toBeUndefined();
+  });
+
+  /** A path's own part as the original's CombatPath writes it, before its request. */
+  function pathStart(w: EssWriter, id: number, request: string, destination: string): EssWriter {
+    const type =
+      pathingTypeId('CombatPathT') ^
+      pathingTypeId(`CombatPathRequest${request}`) ^
+      pathingTypeId(`CombatPathDestination${destination}`);
+    // The id (first time), the type; the actor, three values, two timers, no speed controller.
+    w.u32(id | 1)
+      .u32(type >>> 0)
+      .refId(1, 0x14)
+      .u32(1)
+      .u32(2)
+      .u32(3);
+    return w.f32(1).f32(2).f32(3).f32(4).u32(0);
+  }
+  /** A location: a point and the cell's reference. */
+  const location = (w: EssWriter): EssWriter => w.f32(1).f32(2).f32(3).refId(1, 0x3c);
+  /** A path point with no cell and no form (movement.ts). */
+  const point = (w: EssWriter): EssWriter =>
+    w.f32(1).f32(2).f32(3).u32(0).bytes([0, 0, 0]).u16(0xffff).u8(0).u8(0);
+
+  it('reads the hover path: its request and the places to hover, a point and seven values each', () => {
+    const w = pathStart(new EssWriter(), 0x10, 'Hover', 'None').u64(0n).vsval(2);
+    for (let i = 0; i < 2; i++) {
+      point(w);
+      for (let j = 0; j < 7; j++) w.f32(j);
+    }
+    const s = stream(w.done());
+    readCombatObject(s);
+    expect(s.reader.remaining).toBe(0);
+  });
+
+  it('reads the flying paths and their destinations as the original writes them', () => {
+    const w = new EssWriter();
+    // Landing at a location: the flight request, the landing's reference and three values;
+    // the destination's location and a value.
+    pathStart(w, 0x20, 'Landing', 'Location').u64(0n).refId(1, 0x1234).u32(0).u32(0).u32(0);
+    location(w).u32(5);
+    // Orbiting a location: the flight request and a value.
+    pathStart(w, 0x30, 'Orbit', 'Location').u64(0n).u32(9);
+    location(w).u32(5);
+    // A flying attack: the flight request and its target; no destination.
+    pathStart(w, 0x40, 'FlyingAttack', 'None').u64(0n).refId(1, 0x14);
+    // To references by weight: the request and the weights; the destination's reference with
+    // its location, a value and a timer, then the references (a reference and a value each).
+    pathStart(w, 0x50, 'WeightedMultiGoal', 'Refs').u64(0n).vsval(2).f32(0.5).f32(0.5);
+    location(w.refId(1, 0x14)).u32(0).f32(0).f32(1);
+    w.vsval(2).refId(1, 0x14).u32(0).refId(1, 0x15).u32(1);
+    // To several locations: a location and a value each.
+    pathStart(w, 0x60, 'MultiGoal', 'Locations').u64(0n).vsval(1);
+    location(w).u32(0);
+    const s = stream(w.done());
+    for (let i = 0; i < 5; i++) readCombatObject(s);
+    expect(s.reader.remaining).toBe(0);
+  });
+
+  it('reads the generic paths: the goal policy and the search policy after the request', () => {
+    const generic = (goal: string, search: string, destination: string): number =>
+      (pathingTypeId('CombatPathRequestHover') ^
+        pathingTypeId(`CombatPathingGoalPolicy${goal}`) ^
+        pathingTypeId(`CombatPathingSearchPolicy${search}`) ^
+        pathingTypeId('CombatPathT') ^
+        pathingTypeId(`CombatPathDestination${destination}`)) >>>
+      0;
+    const w = new EssWriter();
+    // Searching: the path's part, the request; the goal's reference, its points (a list), a
+    // point; the search policy's request and four flags; no destination.
+    w.u32(0x71)
+      .u32(generic('Search', 'Standard', 'None'))
+      .refId(1, 0x14)
+      .u32(0)
+      .u32(0)
+      .u32(0);
+    w.f32(0).f32(0).f32(0).f32(0).u32(0).u64(0n);
+    w.refId(1, 0x14).vsval(1).f32(1).f32(2).f32(3).f32(4).f32(5).f32(6);
+    w.u64(0n).bytes([1, 0, 0, 0]);
+    // Flanking a reference: two combat objects, the search, two more objects; the reference.
+    w.u32(0x81)
+      .u32(generic('Flank', 'Flank', 'Ref'))
+      .refId(1, 0x14)
+      .u32(0)
+      .u32(0)
+      .u32(0);
+    w.f32(0).f32(0).f32(0).f32(0).u32(0).u64(0n);
+    w.u32(0).u32(0).u64(0n).bytes([0, 0, 0, 0]).u32(0).u32(0);
+    location(w.refId(1, 0x14)).u32(0).f32(0).f32(1);
+    const s = stream(w.done());
+    readCombatObject(s);
+    readCombatObject(s);
+    expect(s.reader.remaining).toBe(0);
+  });
+
   it('reads a combat controller to its end', () => {
     const w = new EssWriter().refId(1, 0x1234).refId(1, 0x14).u32(7);
     w.bytes([1, 1, 0, 0, 0, 0]).f32(0).f32(0).f32(0);

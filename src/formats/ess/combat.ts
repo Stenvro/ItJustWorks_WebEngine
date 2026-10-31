@@ -61,18 +61,36 @@ const DESTINATIONS: Readonly<Record<string, readonly Part[]>> = {
 };
 
 /** The combat path requests (CombatPathT's first argument): what each writes. */
-const PATH_REQUESTS: readonly (readonly [string, readonly Part[]])[] = [
-  ['Standard', ['request']],
-  ['MultiGoal', ['request']],
-  ['WeightedMultiGoal', ['request', ['list', [4]]]],
-  ['StraightPath', ['request']],
-  ['RotatePath', ['request']],
-  ['Flight', ['request']],
-  ['Orbit', ['request', 4]],
-  ['Landing', ['request', 'form', 12]],
-  ['FlyingAttack', ['request', 'form']],
-  // Where to hover: a point and seven floats each.
-  ['Hover', ['request', ['list', ['point', 28]]]],
+const PATH_REQUESTS: Readonly<Record<string, readonly Part[]>> = {
+  Standard: ['request'],
+  MultiGoal: ['request'],
+  WeightedMultiGoal: ['request', ['list', [4]]],
+  StraightPath: ['request'],
+  RotatePath: ['request'],
+  Flight: ['request'],
+  Orbit: ['request', 4],
+  Landing: ['request', 'form', 12],
+  FlyingAttack: ['request', 'form'],
+  // Where to hover: a point and seven values each.
+  Hover: ['request', ['list', ['point', 28]]],
+};
+
+/** The combat paths the original has, by request and destination (its 14 templates). */
+const PATHS: readonly (readonly [string, string])[] = [
+  ['Standard', 'Location'],
+  ['Standard', 'Ref'],
+  ['MultiGoal', 'Locations'],
+  ['MultiGoal', 'Refs'],
+  ['WeightedMultiGoal', 'Locations'],
+  ['WeightedMultiGoal', 'Refs'],
+  ['StraightPath', 'Location'],
+  ['RotatePath', 'Location'],
+  ['Flight', 'Location'],
+  ['Flight', 'Ref'],
+  ['Orbit', 'Location'],
+  ['Landing', 'Location'],
+  ['Hover', 'None'],
+  ['FlyingAttack', 'None'],
 ];
 
 /** The combat paths made from a goal and a search policy, with their destination. */
@@ -206,14 +224,12 @@ const COMBAT_TYPES = ((): Map<number, readonly [string, readonly Part[]]> => {
       );
     }
   }
-  for (const [request, parts] of PATH_REQUESTS) {
-    for (const [destination, rest] of Object.entries(DESTINATIONS)) {
-      add(
-        `CombatPathT<${request}, ${destination}>`,
-        mix('CombatPathT', `CombatPathRequest${request}`, `CombatPathDestination${destination}`),
-        [...PATH, ...parts, ...rest],
-      );
-    }
+  for (const [request, destination] of PATHS) {
+    add(
+      `CombatPathT<${request}, ${destination}>`,
+      mix('CombatPathT', `CombatPathRequest${request}`, `CombatPathDestination${destination}`),
+      [...PATH, ...(PATH_REQUESTS[request] ?? []), ...(DESTINATIONS[destination] ?? [])],
+    );
   }
   for (const [goal, search, destination, parts] of GENERIC_PATHS) {
     // Observed in the original: the generic request's own id is the hover request's name's,

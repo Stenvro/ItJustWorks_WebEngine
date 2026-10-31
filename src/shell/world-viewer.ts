@@ -97,6 +97,7 @@ import type { AdoptedVehicle } from './actor-vehicles.ts';
 import { stageObject, type StageObject } from './actor-furniture.ts';
 import type { MoveRequest } from '../ai/locomotion.ts';
 import { controlsRequest, keepOffsetRequest } from '../ai/movement-overrides.ts';
+import { terrainEffectPlacement } from '../world/terrain-effect.ts';
 import { summonPlace, type NavmeshSet } from '../ai/pathfinding.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement } from '../scripting/runtime/runtime.ts';
@@ -917,10 +918,18 @@ export class WorldViewer {
     furnitureInUse: (reference, marker) => this.#stage?.furniture.inUse(reference, marker) ?? false,
     addRagdoll: (reference) => this.#stage?.addRagdoll(reference) ?? Promise.resolve(),
     removeRagdoll: (reference) => this.#stage?.removeRagdoll(reference) ?? Promise.resolve(),
-    terrainEffectAt: (model, at) => {
+    terrainEffectAt: (model, at, heading) => {
       const fx = this.#stage?.fx;
-      fx?.show(model, undefined, at, { kind: 'impact' });
-      return fx !== undefined;
+      const placed = terrainEffectPlacement(at, heading, (x, y) => {
+        const cell = this.#cells.get(cellKey(Math.floor(x / CELL_SIZE), Math.floor(y / CELL_SIZE)));
+        return cell?.ready && cell.land ? landHeightAt(cell.land, cell.x, cell.y, x, y) : undefined;
+      });
+      if (!fx || !placed) return false;
+      // TODO(M13): the original then sets each piece of the model on the land at its own place
+      // (the renderer places the model whole).
+      const direction: Vec3 = [Math.sin(placed.heading), Math.cos(placed.heading), 0];
+      fx.show(model, undefined, placed.position, { kind: 'impact', direction });
+      return true;
     },
     cameraTarget: (actor) => {
       const player = this.#play?.player;

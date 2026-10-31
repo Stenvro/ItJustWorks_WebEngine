@@ -287,8 +287,8 @@ export interface WorldBridge {
   /** ObjectReference.ForceRemoveRagdollFromWorld: its ragdoll leaves the physics world. */
   removeRagdoll?(actor: number): Promise<void>;
   /**
-   * ObjectReference.PlayTerrainEffect: a temporary terrain effect of a model at a reference,
-   * on a node of its 3D (none: its root); false when it cannot be set up.
+   * ObjectReference.PlayTerrainEffect: a temporary terrain effect of a model on the land under
+   * a reference (the node named in the effect's own model); false when it cannot be set up.
    */
   terrainEffect?(reference: number, model: string, node: string): boolean;
   /**

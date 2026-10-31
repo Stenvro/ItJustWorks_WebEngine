@@ -35,14 +35,21 @@ a master or the plugin and its string ids resolve. Nothing depends on names in s
 Beside it the census lists, per record type, the subrecords no engine code outside
 `src/formats` names (by source text): parsed, used by: open, which is the other areas' work.
 
-## Summary (2026-10-30, round 9)
+## Summary (2026-10-31, round 10)
 
 The checklist has **157 items**: 37 format items below and the 120 record types of the load
-order (the table at the end). **155 are done** (35 format items, all 120 record types). Open:
-the save game's change forms (every one of both saves reads to its end by its layout since
-round 9, the AI process included; open are layouts no save holds: a created package as a PACK
-change form, a grenade's constraints, the combat paths) and global data (every entry by its
-layout since round 9; open: the combat search's detail, in neither save).
+order (the table at the end). **All 157 are done.** Round 10 closed the save game's last two:
+the layouts no real save holds were read from the original's save code and each is tested on a
+buffer written by that layout: a package the game made as a PACK change form (its whole
+definition, its kind from its PKDT's type, no form flags) and a made package's own package data
+by its type's data class, a grenade's decals (the simple decals stuck to it: what was taken for
+Havok constraints), the 26 combat paths (14 request and destination templates, 12 generic ones,
+the hover request's places), the combat search's detail (its line-of-sight grid map through the
+pathing stream; UESP's layout was the one-grid case) and the story event members of kind 1 (a
+form as a reference id; a kind the original does not know has no value).
+
+Round 9: every change form of both saves read to its end by its layout, the AI process
+included, and every global data entry by its layout.
 
 Round 8 (the two real saves): the player's data read to its end (camera, quest log, perks,
 tints, ...), the combat AI's objects (30 classes and the templates, the combat controller with
@@ -221,23 +228,27 @@ and imports the first of them when it is there.
       registrations are read (`src/formats/ess/papyrus.ts`). Their sizes for the parts no save
       held yet (queued unbinds, latent function queues, LOS events, the last five lists) are
       xEdit's (TODO(M13)).
-- [ ] Change forms: every one of both saves (21,599) is read to its end, all 4,727 actors
+- [x] Change forms: every one of both saves (21,599) is read to its end, all 4,727 actors
       included (round 7: the movement controller, `src/formats/ess/movement.ts`; round 8: the
       player's data to its end, `player.ts`, and the combat AI's objects in 12 combat
       controllers and 6 combat pathing requests, `combat.ts`; round 9: the AI process data by
       its layout, `process.ts`: every process level's part, the running packages with their
       data by kind, a custom package's changed parameters and its procedure tree's states, the
-      packages the game makes and the package extras; nothing is found by its shape). Open, none
-      in the saves: a package the game made as a PACK change form (its kind is not written
-      there) and one with its own package data, a grenade's constraints and the combat paths'
-      classes (built from the original's layouts).
-- [ ] Global data: every one of the 30 types has a reader, and `readGlobalData` (run by
+      packages the game makes and the package extras; nothing is found by its shape). Round 10,
+      none in the saves, read from the original's save code and tested on buffers written by
+      it: a package the game made as a PACK change form (no form flags; its definition as the
+      AI process writes it, its kind from its PKDT's type) and a made package's own data (by
+      its type's data class: follow, escort, eat, use an item, ambush, patrol, dialogue, use a
+      weapon; custom none), a grenade's decals (simple decals) and the 26 combat paths.
+- [x] Global data: every one of the 30 types has a reader, and `readGlobalData` (run by
       `ess-info` and the save test) says what each leaves. Round 8: every entry of both saves
       reads to its last byte (the combat table's threats are combat objects; temp effects
       have three lists). Round 9: the weather's tail (the sky's values and its two sky
       effects) and the story event manager's events are read by the original's layout; 104
-      has none (the original neither writes nor reads it). Open: the combat search's detail is
-      UESP's layout (none in the saves).
+      has none (the original neither writes nor reads it). Round 10: the combat search's detail
+      by the original's layout (its line-of-sight grid map: grids by key, their cells and
+      navmeshes, a path point) and the story event members of every kind, each tested on a
+      buffer written by the original's layout (none in the saves).
 
 ## Files the original does not load
 
