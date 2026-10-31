@@ -20,7 +20,7 @@ default objects and natives count as done when our code names them, unless the t
 says otherwise. Rows marked n/a play nothing (data for other systems, values no record uses
 for a form, SKSE's natives, the original's thread and cache tuning).
 
-## Counts (2026-10-31, round 2)
+## Counts (2026-10-31, round 3)
 
 | Part                                      | Items | Done | Open | n/a |
 | ----------------------------------------- | ----: | ---: | ---: | --: |
@@ -37,13 +37,13 @@ for a form, SKSE's natives, the original's thread and cache tuning).
 | Creature sounds (NPC_ CSDT)               |     3 |    3 |    0 |   0 |
 | Magic effect sounds (MGEF SNDD)           |     6 |    6 |    0 |   0 |
 | Condition functions (SNDR, MUST)          |    12 |   12 |    0 |   0 |
-| Default objects (DOBJ) naming audio forms |    46 |   44 |    1 |   1 |
+| Default objects (DOBJ) naming audio forms |    46 |   45 |    0 |   1 |
 | [Audio] INI settings                      |    56 |   48 |    0 |   8 |
 | Audio game settings                       |    26 |   22 |    0 |   4 |
 | Papyrus audio natives                     |    21 |   12 |    0 |   9 |
 | Sound files                               |     6 |    6 |    0 |   0 |
-| Behaviour items (below)                   |    47 |   39 |    6 |   2 |
-| All                                       |   402 |  357 |    7 |  38 |
+| Behaviour items (below)                   |    47 |   45 |    0 |   2 |
+| All                                       |   402 |  364 |    0 |  38 |
 
 Round 1 built: creatures' conscious and movement loops (NPC_ CSDT 7 and 6: the dragons', horses'
 and draugr's breathing, the dwarven machines' hum), the infos' Audio Output Override (1963
@@ -70,6 +70,21 @@ person, P3OM in third) and the interface's (IOPM), the bound weapons' idle loop 
 the crossbows' 2D attack sound for the player's shot (WEAP XNAM), and the mudcrab's idle sound
 (CSDT 0) with its ambient idles.
 
+Round 3 built, observed in the original: the reverb's own sound to the I3DL2 definitions
+(early reflections from the reflections delay, now read as 1.2 ms a step; a late part that
+falls 60 dB over the decay time at low frequencies and over decay × HF ratio at the HF
+reference; Room and Room HF over both; the levels as energies; diffusion as echo density,
+density as modal colouring); the distance low-pass and the reverb send by distance (X3DAudio
+with the output model's maximum distance as the curve distance scaler and its default curves,
+the low-pass as XAudio2's filter, the reverb send without the volume curve); the volume
+curve's spacing; thunder checked every 30 ms with one chance in the weather's frequency × its
+thunder sounds, the lightning flash starting with it; the weathers' other sounds played on and
+started again within a second of ending; the music's fades (a finishing type's own Fade
+Duration, at least 4 s, the new type at once; cue points hold it back; ducking over
+fMusicDuckingSeconds and fMusicUnDuckingSeconds; Abrupt Transition changes nothing; a track
+with cue points but no finale jumps to its last one); the level-up music as the level-up menu
+opens; the success music (SCMS) is read by no code, so it never plays.
+
 ## Behaviour checklist
 
 What a sweep of the data cannot see: the engine's own rules around the records.
@@ -91,18 +106,18 @@ What a sweep of the data cannot see: the engine's own rules around the records.
 | 13  | Under water: categories muted, the underwater loop                                 | done   | sound-system                                                                         |
 | 14  | Reverb by acoustic space (interior cell, exterior boxes, the map's)                | done   | sound-system, reverb.ts                                                              |
 | 15  | Reverb crossfade over fReverbTransitionTime                                        | done   | audio-engine setReverb (observed in the original)                                    |
-| 16  | Reverb sound (XAudio2's I3DL2 reverb)                                              | open   | an impulse response built from the parameters: an approximation (TODO(M13))          |
+| 16  | Reverb sound (XAudio2's I3DL2 reverb)                                              | done   | reverb.ts to the I3DL2 definitions (TODO(M13): XAudio2's echo and modal density)     |
 | 17  | Acoustic space ambience loops (fASFadeInTime, fASFadeOutTime)                      | done   | sound-system                                                                         |
 | 18  | Region sounds: half-second update, chances, start limit, placement, fades          | done   | ambience.ts (observed in the original)                                               |
-| 19  | Weather loops and thunder after flashes                                            | done   | ambience.ts                                                                          |
-| 20  | Thunder's delay after a flash, the weather one-shots' chance                       | open   | inferred (0.5–3 s; 4 % a second): TODO(M13)                                          |
+| 19  | Weather sounds and thunder with its flash                                          | done   | ambience.ts                                                                          |
+| 20  | Thunder's delay after a flash, the weather one-shots' chance                       | done   | ambience.ts, lightning.ts: no delay, 30 ms checks; singles restart (observed)        |
 | 21  | Music: priority, queueing, ducking, cue points and finales, palettes, silences     | done   | music.ts                                                                             |
-| 22  | Music: which fade applies to which change                                          | open   | inferred from the Creation Kit's descriptions (TODO(M13))                            |
+| 22  | Music: which fade applies to which change                                          | done   | music.ts (observed in the original)                                                  |
 | 23  | Combat music: start, keep, stop rules                                              | done   | combat-music.ts                                                                      |
 | 24  | Combat music: a second group's threat ratio, the strength cap                      | done   | combat-music.ts (observed in the original; the cap is never read)                    |
 | 25  | Location music: cell, regions, worldspace, default; the location's (LCTN NAM1)     | done   | sound-system #locationMusic (the location's place inferred: TODO(M13))               |
 | 26  | Special music: dungeon cleared, death                                              | done   | location-clearing.ts, player-death.ts                                                |
-| 27  | Special music: level up and success (LUMS, SCMS)                                   | open   | level up done (progression-engine); when the success music (SCMS) plays: not known   |
+| 27  | Special music: level up and success (LUMS, SCMS)                                   | done   | level-up-menu.ts (observed); SCMS is never read by the original                      |
 | 28  | Spoken lines: voice files, lip sync, silent lines' length, padding                 | done   | sound-system voiceLine, world-lines.ts, actors.ts                                    |
 | 29  | Spoken lines through the info's output model, or the response's own sound          | done   | sound-system voiceLine, actors saySound                                              |
 | 30  | Head motion of lip sync scaled by fDialogueHead*Exaggeration                       | done   | face.ts (actors.ts reads the settings)                                               |
@@ -121,14 +136,13 @@ What a sweep of the data cannot see: the engine's own rules around the records.
 | 43  | Streaming and the decoded-buffer budget                                            | done   | music streams (music-output.ts), effects in a 256 MB cache                           |
 | 44  | Bink videos' sound                                                                 | done   | bink-video.ts                                                                        |
 | 45  | A death cry heard only within fDeathSoundMaxDistance of the player                 | done   | actor-graph-events.ts #deathCryHeard                                                 |
-| 46  | Distance low-pass (X3DAudio's direct-path filter by distance)                      | open   | not applied: its curve's distance scale in the original is not known (docs/audio.md) |
-| 47  | Reverb send by distance (X3DAudio's reverb level)                                  | open   | the model's reverb send is constant: the original scales it by X3DAudio's curve      |
+| 46  | Distance low-pass (X3DAudio's direct-path filter by distance)                      | done   | distance-filter.ts, sound-instance.ts (observed: maximum distance as the scaler)     |
+| 47  | Reverb send by distance (X3DAudio's reverb level)                                  | done   | distance-filter.ts, sound-instance.ts (observed: default curve, no volume curve)     |
 
-The next biggest open items: surround output (rear, side and LFE speakers), sound-driven
-rumble, sound markers placed at run time, telekinesis and activation-refused sounds, the
-lip-sync head exaggeration and the speech delays, when the success music (SCMS) plays, the
-reverb's own sound (an approximation of XAudio2's), thunder's delay and the weather one-shots'
-chance, and which music fade applies to which change.
+Nothing is open. What stays inferred is marked TODO(M13) in the code: XAudio2's own echo and
+modal density in the reverb, the fold of rear and side speakers onto smaller outputs, which
+rumble nibble is which motor, the location music's place among the regions', and the other
+refusals' sounds.
 
 ## The data sweep
 
@@ -454,54 +468,54 @@ chance, and which music fade applies to which change.
 
 ### Default objects (DOBJ) naming audio forms
 
-| Item                                         | Uses | Status | Where / why                                                                                |
-| -------------------------------------------- | ---: | ------ | ------------------------------------------------------------------------------------------ |
-| BTMS MUSC MUSCombat                          |    1 | done   | battleMusic                                                                                |
-| DCMS MUSC MUSDungeonCleared                  |    1 | done   | dungeonClearedMusic                                                                        |
-| DDSC SNCT AudioCategoryVOC                   |    1 | done   | dialogueCategory                                                                           |
-| DFMS MUSC MUSExploreTestb                    |    1 | done   | defaultMusic                                                                               |
-| DFTS FSTS DefaultFootstepSet                 |    1 | done   | named in code                                                                              |
-| DOP2 SOPM SOMDialogue3DDefault               |    1 | done   | dialogueOutput3d                                                                           |
-| DOP3 SOPM SOMDialogue2D                      |    1 | done   | dialogueOutput2d                                                                           |
-| DTMS MUSC MUSSpecialDeath                    |    1 | done   | deathMusic                                                                                 |
-| HFSD SNDR UIHealthHeartbeatBLPSD             |    1 | done   | heartbeatFast                                                                              |
-| HSSD SNDR UIHealthHeartbeatALPSD             |    1 | done   | heartbeatSlow                                                                              |
-| HVFS SNDR ITMGenericIngredientUpFailSD       |    1 | done   | named in code                                                                              |
-| IOPM SOPM SOMUIDefault                       |    1 | done   | interfaceOutput                                                                            |
-| LUMS MUSC MUSSpecialSuccess                  |    1 | done   | levelUpMusic                                                                               |
-| MDSC SNCT AudioCategoryMUS                   |    1 | done   | musicCategory                                                                              |
-| MFSN SNDR MAGFailSD                          |    1 | done   | magicFailSound                                                                             |
-| MMSD SNDR AMBrWindBedWorldMapLP              |    1 | done   | worldMapAmbient                                                                            |
-| NASD SNDR UIActivateFail                     |    1 | done   | activateFail                                                                               |
-| NDSC SNCT AudioCategoryNonVOC                |    1 | done   | nonDialogueCategory                                                                        |
-| P3OM SOPM SOMMono01400Player3rd              |    1 | done   | playerOutput3rd                                                                            |
-| PDLC SNCT AudioCategoryPausedDuringMenuLoad  |    1 | done   | pauseDuringLoadingMenu                                                                     |
-| PDMC SNCT AudioCategoryPausedDuringMenuFade  |    1 | done   | pauseDuringMenuFade                                                                        |
-| PDSA SNDR ITMGenericArmorDownSD              |    1 | done   | inventory itemSound: the default by the item's kind                                        |
-| PDSB SNDR ITMGenericBookDownSD               |    1 | done   | inventory itemSound: the default by the item's kind                                        |
-| PDSG SNDR ITMGenericDownSD                   |    1 | done   | inventory itemSound: the default by the item's kind                                        |
-| PDSI SNDR ITMGenericIngredientDownSD         |    1 | done   | inventory itemSound: the default by the item's kind                                        |
-| PDSW SNDR ITMGenericWeaponDownSD             |    1 | done   | inventory itemSound: the default by the item's kind                                        |
-| PIMC SNCT AudioCategoryPausedDuringMenu      |    1 | done   | pauseDuringMenuImmediate                                                                   |
-| POPM SOPM SOMMono01400Player1st              |    1 | done   | playerOutput1st                                                                            |
-| PUSA SNDR ITMGenericArmorUpSD                |    1 | done   | inventory itemSound: the default by the item's kind                                        |
-| PUSB SNDR ITMGenericBookUpSD                 |    1 | done   | inventory itemSound: the default by the item's kind                                        |
-| PUSG SNDR ITMGenericUpSD                     |    1 | done   | inventory itemSound: the default by the item's kind                                        |
-| PUSI SNDR ITMGenericIngredientUpSD           |    1 | done   | inventory itemSound: the default by the item's kind                                        |
-| PUSW SNDR ITMGenericWeaponUpSD               |    1 | done   | inventory itemSound: the default by the item's kind                                        |
-| RVBT REVB DefaultReverb                      |    1 | done   | DefaultReverb is silent (-100 dB): as no reverb                                            |
-| SCMS MUSC MUSSpecialSuccess                  |    1 | open   | when the original plays the success music is not known (vanilla: LUMS's MUSSpecialSuccess) |
-| SFDC SNCT AudioCategorySFXFadeDuringDialogue |    1 | done   | sfxFadeInDialogueCategory                                                                  |
-| SFSN SNDR MAGFailShoutSD                     |    1 | done   | shoutFailSound                                                                             |
-| SMSC SNCT AudioCategoryAMBr                  |    1 | done   | statsMuteCategory                                                                          |
-| SSSC MUSC _NONE                              |    1 | n/a    | names the _NONE music type                                                                 |
-| TKGS SNDR MAGAlterationTelekinesisGrabSD     |    1 | done   | telekinesisGrabSound                                                                       |
-| TKTS SNDR MAGAlterationTelekinesisThrowSD    |    1 | done   | telekinesisThrowSound                                                                      |
-| TSSC SNCT AudioCategoryNPCKillMove           |    1 | done   | timeSensitiveCategory                                                                      |
-| UWLS SNDR AMBUnderwater2DLPM                 |    1 | done   | underwaterLoop                                                                             |
-| WASN SNDR MAGWardTestAbsorbSD                |    1 | done   | named in code                                                                              |
-| WBSN SNDR MAGWardTestBreakSD                 |    1 | done   | named in code                                                                              |
-| WDSN SNDR MAGWardTestDeflectSD               |    1 | done   | named in code                                                                              |
+| Item                                         | Uses | Status | Where / why                                                   |
+| -------------------------------------------- | ---: | ------ | ------------------------------------------------------------- |
+| BTMS MUSC MUSCombat                          |    1 | done   | battleMusic                                                   |
+| DCMS MUSC MUSDungeonCleared                  |    1 | done   | dungeonClearedMusic                                           |
+| DDSC SNCT AudioCategoryVOC                   |    1 | done   | dialogueCategory                                              |
+| DFMS MUSC MUSExploreTestb                    |    1 | done   | defaultMusic                                                  |
+| DFTS FSTS DefaultFootstepSet                 |    1 | done   | named in code                                                 |
+| DOP2 SOPM SOMDialogue3DDefault               |    1 | done   | dialogueOutput3d                                              |
+| DOP3 SOPM SOMDialogue2D                      |    1 | done   | dialogueOutput2d                                              |
+| DTMS MUSC MUSSpecialDeath                    |    1 | done   | deathMusic                                                    |
+| HFSD SNDR UIHealthHeartbeatBLPSD             |    1 | done   | heartbeatFast                                                 |
+| HSSD SNDR UIHealthHeartbeatALPSD             |    1 | done   | heartbeatSlow                                                 |
+| HVFS SNDR ITMGenericIngredientUpFailSD       |    1 | done   | named in code                                                 |
+| IOPM SOPM SOMUIDefault                       |    1 | done   | interfaceOutput                                               |
+| LUMS MUSC MUSSpecialSuccess                  |    1 | done   | levelUpMusic                                                  |
+| MDSC SNCT AudioCategoryMUS                   |    1 | done   | musicCategory                                                 |
+| MFSN SNDR MAGFailSD                          |    1 | done   | magicFailSound                                                |
+| MMSD SNDR AMBrWindBedWorldMapLP              |    1 | done   | worldMapAmbient                                               |
+| NASD SNDR UIActivateFail                     |    1 | done   | activateFail                                                  |
+| NDSC SNCT AudioCategoryNonVOC                |    1 | done   | nonDialogueCategory                                           |
+| P3OM SOPM SOMMono01400Player3rd              |    1 | done   | playerOutput3rd                                               |
+| PDLC SNCT AudioCategoryPausedDuringMenuLoad  |    1 | done   | pauseDuringLoadingMenu                                        |
+| PDMC SNCT AudioCategoryPausedDuringMenuFade  |    1 | done   | pauseDuringMenuFade                                           |
+| PDSA SNDR ITMGenericArmorDownSD              |    1 | done   | inventory itemSound: the default by the item's kind           |
+| PDSB SNDR ITMGenericBookDownSD               |    1 | done   | inventory itemSound: the default by the item's kind           |
+| PDSG SNDR ITMGenericDownSD                   |    1 | done   | inventory itemSound: the default by the item's kind           |
+| PDSI SNDR ITMGenericIngredientDownSD         |    1 | done   | inventory itemSound: the default by the item's kind           |
+| PDSW SNDR ITMGenericWeaponDownSD             |    1 | done   | inventory itemSound: the default by the item's kind           |
+| PIMC SNCT AudioCategoryPausedDuringMenu      |    1 | done   | pauseDuringMenuImmediate                                      |
+| POPM SOPM SOMMono01400Player1st              |    1 | done   | playerOutput1st                                               |
+| PUSA SNDR ITMGenericArmorUpSD                |    1 | done   | inventory itemSound: the default by the item's kind           |
+| PUSB SNDR ITMGenericBookUpSD                 |    1 | done   | inventory itemSound: the default by the item's kind           |
+| PUSG SNDR ITMGenericUpSD                     |    1 | done   | inventory itemSound: the default by the item's kind           |
+| PUSI SNDR ITMGenericIngredientUpSD           |    1 | done   | inventory itemSound: the default by the item's kind           |
+| PUSW SNDR ITMGenericWeaponUpSD               |    1 | done   | inventory itemSound: the default by the item's kind           |
+| RVBT REVB DefaultReverb                      |    1 | done   | DefaultReverb is silent (-100 dB): as no reverb               |
+| SCMS MUSC MUSSpecialSuccess                  |    1 | done   | observed in the original: no code reads it, so it never plays |
+| SFDC SNCT AudioCategorySFXFadeDuringDialogue |    1 | done   | sfxFadeInDialogueCategory                                     |
+| SFSN SNDR MAGFailShoutSD                     |    1 | done   | shoutFailSound                                                |
+| SMSC SNCT AudioCategoryAMBr                  |    1 | done   | statsMuteCategory                                             |
+| SSSC MUSC _NONE                              |    1 | n/a    | names the _NONE music type                                    |
+| TKGS SNDR MAGAlterationTelekinesisGrabSD     |    1 | done   | telekinesisGrabSound                                          |
+| TKTS SNDR MAGAlterationTelekinesisThrowSD    |    1 | done   | telekinesisThrowSound                                         |
+| TSSC SNCT AudioCategoryNPCKillMove           |    1 | done   | timeSensitiveCategory                                         |
+| UWLS SNDR AMBUnderwater2DLPM                 |    1 | done   | underwaterLoop                                                |
+| WASN SNDR MAGWardTestAbsorbSD                |    1 | done   | named in code                                                 |
+| WBSN SNDR MAGWardTestBreakSD                 |    1 | done   | named in code                                                 |
+| WDSN SNDR MAGWardTestDeflectSD               |    1 | done   | named in code                                                 |
 
 ### [Audio] INI settings
 

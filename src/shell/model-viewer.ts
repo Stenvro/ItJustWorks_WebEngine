@@ -2142,7 +2142,6 @@ export class ModelViewer {
           hour: session.gameHour,
           interior: true,
           swimming: this.#play?.player.swimming ?? false,
-          flash: undefined,
           cellMusic: this.#cell.data.cell.musicType,
           location: this.#cell.data.cell.location,
           worldMusic: undefined,

@@ -59,11 +59,24 @@ const regions = new Map<number, RegionAudio>([
   ],
 ]);
 
-const clear: AmbientWeather = { formId: 0x300, flags: 0x1, thunderFrequency: 255, sounds: [] };
+const fades = {
+  thunderFadeIn: 0,
+  thunderFadeOut: 1,
+  precipitationFadeIn: 0,
+  precipitationFadeOut: 1,
+};
+const clear: AmbientWeather = {
+  formId: 0x300,
+  flags: 0x1,
+  thunderFrequency: 255,
+  sounds: [],
+  ...fades,
+};
 const storm: AmbientWeather = {
   formId: 0x301,
   flags: 0x4,
   thunderFrequency: 246,
+  ...fades,
   sounds: [
     { sound: RAIN, type: 1 },
     { sound: THUNDER, type: 3 },
@@ -74,6 +87,7 @@ const snowstorm: AmbientWeather = {
   flags: 0x8,
   thunderFrequency: 255,
   sounds: [{ sound: GUST, type: 2 }],
+  ...fades,
 };
 
 interface Played {
@@ -83,6 +97,7 @@ interface Played {
   level: number;
   fadedOut: number | undefined;
   stopped: boolean;
+  ended: boolean;
 }
 
 class FakePlayer implements AmbientPlayer {
@@ -101,9 +116,20 @@ class FakePlayer implements AmbientPlayer {
   }
 
   play(sound: number, place: Vec3 | undefined, fadeIn: number): Promise<AmbientSound | undefined> {
-    const entry: Played = { sound, place, fadeIn, level: 1, fadedOut: undefined, stopped: false };
+    const entry: Played = {
+      sound,
+      place,
+      fadeIn,
+      level: 1,
+      fadedOut: undefined,
+      stopped: false,
+      ended: false,
+    };
     this.played.push(entry);
     const instance: AmbientSound = {
+      get ended() {
+        return entry.ended;
+      },
       setLevel: (level: number) => {
         entry.level = level;
       },
@@ -130,7 +156,6 @@ const state = (overrides: Partial<AmbientState> = {}): AmbientState => ({
   hour: 10,
   interior: false,
   swimming: false,
-  flash: undefined,
   cellMusic: undefined,
   worldMusic: undefined,
   waterAt: undefined,
@@ -208,35 +233,89 @@ describe('ambience', () => {
     expect(player.of(BIRD)).toHaveLength(1);
   });
 
-  it('crossfades weather loops with a change of weather and plays thunder after flashes', async () => {
+  it('crossfades weather loops with a change of weather', async () => {
     const player = new FakePlayer();
     const ambience = new Ambience(player, ini, () => 0.5);
-    const changing = { weather: storm, previousWeather: clear, transition: 0.25, flash: 5 };
+    const changing = { weather: storm, previousWeather: clear, transition: 0.25 };
     ambience.update(state(changing), LISTENER, 0);
     await settle();
     ambience.update(state(changing), LISTENER, 0.1);
     await settle();
     ambience.update(state(changing), LISTENER, 0.2);
     expect(player.of(RAIN)[0]?.level).toBe(0.25);
-    // The flash under way when ambience starts is not followed; the next one is.
-    vi.advanceTimersByTime(5000);
-    expect(player.of(THUNDER)).toHaveLength(0);
-    ambience.update(state({ weather: storm, flash: 9 }), LISTENER, 0.4);
-    expect(player.of(THUNDER)).toHaveLength(0);
-    vi.advanceTimersByTime(5000);
-    expect(player.of(THUNDER)).toHaveLength(1);
     // Indoors: no weather.
     ambience.update(state({ weather: storm, interior: true, regions: [] }), LISTENER, 0.5);
     expect(player.of(RAIN)[0]?.fadedOut).toBeDefined();
   });
 
-  it('plays the single weather sounds of weathers without lightning at random', async () => {
+  it('starts thunder at random every 30 ms, with its lightning, once it is not playing', async () => {
     const player = new FakePlayer();
-    const ambience = new Ambience(player, ini, () => 0);
-    ambience.update(state({ weather: snowstorm, regions: [] }), LISTENER, 0);
+    let roll = 0;
+    const ambience = new Ambience(player, ini, () => roll);
+    const flashes: number[] = [];
+    const stormy = state({
+      weather: storm,
+      regions: [],
+      lightning: (amount) => flashes.push(amount),
+    });
+    ambience.update(stormy, LISTENER, 0);
     await settle();
-    ambience.update(state({ weather: snowstorm, regions: [] }), LISTENER, 1);
+    ambience.update(stormy, LISTENER, 0.01);
+    expect(player.of(THUNDER)).toHaveLength(0);
+    // One chance in 246 each check: a roll of 0 starts it, with the flash at full brightness.
+    ambience.update(stormy, LISTENER, 0.04);
+    await settle();
+    expect(player.of(THUNDER)).toHaveLength(1);
+    expect(flashes).toEqual([1]);
+    // Not again while it plays.
+    ambience.update(stormy, LISTENER, 0.08);
+    expect(player.of(THUNDER)).toHaveLength(1);
+    const first = player.of(THUNDER)[0];
+    if (first) first.ended = true;
+    roll = 0.5;
+    ambience.update(stormy, LISTENER, 0.12);
+    expect(player.of(THUNDER)).toHaveLength(1);
+    roll = 0.001;
+    ambience.update(stormy, LISTENER, 0.16);
+    expect(player.of(THUNDER)).toHaveLength(2);
+    // During a change the leaving storm's thunder comes at its share, as bright.
+    const leaving = state({
+      weather: clear,
+      previousWeather: storm,
+      transition: 0.5,
+      regions: [],
+      lightning: (amount) => flashes.push(amount),
+    });
+    const second = player.of(THUNDER)[1];
+    await settle();
+    if (second) second.ended = true;
+    ambience.update(leaving, LISTENER, 0.2);
+    ambience.update(leaving, LISTENER, 0.24);
+    await settle();
+    expect(flashes[2]).toBeCloseTo(1 - 0.5 / 1.001, 6);
+    expect(player.of(THUNDER)[2]?.level).toBeCloseTo(1 - 0.5 / 1.001, 6);
+  });
+
+  it("plays a weather's single sounds on, starting them again within a second of ending", async () => {
+    const player = new FakePlayer();
+    const ambience = new Ambience(player, ini, () => 0.5);
+    const snowing = state({ weather: snowstorm, regions: [] });
+    ambience.update(snowing, LISTENER, 0);
+    await settle();
+    ambience.update(snowing, LISTENER, 0.1);
+    await settle();
     expect(player.of(GUST)).toHaveLength(1);
+    const gust = player.of(GUST)[0];
+    if (gust) gust.ended = true;
+    ambience.update(snowing, LISTENER, 0.2);
+    await settle();
+    expect(player.of(GUST)).toHaveLength(2);
+    const again = player.of(GUST)[1];
+    if (again) again.ended = true;
+    ambience.update(snowing, LISTENER, 0.7);
+    expect(player.of(GUST)).toHaveLength(2);
+    ambience.update(snowing, LISTENER, 1.3);
+    expect(player.of(GUST)).toHaveLength(3);
   });
 
   it('stops everything at once', async () => {

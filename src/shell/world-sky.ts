@@ -12,12 +12,7 @@ import type {
 import type { Vec3 } from '../render/math.ts';
 import type { GpuScene, SceneLighting, SceneRenderer } from '../render/scene-renderer.ts';
 import type { TextureCache } from '../render/texture-cache.ts';
-import {
-  flashIntensity,
-  FLASH_SECONDS,
-  lightningInterval,
-  thunderAmount,
-} from '../world/lightning.ts';
+import { flashIntensity } from '../world/lightning.ts';
 import { parsePrecipitation, precipitationAmounts } from '../world/precipitation.ts';
 import type { GpuSky, SkyFrame, SkyRenderer } from '../render/sky.ts';
 import { skyShapes } from '../render/sky-data.ts';
@@ -204,11 +199,9 @@ export class WorldSky {
   /** Precipitation types on the GPU by SPGD form id (undefined while loading or if broken). */
   readonly #precipitation = new Map<number, GpuPrecipitation | undefined>();
   #falling: PrecipitationFrame[] = [];
-  /** Lightning: when the next flash comes and when the last one began (seconds). */
-  #nextFlash: number | undefined;
-  /** The mean interval the next flash was drawn with. */
-  #flashInterval: number | undefined;
+  /** Lightning: when the last flash began (seconds) and its brightness (the thunder's share). */
   #flashStart = -Infinity;
+  #flashAmount = 0;
 
   private constructor(
     session: GameSession,
@@ -330,6 +323,15 @@ export class WorldSky {
     return this.#flashStart;
   }
 
+  /**
+   * A lightning flash now, as bright as `amount` (0–1): observed in the original, the flash
+   * comes with a thunder sound as it starts (src/audio/ambience.ts).
+   */
+  flash(amount: number): void {
+    this.#flashStart = this.#seconds;
+    this.#flashAmount = Math.max(0, Math.min(1, amount));
+  }
+
   /** The regions of the camera's cell (their sounds play: src/audio/ambience.ts). */
   get regions(): readonly number[] {
     return this.#regionIds;
@@ -420,7 +422,7 @@ export class WorldSky {
     const weather = this.#weather;
     if (!weather) return undefined;
     this.#state = skyState({
-      lightning: this.#lightning(weather),
+      lightning: this.#lightning(),
       weather,
       ...(this.#previous && { previous: this.#previous, transition: this.#transition }),
       climate: this.#climate,
@@ -528,33 +530,9 @@ export class WorldSky {
     this.#precipitation.clear();
   }
 
-  /** The lightning flash this frame: storms flash at random, about their weather's interval. */
-  #lightning(weather: WeatherRecord): number {
-    const amount = thunderAmount(weather, this.#previous, this.#transition);
-    const stormy =
-      amount > 0
-        ? this.#previous && weather.thunderFrequency >= 255
-          ? this.#previous
-          : weather
-        : undefined;
-    const interval = stormy && lightningInterval(stormy.thunderFrequency);
-    if (interval === undefined) {
-      this.#nextFlash = undefined;
-      return 0;
-    }
-    // Exponentially distributed waits: flashes come at random, `interval` apart on average.
-    // They have no memory, so a storm of another frequency simply draws its next flash anew.
-    const wait = (): number => -Math.log(1 - Math.random()) * interval;
-    if (interval !== this.#flashInterval) {
-      this.#flashInterval = interval;
-      this.#nextFlash = undefined;
-    }
-    this.#nextFlash ??= this.#seconds + wait();
-    if (this.#seconds >= this.#nextFlash) {
-      this.#flashStart = this.#seconds;
-      this.#nextFlash = this.#seconds + FLASH_SECONDS + wait();
-    }
-    return flashIntensity(this.#seconds - this.#flashStart) * amount;
+  /** The lightning flash this frame (thunder starts flashes: flash). */
+  #lightning(): number {
+    return flashIntensity(this.#seconds - this.#flashStart) * this.#flashAmount;
   }
 
   #loadPrecipitation(formId: number): GpuPrecipitation | undefined {
