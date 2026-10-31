@@ -532,32 +532,49 @@ export class GameMenus {
     });
   }
 
-  /** A level-up waiting: the player picks an attribute, then the skills menu opens. */
+  /**
+   * A level-up waiting: the skills menu opens in its LEVEL_UP state with the level-up menu over
+   * it (observed in the original: the skills menu goes on under the LevelUp Menu and takes its
+   * level-up state once that has closed). The player picks an attribute; the skills menu then
+   * shows the new level, attributes and perk point. Left without a choice, both close.
+   */
   async #openLevelUp(): Promise<void> {
-    const open = { menu: undefined as Menu | undefined, leave: this.#held(MenuName.levelUp) };
-    this.#open = open;
-    open.menu = await this.#levelUp.open(MENU_DEPTH, (chose) => {
+    const skills = await this.#openSkills(true);
+    const open = this.#open;
+    if (!skills || !open) return;
+    const leave = this.#held(MenuName.levelUp);
+    const level = { menu: undefined as Menu | undefined, done: false };
+    const end = (): void => {
+      if (level.done) return;
+      level.done = true;
+      leave();
+    };
+    // The skills menu closed from outside (Play ends): the level-up menu goes with it.
+    const leaveSkills = open.leave;
+    open.leave = () => {
+      if (!level.done && level.menu) this.#host.close(level.menu);
+      end();
+      leaveSkills();
+    };
+    level.menu = await this.#levelUp.open(MENU_DEPTH + 1, (chose) => {
+      end();
       if (this.#open !== open) return;
-      this.#open = undefined;
-      open.leave();
-      if (!chose) return;
-      this.#openSkills(true).catch((error: unknown) => {
-        this.#terminal.log(
-          'ui',
-          `the skills menu does not open: ${error instanceof Error ? error.message : String(error)}`,
-          'error',
-        );
-        this.#closeOpen();
-      });
+      if (chose) void skills.refresh();
+      else skills.close();
     });
-    if (this.#open !== open) this.#host.close(open.menu);
+    if (this.#open !== open && !level.done) {
+      this.#host.close(level.menu);
+      end();
+    }
   }
 
   /**
    * The skills menu (after levelling up: `levelUp`), the HUD hidden; it closes after its
-   * camera's outro.
+   * camera's outro. Returns it open (undefined if it did not open).
    */
-  async #openSkills(levelUp: boolean): Promise<void> {
+  async #openSkills(
+    levelUp: boolean,
+  ): Promise<{ close(): void; refresh(): Promise<void> } | undefined> {
     const open = { menu: undefined as Menu | undefined, leave: this.#held(MenuName.stats) };
     this.#open = open;
     const opened = await this.#skills.open(levelUp, () => {
@@ -567,13 +584,15 @@ export class GameMenus {
     });
     if (!opened) {
       if (this.#open === open) this.#closeOpen();
-      return;
+      return undefined;
     }
-    if (this.#open !== open) opened.close();
-    else {
-      open.menu = opened.menu;
-      this.#tutorial(levelUp ? 'HBLU' : 'HBSK');
+    if (this.#open !== open) {
+      opened.close();
+      return undefined;
     }
+    open.menu = opened.menu;
+    this.#tutorial(levelUp ? 'HBLU' : 'HBSK');
+    return opened;
   }
 
   /**

@@ -896,7 +896,10 @@ export class ConsoleCommands {
         controls.menu = enabled;
         controls.activate = enabled;
         controls.journalTabs = enabled;
-        controls.povLocks = [];
+        // The camera's switch: epc frees it of every lock (the scripts' too, as it frees the
+        // other controls); dpc locks it as abCamSwitch with aiDisablePOVType 0 (the natives'
+        // default) does, so Toggle POV does nothing meanwhile.
+        controls.povLocks = enabled ? [] : [...controls.povLocks.filter((lock) => lock !== 0), 0];
         context.controlsChanged();
         return [];
       }
