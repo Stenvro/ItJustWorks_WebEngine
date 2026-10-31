@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 import { devGamedata } from './tools/dev-gamedata-plugin.ts';
 import { ruffle } from './tools/ruffle-plugin.ts';
@@ -8,6 +9,9 @@ const isolationHeaders = {
   'Cross-Origin-Embedder-Policy': 'require-corp',
 };
 
+// As a watcher glob: forward slashes, absolute.
+const localToolFolder = fileURLToPath(new URL('./.tools', import.meta.url)).replaceAll('\\', '/');
+
 // Hard rule 4: localhost only.
 export default defineConfig({
   plugins: [devGamedata(), ruffle()],
@@ -16,8 +20,10 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     headers: isolationHeaders,
-    // Local tool folders (nested working copies among them) are no part of the app.
-    watch: { ignored: ['**/.*/**'] },
+    // This root's own local tool folder (nested working copies among them) is no part of the
+    // app. Only this root's: a working copy that itself lives under such a folder still
+    // watches its own files.
+    watch: { ignored: [`${localToolFolder}/**`] },
   },
   // The app's one page: nested working copies' pages are not scanned for dependencies.
   optimizeDeps: { entries: ['index.html'] },

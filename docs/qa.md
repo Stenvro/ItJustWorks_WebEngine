@@ -14,8 +14,7 @@ for regressions.
   the menu stack and the page's errors in `tour.json` (Vite 5192, Chrome 9352 by default; the
   window 1280 × 720 unless `--size` gives another, its clicks scaled from the movies' stage).
   What was seen is kept in docs/completeness/menus.md ("On screen"). The project's Vite config
-  does not watch a hidden folder: from a working copy there, Vite must be started again after an edit
-  (or with a config of its own that watches it) before the page shows the change.
+  leaves out only its own root's hidden folders, so a working copy under one still sees its edits.
 
 ## Running it
 
