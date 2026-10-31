@@ -128,6 +128,7 @@ import { gbufferTarget } from './gbuffer.ts';
 import { materialTextures, missingTextures } from './material-slots.ts';
 import { projectedUVParams, type MaterialObject } from '../world/material-object.ts';
 import type { WaterType } from '../world/water.ts';
+import { releaseAfterFrame } from './frame-release.ts';
 
 export const SAMPLE_COUNT = 4;
 export const DEPTH_FORMAT: GPUTextureFormat = 'depth32float';
@@ -1393,12 +1394,15 @@ export class GpuScene {
     this.#boundStale = true;
   }
 
+  /** Its buffers go after the frame being recorded, if any (frame-release.ts). */
   destroy(): void {
-    this.uniforms.destroy();
-    this.lightLists?.buffer.destroy();
-    this.motion?.buffer.destroy();
-    this.bones?.buffer.destroy();
-    for (const model of this.#models) model.release();
+    releaseAfterFrame(() => {
+      this.uniforms.destroy();
+      this.lightLists?.buffer.destroy();
+      this.motion?.buffer.destroy();
+      this.bones?.buffer.destroy();
+      for (const model of this.#models) model.release();
+    });
   }
 }
 
