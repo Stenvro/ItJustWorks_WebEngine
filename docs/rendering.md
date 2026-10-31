@@ -768,7 +768,10 @@ the texture's alpha. One instanced draw per texture set; decals out of view are 
 Dynamic decals (a hit's blood: `src/shell/combat-impacts.ts`) last `[Display]` fDecalLifetime
 (30 s); at most `[Decals]` uMaxDecals (1000; the Medium preset 100) are kept, the oldest going
 first (observed in the original: each is made with the lifetime, the count capped by the
-setting; `expireDecals`). TODO(M13): whether one fades at its end or vanishes.
+setting; `expireDecals`). At the end of its lifetime a decal fades out (observed in the
+original, the plain and the skinned decals alike): its shapes' alpha runs down from 1 to 0 over
+one more second, then it goes (`DECAL_FADE_SECONDS`, `decalAlpha`; the decal shapes through
+`fadeScene`, a projected decal through its instance's `params.z` in `decal.wgsl`).
 
 **Skinned decals** (`skinned-decal.ts`; blood on an actor, `combat-impacts.ts bodyDecal`). The
 original walks the shapes in the decal's box: a hidden shape or one flagged no-decals is skipped
@@ -795,10 +798,36 @@ first surface it meets that is not an actor or a projectile takes the decal, spa
 impact's Placement Radius (IPCT DATA; none when 0). Both count against iMaxDecalsPerFrame and
 fDecalLOD0. ObjectReference.PlayImpactEffect's decal is forced: made past the spacing, the
 per-frame count and the distance. Ours (`#splatter`, `struckNodeKey`, `environmentBloodWay`)
-keys the struck node by the reference and the collision's node name (the land by its cell);
-TODO(M13): ours projects the box onto whatever lies in it rather than building the decal from
-the struck shapes' triangles, and which impact data set the environment blood uses is unread
-(ours: the hit's own impact).
+keys the struck node by the reference and the collision's node name (the land by its cell).
+
+The environment blood's impact, observed in the original, is not the hit's: it is the impact
+for the target race's material (RACE NAM4) in the sever impact data set (BPND) of the struck
+limb's part in the race's body part data (RACE GNAM); where that part names none, no blood is
+left behind the target. Its decal is square (one size drawn between the decal's min and max
+width serves as its width and its height: `squareDecal`) and 48 deep either side of the
+surface (`ENVIRONMENT_BLOOD.depth`) whatever its DODT depth. TODO(M13): which limb an ordinary
+blow records is unread (ours, `actor-combat.ts #environmentBlood`: the head where the hit lands
+nearer the head's node than the torso's, else the torso).
+
+**How a world decal is built** (`world-decal.ts`, `combat-impacts.ts #onSurfaces`; observed in
+the original). Each shape under the struck node (`ModelPart.ancestors` holds the names above a
+shape; the whole model where the collision names no node) is visited as on actors: hidden
+shapes, decal shapes and, without bAllowDecalsOnAlpha, alpha-blended or alpha-tested ones are
+left out; each shape that takes the decal counts against iMaxDecalsPerFrame. The box is the
+decal's width across, its height up and its DODT depth either side of the struck point along
+the projection (`worldDecalBox`; 48 for the environment blood). A triangle of the shape takes
+part when its face (its winding's normal) turns from the struck surface's normal by less than
+the impact's angle threshold (IPCT DATA: cos of it, at least 0.01; the vanilla impacts use 15°,
+35°, 80° and 85°: `node tools/decal-info.ts --impacts`); it is clipped against the box's six
+planes and the polygon left is cut into a fan (`clipToUnitCube`). The copied vertices keep the
+shape's other data, their normals carried along the cut edges, their texture coordinates
+projected across the box into the decal's atlas quarter (as on actors) and their tangent frames
+made again; the decal shape is drawn with the lighting shader as a Decal and Dynamic_Decal
+(depth bias) where the shape is: the instance's placement, motion, visibility and pose shared,
+on the shape's node. The land of the cell takes one built the same way from its 33×33 grid of
+heights and normals, each 128-unit square cut south-west to north-east as the land's own
+triangles (`landDecalPart`). Where nothing in the box takes it there is no decal. A viewer
+without its shapes given (the headless simulation) falls back to the projected box.
 
 Ours, on actors: the actor's skinned shapes are skinned on the CPU in
 the pose of the hit, their triangles that overlap the box (a separating-axis test against the

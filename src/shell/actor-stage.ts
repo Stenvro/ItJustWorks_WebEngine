@@ -28,6 +28,7 @@ import type { PhysicsWorld } from '../physics/physics-world.ts';
 import { transformPoint, type Vec3 } from '../render/math.ts';
 import type { RenderPort } from '../render/render-port.ts';
 import type { GpuScene, InstanceVisibility } from '../render/scene-renderer.ts';
+import type { DecalLand } from '../render/world-decal.ts';
 import { ragdollOf, referenceMatrix, type CellActor } from '../world/cell-loader.ts';
 import { linkedReferences, parseReference } from '../world/cell-records.ts';
 import { actorValueIndex } from '../world/actor-values.ts';
@@ -201,6 +202,8 @@ export interface ActorStageOptions {
   readonly adoptVehicle?: (reference: number) => AdoptedVehicle | undefined;
   /** An object of the loaded area as effects cover it (a script's shader on a static, an item). */
   readonly objectBody?: (reference: number) => EffectBody | undefined;
+  /** The land of the cell holding a point (exteriors), which the hits' decals are built on. */
+  readonly land?: (x: number, y: number) => DecalLand | undefined;
   /**
    * A dead actor lying in its cell's ragdoll was made again: that ragdoll moves the new pose
    * (src/shell/play-session.ts, ragdollPoseReplaced).
@@ -528,6 +531,13 @@ export class ActorStage {
       decapitate: (actor) => {
         void this.dismemberment.decapitate(actor);
       },
+      // The viewer's drawn objects and land, which the hits' decals are built on.
+      ...(options.objectBody && {
+        decalSurfaces: () => ({
+          instances: (reference: number) => options.objectBody?.(reference)?.placed.instances,
+          land: (x: number, y: number) => options.land?.(x, y),
+        }),
+      }),
       held: (actor, view, models, weapons) => {
         this.#heldGlow(actor, view, models, weapons);
       },

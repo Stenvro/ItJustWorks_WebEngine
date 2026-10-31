@@ -94,6 +94,8 @@ fn fs_decal(in: DecalOut) -> @location(0) vec4f {
       alpha = smoothstep(0.15, 0.35, facing);
     }
   }
+  // A dynamic decal fading out at its end (params.z: how far it has faded).
+  alpha = alpha * (1.0 - in.params.z);
   if (alpha <= 0.003) {
     discard;
   }

@@ -145,9 +145,16 @@ export const DECAL_SPACING = 16;
  * environment blood): at fCombatEnvironmentBloodChance (0.75 built in) a ray from the hit along
  * the blow, its direction lowered by half before it is made a unit, 512 units long; the first
  * surface it meets that is not an actor or a projectile takes one, spaced by its impact's
- * Placement Radius (IPCT DATA) in place of the impacts' 16 (none when it is 0).
+ * Placement Radius (IPCT DATA) in place of the impacts' 16 (none when it is 0). Its decal is
+ * square (one size drawn for its width and its height: squareDecal) and 48 deep either side of
+ * the surface whatever its DODT depth.
  */
-export const ENVIRONMENT_BLOOD = { chance: 0.75, drop: 0.5, reach: 512 } as const;
+export const ENVIRONMENT_BLOOD = { chance: 0.75, drop: 0.5, reach: 512, depth: 48 } as const;
+
+/** A decal whose height is drawn as its width (the environment blood's: one size for both). */
+export function squareDecal(decal: DecalData): DecalData {
+  return { ...decal, minHeight: decal.minWidth, maxHeight: decal.maxWidth };
+}
 
 /** The way an actor hit's environment blood looks for the world (a unit vector). */
 export function environmentBloodWay(
@@ -220,8 +227,25 @@ export function placedSize(placed: PlacedDecal): { width: number; height: number
 }
 
 /**
+ * How long a dynamic decal fades out once its lifetime is over (observed in the original: the
+ * plain and the skinned decals alike show whole for [Display] fDecalLifetime seconds, then their
+ * shapes' alpha runs down from 1 to 0 over one more second, and they go).
+ */
+export const DECAL_FADE_SECONDS = 1;
+
+/** When a dynamic decal made at `made` goes: its lifetime, then its fade. */
+export function decalGoneAt(made: number, lifetime: number): number {
+  return made + Math.max(0, lifetime) + DECAL_FADE_SECONDS;
+}
+
+/** A dynamic decal's alpha at `now` (1 through its lifetime, then down to 0 as it fades). */
+export function decalAlpha(goneAt: number, now: number): number {
+  return Math.min(1, Math.max(0, (goneAt - now) / DECAL_FADE_SECONDS));
+}
+
+/**
  * Dynamic decals (a hit's blood) as the engine keeps them (observed in the original): each lasts [Display]
- * fDecalLifetime seconds (`until`: when it goes), at most [Decals] uMaxDecals at once. Removes
+ * fDecalLifetime seconds and its fade (`until`: when it goes), at most [Decals] uMaxDecals at once. Removes
  * from `decals` (oldest first) those past their time at `now`, then the oldest beyond `max`;
  * returns those that went.
  */

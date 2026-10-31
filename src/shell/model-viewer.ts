@@ -1134,6 +1134,11 @@ export class ModelViewer {
       navmeshes: () => this.#navmeshes,
       objects: () => this.#stageObjects(),
       obstacles: () => this.#stageObstacles(),
+      // The cell's drawn objects (the hits' decals are built on their shapes).
+      objectBody: (reference) => {
+        const instance = this.#instances.get(reference) ?? this.#created?.get(reference)?.instance;
+        return instance && { placed: { instances: [instance] } };
+      },
       ragdollPoseReplaced: (from, to) => this.#play?.ragdollPoseReplaced(from, to),
       door: (reference) => this.#doorOf(reference),
       interior: true,
