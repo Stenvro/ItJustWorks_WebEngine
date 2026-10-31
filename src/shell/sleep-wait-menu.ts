@@ -1,7 +1,7 @@
 // Waiting and sleeping (interface\sleepwaitmenu.swf: T, or a bed): how many hours, on a slider.
 // The engine tells the menu whether the player sleeps (_root.SleepWaitMenu_mc.SetSleeping: "Rest
 // how long?" or "Wait how long?") and the date and time (SetCurrentTime, as the tween menu
-// shows it); OK(hours) passes the time iSecondsToSleepPerUpdate game seconds an update (900:
+// shows it but without the year, observed in the original); OK(hours) passes the time iSecondsToSleepPerUpdate game seconds an update (900:
 // a quarter hour; the menu's time and hours counting down) and closes the menu, Cancel closes it. A sleep tells the scripts registered for it
 // (RegisterForSleep): OnSleepStart(start, desired end) and OnSleepStop(interrupted), in game
 // days. Each hour health, magicka and stamina regenerate as over the real seconds it stands for
@@ -53,8 +53,12 @@ export class SleepWaitMenu {
     const runtime = this.#session.scriptsReady;
     const settings = await this.#session.settings();
     return runtime
-      ? formatGameDate(runtime.date, runtime.dayOfWeek, runtime.gameHour, (name) =>
-          settings.string(name),
+      ? formatGameDate(
+          runtime.date,
+          runtime.dayOfWeek,
+          runtime.gameHour,
+          (name) => settings.string(name),
+          false,
         )
       : '';
   }
