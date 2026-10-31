@@ -718,6 +718,20 @@ export class BehaviorRuntime {
    * animates only its minimum bones; undefined: not known, its bone LOD's distance decides.
    */
   seen: boolean | undefined = undefined;
+  /**
+   * Whether its first bone has left its 3D's bound (that bone's place in the world outside the
+   * bounding sphere of the actor's model; AnimationRate.rootAway): one not seen and with no
+   * minimum still animates that bone, so that its root can come back (observed in the original).
+   */
+  rootAway = false;
+  /**
+   * The next pose update generates every bone, bone LOD and sight aside, then this clears
+   * (observed in the original: the actor's one-shot "force one graph update" flag). A new graph
+   * starts with it set, so that an actor never seen since it loaded still stands in its pose,
+   * not its bind pose. TODO(M13): which of the original's load and attach paths set the flag is
+   * unread (a seated actor's furniture timer is one); a new graph here stands for them.
+   */
+  forceOneUpdate = true;
   /** The bone LOD's levels: beyond `squared` distance, only the first `count` bones animate. */
   #boneLod: readonly { readonly squared: number; readonly count: number }[] | undefined;
   /** The head bone the line's turn goes to (−1: none). */
@@ -1389,6 +1403,9 @@ export class BehaviorRuntime {
     const bones = this.#boneCount * TRANSFORM_FLOATS;
     // Bone LOD: far from the camera the last bones keep their pose (setBoneLod).
     const animated = this.#animatedBones() * TRANSFORM_FLOATS;
+    // Spent once a pose was generated; a graph that gives none yet (its clips still loading)
+    // stands at its reference pose and keeps the full update for when it does.
+    this.forceOneUpdate = !generated;
     if (!generated) {
       this.pose.set(reference);
     } else if (generated.additive) {
@@ -1411,11 +1428,9 @@ export class BehaviorRuntime {
    * bones beyond 128 units, its fingers beyond 768, its magic and weapon nodes beyond 2048).
    * Each update the last level whose distance the camera is beyond (across the ground, by the
    * skeleton's scale: animationRate) gives the count, no fewer than minimumBones. An actor the
-   * camera did not see (`seen` false: its 3D culled, not drawn this frame; one with no 3D
-   * counts as seen) animates its minimum bones alone, bone LOD or not.
-   * TODO(M13): with no minimum the original still animates the first bone when the animation's
-   * root has left the 3D's bound (here none animates), and an actor flag it reads (unread which)
-   * counts an unseen actor as seen.
+   * camera did not see (`seen` false: its 3D culled, not drawn this frame; one of a race that
+   * flies counts as seen) animates its minimum bones alone, bone LOD or not; with no minimum,
+   * its first bone still animates while that bone is outside its 3D's bound (`rootAway`).
    */
   setBoneLod(levels: readonly { readonly distance: number; readonly bone: string }[]): void {
     const index = new Map(this.skeleton.bones.map((bone, i) => [bone.name.toLowerCase(), i]));
@@ -1429,7 +1444,11 @@ export class BehaviorRuntime {
 
   /** How many bones animate at the camera's distance (bone LOD). */
   #animatedBones(): number {
-    if (this.seen === false) return Math.min(this.#boneCount, this.minimumBones);
+    if (this.forceOneUpdate) return this.#boneCount;
+    if (this.seen === false) {
+      const minimum = Math.min(this.#boneCount, this.minimumBones);
+      return minimum === 0 && this.rootAway ? Math.min(this.#boneCount, 1) : minimum;
+    }
     const levels = this.#boneLod;
     const distance = this.boneLodDistance;
     if (!levels || distance === undefined) return this.#boneCount;

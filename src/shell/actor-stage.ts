@@ -21,10 +21,11 @@ import {
   animateSkeletons,
   animationRate,
   animationRateSettings,
+  boneLeftBound,
   fovAcross,
 } from '../animation/animated-skeleton.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
-import type { Vec3 } from '../render/math.ts';
+import { transformPoint, type Vec3 } from '../render/math.ts';
 import type { RenderPort } from '../render/render-port.ts';
 import type { GpuScene, InstanceVisibility } from '../render/scene-renderer.ts';
 import { ragdollOf, referenceMatrix, type CellActor } from '../world/cell-loader.ts';
@@ -2331,7 +2332,9 @@ export class ActorStage {
         actors?.get(reference)?.unconscious === true;
       behavior.minimumBones = allBones ? Infinity : this.furniture.holds(reference) ? sitting : 0;
     }
-    // Whether the camera saw each in the last frame (one with no 3D drawn counts as seen).
+    // Whether the camera saw each in the last frame (one with no 3D drawn counts as seen), and
+    // whether its first bone has left its model's bound (observed in the original: an actor of
+    // a race that flies counts as seen; one unseen still animates a first bone that has left).
     const scenes = new Map<PlacedActor, GpuScene>();
     for (const staged of this.#actors.values())
       if (staged.scene) scenes.set(staged.placed, staged.scene);
@@ -2351,8 +2354,21 @@ export class ActorStage {
             world ? Math.hypot(world[0] ?? 0, world[1] ?? 0, world[2] ?? 0) || 1 : 1,
           );
           const scene = scenes.get(placed);
-          const seen = scene && port.seen ? port.seen(scene) : undefined;
-          return seen === undefined ? rate : { ...rate, seen };
+          if (!scene || !port.seen) return rate;
+          const seen = fliesByRace(placed.look.raceFlags) || port.seen(scene);
+          if (seen) return { ...rate, seen };
+          const first = placed.pose.skeleton.hkx?.bones[0]?.name;
+          const bone = first === undefined ? undefined : placed.pose.world(first);
+          const bound = scene.bound;
+          const rootAway =
+            world !== undefined &&
+            bone !== undefined &&
+            bound !== null &&
+            boneLeftBound(
+              transformPoint(world, [bone[12] ?? 0, bone[13] ?? 0, bone[14] ?? 0]),
+              bound,
+            );
+          return { ...rate, seen, rootAway };
         }),
     );
     // Their bodies follow the poses (the dead's poses their bodies, the dead player's too).
