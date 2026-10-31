@@ -5,11 +5,24 @@ import {
   FOCUS_SHADOW_DISTANCE,
   focusFade,
   focusMapSize,
+  focusMix,
   MAX_FOCUS_SHADOWS,
   selectFocusShadows,
   type FocusCandidate,
 } from './focus-shadows.ts';
 import { invert, project } from './frustum.ts';
+
+describe('focusMix', () => {
+  it('fades the focus map towards lit, then keeps the darker of it and the cascades', () => {
+    // A full map's shadow darkens a pixel the cascades light; a faded one less so.
+    expect(focusMix(1, 0, 1)).toBe(0);
+    expect(focusMix(1, 0, 0.25)).toBe(0.75);
+    // Gone: the cascades alone.
+    expect(focusMix(0.4, 0, 0)).toBe(0.4);
+    // A lit map never brightens the cascades' shadow.
+    expect(focusMix(0.3, 1, 1)).toBe(0.3);
+  });
+});
 import { lookAt, multiply, perspectiveReversedZ, type Vec3 } from './math.ts';
 import { fitCascades } from './shadow-cascades.ts';
 

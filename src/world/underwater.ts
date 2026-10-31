@@ -21,7 +21,7 @@
 // saturation, brightness) is unread; ours takes them over the whole image once the near plane
 // is wholly under, as its depth of field does.
 
-import { parseImageSpace, type ImageSpace } from './image-space.ts';
+import { NEUTRAL_IMAGE_SPACE, parseImageSpace, type ImageSpace } from './image-space.ts';
 import type { GameRecord } from './record-db.ts';
 import type { Vec3 } from '../render/math.ts';
 import type { WaterType } from './water.ts';
@@ -131,6 +131,21 @@ export function underwaterFogColor(
 export function underwaterFogShare(depth: number, near: number, far: number): number {
   if (far === near) return depth >= near ? 1 : 0;
   return Math.min(1, Math.max(0, (depth - near) / (far - near)));
+}
+
+/**
+ * The imagespace wholly under water (observed in the original): the scene's own (the weather's
+ * or the cell's, with the modifiers on it) with the depth of field of the water's imagespace
+ * (WATR INAM: its strength, distance, range, sides and blur radius) in place of its own. The
+ * water's imagespace reaches nothing else: no HDR, cinematic or tint term of it is ever read.
+ * Without a water imagespace (or above water), the scene's unchanged.
+ */
+export function underwaterImageSpace(
+  scene: ImageSpace | undefined,
+  water: ImageSpace | undefined,
+): ImageSpace | undefined {
+  if (!water) return scene;
+  return { ...(scene ?? NEUTRAL_IMAGE_SPACE), depthOfField: water.depthOfField };
 }
 
 /** What the image passes need of the underwater view this frame (post.ts, shaders/dof.wgsl). */

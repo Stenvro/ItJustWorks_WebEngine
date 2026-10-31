@@ -1448,10 +1448,46 @@ describe('bone LOD', () => {
     runtime.minimumBones = 0;
     runtime.update(1);
     expect([runtime.pose[0], runtime.pose[10]]).toEqual([4, 3]);
+    // With no minimum, the first bone still animates while it is outside its 3D's bound.
+    runtime.rootAway = true;
+    runtime.update(1);
+    expect([runtime.pose[0], runtime.pose[10]]).toEqual([6, 3]);
+    runtime.rootAway = false;
     // Seen again (or not known, as headless): every bone near the camera.
     runtime.seen = undefined;
     runtime.update(1);
-    expect([runtime.pose[0], runtime.pose[10]]).toEqual([6, 6]);
+    expect([runtime.pose[0], runtime.pose[10]]).toEqual([7, 7]);
+  });
+
+  it('poses every bone once for a graph never seen, then its minimum alone', () => {
+    const oneBone: HkxSkeleton = {
+      ...skeleton,
+      bones: [{ name: 'Root', lockTranslation: false }],
+      parents: Int16Array.of(-1),
+      referencePose: Float32Array.of(0, 0, 0, 0, 0, 0, 1, 1, 1, 1),
+    };
+    const moving: AnimationBinding = {
+      ...animation(0, 10),
+      animation: {
+        ...animation(0, 10).animation,
+        trackCount: 1,
+        sample: (time, out) => {
+          out.set([time, 0, 0, 0, 0, 0, 1, 1, 1, 1]);
+        },
+      },
+    };
+    const runtime = new BehaviorRuntime({
+      root: graph(clip('move'), []),
+      host: host({ move: moving }),
+      skeleton: oneBone,
+    });
+    runtime.seen = false;
+    runtime.update(1);
+    // Not left at its bind pose: its first update generated it.
+    expect(runtime.pose[0]).toBe(1);
+    expect(runtime.forceOneUpdate).toBe(false);
+    runtime.update(1);
+    expect(runtime.pose[0]).toBe(1);
   });
 });
 

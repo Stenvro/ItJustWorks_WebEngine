@@ -135,6 +135,51 @@ export function placeDecal(decal: DecalData, formId: number, placement: Mat4): P
 }
 
 /**
+ * The spacing the original's impacts give a plain decal (observed in the original: every
+ * caller that makes a dynamic decal sets 16).
+ */
+export const DECAL_SPACING = 16;
+
+/** A plain decal on a node: where it was made (world) and its width. */
+export interface DecalSpot {
+  readonly point: readonly [number, number, number];
+  readonly width: number;
+}
+
+/**
+ * Whether a new plain decal is too near one already on the same node (observed in the
+ * original): it is skipped where an existing one was made within (the larger of its width and
+ * height + that one's width) / √spacing of where it would go, the existing ones' points as they
+ * were made.
+ */
+export function decalTooNear(
+  point: readonly [number, number, number],
+  size: { readonly width: number; readonly height: number },
+  existing: Iterable<DecalSpot>,
+  spacing = DECAL_SPACING,
+): boolean {
+  if (!(spacing > 0)) return false;
+  const reach = Math.max(size.width, size.height);
+  for (const spot of existing) {
+    const dx = point[0] - spot.point[0];
+    const dy = point[1] - spot.point[1];
+    const dz = point[2] - spot.point[2];
+    const r = reach + spot.width;
+    if (dx * dx + dy * dy + dz * dz <= (r * r) / spacing) return true;
+  }
+  return false;
+}
+
+/** A placed decal's width and height (its box's X and Z lengths). */
+export function placedSize(placed: PlacedDecal): { width: number; height: number } {
+  const b = placed.box;
+  return {
+    width: Math.hypot(b[0] ?? 0, b[1] ?? 0, b[2] ?? 0),
+    height: Math.hypot(b[8] ?? 0, b[9] ?? 0, b[10] ?? 0),
+  };
+}
+
+/**
  * Dynamic decals (a hit's blood) as the engine keeps them (observed in the original): each lasts [Display]
  * fDecalLifetime seconds (`until`: when it goes), at most [Decals] uMaxDecals at once. Removes
  * from `decals` (oldest first) those past their time at `now`, then the oldest beyond `max`;

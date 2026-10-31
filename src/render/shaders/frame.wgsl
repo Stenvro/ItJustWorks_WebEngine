@@ -48,6 +48,9 @@ struct Frame {
   // The world map's relief overlay on LOD land (scene-renderer.ts WorldMapOverlay): the normal
   // map's scale per world unit (0: off) and strength, the snow normal map's scale and strength.
   worldMap: vec4f,
+  // x: the eye adaptation's adapted luminance as the last frame left it (copied in on the GPU:
+  // the character light's luminance, the original's slot 11).
+  luminance: vec4f,
 };
 
 struct PointLight {
@@ -182,17 +185,19 @@ fn depthToScene(fragCoord: vec4f) -> f32 {
 }
 
 // How much of the sun reaches a point (0 in shadow, 1 lit) of a draw shaded by focus map
-// `focus` (1 + its index; 0: none, focus-shadows.ts): that map (sharp shadows on the body near
-// the player it holds, by its fade), the cascades elsewhere.
+// `focus` (1 + its index; 0: none, focus-shadows.ts): as the original's shadow mask mixes them,
+// the focus map's result faded towards lit by its fade, then the darker of it and the
+// cascades' (focusMix).
 fn sunShadow(worldPos: vec3f, n: vec3f, focus: u32) -> f32 {
   if (frame.shadowParams.x < 0.5) {
     return 1.0;
   }
-  let shade = focusShadow(worldPos, n, focus);
-  if (shade.y >= 1.0) {
-    return shade.x;
+  let cascades = cascadeShadow(worldPos, n);
+  if (focus == 0u) {
+    return cascades;
   }
-  return mix(cascadeShadow(worldPos, n), shade.x, shade.y);
+  let shade = focusShadow(worldPos, n, focus);
+  return min(cascades, mix(1.0, shade.x, shade.y));
 }
 
 // Focus map `focus` (1 + its index) at a point of its body: how lit it is (x, sampled 3x3

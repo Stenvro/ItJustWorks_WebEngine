@@ -724,6 +724,8 @@ export class Renderer {
     const colorView = targets.color.createView();
     const depthView = targets.depth.createView();
     const encoder = device.createCommandEncoder({ label: 'frame' });
+    // The last frame's adapted luminance into the frames' uniforms (the character light's).
+    this.post.copyAdaptedLuminance(encoder, this.scene.luminanceTargets);
 
     // The sun's shadow map: casters of the loaded cells, one pass per cascade.
     const terrainCells = view?.terrain ? [...view.terrain()] : [];

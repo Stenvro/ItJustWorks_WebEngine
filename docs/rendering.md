@@ -41,9 +41,13 @@ How a frame is put together (`src/render/renderer.ts`). Everything is drawn in H
    measured from the bound's centre, the original from the actor's root). In place of the
    stencil the draws of a focus body's scene name its map (the entry past their light lists,
    `sceneFocus` in `common.wgsl`), and only they sample it. Its depth bias is two of its
-   texels. TODO(M13): how the mask mixes a fading map with the cascades (here the focus
-   result is mixed into the cascades' by the fade); the engine also checks a cell flag before
-   it renders them, read as "exteriors" here.
+   texels. How the mask mixes them, observed in the original's shadow mask shaders: on a pixel
+   the stencil gives a map, the map's comparison (0 or 1) is faded towards lit by that map's
+   fade, 1 + fade × (shadow − 1), and the darker of it and the cascades' result is kept (the
+   cascades still darken the focus actor; a faded map only adds its own shadow); the shadow
+   distance's fade then applies to the result. Ours: `sunShadow` in `frame.wgsl`
+   (`focusMix`). TODO(M13): the engine also checks a cell flag before it renders them, read as
+   "exteriors" here; its focus comparison's bias is three times the cascades' (ours: its own).
 
    **Shadow lights** (`light-shadows.ts`), interiors and exteriors: lights whose LIGH carries
    Shadow Spotlight, Shadow Hemisphere or Shadow Omnidirectional (`cell-lighting.ts`
@@ -456,13 +460,13 @@ constants of Nukem9's decompiled `BSLightingShader`:
    SecondaryLightIntensity 0.75 / 0.3, ...LumScale 2, ...LumMax 0.75): on actors' skin (FaceGen
    and skin tint shapes) primary × saturate(n·v) + secondary × saturate((0.1644, −0.9864) ·
    n.yz in the actor's model space), times min(LumMax, LumScale × luminance). The luminance is
-   the red of one sample of slot 11 at (1, 1). Observed in the original: no render target fills
-   that slot for the character light, and its techniques bind nothing there. The only lighting
-   draws that bind slot 11 are the projected-UV ones (Data\Textures\Effects\ProjectedNoise.dds),
-   and the renderer's state reset empties it; so the slot holds nothing (the sample reads 0)
-   or that noise texture left by a projected-UV draw before it. TODO(M13): which of the two a
-   frame's actors see depends on the original's draw order, unread; ours keeps the directional
-   ambient's luminance.
+   the red of one sample of slot 11 at (1, 1). Observed in the original: the techniques with
+   the character light bind slot 11 themselves, to the eye adaptation's 1×1 adapted luminance
+   target (the one the HDR pass's adaptation writes and its bloom and tone map read), so the
+   sample is the adapted luminance as the last frame left it (the scene draws before the HDR
+   pass); other lighting draws bind ProjectedNoise.dds there (projected UVs) or nothing. Ours:
+   the renderer copies the adaptation's adapted value (its x, the tone map's contrast pivot)
+   into each frame's uniforms on the GPU before the scene's passes (`Frame.luminance`).
    Eyes (type 16, 3,320 vanilla shapes, `node tools/effect-audit.ts --shaders`) carry
    Eye_Environment_Mapping (SLSF1 `0x20000`), not Environment_Mapping, and reflect their cube
    map (slot 4, with the mask of slot 5: both bound by that flag, `material-slots.ts`) by their
@@ -769,8 +773,11 @@ uMaxSkinDecalPerActor (25; Skyrim_Default.ini sets 60): otherwise the new one is
 the older stay. Each shape's decal counts against these. A rigid shape in the box (a helmet, a
 shield, a worn weapon: no skin) gets a plain decal of its own, hung under that shape's parent
 node so it moves with it, made while fewer than `[Display]` iMaxDecalsPerFrame (100) were made
-this frame; one too near a decal already on that node is skipped (TODO(M13): the spacing
-factor is unread). No dynamic decal is made farther than `[Display]` fDecalLOD0 (800) from the
+this frame; one too near a decal already on that node is skipped: within
+√((max(width, height) + the other's width)² / spacing) of where the other was made, the spacing
+16 in every caller that makes a dynamic decal (`decalTooNear` in `src/world/decal.ts`; the
+original applies it to every plain decal, the world's too: TODO(M13), ours project the world's
+over their box, not onto the struck shape's node). No dynamic decal is made farther than `[Display]` fDecalLOD0 (800) from the
 camera (observed in the original). Ours: the actor's skinned shapes are skinned on the CPU in
 the pose of the hit, their triangles that overlap the box (a separating-axis test against the
 unit cube) are copied with their bone weights and partitions (equipment that hides a body part
@@ -929,9 +936,13 @@ takes its values; across, the masked shader takes the scene's depth of field out
 and the water imagespace's inside it (one blurred copy, at the scene's radius). Five water types
 name no imagespace (DefaultWaterCold among them): no depth of field inside the mask there.
 `node tools/water-info.ts --underwater` lists each type's fog, planes and imagespace. Ours
-takes the water imagespace in place of the weather's or the cell's, the screen modifiers on top,
-once the near plane is wholly under. TODO(M13): where the engine swaps in that imagespace's
-colour terms (tint, saturation, brightness) is unread.
+takes the water imagespace's depth of field (its strength, distance, range, sides and blur
+radius) in place of the scene's once the near plane is wholly under (`underwaterImageSpace`).
+Observed in the original: the image-space manager keeps the water's imagespace as a base data of
+its own, set when the camera's water changes; the scene's base data is the weather's (or the
+cell's) and is what the HDR, cinematic and tint passes read, with the modifiers; the water's is
+read only by the depth of field and its switch. So its HDR, saturation, brightness, contrast and
+tint (UnderwaterImageSpace: saturation 0.8, tint 0.1) never apply.
 
 **Which water.** A cell's water is its XCWT type, else its world's water (NAM2, from the
 parent world when the world takes its water from it), at its XCLW height, else the world's

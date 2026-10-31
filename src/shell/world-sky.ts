@@ -23,6 +23,7 @@ import type { GpuSky, SkyFrame, SkyRenderer } from '../render/sky.ts';
 import { skyShapes } from '../render/sky-data.ts';
 import { blendImageSpaces, parseImageSpace, type ImageSpace } from '../world/image-space.ts';
 import { parseLensFlare, type LensFlare } from '../world/lens-flare.ts';
+import { underwaterImageSpace } from '../world/underwater.ts';
 import {
   blendVolumetricLighting,
   godRays,
@@ -424,10 +425,13 @@ export class WorldSky {
     }
     // The image-space modifiers on the screen change the weather's imagespace (also the
     // Sunlight Scale the directional light takes from it).
-    // Under water, the water's own imagespace takes the weather's place.
-    this.#imageSpace = this.#session.imageSpaceModifiers.imageSpace(
-      this.#underwaterImageSpace ?? (spaces.length > 0 ? blendImageSpaces(spaces) : undefined),
-      now,
+    // Under water, the water's own imagespace gives the depth of field alone.
+    this.#imageSpace = underwaterImageSpace(
+      this.#session.imageSpaceModifiers.imageSpace(
+        spaces.length > 0 ? blendImageSpaces(spaces) : undefined,
+        now,
+      ),
+      this.#underwaterImageSpace,
     );
     this.#falling = [];
     if (this.#session.sky.mode !== SkyMode.none) {
@@ -494,7 +498,7 @@ export class WorldSky {
     return this.#imageSpace;
   }
 
-  /** The imagespace of the water the camera is under, in the weather's place (or undefined). */
+  /** The imagespace of the water the camera is under: its depth of field (or undefined). */
   setUnderwaterImageSpace(space: ImageSpace | undefined): void {
     this.#underwaterImageSpace = space;
   }

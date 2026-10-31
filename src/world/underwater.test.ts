@@ -9,9 +9,31 @@ import {
   underwaterCrossing,
   underwaterFogColor,
   underwaterFogShare,
+  underwaterImageSpace,
   UnderwaterView,
   type NearPlaneWater,
 } from './underwater.ts';
+import { NEUTRAL_IMAGE_SPACE, type ImageSpace } from './image-space.ts';
+
+describe('underwaterImageSpace', () => {
+  it("takes only the water imagespace's depth of field, the scene's colour terms kept", () => {
+    const scene: ImageSpace = { ...NEUTRAL_IMAGE_SPACE, saturation: 1.2, tintAmount: 0.3 };
+    const water: ImageSpace = {
+      ...NEUTRAL_IMAGE_SPACE,
+      saturation: 0.8,
+      tintAmount: 0.1,
+      depthOfField: { strength: 1, distance: -50, range: 500, blurRadius: 2, sky: true },
+    };
+    const under = underwaterImageSpace(scene, water);
+    expect(under?.saturation).toBe(1.2);
+    expect(under?.tintAmount).toBe(0.3);
+    expect(under?.depthOfField).toEqual(water.depthOfField);
+    // No scene imagespace: a neutral one with the water's depth of field.
+    expect(underwaterImageSpace(undefined, water)?.saturation).toBe(1);
+    // No water imagespace: the scene's.
+    expect(underwaterImageSpace(scene, undefined)).toBe(scene);
+  });
+});
 import { parseWater } from './water.ts';
 
 const NEAR = 15;
