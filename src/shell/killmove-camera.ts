@@ -15,10 +15,14 @@
 
 import {
   SHOT_TRANSITION_DEFAULTS,
+  shotDollyTime,
+  shotStartMode,
   transitionBlur,
+  type ShotStartMode,
   type ShotTransition,
 } from '../gameplay/combat/kill-camera-transition.ts';
 import {
+  CameraAction,
   CameraShotFlag,
   CameraSubject,
   parseCameraPath,
@@ -87,6 +91,15 @@ export interface KillmoveSubjects {
   readonly node?: (reference: number, which: 'torso' | 'weapon') => Vec3 | undefined;
   /** An actor's height (its middle is a between-actors look's height; none: a chest's). */
   readonly height?: (reference: number) => number;
+  /**
+   * Whether an actor leads the paired animation it plays (its synchronized clip's
+   * bLeadCharacter): the lead actor of a shot (CAMS subject 3) is the target when it leads.
+   */
+  readonly leads?: (reference: number) => boolean;
+  /** Where the player's view is as the camera begins (its first shot dollies from there). */
+  readonly from?: () => Vec3 | undefined;
+  /** Whether the player is dead (a shot then does not cut away to their view). */
+  readonly playerDead?: () => boolean;
 }
 
 /** A shot to play: its camera model (where it sits in its subject's frame), for how long. */
@@ -111,8 +124,23 @@ export class KillmoveCamera implements Camera {
   #time = 0;
   /** Seconds since it began (its safety time). */
   #elapsed = 0;
-  /** The move into the current shot: where the last shot ended, the seconds of it so far. */
-  #dolly: { readonly from: Vec3; seconds: number } | undefined;
+  /** How its path's shots start (CPTH DATA: dolly, cut, or a Zoom shot's own time). */
+  readonly #mode: ShotStartMode;
+  /**
+   * The move into the current shot: where the camera was as it began (none: no view to come
+   * from), the seconds of it so far, how long it takes.
+   */
+  #dolly: { readonly from: Vec3; seconds: number; readonly time: number } | undefined;
+  /** The current shot's lead actor (CAMS subject 3): the attacker or the target. */
+  #lead: number = CameraSubject.attacker;
+  /** The current shot's own spot came within the cut-away distance of its look last update. */
+  #near = false;
+  /**
+   * The shot was cut away (observed in the original: its camera came within
+   * fVATSCameraCutAwayDistance of what it looks at while the player lives): the player's
+   * first-person view shows from then on, the playback (its time and image space) going on.
+   */
+  cutAway = false;
   /** The current shot's location and target where they were as it began (its follow flags). */
   #spots: { readonly shot: number; location?: Vec3; target?: Vec3 } | undefined;
   /**
@@ -126,10 +154,17 @@ export class KillmoveCamera implements Camera {
   /** The kill cameras' path it plays (CPTH editor id: development, tools). */
   readonly path: string;
 
-  private constructor(shots: readonly Shot[], subjects: KillmoveSubjects, path: string) {
+  private constructor(
+    shots: readonly Shot[],
+    subjects: KillmoveSubjects,
+    path: string,
+    mode: ShotStartMode,
+  ) {
     this.#shots = shots;
     this.#subjects = subjects;
     this.path = path;
+    this.#mode = mode;
+    this.#begin(subjects.from?.());
     this.update(0);
   }
 
@@ -196,7 +231,22 @@ export class KillmoveCamera implements Camera {
       if (!session.vfs.has(path)) continue;
       made.push({ record: shot, model: readCameraModel(parseNif(await session.vfs.read(path))) });
     }
-    return made.length > 0 ? new KillmoveCamera(made, subjects, chosen.editorId) : undefined;
+    return made.length > 0
+      ? new KillmoveCamera(made, subjects, chosen.editorId, shotStartMode(chosen.zoom))
+      : undefined;
+  }
+
+  /**
+   * A camera playing given shots (no models: each its default place) with a path's DATA, as
+   * choose would make it (tests, tools).
+   */
+  static ofShots(
+    shots: readonly CameraShot[],
+    subjects: KillmoveSubjects,
+    pathData = 0,
+  ): KillmoveCamera {
+    const played = shots.map((record) => ({ record, model: undefined }));
+    return new KillmoveCamera(played, subjects, 'shots', shotStartMode(pathData));
   }
 
   update(deltaSeconds: number): void {
@@ -215,11 +265,11 @@ export class KillmoveCamera implements Camera {
     if (this.#time > Math.max(0.1, shot.record.maxTime)) {
       this.#shot++;
       this.#time = 0;
-      this.#dolly = { from: this.position, seconds: 0 };
       if (this.#shot >= this.#shots.length) {
         this.done = true;
         return;
       }
+      this.#begin(this.position);
     }
     const current = this.#shots[this.#shot] ?? shot;
     const subjects = this.#subjects;
@@ -253,7 +303,8 @@ export class KillmoveCamera implements Camera {
     // The frame the model's place turns with: the attacker's facing, but the target's for a
     // shot at the target that follows its bone (observed in the original).
     const heading =
-      record.location === CameraSubject.target && !follows(CameraShotFlag.dontFollowBone)
+      this.#subject(record.location) === CameraSubject.target &&
+      !follows(CameraShotFlag.dontFollowBone)
         ? subjects.targetHeading()
         : subjects.attackerHeading();
     // The model's camera at the shot's time (every vanilla camera model has an NiCamera).
@@ -268,16 +319,28 @@ export class KillmoveCamera implements Camera {
       location[1] - ox * sin + oy * cos,
       location[2] + oz,
     ];
+    const settings = subjects.transition ?? SHOT_TRANSITION_DEFAULTS;
+    // The cut-away (observed in the original): a shot whose own spot came within
+    // fVATSCameraCutAwayDistance of its look at the last update hands the view to the player's
+    // first person, unless the player is dead (the camera then goes on).
+    if (this.#near && subjects.playerDead?.() !== true) this.cutAway = true;
+    this.#near =
+      Math.hypot(to[0] - looked[0], to[1] - looked[1], to[2] - looked[2]) <=
+      settings.cutAwayDistance;
     this.position = to;
     this.radialBlur = 0;
-    // Into a new shot far from the last one: the dolly there (ShotTransition).
+    // Into a shot far from where the camera was: the dolly there (ShotTransition), but never
+    // into a Shoot shot.
     const dolly = this.#dolly;
-    const settings = subjects.transition ?? SHOT_TRANSITION_DEFAULTS;
     if (dolly) {
       const from = dolly.from;
       const way: Vec3 = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
-      const progress = dolly.seconds / settings.dollyTime;
-      if (Math.hypot(way[0], way[1], way[2]) <= settings.dollyMin || !(progress < 1)) {
+      const progress = dolly.seconds / dolly.time;
+      if (
+        record.action === CameraAction.shoot ||
+        Math.hypot(way[0], way[1], way[2]) <= settings.dollyMin ||
+        !(progress < 1)
+      ) {
         this.#dolly = undefined;
       } else {
         this.position = [
@@ -301,21 +364,42 @@ export class KillmoveCamera implements Camera {
    * torso node (the original's VATS-chosen part, none in a killmove, else its torso part's
    * node); the attacker's WEAPON node for a shot that follows the bone, else its torso node.
    * An actor without that node is measured from its feet (its 3D root); with no skeleton known
-   * at all, the look goes to chest height. The lead actor is the attacker here.
-   * TODO(M13): the shot that ends once its camera comes within fVATSCameraCutAwayDistance of
-   * its target (the original's condition on the player is unread) is not applied.
+   * at all, the look goes to chest height. The lead actor is whichever of the two its shot
+   * began with (#begin).
    */
   #shotPoint(subject: number, flags: number, attacker: Vec3, target: Vec3): Vec3 {
     const subjects = this.#subjects;
     const projectile = this.#projectile;
     if (subject === CameraSubject.projectile && projectile) return projectile.position;
     const node = subjects.node;
-    const isTarget = subject === CameraSubject.target;
+    const isTarget = this.#subject(subject) === CameraSubject.target;
     const reference = isTarget ? subjects.targetRef : subjects.attackerRef;
     const feet = isTarget ? target : attacker;
     if (!node) return [feet[0], feet[1], feet[2] + CHEST * 0.75];
     const followBone = !isTarget && (flags & CameraShotFlag.dontFollowBone) === 0;
     return (followBone ? node(reference, 'weapon') : undefined) ?? node(reference, 'torso') ?? feet;
+  }
+
+  /**
+   * A shot begins (observed in the original, as the playback hands it its path's start mode):
+   * the move into it from `from` (where the camera was; none: it cuts) by the mode
+   * (shotDollyTime), and its lead actor: the target when the target leads the paired animation
+   * it plays, else the attacker.
+   */
+  #begin(from: Vec3 | undefined): void {
+    const record = this.#shots[this.#shot]?.record;
+    const settings = this.#subjects.transition ?? SHOT_TRANSITION_DEFAULTS;
+    const time = record && shotDollyTime(this.#mode, record, settings.dollyTime);
+    this.#dolly = from && time !== undefined ? { from, seconds: 0, time } : undefined;
+    const subjects = this.#subjects;
+    this.#lead =
+      subjects.leads?.(subjects.targetRef) === true ? CameraSubject.target : CameraSubject.attacker;
+    this.#near = false;
+  }
+
+  /** A shot's subject with its lead actor resolved (the attacker, projectile or target). */
+  #subject(subject: number): number {
+    return subject === CameraSubject.leadActor ? this.#lead : subject;
   }
 
   /** The point `share` of the way from the attacker's middle to the target's. */
