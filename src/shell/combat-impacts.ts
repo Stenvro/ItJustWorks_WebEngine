@@ -27,11 +27,14 @@ import {
 } from '../render/skinned-decal.ts';
 import type { ModelData, ModelPart } from '../render/model-data.ts';
 import {
+  decalTooNear,
   expireDecals,
   parseTextureSet,
   placeDecal,
+  placedSize,
   TextureSetFlag,
   type DecalData,
+  type DecalSpot,
   type TextureSet,
 } from '../world/decal.ts';
 import { impactFacing, type Impact } from '../world/impact-records.ts';
@@ -74,6 +77,8 @@ interface SkinDecal {
   readonly until: number;
   readonly skinned: number;
   readonly rigid: number;
+  /** Its plain decals on the actor's rigid shapes: the node each is on, where it was made. */
+  readonly spots: readonly (DecalSpot & { readonly node: number | ModelPart })[];
 }
 
 /** An impact's decal (IPCT DODT and DNAM). */
@@ -178,7 +183,7 @@ export class CombatImpacts {
       decalFrame(point, [-way[0], -way[1], -way[2]]),
     );
     if (actor !== undefined && 'instances' in now) {
-      await this.#actorDecal(data, placed, now, actor);
+      await this.#actorDecal(data, { ...placed, point }, now, actor);
       return;
     }
     const node = nearestNode(now, point);
@@ -223,14 +228,17 @@ export class CombatImpacts {
    * the actor carries fewer than [Decals] uMaxSkinDecalPerActor (each shape's decal counts;
    * without [Decals] bSkinnedDecals, none); a rigid shape (a helmet, a shield, a worn weapon)
    * takes a plain decal on its own geometry, hung on its node, while fewer than [Display]
-   * iMaxDecalsPerFrame were made this frame (and fewer than [Decals] uMaxDecals live). Past a
-   * limit the decal is not made (the older ones stay).
-   * TODO(M13): the original skips a plain decal too near one already on the same node (its
-   * spacing factor is unread). 'none': no shape lies in the box.
+   * iMaxDecalsPerFrame were made this frame (and fewer than [Decals] uMaxDecals live), and none
+   * on the same node was made too near (decalTooNear, the impacts' spacing of 16). Past a
+   * limit the decal is not made (the older ones stay). 'none': no shape lies in the box.
    */
   async #actorDecal(
     data: ImpactDecal,
-    placed: { readonly box: Mat4; readonly rect: readonly [number, number, number, number] },
+    placed: {
+      readonly box: Mat4;
+      readonly rect: readonly [number, number, number, number];
+      readonly point: Vec3;
+    },
     body: DecalBody,
     actor: number,
   ): Promise<'made' | 'refused' | 'none'> {
@@ -267,6 +275,10 @@ export class CombatImpacts {
     const parts: ModelPart[] = [];
     /** The skeleton node each rigid decal shape hangs on (the decal instance's pose nodes). */
     const hung: number[] = [];
+    /** The plain decals on this actor's rigid shapes, live or made now, by node. */
+    const spots = this.#skin.filter((d) => d.actor === actor).flatMap((d) => d.spots);
+    const made: SkinDecal['spots'][number][] = [];
+    const size = placedSize(placed);
     let skinned = 0;
     let rigid = 0;
     let found = false;
@@ -313,7 +325,7 @@ export class CombatImpacts {
                   part.local ?? identity(),
                 )
               : multiply(instance.world, part.world);
-          const made = rigidDecalPart(
+          const decal = rigidDecalPart(
             { part, world },
             placed.box,
             placed.rect,
@@ -322,13 +334,18 @@ export class CombatImpacts {
             look.color,
             node >= 0 ? hung.length : undefined,
           );
-          if (!made) continue;
+          if (!decal) continue;
           found = true;
           if (rigidLeft <= 0) continue;
+          // Not too near a plain decal already on its node (its skeleton node, else its shape).
+          const key = node >= 0 ? node : part;
+          const near = [...spots, ...made].filter((spot) => spot.node === key);
+          if (decalTooNear(placed.point, size, near)) continue;
           rigidLeft--;
           rigid++;
           if (node >= 0) hung.push(node);
-          parts.push(made);
+          made.push({ node: key, point: placed.point, width: size.width });
+          parts.push(decal);
         }
         first ??= instance;
       }
@@ -364,7 +381,15 @@ export class CombatImpacts {
       return 'made';
     }
     const lifetime = ini.number('Display', 'fDecalLifetime');
-    this.#skin.push({ actor, model: gpu, scene, until: this.#now() + lifetime, skinned, rigid });
+    this.#skin.push({
+      actor,
+      model: gpu,
+      scene,
+      until: this.#now() + lifetime,
+      skinned,
+      rigid,
+      spots: made,
+    });
     return 'made';
   }
 
