@@ -14,7 +14,7 @@ export interface KeepOffset {
   readonly target: number;
   readonly offset: readonly [number, number, number];
   readonly angle: readonly [number, number, number];
-  /** Farther than this from its place it runs to catch up. */
+  /** From this distance from its place on it goes at the planner's full speed. */
   readonly catchUpRadius: number;
   /** Within this of its place it stands (facing as the offset turns it). */
   readonly followRadius: number;
@@ -57,13 +57,16 @@ export function offsetPlace(keep: KeepOffset, target: OffsetPose): [number, numb
   ];
 }
 
+/** The normalized speed (walk 1, run 2) the keep-offset planner asks for at its catch-up radius. */
+export const KEEP_OFFSET_FULL_SPEED = 3;
+
 /**
- * What the actor's movement does this step to keep the offset: past the catch-up radius it
- * runs to its place (facing the way it goes), between the radii it walks there, within the
- * follow radius it stands; walking or standing it faces the target's heading turned by the
- * offset's angle about z.
- * TODO(M13): the controller's own speed matching inside the catch-up radius (the agent's
- * blending between the radii is not read; walking there is inferred).
+ * What the actor's movement does this step to keep the offset, as observed in the original's
+ * keep-offset planner: it goes straight for its place (its distance in three dimensions) at
+ * a speed on the engine's normalized scale that grows linearly from 0 at the follow radius
+ * to 3 at the catch-up radius and stays there beyond it ((distance − follow) / (catch-up −
+ * follow), clamped to 0..1, × 3); within the follow radius it stands. Moving or standing it
+ * faces the target's heading turned by the offset's angle about z.
  */
 export function keepOffsetRequest(
   keep: KeepOffset,
@@ -73,11 +76,19 @@ export function keepOffsetRequest(
   const place = offsetPlace(keep, target);
   const dx = place[0] - self.position[0];
   const dy = place[1] - self.position[1];
-  const distance = Math.hypot(dx, dy);
+  const dz = place[2] - self.position[2];
+  const distance = Math.hypot(dx, dy, dz);
   const face = target.heading + keep.angle[2];
-  if (distance <= keep.followRadius) return { gait: 'walk', face };
-  if (distance > keep.catchUpRadius) return { direction: [dx, dy], gait: 'run' };
-  return { direction: [dx, dy], gait: 'walk', face };
+  const span = keep.catchUpRadius - keep.followRadius;
+  const share =
+    span > 0
+      ? Math.min(1, Math.max(0, (distance - keep.followRadius) / span))
+      : distance > keep.followRadius
+        ? 1
+        : 0;
+  if (share <= 0 || (dx === 0 && dy === 0)) return { gait: 'walk', face };
+  const pace = share * KEEP_OFFSET_FULL_SPEED;
+  return { direction: [dx, dy], gait: pace > 1 ? 'run' : 'walk', face, pace };
 }
 
 /** The player's controls: the way asked in the view's frame (x right, y forward) and running. */

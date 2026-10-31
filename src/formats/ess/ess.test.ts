@@ -606,6 +606,46 @@ describe('change forms', () => {
     expect(form).toMatchObject({ npc: { fullName: 'Lydia' }, undecoded: 0 });
   });
 
+  it('reads a package the game made as its definition, a plugin package as nothing', () => {
+    // An alarm package the game made (PKDT's type 21): no form flags even with the flag set,
+    // its PKDT, a location (a reference's, radius 512) and a target (a reference), a u32,
+    // then the alarm's crimes (a type byte and an hour each) and a switch.
+    const pkdt = [0, 0, 0, 0, 21, 0, 0, 0, 0, 0, 0, 0];
+    const alarm = new EssWriter().bytes(pkdt).u8(1 | 2);
+    alarm.u8(0).u32(512).refId(1, 0x1a26f).u8(0).u32(0).refId(1, 0x14).u32(0);
+    alarm.vsval(1).u8(2).u16(14).u8(1);
+    const made = readChangeForm(entry(32, 1, alarm.done(), (2 << 22) | 0x10), resolve);
+    expect(made).toMatchObject({ base: { packageType: 21 }, undecoded: 0 });
+    expect(made.stoppedAt).toBeUndefined();
+    const plugin = readChangeForm(entry(32, 1, new Uint8Array(0), (1 << 22) | 0x14), resolve);
+    expect(plugin).toMatchObject({ undecoded: 0 });
+    expect(plugin.stoppedAt).toBeUndefined();
+  });
+
+  it("reads a grenade's decals as the original's simple decals", () => {
+    const w = new EssWriter();
+    for (let i = 0; i < 9; i++) w.u32(0);
+    w.refId(1, 0x1a26f).refId(0, 0).refId(1, 0x14).refId(0, 0); // source, ammo, shooter, target
+    w.f32(0).f32(0).f32(0).u32(0).u32(0).f32(0).f32(0).f32(0).f32(1).f32(0).f32(0).f32(0);
+    w.u32(0).u32(0).u32(0).i32(-1).u8(0).vsval(0); // no item, no impacts
+    w.f32(0).f32(0).f32(0).refId(0, 0).u32(0).refId(0, 0).u32(0);
+    // Two decals: one on a reference, one on a cell's land (its quad 2). Each: two texture
+    // sets, origin, direction, width, height, depth, a rotation matrix, four switches, the
+    // parallax scale and passes, shininess, a value, a color, two switches and a u32.
+    w.vsval(2);
+    for (const onLand of [false, true]) {
+      if (onLand) w.u8(1).refId(1, 0x3c).u32(2);
+      else w.u8(0).refId(1, 0x1a26f);
+      w.refId(1, 0x10).refId(0, 0);
+      for (let i = 0; i < 3 + 3 + 3 + 9; i++) w.f32(1);
+      w.bytes([0, 1, 1, 0]).f32(0.5).u8(4).f32(10).u32(0).f32(1).f32(1).f32(1).u8(0).u8(1);
+      w.u32(0);
+    }
+    const form = readChangeForm({ ...entry(3, 0, w.done()), version: 78 }, resolve);
+    expect(form.stoppedAt).toBeUndefined();
+    expect(form).toMatchObject({ projectile: { decals: 2 }, undecoded: 0 });
+  });
+
   it("reads the player base's skills, race, name and sex", () => {
     const data = new EssWriter()
       .wstring('Dovahkiin')

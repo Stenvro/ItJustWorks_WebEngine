@@ -142,44 +142,44 @@ const CreatedProcedure = {
 /**
  * A package the game made (an alarm, a flee, a trespass warning, a spectator's, a dialogue's):
  * its PKDT, which of location, target and data follow (bits 1, 2, 4), those, a u32, then what
- * its kind adds, as observed in the original.
+ * its kind adds, as observed in the original. Its kind is its PKDT's type (the byte after the
+ * flags): the AI process writes it before the definition too, a PACK change form does not.
+ * Returns the package's type.
  */
-export function readCreatedPackage(stream: PathingStream, procedure: number): void {
+export function readCreatedPackage(stream: PathingStream, procedure?: number): number {
   const reader = stream.reader;
   const ref = (): void => {
     stream.form();
   };
-  reader.skip(12);
+  const type = reader.bytes(12)[4] ?? 0;
   const parts = reader.u8();
   if (parts & 1) readPackageLocation(stream);
   if (parts & 2) readPackageTarget(stream);
-  // TODO(M13): a created package with its own package data (none in the saves read; the game
-  // makes its packages without one).
-  if (parts & 4) throw new ProcessUnknown("a created package's own data");
+  if (parts & 4) readPackageDefinitionData(stream, type);
   reader.u32();
-  switch (procedure) {
+  switch (procedure ?? type) {
     case CreatedProcedure.alarm:
       // The crimes it is about: a type byte and its game hour (u16) each; a switch.
       reader.skip(3 * reader.vsval());
       reader.u8();
-      return;
+      return type;
     case CreatedProcedure.dialogue:
     case CreatedProcedure.inGameDialogue:
       ref();
       ref();
       ref();
       reader.skip(2);
-      return;
+      return type;
     case CreatedProcedure.flee:
       reader.skip(2 + 12 + 4 + 3);
       ref();
       ref();
       for (let n = reader.vsval(), i = 0; i < n; i++) ref();
-      return;
+      return type;
     case CreatedProcedure.trespass:
       reader.skip(5 * 4);
       ref();
-      return;
+      return type;
     case CreatedProcedure.spectator:
       reader.skip(4 * 4 + 1 + 12);
       // What it watches: values, times, two points, two switches, two references each.
@@ -188,9 +188,9 @@ export function readCreatedPackage(stream: PathingStream, procedure: number): vo
         ref();
         ref();
       }
-      return;
+      return type;
     default:
-      return;
+      return type;
   }
 }
 
@@ -268,6 +268,56 @@ function readPackageDataInto(
     }
     default:
       throw new ProcessUnknown(`package data of kind ${String(kind)}`);
+  }
+}
+
+/**
+ * A package definition's own data (TESPackageData) as a package the game made writes it, by
+ * the package's type, as observed in the original: the type gives the data its class when the
+ * package is made, and each class writes its own fields; an optional location or target is a
+ * byte that says it follows. The custom and template packages' (18, 19) write nothing; the
+ * other types have none.
+ */
+function readPackageDefinitionData(stream: PathingStream, type: number): void {
+  const reader = stream.reader;
+  const location = (): void => {
+    if (reader.u8() !== 0) readPackageLocation(stream);
+  };
+  switch (type) {
+    case 1: // follow
+    case 2: // escort
+      reader.u32();
+      location();
+      return;
+    case 3: // eat
+    case 8: // use an item at
+    case 9: // ambush
+      location();
+      return;
+    case 13: // patrol: two switches
+      reader.skip(2);
+      return;
+    case 15: // dialogue
+    case 28: // in-game dialogue
+      reader.u32();
+      reader.skip(3);
+      reader.u32();
+      reader.u8();
+      reader.u32();
+      stream.form();
+      location();
+      return;
+    case 16: // use a weapon: switches, three u16, two u32, a reference, a target, a location
+      reader.skip(6 + 3 * 2 + 2 * 4);
+      stream.form();
+      if (reader.u8() !== 0) readPackageTarget(stream);
+      location();
+      return;
+    case 18: // custom
+    case 19: // template
+      return;
+    default:
+      throw new ProcessUnknown(`package data of a package of type ${String(type)}`);
   }
 }
 

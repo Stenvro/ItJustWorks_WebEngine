@@ -25,8 +25,10 @@ export interface MoveRequest {
   readonly speedMult?: number | undefined;
   /**
    * Its speed on the engine's normalized scale (1 its movement type's walk, 2 its run, each in
-   * the way it goes; between them linear): the combat paths' speeds (fCombatSpeedValueWalk 1,
-   * FastWalk 1.33, Jog 1.66, Run 2). Undefined: its gait's speed.
+   * the way it goes; between them linear; beyond 2 in running speeds, as the scale's turn rates
+   * go: 3 is twice its run): the combat paths' speeds (fCombatSpeedValueWalk 1, FastWalk 1.33,
+   * Jog 1.66, Run 2), the keep-offset planner's (up to 3). Undefined: its gait's speed.
+   * TODO(M13): beyond 2 the turn rates' rule (observed for them) is taken for the speeds too.
    */
   readonly pace?: number | undefined;
   /** How it turns (undefined: as any actor out of combat, DEFAULT_TURNING). */
@@ -303,7 +305,9 @@ export function steer(
         : runSpeed
       : pace <= 1
         ? walkSpeed * Math.max(0, pace)
-        : walkSpeed + (runSpeed - walkSpeed) * (pace - 1);
+        : pace <= 2
+          ? walkSpeed + (runSpeed - walkSpeed) * (pace - 1)
+          : runSpeed * (pace - 1);
   let speed = gaitSpeed * (request.speedMult ?? 1);
   if (request.face === undefined) {
     // Not strafing it goes ahead, the way it faces (its graph's Direction is 0: a sideways

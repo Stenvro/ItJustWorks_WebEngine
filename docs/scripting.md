@@ -920,3 +920,23 @@ keeps its own: MQ101's AddRaceSpells reads the base's) and the world makes the a
 it (`WorldBridge.raceChanged`): the player's body keeps the chosen face (a werewolf and back),
 an NPC of a loaded cell is placed again where it stands. The race menu gives up the actor's own
 race for the race chosen. TODO(M12): both in the save.
+
+### Movement overrides and terrain effects
+
+Observed in the original. **KeepOffsetFromActor** hands the actor's movement controller a
+planner that keeps the offset (`src/ai/movement-overrides.ts`): the offset is turned into the
+target's frame and its place sought each step; the actor goes straight for it at a speed on the
+engine's normalized scale (1 walk, 2 run) of 3 × (distance − follow radius) / (catch-up radius −
+follow radius), clamped to 0..3, the distance taken in three dimensions: it stands within the
+follow radius, speeds up linearly between the radii and goes at 3 from the catch-up radius on,
+facing the target's heading turned by the offset's angle about z.
+
+**PlayTerrainEffect** makes a terrain effect (`src/world/terrain-effect.ts`): its model stands
+on the land under the reference (the reference's x and y, the land's height there), turned as
+the reference is, hung under the land's node and the cell's physics world (an actor's collision
+layer for its pieces), its model's sequence played; each piece of the model is then set on the
+land's height at its own place. It takes nothing else of the ground: no texture and no
+material. With no land under the reference (an interior) it cannot be set up: the original's
+error "Could not set up terrain effect.". The attach bone is looked up in the effect's own
+model, not the reference's 3D. TODO(M13): the pieces set one by one and the attach node are the
+renderer's to do (the model is placed whole).
