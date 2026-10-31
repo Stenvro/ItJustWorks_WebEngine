@@ -159,6 +159,11 @@ export interface ModelPart {
   readonly node?: number;
   readonly local?: Mat4;
   /**
+   * The lower-case names of the nodes above the shape, the root first: a hit's decal goes onto
+   * the shapes under the node that holds the struck collision (src/render/world-decal.ts).
+   */
+  readonly ancestors?: readonly string[];
+  /**
    * A weapon's blood: a shape the NIF hides (BloodLighting, BloodFX, EdgeBlood, ...: hidden, its
    * shader a Dynamic_Decal) until a hit on flesh bloodies the weapon (the engine's
    * BSTempEffectWeaponBlood shows and fades it). Drawn only for instances that carry a weapon's
@@ -640,6 +645,16 @@ export function buildModel(file: NifFile, options: BuildOptions = {}): ModelData
   /** Every named node's place in the model (lower-case name; the first of a name). */
   const namedNodes = new Map<string, Mat4>();
   let currentNode = -1;
+  /** The names above each node's shapes (ModelPart.ancestors), shared by its shapes. */
+  const ancestorsOfNode = new Map<number, readonly string[]>();
+  const ancestorsOf = (node: number): readonly string[] => {
+    let names = ancestorsOfNode.get(node);
+    if (!names) {
+      names = nodeNames.map((name) => name.toLowerCase());
+      ancestorsOfNode.set(node, names);
+    }
+    return names;
+  };
   /** The shape being visited, under its node. */
   let currentLocal: Mat4 = identity();
   /** NiSwitchNodes met. */
@@ -873,6 +888,7 @@ export function buildModel(file: NifFile, options: BuildOptions = {}): ModelData
       ...(skin && { skin }),
       node: currentNode,
       local: currentLocal,
+      ancestors: ancestorsOf(currentNode),
       ...(currentWeaponBlood && { weaponBlood: true }),
       ...(currentMeshParticle && { meshParticle: currentMeshParticle }),
     });
