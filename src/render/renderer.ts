@@ -235,8 +235,11 @@ export interface SceneView {
   readonly lighting: (camera: Camera) => SceneLighting;
   /** Draw the shell backdrop behind the scene (model viewer) or not (cells). */
   readonly backdrop: boolean;
-  /** The directional light casts cascaded shadows (exteriors). */
-  readonly shadows?: boolean;
+  /**
+   * The directional light casts cascaded shadows (exteriors; a function: asked each frame, as
+   * the world it shows may change).
+   */
+  readonly shadows?: boolean | (() => boolean);
   /** Lights with LIGH shadow flags cast shadows (light-shadows.ts). */
   readonly lightShadows?: boolean;
   /**
@@ -668,7 +671,8 @@ export class Renderer {
       }
       const lighting = view.lighting(view.camera);
       frameLighting = lighting;
-      const inverse = view.shadows ? invert(this.#viewProjection) : undefined;
+      const sunShadows = typeof view.shadows === 'function' ? view.shadows() : view.shadows;
+      const inverse = sunShadows === true ? invert(this.#viewProjection) : undefined;
       if (inverse) {
         const fitted = fitCascades(
           inverse,

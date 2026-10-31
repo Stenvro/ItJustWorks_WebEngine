@@ -182,8 +182,12 @@ const FOCUS_FLOATS_START = LIGHT_SHADOW_LAYERS * 16 + MAX_SHADOW_LIGHTS * 4 + 4;
  * a vec4 per focus map, and their count.
  */
 const LIGHT_SHADOW_FLOATS = FOCUS_FLOATS_START + MAX_FOCUS_SHADOWS * 20 + 4;
-/** Receiver offset of the focus maps against acne along the light, in their texels. */
-const FOCUS_DEPTH_BIAS_TEXELS = 2;
+/**
+ * The focus maps' depth bias against acne, in times the cascades' (observed in the original's
+ * shadow mask: a focus map's comparison takes three times the bias of the cascade at the
+ * pixel, in the focus map's own depth).
+ */
+const FOCUS_DEPTH_BIAS_CASCADES = 3;
 /** The cascade uniform slot of focus map `index` (after the sun's and the lights' layers). */
 export function focusCascadeSlot(index: number): number {
   return SHADOW_TEXTURE_LAYERS + LIGHT_SHADOW_LAYERS + index;
@@ -3339,7 +3343,7 @@ export class SceneRenderer {
       data.set(
         [
           shadow.texelSize,
-          (FOCUS_DEPTH_BIAS_TEXELS * shadow.texelSize) / shadow.depthRange,
+          FOCUS_DEPTH_BIAS_CASCADES * SHADOW_DEPTH_BIAS,
           shadow.size / FOCUS_MAP_SIZE,
           shadow.fade,
         ],

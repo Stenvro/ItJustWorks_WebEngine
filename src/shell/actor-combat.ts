@@ -676,6 +676,7 @@ export class ActorCombat implements CombatBridge {
         position: hit.point,
         direction: [direction[0] / norm, direction[1] / norm, direction[2] / norm],
         heavy: false,
+        forced: true,
       },
       physics,
     );
