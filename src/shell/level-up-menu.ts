@@ -36,6 +36,12 @@ export class LevelUpMenu {
 
   /** Opens the menu; `closed(chose)` once it has closed (`chose`: an attribute was raised). */
   open(depth: number, closed: (chose: boolean) => void): Promise<Menu> {
+    // Observed in the original: the menu adds the level-up music (DOBJ LUMS, the
+    // MUSSpecialSuccess stings) as it opens.
+    void this.#session.defaultObjects().then((defaults) => {
+      const music = defaults.get('LUMS');
+      if (music !== undefined) this.#session.soundSystem?.music.add(music);
+    });
     let done = false;
     const close = (menu: Menu, chose: boolean): void => {
       if (done) return;

@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { FLASH_SECONDS, flashIntensity, lightningInterval, thunderAmount } from './lightning.ts';
+import {
+  FLASH_SECONDS,
+  THUNDER_CHECK_SECONDS,
+  fadeShare,
+  flashIntensity,
+  thunderChance,
+} from './lightning.ts';
 
 describe('lightning', () => {
-  it('flashes only in weathers with thunder, more often for lower frequencies', () => {
-    expect(lightningInterval(255)).toBeUndefined();
-    expect(lightningInterval(246)).toBeCloseTo(28.9, 1);
-    expect(lightningInterval(15)).toBeCloseTo(1.76, 2);
+  it('thunders with one chance in the frequency × the thunder sounds at each 30 ms check', () => {
+    expect(thunderChance(246, 1)).toBeCloseTo(1 / 246, 12);
+    expect(thunderChance(15, 2)).toBeCloseTo(1 / 30, 12);
+    // A storm's single thunder: about every 7.4 s.
+    expect(THUNDER_CHECK_SECONDS / thunderChance(246, 1)).toBeCloseTo(7.38, 2);
   });
 
   it('strikes, strikes again and fades', () => {
@@ -15,13 +22,12 @@ describe('lightning', () => {
     expect(flashIntensity(-0.1)).toBe(0);
   });
 
-  it('fades thunder in and out with a change of weather', () => {
-    const storm = { thunderFrequency: 246, thunderFadeIn: 0.5, thunderFadeOut: 0.5 };
-    const calm = { thunderFrequency: 255, thunderFadeIn: 0, thunderFadeOut: 0 };
-    expect(thunderAmount(storm, undefined, 1)).toBe(1);
-    expect(thunderAmount(storm, calm, 0.25)).toBe(0);
-    expect(thunderAmount(storm, calm, 0.75)).toBeCloseTo(0.5, 6);
-    expect(thunderAmount(calm, storm, 0.25)).toBeCloseTo(0.5, 6);
-    expect(thunderAmount(calm, undefined, 1)).toBe(0);
+  it('shares a fading effect between the arriving and the leaving weather', () => {
+    expect(fadeShare(0.5, 1, false, undefined)).toBe(1);
+    expect(fadeShare(0.5, 1, false, 0.25)).toBe(0);
+    expect(fadeShare(0.5, 1, false, 0.75)).toBeCloseTo(0.5, 6);
+    expect(fadeShare(0, 0.5, true, 0.25)).toBeCloseTo(1 - 0.25 / 0.501, 6);
+    expect(fadeShare(0, 0.5, true, 0.6)).toBe(0);
+    expect(fadeShare(0, 0, true, undefined)).toBe(0);
   });
 });

@@ -56,8 +56,14 @@ class FakeVoice implements MusicVoice {
     this.#length = length;
   }
 
+  #offset = 0;
+
   get position(): number {
-    return this.#clock.now - this.#start;
+    return this.#clock.now - this.#start + this.#offset;
+  }
+
+  seek(seconds: number): void {
+    this.#offset += seconds - this.position;
   }
 
   get ended(): boolean {
@@ -231,7 +237,8 @@ describe('music', () => {
     expect(music.state.current).toBe(0x30);
     expect(music.state.ducked).toEqual([0x10]);
     expect(exploreBus?.level).toBeCloseTo(dbToGain(-100));
-    expect(exploreBus?.fadeSeconds).toBe(9);
+    // Over [Audio] fMusicDuckingSeconds, not the ducking type's fade duration.
+    expect(exploreBus?.fadeSeconds).toBe(6);
     expect(output.playing('combat.wav')).toBeDefined();
     expect(output.playing('music\\day.wav')).toBeDefined();
     // Combat ends: the next cue point (8 s into the track) crossfades into the finale.
@@ -248,10 +255,10 @@ describe('music', () => {
     await run(music, output, 8);
     expect(music.state.leaving).toEqual([]);
     expect(exploreBus?.level).toBe(1);
-    expect(exploreBus?.fadeSeconds).toBe(9);
+    expect(exploreBus?.fadeSeconds).toBe(8);
   });
 
-  it('lets the old type fade out before a new one starts', async () => {
+  it('fades the old type out over its own fade duration while the new one starts', async () => {
     const output = new FakeOutput();
     explore(output);
     output.types.set(0x40, type(0x40, { fadeDuration: 6, tracks: [7] }));
@@ -262,10 +269,10 @@ describe('music', () => {
     await run(music, output, 2);
     music.setLocation(0x40);
     await run(music, output, 3);
-    expect(output.voices[0]?.stopFade).toBe(6);
-    expect(output.playing('dungeon.wav')).toBeUndefined();
-    await run(music, output, 5);
+    // The exploration type's own 12 s (the dungeon's 6 s plays no part), the dungeon at once.
+    expect(output.voices[0]?.stopFade).toBe(12);
     expect(output.playing('dungeon.wav')).toBeDefined();
+    await run(music, output, 12);
     expect(output.buses[0]?.disposed).toBe(true);
   });
 
@@ -326,5 +333,41 @@ describe('music', () => {
     await run(music, output, 3);
     const fading = output.voices.filter((voice) => voice.stoppedAt !== undefined);
     expect(fading.some((voice) => voice.stopFade === 5)).toBe(true);
+  });
+
+  it('plays a track with cue points but no finale on from its last cue point, the next type after it', async () => {
+    const output = new FakeOutput();
+    output.types.set(0x70, type(0x70, { tracks: [13] }));
+    output.tracks.set(13, track(13, { file: 'cued.wav', cuePoints: [4, 20] }));
+    output.files.set('cued.wav', 24);
+    output.types.set(0x71, type(0x71, { tracks: [14] }));
+    output.tracks.set(14, track(14, { file: 'next.wav' }));
+    output.files.set('next.wav', 30);
+    const music = new Music(output, SETTINGS, () => 0.99);
+    music.setLocation(0x70);
+    await run(music, output, 2);
+    music.setLocation(0x71);
+    await run(music, output, 3);
+    // At the cue point (4 s) it jumps to the last one (20 s) and plays its 4 s out.
+    const cued = output.voices.find((voice) => voice.file === 'cued.wav');
+    expect(cued?.position).toBeGreaterThanOrEqual(20);
+    expect(cued?.stoppedAt).toBeUndefined();
+    expect(output.playing('next.wav')).toBeUndefined();
+    await run(music, output, 5);
+    expect(output.playing('next.wav')).toBeDefined();
+  });
+
+  it('fades a type without a fade duration out over 4 s', async () => {
+    const output = new FakeOutput();
+    output.types.set(0x72, type(0x72, { tracks: [15] }));
+    output.tracks.set(15, track(15, { file: 'tavern.wav' }));
+    output.files.set('tavern.wav', 60);
+    explore(output);
+    const music = new Music(output, SETTINGS, () => 0.99);
+    music.setLocation(0x72);
+    await run(music, output, 2);
+    music.setLocation(0x10);
+    await run(music, output, 1);
+    expect(output.voices[0]?.stopFade).toBe(4);
   });
 });

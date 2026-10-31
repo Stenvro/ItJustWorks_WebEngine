@@ -10,14 +10,14 @@ export function dbToGain(db: number): number {
 }
 
 /**
- * The output model's volume at a distance: the curve's five points (percent) spread evenly
- * from the minimum to the maximum distance and joined by straight lines; inside the minimum
- * the first point, beyond the maximum silence (TODO(M13): the engine's own spacing).
+ * The output model's volume at a distance, observed in the original: the curve's five points
+ * (percent) spread evenly from the minimum to the maximum distance and joined by straight
+ * lines; inside the minimum the first point, at or beyond the maximum silence.
  */
 export function distanceGain(attenuation: SoundAttenuation | undefined, distance: number): number {
   if (!attenuation) return 1;
   const { minDistance, maxDistance, curve } = attenuation;
-  if (distance > maxDistance) return 0;
+  if (distance >= maxDistance) return 0;
   if (distance <= minDistance || maxDistance <= minDistance) return (curve[0] ?? 100) / 100;
   const t = ((distance - minDistance) / (maxDistance - minDistance)) * (curve.length - 1);
   const i = Math.min(curve.length - 2, Math.floor(t));

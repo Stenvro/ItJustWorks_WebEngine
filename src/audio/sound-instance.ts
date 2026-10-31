@@ -1,11 +1,14 @@
 // One playing sound: its file in a buffer source (looping per the descriptor), its own volume
 // (static attenuation, dB variance) and pitch, the distance curve of its output model, then
 // either a 3D panner (output models that use HRTF) or fixed speaker levels, into its category;
-// a share goes to the reverb. Notes: docs/audio.md.
+// a share goes to the reverb. Placed by X3DAudio in the original (HRTF models that attenuate
+// with distance), the direct path also gets the distance low-pass and the reverb share falls
+// with distance (distance-filter.ts). Notes: docs/audio.md.
 
 import type { Vec3 } from '../render/math.ts';
 import type { SoundDescriptor, SoundOutputModel } from '../world/sound-records.ts';
 import { distanceGain, instanceGain, instancePitch } from './attenuation.ts';
+import { curveDistance, directLowPass, lowPassFor, reverbLevel } from './distance-filter.ts';
 import type { AudioEngine } from './audio-engine.ts';
 import { rumbleSends } from './rumble.ts';
 import { speakerGains } from './speakers.ts';
@@ -43,6 +46,10 @@ export class SoundInstance {
   readonly #fade: GainNode;
   readonly #distance: GainNode;
   readonly #panner: PannerNode | undefined;
+  /** X3DAudio's direct-path low-pass and the reverb send it scales (HRTF models). */
+  readonly #lowPass: BiquadFilterNode | undefined;
+  #reverbSend: GainNode | undefined;
+  #reverbShare = 0;
   #source: AudioBufferSourceNode;
   #stopping = false;
   #level = 1;
@@ -86,7 +93,13 @@ export class SoundInstance {
         maxDistance: 1e9,
         rolloffFactor: 0,
       });
-      this.#distance.connect(this.#panner);
+      if (model?.attenuatesWithDistance && model.attenuation) {
+        this.#lowPass = new BiquadFilterNode(context, { type: 'lowpass', frequency: 24000 });
+        this.#distance.connect(this.#lowPass);
+        this.#lowPass.connect(this.#panner);
+      } else {
+        this.#distance.connect(this.#panner);
+      }
       this.#panner.connect(output);
     } else {
       this.#speakerOutput(output);
@@ -94,9 +107,12 @@ export class SoundInstance {
     const send = model?.reverbSend ?? 0;
     if (send > 0) {
       const reverb = context.createGain();
-      reverb.gain.value = send * engine.categoryVolume(descriptor.category);
-      this.#distance.connect(reverb);
+      this.#reverbShare = send * engine.categoryVolume(descriptor.category);
+      reverb.gain.value = this.#reverbShare;
+      // X3DAudio's sounds send before the volume curve, by the reverb level instead.
+      (this.#lowPass ? this.#fade : this.#distance).connect(reverb);
       reverb.connect(engine.reverbSend);
+      if (this.#lowPass) this.#reverbSend = reverb;
     }
     this.#rumbleSend();
     // One starting while a menu holds its category waits for the menu to close.
@@ -175,8 +191,19 @@ export class SoundInstance {
       : 1;
     // Its first update sets the gain at once: smoothed from the node's 1, a distant footstep
     // would start at full volume (a thump each, a drumming of the far actors' steps).
-    if (this.#placed) this.#distance.gain.setTargetAtTime(gain, time, SMOOTHING);
-    else this.#distance.gain.setValueAtTime(gain, time);
+    const set = (param: AudioParam, value: number): void => {
+      if (this.#placed) param.setTargetAtTime(value, time, SMOOTHING);
+      else param.setValueAtTime(value, time);
+    };
+    set(this.#distance.gain, gain);
+    const attenuation = this.model?.attenuation;
+    if (this.#lowPass && attenuation) {
+      const normalized = curveDistance(attenuation, distance);
+      const filter = lowPassFor(directLowPass(normalized), this.#engine.context.sampleRate);
+      set(this.#lowPass.frequency, filter?.frequency ?? this.#engine.context.sampleRate / 2);
+      set(this.#lowPass.Q, filter?.q ?? 0);
+      if (this.#reverbSend) set(this.#reverbSend.gain, this.#reverbShare * reverbLevel(normalized));
+    }
     this.#placed = true;
     if (this.#panner) {
       this.#panner.positionX.setValueAtTime(position[0], time);
@@ -213,8 +240,11 @@ export class SoundInstance {
     this.#source.stop();
   }
 
-  /** Sets its level (0–1) smoothly: weather loops follow a change of weather. */
-  setLevel(level: number): void {
+  /**
+   * Sets its level (0–1), smoothly over a time constant of `smoothing` seconds (0: at once):
+   * weather loops follow a change of weather.
+   */
+  setLevel(level: number, smoothing = 0.5): void {
     if (this.#stopping || Math.abs(level - this.#level) < 0.01) return;
     this.#level = level;
     // Replaces a fade-in still under way, which would otherwise end at full level.
@@ -222,7 +252,8 @@ export class SoundInstance {
     const gain = this.#fade.gain;
     gain.cancelScheduledValues(time);
     gain.setValueAtTime(gain.value, time);
-    gain.setTargetAtTime(level, time, 0.5);
+    if (smoothing <= 0) gain.setValueAtTime(level, time);
+    else gain.setTargetAtTime(level, time, smoothing);
   }
 
   /**

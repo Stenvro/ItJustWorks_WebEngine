@@ -256,6 +256,10 @@ class StreamVoice implements MusicVoice {
     return this.#ended;
   }
 
+  seek(seconds: number): void {
+    if (!this.#ended) this.#audio.currentTime = seconds;
+  }
+
   stop(seconds: number): void {
     if (this.#stopping || this.#ended) return;
     this.#stopping = true;
