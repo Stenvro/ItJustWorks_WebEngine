@@ -32,11 +32,16 @@
 import type { ObjectGraph } from '../animation/object-graph.ts';
 import { SKILL_CAP } from '../gameplay/actor-leveling.ts';
 import {
+  cameraMoveShare,
   nearestRing,
+  RING_SETTLE_SECONDS,
   RING_SKILLS,
   ringAxes,
   ringTurnSpeed,
+  ringView,
   SKILL_ANGLE,
+  SKILLS_LOOK_AT_DEFAULTS,
+  STAR_MOVE_SECONDS,
   starPlace,
   STAR_CAMERA_DEFAULTS,
   STAR_GRID_DEFAULTS,
@@ -73,20 +78,13 @@ const STAR_MODEL = 'meshes\\interface\\intperkstars01.nif';
 const LINE_MODEL = 'meshes\\interface\\intperkline01.nif';
 /** The line model's beam runs along +Y to its BeamEnd node. */
 const LINE_LENGTH = 56.2;
-/** Where the camera rests after the dome's CameraIntro (its CameraPosition node). */
+/**
+ * Where the dome's CameraIntro leaves its CameraPosition node; from there the camera settles to
+ * the dome's middle (RING_SETTLE_SECONDS).
+ */
 const CAMERA_REST_Z = -16.44;
 /** The intro's and outro's lengths (s). */
 const INTRO_SECONDS = 0.63;
-/**
- * How far up the camera looks at the ring (degrees): the constellations over the names.
- * Fitted (the dome's camera node looks level; the menu shows the constellations above).
- */
-const RING_PITCH = 10;
-/**
- * Seconds the camera takes to a selected star's camera point, up into a tree and back down to
- * the ring (observed in the original: a second).
- */
-const STAR_MOVE_SECONDS = 1;
 /** Degrees the view turns per pixel the mouse moves. */
 const MOUSE_DEGREES = 0.15;
 /** The skills' and meters' colours: as they are, fortified, damaged (the item cards' own). */
@@ -146,15 +144,17 @@ interface CameraPose {
   readonly target: Vec3;
 }
 
-/** The camera at the dome's middle, turned to a heading and pitched up. */
+/** The camera at the dome's middle, turned to a heading, looking at the ring's points. */
 class SkillsCamera implements Camera {
   position: Vec3 = [0, 0, CAMERA_REST_Z];
   forward: Vec3 = [0, 1, 0];
   /** fStatsCameraNearDistance. */
   readonly near: number;
   yaw = 0;
-  pitch = RING_PITCH;
+  /** Its height: the CameraIntro's, then settling to the dome's middle (0). */
   z = CAMERA_REST_Z;
+  /** fStatsSkillsLookAt. */
+  lookAt: Vec3 = SKILLS_LOOK_AT_DEFAULTS;
   /** Where it stands in a tree (and on its way there and back); undefined: on the ring. */
   pose: CameraPose | undefined;
   /** Vertical field of view (radians). */
@@ -171,18 +171,9 @@ class SkillsCamera implements Camera {
     // The menu moves it.
   }
 
-  /** At the dome's middle, turned to its heading and pitched up. */
+  /** At the dome's middle, looking at the point its heading faces (skills-ring.ts ringView). */
   ringPose(): CameraPose {
-    const yaw = (this.yaw * Math.PI) / 180;
-    const pitch = (this.pitch * Math.PI) / 180;
-    return {
-      position: [0, 0, this.z],
-      target: [
-        Math.sin(yaw) * Math.cos(pitch),
-        Math.cos(yaw) * Math.cos(pitch),
-        this.z + Math.sin(pitch),
-      ],
-    };
+    return ringView(this.yaw, this.z, this.lookAt);
   }
 
   viewProjection(aspect: number, out: Mat4 = new Float32Array(16)): Mat4 {
@@ -318,6 +309,8 @@ class Viewing {
    * was, since `start` (seconds).
    */
   #view: { from: CameraPose; to: PerkStar | undefined; start: number } | undefined;
+  /** When the camera began settling from the CameraIntro's end to the ring (seconds). */
+  #settleStart: number | undefined;
   /** Where the camera stands in a tree (GMSTs). */
   readonly #starCamera: StarCamera;
   #shownYaw = Number.NaN;
@@ -345,6 +338,11 @@ class Viewing {
     this.#targetYaw = setup.ring * SKILL_ANGLE;
     this.#camera.yaw = this.#targetYaw;
     this.#camera.z = -3000;
+    this.#camera.lookAt = [
+      this.#setting('fStatsSkillsLookAtX', SKILLS_LOOK_AT_DEFAULTS[0]),
+      this.#setting('fStatsSkillsLookAtY', SKILLS_LOOK_AT_DEFAULTS[1]),
+      this.#setting('fStatsSkillsLookAtZ', SKILLS_LOOK_AT_DEFAULTS[2]),
+    ];
     const offset = STAR_CAMERA_DEFAULTS.offset;
     const lookAt = STAR_CAMERA_DEFAULTS.lookAt;
     this.#starCamera = {
@@ -764,10 +762,15 @@ class Viewing {
           this.#finish();
           return;
         }
-        // Then the dome plays its own Idle.
+        // Then the dome plays its own Idle, and the camera settles to the dome's middle.
         this.#domePlayback.sequence = undefined;
         camera.z = CAMERA_REST_Z;
+        this.#settleStart = seconds;
       }
+    } else if (this.#settleStart !== undefined) {
+      const share = (seconds - this.#settleStart) / RING_SETTLE_SECONDS;
+      camera.z = CAMERA_REST_Z * (1 - cameraMoveShare(share, false));
+      if (share >= 1) this.#settleStart = undefined;
     }
     // Turning.
     const delta = this.#targetYaw - camera.yaw;
@@ -800,7 +803,8 @@ class Viewing {
   /**
    * The camera up into a tree, from star to star, and back down to the ring (observed in the
    * original): a selected star's camera point (starView) is where it goes, over
-   * STAR_MOVE_SECONDS from where it was.
+   * STAR_MOVE_SECONDS from where it was (cameraMoveShare: eased both ways in a tree, slowing
+   * to the ring).
    */
   #moveView(seconds: number): void {
     const camera = this.#camera;
@@ -816,7 +820,7 @@ class Viewing {
         ? starView(moving.to.place, tree.ring, this.#starCamera)
         : camera.ringPose();
     const share = Math.min(1, Math.max(0, (seconds - moving.start) / STAR_MOVE_SECONDS));
-    const eased = share * share * (3 - 2 * share);
+    const eased = cameraMoveShare(share, moving.to !== undefined);
     const mix = (a: Vec3, b: Vec3): Vec3 => [
       a[0] + (b[0] - a[0]) * eased,
       a[1] + (b[1] - a[1]) * eased,
