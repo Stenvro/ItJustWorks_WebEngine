@@ -15,6 +15,31 @@ buffers up to 256 MB, least recently used first out (a playing sound keeps its b
 Browsers start audio only after a user gesture: the first click or key resumes the audio
 context.
 
+### Alternate sounds
+
+Observed in the original: a sound whose file is not in memory yet does not wait for it when
+something else will do. Its audio cache is searched for the file it picked, then for another
+file of the same descriptor (one at random), then for a file of the descriptor's "Alternate
+Sound For" (SNDR SNAM, 247 descriptors: every player footstep falls back to the dirt ones,
+FSTPlayerDirtWalkLSD and the like, the item sounds to ITMGenericUpLoFi, weapon impacts to
+WPNImpactGenericLoFi, the horses' hooves to their LoFi set). The one found plays at once, with
+the requested sound's own category, output model and attenuation, while the picked file loads
+for the next time (`alternate-sound.ts`, `SoundSystem.#readyStandIn`). With none in memory the
+sound waits for its file.
+
+### Output models of the player and the interface
+
+Observed in the original: the audio manager keeps an output model per object, and a sound that
+follows such an object plays through that model instead of its descriptor's. The player's own
+sounds (those played for the player's reference: footsteps, blows, draws, spells) play through
+the player's first-person model (DOBJ POPM, SOMMono01400Player1st: 2D) in first person and the
+third-person one (P3OM, SOMMono01400Player3rd: 3D, 410 to 3239 units) in third, so the
+footsteps the player's descriptors give the 2D model are heard at the player behind the camera
+(`SoundSystem.playerView`, set by the viewers each frame). The menus' sounds (PlaySound, a
+menu's own) play 2D through the interface model (IOPM, SOMUIDefault; `playInterface`).
+TODO(M13): that the player's 3D carries POPM and P3OM and that every menu sound takes IOPM is
+inferred from the default objects' names.
+
 ### Voice files that do not exist
 
 A response's voice file is `Sound\Voice\<plugin>\<voice type>\<file>.fuz` under the plugin that
@@ -106,7 +131,8 @@ open sound as the player goes through.
 Interiors have one (cell XCAS); in exteriors placed acoustic spaces (ASPC references) take
 effect inside their box. The space in effect gives the reverb (REVB) and its ambience loop
 (SNDR, 2D); switching spaces fades the old loop out and the new one in (`[Audio]`
-fASFadeOutTime 8 s, fASFadeInTime 3 s). In interiors the space's region (RDAT) gives the
+fASFadeOutTime 8 s, fASFadeInTime 3 s). The world map plays its own loop, the default object
+MMSD (AMBrWindBedWorldMapLP), in its acoustic space UIWorldMap. In interiors the space's region (RDAT) gives the
 region sounds (below); the Creation Kit offers that field for interiors only. The
 reverb is a convolver with an impulse response built from the I3DL2 parameters (decay, HF
 decay ratio at the HF reference, room and room HF level, reflections and reverb level and
@@ -171,13 +197,19 @@ fight not against the player when one of its fighters is within
 fCombatMusicNearCombatInnerRadius, the player detects one of them and their strength passes the
 player's × fCombatMusicPlayerNearStrengthMult; playing, a fight against the player or within
 fCombatMusicNearCombatOuterRadius keeps it, the odds not weighed again; it ends
-fCombatMusicStopTime after the last fight with its finale. Strength (the engine's, also its
+fCombatMusicStopTime after the last fight with its finale; a fight not against the player
+counts only once it is even: each combat group decides it once, fCombatMusicGroupThreatRatioTimer
+(1 s) after it forms, its targets' strength over its own between fCombatMusicGroupThreatRatioMin
+and Max (0.5 and 2, exclusive), so guards cutting down a mudcrab start nothing
+(fCombatMusicPlayerCombatStrengthCap is never read). Strength (the engine's, also its
 GetThreatRatio's): damage × health / (1 − the armour's reduction, at most 0.99), so a lone
 wolf does not start it for a new player but a pack does; `src/shell/actor-combat.ts` feeds it; its
 conditions' GetCombatTargetHasKeyword asking the player's foes, the boss music against dragons;
 discoveries, quest moments
-and the rest through Papyrus MusicType.Add / Remove, from the script runtime). The location's is the cell's
-XCMO; indoors else the default object DFMS; outdoors else the music of the camera cell's
+and the rest through Papyrus MusicType.Add / Remove, from the script runtime). The location's is the cell's XCMO; else its location's (LCTN NAM1, or the nearest parent
+location's that names one: Mzulft's exterior plays MUSDungeon, the dragon mound by Frost River
+Farm none, `_NONE`; TODO(M13): its place before the regions' is inferred); indoors else the
+default object DFMS; outdoors else the music of the camera cell's
 regions in effect (RDMO; the same priority and override rule as region sounds), the
 worldspace's ZNAM, then DFMS. Tamriel's ZNAM is `_NONE`, so the regions give its music:
 Riverwood's pine forest plays MUSExploreForestPine.
@@ -261,8 +293,9 @@ carriage's movement loops 6, every breathing and conscious loop 7). `src/shell/c
 plays the conscious loop at the creature's head while it is alive and conscious (a dragon's or
 horse's breathing, a draugr's groan, a gargoyle's growl) and the movement loop while it also
 moves (faster than 20 units a second); both stop as it dies, falls unconscious or leaves the
-stage. TODO(M13): the one-shot types (only the mudcrab names one, Idle) and what the chance
-gates are not played: when the original plays them is not known.
+stage. A creature's idle sound (type 0: only the mudcrabs' AudioTemplateMudcrab names one, at
+40 %) plays at its head as it takes an ambient idle, with its chance (CSDC). TODO(M13): that the
+idle sound goes with the ambient idle is inferred; no record names the other one-shot types.
 
 ## Other engine sounds
 
@@ -281,6 +314,14 @@ gates are not played: when the original plays them is not known.
 - **Harvest:** a plant that gives nothing this season plays the default object HVFS
   (ITMGenericIngredientUpFailSD) instead of its harvest sound.
 - **Death:** the player's death adds the death music (DOBJ DTMS, MUSSpecialDeath).
+- **Level up:** a level-up becoming available (with the sLevelUpAvailable notice) adds the
+  level-up music (DOBJ LUMS, MUSSpecialSuccess: the mus_levelup stings). TODO(M13): the moment
+  is inferred; when the success music (SCMS, the same type in vanilla) plays is not known.
+- **Weapons:** a drawn weapon's idle sound (WEAP UNAM: the bound weapons'
+  MAGConjureBoundWeaponLP) loops at the weapon until it is sheathed or its holder dies
+  (`weapon-idle-sounds.ts`); the player's own shot plays the weapon's 2D attack sound (WEAP
+  XNAM: the crossbows' WPNCrossbowFire2D), anyone else's the 3D one (SNAM). TODO(M13): both
+  rules are inferred from the Creation Kit's names for the fields.
 
 ## Water
 

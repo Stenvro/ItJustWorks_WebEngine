@@ -861,7 +861,12 @@ export class ActorStage {
         const runtime = options.session.scriptsReady;
         const handle =
           target === undefined || !runtime ? undefined : runtime.referenceHandle(target);
-        return this.furniture.actionEvent(user, 'ActionIdle', handle, inFurniture);
+        const event = this.furniture.actionEvent(user, 'ActionIdle', handle, inFurniture);
+        // A creature's idle sound goes with its ambient idle (NPC_ CSDT 0: the mudcrab's).
+        void event.then((taken) => {
+          if (taken !== undefined) this.creatureSounds.idle(user.reference);
+        });
+        return event;
       },
     });
     this.graphEvents = new ActorGraphEvents({

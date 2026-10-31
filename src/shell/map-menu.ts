@@ -40,6 +40,7 @@ import { WorldMapView } from './world-map-view.ts';
 import { LocalMap, type LocalMapContent, type LocalMapMarker } from './local-map.ts';
 import type { OverlayView } from '../render/menu-overlay.ts';
 import { doorDestination } from '../world/cell-loader.ts';
+import { DefaultObjectUse } from '../world/default-objects.ts';
 
 const ROOT = '_root.WorldMap';
 /** UIWorldMap (Skyrim.esm): the acoustic space the map plays (its wind loop). */
@@ -300,9 +301,12 @@ class OpenMap {
     this.#view.camera.input = () => this.#cameraInput();
     void session.sounds().then((sounds) => {
       if (!this.#done) {
+        // The map's loop is the default object MMSD (AMBrWindBedWorldMapLP; the map's acoustic
+        // space names the same one).
         sounds.setMenuSpace(
           MAP_ACOUSTIC_SPACE,
           session.ini.number('MapMenu', 'fMapLoopFadeTimeSeconds'),
+          sounds.defaults.get(DefaultObjectUse.worldMapAmbient),
         );
       }
     });

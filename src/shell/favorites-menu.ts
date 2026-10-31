@@ -78,7 +78,7 @@ export class FavoritesMenu {
       const use = hotkeyUse(item, formId, await runtime.equipment.of(PLAYER_REF), count);
       if (!use.equip) return;
       await runtime.equipment.equip(PLAYER_REF, formId, use.hand ? { hand: use.hand } : {});
-      void this.#session.sounds().then((sounds) => sounds.playNamed('UIFavorite', undefined));
+      void this.#session.sounds().then((sounds) => sounds.playInterface('UIFavorite'));
       return;
     }
   }

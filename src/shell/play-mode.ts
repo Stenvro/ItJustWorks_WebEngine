@@ -313,7 +313,7 @@ export class PlayMode {
         myLog: () => undefined,
         // A UI sound by editor id ("UIMenuOK", "UIObjectiveNew"), at no place.
         PlaySound: (_menu, args) => {
-          void session.sounds().then((sounds) => sounds.playNamed(String(args[1]), undefined));
+          void session.sounds().then((sounds) => sounds.playInterface(String(args[1])));
         },
         // A text's "[Activate]": the art of the key bound to it, answered at once (the menu
         // reads it right after asking).
@@ -1439,7 +1439,7 @@ export class PlayMode {
   /** The loading menu, its text the loading screen's. */
   async #openLoadingMenu(): Promise<void> {
     // The loading screen's mist whooshes in (UILoadscreenMist, the engine's).
-    void this.#session.sounds().then((sounds) => sounds.playNamed('UILoadscreenMist', undefined));
+    void this.#session.sounds().then((sounds) => sounds.playInterface('UILoadscreenMist'));
     const runtime = this.#session.scriptsReady;
     const level = runtime ? await runtime.actors.level(PLAYER_REF) : 1;
     const progress = runtime ? (await runtime.progression.levelProgress()) * 100 : 0;
