@@ -59,6 +59,12 @@ import { AudioEngine } from './audio-engine.ts';
 import { readCategoryRoles } from './category-rules.ts';
 import { distanceGain } from './attenuation.ts';
 import { readyStandIn } from './alternate-sound.ts';
+import {
+  readRumbleSettings,
+  rumbleMotors,
+  type RumbleLevels,
+  type RumbleSettings,
+} from './rumble.ts';
 import { SoundInstance, type SoundBuffer, type SoundPlace } from './sound-instance.ts';
 
 /** The player's reference (its sounds play through the player's output models). */
@@ -77,6 +83,9 @@ const BUFFER_BUDGET = 256 * 1024 * 1024;
 const EMITTER_HYSTERESIS = 1.1;
 /** The collision material of water volumes (MaterialWater). */
 const WATER_MATERIAL = materialId('Water');
+
+/** Where placed loops come from: the loaded cells, or references created at run time. */
+export type EmitterGroup = 'cells' | 'created';
 
 /** A placed looping sound (CellSoundEmitter) as the system tracks it. */
 export interface SoundEmitter {
@@ -284,7 +293,11 @@ export class SoundSystem {
     loader: AudioLoader,
     ini: IniSettings,
   ): Promise<SoundSystem> {
-    const engine = new AudioEngine();
+    // Observed in the original: the audio starts at [Audio] fDefaultMasterVolume and makes no
+    // sound without bEnableAudio; the game's start sets the audio menu's master volume.
+    const engine = new AudioEngine(ini.number('Audio', 'fDefaultMasterVolume'));
+    engine.setEnabled(ini.bool('Audio', 'bEnableAudio'));
+    engine.setMasterVolume(ini.number('AudioMenu', 'fAudioMasterVolume'));
     const categories = await Promise.all(
       db.formIdsOfType('SNCT').map(async (formId) => {
         const record = await db.get(formId);
@@ -820,10 +833,18 @@ export class SoundSystem {
     return entry;
   }
 
-  /** The placed loops of the loaded cells (enabled ones); others stop. */
-  setEmitters(emitters: readonly SoundEmitter[]): void {
+  /** Each group's emitters: the loaded cells' and the references created since. */
+  readonly #emitterGroups = new Map<EmitterGroup, readonly SoundEmitter[]>();
+
+  /**
+   * The placed loops of a group (enabled ones): the loaded cells' ('cells'), or those of the
+   * references the game created after the cells loaded ('created': PlaceAtMe of a sound
+   * marker, an explosion's placed object); the group's others stop.
+   */
+  setEmitters(emitters: readonly SoundEmitter[], group: EmitterGroup = 'cells'): void {
+    this.#emitterGroups.set(group, emitters);
     const keep = new Set<number>();
-    for (const emitter of emitters) {
+    for (const emitter of [...this.#emitterGroups.values()].flat()) {
       keep.add(emitter.reference);
       if (this.#emitters.has(emitter.reference)) continue;
       const state: EmitterState = {
@@ -907,6 +928,7 @@ export class SoundSystem {
       instance.update(this.#listener);
     }
     this.#highlightSpeech();
+    this.#rumbleFrame();
     for (const state of this.#emitters.values()) this.#updateEmitter(state);
     this.#updateSpace();
     const ambient = this.#ambient;
@@ -1114,9 +1136,15 @@ export class SoundSystem {
           decoded.channels.forEach((channel, i) => {
             buffer.copyToChannel(channel as Float32Array<ArrayBuffer>, i);
           });
-          entry.bytes = frames * decoded.channels.length * 4;
-          this.#bufferBytes += entry.bytes;
-          this.#evict();
+          // Observed in the original: a file larger than [Audio] uStreamingThreshold streams
+          // from the disk on each play instead of being kept (here: not kept in the cache).
+          if ((decoded.fileBytes ?? 0) > this.#ini.number('Audio', 'uStreamingThreshold')) {
+            if (this.#buffers.get(path) === entry) this.#buffers.delete(path);
+          } else {
+            entry.bytes = frames * decoded.channels.length * 4;
+            this.#bufferBytes += entry.bytes;
+            this.#evict();
+          }
           entry.ready = {
             buffer,
             ...(decoded.lip && { lip: decoded.lip }),
@@ -1144,6 +1172,7 @@ export class SoundSystem {
     for (const instance of this.#playing) instance.stop(true);
     this.#playing.clear();
     this.setEmitters([]);
+    this.setEmitters([], 'created');
     this.#areas = [];
     this.#cellSpace = undefined;
     this.#applySpace(undefined);
@@ -1164,6 +1193,30 @@ export class SoundSystem {
   /** Called with problems worth logging (once per message). */
   onWarning: ((message: string) => void) | undefined;
 
+  /**
+   * The gamepad's motors (0–1) from the player's sounds (rumble.ts), told every frame while
+   * either runs and once as both stop; unset: the rumble is off.
+   */
+  onRumble: ((motors: RumbleLevels) => void) | undefined;
+  /** Whether the player is power attacking now (fAudioRumblePowerAttackAdj applies). */
+  powerAttacking: (() => boolean) | undefined;
+  #rumbling = false;
+  #rumbleSettings: RumbleSettings | undefined;
+
+  #rumbleFrame(): void {
+    const tell = this.onRumble;
+    if (!tell) return;
+    this.#rumbleSettings ??= readRumbleSettings((name) => this.#ini.number('Audio', name));
+    const motors = rumbleMotors(
+      this.engine.rumble.peaks(),
+      this.#rumbleSettings,
+      this.powerAttacking?.() ?? false,
+    );
+    const on = motors.small > 0 || motors.big > 0;
+    if (on || this.#rumbling) tell(motors);
+    this.#rumbling = on;
+  }
+
   async #start(
     descriptor: SoundDescriptor,
     model: SoundOutputModel | undefined,
@@ -1171,7 +1224,7 @@ export class SoundSystem {
     fadeIn = 0,
   ): Promise<SoundInstance | undefined> {
     const files = descriptor.files;
-    if (files.length === 0) return undefined;
+    if (files.length === 0 || !this.engine.enabled) return undefined;
     // A one-shot sound beyond its output model's reach is not heard: it is not started (the
     // footsteps of actors far off; each would cost a panner and a voice).
     if (descriptor.looping === 'none' && !this.#audible(model, place)) return undefined;

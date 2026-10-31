@@ -518,7 +518,7 @@ export interface CellData {
 }
 
 /** The looping sound a base object makes where it is placed (SNDR), if any. */
-function loopingSoundOf(base: GameRecord): number | undefined {
+export function loopingSoundOf(base: GameRecord): number | undefined {
   const field =
     base.type === 'SOUN'
       ? 'SDSC'

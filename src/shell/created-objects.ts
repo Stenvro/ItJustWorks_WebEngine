@@ -4,7 +4,13 @@
 // like the cell's own references.
 
 import { parseLight, LightFlag, baseModelPath } from '../world/cell-records.ts';
-import { referenceMatrix, type CellLight, type CellObject } from '../world/cell-loader.ts';
+import {
+  loopingSoundOf,
+  referenceMatrix,
+  type CellLight,
+  type CellObject,
+  type CellSoundEmitter,
+} from '../world/cell-loader.ts';
 import { parseItem } from '../world/item-records.ts';
 import type { GpuScene, InstanceVisibility, ModelInstance } from '../render/scene-renderer.ts';
 import type { RenderPort } from '../render/render-port.ts';
@@ -18,6 +24,8 @@ export interface CreatedObject {
   readonly instance: ModelInstance | undefined;
   readonly scene: GpuScene | undefined;
   readonly light: CellLight | undefined;
+  /** Its base's looping sound where it stands (a sound marker's, an activator's, a light's). */
+  readonly sound: CellSoundEmitter | undefined;
   readonly visibility: InstanceVisibility;
   readonly collision: CollisionGroup;
 }
@@ -108,16 +116,23 @@ export class CreatedObjects {
       }
     }
     const group = collisionGroup();
+    const sound = await this.#sound(record, reference, at.position, !visibility.hidden);
+    if (this.#entries.has(reference)) {
+      scene?.destroy();
+      return;
+    }
     const entry: CreatedObject = {
       reference,
       object,
       instance,
       scene,
       light,
+      sound,
       visibility,
       collision: group,
     };
     this.#entries.set(reference, entry);
+    if (sound) this.#refreshSounds();
     if (play && collision) {
       if (keyframed) {
         group.whenComplete.push(() => {
@@ -139,6 +154,40 @@ export class CreatedObjects {
     this.#entries.delete(reference);
     play?.remove(entry.collision);
     entry.scene?.destroy();
+    if (entry.sound) this.#refreshSounds();
+  }
+
+  /**
+   * The sound a created reference makes where it stands, as a cell's own placed one does: a
+   * looping one keeps sounding while the player is in its reach (the sound system's
+   * emitters); a sound marker of a one-shot descriptor (an explosion's placed sound) plays
+   * once as it appears, if enabled.
+   */
+  async #sound(
+    record: Parameters<typeof loopingSoundOf>[0],
+    reference: number,
+    position: readonly [number, number, number],
+    enabled: boolean,
+  ): Promise<CellSoundEmitter | undefined> {
+    const descriptor = loopingSoundOf(record);
+    const sounds = this.#session.soundSystem;
+    if (descriptor === undefined || !sounds) return undefined;
+    const looping = (await sounds.descriptor(descriptor))?.looping ?? 'none';
+    if (looping !== 'none' || record.type !== 'SOUN') {
+      return { reference, position: [position[0], position[1], position[2]], descriptor };
+    }
+    if (enabled) void sounds.play(descriptor, [position[0], position[1], position[2]]);
+    return undefined;
+  }
+
+  /** The enabled created references' loops, for the sound system. */
+  #refreshSounds(): void {
+    this.#session.soundSystem?.setEmitters(
+      [...this.#entries.values()].flatMap((entry) =>
+        entry.sound && !entry.visibility.hidden ? [entry.sound] : [],
+      ),
+      'created',
+    );
   }
 
   /** Every created reference goes (the view changes). */
@@ -148,14 +197,17 @@ export class CreatedObjects {
 
   /** Their enable states as the scripts left them. */
   refresh(runtime: ScriptRuntime, play: PlaySession | undefined): void {
+    let sounds = false;
     for (const entry of this.#entries.values()) {
       const enabled = createdEnabled(runtime, entry.reference);
       if (entry.visibility.hidden === !enabled) continue;
       entry.visibility.hidden = !enabled;
+      if (entry.sound) sounds = true;
       play?.setReferenceEnabled(entry.reference, enabled);
       // Its 3D comes or goes (OnLoad, OnUnload, its graph's registrations), as a cell's own.
       runtime.detach(runtime.referenceShown(entry.reference, enabled));
     }
+    if (sounds) this.#refreshSounds();
   }
 
   *scenes(): Iterable<GpuScene> {

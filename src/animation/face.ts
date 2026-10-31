@@ -218,14 +218,23 @@ export class FaceAnimation implements FaceWeights {
   #eyesOffset = { heading: 0, pitch: 0 };
   #eyesOffsetTimer = 0;
 
+  /**
+   * A spoken line's head pitch, roll and yaw are its lip file's times these (observed in the
+   * original: [Audio] fDialogueHeadPitchExaggeration, fDialogueHeadRollExaggeration,
+   * fDialogueHeadYawExaggeration, 2 each, applied as the lip file is read).
+   */
+  readonly #headExaggeration: readonly [number, number, number];
+
   constructor(
     random: () => number,
     blink: BlinkSettings = VANILLA_BLINK,
     eyes: Readonly<Record<EyeEmotion, EyeOffsets>> = VANILLA_EYES,
+    headExaggeration: readonly [number, number, number] = [1, 1, 1],
   ) {
     this.#random = random;
     this.#blink = blink;
     this.#eyeOffsets = eyes;
+    this.#headExaggeration = headExaggeration;
     this.#untilBlink = this.#blinkDelay();
   }
 
@@ -371,7 +380,8 @@ export class FaceAnimation implements FaceWeights {
             weights[MODIFIER_BASE + m] = curves[LIP_PHONEMES.length + m] ?? 0;
           }
           const head = LIP_PHONEMES.length + LIP_MODIFIERS.length;
-          for (let k = 0; k < 3; k++) this.headRotation[k] = curves[head + k] ?? 0;
+          for (let k = 0; k < 3; k++)
+            this.headRotation[k] = (curves[head + k] ?? 0) * (this.#headExaggeration[k] ?? 1);
         } else if (lip.curves === CREATURE_LIP_CURVES) {
           // A creature line moves its graph's mouth (creatureSink), not FaceGen morphs.
           for (let c = 0; c < CREATURE_LIP_CURVES; c++) this.creature[c] = curves[c] ?? 0;

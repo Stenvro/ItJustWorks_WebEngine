@@ -37,6 +37,11 @@ export interface SoundDescriptor {
   /** Fixed attenuation, dB. */
   readonly staticAttenuation: number;
   readonly conditions: readonly Condition[];
+  /**
+   * LNAM byte 3: the gamepad rumble it sends through an output model that allows rumble, two
+   * levels of 0–15 (src/audio/rumble.ts rumbleSends); absent: none.
+   */
+  readonly rumbleSend?: number;
 }
 
 export interface SoundAttenuation {
@@ -51,11 +56,17 @@ export interface SoundOutputModel {
   readonly formId: number;
   readonly editorId: string;
   readonly attenuatesWithDistance: boolean;
+  /** NAM1 flag 0x2: its sounds send their rumble to the gamepad (the player's own models). */
+  readonly allowsRumble?: boolean;
   /** Share of the sound sent to the reverb (0–1). */
   readonly reverbSend: number;
   /** MNAM 0: placed in 3D (HRTF); 1: fixed speaker levels (ONAM). */
   readonly uses3d: boolean;
-  /** ONAM: speaker levels (0–100) of mono, stereo left and stereo right input: L R C LFE RL RR BL BR. */
+  /**
+   * ONAM: speaker levels (0–100) of mono, stereo left and stereo right input, in the 7.1
+   * speaker order: front left and right, centre, LFE, rear left and right, side left and right
+   * (src/audio/speakers.ts).
+   */
   readonly speakers: readonly (readonly number[])[] | undefined;
   readonly attenuation: SoundAttenuation | undefined;
 }
@@ -250,6 +261,7 @@ export function parseSoundDescriptor(record: GameRecord): SoundDescriptor {
     dbVariance: values?.getUint8(3) ?? 0,
     staticAttenuation: (values?.getUint16(4, true) ?? 0) / 100,
     conditions: parseConditions(record),
+    ...(lnam && (lnam[3] ?? 0) !== 0 && { rumbleSend: lnam[3] ?? 0 }),
   };
 }
 
@@ -271,6 +283,7 @@ export function parseSoundOutputModel(record: GameRecord): SoundOutputModel {
     formId: record.formId,
     editorId: record.editorId ?? '',
     attenuatesWithDistance: ((nam1?.[0] ?? 0) & 0x1) !== 0,
+    ...(((nam1?.[0] ?? 0) & 0x2) !== 0 && { allowsRumble: true }),
     reverbSend: (nam1?.[3] ?? 0) / 100,
     uses3d: (mnam && mnam.byteLength >= 4 ? viewOf(mnam).getUint32(0, true) : 0) === 0,
     speakers:

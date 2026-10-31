@@ -67,8 +67,14 @@ export const DefaultObjectUse = {
   putDownBook: 'PDSB',
   pickUpIngredient: 'PUSI',
   putDownIngredient: 'PDSI',
-  /** SNDR of an activation that fails (a locked door without its key). */
+  /**
+   * SNDR of an activation refused (the No-Activation Sound: a lock that cannot be picked, no
+   * lockpicks, a lock while pursued: src/shell/play-mode.ts).
+   */
   activateFail: 'NASD',
+  /** SNDR as Telekinesis takes hold of an object and as it throws it (src/shell/player-casting.ts). */
+  telekinesisGrabSound: 'TKGS',
+  telekinesisThrowSound: 'TKTS',
   /**
    * SNDR the player hears as a cast is refused or stops for want of magicka (MAGFailSD), and as
    * a shout is refused (MAGFailShoutSD).

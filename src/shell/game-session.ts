@@ -107,10 +107,14 @@ import { WorldLines } from './world-lines.ts';
 import { SceneLines } from './scene-lines.ts';
 import { PlayerLook } from './player-look.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import { rumbleGamepad } from './gamepad-input.ts';
 import type { PlacedActor } from './actors.ts';
 import type { Terminal } from './terminal.ts';
 
 const numberFormat = new Intl.NumberFormat('en-US');
+
+/** How long one frame's sound-driven rumble holds (seconds; the next frame's replaces it). */
+const SOUND_RUMBLE_SECONDS = 0.1;
 
 /**
  * How a session is presented: the page draws it with WebGPU and does the asset work in web
@@ -1532,6 +1536,14 @@ export class GameSession {
       sounds.onWarning = (message) => {
         this.#terminal.log('audio', message, 'warn');
       };
+      // The player's sounds rumble the gamepad (src/audio/rumble.ts) with the Vibration
+      // setting on: each frame's strengths held a little past the next frame.
+      sounds.onRumble = (motors) => {
+        if (this.ini.bool('Controls', 'bGamePadRumble'))
+          rumbleGamepad(motors.small, motors.big, SOUND_RUMBLE_SECONDS);
+      };
+      sounds.powerAttacking = () =>
+        this.scriptsReady?.world.combat?.(PLAYER_REF)?.powerAttacking === true;
       this.soundSystem = sounds;
       return sounds;
     });

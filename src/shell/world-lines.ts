@@ -27,6 +27,8 @@ import type { Terminal } from './terminal.ts';
 const DEFAULT_SPEECH_MULT = 0.15;
 /** Seconds after a voice file before the next response (GMST fGameplayVoiceFilePadding). */
 const DEFAULT_VOICE_PADDING = 0.5;
+/** fSubtitleSpeechDelay's default: how long a line whose voice fails to play lasts. */
+const DEFAULT_SUBTITLE_SPEECH_DELAY = 1.5;
 
 /** How a line is said. */
 export interface SpeakOptions {
@@ -283,9 +285,13 @@ export class WorldLines {
         subtitleText(response.text, name, ini.number('Interface', 'iSubtitleSpeakerNameColor')),
       );
     }
+    // Observed in the original: a line whose voice sound fails to play (its file there but not
+    // played) lasts fSubtitleSpeechDelay seconds, its subtitle shown meanwhile.
     const seconds = control.line
       ? control.line.duration + padding
-      : silentLineSeconds(response.text, perCharacter);
+      : path !== undefined
+        ? (settings.number('fSubtitleSpeechDelay') ?? DEFAULT_SUBTITLE_SPEECH_DELAY)
+        : silentLineSeconds(response.text, perCharacter);
     await new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, seconds * 1000);
       control.wake = () => {
