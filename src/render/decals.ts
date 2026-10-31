@@ -99,6 +99,20 @@ export class GpuDecals {
     if (moved) this.select(() => true);
   }
 
+  /** Draws every decal of the set at an alpha (a dynamic decal fading out at its end). */
+  fade(alpha: number): void {
+    const faded = 1 - Math.min(1, Math.max(0, alpha));
+    let changed = false;
+    for (const group of this.groups) {
+      for (const instance of group.instances) {
+        if (instance.data[38] === faded) continue;
+        instance.data[38] = faded;
+        changed = true;
+      }
+    }
+    if (changed) this.select(() => true);
+  }
+
   destroy(): void {
     this.buffer.destroy();
   }

@@ -32,6 +32,7 @@ import type { AnimationBinding } from '../formats/hkx/animation.ts';
 import type { GraphEvent } from '../animation/graph-events.ts';
 import type { ActorGraphSource } from './actor-graph-events.ts';
 import { ActorValue } from '../world/actor-values.ts';
+import { BodyPartType, parseBodyPartData, type BodyPart } from '../world/body-part-data.ts';
 import { DefaultObjectUse } from '../world/default-objects.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { referenceName } from '../scripting/runtime/quest-text.ts';
@@ -134,7 +135,7 @@ import type { PlacedActor } from './actors.ts';
 import { HeldWeapons, type HeldModels } from './actor-weapons.ts';
 import { WeaponBlood } from '../gameplay/combat/weapon-blood.ts';
 import { armorSkill } from '../gameplay/inventory.ts';
-import { CombatImpacts, type HitImpact } from './combat-impacts.ts';
+import { CombatImpacts, type DecalSurfaces, type HitImpact } from './combat-impacts.ts';
 import { splattersForHit } from '../render/screen-blood-data.ts';
 import type { Impact } from '../world/impact-records.ts';
 import { CombatProjectiles } from './combat-projectiles.ts';
@@ -432,6 +433,8 @@ export interface ActorCombatOptions {
   readonly aim?: () => ProjectileAim | undefined;
   /** A killmove's victim loses its head (src/shell/actor-dismemberment.ts). */
   readonly decapitate?: (actor: number) => void;
+  /** The world's shapes and land the hits' decals are built on (the viewer's). */
+  readonly decalSurfaces?: () => DecalSurfaces | undefined;
   /**
    * An actor's weapons' models were made (third person, or the player's first-person ones), with
    * the weapons in its hands: an enchanted one glows on them (actor-stage.ts).
@@ -497,6 +500,8 @@ export class ActorCombat implements CombatBridge {
   readonly #brain: ActorCombatAi;
   /** When a caster's spell last counted as a blow on a victim ("caster:victim"). */
   readonly #spellHits = new Map<string, number>();
+  /** Body part data (BPTD) by form id, once read: the environment blood's limbs. */
+  readonly #bodyPartData = new Map<number, Promise<readonly BodyPart[]>>();
 
   constructor(options: ActorCombatOptions) {
     this.#options = options;
@@ -527,6 +532,7 @@ export class ActorCombat implements CombatBridge {
           kind: 'impact',
           direction: facing,
         }),
+      options.decalSurfaces,
     );
     this.#projectiles = new CombatProjectiles({
       session: options.session,
@@ -1079,6 +1085,43 @@ export class ActorCombat implements CombatBridge {
     return node && world
       ? transformPoint(world, [node[12] ?? 0, node[13] ?? 0, node[14] ?? 0])
       : undefined;
+  }
+
+  /**
+   * The impact data set of a hit's environment blood (observed in the original): the sever
+   * impact data set of the struck limb's part in the target race's body part data (RACE GNAM,
+   * BPND); none where that part names none. TODO(M13): which limb an ordinary blow records is
+   * unread (ours: the head where the hit lands nearer the head's node than the torso's, else
+   * the torso).
+   */
+  async #environmentBlood(
+    target: number,
+    race: RaceHits | undefined,
+    point: Vec3,
+  ): Promise<number | undefined> {
+    const data = race?.bodyParts;
+    if (data === undefined) return undefined;
+    let parts = this.#bodyPartData.get(data);
+    if (!parts) {
+      parts = this.#options.session.db
+        .then((db) => db.get(data))
+        .then((record) => (record ? parseBodyPartData(record) : []))
+        .catch(() => []);
+      this.#bodyPartData.set(data, parts);
+    }
+    const fighter = this.#fighters.get(target);
+    const body = fighter?.player ? this.#avatar?.body : fighter?.body;
+    const head = body?.look.headNode;
+    const away = (at: Vec3 | undefined): number =>
+      at ? Math.hypot(at[0] - point[0], at[1] - point[1], at[2] - point[2]) : Infinity;
+    const limb =
+      head !== undefined &&
+      away(this.#nodePoint(target, head)) < away(this.#nodePoint(target, 'torso'))
+        ? BodyPartType.head
+        : BodyPartType.torso;
+    const part = (await parts).find((entry) => entry.type === limb);
+    const set = part?.severed.impactData ?? 0;
+    return set !== 0 ? set : undefined;
   }
 
   /** The kill camera's view of the fighters' bodies (killmove-camera.ts KillmoveSubjects). */
@@ -2487,18 +2530,21 @@ export class ActorCombat implements CombatBridge {
         : hit.shot
           ? hit.shot.impactDataSet
           : (record?.impactDataSet ?? gear?.race?.impactDataSet);
-    void this.#impacts
-      .hit(
-        {
-          impactDataSet: impactSet,
-          ...(targetGear?.race?.material !== undefined && {
-            materialForm: targetGear.race.material,
-          }),
-          position: hit.point,
-          direction: hit.direction,
-          heavy: hit.power,
-        },
-        this.#play?.physics,
+    void this.#environmentBlood(targetRef, targetGear?.race, hit.point)
+      .then((environmentBlood) =>
+        this.#impacts.hit(
+          {
+            impactDataSet: impactSet,
+            ...(targetGear?.race?.material !== undefined && {
+              materialForm: targetGear.race.material,
+            }),
+            position: hit.point,
+            direction: hit.direction,
+            heavy: hit.power,
+            ...(environmentBlood !== undefined && { environmentBlood }),
+          },
+          this.#play?.physics,
+        ),
       )
       .then(async (impact) => {
         if (!impact || blocks || !(await this.#impacts.bleeds(impact))) return;
