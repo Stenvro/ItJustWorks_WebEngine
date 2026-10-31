@@ -283,7 +283,7 @@ export class PostProcessor {
     this.#adaptation = device.createBuffer({
       label: 'adaptation',
       size: 16,
-      usage: GPUBufferUsage.STORAGE,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
     });
     this.#adaptParams = device.createBuffer({
       label: 'adaptation-params',
@@ -300,6 +300,19 @@ export class PostProcessor {
   /** The resolved scene texture (copied for the water shader). */
   hdrTexture(width: number, height: number): GPUTexture {
     return this.#ensureTargets(width, height).hdr;
+  }
+
+  /**
+   * Copies the adapted luminance (the adaptation's x, as the last frame left it) into frame
+   * uniforms at `offset`: the character light's luminance (scene-renderer.ts luminanceTargets).
+   */
+  copyAdaptedLuminance(
+    encoder: GPUCommandEncoder,
+    targets: { readonly buffers: readonly GPUBuffer[]; readonly offset: number },
+  ): void {
+    for (const buffer of targets.buffers) {
+      encoder.copyBufferToBuffer(this.#adaptation, 0, buffer, targets.offset, 4);
+    }
   }
 
   /** Starts eye adaptation over (a new scene). */

@@ -283,15 +283,14 @@ fn worldMapOverlayAt(
 // fCharacterLight... in the frame: primary and secondary intensity in ambient[4].w and [5].w,
 // luminance scale and maximum in time.zw): a light from the camera, and one from below and in
 // front of the actor (its model space), by the light around it. Observed in the original: that
-// luminance is one sample of the texture in the lighting shader's slot 11 at its corner (1, 1),
-// times the luminance scale, clamped to 0..the maximum. No target fills that slot for these
-// techniques: it holds nothing or the projected-UV draws' noise texture (docs/rendering.md).
-// TODO(M13): which, by the original's draw order, is unread; ours is the directional ambient's.
-fn characterLight(n: vec3f, toCamera: vec3f, ambient: vec3f) -> vec3f {
+// luminance is the red of one sample of the lighting shader's slot 11, which the character-light
+// techniques bind to the eye adaptation's 1x1 adapted luminance target (as the last frame's HDR
+// pass left it), times the luminance scale, clamped to 0..the maximum (frame.luminance.x).
+fn characterLight(n: vec3f, toCamera: vec3f) -> vec3f {
   let model = normalize(transpose(mat3x3f(draw.world[0].xyz, draw.world[1].xyz, draw.world[2].xyz)) * n);
   let amount = frame.ambient[4].w * saturate(dot(toCamera, n)) +
     frame.ambient[5].w * saturate(dot(vec2f(0.164399, -0.986394), model.yz));
-  let lum = dot(ambient, vec3f(0.2125, 0.7154, 0.0721));
+  let lum = max(frame.luminance.x, 0.0);
   return vec3f(amount * min(frame.time.w, frame.time.z * lum));
 }
 
@@ -550,7 +549,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
   var diffuseLight = ambient + emit + lights.diffuse;
   // Actors' skin takes the character light.
   if (shaderType == SHADER_FACEGEN || shaderType == SHADER_SKIN_TINT) {
-    diffuseLight += characterLight(shadingNormal, toCamera, ambient);
+    diffuseLight += characterLight(shadingNormal, toCamera);
   }
   var color = diffuseLight * base;
   var vertexColor = vec3f(1.0);

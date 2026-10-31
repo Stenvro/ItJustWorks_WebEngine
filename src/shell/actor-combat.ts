@@ -1075,13 +1075,35 @@ export class ActorCombat implements CombatBridge {
   }
 
   /** The kill camera's view of the fighters' bodies (killmove-camera.ts KillmoveSubjects). */
-  #killCameraBodies(): Pick<KillmoveSubjects, 'node' | 'height'> {
+  #killCameraBodies(): Pick<
+    KillmoveSubjects,
+    'node' | 'height' | 'leads' | 'from' | 'playerDead' | 'transition'
+  > {
+    const settings = this.#settings;
     return {
       node: (reference, which) =>
         this.#nodePoint(reference, which === 'torso' ? 'torso' : 'WEAPON'),
       height: (reference) => {
         const fighter = this.#fighters.get(reference);
         return fighter ? this.#size(fighter).height : 0;
+      },
+      // Whether its graph plays a synchronized clip it leads (a shot's lead actor).
+      leads: (reference) => {
+        const fighter = this.#fighters.get(reference);
+        if (!fighter) return false;
+        for (const graph of this.#graphs(fighter)) {
+          const sync = graph.synchronizedClip();
+          if (sync) return sync.lead;
+        }
+        return false;
+      },
+      from: () => this.#play?.view.position,
+      playerDead: () => this.#play?.dead === true,
+      transition: {
+        dollyTime: settings.vatsCameraDollyTime,
+        dollyMin: settings.vatsCameraDollyMin,
+        blurCap: settings.vatsCamTransRBStrengthCap,
+        cutAwayDistance: settings.vatsCameraCutAwayDistance,
       },
     };
   }
@@ -1247,8 +1269,14 @@ export class ActorCombat implements CombatBridge {
     this.#killCamModifier(this.#camera?.imageSpaceModifier);
     if (play) {
       play.heldByPair = player?.state.paired !== undefined;
-      if (this.#camera && play.cameraOverride === undefined) play.cameraOverride = this.#camera;
-      else if (!this.#camera && play.cameraOverride instanceof KillmoveCamera) {
+      // A shot cut away (its camera too near what it looks at) shows the player's first person
+      // while its playback goes on.
+      const shown = this.#camera?.cutAway === true ? undefined : this.#camera;
+      if (this.#camera?.cutAway === true && play.cameraOverride === this.#camera) {
+        play.player.setPov('first');
+      }
+      if (shown && play.cameraOverride === undefined) play.cameraOverride = shown;
+      else if (!shown && play.cameraOverride instanceof KillmoveCamera) {
         play.cameraOverride = undefined;
       }
     }

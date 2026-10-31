@@ -4,10 +4,20 @@ import { identity } from '../render/math.ts';
 import {
   animateSkeletons,
   animationRate,
+  boneLeftBound,
   startObjectSkeleton,
   type AnimationRate,
 } from './animated-skeleton.ts';
 import type { SkeletalGraph } from './behavior-runtime.ts';
+
+describe('boneLeftBound', () => {
+  it('is true only beyond the bound sphere of the 3D', () => {
+    const bound = { center: [10, 0, 0] as const, radius: 5 };
+    expect(boneLeftBound([14, 0, 0], bound)).toBe(false);
+    expect(boneLeftBound([15, 0, 0], bound)).toBe(false);
+    expect(boneLeftBound([10, 4, 4], bound)).toBe(true);
+  });
+});
 
 /** One Havok bone, "Arm", which the clip moves along x by time. */
 const havok: HkxSkeleton = {

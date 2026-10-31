@@ -55,7 +55,7 @@ import {
 } from '../world/cell-loader.ts';
 import type { Arrival } from '../world/worldspace.ts';
 import { DEFAULT_WATER } from '../world/water.ts';
-import { UnderwaterView } from '../world/underwater.ts';
+import { UnderwaterView, underwaterImageSpace } from '../world/underwater.ts';
 import type { SceneLighting } from '../render/scene-lighting.ts';
 import { surfaceOver, waterVolumes, type WaterVolume } from '../world/water-volumes.ts';
 import {
@@ -1563,12 +1563,12 @@ export class ModelViewer {
     this.#roomImageSpaces = new Map();
     this.#loadRoomImageSpaces(cellRooms);
     const imageSpace = (): ImageSpace | undefined => {
-      // Under the cell's water: the water's own imagespace (WATR INAM).
-      const own =
-        this.#underwaterView.imageSpace() ??
-        this.#roomImageSpaces.get(cameraRoom()) ??
-        cell.imageSpace;
-      return this.#session?.imageSpaceModifiers.imageSpace(own) ?? own;
+      // Under the cell's water: the water's own imagespace's depth of field (WATR INAM).
+      const own = this.#roomImageSpaces.get(cameraRoom()) ?? cell.imageSpace;
+      return underwaterImageSpace(
+        this.#session?.imageSpaceModifiers.imageSpace(own) ?? own,
+        this.#underwaterView.imageSpace(),
+      );
     };
     this.#present(scene, undefined, {
       camera: 'fly',
