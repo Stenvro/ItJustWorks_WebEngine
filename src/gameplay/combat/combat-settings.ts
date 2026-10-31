@@ -125,6 +125,15 @@ export interface CombatSettings {
   /** fVATSSafetyMaxTime, fVATSSafetyMaxTimeRanged: a kill camera ends by then (seconds). */
   readonly vatsSafetyMaxTime: number;
   readonly vatsSafetyMaxTimeRanged: number;
+  /**
+   * The kill camera's move between shots and its cut-away (kill-camera-transition.ts):
+   * fVATSCameraDollyTime (s), fVATSCameraDollyMin, fVATSCamTransRBStrengthCap,
+   * fVATSCameraCutAwayDistance (units).
+   */
+  readonly vatsCameraDollyTime: number;
+  readonly vatsCameraDollyMin: number;
+  readonly vatsCamTransRBStrengthCap: number;
+  readonly vatsCameraCutAwayDistance: number;
   // --- Arrows --------------------------------------------------------------------------------
   /** iArrowInventoryChance: % of arrows that hit an actor going into its inventory. */
   readonly arrowInventoryChance: number;
@@ -228,6 +237,10 @@ export const COMBAT_DEFAULTS: CombatSettings = {
   vatsImageSpaceTransitionTime: 0.15,
   vatsSafetyMaxTime: 20,
   vatsSafetyMaxTimeRanged: 6,
+  vatsCameraDollyTime: 1,
+  vatsCameraDollyMin: 256,
+  vatsCamTransRBStrengthCap: 0.5,
+  vatsCameraCutAwayDistance: 25,
   arrowInventoryChance: 33,
   attachedArrowAgeMax: 30,
   maxAttachedArrows: 3,
@@ -305,6 +318,10 @@ const SETTING_NAMES: Readonly<Partial<Record<keyof CombatSettings, string>>> = {
   vatsImageSpaceTransitionTime: 'fVATSImageSpaceTransitionTime',
   vatsSafetyMaxTime: 'fVATSSafetyMaxTime',
   vatsSafetyMaxTimeRanged: 'fVATSSafetyMaxTimeRanged',
+  vatsCameraDollyTime: 'fVATSCameraDollyTime',
+  vatsCameraDollyMin: 'fVATSCameraDollyMin',
+  vatsCamTransRBStrengthCap: 'fVATSCamTransRBStrengthCap',
+  vatsCameraCutAwayDistance: 'fVATSCameraCutAwayDistance',
   arrowInventoryChance: 'iArrowInventoryChance',
   attachedArrowAgeMax: 'fAttachedArrowAgeMax',
   maxAttachedArrows: 'iMaxAttachedArrows',
