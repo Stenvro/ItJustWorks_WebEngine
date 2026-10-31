@@ -200,7 +200,9 @@ export class SkillsMenu {
   async open(
     levelUp: boolean,
     closed: () => void,
-  ): Promise<{ readonly menu: Menu | undefined; close(): void } | undefined> {
+  ): Promise<
+    { readonly menu: Menu | undefined; close(): void; refresh(): Promise<void> } | undefined
+  > {
     const session = this.#session;
     const runtime = session.scriptsReady;
     if (!runtime) return undefined;
@@ -240,6 +242,7 @@ export class SkillsMenu {
       close: () => {
         viewing.leave();
       },
+      refresh: () => viewing.refresh(),
     };
   }
 }
@@ -1008,6 +1011,17 @@ class Viewing {
     this.#refreshStates();
     if (this.#menu) await this.#showSkills(this.#menu);
     this.#showCard();
+  }
+
+  /**
+   * The player's level, attributes and perk points shown again (the level-up menu over this one
+   * has raised them).
+   */
+  async refresh(): Promise<void> {
+    const menu = this.#menu;
+    if (!menu || this.#done) return;
+    await this.#showPlayer(menu);
+    await this.#showSkills(menu);
   }
 
   /** Leaves the menu: the camera's outro, then it closes. */

@@ -791,7 +791,9 @@ switch (letting go of the object does not give back a camera switch a script too
 
 `sleepwaitmenu.swf` (`src/shell/sleep-wait-menu.ts`; T, or a bed's Sleep): the engine calls
 `_root.InitExtensions()`, `_root.SetPlatform(0, false)`, then `SleepWaitMenu_mc.SetSleeping(b)`
-("Rest how long?" or "Wait how long?") and `SetCurrentTime(date)`. `OK(hours)` passes the time
+("Rest how long?" or "Wait how long?") and `SetCurrentTime(date)`, the date without its year
+("Sundas, 8:30 AM, 17th of Last Seed": observed in the original, which writes the year for the
+tween menu, the map and the journal only; with it the line overflows the box). `OK(hours)` passes the time
 iSecondsToSleepPerUpdate (900) game seconds an update (observed in the original: an hour in
 four updates; the clock and the scripts' game-time timers with it, the menu's time and hours
 counting down), then closes the menu;
@@ -833,9 +835,11 @@ experience it lacked: docs/gameplay.md); the card's `SkillMeter` shows its progr
 `levelupmenu.swf` (`src/shell/level-up-menu.ts`): `_root.InitExtensions()`; the menu calls
 `addHealth`, `addMagicka` or `addStamina` as its buttons are pressed. The choice raises the
 attribute by iAVDhmsLevelUp (stamina also the carry weight by fLevelUpCarryWeightMod), the level
-by one, and gives a perk point (UESP, "Leveling"). It opens instead of the skills menu while a
-level-up waits (`GameState.levelUps`; the tween menu's `StartOpenMenuAnim(abLevelUp, ...)` shows
-it), the skills menu after it. A level-up waits as the experience skills give covers the level's threshold (docs/gameplay.md).
+by one, and gives a perk point (UESP, "Leveling"). While a level-up waits (`GameState.levelUps`;
+the tween menu's `StartOpenMenuAnim(abLevelUp, ...)` shows it) the skills menu opens with the
+level-up menu over it, as observed in the original (the skills menu goes on under the LevelUp
+Menu and takes its level-up state once that has closed); after the choice the skills menu shows
+the new level, attributes and perk point. Left without a choice, both close. A level-up waits as the experience skills give covers the level's threshold (docs/gameplay.md).
 
 ## The console
 
