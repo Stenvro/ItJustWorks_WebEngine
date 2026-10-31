@@ -248,6 +248,34 @@ placed.formId;
 `;
 }
 
+/** Page code: moves a reference to `distance` units ahead of the player, facing them. */
+function moveAhead(reference: number, distance: number): string {
+  return `
+var rt = engineDev.play().session.scriptsReady;
+var nat = (name, self, args) => { const dot = name.indexOf('.'); return rt.native(name.slice(0, dot), name.slice(dot + 1))({ vm: rt.vm, self: self === undefined ? null : rt.referenceHandle(self), args, name, latent: (w) => w, where: () => 'menu tour' }); };
+var view = (engineDev.world.play ?? engineDev.viewer.play).player.forward;
+var flat = Math.hypot(view[0], view[1]) || 1;
+var fx = view[0] / flat, fy = view[1] / flat;
+await nat('objectreference.moveto', ${reference}, [rt.referenceHandle(0x14), fx * ${distance}, fy * ${distance}, 0]);
+await nat('objectreference.setangle', ${reference}, [0, 0, (Math.atan2(-fx, -fy) * 180) / Math.PI]);
+true;
+`;
+}
+
+/** Page code: turns the player's view to a reference, `height` units over its feet. */
+function lookAtReference(reference: number, height: number): string {
+  return `
+var rt = engineDev.play().session.scriptsReady;
+var nat = (name, self, args) => { const dot = name.indexOf('.'); return rt.native(name.slice(0, dot), name.slice(dot + 1))({ vm: rt.vm, self: self === undefined ? null : rt.referenceHandle(self), args, name, latent: (w) => w, where: () => 'menu tour' }); };
+var player = (engineDev.world.play ?? engineDev.viewer.play).player;
+var at = [await nat('objectreference.getpositionx', ${reference}, []), await nat('objectreference.getpositiony', ${reference}, []), (await nat('objectreference.getpositionz', ${reference}, [])) + ${height}];
+var dx = at[0] - player.position[0], dy = at[1] - player.position[1], dz = at[2] - player.position[2];
+player.yaw = Math.atan2(dx, dy);
+player.pitch = Math.atan2(dz, Math.hypot(dx, dy));
+true;
+`;
+}
+
 /** Page code: a conversation with a placed actor, as the player's activation starts one. */
 function talkTo(reference: number): string {
   return `
@@ -274,6 +302,15 @@ const STEPS: readonly (readonly [string, Step])[] = [
     async (tour, context) => {
       context.alvor = await tour.repl<number>(placeAhead(FORMS.alvor, 140));
       await sleep(4000);
+      // His package walks him off: brought back ahead and the view turned to his head, until
+      // the crosshair's prompt names him.
+      for (let i = 0; i < 6; i++) {
+        await tour.repl(moveAhead(context.alvor, 110));
+        await tour.repl(lookAtReference(context.alvor, 100));
+        await sleep(700);
+        const facts = (await hudFacts(tour)) as { activate?: string };
+        if ((facts.activate ?? '').includes('Alvor')) break;
+      }
       await tour.shot('hud-activate', await hudFacts(tour));
     },
   ],
@@ -379,6 +416,10 @@ const STEPS: readonly (readonly [string, Step])[] = [
       await tour.page.key('ArrowUp');
       await sleep(3000);
       await tour.shot('skills-perks');
+      // Up the tree: the camera goes to the next star's camera point.
+      await tour.page.key('ArrowUp');
+      await sleep(2000);
+      await tour.shot('skills-perks-up');
       await tour.escape('statsmenu.swf');
       await sleep(1500);
     },

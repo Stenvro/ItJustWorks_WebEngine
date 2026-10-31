@@ -9,6 +9,7 @@ import type { Mat4 } from './math.ts';
 import type { InventoryMarker, ModelData, ModelNode, ModelPart } from './model-data.ts';
 import type { ParticleSystemData } from './particle-data.ts';
 import type { TextureCache } from './texture-cache.ts';
+import { releaseAfterFrame } from './frame-release.ts';
 
 /** When a part is drawn: with the opaque scene, as water after it, or blended last. */
 /** Refraction shapes draw only into the refraction buffer (see refraction.ts). */
@@ -143,8 +144,11 @@ export class GpuModel {
     this.lastUsed = performance.now();
   }
 
+  /** Its buffers go after the frame being recorded, if any (frame-release.ts). */
   destroy(): void {
-    for (const buffer of this.#buffers) buffer.destroy();
-    for (const path of this.#textures.paths) this.#textures.cache.release(path);
+    releaseAfterFrame(() => {
+      for (const buffer of this.#buffers) buffer.destroy();
+      for (const path of this.#textures.paths) this.#textures.cache.release(path);
+    });
   }
 }
