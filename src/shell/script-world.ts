@@ -189,8 +189,11 @@ export interface ScriptView {
   addRagdoll?(reference: number): Promise<void>;
   /** ForceRemoveRagdollFromWorld: an actor's ragdoll leaves the physics world. */
   removeRagdoll?(reference: number): Promise<void>;
-  /** PlayTerrainEffect: the view shows an effect model at a point (false: it shows none). */
-  terrainEffectAt?(model: string, at: Vec3): boolean;
+  /**
+   * PlayTerrainEffect: the view shows an effect model on the land under a point, turned by
+   * `heading` (z, radians); false: no land is loaded there (src/world/terrain-effect.ts).
+   */
+  terrainEffectAt?(model: string, at: Vec3, heading: number): boolean;
   /** SetCameraTarget: the view's camera follows another actor (undefined: the player). */
   cameraTarget?(actor: number | undefined): void;
   /** SetPlayerControls: an actor of the view moves by the player's controls, or by its AI. */
@@ -717,17 +720,19 @@ export class ScriptWorld implements WorldBridge {
   }
 
   /**
-   * PlayTerrainEffect: the model at the node of the reference's 3D (its root without one).
-   * TODO(M13): the engine's terrain effect takes the look of the ground under it (its
-   * material); the model shows as modelled.
+   * PlayTerrainEffect, as observed in the original: the effect stands on the land under the
+   * reference, turned as it is (src/world/terrain-effect.ts); the attach node is looked up in
+   * the effect's own model, not the reference's 3D. TODO(M13): what the effect does with that
+   * node of an actor is not read.
    */
-  terrainEffect(reference: number, model: string, node: string): boolean {
-    const at =
-      (node === '' ? undefined : this.nodePlacement(reference, node)?.position) ??
-      this.livePlacement(reference)?.position;
-    if (!at || model === '') return false;
+  terrainEffect(reference: number, model: string): boolean {
+    const placed = this.livePlacement(reference);
+    if (!placed || model === '') return false;
+    const heading = placed.rotation?.[2] ?? 0;
     let shown = false;
-    for (const view of this.#views) shown = (view.terrainEffectAt?.(model, at) ?? false) || shown;
+    for (const view of this.#views) {
+      shown = (view.terrainEffectAt?.(model, placed.position, heading) ?? false) || shown;
+    }
     return shown;
   }
 

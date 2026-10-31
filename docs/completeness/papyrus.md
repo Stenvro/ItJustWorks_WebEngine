@@ -8,7 +8,7 @@ The natives and events parts come from the sweep `node tools/papyrus-completenes
 for every item); the VM part is kept by hand against `src/scripting/papyrus-vm.ts` and
 docs/scripting.md ("Threads", "Properties", "The log").
 
-## Count (2026-10-30, round 7)
+## Count (2026-10-31, round 8)
 
 | Part    | Items | Done | Open |
 | ------- | ----: | ---: | ---: |
@@ -16,6 +16,10 @@ docs/scripting.md ("Threads", "Properties", "The log").
 | Events  |    99 |   99 |    0 |
 | VM      |    30 |   30 |    0 |
 | Total   |   816 |  816 |    0 |
+
+Round 8 read the natives' last inferred rules from the original: KeepOffsetFromActor's speeds
+between its radii and what PlayTerrainEffect takes of the ground (its place on the land; no
+look). Left to the renderer: setting a terrain effect's pieces on the land one by one.
 
 Round 4 counts the None-argument sweep as a natives item and the simulation's share of the
 events as an events item (both were listed, not counted). The sweep reports the simulation's
@@ -39,13 +43,18 @@ script):
       stack and returns None (placeholders.ts UNBOUND_NATIVES).
 - [x] actor.keepoffsetfromactor, clearkeepoffsetfromactor: the offset (the angles turned to
       radians, the two radii) kept in the game state; the movers steer the actor to it each
-      step (src/ai/movement-overrides.ts; the speeds between the radii inferred: TODO(M13)).
+      step at the original's keep-offset planner's speed: from 0 at the follow radius to 3
+      (the normalized scale's) at the catch-up radius, linear between, by the distance in three
+      dimensions (src/ai/movement-overrides.ts, round 8).
 - [x] actor.setplayercontrols, getplayercontrols: the actor's AI off as EnableAI(false), its
       movement controller driven by the player's controls (the movers' script steering).
 - [x] game.setcameratarget: the third-person camera hangs on that actor (None: the player).
 - [x] objectreference.forceremoveragdollfromworld: latent; the ragdoll leaves the physics world.
-- [x] objectreference.playterraineffect: the model at the node (none: the root); one not set
-      up is the original's error (the ground's own look: TODO(M13)).
+- [x] objectreference.playterraineffect: as the original, the effect stands on the land under
+      the reference (the land's height there, turned as the reference) and takes nothing of
+      the ground's look (no texture, no material); no land under it (an interior) is the
+      original's error (src/world/terrain-effect.ts, round 8). Its pieces set on the land one
+      by one and the effect model's own attach node are the renderer's (TODO(M13)).
 - [x] objectreference.playsyncedanimationss, playsyncedanimationandwaitss: both references'
       events in one call, true when either took; the original's three errors (a None second
       object, an actor on either side); the waiting one waits for the events of those whose

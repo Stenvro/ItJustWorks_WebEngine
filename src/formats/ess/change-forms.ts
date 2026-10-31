@@ -753,6 +753,8 @@ export interface EssBaseChanges {
     readonly cleared?: readonly [number, number];
     readonly keywordData?: readonly { readonly keyword: number; readonly value: number }[];
   };
+  /** PACK: a package the game made: its type (PKDT's; its definition is read past). */
+  readonly packageType?: number;
   /** SMQN: the node's run data (u32 each). */
   readonly questNode?: readonly number[];
   readonly scene?: EssSceneChanges;
@@ -850,11 +852,16 @@ function readBaseChanges(
     }
     case 'SCEN':
       return { scene: readScene(reader) };
-    case 'PACK':
-      // A package the game made writes its whole definition (its data, locations and
-      // targets); a package from a plugin writes nothing. TODO(M13): read a made one.
-      if (entry.refId >>> 22 === RefIdKind.Created) throw new Unknown('a package the game made');
-      return undefined;
+    case 'PACK': {
+      // A package the game made writes its whole definition as the AI process does (its
+      // kind from its PKDT's type); a package from a plugin writes nothing.
+      if (entry.refId >>> 22 !== RefIdKind.Created) return undefined;
+      let packageType = 0;
+      readPackageExtra(reader, resolve, (stream) => {
+        packageType = readCreatedPackage(stream);
+      });
+      return { packageType };
+    }
     default:
       return undefined;
   }
@@ -895,6 +902,8 @@ export interface EssProjectileData {
   readonly rotation?: readonly number[];
   /** The item it carries, with its extra data (an arrow's ammo, a thrown item). */
   readonly item?: EssInventoryEntry;
+  /** A grenade's or mine's decals (simple decals stuck to it). */
+  readonly decals?: number;
   /** Where it hit: position, normal, the reference hit, and the impact's data. */
   readonly impacts?: readonly {
     readonly values: readonly number[];
@@ -917,6 +926,7 @@ function readHazard(reader: EssReader, resolve: RefIdResolver): EssProjectileDat
 function readProjectile(
   reader: EssReader,
   type: number,
+  version: number,
   resolve: RefIdResolver,
 ): EssProjectileData {
   const values: number[] = [];
@@ -942,6 +952,7 @@ function readProjectile(
   words(3);
   values.push(reader.i32()); // a form id as is (−1: none)
   const item = reader.u8() !== 0 ? readInventoryEntry(reader, resolve) : undefined;
+  let grenadeDecals = 0;
   const impacts: { values: number[]; refs: number[] }[] = [];
   const impactCount = reader.vsval();
   for (let i = 0; i < impactCount; i++) {
@@ -979,9 +990,11 @@ function readProjectile(
       values.push(reader.u8());
       break;
     case 'PGRE': {
-      // The grenade's attached constraints: a vsval count of serialized Havok objects.
-      // TODO(M13): their layout (none in the saves seen).
-      if (reader.vsval() !== 0) throw new Unknown("a grenade's constraints");
+      // The decals stuck to the grenade (or mine), as observed in the original: a vsval count
+      // of simple decals.
+      const decals = reader.vsval();
+      for (let i = 0; i < decals; i++) readSimpleDecal(reader, version, resolve);
+      if (decals > 0) grenadeDecals = decals;
       break;
     }
   }
@@ -991,7 +1004,27 @@ function readProjectile(
     rotation,
     ...(item && { item }),
     ...(impacts.length > 0 && { impacts }),
+    ...(grenadeDecals > 0 && { decals: grenadeDecals }),
   };
+}
+
+/**
+ * A simple decal (a temporary decal effect) as the original saves one: whether it is on a
+ * cell's land (1: the cell and which of its four land quads, 0: the reference it is on), its
+ * two texture sets, its origin and direction, its width, height and depth, its emitter's
+ * rotation (a 3×3 matrix), its subtexture index, blending, alpha blending and parallax
+ * switches, the parallax scale and passes, its shininess, a value, its color, two switches and
+ * a u32 (form version 36 and later).
+ */
+function readSimpleDecal(reader: EssReader, version: number, resolve: RefIdResolver): void {
+  if (reader.u8() !== 0) {
+    resolve(reader.refId());
+    reader.u32();
+  } else resolve(reader.refId());
+  resolve(reader.refId());
+  resolve(reader.refId());
+  reader.skip(12 + 12 + 3 * 4 + 36 + 4 + 4 + 1 + 4 + 4 + 4 * 3 + 2);
+  if (version > 35) reader.u32();
 }
 
 /** Whether an interior cell's seen data, then `rest`, read the data exactly to its end. */
@@ -1105,7 +1138,7 @@ export function readChangeForm(entry: ChangeFormEntry, resolve: RefIdResolver): 
         const stopped = readActor(reader, actor, out.formId === PLAYER_REF, resolve);
         if (stopped !== undefined) throw new Unknown(stopped);
       } else if (type === 40) out.projectile = readHazard(reader, resolve);
-      else if (type !== 0) out.projectile = readProjectile(reader, type, resolve);
+      else if (type !== 0) out.projectile = readProjectile(reader, type, entry.version, resolve);
     } else if (type === 6) {
       formFlags();
       const cell: { -readonly [K in keyof EssCellChanges]: EssCellChanges[K] } = {};
@@ -1150,7 +1183,9 @@ export function readChangeForm(entry: ChangeFormEntry, resolve: RefIdResolver): 
         out.leveledAdded = added;
       }
     } else {
-      formFlags();
+      // A package's save writes no form flags (observed in the original: it replaces the
+      // form's own save).
+      if (changeFormTypeName(type) !== 'PACK') formFlags();
       out.base = readBaseChanges(reader, entry, resolve);
     }
   } catch (error) {

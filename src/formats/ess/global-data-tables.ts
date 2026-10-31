@@ -6,7 +6,6 @@
 // stops (an undocumented temp effect type, the story event manager's entries, type 104), the
 // rest is kept as bytes. Platform-independent.
 
-import { FormatError } from '../binary-reader.ts';
 import { EssReader, essReader, type EssSource } from './ess-reader.ts';
 import {
   readAnimObjects,
@@ -168,25 +167,31 @@ export interface CombatSearch {
     readonly unknown1: number;
     readonly flags: readonly [number, number, number];
   }[];
-  readonly detail?: {
-    readonly unknown0: number;
-    readonly unknown1: number;
-    readonly entries: readonly {
-      readonly unknown0: number;
-      readonly bytes: Uint8Array;
-      readonly reference: number;
-      readonly unknown1: number;
-    }[];
-    readonly reference0: number;
-    readonly floats0: readonly number[];
-    readonly reference1: number;
-    readonly float1: number;
-    readonly reference2: number;
-    readonly unknown2: number;
-    readonly unknown3: number;
-    readonly unknown4: number;
-    readonly floats1: readonly number[];
-  };
+  /**
+   * The search's line-of-sight grid map (BSPathingLOSGridMap), as observed in the original:
+   * written through a pathing stream of its own when the search has one.
+   */
+  readonly detail?: CombatSearchGrids;
+}
+
+/** A line-of-sight grid's cell: a switch, its bits, the navmesh it is on and a value. */
+export interface LosGridCell {
+  readonly flag: number;
+  readonly bits: Uint8Array;
+  readonly navmesh: number;
+  readonly value: number;
+}
+
+/** The combat search's line-of-sight grids by key, and the map's own values. */
+export interface CombatSearchGrids {
+  readonly grids: readonly {
+    readonly key: number;
+    readonly cells: readonly LosGridCell[];
+    /** The navmesh the grid is on (0: none). */
+    readonly navmesh: number;
+  }[];
+  /** A u32 before the map's point, and two after it. */
+  readonly values: readonly number[];
 }
 
 /** A combat group (UESP's Unknown0). */
@@ -328,36 +333,35 @@ function readCombatSearch(reader: EssReader, resolve: RefIdResolver): CombatSear
   }
   const search = { unknown0, pairs, unknown1, position: at, unknown2, searchPoints, searchers };
   if (reader.u8() === 0) return search;
-  const detail0 = reader.u32();
-  const detail1 = reader.u32();
-  const entries: NonNullable<CombatSearch['detail']>['entries'][number][] = [];
+  return { ...search, detail: readLosGridMap(new PathingStream(reader, resolve)) };
+}
+
+/**
+ * A line-of-sight grid map as the original saves it through the pathing stream: a u32 count
+ * of grids (a u32 key each, then the grid: a u32 count of cells, each a switch, a u32 count of
+ * bytes and those bytes, a navmesh's reference and a u32; then the grid's navmesh), a u32, a
+ * path point and two u32.
+ */
+function readLosGridMap(stream: PathingStream): CombatSearchGrids {
+  const reader = stream.reader;
+  const grids: CombatSearchGrids['grids'][number][] = [];
   for (let n = reader.u32(), i = 0; i < n; i++) {
-    const unknown = reader.u8();
-    const bytes = reader.bytes(reader.u32()).slice();
-    entries.push({
-      unknown0: unknown,
-      bytes,
-      reference: resolve(reader.refId()),
-      unknown1: reader.u32(),
-    });
+    const key = reader.u32();
+    const cells: LosGridCell[] = [];
+    for (let m = reader.u32(), j = 0; j < m; j++) {
+      cells.push({
+        flag: reader.u8(),
+        bits: reader.bytes(reader.u32()).slice(),
+        navmesh: stream.form(),
+        value: reader.u32(),
+      });
+    }
+    grids.push({ key, cells, navmesh: stream.form() });
   }
-  return {
-    ...search,
-    detail: {
-      unknown0: detail0,
-      unknown1: detail1,
-      entries,
-      reference0: resolve(reader.refId()),
-      floats0: floats(reader, 5),
-      reference1: resolve(reader.refId()),
-      float1: reader.f32(),
-      reference2: resolve(reader.refId()),
-      unknown2: reader.u16(),
-      unknown3: reader.u8(),
-      unknown4: reader.u8(),
-      floats1: floats(reader, 2),
-    },
-  };
+  const values = [reader.u32()];
+  stream.point();
+  values.push(reader.u32(), reader.u32());
+  return { grids, values };
 }
 
 // --- 102 Interface -------------------------------------------------------------------------------
@@ -569,9 +573,10 @@ export function readPlayerControls(data: EssSource): {
 }
 
 /**
- * The kinds of a story event's data members, as the saves read show them (Keyword.SendStoryEvent's
+ * The kinds of a story event's data members, as observed in the original (Keyword.SendStoryEvent's
  * keyword, location, two references and two numbers): their members are numbered by kind in
- * their order (R1, R2, ...). TODO(M13): kind 1 (the other forms, F) is not in the saves read.
+ * their order (R1, R2, ...). A reference is written by its handle, the forms (1, 2, 4) by
+ * their form, all as reference ids; a number as its u32.
  */
 export const StoryParameterKind = {
   reference: 0,
@@ -616,7 +621,8 @@ export function readStoryEvent(reader: EssReader, resolve: RefIdResolver): Saved
     const kind = reader.u32();
     if (kind === 3) parameters.push({ kind, value: reader.u32() });
     else if (kind <= 4) parameters.push({ kind, value: resolve(reader.refId()) });
-    else throw new FormatError(`Unknown story event member kind ${String(kind)}`, reader.offset);
+    // The original writes no value for a kind it does not know.
+    else parameters.push({ kind, value: 0 });
   }
   return { id, type, parameters };
 }

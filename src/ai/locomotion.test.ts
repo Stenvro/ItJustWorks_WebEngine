@@ -136,6 +136,9 @@ describe("turning (the engine's angle controller)", () => {
   it('walks at a normalized pace between its walk and run speeds', () => {
     const step = steer({ direction: [0, 1], gait: 'walk', pace: 1.5 }, 0, TYPES, 1 / 60);
     expect(step.velocity[1]).toBeCloseTo(80 + 0.5 * (370 - 80));
+    // Beyond a run, in running speeds: 3 is twice its run.
+    const fast = steer({ direction: [0, 1], gait: 'run', pace: 3 }, 0, TYPES, 1 / 60);
+    expect(fast.velocity[1]).toBeCloseTo(2 * 370);
   });
 });
 
