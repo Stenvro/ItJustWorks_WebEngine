@@ -361,6 +361,14 @@ export class WorldViewer {
   get #noSky(): boolean {
     return ((this.#world?.record.flags ?? 0) & WorldFlag.noSky) !== 0;
   }
+
+  /**
+   * Whether the sun casts shadows here (observed in the original): in an open world that has
+   * a sky and no fixed dimensions (WRLD DATA flags 0x20 and 0x40); never in an interior.
+   */
+  get #sunShadows(): boolean {
+    return ((this.#world?.record.flags ?? 0) & (WorldFlag.noSky | WorldFlag.fixedDimensions)) === 0;
+  }
   #lod: WorldLod | undefined;
   readonly #cells = new Map<string, LoadedCell>();
   /** The loaded cells' culling markers, and the culler made of them (#rooms). */
@@ -1581,7 +1589,9 @@ export class WorldViewer {
       sunEffects: () => (this.#noSky ? undefined : this.#sky?.sunEffects()),
       screenBlood: () => this.#session?.screenBlood.frame(),
       backdrop: false,
-      shadows: true,
+      // The sun casts shadows (its cascades and focus maps) only in a world with a sky and
+      // without fixed dimensions (observed in the original: WRLD DATA flags 0x20 and 0x40).
+      shadows: () => this.#sunShadows,
       // Campfires, braziers and forges with LIGH shadow flags cast shadows here too.
       lightShadows: true,
       focusShadows: () => this.#focusBodies(),

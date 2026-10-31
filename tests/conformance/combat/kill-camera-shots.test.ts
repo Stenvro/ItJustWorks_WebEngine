@@ -4,11 +4,13 @@
 // the target where it leads its paired clip, else the attacker; a shot whose own spot comes
 // within fVATSCameraCutAwayDistance of its look hands the view to the player's first person
 // unless the player is dead; each shot starts by its path's DATA, never dollying into a Shoot
-// shot, the first one from the player's view.
+// shot, the first one from the player's view; until a shot of it has ended, a shot with a Near
+// Target Distance ends once the kill's projectile has come that near its target.
 
 import { describe, expect, it } from 'vitest';
 import {
   CameraAction,
+  CameraShotFlag,
   CameraSubject,
   type CameraShot,
 } from '../../../src/gameplay/combat/combat-records.ts';
@@ -92,5 +94,52 @@ describe('the kill camera', () => {
     const shoot = shot({ action: CameraAction.shoot });
     const shooting = KillmoveCamera.ofShots([shoot], subjects([0, 500, 0], { from }));
     expect(shooting.position).toEqual([0, -200, 152]);
+  });
+
+  it('ends a shot once the projectile comes within its Near Target Distance, until one ended', () => {
+    const target: Vec3 = [0, 1000, 0];
+    let at: Vec3 = [0, 500, 0];
+    const projectile = (): { position: Vec3; heading: number } => ({ position: at, heading: 0 });
+    const fly = shot({
+      location: CameraSubject.projectile,
+      flags: CameraShotFlag.positionFollowsLocation,
+      maxTime: 5,
+      nearTargetDistance: 100,
+    });
+    const hit = shot({
+      location: CameraSubject.target,
+      target: CameraSubject.attacker,
+      maxTime: 5,
+    });
+    // Cut between shots (DATA 1): the camera is the current shot's own spot.
+    const camera = KillmoveCamera.ofShots([fly, hit], subjects(target, { projectile }), 1);
+    camera.update(0.1);
+    expect(camera.position).toEqual([0, 300, 80]);
+    // Within 100 of the target: the flag is set as it flies, the shot ends on the next update.
+    at = [0, 950, 0];
+    camera.update(0.1);
+    expect(camera.position).toEqual([0, 750, 80]);
+    camera.update(0.1);
+    expect(camera.position).toEqual([0, 800, 152]);
+    // A shot without the distance plays its time; after a shot has ended, nearness ends none.
+    const plain = KillmoveCamera.ofShots(
+      [shot({ location: CameraSubject.projectile, flags: fly.flags, maxTime: 5 }), hit],
+      subjects(target, { projectile }),
+      1,
+    );
+    plain.update(0.1);
+    plain.update(0.1);
+    expect(plain.position).toEqual([0, 750, 80]);
+    at = [0, 500, 0];
+    const later = KillmoveCamera.ofShots(
+      [shot({ maxTime: 0.2 }), fly, hit],
+      subjects(target, { projectile }),
+      1,
+    );
+    later.update(0.25);
+    at = [0, 950, 0];
+    later.update(0.1);
+    later.update(0.1);
+    expect(later.position).toEqual([0, 750, 80]);
   });
 });

@@ -906,7 +906,7 @@ export class PhysicsWorld {
     this.#nodes.delete(collider.handle);
   }
 
-  /** The node a simulated body's collider belongs to (its model's), if known. */
+  /** The node of its model a body's collider hangs on (its collision object's), if known. */
   nodeOf(collider: RAPIER.Collider): string | undefined {
     return this.#nodes.get(collider.handle);
   }
@@ -1072,7 +1072,7 @@ export class PhysicsWorld {
         if (data.phantom) colliderDesc.setActiveHooks(RAPIER.ActiveHooks.FILTER_INTERSECTION_PAIRS);
         const collider = this.world.createCollider(colliderDesc, body);
         this.register(collider, shape.layer, owner, shape.material);
-        if (dynamic) this.#nodes.set(collider.handle, data.node);
+        this.#nodes.set(collider.handle, data.node);
         colliders.push(collider);
         if (shape.type === 'mesh' && shape.oneSided === true && !dynamic) {
           const s = scale / HAVOK_SCALE;

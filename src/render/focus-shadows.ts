@@ -167,7 +167,7 @@ export interface FocusShadow {
   readonly size: number;
   /** World units per texel of its map. */
   readonly texelSize: number;
-  /** Depth range of its view (world units), to turn a bias in units into depth. */
+  /** Depth range of its view (world units): 2.1 radii of its bound. */
   readonly depthRange: number;
   /** How much it counts (focusFade). */
   readonly fade: number;

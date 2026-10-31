@@ -140,6 +140,46 @@ export function placeDecal(decal: DecalData, formId: number, placement: Mat4): P
  */
 export const DECAL_SPACING = 16;
 
+/**
+ * How an actor hit's blood finds the world behind it (observed in the original, the
+ * environment blood): at fCombatEnvironmentBloodChance (0.75 built in) a ray from the hit along
+ * the blow, its direction lowered by half before it is made a unit, 512 units long; the first
+ * surface it meets that is not an actor or a projectile takes one, spaced by its impact's
+ * Placement Radius (IPCT DATA) in place of the impacts' 16 (none when it is 0).
+ */
+export const ENVIRONMENT_BLOOD = { chance: 0.75, drop: 0.5, reach: 512 } as const;
+
+/** The way an actor hit's environment blood looks for the world (a unit vector). */
+export function environmentBloodWay(
+  direction: readonly [number, number, number],
+): [number, number, number] {
+  const way: [number, number, number] = [
+    direction[0],
+    direction[1],
+    direction[2] - ENVIRONMENT_BLOOD.drop,
+  ];
+  const length = Math.hypot(way[0], way[1], way[2]);
+  return length > 1e-9 ? [way[0] / length, way[1] / length, way[2] / length] : way;
+}
+
+/**
+ * The node a dynamic decal on the world is made on (observed in the original): the node that
+ * holds the collision the hit struck, the decal going onto the shapes under it and spaced
+ * against those already beside them; for the landscape, the land of the cell at the point.
+ * A key that two decals share when they are on the same node.
+ */
+export function struckNodeKey(
+  owner: { readonly reference: number; readonly kind: string } | undefined,
+  node: string | undefined,
+  point: readonly [number, number, number],
+): string {
+  if (!owner) return 'none';
+  if (owner.kind === 'landscape') {
+    return `land:${Math.floor(point[0] / 4096)},${Math.floor(point[1] / 4096)}`;
+  }
+  return `${owner.reference}:${(node ?? '').toLowerCase()}`;
+}
+
 /** A plain decal on a node: where it was made (world) and its width. */
 export interface DecalSpot {
   readonly point: readonly [number, number, number];
