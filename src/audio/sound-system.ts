@@ -25,7 +25,7 @@ import {
 } from '../world/sound-records.ts';
 import { ConditionFunction, type Condition } from '../scripting/conditions.ts';
 import type { IniSettings } from '../world/ini-settings.ts';
-import { parseRegionAudio, type RegionAudio } from '../world/sound-records.ts';
+import { locationMusic, parseRegionAudio, type RegionAudio } from '../world/sound-records.ts';
 import { DefaultObjects, DefaultObjectUse } from '../world/default-objects.ts';
 import { Ambience, ambientConditions, type AmbientState } from './ambience.ts';
 import { soundConditionsHold } from './sound-conditions.ts';
@@ -58,8 +58,19 @@ import type { AudioLoader } from './audio-loader.ts';
 import { AudioEngine } from './audio-engine.ts';
 import { readCategoryRoles } from './category-rules.ts';
 import { distanceGain } from './attenuation.ts';
+import { readyStandIn } from './alternate-sound.ts';
 import { SoundInstance, type SoundBuffer, type SoundPlace } from './sound-instance.ts';
 
+/** The player's reference (its sounds play through the player's output models). */
+const PLAYER_REFERENCE = 0x14;
+/** A sound file being decoded or kept decoded. */
+interface BufferEntry {
+  sound: Promise<SoundBuffer | undefined>;
+  bytes: number;
+  used: number;
+  /** The decoded file once it is in memory. */
+  ready?: SoundBuffer;
+}
 /** Decoded sound files kept for reuse (bytes of float samples). */
 const BUFFER_BUDGET = 256 * 1024 * 1024;
 /** A placed loop starts within its range and stops beyond it by this share more. */
@@ -112,10 +123,7 @@ export class SoundSystem {
   readonly #descriptors = new Map<number, Promise<SoundDescriptor | undefined>>();
   readonly #models = new Map<number, Promise<SoundOutputModel | undefined>>();
   readonly #reverbs = new Map<number, Promise<Reverb | undefined>>();
-  readonly #buffers = new Map<
-    string,
-    { sound: Promise<SoundBuffer | undefined>; bytes: number; used: number }
-  >();
+  readonly #buffers = new Map<string, BufferEntry>();
   readonly #playing = new Set<SoundInstance>();
   readonly #emitters = new Map<number, EmitterState>();
   readonly #warned = new Set<string>();
@@ -131,6 +139,8 @@ export class SoundSystem {
   readonly #musicOutput: WebMusicOutput;
   readonly #musicTypes = new Map<number, Promise<MusicType | undefined>>();
   readonly #musicTracks = new Map<number, Promise<MusicTrack | undefined>>();
+  /** Locations' music (LCTN NAM1 up their parents), null while read. */
+  readonly #locationMusics = new Map<number, { music: number | undefined | null }>();
   /** DFMS: the music where nothing names any. */
   readonly #defaultMusic: number | undefined;
   readonly #impacts: ImpactSounds;
@@ -167,6 +177,13 @@ export class SoundSystem {
   /** A menu's acoustic space (the map's) and its fade time, over the world's. */
   #menuSpace: number | undefined;
   #menuFade: number | undefined;
+  /** A menu's own loop in place of its space's ambience (the map's, DOBJ MMSD). */
+  #menuLoop: number | undefined;
+  /**
+   * The player's view (first or third person; undefined: no player), for the player's output
+   * models (DOBJ POPM, P3OM).
+   */
+  playerView: 'first' | 'third' | undefined;
   /** The acoustic space in effect, its ambience loop, and a counter against stale loads. */
   #space: number | undefined;
   #ambientLoop: SoundInstance | undefined;
@@ -323,11 +340,45 @@ export class SoundSystem {
     if (!descriptor) return undefined;
     if (descriptor.conditions.length > 0 && !(await this.#holds(descriptor.conditions, source)))
       return undefined;
-    const model =
-      descriptor.outputModel === undefined
-        ? undefined
-        : await this.outputModel(descriptor.outputModel);
+    const output = this.#playerOutput(source) ?? descriptor.outputModel;
+    const model = output === undefined ? undefined : await this.outputModel(output);
     return this.#start(descriptor, model, place, fadeIn);
+  }
+
+  /**
+   * The interface's sounds (the menus' PlaySound, a menu's own sounds): 2D through the
+   * interface output model (DOBJ IOPM, SOMUIDefault) whatever model their descriptor names.
+   * TODO(M13): that the engine plays every menu sound through it is inferred from the default
+   * object's name (it is the model of 56 of the interface's descriptors; 12 name the player's).
+   */
+  async playInterface(editorId: string): Promise<SoundInstance | undefined> {
+    const formId = (await this.#descriptorNames()).get(editorId.toLowerCase());
+    const descriptor = formId === undefined ? undefined : await this.descriptor(formId);
+    if (!descriptor) return undefined;
+    if (descriptor.conditions.length > 0 && !(await this.#holds(descriptor.conditions, undefined)))
+      return undefined;
+    const output = this.defaults.get(DefaultObjectUse.interfaceOutput) ?? descriptor.outputModel;
+    const model = output === undefined ? undefined : await this.outputModel(output);
+    return this.#start(descriptor, model, undefined);
+  }
+
+  /**
+   * The output model of the player's own sounds (observed in the original: the audio manager
+   * keeps an output model per object, and a sound that follows such an object plays through it
+   * in place of its descriptor's): the player's first-person model (DOBJ POPM,
+   * SOMMono01400Player1st: 2D) in first person, the third-person one (P3OM,
+   * SOMMono01400Player3rd: 3D, heard to 3239 units) in third, so the footsteps and blows the
+   * player's descriptors give the 2D model are placed at the player behind the camera.
+   * TODO(M13): that the player's 3D carries these two is inferred from the default objects'
+   * names; where the engine sets them was not found.
+   */
+  #playerOutput(source: number | undefined): number | undefined {
+    if (source !== PLAYER_REFERENCE || this.playerView === undefined) return undefined;
+    return this.defaults.get(
+      this.playerView === 'first'
+        ? DefaultObjectUse.playerOutput1st
+        : DefaultObjectUse.playerOutput3rd,
+    );
   }
 
   /** Whether a file holds the sound (any of its names: .fuz, .xwm, .wav). */
@@ -808,9 +859,10 @@ export class SoundSystem {
    * `fadeSeconds`;
    * undefined gives the world's back.
    */
-  setMenuSpace(space: number | undefined, fadeSeconds?: number): void {
+  setMenuSpace(space: number | undefined, fadeSeconds?: number, loop?: number): void {
     this.#menuSpace = space;
     this.#menuFade = fadeSeconds;
+    this.#menuLoop = space === undefined ? undefined : loop;
     this.#updateSpace();
     if (space === undefined) this.#menuFade = undefined;
   }
@@ -906,16 +958,42 @@ export class SoundSystem {
   }
 
   /**
-   * The location's music: the cell's (XCMO); indoors else the default (DFMS); outdoors else
-   * its regions' (RDMO), the worldspace's (ZNAM), the default. null: the regions are still
-   * being read.
+   * The location's music: the cell's (XCMO); else its location's (LCTN NAM1, or the nearest
+   * parent location's that names one: Mzulft's exterior plays MUSDungeon, the dragon mound by
+   * Frost River Farm nothing, _NONE); indoors else the default (DFMS); outdoors else its
+   * regions' (RDMO), the worldspace's (ZNAM), the default. null: the regions or the location
+   * are still being read. TODO(M13): the location's place between the cell's and the regions'
+   * and its parents' music are inferred (vanilla's 8 locations with music; their interiors
+   * all name the cell's).
    */
   #locationMusic(ambient: AmbientState): number | undefined | null {
     if (ambient.cellMusic !== undefined) return ambient.cellMusic;
+    if (ambient.location !== undefined) {
+      const music = this.#locationMusicOf(ambient.location);
+      if (music === null) return null;
+      if (music !== undefined) return music;
+    }
     if (ambient.interior) return this.#defaultMusic;
     const region = this.#ambience.regionMusic;
     if (!region.ready) return null;
     return region.music ?? ambient.worldMusic ?? this.#defaultMusic;
+  }
+
+  /** A location's music (LCTN NAM1, else its parents'); null while it is being read. */
+  #locationMusicOf(location: number): number | undefined | null {
+    const known = this.#locationMusics.get(location);
+    if (known !== undefined) return known.music;
+    const entry: { music: number | undefined | null } = { music: null };
+    this.#locationMusics.set(location, entry);
+    locationMusic(this.#db, location).then(
+      (music) => {
+        entry.music = music;
+      },
+      () => {
+        entry.music = undefined;
+      },
+    );
+    return null;
   }
 
   acousticSpace(formId: number): Promise<AcousticSpace | undefined> {
@@ -1018,7 +1096,7 @@ export class SoundSystem {
       cached.used = performance.now();
       return cached.sound;
     }
-    const entry = {
+    const entry: BufferEntry = {
       used: performance.now(),
       bytes: 0,
       sound: this.#loader.load(path).then(
@@ -1039,7 +1117,7 @@ export class SoundSystem {
           entry.bytes = frames * decoded.channels.length * 4;
           this.#bufferBytes += entry.bytes;
           this.#evict();
-          return {
+          entry.ready = {
             buffer,
             ...(decoded.lip && { lip: decoded.lip }),
             ...(decoded.loop && {
@@ -1049,6 +1127,7 @@ export class SoundSystem {
               },
             }),
           };
+          return entry.ready;
         },
         (error: unknown) => {
           this.#warn(error instanceof Error ? error.message : String(error));
@@ -1097,7 +1176,7 @@ export class SoundSystem {
     // footsteps of actors far off; each would cost a panner and a voice).
     if (descriptor.looping === 'none' && !this.#audible(model, place)) return undefined;
     const path = files[Math.floor(this.#next() * files.length)] ?? files[0] ?? '';
-    const sound = await this.buffer(path);
+    const sound = (await this.#readyStandIn(descriptor, path)) ?? (await this.buffer(path));
     if (!sound) return undefined;
     const instance = new SoundInstance(
       this.engine,
@@ -1112,6 +1191,33 @@ export class SoundSystem {
     if (this.#timeAffects(instance)) instance.setTimeRate(this.#timeMultiplier);
     this.#playing.add(instance);
     return instance;
+  }
+
+  /**
+   * A file in memory to play at once in place of `path` (alternate-sound.ts): `path` itself,
+   * another of the descriptor's files, or one of its alternate's (SNDR SNAM); the wanted file
+   * then loads for the next time. Undefined: none is in memory.
+   */
+  async #readyStandIn(descriptor: SoundDescriptor, path: string): Promise<SoundBuffer | undefined> {
+    const ready = (file: string): boolean => this.#buffers.get(file)?.ready !== undefined;
+    if (ready(path)) return this.#ready(path);
+    const alternate =
+      descriptor.alternateFor === undefined
+        ? undefined
+        : await this.descriptor(descriptor.alternateFor);
+    const standIn = readyStandIn(path, descriptor.files, alternate?.files ?? [], ready, () =>
+      this.#next(),
+    );
+    if (standIn === undefined) return undefined;
+    void this.buffer(path);
+    return this.#ready(standIn);
+  }
+
+  /** A decoded file in memory, marked as used. */
+  #ready(path: string): SoundBuffer | undefined {
+    const entry = this.#buffers.get(path);
+    if (entry) entry.used = performance.now();
+    return entry?.ready;
   }
 
   /** Whether a sound at a place is heard at the listener (within its model's attenuation). */
@@ -1163,9 +1269,11 @@ export class SoundSystem {
       const reverb = data?.reverb === undefined ? undefined : await this.reverb(data.reverb);
       if (version !== this.#spaceVersion) return;
       this.engine.setReverb(reverb, this.#ini.number('Audio', 'fReverbTransitionTime'));
-      if (data?.ambient === undefined) return;
+      // A menu's own loop (the map's) plays in place of its space's ambience.
+      const ambient = this.#menuLoop ?? data?.ambient;
+      if (ambient === undefined) return;
       const loop = await this.play(
-        data.ambient,
+        ambient,
         undefined,
         this.#menuFade ?? this.#ini.number('Audio', 'fASFadeInTime'),
       );

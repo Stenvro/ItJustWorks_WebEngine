@@ -13,6 +13,7 @@ import {
   parseReverb,
   parseSoundCategory,
   parseSoundDescriptor,
+  locationMusic,
   parseSoundOutputModel,
   soundFileCandidates,
   type SoundCategory,
@@ -190,6 +191,34 @@ describe.skipIf(!hasGamedata())('sound records in the local game data', () => {
     expect(await name(DefaultObjectUse.dungeonClearedMusic)).toBe('MUSDungeonCleared');
     // Later plugins add their own uses (HearthFires, Dragonborn: KWSP).
     expect(objects.get('KWSP')).toBe(0x3c);
+    // The player's and the interface's output models, level-up music, the world map's loop.
+    expect(await name(DefaultObjectUse.playerOutput1st)).toBe('SOMMono01400Player1st');
+    expect(await name(DefaultObjectUse.playerOutput3rd)).toBe('SOMMono01400Player3rd');
+    expect(await name(DefaultObjectUse.interfaceOutput)).toBe('SOMUIDefault');
+    expect(await name(DefaultObjectUse.levelUpMusic)).toBe('MUSSpecialSuccess');
+    expect(await name(DefaultObjectUse.worldMapAmbient)).toBe('AMBrWindBedWorldMapLP');
+  });
+
+  it('reads the music of locations (LCTN NAM1, else a parent location’s)', async () => {
+    const music = async (editorId: string) => {
+      const formId = await locationMusic(db, (await byEditorId('LCTN', editorId)).formId);
+      return formId === undefined ? undefined : (await db.require(formId)).editorId;
+    };
+    expect(await music('MzulftLocation')).toBe('MUSDungeon');
+    expect(await music('IronbindBarrowLocation')).toBe('MUSDungeonIce');
+    expect(await music('FrostRiverFarmLocation')).toBe('_NONE');
+    expect(await music('WhiterunLocation')).toBeUndefined();
+    // A cell in such a location: Mzulft's exterior.
+    const exterior = await byEditorId('CELL', 'MzulftExterior');
+    const location = await db.require(exterior.formIdField('XLCN') ?? 0);
+    expect(await music(location.editorId ?? '')).toBe('MUSDungeon');
+  });
+
+  it('names an alternate for the player’s footsteps and item sounds (SNDR SNAM)', async () => {
+    const descriptor = parseSoundDescriptor(await byEditorId('SNDR', 'FSTPlayerWoodWalkRSD'));
+    expect((await db.require(descriptor.alternateFor ?? 0)).editorId).toBe('FSTPlayerDirtWalkLSD');
+    const book = parseSoundDescriptor(await byEditorId('SNDR', 'ITMGenericBookUpSD'));
+    expect((await db.require(book.alternateFor ?? 0)).editorId).toBe('ITMGenericUpLoFi');
   });
 
   it('names the music of worldspaces and cells', async () => {

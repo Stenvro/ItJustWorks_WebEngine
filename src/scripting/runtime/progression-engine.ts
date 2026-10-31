@@ -394,6 +394,10 @@ export class ProgressionEngine {
     if (announce && waiting > state.levelUps) {
       const text = await runtime.gameSetting('sLevelUpAvailable');
       if (typeof text === 'string' && text !== '') runtime.world.notification?.(text);
+      // The level-up music (DOBJ LUMS, MUSSpecialSuccess: the mus_levelup stings) as the
+      // level-up becomes available. TODO(M13): its moment (here, with the notice) is inferred.
+      const music = await runtime.magic.defaultObject('LUMS');
+      if (music !== undefined) runtime.world.music?.(music, true);
     }
     state.levelUps = waiting;
   }

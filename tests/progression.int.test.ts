@@ -88,12 +88,16 @@ describe.skipIf(!hasGamedata())('progression on the local game data', () => {
     const game = runtime();
     const increases: number[] = [];
     game.progression.listener = { skillIncreased: (increase) => increases.push(increase.level) };
+    const music: number[] = [];
+    game.world = { music: (type, add) => (add ? music.push(type) : undefined) };
     // UESP: AdvSkill Lockpicking 50 = 45 × 50 + 10 experience, 15 → 21.
     await game.progression.useSkill(PLAYER_REF, 'Lockpicking', 50);
     expect(increases).toEqual([16, 17, 18, 19, 20, 21]);
     expect((await game.actors.value(PLAYER_REF, LOCKPICKING)).base).toBe(21);
     expect(game.state.playerExperience).toBe(16 + 17 + 18 + 19 + 20 + 21);
     expect(game.state.levelUps).toBe(1);
+    // The level-up music (DOBJ LUMS: MUSSpecialSuccess) as the level-up becomes available.
+    expect(music).toEqual([0x3b565]);
     expect(await game.progression.levelUp(ActorValue.health)).toBe(true);
     expect(await game.actors.playerLevel()).toBe(2);
     expect((await game.actors.value(PLAYER_REF, ActorValue.health)).base).toBe(110);

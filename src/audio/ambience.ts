@@ -50,6 +50,8 @@ export interface AmbientState {
   readonly flash: number | undefined;
   /** The music the cell names (XCMO) and the worldspace's (ZNAM). */
   readonly cellMusic: number | undefined;
+  /** The location the cell is in (XLCN; its music: LCTN NAM1). */
+  readonly location?: number | undefined;
   readonly worldMusic: number | undefined;
   /** Water around the listener (src/audio/water-audio.ts), and whether it is under water. */
   readonly waterAt: WaterAt | undefined;

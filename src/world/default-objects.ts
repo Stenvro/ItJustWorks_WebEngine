@@ -50,6 +50,12 @@ export const DefaultObjectUse = {
   /** SOPM of spoken lines in the world (SOMDialogue3DDefault) and at the listener (2D). */
   dialogueOutput3d: 'DOP2',
   dialogueOutput2d: 'DOP3',
+  /** SOPM of the player's own sounds in first and third person, and of the interface's. */
+  playerOutput1st: 'POPM',
+  playerOutput3rd: 'P3OM',
+  interfaceOutput: 'IOPM',
+  /** SNDR looping while the world map is open (AMBrWindBedWorldMapLP). */
+  worldMapAmbient: 'MMSD',
   /** SNDR of picking up and putting down items that name none: generic, weapons, armor, books, ingredients. */
   pickUpGeneric: 'PUSG',
   putDownGeneric: 'PDSG',

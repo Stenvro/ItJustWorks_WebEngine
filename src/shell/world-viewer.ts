@@ -2592,6 +2592,7 @@ export class WorldViewer {
       swimming: this.#play?.player.swimming ?? false,
       flash: Number.isFinite(flash) ? flash : undefined,
       cellMusic: sky.cellMusic,
+      location: sky.cellLocation,
       worldMusic: this.#world?.record.music,
       waterAt: this.#waterSurfaceAt,
       underwater: water !== undefined && camera[2] < water.height,
@@ -2944,6 +2945,9 @@ export class WorldViewer {
     // The surroundings once the camera's cell is known (else the world's music would start).
     const world = this.#sky;
     if (world?.located) this.#session?.soundSystem?.setAmbience(this.#ambientState(world));
+    // The player's sounds take the player's output model of the view (DOBJ POPM, P3OM).
+    const sounds = this.#session?.soundSystem;
+    if (sounds) sounds.playerView = this.#play?.player.pov;
     const sky = this.#sky?.lighting() ?? NO_SKY;
     // A menu's lights (the race menu's) first: they light what it shows.
     const extra = this.#play?.extraLights ?? [];

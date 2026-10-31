@@ -377,6 +377,14 @@ export class Worldspace {
     return regions;
   }
 
+  /** The location a cell is in (XLCN), if it names one. */
+  async cellLocation(x: number, y: number): Promise<number | undefined> {
+    const id = await this.cell(x, y);
+    const record = id === undefined ? undefined : await this.db.get(id);
+    const location = record?.formIdField('XLCN');
+    return location === 0 ? undefined : location;
+  }
+
   /** The music type a cell names (XCMO), if any. */
   async cellMusic(x: number, y: number): Promise<number | undefined> {
     const id = await this.cell(x, y);

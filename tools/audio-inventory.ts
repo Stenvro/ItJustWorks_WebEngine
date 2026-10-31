@@ -82,7 +82,10 @@ const RECORD_COMMON = new Set(['EDID', 'OBND']);
 const SUBRECORD_NOTES: Record<string, Rating> = {
   'SNDR CNAM': ['done', 'descriptor type: see "Descriptor types" below'],
   'SNDR FNAM': ['done', 'older form versions: the looping flag (sound-records.ts)'],
-  'SNDR SNAM': ['open', 'Alternate Sound For: what the engine does with it is not known yet'],
+  'SNDR SNAM': [
+    'done',
+    "Alternate Sound For: played at once while the descriptor's file loads (alternate-sound.ts)",
+  ],
   'SNDR LNAM': ['done', 'looping (byte 1); its rumble send (byte 3): see "Descriptor values"'],
   'SOUN FNAM': ['n/a', "older form versions' file name: every marker names its descriptor"],
   'SOUN SNDD': ['n/a', "older form versions' sound data: every marker names its descriptor"],
@@ -146,13 +149,13 @@ const SOUND_FIELDS: Record<string, readonly [string, Status, string]> = {
   'WEAP YNAM@0': ['pick up sound', 'done', 'inventory itemSound'],
   'WEAP ZNAM@0': ['put down sound', 'done', 'inventory itemSound'],
   'WEAP SNAM@0': ['attack sound', 'done', 'actor-combat'],
-  'WEAP XNAM@0': ['attack sound 2D (crossbows)', 'open', 'read (combat-records), never played'],
+  'WEAP XNAM@0': ['attack sound 2D (crossbows)', 'done', "actor-combat: the player's shot"],
   'WEAP NAM7@0': ['attack loop', 'open', 'read (combat-records), never played'],
   'WEAP TNAM@0': ['swing sound ("Attack Fail" in xEdit)', 'done', 'actor-combat swing'],
   'WEAP UNAM@0': [
     "idle sound (bound weapons' loop)",
-    'open',
-    'read (combat-records), never played',
+    'done',
+    'weapon-idle-sounds.ts: loops while drawn',
   ],
   'WEAP NAM9@0': ['equip sound', 'done', 'actor-combat draw, inventory equip'],
   'WEAP NAM8@0': ['unequip sound', 'done', 'actor-combat sheathe, inventory unequip'],
@@ -203,7 +206,7 @@ const SOUND_FIELDS: Record<string, readonly [string, Status, string]> = {
   'CELL XCAS@0': ['acoustic space', 'done', 'sound-system acoustic spaces'],
   'CELL XCMO@0': ['music', 'done', 'music (location music)'],
   'WRLD ZNAM@0': ['music', 'done', 'music (location music)'],
-  'LCTN NAM1@0': ['music', 'open', "the location's music: not read"],
+  'LCTN NAM1@0': ['music', 'done', "sound-system: the location's music, after the cell's"],
   'INFO TRDT@16': [
     'response sound',
     'done',
@@ -212,7 +215,7 @@ const SOUND_FIELDS: Record<string, readonly [string, Status, string]> = {
   'INFO ONAM@0': ['audio output override', 'done', 'sound-system voiceLine'],
   'SNDR GNAM@0': ['category', 'done', 'sound-instance'],
   'SNDR ONAM@0': ['output model', 'done', 'sound-instance'],
-  'SNDR SNAM@0': ['alternate sound for', 'open', 'see SNDR SNAM'],
+  'SNDR SNAM@0': ['alternate sound for', 'done', 'see SNDR SNAM'],
   'SNCT PNAM@0': ['parent category', 'done', 'audio-engine category tree'],
   'MUSC TNAM@0': ['tracks', 'done', 'music.ts'],
   'MUST SNAM@0': ['palette tracks', 'done', 'music.ts'],
@@ -446,7 +449,7 @@ const GAME_SETTINGS: Record<string, Rating | undefined> = {
   fCombatMusicGroupThreatRatioMin: undefined,
   fCombatMusicGroupThreatRatioMax: undefined,
   fCombatMusicPlayerNearStrengthMult: undefined,
-  fCombatMusicPlayerCombatStrengthCap: undefined,
+  fCombatMusicPlayerCombatStrengthCap: ['n/a', 'the original never reads it'],
   fSplashSoundHeavy: undefined,
   fSplashSoundMedium: undefined,
   fSplashSoundLight: undefined,
@@ -492,6 +495,10 @@ const NATIVES = [
 const DEFAULT_NOTES: Record<string, Rating> = {
   RVBT: ['done', 'DefaultReverb is silent (-100 dB): as no reverb'],
   SSSC: ['n/a', 'names the _NONE music type'],
+  SCMS: [
+    'open',
+    "when the original plays the success music is not known (vanilla: LUMS's MUSSpecialSuccess)",
+  ],
   ...Object.fromEntries(
     ['PUSA', 'PUSB', 'PUSG', 'PUSI', 'PUSW', 'PDSA', 'PDSB', 'PDSG', 'PDSI', 'PDSW'].map((use) => [
       use,
@@ -820,7 +827,9 @@ for (const [key, n] of [...creatureTypes].sort((a, b) => Number(a[0]) - Number(b
     n,
     key === '6' || key === '7'
       ? ['done', 'creature-sounds.ts: loops while conscious (and moving)']
-      : ['open', 'one-shot creature sounds: when the original plays them is not known'],
+      : key === '0'
+        ? ['done', 'creature-sounds.ts: with an ambient idle, at its chance']
+        : ['open', 'one-shot creature sounds: when the original plays them is not known'],
   );
 tableRows('Magic effect sounds (MGEF SNDD)', effectTypes, EFFECT_SOUND_TYPES, (key) => String(key));
 for (const usage of [...audit.usage.values()].sort((a, b) => b.sound - a.sound)) {
