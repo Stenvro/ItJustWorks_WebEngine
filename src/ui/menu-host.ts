@@ -31,7 +31,14 @@ import { flashKeyCode } from './key-codes.ts';
 import { followPlatform } from './input-platform.ts';
 import { DEFAULT_MENU_KEYS } from './menu-keys.ts';
 import type { ButtonMapping } from './button-art.ts';
-import { SAFE_ZONE, safeRect, scaleMode, visibleRect, type SafeZone } from './stage-rects.ts';
+import {
+  menuScaleMode,
+  SAFE_ZONE,
+  safeRect,
+  scaleMode,
+  visibleRect,
+  type SafeZone,
+} from './stage-rects.ts';
 
 /**
  * What answers a menu's call to the engine: `args` as the menu passed them (a GameDelegate
@@ -419,7 +426,13 @@ export class Menu {
     this.set('Stage.visibleRect', rectFields(visible));
     this.set(
       'Stage.safeRect',
-      rectFields(safeRect(visible, box.width / box.height > 4 / 3 + 0.01, this.safeZone)),
+      rectFields(
+        safeRect(
+          { width: this.stageWidth, height: this.stageHeight },
+          box.width / box.height > 4 / 3 + 0.01,
+          this.safeZone,
+        ),
+      ),
     );
   }
 
@@ -779,19 +792,24 @@ export class MenuHost {
     }
     this.#layer.append(element);
     menu.attach(element);
-    // The rects the menu starts with: its stage shown whole (showAll, Ruffle's default) on the
-    // layer; updateStage corrects them once the menu has set its own scale mode.
+    // The scale mode the game loads the movie with (stage-rects.ts), and the rects the menu
+    // starts with for it on the layer; updateStage corrects them if the movie sets its own.
+    const mode = menuScaleMode(menu.movie);
     const view = offscreen ?? this.#layer.getBoundingClientRect();
     const visible = visibleRect(
       menu.stageWidth,
       menu.stageHeight,
       view.width || menu.stageWidth,
       view.height || menu.stageHeight,
-      'showAll',
+      mode,
     );
     const rects = {
       visible,
-      safe: safeRect(visible, view.width / view.height > 4 / 3 + 0.01, this.#safeZone),
+      safe: safeRect(
+        { width: menu.stageWidth, height: menu.stageHeight },
+        view.width / view.height > 4 / 3 + 0.01,
+        this.#safeZone,
+      ),
     };
     menu.laidOut = { width: view.width, height: view.height };
     await element.ruffle().load({
@@ -802,6 +820,7 @@ export class MenuHost {
       backgroundColor: null,
       wmode: 'transparent',
       letterbox: 'off',
+      scale: mode,
       autoplay: 'on',
       unmuteOverlay: 'hidden',
       splashScreen: false,

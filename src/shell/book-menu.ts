@@ -46,6 +46,7 @@ import { startObjectGraph, startPlacedSkeleton } from './object-graphs.ts';
 import { MenuCamera, menuLighting, menuPlacement, type MenuLight } from './menu-3d.ts';
 import type { Terminal } from './terminal.ts';
 import { bookText } from '../ui/book-text.ts';
+import { releaseAfterFrame } from '../render/frame-release.ts';
 import type { IniSettings, INI_DEFAULTS } from '../world/ini-settings.ts';
 
 /** What is read: the book (BOOK), and where it lies when read in the world. */
@@ -544,7 +545,10 @@ class Reading {
     for (const page of this.#textures) {
       page.model.destroy();
       this.#session.textures.withdraw(page.path);
-      page.texture.destroy();
+      const texture = page.texture;
+      releaseAfterFrame(() => {
+        texture.destroy();
+      });
     }
     this.#textures = [];
     if (this.#pages) this.#host.close(this.#pages);

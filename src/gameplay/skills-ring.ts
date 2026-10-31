@@ -9,11 +9,14 @@
 // Conjuration, Destruction, Restoration, Alteration (the ring the menu's skill names keep:
 // SKILL_ANGLE 20, one name per skill in that order).
 //
-// A perk's star stands on its constellation's image: fStatsStarXIncrement (5) a grid column
-// along the image, the tree's columns about the point's direction; a grid row up the image the
-// sum of fStatsStarYIncrement and fStatsStarZIncrement (15 − 9 = 6), row 0 at the image's foot.
-// These measures fit the images (Smithing's twelve columns span its anvil's 35°, Lockpicking's
-// five rows its key's height). Platform-independent. Notes: docs/ui.md ("The skills menu").
+// A perk's star stands in its skill's point's frame (observed in the original; the point's
+// local X along the ring, Y out from the middle, Z up): fStatsStarXIncrement (5) a grid column
+// across, the tree's columns about the point; a grid row fStatsStarYIncrement (15) further out
+// and fStatsStarZIncrement (−9) less down, from fStatsStarZInitialOffset (5) up: the tree
+// leans back from the camera, a ladder up the sky. In a tree the camera stands at the selected
+// star's camera point, fStatsStarCameraOffset (0, −8, 0) in the same frame (toward the middle),
+// looking at the star raised by fStatsStarLookAt (0, 0, 1). Platform-independent. Notes:
+// docs/ui.md ("The skills menu").
 
 import type { Vec3 } from '../render/math.ts';
 import type { PerkTreeNode, SkillRecord } from '../world/perk-trees.ts';
@@ -24,20 +27,34 @@ export const RING_SKILLS: readonly number[] = [
 ];
 /** Degrees between two skills of the ring (the menu's SKILL_ANGLE). */
 export const SKILL_ANGLE = 20;
-/** How far out the constellations' images lie from the dome's middle. */
-export const STAR_DISTANCE = 92;
-/** The images' foot: row 0's height. */
-export const STAR_BASE = -2;
+/** How far out the dome's points lie from its middle (Point00 .. Point17 in the model). */
+export const STAR_DISTANCE = 99.34;
+/** The points' height. */
+export const STAR_BASE = -0.07;
 
 /** The settings the stars' grid comes from (GMSTs). */
 export interface StarGrid {
-  /** fStatsStarXIncrement: along a row. */
+  /** fStatsStarXIncrement: across, a grid column. */
   readonly column: number;
-  /** fStatsStarYIncrement + fStatsStarZIncrement: up the image. */
-  readonly row: number;
+  /** fStatsStarYIncrement: out from the middle, a grid row. */
+  readonly out: number;
+  /** fStatsStarZIncrement: down, a grid row (negative: up). */
+  readonly down: number;
+  /** fStatsStarZInitialOffset: row 0's height above the point. */
+  readonly base: number;
 }
 
-export const STAR_GRID_DEFAULTS: StarGrid = { column: 5, row: 15 - 9 };
+export const STAR_GRID_DEFAULTS: StarGrid = { column: 5, out: 15, down: -9, base: 5 };
+
+/** Where the camera stands and looks in a tree (GMSTs; offsets in the point's frame). */
+export interface StarCamera {
+  /** fStatsStarCameraOffsetX/Y/Z. */
+  readonly offset: Vec3;
+  /** fStatsStarLookAtX/Y/Z: added to the star's place as it is (world axes). */
+  readonly lookAt: Vec3;
+}
+
+export const STAR_CAMERA_DEFAULTS: StarCamera = { offset: [0, -8, 0], lookAt: [0, 0, 1] };
 
 /** A ring position's direction: its unit vector out from the middle and its rightward one. */
 export function ringAxes(ring: number): { out: Vec3; right: Vec3 } {
@@ -57,6 +74,14 @@ export function treeMiddle(skill: SkillRecord): number {
   return (Math.min(...columns) + Math.max(...columns)) / 2;
 }
 
+/** A point in a ring position's frame (x across, y out, z up) in the dome. */
+export function ringPlace(ring: number, local: Vec3): Vec3 {
+  const { out, right } = ringAxes(ring);
+  const x = local[0];
+  const y = STAR_DISTANCE + local[1];
+  return [out[0] * y + right[0] * x, out[1] * y + right[1] * x, STAR_BASE + local[2]];
+}
+
 /** Where a perk's star stands, for the skill at a ring position. */
 export function starPlace(
   skill: SkillRecord,
@@ -64,10 +89,42 @@ export function starPlace(
   ring: number,
   grid: StarGrid = STAR_GRID_DEFAULTS,
 ): Vec3 {
+  return ringPlace(ring, starLocal(skill, node, grid));
+}
+
+/** A star's place in its point's frame. */
+export function starLocal(
+  skill: SkillRecord,
+  node: PerkTreeNode,
+  grid: StarGrid = STAR_GRID_DEFAULTS,
+): Vec3 {
+  // TODO(M13): the original measures the columns from half the skill's perk tree width (an
+  // engine value the record does not hold), the other way along X; the middle of the tree's
+  // columns, this way, puts the branches where the game's trees have them.
+  const row = node.row + node.offsetY;
+  return [
+    (node.column + node.offsetX - treeMiddle(skill)) * grid.column,
+    row * grid.out,
+    grid.base - row * grid.down,
+  ];
+}
+
+/** Where the camera stands and what it looks at with a star selected (its place, its frame). */
+export function starView(
+  place: Vec3,
+  ring: number,
+  camera: StarCamera = STAR_CAMERA_DEFAULTS,
+): { readonly position: Vec3; readonly target: Vec3 } {
   const { out, right } = ringAxes(ring);
-  const x = (node.column + node.offsetX - treeMiddle(skill)) * grid.column;
-  const z = STAR_BASE + (node.row + node.offsetY) * grid.row;
-  return [out[0] * STAR_DISTANCE + right[0] * x, out[1] * STAR_DISTANCE + right[1] * x, z];
+  const [x, y, z] = camera.offset;
+  return {
+    position: [
+      place[0] + right[0] * x + out[0] * y,
+      place[1] + right[1] * x + out[1] * y,
+      place[2] + z,
+    ],
+    target: [place[0] + camera.lookAt[0], place[1] + camera.lookAt[1], place[2] + camera.lookAt[2]],
+  };
 }
 
 /** Below this speed (degrees a second; 0.01 radians) the ring stops turning. */

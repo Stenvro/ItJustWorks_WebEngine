@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { nearestRing, RING_SKILLS, ringTurnSpeed, starPlace, treeMiddle } from './skills-ring.ts';
+import {
+  nearestRing,
+  RING_SKILLS,
+  ringTurnSpeed,
+  starPlace,
+  starView,
+  treeMiddle,
+} from './skills-ring.ts';
 import type { SkillRecord } from '../world/perk-trees.ts';
 
 const node = (index: number, column: number, row: number) => ({
@@ -21,7 +28,7 @@ describe('skills ring', () => {
     expect(RING_SKILLS[9]).toBe(14); // Lockpicking at Point09
   });
 
-  it('puts a tree about its point, rows up its image', () => {
+  it('puts a tree about its point, each row further out and up', () => {
     const skill: SkillRecord = {
       formId: 1,
       editorId: 'AVLockpicking',
@@ -29,12 +36,24 @@ describe('skills ring', () => {
       nodes: [node(1, 0, 0), node(2, 4, 4)],
     };
     expect(treeMiddle(skill)).toBe(2);
-    // Point09: 180°, out along −Y, right along −X.
+    // Point09: 180°, out along −Y, right along −X; row 0 fStatsStarZInitialOffset (5) up.
     const [x, y, z] = starPlace(skill, node(1, 0, 0), 9);
-    expect(x).toBeCloseTo(10, 5);
-    expect(y).toBeCloseTo(-92, 5);
-    expect(z).toBeCloseTo(-2, 5);
-    expect(starPlace(skill, node(2, 4, 4), 9)[2]).toBeCloseTo(22, 5);
+    expect(x).toBeCloseTo(10, 4);
+    expect(y).toBeCloseTo(-99.34, 4);
+    expect(z).toBeCloseTo(4.93, 4);
+    // Row 4: 4 × 15 further out, 4 × 9 higher.
+    const far = starPlace(skill, node(2, 4, 4), 9);
+    expect(far[1]).toBeCloseTo(-159.34, 4);
+    expect(far[2]).toBeCloseTo(40.93, 4);
+  });
+
+  it('stands the camera before the selected star, looking just above it', () => {
+    // Point00: out along +Y.
+    const view = starView([0, 120, 20], 0);
+    expect(view.position[0]).toBeCloseTo(0, 5);
+    expect(view.position[1]).toBeCloseTo(112, 5);
+    expect(view.position[2]).toBeCloseTo(20, 5);
+    expect(view.target).toEqual([0, 120, 21]);
   });
 
   it('finds the ring position nearest a heading', () => {
