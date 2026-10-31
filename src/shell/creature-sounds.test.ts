@@ -51,4 +51,32 @@ describe('creature loops', () => {
     expect(stopped.sort()).toEqual([BREATHE, MACHINE]);
     loops.remove(1);
   });
+
+  it('plays the idle sound with its chance as the creature takes an ambient idle', () => {
+    const started: number[] = [];
+    const sounds2 = new CreatureSounds({
+      play: (descriptor) => {
+        started.push(descriptor);
+        return undefined;
+      },
+      unconscious: () => false,
+    });
+    const crab = [{ type: CreatureSoundType.idle, sound: IDLE, chance: 40 }];
+    const actor: CreatureActor = {
+      reference: 2,
+      sounds: crab,
+      position: [0, 0, 0],
+      dead: false,
+      place: () => [0, 0, 0],
+    };
+    sounds2.frame([actor], 0.1);
+    sounds2.idle(2, () => 0.39); // 39 < 40: it sounds
+    sounds2.idle(2, () => 0.41); // 41: it does not
+    expect(started).toEqual([IDLE]);
+    // Not while dead, nor for an actor it does not know.
+    sounds2.frame([{ ...actor, dead: true }], 0.1);
+    sounds2.idle(2, () => 0);
+    sounds2.idle(3, () => 0);
+    expect(started).toEqual([IDLE]);
+  });
 });

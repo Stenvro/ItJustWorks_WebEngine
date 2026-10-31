@@ -131,6 +131,8 @@ export interface CellRecord {
   readonly acousticSpace: number | undefined;
   /** XCMO: the cell's music type (MUSC). */
   readonly musicType: number | undefined;
+  /** XLCN: the location the cell is in (LCTN). */
+  readonly location?: number | undefined;
 }
 
 const nonZero = (id: number | undefined): number | undefined => (id === 0 ? undefined : id);
@@ -181,6 +183,7 @@ export function parseCell(record: GameRecord): CellRecord {
     waterEnvironmentMap: environmentMap(record.fields.zstring('XWEM')),
     acousticSpace: nonZero(record.formIdField('XCAS')),
     musicType: nonZero(record.formIdField('XCMO')),
+    location: nonZero(record.formIdField('XLCN')),
   };
 }
 

@@ -458,3 +458,25 @@ export function regionsInEffect(regions: readonly RegionAudio[]): RegionAudio[] 
 export function regionMusic(regions: readonly RegionAudio[]): number | undefined {
   return regionsInEffect(regions).find((region) => region.music !== undefined)?.music;
 }
+
+/**
+ * A location's music (LCTN NAM1), else that of its nearest parent location (PNAM) that names
+ * one; undefined where none does.
+ */
+export async function locationMusic(
+  db: { get(formId: number): Promise<GameRecord | undefined> },
+  location: number,
+): Promise<number | undefined> {
+  const seen = new Set<number>();
+  let at: number | undefined = location;
+  while (at !== undefined && !seen.has(at)) {
+    seen.add(at);
+    const record = await db.get(at);
+    if (record?.type !== 'LCTN' || record.deleted) return undefined;
+    const music = record.formIdField('NAM1');
+    if (music !== 0) return music;
+    const parent = record.formIdField('PNAM');
+    at = parent === 0 ? undefined : parent;
+  }
+  return undefined;
+}

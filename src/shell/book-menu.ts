@@ -385,7 +385,7 @@ class Reading {
       const lower = event.toLowerCase();
       if (lower.startsWith(SOUND_PLAY)) {
         const name = event.slice(SOUND_PLAY.length);
-        void this.#session.sounds().then((sounds) => sounds.playNamed(name, undefined));
+        void this.#session.sounds().then((sounds) => sounds.playInterface(name));
       } else if (SHOWN_AFTER.has(lower) && !this.#closing) {
         this.#showTexts(true);
       } else if (CLOSED_AFTER.has(lower) && this.#closing) {

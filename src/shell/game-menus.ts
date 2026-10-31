@@ -707,7 +707,7 @@ export class GameMenus {
         return;
       }
       await runtime.removeItem(PLAYER_REF, runtime.formHandle(book), 1, true, undefined);
-      void session.sounds().then((sounds) => sounds.playNamed('UISpellLearned', undefined));
+      void session.sounds().then((sounds) => sounds.playInterface('UISpellLearned'));
       session.hud.notification(`${name} ${settings.string('sAddItemtoSpellList') ?? ''}`);
       return;
     }
@@ -1067,7 +1067,7 @@ export class GameMenus {
             return;
           }
           // The engine's choosing sound (UITweenSelectSD: silence in the vanilla data).
-          void session.sounds().then((sounds) => sounds.playNamed('UITweenSelectSD', undefined));
+          void session.sounds().then((sounds) => sounds.playInterface('UITweenSelectSD'));
           // As the original: the tween hides (HideMenu) and stays open under the menu chosen;
           // Skills sets its button back from LEVEL UP (ResetStatsButton). When that menu
           // closes the tween closes with it, unless the menu goes back to it (ShowMenu).
