@@ -39,6 +39,7 @@ import type { ActorFlight } from './actor-flight.ts';
 import { transformPoint, type Vec3 } from '../render/math.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ActorInteraction } from '../scripting/runtime/runtime.ts';
+import { RaceFlag } from '../world/actor-records.ts';
 import { referenceMatrix } from '../world/cell-loader.ts';
 import type { StagedActor } from './actor-stage.ts';
 import type { ActorMovers } from './actor-movers.ts';
@@ -138,6 +139,8 @@ export interface ActorMountsOptions {
   readonly startCombat?: (actor: number, target: number) => void;
   /** The actors on the stage (the dragon's targets). */
   readonly actors?: () => Iterable<StagedActor>;
+  /** Whether an actor is unconscious or an essential one down (the dragon's lock skips it). */
+  readonly downed?: (reference: number) => boolean;
 }
 
 export class ActorMounts {
@@ -907,13 +910,19 @@ export class ActorMounts {
 
   /**
    * Whether the dragon's lock may take an actor (observed in the original): loaded, enabled
-   * and living, not the player or their mount. TODO(M13): the engine also leaves out children,
-   * the unconscious and the essential who are down, which the stage does not tell.
+   * and living, not the player or their mount, not a child (its race's flag), not unconscious
+   * and not an essential one down.
    */
   #lockable(reference: number, mount: number): boolean {
     if (reference === mount || reference === PLAYER_REF) return false;
     const staged = this.#options.get(reference);
-    return staged !== undefined && !staged.dead && staged.enabled(reference);
+    return (
+      staged !== undefined &&
+      !staged.dead &&
+      staged.enabled(reference) &&
+      (staged.placed.look.raceFlags & RaceFlag.child) === 0 &&
+      this.#options.downed?.(reference) !== true
+    );
   }
 
   /**

@@ -136,16 +136,23 @@ export class KillmoveCamera implements Camera {
   /** The current shot's own spot came within the cut-away distance of its look last update. */
   #near = false;
   /**
-   * The shot was cut away (observed in the original: its camera came within
+   * The current shot was cut away (observed in the original: its camera came within
    * fVATSCameraCutAwayDistance of what it looks at while the player lives): the player's
-   * first-person view shows from then on, the playback (its time and image space) going on.
+   * first-person view shows for the rest of the shot, the playback (its time and image space)
+   * going on. The flag is the shot's: the next shot begins without it, and the playback, which
+   * hands the view to the kill camera on every update of a shot not cut away, takes it back.
    */
   cutAway = false;
   /** The current shot's location and target where they were as it began (its follow flags). */
   #spots: { readonly shot: number; location?: Vec3; target?: Vec3 } | undefined;
   /**
-   * The radial blur's strength now (the move between shots), 0 when none. TODO(M13): the
-   * image-space stack takes no free radial blur yet (it needs a neutral modifier frame).
+   * The weight of the playback's own radial blur now (the move between shots), 0 when none.
+   * Observed in the original: the playback adds a radial blur image-space instance as it
+   * starts (ramp up fVATSCamTransRBRampup, start fVATSCamTransRBStart, ramp down
+   * fVATSCamTransRBRampDown, down start fVATSCamTransRBDownStart, centred on the screen) and
+   * sets only this weight on it each update (fVATSCamTransRBStrengthCap times the move's
+   * triangle); the blur's own strength stays the 0 it was made with, so the image-space stack
+   * takes a radial blur of no strength from it and nothing is drawn. Ours draws none either.
    */
   radialBlur = 0;
   /** Where its projectile was last (a shot that hit is gone). */
@@ -431,6 +438,8 @@ export class KillmoveCamera implements Camera {
     this.#lead =
       subjects.leads?.(subjects.targetRef) === true ? CameraSubject.target : CameraSubject.attacker;
     this.#near = false;
+    // The cut-away is the shot's (observed in the original): a new shot takes the view back.
+    this.cutAway = false;
   }
 
   /** A shot's subject with its lead actor resolved (the attacker, projectile or target). */
