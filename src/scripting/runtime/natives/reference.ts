@@ -705,9 +705,10 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
     );
   });
   // PlayTerrainEffect(asEffectModelName, asAttachBoneName): observed in the original, a
-  // temporary terrain effect of the model at the reference (an actor's own kind of ground
-  // under it), attached to the named node of its 3D where it has one; one it cannot set up is
-  // the original's error "Could not set up terrain effect."
+  // temporary terrain effect of the model on the land under the reference, turned as it is
+  // (an actor's collision layer for its pieces; the bone is looked up in the effect's own
+  // model); one it cannot set up (no land under it) is the original's error "Could not set up
+  // terrain effect."
   n('objectreference.playterraineffect', (call) => {
     const reference = self(call);
     if (reference === undefined) return null;

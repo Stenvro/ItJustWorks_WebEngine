@@ -80,8 +80,11 @@ faction, cleared), 101 combat (the next combat number, combat groups with their 
 positions, targets, fifteen float pairs and an optional search with an optional detail block;
 then, as observed in the original, the threats: a vsval count of a form and its combat object
 (`CombatThreat`, see "Combat"), their time stamp, a count always 0, a list of references, a
-time stamp and two timers; the search's detail is the original's object written through the
-pathing stream, kept in UESP's layout until a save holds one, TODO(M13)), 102 interface (help messages shown, the last used weapons,
+time stamp and two timers; the search's detail, as observed in the original, is its
+line-of-sight grid map written through a pathing stream of its own: a u32 count of grids (a u32
+key, then the grid: a u32 count of cells, each a byte, a u32 count of bytes and the bytes, a
+navmesh refId and a u32; then the grid's navmesh refId), a u32, a path point (see
+"Movement") and two u32; UESP's layout is the case of one grid), 102 interface (help messages shown, the last used weapons,
 spells and shouts; an extra part UESP sees "in certain situations", read when bytes are left),
 103 actor causes (position, serial number, actor), 105 detection manager, 106 location
 metadata, 107 quest static data (two lists of quest run data: a value's type 1, 2 and 4 are
@@ -91,7 +94,8 @@ player controls, 111 story event manager (as observed in the original: the next 
 u32, then a vsval count of the events told and not yet processed, each as a quest's runtime
 data writes its event: its number u32, its type as SMEN's ENAM (four characters in a u32, first
 in the low byte), a u32 count of data members, each a kind u32 and its value: 0 a reference, 2 a
-location, 4 a keyword (refIds), 3 a number u32, 1 another form; the members are numbered by kind
+location, 4 a keyword, 1 another form (refIds), 3 a number u32, a kind it does not know
+nothing; the members are numbered by kind
 in their order, as Keyword.SendStoryEvent's K1, L1, R1, R2, V1, V2 show), 112 ingredient pairs found to share no effect, 113 menu controls, 114 menu topic manager (two
 references), 1000 temp effects (the effect entries, a u32, then three lists of typed effects,
 as observed in the original (UESP knows two: the byte left after them was the third's empty
@@ -214,8 +218,13 @@ everywhere (the original reserves one byte and widens it when the count is known
   entry: refId, i32, vsval × extra data lists), the impacts (vsval × (position, normal, the
   reference hit, u32, u8, two u16, a material refId, two u32, u8)), 12 bytes, a refId, u32, a
   refId, u32. Then each kind's own: a missile and a barrier one u32; an arrow the missile's and
-  two refIds; a flame two u32; a cone four u32 and 12 bytes; a beam a byte; a grenade a vsval
-  count of its Havok constraints (TODO(M13): their layout; none in the saves read). **PHZD**
+  two refIds; a flame two u32; a cone four u32 and 12 bytes; a beam a byte; a grenade (a mine) a vsval
+  count of the decals stuck to it, each a simple decal: a byte (1: on a cell's land, the cell
+  refId and which of its four quads u32; 0: the reference it is on), two texture set refIds,
+  its origin and direction (12 bytes each), width, height and depth, its emitter's rotation (a
+  3×3 matrix, 36 bytes), four bytes (subtexture, blending, alpha blending, parallax), the
+  parallax scale u32 and passes u8, shininess, a u32, its colour (12 bytes), two bytes and from
+  form version 36 a u32 (as observed in the original; what UESP took for Havok constraints). **PHZD**
   (hazards): six u32 and two refIds.
 - **Actors** (ACHR): the AI process level i32 (−1: none) and the state flags u32 come first,
   then the reference data. With a process, its data follows (see "AI process"). Then, for every
@@ -261,7 +270,9 @@ everywhere (the original reserves one byte and widens it when the count is known
   (flag 30). SMQN: u32 count × u32. SCEN, whatever its flags: playing u8, u32, two bytes, the
   actions (u32 count: type u32, u32, a timer's two bytes, two flag bytes), two bytes, its time
   u32, the phases (u32 count × three bytes), four bytes. PACK: a package the game made writes
-  its whole definition (open, TODO(M13); none in the saves read). INFO, CONT, DOOR, STAT, ALCH,
+  no form flags (its save replaces the form's) and its whole definition as the AI process
+  writes one ("AI process"), its kind (what its procedure adds) from its PKDT's type; a
+  package of a plugin writes nothing. INFO, CONT, DOOR, STAT, ALCH,
   IDLM, NOTE, NAVM, WOOP, MGEF, ENCH, CLAS: the form flags only.
 
 ## AI process
@@ -291,7 +302,7 @@ references, a timer, values and a reference, two bytes, a u32, a time stamp and 
 
 A **running package**: the package (0: none, and nothing follows); for a package the game made
 (0xFF000000 and up) its procedure type (−1: none) and its definition: PKDT (12 bytes), a byte of
-which follow (1 a package location, 2 a package target, 4 its own data: none the game makes), those,
+which follow (1 a package location, 2 a package target, 4 its own data), those,
 a u32, then by procedure type: an alarm (21) a vsval count of (a byte, a u16) and a byte; a
 dialogue (15, 28) three references and two bytes; a flee (22) two bytes, a point, a u32, three
 bytes, two references and a vsval count of references; a trespass (23) five u32 and a reference;
@@ -345,8 +356,13 @@ request). A request is a shared object of the pathing stream (see "Movement").
 Measured on the two saves: every actor's process reads to its end, 2,362 and 2,365 actors with
 the AI process, movement and combat data after it. The custom packages' trees in them: Sequence,
 Stacked, Simultaneous and SitSleep at the root, Travel, Sandbox, Activate and the others below.
-TODO(M13): a created package with its own package data (bit 4: none in the saves; the game makes
-its packages without one).
+A made package's own data (bit 4; none in the saves) is its data class's, which its PKDT's type
+gives it when it is made (as observed in the original): follow (1) and escort (2) a u32 and a
+byte that says a package location follows; eat (3), use an item (8) and ambush (9) that byte
+and location; patrol (13) two bytes; dialogue (15, 28) a u32, three bytes, a u32, a byte, a u32,
+a reference and that byte and location; use a weapon (16) six bytes, three u16, two u32, a
+reference, a byte that says a package target follows and the location's byte; custom and
+template packages (18, 19) nothing; the other types have no data.
 
 ## Movement
 
@@ -405,7 +421,12 @@ u32, two timers, an object, then the request through the pathing stream, what th
 location, locations, a reference (with its location, a u32 and a timer) or references).
 Measured on the second save: cover searches, aim controllers (track target, projectile),
 areas (standard, hold position), target selectors, inventory items (melee, ranged, one-handed
-block, magic and shouts) and threats; the combat paths' layouts wait on a save that holds one.
+block, magic and shouts) and threats. The combat paths, in neither save, are the original's 14
+templates (Standard to a location or a reference, MultiGoal and WeightedMultiGoal to locations
+or references, StraightPath, RotatePath and Orbit to a location, Flight to a location or a
+reference, Landing to a location, Hover and FlyingAttack with no destination; the hover
+request's places: a vsval count of a point and seven values) and the 12 generic ones; each is
+tested on a buffer written by its layout.
 
 The **combat controller**: the attacker and its target (references), the combat group's id
 u32, six switches, a float, a timer; the aim controllers, the current and previous one's

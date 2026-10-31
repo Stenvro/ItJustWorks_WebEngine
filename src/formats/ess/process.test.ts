@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { EssReader } from './ess-reader.ts';
 import { EssWriter } from './ess-test-writer.ts';
 import { PathingStream } from './movement.ts';
-import { PackageDataKind, ProcessUnknown, readPackageData, readProcess } from './process.ts';
+import {
+  PackageDataKind,
+  ProcessUnknown,
+  readCreatedPackage,
+  readPackageData,
+  readProcess,
+} from './process.ts';
 
 /** Reference ids as forms: a created one (kind 2) is 0xFF000000 and up. */
 const resolve = (raw: number): number =>
@@ -60,6 +66,45 @@ describe('AI process', () => {
     const process = readProcess(new PathingStream(reader, resolve), 2);
     expect(reader.remaining).toBe(0);
     expect(process.package?.dataKind).toBeUndefined();
+  });
+
+  it("reads a made package's own data by its type, as each data class writes it", () => {
+    const pkdt = (type: number): number[] => [0, 0, 0, 0, type, 0, 0, 0, 0, 0, 0, 0];
+    // A dialogue package (15) with its data (bit 4): a u32, three switches, a u32, a byte, a
+    // u32, the speaker, a location (a byte says it follows: a reference's); a u32; then the
+    // dialogue package's own three references and two bytes.
+    const dialogue = new EssWriter().bytes(pkdt(15)).u8(4);
+    dialogue.u32(0).bytes([0, 1, 0]).u32(0).u8(0).u32(0).refId(1, 0x14);
+    dialogue.u8(1).u8(0).u32(256).refId(1, 0x1a26f).u32(0);
+    dialogue.refId(1, 0x14).refId(1, 0x15).refId(0, 0).u8(0).u8(0);
+    const s1 = stream(dialogue.done());
+    expect(readCreatedPackage(s1)).toBe(15);
+    expect(s1.reader.remaining).toBe(0);
+    // A use-weapon package (16): switches, three u16, two u32, a reference, a target (none) and
+    // a location (none); a u32; nothing of its own.
+    const weapon = new EssWriter().bytes(pkdt(16)).u8(4);
+    weapon
+      .bytes(new Uint8Array(6 + 6 + 8))
+      .refId(1, 0x14)
+      .u8(0)
+      .u8(0)
+      .u32(0);
+    const s2 = stream(weapon.done());
+    expect(readCreatedPackage(s2)).toBe(16);
+    expect(s2.reader.remaining).toBe(0);
+    // A patrol (13): two switches. A custom package (18): nothing.
+    for (const [type, data] of [
+      [13, [1, 0]],
+      [18, []],
+    ] as const) {
+      const w = new EssWriter().bytes(pkdt(type)).u8(4).bytes(data).u32(0);
+      const s = stream(w.done());
+      expect(readCreatedPackage(s)).toBe(type);
+      expect(s.reader.remaining).toBe(0);
+    }
+    // A type with no data class (a wander, 5) holding data is not the original's.
+    const wander = new EssWriter().bytes(pkdt(5)).u8(4).u32(0).done();
+    expect(() => readCreatedPackage(stream(wander))).toThrow(ProcessUnknown);
   });
 
   it('reads each kind of running package data, and stops at one it does not know', () => {
