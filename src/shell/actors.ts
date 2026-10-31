@@ -257,6 +257,19 @@ export async function ragdollsOf(
   return ragdolls.filter((ragdoll): ragdoll is CellRagdoll => ragdoll !== undefined);
 }
 
+/** A race's loot sounds (RACE ONAM: opening a body's inventory, LNAM: closing it). */
+async function corpseLootSounds(
+  session: GameSession,
+  race: number,
+): Promise<{ readonly open: number | undefined; readonly close: number | undefined }> {
+  const record = await (await session.db).get(race);
+  const sound = (type: string): number | undefined => {
+    const formId = record?.formIdField(type);
+    return formId === 0 ? undefined : formId;
+  };
+  return { open: sound('ONAM'), close: sound('LNAM') };
+}
+
 /** Where an actor's head is, in the world: its race's head node (its body part data's). */
 export function headPosition(placed: PlacedActor): Vec3 {
   const world = placed.instances[0]?.world;
@@ -414,7 +427,19 @@ function actorTargets(
           ...texts,
           reference,
           activate: () => {
-            uses.openContainer(reference, () => undefined);
+            // Its race's loot sounds (RACE ONAM / LNAM: a body's, a skeleton's, a dwarven
+            // machine's) as its inventory opens and closes, at the body.
+            const current = session();
+            const sounds = current && corpseLootSounds(current, look.race);
+            const at = (): Vec3 => headPosition(placed);
+            void sounds?.then((loot) => {
+              if (loot.open !== undefined) void current?.playSound(loot.open, at, 0, reference);
+            });
+            uses.openContainer(reference, () => {
+              void sounds?.then((loot) => {
+                if (loot.close !== undefined) void current?.playSound(loot.close, at, 0, reference);
+              });
+            });
           },
         },
       };
@@ -638,9 +663,11 @@ export class ActorPlacer {
     placed: PlacedActor,
     path: string,
     inPlayersHead = false,
+    /** The info's Audio Output Override (INFO ONAM), if it has one. */
+    outputOverride?: number,
   ): Promise<SpokenLine | undefined> {
     const voices = await this.#session.voices();
-    const line = await voices.voiceLine(path, inPlayersHead);
+    const line = await voices.voiceLine(path, inPlayersHead, outputOverride);
     if (!line) return undefined;
     let lip: LipFile | undefined;
     try {
@@ -665,6 +692,27 @@ export class ActorPlacer {
         if (timer !== undefined) clearTimeout(timer);
         face?.stopSpeaking();
         void instance?.then((playing) => playing?.stop());
+      },
+    };
+  }
+
+  /**
+   * The actor says a response's sound (INFO TRDT's: a creature's attack vocal, a bard's flute)
+   * at its head, as a response without a voice file of its own does; undefined if it does not
+   * play (its conditions, no sound system).
+   */
+  async saySound(placed: PlacedActor, descriptor: number): Promise<SpokenLine | undefined> {
+    const instance = await this.#session.playSound(
+      descriptor,
+      () => headPosition(placed),
+      0,
+      placed.actor.reference,
+    );
+    if (!instance) return undefined;
+    return {
+      duration: instance.duration,
+      stop: () => {
+        instance.stop();
       },
     };
   }

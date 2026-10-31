@@ -138,6 +138,11 @@ export class SoundInstance {
     if (this.#held) rate.setValueAtTime(0, time + Math.max(0, delay));
   }
 
+  /** Seconds of its file (one pass, at its own pitch). */
+  get duration(): number {
+    return this.#sound.buffer.duration;
+  }
+
   /** Whether it has a place in the world (not 2D: the interface, music). */
   get placed(): boolean {
     return this.#place !== undefined;

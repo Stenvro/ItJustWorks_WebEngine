@@ -16,6 +16,12 @@ import {
 } from './category-rules.ts';
 import { reverbImpulse } from './reverb.ts';
 
+/** A reverb: its convolver and its level (crossfading with the other). */
+interface ReverbSlot {
+  readonly convolver: ConvolverNode;
+  readonly level: GainNode;
+}
+
 export class AudioEngine {
   readonly context: AudioContext;
   /** Where sounds without a category play (the master category's node once known). */
@@ -23,7 +29,9 @@ export class AudioEngine {
   /** Sounds send into this by their reverb send; it feeds the reverb. */
   readonly reverbSend: GainNode;
   readonly #output: GainNode;
-  readonly #convolver: ConvolverNode;
+  /** Two reverbs, the current one and the one it crossfades from (fReverbTransitionTime). */
+  readonly #reverbs: readonly [ReverbSlot, ReverbSlot];
+  #activeReverb = 0;
   readonly #categories = new Map<number, GainNode>();
   readonly #categoryData = new Map<number, SoundCategory>();
   /** The user's volume per category (settings sliders), 0–1. */
@@ -48,12 +56,18 @@ export class AudioEngine {
     this.master = this.context.createGain();
     this.master.connect(this.#output);
     this.reverbSend = this.context.createGain();
-    this.#convolver = this.context.createConvolver();
-    this.#convolver.normalize = false;
-    // Until an acoustic space sets one, sends go nowhere.
-    this.reverbSend.connect(this.#convolver);
-    this.#convolver.connect(this.master);
-    this.reverbSend.gain.value = 0;
+    // Until an acoustic space sets one, the reverbs are silent.
+    const slot = (): ReverbSlot => {
+      const convolver = this.context.createConvolver();
+      convolver.normalize = false;
+      const level = this.context.createGain();
+      level.gain.value = 0;
+      this.reverbSend.connect(convolver);
+      convolver.connect(level);
+      level.connect(this.master);
+      return { convolver, level };
+    };
+    this.#reverbs = [slot(), slot()];
   }
 
   /** Starts (or continues) playback; browsers allow it after a user gesture. */
@@ -235,8 +249,12 @@ export class AudioEngine {
     return (data?.volume ?? 1) * user * (ducked === undefined ? 1 : 10 ** (-ducked / 20));
   }
 
-  /** The current acoustic space's reverb (undefined or silent: none). */
-  setReverb(reverb: Reverb | undefined): void {
+  /**
+   * The current acoustic space's reverb (undefined or silent: none). Observed in the original:
+   * a change of acoustic space moves to its reverb over [Audio] fReverbTransitionTime
+   * (`seconds`): here the old reverb fades out as the new one fades in.
+   */
+  setReverb(reverb: Reverb | undefined, seconds = 0.5): void {
     if (reverb?.formId === this.#reverb?.formId) return;
     this.#reverb = reverb;
     let seed = (reverb?.formId ?? 1) >>> 0;
@@ -245,15 +263,23 @@ export class AudioEngine {
       return seed / 4294967296;
     };
     const impulse = reverb && reverbImpulse(reverb, this.context.sampleRate, random);
-    if (!impulse) {
-      this.reverbSend.gain.setTargetAtTime(0, this.context.currentTime, 0.1);
-      return;
-    }
+    const time = this.context.currentTime;
+    const ramp = (level: GainNode, to: number): void => {
+      level.gain.cancelScheduledValues(time);
+      level.gain.setValueAtTime(level.gain.value, time);
+      level.gain.linearRampToValueAtTime(to, time + Math.max(seconds, 0.01));
+    };
+    const old = this.#reverbs[this.#activeReverb];
+    if (old) ramp(old.level, 0);
+    if (!impulse) return;
+    this.#activeReverb = 1 - this.#activeReverb;
+    const next = this.#reverbs[this.#activeReverb];
+    if (!next) return;
     const buffer = this.context.createBuffer(2, impulse[0].length, this.context.sampleRate);
     buffer.copyToChannel(impulse[0], 0);
     buffer.copyToChannel(impulse[1], 1);
-    this.#convolver.buffer = buffer;
-    this.reverbSend.gain.setTargetAtTime(1, this.context.currentTime, 0.1);
+    next.convolver.buffer = buffer;
+    ramp(next.level, 1);
   }
 
   /** Puts the listener at the camera (game units; Z up). */

@@ -125,6 +125,51 @@ export interface NpcRecord {
   readonly defaultPackages: number | undefined;
   /** SNAM: its factions and its rank in each (−1: listed but not a member). */
   readonly factions: ReadonlyMap<number, number>;
+  /** CSDT / CSDI / CSDC: its own creature sounds. */
+  readonly sounds: readonly CreatureSound[];
+  /** CSCR: the NPC_ whose creature sounds it has instead of its own. */
+  readonly inheritsSoundsFrom: number | undefined;
+}
+
+/**
+ * NPC_ CSDT creature sound types. Skyrim's list starts at Idle (its creatures' feet are
+ * footstep sets); the data agrees: MudcrabIdle is 0, the dwarven spheres' and the carriage's
+ * movement loops 6, the dragons', horses' and draugr's breathing and conscious loops 7.
+ */
+export const CreatureSoundType = {
+  idle: 0,
+  aware: 1,
+  attack: 2,
+  hit: 3,
+  death: 4,
+  weapon: 5,
+  movementLoop: 6,
+  consciousLoop: 7,
+} as const;
+
+/** One creature sound: its type (CSDT), descriptor (CSDI) and chance (CSDC, percent). */
+export interface CreatureSound {
+  readonly type: number;
+  readonly sound: number;
+  readonly chance: number;
+}
+
+/** CSDT starts an entry, CSDI names its sound, CSDC its chance (100 without one). */
+function creatureSounds(record: RecordSource): CreatureSound[] {
+  const sounds: CreatureSound[] = [];
+  let type: number | undefined;
+  for (const { type: signature, data } of record.fields.list) {
+    if (signature === 'CSDT') type = data.length >= 4 ? view(data).getUint32(0, true) : undefined;
+    else if (signature === 'CSDI' && type !== undefined) {
+      const sound = formOf(record, data);
+      if (sound !== undefined) sounds.push({ type, sound, chance: 100 });
+    } else if (signature === 'CSDC' && type !== undefined) {
+      const last = sounds[sounds.length - 1];
+      if (last?.type === type && data.length >= 1)
+        sounds[sounds.length - 1] = { ...last, chance: data[0] ?? 100 };
+    }
+  }
+  return sounds;
 }
 
 export interface RaceRecord {
@@ -364,6 +409,8 @@ export function parseNpc(record: RecordSource): NpcRecord {
         return faction !== undefined && data.length >= 5 ? [[faction, view(data).getInt8(4)]] : [];
       }),
     ),
+    sounds: creatureSounds(record),
+    inheritsSoundsFrom: field(record, 'CSCR'),
   };
 }
 

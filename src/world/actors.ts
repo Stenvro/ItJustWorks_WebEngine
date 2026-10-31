@@ -8,6 +8,7 @@ import {
   type AddonModel,
   type ArmorAddonRecord,
   BipedSlot,
+  type CreatureSound,
   HeadPartFile,
   type HeadPartRecord,
   HeadPartType,
@@ -165,6 +166,12 @@ export interface ActorLook {
    * engine's choice is not documented.
    */
   readonly footstepSet: number | undefined;
+  /**
+   * Its creature sounds (NPC_ CSDT/CSDI/CSDC) of the NPC_ its traits come from, or of the one
+   * that NPC_ inherits them from (CSCR). TODO(M13): that sounds go with the traits template
+   * is inferred (no template flag names them).
+   */
+  readonly creatureSounds: readonly CreatureSound[];
   /** Its AI packages (PACK), of the NPC_ its templates give them from. */
   readonly packages: readonly number[];
   /** Its default package list (FLST), of the NPC_ its templates give it from. */
@@ -333,6 +340,13 @@ export class ActorResolver {
 
   constructor(db: RecordDatabase) {
     this.#db = db;
+  }
+
+  /** An NPC_'s creature sounds: its own, else those of the NPC_ it inherits them from (CSCR). */
+  async #creatureSounds(npc: NpcRecord, depth = 0): Promise<readonly CreatureSound[]> {
+    if (npc.inheritsSoundsFrom === undefined || depth > 8) return npc.sounds;
+    const record = await this.#db.get(npc.inheritsSoundsFrom);
+    return record?.type === 'NPC_' ? this.#creatureSounds(parseNpc(record), depth + 1) : npc.sounds;
   }
 
   /** A race's record, read once. */
@@ -641,6 +655,7 @@ export class ActorResolver {
         [...shown, ...bare].find((addon) => firstSlot(addon.slots) === BipedSlot.body)
           ?.weaponAdjust ?? 0,
       footstepSet: footstepSetOf([...shown, ...bare]),
+      creatureSounds: await this.#creatureSounds(traits),
       packages: ai?.packages ?? [],
       defaultPackages: defaults?.defaultPackages,
       factions: factions?.factions ?? new Map<number, number>(),
