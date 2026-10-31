@@ -4,10 +4,13 @@ import { identity } from '../render/math.ts';
 import {
   DecalFlag,
   decalTooNear,
+  ENVIRONMENT_BLOOD,
+  environmentBloodWay,
   expireDecals,
   parseTextureSet,
   placeDecal,
   placedSize,
+  struckNodeKey,
 } from './decal.ts';
 
 describe('decalTooNear', () => {
@@ -20,6 +23,26 @@ describe('decalTooNear', () => {
     expect(decalTooNear([8, 0, 0], size, [])).toBe(false);
     // No spacing: never.
     expect(decalTooNear([0, 0, 0], size, old, 0)).toBe(false);
+  });
+
+  it("looks for an actor hit's blood along the blow lowered by half", () => {
+    const way = environmentBloodWay([1, 0, 0]);
+    expect(way[0]).toBeCloseTo(1 / Math.hypot(1, 0.5));
+    expect(way[2]).toBeCloseTo(-0.5 / Math.hypot(1, 0.5));
+    expect(ENVIRONMENT_BLOOD.reach).toBe(512);
+  });
+
+  it('keys a decal by the node holding the struck collision, the land by its cell', () => {
+    const object = { reference: 0x1234, kind: 'object' };
+    expect(struckNodeKey(object, 'Door01', [0, 0, 0])).toBe(
+      struckNodeKey(object, 'door01', [9e3, 0, 0]),
+    );
+    expect(struckNodeKey(object, 'Frame', [0, 0, 0])).not.toBe(
+      struckNodeKey(object, 'Door01', [0, 0, 0]),
+    );
+    const land = { reference: 0, kind: 'landscape' };
+    expect(struckNodeKey(land, undefined, [100, 100, 0])).toBe('land:0,0');
+    expect(struckNodeKey(land, undefined, [-1, 5000, 0])).toBe('land:-1,1');
   });
 
   it("reads a placed decal's width and height from its box", () => {
