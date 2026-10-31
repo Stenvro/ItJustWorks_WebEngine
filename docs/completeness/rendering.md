@@ -20,9 +20,27 @@ not sample, flags xEdit and nif.xml call unused).
 
 | Part       | Items | Done | Open | n/a |
 | ---------- | ----- | ---- | ---- | --- |
-| Systems    | 84    | 78   | 6    | 0   |
+| Systems    | 86    | 84   | 2    | 0   |
 | Data sweep | 465   | 427  | 0    | 38  |
-| **Total**  | 549   | 505  | 6    | 38  |
+| **Total**  | 551   | 511  | 2    | 38  |
+
+Done in round 12, part B (details), all observed in the original: the character light's
+luminance (#62) is the eye adaptation's 1×1 adapted luminance target, which its techniques bind
+to slot 11 (the last frame's, as the scene draws before the HDR pass); an unseen actor with no
+minimum bones still animates its first bone while that bone is outside its model's bound
+sphere, one of a race that flies counts as seen, and a one-shot full update poses every bone
+(ours: a new graph's first, so an actor never seen since it loaded is not left in its bind
+pose) (#80); the kill cameras' lead actor is the target where it leads the paired clip it
+plays, else the attacker, a shot whose own spot comes within fVATSCameraCutAwayDistance of its
+look hands the view to the player's first person unless the player is dead, and each shot
+starts by its path's DATA (no bit: a dolly over fVATSCameraDollyTime, bit 0: a cut, bit 1: a
+Zoom shot dollies over its Min Time, the others cut), never dollying into a Shoot shot, the
+first shot from the player's view (#82); a plain decal is skipped within (its larger side + the
+other's width) / √16 of one on the same node (#83); the shadow mask keeps the darker of the
+cascades and the focus map's result faded towards lit by its fade (#84); the water's imagespace (#14) is read for its depth of field alone (the original keeps it
+apart from the scene's: its only readers are the depth of field and its switch), so its HDR,
+cinematic and tint terms never apply. New open rows: 85 (a ranged shot's Near Target
+Distance) and 86 (the decals' spacing on the world's struck nodes).
 
 Done in round 12, observed in the original: which water gets which reflection (#77), read again
 whole: with [Water] bUseCubeMapReflections (on by default) every water shares one reflection, a
@@ -215,11 +233,8 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 
 ## Next biggest open items
 
-1. Where the engine swaps in the water's imagespace's colour terms (#14); the character
-   light's slot 11 by the draw order (#62).
-2. The details rows 80 and 82 to 84 leave unread: how the shadow mask mixes a fading focus map,
-   the kill cameras' lead actor and near-target cut-away, the plain decals' spacing on a node,
-   the first bone of an unseen actor whose root left its bound.
+1. A ranged kill camera shot's Near Target Distance (#85: the projectile flag that ends it)
+   and the decals' spacing on the world's struck nodes (#86).
 
 ## Systems
 
@@ -238,7 +253,7 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 | 11  | Shadow lights: omnidirectional, spot, hemisphere                   | done   | light-shadows.ts                                                                                                                                                                                                                                                                                                                               |
 | 12  | Fog: weather, XCLL and LGTM (near, far, power, max)                | done   | frame.wgsl                                                                                                                                                                                                                                                                                                                                     |
 | 13  | Underwater fog                                                     | done   | underwater.ts, post.ts, shaders/dof.wgsl: the depth of field's fogged pass by the view depth, the water type's near and far planes, inside the underwater mask                                                                                                                                                                                 |
-| 14  | Underwater imagespace (WATR INAM)                                  | open   | underwater.ts, world-sky.ts; its depth of field inside the mask is the original's; where the engine swaps in its colour terms (tint, saturation, brightness) is unread: ours with the near plane wholly under                                                                                                                                  |
+| 14  | Underwater imagespace (WATR INAM)                                  | done   | underwater.ts underwaterImageSpace: only its depth of field is read (wholly under, and inside the mask across); the HDR, cinematic and tint terms stay the scene's, as the original keeps the water's imagespace apart (its only readers: the depth of field)                                                                                  |
 | 15  | Underwater colour (how the water's colours are lit, the tint)      | done   | underwater.ts nearPlaneWater, renderer.ts, shaders/dof.wgsl: the near plane against the water (above, across, under), the underwater mask below the line where the water cuts the near plane; the fog colour the shallow colour times the weather's water multiplier                                                                           |
 | 16  | Terrain LOD                                                        | done   | terrain.ts                                                                                                                                                                                                                                                                                                                                     |
 | 17  | Object LOD (.bto, HD LOD)                                          | done   | scene-renderer LOD materials                                                                                                                                                                                                                                                                                                                   |
@@ -286,7 +301,7 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 | 59  | First person: the engine's near plane                              | done   | first-person-view.ts: fNear1stPersonDistance, the f1stPersonFarDepthRange band                                                                                                                                                                                                                                                                 |
 | 60  | First person: particles                                            | done   | particle.wgsl: the first-person instance's systems in its view and band                                                                                                                                                                                                                                                                        |
 | 61  | Eye reflection centres                                             | done   | common.wgsl eyeNormal: the centre by the vertex's eye data; reflection and ambient about it                                                                                                                                                                                                                                                    |
-| 62  | Character light: its luminance source                              | open   | one sample of slot 11 at (1, 1); no target fills it: only projected-UV draws bind a texture there (ProjectedNoise.dds) and the state reset empties it, so it reads 0 or that noise by the draw order (unread); ours: the directional ambient's luminance                                                                                       |
+| 62  | Character light: its luminance source                              | done   | lighting.wgsl characterLight: frame.luminance.x, the eye adaptation's adapted luminance as the last frame left it (the character-light techniques bind the 1×1 adapted luminance target to slot 11; copied into the frames' uniforms on the GPU, post.ts copyAdaptedLuminance)                                                                 |
 | 63  | Default texture per slot for a missing file                        | done   | material-slots.ts missingTextures: the built-in texture each slot of each material takes (diffuse, normal, rim / soft, back light: the default normal map; glows white; the tint grey)                                                                                                                                                         |
 | 64  | Grass                                                              | done   | grass.ts                                                                                                                                                                                                                                                                                                                                       |
 | 65  | Terrain texture blending                                           | done   | terrain.wgsl                                                                                                                                                                                                                                                                                                                                   |
@@ -304,11 +319,13 @@ the original's thresholds, LOD switching and lag bones on skeletons.
 | 77  | Water: the reflection in interiors and of several planes           | done   | water-reflection.ts planReflections: with cube map reflections (default) one cube around the eyes of the sky and LOD for all water outdoors; without, the world's water height in full, other heights sky-only, indoors one per plane of the flagged references; a binding per reflection                                                      |
 | 78  | Havok float slots: hkVis visibility, hkPhoneme                     | done   | behavior-runtime.ts float slot blocks, skeleton.ts showBySlots; hkPhoneme: no skeleton has the slots                                                                                                                                                                                                                                           |
 | 79  | Mesh particles' Havok bodies against the world's shapes            | done   | particle-bodies.ts: per particle a copy of the node's body in the physics world, started at its velocity and spin, its mesh following it                                                                                                                                                                                                       |
-| 80  | Bone LOD of actors the camera does not see                         | open   | done: an unseen actor (no draw in the last frame's view; headless: unknown) animates its minimum bones alone (behavior-runtime.ts seen); unread: the first bone kept animating when the root left the 3D's bound, the actor flag that counts one as seen                                                                                       |
+| 80  | Bone LOD of actors the camera does not see                         | done   | behavior-runtime.ts seen, rootAway, forceOneUpdate: unseen, the minimum bones alone, with none the first bone while out of its bound sphere (boneLeftBound); a flying race counts as seen; a new graph's first update poses every bone (which load paths set that flag: unread)                                                                |
 | 81  | Kill cameras: the model's own turn                                 | done   | camera-model.ts shotAxes: the look at the target turned by the root's local rotation where its controller has rotation keys (177 of 191 shots; tools/camera-models.ts)                                                                                                                                                                         |
-| 82  | Kill cameras: the node a shot is measured from and looks at        | open   | done: the attacker's WEAPON or torso node, the target's torso node, the projectile, the follow flags, Target % Between Actors (killmove-camera.ts #shotPoint); open: the lead actor's side (5 shots; ours the attacker), the near-target cut-away's condition                                                                                  |
-| 83  | Decals on actors' rigid shapes                                     | open   | done: a plain decal of its own per rigid shape in the box, its triangles copied onto its node (skinned-decal.ts rigidDecalPart), iMaxDecalsPerFrame; open: the spacing that skips one too near a decal on the same node (factor unread)                                                                                                        |
-| 84  | Focus shadows: a fading map against the cascades                   | open   | each map's fade by its key (fFadingFracStart) is read; how the shadow mask mixes it is not (ours: mixes the focus result into the cascades' by it)                                                                                                                                                                                             |
+| 82  | Kill cameras: the node a shot is measured from and looks at        | done   | killmove-camera.ts: the WEAPON or torso nodes, the projectile, the follow flags, Target % Between Actors; the lead actor (the target where it leads its paired clip); the cut-away (unless the player is dead); each shot's start mode by its path's DATA (kill-camera-transition.ts)                                                          |
+| 83  | Decals on actors' rigid shapes                                     | done   | a plain decal of its own per rigid shape in the box, its triangles copied onto its node (skinned-decal.ts rigidDecalPart), iMaxDecalsPerFrame; one within (its larger side + the other's width) / 4 of a decal on the same node is skipped (decal.ts decalTooNear, the impacts' spacing 16)                                                    |
+| 84  | Focus shadows: a fading map against the cascades                   | done   | frame.wgsl sunShadow, focus-shadows.ts focusMix: on the focus actor's pixels the darker of the cascades and the map's result faded towards lit by its fade                                                                                                                                                                                     |
+| 85  | Kill cameras: a ranged shot's Near Target Distance                 | open   | read (CAMS DATA, 18 shots of the ranged paths); the original ends such a shot by a flag of its projectile whose setter is unread; ours plays its time                                                                                                                                                                                          |
+| 86  | Dynamic decals on the world: the spacing on the struck node        | open   | the rule is decal.ts decalTooNear; our splatters project over what lies in their box, not onto the struck shape, so the node two would share is not known                                                                                                                                                                                      |
 
 ## Data sweep
 
