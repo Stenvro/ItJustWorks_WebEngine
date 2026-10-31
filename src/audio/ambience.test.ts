@@ -159,38 +159,48 @@ describe('ambience', () => {
     const ambience = new Ambience(player, ini, () => 0.99);
     ambience.update(state(), LISTENER, 0);
     await settle();
+    // Updates come every half second.
     ambience.update(state(), LISTENER, 0.1);
+    expect(player.of(WIND)).toHaveLength(0);
+    ambience.update(state(), LISTENER, 0.5);
     await settle();
     expect(player.of(WIND)).toHaveLength(1);
     expect(player.of(WIND)[0]?.fadeIn).toBe(ini.number('Audio', 'fRegionLoopFadeInTime'));
     expect(player.of(SNOW_WIND)).toHaveLength(0);
-    // Snow: the snowy loop joins; leaving the region fades both out.
-    ambience.update(state({ weather: snowstorm }), LISTENER, 0.2);
+    // Snow: the snowy loop joins; out of the weather it fades out.
+    ambience.update(state({ weather: snowstorm }), LISTENER, 1);
     await settle();
     expect(player.of(SNOW_WIND)).toHaveLength(1);
-    ambience.update(state({ regions: [] }), LISTENER, 0.3);
-    expect(player.of(WIND)[0]?.fadedOut).toBe(ini.number('Audio', 'fRegionLoopFadeOutTime'));
+    ambience.update(state(), LISTENER, 1.5);
     expect(player.of(SNOW_WIND)[0]?.fadedOut).toBe(ini.number('Audio', 'fRegionLoopFadeOutTime'));
+    // Regions without sounds: what plays fades out over 0.3 s.
+    ambience.update(state({ regions: [] }), LISTENER, 2);
+    expect(player.of(WIND)[0]?.fadedOut).toBe(0.3);
   });
 
-  it('gives one-shots their chance once a second, placed around the listener', async () => {
+  it('gives one-shots half their chance each half-second update, placed around the listener', async () => {
     const player = new FakePlayer();
     let roll = 0;
     const ambience = new Ambience(player, ini, () => roll);
     ambience.update(state(), LISTENER, 0);
     await settle();
+    // The first update starts the wind loop: one sound an update (uRegionSoundsAllowedPerUpdate).
+    ambience.update(state(), LISTENER, 0.5);
+    expect(player.of(BIRD)).toHaveLength(0);
     ambience.update(state(), LISTENER, 1);
     expect(player.of(BIRD)).toHaveLength(1);
+    // Chance 0.05: 0.025 an update.
+    roll = 0.03;
     ambience.update(state(), LISTENER, 1.5);
     expect(player.of(BIRD)).toHaveLength(1);
-    roll = 0.5;
-    ambience.update(state(), LISTENER, 2.5);
-    expect(player.of(BIRD)).toHaveLength(1);
     const place = player.of(BIRD)[0]?.place;
-    expect(place).toBeDefined();
     const [x, y, z] = place ?? [0, 0, 0];
-    const distance = Math.hypot(x - LISTENER[0], y - LISTENER[1]);
-    expect(distance).toBeGreaterThanOrEqual(ini.number('Audio', 'fRegionRandomSoundPlacementBase'));
+    const base = ini.number('Audio', 'fRegionRandomSoundPlacementBase');
+    expect(Math.abs(x - LISTENER[0])).toBeGreaterThanOrEqual(base);
+    expect(Math.abs(x - LISTENER[0])).toBeLessThanOrEqual(
+      ini.number('Audio', 'fRegionSoundPlacementRandomOffset'),
+    );
+    expect(Math.abs(y - LISTENER[1])).toBe(base);
     expect(z).toBe(LISTENER[2] + ini.number('Audio', 'fRegionSoundPlacementZOffset'));
     // Not in other weathers than its flags name.
     roll = 0;
@@ -234,7 +244,7 @@ describe('ambience', () => {
     const ambience = new Ambience(player, ini, () => 0.99);
     ambience.update(state(), LISTENER, 0);
     await settle();
-    ambience.update(state(), LISTENER, 0.1);
+    ambience.update(state(), LISTENER, 0.5);
     await settle();
     ambience.stop();
     expect(player.of(WIND)[0]?.stopped).toBe(true);

@@ -347,7 +347,11 @@ export class DialogueMenu {
         voiceType === undefined
           ? undefined
           : await this.#session.lines.voiceFile(spoken, response.number, voiceType);
-      const line: SpokenLine | undefined = path ? await placer.say(speaker, path) : undefined;
+      const line: SpokenLine | undefined = path
+        ? await placer.say(speaker, path, false, spoken.source.info.audioOutputOverride)
+        : response.sound !== 0
+          ? await placer.saySound(speaker, response.sound)
+          : undefined;
       // Its face shows the response's emotion (src/animation/face.ts).
       speaker.face?.showEmotion(response.emotion, response.emotionValue);
       this.#session.lines.responseBegins(reference, spoken, response, undefined);

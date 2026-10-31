@@ -2,9 +2,10 @@
 // beds of wind and water, and one-shots like bird calls and gusts placed around the listener)
 // and the weather (its looping rain and wind, crossfading with a change of weather, and
 // thunder after lightning). Region loops fade in and out ([Audio] fRegionLoopFadeInTime,
-// fRegionLoopFadeOutTime); one-shots get a chance each check, at most
-// uRegionSoundsAllowedPerUpdate new ones, placed fRegionRandomSoundPlacementBase + up to
-// fRegionSoundPlacementRandomOffset away and fRegionSoundPlacementZOffset up. A weather's
+// fRegionLoopFadeOutTime); one-shots get a chance each half-second update, at most
+// uRegionSoundsAllowedPerUpdate new sounds an update, placed around the listener by
+// fRegionRandomSoundPlacementBase, fRegionSoundPlacementRandomOffset and
+// fRegionSoundPlacementZOffset. A weather's
 // thunder sounds (SNAM type 3) follow its lightning flashes; its other single sounds (gusts in
 // a snowstorm, distant thunder in overcast rain) come at random. Every sound's conditions
 // (time of day, weather, indoors) must hold. Notes: docs/audio.md.
@@ -94,13 +95,10 @@ export interface AmbientPlayer {
   ): Promise<AmbientSound | undefined>;
 }
 
-/**
- * Seconds between chances for one-shot region sounds. The engine's audio update runs every
- * uAudioThreadSleepTimeGameMode (33 ms), far too often for the vanilla chances (2–10 %) to be
- * per update; once a second gives bird calls and gusts every few seconds. TODO(M13): compare
- * with the game.
- */
-const CHECK_SECONDS = 1;
+/** Seconds between updates of the region sounds (observed in the original: half a second). */
+const UPDATE_SECONDS = 0.5;
+/** Seconds region loops fade out over when the regions have no sounds (observed). */
+const EMPTY_REGION_FADE = 0.3;
 /**
  * Thunder follows a flash after a delay (distance); the engine's is not documented: here
  * 0.5–3 s. TODO(M13).
@@ -109,11 +107,11 @@ const THUNDER_DELAY = [0.5, 3] as const;
 /** Weather loops follow a change of weather; this smooths their level. */
 const WEATHER_FADE = 2;
 /**
- * The chance each check of a weather's single sounds that do not follow lightning. WTHR SNAM
- * has no chance of its own; this is the median of the region one-shots' (RDSA). TODO(M13):
- * compare with the game.
+ * The chance each update (half a second) of a weather's single sounds that do not follow
+ * lightning: 4 % a second. WTHR SNAM has no chance of its own; this is the median of the
+ * region one-shots' (RDSA). TODO(M13): compare with the game.
  */
-const WEATHER_SOUND_CHANCE = 0.04;
+const WEATHER_SOUND_CHANCE = 0.02;
 
 interface LoopState {
   instance: AmbientSound | undefined;
@@ -135,7 +133,7 @@ export class Ambience {
   };
   readonly #regionLoops = new Map<number, LoopState>();
   readonly #weatherLoops = new Map<number, LoopState>();
-  #lastCheck = 0;
+  #lastCheck = Number.NEGATIVE_INFINITY;
   #lastFlash: number | undefined;
   #flashSeen = false;
   #random: () => number;
@@ -177,39 +175,54 @@ export class Ambience {
     const classification = (state.weather?.flags ?? 0) & 0x0f;
     const fits = (flags: number): boolean =>
       state.interior || classification === 0 || (flags & classification) !== 0;
-    // Region loops: the looping entries that fit the weather and whose conditions hold.
-    const loops = new Set<number>();
-    const oneShots: number[] = [];
-    for (const region of regions) {
-      for (const entry of region.sounds) {
-        const descriptor = this.#descriptor(entry.sound);
-        if (!descriptor || !fits(entry.flags)) continue;
-        if (!soundConditionsHold(descriptor.conditions, context)) continue;
-        if (descriptor.looping !== 'none') loops.add(entry.sound);
-        else oneShots.push(entry.sound);
+    if (now - this.#lastCheck >= UPDATE_SECONDS) {
+      this.#lastCheck = now;
+      this.#weatherOneShots(state, context, listener);
+      this.#regionSounds(regions, fits, context, listener);
+    }
+    this.#weather(state, context);
+  }
+
+  /**
+   * One update of the region sounds, as observed in the original: entries in their regions'
+   * order, those that fit the weather and whose conditions hold; an entry of chance 1 is a
+   * loop (kept while it fits, faded out over fRegionLoopFadeOutTime once it does not, or over
+   * 0.3 s when the regions have no sounds at all), any other a one-shot with half its chance
+   * each update (its chance a second). At most uRegionSoundsAllowedPerUpdate sounds start per
+   * update, loops and one-shots together.
+   */
+  #regionSounds(
+    regions: readonly RegionAudio[],
+    fits: (flags: number) => boolean,
+    context: SoundConditionContext,
+    listener: Vec3,
+  ): void {
+    const entries = regions.flatMap((region) => region.sounds);
+    let allowed = this.#ini.number('Audio', 'uRegionSoundsAllowedPerUpdate');
+    const wanted = new Set<number>();
+    for (const entry of entries) {
+      const descriptor = this.#descriptor(entry.sound);
+      if (!descriptor || !fits(entry.flags)) continue;
+      if (!soundConditionsHold(descriptor.conditions, context)) continue;
+      if (entry.chance >= 1) {
+        if (this.#regionLoops.has(entry.sound)) wanted.add(entry.sound);
+        else if (allowed > 0) {
+          allowed--;
+          wanted.add(entry.sound);
+        }
+      } else if (allowed > 0 && this.#random() < entry.chance * 0.5) {
+        allowed--;
+        void this.#player.play(entry.sound, this.#placeAround(listener), 0);
       }
     }
     this.#keep(
       this.#regionLoops,
-      loops,
+      wanted,
       this.#ini.number('Audio', 'fRegionLoopFadeInTime'),
-      this.#ini.number('Audio', 'fRegionLoopFadeOutTime'),
+      entries.length === 0
+        ? EMPTY_REGION_FADE
+        : this.#ini.number('Audio', 'fRegionLoopFadeOutTime'),
     );
-    // One-shots: a chance each check.
-    if (now - this.#lastCheck >= CHECK_SECONDS) {
-      this.#lastCheck = now;
-      this.#weatherOneShots(state, context, listener);
-      let allowed = this.#ini.number('Audio', 'uRegionSoundsAllowedPerUpdate');
-      for (const region of regions) {
-        for (const entry of region.sounds) {
-          if (allowed <= 0) break;
-          if (!oneShots.includes(entry.sound) || this.#random() >= entry.chance) continue;
-          allowed--;
-          void this.#player.play(entry.sound, this.#placeAround(listener), 0);
-        }
-      }
-    }
-    this.#weather(state, context);
   }
 
   /** Stops everything at once (leaving a world). */
@@ -310,15 +323,21 @@ export class Ambience {
     }
   }
 
-  /** A random point around the listener for a one-shot region sound. */
+  /**
+   * Where a one-shot region sound plays, as observed in the original: east or west of the
+   * listener by fRegionRandomSoundPlacementBase to fRegionSoundPlacementRandomOffset (100 to
+   * 650 units), north or south by fRegionRandomSoundPlacementBase, and
+   * fRegionSoundPlacementZOffset up.
+   */
   #placeAround(listener: Vec3): Vec3 {
-    const angle = this.#random() * Math.PI * 2;
-    const distance =
-      this.#ini.number('Audio', 'fRegionRandomSoundPlacementBase') +
-      this.#random() * this.#ini.number('Audio', 'fRegionSoundPlacementRandomOffset');
+    const base = this.#ini.number('Audio', 'fRegionRandomSoundPlacementBase');
+    const offset = this.#ini.number('Audio', 'fRegionSoundPlacementRandomOffset');
+    const x = base + this.#random() * (offset - base);
+    const east = this.#random() > 0.5;
+    const north = this.#random() > 0.5;
     return [
-      listener[0] + Math.cos(angle) * distance,
-      listener[1] + Math.sin(angle) * distance,
+      listener[0] + (east ? x : -x),
+      listener[1] + (north ? base : -base),
       listener[2] + this.#ini.number('Audio', 'fRegionSoundPlacementZOffset'),
     ];
   }

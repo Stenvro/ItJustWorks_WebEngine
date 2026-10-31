@@ -376,8 +376,16 @@ export function objectActivation(
       },
     };
   }
-  // Nothing of its own to do (an activator: its scripts' OnActivate is all).
-  return prompt && { ...shown('sActivate'), activate: () => undefined };
+  // Nothing of its own to do (an activator: its scripts' OnActivate is all), but its
+  // activation sound (ACTI VNAM: a fish caught, a pressure plate, a portal) at it.
+  return (
+    prompt && {
+      ...shown('sActivate'),
+      activate: () => {
+        play(object.sounds?.activate);
+      },
+    }
+  );
 }
 
 /** What the prompt rule reads of a placed object in this game (src/shell/activation-facts.ts). */

@@ -63,6 +63,16 @@ export interface EffectBody {
   readonly visibility?: InstanceVisibility;
 }
 
+/** Where a body is: its first shape's placement (where it was last while it is not shown). */
+function followBody(body: () => EffectBody | undefined): () => Vec3 {
+  let last: Vec3 = [0, 0, 0];
+  return () => {
+    const world = body()?.placed.instances[0]?.world;
+    if (world) last = [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0];
+    return last;
+  };
+}
+
 /** The same body as when built (an actor made again, an object reloaded: not). */
 const sameShape = (a: EffectShape, b: EffectShape): boolean =>
   a === b || (a.instances[0] !== undefined && a.instances[0] === b.instances[0]);
@@ -90,6 +100,8 @@ interface ShaderShow {
   readonly duration: number | undefined;
   built: BuiltShader | undefined;
   building: boolean;
+  /** Its ambient sound (EFSH DATA), looping at the body while it plays. */
+  sound: Promise<{ stop(immediately?: boolean): void } | undefined> | undefined;
 }
 
 interface BuiltShader {
@@ -326,6 +338,12 @@ export class ActorEffects {
       duration: duration === 0 ? (once > 0 ? once : ONCE_SECONDS) : duration,
       built: undefined,
       building: false,
+      // Its ambient sound (a body on fire, a cloak, an enchanted blade drawn) plays at the
+      // body while the shader shows, and stops with it.
+      sound:
+        shader.ambientSound === undefined
+          ? undefined
+          : this.#options.session.playSound(shader.ambientSound, followBody(body), 0, actor),
     });
   }
 
@@ -465,6 +483,7 @@ export class ActorEffects {
   #dropShader(key: string): void {
     const show = this.#shaders.get(key);
     this.#shaders.delete(key);
+    void show?.sound?.then((playing) => playing?.stop());
     if (show?.built) destroyBuilt(show.built);
     if (show) show.built = undefined;
   }

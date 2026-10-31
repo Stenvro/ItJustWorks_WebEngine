@@ -30,6 +30,18 @@ in the game too. A missing file is logged once (`WorldLines.voiceFile`): as info
 the game's own (its plugin one the game loads by itself), as a warning where a mod's line lacks
 it.
 
+### Output override and response sounds
+
+An info's Audio Output Override (INFO ONAM, 1963 infos) plays its lines through that output
+model instead of the default 3D dialogue model (DOBJ DOP2): the dragons', Alduin's and
+Paarthurnax's lines carry 10 000 units (SOMDialogue3D10000*), the Greybeards' shouts and the
+bards their own reach, some lines are 2D (SOMDialogue2D). A line said in the player's head
+(Say's abSpeakInPlayersHead) stays 2D. A response whose voice file does not exist but which
+names a sound of its own (TRDT, 157 responses: the giants' and draugr's combat vocals, a goat's
+bleat, the bards' instrumental flutes) plays that sound at the speaker's head, the line lasting
+the sound's file (`Actors.saySound`). TODO(M13): whether the original also plays a response's
+sound beside an existing voice file (no vanilla response has both).
+
 ## The graph
 
 - **Categories** (SNCT): one gain per category, connected as the categories' tree to the
@@ -104,6 +116,9 @@ samples is that level, however long the decay (the Palace of the Kings' IntRoomS
 2.9 s, was otherwise 22 dB louder than the dry sound). XAudio2's own algorithm is not
 documented, so this is an approximation
 (TODO(M13): compare with the game). Spaces without reverb (DefaultReverb, −100 dB) have none.
+Observed in the original: a change of acoustic space moves to the new space's reverb over
+`[Audio]` fReverbTransitionTime (0.5 s); here two reverbs crossfade, the old one fading out as
+the new one fades in (`AudioEngine.setReverb`).
 
 ## Ambience
 
@@ -115,20 +130,24 @@ or not, and the last lightning flash.
 - **Region sounds** (REGN RDAT type 7, RDSA): each entry names the weather classifications it
   plays in (WTHR DATA flags pleasant, cloudy, rainy, snow; indoors all). Looping entries
   (vanilla: all chance 1) play 2D while the region holds and their conditions hold, fading in
-  over `[Audio] fRegionLoopFadeInTime` (6 s) and out over fRegionLoopFadeOutTime (8 s). The
-  others (vanilla: chance 0.01–0.1) get their chance once a second, at most
-  uRegionSoundsAllowedPerUpdate (1) starting per check, placed in a random direction
-  fRegionRandomSoundPlacementBase (100) + up to fRegionSoundPlacementRandomOffset (650) units
-  away and fRegionSoundPlacementZOffset (256) up. The engine's audio thread runs every 33 ms
-  (uAudioThreadSleepTimeGameMode); chances that small cannot be per update, so the once-a-second
-  check is inferred (TODO(M13): compare with the game). A pine forest gives a wind bed,
-  cicadas in the morning and a bird call or gust every few seconds; a fort interior creaks.
+  over `[Audio] fRegionLoopFadeInTime` (6 s) and out over fRegionLoopFadeOutTime (8 s).
+  Observed in the original: the region sounds are updated every half second, the entries in
+  their regions' order; an entry of chance 1 is a loop (kept while it fits; faded out over
+  fRegionLoopFadeOutTime once it does not, or over 0.3 s when the regions have no sounds at
+  all), any other a one-shot (vanilla: chance 0.01–0.1) started with half its chance each
+  update, so its chance a second. At most uRegionSoundsAllowedPerUpdate (1) sounds start an
+  update, loops and one-shots together (a region's second loop starts half a second after its
+  first). A one-shot plays east or west of the listener by fRegionRandomSoundPlacementBase
+  (100) to fRegionSoundPlacementRandomOffset (650) units, north or south by
+  fRegionRandomSoundPlacementBase, and fRegionSoundPlacementZOffset (256) up. A pine forest
+  gives a wind bed, cicadas in the morning and a bird call or gust every few seconds; a fort
+  interior creaks.
 - **Weather sounds** (WTHR SNAM): looping ones (rain, wind) play 2D at the weather's share of
   a change (the old weather's at the rest), so rain fades in as the clouds come. Thunder
   (type 3) follows each lightning flash after 0.5–3 s (inferred: TODO(M13)); a weather's other
   single sounds (gusts in a snowstorm, distant thunder in overcast rain, which has no
   lightning) come at random with a 4 % chance a second (WTHR has no chance of its own; the
-  median of the region one-shots'; TODO(M13)).
+  median of the region one-shots'; checked each half-second update at 2 %; TODO(M13)).
 - **Conditions** (`sound-conditions.ts`) of ambient sounds use GetCurrentTime (308 uses),
   GetIsCurrentWeather (96), IsInInterior (38), IsRaining and GetGlobalValue (one each: the
   distant catapults of SkyrimOvercastWar while CWDistantCatapultsAMB is 1). Globals have the
@@ -227,6 +246,41 @@ gait its AI asks for while it moves) or, beyond the high process, the gait its A
 FSTWoodRunArmorHeavyLSD / RSD. Animations' **SoundPlay.`<descriptor>`** events play that sound
 descriptor (by editor id) at the actor; **NPCSoundPlay.`<descriptor>`** only for actors other
 than the player.
+
+An actor wearing no footstep set of its own steps with the default one (DOBJ DFTS,
+DefaultFootstepSet).
+
+## Creature sounds
+
+Actors' creature sounds (NPC_ CSDT type, CSDI descriptor, CSDC chance; CSCR: another NPC_ whose
+sounds it has instead) are read with the NPC_ its traits come from (`ActorLook.creatureSounds`;
+TODO(M13): that they follow the traits template is inferred). Skyrim's types start at Idle (0)
+and run Aware, Attack, Hit, Death, Weapon, Movement Loop (6), Conscious Loop (7), Auxiliary 1–8,
+Jump, PlayRandom/Loop; the data agrees (MudcrabIdle 0, the dwarven spheres' and spiders' and the
+carriage's movement loops 6, every breathing and conscious loop 7). `src/shell/creature-sounds.ts`
+plays the conscious loop at the creature's head while it is alive and conscious (a dragon's or
+horse's breathing, a draugr's groan, a gargoyle's growl) and the movement loop while it also
+moves (faster than 20 units a second); both stop as it dies, falls unconscious or leaves the
+stage. TODO(M13): the one-shot types (only the mudcrab names one, Idle) and what the chance
+gates are not played: when the original plays them is not known.
+
+## Other engine sounds
+
+- **Spells drawn and put away:** each hand's spell's main effect's Sheathe/Draw sound (MGEF
+  SNDD type 0) plays as the hands are drawn and sheathed, beside the weapon's equip and unequip
+  sounds (`ActorCombat`).
+- **Corpses:** searching a body plays its race's open loot sound (RACE ONAM) as its inventory
+  opens and its close loot sound (LNAM) as it closes, at the body.
+- **Activators:** an activator's activation sound (ACTI VNAM: a fish caught, a pressure plate,
+  a portal) plays at it as the player activates it.
+- **Effect shaders:** a shader's ambient sound (EFSH DATA: a burning body, a frost cloak, an
+  enchanted blade's unsheathe) plays at the body it covers while it shows.
+- **Wards:** a ward that holds plays the default object WASN (when Ward Absorb gives magicka
+  back) or WDSN, one that breaks WBSN, at its caster (TODO(M13): which of absorb and deflect is
+  which is inferred from their names).
+- **Harvest:** a plant that gives nothing this season plays the default object HVFS
+  (ITMGenericIngredientUpFailSD) instead of its harvest sound.
+- **Death:** the player's death adds the death music (DOBJ DTMS, MUSSpecialDeath).
 
 ## Water
 

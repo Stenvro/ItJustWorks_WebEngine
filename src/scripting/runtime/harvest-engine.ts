@@ -84,7 +84,9 @@ export class HarvestEngine {
       await runtime.addItem(actor, runtime.formHandle(flora.ingredient), count, false);
       if (actor === PLAYER_REF) runtime.incrementStat('Ingredients Harvested');
     }
-    return { ingredient: flora.ingredient, count, sound: flora.sound };
+    // Nothing grew this season: the default object's harvest-failed sound (HVFS) instead.
+    const failed = count === 0 ? await runtime.magic.defaultObject('HVFS') : undefined;
+    return { ingredient: flora.ingredient, count, sound: failed ?? flora.sound };
   }
 
   /** The cell the player is in now (as the world places them), if known. */

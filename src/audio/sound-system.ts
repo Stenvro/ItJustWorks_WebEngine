@@ -330,21 +330,31 @@ export class SoundSystem {
     return this.#start(descriptor, model, place, fadeIn);
   }
 
-  /**
-   * A spoken line (a voice file: .fuz, or .xwm/.wav with a .lip), loaded: its lip-sync data,
-   * and `play` starting it at a place as dialogue plays (the dialogue category, through the
-   * 3D dialogue output model; `atListener`: the 2D one, spoken in the player's head: Say's
-   * abSpeakInPlayersHead). Undefined if the file cannot be read.
-   */
   /** Whether a file holds the sound (any of its names: .fuz, .xwm, .wav). */
   hasFile(path: string): boolean {
     return this.#loader.find(path) !== undefined;
   }
 
-  async voiceLine(path: string, atListener = false): Promise<VoiceLine | undefined> {
+  /**
+   * A spoken line (a voice file: .fuz, or .xwm/.wav with a .lip), loaded: its lip-sync data,
+   * and `play` starting it at a place as dialogue plays (the dialogue category, through the
+   * 3D dialogue output model, or the info's own: `outputOverride`; `atListener`: the 2D one,
+   * spoken in the player's head: Say's abSpeakInPlayersHead). Undefined if the file cannot
+   * be read.
+   */
+  async voiceLine(
+    path: string,
+    atListener = false,
+    outputOverride?: number,
+  ): Promise<VoiceLine | undefined> {
     const sound = await this.buffer(path);
     if (!sound) return undefined;
-    const outputModel = atListener ? this.#dialogueOutput2d : this.#dialogueOutput;
+    // An info's Audio Output Override (INFO ONAM) plays the line through its own model: the
+    // dragons' and Paarthurnax's lines carry 10000 units, the Greybeards' shouts their own
+    // reach, some lines 2D (SOMDialogue2D). A line said in the player's head stays 2D.
+    const outputModel = atListener
+      ? this.#dialogueOutput2d
+      : (outputOverride ?? this.#dialogueOutput);
     const model = outputModel === undefined ? undefined : await this.outputModel(outputModel);
     const descriptor: SoundDescriptor = {
       formId: 0,
@@ -477,13 +487,14 @@ export class SoundSystem {
    * feet are in (its type's material). False if the set answers nothing to the event.
    */
   async footstep(
-    set: number,
+    set: number | undefined,
     tag: string,
     gait: FootstepGait,
     position: Vec3,
     ground: FootstepGround,
   ): Promise<boolean> {
-    const footsteps = await this.#footstepSet(set);
+    // An actor wearing no footstep set steps with the default one (DOBJ DFTS).
+    const footsteps = await this.#footstepSet(set ?? this.defaults.get('DFTS') ?? 0);
     if (!footsteps) return false;
     const lower = tag.toLowerCase();
     const find = async (ids: readonly number[] | undefined): Promise<Footstep | undefined> => {
@@ -1143,7 +1154,7 @@ export class SoundSystem {
     this.#ambientLoop = undefined;
     if (space === undefined) {
       this.#spaceRegion = undefined;
-      this.engine.setReverb(undefined);
+      this.engine.setReverb(undefined, this.#ini.number('Audio', 'fReverbTransitionTime'));
       return;
     }
     void this.acousticSpace(space).then(async (data) => {
@@ -1151,7 +1162,7 @@ export class SoundSystem {
       this.#spaceRegion = data?.region;
       const reverb = data?.reverb === undefined ? undefined : await this.reverb(data.reverb);
       if (version !== this.#spaceVersion) return;
-      this.engine.setReverb(reverb);
+      this.engine.setReverb(reverb, this.#ini.number('Audio', 'fReverbTransitionTime'));
       if (data?.ambient === undefined) return;
       const loop = await this.play(
         data.ambient,

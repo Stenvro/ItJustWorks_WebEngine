@@ -359,6 +359,8 @@ export class SimLog {
   /** The actors' sound output (their footsteps and the sounds their graphs play). */
   readonly actorSounds: ActorSoundOutput = {
     footstep: (set, tag, gait, position, ground) => {
+      // An actor without a set of its own steps with the default one (the sound system's).
+      if (set === undefined) return Promise.resolve(false);
       this.#push({
         kind: 'footstep',
         at: this.clock(),
