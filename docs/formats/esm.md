@@ -949,7 +949,7 @@ Records behind every sound (`src/world/sound-records.ts`; files: [audio.md](audi
   ASPC references (their bounds).
 - **REVB** (reverb): DATA (14 bytes) = XAudio2's I3DL2 parameters: u16 decay time ms, u16 HF
   reference Hz, s8 room dB, s8 room HF dB, s8 reflections dB, s8 reverb dB, u8 decay HF ratio
-  × 100, u8 reflections delay ("scaled"), u8 reverb delay ms, u8 diffusion %, u8 density %, u8.
+  × 100, u8 reflections delay (1.2 ms a step, observed in the original), u8 reverb delay ms, u8 diffusion %, u8 density %, u8.
   DefaultReverb has everything at −100 dB (none).
 
 ## Music

@@ -2601,7 +2601,6 @@ export class WorldViewer {
 
   /** The surroundings for region and weather sounds. */
   #ambientState(sky: WorldSky): AmbientState {
-    const flash = sky.flashStart;
     // What the renderer looks through: the player's camera while playing, not the free one
     // (left where it was, it once put the player "under water" far from any).
     const camera = this.#view.position;
@@ -2614,7 +2613,9 @@ export class WorldViewer {
       hour: sky.hour,
       interior: false,
       swimming: this.#play?.player.swimming ?? false,
-      flash: Number.isFinite(flash) ? flash : undefined,
+      lightning: (amount) => {
+        sky.flash(amount);
+      },
       cellMusic: sky.cellMusic,
       location: sky.cellLocation,
       worldMusic: this.#world?.record.music,

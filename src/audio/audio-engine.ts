@@ -286,12 +286,7 @@ export class AudioEngine {
   setReverb(reverb: Reverb | undefined, seconds = 0.5): void {
     if (reverb?.formId === this.#reverb?.formId) return;
     this.#reverb = reverb;
-    let seed = (reverb?.formId ?? 1) >>> 0;
-    const random = (): number => {
-      seed = (seed * 1664525 + 1013904223) >>> 0;
-      return seed / 4294967296;
-    };
-    const impulse = reverb && reverbImpulse(reverb, this.context.sampleRate, random);
+    const buffer = reverb && this.#reverbBuffer(reverb);
     const time = this.context.currentTime;
     const ramp = (level: GainNode, to: number): void => {
       level.gain.cancelScheduledValues(time);
@@ -300,15 +295,35 @@ export class AudioEngine {
     };
     const old = this.#reverbs[this.#activeReverb];
     if (old) ramp(old.level, 0);
-    if (!impulse) return;
+    if (!buffer) return;
     this.#activeReverb = 1 - this.#activeReverb;
     const next = this.#reverbs[this.#activeReverb];
     if (!next) return;
-    const buffer = this.context.createBuffer(2, impulse[0].length, this.context.sampleRate);
-    buffer.copyToChannel(impulse[0], 0);
-    buffer.copyToChannel(impulse[1], 1);
     next.convolver.buffer = buffer;
     ramp(next.level, 1);
+  }
+
+  /** Built reverb responses by REVB form id (null: silent), kept as spaces change back. */
+  readonly #reverbBuffers = new Map<number, AudioBuffer | null>();
+
+  #reverbBuffer(reverb: Reverb): AudioBuffer | undefined {
+    let buffer = this.#reverbBuffers.get(reverb.formId);
+    if (buffer === undefined) {
+      let seed = reverb.formId >>> 0 || 1;
+      const random = (): number => {
+        seed = (seed * 1664525 + 1013904223) >>> 0;
+        return seed / 4294967296;
+      };
+      const impulse = reverbImpulse(reverb, this.context.sampleRate, random);
+      buffer = null;
+      if (impulse) {
+        buffer = this.context.createBuffer(2, impulse[0].length, this.context.sampleRate);
+        buffer.copyToChannel(impulse[0], 0);
+        buffer.copyToChannel(impulse[1], 1);
+      }
+      this.#reverbBuffers.set(reverb.formId, buffer);
+    }
+    return buffer ?? undefined;
   }
 
   /** Puts the listener at the camera (game units; Z up). */
