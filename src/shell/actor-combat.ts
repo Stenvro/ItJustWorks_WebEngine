@@ -801,6 +801,11 @@ export class ActorCombat implements CombatBridge {
     return this.#fighters.get(actor)?.target;
   }
 
+  /** A fighter's life state (LifeState), if it fights. */
+  lifeState(actor: number): number | undefined {
+    return this.#fighters.get(actor)?.state.life;
+  }
+
   /** Whether an actor plays a paired animation (a killmove: its death is its clip's). */
   paired(actor: number): boolean {
     return this.#fighters.get(actor)?.state.paired !== undefined;

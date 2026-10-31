@@ -173,6 +173,8 @@ fn objectLighting(
   // are already left out of a list, not of every light.
   let room = draw.flags.z >> 24u;
   let list = drawLightList();
+  // A focus actor's draws: the focus maps of the shadow light that holds them shade it.
+  let focus = sceneFocus();
   for (var i = 0u; i < list.count; i++) {
     let light = pointLights[lightListIndex(list, i)];
     if (lightOtherRoom(light, room)) {
@@ -189,7 +191,8 @@ fn objectLighting(
     let angle = dot(n, toLight);
     // The light's shadow darkens its direct light (as the sun's: not the soft, rim and back
     // light).
-    let shadowed = color * select(1.0, pointShadow(light, worldPos, shadowNormal), receivesShadows);
+    let lightShadow = pointShadow(light, worldPos, shadowNormal, focus);
+    let shadowed = color * select(1.0, lightShadow, receivesShadows);
     result.diffuse += shadowed * saturate(angle);
     if (soft) {
       // The engine passes the unnormalized light vector here.

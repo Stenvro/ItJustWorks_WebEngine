@@ -3,7 +3,7 @@
 // Sources, observed in the original (docs/animation.md, "Killmoves"): a shot's lead actor is
 // the target where it leads its paired clip, else the attacker; a shot whose own spot comes
 // within fVATSCameraCutAwayDistance of its look hands the view to the player's first person
-// unless the player is dead; each shot starts by its path's DATA, never dollying into a Shoot
+// unless the player is dead (for the rest of that shot alone); each shot starts by its path's DATA, never dollying into a Shoot
 // shot, the first one from the player's view; until a shot of it has ended, a shot with a Near
 // Target Distance ends once the kill's projectile has come that near its target.
 
@@ -76,6 +76,17 @@ describe('the kill camera', () => {
     const far = KillmoveCamera.ofShots([near], subjects([0, 500, 0]));
     far.update(0.1);
     expect(far.cutAway).toBe(false);
+  });
+
+  it("takes the view back with the next shot after a cut-away (the flag is the shot's)", () => {
+    const at: Vec3 = [0, -200, 80];
+    const first = shot({ maxTime: 0.2 });
+    const second = shot({ location: CameraSubject.target, target: CameraSubject.attacker });
+    const camera = KillmoveCamera.ofShots([first, second], subjects(at));
+    camera.update(0.1);
+    expect(camera.cutAway).toBe(true);
+    camera.update(0.15);
+    expect(camera.cutAway).toBe(false);
   });
 
   it("dollies into a shot by its path's start mode, never into a Shoot shot", () => {
