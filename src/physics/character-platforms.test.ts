@@ -178,3 +178,45 @@ describe('moving bodies push the character controller', () => {
     expect(pushedSpeed(5000, 300, 100)).toBe(400);
   });
 });
+
+describe('the jump and the step velocity', () => {
+  it('pushes off when asked even if a step left it off the ground (a stair’s edge)', () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    platform(physics, 'fixed');
+    physics.step(1 / 60);
+    const character = settled(physics, [0, 0, 1]);
+    // Off the ground for a step (as down a stair), then the jump's animation pushes off.
+    character.teleport([0, 0, 200]);
+    for (let i = 0; i < 3; i++) {
+      character.step(1 / 60);
+      physics.step(1 / 60);
+    }
+    expect(character.grounded).toBe(false);
+    character.jump(300);
+    character.step(1 / 60);
+    physics.step(1 / 60);
+    expect(character.verticalSpeed).toBeGreaterThan(250);
+    // It goes up and comes down onto the platform again: a landing to tell its graph.
+    let landed = false;
+    for (let i = 0; i < 120 && !landed; i++) {
+      character.step(1 / 60);
+      physics.step(1 / 60);
+      landed = character.grounded;
+    }
+    expect(landed).toBe(true);
+  });
+
+  it('measures its velocity over its last step, not over a frame', () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    platform(physics, 'fixed');
+    physics.step(1 / 60);
+    const character = settled(physics, [0, 0, 1]);
+    character.velocity = [120, 0];
+    character.step(1 / 60);
+    physics.step(1 / 60);
+    // Read on any number of frames before the next step, it is the step's.
+    expect(character.stepVelocity[0]).toBeCloseTo(120, 0);
+    expect(character.stepVelocity[0]).toBeCloseTo(120, 0);
+    expect(character.stepVelocity[1]).toBeCloseTo(0, 3);
+  });
+});

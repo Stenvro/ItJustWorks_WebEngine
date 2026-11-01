@@ -60,6 +60,7 @@ import { attachPlayerInput } from './player-input.ts';
 import { attachGamepad } from './gamepad-input.ts';
 import type { HudSignals } from './hud-signals.ts';
 import type { ActorTarget } from './actors.ts';
+import { turnSwing } from './open-close.ts';
 import {
   bodyOnPose,
   poseRagdoll,
@@ -290,8 +291,7 @@ export function objectActivation(
   }
   const sequence = (name: 'open' | 'close'): void => {
     if (!playback) return;
-    playback.sequence = name;
-    playback.start = clock();
+    turnSwing(playback, instance.model.sequences, name, clock());
     uses?.swung?.(object, instance, activator);
   };
   if (uses && byPlayer && object.baseType === 'CONT') {
@@ -371,8 +371,10 @@ export function objectActivation(
     return {
       ...shown(open ? 'sClose' : 'sOpen'),
       activate: () => {
-        play(open ? object.sounds?.close : object.sounds?.open);
-        sequence(open ? 'close' : 'open');
+        // As it swings now (an actor may have swung it since the prompt was made).
+        const opened = playback.sequence === 'open';
+        play(opened ? object.sounds?.close : object.sounds?.open);
+        sequence(opened ? 'close' : 'open');
       },
     };
   }

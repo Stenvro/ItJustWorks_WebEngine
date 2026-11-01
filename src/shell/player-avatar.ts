@@ -428,9 +428,24 @@ export class PlayerAvatar {
     // Its arms wear what the body wears now.
     void this.#firstPerson?.dress(made.body.look);
     const old = this.#made;
+    // Dressed anew in the same race and sex (an armor put on, a weapon drawn or sheathed), its
+    // graph goes on where it was: the original attaches what is worn to the 3D it has and its
+    // behavior graph runs on. Started anew, the body stood sheathed with the weapon drawn, and
+    // whatever its graph held (a bound idle, a furniture's, a jump) was dropped. Another race
+    // has another graph: that one starts at its beginning.
+    const before = old.body.behavior;
+    const after = made.body.behavior;
+    const goesOn =
+      before !== undefined &&
+      after !== undefined &&
+      made.body.look.race === old.body.look.race &&
+      made.body.look.female === old.body.look.female;
+    if (goesOn) after.restoreActorState(before.saveActorState());
     this.#made = made;
     this.#listen(made.body);
-    this.#locomotion.reset();
+    // A graph started anew is told the movement afresh; one that goes on knows it (told again
+    // that it stands, a body made in mid-jump never heard its landing).
+    if (!goesOn) this.#locomotion.reset();
     if (this.#pose !== undefined) made.body.behavior?.sendEvent(this.#pose);
     old.body.onEvents = undefined;
     old.scene?.destroy();

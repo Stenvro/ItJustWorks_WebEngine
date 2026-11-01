@@ -404,7 +404,14 @@ animated objects alike.
   occlusion are not asked) or the race, and `AnimationRate.rootAway` (the Havok skeleton's first
   bone against the bound of the actor's scene: `boneLeftBound`), into `BehaviorRuntime.seen`
   and `rootAway`; the headless simulation has no camera, so it leaves `seen` unknown and every
-  actor animates by its bone LOD's distance alone.
+  actor animates by its bone LOD's distance alone. The player's body is never given a rate
+  (`PlayerAvatar.update` animates it every frame): no bone LOD, no sight test.
+- **The player dressed anew.** Each change of what the player wears makes their body again (its
+  instances); in the same race and sex the new body's graph goes on from the old one's state
+  (`saveActorState` / `restoreActorState`, as a save keeps it), as the original attaches what is
+  worn to the 3D it has and its graph runs on. Started anew, a body with its sword drawn stood
+  sheathed and whatever its graph held (a bound idle, a jump) was dropped. Another race starts
+  its own graph at its beginning.
 
 Ours besides: a skeleton behind the camera beyond the far distance is not interpolated (it steps:
 nothing of it is seen), a nearer one is (its shadow is). A graph whose variable bDisableInterp is

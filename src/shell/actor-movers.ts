@@ -2399,15 +2399,14 @@ export class ActorMovers {
   #draw(mover: Mover, physics: PhysicsWorld, seconds: number): void {
     const staged = mover.staged;
     const placed = staged.placed;
-    // Drawn between the last two steps; its speed is measured from step to step (no step
-    // since the last frame: it moves as it did).
+    // Drawn between the last two steps; its speed is its last step's (no step since the last
+    // frame: it moves as it did). Measured over the frame, a frame without a step read as a stop
+    // and one with two as twice the speed, and its graph was told so (a display faster than the
+    // physics' 60 steps a second, or a frame's time a little short of a step).
     const feet = mover.character.feetAt(physics.alpha);
     const stepped = mover.character.feet;
     const dt = Math.max(seconds, 1e-3);
-    const velocity: [number, number] =
-      seconds > 0
-        ? [(stepped[0] - mover.drawn[0]) / dt, (stepped[1] - mover.drawn[1]) / dt]
-        : mover.velocity;
+    const velocity: [number, number] = seconds > 0 ? mover.character.stepVelocity : mover.velocity;
     mover.velocity = velocity;
     mover.drawn = [...stepped];
     staged.position = [...feet];
