@@ -4,6 +4,7 @@
 
 import type { AnimatedSkeleton } from './animated-skeleton.ts';
 import type { BehaviorGraphState, BehaviorRuntime } from './behavior-runtime.ts';
+import type { NamedGraphState } from './named-graph-state.ts';
 import type { ObjectGraph, ObjectGraphState } from './object-graph.ts';
 
 /**
@@ -13,6 +14,8 @@ import type { ObjectGraph, ObjectGraphState } from './object-graph.ts';
 export interface SavedGraph {
   readonly sequences?: ObjectGraphState | undefined;
   readonly skeleton?: BehaviorGraphState | undefined;
+  /** An imported original save's state, by names: put back over whichever graph the object has. */
+  readonly named?: NamedGraphState | undefined;
 }
 
 /** A running behavior graph as scripts use it (PlayAnimation, the animation variables). */

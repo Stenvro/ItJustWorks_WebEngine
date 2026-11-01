@@ -1742,6 +1742,7 @@ export class SimWorld {
     savePlayerGraphs: () => this.stage.savePlayerGraphs(),
     savePlayer: () => this.stage.savePlayer(),
     saveProjectiles: () => this.stage.projectiles.save(),
+    saveAttachedArrows: () => this.stage.combat.saveAttachedArrows(),
     impactAt: (impactDataSet, from, direction, length) =>
       this.stage.combat.impactAt(impactDataSet, from, direction, length),
     pathTo: (actor, target, walkRun) => {

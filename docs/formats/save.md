@@ -82,7 +82,13 @@ the world loads again, as the original's change forms hold it (nothing of the re
   place among the graph's machines, its variables). As the object is placed again its graph
   starts there: its sequences played long ago, held at their ends, sending no text keys again
   (a lever pulled stays down before its script's OnLoad). TODO(M13): machines inside behavior
-  references.
+  references. An imported .ess's objects keep theirs by names in `GameState.graphs`
+  (`SavedGraph.named`, below "Animation graphs"), taken as their 3D loads.
+- `attachedArrows` (`SavedAttachedArrow`): the arrows stuck in actors' bodies (the original's
+  ExtraAttachedArrows3D), oldest first: the actor, the PROJ, the bone (its index in the actor's
+  skeleton), its place on the bone (a 4x4 matrix) and the seconds it has been stuck. As the
+  game loads each waits for its actor's body and is drawn on its bone for what is left of
+  fAttachedArrowAgeMax (src/shell/combat-projectiles.ts); one already older is not.
 
 `RuntimeSave.scenes` (`SceneDirector.saveData`): each playing scene's phase, cast, clock and
 actions (status, done, a timer's seconds left), and the starts waiting for their actors or not
@@ -345,16 +351,30 @@ engine's own side of a bleedout and of a paired animation (who holds whom: their
 those states, the systems' bookkeeping is not saved yet). Machines inside behavior references of
 the placed objects' graphs (`graphs`, above) are not kept either.
 
+An imported .ess keeps each graph by names instead (`ActorGraphState.named`, `SavedGraph.named`:
+`NamedGraphState`, src/animation/named-graph-state.ts; docs/formats/ess.md "Animation
+graphs"): the active machines' states and the playing clips' times by the behavior graph's
+name and the node's, every word variable as its 32 bits, the quads as vectors. As each behavior
+file is reached the machines and clips of its graph's name are found by their names among the
+file's and go on as a save of ours would have them (no seconds in the state: the original keeps
+none); a word becomes its variable's value by the variable's type as its file's scope is made.
+A save of ours made after the import keeps the graphs in our own form.
+
 ## Not saved yet
 
 - The procedures' own progress inside a step beyond a patrol's point and the furniture an
   actor is in (a sandbox's activity's time left: it chooses again); the
   actors of cells not loaded when saving (their packages place them, as before); bodies in
   motion keep their places but not their velocities (one falling as the game is saved falls
-  again from where it was: TODO(M13)); the track playing within a music type (it starts again).
+  again from where it was: TODO(M13)); the track playing within a music type (it starts again;
+  the original keeps the track, MUST, in its global data 7); the combat groups' searches and
+  the actors' detection levels (the fight and the detection start again from what the actors
+  see); the world's decals (blood, scorch marks: they are made again by what makes them; the
+  original keeps its dynamic decals in its temp effects, global data 1000).
 
 - The main menu's Load list and the save list's character filter (Continue loads the newest
-  save), thumbnails, Save on Pause (bSaveOnPause with fAutosaveEveryXMins).
+  save), Save on Pause (bSaveOnPause with fAutosaveEveryXMins). (Each save has its thumbnail:
+  the frame drawn as it was made, src/shell/save-screenshot.ts; an import keeps the .ess's.)
 
 ## In Play
 

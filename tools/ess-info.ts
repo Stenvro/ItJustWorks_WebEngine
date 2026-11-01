@@ -4,11 +4,13 @@
 //   node tools/ess-info.ts                      lists the saves in Documents\My Games\...\Saves
 //   node tools/ess-info.ts <file.ess>           header, tables, change form summary
 //   node tools/ess-info.ts <file.ess> --forms   every change form not read to its end
+//   node tools/ess-info.ts <file.ess> --graphs  the animation graphs' state each reference keeps
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
+import { readAnimationGraphs } from '../src/formats/ess/animation-graphs.ts';
 import { readChangeForm } from '../src/formats/ess/change-forms.ts';
 import { changeFormTypeName, globalData, readEss } from '../src/formats/ess/ess.ts';
 import { globalDataName, readMiscStats, refIdResolver } from '../src/formats/ess/global-data.ts';
@@ -19,7 +21,10 @@ const SAVES = join(homedir(), 'Documents', 'My Games', 'Skyrim Special Edition',
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
-  options: { forms: { type: 'boolean', default: false } },
+  options: {
+    forms: { type: 'boolean', default: false },
+    graphs: { type: 'boolean', default: false },
+  },
 });
 const path = positionals[0];
 if (path === undefined) {
@@ -30,7 +35,7 @@ if (path === undefined) {
     // no saves folder
   }
   console.log(names.length ? names.join('\n') : `No .ess saves in ${SAVES}`);
-  console.log('Usage: node tools/ess-info.ts <file.ess> [--forms]');
+  console.log('Usage: node tools/ess-info.ts <file.ess> [--forms] [--graphs]');
   process.exit(names.length ? 0 : 2);
 }
 
@@ -134,3 +139,30 @@ console.log(
     .join(', ')}`,
 );
 for (const [reason, count] of reasons) console.log(`  stopped at ${reason}: ${String(count)}`);
+// The animation graphs' state (--graphs): each reference's graphs, their machines and clips.
+if (values.graphs) {
+  for (const entry of ess.changeForms) {
+    const form = readChangeForm(entry, resolve);
+    if (!form.animation) continue;
+    const label = `${changeFormTypeName(entry.type)} ${hex(form.formId)}`;
+    try {
+      const read = readAnimationGraphs(form.animation);
+      if (read.sequence !== undefined) console.log(`${label}: sequence ${read.sequence}`);
+      for (const graph of read.graphs) {
+        console.log(
+          `${label}: ${String(graph.machines.length)} machines, ${String(graph.clips.length)} clips, ${String(graph.generators.length)} sequences, ${String(graph.words.length + graph.quads.length)} variables, ${String(graph.eventModifiers.length)} event modifiers`,
+        );
+        for (const machine of graph.machines) {
+          console.log(
+            `  ${machine.graph}/${machine.node}: ${machine.stateName} (${String(machine.stateId)})`,
+          );
+        }
+        for (const clip of [...graph.clips, ...graph.generators]) {
+          console.log(`  ${clip.graph}/${clip.node} at ${clip.time.toFixed(2)} s`);
+        }
+      }
+    } catch (error) {
+      console.log(`${label}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
