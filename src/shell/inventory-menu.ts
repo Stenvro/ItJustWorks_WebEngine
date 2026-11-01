@@ -160,9 +160,11 @@ export function inventoryModel(
     },
     // Dropped items leave the inventory and lie in the world in front of the player's feet,
     // falling to the ground (a created reference of the item, its count: created-objects.ts);
-    // quest items cannot be dropped (sDropQuestItemWarning).
+    // quest items cannot be dropped (sDropQuestItemWarning), nor a Can't Drop weapon (WEAP DNAM
+    // 0x8). TODO(M13): what the original shows for the latter (no setting names it) is unknown.
     drop: async ({ formId, stack }, amount) => {
       const game = runtime();
+      if (await game.equipment.cantDrop(formId)) return;
       const have = await game.itemCount(PLAYER_REF, formId);
       const free = have - (await questItemCount(game, PLAYER_REF, formId));
       if (amount > free) {

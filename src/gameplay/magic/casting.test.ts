@@ -56,6 +56,14 @@ describe('magicka cost', () => {
     );
     // SPIT's own cost (0x1: not calculated).
     expect(itemBaseCost({ ...item, flags: 0x1 }, () => 99)).toBe(41);
+    // At a target (aimed): × fMagicRangeTargetCostMult (1 in Skyrim.esm); not self or touch.
+    const aimed = { ...item, delivery: 2 };
+    const plain = itemBaseCost(item, (id) => costs.get(id) ?? 0);
+    const settings = { ...CASTING_DEFAULTS, rangeTargetCostMult: 1.5 };
+    expect(itemBaseCost(aimed, (id) => costs.get(id) ?? 0)).toBeCloseTo(plain, 9);
+    expect(itemBaseCost(aimed, (id) => costs.get(id) ?? 0, settings)).toBeCloseTo(plain * 1.5, 9);
+    const touch = { ...item, delivery: 1 };
+    expect(itemBaseCost(touch, (id) => costs.get(id) ?? 0, settings)).toBeCloseTo(plain, 9);
   });
 
   it("falls with the school's skill: the player's 1 − (skill / 400)^0.65", () => {

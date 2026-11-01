@@ -1347,6 +1347,18 @@ export class CrimeEngine {
       ),
     );
     this.#emit({ kind: 'jailed', faction });
+    // The followers (the player's teammates) wait at the faction's follower wait marker (WAIT)
+    // while the player is jailed (UESP "Followers": they wait outside the jail). TODO(M13): the
+    // engine's own way of holding them there (ours: moved there; their follow package takes
+    // them on when the player comes out).
+    if (crime?.followerWaitMarker !== undefined) {
+      const at = await runtime.placement(crime.followerWaitMarker, false);
+      for (const [reference, actor] of runtime.state.actors) {
+        if (!at || reference === PLAYER_REF || actor.playerTeammate !== true) continue;
+        if (await runtime.actors.isDead(reference)) continue;
+        runtime.move(reference, at.position, at.rotation, at.cell, at.world);
+      }
+    }
     if (marker !== undefined) await this.#sendPlayerTo(marker);
     else await this.serveTime();
   }
