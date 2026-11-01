@@ -341,6 +341,37 @@ describe('where packages put actors', () => {
     });
   });
 
+  it('puts an actor by a Target (location): near the reference another input names', async () => {
+    // As Hearthfire's urchin runners: a Travel to input 15, which names input 25's marker.
+    const runner = pack(0x107, {
+      tree: procedure('Travel', [15]),
+      inputs: [
+        {
+          id: 15,
+          type: 'Location',
+          value: {
+            kind: 'location',
+            location: { type: LocationType.targetLocation, form: 25, radius: 512 },
+          },
+        },
+        {
+          id: 25,
+          type: 'SingleRef',
+          value: {
+            kind: 'singleRef',
+            target: { type: TargetType.specificReference, value: 0xdddc9, count: 0 },
+          },
+        },
+      ],
+    });
+    const far = { ...actor([0x107]), position: [5000, 0, 0] as [number, number, number] };
+    expect(await packageStart(far, world([runner]), at(10))).toMatchObject({
+      kind: 'at',
+      reference: 0xdddc9,
+      radius: 512,
+    });
+  });
+
   it('skips packages whose conditions fail and waits on those it cannot know', async () => {
     const notInFaction = pack(0x103, {
       template: 0x17723,

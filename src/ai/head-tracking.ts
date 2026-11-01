@@ -7,6 +7,8 @@
 // random offset (fAIHeadTrack*); the graph's BSLookAtModifier turns the head and eyes to it
 // (src/animation/procedural.ts). Platform-independent.
 
+import { RaceAiFlag } from './race-combat-records.ts';
+
 export type Vec3 = readonly [number, number, number];
 
 /** HighProcessData::HEAD_TRACK_TYPE, lowest first (CommonLibSSE). */
@@ -120,6 +122,18 @@ export const VANILLA_HEAD_TRACK: HeadTrackSettings = {
 
 /** The setting names of HeadTrackSettings (read from the game settings). */
 export const HEAD_TRACK_SETTINGS = Object.keys(VANILLA_HEAD_TRACK) as (keyof HeadTrackSettings)[];
+
+/**
+ * Whether the engine head tracks an actor of a race (its DATA flags): only a race with Use Head
+ * Track Anims (117 races: the people, the animals, the undead, the dragons) has its graph's
+ * look-at driven (bHeadTracking, TargetLocation). The rest (trolls, spiders, the dwarven
+ * machines, mudcrabs, slaughterfish, chickens, hares, the atronachs of frost and storm, the
+ * dremora) keep their graphs' own looks. TODO(M13): what else the flag gates is not documented
+ * (CommonLibSSE names it, kUseHeadTrackAnims); this is its plain reading.
+ */
+export function raceHeadTracks(raceFlags: number): boolean {
+  return (raceFlags & RaceAiFlag.useHeadTrackAnims) !== 0;
+}
 
 /** How far off its facing an actor may choose another actor to look at (120°). */
 const LOOK_CHOICE_ANGLE = (2 * Math.PI) / 3;

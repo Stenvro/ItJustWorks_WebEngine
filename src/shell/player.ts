@@ -20,6 +20,7 @@ import {
 import { TweenCamera } from './tween-camera.ts';
 import type { Camera } from '../render/view-camera.ts';
 import type { MoveRequest } from '../ai/locomotion.ts';
+import { mountedPitchFloor } from '../ai/mounts.ts';
 import { lookAt, multiply, perspectiveReversedZ, type Mat4, type Vec3 } from '../render/math.ts';
 import { firstPersonViewProjection, verticalFov } from '../render/first-person-view.ts';
 import {
@@ -99,6 +100,8 @@ export interface PlayerData {
   readonly dragonRangedShoulder: readonly [number, number, number];
   /** GMST fJumpHeightMin: how high a jump goes (game units). */
   readonly jumpHeight: number;
+  /** GMST fMountedMaxLookingDown: how far down the view looks from a mount (degrees; 30). */
+  readonly mountedMaxLookingDown?: number;
   /**
    * GMST fJumpFallVelocityMin: falling faster than this (game units a second) the player
    * neither sprints nor starts to (the engine's sprint, observed in the original).
@@ -232,6 +235,7 @@ export async function readPlayerData(
       swim: type('NPCSwimming'),
     },
     jumpHeight: settings.number('fJumpHeightMin') ?? JUMP_HEIGHT_MIN,
+    mountedMaxLookingDown: settings.number('fMountedMaxLookingDown') ?? MOUNTED_MAX_LOOKING_DOWN,
     // The engine's built-in values where no plugin sets them.
     dragonRangedShoulder: [
       settings.number('fOverShoulderRangedDragonPosX') ?? 0,
@@ -376,6 +380,8 @@ const ARRIVAL_FLOOR_BELOW = 96;
 const FOOTPRINT_RAYS = 8;
 /** Pitch limit of the cameras (radians). */
 const MAX_PITCH = (85 * Math.PI) / 180;
+/** fMountedMaxLookingDown where no plugin sets it (Update.esm's value). */
+const MOUNTED_MAX_LOOKING_DOWN = 30;
 /** Looking further down than this while swimming forward dives. */
 const DIVE_PITCH = (-30 * Math.PI) / 180;
 
@@ -1639,9 +1645,16 @@ export class Player implements Camera {
     this.#input = true;
     this.yaw += x * rate * seconds;
     this.pitch = Math.max(
-      -MAX_PITCH,
+      this.#pitchFloor(),
       Math.min(MAX_PITCH, this.pitch - invert * y * rate * seconds),
     );
+  }
+
+  /** How far down the view may look: on a mount no more than fMountedMaxLookingDown. */
+  #pitchFloor(): number {
+    if (this.mount?.() === undefined) return -MAX_PITCH;
+    const down = this.#setup.mountedMaxLookingDown ?? MOUNTED_MAX_LOOKING_DOWN;
+    return Math.max(-MAX_PITCH, mountedPitchFloor(down));
   }
 
   /** Forgets every held key (the window lost focus). */
@@ -1667,7 +1680,7 @@ export class Player implements Camera {
     // The setting Invert Y (bInvertYValues) turns looking up and down around.
     const invert = ini.bool('Controls', 'bInvertYValues') ? -1 : 1;
     this.pitch = Math.max(
-      -MAX_PITCH,
+      this.#pitchFloor(),
       Math.min(
         MAX_PITCH,
         this.pitch - invert * countsY * perCount * ini.number('Controls', 'fMouseHeadingYScale'),
