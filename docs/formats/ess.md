@@ -477,7 +477,18 @@ plugin name, and forms of plugins not loaded are left out. What it applies:
   it had reached: a Sequence's, Stacked's and Random's u32 is the index of the child it runs, a
   Simultaneous's children each keep theirs (every branch state of the saves read names a child
   there, whose procedure the child's state names: SitSleep for Sit and Sleep,
-  DialogueActivate for ForceGreet); TODO(M13): the procedures' own states. A fighting actor's
+  DialogueActivate for ForceGreet). Of the procedures' own states (each keeps the references it
+  names, the places it goes to as LocRef, LocPt or LocCell, and the procedures it runs inside:
+  SitSleep's Activate, a Sandbox's activity, a Patrol's UseIdleMarker and SitSleep): a Patrol's
+  point (its patrol data: a state u32, a timer f32, the index of the point it stands at or walks
+  to, two switches, a u32, then its points from where it began; ours `SavedPackage.goal`, from
+  which its patrol goes on), the furniture a SitSleep goes into (its Activate's reference, while
+  the actor enters: `SavedActor.furniture`). A Travel's, an Escort's and a Sandbox's places are
+  their package's (ours finds its path and picks its activity again from where the actor
+  stands; TODO(M13): a Sandbox's timers and a Wander's point). The actor's state bytes (18, one
+  per ActorState field): the third its sit and sleep state, the thirteenth its weapon's (2
+  drawing, 3 drawn: `SavedActor.weaponDrawn`); TODO(M13): the others (the first's movement
+  bits). A fighting actor's
   process package is its combat override package (ECOR), unless a scene's package action holds
   it; a scene package action whose package completed stays the actor's package while the action
   runs (GetCurrentPackage answers both so); an actor the save keeps at its
@@ -547,8 +558,16 @@ ess)` reads those places ahead);
   (TextDisplayData of kind −2; the others are an alias's name), where a package started and the
   packages run once a day that ran (TODO(M13): the byte beside each; counted run today); those
   that follow from what is applied: AliasInstanceArray, PromotedRef, SceneData, CachedScale,
-  Follower. Not applied (logged by name): Interaction (a rider and its horse), AttachedArrows3D,
-  NonActorMagicTarget, DismemberedLimbs;
+  Follower; a rider and its horse (Interaction of kind 0: the kind u32, the rider, the horse, a
+  byte; Elenwen beside the carts: `SavedActor.riding`; TODO(M13): the other kinds and the
+  byte), the limbs cut off (DismemberedLimbs: after a u16, two u32, a byte and the actor, each
+  limb's body part type u32 and the forms the actor wore as it came off, the decapitated head
+  among them: `ActorState.dismembered`; TODO(M13): the five values), the magic on an object
+  (NonActorMagicTarget: the object and its effects, each a magic item, a byte, a vsval and a
+  sized block; none on the three objects of the saves read; TODO(M13): the effects' data).
+  Not applied (logged by name): AttachedArrows3D (arrows stuck in a body: each the PROJ, the
+  bone's index, a u32, its translation, its rotation as a quaternion and its scale; ours draws
+  them, keeps none);
 - inventory entries' extra data lists, each a stack of the item: what an actor wears or holds
   (Worn: on the body, or in the right hand for a weapon or torch; WornLeft: the left hand),
   put on after the inventory changes (`GameSave.worn`); health (a tempered item's, rounded to
@@ -556,7 +575,8 @@ ess)` reads those places ahead);
   (OutfitItem) are left out of the inventory change: ours puts the outfit on as the actor's
   inventory is first read (TODO(M13): its leveled pieces are ours, picked by the actor's seed).
   Count, LeveledItem, UniqueID, the quest aliases' and an alias's name follow from the rest;
-  CannotWear is logged;
+  CannotWear on an item a cut limb took with it (the decapitated head: ours dresses the body
+  from its limbs) follows from DismemberedLimbs, elsewhere it is logged;
 - NPC_ bases other than the player's: the factions (the whole list as it stands, ranks), the 18
   skills (DNAM) and the AI data (AIDT's aggression, confidence, energy, morality, mood,
   assistance), over their records for every actor of the base (`ActorBaseState`; TODO(M13):
@@ -593,16 +613,30 @@ ess)` reads those places ahead);
   the saves read: so the time is what is left, TODO(M13) on a save where it is not; real time
   in milliseconds, game time in thousandths of an hour), single or repeating, on the form or
   the alias of the handle's high word;
-- the forms scripts added to form lists (FLST).
+- the forms scripts added to form lists (FLST);
+- the arrows lying in the world (PARW, the references the original made for arrows that hit the
+  world: created, with their place and cell): a reference of the arrow's ammunition (the
+  projectile's second form: bow, ammunition, shooter, ...), held where it stuck, falling where
+  physics moved it (havokMoved), as ours makes one (src/shell/combat-projectiles.ts);
+- the combat groups (global data 101): each member's target (the member is the first of its
+  values), for a member whose own combat controller names none; ours puts the groups together
+  again as their members fight. TODO(M13): a group's search (logged; none in the saves read),
+  the members' other values, the groups' float pairs;
+- the quest static data (global data 107): its fourth list is the quests running (the same 451
+  quests in both saves whose change forms say they run, which those apply; a listed quest that
+  does not run is logged). TODO(M13): the other three lists (empty in the saves read).
 
 Read but not imported yet (TODO(M13)): the projectiles and hazards in flight; the base objects'
 other changes (values, names, known ingredient effects; the scenes' clocks); the global data
-tables of combat (101), detection (105), the process lists' crimes (100: none in the saves
-read), temp effects (1000) and quest static data (107: lists of quests whose meaning is not
-known); the movement controller's state (the engine plans its paths anew); the AI processes
-beyond the branch their package reached (the procedures' own states, the high process's timers
-and held objects: M13); the combat controllers' and
-the combat table's searches and objects (M13); the player's other lists (M13).
+tables of detection (105: each a reference with two values, 0, 2 or 3 and 0 or 7, whose meaning
+is not known), the process lists (100: their three floats, −0.0168 twice and a value that
+differs by save, meaning not known; the crimes, none in the saves read), temp effects (1000: the
+decals on objects, as DecalFlameBurn01 on the opening's carts, its texture set, place, normal
+and size; ours has no decal store to put them in) and the interface's help shown (102); the
+movement controller's state (the engine plans its paths anew); the high process's timers and
+held objects (six references with a byte each, whose meaning is not known); the combat
+controllers' searches and objects; the graph variables of the animation change forms (REFR,
+ACHR, PMIS, PFLA: the sized block is read past); the player's other lists.
 
 Everything else is counted by change form type and flag (`REFR: lockExtra x 12`) and by where a
 read stopped, then logged under `save` as not imported.

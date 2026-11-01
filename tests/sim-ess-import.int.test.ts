@@ -13,6 +13,7 @@ import { readGlobalData } from '../src/formats/ess/global-data-tables.ts';
 import { readPapyrus } from '../src/formats/ess/papyrus.ts';
 import { essWorld, importEss } from '../src/save/ess-import.ts';
 import { writeSave } from '../src/save/save-codec.ts';
+import type { GameState } from '../src/scripting/runtime/game-state.ts';
 import { hasGamedata, loadSim, openSim, PLAYER_REF } from './helpers/sim.ts';
 
 const SAVES = join(homedir(), 'Documents', 'My Games', 'Skyrim Special Edition', 'Saves');
@@ -444,3 +445,66 @@ describe.skipIf(!hasGamedata() || opening === undefined)('the opening, imported 
     }
   }, 600_000);
 });
+
+/** MQ101StormcloakPrisoner01Ref, beheaded at the block; the head the body wears then. */
+const BEHEADED_PRISONER = 0x654ed;
+const DECAPITATED_HEAD = 0xdb5d0;
+/** ElenwenREF riding MQ101ElenwenHorse beside the carts. */
+const ELENWEN = 0x198bc;
+const ELENWEN_HORSE = 0x527f1;
+/** SteelArrow, what the opening's archers shoot. */
+const STEEL_ARROW = 0x1397f;
+
+describe.skipIf(!hasGamedata() || known === undefined || opening === undefined)(
+  "the procedures' states and the extra data, imported (local)",
+  () => {
+    it('puts riders on horses and patrols on their points; keeps cut limbs, arrows, fights', async () => {
+      const probe = await openSim();
+      try {
+        const cart = readEss(new Uint8Array(readFileSync(known ?? '')));
+        const onCart = importEss(cart, await essWorld(probe.db, cart), {
+          name: 'Cart',
+          number: 1,
+          now: 0,
+        });
+        const actors = onCart.save.world?.actors ?? [];
+        expect(actors.find((actor) => actor.reference === ELENWEN)?.riding).toBe(ELENWEN_HORSE);
+        // The patrols going on to the point each was at or going to.
+        expect(actors.filter((actor) => actor.package?.goal !== undefined).length).toBeGreaterThan(
+          5,
+        );
+        expect(onCart.skipped.filter((line) => /Interaction|procedures' own/.test(line))).toEqual(
+          [],
+        );
+
+        const helgen = readEss(new Uint8Array(readFileSync(opening ?? '')));
+        const imported = importEss(helgen, await essWorld(probe.db, helgen), {
+          name: 'Helgen',
+          number: 1,
+          now: 0,
+        });
+        // The game state as the import made it (its live maps: gameStateData).
+        const state = imported.save.runtime.state as unknown as GameState;
+        // The beheaded prisoner keeps its head off, with what it wore then (the head among it).
+        const limbs = state.actors.get(BEHEADED_PRISONER)?.dismembered;
+        expect(limbs?.[0]?.limb).toBe(1);
+        expect(limbs?.[0]?.worn).toContain(DECAPITATED_HEAD);
+        // The arrows lying round Helgen: references of their ammunition.
+        const arrows = [...state.created.values()].filter((made) => made.base === STEEL_ARROW);
+        expect(arrows.length).toBeGreaterThanOrEqual(15);
+        // The six fighting Alduin by their combat group.
+        const fighting = (imported.save.world?.actors ?? []).filter(
+          (actor) => actor.combatTarget === ALDUIN_HELGEN,
+        );
+        expect(fighting.length).toBeGreaterThanOrEqual(6);
+        expect(
+          imported.skipped.filter((line) =>
+            /DismemberedLimbs|CannotWear|NonActorMagicTarget|PARW|global data 10[17]/.test(line),
+          ),
+        ).toEqual([]);
+      } finally {
+        await probe.close();
+      }
+    }, 300_000);
+  },
+);

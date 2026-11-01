@@ -126,6 +126,9 @@ interface Ride {
   activating: boolean;
 }
 
+/** How long a loaded save's rider waits for its horse to be placed (its cell's actors load). */
+const SEAT_AGAIN_SECONDS = 10;
+
 export interface ActorMountsOptions {
   readonly session: GameSession;
   readonly terminal: Terminal;
@@ -738,12 +741,39 @@ export class ActorMounts {
     return saddlePlace(at, saddle);
   }
 
+  /** Loaded saves' riders waiting for their horses to be placed: the horse, seconds left. */
+  readonly #toSeat = new Map<number, { readonly horse: number; left: number }>();
+
+  /**
+   * A loaded save's rider (SavedActor.riding): on its horse again at once (HorseEnterInstant,
+   * as the original's load puts it back in the saddle), as soon as the horse is placed too.
+   */
+  rideAgain(rider: number, horse: number): void {
+    this.#toSeat.set(rider, { horse, left: SEAT_AGAIN_SECONDS });
+  }
+
+  #seatAgain(seconds: number): void {
+    const { get } = this.#options;
+    for (const [rider, waiting] of [...this.#toSeat]) {
+      waiting.left -= seconds;
+      const staged = get(rider);
+      const mount = get(waiting.horse);
+      if (staged && mount && !staged.dead && !mount.dead) {
+        this.#toSeat.delete(rider);
+        if (!this.#rides.has(rider) && !this.ridden(waiting.horse)) {
+          void this.#pair(rider, waiting.horse, true);
+        }
+      } else if (waiting.left <= 0 || staged?.dead === true) this.#toSeat.delete(rider);
+    }
+  }
+
   /**
    * Every frame after the skeletons animated: riders on their horses, their graphs driven by
    * the horses' movement; the player's controls ride theirs; paired animations that do not end
    * are ended.
    */
   frame(seconds: number): void {
+    if (this.#toSeat.size > 0) this.#seatAgain(seconds);
     const { movers, get } = this.#options;
     for (const ride of [...this.#rides.values()]) {
       const horse = get(ride.horse);
