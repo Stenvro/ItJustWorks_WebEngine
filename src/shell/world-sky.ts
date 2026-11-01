@@ -10,7 +10,12 @@ import type {
   PrecipitationRenderer,
 } from '../render/precipitation.ts';
 import type { Vec3 } from '../render/math.ts';
-import type { GpuScene, SceneLighting, SceneRenderer } from '../render/scene-renderer.ts';
+import type {
+  GpuScene,
+  ModelInstance,
+  SceneLighting,
+  SceneRenderer,
+} from '../render/scene-renderer.ts';
 import type { TextureCache } from '../render/texture-cache.ts';
 import { flashIntensity } from '../world/lightning.ts';
 import { parsePrecipitation, precipitationAmounts } from '../world/precipitation.ts';
@@ -291,7 +296,7 @@ export class WorldSky {
       gpu,
       precipitation,
       session.textures,
-      new SkyObjects(session, db, scene),
+      new SkyObjects(session, scene),
     );
   }
 
@@ -496,9 +501,17 @@ export class WorldSky {
     };
   }
 
-  /** The sky statics and aurora of the last frame. */
+  /** The aurora of the last frame. */
   skyScenes(): readonly GpuScene[] {
     return this.#session.sky.mode === SkyMode.none ? [] : this.#objects.scenes();
+  }
+
+  /**
+   * A placed reference as the sky shows it: a sky static's is lit by the sky statics colour and
+   * shown as far as the weathers list its base (sky-objects.ts); any other as it is.
+   */
+  skyStaticInstance(instance: ModelInstance, base: number): ModelInstance {
+    return this.#objects.isSkyStatic(base) ? this.#objects.placeStatic(instance, base) : instance;
   }
 
   /** The rain and snow of the last frame. */
