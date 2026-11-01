@@ -617,7 +617,7 @@ function areaFree(
  * of the kill: blocked where it meets something before 85% of the way (another actor only
  * within 256 units). The value is how far out the sight still holds: the last clear step's
  * distance (0: none). (Inferred: the engine's loop stops at the first blocked step; which
- * distance it returns is not in the decompiled code, the data compares it with 60 and 110.)
+ * distance it returns is not observed, the data compares it with 60 and 110.)
  */
 function targetVisible(
   subjects: KillmoveSubjects,
