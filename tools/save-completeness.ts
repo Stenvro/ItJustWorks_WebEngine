@@ -54,7 +54,7 @@ const GLOBAL_DATA: Readonly<Record<number, readonly [boolean, string]>> = {
   2: [false, 'TES: visited worldspaces and the cell grid (not applied)'],
   3: [true, 'global variables, GameDaysPassed sets the clock'],
   4: [false, 'created objects: made potions, poisons, enchantments (none in the saves read)'],
-  5: [false, 'effects: image space modifiers running (not applied)'],
+  5: [true, 'effects: image space modifiers running: empty in every save read'],
   6: [true, 'weather: the current, outgoing, override and default weathers, when it came'],
   7: [true, 'audio: the music types in play (the location type follows from the place)'],
   8: [false, 'sky cells (not applied)'],
@@ -79,7 +79,7 @@ const GLOBAL_DATA: Readonly<Record<number, readonly [boolean, string]>> = {
   109: [true, 'magic favorites and their hotkeys'],
   110: [false, "player controls: the controls' state (its fields not known)"],
   111: [true, 'the story event manager: events waiting, told again'],
-  112: [false, "ingredient shared: the ingredients' known effects (not applied)"],
+  112: [true, "ingredient shared: the ingredients' known effects: empty in every save read"],
   113: [false, 'menu controls (not applied)'],
   114: [false, 'menu topic manager (not applied)'],
   1000: [false, 'temp effects: decals, shaders, particles in the world (not applied)'],
@@ -89,7 +89,7 @@ const GLOBAL_DATA: Readonly<Record<number, readonly [boolean, string]>> = {
   ],
   1002: [false, 'anim objects: what actors hold (not applied)'],
   1003: [false, 'timer (not applied)'],
-  1004: [false, 'synchronized animations: paired animations under way (not applied)'],
+  1004: [true, 'synchronized animations: paired animations under way: empty in every save read'],
   1005: [true, 'main: empty in every save read'],
 };
 
@@ -133,7 +133,12 @@ async function essPart(): Promise<void> {
     await db.close();
   }
   add('ess header', 'header (name, level, race, location, date)', true, 'our save header');
-  add('ess header', 'screenshot', false, 'our saves write no thumbnail yet');
+  add(
+    'ess header',
+    'screenshot',
+    true,
+    "the import's thumbnail (save-screenshot.ts essScreenshot)",
+  );
   add('ess header', 'plugins', true, 'form ids moved to our load order by name');
   add('ess header', 'light plugins', true, 'form ids moved to our load order by name');
   for (const [type, name] of Object.entries(GLOBAL_DATA_TYPES)) {

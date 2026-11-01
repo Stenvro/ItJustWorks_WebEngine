@@ -97,12 +97,31 @@ export interface SavedProjectile {
   readonly resting?: boolean | undefined;
 }
 
+/**
+ * An arrow stuck in an actor's body (the original's ExtraAttachedArrows3D): drawn on the
+ * actor's bone it struck, for what is left of its fAttachedArrowAgeMax.
+ */
+export interface SavedAttachedArrow {
+  /** The actor it is stuck in. */
+  readonly target: number;
+  /** Its PROJ (its model is the projectile's). */
+  readonly projectile: number;
+  /** The bone, by its index in the actor's skeleton. */
+  readonly node: number;
+  /** Its place in the bone's space: a 4x4 matrix, column-major. */
+  readonly local: readonly number[];
+  /** Seconds it has been stuck. */
+  readonly age: number;
+}
+
 export interface WorldSave {
   readonly actors: readonly SavedActor[];
   /** The graphs of loaded objects moved from where they start, by reference. */
   readonly graphs: readonly (readonly [number, SavedGraph])[];
   /** What flies (none in saves made before they were kept). */
   readonly projectiles?: readonly SavedProjectile[];
+  /** The arrows stuck in actors, oldest first (none in saves made before they were kept). */
+  readonly attachedArrows?: readonly SavedAttachedArrow[];
   /** The player's graphs (saves made before kept them only while the player rode a vehicle). */
   readonly playerGraphs?: SavedGraphs;
   /** The player's sneaking, drawn weapon and vehicle exit. */
@@ -118,6 +137,7 @@ export class WorldRestore {
   readonly #actors = new Map<number, SavedActor>();
   readonly #graphs = new Map<number, SavedGraph>();
   #projectiles: readonly SavedProjectile[];
+  #attachedArrows: readonly SavedAttachedArrow[];
   #playerGraphs: SavedGraphs | undefined;
   #player: SavedPlayer | undefined;
 
@@ -127,6 +147,14 @@ export class WorldRestore {
     for (const actor of save.actors) this.#actors.set(actor.reference, actor);
     for (const [reference, graph] of save.graphs) this.#graphs.set(reference, graph);
     this.#projectiles = save.projectiles ?? [];
+    this.#attachedArrows = save.attachedArrows ?? [];
+  }
+
+  /** The arrows stuck in actors as the game was saved, once (drawn again as each is placed). */
+  takeAttachedArrows(): readonly SavedAttachedArrow[] {
+    const arrows = this.#attachedArrows;
+    this.#attachedArrows = [];
+    return arrows;
   }
 
   /** What flew as the game was saved, once (the projectiles fly it on as the world loads). */

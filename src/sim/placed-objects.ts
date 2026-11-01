@@ -75,11 +75,20 @@ export function placeObject(
     ? (session.restoring?.takeGraph(object.reference) ?? takeUnloadedGraph(session, object))
     : undefined;
   if (graph && saved?.sequences) graph.restoreState(saved.sequences, clock());
+  // An imported original save's, by names (the original keeps one state for either kind).
+  if (graph && saved?.named) graph.restoreNamed(saved.named, clock());
   // The events its sequences raise reach its scripts (OnAnimationEvent).
   if (graph)
     graph.onEvent = (event) => session.scriptsReady?.animationEvent(object.reference, event);
   const skeletal = startPlacedSkeleton(model, object.reference);
   if (saved?.skeleton) skeletal?.skeleton.behavior?.restoreState(saved.skeleton);
+  if (saved?.named) {
+    skeletal?.skeleton.behavior?.restoreActorState({
+      files: [],
+      variables: [],
+      named: saved.named,
+    });
+  }
   if (skeletal) {
     skeletonEventsToScripts(skeletal.skeleton, (event) =>
       session.scriptsReady?.animationEvent(object.reference, event),

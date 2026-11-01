@@ -43,6 +43,7 @@ import {
 import {
   readActorCauses,
   readCombat,
+  readGlobalData,
   readInterface,
   readMagicFavorites,
   readQuestStaticData,
@@ -83,7 +84,74 @@ import type { SkySave } from '../world/sky-weather.ts';
 import { cellKey } from '../world/worldspace.ts';
 import type { GameSave } from './game-save.ts';
 import { SAVE_VERSION, type SaveHeader } from './save-codec.ts';
-import type { SavedActor, SavedPlayer } from './world-save.ts';
+import type { SavedActor, SavedAttachedArrow, SavedGraphs, SavedPlayer } from './world-save.ts';
+import {
+  readAnimationGraphs,
+  type EssAnimationGraph,
+  type EssAnimationGraphs,
+} from '../formats/ess/animation-graphs.ts';
+import type { ActorGraphState } from '../animation/behavior-runtime.ts';
+
+/** GameState's open states (ReferenceState.openState): open, closed. */
+const OPEN_STATE_OPEN = 1;
+const OPEN_STATE_CLOSED = 3;
+
+/**
+ * A place as a 4x4 matrix (column-major): a translation, a rotation (a unit quaternion x, y,
+ * z, w) and a uniform scale.
+ */
+export function placeMatrix(
+  [x, y, z]: readonly [number, number, number],
+  [qx, qy, qz, qw]: readonly [number, number, number, number],
+  scale: number,
+): number[] {
+  const xx = qx * qx;
+  const yy = qy * qy;
+  const zz = qz * qz;
+  const xy = qx * qy;
+  const xz = qx * qz;
+  const yz = qy * qz;
+  const wx = qw * qx;
+  const wy = qw * qy;
+  const wz = qw * qz;
+  const s = scale;
+  return [
+    (1 - 2 * (yy + zz)) * s,
+    2 * (xy + wz) * s,
+    2 * (xz - wy) * s,
+    0,
+    2 * (xy - wz) * s,
+    (1 - 2 * (xx + zz)) * s,
+    2 * (yz + wx) * s,
+    0,
+    2 * (xz + wy) * s,
+    2 * (yz - wx) * s,
+    (1 - 2 * (xx + yy)) * s,
+    0,
+    x,
+    y,
+    z,
+    1,
+  ];
+}
+
+/**
+ * An original save's graph as ours keeps an actor's: its nodes and words by names (found as
+ * the graph's files are reached), its quad variables as vectors.
+ */
+export function actorGraphState(graph: EssAnimationGraph): ActorGraphState {
+  return {
+    files: [],
+    variables: [],
+    ...(graph.quads.length > 0 && { vectors: graph.quads }),
+    named: {
+      machines: graph.machines.map((machine) => [machine.graph, machine.node, machine.stateId]),
+      clips: graph.clips.map((clip) => [clip.graph, clip.node, clip.time]),
+      sequences: graph.generators.map((clip) => [clip.graph, clip.node, clip.time]),
+      words: graph.words,
+    },
+  };
+}
 
 const PLAYER_REF = 0x14;
 const PLAYER_BASE = 0x7;
@@ -451,6 +519,11 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   /** The actors with the package each ran (and whom it fought), where the save has them. */
   const savedActors: SavedActor[] = [];
   let savedPlayer: SavedPlayer | undefined;
+  /** The actors' graphs (by actor) and the player's: they go on as they are placed. */
+  const actorGraphs = new Map<number, ActorGraphState>();
+  let playerGraphs: SavedGraphs | undefined;
+  /** The arrows stuck in actors (their AttachedArrows3D extra data). */
+  const attachedArrows: SavedAttachedArrow[] = [];
   /** The map markers whose flags the save keeps (shown, travel to). */
   const mapMarkers = new Map<number, { visible: boolean; travel: boolean }>();
   /** Where actors' packages started, and the packages they ran once, for their saved actors. */
@@ -787,6 +860,7 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       actor.restrained = life === LifeState.restrained;
       applied |= ChangeRefr.lifeState;
     }
+    applied |= applyAnimation(form, formId, reference);
     if (form.actor && formId !== PLAYER_REF) {
       const saved = savedActor(form, formId);
       if (saved) savedActors.push(saved);
@@ -1026,6 +1100,25 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
         state.actor(formId).dismembered = limbs;
         return true;
       }
+      case 'AttachedArrows3D': {
+        // The arrows stuck in the actor (WorldSave.attachedArrows), oldest first: each its PROJ,
+        // its bone, how long it has been stuck and its place on the bone. TODO(M13): the bone
+        // index is taken as ours (the skeleton's bone order), the quaternion as Gamebryo's
+        // (w, x, y, z); the u32 after the list is not known.
+        for (const [arrow = 0, bone = 0xffff, ms = 0, ...place] of extra.items ?? []) {
+          const projectile = ours(arrow);
+          if (!projectile || bone === 0xffff || place.length < 8) continue;
+          const [x = 0, y = 0, z = 0, qw = 1, qx = 0, qy = 0, qz = 0, scale = 1] = place;
+          attachedArrows.push({
+            target: formId,
+            projectile,
+            node: bone,
+            local: placeMatrix([x, y, z], [qx, qy, qz, qw], scale),
+            age: ms / 1000,
+          });
+        }
+        return true;
+      }
       case 'NonActorMagicTarget':
         // The magic effects on an object: none in the saves read (an empty list, which leaves
         // nothing to apply). TODO(M13): the effects' data, once a save holds one.
@@ -1133,6 +1226,38 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
    * procedure states' child indices, procedurePath). TODO(M13): the procedures' own states
    * (where a Travel goes, a Sandbox's activity, a Patrol's point) and the high process's timers.
    */
+  /**
+   * The graphs' state (CHANGE_REFR_ANIMATION, docs/formats/ess.md "Animation graphs"), found
+   * again by names: an actor's goes on as it is placed (SavedActor.graph), the player's body
+   * and first person's as they are made, an object's as its 3D loads (GameState.graphs, which
+   * the placed objects take); a reference with no graph plays its door's Open or Close.
+   * Projectiles' graphs (a spell's hand effects) have no place in ours: left logged.
+   */
+  function applyAnimation(form: EssChangeForm, formId: number, reference: ReferenceState): number {
+    if (!form.animation || !(form.changeFlags & ChangeRefr.animation)) return 0;
+    if (form.type !== 0 && form.type !== 1) return 0;
+    let read: EssAnimationGraphs;
+    try {
+      read = readAnimationGraphs(form.animation);
+    } catch {
+      skips.add(`${changeFormTypeName(form.type)}: an animation block not read`);
+      return 0;
+    }
+    if (read.sequence !== undefined) {
+      const sequence = read.sequence.toLowerCase();
+      if (sequence === 'open') reference.openState = OPEN_STATE_OPEN;
+      else if (sequence === 'close') reference.openState = OPEN_STATE_CLOSED;
+      return ChangeRefr.animation;
+    }
+    const [first, second] = read.graphs.map(actorGraphState);
+    if (!first) return ChangeRefr.animation;
+    if (formId === PLAYER_REF)
+      playerGraphs = { body: first, ...(second && { firstPerson: second }) };
+    else if (form.type === 1) actorGraphs.set(formId, first);
+    else if (first.named) state.graphs.set(formId, { named: first.named });
+    return ChangeRefr.animation;
+  }
+
   function savedActor(form: EssChangeForm, formId: number): SavedActor | undefined {
     const actor = form.actor;
     if (actor?.process) {
@@ -1145,7 +1270,8 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     const target =
       (actor?.combat ? ours(actor.combat.target) : undefined) ?? groupTargets.get(formId);
     const horse = riding.get(formId);
-    if (!id && !target && horse === undefined) return undefined;
+    const graph = actorGraphs.get(formId);
+    if (!id && !target && horse === undefined && !graph) return undefined;
     const initial = form.initial;
     // An actor the save keeps where its record stands (no place written): there.
     const at =
@@ -1183,6 +1309,7 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       ...(furniture && { furniture }),
       ...(weaponDrawn(actor?.stateBits) && { weaponDrawn: true }),
       ...(horse !== undefined && { riding: horse }),
+      ...(graph && { graph }),
       ...(id && {
         package: {
           id,
@@ -1630,11 +1757,26 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       );
     }
   }
+  // Tables that hold nothing to apply when their lists are empty (as in every save read): the
+  // image space modifiers running (5), the ingredients' known effects (112), the paired
+  // animations under way (1004). TODO(M13): applied once a save holds some.
+  const empty = (type: number, data: Uint8Array): boolean => {
+    if (type !== 5 && type !== 112 && type !== 1004) return false;
+    try {
+      const value = readGlobalData(type, data, resolve)?.value;
+      if (Array.isArray(value)) return value.length === 0;
+      const effects = (value as { effects?: unknown } | undefined)?.effects;
+      return Array.isArray(effects) && effects.length === 0;
+    } catch {
+      return false;
+    }
+  };
   for (const table of [ess.globalData1, ess.globalData2, ess.globalData3]) {
     for (const entry of table) {
       if (
         ![0, 1, 3, 6, 7, 101, 103, 107, 109, 111, 1001].includes(entry.type) &&
-        entry.data.length > 0
+        entry.data.length > 0 &&
+        !empty(entry.type, entry.data)
       ) {
         skips.add(`global data ${String(entry.type)}`);
       }
@@ -1680,7 +1822,13 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     ...(sky && { sky }),
     ...(music.length > 0 && { music }),
     unsaved: [],
-    world: { actors: savedActors, graphs: [], ...(savedPlayer && { player: savedPlayer }) },
+    world: {
+      actors: savedActors,
+      graphs: [],
+      ...(savedPlayer && { player: savedPlayer }),
+      ...(playerGraphs && { playerGraphs }),
+      ...(attachedArrows.length > 0 && { attachedArrows }),
+    },
     inventoryDeltas: [...inventoryDeltas].map(([container, items]) => [container, [...items]]),
     ...(worn.size > 0 && { worn: [...worn] }),
   };

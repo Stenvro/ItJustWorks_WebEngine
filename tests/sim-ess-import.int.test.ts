@@ -195,6 +195,31 @@ describe.skipIf(!hasGamedata() || known === undefined)('a known original save (l
       // area go on with them.
       const runs = imported.save.world?.actors.filter((actor) => actor.package) ?? [];
       expect(runs.length).toBeGreaterThan(0);
+      // The actors' graphs as the save has them (CHANGE_REFR_ANIMATION, by names): each placed
+      // one's variables hold the save's values (a real's bits or an integer's), the player's
+      // body and first person graphs kept, the objects' too.
+      const graphed = (imported.save.world?.actors ?? []).filter(
+        (actor) => actor.graph && 'named' in actor.graph && sim.actor(actor.reference),
+      );
+      expect(graphed.length).toBeGreaterThan(5);
+      let words = 0;
+      let same = 0;
+      const bits = new DataView(new ArrayBuffer(4));
+      for (const saved of graphed) {
+        const behavior = sim.actor(saved.reference)?.placed.behavior;
+        const named = saved.graph && 'named' in saved.graph ? saved.graph.named : undefined;
+        for (const [name, word] of named?.words ?? []) {
+          const value = behavior?.variable(name);
+          if (value === undefined) continue;
+          words++;
+          bits.setUint32(0, word, true);
+          if (value === (word | 0) || value === bits.getFloat32(0, true)) same++;
+        }
+      }
+      expect(words).toBeGreaterThan(1000);
+      expect(same / words).toBeGreaterThan(0.95);
+      expect(imported.save.world?.playerGraphs?.firstPerson).toBeDefined();
+      expect(imported.skipped.filter((line) => /(REFR|ACHR): animation/.test(line))).toEqual([]);
       await sim.step(1);
       const going = runs.filter(
         (saved) =>
@@ -452,6 +477,8 @@ const DECAPITATED_HEAD = 0xdb5d0;
 /** ElenwenREF riding MQ101ElenwenHorse beside the carts. */
 const ELENWEN = 0x198bc;
 const ELENWEN_HORSE = 0x527f1;
+/** The Helgen soldier with three arrows stuck in it as the opening is saved. */
+const STUCK = 0x32db7;
 /** SteelArrow, what the opening's archers shoot. */
 const STEEL_ARROW = 0x1397f;
 
@@ -497,9 +524,18 @@ describe.skipIf(!hasGamedata() || known === undefined || opening === undefined)(
           (actor) => actor.combatTarget === ALDUIN_HELGEN,
         );
         expect(fighting.length).toBeGreaterThanOrEqual(6);
+        // The three arrows stuck in a soldier: on its bones, oldest first, for seconds now.
+        const stuck = imported.save.world?.attachedArrows ?? [];
+        expect(stuck.length).toBe(3);
+        expect(stuck.map((arrow) => arrow.target)).toEqual([STUCK, STUCK, STUCK]);
+        expect(stuck[0]?.age).toBeGreaterThan(stuck[1]?.age ?? 0);
+        expect(stuck[0]?.age).toBeLessThan(60);
+        expect(stuck[0]?.local.length).toBe(16);
         expect(
           imported.skipped.filter((line) =>
-            /DismemberedLimbs|CannotWear|NonActorMagicTarget|PARW|global data 10[17]/.test(line),
+            /DismemberedLimbs|CannotWear|NonActorMagicTarget|AttachedArrows3D|PARW|global data 10[17]/.test(
+              line,
+            ),
           ),
         ).toEqual([]);
       } finally {

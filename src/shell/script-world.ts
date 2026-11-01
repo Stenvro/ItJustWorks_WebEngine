@@ -30,6 +30,7 @@ import type {
   SavedActor,
   SavedGraphs,
   SavedPlayer,
+  SavedAttachedArrow,
   SavedProjectile,
   WorldSave,
 } from '../save/world-save.ts';
@@ -180,6 +181,8 @@ export interface ScriptView {
   savePlayer?(): SavedPlayer | undefined;
   /** What flies in this view (projectiles in flight, runes at rest), for a save. */
   saveProjectiles?(): readonly SavedProjectile[];
+  /** The arrows stuck in actors in this view, for a save. */
+  saveAttachedArrows?(): readonly SavedAttachedArrow[];
   /** The player passes into another cell or worldspace (a loading screen is up). */
   changingSpace?(): boolean;
   /** The regions of the player's cell (IsPlayerInRegion). */
@@ -646,12 +649,14 @@ export class ScriptWorld implements WorldBridge {
       }
     }
     const projectiles = [...this.#views].flatMap((view) => view.saveProjectiles?.() ?? []);
+    const attachedArrows = [...this.#views].flatMap((view) => view.saveAttachedArrows?.() ?? []);
     const playerGraphs = [...this.#views].map((view) => view.savePlayerGraphs?.()).find(Boolean);
     const player = [...this.#views].map((view) => view.savePlayer?.()).find(Boolean);
     return {
       actors,
       graphs,
       ...(projectiles.length > 0 && { projectiles }),
+      ...(attachedArrows.length > 0 && { attachedArrows }),
       ...(playerGraphs && { playerGraphs }),
       ...(player && { player }),
     };
