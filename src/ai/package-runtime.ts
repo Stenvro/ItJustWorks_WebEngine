@@ -278,6 +278,8 @@ export interface PackageBody {
   useFurniture(furniture: number, types?: number): Promise<boolean>;
   /** Gets up from the furniture it uses (none: at once). */
   leaveFurniture(): Promise<void>;
+  /** The furniture it is in (entered: not on its way, entering or leaving); undefined: none. */
+  inFurniture?(): number | undefined;
   /** Takes an idle marker (others leave it be) until it leaves it; false: taken. */
   takeIdleMarker(marker: number): boolean;
   /** Leaves the idle marker it took: its idle ends (IdleForceDefaultState). */

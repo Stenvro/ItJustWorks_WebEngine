@@ -690,8 +690,10 @@ interface SandboxChoice extends SandboxCandidate {
 
 const sandboxing: ProcedureRunner = async (run) => {
   const place = await placeIn(run, 0);
-  if (!place) return hold(run);
-  await goTo(run, place);
+  if (!place) {
+    await run.body.leaveFurniture();
+    return run.stopped() ? 'failure' : hold(run);
+  }
   const settings = settingsOf(run);
   const allows: Readonly<Record<SandboxSpot['kind'], boolean>> = {
     sit: run.inputs.bool(5, true),
@@ -729,6 +731,20 @@ const sandboxing: ProcedureRunner = async (run) => {
   // It scans its place every fMin..fMaxSandboxRescanSeconds (real seconds, at random), not as
   // each activity ends: a pick takes the last scan's list.
   let spots = await scan();
+  // In furniture of its place that it may use (one placed in it as its cell loaded, a loaded
+  // save's actor seated as it was saved): it goes on in it, a stay of that kind, before its
+  // first pick. Else it gets up and goes into its place. A loaded save's sandboxer at the
+  // Bannered Mare's counter got up from it at once, its graph leaving the state it was saved in.
+  // TODO(M13): the original's save keeps what is left of the stay (ours: a new one).
+  const seat = run.body.inFurniture?.();
+  const kept = spots.find(
+    (spot) => spot.reference === seat && spot.kind !== 'idle' && allows[spot.kind],
+  );
+  if (!kept) {
+    await run.body.leaveFurniture();
+    if (run.stopped()) return 'failure';
+    await goTo(run, place);
+  }
   void (async () => {
     while (!run.stopped()) {
       await run.wait(
@@ -737,6 +753,11 @@ const sandboxing: ProcedureRunner = async (run) => {
       if (!run.stopped()) spots = await scan();
     }
   })();
+  if (kept) {
+    at = { kind: SPOT_KINDS[kept.kind], reference: kept.reference, spot: kept };
+    plan.began(at.kind);
+    await stayFor(run, gameHours(run), sandboxDuration(at.kind, energy, settings, random));
+  }
   while (!run.stopped()) {
     const here = run.body.position();
     // Outside its place by more than fSandBoxRadiusHysteresis (and in no furniture there): it
@@ -1528,7 +1549,8 @@ export const PROCEDURES: Readonly<Record<string, ProcedureRunner>> = {
   patrol: standing(patrol),
   follow: standing(follow),
   wander: standing(wander),
-  sandbox: standing(sandbox),
+  // Sandbox gets up from furniture itself, unless it goes on in it (sandboxing).
+  sandbox,
   sit: useFurniture(SIT | LEAN, 'success'),
   sleep: useFurniture(SLEEP),
   useidlemarker: useFurniture(SIT | SLEEP | LEAN),

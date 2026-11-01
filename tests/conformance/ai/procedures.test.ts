@@ -138,8 +138,10 @@ describe.skipIf(!hasGamedata())('package flags on the gear (headless simulation)
     day: (number | undefined)[];
     asleep: (number | undefined)[];
     woken: (number | undefined)[];
+    /** How many of each weapon of her day she carries after it (0 for an empty hand). */
+    kept: number[];
     package?: number;
-  } = { day: [], asleep: [], woken: [] };
+  } = { day: [], asleep: [], woken: [], kept: [] };
 
   beforeAll(async () => {
     sim = await openSim({ hour: 10 });
@@ -170,7 +172,16 @@ describe.skipIf(!hasGamedata())('package flags on the gear (headless simulation)
     const pack = sim.package(AERI)?.id;
     sim.setHour(10);
     await sim.step(5);
-    aeri = { day, asleep, woken: await hands(), ...(pack !== undefined && { package: pack }) };
+    const kept = await Promise.all(
+      day.map(async (weapon) => (weapon === undefined ? 0 : sim.runtime.itemCount(AERI, weapon))),
+    );
+    aeri = {
+      day,
+      asleep,
+      woken: await hands(),
+      kept,
+      ...(pack !== undefined && { package: pack }),
+    };
   }, 600_000);
   afterAll(async () => {
     await sim.close();
@@ -187,8 +198,16 @@ describe.skipIf(!hasGamedata())('package flags on the gear (headless simulation)
     expect(aeri.asleep).toEqual([undefined, undefined]);
   });
 
-  it('has its weapons back in its hands as that package ends', () => {
-    expect(aeri.woken).toEqual(aeri.day);
+  // The flag going gives nothing back: the weapons stay in the inventory until a fight takes
+  // one up (observed in the original: Helgen's first prisoner keeps his battleaxe in his pack
+  // from the cart, whose MQ101StayInCart has the flag, to the block; docs/ai.md, The gear).
+  // The flag's sources above name it only, so this case once held our earlier rule, which gave
+  // the weapons back as the package ended.
+  it('keeps them off as that package ends, in its inventory, until a fight', () => {
+    expect(aeri.woken).toEqual([undefined, undefined]);
+    aeri.day.forEach((weapon, hand) => {
+      if (weapon !== undefined) expect(aeri.kept[hand]).toBeGreaterThan(0);
+    });
   });
 
   it.todo(
