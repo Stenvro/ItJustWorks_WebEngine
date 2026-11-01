@@ -121,17 +121,17 @@ These run through every area and explain most of what breaks in play.
 
 ### Magic, effects, perks
 
-| System                  | Status  | Main gaps                                                                                                           |
-| ----------------------- | ------- | ------------------------------------------------------------------------------------------------------------------- |
-| Casting                 | partial | MQ101's storm rate in the sim; NPC ward past its minimum (concentration refusal, fail sound, Touch reach: done)     |
-| Magicka cost            | partial | an NPC's cast in the sim                                                                                            |
-| Active effects          | partial | displacement rules, the conditions' interval (concentration effects a frame at a time: done)                        |
-| Archetypes              | partial | invisibility's refraction shimmer (dithered now), a summon's other place when the way is blocked, Magelight's limit |
-| Skill use               | partial | staffs with perks, a lasting effect by its first frame                                                              |
-| Enchanting              | partial | the charge without EAMT; worn armour shows no glow (TODO(M13): unchecked); dropped and made items glow: done        |
-| Projectiles, explosions | partial | a cone's push as its front passes, a lobber's slide on a slope; cone waves and stuck Magelights not saved           |
-| Visual effects          | partial | RFCT flags (face target, attach to camera); art on held weapons at the hand node                                    |
-| Perks                   | partial | 16 entry points unused by vanilla (mods)                                                                            |
+| System                  | Status  | Main gaps                                                                                                                                                                                                       |
+| ----------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Casting                 | partial | MQ101's storm rate in the sim; NPC ward past its minimum (concentration refusal, fail sound, Touch reach: done)                                                                                                 |
+| Magicka cost            | partial | an NPC's cast in the sim                                                                                                                                                                                        |
+| Active effects          | partial | displacement rules, the conditions' interval (concentration effects a frame at a time: done)                                                                                                                    |
+| Archetypes              | partial | invisibility's refraction shimmer (dithered now), a summon's other place when the way is blocked, Magelight's limit; MGEF Painless (228), Snap To Navmesh (92), Gory Visuals (19) (No Area, No Hit Event: done) |
+| Skill use               | partial | staffs with perks, a lasting effect by its first frame (sneaking trains Sneak by fSkillUsageSneakPerSecond: done)                                                                                               |
+| Enchanting              | partial | the charge without EAMT; worn armour shows no glow (TODO(M13): unchecked); dropped and made items glow: done                                                                                                    |
+| Projectiles, explosions | partial | a cone's push as its front passes, a lobber's slide on a slope; cone waves and stuck Magelights not saved                                                                                                       |
+| Visual effects          | partial | RFCT flags (face target, attach to camera); art on held weapons at the hand node                                                                                                                                |
+| Perks                   | partial | the gameplay checklist: docs/completeness/gameplay.md (510 of 580 items, round 1); 11 entry points unused by vanilla (mods); multi-rank DATA counts (27 perks)                                                  |
 
 ### Animation and bodies
 

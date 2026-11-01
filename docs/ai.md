@@ -462,7 +462,9 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   the weapon, 5 clear the talk and reactions (`node tools/package-census.ts`).
 - **The gear** (`src/shell/actor-package-gear.ts`): Weapon Drawn (659 packages) draws the
   actor's weapon while its package runs and sheathes it as the flag goes; Weapons Unequipped
-  (208: the sleep and meal packages) takes the weapons from its hands and gives them back after;
+  (208: the sleep and meal packages, MQ101's cart) takes the weapons from its hands and does not
+  give them back as the flag goes: its combat takes one up when it fights (observed in the
+  original: Helgen's first prisoner keeps his battleaxe in his pack from the cart to the block);
   Wear Sleep Outfit (18) dresses it in its sleep outfit (NPC\_ SOFT) meanwhile. In combat its
   combat has its weapons. Not yet honoured (tests/conformance/ai/package-evaluation.test.ts):
   Offers Services (85), Maintain Speed At Goal (62), Continue If PC Near (4), Skip Fallout
