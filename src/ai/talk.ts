@@ -12,6 +12,7 @@
 // dialogue engine's (subtype lines, src/scripting/runtime/dialogue-engine.ts) and the scenes'
 // (src/ai/scene-runtime.ts). Platform-independent.
 
+import { FurnitureRecordFlag } from '../world/furniture-records.ts';
 import { InterruptFlag } from './package-records.ts';
 
 type Vec3 = readonly [number, number, number];
@@ -554,4 +555,15 @@ export function sceneLineFaces(
       ? settings.sceneDialogueAngleMoving
       : settings.sceneDialogueAngle;
   return Math.abs(speaker.offDegrees) <= limit;
+}
+
+/**
+ * Whether an actor the player talks to gets out of the furniture it is in first: furniture
+ * with Must Exit To Talk (its record flag; 184 in the load order: the beds and bedrolls, the
+ * wood chopping blocks, the anvil, the levers, the Greybeards' meditation). In any other it
+ * talks from where it sits or leans. TODO(M13): whether the engine also waits for the actor to
+ * stand before the greeting is not documented (here the greeting begins at once).
+ */
+export function getsUpToTalk(furnitureRecordFlags: number): boolean {
+  return (furnitureRecordFlags & FurnitureRecordFlag.mustExitToTalk) !== 0;
 }

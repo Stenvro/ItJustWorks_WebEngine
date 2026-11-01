@@ -15,6 +15,7 @@ import {
   HeadTracker,
   LookPriority,
   pathLookPoint,
+  raceHeadTracks,
   VANILLA_HEAD_TRACK,
   type HeadTrackKind,
   type LookCandidate,
@@ -153,6 +154,7 @@ export class ActorLooks {
     const heading = staged.heading;
     const forward: Vec3 = [Math.sin(heading), Math.cos(heading), 0];
     const allowed =
+      raceHeadTracks(staged.placed.look.raceFlags) &&
       this.#options.session.scriptWorld.lookTargets.headTracking(reference) &&
       behavior.headTrackingAllowed;
     const chosen = allowed ? this.#target(staged, dt) : undefined;

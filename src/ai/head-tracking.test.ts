@@ -7,11 +7,18 @@ import {
   LookRequests,
   noticesPlayer,
   pathLookPoint,
+  raceHeadTracks,
   VANILLA_HEAD_TRACK,
   type LookInterest,
 } from './head-tracking.ts';
 
 describe('head tracking', () => {
+  it('drives the look-at only of a race with Use Head Track Anims', () => {
+    // A race with the flag (bit 0x8000; NordRace) and one without (TrollRace).
+    expect(raceHeadTracks(0x0001_8000)).toBe(true);
+    expect(raceHeadTracks(0x0000_0001)).toBe(false);
+  });
+
   it('chooses the nearest other actor within reach and 120° of its facing', () => {
     // Facing +y (heading 0) from the origin.
     const head = [0, 0, 100] as const;

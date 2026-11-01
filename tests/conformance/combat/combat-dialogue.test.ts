@@ -15,6 +15,8 @@ import {
   CombatDialogue,
   COMBAT_DIALOGUE_DEFAULTS,
   COMBAT_LINE_RANGE,
+  readCombatDialogueSettings,
+  spectatorComments,
 } from '../../../src/ai/combat-dialogue.ts';
 import { LOAD_ORDER } from './settings.ts';
 
@@ -63,6 +65,16 @@ describe('combat dialogue', () => {
     const lines = new CombatDialogue();
     expect(lines.may(1, 'Hit', 0, { listener: 0, blow: 0.05, random: () => 0 })).toBe(false);
     expect(lines.may(1, 'Hit', 0, { listener: 0, blow: 0.2, random: () => 0 })).toBe(true);
+  });
+
+  it('a spectator comments on a fight by fAISocialchanceForConversation (10 %; inside its Interior twin)  [original]', () => {
+    const chances = readCombatDialogueSettings((name) =>
+      name === 'fAISocialchanceForConversationInterior' ? 40 : undefined,
+    );
+    expect(COMBAT_DIALOGUE_DEFAULTS.spectatorChance).toBe(10);
+    expect(spectatorComments(chances, false, () => 0.09)).toBe(true);
+    expect(spectatorComments(chances, false, () => 0.1)).toBe(false);
+    expect(spectatorComments(chances, true, () => 0.39)).toBe(true);
   });
 
   it.todo('Bleedout lines every 1 .. 5 s (no Bleedout line is said yet)  [settings]');

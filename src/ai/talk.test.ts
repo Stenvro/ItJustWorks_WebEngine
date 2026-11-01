@@ -3,6 +3,7 @@ import { InterruptFlag } from './package-records.ts';
 import {
   NO_PACKAGE_INTERRUPTS,
   TalkPlanner,
+  getsUpToTalk,
   greetingHolds,
   sceneLineFaces,
   talkSettings,
@@ -226,6 +227,14 @@ describe('comments on what the player does', () => {
     // Knocking things over waits longer (fCommentOnPlayerKnockingThings).
     talk.update(VANILLA_TALK.playerActionTimer, actors, scene());
     expect(talk.commenter(actors, scene(), true)).toBeUndefined();
+  });
+});
+
+describe('talking to the player from furniture', () => {
+  it('gets up from furniture with Must Exit To Talk (a bed), not from a chair', () => {
+    // CommonBed01R's record flags (bit 28 set) and a chair's (none of it).
+    expect(getsUpToTalk(0x1000_0000)).toBe(true);
+    expect(getsUpToTalk(0x0001_0000)).toBe(false);
   });
 });
 
