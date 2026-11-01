@@ -43,6 +43,8 @@ export interface SavedActor {
   readonly graph?: SavedActorGraph | undefined;
   /** A rider getting out (its exit idle began): where its vehicle was then, how far it came. */
   readonly vehicleExit?: VehicleExit | undefined;
+  /** The horse it rides: it sits on it again as both are placed (none in older saves). */
+  readonly riding?: number | undefined;
 }
 
 /** An actor's graph as a save keeps it (older saves: the placed objects' form). */
