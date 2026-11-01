@@ -225,6 +225,12 @@ export interface CombatAiSettings {
   readonly blockTimeMin: number;
   readonly blockTimeMid: number;
   readonly blockTimeMax: number;
+  /**
+   * fAIShoutToleranceDegrees, fAIShoutMinAimSeconds: a shout is released once its shouter has
+   * faced its target within this many degrees for at least this long (shoutAimed).
+   */
+  readonly shoutToleranceDegrees: number;
+  readonly shoutMinAimSeconds: number;
   /** fCombatBashTargetBlockingMult: × a bash into a target that blocks it. */
   readonly bashTargetBlockingMult: number;
   /** fCombatRangedAttackChanceLastAttackBonus, …BonusTime: + this share, so long after an attack. */
@@ -380,6 +386,8 @@ const SETTINGS: readonly (readonly [keyof CombatAiSettings, string | undefined, 
   ['blockTimeMid', 'fCombatBlockTimeMid', 8],
   ['blockTimeMax', 'fCombatBlockTimeMax', 10000],
   ['bashTargetBlockingMult', 'fCombatBashTargetBlockingMult', 0],
+  ['shoutToleranceDegrees', 'fAIShoutToleranceDegrees', 5],
+  ['shoutMinAimSeconds', 'fAIShoutMinAimSeconds', 2],
   ['rangedAttackChanceLastAttackBonus', 'fCombatRangedAttackChanceLastAttackBonus', 0.5],
   ['rangedAttackChanceLastAttackBonusTime', 'fCombatRangedAttackChanceLastAttackBonusTime', 10],
   ['rangedAttackHoldTimeMin', 'fCombatRangedAttackHoldTimeMin', 0.25],

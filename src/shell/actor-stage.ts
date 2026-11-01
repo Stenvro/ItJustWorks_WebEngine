@@ -1489,6 +1489,10 @@ export class ActorStage {
     this.ai.remove(reference);
     this.senses.killed(reference);
     this.casting.remove(reference);
+    // Its weapons fall from its hands (iDeathDropWeaponChance).
+    this.combat.dropWeaponsOnDeath(reference).catch((error: unknown) => {
+      this.#options.terminal.log('actor', `a death's weapons: ${describe(error)}`, 'warn');
+    });
     this.flight.remove(reference);
     this.talk.remove(reference);
     this.mounts.remove(reference);

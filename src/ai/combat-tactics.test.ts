@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { Fields } from '../formats/esm/fields.ts';
 import { COMBAT_AI_DEFAULTS, readCombatAiSettings } from './combat-ai.ts';
-import { CombatStyleFlag, parseCombatStyle, type CombatStyle } from './combat-style-records.ts';
+import {
+  CombatStyleFlag,
+  CombatStyleRecordFlag,
+  parseCombatStyle,
+  type CombatStyle,
+} from './combat-style-records.ts';
+import { RaceAiFlag } from './race-combat-records.ts';
 import {
   advanceRadii,
   attackChance,
@@ -16,6 +22,7 @@ import {
   chooseEquipment,
   chooseManeuver,
   leftHandSpell,
+  leftHandWeapon,
   chooseSupport,
   choosesBlock,
   circleChance,
@@ -34,9 +41,11 @@ import {
   rangedAttackChance,
   rangeFit,
   restoreShare,
+  shoutAim,
   specialAttackChance,
   stalkTime,
   strafeChance,
+  styleAllowsDualWielding,
   threatens,
   type AttackInput,
   type EquipOption,
@@ -304,6 +313,67 @@ describe('combat tactics: how it moves', () => {
     expect(leftHandSpell({ ...hands, weaponType: 5 }, [flames], 300, melee, settings)).toBe(
       undefined,
     );
+  });
+
+  it('a race that can dual wield takes up a second one-handed weapon where its style allows', () => {
+    const sword: EquipOption = {
+      kind: 'melee',
+      id: 20,
+      damage: 8,
+      range: 141,
+      equipped: true,
+      weaponType: 1,
+      count: 1,
+    };
+    const dagger: EquipOption = { ...sword, id: 21, damage: 4, weaponType: 2, equipped: false };
+    const greatsword: EquipOption = { ...sword, id: 22, damage: 15, weaponType: 5 };
+    const hands = {
+      weapon: 20,
+      weaponType: 1,
+      shield: false,
+      leftWeapon: false,
+      leftSpell: false,
+    };
+    const human = RaceAiFlag.canDualWield | RaceAiFlag.canPickupItems;
+    const dual = style([0.5, 0.5, 1, 1, 1, 1, 1, 1, 1, 0.2], undefined, undefined, 0x5);
+    const options = [sword, dagger, greatsword];
+    // csDualWield's DATA (dueling, allow dual wielding): the dagger, not the two-handed sword.
+    expect(styleAllowsDualWielding(dual)).toBe(true);
+    expect(leftHandWeapon(hands, human, options, 100, dual, settings)).toBe(21);
+    // Not without the style's flag, nor for a race that cannot (a draugr's: no Can Dual Wield).
+    expect(styleAllowsDualWielding(melee)).toBe(false);
+    expect(leftHandWeapon(hands, human, options, 100, melee, settings)).toBeUndefined();
+    expect(
+      leftHandWeapon(hands, RaceAiFlag.canPickupItems, options, 100, dual, settings),
+    ).toBeUndefined();
+    // The record flag (bit 19) allows it too.
+    const recordFlagged = { ...melee, recordFlags: CombatStyleRecordFlag.allowDualWielding };
+    expect(leftHandWeapon(hands, human, options, 100, recordFlagged, settings)).toBe(21);
+    // Its right hand's own sword goes to the left only as a second one.
+    expect(leftHandWeapon(hands, human, [sword], 100, dual, settings)).toBeUndefined();
+    expect(leftHandWeapon(hands, human, [{ ...sword, count: 2 }], 100, dual, settings)).toBe(20);
+    // A shield, a left spell or a two-handed weapon leaves the hand be.
+    expect(leftHandWeapon({ ...hands, shield: true }, human, options, 100, dual, settings)).toBe(
+      undefined,
+    );
+    expect(
+      leftHandWeapon({ ...hands, leftSpell: true }, human, options, 100, dual, settings),
+    ).toBeUndefined();
+    expect(
+      leftHandWeapon({ ...hands, weaponType: 5 }, human, options, 100, dual, settings),
+    ).toBeUndefined();
+  });
+
+  it('a shout goes once its shouter has aimed within its tolerance long enough', () => {
+    const deg = Math.PI / 180;
+    // Skyrim.esm: fAIShoutToleranceDegrees 5, fAIShoutMinAimSeconds 2.
+    expect(shoutAim(10 * deg, undefined, 0, settings)).toEqual({ since: undefined, ready: false });
+    const start = shoutAim(4 * deg, undefined, 1, settings);
+    expect(start).toEqual({ since: 1, ready: false });
+    expect(shoutAim(2 * deg, start.since, 2.5, settings)).toEqual({ since: 1, ready: false });
+    expect(shoutAim(2 * deg, start.since, 3, settings)).toEqual({ since: 1, ready: true });
+    // Turned off its target, the aim starts over.
+    expect(shoutAim(6 * deg, start.since, 3, settings).since).toBeUndefined();
   });
 
   it('turns maneuvers into ways to go', () => {

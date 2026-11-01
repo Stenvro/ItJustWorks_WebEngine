@@ -2570,13 +2570,15 @@ choices its leaves make, `src/shell/actor-combat-ai.ts` runs it.
   Check Unreachable Target take the movement over while they act (the engine's movement
   resource).
 - **Exit Water** (read): the water stands above the actor's feet and its navmesh triangle is
-  flagged water, and a second test of the actor holds (TODO(M13): which; ours: its movers swim
-  it). It runs to the nearest dry triangle it reaches.
+  flagged water, and its race has No Combat In Water (RACE DATA; every race but the mudcrabs,
+  slaughterfish and horkers, which fight in the water). It runs to the nearest dry triangle it
+  reaches.
 - **Check Unreachable Target**: a way that could not be found marks the target unreachable for
   fCombatUnreachableTargetCheckTime (3 s). With a ranged option the close movement falls back to
   ranged (Fallback To Ranged); without one it holds where it stands, and target selection weighs
   the unreachable target down so a reachable one is fought first (TODO(M13): the weight).
-- **Acquire Weapon** (Find Weapon Sequence, Move to Weapon, the pick-up): one that held a weapon
+- **Acquire Weapon** (Find Weapon Sequence, Move to Weapon, the pick-up; only a race with Can
+  Pickup Items, RACE DATA): one that held a weapon
   this fight and has only its fists looks within fCombatAcquireWeaponUnarmed (Disarmed)
   DistanceMin .. Max (as far as its target stands, within the pair) for a weapon lying there,
   not within fCombatAcquireWeaponMinimumTargetDistance of its target; each is scored by its
@@ -2807,7 +2809,16 @@ bash behaviours (their values are ready); the flanking and ranged movement selec
   on a blocking target), chaining in the attack's window; blocking, it bashes by its bash chance
   (Style values). A bow is drawn by its ranged attack chance and loosed after its hold time; a
   spell or staff is cast by its cast chance when it casts nothing yet (TODO(M13): its line of
-  fire).
+  fire). A shout goes once it has faced its target within fAIShoutToleranceDegrees (5) for
+  fAIShoutMinAimSeconds (2) (shoutAim; TODO(M13): the settings' use is read from their names).
+- **Dual wielding**: a race with Can Dual Wield (RACE DATA) whose style allows dual wielding
+  (CSTY DATA flag 0x4, or the record flag of that name: the load order sets them apart on some
+  styles, so either counts; TODO(M13): which the engine reads) takes a second one-handed weapon
+  into its free left hand beside its right's (leftHandWeapon), before a left-hand spell; its
+  left attacks then run.
+- **Death**: a dying actor's weapons fall from its hands by iDeathDropWeaponChance (100): each a
+  reference at its hand's node that anyone may pick up (dropWeaponsOnDeath; TODO(M13): the
+  moment the original lets go of them).
 - **Blocks**: a melee swing coming at it within the swinger's reach it blocks once by its
   block chance (× fCombatBlockChanceWeaponMult without a shield), where its left hand blocks
   (a shield, a two-handed weapon, a one-handed weapon with the left hand free); it lets go as

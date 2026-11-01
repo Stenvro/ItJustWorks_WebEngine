@@ -143,6 +143,8 @@ export async function weaponOptions(
       damage: await equipment.weaponDamage(actor, form),
       range: combatDistance * Math.max(0.1, weapon.reach),
       equipped: false,
+      weaponType: weapon.weaponType,
+      count,
     });
   }
   for (const { id, crossbow } of ranged) {
