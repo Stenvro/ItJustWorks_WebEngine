@@ -20,6 +20,8 @@ const FRIEND = 0x204;
 /** Two guards of Whiterun's faction: allies. */
 const GUARD = 0x205;
 const OTHER_GUARD = 0x206;
+/** A chest Whiterun owns. */
+const CHEST = 0x400;
 
 const hold = (formId: number): FactionRecord => ({
   formId,
@@ -83,7 +85,13 @@ function engine(): { crime: CrimeEngine; state: GameState; events: StoryEventDat
       value: () => Promise.resolve({ base: 0, max: 0, current: 0 }),
       info: () => Promise.resolve(undefined),
       factionRank: () => Promise.resolve(-2),
+      isActor: (reference: number) => Promise.resolve(reference < CHEST),
     },
+    // The chest is Whiterun's (its owning faction tracks crime): only its own may take from it.
+    mayUse: (_actor: number, reference: number) => Promise.resolve(reference !== CHEST),
+    owner: (reference: number) =>
+      Promise.resolve({ actor: undefined, faction: reference === CHEST ? WHITERUN : undefined }),
+    magic: { commander: () => undefined },
     forms: {
       record: () => Promise.resolve(undefined),
       db: { formIdOf: () => undefined },
@@ -208,6 +216,57 @@ describe('crimes and their witnesses', () => {
     crime.witnessDied(CITIZEN);
     expect(state.factions.get(WHITERUN)?.crimeGold).toBe(0);
     expect(told.map((event) => event.kind)).toEqual(['crime', 'forgiven']);
+  });
+});
+
+describe('crimes of NPCs beyond assault', () => {
+  const seen = (crime: CrimeEngine, witnesses: readonly number[]): CrimeEvent[] => {
+    const told: CrimeEvent[] = [];
+    crime.listen((event) => told.push(event));
+    crime.world = { witnesses: () => [...witnesses] };
+    return told;
+  };
+
+  it('a theft: an NPC taking what it may not take, seen by those who care', async () => {
+    const { crime, state } = engine();
+    const told = seen(crime, [CITIZEN, RIFTEN_CITIZEN]);
+    await crime.npcTook(BANDIT, CHEST, 0x1000, 2);
+    expect(told).toEqual([
+      { kind: 'npcCrime', criminal: BANDIT, victim: undefined, witnesses: [CITIZEN], act: 'steal' },
+    ]);
+    // No bounty: only the player has bounties.
+    expect(state.factions.get(WHITERUN)?.crimeGold ?? 0).toBe(0);
+  });
+
+  it('none where it may take it, or from a corpse', async () => {
+    const { crime, state } = engine();
+    const told = seen(crime, [CITIZEN]);
+    await crime.npcTook(BANDIT, 0x500, 0x1000, 1);
+    state.actor(VICTIM).dead = true;
+    await crime.npcTook(BANDIT, VICTIM, 0x1000, 1);
+    expect(told).toEqual([]);
+  });
+
+  it('pickpocketing: taken from a living actor', async () => {
+    const { crime } = engine();
+    const told = seen(crime, [VICTIM, CITIZEN]);
+    await crime.npcTook(BANDIT, VICTIM, 0x1000, 1);
+    expect(told.map((event) => event.kind === 'npcCrime' && event.act)).toEqual(['pickpocket']);
+  });
+
+  it('a murder: the kill that ends its own assault, not one struck back', async () => {
+    const { crime } = engine();
+    const told = seen(crime, [CITIZEN]);
+    await crime.assault(BANDIT, VICTIM);
+    await crime.murder(BANDIT, VICTIM);
+    expect(told.map((event) => event.kind === 'npcCrime' && event.act)).toEqual([
+      'attack',
+      'murder',
+    ]);
+    // A kill without a blow of its own first (a scripted kill) is none.
+    told.length = 0;
+    await crime.murder(BANDIT, CITIZEN);
+    expect(told).toEqual([]);
   });
 });
 

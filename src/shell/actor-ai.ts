@@ -22,6 +22,7 @@ import {
   type PackageTarget,
 } from '../ai/package-records.ts';
 import { PROCEDURES } from '../ai/procedure-runs.ts';
+import { followCommander } from '../ai/engine-packages.ts';
 import { getsUpToTalk } from '../ai/talk.ts';
 import type { ProcessSlicer } from '../ai/process-levels.ts';
 import { aiSettingsOf } from '../ai/ai-settings.ts';
@@ -519,6 +520,11 @@ export class ActorAi {
         continue;
       }
       if (this.#ridden.delete(reference)) entry.packages.evaluate();
+      // One someone commands (a summon, a raised corpse) follows its commander out of combat
+      // (the engine's Follow Commander package, src/ai/engine-packages.ts).
+      const commander = runtime.magic.commander(reference);
+      if (commander !== undefined && commander !== reference)
+        entry.packages.push('followCommander', followCommander, commander);
       // Beyond the high process, on its turn (with the time it was owed).
       const packages = entry.packages;
       if (!this.#slicer) packages.update(seconds);
@@ -721,6 +727,10 @@ export class ActorAi {
         const scripts = this.#session.scriptsReady;
         if (!scripts) return false;
         await alight();
+        // Taken where it may not take it: a theft (crime-engine.ts npcTook), judged before the
+        // reference leaves its place.
+        const base = await scripts.baseOf(target);
+        if (base !== undefined) await scripts.crime.npcTook(reference, target, base, 1);
         await scripts.pickUp(target, reference);
         return true;
       },
@@ -770,12 +780,14 @@ export class ActorAi {
         const base = await scripts?.baseOf(item);
         if (!scripts || base === undefined) return false;
         await scripts.removeItem(holder, scripts.formHandle(base), 1, true, reference);
+        await scripts.crime.npcTook(reference, holder, base, 1);
         return true;
       },
       takeFrom: async (holder, item) => {
         const scripts = this.#session.scriptsReady;
         if (!scripts || (await scripts.itemCount(holder, item)) <= 0) return false;
         await scripts.removeItem(holder, scripts.formHandle(item), 1, true, reference);
+        await scripts.crime.npcTook(reference, holder, item, 1);
         return true;
       },
       ride: (allowed) => {

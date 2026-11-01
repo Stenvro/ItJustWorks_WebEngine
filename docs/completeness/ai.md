@@ -184,7 +184,8 @@ the readers ask for by name.
 - [x] Detection: sight, sound, light, line of sight, stealth, detection states (detection.ts).
 - [ ] Detection: the light's sum is ours.
 - [x] Crime: witnesses, alarms, guards' warnings and arrests, NPC assault alarms.
-- [ ] Crime: NPC crimes beyond assault; guards that only hear an NPC's alarm; fCrimeAlarmRespMult.
+- [ ] Crime: guards that only hear an NPC's alarm; fCrimeAlarmRespMult (NPC theft, pickpocketing and
+      murder alarms: docs/completeness/gameplay.md, round 3).
 - [x] Followers, horses, vehicles (followers.ts, mounts.ts, vehicles.ts).
 - [ ] Followers: the follow offset and walk zone's built-in values ours; mounting from the right.
 - [x] Dialogue-driven AI: greetings, force greet, dialogue activate, conversations (talk.ts).

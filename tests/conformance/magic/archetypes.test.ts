@@ -192,6 +192,9 @@ describe('what the original’s archetypes do that ours do not yet', () => {
   it.todo('Light (Magelight): how many stay at once, and on a moving object it struck');
   it.todo('Invisibility: the refraction shimmer through the actor (ours dithers it away)');
   it.todo('Summon Creature: the engine’s search for another place when the way ahead is blocked');
+  it.todo(
+    'Summon Creature: a summon picks no fight with its summoner’s neutrals (ours: the conjured familiar, a wolf by its template, fights the Bannered Mare’s people)',
+  );
   it.todo('Dispel: the engine’s rule for what it ends (fMagicDispelMagnitudeMult 5)');
   it.todo('Darkness, Night Eye: the image space and fMagicNightEyeAmbient (0.75)');
   it.todo(
