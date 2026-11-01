@@ -113,8 +113,10 @@ export class ActorTalk {
   readonly #inScene = new Map<number, number>();
   /** Those whose sandbox lets them talk with others (Allow Conversation). */
   readonly #sociable = new Set<number>();
-  /** Those a greeting holds (stopped, facing the player) until it ends or the player walks off. */
-  /** The actors a greeting holds, and since when (performance.now ms). */
+  /**
+   * Those a greeting holds (stopped, facing the player) until it ends or the player walks off,
+   * and since when (the clock below, so a run's timing is its frames', not the wall clock's).
+   */
   readonly #greetingHeld = new Map<number, number>();
   /** When a scene line's speaker began to wait to face its target (clock), by speaker:target. */
   readonly #facingSince = new Map<string, number>();
@@ -179,7 +181,7 @@ export class ActorTalk {
     // A greeting the player walks off from lets its actor go on; its line plays out.
     for (const [reference, since] of this.#greetingHeld) {
       const at = this.#staged.get(reference)?.position;
-      const heldFor = (performance.now() - since) / 1000;
+      const heldFor = this.#clock - since;
       if (at && this.#settings && greetingHolds(at, player, this.#settings, heldFor)) continue;
       this.#greetingHeld.delete(reference);
       ai.releaseFromTalk(reference);
@@ -294,7 +296,7 @@ export class ActorTalk {
     const stops = (spoken.info.flags & InfoFlag.canMoveWhileGreeting) === 0;
     if (stops) {
       this.#options.ai.holdToTalk(reference, () => this.#scene.player);
-      this.#greetingHeld.set(reference, performance.now());
+      this.#greetingHeld.set(reference, this.#clock);
     }
     try {
       await this.#speak(reference, spoken, PLAYER_REF);

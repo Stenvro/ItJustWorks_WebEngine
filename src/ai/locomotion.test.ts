@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { GraphChannels } from '../animation/behavior-runtime.ts';
 import type { MovementType } from '../world/movement.ts';
 import {
+  keptSpeed,
   Locomotion,
   MotionFeedback,
   rampSpeed,
@@ -161,9 +162,33 @@ describe("turning (the engine's angle controller)", () => {
       step = steer({ direction: [0, 1], gait: 'run' }, 0, types, 1 / 60, turning);
     }
     expect(step.velocity[1]).toBeCloseTo(370);
-    // Standing, it stops at once.
+    // Standing, it stops at once; the speed it kept falls at its deceleration rate, and only
+    // after standing that long (1 s) is it back at none.
     expect(steer({ gait: 'run' }, 0, types, 1 / 60, turning).velocity).toEqual([0, 0]);
+    expect(turning.speed).toBeCloseTo(370 - 370 / 60);
+    for (let i = 0; i < 60; i++) steer({ gait: 'run' }, 0, types, 1 / 60, turning);
     expect(turning.speed).toBe(0);
+  });
+
+  it('keeps its speed when the way it is asked to go changes while it moves', () => {
+    // A follower running at full speed whose path is planned anew: a frame without a way to go,
+    // then a new way at a right angle to the old. It goes on at nearly its full run, not from
+    // standing.
+    const turning = new Turning();
+    const types = { ...TYPES, acceleration: 1, deceleration: 1 };
+    for (let i = 0; i < 90; i++)
+      steer({ direction: [0, 1], gait: 'run' }, 0, types, 1 / 60, turning);
+    expect(turning.speed).toBeCloseTo(370);
+    steer({ gait: 'run' }, 0, types, 1 / 60, turning);
+    const after = steer({ direction: [1, 1], gait: 'run' }, 0, types, 1 / 60, turning);
+    expect(turning.speed).toBeGreaterThan(360);
+    expect(Math.hypot(after.velocity[0], after.velocity[1])).toBeGreaterThan(0);
+    // A frame its animation moves it without root motion (a transition) does not stop it either.
+    expect(keptSpeed(turning.speed, 0, 370, types, 1 / 60)).toBeGreaterThan(350);
+    // Its animation moving it faster than it kept, it goes on at that speed.
+    expect(keptSpeed(100, 300, 370, types, 1 / 60)).toBe(300);
+    // Where its race gives no rate, standing stops it.
+    expect(keptSpeed(370, 0, 370, {}, 1 / 60)).toBe(0);
   });
 
   it("holds its facing standing within its race's angular tolerance (a horker's 45°)", () => {

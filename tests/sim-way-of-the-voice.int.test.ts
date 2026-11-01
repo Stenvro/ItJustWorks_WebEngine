@@ -18,6 +18,8 @@ const HIGH_HROTHGAR_MARKER = 0x16352;
 const FRONT_DOOR = 0x877d3;
 /** MQ105SetStage20: the trigger inside the front doors. */
 const SET_STAGE_20 = 0x649bc;
+/** On the main hall's floor, below the steps Arngeir comes down to greet the player. */
+const HALL_FLOOR: [number, number, number] = [-330, -850, -980];
 /** MQ105's Arngeir, Borri, EinarthWord and BorriWord aliases. */
 const ARNGEIR = 33;
 const BORRI = 34;
@@ -197,8 +199,10 @@ describe.skipIf(!hasGamedata())('MQ105 The Way of the Voice', () => {
       const trigger = await sim.position(SET_STAGE_20);
       if (trigger) await sim.walkTo(trigger, 20, 400);
       expect(await sim.until(() => sim.stageDone(MQ105, 20), 10)).toBe(true);
-      const hall = await sim.position(arngeir);
-      if (hall) await sim.moveTo([hall[0] + 150, hall[1] - 500, hall[2] + 10]);
+      // The player waits on the hall's floor beside the way Arngeir walks down from the
+      // steps (a spot from Arngeir's position at this moment fell on the steps' edge, where
+      // a step of his more or less had them stand on a ledge he could not walk up to).
+      await sim.moveTo(HALL_FLOOR);
       expect(await sim.until(() => greeting(sim, arngeir) !== undefined, 60)).toBe(true);
       await sim.converse(arngeir, [/summons/], greeting(sim, arngeir));
       expect(await sim.until(() => sim.stageDone(MQ105, 30), 10)).toBe(true);
