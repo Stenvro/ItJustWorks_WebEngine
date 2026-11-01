@@ -51,7 +51,11 @@ const RALOF = 0x2bf9e;
 /** MQ101HelgenArcher3REF, one of the archers fighting Alduin. */
 const HELGEN_ARCHER = 0xe72b9;
 /** How many of the placed living actors run the package the save has them on (of 16). */
-const GOING_FLOOR = 14;
+const GOING_FLOOR = 16;
+/** The two Imperial mages (dunCGImperialMageC01) fighting Alduin away from the player. */
+const HELGEN_MAGES = [0xf3e78, 0xf3e7a];
+/** MUSCombatBossChargen, the music MQ101 adds as Alduin attacks. */
+const MUS_COMBAT_BOSS_CHARGEN = 0x1094aa;
 /** Alduin over Helgen (MQ101). */
 const ALDUIN_HELGEN = 0x32db7;
 
@@ -356,6 +360,9 @@ describe.skipIf(!hasGamedata() || opening === undefined)('the opening, imported 
     const imported = importEss(ess, world, { name: 'Imported', number: 1, now: 0 });
     // The actors the save keeps at their records' places run their packages there too.
     expect(imported.skipped.some((line) => line.includes('place is not known'))).toBe(false);
+    // The sky MQ101 forces (an override), the boss music its script added as Alduin attacks.
+    expect(imported.save.sky?.override).toBe(imported.save.weather);
+    expect(imported.save.music).toEqual([MUS_COMBAT_BOSS_CHARGEN]);
     const bytes = await writeSave({
       header: imported.header,
       thumbnail: new Uint8Array(),
@@ -394,6 +401,19 @@ describe.skipIf(!hasGamedata() || opening === undefined)('the opening, imported 
       expect(appearance?.race).toBe(HIGH_ELF_RACE);
       expect(appearance?.headParts.length).toBeGreaterThan(0);
       expect(appearance?.tints.length).toBeGreaterThan(0);
+      // The help the player has done is not shown again; the music and the sky as saved.
+      expect([...sim.runtime.state.helpDone]).toEqual(expect.arrayContaining(['look', 'forward']));
+      expect(sim.runtime.world.addedMusic?.()).toEqual([MUS_COMBAT_BOSS_CHARGEN]);
+      expect(sim.runtime.world.currentWeather?.()).toBe(imported.save.weather);
+      // What the player wears as the save has it (its inventory's Worn extra data).
+      const worn = imported.save.worn?.find(([actor]) => actor === PLAYER_REF)?.[1] ?? [];
+      expect(worn.length).toBeGreaterThan(0);
+      for (const [item] of worn) {
+        expect([item, await sim.runtime.equipment.isEquipped(PLAYER_REF, item)]).toEqual([
+          item,
+          true,
+        ]);
+      }
       // The actors placed around the player run the packages the save has them run (as
       // GetCurrentPackage answers: a fighter's combat override package, a scene's package done
       // while its action runs), a second on: the packages go on from the branch they had reached,
@@ -412,10 +432,12 @@ describe.skipIf(!hasGamedata() || opening === undefined)('the opening, imported 
       }
       expect(placed).toBeGreaterThan(10);
       // Hadvar on his way to the keep, Ralof at its marker and Alduin's strafe (the scenes'
-      // packages), the wounded in the road, the archers fighting Alduin on their combat override
-      // package (DefaultHoldPositionLinkedRef128). TODO(M13): two archers the save has fighting
-      // do not take the fight up again here.
-      expect(going).toEqual(expect.arrayContaining([HADVAR, RALOF, ALDUIN_HELGEN, HELGEN_ARCHER]));
+      // packages), the wounded in the road, the archers and mages fighting Alduin on their combat
+      // override package (DefaultHoldPositionLinkedRef128): the two mages beyond the fighters'
+      // reach of the player take their fight up too, as the original keeps them fighting.
+      expect(going).toEqual(
+        expect.arrayContaining([HADVAR, RALOF, ALDUIN_HELGEN, HELGEN_ARCHER, ...HELGEN_MAGES]),
+      );
       expect(going.length).toBeGreaterThanOrEqual(GOING_FLOOR);
     } finally {
       await sim.close();

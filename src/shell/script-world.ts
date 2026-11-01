@@ -34,7 +34,7 @@ import type {
   WorldSave,
 } from '../save/world-save.ts';
 import type { ScreenModifiers } from './screen-modifiers.ts';
-import { SkyMode, type SkyWeather } from '../world/sky-weather.ts';
+import { SkyMode, type SkySave, type SkyWeather } from '../world/sky-weather.ts';
 import type { Terminal } from './terminal.ts';
 import type { HudSignals } from './hud-signals.ts';
 import type { Talking } from './world-lines.ts';
@@ -169,6 +169,11 @@ export interface ScriptView {
   facesForLine?(speaker: number, target: number): boolean | undefined;
   /** What a save keeps of the view's actors (their stage's: src/save/world-save.ts). */
   saveActors?(): readonly SavedActor[];
+  /**
+   * The loaded cells' objects that moved (physics knocked them about) note where they are now,
+   * as a cell leaving the loaded area does (moved-objects.ts): a save keeps their places.
+   */
+  noteMovedObjects?(): void;
   /** The player's graphs (src/save/world-save.ts). */
   savePlayerGraphs?(): SavedGraphs | undefined;
   /** The player's sneaking, drawn weapon and vehicle exit (src/save/world-save.ts). */
@@ -622,6 +627,7 @@ export class ScriptWorld implements WorldBridge {
     const actors: SavedActor[] = [];
     const graphs: [number, SavedGraph][] = [];
     const seen = new Set<number>();
+    for (const view of this.#views) view.noteMovedObjects?.();
     for (const view of this.#views) {
       for (const actor of view.saveActors?.() ?? []) {
         if (seen.has(actor.reference)) continue;
@@ -1110,8 +1116,19 @@ export class ScriptWorld implements WorldBridge {
 
   music(type: number, add: boolean): void {
     const music = this.sounds?.()?.music;
+    this.#musicAdded = this.#musicAdded.filter((id) => id !== type);
+    if (add) this.#musicAdded.push(type);
     if (add) music?.add(type);
     else music?.remove(type);
+  }
+
+  /** The music types scripts added (as told here), still in play when the music says so. */
+  #musicAdded: number[] = [];
+
+  addedMusic(): readonly number[] {
+    const playing = this.sounds?.()?.music.state.added;
+    this.#musicAdded = this.#musicAdded.filter((id) => playing?.includes(id) ?? true);
+    return [...this.#musicAdded];
   }
 
   /** The session's image-space modifiers (what ImageSpaceModifier's functions change). */
@@ -1139,6 +1156,14 @@ export class ScriptWorld implements WorldBridge {
 
   weatherTransition(): number {
     return this.sky?.transition ?? 1;
+  }
+
+  skyState(): SkySave | undefined {
+    return this.sky?.save();
+  }
+
+  restoreSky(saved: SkySave): void {
+    this.sky?.restore(saved);
   }
 
   skyMode(): number {

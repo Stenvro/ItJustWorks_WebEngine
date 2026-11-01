@@ -4,12 +4,14 @@
 // (the shell or the headless simulation), which then applies the player's place and the
 // weather. Free of browser APIs but for compression (save-codec.ts).
 
+import type { Hand } from '../gameplay/equipment.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { RuntimeSave } from '../scripting/runtime/runtime-save.ts';
 import { readSave, SAVE_VERSION, writeSave, type SaveHeader } from './save-codec.ts';
 import type { SavedHazard } from '../scripting/runtime/hazard-engine.ts';
 import type { WorldSave } from './world-save.ts';
+import type { SkySave } from '../world/sky-weather.ts';
 
 /** The save file's body. */
 export interface GameSave {
@@ -18,6 +20,13 @@ export interface GameSave {
   readonly player: Placement;
   /** The sky's weather then (none outside). */
   readonly weather: number | undefined;
+  /**
+   * The sky beside its weather: the change under way (the weather it comes from, when it
+   * began), the weather scripts hold over the regions. None in saves made before it.
+   */
+  readonly sky?: SkySave | undefined;
+  /** The music types scripts added (MusicType.Add) still in play, oldest first. */
+  readonly music?: readonly number[] | undefined;
   /** What could not be saved (threads in flight, ...): logged again as it loads. */
   readonly unsaved: readonly string[];
   /**
@@ -32,6 +41,11 @@ export interface GameSave {
    * .ess keeps inventories as changes against the records: ess-import.ts).
    */
   readonly inventoryDeltas?: readonly (readonly [number, readonly (readonly [number, number])[]])[];
+  /**
+   * What actors wear and hold beside their outfits, by actor (an imported .ess keeps it as its
+   * inventory entries' Worn extra data): put on once the inventory deltas are in.
+   */
+  readonly worn?: readonly (readonly [number, readonly (readonly [number, Hand | undefined])[]])[];
 }
 
 export interface SaveRequest {
@@ -66,6 +80,8 @@ export async function saveGame(
     runtime: data,
     player,
     weather: runtime.world.currentWeather?.(),
+    sky: runtime.world.skyState?.(),
+    music: runtime.world.addedMusic?.(),
     unsaved,
     world: runtime.world.saveWorld?.(),
     hazards: runtime.hazards.save(),
@@ -88,6 +104,17 @@ export async function saveGame(
     body,
   });
   return { bytes, unsaved };
+}
+
+/**
+ * A loaded save's sky and music put back once the world is in place: the sky's change under
+ * way going on (a save of before kept the weather alone: it comes at once), the music types
+ * scripts had added in play again.
+ */
+export function restoreAmbience(runtime: ScriptRuntime, save: GameSave): void {
+  if (save.sky) runtime.world.restoreSky?.(save.sky);
+  else if (save.weather !== undefined) runtime.world.setWeather?.(save.weather, true, false, false);
+  for (const type of save.music ?? []) runtime.world.music?.(type, true);
 }
 
 /** A save file read back: its header and body. */
@@ -130,6 +157,7 @@ export async function loadGameScripts(
       else inventory.delete(item);
     }
   }
+  for (const [actor, items] of save.worn ?? []) await runtime.equipment.putOnSaved(actor, items);
   for (const what of save.unsaved) problems.push(`not saved: ${what}`);
   return problems;
 }

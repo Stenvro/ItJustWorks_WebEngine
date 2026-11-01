@@ -256,6 +256,18 @@ export interface EssQuestChanges {
   /** The story manager event that started it (runtime data). */
   readonly event?: SavedStoryEvent;
   readonly alreadyRun?: boolean;
+  /** Its runs' data (instanceData). */
+  readonly instances?: { readonly next: number; readonly instances: readonly EssQuestInstance[] };
+}
+
+/** One run of a quest as its instance data keeps it. */
+export interface EssQuestInstance {
+  readonly id: number;
+  /** The references its aliases hold in this run. */
+  readonly aliases: readonly { readonly alias: number; readonly reference: number }[];
+  /** The text display globals' values this run holds. */
+  readonly globals: readonly { readonly global: number; readonly value: number }[];
+  readonly rest: readonly number[];
 }
 
 export interface EssFactionChanges {
@@ -272,6 +284,11 @@ export interface EssFactionChanges {
 
 export interface EssCellChanges {
   readonly flags?: number;
+  /**
+   * What the player has seen (the local map's fog): 32 bytes, 16 × 16 bits, an exterior cell's
+   * one (at 0, 0), an interior's per part with the part's two signed bytes (its x and y).
+   */
+  readonly seen?: readonly { readonly x: number; readonly y: number; readonly bits: Uint8Array }[];
   readonly fullName?: string;
   readonly owner?: number;
 }
@@ -1163,10 +1180,13 @@ export function readChangeForm(entry: ChangeFormEntry, resolve: RefIdResolver): 
           initial?.kind === 'detached cell'
             ? initial.x !== undefined
             : !fitsInteriorSeenData(reader, rest);
-        if (exterior) reader.skip(32);
+        if (exterior) cell.seen = [{ x: 0, y: 0, bits: reader.bytes(32) }];
         else {
           const n = reader.vsval();
-          for (let i = 0; i < n; i++) reader.skip(2 + 32);
+          const parts: { x: number; y: number; bits: Uint8Array }[] = [];
+          for (let i = 0; i < n; i++)
+            parts.push({ x: reader.i8(), y: reader.i8(), bits: reader.bytes(32) });
+          cell.seen = parts;
         }
       }
       rest();
@@ -1247,14 +1267,25 @@ function readQuest(reader: EssReader, flags: number, resolve: RefIdResolver): Es
     if (reader.u8() !== 0) quest.event = readStoryEvent(reader, resolve);
   }
   if (has(ChangeQuest.instanceData)) {
-    reader.u32();
-    const n = reader.vsval();
-    for (let i = 0; i < n; i++) {
-      reader.u32();
-      reader.skip(reader.vsval() * 7);
-      reader.skip(reader.vsval() * 7);
-      reader.skip(3);
+    // The quest's runs (instances): each its id, its aliases' references (alias id, then the
+    // reference), the text display globals' values (as Quest.UpdateCurrentInstanceGlobal keeps
+    // them), three bytes. TODO(M13): the first word (1 in the saves read: the next run's id?)
+    // and the three bytes (0 in every run read).
+    const next = reader.u32();
+    const instances: EssQuestInstance[] = [];
+    for (let n = reader.vsval(), i = 0; i < n; i++) {
+      const id = reader.u32();
+      const aliases: { alias: number; reference: number }[] = [];
+      for (let m = reader.vsval(), j = 0; j < m; j++) {
+        aliases.push({ alias: reader.u32(), reference: resolve(reader.refId()) });
+      }
+      const globals: { global: number; value: number }[] = [];
+      for (let m = reader.vsval(), j = 0; j < m; j++) {
+        globals.push({ global: resolve(reader.refId()), value: reader.f32() });
+      }
+      instances.push({ id, aliases, globals, rest: [...reader.bytes(3)] });
     }
+    quest.instances = { next, instances };
   }
   if (has(ChangeQuest.alreadyRun)) quest.alreadyRun = reader.u8() !== 0;
   return quest;

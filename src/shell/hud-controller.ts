@@ -173,8 +173,17 @@ export class HudController implements HudSink {
   readonly #notices: QuestNotice[] = [];
   /** Help messages by their event (lower case). */
   readonly #help = new Map<string, ShownHelp>();
-  /** Events whose help the player has done (they are not shown again until reset). */
-  readonly #helpDone = new Set<string>();
+  /** Without a game: the events whose help was done here. */
+  readonly #helpDoneHere = new Set<string>();
+
+  /**
+   * Events whose help the player has done (they are not shown again until reset): the game
+   * state's, which a save keeps.
+   */
+  get #helpDone(): Set<string> {
+    return this.#source.runtime()?.state.helpDone ?? this.#helpDoneHere;
+  }
+
   /** The stealth meter (hud-stealth.ts). */
   readonly #stealth = new StealthMeter();
   /** The hands holding a Target Location spell, when they were last checked, the frame shown. */
