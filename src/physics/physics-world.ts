@@ -135,6 +135,58 @@ const DEACTIVATION_TURN = 0.05;
 const DEACTIVATION_CHECK = 0.25;
 const DEACTIVATION_SECONDS = 1;
 
+/** A deactivation group (PhysicsWorld.#deactivate): one system's awake bodies. */
+interface RestingGroup {
+  readonly bodies: RAPIER.RigidBody[];
+  resting: boolean;
+}
+
+/**
+ * The deactivation groups joined into Havok's simulation islands: groups whose awake bodies
+ * touch (a contact point in the last step) belong to one island. Fixed and keyframed bodies join
+ * none (Havok keeps them out of islands), nor do sleeping ones.
+ */
+function contactIslands(
+  world: RAPIER.World,
+  groups: ReadonlyMap<string, RestingGroup>,
+): RestingGroup[][] {
+  const groupOf = new Map<number, string>();
+  for (const [key, group] of groups) for (const body of group.bodies) groupOf.set(body.handle, key);
+  const parent = new Map<string, string>();
+  const find = (key: string): string => {
+    let root = key;
+    while (parent.has(root)) root = parent.get(root) ?? root;
+    if (root !== key) parent.set(key, root);
+    return root;
+  };
+  const narrow = world.narrowPhase;
+  for (const [key, group] of groups) {
+    for (const body of group.bodies) {
+      for (let i = 0; i < body.numColliders(); i++) {
+        const handle = body.collider(i).handle;
+        narrow.contactPairsWith(handle, (other) => {
+          const otherBody = world.getCollider(other).parent();
+          const otherKey = otherBody ? groupOf.get(otherBody.handle) : undefined;
+          if (otherKey === undefined || find(otherKey) === find(key)) return;
+          const touches = { found: false };
+          narrow.contactPair(handle, other, world.bodies, (manifold) => {
+            if (manifold.numContacts() > 0) touches.found = true;
+          });
+          if (touches.found) parent.set(find(otherKey), find(key));
+        });
+      }
+    }
+  }
+  const islands = new Map<string, RestingGroup[]>();
+  for (const [key, group] of groups) {
+    const root = find(key);
+    const island = islands.get(root);
+    if (island) island.push(group);
+    else islands.set(root, [group]);
+  }
+  return [...islands.values()];
+}
+
 /** The layers of ragdolls' bodies: the living's (powered, hit) and the dead's. */
 const RAGDOLL_LAYERS: ReadonlySet<number> = new Set([Layer.biped, Layer.bipedNoCc, Layer.deadBip]);
 
@@ -2656,7 +2708,7 @@ export class PhysicsWorld {
     const seen = new Set<number>();
     // Per system (its colliders' system; a lone body is its own): awake bodies and whether all
     // of them have stayed still long enough.
-    const systems = new Map<string, { bodies: RAPIER.RigidBody[]; resting: boolean }>();
+    const systems = new Map<string, RestingGroup>();
     this.world.bodies.forEach((body) => {
       if (!body.isDynamic() || body.isSleeping() || !body.isEnabled()) return;
       const handle = body.handle;
@@ -2701,6 +2753,13 @@ export class PhysicsWorld {
       if (entry.seconds < DEACTIVATION_SECONDS || this.#settling.has(handle)) group.resting = false;
     });
     for (const handle of still.keys()) if (!seen.has(handle)) still.delete(handle);
+    // Havok deactivates a simulation island as a whole: the awake bodies joined by contacts
+    // (and their systems' constraints) rest together or not at all. One put to sleep while
+    // something still moving lay on it (the crate under a severed head rocking in it) dropped
+    // its own contacts with what held it up and fell through the ground.
+    for (const group of contactIslands(this.world, systems)) {
+      if (group.some(({ resting }) => !resting)) for (const each of group) each.resting = false;
+    }
     for (const { bodies, resting } of systems.values()) {
       if (!resting) continue;
       for (const body of bodies) {

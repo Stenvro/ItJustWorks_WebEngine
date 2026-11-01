@@ -2,7 +2,8 @@
 // FootLeft, FootRight, FootFront, JumpDown, ..., sounding the impact for the ground underfoot
 // or the water the feet are in) and SoundPlay events (SoundPlay.<descriptor>: a sound
 // descriptor by editor id at the actor; NPCSoundPlay.<descriptor> only for actors other than
-// the player). Notes: docs/audio.md ("Footsteps").
+// the player; SoundStop.<descriptor> and SoundRelease.<descriptor> end what those started).
+// Notes: docs/audio.md ("Footsteps").
 
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { Layer } from '../physics/collision-layers.ts';
@@ -52,25 +53,57 @@ export interface SoundingWorld {
 
 const SOUND_PLAY = 'soundplay';
 const NPC_SOUND_PLAY = 'npcsoundplay';
+const SOUND_STOP = 'soundstop';
+const SOUND_RELEASE = 'soundrelease';
+
+/** A sound an actor's animation started, which a later event can stop (SoundInstance). */
+interface StoppableSound {
+  stop(immediately?: boolean): void;
+  readonly ended: boolean;
+}
 
 /** The handler of an actor's raised events (AnimatedSkeleton.onEvents). */
 export function actorSounds(
   actor: SoundingActor,
   world: SoundingWorld,
 ): (events: readonly GraphEvent[]) => void {
+  // What its animations play, by lower-case descriptor: SoundStop.<descriptor> stops them at
+  // once (the bow's draw loop, WPNBowPullLPM, as the arrow leaves), SoundRelease.<descriptor>
+  // lets them end (a loop plays out its release). TODO(M13): the original's split between the
+  // two is inferred from their names and the data (Stop follows loops cut short, Release a
+  // dog's bark left to finish).
+  const playing = new Map<string, StoppableSound[]>();
+  const play = (sounds: ActorSoundOutput, name: string): void => {
+    const key = name.toLowerCase();
+    void sounds
+      .playNamed(name, () => actor.feet(), actor.reference)
+      .then((sound) => {
+        if (!isStoppable(sound)) return;
+        const list = (playing.get(key) ?? []).filter((each) => !each.ended);
+        list.push(sound);
+        playing.set(key, list);
+      });
+  };
+  const stop = (name: string, immediately: boolean): void => {
+    const key = name.toLowerCase();
+    for (const sound of playing.get(key) ?? []) if (!sound.ended) sound.stop(immediately);
+    playing.delete(key);
+  };
   return (events) => {
     const sounds = world.sounds();
     if (!sounds) return;
     for (const event of events) {
       const tag = event.name.toLowerCase();
       if (tag === SOUND_PLAY) {
-        if (event.payload !== undefined)
-          void sounds.playNamed(event.payload, () => actor.feet(), actor.reference);
+        if (event.payload !== undefined) play(sounds, event.payload);
         continue;
       }
       if (tag === NPC_SOUND_PLAY) {
-        if (!actor.player && event.payload !== undefined)
-          void sounds.playNamed(event.payload, () => actor.feet(), actor.reference);
+        if (!actor.player && event.payload !== undefined) play(sounds, event.payload);
+        continue;
+      }
+      if (tag === SOUND_STOP || tag === SOUND_RELEASE) {
+        if (event.payload !== undefined) stop(event.payload, tag === SOUND_STOP);
         continue;
       }
       // Without a set of its own: the default one (the sound system's DFTS).
@@ -121,6 +154,15 @@ export function footstepGait(motion: GaitMotion | undefined): FootstepGait {
   if (motion.sneaking) return 'sneak';
   if (motion.sprinting) return 'sprint';
   return motion.running ? 'run' : 'walk';
+}
+
+function isStoppable(sound: unknown): sound is StoppableSound {
+  return (
+    typeof sound === 'object' &&
+    sound !== null &&
+    'stop' in sound &&
+    typeof sound.stop === 'function'
+  );
 }
 
 /**

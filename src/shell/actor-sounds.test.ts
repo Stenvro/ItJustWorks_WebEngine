@@ -50,6 +50,32 @@ describe('actorSounds, SoundPlay', () => {
     expect(playNamed.mock.calls[0]?.[0]).toBe('NPCGiantAttackStomp');
     expect(footstep).not.toHaveBeenCalled();
   });
+
+  it('stops what SoundPlay started: SoundStop at once, SoundRelease letting it end', async () => {
+    const stops: (boolean | undefined)[] = [];
+    const loop = { ended: false, stop: (immediately?: boolean) => void stops.push(immediately) };
+    const footstep = vi.fn(() => Promise.resolve(true));
+    const world: SoundingWorld = {
+      sounds: () => ({ footstep, playNamed: () => Promise.resolve(loop) }),
+      ground: () => undefined,
+      water: () => undefined,
+    };
+    const look = { footstepSet: FOOTSTEP_SET } as unknown as ActorLook;
+    const handle = actorSounds(
+      { look, feet: () => [0, 0, 0], gait: () => 'run', player: true },
+      world,
+    );
+    handle([graphEvent('SoundPlay.WPNBowPullLPM')]);
+    await Promise.resolve();
+    // Another descriptor's stop leaves it playing; its own stops it (any case).
+    handle([graphEvent('SoundStop.WPNBowZoomIn'), graphEvent('SoundStop.wpnbowpulllpm')]);
+    expect(stops).toEqual([true]);
+    handle([graphEvent('SoundPlay.NPCDogBarkDistant')]);
+    await Promise.resolve();
+    handle([graphEvent('SoundRelease.NPCDogBarkDistant')]);
+    expect(stops).toEqual([true, false]);
+    expect(footstep).not.toHaveBeenCalled();
+  });
 });
 
 describe('footstepGait', () => {

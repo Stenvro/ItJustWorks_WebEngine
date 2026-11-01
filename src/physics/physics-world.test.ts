@@ -977,6 +977,73 @@ describe('deactivation', () => {
     expect(rigid.isSleeping()).toBe(true);
     physics.free();
   });
+
+  it('keeps a body awake while something moving lies on it (one simulation island)', () => {
+    const islandMatrix = new CollisionMatrix([
+      {
+        formId: 1,
+        editorId: 'L_STATIC',
+        index: Layer.static,
+        name: '',
+        flags: 0,
+        collidesWith: [4],
+      },
+      {
+        formId: 4,
+        editorId: 'L_CLUTTER',
+        index: Layer.clutter,
+        name: '',
+        flags: 0,
+        collidesWith: [1, 4],
+      },
+    ]);
+    const physics = new PhysicsWorld(islandMatrix, GRAVITY);
+    physics.addObject(collision(body(box([-200, -200, -20], [200, 200, 0]))), IDENTITY, {
+      reference: 1,
+      kind: 'object',
+    });
+    const dynamic = (min: [number, number, number], max: [number, number, number], mass: number) =>
+      collision({
+        ...body({ ...box(min, max), layer: Layer.clutter }),
+        motion: 'dynamic',
+        layer: Layer.clutter,
+        mass,
+        inertia: [0.5, 0.5, 0.5],
+        maxLinearVelocity: 100,
+        maxAngularVelocity: 30,
+      });
+    // A crate's floor, and on it something that keeps moving (a head rocking in it): the board
+    // stays where it lies while the rocker moves back and forth on it.
+    const board = physics.addObject(dynamic([-30, -30, 0], [30, 30, 2], 20), IDENTITY, {
+      reference: 2,
+      kind: 'object',
+    });
+    const rocker = physics.addObject(dynamic([-5, -5, 2], [5, 5, 12], 4), IDENTITY, {
+      reference: 3,
+      kind: 'object',
+    });
+    const floor = board.bodies[0]?.body;
+    const moving = rocker.bodies[0]?.body;
+    if (!floor || !moving) throw new Error('no body');
+    for (let i = 0; i < 60; i++) physics.step(1 / 60);
+    let sign = 1;
+    for (let i = 0; i < 240; i++) {
+      physics.step(1 / 60, () => {
+        if (i % 30 === 0) sign = -sign;
+        moving.setLinvel({ x: 0.2 * sign, y: 0, z: moving.linvel().z }, true);
+      });
+      // Put to sleep under the moving body, the board would drop its contacts with the ground
+      // while still being moved, and fall through it.
+      expect(floor.isSleeping()).toBe(false);
+    }
+    expect(floor.translation().z * 69.99125).toBeGreaterThan(-1);
+    // Left alone, both come to rest and sleep together.
+    for (let i = 0; i < 300 && !floor.isSleeping(); i++) physics.step(1 / 60);
+    expect(floor.isSleeping()).toBe(true);
+    expect(moving.isSleeping()).toBe(true);
+    expect(floor.translation().z * 69.99125).toBeGreaterThan(-1);
+    physics.free();
+  });
 });
 
 describe('characters on characters', () => {
