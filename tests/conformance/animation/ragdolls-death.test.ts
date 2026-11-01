@@ -161,10 +161,13 @@ describe.skipIf(!hasGamedata())('Hulda killed at the bar counter (headless simul
   // feet are pressed flat against the ankles' limit within three steps, the calves lock upright
   // and she drapes over the counter on straight legs (head at 96–99) in about half the phases.
   // At Havok's 4 she slumps in every phase, but Rapier's ragdolls then no longer settle
-  // (world-time-step.test.ts: the solver's iterations).
-  it.fails(
-    'her body slumps: the head falls below the counter’s height  ' +
-      'TODO(M13): ragdoll joints at their limits solved as Havok’s soft limits',
+  // (world-time-step.test.ts: the solver's iterations). With the movement actions performed
+  // through the idle tree and the syncing blenders' sync points, the phase of her lean at the
+  // kill is one in which she slumps; the joints' limits are solved as before. TODO(M13): ragdoll joints at
+  // their limits solved as Havok's soft limits (the straight-legs drape of the other phases).
+  it(
+    'her body slumps: the head falls below the counter’s height (in the phase of her lean the ' +
+      'simulation reaches)',
     () => {
       expect(headBefore).toBeGreaterThan(100);
       expect(headAfter).toBeLessThan(60);

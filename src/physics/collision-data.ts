@@ -96,6 +96,11 @@ export interface CollisionBody {
   readonly maxLinearVelocity: number;
   /** Radians per second. */
   readonly maxAngularVelocity: number;
+  /**
+   * Havok's allowed penetration depth (Havok units): how deep into another it may go in a step
+   * before continuous collision steps in (sweptBody). Undefined: 0.
+   */
+  readonly penetrationDepth?: number;
   /** hkQualityType (debris, moving, critical, bullet, ...). */
   readonly quality: number;
   /**
@@ -745,6 +750,7 @@ export function buildCollision(
       maxLinearVelocity: rigid?.maxLinearVelocity ?? 104.4,
       maxAngularVelocity: rigid?.maxAngularVelocity ?? 31.57,
       quality: rigid?.qualityType ?? 1,
+      penetrationDepth: rigid?.penetrationDepth ?? 0,
       solverDeactivation: rigid?.solverDeactivation ?? 1,
       shapes,
     });

@@ -4517,7 +4517,7 @@ export class ActorCombat implements CombatBridge {
 
   /**
    * Knocks an actor down (Actor.PushActorAway, a trap's push, an explosion's knock-down
-   * flags, an attack's knockdown): its idle tree's ActionKnockdown says how (the humans'
+   * flags, an attack's knockdown): its idle tree's ActionKnockDown says how (the humans'
    * NPCKnockDown, the bear's, the giant's: "Ragdoll"; mammoths, atronachs and wisps: a
    * stagger), and its ragdoll is pushed away from `from` by `force` (an impulse on its bodies,
    * Havok units; negative pulls). A race with No Knockdowns (RACE DATA), or a graph with no
@@ -4549,7 +4549,7 @@ export class ActorCombat implements CombatBridge {
     const flight = this.#options.flight?.();
     const flies = flight?.isFlying(reference) === true || flight?.perched(reference) === true;
     const immune = flies || ((fighter.body?.look.raceFlags ?? 0) & RaceFlag.noKnockdowns) !== 0;
-    const event = immune ? undefined : (await this.#act(fighter, 'ActionKnockdown'))?.toLowerCase();
+    const event = immune ? undefined : (await this.#act(fighter, 'ActionKnockDown'))?.toLowerCase();
     if (event === 'ragdoll' || event === 'ragdollinstant') {
       await knockdowns.knockDown(reference, push);
       return;

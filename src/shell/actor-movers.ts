@@ -270,6 +270,16 @@ export interface ActorMoversOptions {
    * whether its graph took an idle.
    */
   readonly performAction?: (actor: number, action: string) => Promise<boolean>;
+  /**
+   * Performs a movement action at once where its idles ask only the actor's own state
+   * (ActorFurniture.actionEventNow): whether its graph took an idle, undefined when it cannot be
+   * told now.
+   */
+  readonly performActionNow?: (
+    actor: number,
+    action: string,
+    as?: { readonly sneaking?: boolean },
+  ) => boolean | undefined;
   /** Whether the player sees a point (an actor that cannot find its way is warped unseen). */
   readonly seen?: (point: Vec3) => boolean;
 }
@@ -1322,10 +1332,15 @@ export class ActorMovers {
     return straightReach(set, start, to, mover?.character.shape.radius ?? WALKER_RADIUS);
   }
 
-  /** An actor's movement actions through its idle tree (its falls and landings). */
+  /** An actor's movement actions through its idle tree (moving, turning, falls, landings). */
   #actionsOf(reference: number): LocomotionActions | undefined {
-    const perform = this.#options.performAction;
-    return perform ? { perform: (action) => perform(reference, action) } : undefined;
+    const { performAction: perform, performActionNow: now } = this.#options;
+    return perform
+      ? {
+          perform: (action) => perform(reference, action),
+          ...(now && { performNow: (action, as) => now(reference, action, as) }),
+        }
+      : undefined;
   }
 
   /** A script moved an actor: its controller goes there (no sliding). */

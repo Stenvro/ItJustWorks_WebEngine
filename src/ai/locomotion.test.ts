@@ -497,3 +497,47 @@ describe('Locomotion falls and landings (the idle tree)', () => {
     expect(graph.values.get('VelocityZ')).toBe(-400);
   });
 });
+
+describe('Locomotion movement actions (the idle tree)', () => {
+  it('performs the actions at once where it can, in order behind one its idle tree resolves', async () => {
+    const now: string[] = [];
+    const asked: string[] = [];
+    // ActionMoveStart's idle asks more than the actor's own state here (resolved later).
+    const locomotion = new Locomotion({
+      perform: (action) => {
+        asked.push(action);
+        return Promise.resolve(true);
+      },
+      performNow: (action, as) => {
+        if (action === 'ActionMoveStart' && !asked.includes(action)) return undefined;
+        now.push(as?.sneaking === undefined ? action : `${action}:${String(as.sneaking)}`);
+        return true;
+      },
+    });
+    const graph = recorder();
+    locomotion.drive([graph], frame({}));
+    // Setting out to the right while turning: the move start waits for its idle tree, the strafe
+    // and the turn wait behind it.
+    locomotion.drive([graph], frame({ velocity: [100, 100], turnRate: -1 }));
+    expect(now).toEqual([]);
+    // The sync variables are set at once, whether or not the graph takes the event.
+    expect(graph.values.get('iSyncIdleLocomotion')).toBe(1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(asked).toEqual(['ActionMoveStart']);
+    expect(now).toEqual(['ActionMoveRight', 'ActionTurnLeft']);
+    // Nothing is sent to the graphs directly: the idles send their own events.
+    expect(graph.events).toEqual([]);
+    // ActionSneak is performed as the actor was before (its idles pick SneakStart by
+    // IsSneaking() == 0).
+    locomotion.drive([graph], frame({ velocity: [100, 100], turnRate: -1, sneaking: true }));
+    locomotion.drive([graph], frame({ velocity: [100, 100], turnRate: -1, sneaking: false }));
+    expect(now.slice(-2)).toEqual(['ActionSneak:false', 'ActionSneak:true']);
+    locomotion.drive([graph], frame({ swimming: true }));
+    expect(now.slice(-4)).toEqual([
+      'ActionMoveStop',
+      'ActionMoveLeft',
+      'ActionTurnStop',
+      'ActionSwimStateChange',
+    ]);
+  });
+});

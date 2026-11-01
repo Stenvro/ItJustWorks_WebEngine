@@ -22,12 +22,14 @@ import {
   IdleMarkerRecordFlag,
   parseIdleMarker,
   readIdleTree,
+  type IdleRecord,
   type IdleTree,
 } from '../ai/idle-records.ts';
 import { aiSettingsOf } from '../ai/ai-settings.ts';
 import type { SandboxSpot } from '../ai/package-runtime.ts';
 import { parseNif } from '../formats/nif/nif.ts';
 import type { Vec3 } from '../render/math.ts';
+import { actorStateHolds, type ActorStateAs } from '../scripting/runtime/condition-values.ts';
 import type { ActorInteraction } from '../scripting/runtime/runtime.ts';
 import { ObjectHandle } from '../scripting/values.ts';
 import { meshPath, seededRandom } from '../world/actors.ts';
@@ -245,6 +247,11 @@ export class ActorFurniture {
   readonly #markers = new Map<number, number>();
   readonly #kinds = new Map<number, Promise<SpotKind | undefined>>();
   #idleTree: Promise<IdleTree> | undefined;
+  /** The idle tree once read, and each behavior project's graph key once known (actionEventNow). */
+  #idleTreeNow: IdleTree | undefined;
+  readonly #graphKeys = new Map<string, string | undefined>();
+  /** When each idle with a replay delay last played, by actor (scripts' real seconds). */
+  readonly #replays = new Map<number, Map<number, number>>();
 
   constructor(options: ActorFurnitureOptions) {
     this.#options = options;
@@ -482,12 +489,36 @@ export class ActorFurniture {
     }
     const subject = new ObjectHandle(user.reference, 'actor');
     const context = target === undefined ? {} : { target };
+    const now = runtime.state.realTime;
     const idle = await tree.resolveAsync(parent.formId, graph, (candidate) =>
-      runtime.conditionsHold(candidate.conditions, subject, undefined, context),
+      this.#replayReady(user.reference, candidate, now)
+        ? runtime.conditionsHold(candidate.conditions, subject, undefined, context)
+        : Promise.resolve(false),
     );
     // Entering it meanwhile (the idle was asked for on the way): the furniture has it now.
     if (!inFurniture && this.#takenBy(user.reference, action)) return undefined;
-    return idle?.event !== undefined && user.send(idle.event) ? idle.event : undefined;
+    if (idle?.event === undefined || !user.send(idle.event)) return undefined;
+    this.#replayed(user.reference, idle, runtime.state.realTime);
+    return idle.event;
+  }
+
+  /**
+   * Whether an idle may play again for an actor: its replay delay (IDLE DATA, seconds; 126
+   * vanilla idles have one: the ambient idles' greetings, the drunks', the guards') has passed
+   * since it last played for that actor. TODO(M13): whether the original counts it per actor
+   * (as here) and whether a group idle's delay holds its children (here: the idle played).
+   */
+  #replayReady(actor: number, idle: IdleRecord, now: number): boolean {
+    if (!(idle.replayDelay > 0)) return true;
+    const at = this.#replays.get(actor)?.get(idle.formId);
+    return at === undefined || now - at >= idle.replayDelay;
+  }
+
+  #replayed(actor: number, idle: IdleRecord, now: number): void {
+    if (!(idle.replayDelay > 0)) return;
+    let played = this.#replays.get(actor);
+    if (!played) this.#replays.set(actor, (played = new Map<number, number>()));
+    played.set(idle.formId, now);
   }
 
   /**
@@ -538,7 +569,9 @@ export class ActorFurniture {
   }
 
   #tree(): Promise<IdleTree> {
-    this.#idleTree ??= this.#options.session.db.then((db) => readIdleTree(db));
+    this.#idleTree ??= this.#options.session.db
+      .then((db) => readIdleTree(db))
+      .then((tree) => (this.#idleTreeNow = tree));
     return this.#idleTree;
   }
 
@@ -548,7 +581,52 @@ export class ActorFurniture {
     if (project === undefined) return undefined;
     const behaviors = await this.#options.session.animation.behaviors(project);
     const graphFile = behaviors?.character.behavior;
-    return graphFile === undefined ? undefined : behaviorGraphKey(graphFile);
+    const key = graphFile === undefined ? undefined : behaviorGraphKey(graphFile);
+    this.#graphKeys.set(project, key);
+    return key;
+  }
+
+  /**
+   * Performs an action at once, as the engine does as it performs one (its idle search and the
+   * graph's event in the same frame): the event its graph took, null when nothing under it plays,
+   * undefined when it cannot be told now (the idle tree or the graph's key not read yet, the
+   * actor's furniture keeps it from the action, or an idle on the way has a condition that is
+   * not of the actor's own state: actorStateHolds). Undefined asks for actionEvent instead.
+   * `as`: the actor's state as the action is performed (ActionSneak: before its sneaking
+   * changes).
+   */
+  actionEventNow(
+    user: FurnitureUser,
+    action: string,
+    as?: ActorStateAs,
+  ): string | null | undefined {
+    const runtime = this.#options.session.scriptsReady;
+    const tree = this.#idleTreeNow;
+    const project = user.placed.look.behavior;
+    if (!runtime || !tree || project === undefined || this.#takenBy(user.reference, action)) {
+      if (!tree) void this.#tree();
+      return undefined;
+    }
+    if (!this.#graphKeys.has(project)) {
+      void this.#graphKey(user);
+      return undefined;
+    }
+    const graph = this.#graphKeys.get(project);
+    const parent = tree.action(action);
+    if (graph === undefined || !parent) return null;
+    const asked = { unknown: false };
+    const now = runtime.state.realTime;
+    const idle = tree.resolve(parent.formId, graph, (candidate) => {
+      if (asked.unknown) return false;
+      if (!this.#replayReady(user.reference, candidate, now)) return false;
+      const holds = actorStateHolds(runtime, candidate.conditions, user.reference, as);
+      if (holds === undefined) asked.unknown = true;
+      return holds === true;
+    });
+    if (asked.unknown) return undefined;
+    if (idle?.event === undefined || !user.send(idle.event)) return null;
+    this.#replayed(user.reference, idle, now);
+    return idle.event;
   }
 
   /**

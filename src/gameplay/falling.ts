@@ -29,11 +29,13 @@ export function fallSettings(
   npc: boolean,
 ): FallSettings {
   const fallback = npc ? NPC_FALL : PLAYER_FALL;
-  const suffix = npc ? 'NPC' : '';
+  const [min, mult, exponent] = npc
+    ? ['fJumpFallHeightMinNPC', 'fJumpFallHeightMultNPC', 'fJumpFallHeightExponentNPC']
+    : ['fJumpFallHeightMin', 'fJumpFallHeightMult', 'fJumpFallHeightExponent'];
   return {
-    min: value(`fJumpFallHeightMin${suffix}`) ?? fallback.min,
-    mult: value(`fJumpFallHeightMult${suffix}`) ?? fallback.mult,
-    exponent: value(`fJumpFallHeightExponent${suffix}`) ?? fallback.exponent,
+    min: value(min) ?? fallback.min,
+    mult: value(mult) ?? fallback.mult,
+    exponent: value(exponent) ?? fallback.exponent,
   };
 }
 
