@@ -2124,8 +2124,16 @@ meanwhile.
   The Stagger effect (MGEF archetype 33: Unrelenting Force's 0.75, 1.25, 1.5; the Incinerate
   and Ice Spike perks' push 0.25; the giants' and atronachs' area slams) staggers by its
   magnitude weighed so against the target's mass, from its caster's side.
+  ObjectReference.KnockAreaEffect(magnitude, radius) staggers so too (every actor within the
+  radius, from the reference, at the magnitude); it knocks nobody down. The original's scripts
+  use it as their stagger: a dragon's landings (DragonActorScript: 1 within its length, 2 lengths
+  for a forceful one) and the wall Alduin breaks in Helgen's tower (1.5 lengths), a giant's
+  stomp (0.5), the Greybeards' greeting (0.2, 0.25), the hall falling in Helgen's keep (1
+  within 2048; HelgenHallCollapseScript names its marker staggerOrigin). Allies in Helgen's
+  attack stagger as Alduin lands about them and run on (`tests/sim-opening-ride.int.test.ts`).
+  TODO(M13): whether its magnitude falls off towards the radius.
 - **Knock-downs** (`src/shell/actor-knockdowns.ts`, `actor-bodies.ts`, the player's:
-  `player-knockdown.ts`): Actor.PushActorAway and KnockAreaEffect (Unrelenting Force's third
+  `player-knockdown.ts`): Actor.PushActorAway (Unrelenting Force's third
   word is its effect's VoicePushEffectScript: PushActorAway with PushForce 15), a trap's
   ProcessTrapHit push, an explosion with Knock Down Always (EXPL DATA 0x4; By Formula 0x8:
   those below fKnockdownCurrentHealthThreshold of their health, TODO(M13)), an attack whose

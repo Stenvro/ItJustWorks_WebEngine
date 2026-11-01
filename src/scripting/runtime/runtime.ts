@@ -177,9 +177,10 @@ export interface WorldBridge {
   knockDown?(actor: number, from: Vec3, force: number): void;
   /**
    * A Stagger effect on an actor (its magnitude, weighed against its mass by combat:
-   * src/shell/actor-combat.ts staggerEffect), from its caster's side.
+   * src/shell/actor-combat.ts staggerEffect), from its caster's side (`from`: where the
+   * stagger comes from when its source is no actor, a KnockAreaEffect's reference).
    */
-  stagger?(actor: number, magnitude: number, caster: number | undefined): void;
+  stagger?(actor: number, magnitude: number, caster: number | undefined, from?: Vec3): void;
   /** Paralysis begins or ends on an actor (it lies as its ragdoll meanwhile). */
   paralyze?(actor: number, on: boolean): void;
   /** Grab Actor begins or ends: the target hangs as its ragdoll before its caster meanwhile. */
