@@ -880,8 +880,15 @@ export class CastingEngine {
             }),
           });
     // The hit is told (TESHitEvent: OnHit): an actor's by a hostile spell that took hold, an
-    // object's by any spell that reached it (a brazier lit by Flames, a target struck).
-    if ((applied > 0 && hostile && actor) || !actor) {
+    // object's by any spell that reached it (a brazier lit by Flames, a target struck); not
+    // when every effect delivered has No Hit Event (MGEF DATA 0x10).
+    let tells = false;
+    for (const index of options.effects ?? item.effects.map((_, at) => at)) {
+      const entry = item.effects[index];
+      const flags = entry ? ((await runtime.magic.effect(entry.effect))?.flags ?? 0) : 0;
+      if ((flags & EffectFlag.noHitEvent) === 0) tells = true;
+    }
+    if (tells && ((applied > 0 && hostile && actor) || !actor)) {
       runtime.events.emit('hit', {
         target,
         aggressor: caster,
@@ -1074,7 +1081,12 @@ export class CastingEngine {
       (item.flags & MagicSpellFlag.areaIgnoresLineOfSight) === 0;
     const settings = await this.explosionSettings();
     const sight = explosionSightStart(point, options.direction, settings);
-    const areas = delivered.item.effects.map((entry) => entry.area * UNITS_PER_FOOT);
+    // An effect with No Area (MGEF DATA 0x800) takes none, whatever its item gives it.
+    const areas: number[] = [];
+    for (const entry of delivered.item.effects) {
+      const flags = (await runtime.magic.effect(entry.effect))?.flags ?? 0;
+      areas.push((flags & EffectFlag.noArea) !== 0 ? 0 : entry.area * UNITS_PER_FOOT);
+    }
     const widest = Math.max(0, ...areas);
     if (widest <= 0) return [];
     const reached: number[] = [];

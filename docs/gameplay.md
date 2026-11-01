@@ -197,15 +197,15 @@ Sources: UESP "Skyrim:Leveling", "Skyrim:Skills", the AVIF records.
 - `useSkill(actor, skill, uses)` is the API every system calls; only the player gains (NPCs'
   skills follow their class and level). The units of use:
 
-| Source                                                       | Uses                                                                                      |
-| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
-| a lock opened / a pick broken (`lockpicking-menu.ts`)        | fSkillUsageLockPickVeryEasy .. VeryHard (2, 3, 5, 8, 13) / fSkillUsageLockPickBroken 0.25 |
-| a trade (`barter-menu.ts`)                                   | the item's value, once a trade (UESP "Speech")                                            |
-| persuade, intimidate, bribe, gifts                           | the game's FavorDialogueScript: `Game.AdvanceSkill("Speechcraft", ...)`                   |
-| forging (`crafting-menu.ts`)                                 | fConstructibleSkillUseMult × value ^ fConstructibleSkilluseExp + ...Const (3, 0.65, 25)   |
-| tempering                                                    | 3.8 × √(value gained × quality levels gained) (UESP's fit)                                |
-| disenchanting                                                | fDisenchantSkillUse (0.0025) a gold of the enchantment                                    |
-| sneaking (detection), casting (magic), hits, blocks (combat) | fSkillUsageSneakPerSecond a second; a spell's base cost; the systems that come            |
+| Source                                                               | Uses                                                                                                                                |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| a lock opened / a pick broken (`lockpicking-menu.ts`)                | fSkillUsageLockPickVeryEasy .. VeryHard (2, 3, 5, 8, 13) / fSkillUsageLockPickBroken 0.25                                           |
+| a trade (`barter-menu.ts`)                                           | the item's value, once a trade (UESP "Speech")                                                                                      |
+| persuade, intimidate, bribe, gifts                                   | the game's FavorDialogueScript: `Game.AdvanceSkill("Speechcraft", ...)`                                                             |
+| forging (`crafting-menu.ts`)                                         | fConstructibleSkillUseMult × value ^ fConstructibleSkilluseExp + ...Const (3, 0.65, 25)                                             |
+| tempering                                                            | 3.8 × √(value gained × quality levels gained) (UESP's fit)                                                                          |
+| disenchanting                                                        | fDisenchantSkillUse (0.0025) a gold of the enchantment                                                                              |
+| sneaking (`actor-senses.ts`), casting (magic), hits, blocks (combat) | fSkillUsageSneakPerSecond (0.625) a second sneaking near an actor unaware of the player; a spell's base cost; the systems that come |
 
 - Books, trainers and `Game.IncrementSkill(By)` (`incrementSkill`) give the experience the skill
   lacks to its next level, more by its SkillAdvance (UESP "Skill Books": "sufficient experience
