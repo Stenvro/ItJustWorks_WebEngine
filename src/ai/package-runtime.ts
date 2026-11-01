@@ -528,6 +528,28 @@ export function gaitOf(flags: PackageFlags): Gait {
 }
 
 /**
+ * A jogging package's pace (PKDT preferred speed Jog): fJogInterpolationBetweenWalkAndRun of the
+ * way from its walking speed to its running speed (1 + 0.65 on MoveRequest.pace's scale); its
+ * gait runs (gaitOf). Undefined for the other speeds.
+ */
+export function jogPace(
+  flags: PackageFlags,
+  settings: Pick<AiSettings, 'jogInterpolation'>,
+): number | undefined {
+  if ((flags.flags & PackageFlag.preferredSpeed) === 0 || flags.speed !== 1) return undefined;
+  return 1 + Math.max(0, Math.min(1, settings.jogInterpolation));
+}
+
+/** A body whose travels go at a pace (a jogging package's) unless one asks for its own. */
+function pacedBody(body: PackageBody, pace: number | undefined): PackageBody {
+  if (pace === undefined) return body;
+  const paced = Object.create(body) as PackageBody & { travel: PackageBody['travel'] };
+  paced.travel = (to, gait, arrive, space, options) =>
+    body.travel(to, gait, arrive, space, { pace, ...options });
+  return paced;
+}
+
+/**
  * An actor's package as a save keeps it (as the original's actor change form keeps its
  * process's package): which, whether it completed, where it began, the branch it runs and what
  * its Finds found. On load the actor's packages are chosen as ever; when the saved one is
@@ -620,6 +642,11 @@ export interface TravelOptions {
    * goes: a follower matching its leader's.
    */
   readonly speedMult?: (gaitSpeed: number) => number;
+  /**
+   * Its speed on the normalized scale (MoveRequest.pace: 1 its walk, 2 its run): a jogging
+   * package's (jogPace). Undefined: its gait's.
+   */
+  readonly pace?: number;
   /** The reference the place is (a flier flies to a sky marker, lands at anything else). */
   readonly target?: number;
 }
@@ -1343,14 +1370,15 @@ export class ActorPackages {
     inputs: ProcedureInputs,
   ): Promise<ProcedureResult | 'complete' | 'stopped'> {
     const inputOf = (slot: number): number | undefined => branch.inputs[slot];
+    const flags = packageFlags(running.pack, running.overrides);
     const result = await runner({
       actor: this.actor,
-      body: this.#body,
+      body: pacedBody(this.#body, jogPace(flags, this.#mind.settings?.() ?? AI_DEFAULTS)),
       mind: this.#mind,
       inputs,
       pack: running.pack,
       context: running.context,
-      gait: gaitOf(packageFlags(running.pack, running.overrides)),
+      gait: gaitOf(flags),
       found: (slot) => {
         const input = inputOf(slot);
         const list = input === undefined ? undefined : running.found.get(input);

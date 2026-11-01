@@ -3,7 +3,10 @@
 // on the side away from it, two that meet head-on both keeping right; the way turns just as far
 // as passing needs. Which it looks at is the engine's (observed in the original: the nearest
 // iMaxActorsToAvoid within its avoidance radius); how the engine's own avoidance turns the way is
-// not read yet (TODO(M13)). Platform-independent.
+// not read yet (TODO(M13)). Only an actor whose race uses the advanced avoidance (RACE DATA Flags 2:
+// race-ai-flags.ts) foresees where those moving will be and keeps right of one coming head-on;
+// the others (the wolves, bears, deer, horses) go round those in their way as they stand now.
+// Platform-independent.
 
 type Vec2 = readonly [number, number];
 
@@ -20,6 +23,11 @@ export interface Avoider {
   readonly radius: number;
   readonly speed: number;
   readonly direction: Vec2;
+  /**
+   * Its race uses the advanced avoidance (undefined: it does): others' movement foreseen, the
+   * head-on rule kept. TODO(M13): the plain reading of the flag's name.
+   */
+  readonly advanced?: boolean;
 }
 
 /** Those it would come within reach of in this long are gone round (seconds). */
@@ -62,24 +70,27 @@ export function avoidance<N extends Neighbour>(
         other: N;
       }
     | undefined;
+  const foresees = self.advanced !== false;
   for (const other of neighbours) {
+    // Without the advanced avoidance one moving is taken where it stands now.
+    const otherVelocity: Vec2 = foresees ? other.velocity : [0, 0];
     const rx = other.position[0] - self.position[0];
     const ry = other.position[1] - self.position[1];
     const distance = Math.hypot(rx, ry);
     const reach = self.radius + other.radius + MARGIN;
-    const otherSpeed = Math.hypot(other.velocity[0], other.velocity[1]);
+    const otherSpeed = Math.hypot(otherVelocity[0], otherVelocity[1]);
     if (distance > reach + (self.speed + otherSpeed) * LOOKAHEAD_SECONDS) continue;
     // Only what lies ahead (what is beside or behind it does not block its way).
     if (rx * ux + ry * uy <= 0) continue;
     // Closest approach over the next moment, by their speeds.
-    const wx = vx - other.velocity[0];
-    const wy = vy - other.velocity[1];
+    const wx = vx - otherVelocity[0];
+    const wy = vy - otherVelocity[1];
     const w2 = wx * wx + wy * wy;
     const time = w2 > 1e-6 ? Math.min(LOOKAHEAD_SECONDS, Math.max(0, (rx * wx + ry * wy) / w2)) : 0;
     const closest = Math.hypot(rx - wx * time, ry - wy * time);
     if (closest >= reach) continue;
     if (threat && time >= threat.time) continue;
-    const headOn = other.velocity[0] * ux + other.velocity[1] * uy < -self.speed * HEAD_ON;
+    const headOn = otherVelocity[0] * ux + otherVelocity[1] * uy < -self.speed * HEAD_ON;
     threat = { time, rx, ry, distance, reach, headOn, other };
   }
   if (!threat) return { direction: self.direction, blocker: undefined };
@@ -106,6 +117,8 @@ export interface WayGiver {
   readonly reference: number;
   /** Its gait's rank: walk 0, run 1, sprint 2. */
   readonly gait: number;
+  /** Others push it aside (RACE DATA Not Pushable clear; undefined: they do). */
+  readonly pushable?: boolean;
 }
 
 /**
@@ -116,6 +129,8 @@ export interface WayGiver {
  * who yields is not read; this one only ensures one of the two does.
  */
 export function givesWay<A extends WayGiver>(a: A, b: A): A {
+  // One its race keeps from being pushed (the dragons) gives way to no one.
+  if ((a.pushable === false) !== (b.pushable === false)) return a.pushable === false ? b : a;
   if (a.gait !== b.gait) return a.gait < b.gait ? a : b;
   return a.reference < b.reference ? a : b;
 }

@@ -4,6 +4,7 @@ import type { MovementType } from '../world/movement.ts';
 import {
   Locomotion,
   MotionFeedback,
+  rampSpeed,
   steer,
   taggedMovementType,
   turnRate,
@@ -139,6 +140,40 @@ describe("turning (the engine's angle controller)", () => {
     // Beyond a run, in running speeds: 3 is twice its run.
     const fast = steer({ direction: [0, 1], gait: 'run', pace: 3 }, 0, TYPES, 1 / 60);
     expect(fast.velocity[1]).toBeCloseTo(2 * 370);
+  });
+
+  it("gains and loses speed at its race's rates (seconds to its full run and to a stop)", () => {
+    // A wolf: 0.6 s from standing to its full run, 2 s from it to a stop.
+    expect(rampSpeed(0, 370, 370, { acceleration: 0.6, deceleration: 2 }, 0.3)).toBeCloseTo(185);
+    expect(rampSpeed(370, 80, 370, { acceleration: 0.6, deceleration: 2 }, 0.5)).toBeCloseTo(
+      370 - 92.5,
+    );
+    // Never past what it wants; no rate: at once.
+    expect(rampSpeed(0, 80, 370, { acceleration: 0.6 }, 0.3)).toBe(80);
+    expect(rampSpeed(0, 370, 370, {}, 1 / 60)).toBe(370);
+    // Steered with its mover's state, a person (1 s) runs at a sixtieth of its run after a step.
+    const turning = new Turning();
+    const types = { ...TYPES, acceleration: 1, deceleration: 1 };
+    const first = steer({ direction: [0, 1], gait: 'run' }, 0, types, 1 / 60, turning);
+    expect(first.velocity[1]).toBeCloseTo(370 / 60);
+    let step = first;
+    for (let i = 0; i < 60; i++) {
+      step = steer({ direction: [0, 1], gait: 'run' }, 0, types, 1 / 60, turning);
+    }
+    expect(step.velocity[1]).toBeCloseTo(370);
+    // Standing, it stops at once.
+    expect(steer({ gait: 'run' }, 0, types, 1 / 60, turning).velocity).toEqual([0, 0]);
+    expect(turning.speed).toBe(0);
+  });
+
+  it("holds its facing standing within its race's angular tolerance (a horker's 45°)", () => {
+    const turning = new Turning();
+    turning.settled = true;
+    const types = { ...TYPES, angularAcceleration: 4, angularTolerance: degrees(45) };
+    const held = steer({ gait: 'walk', face: degrees(30) }, 0, types, 1 / 60, turning);
+    expect(held.heading).toBe(0);
+    const turned = steer({ gait: 'walk', face: degrees(50) }, 0, types, 1 / 60, turning);
+    expect(turned.heading).toBeGreaterThan(0);
   });
 });
 

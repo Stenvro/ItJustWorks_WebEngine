@@ -207,6 +207,41 @@ describe('findPath', () => {
     expect(locked?.doors).toEqual([]);
   });
 
+  it('keeps off the triangles of doors shut to one that cannot open doors', () => {
+    const mesh = gridMesh(1, L_SQUARES);
+    const withDoor: Navmesh = {
+      ...mesh,
+      doors: [
+        { triangle: 6, type: 0, door: 0xabc },
+        { triangle: 7, type: 0, door: 0xabc },
+      ],
+    };
+    const set = setOf([withDoor]);
+    let shut = true;
+    const options = { radius: 10, closedDoor: (door: number) => door === 0xabc && shut };
+    expect(findPath(set, [10, 50, 0], [250, 290, 0], options)?.complete).toBe(false);
+    // Standing open, it passes.
+    shut = false;
+    expect(findPath(set, [10, 50, 0], [250, 290, 0], options)?.complete).toBe(true);
+  });
+
+  it('takes the roads (preferred triangles), unless its race keeps off them', () => {
+    // Two rows of five squares; the lower row's middle three are a road.
+    const squares: [number, number][] = [];
+    for (let y = 0; y < 2; y++) for (let x = 0; x < 5; x++) squares.push([x, y]);
+    const set = setOf([
+      gridMesh(1, squares, (square) => (square >= 1 && square <= 3 ? NavmeshFlag.preferred : 0)),
+    ]);
+    const highest = (avoidsRoads: boolean): number =>
+      Math.max(
+        ...(
+          findPath(set, [50, 50, 0], [450, 50, 0], { radius: 10, avoidsRoads })?.points ?? []
+        ).map((point) => point[1]),
+      );
+    expect(highest(false)).toBeLessThan(100);
+    expect(highest(true)).toBeGreaterThanOrEqual(100);
+  });
+
   it('keeps off places closed to it (a door the navmesh does not mark)', () => {
     const set = setOf([gridMesh(1, L_SQUARES)]);
     // A door in the square north of the corner (250, 150): its triangles' middles are near it.
