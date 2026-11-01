@@ -301,7 +301,10 @@ export interface ActorCombatAiOptions {
   readonly ai?: () => ActorAi | undefined;
   /** Inside a cell (fFleeDistanceInterior) or outside. */
   readonly interior?: () => boolean;
-  /** Off its horse before it fights (TODO(M13): mounted combat, RACE allowMountedCombat). */
+  /**
+   * Off its horse before it fights; one on a mount that fights ridden (Allow Mounted Combat:
+   * src/ai/mounts.ts fightsRidden) stays on.
+   */
   readonly dismount?: (actor: number) => Promise<void>;
   /**
    * Furniture holding an actor (src/shell/actor-furniture.ts): one in combat gets up out of
@@ -311,7 +314,7 @@ export interface ActorCombatAiOptions {
     holds(actor: number): boolean;
     leave(actor: number): Promise<void>;
   };
-  /** A horse its rider moves: its own AI waits. */
+  /** A horse its rider moves: its own AI waits (a ridden mount that fights is not one). */
   readonly ridden?: (actor: number) => boolean;
   /** Spells, staffs and shouts in combat (M10 5.3). */
   readonly casting?: () => CombatCasting | undefined;
