@@ -25,17 +25,43 @@ both machine-checkable parts:
 The world beside the scripts (the stage's actors, graphs, physics, audio, the sky) is kept by
 hand below, against docs/formats/save.md.
 
-## Count (2026-11-01, round 1)
+## Count (2026-11-01, round 2)
 
 | Part                          | Items | Done | Open |
 | ----------------------------- | ----: | ---: | ---: |
 | .ess header                   |     4 |    3 |    1 |
-| .ess global data              |    30 |    6 |   24 |
-| .ess change forms (flags)     |    68 |   38 |   30 |
-| .ess other (by the import)    |     3 |    0 |    3 |
-| Own save: runtime fields      |   161 |  151 |   10 |
+| .ess global data              |    30 |    7 |   23 |
+| .ess change forms (flags)     |    68 |   39 |   29 |
+| .ess other (import and hand)  |     4 |    3 |    1 |
+| Own save: runtime fields      |   161 |  159 |    2 |
 | Own save: the world (by hand) |    24 |   13 |   11 |
-| Total                         |   290 |  211 |   79 |
+| Total                         |   291 |  224 |   67 |
+
+(Round 1: 290 items, 211 done. The sweep itself prints 264 items: the ".ess other" part lists
+only what the import still logs, so its three items done this round are kept by hand below.)
+
+Round 2 built down:
+
+- The AI process beyond the package: a running package goes on in the branch of its procedure
+  tree it had reached (the procedure states' child indices, `procedurePath`: every one of some
+  3,300 branch states in the saves read names a child at its index). The package an actor runs
+  (GetCurrentPackage) is its combat override package (ECOR) while it fights, unless a scene's
+  package action holds it, and a scene package action's package once it completed, while the
+  action runs: as the saves keep both. A fight a load starts reads the actor's profile first, so
+  its override package leashes it at once. The opening's import: 14 of the 16 living actors
+  placed round the player run the package the save has them on (5 before; MQ101's archers on
+  DefaultHoldPositionLinkedRef128, Ralof at the keep).
+- Papyrus: the running stacks resume as our threads at the instruction the save has each frame
+  at (our VM runs the compiled code, so the positions are the same: every frame read stands on
+  its call, which runs again as its function message would); the suspended calls start; a stack
+  in a wait table waits for its clock; the animation event, sleep, tracked stats and inventory
+  filter registrations are put back. An alias script's instance lands on its alias (the object
+  table's high word is the alias id, −1 on forms): before, every alias script's variables went
+  to its quest.
+- FACT reactions (bit 2): the modifier and the group combat reaction to each faction.
+- Our own save: the casting delays and lesser power cooldowns, regeneration delays, NPC assaults
+  answered, traps' contacts, Accumulate Magnitude growth, the share of an effect done at once and
+  the summons fading (RuntimeSave.engines).
 
 Round 1 wrote the sweep and this list, and built
 down:
@@ -60,8 +86,10 @@ down:
 Checked by tests/sim-ess-import.int.test.ts "the opening, imported": the save played to Helgen
 Keep imported into a fresh simulation: MQ101 at its stages, its dead dead, every reference the
 save enables or disables so, the player a High Elf with their face, and the actors placed around
-the player on the packages the save has them run (5 of 16: Hadvar on his way to the keep and
-Alduin's strafe by their scenes, the wounded in the road; the rest below).
+the player on the packages the save has them run (14 of 16 since round 2; two archers the save
+has fighting do not take the fight up again). The cart save's import resumes its two running
+stacks without a problem logged and keeps its registrations (the same file, "restores the
+player's place").
 
 ## The .ess side
 
@@ -103,7 +131,7 @@ Alduin's strafe by their scenes, the wounded in the road; the rest below).
 | 113 MenuControls             | open   | not applied                                                            |
 | 114 MenuTopicManager         | open   | not applied                                                            |
 | 1000 Temp Effects            | open   | decals, shaders, particles in the world                                |
-| 1001 Papyrus                 | open   | instances, states, update registrations done; the rest below           |
+| 1001 Papyrus                 | done   | instances, stacks, messages, waits, suspended calls, registrations     |
 | 1002 Anim Objects            | open   | what actors hold                                                       |
 | 1003 Timer                   | open   | not applied                                                            |
 | 1004 Synchronized Animations | open   | paired animations under way                                            |
@@ -154,8 +182,8 @@ By type, each change flag the saves use (forms counted over both saves).
 | FLST | added forms (bit 31)     |    50 | done   | the forms scripts added                                       |
 | LVLI | added (bit 31)           |   100 | done   | leveled list additions                                        |
 | LVLN | added (bit 31)           |     2 | done   |                                                               |
-| FACT | bit 2                    |   114 | open   | reactions                                                     |
-| FACT | bit 31                   |     1 | open   | crime counts                                                  |
+| FACT | reactions (bit 2)        |   114 | done   | modifier and combat reaction to each faction                  |
+| FACT | crimeCounts (bit 31)     |     1 | open   | crime counts: the four values' meaning not known              |
 | LCTN | keyword data (bit 30)    |   128 | open   | location keyword data                                         |
 | SMQN | bit 31                   |    18 | open   | the story manager nodes' last run                             |
 | PARW | moved, havokMoved, cell  |    32 | open   | arrows lying in the world (projectile change forms not taken) |
@@ -172,31 +200,34 @@ By type, each change flag the saves use (forms counted over both saves).
 
 ### Other parts the import lists
 
-| Item                                                      | Status | Why open                                                       |
-| --------------------------------------------------------- | ------ | -------------------------------------------------------------- |
-| The AI process beyond its package                         | open   | the procedures' running states, the high process's timers: M13 |
-| Papyrus running stacks                                    | open   | our frames keep their own code positions, not the compiled one |
-| Papyrus messages, waits, registrations other than updates | open   | read, not applied                                              |
+| Item                                                                | Status | Why open                                                                    |
+| ------------------------------------------------------------------- | ------ | --------------------------------------------------------------------------- |
+| The package's branch reached; the package GetCurrentPackage answers | done   | procedurePath; combat override, scene package done                          |
+| The procedures' own states, the process's timers and held objects   | open   | where a Travel goes, a Sandbox's activity, a Patrol's point: M13            |
+| Papyrus running stacks                                              | done   | resumed at the compiled instruction (by hand: the import no longer logs it) |
+| Papyrus messages, waits, registrations other than updates           | done   | LOS and latent functors: none in the saves read, logged if seen             |
 
 ## Our own save
 
 ### Runtime fields (the sweep)
 
-161 fields: 151 done (kept by their class's save method, GameState, SAVED_RUNTIME_FIELDS, a
-record or settings cache, or derived or gone within a frame as the sweep's table says), 10 open:
+161 fields: 159 done (kept by their class's save method, GameState, SAVED_RUNTIME_FIELDS, a
+record or settings cache, or derived or gone within a frame as the sweep's table says), 2 open.
+Round 2 gave the casting, progression, crime, magic engines and the traps' hits saveData and
+loadData (RuntimeSave.engines; src/scripting/runtime/engine-save.test.ts):
 
-| Field                      | Status | What is lost on a load                         |
-| -------------------------- | ------ | ---------------------------------------------- |
-| casting-engine#casts       | open   | a cast being charged or held                   |
-| casting-engine#shouting    | open   | a shout key held                               |
-| casting-engine#lastCast    | open   | the AI's delays between casts                  |
-| casting-engine#lesserUsed  | open   | lesser powers' cooldowns                       |
-| crime-engine#npcAssaults   | open   | NPC assaults answered (an alarm again)         |
-| magic-engine#accumulating  | open   | Accumulate Magnitude effects' growth           |
-| magic-engine#did           | open   | an effect's share done at once (its skill use) |
-| magic-engine#fadingSummons | open   | summons fading out                             |
-| progression-engine#delays  | open   | regeneration delays                            |
-| trap-hits#entries          | open   | traps' hit timers by target                    |
+| Field                      | Status | What is lost on a load                        |
+| -------------------------- | ------ | --------------------------------------------- |
+| casting-engine#casts       | open   | a cast being charged or held                  |
+| casting-engine#shouting    | open   | a shout key held                              |
+| casting-engine#lastCast    | done   | the AI's delays between casts (seconds ago)   |
+| casting-engine#lesserUsed  | done   | lesser powers' cooldowns (seconds ago)        |
+| crime-engine#npcAssaults   | done   | NPC assaults answered                         |
+| magic-engine#accumulating  | done   | by the effect's key                           |
+| magic-engine#did           | done   | by the effect's key                           |
+| magic-engine#fadingSummons | done   | seconds left                                  |
+| progression-engine#delays  | done   | seconds left                                  |
+| trap-hits#entries          | done   | on the game's real time, which the save keeps |
 
 ### The world (by hand, against docs/formats/save.md)
 
@@ -229,14 +260,16 @@ record or settings cache, or derived or gone within a frame as the sweep's table
 
 ## Next biggest open items
 
-1. The AI processes beyond the package (1615 actors a save): the procedures' running states,
-   so a package resumed goes on in its step; then actors the save has on a package our AI does
-   not choose (MQ101's soldiers on DefaultHoldPositionLinkedRef128 choose
-   dunCGAlduinBaitStayAtLinkedRef here) and Ralof, saved going into the keep, who runs none.
-2. Papyrus stacks, messages and the other registrations (an imported save's scripts in the
-   middle of a function).
-3. The extra data of references and actors (itemExtraData, encounter zones, gameOnlyExtra,
-   leveled actors' bases, baseObject swaps).
-4. The global data tables still open: combat, detection, process lists (crimes), audio (music),
-   temp effects, quest static data, interface.
-5. Our own save's world side: physics bodies in motion, the music, the sky's transition.
+1. The extra data of references and actors (itemExtraData: souls, charges, poisons, 178 forms;
+   encounter zones, 883; gameOnlyExtra, 2,940; leveled actors' generated bases, 2,784; baseObject
+   swaps, 30): ours has no place for most of them yet (per-item extra data in inventories, a
+   reference's zone, a leveled actor's base kept rather than drawn again).
+2. The procedures' own states inside a branch (where a Travel goes, a Sandbox's activity and
+   timers, a Patrol's point) and the high process's timers and held objects; the two archers of
+   the opening that do not take their fight up again.
+3. The global data tables still open: combat (groups, searches), detection, process lists
+   (crimes being reported), audio (the music), temp effects, quest static data, interface.
+4. NPC\_ bases' factions, skills and AI data a script changed (no place for other bases' in
+   GameState yet); QUST instance data; CELL detach times and the local map's fog.
+5. Our own save's world side: physics bodies in motion, the music, the sky's transition; casts
+   being charged and shout keys held.

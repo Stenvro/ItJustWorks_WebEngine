@@ -1076,8 +1076,8 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
 /** The save's Papyrus values as ours: its objects as handles to their forms. */
 interface PapyrusValues {
   readonly objects: ReadonlyMap<number, EssObject>;
-  handleOf(object: EssObject): ObjectHandle | undefined;
-  value(variable: EssVariable): Value;
+  readonly handleOf: (object: EssObject) => ObjectHandle | undefined;
+  readonly value: (variable: EssVariable) => Value;
 }
 
 function papyrusValues(
@@ -1188,7 +1188,7 @@ function scriptThreads(
     threads.push({
       origin: {
         kind: event ? 'event' : 'call',
-        target: event ? outer.self.as(outer.instance?.script ?? outer.script) : outer.self,
+        target: event ? outer.self.as(outer.instance.script) : outer.self,
         name: outer.name,
         args: [],
       },
