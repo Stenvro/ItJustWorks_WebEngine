@@ -1614,6 +1614,10 @@ Tool's 30 Hz, made frame-rate independent (1 − (1 − g)^(30 dt); TODO(M13)).
 Where actors look (`src/ai/head-tracking.ts`, `src/shell/actor-looks.ts`): an actor has a
 head track target of each kind (CommonLibSSE HEAD_TRACK_TYPE: default, action, script, combat,
 dialogue, procedure); the highest set is looked at (TODO(M13): the order is the enum's).
+Only an actor of a race with Use Head
+Track Anims (RACE DATA; 117 races: not the trolls, spiders, dwarven machines, dremora, frost and
+storm atronachs) has its look-at driven; the rest keep their graphs' own looks (TODO(M13): the
+plain reading of the flag).
 Scripts' Actor.SetLookAt and ClearLookAt are 'script'; scenes' looks, speakers talking to
 someone and the actor talking with the player are 'dialogue'; other code asks through
 `session.scriptWorld.lookTargets.lookAt(actor, target, kind)` (a reference or a world point;

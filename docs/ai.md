@@ -573,7 +573,10 @@ casting-engine.ts`), the Shout procedure's shout through `ActorCasting.shoutAt` 
 - **Places:** near a reference (its placement and the radius), near the linked reference of a
   keyword, near the editor location, in a cell (round the actor while it is in it), near self,
   near where the package began, near the reference an alias of the package's quest (QNAM)
-  holds; targets also by an alias. A location alias's location: round its world location
+  holds, near the reference another data input of the package names (location type 11,
+  Target (location): its form field is that input's id; Hearthfire's urchin runners send their
+  runner to a mine's marker or an innkeeper so); targets also by an alias. A location alias's
+  location: round its world location
   marker (LCTN MNAM), as far as its radius (RNAM) or the package's; an object or a type of
   object: the nearest such reference within 4096 units of the actor (TODO(M13): the engine's
   search radius; no vanilla package names these three; `place` in `src/shell/actor-ai.ts`). A
@@ -1883,8 +1886,17 @@ it ([below](#conversations-between-actors)); for greetings and chatter the rules
 follow the game settings' names (TODO(M13) where they are ours). The running package's PKDT interrupt flags
 say what an actor may do: hellos to the player (0x1, 4,604 of 7,633 vanilla packages), random
 conversations (0x2), idle chatter (0x80), reactions to the player's actions (0x10), world
-interactions (0x200, GetAllowWorldInteractions: the WI comment quests); an actor without a
-package may do all.
+interactions (0x200, GetAllowWorldInteractions: the 39 world interaction quests' aliases, WI*,
+cast only actors whose package has it); an actor without a package may do all. Bit 0x100 (1,682
+packages) is the earlier games' Avoid Radiation and PKDT's bits 0x10, 0x20 and 0x100 their door
+locking flags (xEdit's TES4, FO3 and FNV definitions), kept in records made from theirs: this
+game reads none of them.
+
+- **Getting up to talk:** an actor the player talks to in furniture with Must Exit To Talk (its
+  MNAM flag, and the record flag the editor sets with it: the beds and bedrolls, the chopping
+  blocks, the anvil, the levers, the Greybeards' meditation) gets out of it first; in any other
+  (a chair, a bench, a counter) it talks from where it is (talk.ts getsUpToTalk). TODO(M13):
+  whether the greeting waits until it stands.
 
 - **A line** of a topic subtype (Hello, Idle, a bark) is the first valid info of the subtype's
   topics of the running quests, by quest priority, then topic priority; its quest's dialogue
@@ -1965,7 +1977,7 @@ Sovngarde, dogs), all with a scene of two (869) or three actors.
   with the player, in no scene and in no other ask, and is within fDistancetoPlayerforConversations
   (3000) of the player, who is not in a conversation. There is no chance roll:
   fAISocialchanceForConversation (and its Interior twin) is read by the engine's spectator
-  comments, not here.
+  comments, not here ("Combat AI", Spectators).
 - **Whom.** It goes through the high process's actors in their order and takes the first that
   may be asked: not itself or the player, speaking, free, standing or seated (not asleep, not in
   other furniture), its package allowing random conversations, in no scene and no other ask,
@@ -2739,7 +2751,8 @@ bash behaviours (their values are ready); the flanking and ranged movement selec
   makes it hostile to it (the reaction's scriptHostile: the actor state's combatTargets, until
   StopCombat, StopCombatAlarm or its combat ends: TODO(M13) how long the engine keeps it); a
   hostile spell that takes hold turns its victim on its caster as a blow does. Entering, it says NormalToCombat (AlertToCombat when
-  alerted), gets off its horse (TODO(M13): mounted combat), its detection reaction or override
+  alerted), gets off its horse (one on a mount that fights ridden stays on: "Horses and
+  followers" below), its detection reaction or override
   package ends, and its package's way stops.
 - **Targets** (`selectTarget`): the most threatening (health × its blow's damage), nearest
   first (half as much at 1024 units), its current target counting 1.5 times (it does not switch
@@ -2857,11 +2870,26 @@ bash behaviours (their values are ready); the flanking and ranged movement selec
   later (unless its package keeps its weapon drawn) and chooses its package again. Its own lines
   in the fight: Taunt every fCombatDialogueTaunt\* (10–30 s); 5.1's Attack, Hit, Block, Death.
 - **Spectators**: those detection has watching a fight (their package's observe combat
-  interrupt, [Detection](#detection)) say ObserveCombat; a cowardly one runs from the fight
-  instead (Flee, IsFleeing) for 10 s. Scenes pause or end on an actor's combat and watching
+  interrupt, [Detection](#detection)) say ObserveCombat as they begin watching, by
+  fAISocialchanceForConversation (10 %; inside its Interior twin, 10 %; TODO(M13): one roll per
+  watch is ours); a cowardly one runs from the fight instead (Flee, IsFleeing) for 10 s. Scenes pause or end on an actor's combat and watching
   (SCEN DNAM).
 - **Horses and followers**: a ridden horse is its rider's to move; others fight or flee by their
-  own AI values (horses: cowardly). Teammates fight the player's fights (above).
+  own AI values (horses: cowardly). Mounted combat: a mount whose race has Allow Mounted Combat
+  (RACE DATA Flags 2: the three dragon races) fights while ridden (a ridden dragon flies the
+  attack on the target its rider locks), and an actor riding one stays on it to fight; no horse
+  race has it, so a horse's rider gets off (src/ai/mounts.ts fightsRidden). The player's view
+  from a mount looks no more than fMountedMaxLookingDown (Update.esm 30°) down. TODO(M13): a
+  rider staying on attacks only with what it casts and shouts.
+- **Non-Hostile races** (RACE DATA Flags 2: deer, elk, foxes, goats, cows, chickens, hares, the
+  pets): one fighting or fleeing the player is no threat to them: it does not keep them from
+  waiting, plays no combat music and is no enemy on the compass (combat-reactions.ts
+  threatensPlayer; TODO(M13): the plain reading of the flag).
+- **Rotating attacks** (ATKD Rotating Attack: 38 attacks, the bears', sabre cats', mammoths',
+  mudcrabs', chaurus' and dwarven spiders' side and spin attacks): while one plays, the
+  attacker's controller keeps turning it to its target, as the graph's bAllowRotation does
+  (movement-drive.ts driveOf); any other attack plays as its clip faces (TODO(M13): the plain
+  reading of the flag). Teammates fight the player's fights (above).
 - **Scripts**: IsInCombat (the player: while anyone fights them), GetCombatState (0, 1, 2
   searching), IsFleeing, GetShouldAttack, IsHostileToActor, GetFactionRelation (the reaction;
   without a parameter, to the player: TODO(M13)), IsCombatTarget (the subject is its

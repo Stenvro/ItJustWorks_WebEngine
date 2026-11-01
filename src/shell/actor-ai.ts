@@ -582,7 +582,8 @@ export class ActorAi {
   async #getUpToTalk(staged: StagedActor): Promise<void> {
     const using = this.#furniture.interaction(staged.reference);
     const record = using && (await this.#session.scriptsReady?.forms.record(using.base));
-    if (record && getsUpToTalk(record.flags)) await this.#furniture.leave(this.#userOf(staged));
+    if (record && getsUpToTalk(record.flags, record.fields.u32('MNAM')))
+      await this.#furniture.leave(this.#userOf(staged));
   }
 
   #body(staged: StagedActor): PackageBody {

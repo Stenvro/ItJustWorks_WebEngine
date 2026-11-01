@@ -12,7 +12,7 @@
 // dialogue engine's (subtype lines, src/scripting/runtime/dialogue-engine.ts) and the scenes'
 // (src/ai/scene-runtime.ts). Platform-independent.
 
-import { FurnitureRecordFlag } from '../world/furniture-records.ts';
+import { FurnitureMarkerFlag, FurnitureRecordFlag } from '../world/furniture-records.ts';
 import { InterruptFlag } from './package-records.ts';
 
 type Vec3 = readonly [number, number, number];
@@ -559,11 +559,15 @@ export function sceneLineFaces(
 
 /**
  * Whether an actor the player talks to gets out of the furniture it is in first: furniture
- * with Must Exit To Talk (its record flag; 184 in the load order: the beds and bedrolls, the
- * wood chopping blocks, the anvil, the levers, the Greybeards' meditation). In any other it
- * talks from where it sits or leans. TODO(M13): whether the engine also waits for the actor to
- * stand before the greeting is not documented (here the greeting begins at once).
+ * with Must Exit To Talk (its MNAM marker flag, and the record flag the editor sets with it; 184
+ * in the load order: the beds and bedrolls, the wood chopping blocks, the anvil, the levers,
+ * the Greybeards' meditation). In any other it talks from where it sits or leans.
+ * TODO(M13): whether the engine also waits for the actor to stand before the greeting is not
+ * documented (here the greeting begins at once).
  */
-export function getsUpToTalk(furnitureRecordFlags: number): boolean {
-  return (furnitureRecordFlags & FurnitureRecordFlag.mustExitToTalk) !== 0;
+export function getsUpToTalk(recordFlags: number, markerFlags: number | undefined): boolean {
+  return (
+    (recordFlags & FurnitureRecordFlag.mustExitToTalk) !== 0 ||
+    ((markerFlags ?? 0) & FurnitureMarkerFlag.mustExitToTalk) !== 0
+  );
 }

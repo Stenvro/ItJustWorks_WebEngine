@@ -16,20 +16,41 @@ code (comments left out), or the sweep's own table says why nothing more reads i
 each item is how many records (triangles, attacks) use it. The mechanics part is kept by hand
 against docs/ai.md and the conformance suites (tests/conformance/ai/).
 
-## Count (2026-11-01, round 1)
+## Count (2026-11-01, round 2)
 
 | Part                    | Items | Done | Open |
 | ----------------------- | ----: | ---: | ---: |
-| Packages (data)         |   186 |  180 |    6 |
-| NPCs, races (data)      |    19 |   13 |    6 |
-| Idle markers, furniture |    25 |   20 |    5 |
+| Packages (data)         |   186 |  186 |    0 |
+| NPCs, races (data)      |    19 |   14 |    5 |
+| Idle markers, furniture |    25 |   21 |    4 |
 | Navmeshes (data)        |    12 |   11 |    1 |
-| Game settings           |   190 |  180 |   10 |
+| Game settings           |   190 |  182 |    8 |
 | Mechanics (by hand)     |    24 |   13 |   11 |
-| Total                   |   456 |  417 |   39 |
+| Total                   |   456 |  427 |   29 |
 
 Round 1 wrote the sweep and this list; Can Pickup Items (RACE DATA) became read: only a race that
 can pick up items runs the combat tree's Acquire Weapon.
+
+Round 2 built down:
+
+- World Interactions (3915 packages): read by name where the original reads it, the condition
+  GetAllowWorldInteractions (the 39 world interaction quests' aliases: WICommentDiseased,
+  WICraftItem01, ...), true while the actor's package has the flag.
+- The unnamed bits are the earlier games' flags kept in records made from theirs (xEdit's TES4,
+  FO3 and FNV definitions): interrupt bit 0x100 (1682 packages) Avoid Radiation, PKDT bits 0x10,
+  0x20, 0x100 (33, 2, 5) Lock Doors At Package End, Lock Doors At Location, Unlock Doors At
+  Location. This game's references (xEdit, CommonLibSSE) name none of them: inert.
+- Location type 11 (18 inputs, all in Hearthfire's urchin runner packages): Target (location),
+  as xEdit's later game's definition names it ("Target: %s, radius %u"): the reference another
+  data input of the package names, within the radius (package-start.ts placeOf, actor-ai.ts
+  place; PackageContext carries the inputs).
+- Use Head Track Anims (117 races): only such a race has its graph's look-at driven
+  (head-tracking.ts raceHeadTracks; trolls, spiders, the dwarven machines, the dremora keep
+  their graphs' own looks). TODO(M13): what else the flag gates.
+- Must Exit To Talk (184 furniture): an actor the player talks to gets out of such furniture (a
+  bed, a chopping block) first (talk.ts getsUpToTalk, actor-ai.ts).
+- fAISocialchanceForConversation (10) and its Interior twin: the chance a spectator who begins
+  watching a fight says its ObserveCombat line (combat-dialogue.ts spectatorComments).
 
 ## Packages
 
@@ -44,8 +65,8 @@ can pick up items runs the combat tree's Acquire Weapon.
       Selector, Topic) (src/ai/package-start.ts, package-runtime.ts).
 - [x] Locations (8 of 9 types): near reference, in cell, near package start, near editor
       location, near linked reference, alias reference, alias location, near self.
-- [ ] Location type 11 (18 packages): neither xEdit nor CommonLibSSE (PackageLocation::Type)
-      names it. TODO(M13): what the original does with it.
+- [x] Location type 11 (18 packages): Target (location), the reference another input names
+      (round 2, above).
 - [x] Targets (6 of 6 types): specific reference, object id, object type, linked reference,
       reference alias, self.
 - [x] Schedule (PSDT): month, day of week, date, hour, minute, duration (package-start.ts).
@@ -54,13 +75,13 @@ can pick up items runs the combat tree's Acquire Weapon.
 - [x] Conditions: all 89 functions the packages use are valued (condition-values.ts; GetStage
       1574 packages, GetVMQuestVariable 615, ...).
 - [x] PKDT general flags: all 16 named ones (Offers Services .. Wear Sleep Outfit).
-- [ ] PKDT flag 0x10 (33 packages), 0x20 (2), 0x100 (5): neither xEdit nor CommonLibSSE
-      (PACKAGE_DATA::GeneralFlag) names them. TODO(M13).
+- [x] PKDT flag 0x10 (33 packages), 0x20 (2), 0x100 (5): the earlier games' door locking flags
+      (round 2, above); inert.
 - [x] PKDT interrupt flags: hellos to player, random conversations, observe combat, greet
       corpse, reaction to player actions, friendly fire comments, aggro radius, idle chatter.
-- [ ] Interrupt flag World Interactions (3915 packages): not read. Next: what it allows (the
-      actor's use of the world's objects on its own: activators, idle markers in passing).
-- [ ] Interrupt flag 0x100 (1682 packages): unnamed (xEdit, CommonLibSSE). TODO(M13).
+- [x] Interrupt flag World Interactions (3915 packages): GetAllowWorldInteractions, the world
+      interaction quests' casting (round 2, above).
+- [x] Interrupt flag 0x100 (1682 packages): the earlier games' Avoid Radiation; inert.
 - [x] Interrupt override (none 7222, combat 285): the override lists decide
       (src/shell/actor-senses.ts: SPOR, OCOR, GWOR; ECOR in actor-combat-ai.ts); the byte sorts a
       package into such a list.
@@ -75,7 +96,7 @@ can pick up items runs the combat tree's Acquire Weapon.
 - [ ] Can't Open Doors (60 races: animals, dragons, giants, dwarven centurions): not read; their
       paths pass shut doors. Next: shut doors closed to their paths (pathfinding closedDoors),
       load doors refused (ActorDoors.mayPass).
-- [ ] Use Head Track Anims (117 races): not read (head tracking turns the bones).
+- [x] Use Head Track Anims (117 races): only these races' look-at is driven (round 2, above).
 - [ ] Not Pushable (9 races): declared (RaceFlag.notPushable), not read by the bump and push.
 - [ ] Immobile (2), Always Use Proxy Controller (6), Avoids Roads (4): not read.
 
@@ -86,7 +107,7 @@ can pick up items runs the combat tree's Acquire Weapon.
 - [x] FURN: marker types (sit, sleep, lean), entry points (front, behind, left, right, up),
       disabled entries, the can-sit / sleep / lean bits, perch, Ignored By Sandbox, children can
       use (src/shell/actor-furniture.ts, actor-flight.ts).
-- [ ] FURN Must Exit To Talk (184): not read (an actor seated there stands up to talk).
+- [x] FURN Must Exit To Talk (184): the actor gets up to talk with the player (round 2).
 - [ ] FURN interaction keyword (KNAM, 467): not read.
 - [ ] FURN marker keyword (FNMK, 2): not read.
 - [ ] FURN Disables Activation (2): not read.
@@ -106,10 +127,9 @@ The load order's AI settings (84: fAI*, fSandbox*, fSneak*, detection, crime, gu
 comments, head tracking, idle chatter, random scenes, followers, escorts) and 106 built-in ones
 the readers ask for by name.
 
-- [x] 74 of 84 plugin settings and all 106 built-in ones (src/ai/ai-settings.ts, detection.ts,
-      talk.ts, head-tracking.ts, src/gameplay/crime.ts, ...).
-- [ ] fAISocialchanceForConversation, ...Interior: read by the spectators' comments
-      (docs/ai.md "Talking"), which do not roll it yet.
+- [x] 76 of 84 plugin settings and all 106 built-in ones (src/ai/ai-settings.ts, detection.ts,
+      talk.ts, head-tracking.ts, combat-dialogue.ts, src/gameplay/crime.ts, ...).
+- [x] fAISocialchanceForConversation, ...Interior: the spectators' comment chance (round 2).
 - [ ] fAIForceGreetingTimer (3), fAIInDialogueModewithPlayerTimer (60): not read.
 - [ ] fFurnitureMarkerAngleTolerance (10): not read (furniture entry facing).
 - [ ] fActorDefaultTurningSpeed, fJogInterpolationBetweenWalkAndRun: not read (locomotion).
@@ -145,7 +165,9 @@ the readers ask for by name.
 
 ## Next biggest
 
-1. World Interactions (3915 packages) and the unnamed interrupt bit (1682).
-2. Can't Open Doors (60 races).
-3. Use Head Track Anims (117 races) and Must Exit To Talk (184 furniture).
-4. The spectators' comment chance (fAISocialchanceForConversation).
+1. Can't Open Doors (60 races).
+2. FURN interaction keyword (KNAM, 467) and IDLM Loose Only (72).
+3. Not Pushable (9 races), Immobile (2), Always Use Proxy Controller (6), Avoids Roads (4).
+4. The settings left: fAIForceGreetingTimer, fAIInDialogueModewithPlayerTimer,
+   fFurnitureMarkerAngleTolerance, fActorDefaultTurningSpeed, fJogInterpolationBetweenWalkAndRun,
+   fTrackSpeed, fTrackDeadZoneXY / Z.
