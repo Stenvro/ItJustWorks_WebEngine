@@ -308,6 +308,19 @@ export function classShare(
 /** DefaultWeather (Skyrim.esm): the weather when no list gives one. */
 export const DEFAULT_WEATHER = 0x15e;
 
+/** What a save keeps of the sky (the original keeps the same in its weather table). */
+export interface SkySave {
+  readonly current: number;
+  /** The weather a change under way comes from. */
+  readonly outgoing?: number | undefined;
+  readonly override?: number | undefined;
+  readonly default?: number | undefined;
+  /** When the current weather came (game hours, the time of day). */
+  readonly since: number;
+  /** An accelerated change: the share it sped up from. */
+  readonly acceleratedFrom?: number | undefined;
+}
+
 export class SkyWeather {
   readonly #host: SkyWeatherHost;
   #settings: WeatherSettings;
@@ -342,6 +355,8 @@ export class SkyWeather {
   #forced: { readonly weather: number; readonly override: boolean }[] = [];
   /** Counts each new current weather (viewers notice a change by it). */
   #changes = 0;
+  /** A saved sky put back: the region the player is in is taken as the one it was chosen in. */
+  #adopt = false;
 
   constructor(host: SkyWeatherHost, settings: WeatherSettings = DEFAULT_WEATHER_SETTINGS) {
     this.#host = host;
@@ -465,6 +480,40 @@ export class SkyWeather {
     this.#acceleratedFrom = 0;
   }
 
+  /** What a save keeps of the sky: the weathers, the change under way and when it began. */
+  save(): SkySave | undefined {
+    if (this.#current === undefined) return undefined;
+    return {
+      current: this.#current,
+      outgoing: this.#outgoing,
+      override: this.#override,
+      default: this.#default,
+      since: this.#since,
+      ...(this.#accelerating && { acceleratedFrom: this.#acceleratedFrom }),
+    };
+  }
+
+  /**
+   * A saved sky put back (ours, or an original save's weather table): the change under way
+   * goes on from where it was (its share follows from when it began), and the weather stands
+   * in the region the player is in as it was chosen there, rather than a new pick.
+   */
+  restore(saved: SkySave): void {
+    this.#forced = [];
+    this.#current = saved.current;
+    this.#outgoing = saved.outgoing;
+    this.#override = saved.override;
+    this.#default = saved.default;
+    this.#hour = this.#host.hour();
+    this.#since = saved.since;
+    this.#accelerating = saved.acceleratedFrom !== undefined;
+    this.#acceleratedFrom = saved.acceleratedFrom ?? 0;
+    this.#region = undefined;
+    this.#adopt = true;
+    this.#advance();
+    this.#changes++;
+  }
+
   /** Weather.ForceActive (and the console's fw): the weather at once, on the next frame. */
   forceWeather(weather: number, override: boolean): void {
     this.#forced.push({ weather, override });
@@ -541,6 +590,11 @@ export class SkyWeather {
   #regionChoice(climate: SkyClimate, lifetime: number, elapsed: number): number | undefined {
     const host = this.#host;
     const region = this.#weatherRegion();
+    if (this.#adopt) {
+      this.#adopt = false;
+      this.#region = region;
+      return undefined;
+    }
     const old = this.#region;
     if (region === old && !this.#released) {
       if (elapsed <= lifetime) {

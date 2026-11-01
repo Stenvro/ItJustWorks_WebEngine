@@ -49,9 +49,16 @@ too: a function that fills an array it was given fills its caller's.)
 ## The body
 
 `GameSave`: `runtime` (below), `player` (position, rotation, cell or worldspace, scale: as
-`ScriptRuntime.placement` gives it), `weather` (the sky's current weather), `unsaved` (what
-could not be saved, logged again as it loads) and `world` (the loaded world beside the scripts,
-below).
+`ScriptRuntime.placement` gives it), `weather` (the sky's current weather), `sky` (the sky's
+`SkySave`, src/world/sky-weather.ts: the current and outgoing weathers, the override and the
+default, when the current came, an accelerated change's start: the change under way goes on
+after the load, and the weather stands in the region the player is in rather than a new pick),
+`music` (the music types scripts added, MusicType.Add, still in play: added again as it loads;
+the location's type and the fights' follow from the world), `unsaved` (what could not be saved,
+logged again as it loads), `world` (the loaded world beside the scripts, below) and, from an
+imported .ess, `inventoryDeltas` and `worn` (what actors wear beside their outfits, put on after
+the deltas). As a save is made, the loaded cells' objects that physics moved note where they
+are (moved-objects.ts, as a cell leaving the loaded area does), so they load where they were.
 
 `WorldSave` (`src/save/world-save.ts`), the minimal state each system rebuilds itself from as
 the world loads again, as the original's change forms hold it (nothing of the rendering):
@@ -150,8 +157,9 @@ names; and the reservations of the aliases that reserve what they hold: nothing 
 the save, both follow from the quests' alias fills), the script instances are made as the plugins attach them and
 take the save's variables and states (their property setters do not run again), the update
 registrations are re-armed, and the player's lasting effects are prepared. Play then loads the
-player's cell or worldspace behind the loading screen (as a new game does) and sets the saved
-weather. What could not be matched (a script no longer attached, a variable gone, a missing
+player's cell or worldspace behind the loading screen (as a new game does) and puts back the
+sky and the music (`restoreAmbience`; a save of before kept the weather alone, which comes at
+once). What could not be matched (a script no longer attached, a variable gone, a missing
 plugin) is logged under `save`.
 
 ## Papyrus threads
@@ -332,8 +340,10 @@ the placed objects' graphs (`graphs`, above) are not kept either.
 
 ## Not saved yet
 
-- The procedures' own progress inside a step (a sandbox's activity: it chooses again), the sky's
-  transition; the actors of cells not loaded when saving (their packages place them, as before).
+- The procedures' own progress inside a step (a sandbox's activity: it chooses again); the
+  actors of cells not loaded when saving (their packages place them, as before); bodies in
+  motion keep their places but not their velocities (one falling as the game is saved falls
+  again from where it was: TODO(M13)); the track playing within a music type (it starts again).
 
 - The main menu's Load list and the save list's character filter (Continue loads the newest
   save), thumbnails, Save on Pause (bSaveOnPause with fAutosaveEveryXMins).

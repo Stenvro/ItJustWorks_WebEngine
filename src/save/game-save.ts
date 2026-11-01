@@ -11,6 +11,7 @@ import type { RuntimeSave } from '../scripting/runtime/runtime-save.ts';
 import { readSave, SAVE_VERSION, writeSave, type SaveHeader } from './save-codec.ts';
 import type { SavedHazard } from '../scripting/runtime/hazard-engine.ts';
 import type { WorldSave } from './world-save.ts';
+import type { SkySave } from '../world/sky-weather.ts';
 
 /** The save file's body. */
 export interface GameSave {
@@ -19,6 +20,13 @@ export interface GameSave {
   readonly player: Placement;
   /** The sky's weather then (none outside). */
   readonly weather: number | undefined;
+  /**
+   * The sky beside its weather: the change under way (the weather it comes from, when it
+   * began), the weather scripts hold over the regions. None in saves made before it.
+   */
+  readonly sky?: SkySave | undefined;
+  /** The music types scripts added (MusicType.Add) still in play, oldest first. */
+  readonly music?: readonly number[] | undefined;
   /** What could not be saved (threads in flight, ...): logged again as it loads. */
   readonly unsaved: readonly string[];
   /**
@@ -72,6 +80,8 @@ export async function saveGame(
     runtime: data,
     player,
     weather: runtime.world.currentWeather?.(),
+    sky: runtime.world.skyState?.(),
+    music: runtime.world.addedMusic?.(),
     unsaved,
     world: runtime.world.saveWorld?.(),
     hazards: runtime.hazards.save(),
@@ -94,6 +104,17 @@ export async function saveGame(
     body,
   });
   return { bytes, unsaved };
+}
+
+/**
+ * A loaded save's sky and music put back once the world is in place: the sky's change under
+ * way going on (a save of before kept the weather alone: it comes at once), the music types
+ * scripts had added in play again.
+ */
+export function restoreAmbience(runtime: ScriptRuntime, save: GameSave): void {
+  if (save.sky) runtime.world.restoreSky?.(save.sky);
+  else if (save.weather !== undefined) runtime.world.setWeather?.(save.weather, true, false, false);
+  for (const type of save.music ?? []) runtime.world.music?.(type, true);
 }
 
 /** A save file read back: its header and body. */

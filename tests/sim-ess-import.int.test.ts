@@ -54,6 +54,8 @@ const HELGEN_ARCHER = 0xe72b9;
 const GOING_FLOOR = 16;
 /** The two Imperial mages (dunCGImperialMageC01) fighting Alduin away from the player. */
 const HELGEN_MAGES = [0xf3e78, 0xf3e7a];
+/** MUSCombatBossChargen, the music MQ101 adds as Alduin attacks. */
+const MUS_COMBAT_BOSS_CHARGEN = 0x1094aa;
 /** Alduin over Helgen (MQ101). */
 const ALDUIN_HELGEN = 0x32db7;
 
@@ -358,6 +360,9 @@ describe.skipIf(!hasGamedata() || opening === undefined)('the opening, imported 
     const imported = importEss(ess, world, { name: 'Imported', number: 1, now: 0 });
     // The actors the save keeps at their records' places run their packages there too.
     expect(imported.skipped.some((line) => line.includes('place is not known'))).toBe(false);
+    // The sky MQ101 forces (an override), the boss music its script added as Alduin attacks.
+    expect(imported.save.sky?.override).toBe(imported.save.weather);
+    expect(imported.save.music).toEqual([MUS_COMBAT_BOSS_CHARGEN]);
     const bytes = await writeSave({
       header: imported.header,
       thumbnail: new Uint8Array(),
@@ -396,6 +401,10 @@ describe.skipIf(!hasGamedata() || opening === undefined)('the opening, imported 
       expect(appearance?.race).toBe(HIGH_ELF_RACE);
       expect(appearance?.headParts.length).toBeGreaterThan(0);
       expect(appearance?.tints.length).toBeGreaterThan(0);
+      // The help the player has done is not shown again; the music and the sky as saved.
+      expect([...sim.runtime.state.helpDone]).toEqual(expect.arrayContaining(['look', 'forward']));
+      expect(sim.runtime.world.addedMusic?.()).toEqual([MUS_COMBAT_BOSS_CHARGEN]);
+      expect(sim.runtime.world.currentWeather?.()).toBe(imported.save.weather);
       // What the player wears as the save has it (its inventory's Worn extra data).
       const worn = imported.save.worn?.find(([actor]) => actor === PLAYER_REF)?.[1] ?? [];
       expect(worn.length).toBeGreaterThan(0);

@@ -838,6 +838,13 @@ export class WorldViewer {
       this.#stage?.talk.randomSceneStarts(scene, first, second),
     facesForLine: (speaker, target) => this.#stage?.talk.faces(speaker, target),
     saveActors: () => this.#stage?.saveActors() ?? [],
+    noteMovedObjects: () => {
+      const state = this.#session?.scriptsReady?.state;
+      if (!state) return;
+      for (const cell of this.#cells.values()) {
+        if (cell.scriptsAttached) noteMoved(cell.placed, state);
+      }
+    },
     savePlayerGraphs: () => this.#stage?.savePlayerGraphs(),
     savePlayer: () => this.#stage?.savePlayer(),
     saveProjectiles: () => this.#stage?.projectiles.save() ?? [],

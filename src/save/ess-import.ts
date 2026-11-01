@@ -24,6 +24,7 @@ import {
 } from '../formats/ess/change-forms.ts';
 import { changeFormTypeName, globalData, type EssFile } from '../formats/ess/ess.ts';
 import {
+  readAudio,
   readGlobalVariables,
   readMiscStats,
   readPlayerLocation,
@@ -41,6 +42,7 @@ import {
 } from '../formats/ess/papyrus.ts';
 import {
   readActorCauses,
+  readInterface,
   readMagicFavorites,
   readStoryEventManager,
   StoryParameterKind,
@@ -75,6 +77,7 @@ import type { SavedScene } from '../ai/scene-runtime.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
 import { FACE_MORPH_COUNT } from '../world/chargen-records.ts';
 import { seenFromSave } from '../world/seen-data.ts';
+import type { SkySave } from '../world/sky-weather.ts';
 import { cellKey } from '../world/worldspace.ts';
 import type { GameSave } from './game-save.ts';
 import { SAVE_VERSION, type SaveHeader } from './save-codec.ts';
@@ -620,10 +623,22 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       // INFO: said (its Say Once mark; the mark matters to those infos alone).
       saidOnce.add(formId);
       applied |= ChangeBase.last;
-    } else if (entry.type === 38 && flags & ChangeBase.last) {
-      state.location(formId).cleared = true;
-      state.location(formId).everCleared = true;
-      applied |= ChangeBase.last;
+    } else if (entry.type === 38 && flags & (ChangeBase.last | ChangeBase.locationKeywordData)) {
+      // LCTN: cleared, and the values scripts set on its keywords (SetKeywordData).
+      if (flags & ChangeBase.last) {
+        state.location(formId).cleared = true;
+        state.location(formId).everCleared = true;
+        applied |= ChangeBase.last;
+      }
+      const keywordData = form.base?.location?.keywordData;
+      if (keywordData) {
+        const values = state.location(formId).keywordData;
+        for (const { keyword, value } of keywordData) {
+          const id = ours(keyword);
+          if (id) values.set(id, value);
+        }
+        applied |= ChangeBase.locationKeywordData;
+      }
     } else if (form.base?.formListAdded) {
       // FLST: the forms scripts added (AddForm), in the order they were added.
       const added: number[] = [];
@@ -1281,15 +1296,75 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     });
   }
 
-  // The weather.
+  // The sky: the current weather, the one a change under way comes from and when the current
+  // came (the time of day), the weather scripts hold over the regions (ForceActive and
+  // SetActive with override) and the one that stands for the regions' choice. Its climate,
+  // region and fog follow from where the player is. TODO(M13): the change's share is ours
+  // from when it began (the original keeps its own, weatherPercent: 1 in the saves read).
   let weather: number | undefined;
+  let sky: SkySave | undefined;
   const weatherData = globalData(ess, 6);
   if (weatherData) {
     try {
-      const id = ours(readWeather(weatherData, resolve).weather);
-      weather = id === 0 ? undefined : id;
+      const read = readWeather(weatherData, resolve);
+      const form = (id: number): number | undefined => {
+        const mapped = id === 0 ? undefined : ours(id);
+        return mapped === 0 ? undefined : mapped;
+      };
+      weather = form(read.weather);
+      if (weather !== undefined) {
+        sky = {
+          current: weather,
+          outgoing: form(read.previousWeather),
+          override: form(read.overrideWeather),
+          default: form(read.defaultWeather),
+          since: read.beginTime,
+        };
+      }
     } catch {
       skips.add('weather: unreadable');
+    }
+  }
+
+  // The music (global data 7): the types in play beside the location's (whose type, the
+  // table's last form, follows from where the player is), oldest first: MQ101's
+  // MUSDungeonChargen on the cart, MUSCombatBossChargen as Alduin attacks. TODO(M13): the
+  // table's first form (0 in the saves read); a type the fights added is put back as a
+  // script's (none in the saves read: the fights add theirs again as they go on).
+  const music: number[] = [];
+  const audioData = globalData(ess, 7);
+  if (audioData) {
+    try {
+      for (const type of readAudio(audioData, resolve).tracks) {
+        const id = type === 0 ? undefined : ours(type);
+        if (id) music.push(id);
+      }
+    } catch {
+      skips.add('audio: unreadable');
+    }
+  }
+
+  // The interface (global data 102): the input events whose help messages the player has done
+  // (the opening's "Look" and "Forward"), not shown again; the weapons, spells and shouts used
+  // last (the journal's favorites, each counted once). TODO(M13): the help messages shown (one
+  // number, 252 in the saves read) and the two words beside them, whose meaning is not known.
+  const interfaceData = globalData(ess, 102);
+  if (interfaceData) {
+    try {
+      const read = readInterface(interfaceData, resolve);
+      for (const name of read.extra?.names ?? []) state.helpDone.add(name.toLowerCase());
+      for (const [list, usage] of [
+        [read.lastUsedWeapons, state.usage.weapons],
+        [read.lastUsedSpells, state.usage.spells],
+        [read.lastUsedShouts, state.usage.shouts],
+      ] as const) {
+        for (const form of list) {
+          const id = form === 0 ? undefined : ours(form);
+          if (id) usage.set(id, (usage.get(id) ?? 0) + 1);
+        }
+      }
+    } catch {
+      skips.add('interface: unreadable');
     }
   }
 
@@ -1394,7 +1469,7 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   }
   for (const table of [ess.globalData1, ess.globalData2, ess.globalData3]) {
     for (const entry of table) {
-      if (![0, 1, 3, 6, 103, 109, 111, 1001].includes(entry.type) && entry.data.length > 0) {
+      if (![0, 1, 3, 6, 7, 103, 109, 111, 1001].includes(entry.type) && entry.data.length > 0) {
         skips.add(`global data ${String(entry.type)}`);
       }
     }
@@ -1436,6 +1511,8 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     runtime,
     player,
     weather,
+    ...(sky && { sky }),
+    ...(music.length > 0 && { music }),
     unsaved: [],
     world: { actors: savedActors, graphs: [], ...(savedPlayer && { player: savedPlayer }) },
     inventoryDeltas: [...inventoryDeltas].map(([container, items]) => [container, [...items]]),
