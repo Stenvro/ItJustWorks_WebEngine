@@ -354,7 +354,11 @@ player's by their movement, an NPC's by its controller's motion (the movers': sn
 gait its AI asks for while it moves) or, beyond the high process, the gait its AI asks for. The player in iron boots running across the Abandoned Shack's floor plays
 FSTWoodRunArmorHeavyLSD / RSD. Animations' **SoundPlay.`<descriptor>`** events play that sound
 descriptor (by editor id) at the actor; **NPCSoundPlay.`<descriptor>`** only for actors other
-than the player.
+than the player. **SoundStop.`<descriptor>`** stops what that actor's animations started of it
+at once (the bow's draw loop, WPNBowPullLPM, as the arrow leaves: 17 annotations), and
+**SoundRelease.`<descriptor>`** lets it end, a loop playing out its release (8, the dogs'
+barks). TODO(M13): the split between the two is inferred from their names and where the data
+uses them.
 
 An actor wearing no footstep set of its own steps with the default one (DOBJ DFTS,
 DefaultFootstepSet).

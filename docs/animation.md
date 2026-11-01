@@ -1009,11 +1009,17 @@ in furniture, its executioner (another user of it with the isExecutioner keyword
 headsman). Helgen's prisoner has no killer at his Decapitate (KillActor comes 4.8 s later):
 unbent, his head flew level at 250 units a second over the basket (an open crate, 20 by 30
 units, before the block) and rolled down the street; bent down by the headsman's chop it
-drops into it, as observed in the original. TODO(M13): how the engine knows the executioner;
-the physics has no rolling friction yet (Havok's rollingFrictionMultiplier), so a head that
-comes down in the crate (its narrow side leaves the head's capsule, radius 8.6, 2 units of
-play) can roll off its rim or, after a few seconds, work through its thin walls. The
-head's place is read by `headAt` (its body is made and falls in the headless simulation too,
+drops into it, as observed in the original. TODO(M13): how the engine knows the executioner.
+The crate, scaled 0.66, leaves the head's capsule (radius 8.6) 1.3 units of play across its
+narrow side. Ours comes down at 45 degrees (250 units a second, the chop bending it down) and
+reaches the rim's height while still over the near wall: it strikes both rims and rolls off
+along the far one (`sim-opening-ride`). TODO(M13): where the original's flight starts (the
+moment of the chop the cut falls on). Not the cause: rolling friction (rollingFrictionMultiplier
+is 0 in every mesh, the skeletons' too), the head's friction 0.8 and restitution 0.8 (read,
+combined with the crate's 0.5 and 0.4 as Havok does), continuous collision (the walls are
+struck at the rim, not passed through). A crate put to sleep while the head still rocked in it
+sank and fell through the street; Havok deactivates such an island as a whole, and so does
+ours now (docs/physics.md, "Deactivation by island"). The head's place is read by `headAt` (its body is made and falls in the headless simulation too,
 with nothing to draw). The ragdoll's
 head bodies (a dying actor's, a corpse placed in its cell) stay out of collision. The piece
 names no reference (the crosshair finds nothing on it).
