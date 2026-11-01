@@ -40,6 +40,7 @@ import {
   type SavedStoryEvent,
 } from '../formats/ess/global-data-tables.ts';
 import type { EssPlayerData, EssTintMask } from '../formats/ess/player.ts';
+import type { EssProcedureState } from '../formats/ess/process.ts';
 import type { SavedInstance } from '../scripting/papyrus-vm.ts';
 import { GameState, type ActorValueState } from '../scripting/runtime/game-state.ts';
 import {
@@ -136,6 +137,30 @@ function sceneAction(
     complete: done,
     left: Number.isFinite(seconds) && seconds > 0 && seconds < 3600 ? seconds : 0,
   };
+}
+
+/**
+ * The branch a running package's tree had reached, as our saved packages keep it (SavedPackage
+ * path: each branch's index among its parent's children, from the root down), from its procedure
+ * states: a Sequence's, Stacked's and Random's u32 is the index of the child it runs (in the
+ * saves read, every one of some 3,300 names a child, whose procedure the child's state names:
+ * SitSleep for Sit and Sleep, DialogueActivate for ForceGreet); of a Simultaneous branch's
+ * children, the first that runs (ours goes down one).
+ */
+export function procedurePath(state: EssProcedureState | undefined): number[] {
+  const path: number[] = [];
+  for (let at = state; at && path.length < 32;) {
+    if (at.index !== undefined) {
+      path.push(at.index);
+      at = at.child;
+      continue;
+    }
+    const first = at.children?.find((child) => child.state);
+    if (!first) break;
+    path.push(first.index);
+    at = first.state;
+  }
+  return path;
 }
 
 /** The change flags that write a reference's place into its change form. */
@@ -598,13 +623,17 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
    * An actor's running package (its AI process's current one) and whom it fought (its combat
    * controller's target), where the save has it stand: it goes on with them as it is placed
    * (src/save/world-save.ts). An actor the save keeps at its record's place (it writes no place
-   * for it) stands there. The package starts again from its procedure tree's root.
-   * TODO(M13): the procedures' running states (process.ts reads them) into ours.
+   * for it) stands there. The package goes on in the branch of its procedure tree it ran (its
+   * procedure states' child indices, procedurePath). TODO(M13): the procedures' own states
+   * (where a Travel goes, a Sandbox's activity, a Patrol's point) and the high process's timers.
    */
   function savedActor(form: EssChangeForm, formId: number): SavedActor | undefined {
     const actor = form.actor;
-    if (actor?.process) skips.add('ACHR: the AI process beyond its package (TODO(M13))');
-    const pkg = actor?.process?.package?.package;
+    if (actor?.process) {
+      skips.add("ACHR: the procedures' own states and the process's timers (TODO(M13))");
+    }
+    const running = actor?.process?.package;
+    const pkg = running?.package;
     const id = pkg === undefined ? undefined : ours(pkg);
     const target = actor?.combat ? ours(actor.combat.target) : undefined;
     if (!id && !target) return undefined;
@@ -638,7 +667,14 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       position: at.position,
       heading: at.rotation[2],
       ...(id && {
-        package: { id, completed: false, ended: false, path: [], found: [], ranOn: [] },
+        package: {
+          id,
+          completed: false,
+          ended: false,
+          path: procedurePath(running?.procedureState),
+          found: [],
+          ranOn: [],
+        },
       }),
       ...(target && { combatTarget: target }),
     };

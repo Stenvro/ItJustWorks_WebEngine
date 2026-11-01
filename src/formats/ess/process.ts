@@ -40,8 +40,22 @@ export interface EssActorPackage {
   readonly parameters?: readonly EssPackageValue[];
   /** A custom package's running procedure (its execution state's name; '' when none). */
   readonly procedure?: string;
+  /** A custom package's procedure tree's running state, from its root (`procedure`) down. */
+  readonly procedureState?: EssProcedureState;
   /** A sandbox's current activity's reference, a patrol's or guard's target (as read). */
   readonly dataTarget?: number;
+}
+
+/**
+ * A procedure tree item's running state, as far as the import uses it: its kind's name and, for
+ * a branch, the u32 it keeps with the child it runs (Sequence, Stacked, Random) or with each
+ * child (Simultaneous), and that child's state.
+ */
+export interface EssProcedureState {
+  readonly name: string;
+  readonly index?: number;
+  readonly child?: EssProcedureState;
+  readonly children?: readonly { readonly index: number; readonly state?: EssProcedureState }[];
 }
 
 /** What the AI process's data says, as far as the engine has a use for it. */
@@ -197,7 +211,7 @@ export function readCreatedPackage(stream: PathingStream, procedure?: number): n
 /** What a running package's own data says, as far as it is kept. */
 export type EssPackageData = Pick<
   EssActorPackage,
-  'dataKind' | 'dataTarget' | 'parameters' | 'procedure'
+  'dataKind' | 'dataTarget' | 'parameters' | 'procedure' | 'procedureState'
 >;
 
 /**
@@ -263,7 +277,7 @@ function readPackageDataInto(
       // The procedure tree's running state: its execution state's name, then its data.
       const name = reader.wstring();
       out.procedure = name;
-      if (name !== '') readExecState(stream, name);
+      if (name !== '') out.procedureState = readExecState(stream, name);
       return;
     }
     default:
@@ -430,10 +444,9 @@ function readNested(stream: PathingStream, name: string): void {
 }
 
 /** A child procedure's state: its name ('' when none), then its state. */
-function readChild(stream: PathingStream): string {
+function readChild(stream: PathingStream): EssProcedureState | undefined {
   const name = stream.reader.wstring();
-  if (name !== '') readExecState(stream, name);
-  return name;
+  return name === '' ? undefined : readExecState(stream, name);
 }
 
 /**
@@ -441,28 +454,39 @@ function readChild(stream: PathingStream): string {
  * branches (Sequence, Stacked, Simultaneous, Random) hold their children's states, each
  * procedure keeps its own (where it goes, what it uses, the pathing request it waits on).
  */
-function readExecState(stream: PathingStream, name: string): void {
+function readExecState(stream: PathingStream, name: string): EssProcedureState {
+  const reader = stream.reader;
+  switch (name) {
+    case 'Sequence':
+    case 'Stacked':
+    case 'Random': {
+      const child = readChild(stream);
+      const index = reader.u32();
+      if (name === 'Random') reader.skip(4 * reader.vsval());
+      return { name, index, ...(child && { child }) };
+    }
+    case 'Simultaneous': {
+      const children: { index: number; state?: EssProcedureState }[] = [];
+      for (let n = reader.vsval(), i = 0; i < n; i++) {
+        const index = reader.u32();
+        const state = readChild(stream);
+        children.push({ index, ...(state && { state }) });
+      }
+      return { name, children };
+    }
+    default:
+      readProcedureState(stream, name);
+      return { name };
+  }
+}
+
+/** A procedure's own running state (not a branch's), by its name. */
+function readProcedureState(stream: PathingStream, name: string): void {
   const reader = stream.reader;
   const ref = (): void => {
     stream.form();
   };
   switch (name) {
-    case 'Sequence':
-    case 'Stacked':
-      readChild(stream);
-      reader.u32();
-      return;
-    case 'Simultaneous':
-      for (let n = reader.vsval(), i = 0; i < n; i++) {
-        reader.u32();
-        readChild(stream);
-      }
-      return;
-    case 'Random':
-      readChild(stream);
-      reader.u32();
-      reader.skip(4 * reader.vsval());
-      return;
     case 'Acquire':
       reader.u32();
       ref();

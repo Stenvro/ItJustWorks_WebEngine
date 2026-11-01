@@ -1046,6 +1046,11 @@ export class ActorCombat implements CombatBridge {
     );
   }
 
+  /** The combat override package (ECOR) an actor runs while it fights (ActorCombatAi). */
+  overridePackage(reference: number): number | undefined {
+    return this.#brain.overridePackage(reference);
+  }
+
   /**
    * What a fighter's hands hold (WeaponType; undefined: nothing) and whether its left holds a
    * shield: what the player's attack buttons do.

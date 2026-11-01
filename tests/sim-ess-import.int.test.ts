@@ -47,6 +47,11 @@ const MQ101 = 0x3372b;
 const TAMRIEL = 0x3c;
 const HIGH_ELF_RACE = 0x13743;
 const HADVAR = 0x2bfa2;
+const RALOF = 0x2bf9e;
+/** MQ101HelgenArcher3REF, one of the archers fighting Alduin. */
+const HELGEN_ARCHER = 0xe72b9;
+/** How many of the placed living actors run the package the save has them on (of 16). */
+const GOING_FLOOR = 14;
 /** Alduin over Helgen (MQ101). */
 const ALDUIN_HELGEN = 0x32db7;
 
@@ -353,8 +358,11 @@ describe.skipIf(!hasGamedata() || opening === undefined)('the opening, imported 
       expect(appearance?.race).toBe(HIGH_ELF_RACE);
       expect(appearance?.headParts.length).toBeGreaterThan(0);
       expect(appearance?.tints.length).toBeGreaterThan(0);
-      // The actors placed around the player run the packages the save has them run.
-      await sim.step(3);
+      // The actors placed around the player run the packages the save has them run (as
+      // GetCurrentPackage answers: a fighter's combat override package, a scene's package done
+      // while its action runs), a second on: the packages go on from the branch they had reached,
+      // so Alduin's strafe, saved half done, ends a little later and his flight grab follows.
+      await sim.step(1);
       // The dead run none.
       let placed = 0;
       const going: number[] = [];
@@ -362,15 +370,17 @@ describe.skipIf(!hasGamedata() || opening === undefined)('the opening, imported 
         if (!saved.package || sim.actor(saved.reference) === undefined) continue;
         if (await sim.runtime.actors.isDead(saved.reference)) continue;
         placed++;
-        if (sim.package(saved.reference)?.id === saved.package.id) going.push(saved.reference);
+        if (sim.runtime.currentPackage(saved.reference) === saved.package.id) {
+          going.push(saved.reference);
+        }
       }
-      console.log(`opening: ${String(going.length)} of ${String(placed)} placed actors run them`);
       expect(placed).toBeGreaterThan(10);
-      // Hadvar on his way to the keep and Alduin's strafe (the scenes' packages), the wounded in
-      // the road. TODO(M13): the soldiers the save has on DefaultHoldPositionLinkedRef128 choose
-      // dunCGAlduinBaitStayAtLinkedRef here; Ralof, saved going into the keep, runs none yet.
-      expect(going).toEqual(expect.arrayContaining([HADVAR, ALDUIN_HELGEN]));
-      expect(going.length).toBeGreaterThanOrEqual(5);
+      // Hadvar on his way to the keep, Ralof at its marker and Alduin's strafe (the scenes'
+      // packages), the wounded in the road, the archers fighting Alduin on their combat override
+      // package (DefaultHoldPositionLinkedRef128). TODO(M13): two archers the save has fighting
+      // do not take the fight up again here.
+      expect(going).toEqual(expect.arrayContaining([HADVAR, RALOF, ALDUIN_HELGEN, HELGEN_ARCHER]));
+      expect(going.length).toBeGreaterThanOrEqual(GOING_FLOOR);
     } finally {
       await sim.close();
     }
