@@ -232,9 +232,10 @@ describe('comments on what the player does', () => {
 
 describe('talking to the player from furniture', () => {
   it('gets up from furniture with Must Exit To Talk (a bed), not from a chair', () => {
-    // CommonBed01R's record flags (bit 28 set) and a chair's (none of it).
-    expect(getsUpToTalk(0x1000_0000)).toBe(true);
-    expect(getsUpToTalk(0x0001_0000)).toBe(false);
+    // A bed's flags (record bit 28, MNAM bit 27) and a chair's (neither).
+    expect(getsUpToTalk(0x1000_0000, 0x0800_0001)).toBe(true);
+    expect(getsUpToTalk(0, 0x0800_0001)).toBe(true);
+    expect(getsUpToTalk(0x0001_0000, 0x4000_0001)).toBe(false);
   });
 });
 
