@@ -47,6 +47,8 @@ describe('AI process', () => {
       package: 0x10158d,
       dataKind: PackageDataKind.custom,
       procedure: 'Sequence',
+      // The branch it runs: the Sequence's third child, a Travel.
+      procedureState: { name: 'Sequence', index: 2, child: { name: 'Travel' } },
       parameters: [{ index: 2, type: 'SingleRef' }],
       target: 0x10158e,
     });

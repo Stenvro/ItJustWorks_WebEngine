@@ -513,7 +513,7 @@ export class ModelViewer {
       if (reference === PLAYER_REF) this.#seat?.release();
       this.#stage?.killed(reference, killer, silent);
     },
-    currentPackage: (reference) => this.#stage?.ai.current(reference)?.id,
+    currentPackage: (reference) => this.#stage?.currentPackage(reference),
     currentProcedure: (reference) => this.#stage?.ai.current(reference)?.procedure,
     randomSceneStarts: (scene, first, second) =>
       this.#stage?.talk.randomSceneStarts(scene, first, second),

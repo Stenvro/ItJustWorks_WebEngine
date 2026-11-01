@@ -1633,6 +1633,18 @@ export class ActorStage {
   }
 
   /**
+   * The package an actor runs (GetCurrentPackage): while it fights, its combat override package
+   * (ECOR), unless a scene's package action holds it, as observed in the original (its saves
+   * keep MQ101's archers fighting Alduin on their override, the soldier a scene sends past them
+   * on the scene's patrol); else its AI's.
+   */
+  currentPackage(reference: number): number | undefined {
+    const scene = this.#options.session.scriptsReady?.scenes.packagesOf(reference);
+    const override = scene?.length ? undefined : this.combat.overridePackage(reference);
+    return override ?? this.ai.current(reference)?.id;
+  }
+
+  /**
    * What a save keeps of the actors on the stage (src/save/world-save.ts): where each stands,
    * the furniture it is in, its package and how far it got, whom it fights, whether a script
    * set it sneaking and whether its weapon is out (the original saves both with its actor

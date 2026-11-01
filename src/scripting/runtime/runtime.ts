@@ -3831,6 +3831,13 @@ export class ScriptRuntime implements VmHost {
       threads: threads.threads,
       scenes: this.scenes.saveData(),
       translations,
+      engines: {
+        casting: this.casting.saveData(),
+        progression: this.progression.saveData(),
+        crime: this.crime.saveData(),
+        trapHits: this.trapHits.saveData(),
+        magic: this.magic.saveData(),
+      },
     };
   }
 
@@ -3912,6 +3919,14 @@ export class ScriptRuntime implements VmHost {
     this.scenes.restore(save.scenes);
     // The translations in progress go on from where they were.
     for (const translation of save.translations ?? []) this.#translateFor(translation);
+    // The engines' timers and marks (casting delays and cooldowns, regeneration delays, NPC
+    // assaults answered, traps' hits, effects' growth, summons fading).
+    const engines = save.engines;
+    this.casting.loadData(engines?.casting);
+    this.progression.loadData(engines?.progression);
+    this.crime.loadData(engines?.crime);
+    this.trapHits.loadData(engines?.trapHits);
+    this.magic.loadData(engines?.magic);
     // The player's abilities, diseases and worn enchantments act again (magic-engine.ts).
     await this.magic.prepare(PLAYER_REF);
     await this.vm.idle();

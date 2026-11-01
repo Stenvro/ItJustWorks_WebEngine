@@ -56,7 +56,7 @@ export interface EssObject {
   readonly script: string;
   /** The 16 bits before the reference id (UESP "unknown2bits"). */
   readonly flags: number;
-  /** The game handle's high word (a form's type; an alias's id). */
+  /** The game handle's high word: an alias's id (−1 on a form, in every save read). */
   readonly high: number;
   readonly refId: RawRefId;
   readonly unknown: number;

@@ -197,6 +197,17 @@ the seconds the whole way takes, the share after which it is almost complete
 (fRefTranslationAlmostDonePercent) and the seconds gone. After a load each goes on from there:
 its almost-complete event if not yet told, then its end.
 
+## The engines' timers
+
+`RuntimeSave.engines` (each engine's saveData, put back by its loadData after the game state):
+the casting engine's last casts by "actor:item" (the AI's delays between casts) and lesser
+powers' last uses (their cooldowns), as seconds before the save on its own clock; the
+regeneration delays by "reference:vital" (seconds left); the NPC assaults already answered
+("attacker:victim", no alarm again); the traps' contacts by target and trap, with their last
+telling on the game's real time and the touch; by active effect key, an Accumulate Magnitude
+effect's rate and hold and the share of a value effect done at once; the summons fading out
+(seconds left). Not kept (TODO(M13)): a cast being charged or held, a shout key held.
+
 ## World state kept while unloaded
 
 GameState's own fields hold, and so save, what the world keeps of references that are not

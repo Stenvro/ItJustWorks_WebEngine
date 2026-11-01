@@ -393,9 +393,25 @@ export class SceneDirector {
     return current === undefined || packages.includes(current);
   }
 
-  /** The scene package an actor runs (GetCurrentPackage where its AI does not run). */
+  /**
+   * The scene package an actor runs (GetCurrentPackage where its AI does not run). One whose
+   * package completed is still its package while that action runs, as observed in the original:
+   * its saves keep it as the actor's AI process's package (MQ101's Ralof, at the keep's marker,
+   * on MQ101DragonRaloftoMarkerFKeep until phase 6 ends it).
+   */
   packageOf(actor: number): number | undefined {
-    return this.packagesOf(actor)?.[0];
+    const running = this.packagesOf(actor)?.[0];
+    if (running !== undefined) return running;
+    const playing = this.#actors.get(actor);
+    if (!playing || !live(playing)) return undefined;
+    let latest: ActionRun | undefined;
+    for (const run of playing.actions) {
+      if (run.actor !== actor || run.action.type !== 'package' || run.status !== 'running') {
+        continue;
+      }
+      if (!latest || run.order > latest.order) latest = run;
+    }
+    return latest?.action.type === 'package' ? latest.action.packages[0] : undefined;
   }
 
   /** Where a scene has an actor look now (undefined: no scene action holds its head). */
