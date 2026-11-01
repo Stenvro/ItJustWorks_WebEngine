@@ -505,7 +505,10 @@ the player in a runtime on the game data, `--audit` reads every record).
   another comes; the summoner's perks raise the limit: Mod Commanded Actor Limit, Twin Souls'
   one more), gone as the effect ends or the summoner dies: it fades out (its alpha to 0) and
   leaves the world after fSummonedCreatureFadeOutSeconds (1.5), gone for the game at once (a save
-  meanwhile has it no more); Reanimate raises a corpse (it falls again as it
+  meanwhile has it no more); out of combat a summon (and a raised corpse) follows its commander,
+  coming up from beyond fSummonedCreatureMaxFollowDist (400) to fSummonedCreatureMinFollowDist
+  (250) from it (the engine package Follow Commander: src/ai/engine-packages.ts; TODO(M13): the
+  band's use is inferred); Reanimate raises a corpse (it falls again as it
   ends); Banish ends a summoning; Bound Weapon puts its weapon in the hand; Spawn Hazard and
   Spawn Scripted Ref place their form; Disarm takes the weapons out of the hands
   (sPlayerDisarmedMessage), not a bound one nor a Can't Drop one (WEAP DNAM 0x8); Soul Trap and Actor.TrapSoul put a dead actor's soul (by level:
@@ -695,7 +698,9 @@ Format/SPEL"; the game settings.
   the time it is held (its cost a second). Observed in the original: the player's magicka
   does not regenerate while any of their casts lasts; an NPC's does when
   bRegenNPCMagickaDuringCast is set (1).
-- A staff spends its enchantment's cost from its charge (WEAP EAMT at first; Staff of Fireball
+- A staff spends its enchantment's cost from its charge (WEAP EAMT at first, without one its
+  enchantment's: ENIT's charge amount with No Auto Calc, else fMagicEnchantmentChargeMult × its
+  cost + fMagicEnchantmentChargeBase, 1 and 0, observed in the original; so for weapons; Staff of Fireball
   2000, 133 a cast: 15 casts); the charge is kept on the staff itself (ExtraCharge: "Items of their own"). A scroll is
   used up. Neither, nor powers or shouts, trains a skill.
 
@@ -1112,6 +1117,13 @@ tools/crime-info.ts` lists the crime factions with their values, jails and chest
   one), the one hit too, as an ally overlooks the player's assault: a guard's stray arrow on
   another guard as the dragon they shot at falls raises no fight between them (TODO(M13): the
   engine's own rule for who reports an actor's crime).
+- An actor's other crimes, alarms as its assault: a murder, the kill that ends its own assault
+  (not one struck back, not a scripted kill without a blow); a theft, a package's Acquire taking
+  what it may not take (Allow Stealing; `crime.npcTook`), and pickpocketing, taking from a living
+  actor (Allow Pickpocketing). In the load order only MQ101RalofGetDoorKey allows both, taking
+  the key from a corpse (no one's). Trespass is the player's alone (the warnings, the off-limits
+  doors); actors go where their packages send them. TODO(M13): whether the original records an
+  actor's crimes and marks what it stole.
 
 ### Stolen items
 
@@ -1556,9 +1568,20 @@ the scripts ask for. `node tools/papyrus-run.ts --new-game --console "2:player.c
 WerewolfChange player"` (twice: the first cast only ends the Companions' "virgin" flag) or
 `... DLC1VampireChange ...` runs a change in Node, `--activate t:<ref>` feeds.
 
-- **Game.SetBeastForm** (`runtime.beastForm`): the inventory, magic and favorites menus stay
-  shut (their keys and the tween menu's choices: src/shell/game-menus.ts); the map, skills and
-  journal open (UESP "Skyrim:Werewolf").
+- **The archetypes** Werewolf and Vampire Lord (WerewolfChangeEffect, DLC1VampireChangeEffect;
+  their associated item the beast race): on the player the beast form starts as the effect
+  takes hold, before its scripts start (WerewolfChangeEffectScript's first-change branch turns
+  it off again, which shows the engine turned it on: src/gameplay/beast-forms.ts).
+- **Game.SetBeastForm** (`runtime.beastForm`): the werewolf's inventory, magic and favorites
+  menus stay shut (their keys and the tween menu's choices: src/shell/game-menus.ts); the map,
+  skills and journal open (UESP "Skyrim:Werewolf"). The vampire lord's inventory stays shut;
+  its magic and favorites menus list only the default object VampireSpells (RIVS:
+  DLC1VampireSpellsPowers, Revert Form among them). A change under way (the race not yet
+  switched) keeps all three shut. TODO(M13): whether the werewolf's howls are chosen in a menu.
+  The HUD has no beast meter (hudmenu.swf names none): the meters are the beast race's.
+- **The controls the race takes away** are the data's: the scripts' DisablePlayerControls, and
+  the perks PlayerWerewolfFeed and DLC1VampireActivationBlocker, whose Filter Activation entries
+  keep the beasts from items, containers and closed doors.
 - **The beast's perk tree** (src/gameplay/beast-perk-trees.ts): in a beast form the skills menu
   shows the form's tree alone, the form being the player's race's by the default objects
   WerewolfRace (RIWR) and VampireRace (RIVR). Its perks cost the points in the global the

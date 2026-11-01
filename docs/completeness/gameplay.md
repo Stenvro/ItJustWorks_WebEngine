@@ -20,20 +20,20 @@ why the original reads nothing more there. The counts are the records (entries, 
 the item. Items no record uses are open but counted apart: only mods need them. The mechanics
 part is kept by hand against docs/gameplay.md and the conformance suites.
 
-## Count (2026-11-01, round 2)
+## Count (2026-11-01, round 3)
 
 | Part                               | Items | Done | Open | Open, unused |
 | ---------------------------------- | ----: | ---: | ---: | -----------: |
 | Perks (entry points, functions)    |   116 |  104 |   12 |           12 |
-| Magic effects (archetypes, flags)  |   104 |   99 |    5 |            3 |
+| Magic effects (archetypes, flags)  |   104 |  101 |    3 |            3 |
 | Spells, enchantments, potions      |    43 |   42 |    1 |            1 |
 | Shouts, skills (SHOU, WOOP, AVIF)  |    16 |   16 |    0 |            0 |
 | Crafting (FURN, COBJ)              |    26 |   25 |    1 |            1 |
 | Factions (FACT)                    |    40 |   40 |    0 |            0 |
-| Equipment (EQUP, ARMO, WEAP, AMMO) |    43 |   37 |    6 |            5 |
-| Game settings                      |   172 |  161 |   11 |            0 |
-| Mechanics (by hand)                |    20 |   18 |    2 |            0 |
-| Total                              |   580 |  542 |   38 |           22 |
+| Equipment (EQUP, ARMO, WEAP, AMMO) |    43 |   38 |    5 |            5 |
+| Game settings                      |   172 |  163 |    9 |            0 |
+| Mechanics (by hand)                |    20 |   20 |    0 |            0 |
+| Total                              |   580 |  549 |   31 |           22 |
 
 Round 1 wrote the sweep and this list, and built down Weapons Unequipped (the package takes the
 weapons from the actor's hands and does not give them back as the flag goes; observed in the
@@ -82,20 +82,44 @@ Round 2 built down:
   unknown: TODO(M13), to check in the original with a Riften guard after his meal
   (GuardRiftenEat*: Weapons Unequipped); ours stay unarmed until they fight. Not changed.
 
+Round 3 built down:
+
+- The werewolf and vampire lord archetypes (WerewolfChangeEffect, DLC1VampireChangeEffect; their
+  associated item the beast race): on the player the beast form starts as the effect takes
+  hold, before its scripts (WerewolfChangeEffectScript's first-change branch turns it off again,
+  which shows the engine turned it on). The rest of the change is the scripts' and runs: the race
+  with its skeleton and graph (Actor.SetRace), the controls (DisablePlayerControls, and the
+  perks PlayerWerewolfFeed and DLC1VampireActivationBlocker, whose Filter Activation entries
+  keep the beasts from items, doors and containers), the feeding (the perk's Activate choice,
+  SpecialFeeding), the timer (PlayerWerewolfShiftBackTime, OnUpdate). The vampire lord's magic
+  and favorites menus open, listing only the default object VampireSpells (RIVS:
+  DLC1VampireSpellsPowers, Revert Form among them); the werewolf's stay shut. The HUD has no
+  beast meter: hudmenu.swf names none. src/gameplay/beast-forms.ts, magic-engine.ts;
+  tests/conformance/magic/beast-forms.test.ts runs a change in the simulation into the form and
+  back at its timer. TODO(M13): whether the werewolf's howls are chosen in a menu.
+- Use All Parents (BothHands, Shield): read by EquipSlots.place beside the parser (explained).
+- An enchanted item's charge without EAMT (31 weapons: the bound weapons, the Ebony Blade,
+  Keening, the Poacher's Axe, ...): its enchantment's, ENIT's charge amount with No Auto Calc,
+  else fMagicEnchantmentChargeMult × its cost + fMagicEnchantmentChargeBase (observed in the
+  original; crafting-engine.ts fullCharge, for weapons, staffs and the menus' values).
+- NPCs' crimes beyond assault: theft and pickpocketing (a package's Acquire taking what it may
+  not: crime-engine.ts npcTook; the data allows it in MQ101RalofGetDoorKey alone) and murder (the
+  kill that ends its own assault) are alarms its witnesses raise; trespass is the player's alone.
+  TODO(M13): whether the original records an NPC's crimes and marks its stolen items.
+- fSummonedCreature{Min,Max}FollowDist: a summon or a raised corpse out of combat follows its
+  commander (the engine package Follow Commander, src/ai/engine-packages.ts). Seen on the way: the
+  conjured familiar (a wolf by its template) picks a fight with the Bannered Mare's people, which
+  the original's summons do not (the combat AI's part, open).
+
 ## Next biggest open items
 
-1. Settings whose use is not documented (each 1): fMagicAreaScale{Min,Max} (2.5, 100),
-   fInvisibilityMaxRefraction (0.5: the refraction shimmer is not drawn yet, invisibility.ts),
-   fSummonedCreature{Min,Max}FollowDist (250, 400: summons follow their summoner out of combat,
-   the AI's part), fEnchantingSkillFactor (1.25: UESP's measured skill multiplier is 1.253 at
-   100; how the engine uses the setting is unknown), iIngredient{AlchemyUses,WortcraftUses} (0)
-   and iIngredientUseEffectThreshold (25), fHealthDataValue1 (1.1), fLevelScalingMult (1).
-2. The werewolf (2 effects) and vampire lord (1) archetypes: their scripts do the change; the
-   archetypes' own engine part is not identified.
-3. Equip slots' Use All Parents (2 EQUP): not read by name.
-4. Enchanting: an item's charge without EAMT; NPCs' crimes beyond assault (docs/completeness/
-   ai.md).
-5. Unused by the load order (mods only, 22): 11 perk entry points, trait, concussion, disguise,
+1. Settings whose use no document names (each 1): fMagicAreaScale{Min,Max} (2.5, 100),
+   fEnchantingSkillFactor (1.25: UESP's measured multiplier is 1.253 at 100; how the setting
+   enters it is unknown), iIngredient{AlchemyUses,WortcraftUses} (0) and
+   iIngredientUseEffectThreshold (25), fHealthDataValue1 (1.1), fLevelScalingMult (1): need the
+   original's code. fInvisibilityMaxRefraction (0.5): the refraction shimmer is not drawn yet
+   (rendering).
+2. Unused by the load order (mods only, 22): 11 perk entry points, trait, concussion, disguise,
    enchant visuals, medicine, the workbench type None, two EQUP flags, three weapon flags 2.
 
 ## Mechanics (by hand)
@@ -126,8 +150,10 @@ Round 2 built down:
 - [x] NPCs' improved items: the load order gives none (no COED item condition above 1 in any
       leveled list, NPC or container); COED's condition is not read (mods only).
 - [x] Followers at the jail's wait marker (crime-engine.ts jail; round 2).
-- [ ] Enchanting: an item's charge without EAMT (docs/engine-map.md, Enchanting).
-- [ ] NPCs' crimes beyond assault (docs/completeness/ai.md holds the guards' side).
+- [x] Enchanting: an item's charge without EAMT: its enchantment's (crafting-engine.ts
+      fullCharge; round 3).
+- [x] NPCs' crimes beyond assault: theft, pickpocketing, murder as alarms (crime-engine.ts
+      npcTook, murder; round 3). Trespass is the player's alone.
 
 ## Lists (from the sweep)
 
@@ -181,17 +207,15 @@ Round 2 built down:
 - [x] ranks (DATA: above 1) (27): src/scripting/runtime/perk-engine.ts: no vanilla entry belongs to a rank past the first (PRKE rank 0 in all), and a tree's ranks are its NNAM chain (Novice Locks: DATA 5, one record; the original's menu shows one rank); the count is the Creation Kit's
 - [ ] trait (0): unused by the load order (mods only)
 
-### Magic effect archetypes (43 of 47)
+### Magic effect archetypes (45 of 47)
 
 - [x] valueModifier (446), absorb (58), dualValueModifier (134), calm (22), demoralize (27), frenzy (13), disarm (6), commandSummoned (1), invisibility (13), darkness (0), nightEye (0), boundWeapon (9), summonCreature (81), detectLife (19), telekinesis (1), paralysis (29), reanimate (14), turnUndead (13), valueAndParts (0), accumulateMagnitude (3), peakValueModifier (332), rally (8), enhanceWeapon (4), banish (4), grabActor (1): src/gameplay/magic/effect-rules.ts
 - [x] script (351): src/scripting/runtime/magic-engine.ts: a Script effect does nothing but run its scripts (OnEffectStart, OnEffectFinish) and its actor value, as every effect does
-- [x] dispel (0), cureDisease (3), lock (0), open (0), soulTrap (4), werewolfFeed (1), cureParalysis (0), cureAddiction (0), curePoison (1), stagger (52), cloak (46), slowTime (5), spawnHazard (13), etherealize (4), spawnScriptedRef (1): src/scripting/runtime/magic-engine.ts
+- [x] dispel (0), cureDisease (3), lock (0), open (0), soulTrap (4), werewolfFeed (1), cureParalysis (0), cureAddiction (0), curePoison (1), stagger (52), cloak (46), werewolf (2), slowTime (5), spawnHazard (13), etherealize (4), spawnScriptedRef (1), vampireLord (1): src/scripting/runtime/magic-engine.ts
 - [x] light (8): src/gameplay/magic/projectile-flight.ts
 - [x] guide (1): src/shell/actor-stage.ts
 - [ ] concussion (0): unused by the load order (mods only)
-- [ ] werewolf (2): not read
 - [ ] disguise (0): unused by the load order (mods only)
-- [ ] vampireLord (1): not read
 
 ### Magic effect flags (18 of 18)
 
@@ -223,8 +247,8 @@ Round 2 built down:
 ### Spells, scrolls, enchantments, potions, ingredients (31 of 31)
 
 - [x] SPEL castType (1451), SPEL delivery (1451), SPEL effects (1451), SCRL castType (104), SCRL delivery (104), SCRL effects (104), ENCH castType (757), ENCH delivery (757), ENCH effects (757), ALCH castType (0), ALCH delivery (0), ALCH effects (472), INGR castType (0), INGR delivery (0), INGR effects (180): src/gameplay/magic/casting.ts
-- [x] SPEL cost (794), SCRL cost (103), ENCH cost (614), ALCH cost (0), INGR cost (0): src/gameplay/crafting.ts
-- [x] SPEL chargeTime (552), SCRL chargeTime (38), ENCH enchantment.amount (613): src/scripting/runtime/casting-engine.ts
+- [x] SPEL cost (794), SCRL cost (103), ENCH cost (614), ENCH enchantment.amount (613), ALCH cost (0), INGR cost (0): src/gameplay/crafting.ts
+- [x] SPEL chargeTime (552), SCRL chargeTime (38): src/scripting/runtime/casting-engine.ts
 - [x] SPEL castingPerk (196), SCRL castingPerk (0): src/scripting/runtime/perk-engine.ts
 - [x] ENCH enchantment.baseEnchantment (360), ENCH enchantment.wornRestrictions (80), ALCH potion.value (466), INGR potion.value (0): src/scripting/runtime/crafting-engine.ts
 - [x] ALCH potion.addiction (0), ALCH potion.useSound (470): src/scripting/runtime/magic-engine.ts
@@ -298,9 +322,9 @@ Round 2 built down:
 - [x] vendor.chest (183): src/shell/actor-senses.ts
 - [x] rank titles (MNAM, FNAM) (14): src/world/actor-records.ts
 
-### Equip slots (EQUP) (0 of 3)
+### Equip slots (EQUP) (1 of 3)
 
-- [ ] useAllParents (2): not read
+- [x] useAllParents (2): src/world/equip-slots.ts (EquipSlots.place, beside the parser): a slot whose parents are both hands takes both (BothHands: a two-handed weapon) with the flag, one of them (EitherHand) without; Shield's one parent is the left hand (src/world/equip-slots.test.ts)
 - [ ] parentsOptional (0): unused by the load order (mods only)
 - [ ] itemSlot (0): unused by the load order (mods only)
 
@@ -314,7 +338,7 @@ Round 2 built down:
 - [x] WEAP critDamage (3031), WEAP stagger (2456), WEAP critMult (3233), WEAP firstPersonModel (3300), WEAP equipSound (3307), WEAP unequipSound (3307), WEAP equipType (ETYP) (3323), ARMO rating (2639), ARMO equipType (ETYP) (316), AMMO equipType (ETYP) (0): src/scripting/runtime/equipment-engine.ts
 - [x] WEAP value (3275), ARMO value (3433), AMMO value (46): src/gameplay/chargen.ts
 - [x] WEAP weight (3267), ARMO weight (3423), AMMO weight (65): src/gameplay/actor-leveling.ts
-- [x] WEAP enchantment (EITM) (3018), ARMO enchantment (EITM) (2847), AMMO enchantment (EITM) (0): src/scripting/runtime/casting-engine.ts
+- [x] WEAP enchantment (EITM) (3018), ARMO enchantment (EITM) (2847), AMMO enchantment (EITM) (0): src/scripting/runtime/crafting-engine.ts
 - [x] ARMO armorType (2554): src/gameplay/inventory.ts
 
 ### Weapon flags (DNAM) (4 of 4)
@@ -350,37 +374,36 @@ Round 2 built down:
 - [x] fLockpickSkillSweetSpotMult (1), fLockpickBrokenPicksMult (1), fLockpickSkillPartialPickMult (1), fLockpickSkillPartialPickBase (1): src/gameplay/lockpicking.ts
 - [x] iLockLevelMaxVeryEasy (1): a name built at run time
 
-### Settings: magic and shouts (40 of 46)
+### Settings: magic and shouts (42 of 46)
 
 - [x] fEnchantmentPointsMult (1), fEnchantmentEffectPointsMult (1): src/shell/inventory-menu.ts
 - [x] fMagicPCSkillCostScale (1), fMagicCasterSkillCostMult (1), fMagicAbsorbVisualTimer (1), fMagicCasterPCSkillCostBase (1), fMagicSkillCostScale (1), fMagicRangeTargetCostMult (1), fMagicAreaBaseCostMult (1), fMagicDualCastingTimeMult (1), fMagicDualCastingCostMult (1): src/gameplay/magic/casting.ts
 - [x] fShoutRumbleSmallMotorFrequencyV3 (1), fShoutRumbleSmallMotorDurationV3 (1), fShoutRumbleBigMotorFrequencyV3 (1), fShoutRumbleBigMotorDurationV3 (1), fShoutRumbleBigMotorDurationV2 (1), fShoutRumbleSmallMotorFrequencyV2 (1), fShoutRumbleSmallMotorDurationV2 (1), fShoutRumbleBigMotorFrequencyV2 (1), fShoutRumbleSmallMotorFrequencyV1 (1), fShoutRumbleSmallMotorDurationV1 (1), fShoutRumbleBigMotorFrequencyV1 (1), fShoutRumbleBigMotorDurationV1 (1): a name built at run time
 - [x] fSummonedCreatureFadeOutSeconds (1), iMagicGuideWaypoints (1), fMagicGuideSpacing (1), fMagicWardPowerMaxMult (1), fMagicWardPowerMaxBase (1): src/gameplay/magic/effect-rules.ts
 - [x] fMagicTelekinesisBaseDistance (1), fMagicTelekinesiDistanceMult (1), fMagicTelekinesisDistanceMin (1): src/gameplay/magic/telekinesis.ts
+- [x] fSummonedCreatureMaxFollowDist (1), fSummonedCreatureMinFollowDist (1): src/ai/ai-settings.ts
 - [x] fDetectionSneakLightMod (1): src/ai/detection.ts
 - [x] fMagicDualCastingEffectivenessBase (1): src/scripting/runtime/magic-engine.ts
 - [x] fMagicLightSideOffset (1), fMagicLightHeightOffset (1), fMagicLightForwardOffset (1): inert: registered by the original and never read (observed in the original): src/shell/actor-effects.ts LIGHT_OFFSET
 - [x] fShoutTime2 (1), fShoutTime1 (1): src/scripting/runtime/casting-engine.ts
 - [x] fMagicGrabActorMinDistance (1), fMagicGrabActorThrowForce (1): src/shell/actor-combat.ts
-- [ ] fEnchantingSkillFactor (1): not read
-- [ ] fSummonedCreatureMaxFollowDist (1): not read
-- [ ] fSummonedCreatureMinFollowDist (1): not read
-- [ ] fInvisibilityMaxRefraction (1): not read
-- [ ] fMagicAreaScaleMin (1): not read
-- [ ] fMagicAreaScaleMax (1): not read
+- [ ] fEnchantingSkillFactor (1): not read: needs the original's code: UESP's measured skill multiplier (1 + s(s - 0.14) / 3.4, 1.253 at 100: src/gameplay/crafting.ts) does not show how the setting enters it
+- [ ] fInvisibilityMaxRefraction (1): not read: the refraction shimmer through an invisible actor is not drawn yet (rendering: src/gameplay/magic/invisibility.ts dithers it)
+- [ ] fMagicAreaScaleMin (1): not read: needs the original's code (no document names its use)
+- [ ] fMagicAreaScaleMax (1): not read: needs the original's code (no document names its use)
 
 ### Settings: stats (6 of 7)
 
 - [x] fStaminaBlockBase (1), fStaminaBlockDmgMult (1), fStaminaPowerBashBase (1), fStaminaBashBase (1), fStaminaAttackWeaponBase (1), fStaminaAttackWeaponMult (1): src/gameplay/vitals.ts
-- [ ] fHealthDataValue1 (1): not read
+- [ ] fHealthDataValue1 (1): not read: needs the original's code (no document names its use)
 
 ### Settings: alchemy and crafting (5 of 8)
 
 - [x] fTemperingSkillUseMult (1), fTemperingSkillUseItemValConst (1), fTemperingSkillUseItemValExp (1), fTemperingSkillUseItemValMult (1): src/gameplay/crafting.ts
 - [x] fAlchemySkillFactor (1): src/scripting/runtime/crafting-engine.ts
-- [ ] iIngredientWortcraftUses (1): not read
-- [ ] iIngredientUseEffectThreshold (1): not read
-- [ ] iIngredientAlchemyUses (1): not read
+- [ ] iIngredientWortcraftUses (1): not read: needs the original's code (no document names its use)
+- [ ] iIngredientUseEffectThreshold (1): not read: needs the original's code (no document names its use)
+- [ ] iIngredientAlchemyUses (1): not read: needs the original's code (no document names its use)
 
 ### Settings: skills and level-up (52 of 53)
 
@@ -392,7 +415,7 @@ Round 2 built down:
 - [x] fLevelUpCarryWeightMod (1), fXPLevelUpMult (1), fXPLevelUpBase (1), fSkillUseCurve (1): src/gameplay/progression.ts
 - [x] iAVDSkillsLevelUp (1), iAVDhmsLevelUp (1): src/gameplay/actor-leveling.ts
 - [x] iXPRewardSpeechChallengeVeryEasy (1), iXPRewardPickLockVeryHard (1), iXPRewardPickLockVeryEasy (1), iXPRewardPickLockHard (1), iXPRewardPickLockEasy (1), iXPRewardPickLockAverage (1), iXPRewardPickLock (1), iXPRewardKillOpponentVeryHard (1), iXPRewardKillOpponentVeryEasy (1), iXPRewardKillOpponentHard (1), iXPRewardKillOpponentEasy (1), iXPRewardKillOpponentAverage (1), iXPRewardHackComputerVeryHard (1), iXPRewardHackComputerVeryEasy (1), iXPRewardHackComputerHard (1), iXPRewardHackComputerEasy (1), iXPRewardHackComputerAverage (1), iXPRewardHackComputer (1), iXPRewardDiscoverMapMarker (1), iXPLevelKillNPCVeryHard (1), iXPLevelKillNPCVeryEasy (1), iXPLevelKillNPCHard (1), iXPLevelKillNPCEasy (1), iXPLevelKillNPCAverage (1), iXPLevelKillCreatureVeryHard (1), iXPLevelKillCreatureVeryEasy (1), iXPLevelKillCreatureHard (1), iXPLevelKillCreatureEasy (1), iXPLevelKillCreatureAverage (1), iXPDeathRewardHealthThreshold (1), iXPBumpBase (1): inert: an earlier game's experience points: nothing here gives any (the level comes from skills)
-- [ ] fLevelScalingMult (1): not read
+- [ ] fLevelScalingMult (1): not read: needs the original's code (no document names its use)
 
 ### Settings: armor and weapons (31 of 31)
 

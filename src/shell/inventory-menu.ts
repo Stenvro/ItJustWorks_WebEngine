@@ -347,7 +347,7 @@ export async function itemValue(
     {
       constant: enchantment.castType === 0,
       cost: await runtime.casting.baseCost(enchantment),
-      charge: item.charge > 0 ? item.charge : (enchantment.enchantment?.amount ?? 0),
+      charge: await runtime.crafting.fullCharge(item.charge, enchantment),
     },
     {
       pointsMult: settings.number('fEnchantmentPointsMult') ?? d.pointsMult,

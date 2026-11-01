@@ -147,6 +147,10 @@ const EXPLAINED: ReadonlyMap<string, string> = new Map([
   ],
   ['Magic effect flags|goryVisuals', 'not used by the game (Creation Kit "Magic Effect")'],
   [
+    'Equip slots (EQUP)|useAllParents',
+    "src/world/equip-slots.ts (EquipSlots.place, beside the parser): a slot whose parents are both hands takes both (BothHands: a two-handed weapon) with the flag, one of them (EitherHand) without; Shield's one parent is the left hand (src/world/equip-slots.test.ts)",
+  ],
+  [
     'Faction flags (FACT DATA)|canBeOwner',
     'the editor\'s filter of the factions it offers as owners (Creation Kit "Faction"); the game takes the owner a cell or reference names (every faction owning a cell has the flag)',
   ],
@@ -192,6 +196,27 @@ const INERT: readonly (readonly [RegExp, string])[] = [
   ],
 ];
 
+/** Why an open item stays open, by name (the checklist's reason). */
+const OPEN: ReadonlyMap<string, string> = new Map([
+  ...[
+    'fMagicAreaScaleMin',
+    'fMagicAreaScaleMax',
+    'fHealthDataValue1',
+    'fLevelScalingMult',
+    'iIngredientAlchemyUses',
+    'iIngredientWortcraftUses',
+    'iIngredientUseEffectThreshold',
+  ].map((name) => [name, "needs the original's code (no document names its use)"] as const),
+  [
+    'fEnchantingSkillFactor',
+    "needs the original's code: UESP's measured skill multiplier (1 + s(s - 0.14) / 3.4, 1.253 at 100: src/gameplay/crafting.ts) does not show how the setting enters it",
+  ],
+  [
+    'fInvisibilityMaxRefraction',
+    'the refraction shimmer through an invisible actor is not drawn yet (rendering: src/gameplay/magic/invisibility.ts dithers it)',
+  ],
+]);
+
 /**
  * Items the engine reads under another name than the table's (the parser turns the bit into a
  * field), by "part|name": the pattern that finds the reading code.
@@ -213,7 +238,14 @@ export async function gameplayCompleteness(db: RecordDatabase): Promise<Gameplay
   const push = (part: string, name: string, uses: number, where: string | undefined): void => {
     const explained = EXPLAINED.get(`${part}|${name}`);
     const found = where ?? explained;
-    items.push({ part, name, uses, done: found !== undefined, where: found ?? 'not read' });
+    const open = OPEN.get(name);
+    items.push({
+      part,
+      name,
+      uses,
+      done: found !== undefined,
+      where: found ?? (open === undefined ? 'not read' : `not read: ${open}`),
+    });
   };
   /** A table's keys (a flag or id table), each done when `pattern(key)` reads it. */
   const table = (
