@@ -193,6 +193,12 @@ const SHOUT_RECOVERY_MULT = 86;
 /** KYWD MagicWard (Skyrim.esm): ward spells. */
 const MAGIC_WARD = 0x1ea69;
 
+/** What a save keeps of the casting engine: "actor:item" keys with seconds since. */
+export interface CastingSave {
+  readonly lastCast: readonly (readonly [string, number])[];
+  readonly lesserUsed: readonly (readonly [string, number])[];
+}
+
 export class CastingEngine {
   readonly #runtime: ScriptRuntime;
   /** Casts going on, by "actor:source". */
@@ -777,6 +783,24 @@ export class CastingEngine {
     return eamt && eamt.length >= 2
       ? new DataView(eamt.buffer, eamt.byteOffset, eamt.byteLength).getUint16(0, true)
       : (castable.item.enchantment?.amount ?? 0);
+  }
+
+  /**
+   * What a save keeps (RuntimeSave.engines): when each actor last began casting an item (the
+   * AI's delays) and last used each lesser power (its cooldown), as seconds ago on the engine's
+   * clock. TODO(M13): a cast being charged or held, a shout key held (the original keeps its
+   * casters' states in the actors' saved process).
+   */
+  saveData(): CastingSave {
+    const ages = (stamps: ReadonlyMap<string, number>): [string, number][] =>
+      [...stamps].map(([key, at]) => [key, this.#clock - at]);
+    return { lastCast: ages(this.#lastCast), lesserUsed: ages(this.#lesserUsed) };
+  }
+
+  /** A save's casting state (saveData) on this fresh engine. */
+  loadData(data: CastingSave | undefined): void {
+    for (const [key, age] of data?.lastCast ?? []) this.#lastCast.set(key, this.#clock - age);
+    for (const [key, age] of data?.lesserUsed ?? []) this.#lesserUsed.set(key, this.#clock - age);
   }
 
   /**

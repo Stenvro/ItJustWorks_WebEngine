@@ -143,6 +143,16 @@ export class CrimeEngine {
     this.#runtime = runtime;
   }
 
+  /** What a save keeps (RuntimeSave.engines): the NPC assaults answered (attacker:victim). */
+  saveData(): readonly string[] {
+    return [...this.#npcAssaults];
+  }
+
+  /** A save's answered assaults (saveData): the pairs do not raise an alarm again. */
+  loadData(assaults: readonly string[] | undefined): void {
+    for (const key of assaults ?? []) this.#npcAssaults.add(key);
+  }
+
   /** Listens to crimes; returns the function that stops listening. */
   listen(listener: (event: CrimeEvent) => void): () => void {
     this.#listeners.add(listener);
