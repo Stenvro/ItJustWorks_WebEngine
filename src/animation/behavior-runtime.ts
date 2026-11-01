@@ -38,6 +38,7 @@ import { evaluateNode, parseExpression, type Expression } from './behavior-expre
 import { MirroredSkeleton } from './mirror.ts';
 import { addPose, blendPoses, PoseAccumulator } from './pose.ts';
 import { intoMatchFrame, matchPose, type PoseMatch } from './pose-matching.ts';
+import { alignPhase, syncLayout, type SyncPoint } from './sync-points.ts';
 import {
   directAt,
   footIk,
@@ -354,6 +355,23 @@ interface CyclicState {
   elapsed: number;
 }
 
+const SYNC_POINT_EVENTS = new WeakMap<BehaviorGraph, ReadonlySet<string>>();
+
+/** The lower-case names of the events a graph file flags as sync points (EVENT_FLAGS.syncPoint). */
+function syncPointEvents(graph: BehaviorGraph): ReadonlySet<string> {
+  let named = SYNC_POINT_EVENTS.get(graph);
+  if (!named) {
+    const flags = graph.eventFlags ?? [];
+    named = new Set(
+      graph.events
+        .filter((_, id) => ((flags[id] ?? 0) & EVENT_FLAGS.syncPoint) !== 0)
+        .map((name) => name.toLowerCase()),
+    );
+    SYNC_POINT_EVENTS.set(graph, named);
+  }
+  return named;
+}
+
 const SILENT_EVENTS = new WeakMap<BehaviorGraph, ReadonlySet<string>>();
 
 /** The lower-case names of the events a graph file flags silent (EVENT_FLAGS.silent). */
@@ -667,6 +685,8 @@ export class BehaviorRuntime {
    * around it set that phase (it then plays at that phase rather than advancing its own).
    */
   readonly #syncPhases = new WeakMap<object, { phase: number; driven: number }>();
+  /** Each clip's sync points (#clipSyncPoints), once its animation is there. */
+  readonly #clipSyncs = new WeakMap<object, readonly SyncPoint[]>();
   /** Each active hkbGetUpModifier's ragdoll pose, captured as it became active. */
   readonly #getUpFrom = new WeakMap<object, Float32Array>();
   /** The ragdoll controls active in this update. */
@@ -2918,9 +2938,16 @@ export class BehaviorRuntime {
    */
   #sync(node: Blender, dt: number, scope: Scope): void {
     const weighted = activeChildren(node, this.#blenderRead(node, scope));
+    // Its sync master (indexOfSyncMasterChild: the jumps' directional blends' and the unequip
+    // blends' first child, 13 of the vanilla graphs' 1,369 syncing blenders) leads the cycle
+    // while it plays: the cycle is its, and so are the sync points' places. Without one (-1),
+    // the children's weighted.
+    const masterChild = node.children[node.indexOfSyncMasterChild ?? -1];
+    const master = weighted.find(([child, weight]) => child === masterChild && weight > 0);
+    const leading = master ? [master] : weighted;
     let total = 0;
     let duration = 0;
-    for (const [child, weight] of weighted) {
+    for (const [child, weight] of leading) {
       const cycle = this.#cycleDuration(child.generator, 0);
       if (cycle === undefined || !(weight > 0)) continue;
       total += weight;
@@ -2938,9 +2965,86 @@ export class BehaviorRuntime {
       phase = (((start + dt / duration) % 1) + 1) % 1;
     }
     this.#syncPhases.set(node, { phase, driven: own?.driven ?? -1 });
+    // The cycle's sync points (the leading children's, weighted): each child plays between its
+    // own as the cycle is between these.
+    const layout = syncLayout(
+      leading.map(([child, weight]) => ({
+        points: this.#syncPointsOf(child.generator, 0),
+        weight,
+      })),
+    );
     const seen = new Set<object>();
     for (const [child, weight] of weighted) {
-      if (weight > 0) this.#drivePhase(child.generator, phase, seen, 0);
+      if (weight > 0) this.#drivePhase(child.generator, phase, seen, 0, layout);
+    }
+  }
+
+  /**
+   * A clip's sync points: the events its graph flags as sync points (EVENT_FLAGS.syncPoint) at
+   * its triggers and, unless it keeps its annotations from being triggers, its animation's
+   * annotations, each at its place in the cropped cycle (src/animation/sync-points.ts).
+   */
+  #clipSyncPoints(node: Clip): readonly SyncPoint[] {
+    const cached = this.#clipSyncs.get(node);
+    if (cached) return cached;
+    const animation = this.#host.clip(node.animation)?.animation;
+    if (!animation) return [];
+    const graph = this.#scopeOf(node).graph;
+    const flags = graph.eventFlags ?? [];
+    const cropStart = node.cropStart ?? 0;
+    const duration = Math.max(1e-4, animation.duration - cropStart - (node.cropEnd ?? 0));
+    const points: SyncPoint[] = [];
+    const add = (name: string | undefined, time: number): void => {
+      if (name !== undefined && time >= 0 && time <= duration)
+        points.push({ name: name.toLowerCase(), at: Math.min(time / duration, 1 - 1e-9) });
+    };
+    for (const trigger of node.triggers ?? []) {
+      if (((flags[trigger.event.id] ?? 0) & EVENT_FLAGS.syncPoint) === 0) continue;
+      add(
+        graph.events[trigger.event.id],
+        trigger.relativeToEndOfClip ? duration + trigger.localTime : trigger.localTime,
+      );
+    }
+    if (((node.flags ?? 0) & CLIP_FLAGS.dontConvertAnnotationsToTriggers) === 0) {
+      const named = syncPointEvents(graph);
+      for (const annotation of animation.annotations) {
+        const name = annotation.text.toLowerCase();
+        if (named.has(name)) add(name, annotation.time - cropStart);
+      }
+    }
+    this.#clipSyncs.set(node, points);
+    return points;
+  }
+
+  /** A generator's sync points: a clip's, through what holds one; a blender's children's. */
+  #syncPointsOf(node: BehaviorGenerator | undefined, depth: number): readonly SyncPoint[] {
+    if (!node || depth > 32) return [];
+    switch (node.kind) {
+      case 'clip':
+        return this.#clipSyncPoints(node);
+      case 'blender':
+        if (node.poseMatching) return [];
+        return syncLayout(
+          activeChildren(node, this.#blenderRead(node, this.#scopeOf(node))).map(
+            ([child, weight]) => ({
+              points: this.#syncPointsOf(child.generator, depth + 1),
+              weight,
+            }),
+          ),
+        );
+      case 'state-machine':
+        return this.#syncPointsOf(this.#machine(node).current?.generator, depth + 1);
+      case 'behavior-reference':
+        return this.#syncPointsOf(this.#reference(node), depth + 1);
+      case 'modifier-generator':
+      case 'state-tagging':
+      case 'synchronized-clip':
+      case 'cyclic-blend':
+      case 'bone-switch':
+      case 'offset-animation':
+        return this.#syncPointsOf(node.generator, depth + 1);
+      default:
+        return [];
     }
   }
 
@@ -2997,6 +3101,7 @@ export class BehaviorRuntime {
     phase: number,
     seen: Set<object>,
     depth: number,
+    layout: readonly SyncPoint[] = [],
   ): void {
     if (!node || seen.has(node) || depth > 32) return;
     seen.add(node);
@@ -3010,7 +3115,8 @@ export class BehaviorRuntime {
           backward: false,
           phase: undefined,
         };
-        state.phase = phase;
+        // At its own sync points' place for the cycle's (SyncLeft down as the blend passes it).
+        state.phase = alignPhase(phase, layout, this.#clipSyncPoints(node));
         this.#clips.set(node, state);
         return;
       }
@@ -3024,14 +3130,14 @@ export class BehaviorRuntime {
           node,
           this.#blenderRead(node, this.#scopeOf(node)),
         )) {
-          if (weight > 0) this.#drivePhase(child.generator, phase, seen, depth + 1);
+          if (weight > 0) this.#drivePhase(child.generator, phase, seen, depth + 1, layout);
         }
         return;
       case 'state-machine':
-        this.#drivePhase(this.#machine(node).current?.generator, phase, seen, depth + 1);
+        this.#drivePhase(this.#machine(node).current?.generator, phase, seen, depth + 1, layout);
         return;
       case 'behavior-reference':
-        this.#drivePhase(this.#reference(node), phase, seen, depth + 1);
+        this.#drivePhase(this.#reference(node), phase, seen, depth + 1, layout);
         return;
       case 'modifier-generator':
       case 'state-tagging':
@@ -3039,7 +3145,7 @@ export class BehaviorRuntime {
       case 'cyclic-blend':
       case 'bone-switch':
       case 'offset-animation':
-        this.#drivePhase(node.generator, phase, seen, depth + 1);
+        this.#drivePhase(node.generator, phase, seen, depth + 1, layout);
         return;
       default:
         return;

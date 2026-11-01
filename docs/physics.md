@@ -27,7 +27,13 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
   game units a second), is debris, never swept; of the others, debris quality becomes moving
   (swept against what is fixed) and the rest keep the file's (vanilla files: fixed, keyframed,
   debris and moving). So nearly all clutter is swept; a cart is not. Rapier sweeps against
-  everything, not only fixed bodies.
+  everything, not only fixed bodies. A body whose top speed covers no more than its allowed
+  penetration depth (bhkRigidBody penetrationDepth, Havok units) in a step is never swept:
+  Havok's time of impact steps in only past that depth. TODO(M13): Havok also sweeps by it
+  within a step (a TOI only past the depth); Rapier's CCD has no per-body depth.
+- **Explosions' push** comes from below the explosion's centre by its Vertical Offset Mult
+  (EXPL DATA, 34 vanilla explosions) of its radius (src/scripting/runtime/casting-engine.ts).
+  TODO(M13): the sign and the unit are read from the field's name, not observed.
 - **Gravity:** 9.8 m/s² downwards. Not documented; it is what mods read from the running
   game (hkpWorld::m_gravity).
 - **Collision filter:** every collider has a layer; pairs collide as the COLL records say

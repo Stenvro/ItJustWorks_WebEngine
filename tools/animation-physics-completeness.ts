@@ -96,6 +96,15 @@ const READ_BY_PLACE: ReadonlyMap<string, string> = new Map([
   ],
 ]);
 
+/**
+ * Handlers the response files name that the original has no class of: their events do nothing
+ * there (tests/conformance/animation/engine-handlers.test.ts keeps them unanswered).
+ */
+const NO_HANDLER_CLASS: ReadonlyMap<string, string> = new Map([
+  ['StopHorseCameraHandler', 'the original has no such handler: its event does nothing'],
+  ['RemoveCharacterControllerHandler', 'the original has no such handler: its event does nothing'],
+]);
+
 /** Parsed node fields the runtime has no use for, by "kind.field", with the reason. */
 const NOT_RUNTIME: ReadonlyMap<string, string> = new Map([
   ['other.name', 'a node of no class the runtime runs'],
@@ -440,7 +449,14 @@ export async function animationPhysicsCompleteness(
       );
     }
     for (const [event, handler] of handled) {
-      push('animation', 'Response handlers', `${event} : ${handler}`, 1, handlerNamed(handler));
+      const none = NO_HANDLER_CLASS.get(handler);
+      push(
+        'animation',
+        'Response handlers',
+        `${event} : ${handler}`,
+        1,
+        none === undefined ? handlerNamed(handler) : `none: ${none}`,
+      );
     }
     // ---- Idles, actions.
     const idleFields = new Map<string, number>();

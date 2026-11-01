@@ -550,6 +550,97 @@ export async function compareConditionValue(
 }
 
 /**
+ * The value of a function of an actor's own state at once (how it moves, whether it rides, its
+ * graph's variables), undefined for any other function: what the engine's actions read as they
+ * are performed (src/shell/actor-furniture.ts actionEventNow), valued as conditionValue values
+ * them. `as`: its state as the action is performed where it differs from the world's (ActionSneak
+ * is performed before the sneaking changes: its idles pick SneakStart by IsSneaking() == 0).
+ */
+export function actorStateValue(
+  runtime: ScriptRuntime,
+  condition: Condition,
+  reference: number,
+  as: ActorStateAs = {},
+): number | undefined {
+  const flag = (value: boolean): number => (value ? 1 : 0);
+  switch (condition.function) {
+    // How it moves (the player's input, an actor's controller and its AI's travel).
+    case Fn.isMoving:
+    case Fn.isSneaking:
+    case Fn.isSwimming:
+    case Fn.isSprinting:
+    case Fn.isPathing:
+    case Fn.getMovementSpeed: {
+      const motion = runtime.world.motion?.(reference);
+      if (condition.function === Fn.getMovementSpeed) return motion?.speed ?? 0;
+      const pick =
+        condition.function === Fn.isMoving
+          ? motion?.moving
+          : condition.function === Fn.isSneaking
+            ? (as.sneaking ?? motion?.sneaking)
+            : condition.function === Fn.isSwimming
+              ? motion?.swimming
+              : condition.function === Fn.isSprinting
+                ? motion?.sprinting
+                : motion?.pathing;
+      return flag(pick === true);
+    }
+    // Riding (src/shell/actor-mounts.ts): a horse, or a dragon (a flying mount).
+    case Fn.isRidingHorse:
+      return flag(runtime.world.mountOf?.(reference) !== undefined);
+    // Its behavior graph's variables (bInJumpState, iState, ...).
+    case Fn.getGraphVariableInt:
+    case Fn.getGraphVariableFloat: {
+      const name = condition.strings[0];
+      if (name === undefined) return undefined;
+      const value = runtime.world.animationVariable?.(reference, name) ?? 0;
+      return condition.function === Fn.getGraphVariableInt ? Math.trunc(value) : value;
+    }
+    default:
+      return undefined;
+  }
+}
+
+/** An actor's state as an action is performed, where it differs from the world's. */
+export interface ActorStateAs {
+  readonly sneaking?: boolean;
+}
+
+/**
+ * Whether conditions on an actor's own state hold at once (actorStateValue), grouped as the
+ * runtime's conditionsHold groups them; undefined when one cannot be valued so (another
+ * function, another run-on, a global's comparand): those are asked through the runtime.
+ */
+export function actorStateHolds(
+  runtime: ScriptRuntime,
+  conditions: readonly Condition[],
+  reference: number,
+  as: ActorStateAs = {},
+): boolean | undefined {
+  let group: boolean | undefined;
+  let result = true;
+  for (const condition of conditions) {
+    if (
+      condition.runOn !== 0 ||
+      condition.swapSubjectAndTarget === true ||
+      typeof condition.comparand !== 'number'
+    )
+      return undefined;
+    const value = actorStateValue(runtime, condition, reference, as);
+    if (value === undefined) return undefined;
+    const holds = OPERATORS[condition.operator]?.(value, condition.comparand) ?? false;
+    if (condition.or) group = (group ?? false) || holds;
+    else {
+      const passed = group === undefined ? holds : group || holds;
+      group = undefined;
+      // Valued to the end: one later that cannot be valued leaves the whole unknown.
+      if (!passed) result = false;
+    }
+  }
+  return result && (group ?? true);
+}
+
+/**
  * A condition function's value for a subject: a number, undefined where it has none for this
  * subject, or NOT_VALUED for a function no evaluator values (the audit's question).
  */
@@ -1123,30 +1214,12 @@ async function conditionValue(
     case Fn.isSwimming:
     case Fn.isSprinting:
     case Fn.isPathing:
-    case Fn.getMovementSpeed: {
-      if (reference === undefined) return undefined;
-      const motion = runtime.world.motion?.(reference);
-      if (condition.function === Fn.getMovementSpeed) return motion?.speed ?? 0;
-      const pick =
-        condition.function === Fn.isMoving
-          ? motion?.moving
-          : condition.function === Fn.isSneaking
-            ? motion?.sneaking
-            : condition.function === Fn.isSwimming
-              ? motion?.swimming
-              : condition.function === Fn.isSprinting
-                ? motion?.sprinting
-                : motion?.pathing;
-      return flag(pick === true);
-    }
+    case Fn.getMovementSpeed:
+      return reference === undefined ? undefined : actorStateValue(runtime, condition, reference);
     // Its behavior graph's variables (bInJumpState, iState, ...).
     case Fn.getGraphVariableInt:
-    case Fn.getGraphVariableFloat: {
-      const name = condition.strings[0];
-      if (reference === undefined || name === undefined) return undefined;
-      const value = runtime.world.animationVariable?.(reference, name) ?? 0;
-      return condition.function === Fn.getGraphVariableInt ? Math.trunc(value) : value;
-    }
+    case Fn.getGraphVariableFloat:
+      return reference === undefined ? undefined : actorStateValue(runtime, condition, reference);
     // What it is (the activated object, the used item): its base's form type, as the
     // functions' parameter numbers them (xEdit wbFormTypeEnum).
     case Fn.getIsObjectType:
@@ -1183,7 +1256,7 @@ async function conditionValue(
     }
     // Riding (src/shell/actor-mounts.ts): a horse, or a dragon (a flying mount).
     case Fn.isRidingHorse:
-      return flag(reference !== undefined && runtime.world.mountOf?.(reference) !== undefined);
+      return reference === undefined ? 0 : actorStateValue(runtime, condition, reference);
     case Fn.isBeingRidden:
       return flag(reference !== undefined && runtime.world.riderOf?.(reference) !== undefined);
     case Fn.isOnFlyingMount:

@@ -91,13 +91,19 @@ const QUALITY_MOVING = 4;
  * placement's.
  */
 export function sweptBody(
-  data: Pick<CollisionBody, 'quality' | 'maxLinearVelocity' | 'shapes'>,
+  data: Pick<CollisionBody, 'quality' | 'maxLinearVelocity' | 'shapes' | 'penetrationDepth'>,
   scale: number,
   debris: DebrisQuality,
 ): boolean {
   const extent = (smallestExtent(data.shapes) * scale) / HAVOK_SCALE;
   if (extent > debris.minExtent || data.maxLinearVelocity * HAVOK_SCALE < debris.maxVelocity)
     return false;
+  // Havok's time of impact steps in only where a body may go deeper into another in a step than
+  // its allowed penetration depth (its own, Havok units): one whose top speed covers no more
+  // than that in a step is never swept. TODO(M13): Havok also sweeps by it within the step (a
+  // body's TOI only past that depth); Rapier's CCD has no per-body depth.
+  const allowed = data.penetrationDepth ?? 0;
+  if (allowed > 0 && data.maxLinearVelocity * PHYSICS_STEP <= allowed) return false;
   const quality = data.quality === QUALITY_DEBRIS ? QUALITY_MOVING : data.quality;
   return quality >= QUALITY_MOVING;
 }

@@ -96,7 +96,10 @@ export class PlayerAvatar {
   useActions(actions: LocomotionActions): void {
     this.#locomotion.release();
     this.#locomotion = new Locomotion(actions);
+    this.#actions = actions;
   }
+  /** Their actions through the idle tree (useActions). */
+  #actions: LocomotionActions | undefined;
   /** A jump's animation started: the graph's JumpUp pushes off. */
   #jumping = false;
   /** An idle the body holds (the race menu's pose): sent again to a body made again. */
@@ -131,9 +134,26 @@ export class PlayerAvatar {
     this.#firstPerson = firstPerson;
     this.#female = made.body.look.female;
     this.#bodyYaw = player.yaw;
+    // A jump is the engine's ActionJump: 0_master's JumpRoot takes it only out of furniture,
+    // neither casting, attacking, bleeding out, riding nor equipping, and its
+    // JumpDirectionalStart moving faster than 10 units a second, else JumpStandingStart. A jump
+    // its graph does not take does not push off.
     player.jumpTrigger = (moving) => {
       this.#jumping = true;
-      this.send(moving ? 'JumpDirectionalStart' : 'JumpStandingStart');
+      const actions = this.#actions;
+      if (!actions) {
+        this.send(moving ? 'JumpDirectionalStart' : 'JumpStandingStart');
+        return;
+      }
+      const now = actions.performNow?.('ActionJump');
+      const refused = (): void => {
+        this.#jumping = false;
+      };
+      if (now === false) refused();
+      else if (now === undefined)
+        void actions.perform('ActionJump').then((took) => {
+          if (!took) refused();
+        }, refused);
     };
     player.cameraOffset = () => this.#cameraOffset();
     player.taggedMovement = () => this.#taggedMovement();
