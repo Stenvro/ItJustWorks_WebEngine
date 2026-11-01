@@ -581,6 +581,13 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   after each step: a slow low-class body loses an eighth of its speed a step). TODO(M13): Havok
   slows a body only while its speed relative to its neighbours is also below a threshold per
   class (0.05, 0.02, 0.013, 0.01 at four iterations; how it is measured is not known).
+- **Deactivation by island:** Havok deactivates a simulation island (the awake bodies joined
+  by contacts and constraints) as a whole: no body of it sleeps while another still moves
+  (`contactIslands` in `#deactivate`). Put to sleep on its own, a body under something still
+  moving kept being moved by it but solved no contact with what held it up: MQ101's head
+  basket (an open crate) with the severed head rocking in it sank into the ground under it and,
+  seconds later, fell through it, the head with it (`physics-world.test.ts`, "one simulation
+  island").
 
 - **The cone:** Havok's ragdoll constraint keeps the second body's twist axis within its cone
   (coneMaxAngle) of the first's; Rapier's limits are a box of two swings, as wide as the cone on

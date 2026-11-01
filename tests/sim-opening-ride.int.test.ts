@@ -222,9 +222,11 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
       expect(await sim.until(() => stage.dismemberment.headAt(prisoner) !== undefined, 60)).toBe(
         true,
       );
-      // It comes down in the basket: within its bounds, below its rim's height plus the head's
-      // radius. TODO(M13): it may roll off the rim or work through the crate's thin walls once
-      // down (the physics has no rolling friction yet), so where it lies later is not checked.
+      // It comes down at the basket: within its bounds, below its rim's height plus the head's
+      // radius. TODO(M13): ours comes down at 45 degrees and reaches the rim's height while still
+      // over the near wall (the crate, scaled 0.66, leaves the head 1.3 units of play across),
+      // strikes both rims and rolls off along the far one; where the original's flight starts
+      // (the chop's moment of the cut) is not known, so where it lies later is not checked.
       const basket = await sim.position(HEAD_BASKET);
       let nearest = Infinity;
       for (let i = 0; i < 10; i++) {
@@ -246,6 +248,16 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
       expect(await sim.runtime.equipment.weapon(prisoner, 'right')).toBe(held[0]);
       expect(await sim.runtime.equipment.weapon(prisoner, 'left')).toBe(held[1]);
       expect(await weapons()).toEqual(carried);
+      // The basket stays where it stands as the head strikes and rolls on it (put to sleep under
+      // something still moving on it, a crate sank into the street and fell through it: Havok
+      // deactivates their island as a whole).
+      for (let i = 0; i < 10; i++) {
+        await sim.step(1);
+        const at = await sim.position(HEAD_BASKET);
+        expect(Math.abs((at?.[2] ?? 0) - (basket?.[2] ?? 0)), 'the basket in place').toBeLessThan(
+          2,
+        );
+      }
       // Called to the block (95), the player walks to it, kneels (the block's IdleExecutioneeIdle)
       // and, the headsman ready, lays their head on it (IdleExecutionerChop_Player, played by
       // HeadChopBlockHookupSCRIPT): both their graphs in the executionee's chop, the first-person
