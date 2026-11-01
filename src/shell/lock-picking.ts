@@ -12,6 +12,7 @@
 import {
   BROKEN_PICK_SKILL_USE,
   lockDifficulty,
+  lockLevelMaxima,
   lockLevelSetting,
   LOCK_OPEN_ANGLE,
   LOCKPICK,
@@ -111,7 +112,10 @@ export async function pickSetup(
   random: () => number = Math.random,
 ): Promise<PickSetup | undefined> {
   const lock = await runtime.lock(reference);
-  const difficulty = lockDifficulty(lock.level);
+  const difficulty = lockDifficulty(
+    lock.level,
+    lockLevelMaxima((name) => settings.number(name)),
+  );
   if (difficulty === undefined) return undefined;
   const skeletonKey = (await runtime.itemCount(PLAYER_REF, SKELETON_KEY)) > 0;
   const skill = (await runtime.actors.value(PLAYER_REF, LOCKPICKING)).current;

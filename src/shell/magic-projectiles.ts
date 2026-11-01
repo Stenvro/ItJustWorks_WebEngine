@@ -95,8 +95,11 @@ export interface MagicProjectilesOptions {
   readonly targets: () => Iterable<ProjectileTarget>;
   /** A sound at a place is a noise the actors may hear (src/shell/actor-senses.ts). */
   readonly noise?: (at: Vec3, owner: number | undefined, soundLevel: number) => void;
-  /** A hostile spell took hold on an actor (who was attacked, by whom). */
-  readonly hit?: (target: number, caster: number) => void;
+  /**
+   * A hostile spell took hold on an actor (who was attacked, by whom); `painful` unless every
+   * hostile effect of it is Painless (its target does not cry out).
+   */
+  readonly hit?: (target: number, caster: number, painful: boolean) => void;
   /** What shows for a moment (muzzle flashes, explosions, impacts, cones' waves). */
   readonly fx?: MagicFx;
   /** An impact on a surface: its sound and decal; the impact (IPCT) it was. */
@@ -454,7 +457,7 @@ export class MagicProjectiles {
       ...(effectiveness !== undefined && { effectiveness }),
     });
     if (applied > 0 && target !== delivered.caster && (await runtime.magic.hostile(delivered.item)))
-      this.#options.hit?.(target, delivered.caster);
+      this.#options.hit?.(target, delivered.caster, await runtime.magic.painful(delivered.item));
     return applied;
   }
 
@@ -1091,10 +1094,15 @@ export class MagicProjectiles {
       await this.#surface(runtime, caster, explosion.impactDataSet, hit, point, aim);
     const placed = explosion.placedObject;
     if (placed !== undefined) {
-      const hazard = await runtime.hazards.place(placed, point, caster);
+      // A Snap To Navmesh spell's (the frost walls') lies on the navmesh at its point.
+      const snapped =
+        delivered && (await runtime.magic.snapsToNavmesh(delivered.item))
+          ? runtime.world.summonPlace?.([...point], [...point], 0)
+          : undefined;
+      const hazard = await runtime.hazards.place(placed, snapped ?? point, caster);
       if (hazard === undefined) {
         const reference = await runtime.placeAt(placed, caster, 1);
-        runtime.move(reference, [...point]);
+        runtime.move(reference, [...(snapped ?? point)]);
       }
     }
     // Its projectile flies on from it, at the nearest other living actor within its range

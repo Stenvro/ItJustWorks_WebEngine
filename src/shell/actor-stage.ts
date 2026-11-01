@@ -758,8 +758,8 @@ export class ActorStage {
       },
       // A hostile spell's hit: the victim turns on its caster (combat, as a blow does) and
       // searches for one it does not see.
-      hit: (target, caster) => {
-        this.combat.spellHit(caster, target);
+      hit: (target, caster, painful) => {
+        this.combat.spellHit(caster, target, painful);
         if (target !== caster && target !== PLAYER_REF) this.senses.attackedBy(target, caster);
         // On one not hostile to the caster it is an assault (crime-engine.ts), as a weapon's is.
         const crime = options.session.scriptsReady?.crime;

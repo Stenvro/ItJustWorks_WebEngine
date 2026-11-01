@@ -53,6 +53,7 @@ import {
   AmmoFlag,
   ArmorType,
   parseItem,
+  WeaponFlag,
   WeaponFlag2,
   WeaponType,
   type ItemRecord,
@@ -266,6 +267,20 @@ export class EquipmentEngine {
       this.#items.set(formId, record ? parseItem(record) : undefined);
     }
     return this.#items.get(formId);
+  }
+
+  /**
+   * A Can't Drop weapon (WEAP DNAM 0x8: the summons' and bound weapons, the trap and creature
+   * weapons, Sigdis's and Mikrul's): it does not leave its holder's items to lie in the world
+   * (the inventory's drop, a death's or a disarm's fall).
+   */
+  async cantDrop(formId: number): Promise<boolean> {
+    return (((await this.item(formId))?.weapon?.flags ?? 0) & WeaponFlag.cantDrop) !== 0;
+  }
+
+  /** A Non-hostile weapon (WEAP DNAM Flags2 0x1000): its blows make no one hostile. */
+  async nonHostile(formId: number): Promise<boolean> {
+    return (((await this.item(formId))?.weapon?.flags2 ?? 0) & WeaponFlag2.nonHostile) !== 0;
   }
 
   /** What a form is to the equip system: where it goes, its slots (undefined: not equippable). */
@@ -509,10 +524,14 @@ export class EquipmentEngine {
       (state.left !== undefined && this.#describe(state.left)?.type === 'ARMO') ||
       (canShield && shields.length > 0);
     if (!locked('right') && hands('right')) {
+      // Not one only the player uses (Player Only: Flags2 0x1) or one not used in normal combat
+      // (Flags2 0x40: Keening, the Aetherium crest's).
       const weapons = carried.filter(
         ({ item, record }) =>
           item.type === 'WEAP' &&
           record.weapon !== undefined &&
+          (record.weapon.flags2 & (WeaponFlag2.playerOnly | WeaponFlag2.notUsedInNormalCombat)) ===
+            0 &&
           (item.place !== 'both' || (hands('left') && !locked('left'))),
       );
       const type = (entry: (typeof weapons)[number]): number => entry.item.weaponType ?? 0;

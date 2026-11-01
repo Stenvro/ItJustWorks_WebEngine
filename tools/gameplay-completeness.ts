@@ -133,13 +133,47 @@ const EXPLAINED: ReadonlyMap<string, string> = new Map([
     'Perk entry functions|none',
     'src/gameplay/perk-entry-points.ts: an entry without a function changes nothing',
   ],
+  [
+    'Recipes by bench keyword (COBJ BNAM)|BYOHBuilding* (208 keywords)',
+    "src/shell/crafting-models.ts (RecipeIndex.forWorkbench): 4 parts' keywords (a bench, a desk, a weapon plaque, a fireplace's slaughterfish) are on no workbench of the load order, so the original offers those 4 recipes nowhere either",
+  ],
+  [
+    'Recipes by bench keyword (COBJ BNAM)|Camping_CampfireCookingShared',
+    "src/shell/crafting-models.ts (RecipeIndex.forWorkbench): Update.esm's keyword for the Camping Creation's campfire (the fishing recipes' cooking there), which the install does not have: no workbench has it in the original either; one that has it lists them",
+  ],
+  [
+    'Perk entries|ranks (DATA: above 1)',
+    "src/scripting/runtime/perk-engine.ts: no vanilla entry belongs to a rank past the first (PRKE rank 0 in all), and a tree's ranks are its NNAM chain (Novice Locks: DATA 5, one record; the original's menu shows one rank); the count is the Creation Kit's",
+  ],
+  ['Magic effect flags|goryVisuals', 'not used by the game (Creation Kit "Magic Effect")'],
+  [
+    'Faction flags (FACT DATA)|canBeOwner',
+    'the editor\'s filter of the factions it offers as owners (Creation Kit "Faction"); the game takes the owner a cell or reference names (every faction owning a cell has the flag)',
+  ],
+  [
+    'Faction flags (FACT DATA)|hiddenFromPlayer',
+    'keeps a faction off the player\'s faction list (Creation Kit "Faction"), which Skyrim\'s menus do not have',
+  ],
+  [
+    'Weapon flags (DNAM)|embeddedWeapon',
+    "unused (CommonLibSSE TESObjectWEAP): its actor value is an earlier game's limb condition, which Skyrim has none of",
+  ],
+  [
+    'Weapon flags (DNAM)|ignoresNormalWeaponResistance',
+    "an earlier game's resistance to normal weapons: Skyrim has no such actor value (CommonLibSSE ActorValue: damage, poison, fire, shock, frost, magic, disease)",
+  ],
+  [
+    'Ammunition flags (DATA)|ignoresNormalResistance',
+    "an earlier game's resistance to normal weapons: Skyrim has no such actor value (CommonLibSSE ActorValue: damage, poison, fire, shock, frost, magic, disease)",
+  ],
 ]);
 
 /**
  * Game settings the plugins define that the original reads nothing from: an earlier game's
  * leftovers (Fallout 3's experience points, computers, weapon condition and speech challenges),
- * with the reason. Skyrim's level comes from skill increases alone (UESP "Leveling"); a speech
- * check is a dialogue condition on the Speech skill; weapons do not wear.
+ * and those the original registers but never reads, with the reason. Skyrim's level comes from
+ * skill increases alone (UESP "Leveling"); a speech check is a dialogue condition on the Speech
+ * skill; weapons do not wear.
  */
 const INERT: readonly (readonly [RegExp, string])[] = [
   [
@@ -151,6 +185,10 @@ const INERT: readonly (readonly [RegExp, string])[] = [
   [
     /^iSpeechChallengeDifficulty/,
     "an earlier game's speech challenges: a speech check is a dialogue condition on the skill",
+  ],
+  [
+    /^fMagicLight(Forward|Height|Side)Offset$/,
+    'registered by the original and never read (observed in the original): src/shell/actor-effects.ts LIGHT_OFFSET',
   ],
 ];
 
@@ -518,7 +556,7 @@ export async function gameplayCompleteness(db: RecordDatabase): Promise<Gameplay
       group.uses,
       where?.startsWith('open') ? undefined : where,
     );
-    if (where?.startsWith('open')) {
+    if (where?.startsWith('open') && items.at(-1)?.done !== true) {
       const last = items.pop();
       if (last) items.push({ ...last, where });
     }

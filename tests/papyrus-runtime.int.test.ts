@@ -189,6 +189,13 @@ describe.skipIf(!hasGamedata())('the script runtime on the local game data', () 
     expect(await runtime.actors.level(PLAYER)).toBe(1);
   });
 
+  it('gives the player the PC Start Spell spells (PCHealRateCombat)', async () => {
+    const spell = db.formIdOf('Skyrim.esm', 0x1031d3);
+    expect(spell).toBeDefined();
+    if (spell === undefined) return;
+    expect(await runtime.actors.hasSpell(PLAYER, spell)).toBe(true);
+  });
+
   it('holds every placeholder native to a milestone, and has each registered', () => {
     for (const [key, why] of PLACEHOLDER_NATIVES) {
       const [script = '', fn = ''] = key.split('.');

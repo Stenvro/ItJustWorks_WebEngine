@@ -1379,6 +1379,20 @@ export class CastingEngine {
       const seconds = await runtime.gameSetting(`fShoutRumbleBigMotorDurationV${String(count)}`);
       if (typeof strength === 'number' && typeof seconds === 'number')
         runtime.world.shakeCamera?.(strength, seconds);
+      // The controller's two motors: the small one's by fShoutRumbleSmallMotor{Frequency,
+      // Duration}V<n>, the big one's as above (Game.ShakeController's: one length for both,
+      // the longer).
+      const small = await runtime.gameSetting(`fShoutRumbleSmallMotorFrequencyV${String(count)}`);
+      const smallSeconds = await runtime.gameSetting(
+        `fShoutRumbleSmallMotorDurationV${String(count)}`,
+      );
+      if (
+        typeof small === 'number' &&
+        typeof smallSeconds === 'number' &&
+        typeof strength === 'number' &&
+        typeof seconds === 'number'
+      )
+        runtime.world.shakeController?.(small, strength, Math.max(smallSeconds, seconds));
     }
     return delivered;
   }

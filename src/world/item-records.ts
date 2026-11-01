@@ -64,7 +64,13 @@ export const WeaponFlag = {
 } as const;
 
 /** WEAP DNAM Flags2 (xEdit). */
-export const WeaponFlag2 = { playerOnly: 0x1, npcsUseAmmo: 0x2, boundWeapon: 0x2000 } as const;
+export const WeaponFlag2 = {
+  playerOnly: 0x1,
+  npcsUseAmmo: 0x2,
+  notUsedInNormalCombat: 0x40,
+  nonHostile: 0x1000,
+  boundWeapon: 0x2000,
+} as const;
 
 export interface WeaponData {
   readonly damage: number;
