@@ -637,6 +637,7 @@ describe.skipIf(!hasGamedata())('the combat tree in a fight (headless simulation
   let bandit = 0;
   let mage = 0;
   let wolves: number[] = [];
+  let banditTold: number | undefined;
   const mageDistances: number[] = [];
 
   beforeAll(async () => {
@@ -662,6 +663,7 @@ describe.skipIf(!hasGamedata())('the combat tree in a fight (headless simulation
       combat.startCombat(wolves[0] ?? 0, bandit);
       combat.startCombat(wolves[1] ?? 0, mage);
       await sim.step(0.25);
+      if (i === 0) banditTold = combat.targetOf(bandit);
       const d = await sim.distance(mage, wolves[1] ?? 0);
       if (d !== undefined) mageDistances.push(d);
     }
@@ -676,6 +678,8 @@ describe.skipIf(!hasGamedata())('the combat tree in a fight (headless simulation
     // Through the player's eyes: the fight's graphs update at the animation rate LOD's pace
     // (behind the camera every fAnimInterpMaxTime), and its blows still land.
     expect(sim.world.session.render.view?.camera).toBeDefined();
+    // Told to fight its wolf as it was placed (before it was a fighter), it takes that fight up.
+    expect(banditTold).toBe(wolves[0]);
     expect(hits().some((hit) => hit.aggressor === bandit && wolves.includes(hit.target))).toBe(
       true,
     );
