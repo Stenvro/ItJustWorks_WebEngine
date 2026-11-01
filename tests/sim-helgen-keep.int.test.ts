@@ -432,7 +432,10 @@ describe.skipIf(!hasGamedata())('MQ101 in Helgen Keep', () => {
         expect(door).toBeDefined();
         if (!door) return;
         // Along the cave towards its end: the automatic door takes the player out on the way.
-        await open.walkPath(door, 30, 120);
+        // The walk starts where the caves' case left the player beside Ralof as 800 was set,
+        // some 10,000 units of path from the door in some runs (Ralof, who starts from standing
+        // at his race's acceleration, a few seconds further back): 45 s, not 30, covers it.
+        await open.walkPath(door, 45, 120);
         expect(await open.until(() => open.world.loadedCells.length > 1, 5)).toBe(true);
         expect((await open.runtime.placement(PLAYER_REF))?.world).toBe(TAMRIEL);
         // Outside, the exit's trigger sets MQ102 15 (its route entry MQ102B 10); Ralof's talk
