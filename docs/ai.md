@@ -1271,6 +1271,11 @@ location's lists.
   triangle the navmesh marks in front of the door (else the navmesh point nearest the door), not
   to the door's own place, which sits in its frame off the walkable floor (HelgenHomestead's
   door is a hundred units from Torolf's porch).
+- Actors coming out of one load door while those before them still stand at its arrival point
+  (the game state keeps an actor away at the point until its next door or its place) are put one
+  on from another along the arrival's facing, 64 units apart (`doorArrivalSpot`): the Greybeards
+  out to High Hrothgar's courtyard were all set on one spot, and their controllers could not
+  part. TODO(M13): the original's own spots for them (observed: one behind another).
 - **When its package changes** (a script's EvaluatePackage, a scene's package action starting
   or ending) an actor away is asked again at once and sent where its package now
   has it. While a scene's package action runs, its packages are the actor's only ones away as

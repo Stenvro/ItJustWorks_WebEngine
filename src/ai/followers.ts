@@ -240,6 +240,42 @@ export function doorSpacing(settings: Pick<AiSettings, 'followerSpacingAtDoors'>
 }
 
 /**
+ * The spacing of actors that come out of one load door's arrival point while those before them
+ * still stand there (units): a human's width and a stride between them.
+ */
+export const DOOR_ARRIVAL_SPACING = FOLLOWER_WIDTH + 24;
+/** How many spots on from the arrival point an actor coming out of a door may be put. */
+const DOOR_ARRIVAL_SPOTS = 6;
+
+/**
+ * Where an actor coming out of a load door stands: the door's arrival point, or, where actors
+ * that came out before it still stand (`taken`: their spots), the first spot on along the
+ * arrival's facing (out of the door, the way its arrival leads), `spacing` apart, that none of
+ * them holds; all held, the last. Actors are never set into one another at one point: several
+ * through one door at once (the Greybeards out to High Hrothgar's courtyard) stood on one spot,
+ * and their controllers could not part. TODO(M13): the original's own spots for actors coming
+ * through a door after one another (observed: one behind another; the rule is not documented).
+ */
+export function doorArrivalSpot(
+  arrival: FollowPlace,
+  taken: readonly Vec3[],
+  spacing = DOOR_ARRIVAL_SPACING,
+): [number, number, number] {
+  const forward = [Math.sin(arrival.heading), Math.cos(arrival.heading)] as const;
+  let spot: [number, number, number] = [...arrival.position];
+  for (let k = 0; k < DOOR_ARRIVAL_SPOTS; k++) {
+    spot = [
+      arrival.position[0] + forward[0] * spacing * k,
+      arrival.position[1] + forward[1] * spacing * k,
+      arrival.position[2],
+    ];
+    const [x, y] = spot;
+    if (taken.every((at) => Math.hypot(at[0] - x, at[1] - y) >= spacing / 2)) return spot;
+  }
+  return spot;
+}
+
+/**
  * Where a follower catching up is put: behind its leader (away from where it looks) at the
  * follower's distance, so it comes into sight following.
  */
