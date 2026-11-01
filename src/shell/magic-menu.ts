@@ -11,7 +11,14 @@
 // a per-second cost for concentration spells (castTime 0). A shout's card offers Unlock (R) while a learned
 // word is locked: a dragon soul spent on it. Notes: docs/ui.md ("The item menus").
 
+import {
+  beastFormOf,
+  beastListed,
+  VAMPIRE_SPELLS,
+  type BeastForm,
+} from '../gameplay/beast-forms.ts';
 import { CardType, EquipState } from '../gameplay/inventory.ts';
+import { DefaultObjects } from '../world/default-objects.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { ActorValue } from '../world/actor-values.ts';
 import type { ActiveEffectState } from '../scripting/runtime/game-state.ts';
@@ -35,6 +42,25 @@ import type { GameSession } from './game-session.ts';
 import { effectsText, playerMeters } from './inventory-menu.ts';
 import { slotHand, type ItemEntry, type ItemMenuModel } from './item-menu.ts';
 import type { Terminal } from './terminal.ts';
+
+/** The player's beast form and the spells it lists (src/gameplay/beast-forms.ts). */
+export interface PlayerBeastForm {
+  readonly form: BeastForm | 'changing' | undefined;
+  /** Whether the magic and favorites menus list a spell or shout in the form. */
+  listed(formId: number): boolean;
+}
+
+/** The player's beast form now (out of one: every spell listed). */
+export async function playerBeastForm(runtime: ScriptRuntime): Promise<PlayerBeastForm> {
+  if (!runtime.beastForm) return { form: undefined, listed: () => true };
+  const defaults = await DefaultObjects.read(runtime.forms.db);
+  const form = beastFormOf(true, await runtime.actors.raceOf(PLAYER_REF), (use) =>
+    defaults.get(use),
+  );
+  const list = defaults.get(VAMPIRE_SPELLS);
+  const spells = new Set(list === undefined ? [] : await runtime.forms.formList(list));
+  return { form, listed: (formId) => beastListed(form, formId, spells) };
+}
 
 /** The magic menu's category bits (the movie only tests them). */
 const MagicCategory = {
@@ -114,7 +140,10 @@ export function magicModel(session: GameSession, terminal: Terminal): ItemMenuMo
       const entries: ItemEntry[] = [];
       const cards: Record<string, unknown>[] = [];
       const shouting = game.casting.isShouting(PLAYER_REF);
+      // The vampire lord's menu lists its own spells and powers alone (beast-forms.ts).
+      const beast = await playerBeastForm(game);
       for (const formId of await game.actors.spells(PLAYER_REF)) {
+        if (!beast.listed(formId)) continue;
         const record = await game.forms.record(formId);
         const favorite = game.state.favorites.has(formId);
         const favoriteBit = favorite ? MagicCategory.favorites : 0;

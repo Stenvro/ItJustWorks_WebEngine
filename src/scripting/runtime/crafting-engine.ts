@@ -22,6 +22,8 @@ import {
   enchantedItemName,
   ENCHANTING_SKILL_USE,
   enchantingCostSettings,
+  ENCHANTMENT_CHARGE_SETTINGS,
+  enchantmentCharge,
   enchantmentsAllowed,
   enchantmentUses,
   failedAlchemySkillUse,
@@ -550,8 +552,7 @@ export class CraftingEngine {
 
   /**
    * An enchanted weapon's or a staff's charge (of the item `which` names: the one wielded, or a
-   * menu's row), or undefined: what is left, its full charge (WEAP EAMT, else its
-   * enchantment's), what a use costs.
+   * menu's row), or undefined: what is left, its full charge (fullCharge), what a use costs.
    */
   async charge(
     actor: number,
@@ -564,9 +565,35 @@ export class CraftingEngine {
     const enchantment = await runtime.magic.item(item.enchantment);
     if (enchantment?.kind !== 'enchantment' || enchantment.castType === CastType.constantEffect)
       return undefined;
-    const max = item.charge > 0 ? item.charge : (enchantment.enchantment?.amount ?? 0);
+    const max = await this.fullCharge(item.charge, enchantment);
     const kept = this.keptCharge(actor, weapon, which);
     return { current: Math.min(max, kept ?? max), max, cost: Math.max(0, enchantment.cost) };
+  }
+
+  /**
+   * An enchanted weapon's or a staff's full charge: its own (WEAP EAMT), else its enchantment's
+   * (crafting.ts enchantmentCharge: ENIT's with No Auto Calc, else fMagicEnchantmentChargeMult ×
+   * its cost + fMagicEnchantmentChargeBase).
+   */
+  async fullCharge(eamt: number, enchantment: MagicItemRecord): Promise<number> {
+    if (eamt > 0) return eamt;
+    const runtime = this.#runtime;
+    const setting = async (name: string): Promise<number | undefined> => {
+      const value = await runtime.gameSetting(name);
+      return typeof value === 'number' ? value : undefined;
+    };
+    const d = ENCHANTMENT_CHARGE_SETTINGS;
+    return enchantmentCharge(
+      {
+        noAutoCalc: (enchantment.flags & EnchantmentFlag.noAutoCalc) !== 0,
+        amount: enchantment.enchantment?.amount ?? 0,
+        cost: await runtime.casting.baseCost(enchantment),
+      },
+      {
+        mult: (await setting('fMagicEnchantmentChargeMult')) ?? d.mult,
+        base: (await setting('fMagicEnchantmentChargeBase')) ?? d.base,
+      },
+    );
   }
 
   /**
