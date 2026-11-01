@@ -117,6 +117,66 @@ describe.skipIf(!hasGamedata())('MQ101 in Helgen Keep', () => {
       await sim.close();
     }
   }, 300_000);
+  // Found 2026-11-01: putting on the keep's Imperial armor made the player's body again with a
+  // graph started anew: a drawn sword's body stood sheathed while the game had it drawn, and
+  // whatever the graph held was dropped. Dressed in the same race, the graph goes on.
+  it('keeps the player’s graph as they put on armor with their sword drawn, and animates the arms', async () => {
+    const sim = await openSim({ opening: true });
+    try {
+      await sim.step(1);
+      for (const playing of sim.runtime.scenes.snapshot()) sim.runtime.scenes.stop(playing.scene);
+      void sim.runtime.quests.setStage(MQ101, 220);
+      await sim.step(0.5);
+      await sim.openInterior(KEEP);
+      for (const playing of sim.runtime.scenes.snapshot()) sim.runtime.scenes.stop(playing.scene);
+      await sim.step(1);
+      const controls = sim.runtime.controls;
+      controls.movement = controls.fighting = controls.looking = controls.activate = true;
+      const graph = () => sim.world.playerView?.avatar?.body.behavior;
+      const states = (): string[] =>
+        graph()
+          ?.states()
+          .map((s) => s.state) ?? [];
+      const sword = await sim.formId('WEAP', 'ImperialSword');
+      const cuirass = await sim.formId('ARMO', 'ArmorImperialCuirass');
+      for (const item of [sword, cuirass])
+        await sim.runtime.addItem(PLAYER_REF, sim.runtime.formHandle(item), 1, true);
+      await sim.equip(sword);
+      for (let tries = 0; tries < 3 && !states().includes('Weap_Readied_State'); tries++) {
+        sim.press('Ready Weapon', true);
+        await sim.step(0.1);
+        sim.press('Ready Weapon', false);
+        await sim.step(2);
+      }
+      expect(states()).toContain('Weap_Readied_State');
+      const drawnGraph = graph();
+      await sim.equip(cuirass);
+      await sim.step(1);
+      // A new body (the armor on it), its graph still drawn.
+      expect(graph()).not.toBe(drawnGraph);
+      expect(states()).toContain('Weap_Readied_State');
+      // Walking, the upper arms move off the reference pose (the bind pose's arms stand out).
+      const turned = (name: string): number => {
+        const behavior = graph();
+        if (!behavior) return 0;
+        const bone = behavior.skeleton.bones.findIndex((b) => b.name === name);
+        const o = bone * 10 + 3;
+        let dot = 0;
+        for (let k = 0; k < 4; k++)
+          dot += (behavior.pose[o + k] ?? 0) * (behavior.skeleton.referencePose[o + k] ?? 0);
+        return (2 * Math.acos(Math.min(1, Math.abs(dot))) * 180) / Math.PI;
+      };
+      sim.press('Forward', true);
+      for (let i = 0; i < 6; i++) {
+        await sim.step(0.25);
+        expect(turned('NPC L UpperArm [LUar]')).toBeGreaterThan(3);
+        expect(turned('NPC R UpperArm [RUar]')).toBeGreaterThan(3);
+      }
+      sim.press('Forward', false);
+    } finally {
+      await sim.close();
+    }
+  }, 300_000);
   // Found 2026-10-28: the scene was never stuck in phase 6 (its line is 17 s long). Stage 275's
   // fragment has the Imperial activate the outer lever (KeepLever1.Activate(soldier)): that
   // default activation sat the player in the lever, walking them through the shut gate into

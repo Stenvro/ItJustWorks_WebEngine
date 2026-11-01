@@ -293,6 +293,8 @@ export class CharacterBody {
   /** Feet (bottom of the capsule) after the last step and the one before, game units. */
   #feet: [number, number, number];
   #previous: [number, number, number];
+  /** The last step's length (seconds; 0 before the first). */
+  #stepped = 0;
   /** Vertical speed, game units per second (up positive). */
   verticalSpeed = 0;
   #grounded = false;
@@ -798,11 +800,28 @@ export class CharacterBody {
     return undefined;
   }
 
-  /** Jumps with this upward speed (game units per second) at the next step, if grounded. */
-  jump(speed: number): boolean {
-    if (!this.#grounded) return false;
+  /**
+   * Jumps with this upward speed (game units per second) at the next step. The jump was asked
+   * for on the ground (Player: grounded when the jump's animation was started); it pushes off
+   * when that animation says (its JumpUp), on the ground or not by then: a step down or a stair's
+   * edge between the two left the controller ungrounded for a step, the push-off was dropped and
+   * the graph, in its jump state with no fall to land from, hung in its jump pose on the stairs.
+   */
+  jump(speed: number): void {
     this.#jumpSpeed = speed;
-    return true;
+  }
+
+  /**
+   * The horizontal velocity its last step made (game units per second): what it moves at, the
+   * same on every frame between two steps (a frame with no step is no stop, and one with two
+   * no double speed).
+   */
+  get stepVelocity(): [number, number] {
+    if (!(this.#stepped > 0)) return [0, 0];
+    return [
+      (this.#feet[0] - this.#previous[0]) / this.#stepped,
+      (this.#feet[1] - this.#previous[1]) / this.#stepped,
+    ];
   }
 
   /** One fixed step: gravity, the wanted movement, sliding and stepping. Before world.step. */
@@ -1026,6 +1045,7 @@ export class CharacterBody {
     this.#carrier = standing;
     this.#body.setNextKinematicTranslation(next);
     this.#previous = this.#feet;
+    this.#stepped = seconds;
     this.#feet = [
       next.x * HAVOK_SCALE,
       next.y * HAVOK_SCALE,

@@ -761,7 +761,9 @@ export class Player implements Camera {
    * while swimming).
    */
   launchJump(): void {
-    if (!this.character.grounded || this.character.swimming) return;
+    // Asked for on the ground (#move); the push-off comes with the animation, grounded or not by
+    // then (CharacterBody.jump): the graph is in its jump state and lands only from the air.
+    if (this.character.swimming) return;
     this.onAction?.('JUMP');
     // fJumpHeightMin: the height of the jump; with constant gravity v = √(2 g h).
     const g = -this.#setup.physics.world.gravity.z * HAVOK_SCALE;
