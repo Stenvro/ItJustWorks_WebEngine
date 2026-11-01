@@ -1381,7 +1381,10 @@ export class ActorCombatAi {
   /**
    * Whom a fighter fights now, if it does: an actor its combat (fighting, not searching), the
    * player one they struck lately (GetAttacked's fDetectionStateExpireTime); the one fought
-   * alive and on its feet.
+   * alive and on its feet. A cowardly actor flees from any fight it is in, so it fights no one
+   * unless cornered (or rallied, or frenzied: shouldFlee): a deer that bolts from the player
+   * (its aggro radius puts it into combat with them) is no attacker the guards defend the
+   * player from, nor one its herd helps.
    */
   #fightTarget(fighter: FighterView, views: ReadonlyMap<number, FighterView>): number | undefined {
     let target: number | undefined;
@@ -1391,7 +1394,13 @@ export class ActorCombatAi {
       if (struck !== PLAYER_REF) return undefined;
     } else {
       const mind = this.#minds.get(fighter.reference);
-      target = mind?.mode === 'fight' ? mind.target : undefined;
+      const magic = this.#options.session.scriptsReady?.magic.aiState(fighter.reference);
+      const flees =
+        mind?.profile?.confidence === Confidence.cowardly &&
+        this.#clock >= mind.corneredUntil &&
+        magic?.rallied !== true &&
+        magic?.frenzied !== true;
+      target = mind?.mode === 'fight' && !flees ? mind.target : undefined;
     }
     const victim = target === undefined ? undefined : views.get(target);
     if (!victim || victim.state.life === LifeState.dead || bleedingOut(victim.state)) {

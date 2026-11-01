@@ -12,6 +12,7 @@ import type RAPIER from '@dimforge/rapier3d-compat';
 import { driveOf, type MovementDrive } from '../ai/movement-drive.ts';
 import {
   angleBetween,
+  keptSpeed,
   Locomotion,
   MotionFeedback,
   steer,
@@ -2163,6 +2164,7 @@ export class ActorMovers {
       mover.rooted = rooted;
       if (rooted) {
         mover.character.velocity = [root.velocity[0], root.velocity[1]];
+        const kept = mover.turning.speed;
         // Allowed to rotate (AllowRotation), or standing to face a way, its controller turns it
         // the way it goes while its animation moves it.
         const turning =
@@ -2184,8 +2186,12 @@ export class ActorMovers {
         const turned = angleBetween(before, staged.heading);
         mover.turned.angle += turned;
         mover.wish = { velocity: [0, 0], turnRate: step > 0 ? turned / step : 0 };
-        // Its controller takes over at the speed its animation moved it (rampSpeed).
-        mover.turning.speed = Math.hypot(root.velocity[0], root.velocity[1]);
+        // Its controller takes over at the speed its animation moved it, or at the speed it kept
+        // where that is faster (a transition's frame without root motion does not stop it).
+        const made = Math.hypot(root.velocity[0], root.velocity[1]);
+        mover.turning.speed = types
+          ? keptSpeed(kept, made, types.run.run.forward, types, step)
+          : made;
       } else if (request && types) {
         const steering = steer(request, staged.heading, types, step, mover.turning);
         mover.character.velocity = [steering.velocity[0], steering.velocity[1]];
@@ -2196,7 +2202,12 @@ export class ActorMovers {
       } else {
         mover.character.velocity = [0, 0];
         mover.wish = { velocity: [0, 0], turnRate: 0 };
-        mover.turning.reset();
+        // Asked for nothing it stands; the speed it kept falls at its race's rate (keptSpeed), so
+        // a request planned anew a frame later goes on from it.
+        mover.turning.stop();
+        mover.turning.speed = types
+          ? keptSpeed(mover.turning.speed, 0, types.run.run.forward, types, step)
+          : 0;
       }
       mover.turned.seconds += step;
       // Swimming, it floats with its shoulders at the surface (as the player).

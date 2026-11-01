@@ -74,9 +74,14 @@ export class Turning {
   speed = 0;
 
   reset(): void {
+    this.stop();
+    this.speed = 0;
+  }
+
+  /** It no longer turns (nor holds a facing); its speed is kept (keptSpeed). */
+  stop(): void {
     this.rate = 0;
     this.settled = false;
-    this.speed = 0;
   }
 }
 
@@ -100,6 +105,24 @@ export function rampSpeed(
   if (rate === undefined || !(rate > 0) || !(seconds > 0)) return wanted;
   const change = (Math.max(full, 1) / rate) * seconds;
   return rising ? Math.min(wanted, current + change) : Math.max(wanted, current - change);
+}
+
+/**
+ * Its speed after a step its own steering does not move it in (it stands, or its animation moves
+ * it at `made` units a second): what its animation made, where that is faster; else the speed it
+ * had, falling at its race's deceleration rate (rampSpeed). An actor keeps its speed across a
+ * new path request (observed in the original: it gains speed from standing only where it stood
+ * still), so a step without a way to go (its way is planned anew, a transition's frame of root
+ * motion) does not throw it back to standing: going on, it goes on from the speed it kept.
+ */
+export function keptSpeed(
+  current: number,
+  made: number,
+  full: number,
+  rates: { readonly deceleration?: number | undefined },
+  seconds: number,
+): number {
+  return made >= current ? made : rampSpeed(current, made, full, rates, seconds);
 }
 
 /** The angle controller's dead band: nearer than this, turning slower than this a second, it stops. */
@@ -326,8 +349,9 @@ export function steer(
     next = heading + (Math.abs(turn) <= step ? turn : Math.sign(turn) * step);
   }
   if (!moving) {
-    // Standing it stops at once. TODO(M13): the engine's braking before its goal.
-    if (turning) turning.speed = 0;
+    // Standing it stops at once, the speed it kept falling at its race's deceleration rate
+    // (keptSpeed). TODO(M13): the engine's braking before its goal.
+    if (turning) turning.speed = keptSpeed(turning.speed, 0, type.run.forward, types, seconds);
     return { velocity: [0, 0], heading: next };
   }
   // The way against the facing: x right, y forward.
