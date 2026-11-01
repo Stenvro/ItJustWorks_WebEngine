@@ -1241,6 +1241,18 @@ export class ActorSenses implements ScriptSenses {
     return this.#profiles.get(actor)?.profile.overrides?.combat;
   }
 
+  /**
+   * The same, its profile read first if it was not yet (a fight a loaded save starts at once,
+   * before detection has weighed the actor).
+   */
+  async combatOverridesRead(actor: number): Promise<number | undefined> {
+    const runtime = this.#options.session.scriptsReady;
+    if (this.#profiles.has(actor) || !runtime) return this.combatOverrides(actor);
+    const profile = await this.#readProfile(runtime, actor).catch(() => DEFAULT_PROFILE);
+    if (!this.#profiles.has(actor)) this.#profiles.set(actor, { profile, read: this.#clock });
+    return this.combatOverrides(actor);
+  }
+
   /** What an actor reacts to now (the engine's reaction or an override list), if anything. */
   reacting(actor: number): ReactionKind | undefined {
     return this.#reactions.get(actor)?.kind ?? this.#overriding.get(actor)?.kind;

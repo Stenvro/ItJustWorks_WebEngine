@@ -10,7 +10,7 @@ import { EssWriter, writeSyntheticEss } from '../formats/ess/ess-test-writer.ts'
 import { PapyrusType } from '../formats/ess/papyrus.ts';
 import type { GameState } from '../scripting/runtime/game-state.ts';
 import { ObjectHandle } from '../scripting/values.ts';
-import { formIdMapper, importEss, type EssWorld } from './ess-import.ts';
+import { formIdMapper, importEss, procedurePath, type EssWorld } from './ess-import.ts';
 
 const WHITERUN_WORLD = 0x1a26f;
 const BREEZEHOME = 0x165a7;
@@ -182,6 +182,23 @@ describe('ess import', () => {
     expect(map(0xfe000801)).toBe(0xfe002801);
     expect(map(0xff000123)).toBe(0xff000123);
     expect(map(0x05000001)).toBeUndefined();
+  });
+
+  it("puts a running package's procedure states as the branch it had reached", () => {
+    // A Stacked branch on its second child, a Sequence on its third (a Sandbox), its place.
+    const state = {
+      name: 'Stacked',
+      index: 1,
+      child: { name: 'Sequence', index: 2, child: { name: 'Sandbox' } },
+    };
+    expect(procedurePath(state)).toEqual([1, 2]);
+    // A Simultaneous branch: the first child that runs.
+    const simultaneous = {
+      name: 'Simultaneous',
+      children: [{ index: 0 }, { index: 1, state: { name: 'Patrol' } }],
+    };
+    expect(procedurePath(simultaneous)).toEqual([1]);
+    expect(procedurePath(undefined)).toEqual([]);
   });
 
   it('imports the player, globals, quests, references, inventories and script variables', () => {

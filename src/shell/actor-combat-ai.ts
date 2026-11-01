@@ -452,6 +452,8 @@ interface Mind {
   readonly lastKnown: Map<number, Vec3>;
   /** A combat style its combat override package gives (PACK CNAM). */
   packageStyle: number | undefined;
+  /** The combat override package it runs as it fights (ECOR's first that holds). */
+  overridePackage?: number | undefined;
   /** It held a weapon in this fight (one disarmed picks one up again). */
   armed: boolean;
   /** Its support (heals, potions, summons, wards, buffs): when next weighed, last restored. */
@@ -630,6 +632,15 @@ export class ActorCombatAi {
   engaged(reference: number): boolean {
     const mind = this.#minds.get(reference);
     return mind !== undefined && mind.mode !== 'idle' && !mind.ignoring;
+  }
+
+  /**
+   * The combat override package (ECOR) an actor runs while it fights: the package it runs then
+   * (GetCurrentPackage), as observed in the original, whose saves keep it as the fighting
+   * actor's AI process's package (MQ101's archers on DefaultHoldPositionLinkedRef128).
+   */
+  overridePackage(reference: number): number | undefined {
+    return this.engaged(reference) ? this.#minds.get(reference)?.overridePackage : undefined;
   }
 
   /** GetCombatState: 0 not in combat, 1 in combat, 2 searching. */
@@ -1590,11 +1601,13 @@ export class ActorCombatAi {
   async #leash(mind: Mind): Promise<void> {
     mind.leash = undefined;
     mind.packageStyle = undefined;
-    const list = this.#options.senses?.()?.combatOverrides(mind.reference);
-    if (list === undefined) return;
+    mind.overridePackage = undefined;
+    const list = await this.#options.senses?.()?.combatOverridesRead(mind.reference);
+    if (list === undefined || mind.mode === 'idle') return;
     const found = await this.#options.ai?.()?.combatPlace(mind.reference, list);
     if (mind.mode === 'idle' || !found) return;
     mind.packageStyle = found.combatStyle;
+    mind.overridePackage = found.package;
     if (found.place) {
       mind.leash = { center: found.place.position, radius: Math.max(64, found.place.radius) };
     }
@@ -1742,6 +1755,7 @@ export class ActorCombatAi {
     mind.search = undefined;
     mind.chase = undefined;
     mind.leash = undefined;
+    mind.overridePackage = undefined;
     mind.fleeWay = undefined;
     mind.scaredFrom = undefined;
     mind.enemies.clear();
