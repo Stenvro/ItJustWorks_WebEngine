@@ -143,7 +143,8 @@ async function bootGame(
   await sleep(1500);
   if (scenario.start.kind === 'new') {
     ctx.note('new game');
-    await page.eval(`(engineDev.play().startMenu.received('NEW', []), true)`, 10000);
+    // NEW only asks first (ConfirmNewGame); the movie's answer on yes is StartNewGame.
+    await page.eval(`(engineDev.play().startMenu.received('StartNewGame', []), true)`, 10000);
   } else {
     ctx.note(`coc ${scenario.start.cell}`);
     const answer = await page.eval<string[]>(
