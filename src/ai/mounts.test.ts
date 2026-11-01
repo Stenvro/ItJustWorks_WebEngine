@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   dismountPlace,
+  fightsRidden,
   inFrame,
   mountPlace,
+  mountedPitchFloor,
   ownsHorse,
   partnerEvent,
   riddenRequest,
@@ -112,5 +114,17 @@ describe('owning a horse', () => {
     expect(ownsHorse({ faction: 0x39f26 }, rider)).toBe(false);
     expect(ownsHorse({ actor: 9 }, rider)).toBe(false);
     expect(ownsHorse({ actor: 9 }, { ...rider, lastRidden: true })).toBe(true);
+  });
+});
+
+describe('mounted combat', () => {
+  it('a mount fights ridden only by its race’s Allow Mounted Combat (the dragons)', () => {
+    // DragonRace's DATA Flags 2 (0x10) and HorseRace's (none).
+    expect(fightsRidden(0x10)).toBe(true);
+    expect(fightsRidden(0)).toBe(false);
+  });
+
+  it('the view looks no more than fMountedMaxLookingDown (30°) down from a mount', () => {
+    expect(mountedPitchFloor(30)).toBeCloseTo(-Math.PI / 6);
   });
 });

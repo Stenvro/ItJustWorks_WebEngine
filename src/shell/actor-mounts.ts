@@ -24,6 +24,7 @@ import type { GraphEvent } from '../animation/graph-events.ts';
 import type { ActorGraphSource } from './actor-graph-events.ts';
 import {
   dismountPlace,
+  fightsRidden,
   mountPlace,
   PAIR_END,
   PAIRED_PREFIX,
@@ -147,6 +148,8 @@ export class ActorMounts {
   readonly #options: ActorMountsOptions;
   readonly #rides = new Map<number, Ride>();
   readonly #offsets = new Map<number, Promise<MountOffsets>>();
+  /** Each race's Allow Mounted Combat (fightsRidden), read once per race (false until read). */
+  readonly #mountedCombat = new Map<number, boolean>();
   /** What each actor asked about is ridden as (undefined: no mount, or not known yet). */
   readonly #mountKinds = new Map<number, MountKind | undefined>();
   /** Whether the player's perks let them ride each dragon asked about (Allow Mount Actor). */
@@ -381,6 +384,32 @@ export class ActorMounts {
       if (ride.travel?.[0] === to[0] && ride.travel[1] === to[1]) ride.travel = undefined;
     });
     return true;
+  }
+
+  /**
+   * Whether a mount fights while ridden (its race's Allow Mounted Combat: a dragon): its combat
+   * runs under its rider. A ridden horse's waits (its rider moves it).
+   */
+  fightsRidden(mount: number): boolean {
+    const race = this.#options.get(mount)?.placed.look.race;
+    if (race === undefined) return false;
+    if (!this.#mountedCombat.has(race)) {
+      this.#mountedCombat.set(race, false);
+      void this.#options.session.db
+        .then(async (db) => {
+          const record = await db.get(race);
+          if (record?.type === 'RACE')
+            this.#mountedCombat.set(race, fightsRidden(parseRaceCombat(record).flags2));
+        })
+        .catch(() => undefined);
+    }
+    return this.#mountedCombat.get(race) === true;
+  }
+
+  /** Whether a rider stays on its mount to fight (its mount fights ridden), not getting off. */
+  fightsMounted(rider: number): boolean {
+    const ride = this.#rides.get(rider);
+    return ride !== undefined && this.fightsRidden(ride.horse);
   }
 
   /** A race's mount offsets (RACE DATA), read once per race. */
