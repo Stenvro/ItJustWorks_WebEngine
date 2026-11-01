@@ -2641,8 +2641,12 @@ export class ActorCombat implements CombatBridge {
       blocked: blocks,
     });
     // It fights back, or lets a friend's blow pass (the combat AI: iFriendHitCombatAllowed);
-    // a practice's blow without Allow Combat Start On Hit passes (no fight, search or crime).
-    const passes = attacker.practice?.combatStartOnHit === false;
+    // a practice's blow without Allow Combat Start On Hit passes (no fight, search or crime), as
+    // does a Non-hostile weapon's (WEAP DNAM Flags2 0x1000: DA08RealEbonyBlade; UESP "Ebony
+    // Blade": it attacks NPCs without their becoming hostile).
+    const passes =
+      attacker.practice?.combatStartOnHit === false ||
+      (weapon !== undefined && (await runtime.equipment.nonHostile(weapon)));
     if (!passes) this.#brain.hit(attackerRef, targetRef);
     if (attacker.player) this.#struck(targetRef);
     // Detection: the one attacked searches for its attacker; those near watch the fight.
@@ -4353,6 +4357,8 @@ export class ActorCombat implements CombatBridge {
     ];
     for (const [weapon, node] of hands) {
       if (weapon === undefined || (await runtime.equipment.item(weapon))?.type !== 'WEAP') continue;
+      // A Can't Drop weapon stays with it (the summons' and bound weapons, Sigdis's bows).
+      if (await runtime.equipment.cantDrop(weapon)) continue;
       const health = await runtime.removeItem(
         reference,
         runtime.formHandle(weapon),
@@ -4444,9 +4450,10 @@ export class ActorCombat implements CombatBridge {
    * A hostile spell that took hold on an actor (src/shell/magic-projectiles.ts): as a blow does,
    * its victim turns on its caster (the combat AI: at once on an enemy or a neutral, a friend's
    * after iFriendHitCombatAllowed), and the caster shows on the HUD's enemy bar if it is the
-   * player's.
+   * player's. A painful one (not every hostile effect Painless: magic-engine.ts painful) makes
+   * the victim cry out (its Hit line, as a blow's does).
    */
-  spellHit(caster: number, victim: number): void {
+  spellHit(caster: number, victim: number, painful = true): void {
     if (caster === victim) return;
     // A held spell's sprays (Flames: one every relaunch interval) count as one blow a second.
     const key = `${String(caster)}:${String(victim)}`;
@@ -4456,6 +4463,10 @@ export class ActorCombat implements CombatBridge {
     if (this.#spellHits.size > 256) this.#spellHits.clear();
     this.#brain.hit(caster, victim);
     if (caster === PLAYER_REF && victim !== PLAYER_REF) this.#struck(victim);
+    // TODO(M13): the player's own hit blur and ouch sound (a blow's too) are not identified.
+    if (painful && this.#fighters.get(victim)?.state.life === LifeState.alive) {
+      this.#bark(victim, 'Hit', caster);
+    }
   }
 
   /**

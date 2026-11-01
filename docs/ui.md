@@ -1449,7 +1449,9 @@ entry points (docs/gameplay.md "Crafting", "Perks").
 ## Lockpicking
 
 A locked door or container (REFR XLOC: level 1 Novice, 25 Apprentice, 50 Adept, 75 Expert, 100
-Master, 255 a key only; scripts lock and unlock it since) is prompted "Unlock" (sUnlock) with
+Master, 255 a key only; a level counts as the first difficulty whose most it is within,
+iLockLevelMax<VeryEasy..VeryHard>, Skyrim.esm setting VeryEasy's 1; scripts lock and unlock it
+since) is prompted "Unlock" (sUnlock) with
 its lock's level after its name (sLockLevelName*, UESP: "Unlock (object)", the level shown).
 Activating it opens it with its key when the player carries it (sOpenWithKey, then it opens),
 says sImpossibleLock for a key-only lock, sOutOfLockpicks without a lockpick (or the Skeleton

@@ -58,6 +58,8 @@ from the real data (`--player`, `--base <editor id>`, `--audit` for every placed
   record's DOFT; leveled items picked at the actor's level) join its items as the outfit's and
   are worn. A new outfit takes the old one's items away and is worn (Creation Kit: SetOutfit);
   the sleep outfit (SOFT) is worn while it sleeps (`EquipmentEngine.sleep`, for the AI).
+- A new game gives the player every spell with PC Start Spell (SPIT 0x20000; Creation Kit
+  "Spell"): PCHealRateCombat, the only one.
 - The player gets the Player record's outfit too: the iron armor of a game started without the
   opening; the opening's scripts (MQ101) strip it (`RemoveAllItems`) and dress the prisoner.
 - NPCs then take up what they carry that suits them (TODO(M13): the engine's choice is not
@@ -65,8 +67,27 @@ from the real data (`--player`, `--base <editor id>`, `--audit` for every placed
   rated above what covers the same slots, or for free slots; a melee weapon (one-handed beside a
   shield it has), else a bow or crossbow, else a staff, the one that does the most damage with
   its skill; a shield beside a one-handed weapon; the best arrows (non-bolts) or bolts for its
-  bow or crossbow. Items given to an NPC are weighed the same way. In combat it chooses its
-  weapons by its combat style ([ai.md](ai.md#combat-ai)).
+  bow or crossbow. Items given to an NPC are weighed the same way; a weapon only the player uses
+  (WEAP Flags2 0x1 Player Only) or one not used in normal combat (0x40: Keening, the Aetherium
+  crest) it does not take up. In combat it chooses its weapons by its combat style
+  ([ai.md](ai.md#combat-ai)).
+- Weapon flags gameplay reads: Can't Drop (DNAM 0x8, 131 weapons: the summons' and bound
+  weapons, trap and creature weapons, Sigdis's bows, Mikrul's sword) keeps the weapon in its
+  holder's items: not dropped from the inventory (TODO(M13): what the original shows then; no
+  setting names it), not falling from a dying actor's hands, not disarmed. Non-hostile (Flags2
+  0x1000: DA08RealEbonyBlade; UESP "Ebony Blade": it attacks NPCs without their becoming
+  hostile) makes its blows pass as a practice's do (no fight, search or assault). Embedded Weapon
+  (CommonLibSSE: unused; its actor value is an earlier game's limb condition) and Ignores Normal
+  Weapon Resistance (no such resistance in Skyrim's actor values) do nothing.
+- Weapons Unequipped (a package's flag): the package takes the weapons from the actor's hands
+  and the next package does not give them back (observed in the original: Helgen's first
+  prisoner); its combat takes one up. Round 2 looked for the moment the original gives them
+  back: the Creation Kit names none ("unequips its weapons while running this package"),
+  CommonLibSSE names none for weapons, and an earlier game's modders saw NPCs change their gear
+  as their AI re-evaluates (which the prisoner contradicts here). TODO(M13): whether a reload of
+  the actor's 3D (a cell change) takes them up again is unknown, so Riften's guards stay
+  unarmed after their meal and sleep packages (GuardRiftenEat*, GuardRiftenSleep*) until they
+  fight; to check in the original.
 
 ### The menus
 
@@ -433,9 +454,19 @@ the player in a runtime on the game data, `--audit` reads every record).
   Resistance"). A disease is caught unless Disease Resistance's percentage resists it, and
   only by its effects' chance (their GetRandomPercent conditions).
 - Stacking: the same effect item of the same item from the same caster and source replaces
-  the one there (No Recast: it is not applied again); different items stack, but of a Peak
+  the one there (No Recast: it is not applied again; an enchantment with Extend Duration On
+  Recast, ENIT 0x4, adds its duration to the one there: the 16 soul trap weapon and Dwemer flame
+  pillar enchantments, Creation Kit "Enchantment"); different items stack, but of a Peak
   Value Modifier only the strongest instance of one magic effect counts. An effect dispels
   those it counters (ESCE) and, with Dispel with Keywords, those sharing a keyword.
+- Hit reaction: a hostile spell that takes hold on an actor makes it cry out (its Hit line, as a
+  blow's does) unless every hostile effect of it is Painless (MGEF 0x4000000, 228 effects: the
+  traps' fire and gas, Frenzy and Fury, the Nightingale's Subterfuge, the creatures' poisoning
+  bites; Creation Kit "Magic Effect": the target does not cry out; on the player it also leaves
+  out the hit blur and the ouch sound, which the engine has for no hit yet: TODO(M13)).
+- Snap To Navmesh (MGEF 0x8, 92 effects: every summon, the frost walls): the target point moves
+  onto the navmesh (Creation Kit "Magic Effect"): a summon's place (summonPlace) and the hazard a
+  wall's burst leaves. Gory Visuals (19) is not used by the game (Creation Kit).
 - Conditions: the effect item's and the magic effect's, on the target ("target" runs on the
   caster), evaluated as it is applied and about each second (TODO(M13): the engine's interval):
   while they fail the effect is inactive (it does nothing, its scripts finished; again active,
@@ -472,10 +503,12 @@ the player in a runtime on the game data, `--audit` reads every record).
   actor's spells). Dispel ends spells' effects up to its magnitude (TODO(M13): Oblivion's rule).
 - Summon Creature places its NPC_ before the summoner (one at a time, the oldest going as
   another comes; the summoner's perks raise the limit: Mod Commanded Actor Limit, Twin Souls'
-  one more), gone as the effect ends or the summoner dies; Reanimate raises a corpse (it falls again as it
+  one more), gone as the effect ends or the summoner dies: it fades out (its alpha to 0) and
+  leaves the world after fSummonedCreatureFadeOutSeconds (1.5), gone for the game at once (a save
+  meanwhile has it no more); Reanimate raises a corpse (it falls again as it
   ends); Banish ends a summoning; Bound Weapon puts its weapon in the hand; Spawn Hazard and
   Spawn Scripted Ref place their form; Disarm takes the weapons out of the hands
-  (sPlayerDisarmedMessage); Soul Trap and Actor.TrapSoul put a dead actor's soul (by level:
+  (sPlayerDisarmedMessage), not a bound one nor a Can't Drop one (WEAP DNAM 0x8); Soul Trap and Actor.TrapSoul put a dead actor's soul (by level:
   iLesserSoulActorLevel 4 .. iGrandSoulActorLevel 38; NPCs black) into the smallest empty gem
   that holds it (its NAM0 form), with the Soul Captured sound (DOBJ SCSD).
 - Cloaks put their spell on the other actors within their magnitude in feet every [General]
@@ -645,7 +678,9 @@ Format/SPEL"; the game settings.
 - The base cost is SPIT's own with 0x1 (an enchantment's with ENIT 0x1, no auto calc), else the
   sum of its effects': base cost × (magnitude × duration / 10)^1.1, a magnitude under 1 counted
   as 1, a duration of 0 (and any for concentration spells) as 10, × (1 + fMagicAreaBaseCostMult
-  × area) (0: areas cost nothing). Firebolt 41.39, Flames 24.6 a second.
+  × area) (0: areas cost nothing). Firebolt 41.39, Flames 24.6 a second. A spell delivered at a
+  target (aimed, target actor, target location) × fMagicRangeTargetCostMult (1: TODO(M13), the
+  earlier game's rule, Oblivion's "Spell Cost"; whether Skyrim's engine applies it is unknown).
 - Observed in the original: the caster pays base × (1 − (Base × skill)^Scale) × Mult, the
   skill a whole number. The player's settings: fMagicCasterPCSkillCostBase,
   fMagicPCSkillCostScale, fMagicCasterPCSkillCostMult (0.0025, 0.65, 1: Firebolt 36.5 at 15,
@@ -886,7 +921,10 @@ Sources: UESP "Skyrim:Shouts", "Skyrim:Dragon Souls", "Skyrim:Powers"; SHOU and 
   fShoutTime2 (0.9 s) three (TODO(M13): the settings read as hold times). The word's spell is
   cast (most are cones: Unrelenting Force; some Self: Whirlwind Sprint), its release sound is the
   thu'um (MGEF release sound); the player's shakes the view as the controller would rumble
-  (fShoutRumbleBigMotorFrequencyV<n>, ...DurationV<n>: WorldBridge.shakeCamera, TODO(M13)).
+  (fShoutRumbleBigMotorFrequencyV<n>, ...DurationV<n>: WorldBridge.shakeCamera, TODO(M13)), and
+  the controller rumbles (WorldBridge.shakeController, as Game.ShakeController): the small motor
+  by fShoutRumbleSmallMotorFrequencyV<n>, the big one as above, for the longer of the two
+  durations.
 - The voice then recovers for that word's recovery × (1 − ShoutRecoveryMult) (the Blessing of
   Talos's 0.2 is "20 % less"; TODO(M13): inferred from its text): Unrelenting Force 15, 20, 45 s.
   ActorState.voiceRecoveryTime counts down (Get/SetVoiceRecoveryTime); the HUD's shout meter
@@ -1148,6 +1186,10 @@ tools/crime-info.ts` lists the crime factions with their values, jails and chest
   skills), the items come back, the player is let out at the exterior jail marker (Days Jailed,
   the Served Time event). Leaving the jail's cell unserved is an escape: the bounty comes back
   with iCrimeGoldEscape (Jail Escapes, the Escape Jail event: EscapeJailQuest).
+- The player's followers (teammates) wait at the crime faction's follower wait marker (FACT WAIT,
+  35 crime factions) while the player is jailed (UESP "Followers"): moved there as the player
+  goes to jail. TODO(M13): how the engine holds them there (ours: their follow package takes
+  them on as the player comes out).
 - The journal's stats list each bounty ("Whiterun Bounty", sBountyStatString).
 
 ### Factions and reactions

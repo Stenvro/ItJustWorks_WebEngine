@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   LOCK_OPEN_ANGLE,
   lockDifficulty,
+  lockLevelMaxima,
   lockLevelSetting,
   lockpickSettings,
   lockShape,
@@ -18,6 +19,15 @@ describe('lockpicking', () => {
     expect(lockDifficulty(255)).toBeUndefined();
     expect(lockLevelSetting(4)).toBe('sLockLevelNameHard');
     expect(lockLevelSetting(undefined)).toBe('sLockLevelNameImpossible');
+  });
+
+  it('reads the most level of each difficulty from iLockLevelMax<VeryEasy..VeryHard>', () => {
+    // Skyrim.esm sets VeryEasy's only (1); the others keep the Creation Kit's levels.
+    const maxima = lockLevelMaxima((name) => (name === 'iLockLevelMaxVeryEasy' ? 1 : undefined));
+    expect(maxima).toEqual([1, 25, 50, 75, 100]);
+    const wider = lockLevelMaxima((name) => (name === 'iLockLevelMaxVeryEasy' ? 10 : undefined));
+    expect(lockDifficulty(5, maxima)).toBe(2);
+    expect(lockDifficulty(5, wider)).toBe(1);
   });
 
   it('sizes the sweet spot and the partial zones as UESP gives them', () => {

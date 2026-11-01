@@ -299,3 +299,34 @@ describe.skipIf(!hasGamedata())('killing a wild creature (headless simulation)',
     'a crime by the player while sneaking unseen: no bounty, the items still stolen  [UESP Crime]',
   );
 });
+
+describe.skipIf(!hasGamedata())('jailed with a follower (headless simulation)', () => {
+  let sim: Sim;
+  beforeAll(async () => {
+    sim = await openSim({ interior: BANNERED_MARE, hour: 10 });
+    await sim.step(1);
+  }, 600_000);
+  afterAll(async () => {
+    await sim.close();
+  });
+
+  it('the follower waits at the hold’s follower wait marker (FACT WAIT)  [UESP Followers]', async () => {
+    const runtime = sim.runtime;
+    const faction = await sim.formId('FACT', 'CrimeFactionWhiterun');
+    const marker = (await runtime.crime.factionCrime(faction))?.followerWaitMarker;
+    expect(marker).toBeDefined();
+    const [follower] = sim.actors();
+    expect(follower).toBeDefined();
+    if (marker === undefined || !follower) return;
+    runtime.state.actor(follower.reference).playerTeammate = true;
+    await runtime.crime.jail(faction, false, true);
+    const placed = runtime.state.references.get(follower.reference)?.position;
+    const now = placed && ([placed[0], placed[1]] as const);
+    const at = await runtime.placement(marker, false);
+    // The player's jail cell loads (as the world does when they are taken there).
+    await sim.openAtPlayer();
+    expect(at && now).toBeTruthy();
+    if (!at || !now) return;
+    expect(Math.hypot(now[0] - at.position[0], now[1] - at.position[1])).toBeLessThan(1);
+  }, 300_000);
+});

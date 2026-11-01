@@ -38,11 +38,25 @@ const LEVEL_NAMES = ['VeryEasy', 'Easy', 'Average', 'Hard', 'VeryHard'] as const
 /** Per difficulty (1..5): the break settings' names (fLockpickBreak<name>). */
 const BREAK_NAMES = ['Novice', 'Apprentice', 'Adept', 'Expert', 'Master'] as const;
 
-/** A lock's difficulty 1 (Novice) .. 5 (Master), or undefined when only its key opens it. */
-export function lockDifficulty(level: number): number | undefined {
+/**
+ * A lock's difficulty 1 (Novice) .. 5 (Master), or undefined when only its key opens it: the
+ * first difficulty whose most (iLockLevelMax<VeryEasy..VeryHard>: VeryEasy's 1 in Skyrim.esm,
+ * the others the Creation Kit's levels) the level is within.
+ */
+export function lockDifficulty(
+  level: number,
+  maxima: readonly number[] = LOCK_LEVELS,
+): number | undefined {
   if (level >= KEY_ONLY_LEVEL) return undefined;
-  const index = LOCK_LEVELS.findIndex((max) => level <= max);
-  return index < 0 ? LOCK_LEVELS.length : index + 1;
+  const index = maxima.findIndex((max) => level <= max);
+  return index < 0 ? maxima.length : index + 1;
+}
+
+/** The most lock level of each difficulty: iLockLevelMax<VeryEasy..VeryHard>. */
+export function lockLevelMaxima(number: (name: string) => number | undefined): number[] {
+  return LEVEL_NAMES.map(
+    (name, index) => number(`iLockLevelMax${name}`) ?? LOCK_LEVELS[index] ?? 100,
+  );
 }
 
 /** The game setting that names a difficulty: sLockLevelName<VeryEasy..VeryHard>. */

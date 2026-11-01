@@ -61,6 +61,7 @@ import {
 } from '../../world/magic-effects.ts';
 import {
   Delivery,
+  EnchantmentFlag,
   MagicSpellFlag,
   parseMagicItem,
   parseSoulGem,
@@ -245,6 +246,8 @@ export class MagicEngine {
   readonly #accumulating = new WeakMap<ActiveEffectState, { rate: number; hold: number }>();
   /** The share of its magnitude an effect at once did to its actor value (its skill use). */
   readonly #did = new WeakMap<ActiveEffectState, number>();
+  /** Summons fading out as their effects ended: the seconds left before they are gone. */
+  readonly #fadingSummons = new Map<number, number>();
 
   constructor(runtime: ScriptRuntime) {
     this.#runtime = runtime;
@@ -603,6 +606,38 @@ export class MagicEngine {
   }
 
   /**
+   * Whether a hostile item's hit hurts: some hostile effect of it is not Painless (MGEF DATA
+   * 0x4000000). Creation Kit "Magic Effect": with Painless a hostile effect's target does not
+   * cry out in pain (the player: no hit blur, no ouch sound). The vanilla Painless hostile
+   * effects: the traps' fire and gas, Frenzy and Fury, the Nightingale's Subterfuge, the
+   * creatures' bites and venoms that only poison.
+   */
+  painful(item: MagicItemRecord): Promise<boolean> {
+    return this.#anyEffect(
+      item,
+      (flags) => (flags & EffectFlag.hostile) !== 0 && (flags & EffectFlag.painless) === 0,
+    );
+  }
+
+  /**
+   * Whether an item's target point moves onto the navmesh: one of its effects has Snap To
+   * Navmesh (MGEF DATA 0x8; Creation Kit "Magic Effect": an Aimed or Target Location point goes
+   * to the nearest point of the navmesh). Besides the summons: the frost walls (Wall of Frost,
+   * the Ice Wraith's and the lurker's sprays), whose hazards lie on the navmesh.
+   */
+  snapsToNavmesh(item: MagicItemRecord): Promise<boolean> {
+    return this.#anyEffect(item, (flags) => (flags & EffectFlag.snapToNavmesh) !== 0);
+  }
+
+  /** Whether some effect of an item has flags passing `test`. */
+  async #anyEffect(item: MagicItemRecord, test: (flags: number) => boolean): Promise<boolean> {
+    for (const entry of item.effects) {
+      if (test((await this.effect(entry.effect))?.flags ?? 0)) return true;
+    }
+    return false;
+  }
+
+  /**
    * A concentration spell still held: its effects on a target from the caster that last while
    * it is held (ApplyOptions.hold) last `seconds` more. Returns the effect items kept on (by
    * index), which are not applied again (a ward keeps what it has grown).
@@ -786,7 +821,11 @@ export class MagicEngine {
         otherEffect.keywords.some((keyword) => effect.keywords.includes(keyword));
       if (counters || shares) await this.end(key);
     }
-    // The same effect of the same item from the same caster: replaced (No Recast: kept).
+    // The same effect of the same item from the same caster: replaced (No Recast: kept). An
+    // enchantment with Extend Duration On Recast (ENIT 0x4: the soul trap weapons, Dwemer flame
+    // pillars) adds its duration to the one there instead (Creation Kit "Enchantment").
+    const extendsDuration =
+      item.type === 'ENCH' && (item.flags & EnchantmentFlag.extendDurationOnRecast) !== 0;
     for (const [key, other] of this.effectsOn(target)) {
       if (
         other.item === item.formId &&
@@ -795,6 +834,10 @@ export class MagicEngine {
         other.source === options.source
       ) {
         if ((effect.flags & EffectFlag.noRecast) !== 0) return false;
+        if (extendsDuration && !other.lasting && other.duration > 0 && duration > 0) {
+          other.duration += duration;
+          return true;
+        }
         await this.end(key);
       }
     }
@@ -1341,11 +1384,13 @@ export class MagicEngine {
       case EffectArchetype.disarm: {
         // Its weapons leave its hands (UESP "Skyrim:Disarm": up to the magnitude's level, the
         // level cap above): the right hand's falls from the hand into the world, a reference
-        // anyone can pick up; a dual wielder's left goes into its inventory; bound weapons stay.
+        // anyone can pick up; a dual wielder's left goes into its inventory; bound weapons and
+        // Can't Drop ones (WEAP DNAM 0x8: the Dremora's, the Nightingale's) stay.
         let dropped = false;
         for (const hand of ['right', 'left'] as const) {
           const weapon = await runtime.equipment.weapon(target, hand);
           if (weapon === undefined || this.#bound(target, weapon)) continue;
+          if (await runtime.equipment.cantDrop(weapon)) continue;
           if (!(await runtime.equipment.unequip(target, weapon, { hand }))) continue;
           dropped = true;
           if (hand === 'right') await this.#dropWeapon(target, weapon);
@@ -1433,10 +1478,17 @@ export class MagicEngine {
         break;
       case EffectArchetype.summonCreature:
       case EffectArchetype.spawnScriptedRef: {
-        // The summon fades out (fSummonedCreatureFadeOutSeconds) and is gone.
+        // The summon fades out (its alpha to 0) and is gone after fSummonedCreatureFadeOutSeconds
+        // (1.5); gone at once for the game (a save made meanwhile has it no more). TODO(M13):
+        // the stage fades an alpha over fActorAlphaFadeSeconds, not this setting's time.
         const state = runtime.state.reference(made);
         state.deleted = true;
-        runtime.world.enableChanged?.(made, false);
+        const seconds = (await this.effectSettings()).summonFadeOut;
+        if (seconds > 0 && (await runtime.actors.isActor(made))) {
+          runtime.state.actor(made).alpha = 0;
+          runtime.world.setAlpha?.(made, 0, true);
+          this.#fadingSummons.set(made, seconds);
+        } else runtime.world.enableChanged?.(made, false);
         break;
       }
       case EffectArchetype.reanimate:
@@ -1520,7 +1572,11 @@ export class MagicEngine {
         );
         if (summonAtLanding(landing, ahead, settings)) position = [...entry.at];
       }
-      position = runtime.world.summonPlace?.(at.position, position, madeRadius) ?? position;
+      // Snap To Navmesh (MGEF DATA 0x8; Creation Kit "Magic Effect": the target point moves to
+      // the nearest point of the navmesh, so a summon starts in a valid place): every vanilla
+      // summon effect has it; one without stands where it was put.
+      if ((effect.flags & EffectFlag.snapToNavmesh) !== 0)
+        position = runtime.world.summonPlace?.(at.position, position, madeRadius) ?? position;
       // Facing its summoner.
       const facing = Math.atan2(at.position[0] - position[0], at.position[1] - position[1]);
       runtime.move(made, position, [0, 0, facing], at.cell, at.world);
@@ -1928,6 +1984,15 @@ export class MagicEngine {
       this.#runtime.detach(this.#changes);
     }
     for (const key of ended) this.#runtime.detach(this.end(key));
+    // Summons that faded out leave the world.
+    for (const [made, left] of this.#fadingSummons) {
+      if (left > seconds) {
+        this.#fadingSummons.set(made, left - seconds);
+        continue;
+      }
+      this.#fadingSummons.delete(made);
+      this.#runtime.world.enableChanged?.(made, false);
+    }
     this.#pulseWait -= seconds;
     if (this.#pulseWait <= 0 && !this.#pulsing) {
       this.#pulseWait = PULSE_SECONDS;
