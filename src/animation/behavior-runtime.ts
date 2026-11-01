@@ -61,6 +61,7 @@ import {
 } from './procedural.ts';
 import { isPaired, pairedTrackBones, type PairedSide } from './paired-clips.ts';
 import { graphEvent, type GraphEvent } from './graph-events.ts';
+import { namedOf, wordValue, type NamedGraphState } from './named-graph-state.ts';
 
 /** A placed object's skeletal graph as a save keeps it (BehaviorRuntime.saveState). */
 export interface BehaviorGraphState {
@@ -88,6 +89,11 @@ export interface ActorGraphState {
    * handles them as it next runs (saves made before kept none).
    */
   readonly events?: readonly (readonly [string] | readonly [string, string])[];
+  /**
+   * An original save's state (an imported save), by names: each file's machines and clips are
+   * found by their names as the file is reached, its word variables by their types.
+   */
+  readonly named?: NamedGraphState;
 }
 
 /** One behavior file's active nodes, as ActorGraphState keeps them. */
@@ -536,6 +542,11 @@ export class BehaviorRuntime {
   /** ... of variables of files not reached yet, by name (lower case). */
   readonly #resumeVariables = new Map<string, number>();
   readonly #resumeVectors = new Map<string, Vec4>();
+  /** ... an original save's, by names (ActorGraphState.named): its words by name (lower case). */
+  #resumeNamed: NamedGraphState | undefined;
+  readonly #resumeWords = new Map<string, number>();
+  /** The variables' types (BehaviorVariable.type), by index. */
+  readonly #variableTypes: number[] = [];
   /**
    * The machines and clips a loaded save put back, until the update that reaches them: those it
    * does not reach start anew when they are reached later (a walk the actor takes up later
@@ -806,8 +817,13 @@ export class BehaviorRuntime {
         this.#variableIndex.set(key, index);
         this.#variableNames.push(variable.name);
         this.#initials.push(variable.initial);
+        this.#variableTypes.push(variable.type);
         // A loaded save's value, for a file reached after the save was put back.
-        const resumed = this.#resumeVariables.get(key);
+        const word = this.#resumeWords.get(key);
+        this.#resumeWords.delete(key);
+        const resumed =
+          this.#resumeVariables.get(key) ??
+          (word === undefined ? undefined : wordValue(word, variable.type));
         this.#resumeVariables.delete(key);
         this.#values.push(resumed ?? variable.initial);
         const vector = this.#resumeVectors.get(key) ?? variable.vector;
@@ -1063,11 +1079,24 @@ export class BehaviorRuntime {
       if (index === undefined) this.#resumeVectors.set(name.toLowerCase(), [x, y, z, w]);
       else this.#vectors.set(index, [x, y, z, w]);
     }
+    // An original save's: its words by the variables' types (those of files not reached yet
+    // as they are), its files' nodes by their names as each file is reached.
+    this.#resumeNamed = saved.named;
+    for (const [name, bits] of saved.named?.words ?? []) {
+      const key = name.toLowerCase();
+      const index = this.#variableIndex.get(key);
+      const type = index === undefined ? undefined : this.#variableTypes[index];
+      if (index === undefined || type === undefined) this.#resumeWords.set(key, bits);
+      else this.#values[index] = wordValue(bits, type) ?? this.#values[index] ?? 0;
+    }
     const reached = new Map<string, BehaviorGraph>();
     for (const [graph, file] of this.#files) reached.set(file, graph);
     const files = new Map(saved.files.map((file) => [file.file, file]));
     for (const [file, graph] of reached) {
-      this.#resumeFile(graph, files.get(file) ?? { file, machines: [], clips: [] });
+      this.#resumeFile(
+        graph,
+        this.#withNamed(graph, files.get(file) ?? { file, machines: [], clips: [] }),
+      );
       files.delete(file);
     }
     for (const [file, entry] of files) this.#resumeFiles.set(file, entry);
@@ -1078,6 +1107,35 @@ export class BehaviorRuntime {
       this.#queue.push(payload === undefined ? { id } : { id, payload });
     }
     this.#told = true;
+  }
+
+  /**
+   * A file's saved machines and clips with an original save's of the same graph (by its name),
+   * found by their nodes' names among the file's (the first of a name).
+   */
+  #withNamed(graph: BehaviorGraph, saved: SavedGraphFile): SavedGraphFile {
+    if (!this.#resumeNamed) return saved;
+    const named = namedOf(this.#resumeNamed, graph.name);
+    if (named.machines.size === 0 && named.clips.size === 0) return saved;
+    const nodes = nodesOf(graph);
+    const machines = [...saved.machines];
+    const clips = [...saved.clips];
+    const found = new Set<string>();
+    nodes.machines.forEach((node, place) => {
+      const name = node.name.toLowerCase();
+      const id = named.machines.get(name);
+      if (id === undefined || found.has(`m${name}`)) return;
+      found.add(`m${name}`);
+      machines.push([place, id, 0]);
+    });
+    nodes.clips.forEach((node, place) => {
+      const name = node.name.toLowerCase();
+      const time = named.clips.get(name);
+      if (time === undefined || found.has(`c${name}`)) return;
+      found.add(`c${name}`);
+      clips.push([place, time, 0]);
+    });
+    return { file: saved.file, machines, clips };
   }
 
   /** One file's saved machines and clips, to go on as they are reached. */
@@ -2799,9 +2857,10 @@ export class BehaviorRuntime {
       this.#files.set(graph, file);
       // A loaded save's states of this file, now that it is reached.
       const saved = this.#resumeFiles.get(file);
-      if (saved) {
-        this.#resumeFiles.delete(file);
-        this.#resumeFile(graph, saved);
+      if (saved) this.#resumeFiles.delete(file);
+      const resumed = this.#withNamed(graph, saved ?? { file, machines: [], clips: [] });
+      if (saved || resumed.machines.length > 0 || resumed.clips.length > 0) {
+        this.#resumeFile(graph, resumed);
       }
     }
     return graph.root;

@@ -31,7 +31,8 @@ import {
   WORLD_GRAVITY,
   type Flight,
 } from '../gameplay/combat/projectile.ts';
-import type { ProjectileCombat } from '../gameplay/combat/combat-records.ts';
+import { parseProjectile, type ProjectileCombat } from '../gameplay/combat/combat-records.ts';
+import type { SavedAttachedArrow } from '../save/world-save.ts';
 import { arrowKnock, loadImpulseSettings } from '../gameplay/impulses.ts';
 import { meshPath } from '../world/actors.ts';
 import { MaterialFlag } from '../world/material-type.ts';
@@ -58,6 +59,9 @@ interface Shot {
 interface StuckInActor {
   readonly target: number;
   readonly until: number;
+  /** Its PROJ and when it struck (the clock's seconds): what a save keeps. */
+  readonly projectile: number;
+  readonly since: number;
   readonly node: number;
   /** Its place in the node's space. */
   readonly local: Mat4;
@@ -318,6 +322,8 @@ export class CombatProjectiles {
     this.#attached.push({
       target,
       until: this.#clock + limits.ageMax,
+      projectile: shot.projectile.formId,
+      since: this.#clock,
       node,
       local: multiply(inverse, at),
       world,
@@ -327,8 +333,72 @@ export class CombatProjectiles {
     this.#follow();
   }
 
+  /** The arrows stuck in actors, for a save (src/save/world-save.ts), oldest first. */
+  saveAttached(): SavedAttachedArrow[] {
+    return this.#attached.map((arrow) => ({
+      target: arrow.target,
+      projectile: arrow.projectile,
+      node: arrow.node,
+      local: [...arrow.local],
+      age: this.#clock - arrow.since,
+    }));
+  }
+
+  /**
+   * A loaded save's stuck arrows: each waits for its actor's body, then is drawn on its bone
+   * for what is left of its age (those already over it are not).
+   */
+  async #restoreAttached(saved: readonly SavedAttachedArrow[]): Promise<void> {
+    const runtime = this.#options.session.scriptsReady;
+    const limits = this.#options.attachedArrows?.();
+    if (!runtime || !limits) return;
+    for (const arrow of saved) {
+      if (arrow.age >= limits.ageMax || arrow.local.length !== 16) continue;
+      const record = await runtime.forms.record(arrow.projectile);
+      const path = record?.type === 'PROJ' ? parseProjectile(record).model : undefined;
+      const model = path === undefined ? undefined : await this.#model(meshPath(path));
+      if (!model) continue;
+      this.#waiting.push({ arrow, model, until: this.#clock + limits.ageMax - arrow.age });
+    }
+  }
+
+  /** Restored arrows whose actors are not placed yet. */
+  #waiting: { arrow: SavedAttachedArrow; model: GpuModel; until: number }[] = [];
+
+  /** Restored arrows go on their actors as their bodies appear (or go when their time is up). */
+  #placeWaiting(): void {
+    const restoring = this.#options.session.restoring;
+    if (restoring) {
+      const saved = restoring.takeAttachedArrows();
+      if (saved.length > 0) void this.#restoreAttached(saved);
+    }
+    if (this.#waiting.length === 0) return;
+    this.#waiting = this.#waiting.filter(({ arrow, model, until }) => {
+      if (until <= this.#clock) return false;
+      if (!this.#options.body?.(arrow.target)) return true;
+      const world = new Float32Array(16);
+      const motion: InstanceMotion = { version: 0 };
+      const scene = this.#options.renderer.scene.createScene([{ model, world, motion }]);
+      if (scene) {
+        this.#attached.push({
+          target: arrow.target,
+          until,
+          projectile: arrow.projectile,
+          since: this.#clock - arrow.age,
+          node: arrow.node,
+          local: Float32Array.from(arrow.local),
+          world,
+          motion,
+          scene,
+        });
+      }
+      return false;
+    });
+  }
+
   /** The arrows stuck in actors follow their nodes; the old, the extra and the orphaned go. */
   #follow(): void {
+    this.#placeWaiting();
     if (this.#attached.length === 0) return;
     const limits = this.#options.attachedArrows?.() ?? { ageMax: 0, max: 0 };
     const gone = new Set(

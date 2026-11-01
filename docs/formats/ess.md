@@ -204,8 +204,9 @@ everywhere (the original reserves one byte and widens it when the count is known
   FollowerSwimBreadcrumbs (12 bytes, refId, u32, vsval × (12 bytes, refId, 12 bytes, refId,
   u8)); AliasInstanceArray (vsval × quest refId + alias id u32); PromotedRef (vsval × refId);
   AttachedArrows3D (vsval × arrows: a refId, and when it is not null a bone u16, and when that
-  is not 0xFFFF the time it has been stuck u32, its translation (12 bytes), its rotation (the
-  original writes the matrix as a quaternion: 16 bytes) and its scale f32; then two u16);
+  is not 0xFFFF the milliseconds it has been stuck u32 (the list is oldest first: each larger
+  than the next), its translation (12 bytes), its rotation (the original writes the matrix as a
+  quaternion: 16 bytes, taken as w, x, y, z) and its scale f32; then two u16);
   TextDisplayData (two refIds, i32; when both are null and it is −2, the name as a wstring);
   Enchantment (refId + u16); RefrPath (88 bytes); GroupConstraint (u32, refId, two wstrings, 32
   bytes); ScriptedAnimDependence (u32 count × refId + u32); CachedScale (8 bytes); Interaction
@@ -274,6 +275,46 @@ everywhere (the original reserves one byte and widens it when the count is known
   writes one ("AI process"), its kind (what its procedure adds) from its PKDT's type; a
   package of a plugin writes nothing. INFO, CONT, DOOR, STAT, ALCH,
   IDLM, NOTE, NAVM, WOOP, MGEF, ENCH, CLAS: the form flags only.
+
+## Animation graphs
+
+The animation block of a reference's change form (CHANGE_REFR_ANIMATION, bit 28;
+`src/formats/ess/animation-graphs.ts`, observed in the original; `node tools/ess-info.ts <save>
+--graphs` lists it):
+
+- a byte: whether the reference has graphs. Without (doors and other objects animated by their
+  NIF sequences alone): the sequence it plays (wstring: `Open`, `Close`), a byte, a u32 (42 in
+  every save read) and two bytes.
+- With: a u32 count of graphs (two for the player: the third person body first, then the first
+  person graph), each:
+  - its class (wstring, `BShkbAnimationGraph`);
+  - the active state machines (u32 count; the innermost first): each its node's name as
+    `File.hkb/NodeName` (the behavior graph's name and the hkbStateMachine's), the state id
+    (u32), the state's name (wstring) and two u32 (TODO(M13): their meaning; 0, 1 or 2);
+  - the playing clip generators (u32 count): each its `File.hkb/NodeName` and its local time
+    (f32, seconds);
+  - the generators with a time of their own (u32 count: Gamebryo sequence generators, an idle's
+    generator): each its name and its time (f32: seconds since it started, observed growing
+    with the play time);
+  - every variable of the graph by name: a wstring, a byte (1: a word, 4 bytes, a real's float
+    bits or an integer; 0: a quad, 16 bytes, a vector or quaternion), its value; the list ends
+    with the name `$-NoMoreVariables-$`;
+  - the event-driven modifiers (u32 count): each its `File.hkb/NodeName` and a byte (active);
+  - then 12 bytes, a u32 count of look-at modifiers (each its name, a u32 count of bones, a u32
+    count of eye bones and a quaternion per bone) and more: not read (TODO(M13)). A second
+    graph is found by its class name after the first's modifiers.
+- after the last graph, as after the sequence: the same byte, u32 and two bytes (an actor's: a
+  u32 1 and 39 more bytes; TODO(M13): their meaning).
+
+Read in both saves for all 77 forms (REFR 26, ACHR 49, PMIS 1, PFLA 1: 63 with graphs). The
+import puts them back by names (`NamedGraphState`, src/animation/named-graph-state.ts): an
+actor's graph takes each machine's state and each clip's time as its behavior files are reached
+(the machine and clip of that name in the file whose graph has that name), the words by each
+variable's type (a real's bits as a float, the others as integers), the quads as its vectors; an
+object's sequence graph (ObjectGraph.restoreNamed) its machines' states, its variables, and its
+sequences each from its saved time; a skeletal object's graph as an actor's. A reference without
+a graph plays its door's sequence: `Open` open, `Close` closed. The projectiles' graphs (a
+spell's hand effects) have no place in ours yet (TODO(M13)).
 
 ## AI process
 
@@ -631,12 +672,23 @@ other changes (values, names, known ingredient effects; the scenes' clocks); the
 tables of detection (105: each a reference with two values, 0, 2 or 3 and 0 or 7, whose meaning
 is not known), the process lists (100: their three floats, −0.0168 twice and a value that
 differs by save, meaning not known; the crimes, none in the saves read), temp effects (1000: the
-decals on objects, as DecalFlameBurn01 on the opening's carts, its texture set, place, normal
-and size; ours has no decal store to put them in) and the interface's help shown (102); the
-movement controller's state (the engine plans its paths anew); the high process's timers and
-held objects (six references with a byte each, whose meaning is not known); the combat
-controllers' searches and objects; the graph variables of the animation change forms (REFR,
-ACHR, PMIS, PFLA: the sized block is read past); the player's other lists.
+decals on objects, as DecalFlameBurn01 on the opening's carts: each entry the object (reference0),
+its texture set (reference1, TXST), a point and a direction in the object's space (vector0,
+vector1), the width, height and depth (floats0: 224, 224, 32), a quaternion, four bytes (the
+first: the texture's part), a float 1, a byte 4, five floats (4, sin 10°, 1, 1, 1) and a u32 1
+or 2; no age is written; ours keeps no decal to put them in: TODO(M13)), the anim objects actors
+hold (1002: an actor, an ANIO and a byte; ours attaches them by the graphs' events) and the
+interface's help shown (102); the movement controller's state (the engine plans its paths
+anew); the high process's timers and held objects (six references with a byte each, whose
+meaning is not known); the combat controllers' searches and objects; the look-at modifiers'
+bones of the animation graphs; the projectiles' graphs (PMIS, PFLA); the player's other lists.
+The tables empty in every save read (5 effects, 112 ingredients shared, 1004 synchronized
+animations) are logged only when they hold something.
+
+The arrows stuck in actors (the AttachedArrows3D extra data: three in a Helgen soldier) become
+`WorldSave.attachedArrows` (docs/formats/save.md): each its PROJ, its bone (TODO(M13): taken as
+the index into our skeleton's bones), its place on the bone (the translation, the quaternion
+and the scale as a matrix) and its age (the milliseconds stuck).
 
 Everything else is counted by change form type and flag (`REFR: lockExtra x 12`) and by where a
 read stopped, then logged under `save` as not imported.

@@ -305,6 +305,8 @@ export interface EssChangeForm {
   readonly scale?: number;
   readonly extras?: readonly EssExtra[];
   readonly inventory?: readonly EssInventoryEntry[];
+  /** The animation graphs' saved state (CHANGE_REFR_ANIMATION): readAnimationGraphs reads it. */
+  readonly animation?: Uint8Array;
   readonly npc?: EssNpcChanges;
   readonly quest?: EssQuestChanges;
   readonly cell?: EssCellChanges;
@@ -656,14 +658,15 @@ function readExtra(
       const items = list((): number[] => {
         const arrow = ref();
         if (arrow === 0) return [];
-        // On a bone: the time it has been stuck, its translation, its rotation (the original
-        // writes the 3x3 matrix as a quaternion: 16 bytes) and its scale.
+        // On a bone: the milliseconds it has been stuck (a u32: the list is oldest first, each
+        // larger than the next), its translation, its rotation (the original writes the 3x3
+        // matrix as a quaternion: 16 bytes) and its scale.
         const bone = reader.u16();
         if (bone === 0xffff) return [arrow, bone];
         return [
           arrow,
           bone,
-          reader.f32(),
+          reader.u32(),
           ...reader.vec3(),
           ...[0, 1, 2, 3].map(() => reader.f32()),
           reader.f32(),
@@ -1169,7 +1172,7 @@ export function readChangeForm(entry: ChangeFormEntry, resolve: RefIdResolver): 
       if (has(ChangeRefr.inventory | ChangeRefr.leveledInventory)) {
         out.inventory = readInventory(reader, resolve);
       }
-      if (has(ChangeRefr.animation)) reader.skip(reader.vsval());
+      if (has(ChangeRefr.animation)) out.animation = reader.bytes(reader.vsval());
       if (type === 1) {
         const actor: { -readonly [K in keyof EssActorData]: EssActorData[K] } = {
           processLevel,
