@@ -107,6 +107,26 @@ describe('object behavior graphs', () => {
     expect(graph.playing[0]?.sequence).toBe('autoloop');
   });
 
+  it("takes an original save's state by names: the machine's state, the sequence's time", () => {
+    const graph = new ObjectGraph(autoplay, sequences, 10);
+    graph.restoreNamed(
+      {
+        machines: [['AutoplayBehavior.hkb', 'Behavior00', 1]],
+        clips: [],
+        sequences: [['AutoplayBehavior.hkb', 'AutoLoop', 239.5]],
+        words: [],
+      },
+      300,
+    );
+    expect(graph.playing).toEqual([{ sequence: 'autoloop', start: 60.5, weight: 1 }]);
+    // Another graph's names are not its own.
+    graph.restoreNamed(
+      { machines: [['Behavior00.hkb', 'Behavior00', 2]], clips: [], words: [] },
+      300,
+    );
+    expect(graph.playing[0]?.sequence).toBe('autoplay');
+  });
+
   it('takes wildcard transitions on events sent by name', () => {
     const graph = new ObjectGraph(autoplay, sequences, 0);
     expect(graph.send('stopeffect', 0.25)).toBe(true);

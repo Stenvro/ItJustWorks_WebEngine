@@ -9,6 +9,7 @@
 
 import { blendCurve } from './behavior-runtime.ts';
 import { evaluateNode, parseExpression, type Expression } from './behavior-expression.ts';
+import { namedOf, wordValue, type NamedGraphState } from './named-graph-state.ts';
 import {
   BLENDER_FLAGS,
   TRANSITION_FLAGS,
@@ -305,18 +306,55 @@ export class ObjectGraph {
     this.#refresh();
   }
 
+  /**
+   * An original save's state put back as it loads (an imported save, docs/formats/ess.md
+   * "Animation graphs"): its machines' states and its variables by name; each sequence named
+   * plays on from its saved time, the others played long ago (as restoreState's).
+   */
+  restoreNamed(named: NamedGraphState, now: number): void {
+    const { machines, sequences } = namedOf(named, this.#graph.name);
+    const words = new Map(named.words.map(([name, bits]) => [name.toLowerCase(), bits]));
+    this.#values.clear();
+    this.#graph.variables.forEach((variable, index) => {
+      const bits = words.get(variable.name.toLowerCase());
+      const value = bits === undefined ? undefined : wordValue(bits, variable.type);
+      if (value !== undefined) this.#values.set(index, value);
+    });
+    this.#deactivate(this.#graph.root);
+    this.#fading.clear();
+    this.#activate(this.#graph.root, now - RESTORED_LONG_AGO, {
+      states: [],
+      next: 0,
+      byName: machines,
+    });
+    for (const [leaf, state] of this.#leaves) {
+      const time = sequences.get(leaf.name.toLowerCase());
+      if (time !== undefined) state.start = now - time;
+      state.sent = now;
+    }
+    this.#touched = true;
+    this.#refresh();
+  }
+
   /** A state changed or a variable was set since the graph started (saveState). */
   #touched = false;
 
   #activate(
     node: BehaviorGenerator | undefined,
     time: number,
-    saved?: { readonly states: readonly number[]; next: number },
+    saved?: {
+      readonly states: readonly number[];
+      next: number;
+      /** An original save's states by their machines' names (lower case), in place of states. */
+      readonly byName?: ReadonlyMap<string, number>;
+    },
   ): void {
     if (!node) return;
     switch (node.kind) {
       case 'state-machine': {
-        const id = saved?.states[saved.next++];
+        const id = saved?.byName
+          ? saved.byName.get(node.name.toLowerCase())
+          : saved?.states[saved.next++];
         const start =
           (id === undefined ? undefined : node.states.find((state) => state.id === id)) ??
           this.#startState(node);

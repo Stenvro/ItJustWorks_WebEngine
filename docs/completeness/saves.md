@@ -25,22 +25,38 @@ both machine-checkable parts:
 The world beside the scripts (the stage's actors, graphs, physics, audio, the sky) is kept by
 hand below, against docs/formats/save.md.
 
-## Count (2026-11-01, round 4)
+## Count (2026-11-01, round 5)
 
 | Part                          | Items | Done | Open |
 | ----------------------------- | ----: | ---: | ---: |
-| .ess header                   |     4 |    3 |    1 |
-| .ess global data              |    30 |   12 |   18 |
-| .ess change forms (flags)     |    68 |   61 |    7 |
-| .ess other (import and hand)  |    11 |    8 |    3 |
+| .ess header                   |     4 |    4 |    0 |
+| .ess global data              |    30 |   15 |   15 |
+| .ess change forms (flags)     |    68 |   64 |    4 |
+| .ess other (import and hand)  |    11 |    9 |    2 |
 | Own save: runtime fields      |   161 |  161 |    0 |
-| Own save: the world (by hand) |    25 |   16 |    9 |
-| Total                         |   299 |  261 |   38 |
+| Own save: the world (by hand) |    25 |   17 |    8 |
+| Total                         |   299 |  270 |   29 |
 
-(Round 3: 297 items, 245 done; round 2: 291, 224; round 1: 290, 211. The sweep itself prints
-266 items: the ".ess other" part lists only what the import still logs, so its items done are
+(Round 4: 299 items, 261 done; round 3: 297, 245; round 2: 291, 224; round 1: 290, 211. The sweep itself prints
+265 items: the ".ess other" part lists only what the import still logs, so its items done are
 kept by hand below. Round 4 split the AI process's item in two (the procedures' states, done;
 the high process's timers, open) and added NPCs riding to the world part.)
+
+Round 5 built down:
+
+- The animation graphs of the change forms (REFR 26, ACHR 49: docs/formats/ess.md "Animation
+  graphs"): each graph's active machines' states, the clips' and sequences' times and every
+  variable by name, read in all 77 forms of both saves; the import puts them back by names
+  (`NamedGraphState`): an actor's (and the player's body and first person graphs) as its
+  behavior files are reached, an object's as its 3D loads, a door without a graph by its
+  Open or Close sequence. Checked in the cart save's simulation: over 1,000 words of the placed
+  actors' graphs, more than 95% hold the save's values after the load.
+- The arrows stuck in bodies (AttachedArrows3D): `WorldSave.attachedArrows`, kept by our save
+  and filled by the import (the opening's soldier with three arrows), drawn again on their
+  bones as their actors are placed (src/shell/combat-projectiles.ts).
+- Tables empty in every save read (5 effects, 112 ingredients shared, 1004 synchronized
+  animations): logged only when they hold something; the .ess screenshot (already the import's
+  thumbnail) and our saves' thumbnails, which the list had open though they were kept.
 
 Round 4 built down:
 
@@ -141,7 +157,7 @@ player's place").
 | Item                                       | Status | Where / why open                          |
 | ------------------------------------------ | ------ | ----------------------------------------- |
 | Header (name, level, race, location, date) | done   | ess-import.ts: our save header            |
-| Screenshot                                 | open   | our saves write no thumbnail yet (M13)    |
+| Screenshot                                 | done   | the import's thumbnail (essScreenshot)    |
 | Plugins                                    | done   | formIdMapper: by name into our load order |
 | Light plugins                              | done   | formIdMapper                              |
 
@@ -154,7 +170,7 @@ player's place").
 | 2 TES                        | open   | visited worldspaces, the cell grid                                      |
 | 3 Global Variables           | done   | GameState globals; GameDaysPassed sets the clock                        |
 | 4 Created Objects            | open   | made potions, poisons, enchantments (none in the saves read)            |
-| 5 Effects                    | open   | image space modifiers running                                           |
+| 5 Effects                    | done   | image space modifiers running: empty in every save read (else logged)   |
 | 6 Weather                    | done   | current, outgoing, override, default; when it came (GameSave.sky)       |
 | 7 Audio                      | done   | the music types in play (GameSave.music; the location's from the place) |
 | 8 Sky Cells                  | open   | not applied                                                             |
@@ -170,14 +186,14 @@ player's place").
 | 109 Magic Favorites          | done   | GameState favorites and hotkeys                                         |
 | 110 PlayerControls           | open   | its fields' meaning not known                                           |
 | 111 Story Event Manager      | done   | the events waiting, told again after the load                           |
-| 112 Ingredient Shared        | open   | the ingredients' known effects                                          |
+| 112 Ingredient Shared        | done   | the ingredients' known effects: empty in every save read (else logged)  |
 | 113 MenuControls             | open   | not applied                                                             |
 | 114 MenuTopicManager         | open   | not applied                                                             |
-| 1000 Temp Effects            | open   | decals on objects (the carts' burns): ours keeps no decals to restore   |
+| 1000 Temp Effects            | open   | decals on objects (the carts' burns): layout read; no decal store yet   |
 | 1001 Papyrus                 | done   | instances, stacks, messages, waits, suspended calls, registrations      |
 | 1002 Anim Objects            | open   | what actors hold                                                        |
 | 1003 Timer                   | open   | not applied                                                             |
-| 1004 Synchronized Animations | open   | paired animations under way                                             |
+| 1004 Synchronized Animations | done   | paired animations under way: empty in every save read (else logged)     |
 | 1005 Main                    | done   | empty in every save read                                                |
 
 ### Change forms
@@ -192,7 +208,7 @@ By type, each change flag the saves use (forms counted over both saves).
 | REFR | inventory, leveledInv.   |   144 | done   | inventory changes added after the load                       |
 | REFR | lockExtra                |   252 | done   | level, locked                                                |
 | REFR | itemExtraData            |   178 | done   | the item reference's holder (ReferenceState.container)       |
-| REFR | animation                |    26 | open   | the object's graph state (ours keeps its own)                |
+| REFR | animation                |    26 | done   | by names (SavedGraph.named); a door's Open or Close          |
 | REFR | encounterZoneExtra       |   367 | done   | ReferenceState.encounterZone                                 |
 | REFR | gameOnlyExtra            |  1467 | done   | NonActorMagicTarget: no effects on the 3 objects             |
 | REFR | baseObject               |    30 | done   | ReferenceState.base (baseOf)                                 |
@@ -204,9 +220,9 @@ By type, each change flag the saves use (forms counted over both saves).
 | ACHR | packageExtraData         |    67 | done   | the package's start; Follower (no data)                      |
 | ACHR | dismemberedLimbs         |     1 | done   | ActorState.dismembered: the limb and what it wore            |
 | ACHR | leveledActor             |  2784 | done   | ActorState.leveledBase: the pick kept                        |
-| ACHR | animation                |    49 | open   | the actor's graph state                                      |
+| ACHR | animation                |    49 | done   | by names (ActorGraphState.named), the player's two graphs    |
 | ACHR | encounterZoneExtra       |   516 | done   |                                                              |
-| ACHR | gameOnlyExtra            |  1472 | open   | applied but AttachedArrows3D (1): ours keeps no stuck arrows |
+| ACHR | gameOnlyExtra            |  1472 | done   | AttachedArrows3D: WorldSave.attachedArrows                   |
 | NPC_ | baseData                 |    22 | done   | ACBS essential, protected, invulnerable                      |
 | NPC_ | face, gender, race, name |     4 | done   | the player's appearance and name                             |
 | NPC_ | defaultOutfit            |     1 | done   | the base's outfit                                            |
@@ -232,9 +248,9 @@ By type, each change flag the saves use (forms counted over both saves).
 | PARW | moved, havokMoved, cell  |    32 | done   | arrows lying in the world: references of their ammunition    |
 | PARW | encounterZoneExtra       |     4 | done   |                                                              |
 | PMIS | moved                    |     1 | done   |                                                              |
-| PMIS | animation                |     1 | open   |                                                              |
+| PMIS | animation                |     1 | open   | read; our projectiles run no graph (TODO(M13))               |
 | PFLA | moved                    |     1 | done   |                                                              |
-| PFLA | animation                |     1 | open   |                                                              |
+| PFLA | animation                |     1 | open   | read; our projectiles run no graph (TODO(M13))               |
 | PGRE | form flags               |     4 | done   |                                                              |
 | PHZD | form flags, moved        |    83 | done   |                                                              |
 | PHZD | gameOnlyExtra            |     1 | done   | its ActorCause                                               |
@@ -252,7 +268,7 @@ By type, each change flag the saves use (forms counted over both saves).
 | Papyrus messages, waits, registrations other than updates           | done   | LOS and latent functors: none in the saves read, logged if seen             |
 | CELL flags 0x40, 0x200                                              | open   | their meaning is not known (TODO(M13))                                      |
 | ACHR extra Interaction                                              | done   | SavedActor.riding (both saves' riders)                                      |
-| ACHR extra AttachedArrows3D                                         | open   | arrows stuck in a body: read, but ours keeps none (they are drawn only)     |
+| ACHR extra AttachedArrows3D                                         | done   | WorldSave.attachedArrows (drawn again on their bones)                       |
 | ACHR extra DismemberedLimbs                                         | done   | ActorState.dismembered                                                      |
 | REFR extra NonActorMagicTarget                                      | done   | no effects on the objects read (TODO(M13): the effects' data)               |
 | ACHR item extra CannotWear                                          | done   | the head a cut limb took (follows from DismemberedLimbs)                    |
@@ -304,24 +320,29 @@ loadData (RuntimeSave.engines; src/scripting/runtime/engine-save.test.ts):
 | Physics bodies in motion (loose objects knocked about)           | open   | places kept; velocities: the physics world's (M13)      |
 | The sky's transition between weathers                            | done   | GameSave.sky (SkyWeather save, restore)                 |
 | The music playing (audio state)                                  | done   | GameSave.music: script-added types (the track restarts) |
-| Combat groups' searches, detection levels                        | open   | the fight starts again                                  |
+| Combat groups' searches, detection levels                        | open   | the fight and detection start again (not kept)          |
 | Flame sprays, cone waves, a Magelight stuck to a wall            | open   | docs/formats/save.md                                    |
-| Thumbnails                                                       | open   | none written                                            |
+| Thumbnails                                                       | done   | save-screenshot.ts takeScreenshot                       |
 | Save on Pause, the Load list's character filter                  | open   | docs/formats/save.md "Not saved yet"                    |
 
 ## Next biggest open items
 
-1. The graph states of the animation change forms (REFR 26, ACHR 49, PMIS, PFLA: 77 forms): the
-   sized block is read past; its graph variables against ours (tests/sim-save-graphs.int.test.ts
-   keeps our own) are the next step.
-2. Arrows stuck in actors (AttachedArrows3D: the PROJ, bone, place, rotation): ours draws them
-   but keeps none, in our save or from an import; and temp effects (1000: decals on objects),
-   which needs a decal store of ours.
-3. The global data tables whose meaning is not known (TODO(M13)): detection (105), the process
-   lists' floats (100), the help shown (102), player controls (110), the high process's timers
-   and held objects; and those not applied: TES (2), effects (5), sky cells (8), location
-   metadata (106), story teller (108), ingredient shared (112), menu controls and topics (113,
-   114), anim objects (1002), timer (1003), synchronized animations (1004).
+1. Temp effects (1000: the decals on the opening's carts, layout in docs/formats/ess.md
+   "Import"): a store of ours for the world's decals (CombatImpacts keeps no spec of what it
+   made: texture set, box, owner, node, time left), saved and restored, then the import's
+   entries into it (their frame, the object's space, and their age, which the save does not
+   write, are TODO(M13)).
+2. The anim objects actors hold (1002: actor, ANIO, a byte; nine in the cart save): put back
+   on the actors (src/shell/actor-anim-objects.ts attaches them only by graph events, which an
+   imported graph does not raise again); the music track playing (7: its MUST), the projectiles'
+   graphs (PMIS, PFLA).
+3. The global data tables whose meaning is not known (TODO(M13); UESP's save page names their
+   fields only as unknowns): detection (105: a reference, 0/2/3 and 0/7), the process lists'
+   floats (100), the help shown (102), player controls (110: 0,0,0,1,1 in both saves), menu
+   controls and topics (113: 1,0; 114: 0,0), story teller (108: a flag 1), timer (1003: 0,0),
+   sky cells (8: every pair 0), TES (2: seven forms with a 1 after Helgen, and a 5x5 grid of 0),
+   location metadata (106: each location and a count 1 to 3); the high process's timers and
+   held objects.
 4. Our own save's world side: bodies' velocities (the physics world's), combat searches,
-   detection levels, the track within a music type, thumbnails.
+   detection levels, the track within a music type.
 5. FACT crime counts and SMQN's last run (their values' meaning), cell flags 0x40 and 0x200.

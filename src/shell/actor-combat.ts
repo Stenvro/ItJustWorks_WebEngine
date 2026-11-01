@@ -164,6 +164,7 @@ import { cellLight, type MagicFx } from './magic-fx.ts';
 import type { CellLight } from '../world/cell-loader.ts';
 import { parseLight, type LightRecord } from '../world/cell-records.ts';
 import { EffectSound, effectSound } from '../world/magic-effects.ts';
+import type { SavedAttachedArrow } from '../save/world-save.ts';
 
 /** A human's shape for hits (its controller's radius and height at scale 1; game units). */
 /** The music type of a boss fight (MUSC; see #setMusic). */
@@ -4605,6 +4606,11 @@ export class ActorCombat implements CombatBridge {
   /** Actor.ClearExtraArrows: the arrows stuck in its body go (combat-projectiles.ts). */
   clearExtraArrows(actor: number): void {
     this.#projectiles.clearAttached(actor);
+  }
+
+  /** The arrows stuck in actors, for a save (src/save/world-save.ts). */
+  saveAttachedArrows(): SavedAttachedArrow[] {
+    return this.#projectiles.saveAttached();
   }
 
   grabActor(caster: number | undefined, target: number, on: boolean): void {
