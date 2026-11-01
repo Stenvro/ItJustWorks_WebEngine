@@ -15,7 +15,12 @@
 // Platform-independent.
 
 import type { CombatAiSettings } from './combat-ai.ts';
-import { CombatStyleFlag, type CombatStyle } from './combat-style-records.ts';
+import {
+  CombatStyleFlag,
+  CombatStyleRecordFlag,
+  type CombatStyle,
+} from './combat-style-records.ts';
+import { RaceAiFlag } from './race-combat-records.ts';
 
 type Vec3 = readonly [number, number, number];
 
@@ -259,6 +264,10 @@ export interface EquipOption {
   readonly equipped: boolean;
   /** A spell or staff cast as long as it is held (MGEF casting type concentration). */
   readonly concentration?: boolean;
+  /** A weapon's WeaponType (a melee weapon's one or two hands). */
+  readonly weaponType?: number;
+  /** How many of it it carries (a second for the other hand). */
+  readonly count?: number;
 }
 
 /**
@@ -378,6 +387,83 @@ export function leftHandSpell(
     if (score > 0 && (!best || score > best.score)) best = { id: option.id, score };
   }
   return best?.id;
+}
+
+/**
+ * Whether a style lets its actor fight with a weapon in each hand: the DATA flag Allow Dual
+ * Wielding (CommonLibSSE TESCombatStyle::FLAG) or the record flag of that name (bit 19). The
+ * load order sets them apart on some styles (15 DATA only, 1 record flag only), so either counts.
+ * TODO(M13): which of the two the engine reads.
+ */
+export function styleAllowsDualWielding(style: CombatStyle): boolean {
+  return (
+    (style.flags & CombatStyleFlag.allowDualWielding) !== 0 ||
+    (style.recordFlags & CombatStyleRecordFlag.allowDualWielding) !== 0
+  );
+}
+
+/**
+ * The one-handed weapon its left hand takes up beside the right's (it dual wields): only when
+ * its race can dual wield (RACE DATA Can Dual Wield) and its style allows it
+ * (styleAllowsDualWielding), with a one-handed weapon (WeaponType 1..4) in its right hand and
+ * the left free (no shield, no weapon, no spell there). The best scored of its other one-handed
+ * weapons (equipmentScore), or a second of the right hand's own; undefined to leave the hand be.
+ * TODO(M13): the engine's order between a left weapon and a left spell (ours: the weapon first,
+ * as a style that allows dual wielding asks for it).
+ */
+export function leftHandWeapon(
+  hands: {
+    readonly weapon: number | undefined;
+    readonly weaponType: number;
+    readonly shield: boolean;
+    readonly leftWeapon: boolean;
+    readonly leftSpell: boolean;
+  },
+  raceFlags: number,
+  options: readonly EquipOption[],
+  distance: number,
+  style: CombatStyle,
+  settings: CombatAiSettings,
+): number | undefined {
+  const oneHanded = (type: number | undefined): boolean =>
+    type !== undefined && type >= 1 && type <= 4;
+  if ((raceFlags & RaceAiFlag.canDualWield) === 0 || !styleAllowsDualWielding(style)) {
+    return undefined;
+  }
+  if (!oneHanded(hands.weaponType) || hands.shield || hands.leftWeapon || hands.leftSpell) {
+    return undefined;
+  }
+  let best: { id: number; score: number } | undefined;
+  for (const option of options) {
+    if (option.kind !== 'melee' || option.id === undefined || !oneHanded(option.weaponType)) {
+      continue;
+    }
+    // The right hand's own weapon only when it carries a second one.
+    if (option.id === hands.weapon && (option.count ?? 1) < 2) continue;
+    const score = equipmentScore({ ...option, equipped: false }, distance, style, settings);
+    if (score > 0 && (!best || score > best.score)) best = { id: option.id, score };
+  }
+  return best?.id;
+}
+
+/**
+ * A shouter's aim (fAIShoutToleranceDegrees, fAIShoutMinAimSeconds): it aims while its facing
+ * stays within the tolerance of its target (`off`: radians off), from `since` (undefined: it
+ * did not aim) on; the shout goes once it has aimed for the minimum time. Returns when its aim
+ * began (undefined: it does not aim now) and whether it may shout. TODO(M13): the settings'
+ * use is read from their names (the original's shout aim is not documented): whether the aim
+ * also waits on the shout's own projectile or cone.
+ */
+export function shoutAim(
+  off: number,
+  since: number | undefined,
+  now: number,
+  settings: CombatAiSettings,
+): { readonly since: number | undefined; readonly ready: boolean } {
+  if ((off * 180) / Math.PI > settings.shoutToleranceDegrees)
+    return { since: undefined, ready: false };
+  const start = since ?? now;
+  return { since: start, ready: now - start >= settings.shoutMinAimSeconds };
 }
 
 // --- How it moves ---------------------------------------------------------------------------------

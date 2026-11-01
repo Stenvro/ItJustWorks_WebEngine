@@ -112,6 +112,8 @@ import {
   chooseAttack,
   chooseEquipment,
   leftHandSpell,
+  leftHandWeapon,
+  shoutAim,
   restoreShare,
   chooseManeuver,
   circleChance,
@@ -136,6 +138,7 @@ import {
 } from '../ai/combat-tactics.ts';
 import { InterruptFlag, PackageFlag } from '../ai/package-records.ts';
 import { CombatStyleFlag, type CombatStyle } from '../ai/combat-style-records.ts';
+import { RaceAiFlag } from '../ai/race-combat-records.ts';
 import { withinReach } from '../ai/flight.ts';
 import type { Gait, MoveRequest, TurnParameters } from '../ai/locomotion.ts';
 import {
@@ -190,6 +193,8 @@ export interface FighterGear {
   readonly speed?: number;
   /** A one-handed weapon in its left hand (it dual wields). */
   readonly leftWeapon?: boolean;
+  /** Its race's DATA flags (RaceAiFlag). */
+  readonly raceFlags?: number;
   /** The spell its right and left hands hold (undefined: none). */
   readonly rightSpell?: number;
   readonly leftSpell?: number;
@@ -426,6 +431,8 @@ interface Mind {
     | { step: 'find' | 'none' }
     | undefined;
   acquireRetry: number;
+  /** Since when it aims a shout at its target (shoutAim; undefined: it does not). */
+  shoutAimSince: number | undefined;
   /** Prepare Dual Cast: the dual cast under way has been loosed. */
   dualCastDone: boolean;
   /** The low process's tree (Low Combat) while it is out of the high process. */
@@ -1035,6 +1042,7 @@ export class ActorCombatAi {
         shore: undefined,
         acquire: undefined,
         acquireRetry: 0,
+        shoutAimSince: undefined,
         dualCastDone: false,
         lowTree: undefined,
         sheatheAt: undefined,
@@ -2773,15 +2781,18 @@ export class ActorCombatAi {
             );
           },
           // Exit Water (observed in the original): the water stands above its feet and its navmesh triangle
-          // is water; and it is not of a race at home there (TODO(M13): the engine's second
-          // test, inferred: its movers swimming it while its race does not swim by nature).
+          // is water; and its race fights no combat in water (RACE DATA No Combat In Water: set on
+          // every race but those at home there, the mudcrabs, slaughterfish and horkers).
           inWater: (f) =>
+            ((f.view.gear?.raceFlags ?? 0) & RaceAiFlag.noCombatInWater) !== 0 &&
             movers.motion(f.mind.reference)?.swimming === true &&
             this.#navmeshes()?.locate(f.feet) !== undefined,
           // Essential Down: an essential actor bleeding out stands out the fight.
           essentialDown: (f) => bleedingOut(f.view.state),
-          // Acquire Weapon: left with its fists after it held a weapon (disarmed).
+          // Acquire Weapon: left with its fists after it held a weapon (disarmed), of a race that
+          // can pick up items (RACE DATA Can Pickup Items).
           mayAcquireWeapon: (f) => {
+            if (((f.view.gear?.raceFlags ?? 0) & RaceAiFlag.canPickupItems) === 0) return false;
             const step = f.mind.acquire?.step;
             if (step === 'find' || step === 'move' || step === 'take' || step === 'taking') {
               return true;
@@ -2874,7 +2885,12 @@ export class ActorCombatAi {
           concentration: (f) => f.option?.concentration === true,
           castChance: (f) =>
             castChance(style(f), f.opponent, f.option?.concentration === true, settings()),
-          mayShout: (f) => this.#mayCast(f, CastingSource.voice),
+          // A shout goes once it has aimed long enough within its tolerance (shoutAim).
+          mayShout: (f) => {
+            const aim = shoutAim(this.#off(f), f.mind.shoutAimSince, this.#clock, this.#settings);
+            f.mind.shoutAimSince = aim.since;
+            return aim.ready && this.#mayCast(f, CastingSource.voice);
+          },
           blocking: (f) => f.view.state.blocking,
           // The sustained block: held between the blows while its target stays near and does
           // not back off (holdsBlock), until its block time runs out.
@@ -3321,7 +3337,10 @@ export class ActorCombatAi {
             );
             return hold === 'charging' ? 'running' : hold === 'release' ? 'success' : 'failure';
           },
-          castShout: (f) => this.#castWith(f, 'voice'),
+          castShout: (f) => {
+            f.mind.shoutAimSince = undefined;
+            return this.#castWith(f, 'voice');
+          },
           noteBlow: (f) => {
             f.mind.blockedSwing = this.#blowAt(f);
             return 'success';
@@ -3779,6 +3798,25 @@ export class ActorCombatAi {
     const gear = view.gear;
     const profile = mind.profile;
     if (!gear || !profile || gear.weapon === undefined || gear.leftSpell !== undefined) return;
+    // A race that can dual wield, its style allowing it: a second one-handed weapon first.
+    const weapon = leftHandWeapon(
+      {
+        weapon: gear.weapon,
+        weaponType: gear.weaponType,
+        shield: gear.shield,
+        leftWeapon: gear.leftWeapon === true,
+        leftSpell: false,
+      },
+      gear.raceFlags ?? 0,
+      profile.options,
+      distance,
+      profile.style,
+      this.#settings,
+    );
+    if (weapon !== undefined) {
+      await runtime.equipment.equip(mind.reference, weapon, { hand: 'left' });
+      return;
+    }
     const spell = leftHandSpell(
       {
         weaponType: gear.weaponType,

@@ -155,4 +155,7 @@ export const LOAD_ORDER = {
   fCombatDialogueTauntMaxElapsedTime: 30,
   fFleeDistanceExterior: 5000,
   fFleeDistanceInterior: 3000,
+  iDeathDropWeaponChance: 100,
+  fAIShoutToleranceDegrees: 5,
+  fAIShoutMinAimSeconds: 2,
 } as const;
