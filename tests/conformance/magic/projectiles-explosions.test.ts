@@ -9,7 +9,9 @@
 //   fMagicChainExplosionEffectivenessDelta (0.1) for each actor reached; a ward meets the hostile
 //   effects of a burst (an explosion, an area) whose point lies within half of
 //   fWardAngleForExplosions (90°) of its actor's facing.
-// - The records: Fireball (FireDamageFFAimedArea, 40 points in 15 feet).
+// - The records: Fireball (FireDamageFFAimedArea, 40 points in 15 feet); the magic effect flags
+//   No Area (DATA 0x800: the effect takes no area; the Creation Kit greys its area out) and No
+//   Hit Event (DATA 0x10: it sends no OnHit), xEdit's TES5 MGEF.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -20,7 +22,8 @@ import {
   wardFacesBurst,
 } from '../../../src/gameplay/magic/explosions.ts';
 import { ActorValue } from '../../../src/world/actor-values.ts';
-import { parseMagicItem } from '../../../src/world/magic-records.ts';
+import { EffectFlag } from '../../../src/world/magic-effects.ts';
+import { parseMagicItem, type MagicItemRecord } from '../../../src/world/magic-records.ts';
 import { hasGamedata, openSim, type Sim } from '../../helpers/sim.ts';
 
 const WARD_POWER = 63;
@@ -174,6 +177,82 @@ describe.skipIf(!hasGamedata())('a ward against a fireball’s burst (sim)', () 
       );
     } finally {
       if (sight) world.explosionReaches = sight;
+      runtime.actors.restore(target.reference, ActorValue.health, 1000);
+    }
+  }, 120_000);
+
+  it('gives an effect with No Area none of its item’s area (Fireball’s 15 feet, FireDamageFFAimed75)', async () => {
+    const runtime = sim.runtime;
+    const [target, caster] = sim.actors();
+    const record = await sim.db.get(await sim.formId('SPEL', 'Fireball'));
+    const item = record ? parseMagicItem(record) : undefined;
+    const placement = target && runtime.world.livePlacement?.(target.reference);
+    const first = item?.effects[0];
+    expect(item && placement && caster && first).toBeTruthy();
+    if (!target || !caster || !item || !placement || !first) return;
+    const noArea = await sim.formId('MGEF', 'FireDamageFFAimed75');
+    expect(((await runtime.magic.effect(noArea))?.flags ?? 0) & EffectFlag.noArea).not.toBe(0);
+    expect(((await runtime.magic.effect(first.effect))?.flags ?? 0) & EffectFlag.noArea).toBe(0);
+    const point: [number, number, number] = [
+      placement.position[0] + 50,
+      placement.position[1],
+      placement.position[2] + 60,
+    ];
+    // Fireball's effects in its 15 feet, every one swapped for the one with No Area.
+    const delivered = (effects: MagicItemRecord['effects']) => ({
+      caster: caster.reference,
+      item: { ...item, effects },
+      via: 'spell' as const,
+      dual: false,
+      cost: { base: 0, magicka: 0, charge: 0, school: undefined, chargeTime: 0 },
+    });
+    const swapped = item.effects.map((entry) => ({ ...entry, effect: noArea, area: 15 }));
+    const world = runtime.world;
+    const sight = world.explosionReaches?.bind(world);
+    world.explosionReaches = () => true;
+    try {
+      expect(first.area).toBe(15);
+      expect(await runtime.casting.area(delivered(swapped), point)).toEqual([]);
+      expect(await runtime.casting.area(delivered(item.effects), point)).toContain(
+        target.reference,
+      );
+    } finally {
+      if (sight) world.explosionReaches = sight;
+      runtime.actors.restore(target.reference, ActorValue.health, 1000);
+    }
+  }, 120_000);
+
+  it('tells no hit (OnHit) for a spell whose every effect has No Hit Event', async () => {
+    const runtime = sim.runtime;
+    const [target, caster] = sim.actors();
+    const record = await sim.db.get(await sim.formId('SPEL', 'Fireball'));
+    const item = record ? parseMagicItem(record) : undefined;
+    expect(item && target && caster).toBeTruthy();
+    if (!target || !caster || !item) return;
+    const delivered = {
+      caster: caster.reference,
+      item,
+      via: 'spell' as const,
+      dual: false,
+      cost: { base: 0, magicka: 0, charge: 0, school: undefined, chargeTime: 0 },
+    };
+    const hits = (): number =>
+      sim.events('hit').filter((event) => event.target === target.reference).length;
+    const magic = runtime.magic;
+    const effect = magic.effect.bind(magic);
+    try {
+      const before = hits();
+      expect(await runtime.casting.deliver(delivered, target.reference)).toBeGreaterThan(0);
+      expect(hits()).toBe(before + 1);
+      // The same spell, its effects marked No Hit Event (MGEF DATA 0x10).
+      magic.effect = async (formId) => {
+        const record = await effect(formId);
+        return record && { ...record, flags: record.flags | EffectFlag.noHitEvent };
+      };
+      expect(await runtime.casting.deliver(delivered, target.reference)).toBeGreaterThan(0);
+      expect(hits()).toBe(before + 1);
+    } finally {
+      magic.effect = effect;
       runtime.actors.restore(target.reference, ActorValue.health, 1000);
     }
   }, 120_000);
