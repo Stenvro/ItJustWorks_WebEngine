@@ -245,6 +245,8 @@ const GUIDE_AHEAD = 6144;
 const GROUND_REACH = 1024;
 /** A corpse kept slower than this (units a second) lies at rest as it is placed again. */
 const CORPSE_REST_SPEED = 5;
+/** KYWD isExecutioner (Skyrim.esm): the headsman at a chopping block. */
+const IS_EXECUTIONER = 0x70c0a;
 
 /** A loaded cell as the stage knows it. */
 interface StageCell {
@@ -867,6 +869,7 @@ export class ActorStage {
       killer: (reference) =>
         options.session.scriptsReady?.state.actors.get(reference)?.killer ??
         this.combat.killerOf(reference),
+      executioner: (reference) => this.#executionerOf(reference),
     });
     this.ambientIdles = new ActorAmbientIdles({
       session: options.session,
@@ -2219,6 +2222,21 @@ export class ActorStage {
   furnitureOf(reference: number): number | undefined {
     if (this.furniture.holds(reference)) return this.furniture.interaction(reference)?.furniture;
     return this.flight.perchOf(reference);
+  }
+
+  /**
+   * The executioner of an actor in furniture: another of its users with the isExecutioner
+   * keyword (the one HeadChopBlockHookupSCRIPT knows the executioner by: Helgen's headsman at
+   * the chopping block). Its axe's swing bends the flight of the head it takes off.
+   */
+  async #executionerOf(reference: number): Promise<number | undefined> {
+    const furniture = this.furnitureOf(reference);
+    const runtime = this.#options.session.scriptsReady;
+    if (furniture === undefined || !runtime) return undefined;
+    for (const user of this.furniture.usersOf(furniture)) {
+      if (user !== reference && (await runtime.hasKeyword(user, IS_EXECUTIONER))) return user;
+    }
+    return undefined;
   }
 
   /** The dependents of a reference that are here to animate (actors, the player). */

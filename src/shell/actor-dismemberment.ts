@@ -66,6 +66,11 @@ export interface ActorDismembermentOptions {
    * (the engine reads its myKiller as the head flies).
    */
   readonly killer: (reference: number) => number | undefined;
+  /**
+   * The executioner of an actor in furniture (its chopping block's headsman), whose swing is
+   * read where it has no killer yet: the chop decapitates before it kills.
+   */
+  readonly executioner?: (reference: number) => Promise<number | undefined>;
 }
 
 /** The node a human's right-hand weapon hangs on: the killer's swing is read from it. */
@@ -94,6 +99,8 @@ interface Piece {
   readonly motion: InstanceMotion;
   /** The body's placement times this is the draws' (the head's rest node to its pose). */
   readonly bodyToDraw: Mat4;
+  /** Where the head node lies in its body (the skeleton model at rest). */
+  readonly head: Vec3;
 }
 
 export class ActorDismemberment {
@@ -158,10 +165,10 @@ export class ActorDismemberment {
     const race = await placer.race(look.race);
     const armor = race?.decapitateArmors[look.female ? 1 : 0];
     if (armor === undefined) return;
-    const weapon = this.#weaponAt(reference);
+    const weapon = await this.#weaponAt(reference);
     // Its look changes in place (the stage does not make it again: dressedInPlace).
     const dressing = (async (): Promise<readonly number[] | undefined> => {
-      await runtime.equipment.equip(reference, armor, { silent: true });
+      await runtime.equipment.equip(reference, armor, { silent: true, worn: true });
       return runtime.equipment.worn(reference);
     })();
     this.#dressing.set(reference, dressing);
@@ -269,6 +276,19 @@ export class ActorDismemberment {
 
   *scenes(): Iterable<GpuScene> {
     for (const piece of this.#pieces.values()) if (piece.scene) yield piece.scene;
+  }
+
+  /** Where an actor's cut head (its head node) is in the world now; undefined: none lies. */
+  headAt(reference: number): Vec3 | undefined {
+    const piece = this.#pieces.get(reference);
+    const m = this.#placement;
+    if (!piece?.collision?.placement(m)) return undefined;
+    const [x, y, z] = piece.head;
+    return [
+      (m[0] ?? 0) * x + (m[4] ?? 0) * y + (m[8] ?? 0) * z + (m[12] ?? 0),
+      (m[1] ?? 0) * x + (m[5] ?? 0) * y + (m[9] ?? 0) * z + (m[13] ?? 0),
+      (m[2] ?? 0) * x + (m[6] ?? 0) * y + (m[10] ?? 0) * z + (m[14] ?? 0),
+    ];
   }
 
   /** An actor left the stage: its cut head goes with it (it is cut again as it comes back). */
@@ -400,8 +420,9 @@ export class ActorDismemberment {
             }),
       });
     }
-    if (instances.length === 0) return;
-    const scene = this.#options.renderer.scene.createScene(instances);
+    // Nothing to draw (no models loaded: the headless simulation), the head still falls.
+    const scene =
+      instances.length === 0 ? undefined : this.#options.renderer.scene.createScene(instances);
     // Its body: the ragdoll's head body (the skeleton model's) on the dead bodies' layer, free.
     const rest = new ActorPose(skeleton).worlds;
     const restHead = rest.subarray(head * 16, head * 16 + 16);
@@ -438,6 +459,7 @@ export class ActorDismemberment {
       world,
       motion,
       bodyToDraw,
+      head: [restHead[12] ?? 0, restHead[13] ?? 0, restHead[14] ?? 0],
     });
   }
 
@@ -525,9 +547,17 @@ export class ActorDismemberment {
     if (velocity) this.#physics?.setVelocity(collision, velocity, [0, 0, 0]);
   }
 
-  /** Where the weapon of an actor's killer is now, to read its swing from. */
-  #weaponAt(reference: number): Pending['weapon'] {
-    const killer = this.#options.killer(reference);
+  /**
+   * Where the weapon of an actor's killer is now, to read its swing from: its killer's, else
+   * its executioner's. Observed in the original: Helgen's first prisoner's head drops into the
+   * basket before the block, its flight bent down by the headsman's chop; unbent (he has no
+   * killer until his clip's KillActor, 4.8 s after its Decapitate), it flew level at
+   * fDecapInitialSpeed over the basket and rolled on down the street. TODO(M13): how the
+   * engine knows the executioner (the victim's myKiller is unset at the chop).
+   */
+  async #weaponAt(reference: number): Promise<Pending['weapon']> {
+    const killer =
+      this.#options.killer(reference) ?? (await this.#options.executioner?.(reference));
     const at = killer === undefined ? undefined : this.#weaponOf(killer);
     return killer === undefined || !at ? undefined : { killer, at, time: this.#clock };
   }
