@@ -180,6 +180,12 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
       expect(driven.map((event) => event.package)).toContain(PLAYER_MOVE_LINE);
       // The cart's HUD stays until the player gets up at the block.
       expect(rideModes(rideState(sim.runtime)).cart).toBe(true);
+      // The first prisoner's cart package (MQ101StayInCart: Weapons Unequipped) took the
+      // battleaxe he carries from his hands; out of the cart, under packages without the flag,
+      // he does not take it up again. Observed in the original: he holds nothing to the block.
+      const prisoner = aliasRef(sim, MQ101, FIRST_PRISONER_ALIAS);
+      expect(await sim.runtime.equipment.weapon(prisoner, 'right')).toBeUndefined();
+      expect(await sim.runtime.equipment.weapon(prisoner, 'left')).toBeUndefined();
       ridersOff = await sim.save();
     } finally {
       await sim.close();
@@ -205,6 +211,9 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
         sim.runtime.equipment.weapon(prisoner, 'right'),
         sim.runtime.equipment.weapon(prisoner, 'left'),
       ]);
+      // As saved: his hands empty, the battleaxe in his pack.
+      expect(held).toEqual([undefined, undefined]);
+      expect(carried).toHaveLength(1);
       // After the roll call MQ101Scene4 walks the player, driven by AI since stage 70's fragment
       // (SetPlayerAIDriven(True)), from the line to the block (MQ101PlayerToMarker6, phase 24);
       // no key is pressed here.

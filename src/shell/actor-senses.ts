@@ -208,10 +208,16 @@ const SNEAKING_HEIGHT = 0.57;
 
 const distance = (a: Vec3, b: Vec3): number => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 
+/** fSkillUsageSneakPerSecond in Skyrim.esm: Sneak's uses a second of sneaking unnoticed. */
+const SNEAK_USE_PER_SECOND = 0.625;
+
 export class ActorSenses implements ScriptSenses {
   readonly #options: ActorSensesOptions;
   #settings = readDetectionSettings();
   #settingsRead = false;
+  /** fSkillUsageSneakPerSecond; the seconds of sneak training not yet given (sneakTraining). */
+  #sneakUse = SNEAK_USE_PER_SECOND;
+  #sneakSeconds = 0;
   /** Who knows of whom (the API: src/ai/detection-states.ts). */
   readonly detections: Detections;
   /**
@@ -343,6 +349,7 @@ export class ActorSenses implements ScriptSenses {
       this.#settingsRead = true;
       void this.#options.session.settings().then((settings) => {
         this.#settings = readDetectionSettings(settings);
+        this.#sneakUse = settings.number('fSkillUsageSneakPerSecond') ?? SNEAK_USE_PER_SECOND;
       });
     }
     this.#clock += seconds;
@@ -398,6 +405,37 @@ export class ActorSenses implements ScriptSenses {
     this.#sneakSpells(runtime, bodies);
     this.#reactionsFrame(seconds);
     this.#stealthFrame();
+    this.#sneakTraining(runtime, bodies, seconds);
+  }
+
+  /**
+   * Sneaking trains Sneak: fSkillUsageSneakPerSecond (0.625) uses for each second the player
+   * sneaks within detection's reach of an actor that has not detected them (UESP "Skyrim:Sneak":
+   * sneaking near those unaware of you; not followers: the stealth meter's actors). TODO(M13):
+   * which actors count in the engine (here the meter's, within detection's reach) is not
+   * documented.
+   */
+  #sneakTraining(runtime: ScriptRuntime, bodies: ReadonlyMap<number, Body>, seconds: number): void {
+    const player = bodies.get(PLAYER_REF);
+    if (!player || this.#world?.player?.sneaking !== true) {
+      this.#sneakSeconds = 0;
+      return;
+    }
+    const reach = detectionReach(this.#settings, !this.#options.interior);
+    let unaware = false;
+    for (const body of bodies.values()) {
+      if (body.reference === PLAYER_REF || !this.#onMeter(body.reference)) continue;
+      if (!this.#options.movers.runsAi(body.reference)) continue;
+      if (distance(body.feet, player.feet) > reach) continue;
+      if (this.detections.state(body.reference, PLAYER_REF) !== 'detected') {
+        unaware = true;
+        break;
+      }
+    }
+    if (!unaware) return;
+    this.#sneakSeconds += seconds;
+    for (; this.#sneakSeconds >= 1; this.#sneakSeconds -= 1)
+      runtime.detach(runtime.progression.useSkill(PLAYER_REF, 'Sneak', this.#sneakUse));
   }
 
   /**

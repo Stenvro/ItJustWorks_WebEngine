@@ -20,7 +20,11 @@ import { Vfs } from '../../../src/vfs/vfs.ts';
 import { RecordDatabase } from '../../../src/world/record-db.ts';
 import { openGameFolder } from '../../../tools/gamedata-path.ts';
 import { magicCensus, type MagicCensus } from '../../../tools/magic-census.ts';
-import { hasGamedata } from '../../helpers/sim.ts';
+import { hasGamedata, openSim, type Sim } from '../../helpers/sim.ts';
+
+/** The Bannered Mare (Whiterun's inn), and the Sneak skill's actor value. */
+const BANNERED_MARE = 0x1605e;
+const SNEAK = 15;
 
 const FIREBOLT = effectItemCost(1.2, { magnitude: 25, duration: 0, area: 0 }, false);
 
@@ -78,6 +82,36 @@ describe.skipIf(!hasGamedata())('the skill usage multipliers across the load ord
     expect(census.skillUsageMults.get(1.4)).toBe(38);
     expect([...census.skillUsageMults.values()].reduce((a, b) => a + b, 0)).toBe(1381);
   });
+});
+
+describe.skipIf(!hasGamedata())('sneaking trains Sneak (sim)', () => {
+  let sim: Sim;
+  beforeAll(async () => {
+    sim = await openSim({ interior: BANNERED_MARE, hour: 10 });
+  }, 300_000);
+  afterAll(async () => {
+    await sim.close();
+  });
+
+  it('by fSkillUsageSneakPerSecond (0.625) a second near actors unaware of the player', async () => {
+    const runtime = sim.runtime;
+    const experience = (): number => runtime.state.skillExperience.get(SNEAK) ?? 0;
+    // With detection off (the console's tdetect) every actor is unaware of the player.
+    runtime.debug.detection = false;
+    try {
+      await sim.step(1);
+      const standing = experience();
+      await sim.step(3);
+      expect(experience()).toBe(standing);
+      sim.world.player.sneaking = true;
+      await sim.step(4.2);
+      // Sneak's AVSK use mult 11.25, offset 0: 4 seconds × 0.625 uses × 11.25.
+      expect(experience() - standing).toBeCloseTo(4 * 0.625 * 11.25, 1);
+    } finally {
+      sim.world.player.sneaking = false;
+      runtime.debug.detection = true;
+    }
+  }, 120_000);
 });
 
 describe('what the original trains that we do not yet', () => {
