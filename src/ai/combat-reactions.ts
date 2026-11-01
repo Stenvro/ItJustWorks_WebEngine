@@ -24,6 +24,7 @@
 //
 // Platform-independent.
 
+import { RaceFlag2 } from './race-combat-records.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 
@@ -51,6 +52,17 @@ export interface ReactionFacts {
   commander(actor: number): number | undefined;
   /** Scripts set it to be attacked on sight (SetAttackActorOnSight). */
   attackedOnSight(actor: number): boolean;
+}
+
+/**
+ * Whether an actor fighting the player (or fleeing them) counts as a threat to them: not one
+ * of a Non-Hostile race (RACE DATA Flags 2; 13 races: the deer, elk, foxes, goats, cows,
+ * chickens, hares, the pets). Such an animal keeps no one from waiting or fast travelling,
+ * plays no combat music and shows as no enemy on the compass. TODO(M13): the plain reading of
+ * the flag's name; what else the engine gates by it is not documented.
+ */
+export function threatensPlayer(raceFlags2: number): boolean {
+  return (raceFlags2 & RaceFlag2.nonHostile) === 0;
 }
 
 /** How bonds rank against each other when an actor's factions disagree: the closest wins. */

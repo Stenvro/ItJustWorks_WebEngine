@@ -20,9 +20,17 @@ export const DRIVE_HANDLERS: Readonly<Record<string, MovementDrive>> = {
  * The drive the graph's variables ask for (bAnimationDriven, bAllowRotation; 0 for a graph
  * without them). Observed in the original: the controller drives the actor only while
  * neither is set; with bAllowRotation set (alone or with bAnimationDriven) its animation moves
- * it while the controller turns it.
+ * it while the controller turns it. A rotating attack under way (ATKD Rotating Attack:
+ * src/gameplay/combat/attacks.ts rotatesThrough) lets the controller turn it as bAllowRotation
+ * does.
  */
-export function driveOf(animationDriven: number, allowRotation: number): MovementDrive {
-  if (allowRotation !== 0) return 'animation-rotation';
+export function driveOf(
+  animationDriven: number,
+  allowRotation: number,
+  rotatingAttack = false,
+): MovementDrive {
+  if (allowRotation !== 0 || (rotatingAttack && animationDriven !== 0)) {
+    return 'animation-rotation';
+  }
   return animationDriven !== 0 ? 'animation' : 'controller';
 }

@@ -389,6 +389,7 @@ export class ActorStage {
       session: options.session,
       terminal: options.terminal,
       slicer: this.process,
+      rotatingAttack: (actor) => this.combat.rotatingAttack(actor),
       ...(options.onTrigger && { onTrigger: options.onTrigger }),
       bodyColliders: (actor) => this.bodies.colliders(actor),
       ...(options.navmeshes && { navmeshes: options.navmeshes }),
