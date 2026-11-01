@@ -25,6 +25,26 @@ export function lockBroken(tries: number, ignore: number): boolean {
   return tries >= (Math.abs(ignore) > 0.0001 ? 2 : 1);
 }
 
+/**
+ * The stagger an actor `distance` units from a KnockAreaEffect(magnitude, radius) takes (before
+ * its mass weighs it), undefined when it is beyond the radius or there is nothing to take. The
+ * original's scripts use it as a stagger: the reference they call it on is named their
+ * "staggerOrigin" (MQ101DragonAttackQuestScript, HelgenHallCollapseScript), the Greybeards'
+ * greeting staggers the player with 0.2 and 0.25, Geirmund's boss trigger turns
+ * bStaggerPlayerOverride on before it, and a dragon's landings (DragonActorScript: 1 within its
+ * length) and a giant's stomps (0.5) stagger those about them; nobody is knocked down by it.
+ * TODO(M13): whether the magnitude falls off towards the radius is not documented (here: it
+ * does not).
+ */
+export function knockAreaStagger(
+  magnitude: number,
+  radius: number,
+  distance: number,
+): number | undefined {
+  if (!(magnitude > 0) || !(distance <= radius)) return undefined;
+  return magnitude;
+}
+
 export function registerReference(n: Register, runtime: ScriptRuntime): void {
   const { state, world } = runtime;
   const ref = (value: Value | undefined): number | undefined => runtime.reference(value ?? null);
@@ -809,8 +829,9 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
     if (thief !== undefined) await runtime.crime.stealAlarm(thief, reference);
     return null;
   });
-  // KnockAreaEffect(afMagnitude, afRadius): the actors within the radius are pushed away from
-  // this reference (as PushActorAway).
+  // KnockAreaEffect(afMagnitude, afRadius): the actors within the radius stagger away from this
+  // reference by the magnitude, weighed against their mass as a Stagger effect's is; they are
+  // not knocked down (knockAreaStagger).
   n('objectreference.knockareaeffect', async (call) => {
     const reference = self(call);
     const at = reference === undefined ? undefined : await runtime.placement(reference);
@@ -825,7 +846,8 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
         there.position[1] - at.position[1],
         there.position[2] - at.position[2],
       );
-      if (distance <= radius) world.pushAway?.(other, reference, num(call.args[0]));
+      const stagger = knockAreaStagger(num(call.args[0]), radius, distance);
+      if (stagger !== undefined) world.stagger?.(other, stagger, reference, [...at.position]);
     }
     return null;
   });
