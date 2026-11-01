@@ -57,6 +57,19 @@ export interface EssPlayerData {
   readonly camera: EssPlayerCamera;
   /** The perks the player has, with the rank of each (CommonLibSSE's PerkRankData). */
   readonly perks: readonly { readonly perk: number; readonly rank: number }[];
+  /** The face's tint masks (the race menu's tints) and the overlay tint masks. */
+  readonly tintMasks: readonly EssTintMask[];
+  readonly overlayTintMasks: readonly EssTintMask[];
+}
+
+/** A tint mask of the player's face: the race's tint layer, its colour and its alpha. */
+export interface EssTintMask {
+  /** The race tint layer it paints (TINI). */
+  readonly index: number;
+  /** RGB bytes (the colour's fourth byte is not used). */
+  readonly color: readonly [number, number, number];
+  /** 0..1. */
+  readonly alpha: number;
 }
 
 /**
@@ -168,10 +181,16 @@ export function readPlayerData(reader: EssReader, resolve: RefIdResolver): EssPl
   // count: tint index u16, colour u32, alpha f32 each), a form.
   for (let i = 0; i < 3; i++) form();
   u32s(1);
-  for (let k = 0; k < 2; k++) {
+  const tints: EssTintMask[][] = [[], []];
+  for (const masks of tints) {
     for (let n = reader.u32(), i = 0; i < n; i++) {
-      reader.u16();
-      u32s(2);
+      const index = reader.u16();
+      const color = reader.u32();
+      masks.push({
+        index,
+        color: [color & 0xff, (color >>> 8) & 0xff, (color >>> 16) & 0xff],
+        alpha: reader.f32(),
+      });
     }
   }
   form();
@@ -203,7 +222,17 @@ export function readPlayerData(reader: EssReader, resolve: RefIdResolver): EssPl
   u8s(3);
   u32s(1);
   u8s(1);
-  return { xp, levelThreshold, skills, questLog, objectives, camera, perks };
+  return {
+    xp,
+    levelThreshold,
+    skills,
+    questLog,
+    objectives,
+    camera,
+    perks,
+    tintMasks: tints[0] ?? [],
+    overlayTintMasks: tints[1] ?? [],
+  };
 }
 
 /** The player camera: its switches and fields of view, every state's own data, the state. */

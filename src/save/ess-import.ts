@@ -15,6 +15,8 @@ import {
   readChangeForm,
   type EssActorValues,
   type EssChangeForm,
+  type EssNpcChanges,
+  type EssSceneChanges,
 } from '../formats/ess/change-forms.ts';
 import { changeFormTypeName, globalData, type EssFile } from '../formats/ess/ess.ts';
 import {
@@ -32,11 +34,12 @@ import {
   type EssVariable,
 } from '../formats/ess/papyrus.ts';
 import {
+  readMagicFavorites,
   readStoryEventManager,
   StoryParameterKind,
   type SavedStoryEvent,
 } from '../formats/ess/global-data-tables.ts';
-import type { EssPlayerData } from '../formats/ess/player.ts';
+import type { EssPlayerData, EssTintMask } from '../formats/ess/player.ts';
 import type { SavedInstance } from '../scripting/papyrus-vm.ts';
 import { GameState, type ActorValueState } from '../scripting/runtime/game-state.ts';
 import {
@@ -48,7 +51,10 @@ import type { Placement } from '../scripting/runtime/runtime.ts';
 import type { StoryEventData } from '../scripting/runtime/story-manager.ts';
 import { ObjectHandle, PapyrusArray, type Value } from '../scripting/values.ts';
 import { CELL_SIZE } from '../world/land.ts';
+import { parseScene } from '../ai/scene-records.ts';
+import type { SavedScene } from '../ai/scene-runtime.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
+import { FACE_MORPH_COUNT } from '../world/chargen-records.ts';
 import { cellKey } from '../world/worldspace.ts';
 import type { GameSave } from './game-save.ts';
 import { SAVE_VERSION, type SaveHeader } from './save-codec.ts';
@@ -60,6 +66,16 @@ const GAME_DAYS_PASSED = 0x39;
 /** The first skill's actor value (OneHanded); DNAM's 18 skills follow in actor value order. */
 const FIRST_SKILL_AV = 6;
 const HEALTH_AV = 24;
+/**
+ * An actor's life state (CommonLibSSE ACTOR_LIFE_STATE), the fifth of its saved state bytes:
+ * the executed prisoners and the opening's dead read 2, the living 0. TODO(M13): the other
+ * values seen on a save (6 on actors a script restrains; 3 not seen yet).
+ */
+/** A scene's phase word when none runs yet. */
+const NO_PHASE = 0xffffffff;
+const LifeState = { alive: 0, dying: 1, dead: 2, unconscious: 3, restrained: 6 } as const;
+/** ACBS's flags (UESP NPC_): those scripts set on a base. */
+const ActorBaseFlag = { essential: 0x2, protected: 0x800, invulnerable: 0x80000000 } as const;
 
 /** A loaded plugin's place in our load order (RecordDatabase plugins' entries). */
 export interface PluginSlot {
@@ -68,21 +84,121 @@ export interface PluginSlot {
   readonly lightIndex?: number | undefined;
 }
 
+/** Where a placed reference's record puts it: its cell (an interior) or worldspace. */
+export interface RecordPlace {
+  readonly cell?: number | undefined;
+  readonly world?: number | undefined;
+  readonly position: readonly [number, number, number];
+  readonly rotation: readonly [number, number, number];
+}
+
 /** What the importer needs of our world: the load order and records' types. */
 export interface EssWorld {
   readonly plugins: readonly PluginSlot[];
   /** A record's type ("CELL", "WRLD", "FACT", ...) by our form id. */
   recordType(formId: number): string | undefined;
+  /**
+   * An actor's place as its record has it, by our form id (the actors the save keeps where
+   * their records stand: it writes no place for them).
+   */
+  recordPlace?(formId: number): RecordPlace | undefined;
+  /** A scene's quest and the aliases of its actors, by our form id (the scenes the save plays). */
+  sceneCast?(formId: number): SceneCast | undefined;
 }
 
-/** Our world as the importer needs it, from the record database. */
-export function essWorld(db: RecordDatabase): EssWorld {
+/** A scene's quest, the aliases of its actors and its actions' indices, in its record's order. */
+export interface SceneCast {
+  readonly quest: number;
+  readonly aliases: readonly number[];
+  readonly actions: readonly number[];
+}
+
+/**
+ * A scene action's state as the save keeps it (its record's order): a u32 (a dialogue's or a
+ * timer's seconds as a float), a timer's two bytes, then two flags: running, and done. As read
+ * on the saves: package actions that run on done (1, 1), lines said (0, 1), packages running
+ * (1, 0), actions not begun (0, 0). TODO(M13): the u32 as a looping line's wait and a timer's
+ * seconds left is inferred from one save's value (1.75).
+ */
+function sceneAction(
+  index: number,
+  action: EssSceneChanges['actions'][number],
+): SavedScene['actions'][number] {
+  const { values } = action;
+  const running = (values.at(-2) ?? 0) !== 0;
+  const done = (values.at(-1) ?? 0) !== 0;
+  const bits = new DataView(new ArrayBuffer(4));
+  bits.setUint32(0, values[0] ?? 0, true);
+  const seconds = bits.getFloat32(0, true);
   return {
-    plugins: db.plugins.map((plugin) => plugin.entry),
+    index,
+    status: running ? 'running' : done ? 'ended' : 'waiting',
+    complete: done,
+    left: Number.isFinite(seconds) && seconds > 0 && seconds < 3600 ? seconds : 0,
+  };
+}
+
+/** The change flags that write a reference's place into its change form. */
+const MOVED = ChangeRefr.moved | ChangeRefr.havokMoved | ChangeRefr.cellChanged;
+
+/**
+ * Our world as the importer needs it, from the record database. Given the save, the places of
+ * its actors that stand where their records put them are read ahead (the import is not async).
+ */
+export async function essWorld(db: RecordDatabase, ess?: EssFile): Promise<EssWorld> {
+  const plugins = db.plugins.map((plugin) => plugin.entry);
+  const places = new Map<number, RecordPlace>();
+  const casts = new Map<number, SceneCast>();
+  if (ess) {
+    const toOurs = formIdMapper(ess, plugins);
+    const actors = ess.changeForms.flatMap((entry) => {
+      if (entry.type !== 1 || entry.changeFlags & MOVED || entry.formId === undefined) return [];
+      const id = toOurs(entry.formId);
+      return id === undefined || id >>> 24 === 0xff ? [] : [id];
+    });
+    await Promise.all(
+      actors.map(async (formId) => {
+        const record = await db.get(formId);
+        const data = record?.fields.first('DATA');
+        const cell = db.cellOfReference(formId);
+        if (!data || data.length < 24 || cell === undefined) return;
+        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+        const f = (at: number): number => view.getFloat32(at, true);
+        const world = db.worldOfCell(cell);
+        places.set(formId, {
+          ...(world === undefined ? { cell } : { world }),
+          position: [f(0), f(4), f(8)],
+          rotation: [f(12), f(16), f(20)],
+        });
+      }),
+    );
+    // The scenes it plays: their quests and actors.
+    const scenes = ess.changeForms.flatMap((entry) => {
+      const id = entry.type === 37 && entry.formId !== undefined ? toOurs(entry.formId) : undefined;
+      return id === undefined ? [] : [id];
+    });
+    await Promise.all(
+      scenes.map(async (formId) => {
+        const record = await db.get(formId);
+        if (!record) return;
+        const scene = parseScene(record);
+        if (scene.quest === undefined) return;
+        casts.set(formId, {
+          quest: scene.quest,
+          aliases: scene.actors.map((actor) => actor.alias),
+          actions: scene.actions.map((action) => action.index),
+        });
+      }),
+    );
+  }
+  return {
+    plugins,
     recordType: (formId) => {
       const at = db.locate(formId);
       return at ? db.typeAt(at) : undefined;
     },
+    recordPlace: (formId) => places.get(formId),
+    sceneCast: (formId) => casts.get(formId),
   };
 }
 
@@ -152,7 +268,8 @@ const FLAG_NAMES: Readonly<Record<string, Readonly<Record<number, string>>>> = {
   QUST: names(ChangeQuest),
 };
 
-function flagName(type: string, bit: number): string {
+/** A change flag's name as the import logs it (by change form type; else "flag 0x..."). */
+export function flagName(type: string, bit: number): string {
   const table = FLAG_NAMES[type] ?? (/^P[A-Z]{3}$/.test(type) ? REFERENCE_NAMES : undefined);
   return table?.[bit] ?? `flag 0x${bit.toString(16)}`;
 }
@@ -180,6 +297,12 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   const inventoryDeltas = new Map<number, Map<number, number>>();
   const formListAdded = new Map<number, number[]>();
   const updates: SavedUpdate[] = [];
+  const saidOnce = new Set<number>();
+  const scenesPlaying: [number, EssSceneChanges][] = [];
+  /** The player's face (their NPC_'s face and sex, their tint masks), put together at the end. */
+  let face: EssNpcChanges['face'];
+  let female: boolean | undefined;
+  let tints: readonly EssTintMask[] = [];
   /** The actors with the package each ran (and whom it fought), where the save has them. */
   const savedActors: SavedActor[] = [];
   let savedPlayer: SavedPlayer | undefined;
@@ -307,8 +430,31 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       if (q.event) quest.event = storyEvent(q.event);
       if (q.alreadyRun !== undefined) applied |= ChangeQuest.alreadyRun;
       if (q.scriptDelay !== undefined) applied |= ChangeQuest.scriptDelay;
-    } else if (entry.type === 9 && form.npc && formId === PLAYER_BASE) {
-      applied |= applyPlayerBase(form);
+    } else if (entry.type === 9 && form.npc) {
+      if (formId === PLAYER_BASE) applied |= applyPlayerBase(form);
+      // ACBS's flags a script set (SetEssential, SetProtected, SetInvulnerable) and the
+      // outfits (SetOutfit), on the base.
+      const npc = form.npc;
+      if (npc.baseData && npc.baseData.length >= 4) {
+        const acbs = new DataView(npc.baseData.buffer, npc.baseData.byteOffset, 4).getUint32(
+          0,
+          true,
+        );
+        const base = state.actorBase(formId);
+        base.essential = (acbs & ActorBaseFlag.essential) !== 0;
+        base.protected = (acbs & ActorBaseFlag.protected) !== 0;
+        base.invulnerable = (acbs & ActorBaseFlag.invulnerable) !== 0;
+        applied |= ChangeNpc.baseData;
+      }
+      for (const [outfit, key] of [
+        [npc.defaultOutfit, 'outfit'],
+        [npc.sleepOutfit, 'sleepOutfit'],
+      ] as const) {
+        const id = outfit === undefined ? undefined : ours(outfit);
+        if (id === undefined) continue;
+        state.actorBase(formId)[key] = id;
+        applied |= key === 'outfit' ? ChangeNpc.defaultOutfit : ChangeNpc.sleepOutfit;
+      }
     } else if (entry.type >= 44 && entry.type <= 46 && form.leveledAdded) {
       // LVLN, LVLI, LVSP: the entries scripts added (AddForm).
       const added = form.leveledAdded.flatMap(({ form: item, level, count }) => {
@@ -320,6 +466,14 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     } else if (entry.type === 13 && flags & ChangeBase.bookRead) {
       state.booksRead.add(formId);
       applied |= ChangeBase.bookRead;
+    } else if (entry.type === 37 && form.base?.scene) {
+      // SCEN: a scene that plays, put together once the quests' aliases are read (below).
+      if (form.base.scene.playing) scenesPlaying.push([formId, form.base.scene]);
+      applied |= ChangeBase.last;
+    } else if (entry.type === 7 && flags & ChangeBase.last) {
+      // INFO: said (its Say Once mark; the mark matters to those infos alone).
+      saidOnce.add(formId);
+      applied |= ChangeBase.last;
     } else if (entry.type === 38 && flags & ChangeBase.last) {
       state.location(formId).cleared = true;
       state.location(formId).everCleared = true;
@@ -396,8 +550,27 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
           if (id !== undefined) factions.set(id, rank < 0 ? -2 : rank);
         }
       }
+      // A lock (not an actor's: its bit is the merchant container there): its level and
+      // whether it is locked (the lock's flags, bit 0).
+      if (extra.name === 'Lock' && form.type !== 1 && typeof extra.value === 'object') {
+        const [level = 0, lockFlags = 0] = extra.value;
+        reference.lockLevel = level;
+        reference.locked = (lockFlags & 1) !== 0;
+        applied |= ChangeRefr.lockExtra;
+      }
     }
     if (form.actor?.values) applyActorValues(formId, form.actor.values);
+    // The life state (an actor's state bits, the fifth byte, as CommonLibSSE's
+    // ACTOR_LIFE_STATE): dying or dead, unconscious, restrained; alive clears them.
+    if (form.type === 1 && form.changeFlags & ChangeRefr.lifeState && form.actor?.stateBits) {
+      const life = form.actor.stateBits[4] ?? 0;
+      const actor = state.actor(formId);
+      if (life === LifeState.dying || life === LifeState.dead) actor.dead = true;
+      else if (life === LifeState.alive) actor.dead = false;
+      actor.unconscious = life === LifeState.unconscious;
+      actor.restrained = life === LifeState.restrained;
+      applied |= ChangeRefr.lifeState;
+    }
     if (form.actor && formId !== PLAYER_REF) {
       const saved = savedActor(form, formId);
       if (saved) savedActors.push(saved);
@@ -424,10 +597,9 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   /**
    * An actor's running package (its AI process's current one) and whom it fought (its combat
    * controller's target), where the save has it stand: it goes on with them as it is placed
-   * (src/save/world-save.ts). The package starts again from its procedure tree's root.
-   * TODO(M13): the procedures' running states (process.ts reads them) into ours; the actors
-   * standing where their records put them (no moved place in the save) keep the package
-   * their AI chooses.
+   * (src/save/world-save.ts). An actor the save keeps at its record's place (it writes no place
+   * for it) stands there. The package starts again from its procedure tree's root.
+   * TODO(M13): the procedures' running states (process.ts reads them) into ours.
    */
   function savedActor(form: EssChangeForm, formId: number): SavedActor | undefined {
     const actor = form.actor;
@@ -437,13 +609,22 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     const target = actor?.combat ? ours(actor.combat.target) : undefined;
     if (!id && !target) return undefined;
     const initial = form.initial;
-    if (!initial || initial.kind === 'detached cell') {
-      skips.add('ACHR: a running package of an actor at its record place (TODO(M13))');
+    // An actor the save keeps where its record stands (no place written): there.
+    const at =
+      initial && initial.kind !== 'detached cell'
+        ? {
+            ...placeOf(initial.kind === 'changed cell' ? initial.newCell : initial.cell),
+            position: initial.position,
+            rotation: initial.rotation,
+          }
+        : world.recordPlace?.(formId);
+    if (!at) {
+      skips.add('ACHR: a running package of an actor whose place is not known');
       return undefined;
     }
-    const place = placeOf(initial.kind === 'changed cell' ? initial.newCell : initial.cell);
+    const place = at;
     // The stage's key for the loaded cell (actor-stage.ts): an exterior's grid, an interior.
-    const [x, y] = initial.position;
+    const [x, y] = at.position;
     const cell =
       place.world !== undefined
         ? cellKey(Math.floor(x / CELL_SIZE), Math.floor(y / CELL_SIZE))
@@ -454,8 +635,8 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     return {
       reference: formId,
       cell,
-      position: initial.position,
-      heading: initial.rotation[2],
+      position: at.position,
+      heading: at.rotation[2],
       ...(id && {
         package: { id, completed: false, ended: false, path: [], found: [], ranOn: [] },
       }),
@@ -497,6 +678,8 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     const { camera } = data;
     const pov = camera.state === 0 ? 'first' : camera.state >= 9 ? 'third' : undefined;
     savedPlayer = { ...(pov && { pov }), fov: [camera.worldFov, camera.firstPersonFov] };
+    // The face's tint masks (the race menu's tints), for the player's appearance.
+    tints = data.tintMasks;
     // TODO(M13): the player's other lists (docs/formats/ess.md "The player").
   }
 
@@ -566,8 +749,96 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       }
       applied |= ChangeNpc.spellList;
     }
-    // TODO(M13): the face (head parts, morphs, tint) and sex into the player's appearance.
+    // The face and sex: the player's appearance (below, once the tints are read too).
+    if (npc.face) {
+      face = npc.face;
+      applied |= ChangeNpc.face;
+    }
+    if (npc.female !== undefined) {
+      female = npc.female;
+      applied |= ChangeNpc.gender;
+    }
     return applied;
+  }
+
+  // The player's appearance, as the race menu leaves it (GameState.playerAppearance): the race,
+  // sex, head parts, hair colour, skin tone, complexion, face sliders and parts, tints.
+  const race = state.actors.get(PLAYER_REF)?.race;
+  if (face && race !== undefined) {
+    const formOf = (id: number | undefined): number | undefined => {
+      const ourId = id === undefined || id === 0 ? undefined : ours(id);
+      return ourId === 0 ? undefined : ourId;
+    };
+    const morphs = face.morphs ?? [];
+    const parts = face.presets ?? [];
+    const tone = face.skinTone ?? [255, 255, 255, 255];
+    state.playerAppearance = {
+      race,
+      sex: female === true ? 1 : 0,
+      // TODO(M13): the body's weight (NAM7) is not found in the save yet: the record's default.
+      weight: 50,
+      headParts: face.headParts.flatMap((part) => formOf(part) ?? []),
+      hairColor: formOf(face.hairColor),
+      skinTone: [tone[0] / 255, tone[1] / 255, tone[2] / 255],
+      faceMorphs: Array.from({ length: FACE_MORPH_COUNT }, (_, i) => morphs[i] ?? 0),
+      faceParts: [parts[0] ?? 0, parts[1] ?? -1, parts[2] ?? 0, parts[3] ?? 0],
+      tints: [...tints]
+        .sort((a, b) => a.index - b.index)
+        .map(({ index, color, alpha }) => ({ index, color, value: alpha, preset: -1 })),
+      complexion: formOf(face.textureSet),
+    };
+  }
+
+  // The scenes playing (SCEN's running state): each goes on in the phase it was in (the state's
+  // first word; −1: not begun yet, a start waiting), cast from its quest's aliases as the save
+  // fills them; its actions start again in that phase, as ours do after a load.
+  // TODO(M13): the actions' own state (their bytes: running, done; a looping line's wait) and
+  // the scene's clock, whose meaning is not known yet.
+  const scenesSaved: SavedScene[] = [];
+  const scenesWaiting: [number, boolean][] = [];
+  for (const [scene, changes] of scenesPlaying) {
+    const cast = world.sceneCast?.(scene);
+    if (!cast) {
+      skips.add('SCEN: a scene whose record is not read');
+      continue;
+    }
+    const quest = state.quests.get(cast.quest);
+    if (quest?.running !== true) continue;
+    const phase = changes.state[0] ?? NO_PHASE;
+    if (phase === NO_PHASE) {
+      scenesWaiting.push([scene, false]);
+      continue;
+    }
+    scenesSaved.push({
+      scene,
+      force: false,
+      random: false,
+      phase,
+      clock: 0,
+      cast: cast.aliases.flatMap((alias) => {
+        const reference = quest.aliases.get(alias);
+        return reference === undefined ? [] : [[alias, reference] as const];
+      }),
+      actions: changes.actions.flatMap((action, i) => {
+        const index = cast.actions[i];
+        return index === undefined ? [] : [sceneAction(index, action)];
+      }),
+    });
+  }
+
+  // The magic favorites (spells, powers and shouts) and their hotkeys (1-8 by index; the
+  // items' favorites are their inventory entries' extra data: TODO(M13)).
+  const favoritesData = globalData(ess, 109);
+  if (favoritesData) {
+    const { favorites, hotkeys } = readMagicFavorites(favoritesData, resolve);
+    for (const favorite of favorites) {
+      const id = favorite === 0 ? undefined : ours(favorite);
+      if (id) state.favorites.add(id);
+    }
+    hotkeys.forEach((hotkey, key) => {
+      const id = hotkey === 0 ? undefined : ours(hotkey);
+      if (id) state.hotkeys.set(id, key);
+    });
   }
 
   // The weather.
@@ -636,7 +907,7 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   }
   for (const table of [ess.globalData1, ess.globalData2, ess.globalData3]) {
     for (const entry of table) {
-      if (![0, 1, 3, 6, 111, 1001].includes(entry.type)) {
+      if (![0, 1, 3, 6, 109, 111, 1001].includes(entry.type) && entry.data.length > 0) {
         skips.add(`global data ${String(entry.type)}`);
       }
     }
@@ -662,9 +933,15 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     mapMarkers: undefined,
     initialized: [],
     seeded: [],
-    dialogue: undefined,
+    dialogue:
+      saidOnce.size > 0
+        ? { saidOnce, saidAt: new Map(), chosen: new Set(), saidInTopic: new Map() }
+        : undefined,
     storyManager: pending.length > 0 ? { pending } : undefined,
     instances,
+    ...((scenesSaved.length > 0 || scenesWaiting.length > 0) && {
+      scenes: { playing: scenesSaved, waiting: scenesWaiting },
+    }),
   };
   const skipped = skips.lines();
   const save: GameSave = {
