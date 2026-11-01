@@ -4341,14 +4341,20 @@ export class ActorCombat implements CombatBridge {
 
   /**
    * An actor dies: the weapons in its hands fall from them by iDeathDropWeaponChance (100 in
-   * Skyrim.esm; UESP "Weapons": a dead actor's weapons lie by its body), each a new reference
-   * at its hand's node (WEAPON for the right, SHIELD for the left) that the world drops and
-   * anyone may pick up; spells, staffs' charges and the shield stay with it.
-   * TODO(M13): the moment the original lets go of them (ours: as its death begins).
+   * Skyrim.esm), each a new reference at its hand's node (WEAPON for the right, SHIELD for the
+   * left) that the world drops and anyone may pick up; spells, staffs' charges and the shield
+   * stay with it. Only weapons out of their sheaths are in its hands: one killed with its
+   * weapons sheathed (an innkeeper at her counter, a sleeper) keeps them at its hip and back,
+   * in its inventory (every sheathed weapon fell before: Hulda's, as she died leaning at the
+   * Bannered Mare's counter).
+   * TODO(M13): inferred (a weapon the death drops is the one held); to be observed in the
+   * original, with the moment it lets go of them (ours: as its death begins).
    */
   async dropWeaponsOnDeath(reference: number): Promise<void> {
     const runtime = this.#options.session.scriptsReady;
     if (!runtime || reference === PLAYER_REF) return;
+    // Read as it dies, before its fighter goes (remove).
+    if (this.weaponState(reference) < WeaponState.drawing) return;
     if (Math.random() * 100 >= this.#settings.deathDropWeaponChance) return;
     const loadout = await runtime.equipment.of(reference);
     const hands: [number | undefined, string][] = [

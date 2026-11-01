@@ -209,7 +209,11 @@ describe.skipIf(!hasGamedata())('the Bannered Mare in the evening (headless simu
   it('Hulda at the bar counter wipes it (BarCounterWipeRoot: GetSitting 3, isBarCounter)', () => {
     const hers = played.filter((idle) => idle.actor === HULDA);
     expect(hers.map((idle) => idle.event)).toContain('IdleBarCounterWipe');
-    expect(hers.every((idle) => idle.furniture !== undefined)).toBe(true);
+    // Each wipe at a counter she leans at, its furniture the action's target. Her sandbox may
+    // take her from one of the bar's counters to the other (0x58E17, 0x58E6C): on her way, in no
+    // furniture, she may pick a standing idle (the case below checks those).
+    const atCounter = hers.filter((idle) => idle.event.startsWith('IdleBarCounter'));
+    expect(atCounter.every((idle) => idle.furniture !== undefined)).toBe(true);
   });
 
   it('those standing in no furniture pick standing idles (no furniture as target)', () => {

@@ -787,6 +787,11 @@ Actors use furniture as the engine's furniture handling does, as far as the data
     fSandBoxInterMarkerMinDist (100) to the one it stands at. With nothing else open it keeps its
     idle marker and plays its idles there again (inferred, TODO(M13): what the engine does when
     its pick finds nothing is not read); in a seat it stays seated.
+  - **Already in furniture** of its place that it may use as the sandbox begins (placed in it as
+    its cell loaded, a loaded save's actor seated as it was saved) it goes on in it, a stay of
+    that kind, before its first pick; else it gets up and goes into its place. Before, every
+    sandbox began by getting up: a loaded save's innkeeper at her counter left it at once
+    (TODO(M13): the original's save keeps what is left of the stay; ours begins a new one).
   - **At an idle marker** its path ends within fAIMarkerDestinationRadius (Skyrim.esm 50); it
     then steps onto the marker, straight, and faces its way before its idles (inferred,
     TODO(M13): how the engine sets an actor on its marker). Before, the Bannered Mare's
@@ -2876,8 +2881,10 @@ bash behaviours (their values are ready); the flanking and ranged movement selec
   into its free left hand beside its right's (leftHandWeapon), before a left-hand spell; its
   left attacks then run.
 - **Death**: a dying actor's weapons fall from its hands by iDeathDropWeaponChance (100): each a
-  reference at its hand's node that anyone may pick up (dropWeaponsOnDeath; TODO(M13): the
-  moment the original lets go of them).
+  reference at its hand's node that anyone may pick up (dropWeaponsOnDeath). Only weapons out of
+  their sheaths (drawing, drawn or sheathing) are in its hands: one killed with them sheathed
+  keeps them on its body, in its inventory (TODO(M13): inferred, to be observed in the
+  original, with the moment it lets go of them).
 - **Blocks**: a melee swing coming at it within the swinger's reach it blocks once by its
   block chance (× fCombatBlockChanceWeaponMult without a shield), where its left hand blocks
   (a shield, a two-handed weapon, a one-handed weapon with the left hand free); it lets go as
