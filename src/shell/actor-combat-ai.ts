@@ -50,7 +50,12 @@ import {
 } from '../ai/combat-groups.ts';
 import { BehaviourTree, type Status, type TreeInstance } from '../ai/behaviour-tree.ts';
 import { AttackPick, combatRegistry } from '../ai/combat-tree.ts';
-import { CombatDialogue, isCombatLine, readCombatDialogueSettings } from '../ai/combat-dialogue.ts';
+import {
+  CombatDialogue,
+  isCombatLine,
+  readCombatDialogueSettings,
+  spectatorComments,
+} from '../ai/combat-dialogue.ts';
 import { CombatProfiles, NO_STYLE, type CombatProfile } from '../ai/combat-profile.ts';
 import { FightReaction, reactionOf } from '../ai/combat-reactions.ts';
 import {
@@ -3864,7 +3869,8 @@ export class ActorCombatAi {
 
   /**
    * Those watching a fight (detection's spectating: their package lets them observe combat)
-   * say their ObserveCombat line; a cowardly one runs from it instead.
+   * may say their ObserveCombat line (by fAISocialchanceForConversation); a cowardly one runs
+   * from it instead.
    */
   #spectators(senses: ActorSenses | undefined): void {
     if (!senses) return;
@@ -3886,7 +3892,11 @@ export class ActorCombatAi {
           continue;
         }
       }
-      this.#bark(reference, 'ObserveCombat');
+      // Not every one comments (fAISocialchanceForConversation).
+      const interior = this.#options.interior?.() === true;
+      if (spectatorComments(this.#dialogue.settings, interior, this.#random)) {
+        this.#bark(reference, 'ObserveCombat');
+      }
     }
   }
 

@@ -81,6 +81,12 @@ export interface CombatDialogueSettings {
   readonly range: number;
   /** [Combat] bDisableCombatDialogue. */
   readonly disabled: boolean;
+  /**
+   * fAISocialchanceForConversation, ...Interior (percent; 10 and 10 in Skyrim.esm): the chance
+   * a spectator who begins watching a fight says its ObserveCombat line (outside, inside).
+   */
+  readonly spectatorChance: number;
+  readonly spectatorChanceInterior: number;
 }
 
 /** The range the distance mults scale (units; TODO(M13): the engine's). */
@@ -105,7 +111,24 @@ export function readCombatDialogueSettings(
     hitThreshold: number('fCombatSpeakHitThreshold') ?? 0.1,
     range: COMBAT_LINE_RANGE,
     disabled,
+    spectatorChance: number('fAISocialchanceForConversation') ?? 10,
+    spectatorChanceInterior: number('fAISocialchanceForConversationInterior') ?? 10,
   };
+}
+
+/**
+ * Whether a spectator says its ObserveCombat line as it begins watching a fight: by
+ * fAISocialchanceForConversation (inside, its Interior twin), which the original reads for
+ * the spectators' comments (docs/ai.md, "Talking"), not for the conversations its name tells.
+ * TODO(M13): that it is one roll as the watch begins (not one per check) is this file's own.
+ */
+export function spectatorComments(
+  settings: Pick<CombatDialogueSettings, 'spectatorChance' | 'spectatorChanceInterior'>,
+  interior: boolean,
+  random: () => number,
+): boolean {
+  const chance = interior ? settings.spectatorChanceInterior : settings.spectatorChance;
+  return random() * 100 < chance;
 }
 
 export const COMBAT_DIALOGUE_DEFAULTS = readCombatDialogueSettings((name) =>

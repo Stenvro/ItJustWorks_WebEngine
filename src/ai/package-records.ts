@@ -29,6 +29,15 @@ export const PackageFlag = {
   weaponDrawn: 0x800000,
   noCombatAlert: 0x8000000,
   wearSleepOutfit: 0x20000000,
+  /**
+   * Bits 4, 5 and 8 (33, 2 and 5 packages): no name in this game's references (xEdit,
+   * CommonLibSSE GeneralFlag); the earlier games' Lock Doors At Package End, Lock Doors At
+   * Location and Unlock Doors At Location (xEdit TES4 / FO3), kept in records made from
+   * theirs. This game locks doors with its Lock Doors procedure; nothing reads them.
+   */
+  legacyLockDoorsAtEnd: 0x10,
+  legacyLockDoorsAtLocation: 0x20,
+  legacyUnlockDoorsAtLocation: 0x100,
 } as const;
 
 /** PLDT location types. */
@@ -43,6 +52,14 @@ export const LocationType = {
   atPackageLocation: 7,
   aliasReference: 8,
   aliasLocation: 9,
+  /**
+   * The reference another data input of the package names (the form field is that input's
+   * id), within the radius. xEdit leaves 11 unnamed for this game; its later game's definition
+   * names it Target (location), "Target: %s, radius %u". 18 inputs use it, all in Hearthfire's
+   * urchin runner packages (BYOHUrchin_AlesanRunner*), each naming one of the package's single
+   * reference inputs (a mine's marker, an innkeeper).
+   */
+  targetLocation: 11,
   nearSelf: 12,
 } as const;
 
@@ -56,6 +73,17 @@ export const InterruptFlag = {
   friendlyFireComments: 0x20,
   aggroRadiusBehavior: 0x40,
   allowIdleChatter: 0x80,
+  /**
+   * Bit 8 (1682 packages): no name in this game's references (xEdit, CommonLibSSE); the
+   * earlier games' Avoid Radiation (xEdit FO3 / FNV), kept as a default. No radiation here:
+   * nothing reads it.
+   */
+  legacyAvoidRadiation: 0x100,
+  /**
+   * The actor may be cast in the world interaction quests (WI*: comments on the player's
+   * deeds, gifts, the radiant small scenes): their aliases ask GetAllowWorldInteractions
+   * (39 quests), true while the package it runs has this flag.
+   */
   worldInteractions: 0x200,
 } as const;
 

@@ -96,6 +96,8 @@ export interface IdleMarkerPlace extends IdleCollection {
 export interface PackageContext {
   readonly start?: Vec3 | undefined;
   readonly quest?: number | undefined;
+  /** The package's data inputs (a Target (location) names one of them: LocationType). */
+  readonly inputs?: ReadonlyMap<number, PackageInput> | undefined;
 }
 
 /** A running package's data, for its conditions (GetNumericPackageData, run on package data). */
@@ -1117,11 +1119,13 @@ export class ActorPackages {
         continue;
       }
       // Where it began: as it is chosen (it starts at once).
+      const inputs = mergedInputs(pack, template);
       const context = {
         start: this.#body.position(),
         quest: pack.ownerQuest ?? template?.ownerQuest,
+        inputs,
       };
-      const data: PackageData = { inputs: mergedInputs(pack, template), context };
+      const data: PackageData = { inputs, context };
       if (!(await mind.conditionsHold(pack.conditions, this.actor, data))) continue;
       return {
         id,

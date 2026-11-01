@@ -14,6 +14,7 @@
 // crime-conditions.ts. Notes: docs/scripting.md ("Conditions").
 
 import { hostileTo, shouldAttack } from '../../ai/combat-ai.ts';
+import { InterruptFlag } from '../../ai/package-records.ts';
 import { parseRaceCombat } from '../../ai/race-combat-records.ts';
 import { NpcFlag, RaceFlag } from '../../world/actor-records.ts';
 import { classShare, precipitating, type WeatherTraits } from '../../world/sky-weather.ts';
@@ -370,9 +371,6 @@ export interface TemperedItem {
   readonly base: number;
   readonly enchanted: boolean;
 }
-
-/** PKDT interrupt flag World Interactions (src/ai/package-records.ts, InterruptFlag). */
-const WORLD_INTERACTIONS = 0x200;
 
 /** What a condition is evaluated in: the story manager event, the quest that owns it. */
 export interface ConditionContext {
@@ -1075,7 +1073,7 @@ async function conditionValue(
       if (pack === undefined) return 1;
       const pkdt = (await runtime.forms.record(pack))?.fields.first('PKDT');
       const interrupts = pkdt && pkdt.length >= 10 ? (pkdt[8] ?? 0) | ((pkdt[9] ?? 0) << 8) : 0;
-      return flag((interrupts & WORLD_INTERACTIONS) !== 0);
+      return flag((interrupts & InterruptFlag.worldInteractions) !== 0);
     }
     case Fn.getIsCurrentPackage:
       // The package its AI runs (a scene's while a package action holds it; none: none).
