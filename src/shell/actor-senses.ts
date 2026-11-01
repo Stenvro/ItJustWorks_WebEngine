@@ -37,6 +37,7 @@ import {
 } from '../ai/detection.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { aliasOverrideLists } from '../ai/detection-records.ts';
+import { commanderOf } from '../ai/combat-profile.ts';
 import type { DetectionReport } from '../ai/combat-groups.ts';
 import { Detections, type DetectionEvent, type WitnessedAct } from '../ai/detection-states.ts';
 import { brightestAmbient, lightLevel, type LightProbe } from '../ai/light-level.ts';
@@ -843,7 +844,10 @@ export class ActorSenses implements ScriptSenses {
       noiseMult: movementNoise(noise.current),
       armourWeight,
       size,
-      teammate: runtime.state.actors.get(reference)?.playerTeammate === true,
+      // The player's summons and commanded creatures are their teammates (combat-profile.ts).
+      teammate:
+        runtime.state.actors.get(reference)?.playerTeammate === true ||
+        commanderOf(runtime, reference) === PLAYER_REF,
       overrides: staged ? await this.#overrideLists(runtime, staged) : undefined,
     };
   }
