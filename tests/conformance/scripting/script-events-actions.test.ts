@@ -128,7 +128,15 @@ describe.skipIf(!hasGamedata())(
       await sim.step(1);
       const feet = (await sim.position(PLAYER_REF)) ?? [0, 0, 0];
       const lying = (await sim.position(bowl)) ?? feet;
-      await sim.moveTo([lying[0], lying[1] - 70, feet[2]], 0);
+      // On the bowl's side away from the urn (placed at the player too), so the urn is not in
+      // the line of sight; then the bowl settles where it lies once the player has stepped away.
+      const urnAt = (await sim.position(urn)) ?? [lying[0], lying[1] + 1, lying[2]];
+      const away = Math.atan2(lying[1] - urnAt[1], lying[0] - urnAt[0]);
+      await sim.moveTo(
+        [lying[0] + 70 * Math.cos(away), lying[1] + 70 * Math.sin(away), feet[2]],
+        0,
+      );
+      await sim.step(1);
       at.grab = sim.time;
       await sim.grab(bowl, 2);
       await sim.step(1);
