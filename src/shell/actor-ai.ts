@@ -656,6 +656,11 @@ export class ActorAi {
         this.#flight?.()?.leavePerch(reference);
         return furniture.leave(user);
       },
+      inFurniture: () => {
+        const using = furniture.interaction(reference);
+        // ActorInteraction state 3: in it.
+        return using?.state === 3 ? using.furniture : undefined;
+      },
       takeIdleMarker: (marker) => furniture.takeMarker(reference, marker),
       leaveIdleMarker: () => {
         furniture.leaveMarker(user);

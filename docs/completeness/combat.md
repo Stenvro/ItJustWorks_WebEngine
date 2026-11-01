@@ -35,8 +35,9 @@ Round 1 wrote the sweep and this list, and built down:
 - A shout is aimed: released once its shouter has faced its target within
   fAIShoutToleranceDegrees (5) for fAIShoutMinAimSeconds (2) (shoutAim; the settings' use read
   from their names: TODO(M13)).
-- A dying actor's weapons fall from its hands by iDeathDropWeaponChance (100)
-  (actor-combat.ts dropWeaponsOnDeath; tests/conformance/combat/death-weapons.test.ts).
+- A dying actor's weapons fall from its hands by iDeathDropWeaponChance (100); sheathed ones
+  stay with the body (actor-combat.ts dropWeaponsOnDeath;
+  tests/conformance/combat/death-weapons.test.ts).
 - ATKD Override Data: set on every NPC's attack (124) and on no race's (2155): it marks the
   NPC's own attack, which replaces its race's for that event (as AttackSet does).
 

@@ -335,8 +335,9 @@ export class ActorFurniture {
   }
 
   /**
-   * The free furniture and idle markers within a radius of a point (and on its floor), that
-   * sandboxing does not ignore (FURN FNAM, IDLM IDLF) and, for a child, that children may use;
+   * The free furniture and idle markers within a radius of a point (and on its floor; with
+   * `actor`, the furniture it uses too), that sandboxing does not ignore (FURN FNAM, IDLM IDLF)
+   * and, for a child, that children may use;
    * furniture with an interaction keyword (FURN KNAM: ActorTypeNPC on 457, ActorTypeDragon on
    * the dragons' perches, Miraak's and the rieklings') only for an actor that has it.
    */
@@ -359,8 +360,10 @@ export class ActorFurniture {
         const runtime = this.#options.session.scriptsReady;
         if (runtime && !(await runtime.hasKeyword(actor, kind.keyword))) continue;
       }
+      // Taken by another (the one it uses itself is a spot of its own: a sandbox goes on in it).
+      const own = actor !== undefined && this.#uses.get(actor)?.furniture === object.reference;
       if (kind.kind === 'idle' ? taken.has(object.reference) : this.inUse(object.reference)) {
-        continue;
+        if (!own) continue;
       }
       found.push({ reference: object.reference, kind: kind.kind, position: [x, y, z] });
     }
