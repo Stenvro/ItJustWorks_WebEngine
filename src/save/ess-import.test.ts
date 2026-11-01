@@ -18,6 +18,7 @@ const QUEST = 0x3372b;
 /** Dawnguard.esm's form, and its plugin's slot in each load order. */
 const DAWNGUARD_FORM = 0x000d62;
 const COMPANIONS = 0x48362;
+const ESSENTIAL_NPC = 0x2bfa7;
 
 /** An actor's own data without an AI process: 25 health damage, Two-handed (7) at 35. */
 function actorData(w: EssWriter): EssWriter {
@@ -127,11 +128,28 @@ function save(): Uint8Array {
           .done(),
       },
       {
-        // A Dawnguard reference disabled (by its index in the form id array).
+        // A Dawnguard reference disabled (by its index in the form id array), locked at 50.
         refId: [0, 1],
         type: 0,
         flags: CHANGE_FORM_FLAGS | ChangeRefr.lockExtra,
-        data: new EssWriter().u32(0x800).u16(0).vsval(0).done(),
+        data: new EssWriter()
+          .u32(0x800)
+          .u16(0)
+          .vsval(1)
+          .u8(0x2a)
+          .u8(50)
+          .u8(1)
+          .refId(0, 0)
+          .u32(0)
+          .u32(0)
+          .done(),
+      },
+      {
+        // An NPC a script made essential (ACBS flags 0x2).
+        refId: [1, ESSENTIAL_NPC],
+        type: 9,
+        flags: ChangeNpc.baseData,
+        data: new EssWriter().u32(0x2).bytes(new Uint8Array(20)).done(),
       },
     ],
     formIds: [(2 << 24) | DAWNGUARD_FORM],
@@ -209,6 +227,11 @@ describe('ess import', () => {
         ],
       ],
     });
-    expect(imported.skipped).toContain('REFR: lockExtra');
+    expect(state.references.get(0x03000d62)).toMatchObject({ locked: true, lockLevel: 50 });
+    expect(imported.skipped).not.toContain('REFR: lockExtra');
+    expect(state.actorBases.get(ESSENTIAL_NPC)).toMatchObject({
+      essential: true,
+      protected: false,
+    });
   });
 });
