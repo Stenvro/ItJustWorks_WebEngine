@@ -452,7 +452,16 @@ Fenn's Gulch Mine). Without a floor there (an underwater passage's auto-load doo
 stays at the door's height. Then the character controller recovers from penetration
 (`CharacterBody.recover`): pushed along each overlapping contact's normal by its depth, a few
 rounds, as Havok's proxy does — arrival points may lie in their door (KatariahWorld's balcony
-door: 25 units in front of it, where the shape reaches 32). The rays leave out the player's
+door: 25 units in front of it, where the shape reaches 32). Other actors' controllers are not
+part of that: a controller inside another (deeper than two of its gaps) leaves it in its steps
+as Havok's proxy solves against a penetrating contact's plane, which moves out at its depth
+times the proxy's penetration recovery speed (hkpCharacterProxyCinfo's default, 1 a second):
+along the way out (centre from centre; two on one spot each the opposite way, the pair's way
+taken from their references) it goes at least that fast, walking off freely and never further
+in, and its sweep leaves that actor out. Rapier's controller, started inside another
+controller, moved out by the whole depth in one step, the other the same way: three Greybeards
+set at one door's arrival point went off together at some 1,800 units a second and over High
+Hrothgar's ledge (`src/physics/character-overlap.test.ts`). The rays leave out the player's
 own shape and phantoms (trigger volumes), as the character controller does. Waiting has no
 time limit but a 60 s safety net: a 10 s limit placed players under their floor where a heavy
 cell's collision took longer (frames are slow in a hidden tab). While walking, a player whose
