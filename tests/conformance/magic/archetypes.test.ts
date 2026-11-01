@@ -188,13 +188,87 @@ describe.skipIf(!hasGamedata())('a cloak’s pulse (sim)', () => {
   }, 120_000);
 });
 
+// A summon at its commander's side: the conjured familiar (EncSummonFamiliar, a wolf by its
+// template: unaggressive with an aggro radius of 0 / 2000 / 500) takes the player's side, so the
+// Bannered Mare's people, neutral to the player, are no one it fights (src/ai/combat-profile.ts);
+// out of combat it follows the player into fSummonedCreatureMinFollowDist (250) ..
+// fSummonedCreatureMaxFollowDist (400) (src/ai/engine-packages.ts: Follow Commander).
+
+const BANNERED_MARE = 0x1605e;
+
+describe.skipIf(!hasGamedata())('a summon at its commander’s side (sim)', () => {
+  let sim: Sim;
+  let familiar = 0;
+  /** Whom each actor of the inn fought, at any step since the cast. */
+  const fought = new Map<number, Set<number>>();
+  const watch = (): boolean => {
+    for (const actor of sim.actors()) {
+      const target = sim.world.stage.combat.targetOf(actor.reference);
+      if (target === undefined) continue;
+      let targets = fought.get(actor.reference);
+      if (!targets) fought.set(actor.reference, (targets = new Set()));
+      targets.add(target);
+    }
+    return false;
+  };
+
+  beforeAll(async () => {
+    sim = await openSim({ interior: BANNERED_MARE, hour: 10 });
+    await sim.step(1);
+    await sim.cast(await sim.formId('SPEL', 'ConjureFamiliar'));
+    familiar =
+      sim.actors().find((actor) => sim.runtime.magic.commander(actor.reference) === PLAYER_REF)
+        ?.reference ?? 0;
+  }, 300_000);
+  afterAll(async () => {
+    await sim.close();
+  });
+
+  it('picks no fight with its summoner’s neutrals: no one in the Bannered Mare fights', async () => {
+    expect(familiar).not.toBe(0);
+    expect(sim.actors().length).toBeGreaterThan(3);
+    await sim.until(watch, 10);
+    expect([...fought.keys()].map((actor) => actor.toString(16))).toEqual([]);
+  }, 120_000);
+
+  it('follows the player who walks off into the follow band, out of combat', async () => {
+    const setting = async (name: string): Promise<number> => {
+      const value = await sim.runtime.gameSetting(name);
+      return typeof value === 'number' ? value : Number.NaN;
+    };
+    const min = await setting('fSummonedCreatureMinFollowDist');
+    const max = await setting('fSummonedCreatureMaxFollowDist');
+    expect([min, max]).toEqual([250, 400]);
+    const start = await sim.position(familiar);
+    const gap = (await sim.distance(familiar, PLAYER_REF)) ?? Infinity;
+    expect(gap).toBeLessThanOrEqual(max);
+    // From the front door across the hall to the far side of the hearth, about 1,000 units.
+    const goal: [number, number, number] = [150, -100, 68];
+    const [x0, y0] = sim.world.player.feet;
+    expect(Math.hypot(goal[0] - x0, goal[1] - y0)).toBeGreaterThan(1000);
+    expect(await sim.walkPath(goal, 30)).toBe(true);
+    const [x1, y1] = sim.world.player.feet;
+    const walked = Math.hypot(x1 - x0, y1 - y0);
+    let away = Infinity;
+    for (let second = 0; second < 15 && away > max; second++) {
+      await sim.until(watch, 1);
+      away = (await sim.distance(familiar, PLAYER_REF)) ?? Infinity;
+    }
+    const end = await sim.position(familiar);
+    expect(start && end).toBeTruthy();
+    if (!start || !end) return;
+    // It came along: what the player walked, less the band it may keep and where it stood.
+    expect(Math.hypot(end[0] - start[0], end[1] - start[1])).toBeGreaterThan(walked - max - gap);
+    expect(away).toBeLessThanOrEqual(max);
+    expect(away).toBeGreaterThan(min / 2);
+    expect(fought.has(familiar)).toBe(false);
+  }, 120_000);
+});
+
 describe('what the original’s archetypes do that ours do not yet', () => {
   it.todo('Light (Magelight): how many stay at once, and on a moving object it struck');
   it.todo('Invisibility: the refraction shimmer through the actor (ours dithers it away)');
   it.todo('Summon Creature: the engine’s search for another place when the way ahead is blocked');
-  it.todo(
-    'Summon Creature: a summon picks no fight with its summoner’s neutrals (ours: the conjured familiar, a wolf by its template, fights the Bannered Mare’s people)',
-  );
   it.todo('Dispel: the engine’s rule for what it ends (fMagicDispelMagnitudeMult 5)');
   it.todo('Darkness, Night Eye: the image space and fMagicNightEyeAmbient (0.75)');
   it.todo(
