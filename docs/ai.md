@@ -2787,7 +2787,13 @@ bash behaviours (their values are ready); the flanking and ranged movement selec
   warn radius, warns within it (ActionIdleWarn: the bear's roar, facing them) and attacks within
   the attack radius, or within the warn-or-attack radius once it has warned 2 s (TODO(M13)). The
   radius also has one that would not attack on sight warn and attack the neutral that come close
-  (inferred: vanilla's wolves and bears are unaggressive with an aggro radius). It
+  (inferred: vanilla's wolves and bears are unaggressive with an aggro radius). A commanded
+  actor (a summon, a raised corpse, a commanded creature) fights on its commander's side, not
+  by its base's AI data (`CombatProfiles.read`, `fightingAggression`): aggressive (its
+  commander's enemies on sight, never the neutral; TODO(M13): whether the engine has it attack
+  them on sight or only join its commander's fights), no aggro radius (the conjured familiar, a
+  wolf by its template, would otherwise warn and attack an inn's patrons), helping allies at
+  least; one the player commands is their teammate (the stealth meter leaves it out). It
   helps by its assistance (helps allies; helps friends and allies) one that fights or is
   attacked, against the other; guards (IsGuard: the class's guard flag or IsGuardFaction, as crime has it) help anyone attacked who did not
   strike first and would not attack on sight (the crime itself, its bounty and the guards'
