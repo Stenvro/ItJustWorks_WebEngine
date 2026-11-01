@@ -174,6 +174,11 @@ export interface CombatAiSettings {
   /** fCombatAttackChanceLastAttackBonus, …BonusTime: × this, reached so long after an attack. */
   readonly attackChanceLastAttackBonus: number;
   readonly attackChanceLastAttackBonusTime: number;
+  /**
+   * fPowerAttackCoolDownTime: no power attack is chosen sooner than this after the last
+   * (seconds; Skyrim.esm 0: none). TODO(M13): the plain reading of the setting's name.
+   */
+  readonly powerAttackCoolDown: number;
   /** fCombatGroupOffensiveMultMin: the group offensive mult's floor against a crowded player. */
   readonly groupOffensiveMultMin: number;
   // --- The combat style's values on the engine's scale (combat-tactics, "Style values") -------
@@ -344,6 +349,7 @@ const SETTINGS: readonly (readonly [keyof CombatAiSettings, string | undefined, 
   ['attackChanceBlockingSwingMult', 'fCombatAttackChanceBlockingSwingMult', 0],
   ['attackChanceLastAttackBonus', 'fCombatAttackChanceLastAttackBonus', 1.5],
   ['attackChanceLastAttackBonusTime', 'fCombatAttackChanceLastAttackBonusTime', 5],
+  ['powerAttackCoolDown', 'fPowerAttackCoolDownTime', 0],
   ['groupOffensiveMultMin', 'fCombatGroupOffensiveMultMin', 0.1],
   ['advanceInnerRadiusMin', 'fCombatAdvanceInnerRadiusMin', 0],
   ['advanceInnerRadiusMid', 'fCombatAdvanceInnerRadiusMid', 0],

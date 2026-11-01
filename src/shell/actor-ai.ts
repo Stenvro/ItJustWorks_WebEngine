@@ -1244,7 +1244,7 @@ export class ActorAi {
       linked: async (reference, keyword) => runtime()?.linkedReference(reference, keyword),
       around: (center, radius, actor) => {
         const flags = staged(actor)?.placed.look.raceFlags ?? 0;
-        return this.#furniture.spots(center, radius, (flags & RaceFlag.child) !== 0);
+        return this.#furniture.spots(center, radius, (flags & RaceFlag.child) !== 0, actor);
       },
       idleMarker: async (reference) => {
         const scripts = runtime();

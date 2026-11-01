@@ -23,6 +23,26 @@ export const DefaultMovementUse = {
 
 export type DefaultMovement = keyof typeof DefaultMovementUse;
 
+/** fActorDefaultTurningSpeed (Skyrim.esm: a full turn a second; radians a second). */
+export const ACTOR_DEFAULT_TURNING_SPEED = 2 * Math.PI;
+
+/**
+ * A movement type with fActorDefaultTurningSpeed for each turn rate it gives none (the cows'
+ * swimming type turns while moving at 0, the dragons' perching type at 0 everywhere), as a
+ * flier without a flying movement type turns at fFlyingActorDefaultTurningSpeed.
+ * TODO(M13): the plain reading of the setting's name.
+ */
+export function withTurning(type: MovementType, defaultTurning: number): MovementType {
+  const own = (rate: number): number => (rate > 0 ? rate : defaultTurning);
+  const { walk, run } = type.rotateInPlace;
+  if (walk > 0 && run > 0 && type.rotateWhileMoving > 0) return type;
+  return {
+    ...type,
+    rotateInPlace: { walk: own(walk), run: own(run) },
+    rotateWhileMoving: own(type.rotateWhileMoving),
+  };
+}
+
 /** What a race says about how it moves (RACE, parseRaceCombat). */
 export type RaceMovement = Pick<
   RaceCombat,
@@ -31,6 +51,9 @@ export type RaceMovement = Pick<
   | 'accelerationRate'
   | 'decelerationRate'
   | 'angularAccelerationRate'
+  | 'angularTolerance'
+  | 'flags'
+  | 'flags2'
   | 'aimAngleTolerance'
   | 'size'
 >;
@@ -102,7 +125,10 @@ export class MovementCatalog {
    * The movement type an actor swims by: its race's (RACE SWMV), else the default one (DOBJ
    * DMSW), else NPCSwimming; with its race's speeds for it (MTYP + SPED).
    */
-  swimming(race: RaceMovement | undefined): MovementType | undefined {
+  swimming(
+    race: RaceMovement | undefined,
+    defaultTurning = ACTOR_DEFAULT_TURNING_SPEED,
+  ): MovementType | undefined {
     const id = race?.movementTypes.swim;
     const type =
       (id === undefined ? undefined : this.#byId.get(id)) ??
@@ -110,16 +136,20 @@ export class MovementCatalog {
       this.named('NPCSwimming');
     if (!type) return undefined;
     const override = race?.movementOverrides.find((entry) => entry.movementType === type.formId);
-    return override ? { ...type, ...override.speeds } : type;
+    return withTurning(override ? { ...type, ...override.speeds } : type, defaultTurning);
   }
 
-  forActor(race: RaceMovement | undefined, tagged: string | undefined): MovementTypes | undefined {
+  forActor(
+    race: RaceMovement | undefined,
+    tagged: string | undefined,
+    defaultTurning = ACTOR_DEFAULT_TURNING_SPEED,
+  ): MovementTypes | undefined {
     const own = (id: number | undefined): MovementType | undefined =>
       id === undefined ? undefined : this.#byId.get(id);
     const withOverride = (type: MovementType | undefined): MovementType | undefined => {
       if (!type) return undefined;
       const override = race?.movementOverrides.find((entry) => entry.movementType === type.formId);
-      return override ? { ...type, ...override.speeds } : type;
+      return withTurning(override ? { ...type, ...override.speeds } : type, defaultTurning);
     };
     const taggedType = tagged === undefined ? undefined : this.named(tagged);
     const walk = withOverride(
@@ -136,7 +166,7 @@ export class MovementCatalog {
     );
     if (!walk || !run) return undefined;
     // Its turning: 1 / its race's angular acceleration rate (the engine's; 1 for none), its aim
-    // angle tolerance in radians.
+    // and angular tolerances in radians; its race's acceleration and deceleration rates.
     const rate = race?.angularAccelerationRate ?? 0;
     return {
       walk,
@@ -144,6 +174,9 @@ export class MovementCatalog {
       ...(sprint && { sprint }),
       angularAcceleration: Math.abs(rate) > 0.0001 ? 1 / rate : 1,
       aimTolerance: ((race?.aimAngleTolerance ?? 0) * Math.PI) / 180,
+      angularTolerance: ((race?.angularTolerance ?? 0) * Math.PI) / 180,
+      acceleration: race?.accelerationRate ?? 0,
+      deceleration: race?.decelerationRate ?? 0,
     };
   }
 

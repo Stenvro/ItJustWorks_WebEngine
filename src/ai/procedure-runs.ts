@@ -1127,7 +1127,9 @@ const say: ProcedureRunner = async (run) => {
 
 /**
  * ForceGreet: waits at its wait location until the player comes into its trigger location,
- * then goes to the player and opens the conversation with its topic.
+ * then goes to the player and opens the conversation with its topic. One at the player whose
+ * greeting could not begin (the player in a menu, another conversation) tries again after
+ * fAIForceGreetingTimer.
  */
 const forceGreet: ProcedureRunner = async (run) => {
   const topic = run.inputs.topic(0);
@@ -1146,6 +1148,8 @@ const forceGreet: ProcedureRunner = async (run) => {
         (await run.body.travel(player.position, run.gait, GREET_DISTANCE, player.space))
       ) {
         if (run.body.greet(typeof topic === 'number' ? topic : undefined)) return 'success';
+        await run.wait(settingsOf(run).forceGreetingTimer);
+        continue;
       }
     }
     await run.wait(IDLE_SECONDS);

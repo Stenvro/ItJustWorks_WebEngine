@@ -423,6 +423,15 @@ describe('combat tactics: attacks, blocks, threats', () => {
     expect(chooseAttack(timid, attack, randoms(0.04, 0.9), settings)).toBe('attack');
   });
 
+  it('power attacks no sooner than fPowerAttackCoolDownTime after its last', () => {
+    const cooling = { ...settings, powerAttackCoolDown: 3 };
+    const since = (seconds: number) => ({ ...attack, sinceLastPowerAttack: seconds });
+    expect(chooseAttack(brute, since(2), randoms(0.5, 0.2), cooling)).toBe('attack');
+    expect(chooseAttack(brute, since(3), randoms(0.5, 0.2), cooling)).toBe('power');
+    // Skyrim.esm's 0: no cool-down.
+    expect(chooseAttack(brute, since(0), randoms(0.5, 0.2), settings)).toBe('power');
+  });
+
   it('attacks more the longer since its last attack, less in a crowd on the player', () => {
     // × 1 .. fCombatAttackChanceLastAttackBonus 1.5 over fCombatAttackChanceLastAttackBonusTime 5.
     expect(attackChance(brute, { ...attack, sinceLastAttack: 0 }, settings)).toBeCloseTo(0.81);

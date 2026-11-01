@@ -362,6 +362,7 @@ export class ActorStage {
       session: options.session,
       find: (reference) => options.door?.(reference),
       unlocks: (actor) => this.ai.unlocksDoors(actor),
+      raceFlags: (actor) => this.#actors.get(actor)?.placed.look.raceFlags,
       // A door or gate that is a navmesh obstacle cuts as it shuts, and opens the way as it opens.
       opened: () => {
         this.refreshObstacles();
@@ -397,6 +398,7 @@ export class ActorStage {
       ...(options.navmeshes && { navmeshes: options.navmeshes }),
       openDoor: (door, actor) => this.doors.passage(door, actor),
       shutTo: (actor) => this.doors.shutTo(actor),
+      closedTo: (door, actor) => this.doors.closedTo(door, actor),
       swimAllowed: (actor) => this.ai.allowsSwimming(actor),
       shutPlaces: (actor) => this.doors.shutPlaces(actor),
       obstacles: this.obstacles,

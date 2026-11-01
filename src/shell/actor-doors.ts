@@ -7,9 +7,14 @@
 // remembering it a while. Load doors swing open with their sound as an actor steps through
 // (it leaves the game's fTeleportDoorActivateDelayTimer later) and as one comes out of the door
 // on the other side. A door a script opens or shuts (SetOpen) swings so and stays. Each swing's
-// end is told to the door's scripts with who swung it (OnOpen, OnClose: open-close.ts).
+// end is told to the door's scripts with who swung it (OnOpen, OnClose: open-close.ts). An actor
+// whose race cannot open doors (RACE DATA Can't Open Doors: the animals, the dragons, the giants)
+// passes a door standing open and no other: a shut one closes its paths, and it takes no load
+// door.
 
 import type { DoorPassage } from '../ai/path-follower.ts';
+import { raceOpensDoors } from '../ai/race-ai-flags.ts';
+import { parseRaceCombat } from '../ai/race-combat-records.ts';
 import { findRoute, type Route, type RouteEnd, type RouteMap } from '../ai/routes.ts';
 import type { Vec3 } from '../render/math.ts';
 import type { ModelInstance } from '../render/scene-renderer.ts';
@@ -33,6 +38,8 @@ export interface ActorDoorsOptions {
   readonly unlocks?: (actor: number) => boolean;
   /** A script opened or shut a door (SetOpen): a navmesh obstacle's cut follows. */
   readonly opened?: (door: number) => void;
+  /** A staged actor's race DATA flags (undefined: not staged; its race is read). */
+  readonly raceFlags?: (actor: number) => number | undefined;
 }
 
 /** A door actors opened shuts this long after the last came to it (seconds). TODO(M13). */
@@ -55,6 +62,8 @@ export class ActorDoors {
   /** The doors shut to each actor, and when each was found shut. */
   readonly #shut = new Map<number, Map<number, number>>();
   #teleportDelay: number | undefined;
+  /** The DATA flags of each race read for an actor not staged, by race. */
+  readonly #races = new Map<number, Promise<number>>();
 
   constructor(options: ActorDoorsOptions) {
     this.#options = options;
@@ -74,6 +83,12 @@ export class ActorDoors {
     const playback = entry.instance?.playback;
     // Opened by the player (no actor's timer on it): it stays open.
     if (playback?.sequence === 'open' && !this.#closing.has(door)) return 'open';
+    // One that cannot open doors passes one standing open (or without anything to open).
+    if (!this.#opens(actor)) {
+      if (!playback || playback.sequence === 'open') return 'open';
+      this.#remember(actor, door);
+      return 'shut';
+    }
     // One only its activate parents open (XAPD: a gate its lever works) is shut to actors.
     if (entry.object.parentActivateOnly === true && playback?.sequence !== 'open') {
       this.#remember(actor, door);
@@ -92,6 +107,16 @@ export class ActorDoors {
       }
     }
     return this.#open(door, entry, actor);
+  }
+
+  /**
+   * Whether a door is shut to an actor that cannot open doors (its paths keep off it): a door of
+   * the loaded area that swings, not open now.
+   */
+  closedTo(door: number, actor: number): boolean {
+    if (this.#opens(actor)) return false;
+    const playback = this.swinging(door)?.instance?.playback;
+    return playback !== undefined && playback.sequence !== 'open';
   }
 
   /** A door of the loaded area that swings (not a load door), with its instance. */
@@ -120,11 +145,12 @@ export class ActorDoors {
   }
 
   /**
-   * Whether an actor may go through a load door: unlocked, or it may open its lock (its key, its
-   * owner, its package).
+   * Whether an actor may go through a load door: its race opens doors, and the door is unlocked
+   * or it may open its lock (its key, its owner, its package).
    */
   async mayPass(door: number, actor: number): Promise<boolean> {
     const runtime = this.#options.session.scriptsReady;
+    if (!(await this.#opensAway(actor))) return false;
     if (!runtime || !(await runtime.lock(door)).locked) return true;
     if (this.#options.unlocks?.(actor) === true) return true;
     return runtime.mayUnlock(actor, door);
@@ -272,6 +298,30 @@ export class ActorDoors {
       },
     );
     return undefined;
+  }
+
+  /** Whether a staged actor's race opens doors (one not staged: as mayPass reads it). */
+  #opens(actor: number): boolean {
+    const flags = this.#options.raceFlags?.(actor);
+    return flags === undefined || raceOpensDoors(flags);
+  }
+
+  /** Whether any actor's race opens doors (staged or not: its race read once). */
+  async #opensAway(actor: number): Promise<boolean> {
+    const flags = this.#options.raceFlags?.(actor);
+    if (flags !== undefined) return raceOpensDoors(flags);
+    const runtime = this.#options.session.scriptsReady;
+    const race = await runtime?.actors.raceOf(actor);
+    if (!runtime || race === undefined) return true;
+    let read = this.#races.get(race);
+    if (!read) {
+      read = runtime.forms.db.get(race).then(
+        (record) => (record?.type === 'RACE' ? parseRaceCombat(record).flags : 0),
+        () => 0,
+      );
+      this.#races.set(race, read);
+    }
+    return raceOpensDoors(await read);
   }
 
   #remember(actor: number, door: number): void {
