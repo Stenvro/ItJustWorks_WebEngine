@@ -30,6 +30,8 @@ import { GameSettings } from '../../world/game-settings.ts';
 import { linkedReferences } from '../../world/cell-records.ts';
 import { QuestFlag } from '../../world/quest-records.ts';
 import type { GameRecord, RecordDatabase } from '../../world/record-db.ts';
+import { MagicSpellFlag } from '../../world/magic-records.ts';
+import { parseSpell } from '../../world/spell-records.ts';
 import { ConditionRunOn, type Condition } from '../conditions.ts';
 import {
   PapyrusVm,
@@ -3754,6 +3756,18 @@ export class ScriptRuntime implements VmHost {
     // begins (UESP: "this quest starts automatically when you begin a new game").
     const unbound = opening ? db.formIdOf('Skyrim.esm', OPENING_QUEST) : undefined;
     if (unbound !== undefined) await this.quests.start(unbound);
+    // The spells with PC Start Spell (SPIT 0x20000; Creation Kit "Spell": the player starts the
+    // game with it): PCHealRateCombat, the player's heal rate in combat (the only one).
+    const startSpells: number[] = [];
+    await db.scan(
+      ['SPEL'],
+      () => true,
+      (record) => {
+        if ((parseSpell(record).flags & MagicSpellFlag.pcStartSpell) !== 0)
+          startSpells.push(record.formId);
+      },
+    );
+    for (const spell of startSpells) await this.actors.addSpell(PLAYER_REF, spell);
     // The player's abilities, diseases and worn enchantments act (magic-engine.ts).
     await this.magic.prepare(PLAYER_REF);
     await this.vm.idle();

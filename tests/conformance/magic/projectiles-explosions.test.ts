@@ -11,7 +11,9 @@
 //   fWardAngleForExplosions (90°) of its actor's facing.
 // - The records: Fireball (FireDamageFFAimedArea, 40 points in 15 feet); the magic effect flags
 //   No Area (DATA 0x800: the effect takes no area; the Creation Kit greys its area out) and No
-//   Hit Event (DATA 0x10: it sends no OnHit), xEdit's TES5 MGEF.
+//   Hit Event (DATA 0x10: it sends no OnHit), xEdit's TES5 MGEF; Painless (DATA 0x4000000: a
+//   hostile effect's target does not cry out in pain, Creation Kit "Magic Effect"); the
+//   enchantment flag Extend Duration On Recast (ENIT 0x4, Creation Kit "Enchantment").
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
@@ -60,7 +62,7 @@ describe('an explosion', () => {
   });
 });
 
-describe.skipIf(!hasGamedata())('a ward against a fireball’s burst (sim)', () => {
+describe.skipIf(!hasGamedata())('a fireball’s burst and other hits on actors (sim)', () => {
   let sim: Sim;
   beforeAll(async () => {
     sim = await openSim({ interior: BANNERED_MARE, hour: 10 });
@@ -255,6 +257,48 @@ describe.skipIf(!hasGamedata())('a ward against a fireball’s burst (sim)', () 
       magic.effect = effect;
       runtime.actors.restore(target.reference, ActorValue.health, 1000);
     }
+  }, 120_000);
+
+  it('makes its target cry out unless every hostile effect is Painless', async () => {
+    const magic = sim.runtime.magic;
+    const record = await sim.db.get(await sim.formId('SPEL', 'Fireball'));
+    const item = record ? parseMagicItem(record) : undefined;
+    expect(item).toBeDefined();
+    if (!item) return;
+    expect(await magic.painful(item)).toBe(true);
+    // Fury's effect (InfluenceAggUpFFAimed) is hostile and Painless in the record.
+    const fury = await sim.formId('MGEF', 'InfluenceAggUpFFAimed');
+    const furyFlags = (await magic.effect(fury))?.flags ?? 0;
+    expect(furyFlags & EffectFlag.hostile).not.toBe(0);
+    const effects = item.effects.slice(0, 1).map((entry) => ({ ...entry, effect: fury }));
+    expect(await magic.painful({ ...item, effects })).toBe(false);
+  }, 120_000);
+
+  it('reads the weapons’ Can’t Drop and Non-hostile flags (WEAP DNAM)', async () => {
+    const equipment = sim.runtime.equipment;
+    expect(await equipment.cantDrop(await sim.formId('WEAP', 'BoundWeaponSwordMystic'))).toBe(true);
+    expect(await equipment.cantDrop(await sim.formId('WEAP', 'IronSword'))).toBe(false);
+    expect(await equipment.nonHostile(await sim.formId('WEAP', 'DA08RealEbonyBlade'))).toBe(true);
+    expect(await equipment.nonHostile(await sim.formId('WEAP', 'IronSword'))).toBe(false);
+  }, 120_000);
+
+  it('adds an Extend Duration On Recast enchantment’s duration to the one on the target', async () => {
+    const magic = sim.runtime.magic;
+    const [target, caster] = sim.actors();
+    const record = await sim.db.get(await sim.formId('ENCH', 'EnchWeaponSoulTrap01'));
+    const item = record ? parseMagicItem(record) : undefined;
+    expect(item && target && caster).toBeTruthy();
+    if (!item || !target || !caster) return;
+    const on = (): number[] =>
+      magic
+        .effectsOn(target.reference)
+        .filter(([, entry]) => entry.item === item.formId)
+        .map(([, entry]) => entry.duration);
+    await magic.apply(item, target.reference, { caster: caster.reference });
+    // Soul Trap 3 s on a hit (ENIT 0x4): a second hit makes it 6 s, one effect.
+    expect(on()).toEqual([3]);
+    await magic.apply(item, target.reference, { caster: caster.reference });
+    expect(on()).toEqual([6]);
   }, 120_000);
 });
 

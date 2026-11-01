@@ -272,6 +272,8 @@ const EFFECT_SETTING_TABLE = {
   /** A summon's placement: how far ahead it is looked for; when a landing point is too near. */
   summonSearchRadius: ['fSummonedCreatureSearchRadius', 512],
   summonDistanceCheck: ['fSummonDistanceCheckThreshold', 750],
+  /** Seconds a summon whose effect ended fades out before it is gone. */
+  summonFadeOut: ['fSummonedCreatureFadeOutSeconds', 1.5],
 } as const satisfies Readonly<Record<string, readonly [string, number]>>;
 
 export type EffectSettings = {

@@ -33,6 +33,7 @@
 // Notes: docs/gameplay.md ("Casting and shouts").
 
 import type { ItemEffect } from '../../world/item-records.ts';
+import { Delivery } from '../../world/magic-records.ts';
 import { CastType } from '../../world/spell-records.ts';
 
 /**
@@ -52,6 +53,8 @@ const CASTING_SETTING_TABLE = {
   dualCostMult: ['fMagicDualCastingCostMult', 2.8],
   dualTimeMult: ['fMagicDualCastingTimeMult', 1],
   areaBaseCostMult: ['fMagicAreaBaseCostMult', 0],
+  /** A spell delivered at a target: its cost × this (itemBaseCost). */
+  rangeTargetCostMult: ['fMagicRangeTargetCostMult', 1],
   /**
    * How far a Touch spell cast by an object (not an actor) reaches: touchReach. The engine
    * registers fMagicDefaultTouchDistance but never reads it (original).
@@ -124,24 +127,31 @@ export function costliestEffectIndex(
 
 /**
  * A magic item's base cost before the caster's skill: its own when it is not calculated (SPIT
- * 0x1; an enchantment's "no auto calc" 0x1 with its ENIT cost), else its effects' costs summed.
+ * 0x1; an enchantment's "no auto calc" 0x1 with its ENIT cost), else its effects' costs summed,
+ * a spell delivered at a target (aimed, target actor, target location) × fMagicRangeTarget
+ * CostMult. TODO(M13): that factor is the earlier game's rule (Oblivion's Construction Set,
+ * "Spell Cost": a Target spell's cost × it); whether Skyrim's engine applies it is unknown (1 in
+ * Skyrim.esm: it changes nothing).
  */
 export function itemBaseCost(
   item: {
     readonly cost: number;
     readonly flags: number;
     readonly castType: number;
+    readonly delivery?: number;
     readonly effects: readonly Pick<ItemEffect, 'effect' | 'magnitude' | 'duration' | 'area'>[];
   },
   effectBaseCost: (effect: number) => number,
-  settings: Pick<CastingSettings, 'areaBaseCostMult'> = CASTING_DEFAULTS,
+  settings: Pick<CastingSettings, 'areaBaseCostMult'> &
+    Partial<Pick<CastingSettings, 'rangeTargetCostMult'>> = CASTING_DEFAULTS,
 ): number {
   if ((item.flags & MANUAL_COST) !== 0) return item.cost;
   const concentration = item.castType === CastType.concentration;
   let cost = 0;
   for (const entry of item.effects)
     cost += effectItemCost(effectBaseCost(entry.effect), entry, concentration, settings);
-  return cost;
+  const atTarget = item.delivery !== undefined && item.delivery >= Delivery.aimed;
+  return atTarget ? cost * (settings.rangeTargetCostMult ?? 1) : cost;
 }
 
 /**
