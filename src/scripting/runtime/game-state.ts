@@ -545,6 +545,11 @@ export class GameState {
   readonly booksRead = new Set<number>();
   /** The tutorials shown in this game (their default objects' uses: "HBLK", ...). */
   readonly tutorialsShown = new Set<string>();
+  /**
+   * The input events whose help message the player has done (lower case: "look", "forward"):
+   * their help is not shown again until reset (Message.ResetHelpMessage).
+   */
+  readonly helpDone = new Set<string>();
   /** How often each skill (actor value) has been made Legendary. */
   readonly legendary = new Map<number, number>();
   /** What the player has seen of interiors (the local map's fog of war), by cell. */

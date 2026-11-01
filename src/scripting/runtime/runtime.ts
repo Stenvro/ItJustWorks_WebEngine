@@ -66,6 +66,7 @@ import { HarvestEngine } from './harvest-engine.ts';
 import { HazardEngine } from './hazard-engine.ts';
 import { DestructionEngine } from './destruction-engine.ts';
 import type { DestructionStage } from '../../world/destruction-records.ts';
+import type { SkySave } from '../../world/sky-weather.ts';
 import type { BodyPush } from '../../gameplay/magic/explosions.ts';
 import { installPerkHooks } from './perk-hooks.ts';
 import { UsageStats } from './usage-stats.ts';
@@ -445,6 +446,9 @@ export interface WorldBridge {
   currentWeather?(): number | undefined;
   outgoingWeather?(): number | undefined;
   weatherTransition?(): number;
+  /** The sky as a save keeps it (its weathers and the change under way), and put back. */
+  skyState?(): SkySave | undefined;
+  restoreSky?(saved: SkySave): void;
   skyMode?(): number;
   /** A weather of a classification from the current region's list. */
   findWeather?(classification: number): number | undefined;
@@ -462,6 +466,8 @@ export interface WorldBridge {
   ): void;
   /** A music type added to or removed from the music stack (M6). */
   music?(type: number, add: boolean): void;
+  /** The music types scripts added that are still in play, oldest first (a save keeps them). */
+  addedMusic?(): readonly number[];
   /**
    * An image-space modifier applied (value: strength), removed, cross-faded in (value:
    * seconds), the cross-fade chain's last one faded out (modifier 0, value: seconds) or popped

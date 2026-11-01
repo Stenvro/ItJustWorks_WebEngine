@@ -515,7 +515,62 @@ ess)` reads those places ahead);
   sex and the player data's tint masks (index u16, colour RGBA bytes, alpha f32) as their
   appearance (TODO(M13): the body's weight is not found in the save: 50);
 - the magic favorites and their hotkeys (global data 109);
-- the weather;
+- the sky (global data 6): the current weather, the one a change under way comes from, the
+  weather scripts hold over the regions (the override: MQ101 forces its) and the one standing
+  for the regions' choice, when the current came (`beginTime`, the time of day): our save's
+  `sky`, which goes on with the change (TODO(M13): its share is ours from when it began; the
+  original keeps its own, `weatherPercent`, 1 in the saves read); the climate, region and fog
+  follow from where the player is;
+- the music (global data 7): the types in play beside the location's, oldest first (the
+  table's last form is the location's type, which follows from the place): our save's `music`,
+  added again as it loads (MQ101's MUSDungeonChargen on the cart, MUSCombatBossChargen as Alduin
+  attacks); TODO(M13): the first form (0 in the saves read);
+- the interface (global data 102): the input events whose help messages the player has done
+  (the names list: "Look", "Forward"), not shown again (`GameState.helpDone`); the weapons,
+  spells and shouts used last (counted once each). TODO(M13): the help messages shown (one
+  number, 252) and the two words beside it;
+- the actor causes (global data 103): the actor each serial number blames, for the ActorCause
+  extra data;
+- the extra data of references and actors (each extra comes with its change flag in the saves
+  read: Ownership, Lock, ReferenceHandle with itemExtraData, EncounterZone with
+  encounterZoneExtra, PromotedRef with promoted, LeveledCreature with leveledActor,
+  PackageStartLocation and Follower with packageExtraData, DismemberedLimbs with
+  dismemberedLimbs; the rest with gameOnlyExtra): an item reference's holder (ReferenceHandle:
+  the reference lies in that inventory, `ReferenceState.container`; the holder's entry names it
+  back), the encounter zone the game gave a reference (all NoZoneZone in the saves read; it wins
+  over its record's and cell's), a base a script swapped in (`ReferenceState.base`, which
+  `baseOf` answers), the NPC_ a leveled actor's lists came down to (LeveledCreature's second
+  form; the first is its base: `ActorState.leveledBase`, kept by the actor's templates rather
+  than drawn again; TODO(M13): the changes to the generated base after them, none in the saves
+  read), ActorCause, ExtraFlags' bit 0 (activation blocked; TODO(M13): the other bits, none set),
+  Ghost, a map marker's flags (bit 0 shown, bit 1 travelled to), a name the player gave
+  (TextDisplayData of kind −2; the others are an alias's name), where a package started and the
+  packages run once a day that ran (TODO(M13): the byte beside each; counted run today); those
+  that follow from what is applied: AliasInstanceArray, PromotedRef, SceneData, CachedScale,
+  Follower. Not applied (logged by name): Interaction (a rider and its horse), AttachedArrows3D,
+  NonActorMagicTarget, DismemberedLimbs;
+- inventory entries' extra data lists, each a stack of the item: what an actor wears or holds
+  (Worn: on the body, or in the right hand for a weapon or torch; WornLeft: the left hand),
+  put on after the inventory changes (`GameSave.worn`); health (a tempered item's, rounded to
+  ours: 1.1, 1.2, ...), charge and soul as `GameState.itemStacks`; a weapon's poison. Outfit items
+  (OutfitItem) are left out of the inventory change: ours puts the outfit on as the actor's
+  inventory is first read (TODO(M13): its leveled pieces are ours, picked by the actor's seed).
+  Count, LeveledItem, UniqueID, the quest aliases' and an alias's name follow from the rest;
+  CannotWear is logged;
+- NPC_ bases other than the player's: the factions (the whole list as it stands, ranks), the 18
+  skills (DNAM) and the AI data (AIDT's aggression, confidence, energy, morality, mood,
+  assistance), over their records for every actor of the base (`ActorBaseState`; TODO(M13):
+  DNAM's offsets, health, magicka, stamina, AIDT's aggro radii);
+- cells: the detach time (whole game hours, as ours keeps `cellDetached`: 7 in saves whose
+  clock reads 8.3 hours), what the player has seen (the local map's fog: 32 bytes, 16 × 16 bits
+  per block, each 2 × 2 of ours; an exterior's one block, an interior's per part with its two
+  signed bytes; TODO(M13): the block's size and the bits' order, and ours draws no fog on the
+  exterior local map), a public place (the flags' 0x20, as the record's DATA; TODO(M13): 0x40
+  and 0x200, whose meaning is not known), the owner;
+- a quest's runs (instanceData: a u32, then each run's id, its aliases' references as alias id
+  and reference, the text display globals' values as global and float, three bytes): the
+  globals' values (`QuestState.instanceGlobals`); TODO(M13): the first u32 and the three bytes;
+- a location's keyword data (LCTN bit 30: the values scripts set on its keywords);
 - Papyrus: each script instance's variables, by script level (a type's members follow its
   parents'), with object variables as handles to the instances' forms, and the state each
   instance is in; an alias script's instance on its alias (the object table's high word is the
@@ -541,8 +596,10 @@ ess)` reads those places ahead);
 - the forms scripts added to form lists (FLST).
 
 Read but not imported yet (TODO(M13)): the projectiles and hazards in flight; the base objects'
-other changes (values, names, known ingredient effects, location keyword data; the scenes'
-clocks); the movement controller's state (the engine plans its paths anew); the AI processes
+other changes (values, names, known ingredient effects; the scenes' clocks); the global data
+tables of combat (101), detection (105), the process lists' crimes (100: none in the saves
+read), temp effects (1000) and quest static data (107: lists of quests whose meaning is not
+known); the movement controller's state (the engine plans its paths anew); the AI processes
 beyond the branch their package reached (the procedures' own states, the high process's timers
 and held objects: M13); the combat controllers' and
 the combat table's searches and objects (M13); the player's other lists (M13).

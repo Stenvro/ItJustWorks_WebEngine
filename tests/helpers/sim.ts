@@ -13,7 +13,7 @@
 import { findPath } from '../../src/ai/pathfinding.ts';
 import { WeaponState } from '../../src/gameplay/combat/combat-state.ts';
 import { Layer } from '../../src/physics/collision-layers.ts';
-import { readGameSave, saveGame } from '../../src/save/game-save.ts';
+import { readGameSave, restoreAmbience, saveGame } from '../../src/save/game-save.ts';
 import type { SpokenInfo, TopicChoice } from '../../src/scripting/runtime/dialogue-engine.ts';
 import { afterInfo } from '../../src/scripting/runtime/dialogue-rules.ts';
 import type { GameEvents } from '../../src/scripting/runtime/event-hub.ts';
@@ -180,8 +180,7 @@ export async function loadSim(
       : undefined;
   if (interior !== undefined) await world.openInterior(interior, arrival);
   else if (player.world !== undefined) await world.openExterior(player.world, { arrival });
-  if (save.weather !== undefined)
-    world.runtime.world.setWeather?.(save.weather, true, false, false);
+  restoreAmbience(world.runtime, save);
   return sim;
 }
 
