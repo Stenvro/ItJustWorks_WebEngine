@@ -115,6 +115,12 @@ export function pushImpulse(
 const SKIN = 0.01;
 /** Rounds of penetration recovery (each pushes out of everything the shape overlaps). */
 const RECOVERY_ROUNDS = 4;
+/** A sweep that moved the shape less than this was held where it stands (Havok units). */
+const HELD_MOVEMENT = 1e-4;
+/** Held in a surface's gap, the shape is set this many gaps (SKIN) off it. */
+const SKIN_OUT = 1.5;
+/** What the shape touches with a normal this near straight up is floor, not a wall (cos 10°). */
+const FLOOR_NORMAL = Math.cos((10 * Math.PI) / 180);
 /**
  * On stairs, a step is climbed when the controller's own movement got less than this share of
  * the way it was to go (measured along that way).
@@ -622,6 +628,50 @@ export class CharacterBody {
   }
 
   /**
+   * Out of the gap the controller keeps (SKIN) to the one wall its last sweep met (beside the
+   * floor under it), across: the shape set SKIN_OUT gaps off it. Rapier's controller held a
+   * hair inside that gap meets the wall at once on its sweep and on every slide along it, so it
+   * moves no way at all: the player pressed into an open door's leaf by a step (Helgen's tower)
+   * stood there for good, where the character proxy slides along the leaf. Walls of two shapes
+   * (a crease), and other actors, hold it as they did: there no slide is to be had. Whether it
+   * was moved.
+   */
+  #outOfSkin(): boolean {
+    const own = this.#collider;
+    const at = this.#body.translation();
+    let wall: { readonly handle: number; readonly x: number; readonly y: number } | undefined;
+    for (let i = 0; i < this.#controller.numComputedCollisions(); i++) {
+      const other = this.#controller.computedCollision(i)?.collider;
+      if (!other || other.handle === wall?.handle) continue;
+      const contact = own.shape.contactShape(
+        at,
+        NO_ROTATION,
+        other.shape,
+        other.translation(),
+        other.rotation(),
+        SKIN,
+      );
+      // normal2 points out of the other shape: the way out (across; the floor is left be).
+      if (!contact || contact.normal2.z >= FLOOR_NORMAL) continue;
+      const across = Math.hypot(contact.normal2.x, contact.normal2.y);
+      if (wall || this.#otherActor(other) || contact.distance >= SKIN || across < 1e-6) {
+        return false;
+      }
+      const depth = SKIN * SKIN_OUT - contact.distance;
+      wall = {
+        handle: other.handle,
+        x: (contact.normal2.x / across) * depth,
+        y: (contact.normal2.y / across) * depth,
+      };
+    }
+    if (!wall) return false;
+    const next = { x: at.x + wall.x, y: at.y + wall.y, z: at.z };
+    this.#body.setTranslation(next, true);
+    this.physics.world.propagateModifiedBodyPositionsToColliders();
+    return true;
+  }
+
+  /**
    * Climbs a step of a staircase that the controller's own movement stopped at: the shape
    * rises by up to the stair height (as far as there is room above it), moves on (the way it
    * was to go, else along what blocks it: a wall beside the stairs), and comes down onto the
@@ -904,6 +954,25 @@ export class CharacterBody {
       predicate,
     );
     let moved: RAPIER.Vector = this.#controller.computedMovement();
+    // Held inside the gap the controller keeps to a surface (a hair nearer than SKIN), its sweep
+    // and every slide meet that surface at once, whichever way it goes: out of the gap first,
+    // as the character proxy recovers, then the way swept again.
+    if (
+      wasGrounded &&
+      !this.swimming &&
+      (desired.x !== 0 || desired.y !== 0) &&
+      Math.hypot(moved.x, moved.y) < HELD_MOVEMENT &&
+      this.#outOfSkin()
+    ) {
+      this.#controller.computeColliderMovement(
+        own,
+        desired,
+        RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+        undefined,
+        predicate,
+      );
+      moved = this.#controller.computedMovement();
+    }
     const rising = this.verticalSpeed > 0;
     this.#grounded = !this.swimming && !rising && this.#controller.computedGrounded();
     // How far it got the way it was to go (sliding along a riser is no way up the stairs).
