@@ -47,6 +47,19 @@ describe('avoidance', () => {
     expect(avoid(other, [me])[0]).toBeLessThan(0);
   });
 
+  it('foresees those moving only with the advanced avoidance (RACE DATA Flags 2)', () => {
+    const coming: Neighbour = { position: [10, 150], velocity: [0, -80], radius: 20 };
+    const plain: Avoider = { ...walker, advanced: false };
+    // Head-on: the advanced keeps right; the plain goes round it where it stands (a little to
+    // the right of its way: on the left).
+    expect(avoid({ ...walker, advanced: true }, [coming])[0]).toBeGreaterThan(0);
+    expect(avoid(plain, [coming])[0]).toBeLessThan(0);
+    // One coming across its way from the left: the advanced sees it in its way, the plain not.
+    const crossing: Neighbour = { position: [-60, 150], velocity: [40, 0], radius: 20 };
+    expect(avoidance(walker, [crossing]).blocker).toBe(crossing);
+    expect(avoidance(plain, [crossing]).blocker).toBeUndefined();
+  });
+
   it('lets one walking the same way ahead of it be, if it keeps its distance', () => {
     const ahead: Neighbour = { position: [0, 100], velocity: [0, 80], radius: 20 };
     expect(avoid(walker, [ahead])).toEqual([0, 10]);
@@ -92,5 +105,12 @@ describe('two on their way into each other', () => {
     const other = { reference: 0x30, gait: 0 };
     expect(givesWay(walking, other)).toBe(walking);
     expect(givesWay(other, walking)).toBe(walking);
+  });
+
+  it('never has one its race keeps from being pushed (a dragon) give way', () => {
+    const dragon = { reference: 0x10, gait: 0, pushable: false };
+    const running = { reference: 0x20, gait: 1 };
+    expect(givesWay(dragon, running)).toBe(running);
+    expect(givesWay(running, dragon)).toBe(running);
   });
 });

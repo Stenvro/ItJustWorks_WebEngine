@@ -3,6 +3,7 @@ import { AttackFlag, type AttackData } from '../../ai/race-combat-records.ts';
 import {
   chooseAttackData,
   DEFAULT_ATTACK,
+  powerAttackDefault,
   rotatesThrough,
   type AttackChoiceContext,
 } from './attacks.ts';
@@ -71,5 +72,14 @@ describe('chooseAttackData', () => {
     expect(chooseAttackData([ahead], beyond, sequence(0, 0))).toBeUndefined();
     // A corpse's cone is twice as wide.
     expect(chooseAttackData([ahead], { ...beyond, targetDead: true }, sequence(0, 0))).toBe(ahead);
+  });
+});
+
+describe('the default power attack (a paired kill move without attack data)', () => {
+  it('deals 1 + fPowerAttackDefaultBonus times the damage', () => {
+    const data = powerAttackDefault(1);
+    expect(data.damageMult).toBe(2);
+    expect(data.flags & AttackFlag.powerAttack).not.toBe(0);
+    expect(powerAttackDefault(0.5).damageMult).toBe(1.5);
   });
 });

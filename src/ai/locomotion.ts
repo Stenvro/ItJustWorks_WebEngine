@@ -70,11 +70,36 @@ export class Turning {
   rate = 0;
   /** Standing, it faces the heading it keeps (within 1°) and holds its facing. */
   settled = false;
+  /** Its speed along its way now, before a turn slows it (units a second: rampSpeed). */
+  speed = 0;
 
   reset(): void {
     this.rate = 0;
     this.settled = false;
+    this.speed = 0;
   }
+}
+
+/**
+ * Its speed after a step at its race's rates (RACE DATA acceleration and deceleration rates,
+ * read as the seconds from standing to `full` speed and from it to a stop, as its angular
+ * acceleration rate is the seconds to its full turn rate: a person 1 and 1, a wolf 0.6 and 2, a
+ * deer 0.4 and 0.3, a giant 3 and 3, a netch 5 and 5, a dragon 0.01). Rates of 0 (or none)
+ * reach the speed wanted at once. TODO(M13): the rates' unit is unconfirmed (no document gives
+ * it, and the locomotion clips have no start or stop clip whose root motion would show it).
+ */
+export function rampSpeed(
+  current: number,
+  wanted: number,
+  full: number,
+  rates: { readonly acceleration?: number | undefined; readonly deceleration?: number | undefined },
+  seconds: number,
+): number {
+  const rising = wanted >= current;
+  const rate = rising ? rates.acceleration : rates.deceleration;
+  if (rate === undefined || !(rate > 0) || !(seconds > 0)) return wanted;
+  const change = (Math.max(full, 1) / rate) * seconds;
+  return rising ? Math.min(wanted, current + change) : Math.max(wanted, current - change);
 }
 
 /** The angle controller's dead band: nearer than this, turning slower than this a second, it stops. */
@@ -123,6 +148,15 @@ export interface MovementTypes {
    */
   readonly angularAcceleration?: number | undefined;
   readonly aimTolerance?: number | undefined;
+  /**
+   * Its race's angular tolerance (RACE DATA, radians; 5° for nearly all, the horkers 45°):
+   * standing, it holds its facing until the heading it keeps is more than this off.
+   * TODO(M13): the plain reading of the field's name.
+   */
+  readonly angularTolerance?: number | undefined;
+  /** Its race's acceleration and deceleration rates (RACE DATA; rampSpeed). */
+  readonly acceleration?: number | undefined;
+  readonly deceleration?: number | undefined;
 }
 
 /** One step of steering: the velocity to move with and the heading after the step. */
@@ -273,6 +307,7 @@ export function steer(
     if (!moving && !carried) {
       const tolerance = Math.max(
         parameters.tolerance,
+        types.angularTolerance ?? 0,
         parameters.raceTolerance === true ? (types.aimTolerance ?? 0) : 0,
       );
       if (turning.settled) {
@@ -290,7 +325,11 @@ export function steer(
     const step = Math.max(0, rate) * seconds;
     next = heading + (Math.abs(turn) <= step ? turn : Math.sign(turn) * step);
   }
-  if (!moving) return { velocity: [0, 0], heading: next };
+  if (!moving) {
+    // Standing it stops at once. TODO(M13): the engine's braking before its goal.
+    if (turning) turning.speed = 0;
+    return { velocity: [0, 0], heading: next };
+  }
   // The way against the facing: x right, y forward.
   const against = angleBetween(next, way);
   const across = Math.sin(against);
@@ -309,6 +348,12 @@ export function steer(
           ? walkSpeed + (runSpeed - walkSpeed) * (pace - 1)
           : runSpeed * (pace - 1);
   let speed = gaitSpeed * (request.speedMult ?? 1);
+  // With its mover's state it gains and loses speed at its race's rates (a turn's slowing,
+  // below, at once).
+  if (turning) {
+    speed = rampSpeed(turning.speed, speed, type.run.forward, types, seconds);
+    turning.speed = speed;
+  }
   if (request.face === undefined) {
     // Not strafing it goes ahead, the way it faces (its graph's Direction is 0: a sideways
     // remainder of the turn it still makes swayed walkers into their walk-left and walk-right

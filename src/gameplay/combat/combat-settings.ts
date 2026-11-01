@@ -167,6 +167,12 @@ export interface CombatSettings {
   readonly weaponBloodFalloffThreshold: number;
   /** iDeathDropWeaponChance: the percent chance a dying actor's weapons fall from its hands. */
   readonly deathDropWeaponChance: number;
+  /**
+   * fPowerAttackDefaultBonus: a power attack without attack data of its own (a paired kill
+   * move's) deals 1 + this times the damage (2: the race power attacks' own mult).
+   * TODO(M13): the plain reading of the setting's name.
+   */
+  readonly powerAttackDefaultBonus: number;
 }
 
 /** The engine's values where the plugins have none (Skyrim.esm and Update.esm otherwise). */
@@ -262,6 +268,7 @@ export const COMBAT_DEFAULTS: CombatSettings = {
   weaponBloodFadeDuration: 60,
   weaponBloodFalloffThreshold: 0.07,
   deathDropWeaponChance: 100,
+  powerAttackDefaultBonus: 1,
 };
 
 /** Each number setting's game setting (its editor id). */
@@ -344,6 +351,7 @@ const SETTING_NAMES: Readonly<Partial<Record<keyof CombatSettings, string>>> = {
   weaponBloodFadeDuration: 'fWeaponBloodFadeDuration',
   weaponBloodFalloffThreshold: 'fWeaponBloodFalloffThreshold',
   deathDropWeaponChance: 'iDeathDropWeaponChance',
+  powerAttackDefaultBonus: 'fPowerAttackDefaultBonus',
 };
 
 /** The sneak multipliers' settings. */

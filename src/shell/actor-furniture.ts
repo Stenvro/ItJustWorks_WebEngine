@@ -24,6 +24,7 @@ import {
   readIdleTree,
   type IdleTree,
 } from '../ai/idle-records.ts';
+import { aiSettingsOf } from '../ai/ai-settings.ts';
 import type { SandboxSpot } from '../ai/package-runtime.ts';
 import { parseNif } from '../formats/nif/nif.ts';
 import type { Vec3 } from '../render/math.ts';
@@ -150,6 +151,8 @@ export function stageObject(object: CellObject): StageObject {
 interface SpotKind {
   readonly kind: SandboxSpot['kind'];
   readonly childCanUse: boolean;
+  /** FURN KNAM: only actors with this keyword use it (undefined: any). */
+  readonly keyword?: number | undefined;
 }
 
 /** KYWD FurnitureSpecial (Skyrim.esm): workbenches, forges, the wood chopping block, ... */
@@ -333,9 +336,16 @@ export class ActorFurniture {
 
   /**
    * The free furniture and idle markers within a radius of a point (and on its floor), that
-   * sandboxing does not ignore (FURN FNAM, IDLM IDLF) and, for a child, that children may use.
+   * sandboxing does not ignore (FURN FNAM, IDLM IDLF) and, for a child, that children may use;
+   * furniture with an interaction keyword (FURN KNAM: ActorTypeNPC on 457, ActorTypeDragon on
+   * the dragons' perches, Miraak's and the rieklings') only for an actor that has it.
    */
-  async spots(center: Vec3, radius: number, child: boolean): Promise<SandboxSpot[]> {
+  async spots(
+    center: Vec3,
+    radius: number,
+    child: boolean,
+    actor?: number,
+  ): Promise<SandboxSpot[]> {
     const found: SandboxSpot[] = [];
     const taken = new Set(this.#markers.values());
     for (const object of this.#options.objects?.() ?? []) {
@@ -345,6 +355,10 @@ export class ActorFurniture {
       if (object.baseType !== 'FURN' && object.baseType !== 'IDLM') continue;
       const kind = await this.#spotKind(object.base);
       if (!kind || (child && !kind.childCanUse)) continue;
+      if (kind.keyword !== undefined && actor !== undefined) {
+        const runtime = this.#options.session.scriptsReady;
+        if (runtime && !(await runtime.hasKeyword(actor, kind.keyword))) continue;
+      }
       if (kind.kind === 'idle' ? taken.has(object.reference) : this.inUse(object.reference)) {
         continue;
       }
@@ -502,7 +516,10 @@ export class ActorFurniture {
     const furniture = parseFurniture(record);
     if ((furniture.flags & FurnitureFlag.ignoredBySandbox) !== 0) return undefined;
     const childCanUse = (record.flags & IdleMarkerRecordFlag.childCanUse) !== 0;
-    if (furniture.keywords.includes(FURNITURE_SPECIAL)) return { kind: 'special', childCanUse };
+    const keyword = furniture.interactionKeyword;
+    if (furniture.keywords.includes(FURNITURE_SPECIAL)) {
+      return { kind: 'special', childCanUse, keyword };
+    }
     // Its markers' kinds: the entry points (FNPR), else its "can" flags (MNAM).
     const types = new Set(furniture.entryPoints.map((entry) => entry.type));
     const flags = furniture.markerFlags ?? 0;
@@ -512,8 +529,8 @@ export class ActorFurniture {
       (flags & (FurnitureMarkerFlag.canSit | FurnitureMarkerFlag.canLean)) !== 0;
     const sleeps =
       types.has(FurnitureMarkerType.sleep) || (flags & FurnitureMarkerFlag.canSleep) !== 0;
-    if (sits) return { kind: 'sit', childCanUse };
-    if (sleeps) return { kind: 'sleep', childCanUse };
+    if (sits) return { kind: 'sit', childCanUse, keyword };
+    if (sleeps) return { kind: 'sleep', childCanUse, keyword };
     return undefined;
   }
 
@@ -629,9 +646,12 @@ export class ActorFurniture {
         this.#uses.delete(actor);
         return false;
       }
+      // Its enter begins once it faces its way within fFurnitureMarkerAngleTolerance.
+      const tolerance =
+        (aiSettingsOf(this.#options.session).furnitureMarkerAngleTolerance * Math.PI) / 180;
       face(heading);
       for (let waited = 0; waited < TURN_SECONDS; waited += 0.1) {
-        if (Math.abs(angle(user.heading, heading)) < 0.1) break;
+        if (Math.abs(angle(user.heading, heading)) <= tolerance) break;
         await sleep(0.1);
         if (this.#uses.get(actor) !== use) return false;
       }

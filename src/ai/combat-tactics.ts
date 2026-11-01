@@ -611,6 +611,8 @@ export interface AttackInput extends Opponent {
   readonly powerChance: number;
   /** Seconds since its last attack (undefined: none yet in this fight). */
   readonly sinceLastAttack: number | undefined;
+  /** Seconds since its last power attack (undefined: none yet in this fight). */
+  readonly sinceLastPowerAttack?: number | undefined;
 }
 
 export type AttackChoice =
@@ -705,7 +707,8 @@ export function offensiveBashChance(
 /**
  * Whether and how it attacks now (a decision every ATTACK_DECISION_SECONDS): blocking, it may
  * bash (bashChance); else it attacks by attackChance; a power attack by its attack data's chance
- * (× power attack staggered mult on a staggered, power attack blocking mult on a blocking target).
+ * (× power attack staggered mult on a staggered, power attack blocking mult on a blocking target),
+ * none within fPowerAttackCoolDownTime of its last.
  */
 export function chooseAttack(
   style: CombatStyle,
@@ -714,14 +717,18 @@ export function chooseAttack(
   settings: CombatAiSettings,
 ): AttackChoice {
   const melee = style.melee;
+  const cooling =
+    input.sinceLastPowerAttack !== undefined &&
+    input.sinceLastPowerAttack < settings.powerAttackCoolDown;
   const power = (): boolean =>
+    !cooling &&
     random() <
-    input.powerChance *
-      (input.targetStaggered
-        ? melee.powerAttackStaggeredMult
-        : input.targetBlocking
-          ? melee.powerAttackBlockingMult
-          : 1);
+      input.powerChance *
+        (input.targetStaggered
+          ? melee.powerAttackStaggeredMult
+          : input.targetBlocking
+            ? melee.powerAttackBlockingMult
+            : 1);
   if (input.blocking && input.canBash && random() < bashChance(style, input, settings)) {
     return power() ? 'powerBash' : 'bash';
   }

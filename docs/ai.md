@@ -155,7 +155,12 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   with the last: within a mesh, through the links into neighbouring meshes (cell borders) and
   over ledges (a jump up or a drop, at a cost of 256 units more). Triangles flagged for no large
   creatures are closed to large and extra large races (RACE DATA size); water costs four times
-  its length to those that do not swim, preferred triangles (roads) half. A goal that cannot be
+  its length to those that do not swim, preferred triangles (roads) half (twice to a race that
+  Avoids Roads: the giants, mammoths, the ghost frost giant, lurkers; TODO(M13): the engine's
+  cost). A door's triangles are closed to one it is locked to, and, while it is shut, to one
+  whose race Can't Open Doors (60 races: the animals, dragons, giants, spiders, centurions:
+  src/ai/race-ai-flags.ts); such an actor passes a door standing open and takes no load door
+  (`ActorDoors`). A goal that cannot be
   reached (another island, past 20,000 triangles) gives the path to where the search came
   nearest to it.
 - **Off the navmesh** (`ActorMovers`): a travel from a point off the navmeshes begins at their
@@ -256,12 +261,18 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
 - **Two on their way into each other** (a narrow way, neither able to go round: going round a
   moving one does not part them, the engine lays no avoid node for it): kept from going on by
   the other, one of the two gives way (`givesWay`, src/ai/avoidance.ts: the slower gait, else
-  the lower reference, the same one whichever asks). It steps off the other's way as a bumped
+  the lower reference, the same one whichever asks; one whose race is Not Pushable, the dragons,
+  never). It steps off the other's way as a bumped
   actor steps off the player's (fBumpReactionIdealMoveDist, at least fBumpReactionMinMoveDist,
   to the side it stands on, else the other), waits fBumpReactionSmallWaitTimer while the other
   passes, and searches its way again (logged "gives way"); no room beside the way, the other
   gives way. TODO(M13): the engine's own rule for who yields was not read.
-- **Bumped** (`src/shell/actor-movers.ts`): the player walking into an actor's controller (at
+- **Advanced avoidance** (RACE DATA Flags 2, 90 races: the people, the undead, trolls, giants,
+  atronachs, the dwarven machines): only these foresee where those moving near them will be and
+  keep right of one coming head-on; the others (wolves, bears, deer, horses) go round those in
+  their way as they stand now. TODO(M13): the plain reading of the flag's name.
+- **Bumped** (`src/shell/actor-movers.ts`): one whose race is Not Pushable does not react; the
+  player walking into an actor's controller (at
   40 units a second or more, towards it) is a bump: where the player came from, clockwise from
   the actor's facing (GetLastBumpDirection), and whether it was small (IsSmallBump; observed in
   the original: big when the actor goes at fBigBumpSpeed, 600, or faster, or the player
@@ -452,7 +463,8 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   root, the package staying (no package events): DialogueFollower's follower travels to wait as
   WaitingForPlayer turns 1 and follows again as it turns 0 (TODO(M13): the engine's own rule).
   The package's preferred speed (PKDT, with its flag) is its gait: jog and run run, walk and fast
-  walk walk.
+  walk walk; a jog runs at fJogInterpolationBetweenWalkAndRun (0.65) of the way from its walking
+  speed to its running speed (`jogPace`).
 - **Flag overrides** (PFO2, PFOR; xEdit's Set / Clear General Flags, Set / Clear Interrupt
   Flags, Preferred Speed Override): while a procedure with one runs, its package runs with those
   flags set and cleared over its own, and one that sets Preferred Speed brings its speed
@@ -499,7 +511,8 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   EatingRoot or DrinkingRoot by GetIsUsedItemType); LockDoors and UnlockDoors lock and unlock
   the load doors of their place (a door without a lock gets a novice one); Say says its topic,
   facing its target; ForceGreet waits at its place until the player comes into its trigger
-  area, goes to them and opens the conversation with its topic; DialogueActivate talks to the
+  area, goes to them and opens the conversation with its topic (one that could not, the player
+  busy, tries again after fAIForceGreetingTimer, 3 s, by its name: TODO(M13)); DialogueActivate talks to the
   player from its place, and to another actor through a scene the story manager gives the two
   ([Conversations between actors](#conversations-between-actors)); KeepAnEyeOn watches its target in its observation area and pursues it
   in its pursuit area; Escort leads its target to the destination, waiting for it where it
@@ -666,6 +679,9 @@ Actors use furniture as the engine's furniture handling does, as far as the data
   ([nif.md](formats/nif.md#furniture-markers)) the record makes some active (FURN MNAM); the
   actor takes the free one nearest it (of the kinds its procedure uses) and the entry point (the
   record's FNPR, less those NAM0 disables) that faces it: front, behind, left, right, up.
+  Furniture with an interaction keyword (FURN KNAM: ActorTypeNPC on 457, ActorTypeDragon on the
+  dragons' perches, Miraak's, the rieklings') is found by sandboxing, Sit and Sleep only for an
+  actor that has that keyword.
 - **The idle:** the enter and exit animations come from the idle tree under ActionActivate
   (`src/ai/idle-records.ts`), its conditions valued on the actor and the furniture: GetSitting /
   GetSleeping (2 about to enter, 3 in it, 4 about to leave), IsFurnitureAnimType,
@@ -677,7 +693,8 @@ Actors use furniture as the engine's furniture handling does, as far as the data
 (dt, false)`) sends the idle's event and adds up its clips' root motion until it is still:
   IdleChairFrontEnter moves 55 units forward and turns 184° in 3.8 s, IdleStoolEnter 25 forward,
   IdleBedLeftEnterStart 74 forward and 90° left. The actor walks to where that motion ends at the
-  marker, turns to its heading there, and its controller goes; its graph's root motion moves it in,
+  marker, turns to its heading there (within fFurnitureMarkerAngleTolerance, 10°, by the
+  setting's name: TODO(M13)), and its controller goes; its graph's root motion moves it in,
   and what is left to the marker at the end is made up in a quarter of a second (the engine's
   path tweener; its rule is not documented). Leaving, the exit's root motion takes it out; then
   it stands and its controller is back. Where no exit idle fits the actor it leaves by the quick
@@ -1948,7 +1965,9 @@ game reads none of them.
   (INFO 0x400) it stops and faces them meanwhile. Not while the player talks with someone.
   Walking off: once the player is farther than fAIInDialogueModeWithPlayerDistance (500) the
   actor is let go to its package while its line plays out; the greeting is not cut short
-  (TODO(M13): the setting is chosen by its name, its reader in the engine was not found).
+  (TODO(M13): the setting is chosen by its name, its reader in the engine was not found). It
+  holds the actor at most fAIInDialogueModewithPlayerTimer (60 s), the distance's twin (by its
+  name, TODO(M13)).
 - **Idle chatter:** every fIdleChatterCommentTimer to fIdleChatterCommentTimerMax (10–20 s) an
   actor whose package allows chatter, within 1,024 units of the player and detecting them,
   says its Idle line to them; one line of chatter at a time (TODO(M13)). The Idle infos weigh
@@ -2577,7 +2596,9 @@ blocks facing it. One is picked by weight and taken with its weight as the chanc
 target must lie within its strike angle × fCombatAttackStrikeAngleMult (0.67) about the
 attacker's facing turned by its attack angle (twice as wide on the dead). One that fails is
 dropped and the pick made again among the rest; the one taken sends its event to the graph and
-its recovery time starts. The engine also measures the attack's reach with the lunge its clip
+its recovery time starts. A power attack is chosen no sooner than fPowerAttackCoolDownTime
+(Skyrim.esm 0) after the last (by the setting's name, TODO(M13)); one without attack data of its
+own (a paired kill move's) deals 1 + fPowerAttackDefaultBonus (1) times the damage. The engine also measures the attack's reach with the lunge its clip
 moves (the animation set's root motion; TODO(M13): the combat AI's reach check stands for it).
 Creatures fight so: their idle trees hold no attack for ActionRightAttack, or one that is no
 attack (the frostbite spider's has only combatStanceStart, which takes it back from its spit
@@ -2954,7 +2975,17 @@ way it runs. Its planner turns it there as the engine's movement controller does
   1 / its race's angular acceleration rate (humans 0.25: 4) × fCombatPathingRotationAccelerationMult
   (2) in turn-while-moving rates a second (humans: 0.16 s to full speed). Out of combat its
   movement type's rates and its race's acceleration unscaled (TODO(M13): the movement parameters
-  outside combat are not read).
+  outside combat are not read). A movement type without a turn rate (the cows' swimming one
+  while moving) turns at fActorDefaultTurningSpeed (a full turn a second). Standing, it also
+  holds its facing within its race's angular tolerance (RACE DATA: 5° for nearly all, the
+  horkers 45°; TODO(M13): the plain reading);
+- its speed: it gains and loses speed at its race's acceleration and deceleration rates (RACE
+  DATA), read as the seconds from standing to its full run and from it to a stop, as the angular
+  rate is the seconds to its full turn rate: a person 1 and 1, a wolf 0.6 and 2, a deer 0.4 and
+  0.3, a giant 3 and 3, a netch 5 and 5, the dragons 0.01 (`rampSpeed`, src/ai/locomotion.ts).
+  A turn's slowing and a stop are at once. TODO(M13): the unit is unconfirmed (no document gives
+  it; no locomotion clip starts or stops, so the clips' root motion cannot show it). An Immobile
+  race's actor (the mannequins) goes nowhere and keeps its facing.
 
 What this fixed: the heading was snapped to the target's place every physics step, so while a
 fighter or its target moved, its turn rate fell to 0 on the steps that had no turn left and rose

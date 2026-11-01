@@ -16,17 +16,17 @@ code (comments left out), or the sweep's own table says why nothing more reads i
 each item is how many records (triangles, attacks) use it. The mechanics part is kept by hand
 against docs/ai.md and the conformance suites (tests/conformance/ai/).
 
-## Count (2026-11-01, round 2)
+## Count (2026-11-01, round 3)
 
 | Part                    | Items | Done | Open |
 | ----------------------- | ----: | ---: | ---: |
 | Packages (data)         |   186 |  186 |    0 |
-| NPCs, races (data)      |    19 |   14 |    5 |
-| Idle markers, furniture |    25 |   21 |    4 |
+| NPCs, races (data)      |    19 |   19 |    0 |
+| Idle markers, furniture |    25 |   22 |    3 |
 | Navmeshes (data)        |    12 |   11 |    1 |
-| Game settings           |   190 |  182 |    8 |
+| Game settings           |   190 |  187 |    3 |
 | Mechanics (by hand)     |    24 |   13 |   11 |
-| Total                   |   456 |  427 |   29 |
+| Total                   |   456 |  438 |   18 |
 
 Round 1 wrote the sweep and this list; Can Pickup Items (RACE DATA) became read: only a race that
 can pick up items runs the combat tree's Acquire Weapon.
@@ -51,6 +51,42 @@ Round 2 built down:
   bed, a chopping block) first (talk.ts getsUpToTalk, actor-ai.ts).
 - fAISocialchanceForConversation (10) and its Interior twin: the chance a spectator who begins
   watching a fight says its ObserveCombat line (combat-dialogue.ts spectatorComments).
+
+Round 3 built down (the race flags' readers: src/ai/race-ai-flags.ts):
+
+- Can't Open Doors (60 races): such an actor passes a door standing open and no other; a shut
+  one closes its paths (pathfinding.ts closedDoor, actor-doors.ts closedTo) and it takes no load
+  door, staged or away (ActorDoors.mayPass; tests/conformance/ai/race-doors.test.ts). Followers
+  still come along through load doors with the player (they are put there, as the original's).
+- Not Pushable (9 races: the dragons, the Forgemaster, Miraak, the ghost frost giant): bumped
+  into, it does not flinch and step aside, and it never gives way on a narrow way
+  (avoidance.ts givesWay).
+- Immobile (the mannequins, the Midden's empty actor): its travels fail at once and it stands,
+  keeping its facing (actor-movers.ts). TODO(M13): whether it still turns to face.
+- Avoids Roads (giants, mammoths, the ghost frost giant, lurkers): the navmeshes' preferred
+  triangles (roads) cost it twice their length instead of half (ROAD_AVOID_COST, TODO(M13)).
+- Always Use Proxy Controller (the six dragon races): every actor here moves by the character
+  proxy controller (src/physics/character.ts), which the flag keeps the dragons on; when the
+  original moves the other races to the rigid body controller is TODO(M13).
+- FURN interaction keyword (467: ActorTypeNPC on 457, ActorTypeDragon on the perches, Miraak's,
+  the rieklings'): furniture with one is found for sandboxing and Sit / Sleep only by an actor
+  with that keyword (actor-furniture.ts spots).
+- fActorDefaultTurningSpeed (a full turn a second): the turn rate where a movement type gives
+  none (the cows' swimming type turns at 0 while moving; movement-types.ts withTurning).
+- fJogInterpolationBetweenWalkAndRun (0.65): a package's preferred speed Jog runs at 0.65 of the
+  way from its walk to its run (package-runtime.ts jogPace; it ran at a full run before).
+- fFurnitureMarkerAngleTolerance (10°): one about to enter furniture begins once it faces the
+  enter's way within it (actor-furniture.ts).
+- fAIForceGreetingTimer (3): a force greeter at the player whose greeting could not begin tries
+  again after it (procedure-runs.ts forceGreet).
+- fAIInDialogueModewithPlayerTimer (60): a greeting holds its actor at most this long, beside
+  its distance twin (talk.ts greetingHolds).
+
+The last four are their names' plain readings (TODO(M13)). Left open: IDLM Loose Only (CommonLibSSE
+names it kLooseOnly, xEdit only for a later game; 72 of 89 markers; its meaning is not
+documented), and fTrackSpeed, fTrackDeadZoneXY / Z: the earlier game's head tracking set (it had
+eleven fTrack\* settings; Skyrim.esm keeps three); this game's head tracking reads fHeadTrack\*;
+whether anything reads these needs the original's code.
 
 ## Packages
 
@@ -93,22 +129,21 @@ Round 2 built down:
       override (src/shell/actor-ai.ts, actor-senses.ts, actor-combat-ai.ts).
 - [x] Race flags read: Allow PC Dialogue, Allow Pickpocket (activation-facts.ts), Can Pickup Items
       (actor-combat-ai.ts: Acquire Weapon).
-- [ ] Can't Open Doors (60 races: animals, dragons, giants, dwarven centurions): not read; their
-      paths pass shut doors. Next: shut doors closed to their paths (pathfinding closedDoors),
-      load doors refused (ActorDoors.mayPass).
+- [x] Can't Open Doors (60 races: animals, dragons, giants, dwarven centurions): open doors
+      only; shut ones close their paths, no load doors (round 3, above).
 - [x] Use Head Track Anims (117 races): only these races' look-at is driven (round 2, above).
-- [ ] Not Pushable (9 races): declared (RaceFlag.notPushable), not read by the bump and push.
-- [ ] Immobile (2), Always Use Proxy Controller (6), Avoids Roads (4): not read.
+- [x] Not Pushable (9 races): no bump reaction, never gives way (round 3, above).
+- [x] Immobile (2), Always Use Proxy Controller (6), Avoids Roads (4) (round 3, above).
 
 ## Idle markers and furniture
 
 - [x] IDLM: idles, timer, Run In Sequence, Do Once, Ignored By Sandbox, children can use.
-- [ ] IDLM flag Loose Only (72 markers): not read.
+- [ ] IDLM flag Loose Only (72 markers): open; its meaning is not documented (round 3, above).
 - [x] FURN: marker types (sit, sleep, lean), entry points (front, behind, left, right, up),
       disabled entries, the can-sit / sleep / lean bits, perch, Ignored By Sandbox, children can
       use (src/shell/actor-furniture.ts, actor-flight.ts).
 - [x] FURN Must Exit To Talk (184): the actor gets up to talk with the player (round 2).
-- [ ] FURN interaction keyword (KNAM, 467): not read.
+- [x] FURN interaction keyword (KNAM, 467): only actors with the keyword use it (round 3).
 - [ ] FURN marker keyword (FNMK, 2): not read.
 - [ ] FURN Disables Activation (2): not read.
 
@@ -127,13 +162,14 @@ The load order's AI settings (84: fAI*, fSandbox*, fSneak*, detection, crime, gu
 comments, head tracking, idle chatter, random scenes, followers, escorts) and 106 built-in ones
 the readers ask for by name.
 
-- [x] 76 of 84 plugin settings and all 106 built-in ones (src/ai/ai-settings.ts, detection.ts,
+- [x] 81 of 84 plugin settings and all 106 built-in ones (src/ai/ai-settings.ts, detection.ts,
       talk.ts, head-tracking.ts, combat-dialogue.ts, src/gameplay/crime.ts, ...).
 - [x] fAISocialchanceForConversation, ...Interior: the spectators' comment chance (round 2).
-- [ ] fAIForceGreetingTimer (3), fAIInDialogueModewithPlayerTimer (60): not read.
-- [ ] fFurnitureMarkerAngleTolerance (10): not read (furniture entry facing).
-- [ ] fActorDefaultTurningSpeed, fJogInterpolationBetweenWalkAndRun: not read (locomotion).
-- [ ] fTrackSpeed, fTrackDeadZoneXY, fTrackDeadZoneZ: not read.
+- [x] fAIForceGreetingTimer (3), fAIInDialogueModewithPlayerTimer (60),
+      fFurnitureMarkerAngleTolerance (10), fActorDefaultTurningSpeed,
+      fJogInterpolationBetweenWalkAndRun (round 3, above).
+- [ ] fTrackSpeed, fTrackDeadZoneXY, fTrackDeadZoneZ: the earlier game's head tracking set;
+      whether anything reads them needs the original's code (round 3, above).
 
 ## Mechanics (by hand)
 
@@ -165,9 +201,9 @@ the readers ask for by name.
 
 ## Next biggest
 
-1. Can't Open Doors (60 races).
-2. FURN interaction keyword (KNAM, 467) and IDLM Loose Only (72).
-3. Not Pushable (9 races), Immobile (2), Always Use Proxy Controller (6), Avoids Roads (4).
-4. The settings left: fAIForceGreetingTimer, fAIInDialogueModewithPlayerTimer,
-   fFurnitureMarkerAngleTolerance, fActorDefaultTurningSpeed, fJogInterpolationBetweenWalkAndRun,
-   fTrackSpeed, fTrackDeadZoneXY / Z.
+1. Avoidance: the engine's way round and who yields; what the advanced avoidance adds (the race
+   flag's reading is the plain one).
+2. IDLM Loose Only (72 markers), FURN marker keyword (FNMK, 2), FURN Disables Activation (2).
+3. fTrackSpeed, fTrackDeadZoneXY / Z: the original's code must be read for them.
+4. The mechanics left by hand (Continue If PC Near's reach, sandbox radii, the light's sum, NPC
+   crimes, the follow offset).

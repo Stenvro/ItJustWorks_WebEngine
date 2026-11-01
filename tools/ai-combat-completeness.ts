@@ -140,6 +140,10 @@ const EXPLAINED: ReadonlyMap<string, string> = new Map([
     'src/shell/actor-combat-ai.ts: the style chooses dueling or flanking (169 styles duel, 19 flank, none both, 9 neither); the tree as observed in the original runs Close Movement (circle, fall back: CSCR) for every style without Flanking, so Dueling is read as not Flanking',
   ],
   [
+    'Race AI flags (DATA)|alwaysUseProxyController',
+    'src/physics/character.ts: every actor moves by the character proxy controller here, which the flag keeps the dragons on (when the original moves the other races to the rigid body controller is TODO(M13))',
+  ],
+  [
     'Interrupt override (PKDT)|none',
     'src/shell/actor-senses.ts: the actor runs an override package from the list its situation names (SPOR, OCOR, GWOR, ECOR); the byte only sorts the package into such lists',
   ],
@@ -151,6 +155,45 @@ const EXPLAINED: ReadonlyMap<string, string> = new Map([
     'Attack data (ATKD, ATKE)|overrideData',
     "src/shell/actor-combat.ts: set on every NPC_ attack (124) and on no race's (2155): it marks an NPC's own attack, which replaces its race's for the event (AttackSet)",
   ],
+]);
+
+/** Items left open, by "part|name": why (what is not known, or who works on it). */
+const CODE = "needs the original's code: no document gives its use";
+const OPEN: ReadonlyMap<string, string> = new Map([
+  [
+    'Idle markers (IDLM)|looseOnly',
+    'open: CommonLibSSE names it kLooseOnly, xEdit only for a later game; set on 72 of 89 markers (the 17 without it include the five with no idles); its meaning is not documented',
+  ],
+  [
+    'Navmesh triangles (NVNM)|found',
+    'open: set on nearly every triangle; whether the game reads it is not documented',
+  ],
+  ...(['fTrackSpeed', 'fTrackDeadZoneXY', 'fTrackDeadZoneZ'] as const).map(
+    (name): [string, string] => [
+      `Game settings (GMST)|${name}`,
+      `open: the earlier game's head tracking set (eleven fTrack* settings, Skyrim.esm keeps three); this game's head tracking reads fHeadTrack*; ${CODE}`,
+    ],
+  ),
+  ...(
+    [
+      'fCombatSneakAttackBonusMult',
+      'fCombatDamageBonusSneakingMult',
+      'fBlockSkillMult',
+      'fBlockAmountWeaponMult',
+      'fBlockMax',
+      'fKnockbackTime',
+      'fKnockbackDamageMult',
+      'fKnockbackForceMax',
+      'fConcussionTimer',
+      'iStaggerAttackChance',
+    ] as const
+  ).map((name): [string, string] => [`Game settings (GMST)|${name}`, `open: ${CODE}`]),
+  ...(['iCombatDismemberPartChance', 'iCombatExplodePartChance'] as const).map(
+    (name): [string, string] => [
+      `Game settings (GMST)|${name}`,
+      'open: the limb roll keeps its defaults (dismemberment.ts); worked on with dismemberment',
+    ],
+  ),
 ]);
 
 /** The game setting name patterns of each area (the load order's GMSTs matching them). */
@@ -245,7 +288,7 @@ export async function aiCombatCompleteness(
     name: string,
     uses: number,
     where: string | undefined,
-    open = 'not read',
+    open = OPEN.get(`${part}|${name}`) ?? 'not read',
   ): void => {
     const alias = ALIASES.get(`${part}|${name}`);
     const found =
@@ -714,7 +757,7 @@ export async function aiCombatCompleteness(
           : name === undefined
             ? undefined
             : readIn(new RegExp(`\\bNavmeshFlag\\.${name}\\b`), NAVMESH_FILES),
-        name === undefined ? 'no name (unknown bit)' : 'not read',
+        name === undefined ? 'no name (unknown bit)' : undefined,
       );
     }
     flags(

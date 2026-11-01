@@ -388,6 +388,8 @@ interface Mind {
   nextAttack: number;
   /** When it last attacked, shot or cast (its clock; undefined: not yet in this fight). */
   lastAttack: number | undefined;
+  /** When it last power attacked (its clock; undefined: not yet in this fight). */
+  lastPowerAttack: number | undefined;
   /** When it was last hurt (a blow landed or blocked; undefined: not in this fight). */
   damagedAt: number | undefined;
   /** How long it holds its bow drawn this shot (seconds). */
@@ -1017,6 +1019,7 @@ export class ActorCombatAi {
         nextAim: 0,
         nextAttack: 0,
         lastAttack: undefined,
+        lastPowerAttack: undefined,
         damagedAt: undefined,
         bowHold: 0,
         blockUntil: 0,
@@ -2701,7 +2704,9 @@ export class ActorCombatAi {
     const asked = this.#clock;
     const mind = f.mind;
     void this.#options.host.attack(mind.reference, action).then((began) => {
-      if (began) mind.lastAttack = asked;
+      if (!began) return;
+      mind.lastAttack = asked;
+      if (action.includes('PowerAttack')) mind.lastPowerAttack = asked;
     });
     return 'success';
   }
@@ -3265,6 +3270,10 @@ export class ActorCombatAi {
                 powerChance: gear?.powerChance ?? 0,
                 ...f.opponent,
                 sinceLastAttack: sinceLast(f),
+                sinceLastPowerAttack:
+                  f.mind.lastPowerAttack === undefined
+                    ? undefined
+                    : this.#clock - f.mind.lastPowerAttack,
               },
               this.#random,
               this.#settings,
