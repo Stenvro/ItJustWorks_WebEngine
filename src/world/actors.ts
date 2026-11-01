@@ -27,7 +27,7 @@ import {
   RaceFlag,
   TemplateFlag,
 } from './actor-records.ts';
-import { resolveActorTemplates } from './actor-templates.ts';
+import { resolveActorTemplates, type ActorTemplates } from './actor-templates.ts';
 import { pickLeveled, seededRandom } from './leveled.ts';
 import { headNode, parseBodyPartData, torsoNode, type BodyPart } from './body-part-data.ts';
 import type { RecordDatabase } from './record-db.ts';
@@ -338,8 +338,25 @@ export class ActorResolver {
   readonly #addons = new Map<number, ArmorAddonRecord | undefined>();
   readonly #headParts = new Map<number, HeadPartRecord | undefined>();
 
+  /**
+   * The NPC_ a reference's leveled lists came down to as a save keeps it (ActorState
+   * leveledBase), set by whoever runs the game; none: drawn by the reference's seed.
+   */
+  leveledPick: (reference: number) => number | undefined = () => undefined;
+
   constructor(db: RecordDatabase) {
     this.#db = db;
+  }
+
+  #templates(base: number, reference: number, level: number): Promise<ActorTemplates | undefined> {
+    return resolveActorTemplates(
+      (id) => this.#db.get(id),
+      base,
+      reference,
+      level,
+      undefined,
+      this.leveledPick(reference),
+    );
   }
 
   /** An NPC_'s creature sounds: its own, else those of the NPC_ it inherits them from (CSCR). */
@@ -528,7 +545,7 @@ export class ActorResolver {
    * (none of its outfit, head or face read): what the actors away ask (src/shell/actors-away.ts).
    */
   async mind(base: number, reference: number, level = 1): Promise<ActorMind | undefined> {
-    const templates = await resolveActorTemplates((id) => this.#db.get(id), base, reference, level);
+    const templates = await this.#templates(base, reference, level);
     if (!templates) return undefined;
     const npc = async (formId: number): Promise<NpcRecord | undefined> => {
       const record = await this.#db.get(formId);
@@ -563,7 +580,7 @@ export class ActorResolver {
     level = 1,
     overrides: LookOverrides = {},
   ): Promise<ActorLook | undefined> {
-    const templates = await resolveActorTemplates((id) => this.#db.get(id), base, reference, level);
+    const templates = await this.#templates(base, reference, level);
     if (!templates) return undefined;
     const npc = async (formId: number): Promise<NpcRecord | undefined> => {
       const record = await this.#db.get(formId);

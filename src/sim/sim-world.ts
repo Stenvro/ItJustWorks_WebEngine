@@ -1734,6 +1734,11 @@ export class SimWorld {
       this.stage.talk.randomSceneStarts(scene, first, second),
     facesForLine: (speaker, target) => this.stage.talk.faces(speaker, target),
     saveActors: () => this.stage.saveActors(),
+    noteMovedObjects: () => {
+      for (const cell of this.#cells.values()) {
+        if (cell.scriptsAttached) noteMoved(cell.placed, this.runtime.state);
+      }
+    },
     savePlayerGraphs: () => this.stage.savePlayerGraphs(),
     savePlayer: () => this.stage.savePlayer(),
     saveProjectiles: () => this.stage.projectiles.save(),

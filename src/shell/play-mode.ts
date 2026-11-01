@@ -70,7 +70,7 @@ import { SaveManager } from './save-manager.ts';
 import { LoadWaitSpinner } from './load-wait-spinner.ts';
 import { tryLock } from './lock-picking.ts';
 import { gameDaysText, IMPORT_ESS_TEXT, SAVE_SCREENSHOT_IMAGE, SaveList } from './save-list.ts';
-import type { GameSave } from '../save/game-save.ts';
+import { restoreAmbience, type GameSave } from '../save/game-save.ts';
 import { essWorld } from '../save/ess-import.ts';
 import type { SaveHeader } from '../save/save-codec.ts';
 
@@ -592,9 +592,8 @@ export class PlayMode {
     this.#loadingMenu = undefined;
     this.#mist?.hide();
     this.#mist = undefined;
-    // A loaded game's sky as it was saved.
-    if (load?.save.weather !== undefined)
-      runtime.world.setWeather?.(load.save.weather, true, false, false);
+    // A loaded game's sky and music as they were saved.
+    if (load) restoreAmbience(runtime, load.save);
     // In the game: its HUD, its compass.
     // Its enemies: those fighting the player on the actor stage (src/shell/actor-combat.ts).
     const compass = new Compass(session, () => this.#world.enemies?.() ?? []);

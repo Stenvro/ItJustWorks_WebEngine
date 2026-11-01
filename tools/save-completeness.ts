@@ -55,13 +55,16 @@ const GLOBAL_DATA: Readonly<Record<number, readonly [boolean, string]>> = {
   3: [true, 'global variables, GameDaysPassed sets the clock'],
   4: [false, 'created objects: made potions, poisons, enchantments (none in the saves read)'],
   5: [false, 'effects: image space modifiers running (not applied)'],
-  6: [false, "weather: the current weather only (the transition, the sky's other fields not)"],
-  7: [false, 'audio: the music playing (not applied)'],
+  6: [true, 'weather: the current, outgoing, override and default weathers, when it came'],
+  7: [true, 'audio: the music types in play (the location type follows from the place)'],
   8: [false, 'sky cells (not applied)'],
   100: [false, 'process lists: crimes being reported (not applied)'],
   101: [false, 'combat: the combat groups and their searches (not applied)'],
-  102: [false, 'interface: help messages shown, the HUD (not applied)'],
-  103: [false, 'actor causes (not applied)'],
+  102: [
+    false,
+    'interface: help events done, last used applied; the help messages shown (meaning: TODO(M13))',
+  ],
+  103: [true, "actor causes: the actor each reference's ActorCause extra blames"],
   104: [false, 'unknown 104'],
   105: [false, 'detection manager (not applied)'],
   106: [false, 'location metadata (not applied)'],
@@ -141,7 +144,12 @@ async function essPart(): Promise<void> {
     add('ess change forms', line, !skipped.has(line), `${String(count)} forms`);
   }
   for (const line of skipped) {
-    if (line.includes('TODO') || line.startsWith('papyrus') || line.includes('unreadable')) {
+    if (
+      line.includes('TODO') ||
+      line.startsWith('papyrus') ||
+      line.includes('unreadable') ||
+      line.includes(' not applied')
+    ) {
       add('ess other', line, false, 'listed by the import');
     }
   }

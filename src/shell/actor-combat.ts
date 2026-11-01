@@ -209,6 +209,12 @@ const WEAPON_ANSWER = 4;
 const DEAD_REFUSALS = 8;
 /** Fighters this far from the player are left alone (the high process's reach). */
 const FIGHT_REACH = 4096;
+/**
+ * How long an actor told to fight beyond the reach stays a fighter to take the fight up.
+ * TODO(M13): the original's rule for a fight told to an actor outside the high process is not
+ * known; a short window lets a loaded save's distant fighters take theirs up.
+ */
+const JOIN_SECONDS = 5;
 /** How often a fighter's perks' graph variables are read again (seconds). */
 const PERK_VARIABLE_SECONDS = 1;
 /** How wide a flying arrow is to those it may hit and who dodge it (units). */
@@ -459,6 +465,12 @@ const describe = (error: unknown): string =>
 export class ActorCombat implements CombatBridge {
   readonly #options: ActorCombatOptions;
   readonly #fighters = new Map<number, Fighter>();
+  /**
+   * Actors told to fight while beyond the fighters' reach of the player (a loaded save's
+   * actors in combat: the original keeps them in its high process, fighting wherever they
+   * are), with the seconds they stay fighters to take the fight up.
+   */
+  readonly #joining = new Map<number, number>();
   /** The NPC archers' Archery, as read when they draw. */
   readonly #archery = new Map<number, number>();
   /** The graph variables each fighter's perks set (Set Boolean Graph Variable), when read. */
@@ -819,7 +831,13 @@ export class ActorCombat implements CombatBridge {
 
   /** `modifier`: a loaded save's fight keeps the confidence modifier it drew. */
   startCombat(actor: number, target: number, modifier?: number): void {
-    if (actor === target || !this.#fighters.has(actor)) return;
+    if (actor === target) return;
+    // Not a fighter yet (too far from the player): it is one from the next frame, and is
+    // told again (a loaded save's fight is told for some seconds: actor-stage.ts).
+    if (!this.#fighters.has(actor)) {
+      if (actor !== PLAYER_REF) this.#joining.set(actor, JOIN_SECONDS);
+      return;
+    }
     this.#brain.startCombat(actor, target, modifier);
   }
 
@@ -1280,6 +1298,10 @@ export class ActorCombat implements CombatBridge {
     this.#clock += seconds;
     this.#readSettings();
     this.#listenToEquipment(runtime);
+    for (const [reference, left] of this.#joining) {
+      if (left <= seconds || this.engaged(reference)) this.#joining.delete(reference);
+      else this.#joining.set(reference, left - seconds);
+    }
     const seen = new Set<number>();
     for (const staged of this.#options.actors()) {
       if (staged.dead || staged.visibility.hidden) continue;
@@ -1290,7 +1312,8 @@ export class ActorCombat implements CombatBridge {
         !focus ||
         Math.hypot(staged.position[0] - focus[0], staged.position[1] - focus[1]) < FIGHT_REACH ||
         this.engaged(staged.reference) ||
-        this.#options.movers.inHighProcess(staged.reference);
+        this.#options.movers.inHighProcess(staged.reference) ||
+        this.#joining.has(staged.reference);
       if (!near) continue;
       seen.add(staged.reference);
       let fighter = this.#fighters.get(staged.reference);

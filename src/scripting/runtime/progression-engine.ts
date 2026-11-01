@@ -578,6 +578,9 @@ export class ProgressionEngine {
    */
   async encounterZone(reference: number): Promise<number | undefined> {
     const forms = this.#runtime.forms;
+    // The zone the game gave it (a save's ExtraEncounterZone) wins.
+    const given = this.#runtime.state.references.get(reference)?.encounterZone;
+    if (given !== undefined) return given;
     const own = this.#runtime.state.created.has(reference)
       ? undefined
       : (await forms.record(reference))?.formIdField('XEZN');

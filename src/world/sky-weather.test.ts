@@ -105,6 +105,36 @@ describe('sky weather', () => {
     expect(sky.transition).toBe(1);
   });
 
+  it('keeps a change under way in a save, and goes on with it where it was', () => {
+    const h = host();
+    const sky = skyWith(CLEAR, h);
+    sky.setWeather(RAIN, true, false);
+    sky.frame();
+    h.now += CHANGE * 0.4;
+    sky.frame();
+    const saved = sky.save();
+    expect(saved).toMatchObject({ current: RAIN, outgoing: CLEAR, override: RAIN });
+    // A fresh sky in the same region (none here) and at the same hour takes it up.
+    const again = new SkyWeather(h);
+    again.setClimate(climate);
+    if (saved) again.restore(saved);
+    expect(again.current).toBe(RAIN);
+    expect(again.outgoing).toBe(CLEAR);
+    expect(again.transition).toBeCloseTo(0.4, 5);
+    h.now += CHANGE * 0.3;
+    again.frame();
+    expect(again.transition).toBeCloseTo(0.7, 5);
+    expect(again.current).toBe(RAIN);
+    // A weather the regions chose (no override) stands too, not picked again at once.
+    const chosen = skyWith(CLEAR, h);
+    const kept = chosen.save();
+    const restored = new SkyWeather(h);
+    restored.setClimate({ ...climate, weathers: list([SNOW, 100]) });
+    if (kept) restored.restore(kept);
+    restored.frame();
+    expect(restored.current).toBe(CLEAR);
+  });
+
   it('lets a new weather wait for a change under way, and hurries it when asked', () => {
     const h = host();
     const sky = skyWith(CLEAR, h);
