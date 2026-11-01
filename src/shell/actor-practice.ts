@@ -19,8 +19,16 @@ import type { GameSession } from './game-session.ts';
 
 /** How long a step of a practice waits for the graph at most (seconds). */
 const STEP_LIMIT = 4;
-/** A drawn bow is held this long before it looses (seconds). TODO(M13): the engine's. */
-const BOW_HOLD = 0.6;
+/**
+ * A drawn bow is held before it looses for the shortest hold the combat AI gives one
+ * (fCombatRangedAttackHoldTimeAbsoluteMin, its built-in value here; seconds): a practice aims
+ * at nothing it must lead. Observed in the original: Helgen's archers (MQ101ArcherFireLokirPackage,
+ * started as Lokir runs) bring him down on the run; held 0.6 s as before, their first arrow
+ * came at his run's very end, in the browser after his package's end fragment had killed him.
+ * TODO(M13): the UseWeapon procedure's own hold.
+ */
+const BOW_HOLD = 0.1;
+const BOW_HOLD_SETTING = 'fCombatRangedAttackHoldTimeAbsoluteMin';
 /** An attack its graph refused is asked again this often (seconds: the combat tree's attack idle). */
 const ATTACK_RETRY = 0.25;
 /**
@@ -97,7 +105,8 @@ export class ActorPractice {
       if (!(await this.#begin(actor, action, ranged))) return false;
       if (ranged) {
         await this.#until(() => state()?.attack === AttackState.bowDrawn);
-        await this.#sleep(BOW_HOLD);
+        const settings = await this.#options.session.settings();
+        await this.#sleep(settings.number(BOW_HOLD_SETTING) ?? BOW_HOLD);
         if (barrage.aimOnly) continue;
         await combat.release(actor, 'ActionRightRelease');
       }
