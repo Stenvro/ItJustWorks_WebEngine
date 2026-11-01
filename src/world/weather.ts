@@ -115,7 +115,7 @@ export interface WeatherRecord {
   /** RFCT visual effect. */
   readonly visualEffect: number | undefined;
   readonly sounds: readonly { readonly sound: number; readonly type: number }[];
-  /** STAT records drawn in the sky (TNAM). */
+  /** STATs whose placed references the sky shows in this weather (TNAM; skyStaticShare). */
   readonly skyStatics: readonly number[];
   /** Aurora model (meshes\...), '' for none. */
   readonly aurora: string;
@@ -436,4 +436,26 @@ export function parseRegionWeather(record: WeatherSource): RegionWeather | undef
     }
   }
   return undefined;
+}
+
+/**
+ * How much of a sky static's placed references the sky shows (0..1): the current weather's
+ * share where its TNAM lists the static, the outgoing weather's where it lists it. The statics
+ * are not drawn at the camera: the world places them (1059 persistent, Full LOD references of
+ * the cloud banks round the mountains in vanilla) and the sky keeps those references and shows
+ * the ones its weathers list (the original's sky holds a list of its sky static references).
+ * TODO(M13): the original's fade curve over a weather change is unread; a linear share of the
+ * transition is taken, as for the clouds.
+ */
+export function skyStaticShare(
+  base: number,
+  current: { readonly skyStatics: readonly number[] } | undefined,
+  previous: { readonly skyStatics: readonly number[] } | undefined,
+  transition: number,
+): number {
+  if (!current) return 0;
+  const t = previous ? Math.max(0, Math.min(1, transition)) : 1;
+  const now = current.skyStatics.includes(base) ? t : 0;
+  const before = previous?.skyStatics.includes(base) === true ? 1 - t : 0;
+  return Math.min(1, now + before);
 }

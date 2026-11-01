@@ -327,7 +327,7 @@ an ordinary blow records, the lens flare's target sizes (#33), the First Person 
 | 39  | Clouds (layers, speeds, colours, alphas)                             | done   | sky.ts                                                                                                                                                                                                                                                                                                                                                                                                              |
 | 40  | Sun, sun glare, sun damage                                           | done   | sky.ts, sun-effects.ts                                                                                                                                                                                                                                                                                                                                                                                              |
 | 41  | Moons and their phases, stars                                        | done   | sky.ts                                                                                                                                                                                                                                                                                                                                                                                                              |
-| 42  | Aurora                                                               | done   | sky.ts                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 42  | Aurora                                                               | done   | sky.ts; sky-objects.ts (at the camera, behind everything)                                                                                                                                                                                                                                                                                                                                                           |
 | 43  | Lightning: procedural bolts and the flash                            | done   | lightning.ts                                                                                                                                                                                                                                                                                                                                                                                                        |
 | 44  | Precipitation (SPGD rain and snow)                                   | done   | precipitation.ts                                                                                                                                                                                                                                                                                                                                                                                                    |
 | 45  | Weather transitions                                                  | done   | sky-state.ts                                                                                                                                                                                                                                                                                                                                                                                                        |
@@ -880,57 +880,57 @@ model's shapes swaps nothing.
 
 ### Records: WTHR (108)
 
-| Item | Uses | Status | Where / why                               |
-| ---- | ---- | ------ | ----------------------------------------- |
-| 00TX | 95   | done   | read                                      |
-| 10TX | 95   | done   | read                                      |
-| 20TX | 43   | done   | read                                      |
-| 30TX | 95   | done   | read                                      |
-| 40TX | 28   | done   | read                                      |
-| 50TX | 28   | done   | read                                      |
-| 60TX | 28   | done   | read                                      |
-| 70TX | 28   | done   | read                                      |
-| 80TX | 70   | done   | read                                      |
-| 90TX | 70   | done   | read                                      |
-| :0TX | 64   | done   | read                                      |
-| ;0TX | 71   | done   | read                                      |
-| <0TX | 15   | done   | read                                      |
-| =0TX | 15   | done   | read                                      |
-| >0TX | 21   | done   | read                                      |
-| ?0TX | 30   | done   | read                                      |
-| @0TX | 35   | done   | read                                      |
-| A0TX | 15   | done   | read                                      |
-| B0TX | 13   | done   | read                                      |
-| C0TX | 29   | done   | read                                      |
-| D0TX | 31   | done   | read                                      |
-| DALC | 108  | done   | read                                      |
-| DATA | 108  | done   | read                                      |
-| E0TX | 35   | done   | read                                      |
-| F0TX | 35   | done   | read                                      |
-| FNAM | 108  | done   | read                                      |
-| G0TX | 15   | done   | read                                      |
-| H0TX | 9    | done   | read                                      |
-| HNAM | 93   | done   | read                                      |
-| I0TX | 7    | done   | read                                      |
-| IMSP | 108  | done   | read                                      |
-| J0TX | 7    | done   | read                                      |
-| JNAM | 108  | done   | read                                      |
-| K0TX | 40   | done   | read                                      |
-| L0TX | 92   | done   | read                                      |
-| LNAM | 108  | done   | weather.ts: the cloud layer count (29, 4) |
-| MNAM | 108  | done   | read                                      |
-| MODL | 38   | done   | read                                      |
-| MODT | 38   | n/a    | texture hashes                            |
-| NAM0 | 108  | done   | read                                      |
-| NAM1 | 108  | done   | read                                      |
-| NAM2 | 10   | done   | weather.ts: moon glare colours (FX)       |
-| NAM3 | 10   | done   | weather.ts: sun glare colours (FX)        |
-| NNAM | 108  | done   | read                                      |
-| PNAM | 108  | done   | read                                      |
-| QNAM | 108  | done   | read                                      |
-| RNAM | 108  | done   | read                                      |
-| SNAM | 36   | done   | read                                      |
-| TNAM | 87   | done   | read                                      |
+| Item | Uses | Status | Where / why                                                                                           |
+| ---- | ---- | ------ | ----------------------------------------------------------------------------------------------------- |
+| 00TX | 95   | done   | read                                                                                                  |
+| 10TX | 95   | done   | read                                                                                                  |
+| 20TX | 43   | done   | read                                                                                                  |
+| 30TX | 95   | done   | read                                                                                                  |
+| 40TX | 28   | done   | read                                                                                                  |
+| 50TX | 28   | done   | read                                                                                                  |
+| 60TX | 28   | done   | read                                                                                                  |
+| 70TX | 28   | done   | read                                                                                                  |
+| 80TX | 70   | done   | read                                                                                                  |
+| 90TX | 70   | done   | read                                                                                                  |
+| :0TX | 64   | done   | read                                                                                                  |
+| ;0TX | 71   | done   | read                                                                                                  |
+| <0TX | 15   | done   | read                                                                                                  |
+| =0TX | 15   | done   | read                                                                                                  |
+| >0TX | 21   | done   | read                                                                                                  |
+| ?0TX | 30   | done   | read                                                                                                  |
+| @0TX | 35   | done   | read                                                                                                  |
+| A0TX | 15   | done   | read                                                                                                  |
+| B0TX | 13   | done   | read                                                                                                  |
+| C0TX | 29   | done   | read                                                                                                  |
+| D0TX | 31   | done   | read                                                                                                  |
+| DALC | 108  | done   | read                                                                                                  |
+| DATA | 108  | done   | read                                                                                                  |
+| E0TX | 35   | done   | read                                                                                                  |
+| F0TX | 35   | done   | read                                                                                                  |
+| FNAM | 108  | done   | read                                                                                                  |
+| G0TX | 15   | done   | read                                                                                                  |
+| H0TX | 9    | done   | read                                                                                                  |
+| HNAM | 93   | done   | read                                                                                                  |
+| I0TX | 7    | done   | read                                                                                                  |
+| IMSP | 108  | done   | read                                                                                                  |
+| J0TX | 7    | done   | read                                                                                                  |
+| JNAM | 108  | done   | read                                                                                                  |
+| K0TX | 40   | done   | read                                                                                                  |
+| L0TX | 92   | done   | read                                                                                                  |
+| LNAM | 108  | done   | weather.ts: the cloud layer count (29, 4)                                                             |
+| MNAM | 108  | done   | read                                                                                                  |
+| MODL | 38   | done   | read                                                                                                  |
+| MODT | 38   | n/a    | texture hashes                                                                                        |
+| NAM0 | 108  | done   | read                                                                                                  |
+| NAM1 | 108  | done   | read                                                                                                  |
+| NAM2 | 10   | done   | weather.ts: moon glare colours (FX)                                                                   |
+| NAM3 | 10   | done   | weather.ts: sun glare colours (FX)                                                                    |
+| NNAM | 108  | done   | read                                                                                                  |
+| PNAM | 108  | done   | read                                                                                                  |
+| QNAM | 108  | done   | read                                                                                                  |
+| RNAM | 108  | done   | read                                                                                                  |
+| SNAM | 36   | done   | read                                                                                                  |
+| TNAM | 87   | done   | weather.ts skyStaticShare: the placed references of the listed sky statics are shown (sky-objects.ts) |
 
 ### Alternate textures (MODS)
 

@@ -427,19 +427,25 @@ changes like precipitation (Thunder Begin Fade In, End Fade Out). The interval's
 inferred: TODO(M13) compare with the original. Thunder sounds follow the flashes
 ([audio.md](../audio.md#ambience)).
 
-**Sky statics and aurora:** TNAM (87 weathers) lists STATs drawn in the sky — mostly the
-distant cloud banks `skyinv_clouddistant*.nif` (effect meshes about 11600 units across with
-scrolling cloud sheets: base colour scale 1.5, a palette, External_Emittance and
-Effect_Lighting), also Sovngarde's sky. Their light is the weather's sky statics colour
-(NAM0 13, by the hour: SkyrimCloudy 152,154,153 at 7:30, 218,215,236 at 13:00, 64,91,107 at
-20:00), not the sun and ambient light: lit by the sun (× the imagespace's sunlight scale) the
-96 overlapping sheets of a cloudy weather turned the whole sky a flat white of about 2.2; MODL (38 weathers, the
-`_A` variants among them) is the aurora, `skyskyrimaurora.nif`: three skinned effect
-shapes (rest pose) whose UV and alpha controllers make it ripple. Both follow the camera and
-fade with weather changes; the aurora also fades in from `fAuroraFadeInStart` to
-`fAutoraFadeIn` and out until `fAutoraFadeOut`, and with the flag `0x20` turns with the sun's
-heading. They are drawn without fog, scaled up (statics × 100, aurora × 3000) so they lie
-behind the landscape's LOD with the same angular size (`src/shell/sky-objects.ts`).
+**Sky statics and aurora:** TNAM (87 weathers, 160 distinct STATs) lists the sky statics —
+mostly the distant cloud banks `sky\clouddistant*.nif` / `sky\cloudshape*.nif` and their `INV_`
+variants (effect meshes about 11600 units across with scrolling cloud sheets: base colour scale
+1.5, a palette, External_Emittance and Effect_Lighting), also Sovngarde's sky. They are not
+models the sky draws: the world places them, 1059 persistent references (flags 0x10400: Is Full
+LOD) of 113 of the 160 bases, round the mountains at heights of 13000-17000 (by Helgen: 64162,
+-85325, 13139). The sky keeps those references (the original's sky holds a list of its sky
+static references) and shows the ones whose base the current weather lists, the outgoing
+weather's fading out over a change (`skyStaticShare` in `src/world/weather.ts`; the curve is
+inferred). Drawing every listed static's model round the camera instead piled a cloudy
+weather's 96 sheets about the view: straight-edged white planes across the sky that stayed put
+as the camera moved. Their light is the weather's sky statics colour (NAM0 13, by the hour:
+SkyrimCloudy 152,154,153 at 7:30, 218,215,236 at 13:00, 64,91,107 at 20:00), not the sun and
+ambient light. MODL (38 weathers, the `_A` variants among them) is the aurora,
+`skyskyrimaurora.nif`: three skinned effect shapes (rest pose) whose UV and alpha controllers
+make it ripple. It follows the camera, fades in from `fAuroraFadeInStart` to `fAutoraFadeIn`
+and out until `fAutoraFadeOut`, and with the flag `0x20` turns with the sun's heading; it is
+drawn without fog, scaled up × 3000 so it lies behind the landscape's LOD with the same angular
+size (`src/shell/sky-objects.ts`).
 
 ## Water
 

@@ -2357,25 +2357,28 @@ export class WorldViewer {
       ),
     );
     const placed: PlacedObject[] = [];
+    const sky = this.#sky;
     objects.forEach((object, i) => {
       const model = models[i];
       if (!model) return;
+      const entry = placeObject(
+        session,
+        object,
+        {
+          model,
+          collision: collisions[i],
+          water: waterTypes[i],
+          directional: directionals[i],
+        },
+        {
+          simulated,
+          ...(visibility && { visibility: visibility(object.reference) }),
+          sway: (swayed, swaying) => this.#treeSway(swayed, swaying),
+        },
+      );
+      // The weathers' sky statics (the cloud banks round the mountains) show as the sky has them.
       placed.push(
-        placeObject(
-          session,
-          object,
-          {
-            model,
-            collision: collisions[i],
-            water: waterTypes[i],
-            directional: directionals[i],
-          },
-          {
-            simulated,
-            ...(visibility && { visibility: visibility(object.reference) }),
-            sway: (swayed, swaying) => this.#treeSway(swayed, swaying),
-          },
-        ),
+        sky ? { ...entry, instance: sky.skyStaticInstance(entry.instance, object.base) } : entry,
       );
     });
     return placed;
