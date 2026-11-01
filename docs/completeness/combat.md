@@ -13,17 +13,17 @@ item with where it is read); docs/completeness/ai.md says when an item counts as
 mechanics part is kept by hand against docs/ai.md ("Combat", "Combat AI", "Flying") and the
 conformance suites (tests/conformance/combat/).
 
-## Count (2026-11-01, round 2)
+## Count (2026-11-01, round 3)
 
 | Part                     | Items | Done | Open |
 | ------------------------ | ----: | ---: | ---: |
 | Combat style (CSTY)      |    35 |   35 |    0 |
 | Attack data (ATKD, ATKE) |    16 |   16 |    0 |
-| Race combat (DATA, ATKR) |    15 |   11 |    4 |
+| Race combat (DATA, ATKR) |    15 |   15 |    0 |
 | Behaviour tree actions   |    63 |   63 |    0 |
-| Game settings            |   406 |  385 |   21 |
+| Game settings            |   406 |  387 |   19 |
 | Mechanics (by hand)      |    22 |   14 |    8 |
-| Total                    |   557 |  524 |   33 |
+| Total                    |   557 |  530 |   27 |
 
 Round 1 wrote the sweep and this list, and built down:
 
@@ -67,6 +67,35 @@ fConcussionTimer (40; Fallout's crippled-head concussion) have no documented use
 though Skyrim.esm sets values of its own for the first three; iStaggerAttackChance (50) is
 undocumented. These need the original's code read for them.
 
+Round 3 built down:
+
+- Acceleration and deceleration rates (171 races): an actor gains and loses speed at them, read
+  as the seconds from standing to its full run and from it to a stop, as its race's angular
+  acceleration rate is the seconds to its full turn rate (observed in the original): a person 1
+  and 1, a wolf 0.6 and 2, a deer 0.4 and 0.3, a giant or mammoth 3 and 3, a netch 5 and 5, the
+  dragons 0.01 (locomotion.ts rampSpeed). A turn's slowing and a stop stay at once.
+  TODO(M13): the unit is unconfirmed: no document gives it, and no locomotion clip of the
+  people's or the wolves' projects starts or stops (the clips' root motion is steady), so the
+  animations cannot settle it.
+- Angular tolerance (171 races: 5° for nearly all, the horkers 45°, one race 50°): standing, the
+  actor holds its facing until the heading it keeps is more than this off (with the
+  fDefaultAngleTolerance / fCombatAngleTolerance its movement asks; TODO(M13): the plain reading).
+- Use Advanced Avoidance (90 races): only these foresee where those moving near them will be
+  and keep right of one coming head-on; the others (wolves, bears, deer, horses) go round those
+  in their way as they stand now (avoidance.ts; TODO(M13): the plain reading of the name).
+- fPowerAttackCoolDownTime (Skyrim.esm 0): no power attack is chosen sooner than this after the
+  last (combat-tactics.ts chooseAttack). fPowerAttackDefaultBonus (1): a power attack without
+  attack data of its own (a paired kill move's) deals 1 + this times the damage, the 2 the
+  default power attack had (attacks.ts powerAttackDefault). Both their names' plain readings
+  (TODO(M13)).
+
+Looked for and not found (left open): fCombatSneakAttackBonusMult (100) and
+fCombatDamageBonusSneakingMult (2) are in no document; the sneak attack's documented rule is
+whole without them (the weapon kind's fCombatSneak*Mult × the perks × fDamageSneakAttackMult:
+src/gameplay/combat/damage.ts), so their use needs the original's code. The block, knockback
+and concussion settings and iStaggerAttackChance stay open for the same reason;
+iCombatDismemberPartChance and iCombatExplodePartChance are left to the dismemberment work.
+
 ## Combat style (CSTY)
 
 - [x] CSGD: offensive, defensive and group offensive mults, the six equipment score mults,
@@ -95,14 +124,12 @@ undocumented. These need the original's code read for them.
       acceleration, aim angle tolerance, flight radius.
 - [x] Allow Mounted Combat (the three dragon races) and fMountedMaxLookingDown (round 2, above).
 - [x] Non-Hostile (13 races): no threat to the player (round 2, above).
-- [ ] Use Advanced Avoidance (90 races: the people, the undead, trolls, giants, atronachs, the
-      dwarven machines, mudcrabs, frostbite spiders; not the wolves, bears, deer, horses): not
-      read. What "advanced" avoidance is beside the plain one (src/ai/avoidance.ts) is not
-      documented.
-- [ ] Acceleration and deceleration rates, angular tolerance (171 races): declared for the
-      movers (movement-types.ts RaceMovement), not read. The values (people 1 and 1, wolves 0.6
-      and 2, dragons 0.01) read as seconds to full speed and to a stop, by analogy with the
-      angular rate (1 / rate, observed in the original), but that is not confirmed.
+- [x] Use Advanced Avoidance (90 races: the people, the undead, trolls, giants, atronachs, the
+      dwarven machines, mudcrabs, frostbite spiders; not the wolves, bears, deer, horses): they
+      foresee others' movement (round 3, above; the plain reading).
+- [x] Acceleration and deceleration rates, angular tolerance (171 races): the movers gain and
+      lose speed at them, hold their facing within it (round 3, above; the rates' unit
+      TODO(M13)).
 
 ## Behaviour tree
 
@@ -115,18 +142,19 @@ The load order's combat settings (120: fCombat*, stagger, block, bash, power att
 kill camera, bleedout, confidence, flee, sneak damage, death force, bows, projectiles, mounted)
 and 286 built-in ones the readers ask for by name.
 
-- [x] 99 of 120 plugin settings (7 of them inert: never read, or an earlier game's grenades and
-      mines) and all 286 built-in ones; round 2: fMountedMaxLookingDown.
-- [ ] fPowerAttackCoolDownTime (0), fPowerAttackDefaultBonus (1): not read.
-- [ ] iStaggerAttackChance (50): not read; undocumented (round 2, above).
-- [ ] fKnockbackTime, fKnockbackDamageMult, fKnockbackForceMax, fConcussionTimer: not read; no
-      documented use in this game (round 2, above).
+- [x] 101 of 120 plugin settings (7 of them inert: never read, or an earlier game's grenades and
+      mines) and all 286 built-in ones; round 2: fMountedMaxLookingDown; round 3:
+      fPowerAttackCoolDownTime, fPowerAttackDefaultBonus.
+- [ ] iStaggerAttackChance (50): needs the original's code: undocumented (round 2, above).
+- [ ] fKnockbackTime, fKnockbackDamageMult, fKnockbackForceMax, fConcussionTimer: needs the
+      original's code: no documented use in this game (round 2, above).
 - [ ] fKillCamBaseOdds (1): not read (the kill moves' odds are the INI's and the perks').
-- [ ] fBlockSkillMult, fBlockAmountWeaponMult, fBlockMax (0.7): not read; in none of UESP's
-      measured block formulas (round 2, above; combat-settings.ts TODO(M13)).
-- [ ] fCombatSneakAttackBonusMult (100), fCombatDamageBonusSneakingMult (2): not read.
+- [ ] fBlockSkillMult, fBlockAmountWeaponMult, fBlockMax (0.7): needs the original's code; in
+      none of UESP's measured block formulas (round 2, above; combat-settings.ts TODO(M13)).
+- [ ] fCombatSneakAttackBonusMult (100), fCombatDamageBonusSneakingMult (2): needs the
+      original's code: in no document, the sneak attack's rule whole without them (round 3).
 - [ ] iCombatDismemberPartChance, iCombatExplodePartChance: the limb roll keeps its defaults
-      (dismemberment.ts), the load order's values are not read.
+      (dismemberment.ts), the load order's values are not read; left to the dismemberment work.
 - [ ] fCombatPlayerLimbDamageMult, fCombatFollowRadiusMult, fAIUseWeaponDistance (15000),
       fCombatThreatProximityExplosionAvoidTime, fDeathForceSpellImpactMult,
       fBowZoomStaminaDrainMult: not read.
@@ -160,11 +188,10 @@ and 286 built-in ones the readers ask for by name.
 
 ## Next biggest
 
-1. The race's acceleration and deceleration rates and angular tolerance (171 races) and Use
-   Advanced Avoidance (90 races): the movers' rules.
-2. The block and knockback settings (fBlockSkillMult, fBlockAmountWeaponMult, fBlockMax,
-   fKnockback\*, fConcussionTimer) and iStaggerAttackChance: no document has their use; the
-   original's code must be read for them.
-3. iCombatDismemberPartChance and iCombatExplodePartChance (dismemberment.ts).
-4. The sneak attack settings (fCombatSneakAttackBonusMult, fCombatDamageBonusSneakingMult) and
-   the power attack ones (fPowerAttackCoolDownTime, fPowerAttackDefaultBonus).
+1. The block, knockback, concussion and sneak bonus settings and iStaggerAttackChance (11): no
+   document has their use; the original's code must be read for them.
+2. iCombatDismemberPartChance and iCombatExplodePartChance (dismemberment.ts).
+3. fCombatPlayerLimbDamageMult, fCombatFollowRadiusMult, fAIUseWeaponDistance,
+   fCombatThreatProximityExplosionAvoidTime, fDeathForceSpellImpactMult,
+   fBowZoomStaminaDrainMult, fKillCamBaseOdds.
+4. The rates' unit (acceleration, deceleration) and what the advanced avoidance adds.

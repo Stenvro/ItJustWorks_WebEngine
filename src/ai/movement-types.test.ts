@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MovementType } from '../world/movement.ts';
-import { MovementCatalog, type RaceMovement } from './movement-types.ts';
+import { MovementCatalog, withTurning, type RaceMovement } from './movement-types.ts';
 
 const type = (formId: number, name: string, forward: number): MovementType => ({
   formId,
@@ -39,8 +39,32 @@ const race = (overrides: Partial<RaceMovement>): RaceMovement => ({
   decelerationRate: 0,
   angularAccelerationRate: 0,
   aimAngleTolerance: 0,
+  angularTolerance: 0,
+  flags: 0,
+  flags2: 0,
   size: 1,
   ...overrides,
+});
+
+describe('the race DATA movement fields', () => {
+  it('gives its acceleration and deceleration rates and angular tolerance (radians)', () => {
+    const wolf = race({ accelerationRate: 0.6, decelerationRate: 2, angularTolerance: 5 });
+    const types = catalog.forActor(wolf, undefined);
+    expect(types?.acceleration).toBeCloseTo(0.6);
+    expect(types?.deceleration).toBe(2);
+    expect(types?.angularTolerance).toBeCloseTo((5 * Math.PI) / 180);
+  });
+
+  it('turns at fActorDefaultTurningSpeed where a movement type gives no rate', () => {
+    // The cows' swimming type turns at 0 while moving; the dragons' perching at 0 everywhere.
+    const still = { ...DEFAULT, rotateInPlace: { walk: 0, run: 1 }, rotateWhileMoving: 0 };
+    const turned = withTurning(still, 2 * Math.PI);
+    expect(turned.rotateWhileMoving).toBeCloseTo(2 * Math.PI);
+    expect(turned.rotateInPlace).toEqual({ walk: 2 * Math.PI, run: 1 });
+    expect(withTurning(DEFAULT, 2 * Math.PI)).toBe(DEFAULT);
+    const perching = new MovementCatalog([still], { walk: still.formId });
+    expect(perching.forActor(race({}), undefined, 3)?.walk.rotateWhileMoving).toBe(3);
+  });
 });
 
 describe('MovementCatalog.forActor', () => {

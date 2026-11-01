@@ -266,6 +266,15 @@ describe('settings', () => {
     expect(greetingHolds([0, 0, 0], undefined, VANILLA_TALK)).toBe(false);
   });
 
+  it('lets a greeting go after fAIInDialogueModewithPlayerTimer', () => {
+    expect(VANILLA_TALK.greetingHoldTimer).toBe(60);
+    const settings = talkSettings((name) =>
+      name === 'fAIInDialogueModewithPlayerTimer' ? 10 : undefined,
+    );
+    expect(greetingHolds([0, 0, 0], [100, 0, 0], settings, 9)).toBe(true);
+    expect(greetingHolds([0, 0, 0], [100, 0, 0], settings, 10)).toBe(false);
+  });
+
   it('starts a scene line by the speaker turning, 80 degrees while it moves', () => {
     const s = VANILLA_TALK;
     expect(sceneLineFaces({ offDegrees: 30, speed: 0, turning: true }, s)).toBe(false);

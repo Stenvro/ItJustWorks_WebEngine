@@ -55,7 +55,7 @@ import {
   attackEventKind,
   chooseAttackData,
   DEFAULT_ATTACK,
-  POWER_ATTACK_DEFAULT,
+  powerAttackDefault,
   rotatesThrough,
 } from '../gameplay/combat/attacks.ts';
 import type { AttackData } from '../ai/race-combat-records.ts';
@@ -3889,7 +3889,9 @@ export class ActorCombat implements CombatBridge {
   #attackData(fighter: Fighter, event: string): AttackData {
     const data = fighter.gear?.attacks.of(event);
     if (data) return data;
-    return event.toLowerCase().startsWith(PAIRED_PREFIX) ? POWER_ATTACK_DEFAULT : DEFAULT_ATTACK;
+    return event.toLowerCase().startsWith(PAIRED_PREFIX)
+      ? powerAttackDefault(this.#settings.powerAttackDefaultBonus)
+      : DEFAULT_ATTACK;
   }
 
   /** Stamina for a power attack or bash (the skill progression's costs). */

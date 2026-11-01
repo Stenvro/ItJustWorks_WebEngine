@@ -160,6 +160,23 @@ export interface AiSettings {
   readonly processListsUpdateTimeMax: number;
   readonly processListsUpdateLowFrameRate: number;
   readonly processListsUpdateHighFrameRate: number;
+  /** fActorDefaultTurningSpeed: the turn rate where a movement type gives none (rad/s). */
+  readonly actorDefaultTurningSpeed: number;
+  /**
+   * fJogInterpolationBetweenWalkAndRun: a package's jog goes this share of the way from its
+   * walking speed to its running speed (0.65).
+   */
+  readonly jogInterpolation: number;
+  /**
+   * fFurnitureMarkerAngleTolerance: one about to enter furniture begins once it faces the way
+   * its enter begins within this (degrees). TODO(M13): the plain reading of the name.
+   */
+  readonly furnitureMarkerAngleTolerance: number;
+  /**
+   * fAIForceGreetingTimer: a force greeter at the player whose greeting could not begin (the
+   * player busy) tries again after this (seconds). TODO(M13): the plain reading of the name.
+   */
+  readonly forceGreetingTimer: number;
 }
 
 /** The sandbox's activity kinds, in the engine's order (its settings tables by kind). */
@@ -251,6 +268,11 @@ const SETTINGS: readonly (readonly [keyof AiSettings, string, number])[] = [
   ['processListsUpdateTimeMax', 'fProcessListsUpdateTimeMax:General', 5],
   ['processListsUpdateLowFrameRate', 'fProcessListsUpdateLowFrameRate:General', 10],
   ['processListsUpdateHighFrameRate', 'fProcessListsUpdateHighFrameRate:General', 30],
+  // TODO(M13): the engine's built-in values of these four (Skyrim.esm's here).
+  ['actorDefaultTurningSpeed', 'fActorDefaultTurningSpeed', 2 * Math.PI],
+  ['jogInterpolation', 'fJogInterpolationBetweenWalkAndRun', 0.65],
+  ['furnitureMarkerAngleTolerance', 'fFurnitureMarkerAngleTolerance', 10],
+  ['forceGreetingTimer', 'fAIForceGreetingTimer', 3],
 ];
 
 /** The settings by kind (fSandboxDurationMultSitting, ...), the load order's values first. */

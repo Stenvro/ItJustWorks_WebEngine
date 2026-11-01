@@ -3,7 +3,8 @@
 // the links into neighbouring meshes and over ledges), then pulled tight through the edges it
 // crosses (the funnel), kept the actor's radius from their ends. Triangles flagged for no large
 // creatures are left to the others; water costs more to those that do not swim; preferred
-// triangles (roads) cost less; the doors on the way are listed for the actor to open.
+// triangles (roads) cost less, more to those that keep off roads; the doors on the way are listed
+// for the actor to open, those it cannot open closed.
 // Platform-independent.
 
 import {
@@ -54,6 +55,10 @@ export interface PathOptions {
   readonly limit?: number;
   /** Doors it cannot pass (locked to it): their triangles are closed. */
   readonly closedDoors?: ReadonlySet<number>;
+  /** Doors shut to it now (it cannot open doors: RACE DATA Can't Open Doors): closed as those. */
+  readonly closedDoor?: (door: number) => boolean;
+  /** It keeps off roads (RACE DATA Avoids Roads): preferred triangles cost it more. */
+  readonly avoidsRoads?: boolean;
   /**
    * Places it cannot pass (a door the navmesh does not mark, locked to it): the triangles whose
    * middle lies within each place's radius are closed.
@@ -96,6 +101,11 @@ export interface NavPath {
 const WATER_COST = 4;
 /** Preferred triangles (roads) cost this share of their length. */
 const PREFERRED_COST = 0.5;
+/**
+ * Preferred triangles (roads) cost this many times their length to those that keep off roads
+ * (RACE DATA Avoids Roads). TODO(M13): the engine's own cost is not documented.
+ */
+export const ROAD_AVOID_COST = 2;
 /** A ledge costs this much more than its length (a jump or a drop). */
 const LEDGE_COST = 256;
 /** The default search limit (triangles). */
@@ -247,11 +257,25 @@ function obstacleIndex(
 }
 
 /** What it costs to enter a triangle along `length` (its flags against the actor). */
+/** Whether a triangle is a door's that is closed to the actor (locked to it, shut to it). */
+function doorClosed(
+  navmesh: Navmesh,
+  triangle: number,
+  options: Pick<PathOptions, 'closedDoors' | 'closedDoor'>,
+): boolean {
+  if (!options.closedDoors?.size && !options.closedDoor) return false;
+  const door = doorOf(navmesh, triangle);
+  if (door === undefined) return false;
+  return options.closedDoors?.has(door) === true || options.closedDoor?.(door) === true;
+}
+
 function enterCost(flags: number, length: number, options: PathOptions): number {
   if (options.large === true && (flags & NavmeshFlag.noLargeCreatures) !== 0) return Infinity;
   let cost = length;
   if ((flags & NavmeshFlag.water) !== 0 && options.swims !== true) cost *= WATER_COST;
-  else if ((flags & NavmeshFlag.preferred) !== 0) cost *= PREFERRED_COST;
+  else if ((flags & NavmeshFlag.preferred) !== 0) {
+    cost *= options.avoidsRoads === true ? ROAD_AVOID_COST : PREFERRED_COST;
+  }
   return cost;
 }
 
@@ -328,8 +352,7 @@ export function findPath(
       const target = navmesh.triangles[triangle];
       if (!target || (target.flags & NavmeshFlag.deleted) !== 0) continue;
       // A door it cannot pass closes its triangles.
-      const door = options.closedDoors?.size ? doorOf(navmesh, triangle) : undefined;
-      if (door !== undefined && options.closedDoors?.has(door) === true) continue;
+      if (doorClosed(navmesh, triangle, options)) continue;
       if (options.blocked?.length && isBlocked(navmesh, triangle, options.blocked)) continue;
       const neighbourKey = keyOf(navmesh.formId, triangle);
       if (
@@ -803,7 +826,7 @@ export function randomReachablePoint(
   radius: number,
   least: number,
   random: () => number,
-  options: Pick<PathOptions, 'large' | 'closedDoors' | 'obstacles'> = {},
+  options: Pick<PathOptions, 'large' | 'closedDoors' | 'closedDoor' | 'obstacles'> = {},
 ): Vec3 | undefined {
   const start = set.locate(from);
   if (!start) return undefined;
@@ -850,8 +873,7 @@ export function randomReachablePoint(
       const target = next.triangles[index];
       if (!target || (target.flags & NavmeshFlag.deleted) !== 0) continue;
       if (!Number.isFinite(enterCost(target.flags, 1, { radius: 0, ...options }))) continue;
-      const door = options.closedDoors?.size ? doorOf(next, index) : undefined;
-      if (door !== undefined && options.closedDoors?.has(door) === true) continue;
+      if (doorClosed(next, index, options)) continue;
       if (obstacles?.covers(triangleCentre(next, index))) continue;
       queue.push({ navmesh: next, triangle: index });
     }

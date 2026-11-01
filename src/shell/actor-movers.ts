@@ -48,6 +48,12 @@ import {
 import { obstaclesTouch, type NavmeshObstacleField } from '../ai/navmesh-obstacles.ts';
 import type { TravelOptions } from '../ai/package-runtime.ts';
 import { RaceSize } from '../ai/race-combat-records.ts';
+import {
+  raceAdvancedAvoidance,
+  raceAvoidsRoads,
+  raceImmobile,
+  racePushable,
+} from '../ai/race-ai-flags.ts';
 import type { MovementTypes } from '../ai/locomotion.ts';
 import { MovementCatalog, type RaceMovement } from '../ai/movement-types.ts';
 import { parseNif } from '../formats/nif/nif.ts';
@@ -235,6 +241,8 @@ export interface ActorMoversOptions {
   readonly openDoor?: (door: number, actor: number) => DoorPassage | undefined;
   /** The doors found shut to an actor lately (its paths keep off them), and where they are. */
   readonly shutTo?: (actor: number) => ReadonlySet<number>;
+  /** Whether a door is shut to an actor that cannot open doors (its paths keep off it). */
+  readonly closedTo?: (door: number, actor: number) => boolean;
   /**
    * Whether the package an actor runs lets it swim (PKDT Allow Swimming): only then does one of
    * a race that swims cross water as readily as land. Without the option: it may.
@@ -304,6 +312,8 @@ interface Travel {
   /** A destination that moves, and its speed against its gait's (TravelOptions). */
   readonly moving: TravelOptions['moving'];
   readonly speedMult: TravelOptions['speedMult'];
+  /** Its pace (a jogging package's: TravelOptions). */
+  readonly pace: number | undefined;
   /** How long others in its way have kept it from going on (seconds), and the last that did. */
   blockedFor: number;
   blockedBy: AvoidNode | undefined;
@@ -517,6 +527,9 @@ export class ActorMovers {
     options: TravelOptions = {},
   ): Promise<boolean> {
     this.#travels.get(reference)?.done(false);
+    // One its race keeps from moving (RACE DATA Immobile: the mannequins) goes nowhere.
+    const staged = (this.#movers.get(reference) ?? this.#walkers.get(reference))?.staged;
+    if (staged && raceImmobile(staged.placed.look.raceFlags)) return Promise.resolve(false);
     const going = this.#arrived.get(reference);
     this.#arrived.delete(reference);
     if (going) this.#requests.set(reference, going);
@@ -537,6 +550,7 @@ export class ActorMovers {
         blocked: [],
         moving: options.moving,
         speedMult: options.speedMult,
+        pace: options.pace,
         blockedFor: 0,
         blockedBy: undefined,
         askedPlayer: false,
@@ -641,6 +655,7 @@ export class ActorMovers {
             (mover.staged.placed.look.raceFlags & RaceFlag.swims) !== 0 &&
             this.#options.swimAllowed?.(reference) !== false,
           closedDoors: this.#closedFor(reference, travel),
+          ...this.#raceRules(reference, mover.staged),
           blocked: this.#blockedFor(reference, travel),
           ...(travel.blockedBy && { avoid: [travel.blockedBy] }),
           obstacles: this.#options.obstacles?.index,
@@ -836,8 +851,18 @@ export class ActorMovers {
     if (other && otherTravel) {
       if (this.#reactions.has(other.staged.reference)) return;
       const first = givesWay(
-        { reference, gait: GAIT_RANK[travel.gait], mover },
-        { reference: other.staged.reference, gait: GAIT_RANK[otherTravel.gait], mover: other },
+        {
+          reference,
+          gait: GAIT_RANK[travel.gait],
+          pushable: racePushable(mover.staged.placed.look.raceFlags),
+          mover,
+        },
+        {
+          reference: other.staged.reference,
+          gait: GAIT_RANK[otherTravel.gait],
+          pushable: racePushable(other.staged.placed.look.raceFlags),
+          mover: other,
+        },
       ).mover;
       const second = first === mover ? other : mover;
       if (this.#giveWay(first, second) || this.#giveWay(second, first)) return;
@@ -862,8 +887,14 @@ export class ActorMovers {
     travel.follower = undefined;
   }
 
-  /** A request on its way at the travel's speed (a follower matching its leader's). */
+  /**
+   * A request on its way at the travel's speed (a follower matching its leader's) and pace (a
+   * jogging package's, on the run's gait).
+   */
   #paced(types: MovementTypes | undefined, travel: Travel, request: MoveRequest): MoveRequest {
+    if (travel.pace !== undefined && request.gait === 'run' && request.pace === undefined) {
+      request = { ...request, pace: travel.pace };
+    }
     if (!travel.speedMult || !types) return request;
     const type =
       request.gait === 'walk'
@@ -1024,6 +1055,21 @@ export class ActorMovers {
   ): readonly { readonly at: Vec3; readonly radius: number }[] {
     const lately = this.#options.shutPlaces?.(reference) ?? [];
     return lately.length === 0 ? travel.blocked : [...travel.blocked, ...lately];
+  }
+
+  /**
+   * What its race asks of its paths: the doors shut now closed to one that cannot open doors,
+   * the roads costing more to one that keeps off them (RACE DATA flags: race-ai-flags.ts).
+   */
+  #raceRules(
+    reference: number,
+    staged: StagedActor,
+  ): { closedDoor?: (door: number) => boolean; avoidsRoads: boolean } {
+    const closedTo = this.#options.closedTo;
+    return {
+      ...(closedTo && { closedDoor: (door: number) => closedTo(door, reference) }),
+      avoidsRoads: raceAvoidsRoads(staged.placed.look.raceFlags),
+    };
   }
 
   /** The doors an actor's search keeps off: those shut to it on this way and lately. */
@@ -1483,6 +1529,8 @@ export class ActorMovers {
       const mover = this.#movers.get(owner.reference);
       if (!mover || this.#reactions.has(owner.reference)) continue;
       const staged = mover.staged;
+      // One its race keeps from being pushed (Not Pushable: the dragons) does not react.
+      if (!racePushable(staged.placed.look.raceFlags)) continue;
       const dx = staged.position[0] - px;
       const dy = staged.position[1] - py;
       // Walking into it, not away from it.
@@ -1701,7 +1749,7 @@ export class ActorMovers {
     const travel = this.#travels.get(reference);
     if (travel && !this.#walkerTravel(walker, travel, seconds)) return;
     const request = this.#requests.get(reference);
-    const types = this.#catalogRead?.forActor(walker.race, undefined);
+    const types = this.#catalogRead?.forActor(walker.race, undefined, this.#defaultTurning());
     if (held && request?.direction !== undefined) {
       const now = performance.now();
       if (now - walker.idleStoppedAt >= IDLE_STOP_AGAIN_MS) {
@@ -1819,6 +1867,7 @@ export class ActorMovers {
           (staged.placed.look.raceFlags & RaceFlag.swims) !== 0 &&
           this.#options.swimAllowed?.(reference) !== false,
         closedDoors: this.#closedFor(reference, travel),
+        ...this.#raceRules(reference, staged),
         blocked: this.#blockedFor(reference, travel),
         ...(travel.blockedBy && { avoid: [travel.blockedBy] }),
         obstacles: this.#options.obstacles?.index,
@@ -1849,7 +1898,7 @@ export class ActorMovers {
       return false;
     }
     if (step.request) {
-      const types = this.#catalogRead?.forActor(walker.race, undefined);
+      const types = this.#catalogRead?.forActor(walker.race, undefined, this.#defaultTurning());
       this.#requests.set(reference, this.#paced(types, travel, step.request));
     }
     return true;
@@ -2044,6 +2093,11 @@ export class ActorMovers {
     return entry;
   }
 
+  /** fActorDefaultTurningSpeed: the turn rate where a movement type gives none. */
+  #defaultTurning(): number {
+    return aiSettingsOf(this.#options.session).actorDefaultTurningSpeed;
+  }
+
   #movementCatalog(): Promise<MovementCatalog> {
     this.#catalog ??= this.#options.session.db
       .then((db) => MovementCatalog.read(db))
@@ -2066,7 +2120,12 @@ export class ActorMovers {
       // Its movement controller steered by a script's override (KeepOffsetFromActor, the
       // player's controls) instead of its AI's wish.
       const steered = this.steering?.(staged.reference);
-      const wanted = steered ? steered.request : this.#requests.get(staged.reference);
+      // One its race keeps from moving (Immobile) stands, keeping its facing.
+      const wanted = raceImmobile(staged.placed.look.raceFlags)
+        ? undefined
+        : steered
+          ? steered.request
+          : this.#requests.get(staged.reference);
       // On its way it goes round the others and the player in it (the nearest of them within
       // its avoidance radius, iMaxActorsToAvoid at the most).
       let request = wanted;
@@ -2076,6 +2135,7 @@ export class ActorMovers {
           radius: mover.character.shape.radius,
           speed: Math.max(Math.hypot(...mover.velocity), AVOID_SPEED),
           direction: wanted.direction,
+          advanced: mover.race === undefined || raceAdvancedAvoidance(mover.race.flags2),
         };
         const near = avoidanceNeighbours(
           self,
@@ -2124,6 +2184,8 @@ export class ActorMovers {
         const turned = angleBetween(before, staged.heading);
         mover.turned.angle += turned;
         mover.wish = { velocity: [0, 0], turnRate: step > 0 ? turned / step : 0 };
+        // Its controller takes over at the speed its animation moved it (rampSpeed).
+        mover.turning.speed = Math.hypot(root.velocity[0], root.velocity[1]);
       } else if (request && types) {
         const steering = steer(request, staged.heading, types, step, mover.turning);
         mover.character.velocity = [steering.velocity[0], steering.velocity[1]];
@@ -2209,8 +2271,8 @@ export class ActorMovers {
     if (mover.types && key === mover.typesFor) return mover.types;
     const catalog = this.#catalogRead;
     if (!catalog) return mover.types;
-    const types = catalog.forActor(mover.race, tagged);
-    const swim = swimming ? catalog.swimming(mover.race) : undefined;
+    const types = catalog.forActor(mover.race, tagged, this.#defaultTurning());
+    const swim = swimming ? catalog.swimming(mover.race, this.#defaultTurning()) : undefined;
     mover.types = types && swim ? { ...types, walk: swim, run: swim, sprint: undefined } : types;
     mover.typesFor = key;
     return mover.types;

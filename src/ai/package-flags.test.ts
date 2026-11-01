@@ -11,7 +11,8 @@ import {
   tick,
 } from '../../tests/helpers/packages.ts';
 import { PackageFlag } from './package-records.ts';
-import type { ProcedureRunner } from './package-runtime.ts';
+import { gaitOf, jogPace, type ProcedureRunner } from './package-runtime.ts';
+import { AI_DEFAULTS } from './ai-settings.ts';
 
 const done: ProcedureRunner = () => Promise.resolve('success');
 
@@ -97,5 +98,17 @@ describe('package flags', () => {
     };
     expect(await stops(0)).toBeGreaterThan(0);
     expect(await stops(PackageFlag.maintainSpeedAtGoal)).toBe(0);
+  });
+});
+
+describe('the preferred speed Jog', () => {
+  it('runs at fJogInterpolationBetweenWalkAndRun of the way from its walk to its run', () => {
+    const jog = { flags: PackageFlag.preferredSpeed, interrupts: 0, speed: 1 };
+    expect(gaitOf(jog)).toBe('run');
+    expect(jogPace(jog, AI_DEFAULTS)).toBeCloseTo(1.65);
+    expect(jogPace(jog, { jogInterpolation: 0.5 })).toBe(1.5);
+    // Run, walk, or no preferred speed: their gait's own pace.
+    expect(jogPace({ ...jog, speed: 2 }, AI_DEFAULTS)).toBeUndefined();
+    expect(jogPace({ ...jog, flags: 0 }, AI_DEFAULTS)).toBeUndefined();
   });
 });

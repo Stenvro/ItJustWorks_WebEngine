@@ -90,13 +90,18 @@ export const DEFAULT_ATTACK: AttackData = {
   staminaMult: 1,
 };
 
-/** The attack data of a killmove (pa_...) or another event without its own: a power attack. */
-export const POWER_ATTACK_DEFAULT: AttackData = {
-  ...DEFAULT_ATTACK,
-  damageMult: 2,
-  flags: AttackFlag.powerAttack,
-  stagger: 1,
-};
+/**
+ * The attack data of a killmove (pa_...) or another event without its own: a power attack, its
+ * damage 1 + fPowerAttackDefaultBonus times (2).
+ */
+export function powerAttackDefault(defaultBonus: number): AttackData {
+  return {
+    ...DEFAULT_ATTACK,
+    damageMult: 1 + defaultBonus,
+    flags: AttackFlag.powerAttack,
+    stagger: 1,
+  };
+}
 
 /** What the engine weighs an attack data by as it picks one (chooseAttackData). */
 export interface AttackChoiceContext {
