@@ -302,14 +302,12 @@ describe.skipIf(!hasGamedata())('MQ105 The Way of the Voice', () => {
     }
   }, 600_000);
 
-  // TODO(M13): with fast travel passing its hours (the chain at hour 15.7), the masters come out
-  // of the courtyard door together, their character controllers inside each other at its one
-  // arrival point; standing still (no movement asked), the controller's sweep moves Arngeir
-  // out of the others' shapes by the overlap's depth every step (30 units: 1,900 units a
-  // second), they move on together, and he slides off the ledge, so 105 never comes. Leaving
-  // the overlapped actors out of a still actor's sweep stopped the slide but broke fights and
-  // idle markers elsewhere; the engine's rule for character proxies placed into each other is
-  // still to be found.
+  // Found 2026-11-01: the masters came out of the courtyard door together, all set at its one
+  // arrival point; the controller's sweep moved Arngeir and another master out of each other by
+  // the whole depth every step, both the same way (some 1,800 units a second), and Arngeir went
+  // off the ledge, so 105 never came. Actors coming out of a door now stand one on from
+  // another, and controllers set into one another part by the character proxy's penetration
+  // recovery, each its own way.
   // Arngeir leads the masters out to the courtyard and the player follows; by the word Borri
   // will teach (they wait for the player within 700 units) it appears (105), standing on it
   // teaches Wuld (110), Borri's power unlocks it (115, 120).

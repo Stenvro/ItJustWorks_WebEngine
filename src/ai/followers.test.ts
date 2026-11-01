@@ -5,6 +5,8 @@ import {
   CATCH_UP_SECONDS,
   catchUpPlace,
   catchUpTime,
+  DOOR_ARRIVAL_SPACING,
+  doorArrivalSpot,
   doorSpacing,
   followDistance,
   followerRanks,
@@ -118,5 +120,28 @@ describe('followers', () => {
     expect(places.every((place) => place.heading === 0)).toBe(true);
     // fFollowerSpacingAtDoors and their widths.
     expect(doorSpacing(AI_DEFAULTS)).toBe(240);
+  });
+});
+
+describe('actors coming out of one load door', () => {
+  // Facing east (compass radians: 0 north, a quarter turn east).
+  const arrival = { position: [100, 200, 50] as const, heading: Math.PI / 2 };
+
+  it('stand at the arrival point when no one stands there', () => {
+    expect(doorArrivalSpot(arrival, [])).toEqual([100, 200, 50]);
+  });
+
+  it('stand one on from another along the way out of the door, never on one spot', () => {
+    const second = doorArrivalSpot(arrival, [[100, 200, 50]]);
+    expect(second[0]).toBeCloseTo(100 + DOOR_ARRIVAL_SPACING);
+    expect(second[1]).toBeCloseTo(200);
+    const third = doorArrivalSpot(arrival, [[100, 200, 50], second]);
+    expect(third[0]).toBeCloseTo(100 + 2 * DOOR_ARRIVAL_SPACING);
+    // A spot left again is taken again.
+    expect(doorArrivalSpot(arrival, [second])).toEqual([100, 200, 50]);
+  });
+
+  it('are wider apart than a human shape', () => {
+    expect(DOOR_ARRIVAL_SPACING).toBeGreaterThan(40);
   });
 });

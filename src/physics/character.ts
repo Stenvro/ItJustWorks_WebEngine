@@ -156,6 +156,77 @@ const SEEK_RETRY = 8;
 const SEEK_STILL = 0.01;
 const SEEK_SAME_WAY = 0.999;
 
+/**
+ * Havok's character proxy recovers from penetration through its contacts' planes: a plane the
+ * shape is inside moves out at its depth times the proxy's penetration recovery speed
+ * (hkpCharacterProxyCinfo's m_penetrationRecoverySpeed, 1 a second by default), and the proxy's
+ * velocity is solved against it, so it leaves at least that fast and never at once.
+ * TODO(M13): whether the game's bhkCharProxyController sets a speed of its own is not documented.
+ */
+export const PENETRATION_RECOVERY = 1;
+/**
+ * Another controller's shape it is deeper in than this (Havok units: two of the gaps the
+ * controller keeps) it leaves by penetration recovery; a shallower overlap (two actors walking
+ * into each other in one step) the controller's sweep settles as before.
+ */
+const INSIDE_DEPTH = 2 * SKIN;
+/** Centres nearer than this (Havok units, across) are one spot: no way out between them. */
+const SAME_SPOT = 1e-3;
+
+/** A shape the controller is inside: the way out of it (unit, horizontal) and how deep (any units). */
+export interface Penetration {
+  readonly way: readonly [number, number];
+  readonly depth: number;
+}
+
+/**
+ * The way out of another controller's shape (unit, horizontal): from its centre to this one's.
+ * Two set on one spot (several actors put at one arrival point) have no such way; they leave it
+ * in opposite directions, the pair's direction taken from their references (the lower one's way,
+ * the higher one's the opposite): each pair of actors splits its own way. (Both took the
+ * contact's normal, the same for both, and moved out together, step after step.)
+ */
+export function wayOut(
+  own: { readonly x: number; readonly y: number },
+  other: { readonly x: number; readonly y: number },
+  ownReference: number,
+  otherReference: number,
+): [number, number] {
+  const dx = own.x - other.x;
+  const dy = own.y - other.y;
+  const length = Math.hypot(dx, dy);
+  if (length >= SAME_SPOT) return [dx / length, dy / length];
+  const low = Math.min(ownReference, otherReference) >>> 0;
+  const high = Math.max(ownReference, otherReference) >>> 0;
+  const mixed = (Math.imul(low ^ 0x9e3779b9, 0x85ebca6b) ^ Math.imul(high, 0xc2b2ae35)) >>> 0;
+  const angle = (mixed / 2 ** 32) * 2 * Math.PI;
+  const sign = ownReference >>> 0 === low ? 1 : -1;
+  return [Math.cos(angle) * sign, Math.sin(angle) * sign];
+}
+
+/**
+ * A velocity solved against the planes of the shapes it is inside, as the character proxy's
+ * solver does: along each one's way out it goes at least at that plane's recovery speed (its
+ * depth times `rate`, per second, in the velocity's units). What it moves at anyway along the
+ * way, or across it, is kept: it walks off freely, but never further in.
+ */
+export function recoveringVelocity(
+  velocity: readonly [number, number],
+  inside: readonly Penetration[],
+  rate = PENETRATION_RECOVERY,
+): [number, number] {
+  let [x, y] = velocity;
+  for (const { way, depth } of inside) {
+    const out = depth * rate;
+    const along = x * way[0] + y * way[1];
+    if (along < out) {
+      x += (out - along) * way[0];
+      y += (out - along) * way[1];
+    }
+  }
+  return [x, y];
+}
+
 /** The way along a surface (its normal) that is left of a horizontal direction, if enough. */
 function along(
   direction: RAPIER.Vector,
@@ -497,6 +568,52 @@ export class CharacterBody {
     return owner?.kind === 'actor' && owner.reference !== this.owner.reference;
   }
 
+  /** Another actor's controller shape. */
+  #otherController(collider: RAPIER.Collider): boolean {
+    return this.physics.layerOf(collider) === Layer.charController && this.#otherActor(collider);
+  }
+
+  /**
+   * The other controllers' shapes it is inside (deeper than INSIDE_DEPTH) where it is now, by
+   * their collider handles: the way out of each and how deep (Havok units).
+   */
+  #insideControllers(predicate: (collider: RAPIER.Collider) => boolean): Map<number, Penetration> {
+    const found = new Map<number, Penetration>();
+    const own = this.#collider;
+    if (!own.isEnabled()) return found;
+    const at = this.#body.translation();
+    const reference = this.owner.kind === 'actor' ? this.owner.reference : 0;
+    this.physics.world.intersectionsWithShape(
+      at,
+      NO_ROTATION,
+      own.shape,
+      (other) => {
+        const contact = own.shape.contactShape(
+          at,
+          NO_ROTATION,
+          other.shape,
+          other.translation(),
+          other.rotation(),
+          0,
+        );
+        if (!contact || contact.distance >= -INSIDE_DEPTH) return true;
+        const owner = this.physics.ownerOf(other);
+        const otherReference = owner?.kind === 'actor' ? owner.reference : 0;
+        found.set(other.handle, {
+          way: wayOut(at, other.translation(), reference, otherReference),
+          depth: -contact.distance,
+        });
+        return true;
+      },
+      RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+      undefined,
+      own,
+      undefined,
+      (collider) => predicate(collider) && this.#otherController(collider),
+    );
+    return found;
+  }
+
   /** Centre of the capsule (Havok units) for feet at `feet` (game units). */
   #center(feet: Vec3): RAPIER.Vector {
     return {
@@ -574,7 +691,10 @@ export class CharacterBody {
    * Moves the character out of what its shape overlaps, as Havok's character proxy recovers
    * from penetration: along each contact's normal by its depth, for a few rounds. A door's
    * arrival point may lie in the door (KatariahWorld's balcony door: 25 units in front of it,
-   * where the shape reaches 32). Ray and shape casts must see the world (after a step).
+   * where the shape reaches 32). Ray and shape casts must see the world (after a step). Other
+   * actors' controllers are left be: out of those it moves in its steps, at the recovery speed
+   * (#insideControllers), not at once along a contact's normal (two actors set on one spot have
+   * the same normal, and were pushed off together).
    */
   recover(): void {
     const own = this.#collider;
@@ -611,7 +731,8 @@ export class CharacterBody {
         undefined,
         own,
         undefined,
-        (collider) => filter(collider) && !this.#ownBody(collider),
+        (collider) =>
+          filter(collider) && !this.#ownBody(collider) && !this.#otherController(collider),
       );
       if (contacts === 0) return;
       const next = { x: at.x + push.x, y: at.y + push.y, z: at.z + push.z };
@@ -876,10 +997,6 @@ export class CharacterBody {
 
   /** One fixed step: gravity, the wanted movement, sliding and stepping. Before world.step. */
   step(seconds: number): void {
-    // Coming off another actor it is pressed into (placed into it: the player set at a coc
-    // marker where an NPC stands), first out of what it overlaps, as the character proxy
-    // recovers from penetration: the controller does not move a shape out of one it is in.
-    if (this.#offActor) this.recover();
     // Carried by what it stands on (#carrier): first by what that moved since its last step (a
     // script set it there: TranslateTo, SetPosition), so the shape stands on it again.
     this.carriedTurn = 0;
@@ -920,12 +1037,38 @@ export class CharacterBody {
           : 1;
       this.verticalSpeed -= gravity * multiplier * seconds;
     }
+    const own = this.#collider;
+    const filter = this.physics.filterFor(Layer.charController);
+    const ignored = this.ignored;
+    const touching = (collider: RAPIER.Collider): boolean =>
+      collider.handle !== own.handle &&
+      !ignored.has(collider.handle) &&
+      filter(collider) &&
+      !this.#ownBody(collider);
+    // Inside other actors' controllers (placed into them: several actors set at one door's
+    // arrival point, the player at a coc marker where an NPC stands): out of them by the
+    // character proxy's penetration recovery, each its own way. The sweep leaves them out: from
+    // inside one, Rapier's controller moved the shape out by the whole depth in one step, the
+    // other actor the same way, and they went on together at some 1,800 units a second.
+    const inside = this.#insideControllers(touching);
+    const predicate =
+      inside.size === 0
+        ? touching
+        : (collider: RAPIER.Collider): boolean =>
+            touching(collider) && !inside.has(collider.handle);
     // Off another actor it stood on: away from it at least as fast as it falls (as off a slope).
     const off = this.#offActor;
     const slide = off ? Math.max(OFF_ACTOR_SPEED, -this.verticalSpeed) : 0;
+    const [vx, vy] = recoveringVelocity(
+      [
+        this.velocity[0] + this.#pushed[0] + (off ? off[0] * slide : 0),
+        this.velocity[1] + this.#pushed[1] + (off ? off[1] * slide : 0),
+      ],
+      [...inside.values()].map(({ way, depth }) => ({ way, depth: depth * HAVOK_SCALE })),
+    );
     const desired = {
-      x: toHavok((this.velocity[0] + this.#pushed[0] + (off ? off[0] * slide : 0)) * seconds),
-      y: toHavok((this.velocity[1] + this.#pushed[1] + (off ? off[1] * slide : 0)) * seconds),
+      x: toHavok(vx * seconds),
+      y: toHavok(vy * seconds),
       z: toHavok(this.verticalSpeed * seconds),
     };
     // On stairs (surfaces of a stair material) whole steps are climbed; elsewhere only what
@@ -937,14 +1080,6 @@ export class CharacterBody {
         this.settings.stairMaterials.has(material),
       ),
     );
-    const own = this.#collider;
-    const filter = this.physics.filterFor(Layer.charController);
-    const ignored = this.ignored;
-    const predicate = (collider: RAPIER.Collider): boolean =>
-      collider.handle !== own.handle &&
-      !ignored.has(collider.handle) &&
-      filter(collider) &&
-      !this.#ownBody(collider);
     const wasGrounded = this.#grounded;
     this.#controller.computeColliderMovement(
       own,
@@ -1060,11 +1195,6 @@ export class CharacterBody {
       !this.standsOnActors && stopped
         ? (onActor ?? byActor ?? this.#overlappedActor(predicate))
         : undefined;
-    // In one: out of it at once.
-    if (caught !== undefined && !this.swimming && this.#overlappedActor(predicate)) {
-      this.recover();
-      moved = { x: 0, y: 0, z: 0 };
-    }
     if (
       !this.standsOnActors &&
       (this.#grounded || (caught !== undefined && this.#support(moved, predicate) !== 'ground')) &&

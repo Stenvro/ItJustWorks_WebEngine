@@ -21,6 +21,7 @@ import { MovementCatalog } from '../ai/movement-types.ts';
 import { parseRaceCombat, type RaceCombat } from '../ai/race-combat-records.ts';
 import { LOW_PROCESSING_MS } from '../ai/process-levels.ts';
 import { aiSettingsOf } from '../ai/ai-settings.ts';
+import { doorArrivalSpot } from '../ai/followers.ts';
 import {
   findRoute,
   polylineLength,
@@ -162,6 +163,11 @@ export class ActorsAway {
   #persistent: readonly number[] | undefined;
   #pending: Ask | undefined;
   #lastRun: ScheduleRun | undefined;
+  /**
+   * Who came out of each load door's arrival point (by its space and point) and the spot each
+   * was put at: one standing there still (or on its way there) holds it (doorArrivalSpot).
+   */
+  readonly #outOfDoors = new Map<string, { actor: number; spot: Vec3; moving: boolean }[]>();
 
   constructor(options: ActorsAwayOptions) {
     this.#options = options;
@@ -695,12 +701,12 @@ export class ActorsAway {
         // Through a door into the loaded area: it comes out of it there (the door swings).
         this.#trips.delete(actor);
         this.#options.doors?.arrive(door.destination, actor);
-        void this.#moveTo(runtime, actor, arrival);
+        void this.#comeOut(runtime, actor, arrival);
         return;
       }
       // Through a door: the game state has it in the space it came into (a script asking for
       // its cell or worldspace gets that one). TODO(M13): its place along the way between.
-      void this.#moveTo(runtime, actor, arrival);
+      void this.#comeOut(runtime, actor, arrival);
     }
   }
 
@@ -710,10 +716,43 @@ export class ActorsAway {
     return doors ? doors.route(map, from, to, actor) : Promise.resolve(findRoute(map, from, to));
   }
 
-  /** Puts an actor at a place (the game state; the views show it if they hold the place). */
-  async place(actor: number, place: AwayPlace): Promise<void> {
+  /**
+   * Puts an actor at a load door's arrival point as it comes out of the door (#comeOut): the game
+   * state; the views show it if they hold the place.
+   */
+  async comeOut(actor: number, arrival: AwayPlace): Promise<void> {
     const runtime = this.#options.session.scriptsReady;
-    if (runtime) await this.#moveTo(runtime, actor, place);
+    if (runtime) await this.#comeOut(runtime, actor, arrival);
+  }
+
+  /**
+   * An actor comes out of a load door: at its arrival point, off those who came out there
+   * before it and stand there still (doorArrivalSpot).
+   */
+  async #comeOut(runtime: ScriptRuntime, actor: number, arrival: AwayPlace): Promise<void> {
+    const [x, y, z] = arrival.position.map(Math.round);
+    const space = arrival.space;
+    const key =
+      `${space.kind === 'world' ? `w${String(space.world)}` : `c${String(space.cell)}`}:` +
+      `${String(x)},${String(y)},${String(z)}`;
+    const standing = (this.#outOfDoors.get(key) ?? []).filter((out) => {
+      if (out.actor === actor) return false;
+      if (out.moving) return true;
+      const at = runtime.state.references.get(out.actor)?.position;
+      return at !== undefined && distance(at, out.spot) < 1;
+    });
+    const spot = doorArrivalSpot(
+      { position: arrival.position, heading: arrival.heading ?? 0 },
+      standing.map((out) => out.spot),
+    );
+    const out = { actor, spot, moving: true };
+    standing.push(out);
+    this.#outOfDoors.set(key, standing);
+    try {
+      await this.#moveTo(runtime, actor, { ...arrival, position: spot });
+    } finally {
+      out.moving = false;
+    }
   }
 
   async #moveTo(runtime: ScriptRuntime, actor: number, place: AwayPlace): Promise<void> {

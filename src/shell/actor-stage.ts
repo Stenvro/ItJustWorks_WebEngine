@@ -1312,7 +1312,7 @@ export class ActorStage {
     };
     if (this.#loaded(arrival)) this.doors.arrive(door.destination, reference);
     else this.away.depart(reference, arrival, destination, walk);
-    await this.away.place(reference, arrival);
+    await this.away.comeOut(reference, arrival);
   }
 
   /**
