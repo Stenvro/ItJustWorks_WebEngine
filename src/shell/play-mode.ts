@@ -894,7 +894,8 @@ export class PlayMode {
    */
   #importPicked(bytes: Uint8Array, mainMenu?: Menu): void {
     void (async () => {
-      const name = await this.#saves.importEss(bytes, essWorld(await this.#session.db));
+      const db = await this.#session.db;
+      const name = await this.#saves.importEss(bytes, (ess) => essWorld(db, ess));
       this.#loadSaved(name);
     })().catch((error: unknown) => {
       this.#terminal.log(

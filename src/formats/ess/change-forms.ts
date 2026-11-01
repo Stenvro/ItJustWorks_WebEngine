@@ -195,6 +195,10 @@ export interface EssValueModifiers {
 export interface EssActorData {
   /** The AI process level (0 high to 3 low), or −1: none. */
   readonly processLevel: number;
+  /** The actor's state word written before its reference data (TODO(M13): its bits). */
+  readonly actorState: number;
+  /** The actor's 18 bytes of state bits after its process's timers (life state among them). */
+  readonly stateBits?: Uint8Array;
   /** Its AI process's state (process.ts), when it has a process. */
   readonly process?: EssProcess;
   readonly values?: EssActorValues;
@@ -1119,9 +1123,10 @@ export function readChangeForm(entry: ChangeFormEntry, resolve: RefIdResolver): 
     const type = entry.type;
     if (REFERENCE_TYPES.has(type)) {
       let processLevel = -1;
+      let actorState = 0;
       if (type === 1) {
         processLevel = reader.i32();
-        reader.u32(); // the actor's state flags
+        actorState = reader.u32(); // the actor's state flags
       }
       formFlags();
       if (has(ChangeRefr.baseObject)) out.baseObject = resolve(reader.refId());
@@ -1133,7 +1138,10 @@ export function readChangeForm(entry: ChangeFormEntry, resolve: RefIdResolver): 
       }
       if (has(ChangeRefr.animation)) reader.skip(reader.vsval());
       if (type === 1) {
-        const actor: { -readonly [K in keyof EssActorData]: EssActorData[K] } = { processLevel };
+        const actor: { -readonly [K in keyof EssActorData]: EssActorData[K] } = {
+          processLevel,
+          actorState,
+        };
         out.actor = actor;
         const stopped = readActor(reader, actor, out.formId === PLAYER_REF, resolve);
         if (stopped !== undefined) throw new Unknown(stopped);
@@ -1372,7 +1380,7 @@ function readActor(
   reader.u8();
   reader.skip(13 * 4); // timers, counters and the time since its last update
   ref();
-  reader.skip(18); // its state bits
+  actor.stateBits = reader.bytes(18); // its state bits
   ref();
   const casters = reader.u8();
   for (let i = 0; i < 4; i++) {
