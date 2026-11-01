@@ -55,6 +55,7 @@ const runtime = {
   forms: { record: (formId: number) => Promise.resolve(records.get(formId)) },
   state: {
     globals: new Map([[GLOBAL, 7.6]]),
+    references: new Map(),
     quests: new Map([
       [
         QUEST,
