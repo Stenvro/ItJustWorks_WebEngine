@@ -147,6 +147,10 @@ const EXPLAINED: ReadonlyMap<string, string> = new Map([
   ],
   ['Magic effect flags|goryVisuals', 'not used by the game (Creation Kit "Magic Effect")'],
   [
+    'Equip slots (EQUP)|useAllParents',
+    "src/world/equip-slots.ts (EquipSlots.place, beside the parser): a slot whose parents are both hands takes both (BothHands: a two-handed weapon) with the flag, one of them (EitherHand) without; Shield's one parent is the left hand (src/world/equip-slots.test.ts)",
+  ],
+  [
     'Faction flags (FACT DATA)|canBeOwner',
     'the editor\'s filter of the factions it offers as owners (Creation Kit "Faction"); the game takes the owner a cell or reference names (every faction owning a cell has the flag)',
   ],

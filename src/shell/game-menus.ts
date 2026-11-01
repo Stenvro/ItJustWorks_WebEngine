@@ -12,7 +12,8 @@ import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
 import { JournalMenu, JournalPage, type JournalSaves } from './journal-menu.ts';
 import { inventoryModel } from './inventory-menu.ts';
-import { magicModel } from './magic-menu.ts';
+import { magicModel, playerBeastForm } from './magic-menu.ts';
+import { beastMenuShut } from '../gameplay/beast-forms.ts';
 import { ItemMenu, type ItemMenuModel } from './item-menu.ts';
 import { FavoritesMenu } from './favorites-menu.ts';
 import { hotkeyOfEvent } from '../gameplay/hotkeys.ts';
@@ -66,7 +67,7 @@ const EVENT_MENUS: Readonly<Record<string, string>> = {
   wait: 'Wait',
 };
 
-/** The menus a beast form keeps shut. */
+/** The menus a beast form may keep shut (which, by the form: src/gameplay/beast-forms.ts). */
 const BEAST_SHUT: ReadonlySet<string> = new Set(['Inventory', 'Magic', 'Favorites']);
 
 /** What the menus ask of the world being played. */
@@ -298,11 +299,23 @@ export class GameMenus {
 
   /**
    * Opens one of the game's menus by name ("Tween", "Journal", "Inventory", ...). In a beast
-   * form (Game.SetBeastForm: a werewolf, a vampire lord) the inventory, magic and favorites
-   * stay shut (UESP "Skyrim:Werewolf": no items, no spells of the player's own).
+   * form (Game.SetBeastForm) the werewolf's inventory, magic and favorites stay shut (UESP
+   * "Skyrim:Werewolf": no items, no spells of the player's own), the vampire lord's inventory
+   * (its magic and favorites list its own spells: src/gameplay/beast-forms.ts).
    */
   openMenu(name: string): void {
-    if (this.#session.scriptsReady?.beastForm === true && BEAST_SHUT.has(name)) return;
+    const runtime = this.#session.scriptsReady;
+    if (runtime?.beastForm === true && BEAST_SHUT.has(name)) {
+      void playerBeastForm(runtime).then((beast) => {
+        if (!beastMenuShut(beast.form, name)) this.#openNamed(name);
+      });
+      return;
+    }
+    this.#openNamed(name);
+  }
+
+  /** Opens a menu by name (openMenu, past a beast form's shut menus). */
+  #openNamed(name: string): void {
     const opening =
       name === 'Tween'
         ? this.#openTween()

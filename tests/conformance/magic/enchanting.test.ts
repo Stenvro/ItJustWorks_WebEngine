@@ -18,6 +18,8 @@ import {
   apparelEnchantmentMagnitude,
   ENCHANTED_VALUE_SETTINGS,
   enchantedItemValue,
+  ENCHANTMENT_CHARGE_SETTINGS,
+  enchantmentCharge,
   enchantingSkillMultiplier,
   enchantmentUses,
 } from '../../../src/gameplay/crafting.ts';
@@ -43,6 +45,22 @@ describe('an enchanted item’s value', () => {
 
   it('adds nothing to an item worth nothing', () => {
     expect(enchantedItemValue(0, { constant: false, cost: 10, charge: 500 })).toBe(0);
+  });
+});
+
+describe('an enchanted item’s charge without EAMT', () => {
+  it('is its enchantment’s: ENIT’s amount with No Auto Calc', () => {
+    expect(enchantmentCharge({ noAutoCalc: true, amount: 16, cost: 40 })).toBe(16);
+  });
+
+  it('else fMagicEnchantmentChargeMult × its cost + fMagicEnchantmentChargeBase (1 and 0)', () => {
+    expect(ENCHANTMENT_CHARGE_SETTINGS).toEqual({ mult: 1, base: 0 });
+    expect(enchantmentCharge({ noAutoCalc: false, amount: 0, cost: 16 })).toBe(16);
+    expect(
+      enchantmentCharge({ noAutoCalc: false, amount: 0, cost: 10 }, { mult: 3, base: 5 }),
+    ).toBe(35);
+    // The bound weapons' and the Ebony Blade's enchantments cost nothing: no charge to use.
+    expect(enchantmentCharge({ noAutoCalc: false, amount: 0, cost: 0 })).toBe(0);
   });
 });
 
@@ -85,7 +103,6 @@ describe('what the original does that we do not yet', () => {
     'an enchanted item glows with its enchantment’s enchant shader and art (MGEF enchant shader, ' +
       'enchant art), in the world, in the hand and on the body',
   );
-  it.todo('an enchantment’s charge without EAMT: fMagicEnchantmentChargeMult × its cost');
   it.todo(
     'a staff’s or a weapon’s enchantment used by an NPC never runs out (original: the engine’s rule)',
   );
