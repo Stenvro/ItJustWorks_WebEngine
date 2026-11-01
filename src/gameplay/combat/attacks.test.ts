@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { AttackFlag, type AttackData } from '../../ai/race-combat-records.ts';
-import { chooseAttackData, DEFAULT_ATTACK, type AttackChoiceContext } from './attacks.ts';
+import {
+  chooseAttackData,
+  DEFAULT_ATTACK,
+  rotatesThrough,
+  type AttackChoiceContext,
+} from './attacks.ts';
 
 const attack = (event: string, extra: Partial<AttackData> = {}): AttackData => ({
   ...DEFAULT_ATTACK,
@@ -26,6 +31,13 @@ const sequence =
   (...values: number[]): (() => number) =>
   () =>
     values.shift() ?? 0;
+
+describe('rotating attacks', () => {
+  it('turn their attacker through the attack only with the Rotating Attack flag', () => {
+    expect(rotatesThrough({ ...DEFAULT_ATTACK, flags: AttackFlag.rotatingAttack })).toBe(true);
+    expect(rotatesThrough(DEFAULT_ATTACK)).toBe(false);
+  });
+});
 
 describe('chooseAttackData', () => {
   it('picks by weight and takes the pick with its weight as the chance', () => {

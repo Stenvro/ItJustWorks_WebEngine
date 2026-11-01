@@ -15,6 +15,7 @@
 // Getting off, it stands where the dismount's NPC Root ends: 111.6 units to the horse's left.
 
 import type { Gait, MoveRequest } from './locomotion.ts';
+import { RaceFlag2 } from './race-combat-records.ts';
 
 type Vec3 = readonly [number, number, number];
 
@@ -157,4 +158,24 @@ export function ownsHorse(
   if (owner.actor === undefined && owner.faction === undefined) return true;
   if (owner.actor !== undefined && owner.actor === rider.base) return true;
   return owner.faction !== undefined && rider.factions.has(owner.faction);
+}
+
+/**
+ * Mounted combat: whether a mount fights while it is ridden, by its race's Allow Mounted Combat
+ * (RACE DATA Flags 2; the three dragon races). A ridden dragon fights: its combat flies the
+ * attack on the target its rider sets it on (the target lock). A ridden horse does not (its
+ * rider moves it), and an actor riding one gets off to fight (no race of the load order lets a
+ * horse fight ridden). TODO(M13): a rider staying on a mount that fights attacks from the saddle
+ * only with what it casts and shouts (the engine's own riders' attacks are not documented).
+ */
+export function fightsRidden(raceFlags2: number): boolean {
+  return (raceFlags2 & RaceFlag2.allowMountedCombat) !== 0;
+}
+
+/**
+ * The least pitch of the player's view while mounted (radians, below level is negative): no
+ * more than fMountedMaxLookingDown degrees down (Update.esm 30), for aiming from the saddle.
+ */
+export function mountedPitchFloor(maxLookingDownDegrees: number): number {
+  return -(maxLookingDownDegrees * Math.PI) / 180;
 }

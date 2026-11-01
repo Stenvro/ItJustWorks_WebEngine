@@ -124,6 +124,21 @@ const PATTERNS: ReadonlyMap<string, RegExp> = new Map([
 
 /** Items done without a reader of their own, by "part|name": why nothing more reads them. */
 const EXPLAINED: ReadonlyMap<string, string> = new Map([
+  ...(
+    [
+      ['Package flags (PKDT)', 'legacyLockDoorsAtEnd'],
+      ['Package flags (PKDT)', 'legacyLockDoorsAtLocation'],
+      ['Package flags (PKDT)', 'legacyUnlockDoorsAtLocation'],
+      ['Interrupt flags (PKDT)', 'legacyAvoidRadiation'],
+    ] as const
+  ).map(([part, name]): [string, string] => [
+    `${part}|${name}`,
+    "inert: an earlier game's flag kept in the records (src/ai/package-records.ts); this game's references name none there",
+  ]),
+  [
+    'Combat style (CSTY)|dueling',
+    'src/shell/actor-combat-ai.ts: the style chooses dueling or flanking (169 styles duel, 19 flank, none both, 9 neither); the tree as observed in the original runs Close Movement (circle, fall back: CSCR) for every style without Flanking, so Dueling is read as not Flanking',
+  ],
   [
     'Interrupt override (PKDT)|none',
     'src/shell/actor-senses.ts: the actor runs an override package from the list its situation names (SPOR, OCOR, GWOR, ECOR); the byte only sorts the package into such lists',

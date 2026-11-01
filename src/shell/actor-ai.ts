@@ -22,6 +22,7 @@ import {
   type PackageTarget,
 } from '../ai/package-records.ts';
 import { PROCEDURES } from '../ai/procedure-runs.ts';
+import { getsUpToTalk } from '../ai/talk.ts';
 import type { ProcessSlicer } from '../ai/process-levels.ts';
 import { aiSettingsOf } from '../ai/ai-settings.ts';
 import { patrolIdleTime } from '../ai/package-records.ts';
@@ -165,6 +166,8 @@ export class ActorAi {
    * packages wait as with the player; where each faces (undefined: it is left to move).
    */
   readonly #talkHeld = new Map<number, () => Vec3 | undefined>();
+  /** Actors the player talks to that were asked to get out of their furniture (getsUpToTalk). */
+  readonly #gotUp = new Set<number>();
   /** Whether an actor fights now (its packages wait meanwhile: src/shell/actor-combat.ts). */
   readonly #engaged: ((reference: number) => boolean) | undefined;
   readonly #slicer: ProcessSlicer | undefined;
@@ -379,6 +382,7 @@ export class ActorAi {
       const context = {
         start: this.#actors.get(actor)?.staged.position,
         quest: pack.ownerQuest ?? template?.ownerQuest,
+        inputs,
       };
       if (!(await mind.conditionsHold(pack.conditions, actor, { inputs, context }))) continue;
       let place: PackagePlace | undefined;
@@ -483,6 +487,11 @@ export class ActorAi {
           this.#talking.add(reference);
           this.#movers.stop(reference);
         }
+        // In furniture it must leave to talk (Must Exit To Talk: a bed), it gets up first.
+        if (speaker === reference && !this.#gotUp.has(reference)) {
+          this.#gotUp.add(reference);
+          void this.#getUpToTalk(staged).catch(() => undefined);
+        }
         const at = speaker === reference ? player : held?.();
         if (at && !this.#furniture.holds(reference)) {
           const heading = Math.atan2(at[0] - staged.position[0], at[1] - staged.position[1]);
@@ -491,6 +500,7 @@ export class ActorAi {
         continue;
       }
       if (this.#engaged?.(reference) === true) continue;
+      this.#gotUp.delete(reference);
       if (this.#talking.delete(reference)) {
         this.#movers.request(reference, undefined);
         entry.packages.evaluate();
@@ -566,6 +576,14 @@ export class ActorAi {
       }
     }
     return undefined;
+  }
+
+  /** The player talks to an actor in furniture with Must Exit To Talk: it gets out of it. */
+  async #getUpToTalk(staged: StagedActor): Promise<void> {
+    const using = this.#furniture.interaction(staged.reference);
+    const record = using && (await this.#session.scriptsReady?.forms.record(using.base));
+    if (record && getsUpToTalk(record.flags, record.fields.u32('MNAM')))
+      await this.#furniture.leave(this.#userOf(staged));
   }
 
   #body(staged: StagedActor): PackageBody {
@@ -1066,6 +1084,16 @@ export class ActorAi {
                 reference: record?.marker,
               }
             );
+          }
+          // The reference another input of the package names (Target (location)).
+          case LocationType.targetLocation: {
+            const value = context.inputs?.get(location.form)?.value;
+            const named =
+              value?.kind === 'singleRef' || value?.kind === 'targetSelector'
+                ? await this.#mind.target(value.target, actor, context)
+                : undefined;
+            const at = named === undefined ? undefined : await placementOf(named);
+            return at && { ...at, radius: location.radius, reference: named };
           }
           // The nearest reference of an object (or of a type of object) round the actor.
           case LocationType.objectId:

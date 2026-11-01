@@ -591,6 +591,13 @@ async function placeOf(
     if (inputId === NO_INPUT) continue;
     const value = inputs.get(inputId)?.value;
     if (value?.kind === 'location') {
+      // A Target (location): where the input it names puts the actor.
+      const named =
+        value.location.type === LocationType.targetLocation
+          ? inputs.get(value.location.form)?.value
+          : undefined;
+      if (named?.kind === 'singleRef' || named?.kind === 'targetSelector')
+        return targetPlace(id, name, named.target, actor, world, value.location.radius);
       return locationPlace(id, name, value.location, actor, world);
     }
     if (value?.kind === 'singleRef' || value?.kind === 'targetSelector') {
@@ -642,16 +649,17 @@ async function targetPlace(
   target: PackageTarget,
   actor: PackageActor,
   world: PackageWorld,
+  radius = 0,
 ): Promise<PackageStart> {
   switch (target.type) {
     case TargetType.specificReference:
-      return referencePlace(id, procedure, target.value, actor, world);
+      return referencePlace(id, procedure, target.value, actor, world, radius);
     case TargetType.linkedReference: {
       const linked = actor.linked(target.value);
       // Without the link (scripts link some actors as they need them) the place is not known.
       return linked === undefined
         ? { kind: 'undecided', package: id, reason: 'its linked reference is missing' }
-        : referencePlace(id, procedure, linked, actor, world);
+        : referencePlace(id, procedure, linked, actor, world, radius);
     }
     case TargetType.self:
       return { kind: 'here', package: id, procedure };

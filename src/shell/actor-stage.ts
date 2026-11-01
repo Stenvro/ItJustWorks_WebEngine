@@ -391,6 +391,7 @@ export class ActorStage {
       session: options.session,
       terminal: options.terminal,
       slicer: this.process,
+      rotatingAttack: (actor) => this.combat.rotatingAttack(actor),
       ...(options.onTrigger && { onTrigger: options.onTrigger }),
       bodyColliders: (actor) => this.bodies.colliders(actor),
       ...(options.navmeshes && { navmeshes: options.navmeshes }),
@@ -516,7 +517,9 @@ export class ActorStage {
       ai: () => this.ai,
       fx: () => this.fx,
       interior: () => options.interior === true,
-      dismount: (actor) => this.mounts.getOff(actor),
+      // Off its horse to fight; on a mount that fights ridden (a dragon) it stays on.
+      dismount: (actor) =>
+        this.mounts.fightsMounted(actor) ? Promise.resolve() : this.mounts.getOff(actor),
       furniture: {
         holds: (actor) => this.furniture.holds(actor),
         leave: async (actor) => {
@@ -524,7 +527,7 @@ export class ActorStage {
           if (staged) await this.furniture.leave(this.userOf(staged));
         },
       },
-      ridden: (actor) => this.mounts.ridden(actor),
+      ridden: (actor) => this.mounts.ridden(actor) && !this.mounts.fightsRidden(actor),
       npcCasting: () => combatCasting(options.session, () => this.casting),
       flight: () => this.flight,
       knockdowns: () => this.knockdowns,

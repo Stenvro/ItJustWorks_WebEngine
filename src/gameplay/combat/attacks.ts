@@ -38,6 +38,18 @@ export interface AttackEventKind {
 }
 
 /**
+ * Whether an attack turns its attacker to its target while it plays: ATKD Rotating Attack (38
+ * attacks: the bears', sabre cats', mammoths', mudcrabs', chaurus' and dwarven spiders' side
+ * and spin attacks). Its controller keeps turning it through the attack, as the graph's
+ * bAllowRotation lets it (src/ai/movement-drive.ts); any other attack plays as its clip faces.
+ * TODO(M13): the plain reading of the flag's name; the engine's turn rate through it is the
+ * race's.
+ */
+export function rotatesThrough(data: AttackData): boolean {
+  return (data.flags & AttackFlag.rotatingAttack) !== 0;
+}
+
+/**
  * Whether an event starts an attack, and what kind: by its attack data's flags (power, bash,
  * left hand); events without data by their name (bowAttackStart, pa_ killmoves, the
  * creatures' attackStart_* and combatStanceStart).
