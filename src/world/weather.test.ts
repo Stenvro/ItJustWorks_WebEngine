@@ -7,6 +7,7 @@ import {
   parseRegionWeather,
   parseWeather,
   RegionDataType,
+  skyStaticShare,
   WeatherColor,
   type WeatherSource,
 } from './weather.ts';
@@ -205,5 +206,23 @@ describe('region weather', () => {
     expect(region?.priority).toBe(50);
     expect(region?.weathers.map((w) => w.weather)).toEqual([0x200, 0x201]);
     expect(parseRegionWeather(record([['RDAT', rdat(RegionDataType.sound, 1)]]))).toBeUndefined();
+  });
+});
+
+describe('skyStaticShare', () => {
+  const cloudy = { skyStatics: [0x10, 0x11] };
+  const clear = { skyStatics: [] };
+
+  it('shows the statics the weather lists, and no others', () => {
+    expect(skyStaticShare(0x10, cloudy, undefined, 1)).toBe(1);
+    expect(skyStaticShare(0x12, cloudy, undefined, 1)).toBe(0);
+    expect(skyStaticShare(0x10, clear, undefined, 1)).toBe(0);
+    expect(skyStaticShare(0x10, undefined, undefined, 1)).toBe(0);
+  });
+
+  it('fades them in and out over a weather change', () => {
+    expect(skyStaticShare(0x10, cloudy, clear, 0.25)).toBeCloseTo(0.25);
+    expect(skyStaticShare(0x10, clear, cloudy, 0.25)).toBeCloseTo(0.75);
+    expect(skyStaticShare(0x11, cloudy, { skyStatics: [0x11] }, 0.4)).toBeCloseTo(1);
   });
 });
