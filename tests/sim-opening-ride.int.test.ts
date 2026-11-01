@@ -8,6 +8,7 @@
 // with him. Each case starts from the save the one before took. Skipped without game data.
 
 import { describe, expect, it } from 'vitest';
+import { KnockState } from '../src/gameplay/combat/combat-state.ts';
 import { rideModes, rideState } from '../src/shell/hud-elements.ts';
 import { hasGamedata, loadSim, openSim, PLAYER_REF, type Sim } from './helpers/sim.ts';
 
@@ -52,6 +53,21 @@ async function follow(sim: Sim, actor: number, reach = 180): Promise<void> {
   if (at && Math.hypot(at[0] - x, at[1] - y) > reach && (await sim.walkPath(at, 2, reach - 30)))
     return;
   await sim.step(1);
+}
+
+/**
+ * Who of `actors` falls knocked down (their knock state turns to down: a ragdoll) while the case
+ * runs on, as the knock-downs tell combat of it.
+ */
+function watchKnockdowns(sim: Sim, actors: readonly number[]): number[] {
+  const fallen: number[] = [];
+  const combat = sim.world.stage.combat;
+  const changed = combat.knockChanged.bind(combat);
+  combat.knockChanged = (reference: number, knock: number): void => {
+    if (knock === KnockState.down && actors.includes(reference)) fallen.push(reference);
+    changed(reference, knock);
+  };
+  return fallen;
 }
 
 /** The player turns to a point and jumps towards it (Forward held through the jump). */
@@ -160,6 +176,9 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
     expect(upAtTheBlock).toBeDefined();
     if (!upAtTheBlock) return;
     const sim = await loadSim(upAtTheBlock);
+    // Alduin lands about them and breaks the tower's wall by Ralof: they stagger and run on
+    // (KnockAreaEffect staggers, observed in the original); nobody falls as a ragdoll.
+    const fallen = watchKnockdowns(sim, [RALOF, HADVAR]);
     try {
       // Ralof runs for the tower and waits by its door (MQ101DragonAttackScene1 waits for the
       // player's trigger, 20); in, he stops by Ulfric (22).
@@ -186,6 +205,7 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
       // OnLoad (its quest's script), so it tells the quest the player passed through.
       const square = sim.problems().filter(({ text }) => text.includes('PlayerInSquare'));
       expect(square).toEqual([]);
+      expect(fallen).toEqual([]);
       inTheInn = await sim.save();
     } finally {
       await sim.close();
@@ -196,6 +216,7 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
     expect(inTheInn).toBeDefined();
     if (!inTheInn) return;
     const sim = await loadSim(inTheInn);
+    const fallen = watchKnockdowns(sim, [RALOF, HADVAR]);
     try {
       for (const step of INN_FLOOR_GAP) await sim.walkTo(step, 4, 40);
       // Out of the inn (130) Hadvar takes the player along (151 ... 192); by the keep (195)
@@ -216,6 +237,8 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
       expect(await sim.until(() => sim.stageDone(MQ101, 250), 20)).toBe(true);
       expect(sim.stageDone(MQ101, 210)).toBe(true);
       expect(sim.stageDone(DRAGON_ATTACK, 200)).toBe(true);
+      // On their ways to the keep, Alduin landing about them, neither Ralof nor Hadvar falls.
+      expect(fallen).toEqual([]);
     } finally {
       await sim.close();
     }
