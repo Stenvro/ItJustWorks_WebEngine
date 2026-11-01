@@ -8,6 +8,9 @@ import {
   avoidsPlayer,
   awayFrom,
   Breath,
+  followCommander,
+  followSpot,
+  followsUp,
   getUpFromChairBed,
   reactToDestroyedObject,
   StealWarnings,
@@ -66,6 +69,46 @@ describe('engine packages', () => {
     expect(starts).toBe(2);
     // Its own package was set aside, not left: no package events.
     expect(events.filter((event) => !event.startsWith('begin'))).toEqual([]);
+  });
+
+  it('Follow Commander: beyond fSummonedCreatureMaxFollowDist it makes for the minimum’s spot', async () => {
+    const settings = { summonedMinFollowDist: 250, summonedMaxFollowDist: 400 };
+    expect(followsUp(399, settings)).toBe(false);
+    expect(followsUp(401, settings)).toBe(true);
+    const [x, y] = followSpot([1000, 0, 0], [0, 0, 0], 250);
+    expect(x).toBeCloseTo(250, 6);
+    expect(y).toBeCloseTo(0, 6);
+    const at: { here: [number, number, number] } = { here: [1000, 0, 0] };
+    const travels: [number, number, number][] = [];
+    const lasting: ProcedureRunner = async (run) => {
+      while (!run.stopped()) await run.wait(1);
+      return 'failure';
+    };
+    const { actor } = packageActor(
+      [pack(1, procedure('lasting'))],
+      { lasting },
+      {
+        mind: { livePosition: () => [0, 0, 0] },
+        body: {
+          position: () => at.here,
+          travel: (to) => {
+            travels.push([to[0], to[1], to[2]]);
+            at.here = [to[0], to[1], to[2]];
+            return Promise.resolve(true);
+          },
+        },
+      },
+    );
+    await tick(actor, 1);
+    const commander = 0x14;
+    expect(actor.push('followCommander', followCommander, commander)).toBe(true);
+    for (let i = 0; i < 4; i++) await tick(actor, 0.25);
+    expect(travels).toHaveLength(1);
+    expect(travels[0]?.[0]).toBeCloseTo(250, 6);
+    // Near enough, it stands: its following goes on while it is commanded.
+    for (let i = 0; i < 8; i++) await tick(actor, 0.25);
+    expect(travels).toHaveLength(1);
+    expect(actor.engine()).toBe('followCommander');
   });
 
   it('Steal Warning: iStealWarnings warnings, forgotten fWarningTimer after the first', () => {

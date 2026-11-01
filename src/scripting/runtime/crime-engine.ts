@@ -311,8 +311,8 @@ export class CrimeEngine {
    * report it to its crime faction, which adds the bounty, unless the faction ignores the type,
    * the victim lets it pass (a friend overlooks minor crimes) or nobody who cares saw it.
    * Witnesses that care: the victim, and those whose crime faction is the crime's or shares its
-   * crimes (CRGR), not the player's followers. Crimes by others: TODO(M13) (NPCs' crimes against
-   * each other are combat's). Returns the crime as recorded, if anyone saw it.
+   * crimes (CRGR), not the player's followers. Crimes by others are alarms (#npcCrime). Returns
+   * the crime as recorded, if anyone saw it.
    */
   async commit(
     type: CrimeType,
@@ -327,7 +327,7 @@ export class CrimeEngine {
     },
   ): Promise<Crime | undefined> {
     if (criminal !== PLAYER_REF) {
-      await this.#npcCrime(criminal, options);
+      await this.#npcCrime(type, criminal, options);
       return undefined;
     }
     const runtime = this.#runtime;
@@ -406,10 +406,12 @@ export class CrimeEngine {
    * A crime by an actor other than the player: the witnesses who care (the victim, those of
    * the crime's faction or its crime group, not the criminal's friends) report it as an alarm
    * (no bounty: only the player has bounties); guards answer it by fighting the criminal
-   * (actor-crime.ts). TODO(M13): the engine's rule for which NPC acts are crimes beyond
-   * assault, and whether it records them.
+   * (actor-crime.ts). NPCs' crimes: assault, murder (murder), theft and pickpocketing (npcTook);
+   * trespass is the player's alone (the warnings, the off-limits doors), NPCs go where their
+   * packages send them. TODO(M13): whether the engine records an NPC's crimes.
    */
   async #npcCrime(
+    type: CrimeType,
     criminal: number,
     options: {
       readonly act: CrimeAct;
@@ -438,7 +440,7 @@ export class CrimeEngine {
       if (witness !== victim) {
         const own = await runtime.actors.crimeFaction(witness);
         if (own === undefined || !group.includes(own)) continue;
-        if (await this.#overlooks(witness, criminal, CrimeType.attack)) continue;
+        if (await this.#overlooks(witness, criminal, type)) continue;
       }
       witnesses.push(witness);
     }
@@ -528,6 +530,42 @@ export class CrimeEngine {
       this.#stat('items stolen', count);
     }
     return crime;
+  }
+
+  /**
+   * An NPC took an item (a package's Acquire: one lying in the world, `from` the reference, or
+   * from what an actor or container holds, `from` the holder): taken from a living actor it is
+   * pickpocketing (Allow Pickpocketing), taken where it may not take it (owned by another, as
+   * the player's taking is judged: mayTake; a corpse's items are no one's) a theft (Allow
+   * Stealing). Either is an NPC crime its witnesses report as an alarm (#npcCrime: no bounty,
+   * only the player has bounties; the items are not marked stolen). In the load order only
+   * MQ101RalofGetDoorKey allows both, taking the key from a corpse. TODO(M13): whether the
+   * original marks an NPC's stolen items as stolen.
+   */
+  async npcTook(taker: number, from: number, base: number, count: number): Promise<void> {
+    if (taker === PLAYER_REF || from === taker || count <= 0) return;
+    const runtime = this.#runtime;
+    if (await runtime.actors.isActor(from)) {
+      if (await runtime.actors.isDead(from)) return;
+      if ((await this.reaction(from, taker)) === 'hostile') return;
+      await this.commit(CrimeType.pickpocket, taker, {
+        act: 'pickpocket',
+        victim: from,
+        faction: await this.victimCrimeFaction(from),
+      });
+      return;
+    }
+    if (await this.mayTake(taker, from)) return;
+    const owner = await this.ownerOf(from);
+    const victim = await this.#ownerReference(owner.actor);
+    const faction = await this.crimeFactionFor({ victim, owner, place: from });
+    const record = await runtime.forms.record(base);
+    await this.commit(CrimeType.steal, taker, {
+      act: 'steal',
+      victim,
+      faction,
+      value: (record ? (parseItem(record)?.value ?? 0) : 0) * count,
+    });
   }
 
   /**
@@ -846,10 +884,22 @@ export class CrimeEngine {
 
   /** A murder (combat's kills: through ActorEngine.kill): the killing of one not hostile to the killer. */
   async murder(killer: number, victim: number): Promise<Crime | undefined> {
-    if (killer !== PLAYER_REF || victim === killer) return undefined;
+    if (victim === killer) return undefined;
     if ((await this.reaction(victim, killer)) === 'hostile') return undefined;
     const faction = await this.victimCrimeFaction(victim);
     if (faction === undefined) return undefined;
+    // An NPC's kill is a murder where its fight was its own assault: it struck first one not
+    // hostile to it (the assault answered, #npcAssaults), not back at one who struck it. Those
+    // who see the kill raise the alarm as for the assault (#npcCrime). A scripted kill without
+    // a blow (Actor.Kill) is none. TODO(M13): the original's rule for NPCs' murders (whether a
+    // kill without a recorded assault counts).
+    if (killer !== PLAYER_REF) {
+      const struck = this.#npcAssaults.has(`${String(killer)}:${String(victim)}`);
+      const answered = this.#npcAssaults.has(`${String(victim)}:${String(killer)}`);
+      if (struck && !answered)
+        await this.commit(CrimeType.murder, killer, { act: 'murder', victim, faction });
+      return undefined;
+    }
     const crime = await this.commit(CrimeType.murder, killer, { act: 'murder', victim, faction });
     if (crime) this.#stat('murders');
     return crime;

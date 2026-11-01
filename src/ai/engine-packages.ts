@@ -295,3 +295,59 @@ export function movementBlocked(seconds: number): EngineRunner {
     await run.wait(seconds);
   };
 }
+
+// --- Summons ---------------------------------------------------------------------------------------
+//
+// Follow Commander: an actor someone commands (a summon, a raised corpse, a commanded creature:
+// the magic system's commander) and that fights no one follows its commander, as summons do in
+// the original (UESP "Skyrim:Conjuration": the summoned creature follows its caster). Most summons
+// carry no package of their own (the vanilla summon bases: no PKID, or their template's), so the
+// engine's own following moves them. The band is fSummonedCreatureMinFollowDist (250) to
+// fSummonedCreatureMaxFollowDist (400).
+//
+// Inferred, TODO(M13): how the engine uses the band (ours: farther than the maximum it makes for a
+// spot the minimum from its commander, on its own side, running; within it stands facing them),
+// and whether a commanded actor's own packages run instead where it has some.
+
+/** It looks again this often while near enough (real seconds; ours). */
+const FOLLOW_LOOK = 0.5;
+
+/** The spot `reach` from the leader toward the follower (on the follower's side). */
+export function followSpot(here: Vec3, leader: Vec3, reach: number): Vec3 {
+  const dx = here[0] - leader[0];
+  const dy = here[1] - leader[1];
+  const length = Math.hypot(dx, dy);
+  const [ux, uy] = length > 1e-6 ? [dx / length, dy / length] : [0, -1];
+  return [leader[0] + ux * reach, leader[1] + uy * reach, leader[2]];
+}
+
+/**
+ * Whether a follower `distance` from its commander makes for it: beyond
+ * fSummonedCreatureMaxFollowDist.
+ */
+export function followsUp(
+  distance: number,
+  settings: Pick<AiSettings, 'summonedMaxFollowDist'>,
+): boolean {
+  return distance > settings.summonedMaxFollowDist;
+}
+
+/** Follow Commander: near its commander (the target) while it fights no one. */
+export const followCommander: EngineRunner = async (run) => {
+  const leader = run.target;
+  if (leader === undefined) return;
+  while (!run.stopped()) {
+    const here = run.body.position();
+    const there = run.mind.livePosition?.(leader);
+    if (!here || !there) return;
+    if (!followsUp(flat(here, there), run.settings)) {
+      run.body.face(headingTo(here, there));
+      await run.wait(FOLLOW_LOOK);
+      continue;
+    }
+    const spot = followSpot(here, there, run.settings.summonedMinFollowDist);
+    const walkable = run.mind.walkable ? run.mind.walkable(run.actor, spot) : spot;
+    await run.body.travel(walkable ?? [there[0], there[1], there[2]], 'run', ARRIVE);
+    await run.wait(STEP);
+  }
+};
