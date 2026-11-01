@@ -2867,7 +2867,17 @@ export class ScriptRuntime implements VmHost {
     return (await this.inventory(container)).get(form) ?? 0;
   }
 
-  async addItem(container: number, form: Value, count: number, silent: boolean): Promise<void> {
+  /**
+   * Adds items to a container; an NPC then takes up what suits it better, unless `takeUp` is
+   * false (an item that comes in worn: EquipRequest.worn).
+   */
+  async addItem(
+    container: number,
+    form: Value,
+    count: number,
+    silent: boolean,
+    takeUp = true,
+  ): Promise<void> {
     // A reference (an item made or placed in the world: a quest's item) goes into it itself.
     const reference = form instanceof ObjectHandle ? this.reference(form) : undefined;
     if (reference !== undefined && this.#isItemReference(reference)) {
@@ -2896,7 +2906,7 @@ export class ScriptRuntime implements VmHost {
         count,
         reference: undefined,
       });
-      await this.equipment.itemsGiven(container, item);
+      if (takeUp) await this.equipment.itemsGiven(container, item);
     }
   }
 

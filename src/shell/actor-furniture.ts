@@ -188,6 +188,11 @@ const describe = (error: unknown): string =>
 
 /** After a script's idle in furniture, its graph is looked at again after this (seconds). */
 const KEEP_IN_SECONDS = 0.7;
+/**
+ * A script's idle waits this long at most for a graph put back in its furniture's state to
+ * take it (seconds; the chopping block's enter, AOExecutioneeEnter, takes 1.5).
+ */
+const BACK_IN_SECONDS = 4;
 
 /**
  * The engine's handlers of a graph's furniture exits (meshes\responses\actorresponse.txt and
@@ -302,6 +307,13 @@ export class ActorFurniture {
     return use !== undefined && use.phase !== 'approaching';
   }
 
+  /** The actors that use a furniture now (on their way, entering, in it or leaving). */
+  usersOf(furniture: number): number[] {
+    const users: number[] = [];
+    for (const [actor, use] of this.#uses) if (use.furniture === furniture) users.push(actor);
+    return users;
+  }
+
   /** Whether a furniture's marker (any marker, without one) is taken. */
   inUse(furniture: number, marker?: number): boolean {
     for (const use of this.#uses.values()) {
@@ -397,6 +409,7 @@ export class ActorFurniture {
     }
     if (event === undefined) return false;
     if (this.#uses.has(user.reference) && options.inFurniture !== true) return false;
+    await this.#backIn(user, event);
     const sent = user.send(event);
     for (const dependent of options.dependents ?? []) dependent.send(event);
     const use = this.#uses.get(user.reference);
@@ -780,6 +793,27 @@ export class ActorFurniture {
    * block. TODO(M13): how the engine keeps a graph in its furniture (an enter it holds until
    * the graph takes it).
    */
+  /**
+   * A script's idle for an actor in furniture whose graph a script's idle stood up (not
+   * animation-driven, as the furniture states are) and which that graph would not take now: the
+   * furniture's state is put back first and the idle waits until the graph would take it
+   * (BACK_IN_SECONDS at most). MQ101's block: the camera-bob end (the walk's package's end
+   * fragment) stood the player up, and the block's IdleExecutionerChop_Player, heard only in
+   * Executionee_State, came half a second later, before the state was put back: the player
+   * stood through the execution instead of laying their head on the block.
+   */
+  async #backIn(user: FurnitureUser, event: string): Promise<void> {
+    const use = this.#uses.get(user.reference);
+    const graph = user.placed.behavior;
+    if (!use || !inside(use) || !graph) return;
+    if (graph.variable('bAnimationDriven') !== 0 || graph.wouldHandle(event)) return;
+    await this.#restore(user);
+    for (let waited = 0; waited < BACK_IN_SECONDS; waited += 0.1) {
+      if (this.#uses.get(user.reference) !== use || user.placed.behavior.wouldHandle(event)) return;
+      await sleep(0.1);
+    }
+  }
+
   async #keepIn(user: FurnitureUser, use: Use): Promise<void> {
     await sleep(KEEP_IN_SECONDS);
     if (this.#uses.get(user.reference) !== use || !inside(use)) return;

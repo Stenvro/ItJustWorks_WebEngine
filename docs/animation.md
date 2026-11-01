@@ -961,7 +961,10 @@ DecapitateHandler). In the executable nothing else marks a limb gone.
 its sex, the actor is given that armor to wear (AddWornItem: into its inventory and worn), the
 head is recorded as gone with what the actor wears then (ExtraDismemberedLimbs; the change is
 saved), and the actor is queued for the cut, which [GamePlay] iActorsDismemberedPerFrame (2)
-actors get each frame. Ours: the armor goes on through the equip system; the look change it
+actors get each frame. AddWornItem adds the armor worn: an NPC does not choose its gear again
+for it as it does for an item given (Helgen's first prisoner carries an Iron Battleaxe he
+never wields; ours took it up as the armor came in, and it hung on his back as his head came
+off). Ours: the armor goes on through the equip system (`EquipRequest.worn`); the look change it
 causes is answered in place (`dressedInPlace`), so a dying body is not made again in the middle
 of its death; it is asked for every look change until something else is worn or taken off
 (putting the armor on may change what the actor wears in several steps, each told on its own;
@@ -1001,7 +1004,17 @@ pose in place; the piece is the actor's instances skinned to the head on a still
 pose, drawn where the head's body (the skeleton model's head body, alone) carries it; the
 weapon's motion is read from the killer's weapon node between the blow and the cut (a frame
 or more; the engine reads its weapon body's velocity), the killer being a killmove's leader
-before the kill lands (inferred: the victim's myKiller is set by the kill). The ragdoll's
+before the kill lands (inferred: the victim's myKiller is set by the kill), else, for an actor
+in furniture, its executioner (another user of it with the isExecutioner keyword: the
+headsman). Helgen's prisoner has no killer at his Decapitate (KillActor comes 4.8 s later):
+unbent, his head flew level at 250 units a second over the basket (an open crate, 20 by 30
+units, before the block) and rolled down the street; bent down by the headsman's chop it
+drops into it, as observed in the original. TODO(M13): how the engine knows the executioner;
+the physics has no rolling friction yet (Havok's rollingFrictionMultiplier), so a head that
+comes down in the crate (its narrow side leaves the head's capsule, radius 8.6, 2 units of
+play) can roll off its rim or, after a few seconds, work through its thin walls. The
+head's place is read by `headAt` (its body is made and falls in the headless simulation too,
+with nothing to draw). The ragdoll's
 head bodies (a dying actor's, a corpse placed in its cell) stay out of collision. The piece
 names no reference (the crosshair finds nothing on it).
 
