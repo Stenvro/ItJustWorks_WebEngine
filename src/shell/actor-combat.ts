@@ -19,6 +19,7 @@
 // sets each fighter's target and asks for its draws, attacks, blocks and releases here.
 
 import { strengthDamage } from '../ai/combat-ai.ts';
+import { threatensPlayer } from '../ai/combat-reactions.ts';
 import { parseNpcCombat, parseRaceCombat } from '../ai/race-combat-records.ts';
 import {
   behaviorGraphKey,
@@ -55,6 +56,7 @@ import {
   chooseAttackData,
   DEFAULT_ATTACK,
   POWER_ATTACK_DEFAULT,
+  rotatesThrough,
 } from '../gameplay/combat/attacks.ts';
 import type { AttackData } from '../ai/race-combat-records.ts';
 import { bleedoutRecovered, bleedoutRegain } from '../gameplay/combat/bleedout.ts';
@@ -381,6 +383,8 @@ interface Gear {
   readonly race: RaceHits | undefined;
   /** Its race's DATA flags (RaceAiFlag: Can Dual Wield, No Combat In Water, ...). */
   readonly raceFlags: number;
+  /** Its race's DATA Flags 2 (RaceFlag2: Non-Hostile, ...). */
+  readonly raceFlags2: number;
   /** A torch in the left hand (a LIGH that can be carried): its model and its light. */
   readonly torch: { readonly model: string | undefined; readonly light: LightRecord } | undefined;
   /** A hand holds a spell or a scroll (GetEquippedItemType 9: the graphs' casting clips). */
@@ -1526,6 +1530,7 @@ export class ActorCombat implements CombatBridge {
       attacks,
       race: raceRecord?.type === 'RACE' ? parseRaceHits(raceRecord) : undefined,
       raceFlags: race?.flags ?? 0,
+      raceFlags2: race?.flags2 ?? 0,
       torch,
       spells: { right: rightSpell, left: leftSpell },
       spellForms: {
@@ -3869,6 +3874,17 @@ export class ActorCombat implements CombatBridge {
     fighter.firstHeld?.setVariable(name, value);
   }
 
+  /** Whether an actor's attack under way turns it to its target (ATKD Rotating Attack). */
+  rotatingAttack(reference: number): boolean {
+    const fighter = this.#fighters.get(reference);
+    const current = fighter?.state.current;
+    return (
+      fighter !== undefined &&
+      current !== undefined &&
+      rotatesThrough(this.#attackData(fighter, current.event))
+    );
+  }
+
   /** The attack data of an event (killmoves and events without data: a power attack's). */
   #attackData(fighter: Fighter, event: string): AttackData {
     const data = fighter.gear?.attacks.of(event);
@@ -4053,7 +4069,8 @@ export class ActorCombat implements CombatBridge {
       if (
         fighter.target === PLAYER_REF &&
         fighter.state.life === LifeState.alive &&
-        !fighter.player
+        !fighter.player &&
+        threatensPlayer(fighter.gear?.raceFlags2 ?? 0)
       )
         found.push(fighter.reference);
     }
@@ -4062,7 +4079,13 @@ export class ActorCombat implements CombatBridge {
 
   #fightingPlayer(): boolean {
     for (const fighter of this.#fighters.values()) {
-      if (fighter.target === PLAYER_REF && fighter.state.life === LifeState.alive) return true;
+      // A Non-Hostile race's (a deer the player hunts) keeps no one from waiting.
+      if (
+        fighter.target === PLAYER_REF &&
+        fighter.state.life === LifeState.alive &&
+        threatensPlayer(fighter.gear?.raceFlags2 ?? 0)
+      )
+        return true;
     }
     return false;
   }
@@ -4079,6 +4102,7 @@ export class ActorCombat implements CombatBridge {
     const senses = this.#options.senses?.();
     for (const fighter of this.#fighters.values()) {
       if (fighter.player || fighter.state.life !== LifeState.alive) continue;
+      if (!threatensPlayer(fighter.gear?.raceFlags2 ?? 0)) continue;
       const reference = fighter.reference;
       const targetsPlayer = fighter.target === PLAYER_REF;
       if (!targetsPlayer) {

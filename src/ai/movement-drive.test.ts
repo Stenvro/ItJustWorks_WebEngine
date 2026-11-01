@@ -9,6 +9,11 @@ describe('the movement drive', () => {
     expect(driveOf(1, 1)).toBe('animation-rotation');
   });
 
+  it('lets the controller turn an actor through a rotating attack (ATKD Rotating Attack)', () => {
+    expect(driveOf(1, 0, true)).toBe('animation-rotation');
+    expect(driveOf(0, 0, true)).toBe('controller');
+  });
+
   it("is switched by the engine's drive handlers", () => {
     expect(DRIVE_HANDLERS.AnimationDrivenHandler).toBe('animation');
     expect(DRIVE_HANDLERS.MotionDrivenHandler).toBe('controller');

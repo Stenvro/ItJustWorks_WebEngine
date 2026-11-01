@@ -249,6 +249,8 @@ export interface ActorMoversOptions {
   readonly held?: (actor: number) => boolean;
   /** The middle-high process's turns: walkers beyond the high process walk on theirs. */
   readonly slicer?: ProcessSlicer;
+  /** Whether an actor's attack under way turns it to its target (ATKD Rotating Attack). */
+  readonly rotatingAttack?: (actor: number) => boolean;
   /**
    * An actor's AI sends it on its way while an animation-driven idle holds it: its idle stops
    * (ActionIdleStop: the graph's IdleStop), as the engine stops an actor's idle for its path.
@@ -1228,6 +1230,7 @@ export class ActorMovers {
     const drive = driveOf(
       behavior.variable('bAnimationDriven') ?? 0,
       behavior.variable('bAllowRotation') ?? 0,
+      this.#options.rotatingAttack?.(reference) === true,
     );
     this.#drives.set(reference, drive);
     return drive;

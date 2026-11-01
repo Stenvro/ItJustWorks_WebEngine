@@ -7,6 +7,7 @@ import {
   fightReaction,
   isGuardClass,
   relationshipReaction,
+  threatensPlayer,
   type ReactionFacts,
 } from './combat-reactions.ts';
 
@@ -122,5 +123,12 @@ describe('combat reactions', () => {
     data[35] = 1;
     expect(isGuardClass(data)).toBe(true);
     expect(isGuardClass(undefined)).toBe(false);
+  });
+});
+
+describe('Non-Hostile races', () => {
+  it('a deer fighting or fleeing the player is no threat to them (RACE DATA Flags 2 0x2)', () => {
+    expect(threatensPlayer(0x2)).toBe(false);
+    expect(threatensPlayer(0)).toBe(true);
   });
 });
