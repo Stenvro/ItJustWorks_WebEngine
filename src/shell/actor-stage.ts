@@ -428,12 +428,18 @@ export class ActorStage {
         const staged = this.#actors.get(actor);
         if (staged) void this.furniture.playAction(this.userOf(staged), 'ActionIdleStop');
       },
-      // Its falls and landings (ActionFall, ActionLand) through its idle tree.
+      // Its movement actions (ActionMoveStart, the turns, ActionFall, ActionLand, ...) through
+      // its idle tree.
       performAction: (actor, action) => {
         const staged = this.#actors.get(actor);
         return staged
           ? this.furniture.playAction(this.userOf(staged), action)
           : Promise.resolve(false);
+      },
+      performActionNow: (actor, action, as) => {
+        const staged = this.#actors.get(actor);
+        const event = staged && this.furniture.actionEventNow(this.userOf(staged), action, as);
+        return event === undefined ? undefined : event !== null;
       },
       onBump: (actor) => {
         const staged = this.#actors.get(actor);
@@ -466,6 +472,10 @@ export class ActorStage {
         if (runtime) {
           void actorFell(runtime, reference, height, RAGDOLL_FALL_SHARE).catch(() => undefined);
         }
+      },
+      act: (reference, action) => {
+        const staged = this.#actors.get(reference);
+        return staged && this.furniture.actionEventNow(this.userOf(staged), action);
       },
     });
     this.playerDeath = new PlayerDeath({

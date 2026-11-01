@@ -76,6 +76,13 @@ export interface ActorKnockdownsOptions {
    * falling damage of a ragdoll (src/gameplay/falling.ts, RAGDOLL_FALL_SHARE).
    */
   readonly fell?: (reference: number, height: number) => void;
+  /**
+   * Performs an action on an actor at once (ActorFurniture.actionEventNow): the event its graph
+   * took, null for none, undefined when it cannot be told now (its graph then gets the event the
+   * vanilla idles send). ActionGetUp begins the get-up (NPCGetUp: GetUpBegin; one graph's
+   * GetUpStart), ActionKnockDown knocks one getting up down again.
+   */
+  readonly act?: (reference: number, action: string) => string | null | undefined;
 }
 
 type Phase = 'down' | 'matching' | 'rising';
@@ -130,7 +137,7 @@ export class ActorKnockdowns {
   }
 
   /**
-   * Knocks an actor down: its graph's ragdoll (the idle tree's ActionKnockdown chose "Ragdoll"
+   * Knocks an actor down: its graph's ragdoll (the idle tree's ActionKnockDown chose "Ragdoll"
    * or "RagdollInstant", which combat has sent), its bodies let go and pushed along `push`. One
    * that lies already is pushed again. Whether it lies now.
    */
@@ -177,7 +184,8 @@ export class ActorKnockdowns {
       knock.phase = 'down';
       knock.down = 0;
       knock.resting = 0;
-      knock.placed.behavior?.sendEvent('Ragdoll');
+      if (this.#options.act?.(reference, 'ActionKnockDown') === undefined)
+        knock.placed.behavior?.sendEvent('Ragdoll');
       if (!(await bodies.knockDown(knock.subject.holder))) return false;
       this.#options.changed?.(reference, KnockState.down);
     }
@@ -335,7 +343,9 @@ export class ActorKnockdowns {
     if (pose) behavior.setRagdollPose(pose);
     behavior.setVariable('iGetUpType', 1);
     knock.frame = frame;
-    if (!behavior.sendEvent('GetUpBegin')) {
+    // The engine's ActionGetUp (its idles' GetUpBegin, the one graph's GetUpStart).
+    const acted = this.#options.act?.(knock.subject.reference, 'ActionGetUp');
+    if (acted === undefined ? !behavior.sendEvent('GetUpBegin') : acted === null) {
       this.#stand(knock, frame);
       return;
     }

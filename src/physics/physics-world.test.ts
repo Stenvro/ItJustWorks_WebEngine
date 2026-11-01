@@ -758,6 +758,11 @@ describe('the engine settings of simulated bodies', () => {
     // Never faster than 0.3 Havok units a second (21 game units): debris.
     const slow = { ...moving([-5, -5, 0], [5, 5, 12], 4), maxLinearVelocity: 0.3 };
     expect(sweptBody(slow, 1, DEBRIS_QUALITY)).toBe(false);
+    // Its allowed penetration depth: a step at its top speed (104.4 / 60) goes no deeper than
+    // 2 Havok units allowed: never swept; 0.15 allowed: swept.
+    const cup = moving([-5, -5, 0], [5, 5, 12], 4);
+    expect(sweptBody({ ...cup, penetrationDepth: 2 }, 1, DEBRIS_QUALITY)).toBe(false);
+    expect(sweptBody({ ...cup, penetrationDepth: 0.15 }, 1, DEBRIS_QUALITY)).toBe(true);
     // Keyframed quality on a simulated body: not swept.
     expect(sweptBody(moving([-5, -5, 0], [5, 5, 12], 1), 1, DEBRIS_QUALITY)).toBe(false);
     expect(smallestExtent(moving([-5, -5, 0], [5, 5, 12], 4).shapes)).toBeCloseTo(10);

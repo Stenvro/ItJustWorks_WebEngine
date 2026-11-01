@@ -1198,7 +1198,14 @@ export class CastingEngine {
         ? undefined
         : await runtime.magic.item(explosion.enchantment);
     const sight = explosionSightStart(point, direction, settings);
-    const center: Vec3 = [point[0], point[1], point[2]];
+    // Its push comes from below its centre by its Vertical Offset Mult of its radius (34 vanilla
+    // explosions set one: what they throw goes up and out). TODO(M13): the sign and the unit
+    // (a share of the radius) are read from the field's name, not observed.
+    const pushCenter: Vec3 = [
+      point[0],
+      point[1],
+      point[2] - explosion.verticalOffsetMult * explosion.radius,
+    ];
     const reached: number[] = [];
     for (const reference of runtime.world.loadedReferences?.() ?? []) {
       const at = runtime.world.livePlacement?.(reference)?.position;
@@ -1210,7 +1217,7 @@ export class CastingEngine {
       if (explosion.force > 0) {
         const source = reference === exclude;
         if (runtime.world.explosionPush) {
-          runtime.world.explosionPush(reference, center, (layer, mass) =>
+          runtime.world.explosionPush(reference, pushCenter, (layer, mass) =>
             explosionBodyPush(explosion.force, layer, mass, source, settings),
           );
         } else if (distance > 0) {

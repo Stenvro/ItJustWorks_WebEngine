@@ -28,26 +28,36 @@ are kept by hand below, against docs/animation.md and the conformance suites
 (tests/conformance/animation/). The count after an item is how many objects (nodes,
 annotations, records) use it.
 
-## Count (2026-11-01, round 1)
+## Count (2026-11-01, round 2)
 
 | Part                        | Items | Done | Open |
 | --------------------------- | ----: | ---: | ---: |
 | Behavior classes            |    66 |   66 |    0 |
 | Behavior members (read)     |   320 |  320 |    0 |
-| Behavior node fields (run)  |   292 |  253 |   39 |
+| Behavior node fields (run)  |   292 |  254 |   38 |
 | Annotations (tags)          |   135 |  127 |    8 |
-| Response handlers           |    97 |   95 |    2 |
-| Idles (IDLE fields)         |    10 |    6 |    4 |
+| Response handlers           |    97 |   97 |    0 |
+| Idles (IDLE fields)         |    10 |    7 |    3 |
 | Idle conditions (functions) |   111 |  111 |    0 |
-| Actions (AACT)              |    71 |   40 |   31 |
+| Actions (AACT)              |    71 |   57 |   14 |
 | Game settings (GMST)        |    20 |   20 |    0 |
-| Mechanics (by hand)         |    24 |   15 |    9 |
-| Total                       |  1146 | 1053 |   93 |
+| Mechanics (by hand)         |    24 |   16 |    8 |
+| Total                       |  1146 | 1075 |   71 |
 
 Round 1 wrote the sweep and this list. Built: the animations' SoundStop.<descriptor> and
 SoundRelease.<descriptor> (17 and 8 annotations: the bow's draw loop, WPNBowPullLPM, stops as
 the arrow leaves; a dog's distant bark ends) stop what that actor's SoundPlay started
 (src/shell/actor-sounds.ts).
+
+Round 2 (1053 to 1075): the movement actions (17: moving, turning, sprinting, sneaking,
+swimming, the player's jump, the get-up and knock-down) are performed through the idle tree,
+at once where their idles ask only the actor's own state; the syncing blenders' sync master
+and the clips' sync points; the idles' replay delay; the two response handlers that are no
+classes of the original (their events do nothing). Next biggest: the 38 node fields (userData
+of 24 kinds, TODO(M13); the paired clip's mark threshold and prefix; the cyclic blend range;
+the powered ragdoll's world-from-model mode; the keyframed ragdoll's blend duration), the 14
+actions left (path end, summoned start, force equip, reload, dual release, block anticipate,
+ragdoll instant, reset graph, ...).
 
 ## Behavior graphs
 
@@ -76,15 +86,19 @@ the arrow leaves; a dog's distant bark ends) stop what that actor's SoundPlay st
       blenders, selectors and modifiers carry, but for:
 - [ ] `userData` of 24 node kinds (4,950 nodes): hkbNode's user data. TODO(M13): what the
       original does with it is unknown (the formats' list has it open too).
-- [ ] blender.indexOfSyncMasterChild (2080), maxCyclicBlendParameter (2121),
-      minCyclicBlendParameter (17): parsed, not run. Next: the sync master child leads a synced
-      blend's cycle (docs/animation.md, "Syncing blenders", syncs by the heaviest child).
+- [x] blender.indexOfSyncMasterChild (2080): a syncing blender's master child (13 of 1,369,
+      the jumps' directional and the unequip blends) leads its cycle and its sync points while
+      it plays (docs/animation.md, "Syncing blenders"; round 2).
+- [ ] blender.maxCyclicBlendParameter (2121), minCyclicBlendParameter (17): parsed, not run
+      (a cyclic parametric blend's range).
 - [ ] synchronized-clip.markErrorThreshold (540), syncPrefix (226), applyMotionFromRoot (13):
       parsed, not run (paired animations: when the support is close enough to its mark, the
-      partner's clip prefix, root motion).
+      partner's clip prefix, root motion). Not reached in round 2.
 - [ ] powered-ragdoll.worldFromModelMode (95): the powered ragdoll's root (world-from-model
       mode, its pose-matching bones). TODO(M13) with the formats' list.
-- [ ] rigid-body-ragdoll.durationToBlend (56): how long the keyframed ragdoll blends in.
+- [ ] rigid-body-ragdoll.durationToBlend (56): how long the keyframed ragdoll blends in. Not
+      reached in round 2: the keyframed bones are moved to the pose (actor-bodies #follow), not
+      driven by Havok's hierarchy controller and its gains (the physics list's blend gains).
 - [ ] get-up.alignWithGroundDuration, groundNormal (47): the get-up's turn to the ground.
 - [ ] foot-ik-controls.alignWithGroundRotation (25), foot-ik.alignWithGroundRotation (2).
 - [ ] damping.enableVectorDamping (43).
@@ -98,8 +112,8 @@ the arrow leaves; a dog's distant bark ends) stop what that actor's SoundPlay st
       events (weaponSwing, HitFrame, PreHitFrame, ...), the graphs' own events (SyncLeft,
       SyncRight, FlightLandingEffect, the dogs' and wolves' sounds by their graph events, ...),
       paired partners' 2_ events.
-- [ ] SyncLeft, SyncRight and the other sync points (EVENT_FLAGS.syncPoint) are raised but not
-      used to sync clips: by hand below.
+- [x] SyncLeft, SyncRight and the other sync points (EVENT_FLAGS.syncPoint): they sync the
+      clips of syncing blenders (round 2; by hand below).
 - [ ] FrontFoot (26), BackFoot (25): no footstep set, response file or graph names them.
       TODO(M13): whether the original's code answers them.
 - [ ] Spellfire (2): as above.
@@ -107,9 +121,10 @@ the arrow leaves; a dog's distant bark ends) stop what that actor's SoundPlay st
       misspelt in the data; nothing names them. TODO(M13): confirm the original ignores them.
 - [ ] SoundPlayAt.<descriptor>.<node> (20, the sawmill's saw): an object graph's sound at one
       of its nodes; object graphs do not sound their events yet.
-- [x] Response handlers (95 of 97): actorresponse.txt and playercharacterresponse.txt.
-- [ ] StopHorseCamera : StopHorseCameraHandler, RemoveCharacterControllerFromWorld :
-      RemoveCharacterControllerHandler: not implemented.
+- [x] Response handlers (97 of 97): actorresponse.txt and playercharacterresponse.txt. Two,
+      StopHorseCameraHandler and RemoveCharacterControllerHandler, are no classes of the
+      original: their events do nothing there and here (tests/conformance/animation/
+      engine-handlers.test.ts; the sweep's NO_HANDLER_CLASS).
 
 ## Idles and actions
 
@@ -117,23 +132,39 @@ the arrow leaves; a dog's distant bark ends) stop what that actor's SoundPlay st
       1489, flags 383 (src/ai/idle-records.ts, the idle tree's search).
 - [x] Idle conditions: all 111 functions the idles use are valued.
 - [ ] loopMin, loopMax (4 idles): the looping seconds. Not read.
-- [ ] replayDelay (126 idles): not read.
+- [x] replayDelay (126 idles): an idle is not picked again for the actor until its delay has
+      passed (src/shell/actor-furniture.ts; round 2). TODO(M13): per actor or not; a group
+      idle's delay over its children.
 - [ ] animationGroupSection (3128 idles): "stray bytes" in Skyrim's data (idle-records.ts).
       TODO(M13): confirm the original reads nothing there.
-- [x] Actions performed (40 of 71): ActionIdle, ActionDraw, ActionSheath, the attacks and
-      power attacks, interrupts, ready and release of each hand and the voice, ActionActivate,
-      ActionLand, ActionFall, ActionDeath, ActionDeathWait, the bleedout's, the stagger's, the
-      recoils, ActionBlockHit, ActionWardHit, ActionBumpedInto, ActionTalking, flight and
-      hover, ActionPathStart, ActionIdleStop, ActionIdleStopInstant, ActionIdleWarn.
-- [ ] Actions never performed (31): ActionMoveStart, ActionMoveStop, ActionMoveForward,
+- [x] Actions performed (**DONE** of 71): ActionIdle, ActionDraw, ActionSheath, the attacks
+      and power attacks, interrupts, ready and release of each hand and the voice,
+      ActionActivate, ActionLand, ActionFall, ActionDeath, ActionDeathWait, the bleedout's, the
+      stagger's, the recoils, ActionBlockHit, ActionWardHit, ActionBumpedInto, ActionTalking,
+      flight and hover, ActionPathStart, ActionIdleStop, ActionIdleStopInstant, ActionIdleWarn;
+      round 2: the movement actions (ActionMoveStart, ActionMoveStop, ActionMoveForward,
       ActionMoveBackward, ActionMoveLeft, ActionMoveRight, ActionTurnLeft, ActionTurnRight,
-      ActionTurnStop, ActionLargeMovementDelta, ActionSprintStart, ActionSprintStop,
-      ActionSneak, ActionJump, ActionSwimStateChange, ActionWaterwalkStart, ActionLook,
-      ActionListen, ActionReload, ActionDualRelease, ActionStopEffect, ActionSummonedStart,
-      ActionPathEnd, ActionForceEquip, ActionShieldChange, ActionBlockAnticipate,
-      ActionVoiceReady, ActionKnockDown, ActionGetUp, ActionRagdollInstant, ActionResetGraph.
-      The locomotion ones' events reach the graphs another way (the controllers send them);
-      performed as actions, the idles under them (their conditions) would choose. Next.
+      ActionTurnStop, ActionSprintStart, ActionSprintStop, ActionSneak, ActionSwimStateChange,
+      ActionLargeMovementDelta) through the idle tree as the data channels cross their
+      thresholds, at once where their idles ask only the actor's own state, else in order
+      behind the tree (src/ai/locomotion.ts, ActorFurniture.actionEventNow); the player's
+      ActionJump; the knock-downs' ActionGetUp and ActionKnockDown (combat's ActionKnockdown
+      was asked by a misspelt name the sweep did not find).
+- [ ] Actions never performed (14), each with what is missing:
+  - ActionPathEnd (24 graphs: the canned turn into the heading arrived with): the travel's
+    pathing target is not kept to its end (src/shell/actor-movers.ts #pathStart).
+  - ActionSummonedStart (summonStart, 8 graphs): the summoning lives in the scripts' magic
+    engine; the moment the summon appears is not handed to the stage yet.
+  - ActionForceEquip (19 graphs), ActionReload (the crossbow's reloadStart), ActionDualRelease
+    (StaffBashRelease), ActionBlockAnticipate (blockStart, blockAnticipateStart): combat's
+    equip, crossbow, bash and block code sends their events directly. Next.
+  - ActionRagdollInstant (RagdollInstant, 46 graphs), ActionResetGraph (returnToDefault, ...):
+    TODO(M13): when the original performs them is not known.
+  - ActionWaterwalkStart (WaterWalkStart, 1 graph: the levitating Dwemer sphere's): its
+    moment is not known. TODO(M13).
+  - ActionLook, ActionStopEffect, ActionShieldChange, ActionVoiceReady: no idles in any
+    vanilla graph (performed, nothing would play); ActionListen: one empty idle group. TODO(M13):
+    their moments.
 
 ## Game settings
 
@@ -148,7 +179,8 @@ the arrow leaves; a dog's distant bark ends) stop what that actor's SoundPlay st
 
 - [x] The behavior runtime: state machines, transitions and their effects, blending, syncing
       blenders, bindings, expressions (docs/animation.md, "Behavior runtime").
-- [ ] Sync points: the clips' sync annotations (EVENT_FLAGS.syncPoint) read, not applied.
+- [x] Sync points: a syncing blender's children play between their own sync points as its
+      cycle is between its layout's (src/animation/sync-points.ts; round 2).
 - [ ] Mirrored additive clips: by our own rule (docs/animation.md, "Mirrored clips").
 - [x] Engine handlers: the response files' 95 of 97 (above).
 - [ ] An event no node takes is not reported as not handled; bDisableInterp's setter.

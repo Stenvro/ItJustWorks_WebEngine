@@ -428,6 +428,34 @@ How the engine drives an actor's behavior graph while it moves (`Locomotion`,
 `src/ai/locomotion.ts`; observed in the original, in our words; for NPCs, creatures, horses
 and the player alike).
 
+**Movement actions.** The graph's events of moving come from actions (AACT), performed as the
+data channels cross their thresholds, and their idles' events reach the graph, not raw events:
+ActionMoveStart / Stop (Speed), ActionMoveForward / Backward and ActionMoveRight / Left
+(Direction; the last two have no idles in any vanilla graph), ActionTurnLeft / Right / Stop
+(TurnDelta), ActionSprintStart / Stop, ActionSneak (performed as the actor was before its
+sneaking changed: 0_master's SneakRoot picks SneakStart by IsSneaking() == 0, else SneakStop),
+ActionSwimStateChange (SwimStart by IsSwimming() == 1, the mounted ones by IsRidingHorse), the
+player's ActionJump (JumpRoot: not in furniture, casting, attacking, bleeding out, riding or
+equipping; JumpDirectionalStart over 10 units a second; a jump its graph does not take does not
+push off), ActionLargeMovementDelta as the player's direction is frozen (its idles are a
+rider's; the moment is inferred), the knock-downs' ActionGetUp (GetUpBegin; one graph's
+GetUpStart) and ActionKnockDown on one getting up. So the idles decide per graph: a rider's
+0_master gets no moveStart (IsRidingHorse() == 0), the slaughterfish turns by SwimLeft and
+SwimRight, SprintStart only neither sneaking nor blocking (the shield charge's BlockBashSprint,
+the silent roll's SneakSprintStartRoll by their perks). The engine values an action's idles at
+once, in the frame it is performed; ours does so where every condition on the way is of the
+actor's own state (`actorStateHolds`, src/scripting/runtime/condition-values.ts: how it moves,
+whether it rides, its graph's variables; `ActorFurniture.actionEventNow`), else the idle tree
+is asked through the scripts' conditions and the actions after it wait for it, in order (a turn
+never overtakes the move start before it). The sync variables (iSyncIdleLocomotion, ...) are
+set at once either way. Without an idle tree (a horse's Locomotion, tests) the graphs get the
+events the vanilla idles send.
+
+**Replay delay.** An idle with a replay delay (IDLE DATA, seconds; 126 vanilla idles) is not
+picked again for the same actor until that long has passed since it played (the scripts' real
+seconds). TODO(M13): whether the original counts it per actor, and whether a group idle's
+delay holds its children (ours: the idle played).
+
 **Where the values come from.** Every movement update the actor's movement controller says what
 it wants: a speed, the direction to go in (an angle against the actor's facing) and a rotation
 speed; the engine keeps them in the actor's process data and moves the actor by them. The graph
@@ -667,6 +695,11 @@ graph itself handles by that name; 661 such names in the vanilla graphs). Script
 the whole text (`RegisterForAnimationEvent(…, "SoundPlay.NPCGiantAttackStomp")` in a vanilla
 script), so OnAnimationEvent gets it whole. Events sent to a graph may carry a payload too
 (`sendEvent(name, payload)`); the graph's own handling does not read it.
+
+Two handlers the response files name, StopHorseCameraHandler (StopHorseCamera) and
+RemoveCharacterControllerHandler (RemoveCharacterControllerFromWorld), are no classes of the
+original: their events do nothing there, and nothing here answers them
+(tests/conformance/animation/engine-handlers.test.ts).
 
 **The dispatch.** The engine answers a raised event by a handler class:
 `meshes\responses\actorresponse.txt` maps tags to them for every actor (weaponSwing :
@@ -1478,6 +1511,23 @@ weapon, bow, magic and block locomotion, the horse, the mudcrab, draugr, troll, 
 werewolf and others). A child whose weight comes back above zero is
 activated anew and starts at the blender's phase; the cycle goes on. A blender entered anew
 starts where its clips were started (a transition that syncs), else at 0.
+
+**The sync master.** A syncing blender with a sync master child (indexOfSyncMasterChild: 13 of
+the vanilla graphs' 1,369, all child 0: the jumps' directional blends and the unequip blends)
+takes its cycle from that child while it plays (its weight above zero); the rest (−1) from the
+children's weighted cycle as above.
+
+**Sync points** (`src/animation/sync-points.ts`). A clip's sync points are the events its graph
+flags as sync points (EVENT_FLAGS.syncPoint: SyncLeft and SyncRight in 49 graphs, FootLeft and
+FootRight in 32, and attack windows, staggers) at its triggers and, unless it keeps them from
+being triggers, its annotations, each at its place in its cropped cycle. The blender's cycle is
+laid out by them: the leading children's (the master's, else every active child's weighted,
+each name matched by its order in the cycle, the mean taken round the cycle), and each child
+plays at the share of the way between its own two sync points that the blender's phase has
+between the layout's of the same names: a walk whose left foot falls at a third of its cycle and
+a run whose falls at a half both have it down as the blend passes SyncLeft. With one shared sync
+point a child is shifted by it; with none, it plays at the blender's phase (as Havok's generator
+sync info, which matches sync points by their event's id).
 
 **What this fixed.** The phase was read from the first active child's clip. In a turn blend
 whose damped TurnDelta wavers about zero, the side children take turns: right and straight, then
