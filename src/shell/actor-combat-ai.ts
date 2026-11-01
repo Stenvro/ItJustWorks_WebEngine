@@ -1603,7 +1603,7 @@ export class ActorCombatAi {
     mind.packageStyle = undefined;
     mind.overridePackage = undefined;
     const list = await this.#options.senses?.()?.combatOverridesRead(mind.reference);
-    if (list === undefined || mind.mode === 'idle') return;
+    if (list === undefined) return;
     const found = await this.#options.ai?.()?.combatPlace(mind.reference, list);
     if (mind.mode === 'idle' || !found) return;
     mind.packageStyle = found.combatStyle;

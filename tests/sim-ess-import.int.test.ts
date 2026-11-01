@@ -168,6 +168,22 @@ describe.skipIf(!hasGamedata() || known === undefined)('a known original save (l
         expect(update.left).toBeGreaterThanOrEqual(0);
         if (!update.gameTime) expect(update.left).toBeLessThanOrEqual(update.interval);
       }
+      // The running stacks (on the cart: the rider's OnAnimationEvent and an OnUpdate, each on
+      // the native call its function message queued) go on where they were; the animation
+      // event, sleep, tracked stats and inventory filter registrations are kept.
+      expect(imported.save.runtime.threads?.length).toBe(
+        papyrus.stackData.length + papyrus.suspendedStacks.flat().length,
+      );
+      const resumed = sim.world.terminal.lines.filter(
+        (line) => line.tag === 'save' && line.text.includes('cannot resume'),
+      );
+      expect(resumed).toEqual([]);
+      const runtimeSave = imported.save.runtime;
+      expect((runtimeSave.animationEvents as Map<number, unknown>).size).toBe(
+        papyrus.registrations.animationEvents.length,
+      );
+      expect((runtimeSave.inventoryFilters as Map<string, unknown>).size).toBeGreaterThan(0);
+      expect((runtimeSave.registrations as Map<string, unknown>).has('sleep')).toBe(true);
       // The camera as the original left it: first person, its fields of view.
       expect(imported.save.world?.player).toEqual({ pov: 'first', fov: [80, 80] });
       // The actors' running packages, where the save has them stand: those of the loaded

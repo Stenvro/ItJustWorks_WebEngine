@@ -36,8 +36,9 @@ function papyrus(): Uint8Array {
   for (const s of strings) w.wstring(s);
   w.u32(1).u32(0).u32(1).u32(2).u32(2).u32(3).u32(4).u32(5);
   w.u32(2);
-  w.u64(0x10n).u32(0).u16(0).u16(0x4d).refId(1, QUEST).u8(0);
-  w.u64(0x11n).u32(5).u16(0).u16(0x3e).refId(1, 0x14).u8(0);
+  // The game handles' high words: −1 on a form (an alias script's would be its alias id).
+  w.u64(0x10n).u32(0).u16(0).u16(0xffff).refId(1, QUEST).u8(0);
+  w.u64(0x11n).u32(5).u16(0).u16(0xffff).refId(1, 0x14).u8(0);
   w.u32(0).u32(0).u32(1).u32(0); // no detached objects, arrays or stacks
   w.u64(0x10n).u8(0).u32(6).u32(0).u32(2).u8(PapyrusType.Int).i32(3); // in state Waiting
   w.u8(PapyrusType.Object).u32(5).u64(0x11n);
