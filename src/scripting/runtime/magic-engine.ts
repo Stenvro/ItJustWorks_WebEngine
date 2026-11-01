@@ -1435,8 +1435,18 @@ export class MagicEngine {
       case EffectArchetype.werewolfFeed:
         runtime.state.actor(target).eaten = true;
         break;
+      // Werewolf and Vampire Lord (WerewolfChangeEffect, DLC1VampireChangeEffect; their
+      // associated item the beast race): on the player the beast form starts as the effect
+      // takes hold, before its scripts start. From the data: WerewolfChangeEffectScript's
+      // first-change branch turns it off again (SetBeastForm false) before anything of the
+      // scripts' own has turned it on. The change itself is the scripts' (src/gameplay/
+      // beast-forms.ts).
+      case EffectArchetype.werewolf:
+      case EffectArchetype.vampireLord:
+        if (target === PLAYER_REF) runtime.beastForm = true;
+        break;
       // Cloaks act each cloak interval (#cloaks); Soul Trap as its target dies (died). Concussion,
-      // Telekinesis, Grab Actor, Light, Detect Life, Guide, Disguise, Werewolf, Vampire Lord,
+      // Telekinesis, Grab Actor, Light, Detect Life, Guide, Disguise,
       // Slow Time, Etherealize, Command Summoned, Script: their state is the effect itself
       // (aiState, timeMultiplier) and their scripts; what they show (lights, Detect Life's
       // shader, Clairvoyance's trail) the world's magicEffect shows (src/shell/actor-effects.ts).

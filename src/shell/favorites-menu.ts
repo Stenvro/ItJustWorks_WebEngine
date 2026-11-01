@@ -16,6 +16,7 @@ import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import type { GameSession } from './game-session.ts';
 import { reselect, type LastSelected } from './favorites-select.ts';
 import { mouseEquipSlot, type ItemMenuModel } from './item-menu.ts';
+import { playerBeastForm } from './magic-menu.ts';
 
 const LIST = '_root.MenuHolder.Menu_mc.itemList';
 
@@ -44,9 +45,12 @@ export class FavoritesMenu {
     if (!runtime) return entries;
     const inventory = await runtime.inventory(PLAYER_REF);
     const spells = new Set(await runtime.actors.spells(PLAYER_REF));
+    // A vampire lord's favorites are its own spells and powers alone (beast-forms.ts).
+    const beast = await playerBeastForm(runtime);
     for (const formId of runtime.state.favorites) {
       // Favorites the player no longer has are not listed.
       if ((inventory.get(formId) ?? 0) <= 0 && !spells.has(formId)) continue;
+      if (!beast.listed(formId)) continue;
       const name = (await runtime.forms.record(formId))?.text('FULL') ?? '';
       entries.push({
         text: name,

@@ -791,14 +791,16 @@ export class CastingEngine {
     return kept === undefined ? full : Math.min(full, kept);
   }
 
-  /** A staff's full charge: WEAP EAMT, else its enchantment's. */
+  /** A staff's full charge: WEAP EAMT, else its enchantment's (crafting-engine.ts fullCharge). */
   async #fullCharge(castable: Castable): Promise<number> {
     const staff = castable.object;
     const record = staff === undefined ? undefined : await this.#runtime.forms.record(staff);
     const eamt = record?.fields.first('EAMT');
-    return eamt && eamt.length >= 2
-      ? new DataView(eamt.buffer, eamt.byteOffset, eamt.byteLength).getUint16(0, true)
-      : (castable.item.enchantment?.amount ?? 0);
+    const own =
+      eamt && eamt.length >= 2
+        ? new DataView(eamt.buffer, eamt.byteOffset, eamt.byteLength).getUint16(0, true)
+        : 0;
+    return this.#runtime.crafting.fullCharge(own, castable.item);
   }
 
   /**

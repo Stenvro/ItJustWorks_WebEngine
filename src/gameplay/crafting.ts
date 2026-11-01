@@ -662,6 +662,23 @@ export function enchantedItemValue(
   );
 }
 
+/** The enchantment charge settings: the engine's defaults (no plugin of the load order sets them). */
+export const ENCHANTMENT_CHARGE_SETTINGS = { mult: 1, base: 0 } as const;
+
+/**
+ * An enchantment's own charge (observed in the original), an item's full charge where the item
+ * names none (WEAP EAMT 0: 31 weapons of the load order, the bound weapons, the Ebony Blade,
+ * Keening, the Poacher's Axe, the trap darts, the fishing rods): ENIT's charge amount with its
+ * No Auto Calc flag, else fMagicEnchantmentChargeMult × its cost + fMagicEnchantmentChargeBase.
+ */
+export function enchantmentCharge(
+  enchantment: { readonly noAutoCalc: boolean; readonly amount: number; readonly cost: number },
+  settings: { readonly mult: number; readonly base: number } = ENCHANTMENT_CHARGE_SETTINGS,
+): number {
+  if (enchantment.noAutoCalc) return enchantment.amount;
+  return Math.max(0, settings.mult * enchantment.cost + settings.base);
+}
+
 /** How many hits a weapon's charge gives (rounded down; a cost of 0: unlimited). */
 export function enchantmentUses(charge: number, chargePerUse: number): number {
   return chargePerUse > 0 ? Math.floor(charge / chargePerUse + 1e-9) : Infinity;
