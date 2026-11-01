@@ -4,7 +4,7 @@
 // bSaveOnPause with fAutosaveEveryXMins). Loading itself is Play's (play-mode.ts): the world
 // is rebuilt from the plugins behind the loading screen, then the save is applied.
 
-import { readEss } from '../formats/ess/ess.ts';
+import { readEss, type EssFile } from '../formats/ess/ess.ts';
 import { importEss, type EssWorld } from '../save/ess-import.ts';
 import { readGameSave, saveGame, type GameSave } from '../save/game-save.ts';
 import { readSaveHeader, writeSave, type SaveHeader } from '../save/save-codec.ts';
@@ -202,13 +202,13 @@ export class SaveManager {
    * Imports an original save (.ess) as a new save of ours (ess-import.ts): it is then listed
    * and loaded as any other. What could not be imported is logged. Resolves to its name.
    */
-  async importEss(bytes: Uint8Array, world: EssWorld): Promise<string> {
+  async importEss(bytes: Uint8Array, world: (ess: EssFile) => Promise<EssWorld>): Promise<string> {
     const store = await this.#open();
     const saves = await store.list();
     const number = saves.reduce((most, save) => Math.max(most, save.number), 0) + 1;
     const ess = readEss(bytes);
     const name = `Imported ${ess.header.playerName} ${String(ess.header.saveNumber)}`;
-    const imported = importEss(ess, world, { name, number, now: Date.now() });
+    const imported = importEss(ess, await world(ess), { name, number, now: Date.now() });
     for (const what of imported.skipped)
       this.#terminal.log('save', `not imported: ${what}`, 'warn');
     await store.write(

@@ -474,8 +474,9 @@ plugin name, and forms of plugins not loaded are left out. What it applies:
   package) and whom it fought (its combat controller's target), for the actors the save has
   moved: our world save's actors (`GameSave.world`, docs/formats/save.md), so those of the
   loaded area go on with that package as they are placed (from its procedure tree's root:
-  TODO(M13), the procedures' running states into ours; an actor at its record's place keeps
-  the package its AI chooses);
+  TODO(M13), the procedures' running states into ours); an actor the save keeps at its
+  record's place (it writes no place for it) stands there with its package (`essWorld(db,
+ess)` reads those places ahead);
 - the player: where they stand (their ACHR's moved place, else the player location table),
   level, name, race, the 18 skills and DNAM's health, magicka and stamina (TODO(M13): checked
   against a real save), factions, the base's spells and shouts; their inventory changes; the
@@ -495,7 +496,19 @@ plugin name, and forms of plugins not loaded are left out. What it applies:
 - references: moved (cell or world by the record's type), enabled or disabled, deleted, scale,
   owner, inventory changes (`GameSave.inventoryDeltas`, added to the records' inventories after
   the load), the open-state flag (TODO(M13): its data), references the game created;
-- books read and locations cleared;
+- books read and locations cleared; infos said (their Say Once marks);
+- actors' life state, the fifth of their saved state bytes (CommonLibSSE's ACTOR_LIFE_STATE: 2
+  on the opening's executed and killed, 0 on the living; 6 restrained, 3 unconscious): dead,
+  restrained, unconscious;
+- locks (the Lock extra: level, flags with bit 0 locked, key): the level and whether locked;
+- the scenes playing (SCEN): the first state word is the phase (−1: not begun, a start
+  waiting); each action's last two bytes are running and done (package actions that run on
+  done 1 1, lines said 0 1, packages running 1 0, not begun 0 0), its u32 a looping line's wait
+  as a float (TODO(M13): seen once, 1.75); the cast from the quest's aliases;
+- NPC_ bases: ACBS's essential, protected and invulnerable flags, the outfits; the player's face,
+  sex and the player data's tint masks (index u16, colour RGBA bytes, alpha f32) as their
+  appearance (TODO(M13): the body's weight is not found in the save: 50);
+- the magic favorites and their hotkeys (global data 109);
 - the weather;
 - Papyrus: each script instance's variables, by script level (a type's members follow its
   parents'), with object variables as handles to the instances' forms, and the state each
@@ -511,7 +524,7 @@ Read but not imported yet (TODO(M13)): the running stacks (our resumable frames 
 code positions, not the compiled script's), the function messages, suspended stacks and waits,
 the other registrations (sleep and tracked stats events, inventory filters, animation events);
 the projectiles and hazards in flight; the base objects' other changes (values, names, known
-ingredient effects, location keyword data, scenes' running state); the movement controller's
+ingredient effects, location keyword data; the scenes' clocks); the movement controller's
 state (the engine plans its paths anew); the AI processes beyond the package (the procedures'
 running states, the high process's timers and held objects: M13); the combat controllers' and
 the combat table's searches and objects (M13); the player's other lists (M13).

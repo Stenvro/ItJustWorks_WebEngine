@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { readChangeForm } from '../src/formats/ess/change-forms.ts';
-import { globalData, readEss } from '../src/formats/ess/ess.ts';
+import { globalData, readEss, readEssHeader } from '../src/formats/ess/ess.ts';
 import { refIdResolver } from '../src/formats/ess/global-data.ts';
 import { readGlobalData } from '../src/formats/ess/global-data-tables.ts';
 import { readPapyrus } from '../src/formats/ess/papyrus.ts';
@@ -45,6 +45,10 @@ function knownSave(): string | undefined {
 const known = knownSave();
 const MQ101 = 0x3372b;
 const TAMRIEL = 0x3c;
+const HIGH_ELF_RACE = 0x13743;
+const HADVAR = 0x2bfa2;
+/** Alduin over Helgen (MQ101). */
+const ALDUIN_HELGEN = 0x32db7;
 
 describe.skipIf(!hasGamedata() || known === undefined)('a known original save (local)', () => {
   it('reads every section and every change form to its end', () => {
@@ -103,7 +107,7 @@ describe.skipIf(!hasGamedata() || known === undefined)('a known original save (l
     const lastDone = Math.max(...done.map((stage) => stage.stage));
 
     const probe = await openSim();
-    const world = essWorld(probe.db);
+    const world = await essWorld(probe.db, ess);
     await probe.close();
     const imported = importEss(ess, world, { name: 'Imported', number: 1, now: 0 });
     // The place: the player's own change form (moved in Tamriel).
@@ -213,7 +217,7 @@ describe.skipIf(!hasGamedata() || path === undefined)(
         // no saves folder
       }
       const probe = await openSim();
-      const world = essWorld(probe.db);
+      const world = await essWorld(probe.db);
       await probe.close();
       for (const name of names) {
         const ess = readEss(new Uint8Array(readFileSync(join(SAVES, name))));
@@ -256,7 +260,7 @@ describe.skipIf(!hasGamedata() || path === undefined)('an original save (local)'
     expect(ess.changeForms.length).toBe(ess.locations.changeFormCount);
 
     const probe = await openSim();
-    const world = essWorld(probe.db);
+    const world = await essWorld(probe.db, ess);
     await probe.close();
     const imported = importEss(ess, world, { name: 'Imported', number: 1, now: 0 });
     const bytes = await writeSave({
@@ -276,4 +280,99 @@ describe.skipIf(!hasGamedata() || path === undefined)('an original save (local)'
       await sim.close();
     }
   }, 300_000);
+});
+
+/**
+ * The maintainer's save played on into the opening (its player is a High Elf,
+ * up to Helgen Keep); SKYRIM_ESS_OPENING names another file to check the same way.
+ */
+function openingSave(): string | undefined {
+  if (process.env.SKYRIM_ESS_OPENING) return process.env.SKYRIM_ESS_OPENING;
+  try {
+    for (const name of readdirSync(SAVES)) {
+      if (!name.toLowerCase().endsWith('.ess')) continue;
+      const file = join(SAVES, name);
+      if (readEssHeader(new Uint8Array(readFileSync(file))).header.playerRace === 'HighElfRace') {
+        return file;
+      }
+    }
+  } catch {
+    // no saves folder
+  }
+  return undefined;
+}
+
+const opening = openingSave();
+
+describe.skipIf(!hasGamedata() || opening === undefined)('the opening, imported (local)', () => {
+  it("resumes MQ101 at its stages with its dead, its references and its actors' packages", async () => {
+    const ess = readEss(new Uint8Array(readFileSync(opening ?? '')));
+    const resolve = refIdResolver(ess.formIds);
+    const forms = ess.changeForms.map((entry) => readChangeForm(entry, resolve));
+    const probe = await openSim();
+    const world = await essWorld(probe.db, ess);
+    await probe.close();
+    const imported = importEss(ess, world, { name: 'Imported', number: 1, now: 0 });
+    // The actors the save keeps at their records' places run their packages there too.
+    expect(imported.skipped.some((line) => line.includes('place is not known'))).toBe(false);
+    const bytes = await writeSave({
+      header: imported.header,
+      thumbnail: new Uint8Array(),
+      body: imported.save,
+    });
+    const sim = await loadSim(bytes);
+    try {
+      // MQ101 at the stages the save has done.
+      const quest = forms.find((form) => form.formId === MQ101)?.quest;
+      const done = (quest?.stages ?? []).filter((stage) => stage.done).map((s) => s.stage);
+      expect(done.length).toBeGreaterThan(0);
+      for (const stage of done) expect(sim.stageDone(MQ101, stage)).toBe(true);
+      // The dead (the executed prisoners, those the dragon killed) are dead; the restrained
+      // restrained.
+      const dead = forms.filter((form) => form.type === 1 && form.actor?.stateBits?.[4] === 2);
+      expect(dead.length).toBeGreaterThan(0);
+      for (const form of dead) {
+        expect([form.formId, await sim.runtime.actors.isDead(form.formId)]).toEqual([
+          form.formId,
+          true,
+        ]);
+      }
+      // References enabled and disabled as the save has them.
+      for (const form of forms) {
+        if (form.type !== 0 || form.formFlags === undefined || form.formId >>> 24 === 0xff) {
+          continue;
+        }
+        const enabled = (form.formFlags & 0x800) === 0;
+        expect([form.formId, await sim.runtime.isEnabled(form.formId)]).toEqual([
+          form.formId,
+          enabled,
+        ]);
+      }
+      // The player: a High Elf with the face the race menu gave them.
+      const appearance = sim.runtime.state.playerAppearance;
+      expect(appearance?.race).toBe(HIGH_ELF_RACE);
+      expect(appearance?.headParts.length).toBeGreaterThan(0);
+      expect(appearance?.tints.length).toBeGreaterThan(0);
+      // The actors placed around the player run the packages the save has them run.
+      await sim.step(3);
+      // The dead run none.
+      let placed = 0;
+      const going: number[] = [];
+      for (const saved of imported.save.world?.actors ?? []) {
+        if (!saved.package || sim.actor(saved.reference) === undefined) continue;
+        if (await sim.runtime.actors.isDead(saved.reference)) continue;
+        placed++;
+        if (sim.package(saved.reference)?.id === saved.package.id) going.push(saved.reference);
+      }
+      console.log(`opening: ${String(going.length)} of ${String(placed)} placed actors run them`);
+      expect(placed).toBeGreaterThan(10);
+      // Hadvar on his way to the keep and Alduin's strafe (the scenes' packages), the wounded in
+      // the road. TODO(M13): the soldiers the save has on DefaultHoldPositionLinkedRef128 choose
+      // dunCGAlduinBaitStayAtLinkedRef here; Ralof, saved going into the keep, runs none yet.
+      expect(going).toEqual(expect.arrayContaining([HADVAR, ALDUIN_HELGEN]));
+      expect(going.length).toBeGreaterThanOrEqual(5);
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
 });
