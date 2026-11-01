@@ -35,6 +35,7 @@ import {
   releaseCast,
   touchReach,
   type CastingSettings,
+  type CastPhase,
   type HandCast,
 } from '../../gameplay/magic/casting.ts';
 import { MagicValue, UNITS_PER_FOOT } from '../../gameplay/magic/effect-rules.ts';
@@ -197,6 +198,21 @@ const MAGIC_WARD = 0x1ea69;
 export interface CastingSave {
   readonly lastCast: readonly (readonly [string, number])[];
   readonly lesserUsed: readonly (readonly [string, number])[];
+  /** Casts going on (none in saves made before they were kept). */
+  readonly casts?: readonly SavedCast[];
+  /** Actors holding their voice key (shouting), with the seconds held. */
+  readonly shouting?: readonly (readonly [number, number])[];
+}
+
+/** A cast going on as a save keeps it: its item is read again, its hand where it was. */
+export interface SavedCast {
+  readonly actor: number;
+  readonly source: number;
+  readonly dual: boolean;
+  readonly phase: CastPhase;
+  /** Seconds since it began. */
+  readonly elapsed: number;
+  readonly graphBegan?: boolean;
 }
 
 export class CastingEngine {
@@ -788,19 +804,61 @@ export class CastingEngine {
   /**
    * What a save keeps (RuntimeSave.engines): when each actor last began casting an item (the
    * AI's delays) and last used each lesser power (its cooldown), as seconds ago on the engine's
-   * clock. TODO(M13): a cast being charged or held, a shout key held (the original keeps its
-   * casters' states in the actors' saved process).
+   * clock; the casts going on (a spell charged or held, as its hand had it) and the voice
+   * keys held (seconds held), as the original keeps its casters' states with its actors.
    */
   saveData(): CastingSave {
     const ages = (stamps: ReadonlyMap<string, number>): [string, number][] =>
       [...stamps].map(([key, at]) => [key, this.#clock - at]);
-    return { lastCast: ages(this.#lastCast), lesserUsed: ages(this.#lesserUsed) };
+    const casts = [...this.#casts.values()].map((cast): SavedCast => ({
+      actor: cast.actor,
+      source: cast.source,
+      dual: cast.dual,
+      phase: cast.hand.phase,
+      elapsed: cast.hand.elapsed,
+      ...(cast.graphBegan === true && { graphBegan: true }),
+    }));
+    const shouting = [...this.#shouting].map(
+      ([actor, since]) => [actor, this.#clock - since] as const,
+    );
+    return {
+      lastCast: ages(this.#lastCast),
+      lesserUsed: ages(this.#lesserUsed),
+      ...(casts.length > 0 && { casts }),
+      ...(shouting.length > 0 && { shouting }),
+    };
   }
 
   /** A save's casting state (saveData) on this fresh engine. */
   loadData(data: CastingSave | undefined): void {
     for (const [key, age] of data?.lastCast ?? []) this.#lastCast.set(key, this.#clock - age);
     for (const [key, age] of data?.lesserUsed ?? []) this.#lesserUsed.set(key, this.#clock - age);
+    for (const [actor, held] of data?.shouting ?? []) this.#shouting.set(actor, this.#clock - held);
+    for (const saved of data?.casts ?? []) this.#runtime.detach(this.#castAgain(saved));
+  }
+
+  /**
+   * A saved cast going on again: its item read as it began (what it costs, how long it
+   * charges), its hand at the phase and time it had; nothing paid or told again (it began
+   * before the save).
+   */
+  async #castAgain(saved: SavedCast): Promise<void> {
+    const key = `${String(saved.actor)}:${String(saved.source)}`;
+    const castable = await this.castable(saved.actor, saved.source);
+    if (!castable || this.#casts.has(key)) return;
+    const cost = await this.cost(saved.actor, castable, saved.dual);
+    const hand = beginCast(castable.item.castType, cost.chargeTime);
+    hand.phase = saved.phase;
+    hand.elapsed = saved.elapsed;
+    this.#casts.set(key, {
+      actor: saved.actor,
+      source: saved.source,
+      castable,
+      dual: saved.dual,
+      cost,
+      hand,
+      ...(saved.graphBegan === true && { graphBegan: true }),
+    });
   }
 
   /**

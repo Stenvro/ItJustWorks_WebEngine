@@ -55,6 +55,40 @@ describe('AI process', () => {
     expect(process.package?.values[1]).toBeCloseTo(9.5);
   });
 
+  it("keeps a procedure's own state: a patrol's point, the furniture its SitSleep uses", () => {
+    const w = new EssWriter().u32(0).u32(0).u8(0);
+    w.refId(1, 0x10158d).u8(PackageDataKind.custom).vsval(0);
+    w.wstring('Sequence').wstring('Patrol').u32(0);
+    // The patrol's data: its state, timer, the index of its point (1), two switches, a u32,
+    // then its points.
+    w.u32(3).f32(0).u32(1).u8(0).u8(0).u32(0).vsval(2).refId(1, 0x960fe).refId(1, 0x960ff);
+    // No idle marker; in the furniture at its point: SitSleep, then its Activate's chair.
+    w.u8(0).u8(1).u8(0xff).u8(0).u8(1);
+    w.u8(0xff).refId(1, 0x1a0c0).u8(0).u32(0).u32(0).u8(0).u8(0).u64(0n);
+    w.u64(0n).u8(0).u8(0).u8(0); // the patrol's request, three bytes
+    w.u32(0); // the sequence's index
+    packageTail(w);
+    commonTail(w);
+    const reader = new EssReader(w.done());
+    const process = readProcess(new PathingStream(reader, resolve), 3);
+    expect(reader.remaining).toBe(0);
+    expect(process.package?.procedureState).toEqual({
+      name: 'Sequence',
+      index: 0,
+      child: {
+        name: 'Patrol',
+        goal: 0x960ff,
+        nested: [
+          {
+            name: 'SitSleep',
+            // Its chair, no place of its own written (the location's slot empty).
+            nested: [{ name: 'Activate', refs: [0x1a0c0], locations: [undefined] }],
+          },
+        ],
+      },
+    });
+  });
+
   it('reads a package the game made: its procedure type and definition', () => {
     const w = new EssWriter().u32(0).u32(0).u8(0);
     // A created package (the game's), procedure 23 (trespass): PKDT, nothing more, a u32, then
@@ -114,6 +148,8 @@ describe('AI process', () => {
     patrol.refId(1, 1).refId(1, 2);
     expect(readPackageData(stream(patrol.done()), PackageDataKind.patrol)).toEqual({
       dataKind: PackageDataKind.patrol,
+      // The point it goes to: the first of its two.
+      dataTarget: 1,
     });
     const escort = new EssWriter().refId(1, 0x14).done();
     expect(readPackageData(stream(escort), PackageDataKind.escort).dataTarget).toBe(0x14);

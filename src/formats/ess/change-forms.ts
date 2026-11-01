@@ -171,6 +171,8 @@ export interface EssExtra {
   readonly npc?: EssNpcChanges;
   /** TextDisplayData: a name the player gave (enchanting). */
   readonly text?: string;
+  /** A list the extra holds, each entry's values in the order written. */
+  readonly items?: readonly (readonly number[])[];
 }
 
 /** An actor's actor values as its change form keeps them. */
@@ -546,14 +548,18 @@ function readExtra(
       ref();
       return {};
     case 0x32: {
+      // NonActorMagicTarget: the object, then the effects on it (the magic item, a byte, a
+      // vsval, then the effect's data sized in bytes).
       const value = ref();
-      list(() => {
-        ref();
-        reader.u8();
-        reader.vsval();
-        reader.skip(reader.vsval());
+      const items = list(() => {
+        const item = ref();
+        const flag = reader.u8();
+        const kind = reader.vsval();
+        const size = reader.vsval();
+        reader.skip(size);
+        return [item, flag, kind, size];
       });
-      return { value };
+      return { value, items };
     }
     case 0x34:
       list(() => {
@@ -582,14 +588,13 @@ function readExtra(
       reader.u8();
       return { factions, value: crimeFaction };
     }
-    case 0x5c:
-      reader.skip(2 + 4 + 4 + 1);
-      ref();
-      list(() => {
-        reader.skip(4);
-        list(ref);
-      });
-      return {};
+    case 0x5c: {
+      // DismemberedLimbs: a u16, two u32, a byte, a form, then the parts cut off (a u32 each,
+      // with the forms of what was spawned for it).
+      const value = [reader.u16(), reader.u32(), reader.u32(), reader.u8(), ref()];
+      const items = list(() => [reader.u32(), ...list(ref)]);
+      return { value, items };
+    }
     case 0x6c: {
       // The running data of the package the Package extra names (a kind byte, 0xFF: none).
       const kind = reader.u8();
@@ -647,15 +652,26 @@ function readExtra(
       return { value: list(() => [ref(), reader.u32()]).flat() };
     case 0x8c:
       return { value: list(ref) };
-    case 0x98:
-      list(() => {
-        if (reader.refId() === 0) return;
+    case 0x98: {
+      const items = list((): number[] => {
+        const arrow = ref();
+        if (arrow === 0) return [];
         // On a bone: the time it has been stuck, its translation, its rotation (the original
         // writes the 3x3 matrix as a quaternion: 16 bytes) and its scale.
-        if (reader.u16() !== 0xffff) reader.skip(4 + 12 + 16 + 4);
+        const bone = reader.u16();
+        if (bone === 0xffff) return [arrow, bone];
+        return [
+          arrow,
+          bone,
+          reader.f32(),
+          ...reader.vec3(),
+          ...[0, 1, 2, 3].map(() => reader.f32()),
+          reader.f32(),
+        ];
       });
-      reader.skip(4);
-      return {};
+      const value = reader.u32();
+      return { value, items };
+    }
     case 0x99: {
       const a = reader.refId();
       const b = reader.refId();

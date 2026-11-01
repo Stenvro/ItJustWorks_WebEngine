@@ -56,6 +56,26 @@ export interface EssProcedureState {
   readonly index?: number;
   readonly child?: EssProcedureState;
   readonly children?: readonly { readonly index: number; readonly state?: EssProcedureState }[];
+  /** A procedure's own state (not a branch's): the references it keeps, in the order written. */
+  readonly refs?: readonly number[];
+  /** The places it goes to, in the order written (undefined: none written in that slot). */
+  readonly locations?: readonly (EssWorldLocation | undefined)[];
+  /** The procedures it runs inside it (SitSleep's Activate, a Sandbox's activity, ...). */
+  readonly nested?: readonly EssProcedureState[];
+  /** The point it goes to (a patrol's, among its points: `readPatrolData`). */
+  readonly goal?: number;
+}
+
+/** A place a procedure goes to, as its state writes it (`readWorldLocation`). */
+export interface EssWorldLocation {
+  readonly kind: 'LocRef' | 'LocPt' | 'LocCell';
+  /** LocRef: the reference; LocCell: the interior cell. */
+  readonly form?: number;
+  /** LocRef: an offset from it; LocPt and LocCell: the point. */
+  readonly position: readonly [number, number, number];
+  /** LocPt: the cell and worldspace of the point. */
+  readonly cell?: number;
+  readonly world?: number;
 }
 
 /** What the AI process's data says, as far as the engine has a use for it. */
@@ -250,7 +270,7 @@ function readPackageDataInto(
       return;
     }
     case PackageDataKind.patrol:
-      readPatrolData(stream);
+      out.dataTarget = readPatrolData(stream);
       return;
     case PackageDataKind.guard: {
       reader.skip(3 * 4);
@@ -408,25 +428,28 @@ function readPackageLocation(stream: PathingStream): void {
  * then a reference with a radius (LocRef), a point with its cell and radius (LocPt) or an
  * interior cell with a point (LocCell).
  */
-function readWorldLocation(stream: PathingStream): void {
+function readWorldLocation(stream: PathingStream): EssWorldLocation | undefined {
   const reader = stream.reader;
-  if (reader.u8() === 0) return;
+  if (reader.u8() === 0) return undefined;
   const name = reader.wstring();
   switch (name) {
-    case 'LocRef':
-      stream.form();
-      reader.skip(3 * 4 + 1);
-      return;
-    case 'LocPt':
-      reader.skip(12);
-      stream.form();
-      stream.form();
+    case 'LocRef': {
+      const form = stream.form();
+      const position = reader.vec3();
+      reader.u8();
+      return { kind: name, form, position };
+    }
+    case 'LocPt': {
+      const position = reader.vec3();
+      const cell = stream.form();
+      const world = stream.form();
       reader.skip(4 + 4 + 1 + 1);
-      return;
-    case 'LocCell':
-      stream.form();
-      reader.skip(12);
-      return;
+      return { kind: name, position, cell, world };
+    }
+    case 'LocCell': {
+      const form = stream.form();
+      return { kind: name, form, position: reader.vec3() };
+    }
     default:
       throw new ProcessUnknown(`world location ${name}`);
   }
@@ -438,9 +461,17 @@ function readDialogueTarget(stream: PathingStream): void {
   else stream.reader.u32();
 }
 
+/** What a procedure's own state keeps, gathered as it is read. */
+interface ProcedureParts {
+  readonly refs: number[];
+  readonly locations: (EssWorldLocation | undefined)[];
+  readonly nested: EssProcedureState[];
+  goal?: number | undefined;
+}
+
 /** A procedure's running state the one around it always has (no name: its kind is fixed). */
-function readNested(stream: PathingStream, name: string): void {
-  if (stream.reader.u8() !== 0) readExecState(stream, name);
+function readNested(stream: PathingStream, name: string, parts: ProcedureParts): void {
+  if (stream.reader.u8() !== 0) parts.nested.push(readExecState(stream, name));
 }
 
 /** A child procedure's state: its name ('' when none), then its state. */
@@ -474,17 +505,31 @@ function readExecState(stream: PathingStream, name: string): EssProcedureState {
       }
       return { name, children };
     }
-    default:
-      readProcedureState(stream, name);
-      return { name };
+    default: {
+      const parts: ProcedureParts = { refs: [], locations: [], nested: [] };
+      readProcedureState(stream, name, parts);
+      return {
+        name,
+        ...(parts.refs.length > 0 && { refs: parts.refs }),
+        ...(parts.locations.length > 0 && { locations: parts.locations }),
+        ...(parts.nested.length > 0 && { nested: parts.nested }),
+        ...(parts.goal !== undefined && { goal: parts.goal }),
+      };
+    }
   }
 }
 
 /** A procedure's own running state (not a branch's), by its name. */
-function readProcedureState(stream: PathingStream, name: string): void {
+function readProcedureState(stream: PathingStream, name: string, parts: ProcedureParts): void {
   const reader = stream.reader;
   const ref = (): void => {
-    stream.form();
+    parts.refs.push(stream.form());
+  };
+  const location = (): void => {
+    parts.locations.push(readWorldLocation(stream));
+  };
+  const nested = (inner: string): void => {
+    readNested(stream, inner, parts);
   };
   switch (name) {
     case 'Acquire':
@@ -492,21 +537,21 @@ function readProcedureState(stream: PathingStream, name: string): void {
       ref();
       reader.u32();
       ref();
-      readNested(stream, 'Activate');
+      nested('Activate');
       return;
     case 'Activate':
       reader.u8(); // the package parameter it uses (0xFF: none)
       ref();
-      readWorldLocation(stream);
+      location();
       reader.skip(4 + 4 + 1 + 1);
       stream.request();
       return;
     case 'DialogueActivate':
-      readWorldLocation(stream);
-      readWorldLocation(stream);
+      location();
+      location();
       ref();
       readDialogueTarget(stream);
-      readNested(stream, 'Dialogue');
+      nested('Dialogue');
       reader.u8();
       stream.request();
       return;
@@ -524,19 +569,19 @@ function readProcedureState(stream: PathingStream, name: string): void {
       reader.skip(4 + 1 + 1);
       return;
     case 'Escort':
-      readWorldLocation(stream);
+      location();
       for (let n = reader.vsval(), i = 0; i < n; i++) ref();
       reader.skip(2);
       stream.request();
       reader.skip(4 + 1 + 4 + 4);
       return;
     case 'Find':
-      readWorldLocation(stream);
+      location();
       reader.u32();
       return;
     case 'Flee':
-      readWorldLocation(stream);
-      readNested(stream, 'Travel');
+      location();
+      nested('Travel');
       reader.skip(12 + 6 * 4);
       for (let n = reader.vsval(), i = 0; i < n; i++) ref();
       ref();
@@ -551,66 +596,68 @@ function readProcedureState(stream: PathingStream, name: string): void {
       return;
     case 'Follow':
       ref();
-      readWorldLocation(stream);
-      readWorldLocation(stream);
-      readWorldLocation(stream);
+      location();
+      location();
+      location();
       reader.skip(3 * 4);
       stream.request();
       reader.skip(5);
       return;
     case 'Guard':
     case 'HoldPosition':
-      readWorldLocation(stream);
+      location();
       return;
     case 'Hover':
-      readWorldLocation(stream);
+      location();
       reader.u8();
       return;
     case 'KeepAnEyeOn':
-      readWorldLocation(stream);
-      readWorldLocation(stream);
+      location();
+      location();
       return;
     case 'LockUnlock':
-      readWorldLocation(stream);
+      location();
       reader.skip(2);
       return;
     case 'Orbit':
       reader.u8();
-      readWorldLocation(stream);
+      location();
       reader.u8();
       return;
     case 'Patrol': {
       reader.u32();
       // The patrol's running data (as a patrol package's own), then its idle marker's and
       // furniture's procedures.
-      readPatrolData(stream);
-      readNested(stream, 'UseIdleMarker');
-      readNested(stream, 'SitSleep');
+      parts.goal = readPatrolData(stream);
+      nested('UseIdleMarker');
+      nested('SitSleep');
       stream.request();
       reader.skip(3);
       return;
     }
-    case 'Sandbox':
+    case 'Sandbox': {
       reader.skip(4 * 4 + 1 + STAMP + 4 + STAMP + 4 + 4 + 1 + 4 * 4 + 4 + 7);
       ref();
       ref();
       ref();
       for (let n = reader.vsval(), i = 0; i < n; i++) {
         reader.skip(12);
-        ref();
+        stream.form();
       }
-      readWorldLocation(stream);
-      readChild(stream);
+      location();
+      const activity = readChild(stream);
+      if (activity) parts.nested.push(activity);
       reader.u32();
       stream.request();
       reader.skip(4 + 1);
       return;
+    }
     case 'Say':
       reader.u8();
       return;
     case 'Shout':
-      readWorldLocation(stream);
-      readNested(stream, 'Travel');
+      location();
+      nested('Travel');
       ref();
       reader.u32();
       ref();
@@ -620,11 +667,11 @@ function readProcedureState(stream: PathingStream, name: string): void {
     case 'SitSleep':
       reader.u8(); // the package parameter it uses (0xFF: none)
       reader.u8();
-      readNested(stream, 'Activate');
+      nested('Activate');
       return;
     case 'Travel':
       reader.skip(3);
-      readWorldLocation(stream);
+      location();
       reader.u8(); // the package parameter it uses (0xFF: none)
       stream.request();
       return;
@@ -637,9 +684,9 @@ function readProcedureState(stream: PathingStream, name: string): void {
       reader.u8();
       return;
     case 'UseMagic':
-      readWorldLocation(stream);
-      readWorldLocation(stream);
-      readNested(stream, 'Travel');
+      location();
+      location();
+      nested('Travel');
       ref();
       reader.skip(2 * 4);
       ref();
@@ -647,9 +694,9 @@ function readProcedureState(stream: PathingStream, name: string): void {
       reader.skip(2 + 4 * 4);
       return;
     case 'UseWeapon':
-      readWorldLocation(stream);
-      readWorldLocation(stream);
-      readNested(stream, 'Travel');
+      location();
+      location();
+      nested('Travel');
       ref();
       reader.u32();
       ref();
@@ -659,7 +706,7 @@ function readProcedureState(stream: PathingStream, name: string): void {
       reader.u32();
       return;
     case 'Wander':
-      readWorldLocation(stream);
+      location();
       reader.skip(4 + 1 + 4);
       stream.request();
       return;
@@ -668,11 +715,22 @@ function readProcedureState(stream: PathingStream, name: string): void {
   }
 }
 
-/** A patrol's running data: switches, then its points in order. */
-function readPatrolData(stream: PathingStream): void {
+/**
+ * A patrol's running data: a state, a timer (seconds at its point), the index of the point it
+ * is at or going to, two switches, a u32, then the patrol's points in order from where it began
+ * (as observed in the original: in the saves read the index is within the list in every patrol,
+ * the point it names the one the actor stands at or walks to). Returns that point.
+ * TODO(M13): the state's values and the u32 after the switches.
+ */
+function readPatrolData(stream: PathingStream): number | undefined {
   const reader = stream.reader;
-  reader.skip(3 * 4 + 1 + 1 + 4);
-  for (let n = reader.vsval(), i = 0; i < n; i++) stream.form();
+  reader.u32();
+  reader.f32();
+  const index = reader.u32();
+  reader.skip(1 + 1 + 4);
+  const points: number[] = [];
+  for (let n = reader.vsval(), i = 0; i < n; i++) points.push(stream.form());
+  return points[index];
 }
 
 /** The middle-high process's part (and, when `high`, the high process's inside it). */

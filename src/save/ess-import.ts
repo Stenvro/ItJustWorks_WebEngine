@@ -42,8 +42,10 @@ import {
 } from '../formats/ess/papyrus.ts';
 import {
   readActorCauses,
+  readCombat,
   readInterface,
   readMagicFavorites,
+  readQuestStaticData,
   readStoryEventManager,
   StoryParameterKind,
   type SavedStoryEvent,
@@ -186,6 +188,51 @@ export function procedurePath(state: EssProcedureState | undefined): number[] {
   }
   return path;
 }
+
+/**
+ * The procedures (not the branches) a running package's tree runs, from the root down, with
+ * those each runs inside it (a Sandbox's activity, SitSleep's Activate, a Patrol's furniture).
+ */
+export function procedureStates(state: EssProcedureState | undefined): EssProcedureState[] {
+  if (!state) return [];
+  if (state.index !== undefined || state.children) {
+    return [
+      ...procedureStates(state.child),
+      ...(state.children ?? []).flatMap((child) => procedureStates(child.state)),
+    ];
+  }
+  return [state, ...(state.nested ?? []).flatMap((inner) => procedureStates(inner))];
+}
+
+/**
+ * The furniture a SitSleep goes to and enters (its Activate's reference, in the save's load
+ * order). Seated, the SitSleep keeps no Activate (in the saves read, every actor sitting sits on
+ * a vehicle or a horse, which ours keeps apart). TODO(M13): where the original keeps the
+ * furniture an actor sits in once its Activate is done.
+ */
+function furnitureOf(procedures: readonly EssProcedureState[]): number | undefined {
+  const at = procedures.findIndex((state) => state.name === 'SitSleep');
+  const activate = at < 0 ? undefined : procedures.slice(at + 1).find((s) => s.name === 'Activate');
+  const furniture = activate?.refs?.[0];
+  return furniture === 0 ? undefined : furniture;
+}
+
+/**
+ * An actor's state bits as its change form writes them (18 bytes; ActorState's fields one a
+ * byte, as observed in the original): the third is its sit and sleep state (CommonLibSSE's
+ * SIT_SLEEP_STATE), the fifth its life state, the thirteenth its weapon's (WEAPON_STATE).
+ * TODO(M13): the other bytes (the first's movement bits: 0x41 walking, 0x81 running, as read).
+ */
+const StateByte = { sitSleep: 2, life: 4, weapon: 12 } as const;
+/** SIT_SLEEP_STATE values of an actor in its furniture: entering it, sitting, sleeping. */
+const IN_FURNITURE = new Set([2, 3, 7, 8]);
+/** WEAPON_STATE values of a weapon out: drawing, drawn. */
+const WEAPON_OUT = new Set([2, 3]);
+
+const seated = (bits: Uint8Array | undefined): boolean =>
+  IN_FURNITURE.has(bits?.[StateByte.sitSleep] ?? 0);
+const weaponDrawn = (bits: Uint8Array | undefined): boolean =>
+  WEAPON_OUT.has(bits?.[StateByte.weapon] ?? 0);
 
 /**
  * The change flag each extra data type is written under, as the saves read have them (every
@@ -411,6 +458,8 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   const ranOnce = new Map<number, number[]>();
   /** What actors wear and hold beside their outfits (the Worn extra data), by actor. */
   const worn = new Map<number, [number, Hand | undefined][]>();
+  /** The horse each rider rides (the rider's Interaction extra data). */
+  const riding = new Map<number, number>();
   /** The actor causes (global data 103): the actor each serial number blames. */
   const causes = new Map<number, number>();
   const causeData = globalData(ess, 103);
@@ -452,6 +501,27 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     }
     return { type: saved.type, forms, values, args };
   };
+
+  // The combat groups (global data 101): each member's target, for a member whose own combat
+  // controller names none (the group's fight goes on from its members' fights: ours puts the
+  // group together again as they fight). TODO(M13): a group's search (none in the saves read),
+  // its members' other values and its float pairs.
+  const groupTargets = new Map<number, number>();
+  const combatData = globalData(ess, 101);
+  if (combatData) {
+    try {
+      for (const group of readCombat(combatData, resolve).combats) {
+        if (group.search) skips.add("combat: a group's search (TODO(M13))");
+        for (const member of group.members) {
+          const actor = ours(member.unknown0);
+          const target = ours(member.target);
+          if (actor && target) groupTargets.set(actor, target);
+        }
+      }
+    } catch {
+      skips.add('combat: unreadable');
+    }
+  }
 
   // Global variables, the clock.
   const globals = globalData(ess, 3);
@@ -508,6 +578,8 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
 
     if (entry.type <= 5 || (entry.type >= 40 && entry.type <= 42)) {
       applied |= applyReference(form, formId);
+    } else if (typeName === 'PARW') {
+      applied |= applyArrow(form, formId);
     } else if (entry.type === 8 && form.quest) {
       const quest = state.quest(formId);
       const q = form.quest;
@@ -707,7 +779,7 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     // The life state (an actor's state bits, the fifth byte, as CommonLibSSE's
     // ACTOR_LIFE_STATE): dying or dead, unconscious, restrained; alive clears them.
     if (form.type === 1 && form.changeFlags & ChangeRefr.lifeState && form.actor?.stateBits) {
-      const life = form.actor.stateBits[4] ?? 0;
+      const life = form.actor.stateBits[StateByte.life] ?? 0;
       const actor = state.actor(formId);
       if (life === LifeState.dying || life === LifeState.dead) actor.dead = true;
       else if (life === LifeState.alive) actor.dead = false;
@@ -737,6 +809,25 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     }
     if (formId === PLAYER_REF) state.actor(PLAYER_REF).level = ess.header.playerLevel;
     if (formId === PLAYER_REF && form.actor?.player) applyPlayerData(form.actor.player);
+    return applied;
+  }
+
+  /**
+   * An arrow lying in the world (PARW: one that hit the world and stays, to be picked up): the
+   * reference the original made for it, as ours keeps one (src/shell/combat-projectiles.ts): a
+   * reference of its ammunition (the projectile's second form: bow, ammunition, shooter, ...)
+   * where it lies, held where it stuck, falling if physics moved it (havokMoved).
+   */
+  function applyArrow(form: EssChangeForm, formId: number): number {
+    const applied = applyReference(form, formId);
+    const ammo = ours(form.projectile?.refs[1] ?? 0);
+    const made = state.created.get(formId);
+    if (!made || !ammo || world.recordType(ammo) !== 'AMMO') {
+      skips.add('PARW: an arrow whose ammunition is not known');
+      return applied & ~MOVED;
+    }
+    state.created.set(formId, { ...made, base: ammo });
+    state.reference(formId).motionType = form.changeFlags & ChangeRefr.havokMoved ? 1 : 4;
     return applied;
   }
 
@@ -910,6 +1001,35 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
         // which ours gives from the alias it fills.
         if (extra.text !== undefined) reference.displayName = extra.text;
         return true;
+      case 'Interaction': {
+        // A rider and its horse (kind 0, the only kind in the saves read: the rider first).
+        // TODO(M13): the other kinds and the flag byte after the references.
+        if (typeof value !== 'object' || value[0] !== 0) return false;
+        const rider = ours(value[1] ?? 0);
+        const horse = ours(value[2] ?? 0);
+        if (!rider || !horse || rider !== formId) return false;
+        riding.set(rider, horse);
+        return true;
+      }
+      case 'DismemberedLimbs': {
+        // The limbs cut off: each its body part type and what the actor wore as it came off
+        // (ActorState.dismembered: the body is dressed again so, src/shell/actor-dismemberment.ts).
+        // TODO(M13): the five values before the list (a u16, two u32, a byte, the actor).
+        const limbs = (extra.items ?? []).map(([limb = 0, ...forms]) => ({
+          limb,
+          worn: forms.flatMap((item) => {
+            const id = ours(item);
+            return id ? [id] : [];
+          }),
+        }));
+        if (limbs.length === 0) return false;
+        state.actor(formId).dismembered = limbs;
+        return true;
+      }
+      case 'NonActorMagicTarget':
+        // The magic effects on an object: none in the saves read (an empty list, which leaves
+        // nothing to apply). TODO(M13): the effects' data, once a save holds one.
+        return (extra.items ?? []).length === 0;
       case 'AliasInstanceArray':
       case 'PromotedRef':
       case 'SceneData':
@@ -987,6 +1107,16 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       for (const extra of list) {
         // An item's name from the alias holding it (none of its own) is the alias's.
         if (extra.name === 'TextDisplayData' && extra.text === undefined) continue;
+        // An item a cut limb took with it (the decapitated head a beheaded body wears): ours
+        // dresses the body from its limbs (DismemberedLimbs above), not from its inventory.
+        // TODO(M13): CannotWear on an item of no cut limb (none in the saves read).
+        if (
+          extra.name === 'CannotWear' &&
+          actor &&
+          state.actor(holder).dismembered?.some((limb) => limb.worn.includes(item))
+        ) {
+          continue;
+        }
         if (!ITEM_EXTRAS_KEPT.has(extra.name)) {
           skips.add(`${changeFormTypeName(form.type)}: item extra ${extra.name} not applied`);
         }
@@ -1006,13 +1136,16 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   function savedActor(form: EssChangeForm, formId: number): SavedActor | undefined {
     const actor = form.actor;
     if (actor?.process) {
-      skips.add("ACHR: the procedures' own states and the process's timers (TODO(M13))");
+      // TODO(M13): the high process's timers and the six objects it holds (their meaning).
+      skips.add("ACHR: the high process's timers and held objects (TODO(M13))");
     }
     const running = actor?.process?.package;
     const pkg = running?.package;
     const id = pkg === undefined ? undefined : ours(pkg);
-    const target = actor?.combat ? ours(actor.combat.target) : undefined;
-    if (!id && !target) return undefined;
+    const target =
+      (actor?.combat ? ours(actor.combat.target) : undefined) ?? groupTargets.get(formId);
+    const horse = riding.get(formId);
+    if (!id && !target && horse === undefined) return undefined;
     const initial = form.initial;
     // An actor the save keeps where its record stands (no place written): there.
     const at =
@@ -1037,11 +1170,19 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
           ? String(place.cell)
           : undefined;
     if (cell === undefined) return undefined;
+    const procedures = procedureStates(running?.procedureState);
+    // The point a patrol goes to (among its points), the furniture it sits or sleeps in.
+    const goal = procedures.find((state) => state.goal !== undefined)?.goal;
+    const seat = seated(actor?.stateBits) ? furnitureOf(procedures) : undefined;
+    const furniture = seat === undefined ? undefined : ours(seat);
     return {
       reference: formId,
       cell,
       position: at.position,
       heading: at.rotation[2],
+      ...(furniture && { furniture }),
+      ...(weaponDrawn(actor?.stateBits) && { weaponDrawn: true }),
+      ...(horse !== undefined && { riding: horse }),
       ...(id && {
         package: {
           id,
@@ -1053,6 +1194,7 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
             (pack) => [pack, Math.floor(state.gameDaysPassed)] as const,
           ),
           ...(packageStarts.has(formId) && { start: packageStarts.get(formId) }),
+          ...(goal !== undefined && ours(goal) && { goal: ours(goal) }),
         },
       }),
       ...(target && { combatTarget: target }),
@@ -1455,6 +1597,27 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       skips.add(`papyrus: unreadable (${error instanceof Error ? error.message : String(error)})`);
     }
   }
+  // Quest static data (global data 107): its fourth list is the quests running (in both saves
+  // read, the same 451 quests whose change forms say they run), whose state the QUST change
+  // forms gave; a listed quest that does not run is logged. TODO(M13): the other three lists
+  // (run data, references: empty in the saves read).
+  const staticData = globalData(ess, 107);
+  if (staticData) {
+    try {
+      const lists = readQuestStaticData(staticData, resolve);
+      for (const quest of lists.references3) {
+        const id = ours(quest);
+        if (id && !state.quests.get(id)?.running) {
+          skips.add('quest static data: a quest listed that does not run');
+        }
+      }
+      if (lists.runData0.length + lists.runData1.length + lists.references2.length > 0) {
+        skips.add('quest static data: its run data lists (TODO(M13))');
+      }
+    } catch {
+      skips.add('quest static data: unreadable');
+    }
+  }
   // The story event manager: the events told and not yet processed, told again after the load.
   let pending: StoryEventData[] = [];
   const events = globalData(ess, 111);
@@ -1469,7 +1632,10 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   }
   for (const table of [ess.globalData1, ess.globalData2, ess.globalData3]) {
     for (const entry of table) {
-      if (![0, 1, 3, 6, 7, 103, 109, 111, 1001].includes(entry.type) && entry.data.length > 0) {
+      if (
+        ![0, 1, 3, 6, 7, 101, 103, 107, 109, 111, 1001].includes(entry.type) &&
+        entry.data.length > 0
+      ) {
         skips.add(`global data ${String(entry.type)}`);
       }
     }
