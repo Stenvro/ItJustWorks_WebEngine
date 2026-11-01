@@ -254,9 +254,13 @@ describe.skipIf(!hasGamedata())('Player Infected in Breezehome (headless simulat
   beforeAll(async () => {
     sim = await openSim({ interior: BREEZEHOME, hour: 10 });
     await sim.step(3);
-    // A skeever beside the player: it bites until its disease takes.
+    // A skeever beside the player: it bites until its disease takes. Each bite passes it on at
+    // 3 in 100 (DiseaseAtaxia's effect: GetRandomPercent <= 2), about a bite every 2 s. The
+    // player, unarmed, died after some 19 bites, so the disease took in fewer than half the
+    // runs: in god mode (Debug.SetGodMode: no damage) the bites go on, up to 600 s.
+    sim.runtime.godMode = true;
     skeever = await sim.place(await sim.formId('NPC_', 'EncSkeever'), PLAYER_REF);
-    await sim.until(() => sim.storyEvents('INFC').length > 0, 120);
+    await sim.until(() => sim.storyEvents('INFC').length > 0, 600);
     await sim.step(1);
   }, 600_000);
   afterAll(async () => {
