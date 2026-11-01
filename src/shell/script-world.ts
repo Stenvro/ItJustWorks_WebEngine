@@ -267,8 +267,11 @@ export interface CombatBridge {
   firstPerson(): boolean;
   /** Knocks an actor down, pushed away from a point (src/shell/actor-knockdowns.ts). */
   knockDown(actor: number, from: Vec3 | undefined, force: number): Promise<void>;
-  /** A Stagger effect's magnitude on an actor, from its caster's side. */
-  staggerEffect(actor: number, magnitude: number, caster: number | undefined): void;
+  /**
+   * A Stagger effect's magnitude on an actor, from its caster's side (`from`: where the caster
+   * stands when it is no fighter, a KnockAreaEffect's marker).
+   */
+  staggerEffect(actor: number, magnitude: number, caster: number | undefined, from?: Vec3): void;
   /** Paralysis begins or ends on an actor: it lies as its ragdoll meanwhile. */
   paralyze(actor: number, on: boolean): void;
   /** Grab Actor: the target hangs as its ragdoll before its caster while it lasts. */
@@ -995,7 +998,7 @@ export class ScriptWorld implements WorldBridge {
     return false;
   }
 
-  /** PushActorAway, KnockAreaEffect, a trap's push: knocked down, away from a reference. */
+  /** PushActorAway, a trap's push: knocked down, away from a reference. */
   pushAway(pushed: number, from: number, force: number): void {
     const at = this.livePlacement(from)?.position;
     for (const fights of this.#fights()) void fights.knockDown(pushed, at && [...at], force);
@@ -1006,8 +1009,10 @@ export class ScriptWorld implements WorldBridge {
     for (const fights of this.#fights()) void fights.knockDown(actor, from, force);
   }
 
-  stagger(actor: number, magnitude: number, caster: number | undefined): void {
-    for (const fights of this.#fights()) fights.staggerEffect(actor, magnitude, caster);
+  stagger(actor: number, magnitude: number, caster: number | undefined, from?: Vec3): void {
+    const at = from ?? (caster === undefined ? undefined : this.livePlacement(caster)?.position);
+    for (const fights of this.#fights())
+      fights.staggerEffect(actor, magnitude, caster, at && [at[0], at[1], at[2]]);
   }
 
   paralyze(actor: number, on: boolean): void {

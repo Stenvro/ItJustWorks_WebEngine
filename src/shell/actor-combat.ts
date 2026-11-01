@@ -4394,7 +4394,7 @@ export class ActorCombat implements CombatBridge {
   }
 
   /**
-   * Knocks an actor down (Actor.PushActorAway and KnockAreaEffect, an explosion's knock-down
+   * Knocks an actor down (Actor.PushActorAway, a trap's push, an explosion's knock-down
    * flags, an attack's knockdown): its idle tree's ActionKnockdown says how (the humans'
    * NPCKnockDown, the bear's, the giant's: "Ragdoll"; mammoths, atronachs and wisps: a
    * stagger), and its ragdoll is pushed away from `from` by `force` (an impulse on its bodies,
@@ -4421,9 +4421,9 @@ export class ActorCombat implements CombatBridge {
       return;
     }
     // One the flight holds (in the air, on a perch) staggers too: its graph's knock-down would
-    // leave it a ragdoll nothing gets up (the knock-downs take only actors on their feet), as
-    // the tower wall's KnockAreaEffect left Alduin perched on Helgen's tower. TODO(M13): the
-    // engine's rule for knocking fliers down is inferred (its perch states have staggers).
+    // leave it a ragdoll nothing gets up (the knock-downs take only actors on their feet), as a
+    // push would leave a dragon perched on a tower. TODO(M13): the engine's rule for knocking
+    // fliers down is inferred (its perch states have staggers).
     const flight = this.#options.flight?.();
     const flies = flight?.isFlying(reference) === true || flight?.perched(reference) === true;
     const immune = flies || ((fighter.body?.look.raceFlags ?? 0) & RaceFlag.noKnockdowns) !== 0;
@@ -4534,10 +4534,15 @@ export class ActorCombat implements CombatBridge {
 
   /**
    * A Stagger effect on an actor (its magnitude: Unrelenting Force's 0.75, 1.25, 1.5; the
-   * spells' 0.05 .. 1), weighed against its mass as a hit's stagger is (stagger.ts), from its
-   * caster's side.
+   * spells' 0.05 .. 1; KnockAreaEffect's), weighed against its mass as a hit's stagger is
+   * (stagger.ts), from its caster's side (`from` where the caster is no fighter).
    */
-  staggerEffect(reference: number, magnitude: number, caster: number | undefined): void {
+  staggerEffect(
+    reference: number,
+    magnitude: number,
+    caster: number | undefined,
+    from?: Vec3,
+  ): void {
     const fighter = this.#fighters.get(reference);
     if (!fighter) return;
     const weighed = staggerMagnitude(
@@ -4551,7 +4556,7 @@ export class ActorCombat implements CombatBridge {
       this.#settings,
     );
     const source = caster === undefined ? undefined : this.#fighters.get(caster);
-    this.stagger(reference, weighed, source && this.#feet(source));
+    this.stagger(reference, weighed, (source && this.#feet(source)) ?? from);
   }
 }
 
