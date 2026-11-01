@@ -121,6 +121,25 @@ export class ActorEngine {
     return pending;
   }
 
+  /**
+   * An NPC_'s stats with what the game changed on the base over its record (a save's NPC_
+   * change form: its factions, skills and AI data; ActorBaseState).
+   */
+  async #npcNow(formId: number): Promise<NpcStats | undefined> {
+    const stats = await this.#npc(formId);
+    const set = this.#runtime.state.actorBases.get(formId);
+    if (!stats || !set || (!set.factions && !set.skills && !set.aiData)) return stats;
+    const { factions, skills, aiData } = set;
+    return {
+      ...stats,
+      ...(factions && { factions }),
+      ...(skills && {
+        skills: stats.skills.map((value, i) => skills.get(ActorValue.firstSkill + i) ?? value),
+      }),
+      ...(aiData && { aiData: { ...stats.aiData, ...aiData } }),
+    };
+  }
+
   race(formId: number): Promise<RaceStats | undefined> {
     let pending = this.#races.get(formId);
     if (!pending) {
@@ -173,10 +192,11 @@ export class ActorEngine {
       reference,
       level,
       async (record) => (await runtime.leveledList(record.formId)) ?? parseLeveledList(record),
+      runtime.state.actors.get(reference)?.leveledBase,
     );
     if (!templates) return undefined;
     const part = async (flag: number): Promise<NpcStats | undefined> =>
-      this.#npc(templates.part(flag));
+      this.#npcNow(templates.part(flag));
     const [stats, traits, factions, spells, ai, baseData, keywords, inventory] = await Promise.all([
       part(TemplateFlag.stats),
       part(TemplateFlag.traits),

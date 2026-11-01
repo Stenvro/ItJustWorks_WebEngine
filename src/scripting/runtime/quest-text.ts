@@ -159,7 +159,10 @@ export async function referenceName(
   short = false,
 ): Promise<string> {
   if (reference === PLAYER_REF) return runtime.actors.playerName();
-  // An alias holding it names it (its display name, ALDN).
+  // A name of its own (an item named as it was enchanted), then an alias holding it names it
+  // (its display name, ALDN).
+  const own = runtime.state.references.get(reference)?.displayName;
+  if (own !== undefined) return own;
   const aliased = runtime.aliasDisplayName(reference);
   if (aliased !== undefined) return aliased;
   let base = await runtime.baseOf(reference);

@@ -60,4 +60,23 @@ describe('actor templates', () => {
     const again = await resolveActorTemplates(get, 0x20, 0x5000, 1);
     expect(first?.placed).toBe(again?.placed);
   });
+
+  it("keep the pick a save has, the leveled base's and a leveled template's", async () => {
+    const records = new Map<number, Source>([
+      [0x10, npc(0x10, TemplateFlag.traits, 0x20)],
+      [0x20, leveled(0x20, [0x30, 0x40])],
+      [0x30, npc(0x30, 0)],
+      [0x40, npc(0x40, 0)],
+    ]);
+    const get = (formId: number) => Promise.resolve(records.get(formId));
+    for (const kept of [0x30, 0x40]) {
+      for (let reference = 0x1000; reference < 0x1008; reference++) {
+        const leveled = await resolveActorTemplates(get, 0x20, reference, 1, undefined, kept);
+        expect(leveled?.placed).toBe(kept);
+        const templated = await resolveActorTemplates(get, 0x10, reference, 1, undefined, kept);
+        expect(templated?.placed).toBe(0x10);
+        expect(templated?.part(TemplateFlag.traits)).toBe(kept);
+      }
+    }
+  });
 });

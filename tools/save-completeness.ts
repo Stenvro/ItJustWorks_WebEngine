@@ -61,7 +61,7 @@ const GLOBAL_DATA: Readonly<Record<number, readonly [boolean, string]>> = {
   100: [false, 'process lists: crimes being reported (not applied)'],
   101: [false, 'combat: the combat groups and their searches (not applied)'],
   102: [false, 'interface: help messages shown, the HUD (not applied)'],
-  103: [false, 'actor causes (not applied)'],
+  103: [true, "actor causes: the actor each reference's ActorCause extra blames"],
   104: [false, 'unknown 104'],
   105: [false, 'detection manager (not applied)'],
   106: [false, 'location metadata (not applied)'],
@@ -141,7 +141,12 @@ async function essPart(): Promise<void> {
     add('ess change forms', line, !skipped.has(line), `${String(count)} forms`);
   }
   for (const line of skipped) {
-    if (line.includes('TODO') || line.startsWith('papyrus') || line.includes('unreadable')) {
+    if (
+      line.includes('TODO') ||
+      line.startsWith('papyrus') ||
+      line.includes('unreadable') ||
+      line.includes(' not applied')
+    ) {
       add('ess other', line, false, 'listed by the import');
     }
   }

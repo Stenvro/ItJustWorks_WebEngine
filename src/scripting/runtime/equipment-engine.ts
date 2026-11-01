@@ -408,6 +408,22 @@ export class EquipmentEngine {
     this.#sync(actor);
   }
 
+  /**
+   * What a save has an actor wear and hold beside its outfit (an imported save's Worn extra
+   * data), put on quietly over what its records dressed it in: the items it has, in the hand
+   * the save names.
+   */
+  async putOnSaved(
+    actor: number,
+    items: readonly (readonly [number, Hand | undefined])[],
+  ): Promise<void> {
+    await this.of(actor);
+    for (const [formId, hand] of items) {
+      await this.#apply(actor, formId, hand === undefined ? {} : { hand }, true);
+    }
+    this.#sync(actor);
+  }
+
   /** The outfit an actor wears now: its own (Actor.SetOutfit), its base's, its record's. */
   async #outfitNow(actor: number, asleep: boolean): Promise<number | undefined> {
     const runtime = this.#runtime;

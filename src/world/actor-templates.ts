@@ -39,6 +39,11 @@ export async function resolveActorTemplates(
   /** A leveled list as it stands (scripts add to them); its record's by default. */
   leveled: (record: RecordSource) => Promise<LeveledList> = (record) =>
     Promise.resolve(parseLeveledList(record)),
+  /**
+   * The NPC_ its leveled lists came down to as a save keeps it (the original's
+   * ExtraLeveledCreature): each leveled list on the way comes down to it, not drawn again.
+   */
+  keptPick?: number,
 ): Promise<ActorTemplates | undefined> {
   const random = seededRandom(actorSeed(reference));
   const picks = new Map<number, number | undefined>();
@@ -47,6 +52,10 @@ export async function resolveActorTemplates(
     const record = await get(formId);
     if (record?.type === 'NPC_') return record;
     if (record?.type !== 'LVLN') return undefined;
+    if (keptPick !== undefined && keptPick !== formId) {
+      const kept = await get(keptPick);
+      if (kept?.type === 'NPC_') return kept;
+    }
     if (!picks.has(formId)) picks.set(formId, pickLeveled(await leveled(record), level, random));
     const picked = picks.get(formId);
     return picked === undefined ? undefined : toNpc(picked, depth + 1);

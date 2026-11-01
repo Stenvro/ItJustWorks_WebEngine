@@ -7,6 +7,7 @@
 import {
   CHANGE_FORM_FLAGS,
   ChangeBase,
+  ChangeCell,
   ChangeFaction,
   ChangeNpc,
   ChangeQuest,
@@ -16,6 +17,8 @@ import {
   readChangeForm,
   type EssActorValues,
   type EssChangeForm,
+  type EssExtra,
+  type EssInventoryEntry,
   type EssNpcChanges,
   type EssSceneChanges,
 } from '../formats/ess/change-forms.ts';
@@ -37,6 +40,7 @@ import {
   type EssVariable,
 } from '../formats/ess/papyrus.ts';
 import {
+  readActorCauses,
   readMagicFavorites,
   readStoryEventManager,
   StoryParameterKind,
@@ -50,7 +54,13 @@ import type {
   SavedThread,
   ThreadWait,
 } from '../scripting/papyrus-vm.ts';
-import { GameState, type ActorValueState } from '../scripting/runtime/game-state.ts';
+import type { Hand } from '../gameplay/equipment.ts';
+import {
+  GameState,
+  type ActorValueState,
+  type ItemStack,
+  type ReferenceState,
+} from '../scripting/runtime/game-state.ts';
 import {
   gameStateData,
   type RuntimeSave,
@@ -64,6 +74,7 @@ import { parseScene } from '../ai/scene-records.ts';
 import type { SavedScene } from '../ai/scene-runtime.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
 import { FACE_MORPH_COUNT } from '../world/chargen-records.ts';
+import { seenFromSave } from '../world/seen-data.ts';
 import { cellKey } from '../world/worldspace.ts';
 import type { GameSave } from './game-save.ts';
 import { SAVE_VERSION, type SaveHeader } from './save-codec.ts';
@@ -85,6 +96,8 @@ const NO_PHASE = 0xffffffff;
 const LifeState = { alive: 0, dying: 1, dead: 2, unconscious: 3, restrained: 6 } as const;
 /** ACBS's flags (UESP NPC_): those scripts set on a base. */
 const ActorBaseFlag = { essential: 0x2, protected: 0x800, invulnerable: 0x80000000 } as const;
+/** A cell's flags as its change form keeps them (its record's DATA has the same 0x20). */
+const CellFlag = { publicArea: 0x20 } as const;
 
 /** A loaded plugin's place in our load order (RecordDatabase plugins' entries). */
 export interface PluginSlot {
@@ -170,6 +183,54 @@ export function procedurePath(state: EssProcedureState | undefined): number[] {
   }
   return path;
 }
+
+/**
+ * The change flag each extra data type is written under, as the saves read have them (every
+ * extra of a type comes with its flag); the rest are the game's own (gameOnlyExtra).
+ */
+const EXTRA_FLAG: Readonly<Record<string, number>> = {
+  Ownership: ChangeRefr.ownershipExtra,
+  Lock: ChangeRefr.lockExtra,
+  ReferenceHandle: ChangeRefr.itemExtraData,
+  EncounterZone: ChangeRefr.encounterZoneExtra,
+  PromotedRef: ChangeRefr.promoted,
+  LeveledCreature: ChangeRefr.leveledActor,
+  PackageStartLocation: ChangeRefr.packageExtraData,
+  Follower: ChangeRefr.packageExtraData,
+  Package: ChangeRefr.packageExtraData,
+  PackageData: ChangeRefr.packageExtraData,
+  DismemberedLimbs: ChangeRefr.dismemberedLimbs,
+};
+const EXTRA_FLAGS = [...new Set(Object.values(EXTRA_FLAG))];
+
+/** The change flag an extra comes with (an actor's merchant container bit is not the lock's). */
+function extraFlag(name: string, actor: boolean): number {
+  const flag = EXTRA_FLAG[name] ?? ChangeRefr.gameOnlyExtra;
+  return actor && (flag === ChangeRefr.lockExtra || flag === ChangeRefr.itemExtraData)
+    ? ChangeRefr.gameOnlyExtra
+    : flag;
+}
+
+/**
+ * An inventory entry's extra data ours keeps (applyItemExtras) or that follows from what is
+ * kept: its count, the leveled list or outfit it came from, its unique id, the quest aliases
+ * holding it (a quest item, its reference: QUST runtime data), an alias's name for it.
+ */
+const ITEM_EXTRAS_KEPT = new Set([
+  'Count',
+  'Worn',
+  'WornLeft',
+  'Health',
+  'Charge',
+  'Soul',
+  'Poison',
+  'OutfitItem',
+  'LeveledItem',
+  'UniqueID',
+  'AliasInstanceArray',
+  'FromAlias',
+  'ReferenceHandle',
+]);
 
 /** The change flags that write a reference's place into its change form. */
 const MOVED = ChangeRefr.moved | ChangeRefr.havokMoved | ChangeRefr.cellChanged;
@@ -340,6 +401,26 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   /** The actors with the package each ran (and whom it fought), where the save has them. */
   const savedActors: SavedActor[] = [];
   let savedPlayer: SavedPlayer | undefined;
+  /** The map markers whose flags the save keeps (shown, travel to). */
+  const mapMarkers = new Map<number, { visible: boolean; travel: boolean }>();
+  /** Where actors' packages started, and the packages they ran once, for their saved actors. */
+  const packageStarts = new Map<number, readonly [number, number, number]>();
+  const ranOnce = new Map<number, number[]>();
+  /** What actors wear and hold beside their outfits (the Worn extra data), by actor. */
+  const worn = new Map<number, [number, Hand | undefined][]>();
+  /** The actor causes (global data 103): the actor each serial number blames. */
+  const causes = new Map<number, number>();
+  const causeData = globalData(ess, 103);
+  if (causeData) {
+    try {
+      for (const cause of readActorCauses(causeData, resolve).causes) {
+        const actor = ours(cause.actor);
+        if (actor) causes.set(cause.serialNum, actor);
+      }
+    } catch {
+      skips.add('actor causes: unreadable');
+    }
+  }
 
   /**
    * A story event as ours (story-manager.ts): its members numbered by kind in their order (R1,
@@ -462,10 +543,26 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       }
       // The story event that started it (its conditions and aliases read its data).
       if (q.event) quest.event = storyEvent(q.event);
+      if (q.instances) {
+        // Its run's data: the text display globals' values it holds (its texts show them);
+        // its aliases' references are its runtime data's (applied above) while it runs.
+        for (const run of q.instances.instances) {
+          for (const { global, value } of run.globals) {
+            const id = ours(global);
+            if (id) (quest.instanceGlobals ??= new Map()).set(id, value);
+          }
+        }
+        applied |= ChangeQuest.instanceData;
+      }
       if (q.alreadyRun !== undefined) applied |= ChangeQuest.alreadyRun;
       if (q.scriptDelay !== undefined) applied |= ChangeQuest.scriptDelay;
     } else if (entry.type === 9 && form.npc) {
-      if (formId === PLAYER_BASE) applied |= applyPlayerBase(form);
+      // The player's factions and skills are their actor's (applyPlayerBase); their base's AI
+      // data as any base's.
+      if (formId === PLAYER_BASE) {
+        applied |= applyPlayerBase(form);
+        if (form.npc.aiData) applied |= applyBaseChanges(formId, { aiData: form.npc.aiData });
+      } else applied |= applyBaseChanges(formId, form.npc);
       // ACBS's flags a script set (SetEssential, SetProtected, SetInvulnerable) and the
       // outfits (SetOutfit), on the base.
       const npc = form.npc;
@@ -510,6 +607,8 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
         faction.reactions.set(id, reaction);
       }
       applied |= ChangeFaction.reactions;
+    } else if (entry.type === 6) {
+      applied |= applyCell(form, formId);
     } else if (entry.type === 13 && flags & ChangeBase.bookRead) {
       state.booksRead.add(formId);
       applied |= ChangeBase.bookRead;
@@ -580,30 +679,13 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       reference.scale = form.scale;
       applied |= ChangeRefr.scale;
     }
-    for (const extra of form.extras ?? []) {
-      if (extra.name === 'Ownership' && typeof extra.value === 'number') {
-        const owner = ours(extra.value);
-        if (owner !== undefined) {
-          if (world.recordType(owner) === 'FACT') reference.ownerFaction = owner;
-          else reference.ownerActor = owner;
-          applied |= ChangeRefr.ownershipExtra;
-        }
-      }
-      // The factions a script put the actor in or took it out of (rank −1: out; ours: −2).
-      if (extra.factions) {
-        const factions = state.actor(formId).factions;
-        for (const { faction, rank } of extra.factions) {
-          const id = ours(faction);
-          if (id !== undefined) factions.set(id, rank < 0 ? -2 : rank);
-        }
-      }
-      // A lock (not an actor's: its bit is the merchant container there): its level and
-      // whether it is locked (the lock's flags, bit 0).
-      if (extra.name === 'Lock' && form.type !== 1 && typeof extra.value === 'object') {
-        const [level = 0, lockFlags = 0] = extra.value;
-        reference.lockLevel = level;
-        reference.locked = (lockFlags & 1) !== 0;
-        applied |= ChangeRefr.lockExtra;
+    applied |= applyExtras(form, formId, reference);
+    if (form.baseObject !== undefined && form.changeFlags & ChangeRefr.baseObject) {
+      // A base a script swapped in.
+      const base = ours(form.baseObject);
+      if (base !== undefined && base !== 0) {
+        reference.base = base;
+        applied |= ChangeRefr.baseObject;
       }
     }
     if (form.actor?.values) applyActorValues(formId, form.actor.values);
@@ -626,7 +708,9 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       const deltas = inventoryDeltas.get(formId) ?? new Map<number, number>();
       for (const item of form.inventory) {
         const id = ours(item.item);
-        if (id !== undefined) deltas.set(id, (deltas.get(id) ?? 0) + item.delta);
+        if (id === undefined) continue;
+        const outfit = applyItemExtras(form, formId, id, item);
+        deltas.set(id, (deltas.get(id) ?? 0) + item.delta - outfit);
       }
       inventoryDeltas.set(formId, deltas);
       applied |= ChangeRefr.inventory | ChangeRefr.leveledInventory;
@@ -639,6 +723,261 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     if (formId === PLAYER_REF) state.actor(PLAYER_REF).level = ess.header.playerLevel;
     if (formId === PLAYER_REF && form.actor?.player) applyPlayerData(form.actor.player);
     return applied;
+  }
+
+  /**
+   * A cell's changes: when it last left the loaded area (its detach time, in whole game hours
+   * as ours keeps it: the saves read have 7 an hour and more before their clock's 8.3), what
+   * the player has seen of it (the local map's fog: seenFromSave), whether it is a public place
+   * (its flags' 0x20, as the record's DATA has it), its name and owner.
+   */
+  function applyCell(form: EssChangeForm, formId: number): number {
+    let applied = 0;
+    if (form.initial?.kind === 'detached cell') {
+      state.cellDetached.set(formId, form.initial.detachTime);
+      applied |= ChangeCell.detachTime | ChangeCell.exteriorChar | ChangeCell.exteriorShort;
+    }
+    const cell = form.cell;
+    if (cell?.seen) {
+      // TODO(M13): an exterior's fog is kept, but ours draws none on the exterior local map.
+      const blocks = state.seen.get(formId) ?? new Map<string, Uint8Array>();
+      for (const { x, y, bits } of cell.seen)
+        blocks.set(`${String(x)},${String(y)}`, seenFromSave(bits));
+      state.seen.set(formId, blocks);
+      applied |= ChangeCell.seenData;
+    }
+    if (cell?.flags !== undefined) {
+      state.cell(formId).public = (cell.flags & CellFlag.publicArea) !== 0;
+      if (cell.flags & ~CellFlag.publicArea) {
+        skips.add('CELL: flags 0x40, 0x200 (their meaning is not known: TODO(M13))');
+      }
+      applied |= ChangeCell.flags;
+    }
+    if (cell?.owner !== undefined) {
+      const owner = ours(cell.owner);
+      if (owner) {
+        if (world.recordType(owner) === 'FACT') state.cell(formId).ownerFaction = owner;
+        else state.cell(formId).ownerActor = owner;
+        applied |= ChangeCell.ownership;
+      }
+    }
+    return applied;
+  }
+
+  /**
+   * A reference's extra data (docs/formats/ess.md "Extra data"), each where ours keeps it.
+   * Returns the change flags whose extra data was all applied (an extra comes with its flag:
+   * EXTRA_FLAG); an extra with no place is logged by its name.
+   */
+  function applyExtras(form: EssChangeForm, formId: number, reference: ReferenceState): number {
+    const actor = form.type === 1;
+    const unapplied = new Set<number>();
+    const present = new Set<number>();
+    for (const extra of form.extras ?? []) {
+      const flag = extraFlag(extra.name, actor);
+      present.add(flag);
+      if (applyExtra(extra, form, formId, reference)) continue;
+      unapplied.add(flag);
+      skips.add(`${changeFormTypeName(form.type)}: extra ${extra.name} not applied`);
+    }
+    let applied = 0;
+    for (const flag of [...EXTRA_FLAGS, ChangeRefr.gameOnlyExtra]) {
+      if (actor ? flag === ChangeRefr.itemExtraData || flag === ChangeRefr.lockExtra : false) {
+        continue;
+      }
+      // A flag whose extra data was all applied, or that came with none (nothing to apply).
+      if (!unapplied.has(flag) && (present.has(flag) || form.changeFlags & flag)) applied |= flag;
+    }
+    return applied;
+  }
+
+  /** One extra data entry of a reference applied; false when ours has no place for it. */
+  function applyExtra(
+    extra: EssExtra,
+    form: EssChangeForm,
+    formId: number,
+    reference: ReferenceState,
+  ): boolean {
+    const { value } = extra;
+    const one = typeof value === 'number' ? value : undefined;
+    switch (extra.name) {
+      case 'Ownership': {
+        const owner = one === undefined ? undefined : ours(one);
+        if (owner === undefined) return false;
+        if (world.recordType(owner) === 'FACT') reference.ownerFaction = owner;
+        else reference.ownerActor = owner;
+        return true;
+      }
+      case 'FactionChanges': {
+        // The factions a script put the actor in or took it out of (rank −1: out; ours: −2).
+        const factions = state.actor(formId).factions;
+        for (const { faction, rank } of extra.factions ?? []) {
+          const id = ours(faction);
+          if (id !== undefined) factions.set(id, rank < 0 ? -2 : rank);
+        }
+        return true;
+      }
+      case 'Lock': {
+        // A lock (not an actor's: its bit is the merchant container there): its level and
+        // whether it is locked (the lock's flags, bit 0).
+        if (form.type === 1 || typeof value !== 'object') return false;
+        const [level = 0, lockFlags = 0] = value;
+        reference.lockLevel = level;
+        reference.locked = (lockFlags & 1) !== 0;
+        return true;
+      }
+      case 'ReferenceHandle': {
+        // An item reference in a container (the itemExtraData change): its holder, whose
+        // inventory counts it (the holder's own entry names it back).
+        const holder = one === undefined ? undefined : ours(one);
+        const base = reference.base ?? state.created.get(formId)?.base;
+        if (!holder || base === undefined || form.type === 1) return false;
+        reference.container = { holder, base, count: state.created.get(formId)?.count ?? 1 };
+        return true;
+      }
+      case 'EncounterZone': {
+        const zone = one === undefined ? undefined : ours(one);
+        if (zone === undefined) return false;
+        reference.encounterZone = zone;
+        return true;
+      }
+      case 'LeveledCreature': {
+        // The NPC_ its leveled lists came down to (the second form; the first is its base).
+        // TODO(M13): the changes to the generated base it writes after them (none in the
+        // saves read).
+        const picked = typeof value === 'object' ? ours(value[1] ?? 0) : undefined;
+        if (!picked || Object.keys(extra.npc ?? {}).length > 0) return false;
+        state.actor(formId).leveledBase = picked;
+        return true;
+      }
+      case 'PackageStartLocation': {
+        // Where its package started (its "near the package's start" locations), for the
+        // package it goes on with.
+        if (typeof value !== 'object' || value.length < 4) return false;
+        packageStarts.set(formId, [value[1] ?? 0, value[2] ?? 0, value[3] ?? 0]);
+        return true;
+      }
+      case 'RunOncePacks': {
+        // Packages that run once a day that ran (TODO(M13): the byte beside each is not
+        // known; ours counts them run today).
+        if (typeof value !== 'object') return false;
+        ranOnce.set(
+          formId,
+          value.flatMap((pack) => ours(pack) ?? []),
+        );
+        return true;
+      }
+      case 'ActorCause': {
+        // The actor its doings are blamed on: the actor causes table's (global data 103).
+        const cause = one === undefined ? undefined : causes.get(one);
+        if (cause === undefined) return false;
+        reference.actorCause = cause;
+        return true;
+      }
+      case 'Flags':
+        // ExtraFlags: bit 0 blocks activation (BlockActivation). TODO(M13): its other bits
+        // (none set in the saves read).
+        if (one === undefined || (one & ~1) !== 0) return false;
+        reference.activationBlocked = (one & 1) !== 0;
+        return true;
+      case 'Ghost':
+        state.actor(formId).ghost = one !== 0;
+        return true;
+      case 'MapMarker':
+        // The marker's flags: bit 0 shown on the map, bit 1 travelled to.
+        mapMarkers.set(formId, {
+          visible: ((one ?? 0) & 1) !== 0,
+          travel: ((one ?? 0) & 2) !== 0,
+        });
+        return true;
+      case 'TextDisplayData':
+        // A name of its own (kind −2: named by the player); else the name an alias gives it,
+        // which ours gives from the alias it fills.
+        if (extra.text !== undefined) reference.displayName = extra.text;
+        return true;
+      case 'AliasInstanceArray':
+      case 'PromotedRef':
+      case 'SceneData':
+      case 'CachedScale':
+      case 'Follower':
+        // Kept from what holds it: the quests' aliases (QUST runtime data), the scenes
+        // playing, its scale, the packages of those following it.
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  /**
+   * An inventory entry's extra data lists, each a stack of the item: what it wears or holds
+   * (Worn, WornLeft), its health (tempered), charge and soul (itemStacks), a weapon's poison.
+   * Returns how many of its items came with the actor's outfit, which ours puts on as its
+   * inventory is first read (they are left out of the delta). TODO(M13): the outfit's leveled
+   * pieces are ours, picked by the actor's seed, not the save's.
+   */
+  function applyItemExtras(
+    form: EssChangeForm,
+    holder: number,
+    item: number,
+    entry: EssInventoryEntry,
+  ): number {
+    const actor = form.type === 1;
+    let outfit = 0;
+    for (const list of entry.extras) {
+      const of = (name: string): EssExtra | undefined => list.find((e) => e.name === name);
+      const number = (name: string): number | undefined => {
+        const value = of(name)?.value;
+        return typeof value === 'number' ? value : undefined;
+      };
+      const count = number('Count') ?? 1;
+      if (actor && of('OutfitItem')) {
+        outfit += count;
+        continue;
+      }
+      if (actor && (of('Worn') || of('WornLeft'))) {
+        const items = worn.get(holder) ?? [];
+        // Worn: on the body, or in the right hand (a weapon, a spell's, a torch); WornLeft: the
+        // left hand.
+        const held = ['WEAP', 'LIGH'].includes(world.recordType(item) ?? '');
+        items.push([item, of('WornLeft') ? 'left' : held ? 'right' : undefined]);
+        worn.set(holder, items);
+      }
+      const health = number('Health');
+      const charge = number('Charge');
+      const soul = number('Soul');
+      if (health !== undefined || charge !== undefined || soul !== undefined) {
+        const byBase = state.itemStacks.get(holder) ?? new Map<number, ItemStack[]>();
+        const stacks = byBase.get(item) ?? [];
+        stacks.push({
+          count,
+          // The save's float as ours keeps a tempered item's (1.1 Fine, 1.2 Superior, ...).
+          health: health === undefined ? 1 : Math.round(health * 1000) / 1000,
+          ...(charge !== undefined && { charge }),
+          ...(soul !== undefined && soul > 0 && { soul }),
+          ...((of('Worn') ?? of('WornLeft')) && { worn: true }),
+        });
+        byBase.set(item, stacks);
+        state.itemStacks.set(holder, byBase);
+      }
+      const poison = of('Poison');
+      if (actor && poison && typeof poison.value === 'object') {
+        const id = ours(poison.value[0] ?? 0);
+        if (id) {
+          state.actorMagic.set(holder, {
+            ...state.actorMagic.get(holder),
+            poison: { weapon: item, poison: id, charges: poison.value[1] ?? 1 },
+          });
+        }
+      }
+      for (const extra of list) {
+        // An item's name from the alias holding it (none of its own) is the alias's.
+        if (extra.name === 'TextDisplayData' && extra.text === undefined) continue;
+        if (!ITEM_EXTRAS_KEPT.has(extra.name)) {
+          skips.add(`${changeFormTypeName(form.type)}: item extra ${extra.name} not applied`);
+        }
+      }
+    }
+    return outfit;
   }
 
   /**
@@ -695,7 +1034,10 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
           ended: false,
           path: procedurePath(running?.procedureState),
           found: [],
-          ranOn: [],
+          ranOn: (ranOnce.get(formId) ?? []).map(
+            (pack) => [pack, Math.floor(state.gameDaysPassed)] as const,
+          ),
+          ...(packageStarts.has(formId) && { start: packageStarts.get(formId) }),
         },
       }),
       ...(target && { combatTarget: target }),
@@ -764,6 +1106,46 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       if (modifiers.temporary !== 0) value.temporary = modifiers.temporary;
       value.damage = -modifiers.damage;
     }
+  }
+
+  /**
+   * What the game changed on an NPC_ base other than the player's, over its record: its
+   * factions (the whole list as it stands, SNAM's layout), skills (DNAM's 18 values) and AI
+   * data (AIDT's aggression, confidence, energy, morality, mood, assistance), for every actor
+   * of the base (actor-engine.ts). TODO(M13): DNAM's skill offsets, health, magicka and stamina
+   * (calculated from the level by ours) and AIDT's aggro radii.
+   */
+  function applyBaseChanges(formId: number, npc: EssNpcChanges): number {
+    let applied = 0;
+    if (npc.factions) {
+      const factions = new Map<number, number>();
+      for (const { faction, rank } of npc.factions) {
+        const id = ours(faction);
+        if (id) factions.set(id, rank);
+      }
+      state.actorBase(formId).factions = factions;
+      applied |= ChangeNpc.factions;
+    }
+    if (npc.skills && npc.skills.length >= 18) {
+      state.actorBase(formId).skills = new Map(
+        Array.from({ length: 18 }, (_, i) => [FIRST_SKILL_AV + i, npc.skills?.[i] ?? 0] as const),
+      );
+      applied |= ChangeNpc.skills;
+    }
+    if (npc.aiData && npc.aiData.length >= 6) {
+      const [aggression = 0, confidence = 0, energy = 0, morality = 0, mood = 0, assistance = 0] =
+        npc.aiData;
+      state.actorBase(formId).aiData = {
+        aggression,
+        confidence,
+        energy,
+        morality,
+        mood,
+        assistance,
+      };
+      applied |= ChangeNpc.aiData;
+    }
+    return applied;
   }
 
   function applyPlayerBase(form: EssChangeForm): number {
@@ -1012,7 +1394,7 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   }
   for (const table of [ess.globalData1, ess.globalData2, ess.globalData3]) {
     for (const entry of table) {
-      if (![0, 1, 3, 6, 109, 111, 1001].includes(entry.type) && entry.data.length > 0) {
+      if (![0, 1, 3, 6, 103, 109, 111, 1001].includes(entry.type) && entry.data.length > 0) {
         skips.add(`global data ${String(entry.type)}`);
       }
     }
@@ -1035,7 +1417,7 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     lineOfSight: undefined,
     inventoryFilters,
     formListAdded,
-    mapMarkers: undefined,
+    mapMarkers: mapMarkers.size > 0 ? mapMarkers : undefined,
     initialized: [],
     seeded: [],
     dialogue:
@@ -1057,6 +1439,7 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     unsaved: [],
     world: { actors: savedActors, graphs: [], ...(savedPlayer && { player: savedPlayer }) },
     inventoryDeltas: [...inventoryDeltas].map(([container, items]) => [container, [...items]]),
+    ...(worn.size > 0 && { worn: [...worn] }),
   };
   const header: SaveHeader = {
     version: SAVE_VERSION,

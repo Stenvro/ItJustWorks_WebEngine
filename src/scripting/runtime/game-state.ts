@@ -107,6 +107,15 @@ export interface ReferenceState {
    * that cell resets.
    */
   harvested?: { readonly at: number; readonly cell?: number };
+  /**
+   * The encounter zone the game gave it (the original's ExtraEncounterZone: a reference moved
+   * or made out of its zone's cells, as NoZoneZone): it wins over its record's and its cell's.
+   */
+  encounterZone?: number;
+  /** The base a script swapped in for its record's (the original's baseObject change). */
+  base?: number;
+  /** A name of its own (an item the player named as they enchanted it): the game's TextDisplay. */
+  displayName?: string;
 }
 
 export interface ActorValueState {
@@ -218,6 +227,11 @@ export interface ActorState {
   lookAt?: number;
   /** SetNotShowOnStealthMeter: it does not open the stealth eye. */
   hiddenOnStealthMeter?: boolean;
+  /**
+   * The NPC_ its leveled lists came down to as the game made it (the original's
+   * ExtraLeveledCreature): kept, not drawn again (src/world/actor-templates.ts).
+   */
+  leveledBase?: number;
 }
 
 /**
@@ -246,6 +260,22 @@ export interface ActorBaseState {
   invulnerable?: boolean;
   outfit?: number;
   sleepOutfit?: number;
+  /**
+   * The base's factions as the game changed them (the original's NPC_ factions change): each
+   * faction's rank (−1: out of it), over its record's SNAM list.
+   */
+  factions?: Map<number, number>;
+  /** Skill values by actor value (OneHanded .. Enchanting) set on the base, over its DNAM. */
+  skills?: Map<number, number>;
+  /** AI data set on the base (aggression, confidence, morality, mood, assistance), over AIDT. */
+  aiData?: {
+    readonly aggression: number;
+    readonly confidence: number;
+    readonly energy: number;
+    readonly morality: number;
+    readonly mood: number;
+    readonly assistance: number;
+  };
 }
 
 /** A faction's crime gold and standing with the player and other factions. */

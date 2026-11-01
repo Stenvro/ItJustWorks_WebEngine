@@ -47,6 +47,32 @@ export function markSeen(blocks: SeenBlocks, x: number, y: number, radius = SEEN
   return changed;
 }
 
+/** The original's seen data: 32 bytes, 16 × 16 bits a block. */
+const SAVED_GRID = 16;
+
+/**
+ * An original save's seen data for one block (CHANGE_CELL_SEENDATA's 32 bytes) as ours: each of
+ * its 16 × 16 squares (256 units) is 2 × 2 of ours. TODO(M13): the block's size (taken as the
+ * 4096-unit block ours keeps) and the bits' order (taken as rows south to north, west to east,
+ * the lowest bit first, as ours).
+ */
+export function seenFromSave(bits: Uint8Array): Uint8Array {
+  const out = new Uint8Array((SEEN_GRID * SEEN_GRID) / 8);
+  const scale = SEEN_GRID / SAVED_GRID;
+  for (let bit = 0; bit < SAVED_GRID * SAVED_GRID; bit++) {
+    if (((bits[bit >> 3] ?? 0) & (1 << (bit & 7))) === 0) continue;
+    const row = Math.floor(bit / SAVED_GRID);
+    const column = bit % SAVED_GRID;
+    for (let dy = 0; dy < scale; dy++) {
+      for (let dx = 0; dx < scale; dx++) {
+        const at = (row * scale + dy) * SEEN_GRID + column * scale + dx;
+        out[at >> 3] = (out[at >> 3] ?? 0) | (1 << (at & 7));
+      }
+    }
+  }
+  return out;
+}
+
 /** Whether the square holding a point has been seen. */
 export function seenAt(blocks: SeenBlocks, x: number, y: number): boolean {
   const sx = Math.floor(x / SQUARE);
