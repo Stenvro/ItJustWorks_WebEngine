@@ -47,6 +47,11 @@ const MQ101 = 0x3372b;
 const TAMRIEL = 0x3c;
 const HIGH_ELF_RACE = 0x13743;
 const HADVAR = 0x2bfa2;
+const RALOF = 0x2bf9e;
+/** MQ101HelgenArcher3REF, one of the archers fighting Alduin. */
+const HELGEN_ARCHER = 0xe72b9;
+/** How many of the placed living actors run the package the save has them on (of 16). */
+const GOING_FLOOR = 14;
 /** Alduin over Helgen (MQ101). */
 const ALDUIN_HELGEN = 0x32db7;
 
@@ -163,6 +168,22 @@ describe.skipIf(!hasGamedata() || known === undefined)('a known original save (l
         expect(update.left).toBeGreaterThanOrEqual(0);
         if (!update.gameTime) expect(update.left).toBeLessThanOrEqual(update.interval);
       }
+      // The running stacks (on the cart: the rider's OnAnimationEvent and an OnUpdate, each on
+      // the native call its function message queued) go on where they were; the animation
+      // event, sleep, tracked stats and inventory filter registrations are kept.
+      expect(imported.save.runtime.threads?.length).toBe(
+        papyrus.stackData.length + papyrus.suspendedStacks.flat().length,
+      );
+      const resumed = sim.world.terminal.lines.filter(
+        (line) => line.tag === 'save' && line.text.includes('cannot resume'),
+      );
+      expect(resumed).toEqual([]);
+      const runtimeSave = imported.save.runtime;
+      expect((runtimeSave.animationEvents as Map<number, unknown>).size).toBe(
+        papyrus.registrations.animationEvents.length,
+      );
+      expect((runtimeSave.inventoryFilters as Map<string, unknown>).size).toBeGreaterThan(0);
+      expect((runtimeSave.registrations as Map<string, unknown>).has('sleep')).toBe(true);
       // The camera as the original left it: first person, its fields of view.
       expect(imported.save.world?.player).toEqual({ pov: 'first', fov: [80, 80] });
       // The actors' running packages, where the save has them stand: those of the loaded
@@ -241,6 +262,26 @@ describe.skipIf(!hasGamedata() || path === undefined)(
           const event = readChangeForm(entry, resolve).quest?.event;
           const quest = state.quests.get(entry.formId ?? 0);
           if (event) expect([name, quest?.event]).not.toEqual([name, undefined]);
+        }
+        // The factions' reactions as they stand (modifier and combat reaction to each other).
+        const factions = (
+          imported.save.runtime.state as {
+            factions: Map<
+              number,
+              { reactions: Map<number, number>; reactionModifiers: Map<number, number> }
+            >;
+          }
+        ).factions;
+        for (const entry of ess.changeForms) {
+          if (entry.type !== 31) continue;
+          for (const { faction, modifier, reaction } of readChangeForm(entry, resolve).faction
+            ?.reactions ?? []) {
+            const ours = factions.get(entry.formId ?? 0);
+            expect([ours?.reactions.get(faction), ours?.reactionModifiers.get(faction)]).toEqual([
+              reaction,
+              modifier,
+            ]);
+          }
         }
         // The events the story manager had not processed yet (none in the saves read).
         const sem = readGlobalData(111, globalData(ess, 111) ?? new Uint8Array(), resolve);
@@ -353,8 +394,11 @@ describe.skipIf(!hasGamedata() || opening === undefined)('the opening, imported 
       expect(appearance?.race).toBe(HIGH_ELF_RACE);
       expect(appearance?.headParts.length).toBeGreaterThan(0);
       expect(appearance?.tints.length).toBeGreaterThan(0);
-      // The actors placed around the player run the packages the save has them run.
-      await sim.step(3);
+      // The actors placed around the player run the packages the save has them run (as
+      // GetCurrentPackage answers: a fighter's combat override package, a scene's package done
+      // while its action runs), a second on: the packages go on from the branch they had reached,
+      // so Alduin's strafe, saved half done, ends a little later and his flight grab follows.
+      await sim.step(1);
       // The dead run none.
       let placed = 0;
       const going: number[] = [];
@@ -362,15 +406,17 @@ describe.skipIf(!hasGamedata() || opening === undefined)('the opening, imported 
         if (!saved.package || sim.actor(saved.reference) === undefined) continue;
         if (await sim.runtime.actors.isDead(saved.reference)) continue;
         placed++;
-        if (sim.package(saved.reference)?.id === saved.package.id) going.push(saved.reference);
+        if (sim.runtime.currentPackage(saved.reference) === saved.package.id) {
+          going.push(saved.reference);
+        }
       }
-      console.log(`opening: ${String(going.length)} of ${String(placed)} placed actors run them`);
       expect(placed).toBeGreaterThan(10);
-      // Hadvar on his way to the keep and Alduin's strafe (the scenes' packages), the wounded in
-      // the road. TODO(M13): the soldiers the save has on DefaultHoldPositionLinkedRef128 choose
-      // dunCGAlduinBaitStayAtLinkedRef here; Ralof, saved going into the keep, runs none yet.
-      expect(going).toEqual(expect.arrayContaining([HADVAR, ALDUIN_HELGEN]));
-      expect(going.length).toBeGreaterThanOrEqual(5);
+      // Hadvar on his way to the keep, Ralof at its marker and Alduin's strafe (the scenes'
+      // packages), the wounded in the road, the archers fighting Alduin on their combat override
+      // package (DefaultHoldPositionLinkedRef128). TODO(M13): two archers the save has fighting
+      // do not take the fight up again here.
+      expect(going).toEqual(expect.arrayContaining([HADVAR, RALOF, ALDUIN_HELGEN, HELGEN_ARCHER]));
+      expect(going.length).toBeGreaterThanOrEqual(GOING_FLOOR);
     } finally {
       await sim.close();
     }

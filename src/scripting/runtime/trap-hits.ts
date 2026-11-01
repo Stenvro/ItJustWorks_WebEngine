@@ -35,6 +35,12 @@ interface Entry {
   touch: TrapTouchNow;
 }
 
+/** What a save keeps of the traps' contacts: by target, each trap's last telling. */
+export type TrapHitsSave = readonly (readonly [
+  number,
+  readonly (readonly [number, { readonly told: number; readonly touch: TrapTouchNow }])[],
+])[];
+
 export class TrapHits {
   /** fTrapHitEventDelayMS: the least time between two hits of one trap on one target (ms). */
   delayMs = TRAP_HIT_EVENT_DELAY_MS;
@@ -75,6 +81,25 @@ export class TrapHits {
       this.#tell(trap, target, 'stop', entry.touch);
     }
     if (entries.size === 0) this.#entries.delete(target);
+  }
+
+  /**
+   * What a save keeps (RuntimeSave.engines): each target's traps in touch, with when each last
+   * told (on the game's real time, which the save keeps) and how: after the load a trap still
+   * touching goes on hitting at its delay, not starting again.
+   */
+  saveData(): TrapHitsSave {
+    return [...this.#entries].map(([target, entries]) => [
+      target,
+      [...entries].map(([trap, entry]) => [trap, { ...entry }] as const),
+    ]);
+  }
+
+  /** A save's contacts (saveData) on this fresh tracker. */
+  loadData(data: TrapHitsSave | undefined): void {
+    for (const [target, entries] of data ?? []) {
+      this.#entries.set(target, new Map(entries.map(([trap, entry]) => [trap, { ...entry }])));
+    }
   }
 
   /** An actor or a trap is gone (its cell unloaded): its contacts end without a telling. */

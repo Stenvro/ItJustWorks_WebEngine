@@ -329,8 +329,8 @@ its kind's name, then LocRef (a reference, three u32, a byte), LocPt (a point, t
 u32, two bytes) or LocCell (an interior cell, a point).
 
 The **procedure states**, by name (each a procedure of the package's tree): Sequence and Stacked
-(the child's name and state, a u32), Simultaneous (a vsval count of (u32, child)), Random (child,
-u32, a vsval count of u32), Acquire (u32, reference, u32, reference, a byte and when set an
+(the child's name and state, a u32: the child's index among the branch's), Simultaneous (a vsval
+count of (index u32, child)), Random (child, its index u32, a vsval count of u32), Acquire (u32, reference, u32, reference, a byte and when set an
 Activate state), Activate (the parameter it uses (0xFF: none), a reference, a place, two u32, two
 bytes, a pathing request), DialogueActivate (two places, a reference, a dialogue target (a u32
 kind, then a reference for 0, else a u32), a byte and when set a Dialogue state, a byte, a
@@ -473,8 +473,14 @@ plugin name, and forms of plugins not loaded are left out. What it applies:
   a script put them in or took them out of; the package each ran (its AI process's current
   package) and whom it fought (its combat controller's target), for the actors the save has
   moved: our world save's actors (`GameSave.world`, docs/formats/save.md), so those of the
-  loaded area go on with that package as they are placed (from its procedure tree's root:
-  TODO(M13), the procedures' running states into ours); an actor the save keeps at its
+  loaded area go on with that package as they are placed, in the branch of its procedure tree
+  it had reached: a Sequence's, Stacked's and Random's u32 is the index of the child it runs, a
+  Simultaneous's children each keep theirs (every branch state of the saves read names a child
+  there, whose procedure the child's state names: SitSleep for Sit and Sleep,
+  DialogueActivate for ForceGreet); TODO(M13): the procedures' own states. A fighting actor's
+  process package is its combat override package (ECOR), unless a scene's package action holds
+  it; a scene package action whose package completed stays the actor's package while the action
+  runs (GetCurrentPackage answers both so); an actor the save keeps at its
   record's place (it writes no place for it) stands there with its package (`essWorld(db,
 ess)` reads those places ahead);
 - the player: where they stand (their ACHR's moved place, else the player location table),
@@ -512,7 +518,21 @@ ess)` reads those places ahead);
 - the weather;
 - Papyrus: each script instance's variables, by script level (a type's members follow its
   parents'), with object variables as handles to the instances' forms, and the state each
-  instance is in. An alias script's alias id is TODO(M13).
+  instance is in; an alias script's instance on its alias (the object table's high word is the
+  alias id, −1 on every form's);
+- the running stacks, as our waiting threads: our VM runs the compiled code, so each frame goes
+  on at the instruction the save has it at (its function, script, state, Self and variables,
+  params then locals); every frame of the saves read stands on its call (the callee's frame, or
+  the native call its function message queued), which runs again as the message would have; a
+  stack in a wait table (Wait real time, WaitMenuMode on the wall clock, WaitGameTime) waits for
+  its clock (TODO(M13): the times as on the update registrations, no save read has one); the
+  suspended stacks' calls start; TODO(M13): a stack's fragment callback, a property accessor's
+  function type;
+- the animation event registrations (by sender and lowercase name), the sleep and tracked stats
+  registrations, the inventory event filters (items and form lists); TODO(M13): RegisterForLOS's
+  (the save names viewer and target, not the registering object) and the latent functions'
+  queued work (none in the saves read);
+- the factions' reactions (FACT bit 2: the modifier and the group combat reaction to each);
 - the OnUpdate and OnUpdateGameTime registrations, each going on with the time it had left
   (the original saves the time to send on the VM's clock, which the timer table keeps at 0 in
   the saves read: so the time is what is left, TODO(M13) on a save where it is not; real time
@@ -520,13 +540,11 @@ ess)` reads those places ahead);
   the alias of the handle's high word;
 - the forms scripts added to form lists (FLST).
 
-Read but not imported yet (TODO(M13)): the running stacks (our resumable frames keep their own
-code positions, not the compiled script's), the function messages, suspended stacks and waits,
-the other registrations (sleep and tracked stats events, inventory filters, animation events);
-the projectiles and hazards in flight; the base objects' other changes (values, names, known
-ingredient effects, location keyword data; the scenes' clocks); the movement controller's
-state (the engine plans its paths anew); the AI processes beyond the package (the procedures'
-running states, the high process's timers and held objects: M13); the combat controllers' and
+Read but not imported yet (TODO(M13)): the projectiles and hazards in flight; the base objects'
+other changes (values, names, known ingredient effects, location keyword data; the scenes'
+clocks); the movement controller's state (the engine plans its paths anew); the AI processes
+beyond the branch their package reached (the procedures' own states, the high process's timers
+and held objects: M13); the combat controllers' and
 the combat table's searches and objects (M13); the player's other lists (M13).
 
 Everything else is counted by change form type and flag (`REFR: lockExtra x 12`) and by where a

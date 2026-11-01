@@ -364,12 +364,15 @@ export class ActorAi {
    * The place a combat override package keeps an actor to while it fights (NPC_ / alias ECOR:
    * src/shell/actor-combat-ai.ts): of the first package of the list whose schedule and
    * conditions hold, where its first location input is (undefined: none holds, or it names no
-   * place), and its combat style (PACK CNAM).
+   * place), its combat style (PACK CNAM), and the package (the one the actor runs as it fights).
    */
   async combatPlace(
     actor: number,
     list: number,
-  ): Promise<{ place: PackagePlace | undefined; combatStyle: number | undefined } | undefined> {
+  ): Promise<
+    | { place: PackagePlace | undefined; combatStyle: number | undefined; package: number }
+    | undefined
+  > {
     const runtime = this.#session.scriptsReady;
     if (!runtime) return undefined;
     const mind = this.#mind;
@@ -391,7 +394,7 @@ export class ActorAi {
         place = await mind.place(input.value.location, actor, context);
         break;
       }
-      return { place, combatStyle: pack.combatStyle ?? template?.combatStyle };
+      return { place, combatStyle: pack.combatStyle ?? template?.combatStyle, package: id };
     }
     return undefined;
   }

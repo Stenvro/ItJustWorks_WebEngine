@@ -725,6 +725,19 @@ export class ProgressionEngine {
 
   // --- Health, magicka and stamina over time ----------------------------------------------------
 
+  /**
+   * What a save keeps (RuntimeSave.engines): the seconds before each value regenerates again
+   * ("reference:vital"), so a vital hit just before the save waits out its delay after the load.
+   */
+  saveData(): readonly (readonly [string, number])[] {
+    return [...this.#delays];
+  }
+
+  /** A save's regeneration delays (saveData) on this fresh engine. */
+  loadData(delays: readonly (readonly [string, number])[] | undefined): void {
+    for (const [key, seconds] of delays ?? []) this.#delays.set(key, seconds);
+  }
+
   /** Every frame outside menus: regeneration and sprinting, ten times a second. */
   update(realSeconds: number): void {
     this.#pending += Math.max(0, realSeconds);

@@ -5,7 +5,10 @@
 import type { SavedScenes } from '../../ai/scene-runtime.ts';
 import type { SavedInstance, SavedThread } from '../papyrus-vm.ts';
 import type { ObjectHandle, Value } from '../values.ts';
+import type { CastingSave } from './casting-engine.ts';
 import type { GameState } from './game-state.ts';
+import type { MagicSave } from './magic-engine.ts';
+import type { TrapHitsSave } from './trap-hits.ts';
 
 /** An update registration (RegisterForUpdate and its forms): it goes on after a load. */
 export interface SavedUpdate {
@@ -65,6 +68,14 @@ export interface RuntimeSave {
   readonly scenes?: SavedScenes;
   /** The translations in progress (none in saves made before them). */
   readonly translations?: readonly SavedTranslation[];
+  /** The engines' timers and marks (none in saves made before them; saveData of each). */
+  readonly engines?: {
+    readonly casting?: CastingSave;
+    readonly progression?: readonly (readonly [string, number])[];
+    readonly crime?: readonly string[];
+    readonly trapHits?: TrapHitsSave;
+    readonly magic?: MagicSave;
+  };
 }
 
 /** The runtime's fields a save keeps as they are (plain values and plain objects). */

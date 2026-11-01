@@ -7,6 +7,7 @@
 import {
   CHANGE_FORM_FLAGS,
   ChangeBase,
+  ChangeFaction,
   ChangeNpc,
   ChangeQuest,
   ChangeRefr,
@@ -30,6 +31,8 @@ import {
 import {
   PapyrusType,
   readPapyrus,
+  type EssGameHandle,
+  type EssObject,
   type EssPapyrus,
   type EssVariable,
 } from '../formats/ess/papyrus.ts';
@@ -40,7 +43,13 @@ import {
   type SavedStoryEvent,
 } from '../formats/ess/global-data-tables.ts';
 import type { EssPlayerData, EssTintMask } from '../formats/ess/player.ts';
-import type { SavedInstance } from '../scripting/papyrus-vm.ts';
+import type { EssProcedureState } from '../formats/ess/process.ts';
+import type {
+  SavedFrame,
+  SavedInstance,
+  SavedThread,
+  ThreadWait,
+} from '../scripting/papyrus-vm.ts';
 import { GameState, type ActorValueState } from '../scripting/runtime/game-state.ts';
 import {
   gameStateData,
@@ -136,6 +145,30 @@ function sceneAction(
     complete: done,
     left: Number.isFinite(seconds) && seconds > 0 && seconds < 3600 ? seconds : 0,
   };
+}
+
+/**
+ * The branch a running package's tree had reached, as our saved packages keep it (SavedPackage
+ * path: each branch's index among its parent's children, from the root down), from its procedure
+ * states: a Sequence's, Stacked's and Random's u32 is the index of the child it runs (in the
+ * saves read, every one of some 3,300 names a child, whose procedure the child's state names:
+ * SitSleep for Sit and Sleep, DialogueActivate for ForceGreet); of a Simultaneous branch's
+ * children, the first that runs (ours goes down one).
+ */
+export function procedurePath(state: EssProcedureState | undefined): number[] {
+  const path: number[] = [];
+  for (let at = state; at && path.length < 32;) {
+    if (at.index !== undefined) {
+      path.push(at.index);
+      at = at.child;
+      continue;
+    }
+    const first = at.children?.find((child) => child.state);
+    if (!first) break;
+    path.push(first.index);
+    at = first.state;
+  }
+  return path;
 }
 
 /** The change flags that write a reference's place into its change form. */
@@ -266,6 +299,7 @@ const FLAG_NAMES: Readonly<Record<string, Readonly<Record<number, string>>>> = {
   ACHR: names(ChangeRefr),
   NPC_: names(ChangeNpc),
   QUST: names(ChangeQuest),
+  FACT: names(ChangeFaction),
 };
 
 /** A change flag's name as the import logs it (by change form type; else "flag 0x..."). */
@@ -463,6 +497,19 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       });
       state.leveledAdditions.set(formId, added);
       applied |= ChangeBase.last;
+    } else if (entry.type === 31 && form.faction?.reactions) {
+      // FACT: its reactions to other factions as they stand (the record's list with what
+      // SetReaction, ModReaction, SetAlly and SetEnemy changed): the modifier and the group
+      // combat reaction, as ours keeps scripts' (they win over the record's XNAM).
+      // TODO(M13): its flags (bit 1) and crime counts (bit 31), whose meaning is not known.
+      const faction = state.faction(formId);
+      for (const { faction: other, modifier, reaction } of form.faction.reactions) {
+        const id = ours(other);
+        if (id === undefined || id === 0) continue;
+        faction.reactionModifiers.set(id, modifier);
+        faction.reactions.set(id, reaction);
+      }
+      applied |= ChangeFaction.reactions;
     } else if (entry.type === 13 && flags & ChangeBase.bookRead) {
       state.booksRead.add(formId);
       applied |= ChangeBase.bookRead;
@@ -598,13 +645,17 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
    * An actor's running package (its AI process's current one) and whom it fought (its combat
    * controller's target), where the save has it stand: it goes on with them as it is placed
    * (src/save/world-save.ts). An actor the save keeps at its record's place (it writes no place
-   * for it) stands there. The package starts again from its procedure tree's root.
-   * TODO(M13): the procedures' running states (process.ts reads them) into ours.
+   * for it) stands there. The package goes on in the branch of its procedure tree it ran (its
+   * procedure states' child indices, procedurePath). TODO(M13): the procedures' own states
+   * (where a Travel goes, a Sandbox's activity, a Patrol's point) and the high process's timers.
    */
   function savedActor(form: EssChangeForm, formId: number): SavedActor | undefined {
     const actor = form.actor;
-    if (actor?.process) skips.add('ACHR: the AI process beyond its package (TODO(M13))');
-    const pkg = actor?.process?.package?.package;
+    if (actor?.process) {
+      skips.add("ACHR: the procedures' own states and the process's timers (TODO(M13))");
+    }
+    const running = actor?.process?.package;
+    const pkg = running?.package;
     const id = pkg === undefined ? undefined : ours(pkg);
     const target = actor?.combat ? ours(actor.combat.target) : undefined;
     if (!id && !target) return undefined;
@@ -638,7 +689,14 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       position: at.position,
       heading: at.rotation[2],
       ...(id && {
-        package: { id, completed: false, ended: false, path: [], found: [], ranOn: [] },
+        package: {
+          id,
+          completed: false,
+          ended: false,
+          path: procedurePath(running?.procedureState),
+          found: [],
+          ranOn: [],
+        },
       }),
       ...(target && { combatTarget: target }),
     };
@@ -853,13 +911,18 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     }
   }
 
-  // Papyrus: the script instances' variables (TODO(M12): their stacks and registrations).
+  // Papyrus: the script instances' variables, the threads, the registrations.
   let instances: SavedInstance[] = [];
+  let threads: SavedThread[] = [];
+  const animationEvents = new Map<number, Map<string, Map<string, ObjectHandle>>>();
+  const registered = new Map<string, Map<string, ObjectHandle>>();
+  const inventoryFilters = new Map<string, Set<number>>();
   const papyrusData = globalData(ess, 1001);
   if (papyrusData) {
     try {
       const papyrus = readPapyrus(papyrusData, ess.header.version >= 12);
-      instances = scriptInstances(papyrus, resolve, ours, skips);
+      const values = papyrusValues(papyrus, resolve, ours);
+      instances = scriptInstances(papyrus, values, skips);
       // The update registrations, each with the time left until it fires. The original saves
       // the time to send relative to the VM's clock, which the saves read keep at 0 (the
       // timer table): so the time is what is left (TODO(M13): confirmed on a save whose
@@ -882,13 +945,55 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
           });
         }
       }
-      // TODO(M13): the running stacks (our resumable frames keep their own code positions,
-      // not the compiled script's), the function messages and suspended stacks, the waits,
-      // and the other registrations (animation, sleep, tracked stats, inventory filters).
-      if (papyrus.stacks.length) {
-        skips.add(`papyrus: ${String(papyrus.stacks.length)} running stacks (TODO(M13))`);
+      // The running stacks, their function messages and waits, the suspended calls.
+      threads = scriptThreads(papyrus, values, { real: 0, game: state.gameDaysPassed }, skips);
+      // The other registrations, on the handle's form or alias, as ours keep them (runtime.ts):
+      // animation events by sender and lowercase name, sleep and tracked stats events, the
+      // inventory event filters (items and form lists alike).
+      const handle = (at: EssGameHandle): ObjectHandle | undefined => {
+        const formId = ours(resolve(at.refId));
+        return formId ? new ObjectHandle(formId, 'form', at.high) : undefined;
+      };
+      for (const { refId, events: senderEvents } of registrations.animationEvents) {
+        const sender = ours(resolve(refId));
+        if (!sender) continue;
+        const byName = new Map<string, Map<string, ObjectHandle>>();
+        for (const { name, handles } of senderEvents) {
+          const receivers = new Map<string, ObjectHandle>();
+          for (const at of handles) {
+            const target = handle(at);
+            if (target) receivers.set(target.key, target);
+          }
+          byName.set(name.toLowerCase(), receivers);
+        }
+        animationEvents.set(sender, byName);
       }
-      skips.add('papyrus: messages, waits and the registrations but updates (TODO(M13))');
+      for (const [kind, list] of [
+        ['sleep', registrations.sleepEvents],
+        ['trackedstats', registrations.trackedStatsEvents],
+      ] as const) {
+        const receivers = new Map<string, ObjectHandle>();
+        for (const at of list) {
+          const target = handle(at);
+          if (target) receivers.set(target.key, target);
+        }
+        if (receivers.size > 0) registered.set(kind, receivers);
+      }
+      for (const filter of registrations.inventoryFilters) {
+        const target = handle(filter.handle);
+        if (!target) continue;
+        const forms = [...filter.items, ...filter.lists].flatMap((refId) => {
+          const id = ours(resolve(refId));
+          return id ? [id] : [];
+        });
+        inventoryFilters.set(target.key, new Set(forms));
+      }
+      // TODO(M13): RegisterForLOS's (the save names viewer and target, not the script's
+      // object that registered: none in the saves read), the latent functions' queued work.
+      if (registrations.losEvents.length > 0) skips.add('papyrus: line of sight registrations');
+      if (registrations.functors.some((queue) => queue.length > 0)) {
+        skips.add("papyrus: latent functions' queued work");
+      }
     } catch (error) {
       skips.add(`papyrus: unreadable (${error instanceof Error ? error.message : String(error)})`);
     }
@@ -925,10 +1030,10 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     wordsLearned: new Map(),
     iniOverrides: new Map(),
     updates,
-    animationEvents: undefined,
-    registrations: undefined,
+    animationEvents,
+    registrations: registered,
     lineOfSight: undefined,
-    inventoryFilters: undefined,
+    inventoryFilters,
     formListAdded,
     mapMarkers: undefined,
     initialized: [],
@@ -939,6 +1044,7 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
         : undefined,
     storyManager: pending.length > 0 ? { pending } : undefined,
     instances,
+    ...(threads.length > 0 && { threads }),
     ...((scenesSaved.length > 0 || scenesWaiting.length > 0) && {
       scenes: { playing: scenesSaved, waiting: scenesWaiting },
     }),
@@ -967,23 +1073,24 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   return { header, save, skipped };
 }
 
-/**
- * The script instances with their variables, by script level: a type's members follow its
- * parents' (TODO(M13): checked against a real save), else all go to the script itself.
- */
-function scriptInstances(
+/** The save's Papyrus values as ours: its objects as handles to their forms. */
+interface PapyrusValues {
+  readonly objects: ReadonlyMap<number, EssObject>;
+  readonly handleOf: (object: EssObject) => ObjectHandle | undefined;
+  readonly value: (variable: EssVariable) => Value;
+}
+
+function papyrusValues(
   papyrus: EssPapyrus,
   resolve: RefIdResolver,
   ours: (formId: number) => number | undefined,
-  skips: Skips,
-): SavedInstance[] {
-  const types = new Map(papyrus.types.map((type) => [type.name.toLowerCase(), type]));
+): PapyrusValues {
   const objects = new Map(papyrus.objects.map((object) => [object.handle, object]));
-  const handleOf = (object: (typeof papyrus.objects)[number]): ObjectHandle | undefined => {
+  const handleOf = (object: EssObject): ObjectHandle | undefined => {
     const formId = ours(resolve(object.refId));
     if (formId === undefined) return undefined;
-    // TODO(M13): the game handle's high word names an alias for alias scripts.
-    return new ObjectHandle(formId, object.script, object.flags !== 0 ? object.high : -1);
+    // The game handle's high word: an alias script's alias id (−1 on every form's, as read).
+    return new ObjectHandle(formId, object.script, object.high);
   };
   const value = (variable: EssVariable): Value => {
     switch (variable.type) {
@@ -1004,6 +1111,122 @@ function scriptInstances(
       }
     }
   };
+  return { objects, handleOf, value };
+}
+
+/** The clocks the three wait tables wait on: Utility.Wait, WaitMenuMode, WaitGameTime. */
+const WAIT_CLOCKS = ['real', 'wall', 'game'] as const;
+
+/**
+ * The running stacks as our waiting threads (papyrus-vm.ts SavedThread). Our VM runs the
+ * compiled code as the original does, so a frame goes on at the instruction the save has it
+ * at: each frame of the saves read stands on its call (the callee's frame, or the native call
+ * its function message queued), which our resumed thread runs again, as the queued message
+ * would have run; a stack in a wait table waits for that clock. A suspended stack (a call
+ * queued and not begun) starts. TODO(M13): the stacks' fragment callbacks (a quest stage's,
+ * a scene's results) and a property accessor's function type (1 get, 2 set: none in the saves
+ * read).
+ */
+function scriptThreads(
+  papyrus: EssPapyrus,
+  { objects, value }: PapyrusValues,
+  clocks: { readonly real: number; readonly game: number },
+  skips: Skips,
+): SavedThread[] {
+  const self = (variable: EssVariable): ObjectHandle | null => {
+    const handle = value(variable);
+    return handle instanceof ObjectHandle ? handle : null;
+  };
+  // When each waiting stack resumes, on its clock: real time in milliseconds left, game time
+  // in thousandths of an hour (as the update registrations).
+  const waits = new Map<number, ThreadWait>();
+  papyrus.registrations.waits.forEach((list, i) => {
+    const clock = WAIT_CLOCKS[i] ?? 'real';
+    for (const { stack, time } of list) {
+      const at = clock === 'game' ? clocks.game + time / 1000 / 24 : clocks.real + time / 1000;
+      waits.set(stack, { kind: 'clock', clock, at });
+    }
+  });
+  const threads: SavedThread[] = [];
+  for (const stack of papyrus.stackData) {
+    const frames: SavedFrame[] = [];
+    for (const [depth, frame] of stack.frames.entries()) {
+      const handle = self(frame.self);
+      const object =
+        frame.self.type === PapyrusType.Object ? objects.get(frame.self.handle) : undefined;
+      const attached = object?.script.toLowerCase() === frame.script.toLowerCase();
+      const names = [...frame.function.params, ...frame.function.locals];
+      frames.push({
+        script: frame.baseScript.toLowerCase(),
+        state: (frame.state ?? '').toLowerCase(),
+        function: frame.functionName.toLowerCase(),
+        accessor: frame.functionType === 1 ? 'get' : frame.functionType === 2 ? 'set' : undefined,
+        size: frame.function.code.length,
+        name: frame.functionName,
+        self: handle?.as(frame.script) ?? null,
+        instance: handle && {
+          target: handle.as(frame.script),
+          script: (attached ? frame.script : frame.baseScript).toLowerCase(),
+          native: !attached,
+        },
+        pc: frame.instruction,
+        depth,
+        locals: frame.variables.flatMap((variable, i) => {
+          const local = names[i];
+          return local ? [[local.name.toLowerCase(), value(variable)] as const] : [];
+        }),
+        casts: [],
+        engineNones: [],
+      });
+    }
+    const outer = frames[0];
+    if (!outer?.self || stack.frames.length === 0) {
+      skips.add('papyrus: a running stack on a form not loaded');
+      continue;
+    }
+    const event = outer.instance?.native === false;
+    threads.push({
+      origin: {
+        kind: event ? 'event' : 'call',
+        target: event ? outer.self.as(outer.instance.script) : outer.self,
+        name: outer.name,
+        args: [],
+      },
+      initializing: outer.function === 'oninit',
+      frames,
+      wait: waits.get(stack.id) ?? { kind: 'restart' },
+      where: `${outer.name} (stack ${String(stack.id)})`,
+    });
+    if (stack.callback) skips.add(`papyrus: a stack's ${stack.callback.type} callback (TODO(M13))`);
+  }
+  // The calls queued and not begun.
+  for (const { call } of papyrus.suspendedStacks.flat()) {
+    const target = call && self(call.self);
+    if (!call || !target) {
+      skips.add('papyrus: a suspended call on a form not loaded');
+      continue;
+    }
+    threads.push({
+      origin: { kind: 'call', target, name: call.functionName, args: call.args.map(value) },
+      initializing: false,
+      frames: [],
+      wait: { kind: 'restart' },
+      where: `${call.script}.${call.functionName} (suspended)`,
+    });
+  }
+  return threads;
+}
+
+/**
+ * The script instances with their variables, by script level: a type's members follow its
+ * parents' (TODO(M13): checked against a real save), else all go to the script itself.
+ */
+function scriptInstances(
+  papyrus: EssPapyrus,
+  { handleOf, value }: PapyrusValues,
+  skips: Skips,
+): SavedInstance[] {
+  const types = new Map(papyrus.types.map((type) => [type.name.toLowerCase(), type]));
   const data = new Map(papyrus.objectData.map((entry) => [entry.handle, entry]));
   const instances: SavedInstance[] = [];
   for (const object of papyrus.objects) {
