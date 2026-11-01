@@ -263,6 +263,26 @@ describe.skipIf(!hasGamedata() || path === undefined)(
           const quest = state.quests.get(entry.formId ?? 0);
           if (event) expect([name, quest?.event]).not.toEqual([name, undefined]);
         }
+        // The factions' reactions as they stand (modifier and combat reaction to each other).
+        const factions = (
+          imported.save.runtime.state as {
+            factions: Map<
+              number,
+              { reactions: Map<number, number>; reactionModifiers: Map<number, number> }
+            >;
+          }
+        ).factions;
+        for (const entry of ess.changeForms) {
+          if (entry.type !== 31) continue;
+          for (const { faction, modifier, reaction } of readChangeForm(entry, resolve).faction
+            ?.reactions ?? []) {
+            const ours = factions.get(entry.formId ?? 0);
+            expect([ours?.reactions.get(faction), ours?.reactionModifiers.get(faction)]).toEqual([
+              reaction,
+              modifier,
+            ]);
+          }
+        }
         // The events the story manager had not processed yet (none in the saves read).
         const sem = readGlobalData(111, globalData(ess, 111) ?? new Uint8Array(), resolve);
         const waiting = (sem?.value as { events: unknown[] } | undefined)?.events.length ?? 0;

@@ -7,6 +7,7 @@
 import {
   CHANGE_FORM_FLAGS,
   ChangeBase,
+  ChangeFaction,
   ChangeNpc,
   ChangeQuest,
   ChangeRefr,
@@ -298,6 +299,7 @@ const FLAG_NAMES: Readonly<Record<string, Readonly<Record<number, string>>>> = {
   ACHR: names(ChangeRefr),
   NPC_: names(ChangeNpc),
   QUST: names(ChangeQuest),
+  FACT: names(ChangeFaction),
 };
 
 /** A change flag's name as the import logs it (by change form type; else "flag 0x..."). */
@@ -495,6 +497,19 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       });
       state.leveledAdditions.set(formId, added);
       applied |= ChangeBase.last;
+    } else if (entry.type === 31 && form.faction?.reactions) {
+      // FACT: its reactions to other factions as they stand (the record's list with what
+      // SetReaction, ModReaction, SetAlly and SetEnemy changed): the modifier and the group
+      // combat reaction, as ours keeps scripts' (they win over the record's XNAM).
+      // TODO(M13): its flags (bit 1) and crime counts (bit 31), whose meaning is not known.
+      const faction = state.faction(formId);
+      for (const { faction: other, modifier, reaction } of form.faction.reactions) {
+        const id = ours(other);
+        if (id === undefined || id === 0) continue;
+        faction.reactionModifiers.set(id, modifier);
+        faction.reactions.set(id, reaction);
+      }
+      applied |= ChangeFaction.reactions;
     } else if (entry.type === 13 && flags & ChangeBase.bookRead) {
       state.booksRead.add(formId);
       applied |= ChangeBase.bookRead;

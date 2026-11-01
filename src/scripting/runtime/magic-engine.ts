@@ -217,6 +217,16 @@ function handleOf(key: string): ObjectHandle {
   return new ObjectHandle(Number.parseInt(formId, 16), 'activemagiceffect');
 }
 
+/** What a save keeps of the magic engine beside the active effects (by their keys). */
+export interface MagicSave {
+  readonly accumulating: readonly (readonly [
+    string,
+    { readonly rate: number; readonly hold: number },
+  ])[];
+  readonly did: readonly (readonly [string, number])[];
+  readonly fadingSummons: readonly (readonly [number, number])[];
+}
+
 export class MagicEngine {
   readonly #runtime: ScriptRuntime;
   /** Magic effects read (resolved: the per-frame work looks them up without waiting). */
@@ -1944,6 +1954,38 @@ export class MagicEngine {
    * grow, those that ran out end; about each second lasting effects follow what actors have,
    * conditions are looked at again and cloaks reach those near.
    */
+  /**
+   * What a save keeps (RuntimeSave.engines) beside the active effects themselves (GameState):
+   * by effect key, an Accumulate Magnitude effect's growth (its rate and how much it holds)
+   * and the share of a value effect done at once (its skill use as it ends); the summons fading
+   * out, with their seconds left.
+   */
+  saveData(): MagicSave {
+    const accumulating: [string, { rate: number; hold: number }][] = [];
+    const did: [string, number][] = [];
+    for (const [key, entry] of this.#runtime.state.activeEffects) {
+      const growing = this.#accumulating.get(entry);
+      if (growing) accumulating.push([key, { ...growing }]);
+      const share = this.#did.get(entry);
+      if (share !== undefined) did.push([key, share]);
+    }
+    return { accumulating, did, fadingSummons: [...this.#fadingSummons] };
+  }
+
+  /** A save's magic state (saveData), once its active effects are back in the game state. */
+  loadData(data: MagicSave | undefined): void {
+    const effects = this.#runtime.state.activeEffects;
+    for (const [key, growing] of data?.accumulating ?? []) {
+      const entry = effects.get(key);
+      if (entry) this.#accumulating.set(entry, { ...growing });
+    }
+    for (const [key, share] of data?.did ?? []) {
+      const entry = effects.get(key);
+      if (entry) this.#did.set(entry, share);
+    }
+    for (const [made, seconds] of data?.fadingSummons ?? []) this.#fadingSummons.set(made, seconds);
+  }
+
   update(seconds: number): void {
     if (seconds <= 0) return;
     const ended: string[] = [];
