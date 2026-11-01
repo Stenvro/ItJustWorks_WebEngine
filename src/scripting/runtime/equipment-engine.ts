@@ -70,6 +70,13 @@ export interface EquipRequest {
   readonly preventRemoval?: boolean;
   /** EquipItem's abSilent: an item it is given to equip comes without a notice. */
   readonly silent?: boolean;
+  /**
+   * The engine's AddWornItem (a decapitation's armor): an item it is given comes in worn, and
+   * an NPC does not choose its gear again for it, as it does for an item given (itemsGiven).
+   * Observed in the original: Helgen's first prisoner keeps his battleaxe in his pack as his
+   * head comes off.
+   */
+  readonly worn?: boolean;
 }
 
 /** How an item is taken off. */
@@ -643,7 +650,13 @@ export class EquipmentEngine {
     if (!item || item.place === 'none') return false;
     if (item.place === 'potion') return this.use(actor, formId);
     if (item.counted && (await runtime.itemCount(actor, formId)) <= 0)
-      await runtime.addItem(actor, runtime.formHandle(formId), 1, request.silent ?? true);
+      await runtime.addItem(
+        actor,
+        runtime.formHandle(formId),
+        1,
+        request.silent ?? true,
+        request.worn !== true,
+      );
     return this.#apply(actor, formId, request);
   }
 

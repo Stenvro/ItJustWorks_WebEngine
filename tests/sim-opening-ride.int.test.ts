@@ -44,6 +44,28 @@ const KEEP_DOOR_HADVAR = 0x91a00;
 const BY_KEEP_DOOR: Vec3 = [14760, -79100, 8203];
 /** MQ101SetStage210, inside the keep's door by Hadvar. */
 const IN_KEEP_HADVAR: Vec3 = [1664, 6720, 512];
+/** MQ101's aliases: Lokir (Prisoner01), the first prisoner beheaded, the two archers on Lokir. */
+const LOKIR_ALIAS = 14;
+const FIRST_PRISONER_ALIAS = 38;
+const ARCHER_ALIASES = [146, 149] as const;
+/** Where Lokir's run ends (the last point of MQ101LokirtoMarker2Package's patrol). */
+const LOKIR_RUN_END: Vec3 = [15986, -82424, 8256];
+/** The open crate the heads drop into, before the chopping block (scale 0.66). */
+const HEAD_BASKET = 0x10fb27;
+/** ARMO DecapitatedHead: the decapitation armor of the playable races. */
+const DECAPITATED_HEAD = 0xdb5d0;
+/** CrateOpen01's bound (radius 46 about its centre, 19 up) at the basket's scale. */
+const BASKET_REACH = 30;
+/** The packages that walk the player (driven by AI) up in line and to the block. */
+const PLAYER_MOVE_LINE = 0xf46e4;
+const PLAYER_TO_MARKER6 = 0x65c92;
+
+/** A quest alias's reference in the simulation. */
+function aliasRef(sim: Sim, quest: number, alias: number): number {
+  const reference = sim.runtime.sceneHost.aliasReference(quest, alias);
+  if (reference === undefined) throw new Error(`Alias ${alias} of ${quest.toString(16)} unfilled`);
+  return reference;
+}
 
 /** The player keeps by an actor: walks the way to them while farther than `reach`. */
 async function follow(sim: Sim, actor: number, reach = 180): Promise<void> {
@@ -112,6 +134,34 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
       expect(sim.stageDone(MQ101, 75)).toBe(true);
       expect(sim.menus().filter((menu) => menu.menu === 'RaceSex Menu')).toHaveLength(1);
       expect(sim.world.stage.vehicles.vehicleOf(PLAYER_REF)).toBeUndefined();
+      // Lokir runs for it (MQ101Scene4 phase 8: MQ101LokirtoMarker2Package, whose end fragment
+      // kills him) as the archers shoot (MQ101ArcherFireLokirPackage, Always Hit); his alias's
+      // script (MQ101LokirScript) kills him as an archer's arrow hits him. Observed in the
+      // original: the arrows bring him down on the run, before his run's end.
+      const lokir = aliasRef(sim, MQ101, LOKIR_ALIAS);
+      const archers: number[] = ARCHER_ALIASES.map((alias) => aliasRef(sim, MQ101, alias));
+      const records = sim.records();
+      const hit = records.find(
+        (record) =>
+          record.kind === 'game' && record.type === 'hit' && record.event.target === lokir,
+      );
+      const death = records.find(
+        (record) =>
+          record.kind === 'game' &&
+          record.type === 'death' &&
+          record.event.actor === lokir &&
+          record.event.dead,
+      );
+      const archer = hit?.kind === 'game' && hit.type === 'hit' ? hit.event.aggressor : undefined;
+      expect(archers).toContain(archer);
+      expect(hit && death && hit.at <= death.at).toBe(true);
+      const fell = await sim.position(lokir);
+      expect(
+        fell && Math.hypot(fell[0] - LOKIR_RUN_END[0], fell[1] - LOKIR_RUN_END[1]),
+      ).toBeGreaterThan(100);
+      // Driven by AI from stage 70, the player stepped up in line (MQ101Scene4 phase 14).
+      const driven = sim.packages(PLAYER_REF).filter((event) => event.type === 'start');
+      expect(driven.map((event) => event.package)).toContain(PLAYER_MOVE_LINE);
       // The cart's HUD stays until the player gets up at the block.
       expect(rideModes(rideState(sim.runtime)).cart).toBe(true);
       ridersOff = await sim.save();
@@ -125,6 +175,78 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
     if (!ridersOff) return;
     const sim = await loadSim(ridersOff);
     try {
+      const prisoner = aliasRef(sim, MQ101, FIRST_PRISONER_ALIAS);
+      const weapons = async (): Promise<number[]> => {
+        const carried: number[] = [];
+        for (const [item, count] of await sim.runtime.inventory(prisoner)) {
+          if (count > 0 && (await sim.runtime.forms.record(item))?.type === 'WEAP')
+            carried.push(item);
+        }
+        return carried;
+      };
+      const carried = await weapons();
+      const held = await Promise.all([
+        sim.runtime.equipment.weapon(prisoner, 'right'),
+        sim.runtime.equipment.weapon(prisoner, 'left'),
+      ]);
+      // After the roll call MQ101Scene4 walks the player, driven by AI since stage 70's fragment
+      // (SetPlayerAIDriven(True)), from the line to the block (MQ101PlayerToMarker6, phase 24);
+      // no key is pressed here.
+      const inLine = sim.world.player.feet;
+      const [fromX, fromY] = [inLine[0], inLine[1]];
+      expect(await sim.until(() => sim.stageDone(MQ101, 85), 200)).toBe(true);
+      const walked = sim.packages(PLAYER_REF).filter((event) => event.type === 'start');
+      expect(walked.map((event) => event.package)).toContain(PLAYER_TO_MARKER6);
+      const [toX, toY] = sim.world.player.feet;
+      expect(Math.hypot(toX - fromX, toY - fromY)).toBeGreaterThan(400);
+      // The first prisoner beheaded (Decapitate in his chop, AddWornItem of DecapitatedHead): his
+      // head drops into the basket before the block, its flight bent down by the headsman's chop,
+      // and the armor coming in does not have him take up the battleaxe he carries.
+      const stage = sim.world.stage;
+      expect(await sim.until(() => stage.dismemberment.headAt(prisoner) !== undefined, 60)).toBe(
+        true,
+      );
+      // It comes down in the basket: within its bounds, below its rim's height plus the head's
+      // radius. TODO(M13): it may roll off the rim or work through the crate's thin walls once
+      // down (the physics has no rolling friction yet), so where it lies later is not checked.
+      const basket = await sim.position(HEAD_BASKET);
+      let nearest = Infinity;
+      for (let i = 0; i < 10; i++) {
+        await sim.step(0.1);
+        const head = stage.dismemberment.headAt(prisoner);
+        if (head && basket && head[2] - basket[2] < BASKET_REACH)
+          nearest = Math.min(nearest, Math.hypot(head[0] - basket[0], head[1] - basket[1]));
+      }
+      expect(nearest).toBeLessThan(BASKET_REACH);
+      // The decapitation equips nothing but its armor, and his hands hold what they held.
+      const equipped = sim
+        .records()
+        .flatMap((r) =>
+          r.kind === 'game' && r.type === 'equip' && r.event.actor === prisoner && r.event.equipped
+            ? [r.event.item]
+            : [],
+        );
+      expect(equipped).toEqual([DECAPITATED_HEAD]);
+      expect(await sim.runtime.equipment.weapon(prisoner, 'right')).toBe(held[0]);
+      expect(await sim.runtime.equipment.weapon(prisoner, 'left')).toBe(held[1]);
+      expect(await weapons()).toEqual(carried);
+      // Called to the block (95), the player walks to it, kneels (the block's IdleExecutioneeIdle)
+      // and, the headsman ready, lays their head on it (IdleExecutionerChop_Player, played by
+      // HeadChopBlockHookupSCRIPT): both their graphs in the executionee's chop, the first-person
+      // camera lowered with the head.
+      expect(await sim.until(() => sim.stageDone(MQ101, 95), 120)).toBe(true);
+      const avatar = sim.world.playerView?.avatar;
+      const onTheBlock = (): boolean =>
+        [avatar?.body.behavior, avatar?.firstPerson?.behavior].every(
+          (graph) =>
+            graph?.states().some(({ state }) => state === 'AOExecutioneeChop_1stPerson') === true,
+        );
+      expect(await sim.until(onTheBlock, 30)).toBe(true);
+      // The chop's first-person clip brings Camera1st from 120 units down to the block (43) in
+      // about six seconds.
+      await sim.step(7);
+      const feet = sim.world.player.feet;
+      expect(sim.world.player.eye[2] - feet[2]).toBeLessThan(70);
       expect(await sim.until(() => sim.stageDone(MQ101, 160), 300)).toBe(true);
       // The first prisoner beheaded, the player to the block (95), Alduin's arrival (100).
       for (const stage of [85, 90, 95, 100, 120, 130, 150])

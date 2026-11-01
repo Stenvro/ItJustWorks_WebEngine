@@ -813,6 +813,29 @@ the player: IdleExecutionerChop_Player, then stage 98). The prisoner's chop rais
 KillActor; a graph's KillActor kills its actor; Decapitate takes the prisoner's head off
 (docs/animation.md, "Dismemberment").
 
+The player at the block (observed in the original): driven by AI from stage 70
+(SetPlayerAIDriven(True) in its fragment) to stage 140, they step up in line
+(MQ101PlayerMoveLineMarker1, Scene4 phase 14), walk from the line to the block's side after
+the roll call (MQ101PlayerToMarker6, phase 24) and, called at stage 95, to the block
+(MQ101PlayerToChoppingBlock, a Sit of their alias); no key moves them. At the block they kneel
+in AOExecutioneeIdle until the block's script plays IdleExecutionerChop_Player, whose
+AOExecutioneeChop (both their graphs) pushes their head down onto it: the first-person
+Camera1st goes from 120 units to 43. Ours: the walk's package's end fragment plays
+IdleWalkingCameraEnd, which stands the graph up out of Executionee_State, and the block's chop
+idle, heard only there, could come before the furniture's state was put back (see "Furniture
+and idle markers"): the player stood through the execution. A script's idle for an actor in
+furniture whose graph stands (not animation-driven) and would not take it now puts the
+furniture's state back first and waits for the graph to take it (at most 4 s).
+
+Lokir (Scene4 phases 8 to 11): MQ101LokirtoMarker2Package runs him along a static patrol and
+kills him in its end fragment; MQ101LokirScript (his alias's) kills him when one of the four
+archers hits him; the archers' MQ101ArcherFireLokirPackage (UseWeapon, Always Hit) starts at
+phase 8 for the first, phase 9 for the second, and phase 11 waits for his death. Observed in
+the original: the arrows bring him down on the run. A practice's bow draw is the graph's (the
+equip clip, about 1.4 s, then Bow_DrawLight, 1.7 s to BowDrawn); held 0.6 s more, the first
+arrow reached him 0.15 s before his run's end in the simulation and after it in the browser.
+The practice now holds a drawn bow fCombatRangedAttackHoldTimeAbsoluteMin (0.1 s).
+
 ## Where packages put actors
 
 An actor's editor placement is often not where the game shows it. Whiterun's Imperial guards
