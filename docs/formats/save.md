@@ -214,7 +214,10 @@ regeneration delays by "reference:vital" (seconds left); the NPC assaults alread
 ("attacker:victim", no alarm again); the traps' contacts by target and trap, with their last
 telling on the game's real time and the touch; by active effect key, an Accumulate Magnitude
 effect's rate and hold and the share of a value effect done at once; the summons fading out
-(seconds left). Not kept (TODO(M13)): a cast being charged or held, a shout key held.
+(seconds left); the casts going on (`SavedCast`: the actor, the hand or source, dual, its
+phase and the seconds since it began: its item is read again and its hand goes on where it
+was, ready after the rest of its charge, nothing paid or told again) and the voice keys held
+(the actor and the seconds held, which go on counting).
 
 ## World state kept while unloaded
 
@@ -290,6 +293,10 @@ As the original keeps them with the references (src/shell/actor-vehicles.ts):
   exit idle goes on from where it was and takes it on out from there to the exit's end
   (ExitCartEnd ends the ride). Before, it was saved seated.
 - The horse's package goes on with its patrol's point (above): the ride goes on after the load.
+- An NPC riding a horse (src/shell/actor-mounts.ts): `SavedActor.riding` names the horse; loaded,
+  the rider is put in the saddle at once (HorseEnterInstant) as soon as both are placed (it waits
+  up to ten seconds for the horse's cell). An original save's Interaction extra (Elenwen beside
+  the carts) imports to the same field.
 
 ## Animation graphs
 
@@ -340,7 +347,8 @@ the placed objects' graphs (`graphs`, above) are not kept either.
 
 ## Not saved yet
 
-- The procedures' own progress inside a step (a sandbox's activity: it chooses again); the
+- The procedures' own progress inside a step beyond a patrol's point and the furniture an
+  actor is in (a sandbox's activity's time left: it chooses again); the
   actors of cells not loaded when saving (their packages place them, as before); bodies in
   motion keep their places but not their velocities (one falling as the game is saved falls
   again from where it was: TODO(M13)); the track playing within a music type (it starts again).

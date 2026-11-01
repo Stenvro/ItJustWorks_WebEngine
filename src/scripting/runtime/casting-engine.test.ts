@@ -472,3 +472,43 @@ describe('shouting', () => {
     expect(w.state.actors.get(NPC)?.voiceRecoveryTime).toBe(20);
   });
 });
+
+describe("the casting engine's save", () => {
+  it('keeps a cast being charged and a voice key held: after a load they go on', async () => {
+    const w = world();
+    w.loadouts.set(PLAYER_REF, { right: FIREBOLT });
+    w.set(PLAYER_REF, ActorValue.magicka, 100);
+    w.set(PLAYER_REF, DESTRUCTION, 100);
+    expect(await w.engine.begin(PLAYER_REF, CastingSource.right)).toBe('started');
+    w.engine.update(0.2);
+    // An NPC holding its voice key three quarters of a second (as a loaded save had it).
+    w.engine.loadData({ lastCast: [], lesserUsed: [], shouting: [[NPC, 0.75]] });
+    const saved = JSON.parse(JSON.stringify(w.engine.saveData())) as ReturnType<
+      typeof w.engine.saveData
+    >;
+    expect(saved.casts).toEqual([
+      {
+        actor: PLAYER_REF,
+        source: CastingSource.right,
+        dual: false,
+        phase: 'charging',
+        elapsed: 0.2,
+      },
+    ]);
+
+    const again = world();
+    again.loadouts.set(PLAYER_REF, { right: FIREBOLT });
+    again.set(PLAYER_REF, ActorValue.magicka, 100);
+    again.set(PLAYER_REF, DESTRUCTION, 100);
+    again.engine.loadData(saved);
+    await settle();
+    // Charged where it was: ready after the rest of its charge, not a whole one again.
+    expect(again.engine.isCasting(PLAYER_REF)).toBe(true);
+    again.engine.update(0.4);
+    expect(again.events.map((event) => event.kind)).toEqual(['ready']);
+    // Nothing paid or told again as it goes on.
+    expect(again.castMagic).toEqual([]);
+    // The voice key still held, its time going on from the save's.
+    expect(again.engine.shoutHeld(NPC)).toBeCloseTo(0.75 + 0.4, 6);
+  });
+});

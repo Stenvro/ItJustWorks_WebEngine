@@ -1678,6 +1678,9 @@ export class ActorStage {
         // (seated, sneaking, its weapon out, in a scene's idle). A corpse lies by its pose.
         ...(!staged.dead && { graph: staged.placed.behavior?.saveActorState() }),
         ...(exit && { vehicleExit: exit }),
+        ...(this.mounts.horseOf(reference) !== undefined && {
+          riding: this.mounts.horseOf(reference),
+        }),
       });
     }
     return saved;
@@ -2584,6 +2587,8 @@ export class ActorStage {
           const resumed = saved.graph !== undefined && 'files' in saved.graph;
           if (saved.graph) actor.behavior?.restoreState(saved.graph);
           if (saved.vehicleExit) this.vehicles.exitAgain(reference, saved.vehicleExit);
+          // Riding its horse: in the saddle again as the horse is placed.
+          if (saved.riding !== undefined) this.mounts.rideAgain(reference, saved.riding);
           // A flier saved in the air stays there (not set on the ground) and cruises on from
           // where it was (before, MQ104's dragon circling the watchtower came down and took
           // off again).
