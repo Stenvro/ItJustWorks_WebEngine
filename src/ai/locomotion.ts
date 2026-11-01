@@ -459,8 +459,10 @@ const TURNING_RATE = Math.PI / 180;
  * by the event their idles (IDLE under the AACT) send in every vanilla graph that has them:
  * ActionMoveStart moveStart (the characters' only while not riding: IsRidingHorse() == 0),
  * ActionTurnLeft turnLeft, ActionMoveForward moveForward, ... ActionMoveLeft and ActionMoveRight
- * have no idles. TODO(M13): resolve them through the idle tree (their conditions: a rider's
- * graph gets no moveStart, SprintStart only neither sneaking nor blocking).
+ * have no idles. These are what a graph gets without the actor's idle tree (a horse's
+ * Locomotion, the tests); with it (`actions`) the actions are performed and their idles decide
+ * (a rider's graph gets no moveStart, SprintStart only neither sneaking nor blocking, the
+ * slaughterfish turns by SwimLeft).
  */
 const ACTION_EVENTS = {
   moveStart: 'moveStart',
@@ -476,6 +478,13 @@ const ACTION_EVENTS = {
 export interface LocomotionActions {
   /** Performs an action; resolves whether its graph took one of its idles. */
   perform(action: string): Promise<boolean>;
+  /**
+   * Performs an action at once, as the engine does (its idle search and the event in the same
+   * frame): whether its graph took one of its idles; undefined when that cannot be told now (its
+   * idles' conditions ask more than the actor's own state): `perform` is asked then. `as`: the
+   * actor's state as the action is performed, where it differs from the world's.
+   */
+  performNow?(action: string, as?: { readonly sneaking?: boolean }): boolean | undefined;
 }
 
 /** A fall its idle tree did not take is asked for again this often while it falls (seconds). */
@@ -520,6 +529,8 @@ export class Locomotion {
   /** Its vertical speed in the air last, and as it landed (while its landing resolves). */
   #impact = 0;
   #landing: number | undefined;
+  /** Movement actions waiting for their idle tree (#act), in order. */
+  #acting: Promise<void> | undefined;
 
   /**
    * `actions`: the movement actions the idle tree resolves (an NPC's falls and landings: the
@@ -613,7 +624,12 @@ export class Locomotion {
       fast &&
       last !== undefined &&
       Math.abs(angleBetween(last * 2 * Math.PI, direction * 2 * Math.PI)) > freeze.angle;
-    if (frozen) send('CyclicFreeze');
+    if (frozen) {
+      send('CyclicFreeze');
+      // TODO(M13): the moment the engine performs ActionLargeMovementDelta is inferred (its
+      // idles, a rider's strafes and reversals, read the pathing speed's turn).
+      this.#act(send, 'ActionLargeMovementDelta', undefined);
+    }
     set('Direction', direction);
     if (frozen) send('CyclicCrossBlend');
     this.#direction = fast ? direction : undefined;
@@ -629,21 +645,26 @@ export class Locomotion {
     const sneakStop = !frame.sneaking && told.sneaking;
     if (sprintStop) {
       set('iSyncSprintState', 0);
-      send('SprintStop');
+      this.#act(send, 'ActionSprintStop', 'SprintStop');
     }
-    if (sneakStop) send('SneakStop');
+    if (sneakStop) this.#act(send, 'ActionSneak', 'SneakStop', { sneaking: true });
     // The channels in the engine's order: Speed, Direction, TurnDelta.
     if (moving !== told.moving) {
       set('iSyncIdleLocomotion', moving ? 1 : 0);
-      send(moving ? ACTION_EVENTS.moveStart : ACTION_EVENTS.moveStop);
+      if (moving) this.#act(send, 'ActionMoveStart', ACTION_EVENTS.moveStart);
+      else this.#act(send, 'ActionMoveStop', ACTION_EVENTS.moveStop);
     }
     const forward = direction < 0.25 || direction >= 0.75;
     if (forward !== told.forward) {
       set('iSyncForwardState', forward ? 0 : 1);
-      send(forward ? ACTION_EVENTS.moveForward : ACTION_EVENTS.moveBackward);
+      if (forward) this.#act(send, 'ActionMoveForward', ACTION_EVENTS.moveForward);
+      else this.#act(send, 'ActionMoveBackward', ACTION_EVENTS.moveBackward);
     }
     const right = direction > 0 && direction <= 0.5;
-    if (right !== told.right) set('iSyncStrafeState', right ? 0 : 1);
+    if (right !== told.right) {
+      set('iSyncStrafeState', right ? 0 : 1);
+      this.#act(send, right ? 'ActionMoveRight' : 'ActionMoveLeft', undefined);
+    }
     const wasTurning = told.turning !== 0;
     const turnsNow = Math.abs(turnRate) > TURNING_RATE;
     let turning = told.turning;
@@ -651,18 +672,21 @@ export class Locomotion {
       // Left (counter-clockwise) is a falling compass heading.
       turning = turnRate < 0 ? 1 : -1;
       set('iSyncTurnState', turning > 0 ? TURN_STATE.left : TURN_STATE.right);
-      send(turning > 0 ? ACTION_EVENTS.turnLeft : ACTION_EVENTS.turnRight);
+      if (turning > 0) this.#act(send, 'ActionTurnLeft', ACTION_EVENTS.turnLeft);
+      else this.#act(send, 'ActionTurnRight', ACTION_EVENTS.turnRight);
     } else if (wasTurning && !turnsNow) {
       turning = 0;
       set('iSyncTurnState', TURN_STATE.stop);
-      send(ACTION_EVENTS.turnStop);
+      this.#act(send, 'ActionTurnStop', ACTION_EVENTS.turnStop);
     }
     if (frame.sprinting && !told.sprinting) {
       set('iSyncSprintState', 1);
-      send('SprintStart');
+      this.#act(send, 'ActionSprintStart', 'SprintStart');
     }
-    if (frame.sneaking && !told.sneaking) send('SneakStart');
-    if (frame.swimming !== told.swimming) send(frame.swimming ? 'SwimStart' : 'SwimStop');
+    if (frame.sneaking && !told.sneaking)
+      this.#act(send, 'ActionSneak', 'SneakStart', { sneaking: false });
+    if (frame.swimming !== told.swimming)
+      this.#act(send, 'ActionSwimStateChange', frame.swimming ? 'SwimStart' : 'SwimStop');
     // In the air: falling once it comes down; landing when it stands again.
     const falling = airborne && frame.verticalSpeed < 0;
     const landed = !airborne && told.airborne;
@@ -724,15 +748,44 @@ export class Locomotion {
    */
   resume(graphs: Iterable<LocomotionGraph>): void {
     const told = this.#told;
-    const event = told.moving
-      ? ACTION_EVENTS.moveStart
-      : told.turning > 0
-        ? ACTION_EVENTS.turnLeft
-        : told.turning < 0
-          ? ACTION_EVENTS.turnRight
-          : undefined;
-    if (event === undefined) return;
-    for (const graph of graphs) graph.sendEvent(event);
+    const list = [...graphs];
+    const send = (event: string): void => {
+      for (const graph of list) graph.sendEvent(event);
+    };
+    if (told.moving) this.#act(send, 'ActionMoveStart', ACTION_EVENTS.moveStart);
+    else if (told.turning > 0) this.#act(send, 'ActionTurnLeft', ACTION_EVENTS.turnLeft);
+    else if (told.turning < 0) this.#act(send, 'ActionTurnRight', ACTION_EVENTS.turnRight);
+  }
+
+  /**
+   * Performs a movement action through the actor's idle tree (with `actions`): at once where its
+   * idles' conditions are of the actor's own state (performNow), else asked; in order, so one
+   * waiting for its idle tree holds those after it (a turn never overtakes the move start before
+   * it). Without `actions` (a horse, a test) the graphs get the event its idles send in the
+   * vanilla graphs that have them (`event`; ActionMoveLeft, ActionMoveRight and
+   * ActionLargeMovementDelta have none for an actor on foot). `as`: the actor's state as the
+   * engine performs it (ActionSneak before the sneaking changes).
+   */
+  #act(
+    send: (event: string) => void,
+    action: string,
+    event: string | undefined,
+    as?: { readonly sneaking?: boolean },
+  ): void {
+    const actions = this.#actions;
+    if (!actions) {
+      if (event !== undefined) send(event);
+      return;
+    }
+    if (this.#acting === undefined && actions.performNow?.(action, as) !== undefined) return;
+    const queued = (this.#acting ?? Promise.resolve()).then(async () => {
+      if (actions.performNow?.(action, as) === undefined) await actions.perform(action);
+    });
+    const settled = queued.catch(() => undefined);
+    this.#acting = settled;
+    void settled.then(() => {
+      if (this.#acting === settled) this.#acting = undefined;
+    });
   }
 
   /** Forgets what the graphs were told (a body made again starts from its graphs' start). */
@@ -755,6 +808,7 @@ export class Locomotion {
     this.#fallRetry = 0;
     this.#impact = 0;
     this.#landing = undefined;
+    this.#acting = undefined;
   }
 }
 

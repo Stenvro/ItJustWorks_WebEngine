@@ -18,25 +18,31 @@ settings reader or named in the code. A field with one value in every mesh that 
 the physics counts as done with that reason. The mechanics are kept by hand below, against
 docs/physics.md. The count after an item is how many blocks (records) use it.
 
-## Count (2026-11-01, round 1)
+## Count (2026-11-01, round 2)
 
 | Part                          | Items | Done | Open |
 | ----------------------------- | ----: | ---: | ---: |
 | Collision blocks (NIF)        |    26 |   26 |    0 |
-| Collision fields (NIF)        |   179 |  172 |    7 |
+| Collision fields (NIF)        |   179 |  174 |    5 |
 | Motion systems, qualities     |     8 |    8 |    0 |
 | Responses, time, deactivators |     3 |    3 |    0 |
 | Body layers, COLL layers      |    24 |   24 |    0 |
 | Projectiles (PROJ)            |    24 |   23 |    1 |
-| Explosions (EXPL)             |    16 |   15 |    1 |
+| Explosions (EXPL)             |    16 |   16 |    0 |
 | Material types, impact data   |    17 |   17 |    0 |
-| Game settings (GMST)          |    45 |   32 |   13 |
-| Mechanics (by hand)           |    26 |   17 |    9 |
-| Total                         |   368 |  337 |   31 |
+| Game settings (GMST)          |    45 |   35 |   10 |
+| Mechanics (by hand)           |    26 |   18 |    8 |
+| Total                         |   368 |  344 |   24 |
 
 Round 1 wrote the sweep and this list, and fixed deactivation: Havok deactivates a simulation
 island as a whole, ours put a body to sleep on its own while something still moved on it (a
 crate with a head rocking in it sank into the ground and fell through it).
+
+Round 2 (337 to 344): the bodies' allowed penetration depth in the choice of what is swept, the
+explosions' vertical offset, the NPCs' fall settings (read already, by names the sweep did not
+find). Next biggest: the blend collision objects' gains (1,193) with the keyframed ragdoll's
+blend duration (Havok's hierarchy controller), the chains' softness and error limit, water
+knockdowns, objects placed into what they lie on.
 
 ## Meshes
 
@@ -59,13 +65,16 @@ crate with a head rocking in it sank into the ground and fell through it).
 - [x] collisionResponse (1, simple contact, in every body), timeFactor (1 in every body),
       deactivatorType (1 in every body; bodies come to rest in the original: the world's
       deactivation runs for all): nothing to apply.
-- [ ] penetrationDepth (14,882 bodies): Havok's allowed penetration depth (when continuous
-      collision steps in for a moving body). Ours sweeps bodies by the engine's debris rule
-      (`sweptBody`) without it. Next.
+- [x] penetrationDepth (14,882 bodies): Havok's allowed penetration depth. A body whose top
+      speed covers no more than it in a step is never swept (`sweptBody`; round 2).
+      TODO(M13): within a step Havok's time of impact also waits for that depth; Rapier's CCD
+      has no per-body depth.
 - [ ] bhkBlendCollisionObject heirGain, velocityGain (1193): how a keyframed ragdoll bone's
-      body follows the animation (hierarchy and velocity gains). Not read.
+      body follows the animation (hierarchy and velocity gains). Not read: the keyframed bodies
+      are moved to the pose (src/shell/actor-bodies.ts #follow), not driven toward it by Havok's
+      hierarchy controller. Next, with the keyframed ragdoll's blend duration.
 - [ ] bhkBallSocketConstraintChain constraintForceMixing, maxErrorDistance (6): the chains'
-      softness and error limit. Not read.
+      softness and error limit. Not read (round 2 did not reach it).
 - [ ] bhkRigidBody bodyFlags (1 body): not read.
 - [x] Motion systems (2 sphere inertia 319, 3 sphere stabilized 2691, 4 box inertia 2362, 5 box
       stabilized 9510; fixed and keyframed by mass and node): motionOf, inertiaOf.
@@ -82,8 +91,9 @@ crate with a head rocking in it sank into the ground and fell through it).
 - [ ] PROJ defaultWeaponSource (1 projectile): not read.
 - [x] Explosions (15 of 16): force, radius, damage, flags, placed object, spawned projectile,
       image space and its radius, impact data set, model, light, sounds, enchantment.
-- [ ] EXPL verticalOffsetMult (34 explosions): where above the impact the explosion's centre
-      is (its push from below). Not read.
+- [x] EXPL verticalOffsetMult (34 explosions): the push comes from below the explosion's
+      centre by that share of its radius (src/scripting/runtime/casting-engine.ts; round 2).
+      TODO(M13): the sign and unit are read from the field's name.
 - [x] Material types (MATT): havok id, parent, buoyancy, flags, impact data set, name.
 - [x] Impact data (IPDS, IPCT 10 of 10): per material impacts, their duration, angle
       threshold, placement radius, orientation, model, sounds, hazard, flags.
@@ -95,10 +105,12 @@ crate with a head rocking in it sank into the ground and fell through it).
       (fGameplayImpulseMult*), the explosions' force (fExplosionForceMult*,
       fExplosionSourceRefMult), the death force (fDeathForce*), physics damage
       (fPhysicsDamage1Mass), the lobbed projectiles' friction and restitution (fGrenade*).
-- [ ] fJumpFallHeightMultNPC, fJumpFallHeightMinNPC, fJumpFallHeightExponentNPC: NPCs' fall
-      damage (NPCs' controllers do not fall-damage yet).
+- [x] fJumpFallHeightMultNPC, fJumpFallHeightMinNPC, fJumpFallHeightExponentNPC: NPCs' fall
+      damage (their controllers' landings and ragdolls' get-ups: src/gameplay/falling.ts, read
+      by built names until round 2, so the sweep did not find them).
 - [ ] fWaterKnockdownSizeSmall, Normal, Large, VeryLarge, fWaterKnockdownVelocity: water
-      knocking actors down (a strong current, a waterfall). Not read.
+      knocking actors down (a strong current, a waterfall). Not read. TODO(M13): how the
+      engine weighs a race's size against the current's speed is not documented.
 - [ ] fExplosionWaterRadiusRatio, fExplosionSplashRadius: explosions on water.
 - [ ] fDeathForceSpellImpactMult: a killing spell's push.
 - [ ] fJumpSwimmingMult: a jump out of the water.
@@ -126,12 +138,12 @@ crate with a head rocking in it sank into the ground and fell through it).
 - [ ] The paralysed's stiff fall; the keyframed bones' blend gains (above).
 - [x] Projectiles' flight: gravity, speed, bounces, sticking, impacts.
 - [x] Explosions' impulses (force, falloff, the gameplay impulse settings).
-- [ ] An explosion's vertical offset (above).
+- [x] An explosion's vertical offset (above; round 2).
 - [x] Havok materials: impact data per material, footsteps, sounds (MATT, IPDS).
 - [x] Water: buoyancy by material, currents, swimming, drowning (src/physics/water-physics.ts).
 - [x] Grabbing and telekinesis (src/physics/grab.ts).
 - [x] Physics damage (fPhysicsDamage1Mass ...).
 - [ ] Physics damage to destructibles from the listener (no vanilla impact reaches it).
 - [ ] Objects placed into what they lie on fall through it (340 in the interiors:
-      `tools/settle-audit.ts`). TODO(M13).
+      `tools/settle-audit.ts`). TODO(M13): round 2 did not reach it.
 - [ ] Traps: material, initial flag, cloud traps unchecked.
