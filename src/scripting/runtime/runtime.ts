@@ -2009,6 +2009,9 @@ export class ScriptRuntime implements VmHost {
 
   async baseOf(reference: number): Promise<number | undefined> {
     if (reference === PLAYER_REF) return PLAYER_BASE;
+    // A base a script swapped in (the original's baseObject change).
+    const swapped = this.state.references.get(reference)?.base;
+    if (swapped !== undefined) return swapped;
     const created = this.state.created.get(reference);
     if (created) return created.base;
     const indexed = this.#index?.base.get(reference);

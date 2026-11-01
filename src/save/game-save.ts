@@ -4,6 +4,7 @@
 // (the shell or the headless simulation), which then applies the player's place and the
 // weather. Free of browser APIs but for compression (save-codec.ts).
 
+import type { Hand } from '../gameplay/equipment.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { RuntimeSave } from '../scripting/runtime/runtime-save.ts';
@@ -32,6 +33,11 @@ export interface GameSave {
    * .ess keeps inventories as changes against the records: ess-import.ts).
    */
   readonly inventoryDeltas?: readonly (readonly [number, readonly (readonly [number, number])[]])[];
+  /**
+   * What actors wear and hold beside their outfits, by actor (an imported .ess keeps it as its
+   * inventory entries' Worn extra data): put on once the inventory deltas are in.
+   */
+  readonly worn?: readonly (readonly [number, readonly (readonly [number, Hand | undefined])[]])[];
 }
 
 export interface SaveRequest {
@@ -130,6 +136,7 @@ export async function loadGameScripts(
       else inventory.delete(item);
     }
   }
+  for (const [actor, items] of save.worn ?? []) await runtime.equipment.putOnSaved(actor, items);
   for (const what of save.unsaved) problems.push(`not saved: ${what}`);
   return problems;
 }
