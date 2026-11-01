@@ -327,6 +327,16 @@ through the edges' middles, a player walks around it); and a few steps higher th
   gravity the take-off speed is √(2 g h). No jumping while sprinting (vanilla blocks it). A
   sprint goes on in the air (a jump, a step down) until the fall is faster than
   fJumpFallVelocityMin (Skyrim.esm 700 units a second; the engine's sprint, observed in the original).
+  The jump is asked for on the ground (the input) and pushes off when its animation raises
+  JumpUp, on the ground or not by then (`CharacterBody.jump`): a step down or a stair's edge in
+  between left the controller ungrounded for a step, the push-off was dropped, and the graph,
+  in its jump state with no fall to land from (ActionLand needs one), hung in its jump pose on
+  the stairs (the player "floating").
+- **Step velocity:** an actor's measured speed (what its graph is told through the motion
+  feedback) is its controller's last step's (`CharacterBody.stepVelocity`), the same on every
+  frame until the next step. Measured over each frame, a frame without a step read as a stop and
+  one with two as double speed (a display faster than the 60 steps a second, a frame a little
+  short of a step), and the graphs' Speed flickered.
 - **Swimming:** at a submersion (water depth over the body's height) of 0.69 the body floats
   with its shoulders at the surface; looking down while swimming forward dives. The engine's
   float height (swimFloatHeight) is not documented; 0.69 is the in-game measurement of the
