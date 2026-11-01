@@ -809,8 +809,7 @@ export class ActorFurniture {
     if (graph.variable('bAnimationDriven') !== 0 || graph.wouldHandle(event)) return;
     await this.#restore(user);
     for (let waited = 0; waited < BACK_IN_SECONDS; waited += 0.1) {
-      if (this.#uses.get(user.reference) !== use || user.placed.behavior.wouldHandle(event))
-        return;
+      if (this.#uses.get(user.reference) !== use || user.placed.behavior.wouldHandle(event)) return;
       await sleep(0.1);
     }
   }
