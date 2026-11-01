@@ -379,6 +379,8 @@ interface Gear {
   readonly ammoNode: string | undefined;
   readonly attacks: AttackSet;
   readonly race: RaceHits | undefined;
+  /** Its race's DATA flags (RaceAiFlag: Can Dual Wield, No Combat In Water, ...). */
+  readonly raceFlags: number;
   /** A torch in the left hand (a LIGH that can be carried): its model and its light. */
   readonly torch: { readonly model: string | undefined; readonly light: LightRecord } | undefined;
   /** A hand holds a spell or a scroll (GetEquippedItemType 9: the graphs' casting clips). */
@@ -1523,6 +1525,7 @@ export class ActorCombat implements CombatBridge {
       ammoNode: ammoNode(ammo?.flags ?? AmmoFlag.nonBolt),
       attacks,
       race: raceRecord?.type === 'RACE' ? parseRaceHits(raceRecord) : undefined,
+      raceFlags: race?.flags ?? 0,
       torch,
       spells: { right: rightSpell, left: leftSpell },
       spellForms: {
@@ -3578,6 +3581,7 @@ export class ActorCombat implements CombatBridge {
         powerChance,
         speed: gear.rightRecord?.speed ?? 1,
         leftWeapon: gear.left.weapon !== undefined && gear.shield === undefined && !twoHanded,
+        raceFlags: gear.raceFlags,
         rightSpell: gear.spellForms.right,
         leftSpell: gear.spellForms.left,
         strikeAngle,
@@ -4303,6 +4307,41 @@ export class ActorCombat implements CombatBridge {
 
   #warn(message: string): void {
     this.#options.terminal.log('combat', message, 'warn');
+  }
+
+  /**
+   * An actor dies: the weapons in its hands fall from them by iDeathDropWeaponChance (100 in
+   * Skyrim.esm; UESP "Weapons": a dead actor's weapons lie by its body), each a new reference
+   * at its hand's node (WEAPON for the right, SHIELD for the left) that the world drops and
+   * anyone may pick up; spells, staffs' charges and the shield stay with it.
+   * TODO(M13): the moment the original lets go of them (ours: as its death begins).
+   */
+  async dropWeaponsOnDeath(reference: number): Promise<void> {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime || reference === PLAYER_REF) return;
+    if (Math.random() * 100 >= this.#settings.deathDropWeaponChance) return;
+    const loadout = await runtime.equipment.of(reference);
+    const hands: [number | undefined, string][] = [
+      [loadout.right, 'WEAPON'],
+      [loadout.left === loadout.right ? undefined : loadout.left, 'SHIELD'],
+    ];
+    for (const [weapon, node] of hands) {
+      if (weapon === undefined || (await runtime.equipment.item(weapon))?.type !== 'WEAP') continue;
+      const health = await runtime.removeItem(
+        reference,
+        runtime.formHandle(weapon),
+        1,
+        true,
+        undefined,
+      );
+      const dropped = await runtime.placeAt(weapon, reference, 1);
+      runtime.dropped(dropped, health);
+      const hand = runtime.world.nodePlacement?.(reference, node);
+      const at = hand?.position ?? (await runtime.placement(reference))?.position;
+      if (!at) continue;
+      runtime.move(dropped, [at[0], at[1], at[2] + (hand ? 0 : 64)]);
+      runtime.world.moved?.(dropped);
+    }
   }
 
   /** An actor left the stage or died: it fights no more. */

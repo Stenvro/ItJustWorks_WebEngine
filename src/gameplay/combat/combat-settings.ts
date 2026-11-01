@@ -165,6 +165,8 @@ export interface CombatSettings {
   readonly weaponBloodFadeDuration: number;
   /** fWeaponBloodFalloffThreshold: the soft edge of its mask (the blood shader's). */
   readonly weaponBloodFalloffThreshold: number;
+  /** iDeathDropWeaponChance: the percent chance a dying actor's weapons fall from its hands. */
+  readonly deathDropWeaponChance: number;
 }
 
 /** The engine's values where the plugins have none (Skyrim.esm and Update.esm otherwise). */
@@ -259,6 +261,7 @@ export const COMBAT_DEFAULTS: CombatSettings = {
   weaponBloodLifetime: 10,
   weaponBloodFadeDuration: 60,
   weaponBloodFalloffThreshold: 0.07,
+  deathDropWeaponChance: 100,
 };
 
 /** Each number setting's game setting (its editor id). */
@@ -340,6 +343,7 @@ const SETTING_NAMES: Readonly<Partial<Record<keyof CombatSettings, string>>> = {
   weaponBloodLifetime: 'fWeaponBloodLifetime',
   weaponBloodFadeDuration: 'fWeaponBloodFadeDuration',
   weaponBloodFalloffThreshold: 'fWeaponBloodFalloffThreshold',
+  deathDropWeaponChance: 'iDeathDropWeaponChance',
 };
 
 /** The sneak multipliers' settings. */
