@@ -448,6 +448,20 @@ export function attacksOnSight(aggression: number, reaction: number): boolean {
 }
 
 /**
+ * The aggression an actor fights by: its own (actor value 0), but a commanded one's (a summon,
+ * a raised corpse, a commanded creature: the magic system's commander) is its commander's side
+ * whatever its base's. It attacks on sight those its commander regards as enemies (its
+ * reactions are its commander's: src/ai/combat-reactions.ts) and never the neutral, as summons
+ * in the original do (the conjured familiar, unaggressive with a wolf's aggro radius by its
+ * template, fights none of an inn's people). Magic's frenzy still turns it on anyone.
+ * TODO(M13): whether the engine has it attack its commander's enemies on sight or only take up
+ * the fights its commander is in (ours: the former, as followers do).
+ */
+export function fightingAggression(aggression: number, commanded: boolean): number {
+  return commanded ? Aggression.aggressive : aggression;
+}
+
+/**
  * GetShouldAttack: whether an actor would attack another on sight, wherever they are (its
  * aggression against its reaction; frenzied anyone, calmed no one).
  */
@@ -459,7 +473,11 @@ export async function shouldAttack(
   const magic = runtime.magic.aiState(actor);
   if (magic.calmed) return false;
   if (magic.frenzied) return true;
-  const aggression = (await runtime.actors.value(actor, ActorValue.aggression)).current;
+  const commander = runtime.magic.commander(actor);
+  const aggression = fightingAggression(
+    (await runtime.actors.value(actor, ActorValue.aggression)).current,
+    commander !== undefined && commander !== actor,
+  );
   return attacksOnSight(aggression, await reactionOf(runtime, actor, other));
 }
 

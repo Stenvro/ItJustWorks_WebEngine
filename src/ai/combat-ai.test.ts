@@ -12,6 +12,7 @@ import {
   combatStrength,
   daresHelp,
   drawConfidenceModifier,
+  fightingAggression,
   fleeRatio,
   readCombatAiSettings,
   selectTarget,
@@ -51,6 +52,21 @@ describe('combat AI: entering combat', () => {
     expect(
       [enemy, neutral, ally, friend].map((r) => attacksOnSight(Aggression.frenzied, r)),
     ).toEqual([true, true, true, true]);
+  });
+
+  it('fights a commanded actor by its commander’s side: their enemies, never the neutral', () => {
+    const { enemy, neutral } = FightReaction;
+    for (const own of [
+      Aggression.unaggressive,
+      Aggression.aggressive,
+      Aggression.veryAggressive,
+      Aggression.frenzied,
+    ]) {
+      const aggression = fightingAggression(own, true);
+      expect(attacksOnSight(aggression, enemy)).toBe(true);
+      expect(attacksOnSight(aggression, neutral)).toBe(false);
+      expect(fightingAggression(own, false)).toBe(own);
+    }
   });
 
   it('helps allies, or friends and allies, by assistance', () => {

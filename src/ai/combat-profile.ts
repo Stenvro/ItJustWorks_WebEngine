@@ -5,11 +5,19 @@
 // is a guard's, whether it is the player's teammate, and what it may fight with: the weapons it
 // carries (a bow or crossbow only with ammunition for it) and its fists. Its spells, staffs and
 // shouts are the casting's options (src/shell/combat-casting.ts). Platform-independent.
+//
+// A commanded actor (a summon, a raised corpse, a commanded creature: the magic system's
+// commander) fights on its commander's side, not by its base's AI data: the aggression of one
+// (fightingAggression: its commander's enemies on sight, never the neutral), no aggro radius
+// (the familiar's wolf template would warn and attack whoever comes within 500 units), helping
+// its allies at least (its commander is one), and one the player commands is their teammate.
 
 import { Fields } from '../formats/esm/fields.ts';
+import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { ActorValue } from '../world/actor-values.ts';
 import { AmmoFlag, WeaponType } from '../world/item-records.ts';
+import { Assistance, fightingAggression } from './combat-ai.ts';
 import { parseCombatStyle, type CombatStyle } from './combat-style-records.ts';
 import type { EquipOption } from './combat-tactics.ts';
 
@@ -47,6 +55,22 @@ export interface HeldNow {
   readonly reach: number;
 }
 
+/**
+ * Whom a commanded actor fights for: the head of its chain of commanders (a summoner's raised
+ * corpse's raised corpse: the summoner), as reactions follow it (src/ai/combat-reactions.ts:
+ * two links). Undefined: no one commands it.
+ */
+export function commanderOf(runtime: ScriptRuntime, actor: number): number | undefined {
+  let head = runtime.magic.commander(actor);
+  if (head === actor) return undefined;
+  for (let link = 0; link < 2 && head !== undefined; link++) {
+    const next = runtime.magic.commander(head);
+    if (next === undefined || next === head) break;
+    head = next;
+  }
+  return head;
+}
+
 /** Reads actors' combat profiles, keeping the combat styles read. */
 export class CombatProfiles {
   readonly #styles = new Map<number, Promise<CombatStyle | undefined>>();
@@ -66,20 +90,23 @@ export class CombatProfiles {
       value(ActorValue.confidence),
       value(ActorValue.assistance),
     ]);
+    const commander = commanderOf(runtime, actor);
+    const commanded = commander !== undefined;
     const style =
       (await this.style(runtime, packageStyle ?? info?.ai.combatStyle ?? DEFAULT_COMBAT_STYLE)) ??
       (await this.style(runtime, DEFAULT_COMBAT_STYLE)) ??
       NO_STYLE;
     return {
-      aggression,
+      aggression: fightingAggression(aggression, commanded),
       confidence,
-      assistance,
-      aggroRadius: info?.ai.aiData.aggroRadius,
+      assistance: commanded ? Math.max(assistance, Assistance.helpsAllies) : assistance,
+      aggroRadius: commanded ? undefined : info?.ai.aiData.aggroRadius,
       style,
       // A guard as crime has it: its class's guard flag, or IsGuardFaction (vanilla's town guards
       // are in the faction; their classes are fighters').
       guard: await runtime.crime.isGuard(actor),
-      teammate: runtime.state.actors.get(actor)?.playerTeammate === true,
+      teammate:
+        runtime.state.actors.get(actor)?.playerTeammate === true || commander === PLAYER_REF,
       options: await weaponOptions(runtime, actor, held),
     };
   }
