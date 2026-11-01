@@ -17,7 +17,7 @@ import type { CellObject } from '../world/cell-loader.ts';
 import type { GameSession } from './game-session.ts';
 import { clock } from './object-graphs.ts';
 import { lockNow } from './object-locks.ts';
-import { tellSwing } from './open-close.ts';
+import { tellSwing, turnSwing } from './open-close.ts';
 
 /** A placed door of the loaded area and its instance (its sequences). */
 export interface DoorObject {
@@ -188,8 +188,7 @@ export class ActorDoors {
     const sequence = open ? 'open' : 'close';
     if (!playback || (playback.sequence ?? 'close') === sequence) return;
     this.#play(entry, sequence);
-    playback.sequence = sequence;
-    playback.start = clock();
+    turnSwing(playback, entry.instance.model.sequences, sequence, clock());
     this.#told(door, entry, undefined);
   }
 
@@ -201,8 +200,7 @@ export class ActorDoors {
     if (playback.sequence !== 'open') {
       const swing = (): void => {
         this.#play(entry, 'open');
-        playback.sequence = 'open';
-        playback.start = clock();
+        turnSwing(playback, entry.instance?.model.sequences, 'open', clock());
         this.#told(door, entry, actor);
       };
       // An actor opens a door by activating it, the engine's one activation (its scripts'
@@ -222,8 +220,7 @@ export class ActorDoors {
         this.#closing.delete(door);
         if (playback.sequence !== 'open') return;
         this.#play(entry, 'close');
-        playback.sequence = 'close';
-        playback.start = clock();
+        turnSwing(playback, entry.instance?.model.sequences, 'close', clock());
         this.#told(door, entry, actor);
       }, CLOSE_AFTER * 1000),
     );
