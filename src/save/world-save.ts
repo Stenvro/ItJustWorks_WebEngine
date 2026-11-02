@@ -11,6 +11,8 @@ import type { VehicleOffset, VehiclePose } from '../ai/vehicles.ts';
 import type { SavedGraph } from '../animation/script-graphs.ts';
 import type { CastVia } from '../scripting/runtime/casting-engine.ts';
 import type { DetectionSave } from '../ai/detection-states.ts';
+import type { SavedGroupTarget } from '../ai/combat-groups.ts';
+import type { SavedCombatSearch } from '../ai/combat-search.ts';
 
 /** An actor of the loaded area as the save found it. */
 export interface SavedActor {
@@ -31,6 +33,8 @@ export interface SavedActor {
   readonly combatTarget?: number | undefined;
   /** The confidence modifier its fight drew (fCombatConfidenceModifier*), kept for the fight. */
   readonly confidenceModifier?: number | undefined;
+  /** What its group knew of its target, and its search for it under way. */
+  readonly fight?: SavedFight | undefined;
   /** A script set it sneaking (StartSneaking) in the package it runs. */
   readonly sneaking?: boolean | undefined;
   /** Its weapon drawn (or being drawn): drawn outside a fight too (DrawWeapon). */
@@ -46,6 +50,18 @@ export interface SavedActor {
   readonly vehicleExit?: VehicleExit | undefined;
   /** The horse it rides: it sits on it again as both are placed (none in older saves). */
   readonly riding?: number | undefined;
+}
+
+/**
+ * An actor's fight beside its target (the original keeps its combat group's targets and its
+ * search with the group): what its group knew of the target (stealth points, lost or known,
+ * where last known, as seconds before the save) and the search it made for it (its place, its
+ * step and how far into it). A loaded actor searching goes on with its search, its group
+ * searching, instead of losing its target again and searching anew from detection.
+ */
+export interface SavedFight {
+  readonly known?: SavedGroupTarget | undefined;
+  readonly search?: SavedCombatSearch | undefined;
 }
 
 /** An actor's graph as a save keeps it (older saves: the placed objects' form). */
@@ -96,6 +112,25 @@ export interface SavedProjectile {
   readonly traveled: number;
   readonly age: number;
   readonly resting?: boolean | undefined;
+  /**
+   * What it is beside a missile, lobber or bolt (undefined): a flame's spray (its stream shows
+   * it again where it left), a cone's wave sweeping out (`position` its apex, `velocity` its
+   * direction, `traveled` how far its front has come), a Magelight stuck where it struck.
+   */
+  readonly kind?: 'spray' | 'cone' | 'stuck' | undefined;
+  /** A concentration spell's seconds a spray or a wave carries. */
+  readonly seconds?: number | undefined;
+  /** Where a spray left the hand or mouth. */
+  readonly origin?: readonly [number, number, number] | undefined;
+  /** The actors and objects a cone's wave has reached (each is reached once). */
+  readonly reached?: readonly number[] | undefined;
+  /** A stuck Magelight's seconds left. */
+  readonly left?: number | undefined;
+  /**
+   * Its model's behavior graph (most projectiles' models have one: tools/projectile-graphs.ts):
+   * ours by its states (`sequences`), an imported .ess's by names (`named`).
+   */
+  readonly graph?: SavedGraph | undefined;
 }
 
 /**

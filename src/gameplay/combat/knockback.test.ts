@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { COMBAT_DEFAULTS, readCombatSettings } from './combat-settings.ts';
-import { knockbackApplies, knockbackForce, knockbackVelocity } from './knockback.ts';
+import { knockbackApplies, knockbackForce, knockbackVelocity, trapPushback } from './knockback.ts';
 
 /** Skyrim.esm's knockback settings over the engine's own. */
 const vanilla = readCombatSettings(
@@ -39,5 +39,27 @@ describe('knockback (observed in the original)', () => {
     expect(push?.velocity[0]).toBeCloseTo(200);
     expect(push?.velocity[1]).toBeCloseTo(0);
     expect(knockbackVelocity([0, 0, 0], [0, 0, 0], 60, 0.3)).toBeUndefined();
+  });
+
+  it("pushes a trap's victim's controller by the trap's own pushback, away from the trap", () => {
+    const free = { inKillMove: false, notPushable: false };
+    // A swinging log 40 units of pushback from the west, a little above: 40 / 0.3 s east.
+    const push = trapPushback([-100, 0, 80], [0, 0, 0], 40, free, vanilla);
+    expect(push?.seconds).toBeCloseTo(0.3);
+    expect(push?.velocity[0]).toBeCloseTo(40 / 0.3);
+    expect(push?.velocity[1]).toBeCloseTo(0);
+    expect(push?.velocity[2]).toBeCloseTo(0);
+    // At most fKnockbackForceMax, as a hit's.
+    expect(trapPushback([0, -10, 0], [0, 0, 0], 1000, free, vanilla)?.velocity[1]).toBeCloseTo(
+      128 / 0.3,
+    );
+    // None in a kill move, nor for a Not Pushable race, nor without a pushback.
+    expect(trapPushback([-100, 0, 0], [0, 0, 0], 40, { ...free, inKillMove: true }, vanilla)).toBe(
+      undefined,
+    );
+    expect(trapPushback([-100, 0, 0], [0, 0, 0], 40, { ...free, notPushable: true }, vanilla)).toBe(
+      undefined,
+    );
+    expect(trapPushback([-100, 0, 0], [0, 0, 0], 0, free, vanilla)).toBeUndefined();
   });
 });

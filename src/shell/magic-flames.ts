@@ -23,7 +23,8 @@ import type { LightRecord } from '../world/cell-records.ts';
 import type { ProjectileRecord } from '../world/projectile-data.ts';
 import type { GameSession } from './game-session.ts';
 import { alongMatrix, cellLight, type MagicFx } from './magic-fx.ts';
-import { startObjectGraph } from './object-graphs.ts';
+import { putBackGraph, startObjectGraph } from './object-graphs.ts';
+import type { SavedGraph } from '../animation/script-graphs.ts';
 import type { Terminal } from './terminal.ts';
 
 /** The graph variable a flame's 3D reads its reach from (0: at the hand, 1: its full range). */
@@ -55,6 +56,8 @@ export interface FlameStream {
   instance: ModelInstance | undefined;
   scene: GpuScene | undefined;
   graph: ObjectGraph | undefined;
+  /** A loaded save's state of its graph, put back as its model loads. */
+  savedGraph: SavedGraph | undefined;
   light: LightRecord | undefined;
   /** Seconds since its last spray. */
   since: number;
@@ -108,6 +111,7 @@ export class MagicFlames {
       instance: undefined,
       scene: undefined,
       graph: undefined,
+      savedGraph: undefined,
       light: undefined,
       since: 0,
       done: false,
@@ -120,6 +124,12 @@ export class MagicFlames {
     });
     if (projectile.model) this.#load(stream, projectile.model);
     return stream;
+  }
+
+  /** A loaded save's graph state for a stream (its model's graph goes on from it). */
+  restoreGraph(stream: FlameStream, saved: SavedGraph): void {
+    if (stream.graph) putBackGraph(stream.graph, saved);
+    else stream.savedGraph = saved;
   }
 
   /** A spray of the stream met something `distance` units from the hand (its reach). */
@@ -136,6 +146,8 @@ export class MagicFlames {
       .then((model) => {
         if (!model || stream.done) return;
         stream.graph = startObjectGraph(model, seeds++);
+        putBackGraph(stream.graph, stream.savedGraph);
+        stream.savedGraph = undefined;
         const range = stream.projectile.range > 0 ? stream.projectile.range : 1000;
         stream.graph?.setVariable(FLAME_LENGTH, stream.reach / range);
         const instance: ModelInstance = {

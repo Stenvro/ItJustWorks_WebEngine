@@ -29,6 +29,7 @@ import {
   readGlobalVariables,
   readMiscStats,
   readPlayerLocation,
+  readTes,
   readWeather,
   refIdResolver,
   type RefIdResolver,
@@ -51,6 +52,7 @@ import {
   readStoryEventManager,
   readTempEffects,
   StoryParameterKind,
+  type SavedCombat,
   type SavedStoryEvent,
   type TempEffectEntry,
 } from '../formats/ess/global-data-tables.ts';
@@ -79,6 +81,7 @@ import type { StoryEventData } from '../scripting/runtime/story-manager.ts';
 import { ObjectHandle, PapyrusArray, type Value } from '../scripting/values.ts';
 import { CELL_SIZE } from '../world/land.ts';
 import { parseScene } from '../ai/scene-records.ts';
+import { parseStoryNode } from '../world/story-manager-records.ts';
 import type { SavedScene } from '../ai/scene-runtime.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
 import { FACE_MORPH_COUNT } from '../world/chargen-records.ts';
@@ -94,7 +97,9 @@ import type {
   SavedAttachedArrow,
   SavedDecal,
   SavedGraphs,
+  SavedFight,
   SavedPlayer,
+  SavedProjectile,
 } from './world-save.ts';
 import {
   readAnimationGraphs,
@@ -102,6 +107,7 @@ import {
   type EssAnimationGraphs,
 } from '../formats/ess/animation-graphs.ts';
 import type { ActorGraphState } from '../animation/behavior-runtime.ts';
+import type { SavedGraph } from '../animation/script-graphs.ts';
 
 /** GameState's open states (ReferenceState.openState): open, closed. */
 const OPEN_STATE_OPEN = 1;
@@ -210,6 +216,8 @@ export interface EssWorld {
   recordPlace?(formId: number): RecordPlace | undefined;
   /** A scene's quest and the aliases of its actors, by our form id (the scenes the save plays). */
   sceneCast?(formId: number): SceneCast | undefined;
+  /** A story manager quest node's quests in its record's order (NNAM), by our form id. */
+  nodeQuests?(formId: number): readonly number[] | undefined;
 }
 
 /** A scene's quest, the aliases of its actors and its actions' indices, in its record's order. */
@@ -372,6 +380,7 @@ export async function essWorld(db: RecordDatabase, ess?: EssFile): Promise<EssWo
   const plugins = db.plugins.map((plugin) => plugin.entry);
   const places = new Map<number, RecordPlace>();
   const casts = new Map<number, SceneCast>();
+  const nodes = new Map<number, readonly number[]>();
   if (ess) {
     const toOurs = formIdMapper(ess, plugins);
     const actors = ess.changeForms.flatMap((entry) => {
@@ -413,6 +422,21 @@ export async function essWorld(db: RecordDatabase, ess?: EssFile): Promise<EssWo
         });
       }),
     );
+    // The quest nodes whose runs it keeps: their quests.
+    const questNodes = ess.changeForms.flatMap((entry) => {
+      const id = entry.type === 36 && entry.formId !== undefined ? toOurs(entry.formId) : undefined;
+      return id === undefined ? [] : [id];
+    });
+    await Promise.all(
+      questNodes.map(async (formId) => {
+        const record = await db.get(formId);
+        if (record?.type !== 'SMQN') return;
+        nodes.set(
+          formId,
+          parseStoryNode(record).quests.map(({ quest }) => quest),
+        );
+      }),
+    );
   }
   return {
     plugins,
@@ -422,6 +446,7 @@ export async function essWorld(db: RecordDatabase, ess?: EssFile): Promise<EssWo
     },
     recordPlace: (formId) => places.get(formId),
     sceneCast: (formId) => casts.get(formId),
+    nodeQuests: (formId) => nodes.get(formId),
   };
 }
 
@@ -477,6 +502,96 @@ export function essTempDecals(
     });
   }
   return decals;
+}
+
+/**
+ * An ingredient's game data as the INGR change form keeps it (4 bytes: CommonLibSSE's
+ * IngredientItem::GameData): the effects the player knows (the low u16, a bit per effect slot)
+ * and the player's uses of it (the high u16: the count behind iIngredientUseEffectThreshold).
+ */
+export function essIngredientUse(word: number): { effects: Set<number>; uses: number } {
+  const effects = new Set<number>();
+  for (let slot = 0; slot < 4; slot++) if (word & (1 << slot)) effects.add(slot);
+  return { effects, uses: (word >>> 16) & 0xffff };
+}
+
+/** A u32 word's bits as the float they hold. */
+function wordFloat(word: number): number {
+  const view = new DataView(new ArrayBuffer(4));
+  view.setUint32(0, word >>> 0, true);
+  return view.getFloat32(0, true);
+}
+
+/** The change form types of projectiles in flight the import flies on (applyProjectile). */
+const IN_FLIGHT: ReadonlySet<string> = new Set(['PMIS', 'PFLA']);
+
+/** An AI time stamp the save never set (−FLT_MAX). */
+const NEVER = -3e38;
+
+/**
+ * What a combat group of the save knew of each of its targets (global data 101; docs/formats/
+ * ess.md "Combat groups"), as the fight its members take up again keeps it (SavedFight, by
+ * our target): the stealth points, known (flag 1) or lost (flag 2), the last known place with
+ * its time stamp (the first place and the third time) and the place it attacked from (the
+ * fourth and the fifth), the times as seconds before the save; and the group's search for the
+ * target it searches, from its place. TODO(M13): the detection's own place and time (taken as
+ * the last known ones while it is known), the other places and times, the search's points,
+ * doors and the time it has searched (none in the saves read: it searches from its start).
+ */
+export function essGroupFights(
+  group: SavedCombat,
+  ours: (formId: number) => number | undefined,
+): Map<number, SavedFight> {
+  const fights = new Map<number, SavedFight>();
+  const search = group.search;
+  const searched = search && search.unknown0 !== 0 ? ours(search.unknown0) : undefined;
+  const at = search?.position.position;
+  const searchAt: readonly [number, number, number] | undefined = at && [at[0], at[1], at[2]];
+  for (const entry of group.targets) {
+    const target = ours(entry.reference);
+    if (!target) continue;
+    const place = (
+      index: number,
+      time: number | undefined,
+    ): readonly [number, number, number] | undefined => {
+      const at = entry.positions[index];
+      return at && at.cell !== 0 && time !== undefined && time > NEVER
+        ? [at.position[0], at.position[1], at.position[2]]
+        : undefined;
+    };
+    const ago = (time: number | undefined): number | undefined =>
+      time !== undefined && time > NEVER ? Math.max(0, -time) : undefined;
+    const known = (entry.flags & 1) !== 0;
+    const lastKnown = place(0, entry.times[2]);
+    const attackedAt = place(3, entry.times[4]);
+    fights.set(target, {
+      known: {
+        stealthPoints: entry.stealthPoints,
+        known,
+        lost: (entry.flags & 2) !== 0,
+        searching: search !== undefined,
+        ...(lastKnown && { lastKnown, lastKnownAgo: ago(entry.times[2]) }),
+        ...(known && lastKnown && { detectedAt: lastKnown, detectedAgo: ago(entry.times[2]) }),
+        ...(attackedAt && { attackedAt, attackedAgo: ago(entry.times[4]) }),
+      },
+      ...(search &&
+        searchAt &&
+        searched === target && {
+          search: {
+            at: searchAt,
+            phase: 'go',
+            left: 0,
+            looks: 0,
+            elapsed: 0,
+            first: true,
+            atPlace: true,
+            target: searchAt,
+            ...(search.unknown2 > 0 && { radius: search.unknown2 }),
+          },
+        }),
+    });
+  }
+  return fights;
 }
 
 /** Moves form ids from the save's load order into ours (undefined: its plugin is not loaded). */
@@ -561,6 +676,9 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   const stats = new Map<string, number>();
   const inventoryDeltas = new Map<number, Map<number, number>>();
   const formListAdded = new Map<number, number[]>();
+  /** The story manager's runs: when it last started each quest (game days), by quest node. */
+  const lastStarted = new Map<number, number>();
+  const startedBy = new Map<number, Set<number>>();
   const updates: SavedUpdate[] = [];
   const saidOnce = new Set<number>();
   const scenesPlaying: [number, EssSceneChanges][] = [];
@@ -576,6 +694,8 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   let playerGraphs: SavedGraphs | undefined;
   /** The arrows stuck in actors (their AttachedArrows3D extra data). */
   const attachedArrows: SavedAttachedArrow[] = [];
+  /** The spells' projectiles in flight (PMIS, PFLA): they fly on as the world loads. */
+  const projectiles: SavedProjectile[] = [];
   /** The map markers whose flags the save keeps (shown, travel to). */
   const mapMarkers = new Map<number, { visible: boolean; travel: boolean }>();
   /** Where actors' packages started, and the packages they ran once, for their saved actors. */
@@ -627,24 +747,51 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     return { type: saved.type, forms, values, args };
   };
 
-  // The combat groups (global data 101): each member's target, for a member whose own combat
-  // controller names none (the group's fight goes on from its members' fights: ours puts the
-  // group together again as they fight). TODO(M13): a group's search (none in the saves read),
-  // its members' other values and its float pairs.
+  // The combat groups (global data 101): a target that attacked a member fights it, for one
+  // whose own combat controller names no target (ours puts the groups together again as their
+  // members fight); and each member's fight takes what its group knew of the target and the
+  // search it made for it (SavedFight). TODO(M13): the groups' timers, the members' threats,
+  // the search's points, doors and time searched.
   const groupTargets = new Map<number, number>();
+  const groupKnowledge = new Map<number, Map<number, SavedFight>>();
   const combatData = globalData(ess, 101);
   if (combatData) {
     try {
       for (const group of readCombat(combatData, resolve).combats) {
-        if (group.search) skips.add("combat: a group's search (TODO(M13))");
-        for (const member of group.members) {
-          const actor = ours(member.unknown0);
-          const target = ours(member.target);
+        for (const entry of group.targets) {
+          const actor = ours(entry.reference);
+          const target = ours(entry.attackedMember);
           if (actor && target) groupTargets.set(actor, target);
+        }
+        for (const [target, fight] of essGroupFights(group, ours)) {
+          for (const member of group.members) {
+            const actor = ours(member.reference);
+            if (!actor) continue;
+            const known = groupKnowledge.get(actor) ?? new Map<number, SavedFight>();
+            known.set(target, fight);
+            groupKnowledge.set(actor, known);
+          }
         }
       }
     } catch {
       skips.add('combat: unreadable');
+    }
+  }
+
+  // The dead counts by actor base (global data 2, TES: GetDeadCount); its cell table and last
+  // list hold nothing in the saves read (logged when they do: TODO(M13) their meaning).
+  const tesData = globalData(ess, 2);
+  if (tesData) {
+    try {
+      const tes = readTes(tesData, resolve);
+      for (const { base, count } of tes.deadCounts) {
+        const id = ours(base);
+        if (id !== undefined && id !== 0 && count > 0) state.deadCounts.set(id, count);
+      }
+      if (tes.unknown1.some((id) => id !== 0) || tes.unknown2.length > 0)
+        skips.add('TES: its cell table and last list (TODO(M13))');
+    } catch {
+      skips.add('TES: unreadable');
     }
   }
 
@@ -701,7 +848,9 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     let applied = 0;
     const flags = form.changeFlags;
 
-    if (entry.type <= 5 || (entry.type >= 40 && entry.type <= 42)) {
+    if (IN_FLIGHT.has(typeName)) {
+      applied |= applyProjectile(form, typeName);
+    } else if (entry.type <= 5 || (entry.type >= 40 && entry.type <= 42)) {
       applied |= applyReference(form, formId);
     } else if (typeName === 'PARW') {
       applied |= applyArrow(form, formId);
@@ -794,24 +943,55 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       });
       state.leveledAdditions.set(formId, added);
       applied |= ChangeBase.last;
-    } else if (entry.type === 31 && form.faction?.reactions) {
+    } else if (entry.type === 31 && form.faction) {
       // FACT: its reactions to other factions as they stand (the record's list with what
       // SetReaction, ModReaction, SetAlly and SetEnemy changed): the modifier and the group
       // combat reaction, as ours keeps scripts' (they win over the record's XNAM).
-      // TODO(M13): its flags (bit 1) and crime counts (bit 31), whose meaning is not known.
+      // TODO(M13): its flags (bit 1).
       const faction = state.faction(formId);
-      for (const { faction: other, modifier, reaction } of form.faction.reactions) {
+      for (const { faction: other, modifier, reaction } of form.faction.reactions ?? []) {
         const id = ours(other);
         if (id === undefined || id === 0) continue;
         faction.reactionModifiers.set(id, modifier);
         faction.reactions.set(id, reaction);
       }
-      applied |= ChangeFaction.reactions;
+      if (form.faction.reactions) applied |= ChangeFaction.reactions;
+      // Its crime counts (bit 31: CommonLibSSE's TESFaction majorCrime, minorCrime,
+      // resistArrestTimeStamp, pcEnemyFlagTimeStamp): the counts kept; a resist time stamp
+      // set (not −FLT_MAX) is the player resisting its arrest. Read on the saves: 4 and 0
+      // with neither stamp set (CrimeFactionImperial after Helgen's keep). TODO(M13): what
+      // reads the counts, whether a stopped pursuit clears the stamp, the enemy flag's stamp.
+      const crime = form.faction.crime;
+      if (crime) {
+        const [major, minor, resisted] = crime;
+        faction.crimeCounts = [major | 0, minor | 0];
+        if (resisted > NEVER) faction.resisting = true;
+        applied |= ChangeFaction.crimeCounts;
+      }
     } else if (entry.type === 6) {
       applied |= applyCell(form, formId);
     } else if (entry.type === 13 && flags & ChangeBase.bookRead) {
       state.booksRead.add(formId);
       applied |= ChangeBase.bookRead;
+    } else if (entry.type === 36 && form.base?.questNode) {
+      // SMQN (its bit 31): a word per quest of the node, in its record's order (NNAM), as
+      // observed on the saves read: the game days (a float's bits) the node last started it,
+      // 0 never: the story manager's hours until reset count from it, and "do all before
+      // repeating" skips the quests it started.
+      const quests = world.nodeQuests?.(formId);
+      const runs = form.base.questNode;
+      if (quests?.length === runs.length) {
+        const started = new Set<number>();
+        runs.forEach((word, i) => {
+          const quest = quests[i];
+          const days = wordFloat(word);
+          if (quest === undefined || !(days > 0)) return;
+          lastStarted.set(quest, Math.max(lastStarted.get(quest) ?? 0, days));
+          started.add(quest);
+        });
+        if (started.size > 0) startedBy.set(formId, started);
+        applied |= ChangeBase.last;
+      } else skips.add('SMQN: runs not matching the node');
     } else if (entry.type === 37 && form.base?.scene) {
       // SCEN: a scene that plays, put together once the quests' aliases are read (below).
       if (form.base.scene.playing) scenesPlaying.push([formId, form.base.scene]);
@@ -844,6 +1024,13 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
         if (id !== undefined && id !== 0) added.push(id);
       }
       formListAdded.set(formId, added);
+      applied |= ChangeBase.last;
+    } else if (typeName === 'INGR' && form.base?.knownEffects !== undefined) {
+      // INGR (kIngredientUse): CommonLibSSE's IngredientItem game data, a u16 of the effects the
+      // player knows (a bit each) and a u16 of the player's uses towards the next one.
+      const { effects, uses } = essIngredientUse(form.base.knownEffects);
+      if (effects.size > 0) state.ingredientEffects.set(formId, effects);
+      if (uses > 0) state.ingredientUses.set(formId, uses);
       applied |= ChangeBase.last;
     }
     if (form.formFlags !== undefined && entry.type > 5) applied |= CHANGE_FORM_FLAGS;
@@ -981,7 +1168,10 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     if (cell?.flags !== undefined) {
       state.cell(formId).public = (cell.flags & CellFlag.publicArea) !== 0;
       if (cell.flags & ~CellFlag.publicArea) {
-        skips.add('CELL: flags 0x40, 0x200 (their meaning is not known: TODO(M13))');
+        // CommonLibSSE names them Hand Changed (0x40) and Warn To Leave (0x200); set by the
+        // running game beside the record's flags (0x40 on some 40 interiors in each save read,
+        // 0x200 on two houses not visited). TODO(M13): what either does at run time.
+        skips.add('CELL: flags 0x40, 0x200 (Hand Changed, Warn To Leave: TODO(M13))');
       }
       applied |= ChangeCell.flags;
     }
@@ -1285,6 +1475,67 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
    * the placed objects take); a reference with no graph plays its door's Open or Close.
    * Projectiles' graphs (a spell's hand effects) have no place in ours: left logged.
    */
+  /**
+   * A spell's projectile in flight (PMIS a missile, PFLA a flame's spray): not a reference of
+   * ours (ours fly without one) but a projectile flying on from its place (WorldSave.projectiles),
+   * its graph by names. Its data, as read on the saves (docs/formats/ess.md "Projectiles in
+   * flight"): the shooter the third form, the spell the sixth, its velocity the floats after
+   * the time stamps (22 to 24 of its numbers), its age the fifth number (the seconds its
+   * graph's sequence had played), a missile's units flown the thirteenth (its speed times its
+   * age, within a frame). TODO(M13): a spray's units flown (0 written: its speed times its
+   * age), dual casting, a staff's or a scroll's source, a spray's origin (back along its way).
+   */
+  function applyProjectile(form: EssChangeForm, typeName: string): number {
+    const initial = form.initial;
+    const data = form.projectile;
+    const projectile = initial?.kind === 'created' ? ours(initial.base) : undefined;
+    const caster = ours(data?.refs[2] ?? 0);
+    const item = ours(data?.refs[5] ?? 0);
+    const values = data?.values ?? [];
+    if (initial?.kind !== 'created' || !data || !projectile || !caster || !item) {
+      skips.add(`${typeName}: a projectile without its shooter or spell`);
+      return 0;
+    }
+    const velocity: [number, number, number] = [values[21] ?? 0, values[22] ?? 0, values[23] ?? 0];
+    // The fifth is written as a word: its bits are a float.
+    const age = Math.max(0, wordFloat(values[4] ?? 0));
+    const speed = Math.hypot(...velocity);
+    // The thirteenth (a word holding a float): the units flown (a missile's; a spray's is 0).
+    const flown = wordFloat(values[12] ?? 0);
+    const at = initial.position;
+    let graph: SavedGraph | undefined;
+    let applied = ChangeRefr.moved | ChangeRefr.havokMoved | ChangeRefr.cellChanged;
+    applied |= ChangeRefr.promoted | CHANGE_FORM_FLAGS;
+    if (form.animation && form.changeFlags & ChangeRefr.animation) {
+      try {
+        const named = readAnimationGraphs(form.animation).graphs.map(actorGraphState)[0]?.named;
+        if (named) graph = { named };
+        applied |= ChangeRefr.animation;
+      } catch {
+        skips.add(`${typeName}: an animation block not read`);
+      }
+    }
+    const spray = typeName === 'PFLA';
+    const recordType = world.recordType(item);
+    projectiles.push({
+      projectile,
+      item,
+      via: recordType === 'SCRL' ? 'scroll' : 'spell',
+      caster,
+      dual: false,
+      position: [at[0], at[1], at[2]],
+      velocity,
+      traveled: flown > 0 ? flown : speed * age,
+      age,
+      ...(spray && {
+        kind: 'spray' as const,
+        origin: [at[0] - velocity[0] * age, at[1] - velocity[1] * age, at[2] - velocity[2] * age],
+      }),
+      ...(graph && { graph }),
+    });
+    return applied;
+  }
+
   function applyAnimation(form: EssChangeForm, formId: number, reference: ReferenceState): number {
     if (!form.animation || !(form.changeFlags & ChangeRefr.animation)) return 0;
     if (form.type !== 0 && form.type !== 1) return 0;
@@ -1377,6 +1628,13 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
         },
       }),
       ...(target && { combatTarget: target }),
+      // A group's search goes on with what the group knew. TODO(M13): its knowledge alone (a
+      // fight not searching) is not put back: so put back, two of Helgen's fighters left the
+      // packages the save had them on (their fights start again from detection, as before).
+      ...(target &&
+        groupKnowledge.get(formId)?.get(target)?.search && {
+          fight: groupKnowledge.get(formId)?.get(target),
+        }),
     };
   }
 
@@ -1848,11 +2106,17 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   }
   // Tables that hold nothing to apply when their lists are empty (as in every save read): the
   // image space modifiers running (5), the ingredients' known effects (112), the paired
-  // animations under way (1004). TODO(M13): applied once a save holds some.
+  // animations under way (1004); the menu topic manager's two references (114: CommonLibSSE's
+  // MenuTopicManager speaker and lastSpeaker, a conversation's) none. TODO(M13): applied once
+  // a save holds some.
   const empty = (type: number, data: Uint8Array): boolean => {
-    if (type !== 5 && type !== 112 && type !== 1004) return false;
+    if (type !== 5 && type !== 112 && type !== 114 && type !== 1004) return false;
     try {
       const value = readGlobalData(type, data, resolve)?.value;
+      if (type === 114) {
+        const speakers = value as { unknown0: number; unknown1: number } | undefined;
+        return speakers?.unknown0 === 0 && speakers.unknown1 === 0;
+      }
       if (Array.isArray(value)) return value.length === 0;
       const effects = (value as { effects?: unknown } | undefined)?.effects;
       return Array.isArray(effects) && effects.length === 0;
@@ -1863,7 +2127,7 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   for (const table of [ess.globalData1, ess.globalData2, ess.globalData3]) {
     for (const entry of table) {
       if (
-        ![0, 1, 3, 6, 7, 101, 103, 107, 109, 111, 1000, 1001, 1002].includes(entry.type) &&
+        ![0, 1, 2, 3, 6, 7, 101, 103, 107, 109, 111, 1000, 1001, 1002].includes(entry.type) &&
         entry.data.length > 0 &&
         !empty(entry.type, entry.data)
       ) {
@@ -1896,7 +2160,8 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       saidOnce.size > 0
         ? { saidOnce, saidAt: new Map(), chosen: new Set(), saidInTopic: new Map() }
         : undefined,
-    storyManager: pending.length > 0 ? { pending } : undefined,
+    storyManager:
+      pending.length > 0 || lastStarted.size > 0 ? { pending, lastStarted, startedBy } : undefined,
     instances,
     ...(threads.length > 0 && { threads }),
     ...((scenesSaved.length > 0 || scenesWaiting.length > 0) && {
@@ -1917,6 +2182,7 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       ...(savedPlayer && { player: savedPlayer }),
       ...(playerGraphs && { playerGraphs }),
       ...(attachedArrows.length > 0 && { attachedArrows }),
+      ...(projectiles.length > 0 && { projectiles }),
       ...(decals.length > 0 && { decals }),
       ...(animObjects.length > 0 && { animObjects }),
     },

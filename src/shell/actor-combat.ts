@@ -134,6 +134,7 @@ import {
   knockbackApplies,
   knockbackForce,
   knockbackVelocity,
+  trapPushback,
 } from '../gameplay/combat/knockback.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import { transformPoint, type Mat4, type Vec3 } from '../render/math.ts';
@@ -176,7 +177,7 @@ import { cellLight, type MagicFx } from './magic-fx.ts';
 import type { CellLight } from '../world/cell-loader.ts';
 import { parseLight, type LightRecord } from '../world/cell-records.ts';
 import { EffectSound, effectSound } from '../world/magic-effects.ts';
-import type { SavedAttachedArrow, SavedDecal } from '../save/world-save.ts';
+import type { SavedAttachedArrow, SavedDecal, SavedFight } from '../save/world-save.ts';
 
 /** A human's shape for hits (its controller's radius and height at scale 1; game units). */
 /** The music type of a boss fight (MUSC; see #setMusic). */
@@ -895,6 +896,16 @@ export class ActorCombat implements CombatBridge {
   /** The confidence modifier an actor's fight drew (a save keeps it). */
   confidenceModifier(actor: number): number | undefined {
     return this.#brain.confidenceModifier(actor);
+  }
+
+  /** What a save keeps of an actor's fight: its group's knowledge of its target, its search. */
+  saveFight(actor: number): SavedFight | undefined {
+    return this.#brain.saveFight(actor);
+  }
+
+  /** A loaded save's fight goes on (its target set again already). */
+  resumeFight(actor: number, saved: SavedFight): void {
+    this.#brain.resumeFight(actor, saved);
   }
 
   stopCombat(actor: number): void {
@@ -4689,6 +4700,28 @@ export class ActorCombat implements CombatBridge {
    * knock-down, staggers at full strength instead (UESP "Unrelenting Force": those immune to
    * the ragdoll are staggered). One lying already is pushed again.
    */
+  /** A trap's push back (ProcessTrapHit): the controller pushed away (knockback.ts trapPushback). */
+  trapPush(reference: number, from: Vec3, force: number): void {
+    const fighter = this.#fighters.get(reference);
+    const feet = fighter && this.#feet(fighter);
+    if (!fighter || !feet) return;
+    const settings = this.#settings;
+    const push = trapPushback(
+      from,
+      feet,
+      force,
+      {
+        inKillMove: fighter.state.killMove,
+        notPushable: ((fighter.gear?.raceFlags ?? 0) & RaceAiFlag.notPushable) !== 0,
+      },
+      settings,
+    );
+    if (!push) return;
+    const flat = [push.velocity[0], push.velocity[1]] as const;
+    if (fighter.player) this.#options.playerCharacter?.()?.knockBack(flat, push.seconds);
+    else this.#options.movers.knockBack(reference, flat, push.seconds);
+  }
+
   async knockDown(reference: number, from: Vec3 | undefined, force: number): Promise<void> {
     const fighter = this.#fighters.get(reference);
     const knockdowns = this.#options.knockdowns?.();

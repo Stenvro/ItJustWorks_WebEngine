@@ -92,8 +92,15 @@ export function readPlayerLocation(data: EssSource, resolve: RefIdResolver): Pla
   };
 }
 
+/**
+ * Global data 2 (TES). Its first list, as the saves read show, is the dead counts by actor base
+ * (Actor.GetDeadCount, the GetDeadCount condition): after Helgen, a count of 1 for each base of
+ * the opening's dead (Torolf, the headsman, Lokir, the soldiers Alduin killed) and none in the
+ * save on the cart. TODO(M13): the square table (every reference id 0 in the saves read, 5 x 5:
+ * uGridsToLoad's cells) and the last list (empty in the saves read).
+ */
 export interface TesData {
-  readonly unknown0: readonly { readonly formId: number; readonly unknown: number }[];
+  readonly deadCounts: readonly { readonly base: number; readonly count: number }[];
   /** A square table of reference ids (count2 x count2). */
   readonly unknown1: readonly number[];
   readonly unknown2: readonly number[];
@@ -101,10 +108,10 @@ export interface TesData {
 
 export function readTes(data: EssSource, resolve: RefIdResolver): TesData {
   const reader = essReader(data);
-  const unknown0: { formId: number; unknown: number }[] = [];
+  const deadCounts: { base: number; count: number }[] = [];
   const count0 = reader.vsval();
   for (let i = 0; i < count0; i++) {
-    unknown0.push({ formId: resolve(reader.refId()), unknown: reader.u16() });
+    deadCounts.push({ base: resolve(reader.refId()), count: reader.u16() });
   }
   const count1 = reader.u32();
   const unknown1: number[] = [];
@@ -112,7 +119,7 @@ export function readTes(data: EssSource, resolve: RefIdResolver): TesData {
   const count2 = reader.vsval();
   const unknown2: number[] = [];
   for (let i = 0; i < count2; i++) unknown2.push(resolve(reader.refId()));
-  return { unknown0, unknown1, unknown2 };
+  return { deadCounts, unknown1, unknown2 };
 }
 
 export function readGlobalVariables(data: EssSource, resolve: RefIdResolver): Map<number, number> {

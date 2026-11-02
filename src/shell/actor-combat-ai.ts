@@ -79,7 +79,8 @@ import {
   type MovementRun,
   type MovementTarget,
 } from '../ai/combat-movement.ts';
-import { CombatSearch } from '../ai/combat-search.ts';
+import { CombatSearch, type SearchBody, type SearchSettings } from '../ai/combat-search.ts';
+import type { SavedFight } from '../save/world-save.ts';
 import type { NavmeshSet } from '../ai/pathfinding.ts';
 import {
   chooseCombatSupport,
@@ -1687,29 +1688,79 @@ export class ActorCombatAi {
       this.#end(mind, 'lost');
       return;
     }
+    mind.search?.cancel();
+    mind.search = new CombatSearch(
+      at,
+      this.#searchBody(reference),
+      this.#searchSettings(),
+      this.#random,
+    );
+  }
+
+  /** What a search moves: the actor, by its movers. */
+  #searchBody(reference: number): SearchBody {
+    const movers = this.#options.movers;
+    return {
+      position: () => this.#options.host.fighter(reference)?.feet,
+      travel: (to, arrive, run) => movers.travel(reference, to, run ? 'run' : 'walk', arrive),
+      face: (heading) => {
+        movers.request(reference, { gait: 'walk', face: heading });
+      },
+      stop: () => {
+        movers.stop(reference);
+        movers.request(reference, undefined);
+      },
+    };
+  }
+
+  /** A search's settings (its radius drawn now, by whether the actor is inside). */
+  #searchSettings(): SearchSettings {
     const s = this.#subtrees;
-    const settings = {
+    return {
       ...(this.#options.senses?.()?.settings ?? readDetectionSettings()),
       searchStartWaitTime: s.searchStartWaitTime,
       searchRadius: searchRadius(this.#options.interior?.() === true, this.#random, s),
       searchWanderDistance: s.searchWanderDistance,
       searchLookTime: s.searchLookTime,
     };
+  }
+
+  /**
+   * What a save keeps of an actor's fight beside its target (src/save/world-save.ts
+   * SavedActor.fight): what its group knows of the target, and its search under way.
+   */
+  saveFight(reference: number): SavedFight | undefined {
+    const mind = this.#minds.get(reference);
+    if (!mind || mind.mode === 'idle' || mind.target === undefined) return undefined;
+    const known = this.#groups.saveTarget(reference, mind.target, this.#clock);
+    const search = mind.mode === 'search' ? mind.search?.save() : undefined;
+    if (!known && !search) return undefined;
+    return { ...(known && { known }), ...(search && { search }) };
+  }
+
+  /**
+   * A loaded save's fight taken up again (its target set by StartCombat already): its group
+   * knows of the target what it knew, and a search goes on from its place and step instead of
+   * beginning again from detection (it does not bark CombatToLost again).
+   */
+  resumeFight(reference: number, saved: SavedFight): void {
+    const mind = this.#minds.get(reference);
+    const target = mind?.target;
+    if (!mind || mind.mode === 'idle' || target === undefined) return;
+    if (saved.known) this.#groups.restoreTarget(reference, target, saved.known, this.#clock);
+    if (!saved.search || !this.#groups.searching(reference)) return;
+    const movers = this.#options.movers;
+    mind.mode = 'search';
+    this.#releaseBlock(mind, this.#options.host.fighter(reference));
+    mind.chase = undefined;
+    movers.request(reference, undefined);
+    mind.nextLine =
+      this.#clock + this.#between(this.#settings.searchLineMin, this.#settings.searchLineMax);
     mind.search?.cancel();
-    mind.search = new CombatSearch(
-      at,
-      {
-        position: () => this.#options.host.fighter(reference)?.feet,
-        travel: (to, arrive, run) => movers.travel(reference, to, run ? 'run' : 'walk', arrive),
-        face: (heading) => {
-          movers.request(reference, { gait: 'walk', face: heading });
-        },
-        stop: () => {
-          movers.stop(reference);
-          movers.request(reference, undefined);
-        },
-      },
-      settings,
+    mind.search = CombatSearch.restore(
+      saved.search,
+      this.#searchBody(reference),
+      this.#searchSettings(),
       this.#random,
     );
   }

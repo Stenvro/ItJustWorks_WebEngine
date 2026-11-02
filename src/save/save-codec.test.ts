@@ -86,6 +86,9 @@ describe('save codec', () => {
     state.actor(0x300).dead = true;
     state.crime.offLimits.add(7);
     state.inventories.set(0x14, new Map([[0xf, 100]]));
+    // Each ingredient's uses towards its next effect, and the effects found out.
+    state.ingredientUses.set(0x34cdd, 2);
+    state.ingredientEffects.set(0x34cdd, new Set([0, 1]));
     const data = decodeValue(JSON.parse(JSON.stringify(encodeValue(gameStateData(state)))));
     const fresh = new GameState();
     const offLimits = fresh.crime.offLimits;
@@ -97,5 +100,7 @@ describe('save codec', () => {
     expect(fresh.crime.offLimits).toBe(offLimits);
     expect(offLimits.has(7)).toBe(true);
     expect(fresh.inventories.get(0x14)?.get(0xf)).toBe(100);
+    expect(fresh.ingredientUses.get(0x34cdd)).toBe(2);
+    expect(fresh.ingredientEffects.get(0x34cdd)).toEqual(new Set([0, 1]));
   });
 });

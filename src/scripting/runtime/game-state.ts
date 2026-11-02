@@ -289,6 +289,11 @@ export interface FactionState {
   playerExpelled?: boolean;
   /** The player resisted its guards' arrest (SetPlayerResistingArrest): they attack. */
   resisting?: boolean;
+  /**
+   * Its counts of major and minor crimes (CommonLibSSE's TESFaction majorCrime, minorCrime: an
+   * original save's FACT crime counts). TODO(M13): what counts them and what reads them.
+   */
+  crimeCounts?: readonly [number, number];
   /** Combat reactions scripts set (SetAlly, SetEnemy): faction → 0 neutral .. 3 friend. */
   readonly reactions: Map<number, number>;
   /** Reaction modifiers (SetReaction / ModReaction). */

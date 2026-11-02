@@ -72,7 +72,9 @@ import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { HitImpact } from './combat-impacts.ts';
 import { MagicBeams } from './magic-beams.ts';
 import { MagicFlames, type FlameStream } from './magic-flames.ts';
-import { startObjectGraph } from './object-graphs.ts';
+import { putBackGraph, startObjectGraph } from './object-graphs.ts';
+import type { ObjectGraph } from '../animation/object-graph.ts';
+import type { SavedGraph } from '../animation/script-graphs.ts';
 import { alongMatrix, cellLight, type MagicFx } from './magic-fx.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
@@ -127,6 +129,8 @@ interface Flying {
   readonly stream: FlameStream | undefined;
   readonly origin: Vec3;
   done: boolean;
+  /** A loaded save's state of its model's graph, put back as its model loads. */
+  savedGraph?: SavedGraph | undefined;
 }
 
 /** How far a ray steps past a caster's own bodies it starts inside (units, tries). */
@@ -233,24 +237,70 @@ export class MagicProjectiles {
       });
   }
 
-  /** What flies now, for a save (src/save/world-save.ts; a flame's sprays are not kept). */
+  /**
+   * What flies now, for a save (src/save/world-save.ts): the projectiles in flight and the
+   * runes at rest, a flame's sprays (its stream's graph with them), the cones' waves sweeping
+   * out and the Magelights stuck where they struck; each with its model's graph.
+   */
   save(): SavedProjectile[] {
     const saved: SavedProjectile[] = [];
+    const cast = (
+      delivered: Delivered,
+    ): Pick<SavedProjectile, 'item' | 'via' | 'caster' | 'dual' | 'object'> => ({
+      item: delivered.item.formId,
+      via: delivered.via,
+      caster: delivered.caster,
+      dual: delivered.dual,
+      ...(delivered.object !== undefined && { object: delivered.object }),
+    });
+    const graphOf = (graph: ObjectGraph | undefined): SavedGraph | undefined => {
+      const sequences = graph?.saveState();
+      return sequences && { sequences };
+    };
     for (const flying of this.#flying) {
-      if (flying.done || flying.stream) continue;
-      const { delivered, flight } = flying;
+      if (flying.done) continue;
+      const { delivered, flight, stream } = flying;
+      const graph = graphOf(stream ? stream.graph : flying.instance?.graph);
       saved.push({
         projectile: flying.projectile.formId,
-        item: delivered.item.formId,
-        via: delivered.via,
-        caster: delivered.caster,
-        dual: delivered.dual,
-        ...(delivered.object !== undefined && { object: delivered.object }),
+        ...cast(delivered),
         position: [...flight.position],
         velocity: [...flight.velocity],
         traveled: flight.traveled,
         age: flight.age,
         ...(flight.resting && { resting: true }),
+        ...(stream && { kind: 'spray', origin: [...flying.origin] }),
+        ...(flying.seconds !== undefined && { seconds: flying.seconds }),
+        ...(graph && { graph }),
+      });
+    }
+    for (const { wave, delivered, projectile, seconds } of this.#waves) {
+      if (coneDone(wave)) continue;
+      saved.push({
+        projectile: projectile.formId,
+        ...cast(delivered),
+        position: [...wave.apex],
+        velocity: [...wave.direction],
+        traveled: wave.front,
+        age: Number.isFinite(wave.speed) ? wave.front / wave.speed : 0,
+        kind: 'cone',
+        reached: [...wave.reached],
+        ...(seconds !== undefined && { seconds }),
+      });
+    }
+    for (const stuck of this.#stuck) {
+      const { flying } = stuck;
+      const graph = graphOf(flying.instance?.graph);
+      saved.push({
+        projectile: flying.projectile.formId,
+        ...cast(flying.delivered),
+        position: [...flying.flight.position],
+        velocity: [...flying.flight.velocity],
+        traveled: flying.flight.traveled,
+        age: flying.flight.age,
+        kind: 'stuck',
+        left: Math.max(0, stuck.until - this.#clock),
+        ...(graph && { graph }),
       });
     }
     return saved;
@@ -273,22 +323,106 @@ export class MagicProjectiles {
         cost: await runtime.casting.cost(entry.caster, { item, via: entry.via }),
       };
       const effect = await runtime.casting.mainEffect(item);
-      const flight = launchFlight(projectile, [...entry.position], [0, 1, 0]);
+      const position: Vec3 = [...entry.position];
+      if (entry.kind === 'cone') {
+        // Its wave sweeps on from where its front had come (what it reached is not reached
+        // again), and shows the rest of its way.
+        const range = projectile.range > 0 ? projectile.range : 1000;
+        const wave = launchCone(
+          position,
+          [...entry.velocity],
+          range,
+          projectile.coneSpread,
+          projectile.speed,
+        );
+        wave.front = Math.min(range, entry.traveled);
+        for (const reference of entry.reached ?? []) wave.reached.add(reference);
+        this.#waves.add({ wave, delivered, projectile, seconds: entry.seconds });
+        const speed = projectile.speed > 0 ? projectile.speed : range;
+        const [dx, dy, dz] = wave.direction;
+        const front: Vec3 = [
+          position[0] + dx * wave.front,
+          position[1] + dy * wave.front,
+          position[2] + dz * wave.front,
+        ];
+        this.#options.fx?.show(projectile.model, projectile.light, front, {
+          kind: 'cone',
+          direction: wave.direction,
+          speed,
+          range,
+          travelled: wave.front,
+          duration: (range - wave.front) / speed + 0.25,
+        });
+        continue;
+      }
+      const flight = launchFlight(projectile, position, [0, 1, 0]);
       flight.velocity = [...entry.velocity];
       flight.traveled = entry.traveled;
       flight.age = entry.age;
       if (entry.resting) flight.resting = true;
-      this.#fly(
+      if (entry.kind === 'stuck') {
+        this.#stickAgain(delivered, projectile, effect, flight, entry.left ?? 0, entry.graph);
+        continue;
+      }
+      // A flame's spray flies on from where it left the hand, its stream showing it there.
+      const spray = entry.kind === 'spray';
+      const origin: Vec3 = spray && entry.origin ? [...entry.origin] : position;
+      const seconds =
+        entry.seconds ??
+        (spray && projectile.relaunchInterval > 0 ? projectile.relaunchInterval : undefined);
+      const flying = this.#fly(
         delivered,
         projectile,
         effect,
-        [...entry.position],
-        [0, 1, 0],
-        undefined,
+        origin,
+        normalize(entry.velocity),
+        seconds,
         undefined,
         flight,
       );
+      if (flying.stream && entry.graph) this.#flames.restoreGraph(flying.stream, entry.graph);
+      else flying.savedGraph = entry.graph;
     }
+  }
+
+  /**
+   * A Magelight a save kept stuck where it struck: its model there and its effect's light for
+   * the seconds it had left.
+   */
+  #stickAgain(
+    delivered: Delivered,
+    projectile: ProjectileRecord,
+    effect: MagicEffectRecord | undefined,
+    flight: Flight,
+    left: number,
+    graph: SavedGraph | undefined,
+  ): void {
+    const flying: Flying = {
+      delivered,
+      projectile,
+      effect,
+      flight,
+      seconds: undefined,
+      instance: undefined,
+      scene: undefined,
+      motion: { version: 0 },
+      sound: undefined,
+      light: undefined,
+      stream: undefined,
+      origin: [...flight.position],
+      done: true,
+      savedGraph: graph,
+    };
+    const stuck = {
+      flying,
+      until: this.#clock + left,
+      light: undefined as LightRecord | undefined,
+    };
+    this.#stuck.add(stuck);
+    void this.#options.fx?.lightRecord(effect?.associatedItem).then((light) => {
+      if (light) stuck.light = light;
+    });
+    this.#show(flying, true);
   }
 
   /**
@@ -475,8 +609,8 @@ export class MagicProjectiles {
     seconds: number | undefined,
     follow?: () => Vec3 | undefined,
     restored?: Flight,
-  ): void {
-    const { session, renderer, terminal } = this.#options;
+  ): Flying {
+    const { session } = this.#options;
     const stream =
       flightKind(projectile) === 'spray'
         ? this.#flames.spray(delivered.caster, projectile, origin, aim, follow)
@@ -500,17 +634,31 @@ export class MagicProjectiles {
     if (projectile.sound !== undefined) {
       flying.sound = session.playSound(projectile.sound, () => flying.flight.position);
     }
-    if (stream) return;
+    if (stream) return flying;
     void this.#options.fx?.lightRecord(projectile.light).then((light) => {
       flying.light = light;
     });
+    this.#show(flying, false);
+    return flying;
+  }
+
+  /**
+   * A projectile's model drawn where it is, its graph running (a loaded save's state put back
+   * into it); a stuck one (a Magelight a save kept) is drawn though its flight is done.
+   */
+  #show(flying: Flying, stuck: boolean): void {
+    const { session, renderer, terminal } = this.#options;
+    const projectile = flying.projectile;
     const path = projectile.model;
     if (!path) return;
     session
       .model(meshPath(path))
       .then((model) => {
-        if (!model || flying.done) return;
+        if (!model || (flying.done && !stuck)) return;
+        if (stuck && ![...this.#stuck].some((entry) => entry.flying === flying)) return;
         const graph = startObjectGraph(model, flying.delivered.caster);
+        putBackGraph(graph, flying.savedGraph);
+        flying.savedGraph = undefined;
         const instance: ModelInstance = {
           model,
           world: placementOf(flying.flight),

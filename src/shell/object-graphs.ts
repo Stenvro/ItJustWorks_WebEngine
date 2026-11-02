@@ -6,6 +6,7 @@
 import { startObjectSkeleton, type ObjectSkeleton } from '../animation/animated-skeleton.ts';
 import { ObjectGraph } from '../animation/object-graph.ts';
 import type { GpuModel } from '../render/scene-renderer.ts';
+import type { SavedGraph } from '../animation/script-graphs.ts';
 
 /** Seconds on the renderer's clock (main.ts renders with requestAnimationFrame's time). */
 export const clock = (): number => performance.now() / 1000;
@@ -17,6 +18,16 @@ export const clock = (): number => performance.now() / 1000;
 export function startObjectGraph(model: GpuModel, seed: number): ObjectGraph | undefined {
   if (!model.graph || !model.sequences) return undefined;
   return new ObjectGraph(model.graph, model.sequences.byName, clock(), seededRandom(seed));
+}
+
+/**
+ * A loaded save's state put back into a graph (a projectile's, a flame stream's): ours by its
+ * machines' states, an imported .ess's by names (its sequences going on from their times).
+ */
+export function putBackGraph(graph: ObjectGraph | undefined, saved: SavedGraph | undefined): void {
+  if (!graph || !saved) return;
+  if (saved.sequences) graph.restoreState(saved.sequences, clock());
+  else if (saved.named) graph.restoreNamed(saved.named, clock());
 }
 
 /**

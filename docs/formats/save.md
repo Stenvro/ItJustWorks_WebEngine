@@ -77,7 +77,17 @@ the world loads again, as the original's change forms hold it (nothing of the re
   put it, in its furniture at once; when its AI starts and chooses the saved package first, the
   package goes on without beginning again (no OnPackageStart, no begin fragment), its sequences
   from the child they had reached (a Simultaneous branch's children run anew); its fight (with that modifier) starts
-  again once it and its target are on the stage. Saved actors whose cell goes before it is
+  again once it and its target are on the stage. With its fight (`SavedFight`) it keeps what its
+  combat group knew of the target (`SavedGroupTarget`, src/ai/combat-groups.ts: the stealth
+  points, known or lost, where and when it was last known, detected, attacked from and heard,
+  the times as seconds before the save; whether the group searched) and the search it made for
+  it (`SavedCombatSearch`, src/ai/combat-search.ts: the place, its step (the wait, the run or
+  walk, a look, a wander), the seconds left of a wait or look, the looks made, the seconds
+  searched, the radius drawn and the wander point): as its fight is taken up again its group
+  knows the target as it did and a searcher searches on from there (a walk under way is walked
+  again from where it stands; no CombatToLost said again; it gives up once it has searched
+  fDetectionStateExpireTime in all, counted from the search's start). The members' own
+  detection levels are not kept: each one's next detection test tells its own. Saved actors whose cell goes before it is
   placed come back where their packages have them.
 - `graphs`: the loaded objects whose graphs moved from their start (an event sent, a variable
   set): the sequences' graph (each active state machine's state in the order reached from the
@@ -147,7 +157,9 @@ player's cell loads.
   references and created forms); actors' deaths and states; factions and crime (bounties,
   stolen items, jail, favor); locations (cleared) and the cell reset clocks (`cellVisits`,
   `cellDetached`, `zoneTimes`, `deathHours`); relationships, the local maps' fog, the map
-  marker, favorites and hotkeys, books read, tutorials, active magic effects.
+  marker, favorites and hotkeys, books read, tutorials, active magic effects, the
+  ingredients' known effects and use counts (`ingredientUses`), the dead counts by actor base,
+  the factions' crime counts.
 - `clocks`, `startDate`, `startDays`: the scheduler's real, game and wall clocks and the
   calendar's start.
 - `fields`: the runtime's switches (`SAVED_RUNTIME_FIELDS`: controls, chargen, fast travel,
@@ -172,8 +184,15 @@ it again as the save loads) and, in `world`, `projectiles` (src/save/world-save.
 SavedProjectile: each projectile in flight and each lobber at rest, a rune waiting for its
 trigger: its PROJ, the magic item it carries with its caster, how it was cast and dual casting,
 its position, velocity, the units flown, its age and whether it rests). They fly on as the loaded
-world's physics attaches (MagicProjectiles.restore); a flame's sprays are not kept (the stream
-ends with the cast), nor a cone's wave or a Magelight stuck to a wall (TODO(M13)).
+world's physics attaches (MagicProjectiles.restore). Beside missiles, lobbers and bolts it keeps
+(`kind`) a flame's sprays (where each left the hand and the concentration seconds it carries:
+its stream shows it there again, and the cast held, src/scripting/runtime/casting-engine.ts,
+sprays on), a cone's wave sweeping out (its apex, direction, how far its front has come and
+whom it reached: it sweeps on from there, not reaching them again, its look shown for the rest
+of its way) and a Magelight stuck where it struck (its seconds left: its model and light stay
+there that long). Each keeps its model's behavior graph (`graph`: most projectile models have
+one, tools/projectile-graphs.ts; a spray's is its stream's) by its machines' states, put back as
+its model loads; an imported .ess's by names.
 
 ## Loading
 
@@ -387,10 +406,8 @@ A save of ours made after the import keeps the graphs in our own form.
 
 - The procedures' own progress inside a step beyond a patrol's point and the furniture an
   actor is in (a sandbox's activity's time left: it chooses again); the
-  actors of cells not loaded when saving (their packages place them, as before); the combat
-  groups' searches (an actor searching for a target it lost searches again from what detection
-  kept, where it last knew the target to be: TODO(M13) the search's own place and progress);
-  each body of an articulated object in motion on its own (`motions` keeps the first's,
+  actors of cells not loaded when saving (their packages place them, as before); a combat
+  group's own timers (its dialogue and update timers: they run from the load); each body of an articulated object in motion on its own (`motions` keeps the first's,
   TODO(M13)).
 
 - The main menu's Load list and the save list's character filter (Continue loads the newest

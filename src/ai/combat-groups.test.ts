@@ -226,4 +226,34 @@ describe('combat groups', () => {
     expect(known?.level).toBe(100);
     expect(known?.known).toBe(true);
   });
+  it('keeps what a group knows of its target through a save, on the clock of the loaded game', () => {
+    const { groups, world } = fight();
+    groups.join(BANDIT, []);
+    const known = groups.addTarget(BANDIT, PLAYER);
+    groups.report(BANDIT, PLAYER, seen(10, [700, 50, 0]), world, 4);
+    groups.attacked(BANDIT, PLAYER, [650, 0, 0], 5);
+    groups.update(world, 6);
+    expect(groups.searching(BANDIT)).toBe(true);
+    const saved = groups.saveTarget(BANDIT, PLAYER, 10);
+    expect(saved).toMatchObject({ lost: true, known: false, searching: true });
+    expect(saved?.lastKnownAgo).toBe(6);
+    expect(saved?.attackedAgo).toBe(5);
+    expect(saved?.detectedAgo).toBeUndefined();
+    // The loaded game's groups run on another clock: the times keep their distance from now.
+    const loaded = fight();
+    loaded.groups.join(BANDIT, []);
+    if (!saved) throw new Error('nothing saved');
+    loaded.groups.restoreTarget(BANDIT, PLAYER, saved, 100);
+    const back = loaded.groups.target(BANDIT, PLAYER);
+    expect(back?.stealthPoints).toBe(known?.stealthPoints);
+    expect(back?.lastKnown).toEqual([700, 50, 0]);
+    expect(back?.lastKnownTime).toBe(94);
+    expect(back?.attackedTime).toBe(95);
+    expect(back?.detectedTime).toBe(-Infinity);
+    expect(loaded.groups.searching(BANDIT)).toBe(true);
+    // The group searches on (its target still lost) rather than starting again.
+    loaded.groups.update(loaded.world, 100.5);
+    expect(loaded.groups.searching(BANDIT)).toBe(true);
+    expect(groups.saveTarget(ARCHER, PLAYER, 10)).toBeUndefined();
+  });
 });
