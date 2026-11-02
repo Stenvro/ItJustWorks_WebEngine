@@ -1796,6 +1796,14 @@ export class ActorStage {
     const staged = this.#actors.get(reference);
     if (!staged) return undefined;
     const [x, y, z] = staged.position;
+    // A corpse is where its ragdoll carried it (one killed in the air, where it fell to).
+    const moved = staged.dead ? this.bodies.moved(reference) : undefined;
+    if (moved) {
+      return {
+        position: [x + moved[0], y + moved[1], z + moved[2]],
+        rotation: [0, 0, staged.heading],
+      };
+    }
     return { position: [x, y, z], rotation: [0, 0, staged.heading] };
   }
 

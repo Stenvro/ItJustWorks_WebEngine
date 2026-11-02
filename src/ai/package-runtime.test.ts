@@ -95,8 +95,8 @@ function setup(
     carried: () => Promise.resolve(undefined),
     fakeFood: () => Promise.resolve(undefined),
     lockDoors: () => Promise.resolve(),
-    packageEvent: (_actor, event, record) => {
-      events.push(`${event} ${record.editorId}`);
+    packageEvent: (_actor, event, record, _other, complete) => {
+      events.push(`${event} ${record.editorId}${complete === true ? ' complete' : ''}`);
     },
   };
   const body: PackageBody = {
@@ -529,6 +529,27 @@ describe('ActorPackages', () => {
     expect(ran).toEqual(['travel', 'forcegreet']);
   });
 
+  it('counts a package complete only by a procedure whose success completes it', async () => {
+    // MQ106DelphineIntroGreet2 (ForceGreetFromSitting): a Stacked branch's ForceGreet, which
+    // completes the package, before a Sit, which does not. Her sitting down runs the tree out
+    // (its end) but does not complete it; her greeting does (observed in the original).
+    const { actor, truths, events } = setup(
+      [pack(1, branch('Stacked', [procedure('forcegreet', 1, [condition(7)]), procedure('sit')]))],
+      {
+        forcegreet: () => Promise.resolve('success'),
+        sit: () => Promise.resolve('success'),
+      },
+    );
+    await tick(actor);
+    await tick(actor);
+    expect(events).toEqual(['begin Pack1', 'end Pack1']);
+    truths.add(7);
+    actor.evaluate();
+    await tick(actor);
+    await tick(actor);
+    expect(events.at(-1)).toBe('end Pack1 complete');
+  });
+
   it('runs a once-a-day package once a day', async () => {
     let runs = 0;
     const { actor, setDay } = setup(
@@ -630,7 +651,7 @@ describe('ActorPackages', () => {
     await tick(actor, 1);
     expect(ran.slice(0, 3)).toEqual(['find', 'travel', 'find stopped']);
     expect(ran).not.toContain('sit');
-    expect(events).toContain('end Pack1');
+    expect(events).toContain('end Pack1 complete');
   });
 
   it('with allComplete ends a simultaneous branch as all its children have ended', async () => {

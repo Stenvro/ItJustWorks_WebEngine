@@ -105,13 +105,11 @@ describe.skipIf(!hasGamedata())('MQ106 A Blade in the Dark', () => {
   // ForceGreet before a Sit) and greets the player as they come; the conversation (35-48) ends
   // with the burial site at Kynesgrove (50) and Delphine going to gear up (55). Found
   // 2026-11-02: the scene's phase 8 ended as she sat down (her package's tree ran out along the
-  // Stacked branch's Sit), so there was no greeting; and Delphine's questions (Walk Away
-  // Invisible In Menu infos, as many of the original's choices) were not listed; the second is
-  // fixed. TODO(M13): the first. Not ending a scene's package action while an earlier Stacked
-  // child that completes the package may still run (here, the ForceGreets before her Sit) let
-  // this chain run on to 160, but stopped MQ104's guards' DragonDeathScene (95); which packages
-  // the original holds a scene's action open for is still to be found. The cases after wait.
-  it.skip('has Delphine show the player the secret room and name Kynesgrove (32-55)', async () => {
+  // Stacked branch's Sit), so there was no greeting; observed in the original, a package is
+  // complete only when a procedure whose success completes it succeeds (here a ForceGreet), so
+  // the scene waits for her greeting. And Delphine's questions (Walk Away Invisible In Menu
+  // infos, as many of the original's choices) were not listed.
+  it('has Delphine show the player the secret room and name Kynesgrove (32-55)', async () => {
     if (!afterIntro) return;
     const sim = await loadSim(afterIntro);
     try {
@@ -161,7 +159,9 @@ describe.skipIf(!hasGamedata())('MQ106 A Blade in the Dark', () => {
   // 58 and coming into Kynesgrove 65 (MQ106PlayerScript's OnLocationChange; 65 sets 60, Delphine
   // moved there if unloaded, KynesgroveScene). Alduin circles over the burial mound; the player
   // looks up at him (60's RegisterForSingleLOSGain: 70) and climbs to the mound with Delphine,
-  // where she hides (75: the mound's location, AlduinScene begins).
+  // where she hides (75: the mound's location, AlduinScene begins). Found 2026-11-02: the walk
+  // gave up some 4,000 units short, where the navmeshes of the cells loaded as it began ended;
+  // the sim's walk now searches its way again as the cells load.
   it('takes the player to Kynesgrove and up to the burial mound (58-75)', async () => {
     if (!afterSecretRoom) return;
     const sim = await loadSim(afterSecretRoom);
@@ -174,13 +174,19 @@ describe.skipIf(!hasGamedata())('MQ106 A Blade in the Dark', () => {
       expect(sim.stageDone(MQ106, 58)).toBe(true);
       expect(await sim.until(() => sim.stageDone(MQ106, 65), 10)).toBe(true);
       expect(sim.stageDone(MQ106, 60)).toBe(true);
-      const above = await sim.position(alduin);
-      if (above) sim.look(above);
-      await sim.step(5);
+      // Up to the mound, over the navmeshes of the cells as they load (its top is off them).
+      // Alduin circles over it, cells away from the town: only there, his cell loaded, is he
+      // seen. The player keeps their eyes on him until they have (70).
       const mound = await sim.position(dragon);
-      if (mound) await sim.walkPath(mound, 150, 2500);
+      expect(mound && (await sim.walkPath(mound, 300, 600))).toBe(true);
+      let seen = sim.stageDone(MQ106, 70);
+      for (let second = 0; second < 30 && !seen; second++) {
+        const above = await sim.position(alduin);
+        if (above) sim.look(above);
+        seen = await sim.until(() => sim.stageDone(MQ106, 70), 1);
+      }
+      expect(seen).toBe(true);
       expect(await sim.until(() => sim.stageDone(MQ106, 75), 30)).toBe(true);
-      expect(sim.stageDone(MQ106, 70)).toBe(true);
       afterMound = await sim.save('MQ106 75');
     } finally {
       await sim.close();
@@ -253,11 +259,12 @@ describe.skipIf(!hasGamedata())('MQ106 A Blade in the Dark', () => {
   }, 600_000);
 
   // Delphine's DragonDeathScene plays out ("So you really are..."); the player talks to her
-  // ("Time to answer my questions."): who she is, the Blades, and the next move, the Thalmor
-  // (200: the quest done, the secret door's key given, MQ201 active). TODO(M13): the
-  // conversation runs (its hub lists the Blades and the next move) but 200 does not come; which
-  // info or script sets it (MQ106's own topics set none) is still to be found.
-  it.skip('has Delphine tell the player of the Blades and the quest complete (200)', async () => {
+  // ("Time to answer my questions.", MQ201's topics): who she is, the Blades, and the next move,
+  // the Thalmor (MQ201 20: why she thinks they bring the dragons back; what they know, "Any
+  // ideas?"); "So how do we get into the Thalmor Embassy?" ends it (its info sets MQ201 30,
+  // whose fragment sets MQ106 200: the quest done, the secret door's key given). Found
+  // 2026-11-02: 200 is MQ201's to set, at the end of this talk.
+  it('has Delphine tell the player of the Blades and the quest complete (200)', async () => {
     if (!afterAbsorb) return;
     const sim = await loadSim(afterAbsorb);
     try {
@@ -271,7 +278,11 @@ describe.skipIf(!hasGamedata())('MQ106 A Blade in the Dark', () => {
         /dragons coming back/,
         /The Blades/,
         /next move/,
+        /Thalmor are bringing dragons back/,
+        /Any ideas/,
+        /get into the Thalmor Embassy/,
       ]);
+      expect(sim.stageDone(MQ201, 30)).toBe(true);
       expect(await sim.until(() => sim.stageDone(MQ106, 200), 20)).toBe(true);
       expect(sim.runtime.state.quest(MQ106).completed).toBe(true);
       const key = await sim.formId('KEYM', 'MQDelphineSecretDoorKey');
