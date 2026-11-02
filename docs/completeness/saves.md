@@ -25,24 +25,52 @@ both machine-checkable parts:
 The world beside the scripts (the stage's actors, graphs, physics, audio, the sky) is kept by
 hand below, against docs/formats/save.md.
 
-## Count (2026-11-02, round 6)
+## Count (2026-11-02, round 7)
 
 | Part                          | Items | Done | Open |
 | ----------------------------- | ----: | ---: | ---: |
 | .ess header                   |     4 |    4 |    0 |
-| .ess global data              |    30 |   17 |   13 |
-| .ess change forms (flags)     |    68 |   64 |    4 |
+| .ess global data              |    30 |   19 |   11 |
+| .ess change forms (flags)     |    68 |   68 |    0 |
 | .ess other (import and hand)  |    11 |    9 |    2 |
 | Own save: runtime fields      |   162 |  162 |    0 |
-| Own save: the world (by hand) |    28 |   21 |    7 |
-| Total                         |   303 |  277 |   26 |
+| Own save: the world (by hand) |    29 |   24 |    5 |
+| Total                         |   304 |  286 |   18 |
 
-(Round 5: 299 items, 270 done; round 4: 299, 261; round 3: 297, 245; round 2: 291, 224; round 1: 290, 211. The
+(Round 6: 303 items, 277 done; round 5: 299 items, 270 done; round 4: 299, 261; round 3: 297, 245; round 2: 291, 224; round 1: 290, 211. The
 sweep itself prints 266 items: the ".ess other" part lists only what the import still logs, so
 its items done are kept by hand below. Round 4 split the AI process's item in two (the
 procedures' states, done; the high process's timers, open) and added NPCs riding to the world
 part. Round 6: the runtime's new field (magic-engine#appearing, transient), the world part's
 decals and animation objects, and its combat searches and detection levels split in two.)
+
+Round 7 added the world part's projectiles' graphs (done) and built down:
+
+- Combat searches kept (src/ai/combat-search.ts `SavedCombatSearch`, src/ai/combat-groups.ts
+  `SavedGroupTarget`, `SavedActor.fight`): a fighting actor keeps what its group knew of its
+  target (stealth points, known or lost, where and when last known, detected, attacked from,
+  heard, as seconds before the save) and its search (its place, step, seconds into it, looks,
+  radius, the wander point); a loaded searcher goes on searching from there (no CombatToLost
+  again, its time searched counting on to fDetectionStateExpireTime). The .ess's combat groups
+  are read by what they hold (UESP's "members" are the group's targets, its "targets" the
+  members: Alduin's group at Helgen holds the player and eleven soldiers as targets, Alduin as
+  its one member); each member's fight takes its group's knowledge (`essGroupFights`). Tests:
+  combat-search.test.ts, combat-groups.test.ts, ess-import.test.ts.
+- Flame sprays, cone waves sweeping out and Magelights stuck where they struck kept by our save
+  (`SavedProjectile.kind`: a spray's origin and seconds, a wave's apex, front and those it
+  reached, a stuck light's seconds left), each with its model's graph (`SavedProjectile.graph`;
+  85 of the 247 projectiles' models have one: `node tools/projectile-graphs.ts`). The .ess's
+  missiles and flame sprays in flight (PMIS, PFLA) fly on (the Helgen save's firebolt and
+  Alduin's breath) with their graphs by names, instead of standing as references of their
+  projectiles. Tests: tests/sim-magic-projectiles-save.test.ts, tests/sim-ess-import.int.test.ts.
+- The dead counts by actor base (global data 2: GetDeadCount), SMQN's runs (the game days each
+  node last started each of its quests: the story manager's last starts), FACT's crime counts
+  (CommonLibSSE's majorCrime, minorCrime and the resist arrest stamp), the ingredients' use
+  counts and known effects (INGR, CommonLibSSE's IngredientItem game data; ours keeps
+  `GameState.ingredientUses`); the menu topic manager (114) as a conversation's speakers.
+- A trap's pushback (ProcessTrapHit) now pushes the actor's character controller as a hit's
+  knockback does, by the trap's own pushback (src/gameplay/combat/knockback.ts trapPushback),
+  instead of knocking it down.
 
 Round 6 built down:
 
@@ -185,32 +213,32 @@ player's place").
 | ---------------------------- | ------ | ---------------------------------------------------------------------- |
 | 0 Misc Stats                 | done   | the runtime's stats                                                    |
 | 1 Player Location            | done   | the player's place when their change form has none                     |
-| 2 TES                        | open   | visited worldspaces, the cell grid                                     |
+| 2 TES                        | done   | dead counts by base (GetDeadCount); cell table, last list: none read   |
 | 3 Global Variables           | done   | GameState globals; GameDaysPassed sets the clock                       |
 | 4 Created Objects            | open   | made potions, poisons, enchantments (none in the saves read)           |
 | 5 Effects                    | done   | image space modifiers running: empty in every save read (else logged)  |
 | 6 Weather                    | done   | current, outgoing, override, default; when it came (GameSave.sky)      |
 | 7 Audio                      | done   | the music types in play (GameSave.music); the table keeps no track     |
-| 8 Sky Cells                  | open   | not applied                                                            |
-| 100 Process Lists            | open   | crimes (none in the saves read); three floats: TODO(M13) their meaning |
-| 101 Combat                   | done   | members' fights by their targets; searches logged (none in the saves)  |
+| 8 Sky Cells                  | open   | 64 pairs, every one 0 in both saves (TODO(M13): their meaning)         |
+| 100 Process Lists            | open   | crimes (none read); floats −0.01683 twice, then 0.646 / 0.0042 (M13)   |
+| 101 Combat                   | done   | members' fights, their groups' knowledge and searches (SavedFight)     |
 | 102 Interface                | open   | help done, last used applied; the help shown (meaning: TODO(M13))      |
 | 103 Actor Causes             | done   | the actor each ActorCause extra blames                                 |
 | 104 Unknown                  | open   | not in the saves read                                                  |
-| 105 Detection Manager        | open   | a reference with two values (0/2/3, 0/7): TODO(M13) their meaning      |
-| 106 Location MetaData        | open   | not applied                                                            |
+| 105 Detection Manager        | open   | references, 0/2/3 and 0/7: triggers 2, soldiers 0 or 7 (TODO(M13))     |
+| 106 Location MetaData        | open   | references (actors mostly) with 1 to 3; meaning not known (TODO(M13))  |
 | 107 Quest Static Data        | done   | the quests running (QUST change forms); 3 lists empty: TODO(M13)       |
-| 108 StoryTeller              | open   | not applied                                                            |
+| 108 StoryTeller              | open   | a flag, 1 in both saves (TODO(M13): its meaning)                       |
 | 109 Magic Favorites          | done   | GameState favorites and hotkeys                                        |
-| 110 PlayerControls           | open   | its fields' meaning not known                                          |
+| 110 PlayerControls           | open   | 0,0,0,1,1 in both saves; CommonLibSSE's bools do not settle them (M13) |
 | 111 Story Event Manager      | done   | the events waiting, told again after the load                          |
 | 112 Ingredient Shared        | done   | the ingredients' known effects: empty in every save read (else logged) |
-| 113 MenuControls             | open   | not applied                                                            |
-| 114 MenuTopicManager         | open   | not applied                                                            |
+| 113 MenuControls             | open   | 1,0 in both saves (CommonLibSSE: isProcessing, beastForm, remapMode)   |
+| 114 MenuTopicManager         | done   | a conversation's speakers: none in every save read (else logged)       |
 | 1000 Temp Effects            | done   | the world's decals into the decal store (WorldSave.decals)             |
 | 1001 Papyrus                 | done   | instances, stacks, messages, waits, suspended calls, registrations     |
 | 1002 Anim Objects            | done   | WorldSave.animObjects: loaded and drawn as each actor is placed        |
-| 1003 Timer                   | open   | not applied                                                            |
+| 1003 Timer                   | open   | two u32, 0 and 0 in both saves (TODO(M13): their meaning)              |
 | 1004 Synchronized Animations | done   | paired animations under way: empty in every save read (else logged)    |
 | 1005 Main                    | done   | empty in every save read                                               |
 
@@ -218,60 +246,60 @@ player's place").
 
 By type, each change flag the saves use (forms counted over both saves).
 
-| Type | Flag                     | Forms | Status | Where / why open                                             |
-| ---- | ------------------------ | ----: | ------ | ------------------------------------------------------------ |
-| REFR | form flags               |  2880 | done   | enabled, deleted                                             |
-| REFR | moved, havokMoved        |   299 | done   | the reference's place                                        |
-| REFR | cellChanged, promoted    | 11305 | done   | its cell or worldspace                                       |
-| REFR | inventory, leveledInv.   |   144 | done   | inventory changes added after the load                       |
-| REFR | lockExtra                |   252 | done   | level, locked                                                |
-| REFR | itemExtraData            |   178 | done   | the item reference's holder (ReferenceState.container)       |
-| REFR | animation                |    26 | done   | by names (SavedGraph.named); a door's Open or Close          |
-| REFR | encounterZoneExtra       |   367 | done   | ReferenceState.encounterZone                                 |
-| REFR | gameOnlyExtra            |  1467 | done   | NonActorMagicTarget: no effects on the 3 objects             |
-| REFR | baseObject               |    30 | done   | ReferenceState.base (baseOf)                                 |
-| ACHR | form flags               |   286 | done   | enabled, deleted                                             |
-| ACHR | moved, havokMoved, cell  |  2755 | done   | its place (and its package and fight there)                  |
-| ACHR | promoted, scale          |  2088 | done   |                                                              |
-| ACHR | inventory, leveledInv.   |  1254 | done   |                                                              |
-| ACHR | lifeState                |    16 | done   | dead, unconscious, restrained                                |
-| ACHR | packageExtraData         |    67 | done   | the package's start; Follower (no data)                      |
-| ACHR | dismemberedLimbs         |     1 | done   | ActorState.dismembered: the limb and what it wore            |
-| ACHR | leveledActor             |  2784 | done   | ActorState.leveledBase: the pick kept                        |
-| ACHR | animation                |    49 | done   | by names (ActorGraphState.named), the player's two graphs    |
-| ACHR | encounterZoneExtra       |   516 | done   |                                                              |
-| ACHR | gameOnlyExtra            |  1472 | done   | AttachedArrows3D: WorldSave.attachedArrows                   |
-| NPC_ | baseData                 |    22 | done   | ACBS essential, protected, invulnerable                      |
-| NPC_ | face, gender, race, name |     4 | done   | the player's appearance and name                             |
-| NPC_ | defaultOutfit            |     1 | done   | the base's outfit                                            |
-| NPC_ | factions                 |   264 | done   | ActorBaseState.factions over SNAM (the player's: their own)  |
-| NPC_ | skills                   |    23 | done   | ActorBaseState.skills over DNAM (offsets: TODO(M13))         |
-| NPC_ | aiData                   |    23 | done   | ActorBaseState.aiData over AIDT                              |
-| QUST | flags, alreadyRun        |  1828 | done   | running, completed, failed, active                           |
-| QUST | stages                   |   232 | done   | stages done (the current stage: the highest done, TODO(M13)) |
-| QUST | objectives, runtimeData  |   903 | done   | objectives, aliases, the story event                         |
-| QUST | instanceData             |   244 | done   | the runs' text display globals (instanceGlobals)             |
-| CELL | flags (bit 1)            |   225 | done   | public (0x20); 0x40 and 0x200 unknown (listed below)         |
-| CELL | exterior bits 29, 30     |   128 | done   | detach time: cellDetached (whole game hours)                 |
-| CELL | seen data (bit 31)       |    30 | done   | GameState.seen (seenFromSave); no exterior fog drawn: M13    |
-| INFO | said (bit 31)            |   179 | done   | Say Once marks                                               |
-| SCEN | running state (bit 31)   |    20 | done   | phase, cast, actions                                         |
-| FLST | added forms (bit 31)     |    50 | done   | the forms scripts added                                      |
-| LVLI | added (bit 31)           |   100 | done   | leveled list additions                                       |
-| LVLN | added (bit 31)           |     2 | done   |                                                              |
-| FACT | reactions (bit 2)        |   114 | done   | modifier and combat reaction to each faction                 |
-| FACT | crimeCounts (bit 31)     |     1 | open   | four values; UESP and CommonLibSSE do not name them          |
-| LCTN | keyword data (bit 30)    |   128 | done   | LocationState.keywordData                                    |
-| SMQN | bit 31                   |    18 | open   | the nodes' last run: UESP and CommonLibSSE do not name it    |
-| PARW | moved, havokMoved, cell  |    32 | done   | arrows lying in the world: references of their ammunition    |
-| PARW | encounterZoneExtra       |     4 | done   |                                                              |
-| PMIS | moved                    |     1 | done   |                                                              |
-| PMIS | animation                |     1 | open   | read; our projectiles run no behavior graph to put it in     |
-| PFLA | moved                    |     1 | done   |                                                              |
-| PFLA | animation                |     1 | open   | read; our projectiles run no behavior graph to put it in     |
-| PGRE | form flags               |     4 | done   |                                                              |
-| PHZD | form flags, moved        |    83 | done   |                                                              |
-| PHZD | gameOnlyExtra            |     1 | done   | its ActorCause                                               |
+| Type | Flag                     | Forms | Status | Where / why open                                              |
+| ---- | ------------------------ | ----: | ------ | ------------------------------------------------------------- |
+| REFR | form flags               |  2880 | done   | enabled, deleted                                              |
+| REFR | moved, havokMoved        |   299 | done   | the reference's place                                         |
+| REFR | cellChanged, promoted    | 11305 | done   | its cell or worldspace                                        |
+| REFR | inventory, leveledInv.   |   144 | done   | inventory changes added after the load                        |
+| REFR | lockExtra                |   252 | done   | level, locked                                                 |
+| REFR | itemExtraData            |   178 | done   | the item reference's holder (ReferenceState.container)        |
+| REFR | animation                |    26 | done   | by names (SavedGraph.named); a door's Open or Close           |
+| REFR | encounterZoneExtra       |   367 | done   | ReferenceState.encounterZone                                  |
+| REFR | gameOnlyExtra            |  1467 | done   | NonActorMagicTarget: no effects on the 3 objects              |
+| REFR | baseObject               |    30 | done   | ReferenceState.base (baseOf)                                  |
+| ACHR | form flags               |   286 | done   | enabled, deleted                                              |
+| ACHR | moved, havokMoved, cell  |  2755 | done   | its place (and its package and fight there)                   |
+| ACHR | promoted, scale          |  2088 | done   |                                                               |
+| ACHR | inventory, leveledInv.   |  1254 | done   |                                                               |
+| ACHR | lifeState                |    16 | done   | dead, unconscious, restrained                                 |
+| ACHR | packageExtraData         |    67 | done   | the package's start; Follower (no data)                       |
+| ACHR | dismemberedLimbs         |     1 | done   | ActorState.dismembered: the limb and what it wore             |
+| ACHR | leveledActor             |  2784 | done   | ActorState.leveledBase: the pick kept                         |
+| ACHR | animation                |    49 | done   | by names (ActorGraphState.named), the player's two graphs     |
+| ACHR | encounterZoneExtra       |   516 | done   |                                                               |
+| ACHR | gameOnlyExtra            |  1472 | done   | AttachedArrows3D: WorldSave.attachedArrows                    |
+| NPC_ | baseData                 |    22 | done   | ACBS essential, protected, invulnerable                       |
+| NPC_ | face, gender, race, name |     4 | done   | the player's appearance and name                              |
+| NPC_ | defaultOutfit            |     1 | done   | the base's outfit                                             |
+| NPC_ | factions                 |   264 | done   | ActorBaseState.factions over SNAM (the player's: their own)   |
+| NPC_ | skills                   |    23 | done   | ActorBaseState.skills over DNAM (offsets: TODO(M13))          |
+| NPC_ | aiData                   |    23 | done   | ActorBaseState.aiData over AIDT                               |
+| QUST | flags, alreadyRun        |  1828 | done   | running, completed, failed, active                            |
+| QUST | stages                   |   232 | done   | stages done (the current stage: the highest done, TODO(M13))  |
+| QUST | objectives, runtimeData  |   903 | done   | objectives, aliases, the story event                          |
+| QUST | instanceData             |   244 | done   | the runs' text display globals (instanceGlobals)              |
+| CELL | flags (bit 1)            |   225 | done   | public (0x20); 0x40 and 0x200 unknown (listed below)          |
+| CELL | exterior bits 29, 30     |   128 | done   | detach time: cellDetached (whole game hours)                  |
+| CELL | seen data (bit 31)       |    30 | done   | GameState.seen (seenFromSave); no exterior fog drawn: M13     |
+| INFO | said (bit 31)            |   179 | done   | Say Once marks                                                |
+| SCEN | running state (bit 31)   |    20 | done   | phase, cast, actions                                          |
+| FLST | added forms (bit 31)     |    50 | done   | the forms scripts added                                       |
+| LVLI | added (bit 31)           |   100 | done   | leveled list additions                                        |
+| LVLN | added (bit 31)           |     2 | done   |                                                               |
+| FACT | reactions (bit 2)        |   114 | done   | modifier and combat reaction to each faction                  |
+| FACT | crimeCounts (bit 31)     |     1 | done   | majorCrime, minorCrime kept; resist arrest stamp (M13: users) |
+| LCTN | keyword data (bit 30)    |   128 | done   | LocationState.keywordData                                     |
+| SMQN | bit 31                   |    18 | done   | each quest's last start (game days): the story manager's      |
+| PARW | moved, havokMoved, cell  |    32 | done   | arrows lying in the world: references of their ammunition     |
+| PARW | encounterZoneExtra       |     4 | done   |                                                               |
+| PMIS | moved                    |     1 | done   |                                                               |
+| PMIS | animation                |     1 | done   | the missile flies on, its graph by names (SavedProjectile)    |
+| PFLA | moved                    |     1 | done   |                                                               |
+| PFLA | animation                |     1 | done   | the spray flies on, its stream's graph by names               |
+| PGRE | form flags               |     4 | done   |                                                               |
+| PHZD | form flags, moved        |    83 | done   |                                                               |
+| PHZD | gameOnlyExtra            |     1 | done   | its ActorCause                                                |
 
 (The sweep lists each flag on its own line; rows here group flags that share a status.)
 
@@ -284,7 +312,7 @@ By type, each change flag the saves use (forms counted over both saves).
 | The high process's timers and six held objects                      | open   | their meaning is not known (TODO(M13))                                      |
 | Papyrus running stacks                                              | done   | resumed at the compiled instruction (by hand: the import no longer logs it) |
 | Papyrus messages, waits, registrations other than updates           | done   | LOS and latent functors: none in the saves read, logged if seen             |
-| CELL flags 0x40, 0x200                                              | open   | not named by UESP or CommonLibSSE (TODO(M13))                               |
+| CELL flags 0x40, 0x200                                              | open   | CommonLibSSE: Hand Changed, Warn To Leave; their run-time effect (M13)      |
 | ACHR extra Interaction                                              | done   | SavedActor.riding (both saves' riders)                                      |
 | ACHR extra AttachedArrows3D                                         | done   | WorldSave.attachedArrows (drawn again on their bones)                       |
 | ACHR extra DismemberedLimbs                                         | done   | ActorState.dismembered                                                      |
@@ -334,35 +362,33 @@ loadData (RuntimeSave.engines; src/scripting/runtime/engine-save.test.ts):
 | Actors in cells not loaded as the game is saved                  | open   | their packages place them                               |
 | A procedure's progress inside a step (a sandbox's activity)      | open   | it chooses again                                        |
 | Graph transitions' blends, modifiers' states, behavior refs      | open   | docs/formats/save.md "Animation graphs"                 |
+| Projectiles' graphs (in flight, sprays' streams, stuck lights)   | done   | SavedProjectile.graph                                   |
 | Bleedout and paired animations' engine side                      | open   | their bookkeeping                                       |
 | Physics bodies in motion (loose objects knocked about)           | done   | WorldSave.motions, given back as each body settles      |
 | The sky's transition between weathers                            | done   | GameSave.sky (SkyWeather save, restore)                 |
 | The music playing (audio state)                                  | done   | GameSave.music, musicTrack: the track and its position  |
-| Combat groups' searches                                          | open   | searched again from the detection kept (TODO(M13))      |
+| Combat groups' searches                                          | done   | SavedActor.fight (the group's knowledge, the search)    |
 | Detection levels, alerts, alarms, attacks                        | done   | WorldSave.detection (Detections.save, load)             |
 | Decals on the world (blood, scorches, burns)                     | done   | WorldSave.decals (the decal store)                      |
 | Animation objects actors hold                                    | done   | WorldSave.animObjects                                   |
-| Flame sprays, cone waves, a Magelight stuck to a wall            | open   | docs/formats/save.md                                    |
+| Flame sprays, cone waves, a Magelight stuck to a wall            | done   | SavedProjectile.kind                                    |
 | Thumbnails                                                       | done   | save-screenshot.ts takeScreenshot                       |
 | Save on Pause, the Load list's character filter                  | open   | docs/formats/save.md "Not saved yet"                    |
 
 ## Next biggest open items
 
-1. The projectiles' graphs (PMIS, PFLA animation, one form each): our projectiles run no
-   behavior graph; one that runs it (the dragon's fireball, the flame projectile's) would take
-   the saved state by names as the actors' do.
-2. The global data tables whose meaning is not known (TODO(M13); UESP's save page names their
-   fields only as unknowns): detection (105: a reference, 0/2/3 and 0/7), the process lists'
-   floats (100), the help shown (102), player controls (110: 0,0,0,1,1 in both saves), menu
-   controls and topics (113: 1,0; 114: 0,0), story teller (108: a flag 1), timer (1003: 0,0),
-   sky cells (8: every pair 0), TES (2: seven forms with a 1 after Helgen, and a 5x5 grid of 0),
-   location metadata (106: each location and a count 1 to 3); the high process's timers and
-   held objects.
-3. Our own save's world side: the combat searches' own place and progress (they search again
-   from the detection kept), flame sprays and cone waves in flight, a Magelight stuck to a wall,
-   graph transitions' blends.
-4. FACT crime counts (four values) and SMQN's last run, cell flags 0x40 and 0x200: neither
-   UESP nor CommonLibSSE names them (CommonLibSSE names FACT's change flag
-   kFactionCrimeCounts alone); left for the original's own rule (TODO(M13)).
-5. The decals' details the .ess leaves unsettled: their age (none written: a whole lifetime
-   from the load), the land entries' u32, float1 and the second texture set (TODO(M13)).
+1. Graph transitions' blends (a machine saved mid-transition goes on in the state it blends
+   to), syncing blenders' phases and modifiers' own states; machines inside the placed objects'
+   behavior references (docs/formats/save.md "Animation graphs").
+2. The global data tables whose meaning the saves and CommonLibSSE do not settle (TODO(M13),
+   their observed values in docs/formats/ess.md "Global data"): 8 sky cells (all 0), 100's three
+   floats, 102's help shown, 105 detection (a reference with 0/2/3 and 0/7), 106 (references
+   with 1 to 3), 108 (a flag 1), 110 (0,0,0,1,1), 113 (1,0), 1003 (0,0); the high process's
+   timers and held objects; the cell flags Hand Changed and Warn To Leave (named by
+   CommonLibSSE, their run-time effect not known).
+3. Actors in cells not loaded as the game is saved (their packages place them), a procedure's
+   progress inside a step (a sandbox's activity), bleedout's and paired animations' engine side.
+4. The decals' details the .ess leaves unsettled: their age (none written: a whole lifetime from
+   the load), the land entries' u32 (it differs between an entry's copies, one per shape it was
+   made on), float1 and the second texture set (none in the saves read) (TODO(M13)).
+5. Save on Pause, the Load list's character filter; created objects (4: none in the saves read).
