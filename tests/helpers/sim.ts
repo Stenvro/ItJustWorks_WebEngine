@@ -421,9 +421,32 @@ export class Sim {
   /**
    * The player walks a way over the navmeshes to a point (as one who knows the way: around
    * walls, up stairs), each of its points in turn by walkTo; at most `seconds` in all. False if
-   * there is no way (off the navmeshes) or the point was not reached in time.
+   * there is no way (off the navmeshes) or the point was not reached in time. A way that ends
+   * short of the point (the navmeshes of the cells loaded so far end, or the point is off them:
+   * a burial mound's top) is searched again from where it ended, as the cells round the player
+   * load; past the last navmesh the player walks straight on.
    */
   async walkPath(target: Vec3, seconds: number, reach = 64): Promise<boolean> {
+    const until = this.time + seconds;
+    let last: Vec3 | undefined;
+    for (;;) {
+      const leg = await this.#walkLeg(target, until - this.time, reach);
+      if (leg !== 'short') return leg;
+      const feet = this.world.player.feet;
+      const left = until - this.time;
+      // No nearer than the last way's end: straight on to the point.
+      if (last && Math.hypot(feet[0] - last[0], feet[1] - last[1]) < PATH_GOAL_REACH) {
+        return left > 0 && (await this.walkTo(target, left, reach));
+      }
+      if (left <= 0) return false;
+      last = [feet[0], feet[1], feet[2]];
+      // The cells round them attach meanwhile.
+      await this.world.settle();
+    }
+  }
+
+  /** One way over the navmeshes loaded now ('short': it ended short of the point). */
+  async #walkLeg(target: Vec3, seconds: number, reach: number): Promise<boolean | 'short'> {
     const navmeshes = this.world.navmeshes;
     // A point above the navmesh (a trigger's middle) is walked to where the navmesh is under it.
     const goal = navmeshes.locate(target)
@@ -438,6 +461,7 @@ export class Sim {
     // Blockers whose activate parent was pulled in this walk (not pulled shut again).
     const pulled = new Set<number>();
     let points = path.points.slice(from === feet ? 1 : 0);
+    let complete = path.complete;
     let searched = false;
     for (let index = 0; index < points.length; index++) {
       const point = points[index];
@@ -475,6 +499,7 @@ export class Sim {
           const again = start && findPath(navmeshes, start, goal, { radius: PLAYER_RADIUS });
           if (again) {
             points = again.points.slice(start === here ? 1 : 0);
+            complete = again.complete;
             index = -1;
             break;
           }
@@ -492,7 +517,8 @@ export class Sim {
       }
     }
     const [x, y] = this.world.player.feet;
-    return Math.hypot(goal[0] - x, goal[1] - y) <= reach;
+    if (Math.hypot(goal[0] - x, goal[1] - y) <= reach) return true;
+    return complete ? false : 'short';
   }
 
   /**

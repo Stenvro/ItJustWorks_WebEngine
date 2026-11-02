@@ -236,12 +236,18 @@ export interface PackageMind {
    * (fAIDistanceRadiusMinLocation).
    */
   destinationKind?(reference: number): Promise<'marker' | 'furniture' | 'other'>;
-  /** OnPackageStart / OnPackageChange / OnPackageEnd and the package's own begin, change and end. */
+  /**
+   * OnPackageStart / OnPackageChange / OnPackageEnd and the package's own begin, change and end.
+   * `complete` (an end): a procedure's success completed the package (FNAM 0x1), the only end
+   * the original counts as the package's completion; not its tree running out (docs/ai.md,
+   * "Packages": a scene's package action is done only then).
+   */
   packageEvent(
     actor: number,
     event: 'begin' | 'change' | 'end',
     pack: PackageRecord,
     other?: PackageRecord,
+    complete?: boolean,
   ): void;
 }
 
@@ -963,7 +969,13 @@ export class ActorPackages {
       this.#release();
       if (!this.#keepsSpeed(current)) this.#body.stop();
       this.#body.face(undefined);
-      this.#mind.packageEvent(this.actor, 'end', current.pack);
+      this.#mind.packageEvent(
+        this.actor,
+        'end',
+        current.pack,
+        undefined,
+        current.finished === true,
+      );
       this.#act(current.pack.onEnd);
       fallout = true;
     }
