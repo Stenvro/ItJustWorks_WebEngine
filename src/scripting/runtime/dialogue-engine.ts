@@ -175,7 +175,12 @@ export class DialogueEngine {
         blocking,
         rumor: topic.subtypeName === RUMORS,
         ...(saidOnWalkAway(info) && { walkAway: true }),
-        ...(hiddenInMenu(info) && { hidden: true }),
+        // Walk Away Invisible In Menu keeps a topic without text for walking away; one with
+        // text is listed as any other: 175 of the 261 vanilla infos with the flag are choices
+        // the player makes in the original ("Tell me about the Goldenglow job.", Saadia's
+        // "Relax, I'm not going to hurt you.", Delphine's questions in MQ106).
+        // TODO(M13): what the flag does to a listed topic is not known.
+        ...(hiddenInMenu(info) && text === '' && { hidden: true }),
       });
     }
     const blocking = choices.filter((choice) => choice.blocking);
