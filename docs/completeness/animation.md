@@ -28,7 +28,7 @@ are kept by hand below, against docs/animation.md and the conformance suites
 (tests/conformance/animation/). The count after an item is how many objects (nodes,
 annotations, records) use it.
 
-## Count (2026-11-01, round 2)
+## Count (2026-11-02, round 3)
 
 | Part                        | Items | Done | Open |
 | --------------------------- | ----: | ---: | ---: |
@@ -58,6 +58,11 @@ of 24 kinds, TODO(M13); the paired clip's mark threshold and prefix; the cyclic 
 the powered ragdoll's world-from-model mode; the keyframed ragdoll's blend duration), the 14
 actions left (path end, summoned start, force equip, reload, dual release, block anticipate,
 ragdoll instant, reset graph, ...).
+
+Round 3 (1075, unchanged): spent on the ragdolls' joints at their limits (Hulda at the
+Bannered Mare's counter: she slumps when killed 1.5 or 2 s into her lean, and stays draped over
+the counter on locked legs at 1, 2.5 and 3 s; docs/physics.md, "The cone", and the physics
+list). The node fields, the actions and SoundPlayAt for object graphs were not reached.
 
 ## Behavior graphs
 
