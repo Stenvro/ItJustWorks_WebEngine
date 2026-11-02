@@ -87,7 +87,10 @@ const GLOBAL_DATA: Readonly<Record<number, readonly [boolean, string]>> = {
   111: [true, 'the story event manager: events waiting, told again'],
   112: [true, "ingredient shared: the ingredients' known effects: empty in every save read"],
   113: [false, 'menu controls (not applied)'],
-  114: [false, 'menu topic manager (not applied)'],
+  114: [
+    true,
+    "menu topic manager: a conversation's speakers (none in every save read; else logged)",
+  ],
   1000: [
     true,
     'temp effects: the decals on the world into the decal store (typed effects: none read, logged)',

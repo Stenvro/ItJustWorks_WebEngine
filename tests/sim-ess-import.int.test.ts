@@ -334,10 +334,10 @@ describe.skipIf(!hasGamedata() || path === undefined)(
         // references of their projectiles standing still.
         const created = (imported.save.runtime.state as { created: Map<number, unknown> }).created;
         const flying = ess.changeForms.filter((entry) => entry.type === 2 || entry.type === 5);
-        expect(imported.save.world.projectiles?.length ?? 0).toBe(flying.length);
+        expect(imported.save.world?.projectiles?.length ?? 0).toBe(flying.length);
         for (const entry of flying) expect(created.has(entry.formId ?? 0)).toBe(false);
-        for (const projectile of imported.save.world.projectiles ?? []) {
-          expect(projectile.graph?.named?.sequences.length).toBe(1);
+        for (const projectile of imported.save.world?.projectiles ?? []) {
+          expect(projectile.graph?.named?.sequences?.length).toBe(1);
           expect(projectile.age).toBeGreaterThan(0);
         }
         // The dead counts by actor base (global data 2): GetDeadCount answers them.
@@ -361,7 +361,7 @@ describe.skipIf(!hasGamedata() || path === undefined)(
           expect(days).toBeLessThanOrEqual(imported.save.runtime.state.gameDaysPassed as number);
         }
         // Each member of a combat group knows what its group knew of its target.
-        for (const actor of imported.save.world.actors) {
+        for (const actor of imported.save.world?.actors ?? []) {
           if (actor.fight?.known) expect(actor.combatTarget).toBeDefined();
         }
       }
