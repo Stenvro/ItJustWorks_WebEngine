@@ -9,6 +9,7 @@ import { identity, type Mat4, type Vec3 } from '../render/math.ts';
 import {
   HAVOK_SCALE,
   rigidPart,
+  rigidPartInto,
   smallestExtent,
   type CollisionBody,
   type CollisionConstraint,
@@ -197,6 +198,30 @@ function contactIslands(
 
 /** The layers of ragdolls' bodies: the living's (powered, hit) and the dead's. */
 const RAGDOLL_LAYERS: ReadonlySet<number> = new Set([Layer.biped, Layer.bipedNoCc, Layer.deadBip]);
+
+/**
+ * Kinds of collider some queries want alone, as Rapier collision groups' memberships (bits):
+ * the trigger volumes, the traps (L_TRAP, L_CLOUDTRAP) and the character controllers. Every
+ * collider's group filter takes all of them, so contacts and the other queries are as without
+ * groups; a query for one kind passes the others over inside Rapier, before its predicate,
+ * which is a call back into JavaScript for every candidate (the layers stay ours: layerOf).
+ */
+const QUERY_OTHER = 0x1;
+const QUERY_TRIGGER = 0x2;
+const QUERY_TRAP = 0x4;
+const QUERY_CONTROLLER = 0x8;
+const ALL_GROUPS = 0xffff;
+
+/** Rapier's interaction groups: memberships in the upper 16 bits, the filter in the lower. */
+const groups = (memberships: number, filter: number): number =>
+  ((memberships << 16) | filter) >>> 0;
+
+/** Query filters (interaction groups) by kind of collider, for the queries' `filterGroups`. */
+export const QueryGroups = {
+  triggers: groups(ALL_GROUPS, QUERY_TRIGGER),
+  traps: groups(ALL_GROUPS, QUERY_TRAP),
+  controllers: groups(ALL_GROUPS, QUERY_CONTROLLER),
+} as const;
 
 /** What a collider belongs to: a placed reference, the landscape, an actor. */
 export interface PhysicsOwner {
@@ -455,8 +480,11 @@ function rigidInverse(m: Mat4): Mat4 {
   return out;
 }
 
+/** multiplyInto's product before it is copied out (`out` may be `a` or `b`). */
+const PRODUCT = new Float32Array(16);
+
 function multiplyInto(a: Mat4, b: Mat4, out: Mat4): void {
-  const r = new Float32Array(16);
+  const r = PRODUCT;
   for (let col = 0; col < 4; col++) {
     for (let row = 0; row < 4; row++) {
       let sum = 0;
@@ -954,9 +982,19 @@ export class PhysicsWorld {
 
   /** Gives a collider its layer, owner and material (colliders made outside this class). */
   register(collider: RAPIER.Collider, layer: number, owner: PhysicsOwner, material = 0): void {
-    this.#layers.set(collider.handle, layer);
+    this.#setLayer(collider, layer);
     this.#owners.set(collider.handle, owner);
     if (material !== 0) this.#materials.set(collider.handle, material);
+  }
+
+  /** A collider's layer, and the kinds of query that find it (QueryGroups). */
+  #setLayer(collider: RAPIER.Collider, layer: number): void {
+    this.#layers.set(collider.handle, layer);
+    let kinds = QUERY_OTHER;
+    if ((this.matrix.flags(layer) & LayerFlag.triggerVolume) !== 0) kinds |= QUERY_TRIGGER;
+    if (layer === Layer.trap || layer === Layer.cloudTrap) kinds |= QUERY_TRAP;
+    if (layer === Layer.charController) kinds |= QUERY_CONTROLLER;
+    collider.setCollisionGroups(groups(kinds, ALL_GROUPS));
   }
 
   unregister(collider: RAPIER.Collider): void {
@@ -1503,15 +1541,27 @@ export class PhysicsWorld {
    * the placement `world`: Havok units, world space (as moveBody puts it).
    */
   bodyTarget(placed: PlacedCollision, modelPose: Mat4, world: Mat4): BodyFrame {
-    const local = rigidPart(modelPose);
-    local[12] = (local[12] ?? 0) * placed.scale;
-    local[13] = (local[13] ?? 0) * placed.scale;
-    local[14] = (local[14] ?? 0) * placed.scale;
+    return this.bodyTargets(placed, world)(modelPose);
+  }
+
+  /**
+   * bodyTarget for any number of bodies of a placement under one `world` (an actor's bodies
+   * each frame): the world's rotation and translation taken once, no matrix made per body.
+   */
+  bodyTargets(placed: PlacedCollision, world: Mat4): (modelPose: Mat4) => BodyFrame {
+    const parent = rigidPart(world);
+    const local = new Float32Array(16);
     const pose = new Float32Array(16);
-    multiplyInto(rigidPart(world), local, pose);
-    return {
-      position: [toHavok(pose[12] ?? 0), toHavok(pose[13] ?? 0), toHavok(pose[14] ?? 0)],
-      rotation: matrixQuaternion(pose),
+    return (modelPose) => {
+      rigidPartInto(modelPose, local);
+      local[12] = (local[12] ?? 0) * placed.scale;
+      local[13] = (local[13] ?? 0) * placed.scale;
+      local[14] = (local[14] ?? 0) * placed.scale;
+      multiplyInto(parent, local, pose);
+      return {
+        position: [toHavok(pose[12] ?? 0), toHavok(pose[13] ?? 0), toHavok(pose[14] ?? 0)],
+        rotation: matrixQuaternion(pose),
+      };
     };
   }
 
@@ -1530,6 +1580,13 @@ export class PhysicsWorld {
     const w = most(angular, body.data.maxAngularVelocity);
     body.body.setLinvel({ x: v[0], y: v[1], z: v[2] }, true);
     body.body.setAngvel({ x: w[0], y: w[1], z: w[2] }, true);
+  }
+
+  /** A body's place (Havok units, world space). */
+  bodyFrame(body: PlacedBody): BodyFrame {
+    const t = body.body.translation();
+    const r = body.body.rotation();
+    return { position: [t.x, t.y, t.z], rotation: { x: r.x, y: r.y, z: r.z, w: r.w } };
   }
 
   /** A body's place and velocities (Havok units, world space). */
@@ -2405,8 +2462,7 @@ export class PhysicsWorld {
   setLayer(placed: PlacedCollision, layer: number): void {
     for (const { body, data } of placed.bodies) {
       if (!dynamicBody(data)) continue;
-      for (let i = 0; i < body.numColliders(); i++)
-        this.#layers.set(body.collider(i).handle, layer);
+      for (let i = 0; i < body.numColliders(); i++) this.#setLayer(body.collider(i), layer);
     }
     this.#changed = true;
   }
@@ -2584,7 +2640,7 @@ export class PhysicsWorld {
         return true;
       },
       undefined,
-      undefined,
+      QueryGroups.traps,
       collider,
       undefined,
       this.#isTrap,
@@ -2596,7 +2652,9 @@ export class PhysicsWorld {
    * Query filters by layer alone (the layers are ours: no call into Rapier): given as a query's
    * predicate, the colliders of other layers are passed over before their shapes are tested
    * (each actor's capsule against the landscape's and the buildings' meshes, every frame, was
-   * most of the cost of the trigger and trap queries).
+   * most of the cost of the trigger and trap queries). The query's groups (QueryGroups) pass
+   * most of those over before Rapier calls back; these still answer for colliders made without
+   * a layer.
    */
   readonly #isTrap = (other: RAPIER.Collider): boolean => {
     const layer = this.layerOf(other);
@@ -2670,7 +2728,7 @@ export class PhysicsWorld {
         return true;
       },
       undefined,
-      undefined,
+      QueryGroups.triggers,
       exclude,
       undefined,
       this.#isTriggerVolume,

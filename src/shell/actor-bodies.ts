@@ -600,14 +600,15 @@ export class ActorBodies {
   /** Where the pose puts each body now (Havok units, world). */
   #targets(entry: ActorBody, physics: PhysicsWorld): BodyFrame[] {
     const worlds = entry.pose.worlds;
+    const target = physics.bodyTargets(entry.placed, entry.world);
+    const nodeWorld = this.#nodeWorld;
     return entry.bodies.map(({ node, offset }) =>
-      physics.bodyTarget(
-        entry.placed,
-        multiply(worlds.subarray(node * 16, node * 16 + 16), offset),
-        entry.world,
-      ),
+      target(multiply(worlds.subarray(node * 16, node * 16 + 16), offset, nodeWorld)),
     );
   }
+
+  /** A body's node's world matrix as #targets works it out (one for all). */
+  readonly #nodeWorld = new Float32Array(16);
 
   /**
    * Drives the bodies toward their nodes by the hierarchy controller (keyframe-hierarchy.ts),
@@ -626,7 +627,6 @@ export class ActorBodies {
       const target = targets[i] ?? physics.bodyMotion(posed.body);
       let previous = entry.targets[i];
       if (previous && distance(previous.position, target.position) > JUMP) previous = undefined;
-      const own = physics.bodyMotion(posed.body);
       const velocity = entry.velocities[i];
       const chosen = controlOf(posed);
       return {
@@ -637,8 +637,12 @@ export class ActorBodies {
         // A keyframed body's velocity is the one it was driven at (Rapier keeps none).
         motion:
           posed.body.body.isDynamic() || !velocity
-            ? own
-            : { ...own, linear: velocity.linear, angular: velocity.angular },
+            ? physics.bodyMotion(posed.body)
+            : {
+                ...physics.bodyFrame(posed.body),
+                linear: velocity.linear,
+                angular: velocity.angular,
+              },
         weight: chosen?.weight ?? 1,
       };
     });

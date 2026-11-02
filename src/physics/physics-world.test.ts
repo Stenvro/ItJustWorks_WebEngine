@@ -223,6 +223,61 @@ describe('trigger volumes', () => {
     character.free();
     physics.free();
   });
+
+  it('are found among other colliders by their query groups, traps likewise', () => {
+    const layers = new CollisionMatrix([
+      {
+        formId: 2,
+        editorId: 'L_CHARCONTROLLER',
+        index: Layer.charController,
+        name: '',
+        flags: 0,
+        collidesWith: [Layer.static],
+      },
+      {
+        formId: 3,
+        editorId: 'L_TRIGGER',
+        index: Layer.trigger,
+        name: '',
+        flags: LayerFlag.triggerVolume,
+        collidesWith: [],
+      },
+      { formId: 4, editorId: 'L_TRAP', index: Layer.trap, name: '', flags: 0, collidesWith: [] },
+      {
+        formId: 5,
+        editorId: 'L_STATIC',
+        index: Layer.static,
+        name: '',
+        flags: 0,
+        collidesWith: [],
+      },
+    ]);
+    const physics = new PhysicsWorld(layers, GRAVITY);
+    const at = new Float32Array(IDENTITY);
+    at[12] = 500;
+    at[14] = 100;
+    for (const [layer, reference] of [
+      [Layer.trigger, 0x77],
+      [Layer.trap, 0x88],
+      [Layer.static, 0x99],
+    ] as const) {
+      physics.addPrimitive('box', [100, 100, 100], at, layer, { reference, kind: 'object' });
+    }
+    const character = new CharacterBody(
+      physics,
+      { radius: 14.42, height: 131.84 },
+      settings(new Set()),
+      [500, 0, 50],
+      { reference: 0x14, kind: 'actor' },
+    );
+    physics.step(1 / 60);
+    expect([...physics.triggersOverlapping(character.collider)]).toEqual([0x77]);
+    expect([...physics.trapsTouching(character.collider, 0).keys()]).toEqual([0x88]);
+    // Every collider's filter takes every kind: contacts are as without groups.
+    expect(character.collider.collisionGroups() & 0xffff).toBe(0xffff);
+    character.free();
+    physics.free();
+  });
 });
 
 describe('the character controller', () => {

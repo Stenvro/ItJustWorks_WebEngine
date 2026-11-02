@@ -64,6 +64,15 @@ describe('sampleKeys', () => {
     expect(sampleKeys(linear, 9, ops)).toBe(30);
   });
 
+  it('finds the two keys around a moment among many', () => {
+    const many: KeyGroup<number> = {
+      interpolation: KeyType.linear,
+      keys: Array.from({ length: 101 }, (_, i) => ({ time: i / 10, value: i * 2 })),
+    };
+    expect(sampleKeys(many, 3.05, ops)).toBeCloseTo(61);
+    expect(sampleKeys(many, 9.95, ops)).toBeCloseTo(199);
+  });
+
   it('steps with constant keys and follows tangents with quadratic keys', () => {
     expect(sampleKeys({ ...linear, interpolation: KeyType.constant }, 0.9, ops)).toBe(0);
     const quadratic: KeyGroup<number> = {
@@ -236,5 +245,28 @@ describe('animateLayers', () => {
     expect(animateLayers(scene, [{ tracks: [move(10)], seconds: 0, weight: 0 }]).worlds.size).toBe(
       0,
     );
+  });
+
+  it('places a moved node, everything under it and the nodes above it, no others', () => {
+    // 0 ─ 1 ─ 2 ─ 3, and 0 ─ 4: node 2 moves.
+    const tree = {
+      parents: new Map([
+        [1, 0],
+        [2, 1],
+        [3, 2],
+        [4, 0],
+      ]),
+      transforms: new Map([0, 1, 2, 3, 4].map((ref) => [ref, rest] as const)),
+      roots: [0],
+    };
+    const track: AnimationTrack = {
+      kind: 'transform',
+      block: 2,
+      timing: timing(0),
+      source: { translation: [7, 0, 0], rotation: undefined, scale: undefined, data: undefined },
+    };
+    const frame = animateLayers(tree, [{ tracks: [track], seconds: 0 }]);
+    expect([...frame.worlds.keys()].sort()).toEqual([0, 1, 2, 3]);
+    expect(frame.worlds.get(3)?.[12]).toBeCloseTo(7);
   });
 });
