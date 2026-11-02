@@ -7,12 +7,13 @@ import {
   ChangeRefr,
 } from '../formats/ess/change-forms.ts';
 import { readEss } from '../formats/ess/ess.ts';
-import type { TempEffectEntry } from '../formats/ess/global-data-tables.ts';
+import type { SavedCombat, TempEffectEntry } from '../formats/ess/global-data-tables.ts';
 import { EssWriter, writeSyntheticEss } from '../formats/ess/ess-test-writer.ts';
 import { PapyrusType } from '../formats/ess/papyrus.ts';
 import type { GameState } from '../scripting/runtime/game-state.ts';
 import { ObjectHandle } from '../scripting/values.ts';
 import {
+  essGroupFights,
   essTempDecals,
   formIdMapper,
   importEss,
@@ -495,5 +496,93 @@ describe('the temp effects (global data 1000)', () => {
     expect(decal?.box.slice(4, 7).map((v) => v + 0)).toEqual([0, 0, -64]);
     expect(decal?.box.slice(12, 15)).toEqual([10, 20, 30]);
     expect(decal?.left).toBeUndefined();
+  });
+});
+
+describe('the combat groups (global data 101)', () => {
+  const NEVER = -3.4028234663852886e38;
+  const DRAGON = 0x1001;
+  const SOLDIER = 0x1002;
+  const place = (x: number): { position: [number, number, number]; cell: number } => ({
+    position: [x, 0, 0],
+    cell: 0x3c,
+  });
+  const nowhere = { position: [0, 0, 0] as [number, number, number], cell: 0 };
+  const group = (search?: SavedCombat['search']): SavedCombat => ({
+    unknown0: 0,
+    serialNum: 1,
+    targets: [
+      {
+        reference: SOLDIER,
+        detectLevel: 30,
+        stealthPoints: 0,
+        attackers: 1,
+        flags: 1,
+        attackedMember: DRAGON,
+        positions: [place(100), place(100), place(100), place(90), nowhere],
+        times: [-0.5, -0.5, -0.5, NEVER, -7, NEVER],
+      },
+      {
+        reference: 0x14,
+        detectLevel: -4,
+        stealthPoints: 40,
+        attackers: 0,
+        flags: 2,
+        attackedMember: DRAGON,
+        positions: [place(300), place(300), place(300), nowhere, nowhere],
+        times: [-12, -12, -12, NEVER, NEVER, NEVER],
+      },
+    ],
+    members: [{ reference: DRAGON, strengthTimer: 50, threat: 1000 }],
+    pairs: [],
+    ...(search && { search }),
+    pair0: [0, 0],
+    floats: [],
+    pair1: [0, 0],
+    unknown1: 0,
+  });
+
+  it('give each member what its group knew of its targets, as seconds before the save', () => {
+    const fights = essGroupFights(group(), (id) => id);
+    expect(fights.get(SOLDIER)?.known).toEqual({
+      stealthPoints: 0,
+      known: true,
+      lost: false,
+      searching: false,
+      lastKnown: [100, 0, 0],
+      lastKnownAgo: 0.5,
+      detectedAt: [100, 0, 0],
+      detectedAgo: 0.5,
+      attackedAt: [90, 0, 0],
+      attackedAgo: 7,
+    });
+    const player = fights.get(0x14)?.known;
+    expect(player).toMatchObject({ lost: true, known: false, lastKnownAgo: 12, stealthPoints: 40 });
+    expect(player?.detectedAt).toBeUndefined();
+    expect(player?.attackedAt).toBeUndefined();
+    expect(fights.get(0x14)?.search).toBeUndefined();
+  });
+
+  it("give the target the group searches for its search, from the search's place", () => {
+    const fights = essGroupFights(
+      group({
+        unknown0: 0x14,
+        pairs: [],
+        unknown1: 0,
+        position: place(320),
+        unknown2: 1024,
+        searchPoints: [],
+        searchers: [],
+      }),
+      (id) => id,
+    );
+    expect(fights.get(0x14)?.known?.searching).toBe(true);
+    expect(fights.get(0x14)?.search).toMatchObject({
+      at: [320, 0, 0],
+      phase: 'go',
+      elapsed: 0,
+      radius: 1024,
+    });
+    expect(fights.get(SOLDIER)?.search).toBeUndefined();
   });
 });

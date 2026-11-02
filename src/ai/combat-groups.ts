@@ -154,6 +154,28 @@ export interface GroupTarget {
   attackers: number;
 }
 
+/**
+ * What a group knows of a target as a save keeps it (docs/formats/save.md): its stealth
+ * points, known or lost, where it was detected, last known, attacked from and heard, as seconds
+ * before the save; and whether the group searched. The members' levels are not kept (each
+ * member's next detection test tells its own again).
+ */
+export interface SavedGroupTarget {
+  readonly stealthPoints: number;
+  readonly known: boolean;
+  readonly lost: boolean;
+  readonly searching: boolean;
+  readonly detectedAt?: Vec3 | undefined;
+  readonly detectedAgo?: number | undefined;
+  readonly lastKnown?: Vec3 | undefined;
+  readonly lastKnownAgo?: number | undefined;
+  readonly lostAgo?: number | undefined;
+  readonly attackedAt?: Vec3 | undefined;
+  readonly attackedAgo?: number | undefined;
+  readonly eventAt?: Vec3 | undefined;
+  readonly eventAgo?: number | undefined;
+}
+
 export interface CombatGroup {
   readonly id: number;
   readonly members: Set<number>;
@@ -257,6 +279,58 @@ export class CombatGroups {
   /** What an actor's group knows of a target (undefined: not its target). */
   target(actor: number, target: number): GroupTarget | undefined {
     return this.#of.get(actor)?.targets.get(target);
+  }
+
+  /**
+   * What an actor's group knows of its target, as a save keeps it (times as seconds before
+   * `now`); undefined: not its group's target.
+   */
+  saveTarget(actor: number, target: number, now: number): SavedGroupTarget | undefined {
+    const group = this.#of.get(actor);
+    const known = group?.targets.get(target);
+    if (!group || !known) return undefined;
+    const ago = (time: number): number | undefined => (time === -Infinity ? undefined : now - time);
+    const place = (at: Vec3 | undefined): Vec3 | undefined => at && copy(at);
+    return {
+      stealthPoints: known.stealthPoints,
+      known: known.known,
+      lost: known.lost,
+      searching: group.searching,
+      detectedAt: place(known.detectedAt),
+      detectedAgo: ago(known.detectedTime),
+      lastKnown: place(known.lastKnown),
+      lastKnownAgo: ago(known.lastKnownTime),
+      lostAgo: ago(known.lostTime),
+      attackedAt: place(known.attackedAt),
+      attackedAgo: ago(known.attackedTime),
+      eventAt: place(known.eventAt),
+      eventAgo: ago(known.eventTime),
+    };
+  }
+
+  /**
+   * A loaded save's knowledge of an actor's target put back into its group (the actor in its
+   * group with the target: as its fight was taken up again), `now` the groups' clock; the
+   * members' own levels are told again by their next detection tests.
+   */
+  restoreTarget(actor: number, target: number, saved: SavedGroupTarget, now: number): void {
+    const group = this.#of.get(actor);
+    const known = group && (group.targets.get(target) ?? this.addTarget(actor, target));
+    if (!group || !known) return;
+    const time = (ago: number | undefined): number => (ago === undefined ? -Infinity : now - ago);
+    known.stealthPoints = saved.stealthPoints;
+    known.known = saved.known;
+    known.lost = saved.lost;
+    known.detectedAt = saved.detectedAt && copy(saved.detectedAt);
+    known.detectedTime = time(saved.detectedAgo);
+    known.lastKnown = saved.lastKnown && copy(saved.lastKnown);
+    known.lastKnownTime = time(saved.lastKnownAgo);
+    known.lostTime = time(saved.lostAgo);
+    known.attackedAt = saved.attackedAt && copy(saved.attackedAt);
+    known.attackedTime = time(saved.attackedAgo);
+    known.eventAt = saved.eventAt && copy(saved.eventAt);
+    known.eventTime = time(saved.eventAgo);
+    if (saved.searching) group.searching = true;
   }
 
   /** Whether an actor's group searches for its targets. */

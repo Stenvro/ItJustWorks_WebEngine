@@ -53,12 +53,36 @@ export const SEARCH_RADIUS = 768;
 
 export type SearchState = 'searching' | 'gave-up';
 
+/** A search's step (Wait to Start Search, the run or walk, a look round, a wander, over). */
+export type SearchPhase = 'wait' | 'go' | 'look' | 'wander' | 'done';
+
+/**
+ * A search as a save keeps it: its place, its step and how far into it, the seconds searched.
+ * A walk under way is walked again from where the searcher stands.
+ */
+export interface SavedCombatSearch {
+  readonly at: Vec3;
+  readonly phase: SearchPhase;
+  /** Seconds left of its wait or its look. */
+  readonly left: number;
+  readonly looks: number;
+  readonly elapsed: number;
+  /** Its run to the place not made yet (it runs; then it walks). */
+  readonly first: boolean;
+  /** It looks round at the place itself (else at a wander point). */
+  readonly atPlace: boolean;
+  /** The wander point it walks to. */
+  readonly target: Vec3;
+  /** Its search radius (drawn as it began). */
+  readonly radius?: number | undefined;
+}
+
 export class CombatSearch {
   readonly #body: SearchBody;
   readonly #settings: SearchSettings;
   readonly #random: () => number;
   #at: Vec3;
-  #phase: 'wait' | 'go' | 'look' | 'wander' | 'done';
+  #phase: SearchPhase;
   /** It looks round at the place itself (Investigating), else at a wander point (Looking). */
   #atPlace = true;
   #walking: Promise<boolean> | undefined;
@@ -78,6 +102,41 @@ export class CombatSearch {
     this.#random = random;
     this.#left = settings.searchStartWaitTime ?? 0;
     this.#phase = this.#left > 0 ? 'wait' : 'go';
+  }
+
+  /** A search a save kept, going on from its step (a walk under way starts again). */
+  static restore(
+    saved: SavedCombatSearch,
+    body: SearchBody,
+    settings: SearchSettings,
+    random: () => number,
+  ): CombatSearch {
+    const radius = saved.radius ?? settings.searchRadius;
+    const kept = { ...settings, ...(radius !== undefined && { searchRadius: radius }) };
+    const search = new CombatSearch(saved.at, body, kept, random);
+    search.#phase = saved.phase;
+    search.#left = saved.left;
+    search.#looks = saved.looks;
+    search.#elapsed = saved.elapsed;
+    search.#first = saved.first;
+    search.#atPlace = saved.atPlace;
+    search.#target = [saved.target[0], saved.target[1], saved.target[2]];
+    return search;
+  }
+
+  /** What a save keeps of it. */
+  save(): SavedCombatSearch {
+    return {
+      at: [this.#at[0], this.#at[1], this.#at[2]],
+      phase: this.#phase,
+      left: this.#left,
+      looks: this.#looks,
+      elapsed: this.#elapsed,
+      first: this.#first,
+      atPlace: this.#atPlace,
+      target: [this.#target[0], this.#target[1], this.#target[2]],
+      radius: this.#settings.searchRadius,
+    };
   }
 
   /** Where it searches round. */

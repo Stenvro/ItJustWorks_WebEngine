@@ -140,15 +140,33 @@ export interface SavedPosition {
 /** UESP's UnkStruct: two floats. */
 type FloatPair = [number, number];
 
-export interface CombatMember {
-  readonly unknown0: number;
-  readonly unknown1: number;
-  readonly unknown2: number;
-  readonly unknown3: number;
-  readonly unknown4: number;
-  readonly target: number;
+/**
+ * What a combat group knows of one of its targets (UESP lists these as the group's members;
+ * the saves read show them to be its targets, CommonLibSSE's CombatTarget: Alduin's group at
+ * Helgen holds twelve, the player and the soldiers, each having attacked Alduin, its one member).
+ */
+export interface CombatTargetEntry {
+  /** The target. */
+  readonly reference: number;
+  /** The group's detection level of it (negative: below detection). */
+  readonly detectLevel: number;
+  readonly stealthPoints: number;
+  /** 0 or 1 in the saves read (the members fighting it: the player, Alduin's one target, 1). */
+  readonly attackers: number;
+  /** 1 known, 2 lost (CommonLibSSE's flags). */
+  readonly flags: number;
+  /** The member it attacked. */
+  readonly attackedMember: number;
+  /**
+   * Five places with their cells, in CommonLibSSE's order: the last known one, two more, the one
+   * it attacked from (set alone in the saves read with the fifth time) and one more.
+   */
   readonly positions: readonly SavedPosition[];
-  readonly unknown5: readonly number[];
+  /**
+   * Six time stamps, seconds relative to the save (negative: before; −FLT_MAX never): the
+   * third is the last known place's, the fifth the attack's (TODO(M13): the others' pairing).
+   */
+  readonly times: readonly number[];
 }
 
 export interface CombatSearch {
@@ -198,11 +216,16 @@ export interface CombatSearchGrids {
 export interface SavedCombat {
   readonly unknown0: number;
   readonly serialNum: number;
-  readonly members: readonly CombatMember[];
-  readonly targets: readonly {
+  /** Its targets and what it knows of each (UESP's members). */
+  readonly targets: readonly CombatTargetEntry[];
+  /**
+   * Its members (UESP's targets; CommonLibSSE's CombatMember): the actor, a timer (its
+   * strength's update) and its threat (Alduin's 117750, a soldier's 545).
+   */
+  readonly members: readonly {
     readonly reference: number;
-    readonly unknown0: number;
-    readonly unknown1: number;
+    readonly strengthTimer: number;
+    readonly threat: number;
   }[];
   /** The 4 pairs, then the 11. */
   readonly pairs: readonly FloatPair[];
@@ -246,26 +269,25 @@ export function readCombat(data: EssSource, resolve: RefIdResolver): CombatData 
   for (let count = reader.vsval(), i = 0; i < count; i++) {
     const unknown0 = reader.u32();
     const serialNum = reader.u32();
-    const members: CombatMember[] = [];
-    for (let n = reader.vsval(), j = 0; j < n; j++) {
-      const member = {
-        unknown0: resolve(reader.refId()),
-        unknown1: reader.u32(),
-        unknown2: reader.f32(),
-        unknown3: reader.u16(),
-        unknown4: reader.u16(),
-        target: resolve(reader.refId()),
-        positions: [0, 1, 2, 3, 4].map(() => position(reader, resolve)),
-        unknown5: floats(reader, 6),
-      };
-      members.push(member);
-    }
-    const targets: SavedCombat['targets'][number][] = [];
+    const targets: CombatTargetEntry[] = [];
     for (let n = reader.vsval(), j = 0; j < n; j++) {
       targets.push({
         reference: resolve(reader.refId()),
-        unknown0: reader.f32(),
-        unknown1: reader.f32(),
+        detectLevel: reader.i32(),
+        stealthPoints: reader.f32(),
+        attackers: reader.u16(),
+        flags: reader.u16(),
+        attackedMember: resolve(reader.refId()),
+        positions: [0, 1, 2, 3, 4].map(() => position(reader, resolve)),
+        times: floats(reader, 6),
+      });
+    }
+    const members: SavedCombat['members'][number][] = [];
+    for (let n = reader.vsval(), j = 0; j < n; j++) {
+      members.push({
+        reference: resolve(reader.refId()),
+        strengthTimer: reader.f32(),
+        threat: reader.f32(),
       });
     }
     const pairs: FloatPair[] = [];
@@ -275,8 +297,8 @@ export function readCombat(data: EssSource, resolve: RefIdResolver): CombatData 
     combats.push({
       unknown0,
       serialNum,
-      members,
       targets,
+      members,
       pairs,
       ...(search && { search }),
       pair0: pair(reader),
