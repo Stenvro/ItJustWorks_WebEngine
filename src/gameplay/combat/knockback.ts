@@ -44,6 +44,32 @@ export function knockbackApplies(input: KnockbackInput): boolean {
 }
 
 /**
+ * A trap's push back (ProcessTrapHit's afPushback, observed in the original): the same
+ * character controller push as a hit's knockback, by the trap's own pushback (at most
+ * fKnockbackForceMax) over fKnockbackTime, away from the trap; none for an actor in a kill move
+ * or of a Not Pushable race, none without a pushback. Undefined: no push.
+ */
+export function trapPushback(
+  trap: readonly [number, number, number],
+  target: readonly [number, number, number],
+  pushback: number,
+  input: Pick<KnockbackInput, 'inKillMove' | 'notPushable'>,
+  settings: CombatSettings,
+): { readonly velocity: readonly [number, number, number]; readonly seconds: number } | undefined {
+  if (!(pushback > 0) || !knockbackApplies({ ...input, blocked: 0, projectile: false }))
+    return undefined;
+  // Its way taken flat: the controller moves along the ground. TODO(M13): whether the original
+  // gives a trap above or below the actor less push for the height between them.
+  const from: readonly [number, number, number] = [trap[0], trap[1], target[2]];
+  return knockbackVelocity(
+    from,
+    target,
+    knockbackForce(0, settings, pushback),
+    settings.knockbackTime,
+  );
+}
+
+/**
  * The controller's push: `force` units along the way from `from` to `to` over `seconds`,
  * as a velocity (game units a second) and how long it lasts. TODO(M13): whether the engine's
  * controller holds that speed for the whole time or lets it fade is not known; held here.

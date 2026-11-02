@@ -275,10 +275,14 @@ describe.skipIf(!hasGamedata() || path === undefined)(
         // no saves folder
       }
       const probe = await openSim();
-      const world = await essWorld(probe.db);
+      const saves = await Promise.all(
+        names.map(async (name) => {
+          const ess = readEss(new Uint8Array(readFileSync(join(SAVES, name))));
+          return { name, ess, world: await essWorld(probe.db, ess) };
+        }),
+      );
       await probe.close();
-      for (const name of names) {
-        const ess = readEss(new Uint8Array(readFileSync(join(SAVES, name))));
+      for (const { name, ess, world } of saves) {
         const resolve = refIdResolver(ess.formIds);
         const imported = importEss(ess, world, { name: 'Imported', number: 1, now: 0 });
         const state = imported.save.runtime.state as {
@@ -326,6 +330,40 @@ describe.skipIf(!hasGamedata() || path === undefined)(
         const pending = (imported.save.runtime.storyManager as { pending?: unknown[] } | undefined)
           ?.pending;
         expect(pending?.length ?? 0).toBe(waiting);
+        // The missiles and flame sprays in flight fly on (with their graphs by names), not as
+        // references of their projectiles standing still.
+        const created = (imported.save.runtime.state as { created: Map<number, unknown> }).created;
+        const flying = ess.changeForms.filter((entry) => entry.type === 2 || entry.type === 5);
+        expect(imported.save.world?.projectiles?.length ?? 0).toBe(flying.length);
+        for (const entry of flying) expect(created.has(entry.formId ?? 0)).toBe(false);
+        for (const projectile of imported.save.world?.projectiles ?? []) {
+          expect(projectile.graph?.named?.sequences?.length).toBe(1);
+          expect(projectile.age).toBeGreaterThan(0);
+        }
+        // The dead counts by actor base (global data 2): GetDeadCount answers them.
+        const tes = readGlobalData(2, globalData(ess, 2) ?? new Uint8Array(), resolve);
+        const deadCounts = (imported.save.runtime.state as { deadCounts: Map<number, number> })
+          .deadCounts;
+        for (const { base, count } of (
+          tes?.value as { deadCounts: { base: number; count: number }[] } | undefined
+        )?.deadCounts ?? []) {
+          expect([base, deadCounts.get(base)]).toEqual([base, count]);
+        }
+        // The quest nodes' runs (SMQN): a run for each quest the node started, in game days
+        // within the game's time so far.
+        const runs = (
+          imported.save.runtime.storyManager as { lastStarted?: Map<number, number> } | undefined
+        )?.lastStarted;
+        const nodes = ess.changeForms.filter((entry) => entry.type === 36);
+        if (nodes.length > 0) expect(runs?.size ?? 0).toBeGreaterThan(0);
+        for (const days of runs?.values() ?? []) {
+          expect(days).toBeGreaterThan(0);
+          expect(days).toBeLessThanOrEqual(imported.save.runtime.state.gameDaysPassed as number);
+        }
+        // Each member of a combat group knows what its group knew of its target.
+        for (const actor of imported.save.world?.actors ?? []) {
+          if (actor.fight) expect(actor.combatTarget).toBeDefined();
+        }
       }
     }, 300_000);
   },

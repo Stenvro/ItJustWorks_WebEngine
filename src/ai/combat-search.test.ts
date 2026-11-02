@@ -85,4 +85,54 @@ describe('combat search', () => {
     search.cancel();
     expect(search.update(1)).toBe('gave-up');
   });
+  it('goes on from its step and its time searched after a save', async () => {
+    const searcher = body();
+    const search = new CombatSearch(
+      [1000, 0, 0],
+      searcher,
+      { ...settings, searchRadius: 400 },
+      () => 0.5,
+    );
+    search.update(0.1);
+    await settle();
+    search.update(0.1);
+    search.update(1);
+    // It looks round at the place, part-way through its first look.
+    const saved = search.save();
+    expect(saved).toMatchObject({
+      phase: 'look',
+      looks: 1,
+      first: false,
+      atPlace: true,
+      radius: 400,
+    });
+    expect(saved.left).toBeCloseTo(settings.searchInvestigateTime - 1);
+    expect(saved.elapsed).toBeCloseTo(1.2);
+    const loaded = body();
+    loaded.at = [1000, 0, 0];
+    const again = CombatSearch.restore(saved, loaded, settings, () => 0.5);
+    expect(again.at).toEqual([1000, 0, 0]);
+    expect(again.elapsed).toBeCloseTo(1.2);
+    // The rest of its look, then its two more: no run to the place again.
+    again.update(settings.searchInvestigateTime - 1);
+    expect(loaded.trips).toHaveLength(0);
+    expect(loaded.faced).toHaveLength(1);
+    again.update(settings.searchInvestigateTime);
+    again.update(settings.searchInvestigateTime);
+    again.update(0.1);
+    // Then a walk to a point within the radius it drew (400, not the default).
+    expect(loaded.trips).toHaveLength(1);
+    expect(loaded.trips[0]?.run).toBe(false);
+    const [x, y] = loaded.trips[0]?.to ?? [0, 0, 0];
+    expect(Math.hypot(x - 1000, y)).toBeLessThanOrEqual(400);
+    // Saved mid-walk, it walks there again from where it stands.
+    const walking = again.save();
+    expect(walking.phase).toBe('wander');
+    const third = body();
+    const resumed = CombatSearch.restore(walking, third, settings, () => 0.5);
+    resumed.update(0.1);
+    expect(third.trips).toEqual([{ to: walking.target, run: false }]);
+    // Its time in all carries on: it gives up at fDetectionStateExpireTime counted from the start.
+    expect(resumed.update(settings.stateExpireTime - walking.elapsed)).toBe('gave-up');
+  });
 });

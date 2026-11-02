@@ -59,7 +59,7 @@ describe('ESS global data, tables 2 and 3 (built from the documented layouts)', 
 
   it('reads combat, with a search and its detail', () => {
     const w = new EssWriter().u32(5).vsval(1).u32(9).u32(4);
-    // one member
+    // one target
     w.vsval(1);
     ref(w, 0x14).u32(1).f32(0.5).u16(2).u16(3);
     ref(w, 0x13bbf);
@@ -72,7 +72,7 @@ describe('ESS global data, tables 2 and 3 (built from the documented layouts)', 
         0x3c,
       );
     for (let i = 0; i < 6; i++) w.f32(i);
-    // one target
+    // one member
     w.vsval(1);
     ref(w, 0x13bbf).f32(1).f32(2);
     for (let i = 0; i < 15; i++) w.f32(i).f32(-i);
@@ -109,8 +109,16 @@ describe('ESS global data, tables 2 and 3 (built from the documented layouts)', 
     ref(w, 0x14).f32(2).f32(3).f32(4).f32(5).f32(6);
     const combat = readCombat(w.done(), resolve);
     expect(combat.nextNum).toBe(5);
-    expect(combat.combats[0]?.members[0]?.target).toBe(0x13bbf);
-    expect(combat.combats[0]?.members[0]?.positions[4]).toEqual({
+    expect(combat.combats[0]?.targets[0]).toMatchObject({
+      reference: 0x14,
+      attackedMember: 0x13bbf,
+    });
+    expect(combat.combats[0]?.members[0]).toEqual({
+      reference: 0x13bbf,
+      strengthTimer: 1,
+      threat: 2,
+    });
+    expect(combat.combats[0]?.targets[0]?.positions[4]).toEqual({
       position: [4, 5, 6],
       cell: 0x3c,
     });
