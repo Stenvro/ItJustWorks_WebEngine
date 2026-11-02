@@ -1426,11 +1426,71 @@ browsers, and the second run's streaming flight came first, its shaders not yet 
 
 What is left (TODO(M13)): the opaque pass still binds and draws each draw (the same bundles
 would need the light lists chosen per draw and the room and occluder culling per cluster); the
-physics step and the actors' graphs (others' areas) are the largest parts now. The streaming
-flight's long frames come with each new row of cells and are not profiled yet (TODO(M13): a
-`streaming --cpu-profile` run to find which of the cell's scene, decals, collision and texture
-uploads holds the frame, then spread it over frames); the static scenes gain while the flight
-does not, so the bundles' recording as cells arrive is the first suspect.
+physics step and the actors' graphs (others' areas) are the largest parts now.
+
+#### Streaming
+
+A `streaming --cpu-profile` run (Chrome warmed by `riverwood` first) split into frames (from
+one start of the render loop's callback to the next) showed what held the 46 frames of 33 ms
+and more as cells came in: placing a cell's grass (`placeGrass` with `textureWeightsAt`: 20–50 ms
+a cell, 600 ms of them), the first fit of each distance low-pass coefficient as sounds came in
+range (`lowPassFor`: 20 ms a coefficient, 350 ms), removing a left cell's bodies from Rapier (up
+to 30 ms a cell), then texture uploads, the cells' scenes, terrain, navmeshes and actors'
+placement. Recording the shadow casters' render bundles was not among them: about 20 ms in the
+whole minute (`BUNDLE_SETTLE` holds); hashing which casters a cluster draws costs more (0.4 %).
+
+What changed:
+
+- **Grass in the asset workers**: a cell's grass is placed and packed for the GPU (one
+  `Float32Array` per type, `packGrass`) in a worker (`AssetLoader.placeGrass`, request kind
+  `grass`); the main thread only makes the instance buffer.
+- **Streaming work by turns** (`src/render/frame-work.ts`): a cell's load awaits
+  `frameTurn()` before each step that holds the main thread (its terrain, its objects' instances,
+  its scene, its decals, its navmesh, each grass field; every model's buffers and pipelines in
+  `createModel`; every texture's upload, its mip levels written in slices of about 2 MB). Turns
+  are given between frames, one step at a time, until the frame's 4 ms are spent
+  (`FRAME_WORK_BUDGET_MS`, measured from a turn to the next turn: whatever ran meanwhile counts
+  too); the rest waits for the next frame, as the original streams cells over several frames.
+  Behind a loading screen (`setFrameWorkRush`), without a render loop (the headless simulation)
+  or with no frame for 250 ms (a hidden tab) turns are given at once.
+- **Bodies of left cells removed over frames**: `PlaySession.remove(group, later)` queues them;
+  each frame removes at least one and goes on for 1 ms of the collision budget. They lie two cells
+  and more from the player meanwhile; nothing draws or follows them. A load door's change of place
+  and leaving the world remove at once.
+- **The low-pass fit** (`distance-filter.ts`) takes each frequency's sines and cosines once and
+  the biquad's coefficients once per trial: 1.7 ms a coefficient instead of 14 (Node), the same
+  filters.
+- **A scene's bound** (`GpuScene.bound`): its draws that never move are bounded once, and after a
+  draw moved only the moving ones are, merged with that (`mergeBounds`); a cell with one moving
+  draw walked all its draws every frame (`drawShadows`: 1.9 s → 1.6 s of the minute).
+
+Before (main 1e15dcd0) and after, two runs each, `riverwood`, `streaming`, `whiterun-day` in
+that order, 60 s each, no profiler, headless Chrome on the shared machine (its load varied:
+`riverwood` alone went 106 → 111 fps in a back-to-back pair, `whiterun-day` 74 → 68):
+
+| scenario     | run     | fps   | p50 (ms) | p95 (ms) | p99 (ms) | > 33 ms | > 50 ms |
+| ------------ | ------- | ----- | -------- | -------- | -------- | ------- | ------- |
+| streaming    | before  | 120.2 | 5.6      | 16.7     | 27.8     | 48      | 16      |
+|              | before² | 108.0 | 5.6      | 16.7     | 33.3     | 47      | 17      |
+|              | after   | 100.3 | 11.1     | 16.7     | 22.3     | 5       | 2       |
+|              | after²  | 96.3  | 11.1     | 16.7     | 22.3     | 9       | 3       |
+| riverwood    | before  | 116.1 | 11.0     | 11.2     | 16.8     | 8       | 1       |
+|              | before² | 110.5 | 11.0     | 16.7     | 22.2     | 6       | 1       |
+|              | after   | 98.3  | 11.1     | 16.7     | 16.8     | 5       | 1       |
+|              | after²  | 98.7  | 11.1     | 16.7     | 16.8     | 3       | 0       |
+| whiterun-day | before  | 86.0  | 11.1     | 16.7     | 22.3     | 7       | 1       |
+|              | before² | 73.5  | 11.1     | 22.2     | 27.8     | 25      | 8       |
+|              | after   | 62.8  | 16.7     | 22.3     | 27.8     | 7       | 3       |
+|              | after²  | 68.1  | 11.2     | 22.3     | 33.3     | 23      | 3       |
+
+The flight's long frames went from 47–48 to 5–9 (over 33 ms) and from 16–17 to 2–3 (over
+50 ms), its p99 from 28–33 ms to 22 ms. The mean fps moved with the machine's load: the
+profiles of the flight before and after spend the same 42 s of the minute in the render loop's
+callback, over 6,116 frames before and 6,547 after. Profiled again, 6 frames of the flight are
+over 33 ms; what holds them is no longer the streaming's own work (TODO(M13), others' areas:
+`ActorsAway.#plan` routing actors away from the player through doors, an actor's placement
+(`actors.ts` `place`, a new behavior graph), the HUD's Ruffle player, a music track's stream;
+the records of a cell (`loadCellData`, zlib on the main thread) are read in 1–3 ms steps).
 
 ## The lighting technique's flags and the fades (observed in the original)
 

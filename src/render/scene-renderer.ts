@@ -117,7 +117,7 @@ import {
   type ShadowSlot,
 } from './light-shadows.ts';
 import { MAX_FOCUS_LIGHTS, MAX_FOCUS_SHADOWS, type FocusShadow } from './focus-shadows.ts';
-import { boundOf, orderByBindings, type SceneBound } from './scene-bound.ts';
+import { boundOf, mergeBounds, orderByBindings, type SceneBound } from './scene-bound.ts';
 import waterShader from './shaders/water.wgsl?raw';
 import type { TextureCache } from './texture-cache.ts';
 import { CELL_SIZE } from '../world/land.ts';
@@ -129,6 +129,7 @@ import { materialTextures, missingTextures } from './material-slots.ts';
 import { projectedUVParams, type MaterialObject } from '../world/material-object.ts';
 import type { WaterType } from '../world/water.ts';
 import { releaseAfterFrame } from './frame-release.ts';
+import { frameTurn } from './frame-work.ts';
 
 export const SAMPLE_COUNT = 4;
 export const DEPTH_FORMAT: GPUTextureFormat = 'depth32float';
@@ -1373,6 +1374,10 @@ export class GpuScene {
   /** A sphere round all its draws (see bound); null: never culled whole. */
   #bound: SceneBound | null = null;
   #boundStale = true;
+  /** The bound of the draws that never move ('none': all move; null: never culled whole). */
+  #fixedBound: SceneBound | 'none' | null | undefined;
+  /** The draws that move (#workBound). */
+  #movers: Draw[] | undefined;
   #shadowCasters: Draw[] | undefined;
   #reflected: Draw[] | undefined;
   #water: Draw[] | undefined;
@@ -1417,9 +1422,37 @@ export class GpuScene {
   get bound(): SceneBound | null {
     if (this.#boundStale) {
       this.#boundStale = false;
-      this.#bound = boundOf(this.draws);
+      this.#bound = this.#workBound();
     }
     return this.#bound;
+  }
+
+  /**
+   * The draws that never move are bounded once; after that only those that move are (a moving
+   * instance's, a part following a bone), merged with it. Every frame a scene with one moving
+   * draw walked all its thousand draws before.
+   */
+  #workBound(): SceneBound | null {
+    if (!this.#movers) {
+      const moves = new Set<Draw>();
+      for (const entry of this.moving) moves.add(entry.draw);
+      for (const draw of this.animated)
+        for (const followed of draw.follows?.draws ?? []) moves.add(followed);
+      if (this.draws.some((draw) => draw.sky || draw.firstPerson)) {
+        // Draws never culled (the sky's, first person's): the scene is never culled whole.
+        this.#movers = [];
+        this.#fixedBound = null;
+      } else {
+        this.#movers = [...moves];
+        const fixed = this.draws.filter((draw) => !moves.has(draw));
+        this.#fixedBound = fixed.length > 0 ? boundOf(fixed) : 'none';
+      }
+    }
+    const fixed = this.#fixedBound;
+    if (fixed === null || fixed === undefined) return null;
+    const moving = this.#movers.length > 0 ? boundOf(this.#movers) : null;
+    if (fixed === 'none') return moving;
+    return moving ? mergeBounds(fixed, moving) : fixed;
   }
 
   /**
@@ -2480,6 +2513,8 @@ export class SceneRenderer {
 
   async createModel(data: ModelData, textures: TextureCache): Promise<GpuModel> {
     const device = this.#device;
+    // Its buffers and pipelines in a frame's share of streaming work (frame-work.ts).
+    await frameTurn();
     const buffers: GPUBuffer[] = [];
     const parts = await Promise.all(
       data.parts.map(async (part): Promise<GpuPart> => {

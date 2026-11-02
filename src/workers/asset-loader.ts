@@ -10,6 +10,8 @@ import type { ModelTextureSwaps } from '../render/actor-model.ts';
 import type { CollisionData } from '../physics/collision-data.ts';
 import type { ModelData } from '../render/model-data.ts';
 import type { Vfs } from '../vfs/vfs.ts';
+import type { GrassListing, PackedGrass } from '../world/grass.ts';
+import type { LandData } from '../world/land.ts';
 import { handleAssetRequest } from './asset-work.ts';
 import type { AssetRequest, AssetResponse } from './protocol.ts';
 
@@ -122,6 +124,40 @@ export class AssetLoader {
     const response = await this.#request('texture', path);
     if (!response.ok || response.kind !== 'texture') throw new Error(describe(response));
     return response.texture;
+  }
+
+  /**
+   * A cell's grass, placed and packed by type off the main thread (a cell's placement took
+   * 20–50 ms there, one long frame per cell as cells streamed in).
+   */
+  async placeGrass(
+    land: LandData,
+    cellX: number,
+    cellY: number,
+    listings: readonly GrassListing[],
+    waterHeight: number | undefined,
+  ): Promise<readonly PackedGrass[]> {
+    const response = await this.#send(
+      {
+        id: 0,
+        kind: 'grass',
+        path: `grass of cell ${String(cellX)},${String(cellY)}`,
+        // The colours stay here: placement does not read them.
+        land: {
+          heights: land.heights,
+          normals: land.normals,
+          colors: undefined,
+          quadrants: land.quadrants,
+        },
+        cellX,
+        cellY,
+        listings,
+        waterHeight,
+      },
+      [],
+    );
+    if (!response.ok || response.kind !== 'grass') throw new Error(describe(response));
+    return response.fields;
   }
 
   dispose(): void {

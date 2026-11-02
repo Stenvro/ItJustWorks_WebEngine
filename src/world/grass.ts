@@ -264,3 +264,80 @@ export function placeGrass(
   }
   return placed;
 }
+
+/** Floats per packed plant: position, rotation, size across and up, shade, 0, ground normal, 0. */
+export const GRASS_INSTANCE_FLOATS = 12;
+
+/** One grass type's plants in a cell, packed as the renderer draws them (one instance each). */
+export interface PackedGrass {
+  /** The grass type's form id (GRAS). */
+  readonly formId: number;
+  readonly count: number;
+  /** GRASS_INSTANCE_FLOATS per plant. */
+  readonly data: Float32Array;
+  /** The plants' positions' extent. */
+  readonly min: readonly [number, number, number];
+  readonly max: readonly [number, number, number];
+}
+
+/** Packs placed plants for drawing (an asset worker does it with the placement: protocol.ts). */
+export function packGrass(formId: number, plants: readonly GrassInstance[]): PackedGrass {
+  const data = new Float32Array(plants.length * GRASS_INSTANCE_FLOATS);
+  const min: [number, number, number] = [Infinity, Infinity, Infinity];
+  const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  plants.forEach((plant, i) => {
+    const at = i * GRASS_INSTANCE_FLOATS;
+    const [x, y, z] = plant.position;
+    data[at] = x;
+    data[at + 1] = y;
+    data[at + 2] = z;
+    data[at + 3] = plant.rotation;
+    data[at + 4] = plant.scaleXY;
+    data[at + 5] = plant.scaleZ;
+    data[at + 6] = plant.shade;
+    data[at + 8] = plant.normal[0];
+    data[at + 9] = plant.normal[1];
+    data[at + 10] = plant.normal[2];
+    min[0] = Math.min(min[0], x);
+    min[1] = Math.min(min[1], y);
+    min[2] = Math.min(min[2], z);
+    max[0] = Math.max(max[0], x);
+    max[1] = Math.max(max[1], y);
+    max[2] = Math.max(max[2], z);
+  });
+  return { formId, count: plants.length, data, min, max };
+}
+
+/** The grass types a land texture grows (LTEX GNAM), for placing grass away from the records. */
+export interface GrassListing {
+  /** LTEX form id; undefined: the default land texture. */
+  readonly ltex: number | undefined;
+  readonly types: readonly GrassType[];
+}
+
+/** A cell's grass, placed and packed by type (what the asset workers answer a grass request with). */
+export function placePackedGrass(
+  land: LandData,
+  cellX: number,
+  cellY: number,
+  listings: readonly GrassListing[],
+  waterHeight: number | undefined,
+): PackedGrass[] {
+  // One object per grass type (placeGrass tells them apart by identity), whatever copies the
+  // listings came as.
+  const byId = new Map<number, GrassType>();
+  const lists = new Map<number | undefined, readonly GrassType[]>();
+  for (const listing of listings) {
+    lists.set(
+      listing.ltex,
+      listing.types.map((type) => {
+        const known = byId.get(type.formId);
+        if (known) return known;
+        byId.set(type.formId, type);
+        return type;
+      }),
+    );
+  }
+  const placed = placeGrass(land, cellX, cellY, (ltex) => lists.get(ltex) ?? [], waterHeight);
+  return [...placed].map(([type, plants]) => packGrass(type.formId, plants));
+}
