@@ -58,7 +58,7 @@ import {
 import type { MovementTypes } from '../ai/locomotion.ts';
 import { MovementCatalog, type RaceMovement } from '../ai/movement-types.ts';
 import { parseNif } from '../formats/nif/nif.ts';
-import { CharacterBody } from '../physics/character.ts';
+import { CharacterBody, type CharacterShape } from '../physics/character.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
 import { TRAP_REACH } from '../scripting/runtime/trap-hits.ts';
@@ -484,6 +484,8 @@ export class ActorMovers {
   readonly #breaths = new Map<number, Breath>();
   #bumpTiming: BumpTiming | undefined;
   readonly #bounds = new Map<string, Promise<{ center: Vec3; halfExtents: Vec3 } | undefined>>();
+  /** The bounds read, by skeleton path (null: being read). */
+  readonly #boundsRead = new Map<string, { center: Vec3; halfExtents: Vec3 } | null>();
   #world: MoverWorld | undefined;
   #catalog: Promise<MovementCatalog> | undefined;
   #catalogRead: MovementCatalog | undefined;
@@ -1214,6 +1216,35 @@ export class ActorMovers {
   sneak(reference: number, on: boolean): void {
     if (on) this.#sneaking.add(reference);
     else this.#sneaking.delete(reference);
+  }
+
+  /**
+   * The shape an actor's character controller has from its skeleton's bound "BBX" at its size,
+   * whether or not it has one now (a flier in the air: src/shell/actor-flight.ts); undefined
+   * until the bound is read (asking starts the read).
+   */
+  controllerShapeOf(staged: StagedActor): CharacterShape | undefined {
+    const skeleton = staged.placed.look.skeleton;
+    if (skeleton === undefined) return undefined;
+    let bound = this.#boundsRead.get(skeleton);
+    if (bound === undefined) {
+      this.#boundsRead.set(skeleton, null);
+      void this.#bound(skeleton).then((read) => {
+        this.#boundsRead.set(skeleton, read ?? HUMAN_BOUND);
+      });
+      return undefined;
+    }
+    if (bound === null) return undefined;
+    const scale = staged.placed.look.scale * staged.placed.actor.scale;
+    bound = {
+      center: [bound.center[0] * scale, bound.center[1] * scale, bound.center[2] * scale],
+      halfExtents: [
+        bound.halfExtents[0] * scale,
+        bound.halfExtents[1] * scale,
+        bound.halfExtents[2] * scale,
+      ],
+    };
+    return controllerShape(bound);
   }
 
   /** The height of a moved actor's controller (its eyes: src/shell/actor-senses.ts). */

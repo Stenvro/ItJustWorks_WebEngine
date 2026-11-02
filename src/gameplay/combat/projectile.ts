@@ -82,6 +82,48 @@ export function fly(flight: Flight, seconds: number, gravity: number): { from: V
   return { from, to: [flight.position[0], flight.position[1], flight.position[2]] };
 }
 
+/**
+ * Where along a segment (0..length, `direction` a unit vector) it enters an upright cylinder
+ * standing on `feet` (a character controller's shape): through its side, its top or its bottom
+ * (a shot from below into a flier overhead); 0 if it starts inside; undefined if it misses.
+ */
+export function segmentEntersCylinder(
+  from: Vec3,
+  direction: Vec3,
+  length: number,
+  shape: { readonly feet: Vec3; readonly radius: number; readonly height: number },
+): number | undefined {
+  let enter = 0;
+  let leave = length;
+  // Within the radius (seen from above).
+  const ox = from[0] - shape.feet[0];
+  const oy = from[1] - shape.feet[1];
+  const a = direction[0] * direction[0] + direction[1] * direction[1];
+  const c = ox * ox + oy * oy - shape.radius * shape.radius;
+  if (a < 1e-12) {
+    if (c > 0) return undefined;
+  } else {
+    const b = 2 * (ox * direction[0] + oy * direction[1]);
+    const disc = b * b - 4 * a * c;
+    if (disc < 0) return undefined;
+    const root = Math.sqrt(disc);
+    enter = Math.max(enter, (-b - root) / (2 * a));
+    leave = Math.min(leave, (-b + root) / (2 * a));
+  }
+  // Between its bottom and its top.
+  const bottom = shape.feet[2];
+  const top = shape.feet[2] + shape.height;
+  if (Math.abs(direction[2]) < 1e-12) {
+    if (from[2] < bottom || from[2] > top) return undefined;
+  } else {
+    const t0 = (bottom - from[2]) / direction[2];
+    const t1 = (top - from[2]) / direction[2];
+    enter = Math.max(enter, Math.min(t0, t1));
+    leave = Math.min(leave, Math.max(t0, t1));
+  }
+  return enter <= leave ? enter : undefined;
+}
+
 /** Whether an arrow has flown its PROJ's range (0: no limit) or lifetime (0: none). */
 export function spent(flight: Flight, range: number, lifetime: number): boolean {
   return (range > 0 && flight.distance >= range) || (lifetime > 0 && flight.age >= lifetime);

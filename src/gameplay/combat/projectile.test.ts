@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { expiredArrows, fly, homeOn, launch, WORLD_GRAVITY } from './projectile.ts';
+import {
+  expiredArrows,
+  fly,
+  homeOn,
+  launch,
+  segmentEntersCylinder,
+  WORLD_GRAVITY,
+} from './projectile.ts';
 
 describe('arrows stuck in actors', () => {
   it('go when old, when their actor is gone, and past each actor’s most', () => {
@@ -40,5 +47,29 @@ describe('arrows in flight', () => {
     expect(nearest).toBeLessThan(60);
     // At its own speed.
     expect(Math.hypot(...flight.velocity)).toBeCloseTo(3000, 3);
+  });
+});
+
+describe('a shot meeting a character controller', () => {
+  const dragon = { feet: [0, 0, 1000] as const, radius: 320, height: 384 };
+
+  it('enters it through its side, its bottom or its top', () => {
+    // Level, from the side: where it reaches the radius.
+    expect(segmentEntersCylinder([-1000, 0, 1200], [1, 0, 0], 2000, dragon)).toBeCloseTo(680);
+    // Straight up from under it (a flier overhead): at its bottom.
+    expect(segmentEntersCylinder([0, 100, 0], [0, 0, 1], 2000, dragon)).toBeCloseTo(1000);
+    // Steeply up from beside it: through the bottom, inside the radius.
+    const up = Math.SQRT1_2;
+    expect(segmentEntersCylinder([-900, 0, 200], [up, 0, up], 2000, dragon)).toBeCloseTo(800 / up);
+    // Straight down onto its top.
+    expect(segmentEntersCylinder([0, 0, 2000], [0, 0, -1], 1000, dragon)).toBeCloseTo(616);
+  });
+
+  it('misses it beside, under, over, beyond the step, and starts inside it at 0', () => {
+    expect(segmentEntersCylinder([-1000, 400, 1200], [1, 0, 0], 2000, dragon)).toBeUndefined();
+    expect(segmentEntersCylinder([-1000, 0, 900], [1, 0, 0], 2000, dragon)).toBeUndefined();
+    expect(segmentEntersCylinder([-1000, 0, 1500], [1, 0, 0], 2000, dragon)).toBeUndefined();
+    expect(segmentEntersCylinder([-1000, 0, 1200], [1, 0, 0], 600, dragon)).toBeUndefined();
+    expect(segmentEntersCylinder([0, 0, 1100], [1, 0, 0], 50, dragon)).toBe(0);
   });
 });
