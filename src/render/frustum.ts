@@ -82,6 +82,17 @@ export function frustumPlanes(viewProj: Mat4): Plane[] {
   ];
 }
 
+/** Whether a sphere lies wholly inside all planes (everything within it is inside too). */
+export function sphereInside(planes: readonly Plane[], center: Vec3, radius: number): boolean {
+  const x = center[0];
+  const y = center[1];
+  const z = center[2];
+  for (const p of planes) {
+    if (p[0] * x + p[1] * y + p[2] * z + p[3] < radius) return false;
+  }
+  return true;
+}
+
 /** Whether a sphere is at least partly inside all planes. */
 export function sphereVisible(planes: readonly Plane[], center: Vec3, radius: number): boolean {
   // The planes read by index, not destructured (several times faster: every draw of every pass

@@ -40,7 +40,7 @@ import {
   writePosedPalette,
   writeRestPalette,
 } from './bone-palette.ts';
-import { frustumPlanes, invert, sphereVisible, type Plane } from './frustum.ts';
+import { frustumPlanes, invert, sphereInside, sphereVisible, type Plane } from './frustum.ts';
 import type { RoomCuller } from './room-culler.ts';
 import { VELOCITY_FORMAT } from './taa-data.ts';
 import {
@@ -124,7 +124,8 @@ import { CELL_SIZE } from '../world/land.ts';
 
 export { GpuModel, type ModelAddon };
 export { flatAmbient, type PointLight, type SceneFog, type SceneLighting };
-import { gbufferTarget } from './gbuffer.ts';
+import { GBUFFER_FORMAT, gbufferTarget } from './gbuffer.ts';
+import { BundleSlot, drawnKey, groupBySquare } from './draw-clusters.ts';
 import { materialTextures, missingTextures } from './material-slots.ts';
 import { projectedUVParams, type MaterialObject } from '../world/material-object.ts';
 import type { WaterType } from '../world/water.ts';
@@ -544,7 +545,7 @@ function sameMatrix(a: Float32Array, from: number, b: Float32Array, to: number):
 }
 
 function bindPart(
-  pass: GPURenderPassEncoder,
+  pass: DrawEncoder,
   state: PassState,
   pipeline: GPURenderPipeline,
   part: GpuPart,
@@ -569,6 +570,12 @@ function bindPart(
 
 /** Shadow pipelines that test the diffuse map's alpha (the others never read the material). */
 const alphaTestedShadows = new WeakSet<GPURenderPipeline>();
+
+/**
+ * Object pipelines without a depth test (a shape without Zbuffer_Test): what they leave depends
+ * on the order of the draws, so the opaque pass keeps them out of its bundles (#sceneOpaque).
+ */
+const untestedPipelines = new WeakSet<GPURenderPipeline>();
 
 /**
  * bindPart for a shadow pass: every caster's material group has the same layout, and only
@@ -1297,9 +1304,9 @@ const NO_DRAWS: readonly Draw[] = [];
 
 /** Whether any of a scene may be inside `planes` (its bound, when it has one). */
 /**
- * Shadow casters of a scene that stay where they are, grouped by place (CASTER_CLUSTER_SIZE
- * squares): each group goes into a shadow layer as one render bundle, recorded once and replayed
- * while the same casters are drawn. A depth-only pass ends the same in any order, and a caster
+ * Shadow casters of a scene that stay where they are, grouped by place (draw-clusters.ts): each
+ * group goes into a shadow layer as one render bundle, recorded once and replayed while the same
+ * casters are drawn. A depth-only pass ends the same in any order, and a caster
  * outside the layer's box writes nothing there (clipped), so a group in view is drawn whole.
  */
 interface CasterCluster {
@@ -1307,14 +1314,9 @@ interface CasterCluster {
   readonly radius: number;
   /** In the scene's caster order (by bindings). */
   readonly draws: readonly Draw[];
-  /** By shadow layer: its bundle and the casters it was recorded with (clusterKey). */
-  readonly bundles: ({ bundle: GPURenderBundle; key: number; count: number } | undefined)[];
-  /** By shadow layer: a set not yet recorded, and for how many passes it has stayed. */
-  readonly settling: ({ key: number; count: number; passes: number } | undefined)[];
+  /** By shadow layer: its bundle and the set of casters it is for (draw-clusters.ts). */
+  readonly slots: (BundleSlot<GPURenderBundle> | undefined)[];
 }
-
-/** Passes of a layer a cluster's casters stay the same before they are recorded as a bundle. */
-const BUNDLE_SETTLE = 30;
 
 /** A scene's casters: in clusters, and those that move (drawn one by one). */
 interface SceneCasters {
@@ -1322,8 +1324,44 @@ interface SceneCasters {
   readonly loose: readonly Draw[];
 }
 
-/** The side of a caster cluster's square (game units; a cell is 4096). */
-const CASTER_CLUSTER_SIZE = 1024;
+/**
+ * Opaque draws of a scene that stay where they are, grouped by place (draw-clusters.ts): each
+ * group is drawn as one render bundle while the same draws of it are drawn (#opaqueBundle).
+ */
+interface OpaqueCluster {
+  readonly center: readonly [number, number, number];
+  readonly radius: number;
+  /** In the scene's order. */
+  readonly draws: readonly Draw[];
+  readonly slot: BundleSlot<GPURenderBundle>;
+  /** Whether a room of `roomsOf` holds one of its draws' centres. */
+  roomsOf: RoomCuller | undefined;
+  inRooms: boolean;
+  /**
+   * The light keys reaching its bound (each its index, then its key; `lightFloats` used), the
+   * light frame they were last compared in, and the one since which they are the same
+   * (SceneRenderer #clusterLights).
+   */
+  lightKeys: Float32Array;
+  lightFloats: number;
+  lightsChecked: number;
+  lightsFrom: number;
+}
+
+/** A scene's opaque-pass draws: in clusters, and the others (drawn one by one). */
+interface SceneOpaque {
+  readonly clusters: readonly OpaqueCluster[];
+  readonly loose: readonly Draw[];
+}
+
+/** The draws of a scene that move: a moving instance's, a part following a skeleton. */
+function movingDraws(scene: GpuScene): Set<Draw> {
+  const moves = new Set<Draw>();
+  for (const entry of scene.moving) moves.add(entry.draw);
+  for (const draw of scene.animated)
+    for (const followed of draw.follows?.draws ?? []) moves.add(followed);
+  return moves;
+}
 
 /** Whether a shadow layer with casters at least `minRadius` big draws a caster now. */
 function castsNow(draw: Draw, minRadius: number): boolean {
@@ -1369,6 +1407,8 @@ export class GpuScene {
   motion: SceneMotion | null | undefined;
   /** Its shadow casters by cluster (SceneRenderer #sceneCasters: made when first drawn). */
   casters: SceneCasters | undefined;
+  /** Its opaque draws by cluster (SceneRenderer #sceneOpaque: made when first drawn). */
+  opaque: SceneOpaque | undefined;
   /** The models it draws (held while it exists). */
   readonly #models: readonly GpuModel[];
   /** A sphere round all its draws (see bound); null: never culled whole. */
@@ -4015,19 +4055,42 @@ export class SceneRenderer {
 
   /** Draws the opaque parts of scenes. */
   drawOpaque(pass: GPURenderPassEncoder, scenes: Iterable<GpuScene>): void {
-    pass.setBindGroup(0, this.#frame.bindGroup);
+    const frame = this.#frame;
+    pass.setBindGroup(0, frame.bindGroup);
     pass.setVertexBuffer(1, this.#fallbackVertices);
-    const state = passState();
-    const rooms = this.#frame.rooms;
+    let state = passState();
+    const rooms = frame.rooms;
+    const bundles = this.#opaqueBundles;
     for (const scene of scenes) {
-      if (!sceneInside(this.#frame.planes, scene)) continue;
-      // Its draws are tested only against the occluders that may hide something of it.
+      if (!sceneInside(frame.planes, scene)) continue;
+      const opaque = this.#sceneOpaque(scene);
+      // Its draws are tested only against the occluders that may hide something of it (and a
+      // cluster's against those that may hide something of the cluster).
       const bound = scene.bound;
       if (rooms && bound) rooms.focus(bound.center, bound.radius);
-      for (const draw of scene.draws) {
-        if (draw.part.pass === 'opaque' && !blendFading(draw) && this.#visible(draw)) {
-          this.#drawPart(pass, scene, draw, state);
+      // The draws that stay where they are by cluster, each a bundle (recorded again when what
+      // it draws changed); a cluster whose set is still changing is drawn one by one.
+      bundles.length = 0;
+      for (const cluster of opaque.clusters) {
+        if (!sphereVisible(frame.planes, cluster.center, cluster.radius)) continue;
+        const bundle = this.#opaqueBundle(scene, cluster, rooms);
+        if (bundle === 'unsettled') {
+          for (const draw of this.#opaqueInView) this.#drawPart(pass, scene, draw, state);
+        } else if (bundle) {
+          bundles.push(bundle);
         }
+      }
+      if (bundles.length > 0) {
+        pass.executeBundles(bundles);
+        bundles.length = 0;
+        // A bundle leaves the pass's bindings unset behind it.
+        pass.setBindGroup(0, frame.bindGroup);
+        pass.setVertexBuffer(1, this.#fallbackVertices);
+        state = passState();
+      }
+      // The others one by one.
+      for (const draw of opaque.loose) {
+        if (!blendFading(draw) && this.#visible(draw)) this.#drawPart(pass, scene, draw, state);
       }
       rooms?.unfocus();
     }
@@ -4766,38 +4829,21 @@ export class SceneRenderer {
    */
   #sceneCasters(scene: GpuScene): SceneCasters {
     if (scene.casters) return scene.casters;
-    const moves = new Set<Draw>();
-    for (const entry of scene.moving) moves.add(entry.draw);
-    for (const draw of scene.animated)
-      for (const followed of draw.follows?.draws ?? []) moves.add(followed);
+    const moves = movingDraws(scene);
     const loose: Draw[] = [];
-    const bySquare = new Map<number, Draw[]>();
+    const fixed: Draw[] = [];
     for (const draw of scene.shadowCasters) {
-      if (moves.has(draw) || draw.sky || draw.firstPerson) {
-        loose.push(draw);
-        continue;
-      }
-      const x = Math.floor(draw.center[0] / CASTER_CLUSTER_SIZE) + 32768;
-      const y = Math.floor(draw.center[1] / CASTER_CLUSTER_SIZE) + 32768;
-      const square = x * 65536 + y;
-      let draws = bySquare.get(square);
-      if (!draws) bySquare.set(square, (draws = []));
-      draws.push(draw);
+      if (moves.has(draw) || draw.sky || draw.firstPerson) loose.push(draw);
+      else fixed.push(draw);
     }
     const clusters: CasterCluster[] = [];
-    for (const draws of bySquare.values()) {
+    for (const draws of groupBySquare(fixed, (draw) => draw.center)) {
       const bound = boundOf(draws);
       if (!bound) {
         loose.push(...draws);
         continue;
       }
-      clusters.push({
-        center: bound.center,
-        radius: bound.radius,
-        draws,
-        bundles: [],
-        settling: [],
-      });
+      clusters.push({ center: bound.center, radius: bound.radius, draws, slots: [] });
     }
     scene.casters = { clusters, loose };
     return scene.casters;
@@ -4807,8 +4853,7 @@ export class SceneRenderer {
    * A cluster's bundle for a shadow layer: the casters drawn now (castsNow), recorded once and
    * replayed until that set changes (a reference enabled, faded out, or the layer's smallest
    * caster changed). Undefined when none is drawn; 'unsettled' while the set has not stayed the
-   * same for BUNDLE_SETTLE passes of the layer (a bundle recorded for each passing set cost more
-   * than drawing it).
+   * same for BUNDLE_SETTLE passes of the layer (draw-clusters.ts).
    */
   #clusterBundle(
     scene: GpuScene,
@@ -4824,17 +4869,12 @@ export class SceneRenderer {
       const draw = draws[i];
       if (!draw || !castsNow(draw, minRadius)) continue;
       count++;
-      key = (Math.imul(key, 0x01000193) ^ (i + 1)) | 0;
+      key = drawnKey(key, i);
     }
     if (count === 0) return undefined;
-    const kept = cluster.bundles[layer];
-    if (kept?.key === key && kept.count === count) return kept.bundle;
-    const seen = cluster.settling[layer];
-    if (seen?.key !== key || seen.count !== count) {
-      cluster.settling[layer] = { key, count, passes: 1 };
-      return 'unsettled';
-    }
-    if (++seen.passes < BUNDLE_SETTLE) return 'unsettled';
+    const slot = (cluster.slots[layer] ??= new BundleSlot());
+    const use = slot.use(key, count, this.#cascadeBindGroup);
+    if (use !== 'record') return use;
     const encoder = this.#device.createRenderBundleEncoder({
       label: 'shadow-casters',
       colorFormats: [],
@@ -4849,7 +4889,150 @@ export class SceneRenderer {
       this.#drawCaster(encoder, state, scene, draw, pipeline);
     }
     const bundle = encoder.finish();
-    cluster.bundles[layer] = { bundle, key, count };
+    slot.keep(bundle, key, count, this.#cascadeBindGroup);
+    return bundle;
+  }
+
+  /**
+   * A scene's opaque-pass draws sorted into clusters by place. Those that move (a moving
+   * instance's, a part following a skeleton), those never culled, object LOD (what it draws
+   * follows the loaded cells), actors' parts and shapes without a depth test (what they leave
+   * depends on the order of the draws) stay loose: drawn one by one.
+   */
+  #sceneOpaque(scene: GpuScene): SceneOpaque {
+    if (scene.opaque) return scene.opaque;
+    const moves = movingDraws(scene);
+    const loose: Draw[] = [];
+    const fixed: Draw[] = [];
+    for (const draw of scene.draws) {
+      if (draw.part.pass !== 'opaque') continue;
+      if (
+        moves.has(draw) ||
+        draw.sky ||
+        draw.firstPerson === true ||
+        draw.lodSegments !== undefined ||
+        draw.ranges !== undefined ||
+        draw.bones !== undefined ||
+        draw.face !== undefined ||
+        untestedPipelines.has(draw.part.pipeline)
+      ) {
+        loose.push(draw);
+      } else {
+        fixed.push(draw);
+      }
+    }
+    const clusters: OpaqueCluster[] = [];
+    for (const draws of groupBySquare(fixed, (draw) => draw.center)) {
+      const bound = boundOf(draws);
+      if (!bound) {
+        loose.push(...draws);
+        continue;
+      }
+      clusters.push({
+        center: bound.center,
+        radius: bound.radius,
+        draws,
+        slot: new BundleSlot(),
+        roomsOf: undefined,
+        inRooms: false,
+        lightKeys: new Float32Array(0),
+        lightFloats: -1,
+        lightsChecked: 0,
+        lightsFrom: 0,
+      });
+    }
+    scene.opaque = { clusters, loose };
+    return scene.opaque;
+  }
+
+  /** The draws of a cluster drawn now and in view (#opaqueBundle: lit, drawn when unsettled). */
+  readonly #opaqueInView: Draw[] = [];
+  /** The draws of a cluster drawn now, in view or not (#opaqueBundle: what a bundle records). */
+  readonly #opaqueDrawn: Draw[] = [];
+  /** The bundles the opaque pass replays for a scene (kept between passes). */
+  readonly #opaqueBundles: GPURenderBundle[] = [];
+
+  /**
+   * A cluster's bundle for the opaque pass of the current view (its sphere in view): the draws
+   * drawn now (shown, not faded out, not fading by blending, not hidden by a room or an
+   * occluder), recorded once and replayed until that set changes. Its draws outside the view
+   * are recorded too: the GPU clips them, and the set does not change as the camera turns.
+   * Rooms and occluders are asked per cluster: a cluster no occluder reaches and that no room
+   * holds is not tested draw by draw, and one wholly inside an occluder's volume is hidden
+   * whole. As drawPart does, the draws in view take their lights and mark their fades seen.
+   * Undefined when none is drawn; 'unsettled' while the set has not stayed the same for
+   * BUNDLE_SETTLE passes (the caller draws #opaqueInView one by one).
+   */
+  #opaqueBundle(
+    scene: GpuScene,
+    cluster: OpaqueCluster,
+    rooms: RoomCuller | undefined,
+  ): GPURenderBundle | 'unsettled' | undefined {
+    const frame = this.#frame;
+    const planes = frame.planes;
+    const whole = sphereInside(planes, cluster.center, cluster.radius);
+    let occluded = false;
+    let perDraw = false;
+    if (rooms) {
+      rooms.narrow(cluster.center, cluster.radius);
+      if (rooms.occluding > 0) {
+        if (rooms.occludes(cluster.center, cluster.radius)) occluded = true;
+        else perDraw = true;
+      }
+      if (rooms.active && !occluded) {
+        if (cluster.roomsOf !== rooms) {
+          cluster.roomsOf = rooms;
+          cluster.inRooms = cluster.draws.some((draw) => rooms.inRoom(draw.center));
+        }
+        if (cluster.inRooms) perDraw = true;
+      }
+    }
+    const inView = this.#opaqueInView;
+    const drawn = this.#opaqueDrawn;
+    inView.length = 0;
+    drawn.length = 0;
+    const draws = cluster.draws;
+    let key = 0;
+    for (let i = 0; i < draws.length; i++) {
+      const draw = draws[i];
+      if (!draw || draw.visibility?.hidden === true || blendFading(draw)) continue;
+      const seen = whole || sphereVisible(planes, draw.center, draw.radius);
+      const fade = draw.fade;
+      if (fade) {
+        // In view: its fade goes on over time (object-fade.ts stepFade).
+        if (seen) fade.seen = this.#fadeTime;
+        if (fade.level >= 255) continue;
+      }
+      if (occluded || (perDraw && rooms && !rooms.visible(draw.center, draw.radius))) continue;
+      key = drawnKey(key, i);
+      drawn.push(draw);
+      if (seen) inView.push(draw);
+    }
+    rooms?.widen();
+    if (drawn.length === 0) return undefined;
+    if (inView.length > 0) {
+      const heldFrom = this.#clusterLights(cluster);
+      for (const draw of inView) this.#chooseLights(scene, draw, heldFrom);
+    }
+    const use = cluster.slot.use(key, drawn.length, frame.bindGroup);
+    if (use !== 'record') return use;
+    const encoder = this.#device.createRenderBundleEncoder({
+      label: 'opaque',
+      colorFormats: [this.#colorFormat, GBUFFER_FORMAT],
+      depthStencilFormat: DEPTH_FORMAT,
+      sampleCount: SAMPLE_COUNT,
+    });
+    encoder.setBindGroup(0, frame.bindGroup);
+    encoder.setVertexBuffer(1, this.#fallbackVertices);
+    const state = passState();
+    for (const draw of drawn) {
+      const { part } = draw;
+      bindPart(encoder, state, part.pipeline, part);
+      bindAt(encoder, 1, scene.drawBindGroup, draw.uniformOffset);
+      encoder.drawIndexed(part.indexCount);
+    }
+    const bundle = encoder.finish();
+    cluster.slot.keep(bundle, key, drawn.length, frame.bindGroup);
     return bundle;
   }
 
@@ -5067,12 +5250,63 @@ export class SceneRenderer {
   /**
    * A draw's lights for this frame (light-lists.ts), chosen the first time it is drawn in it by
    * its bound and its room; uploaded with the scene's lists (#flushLights) before the frame is
-   * submitted.
+   * submitted. `heldFrom`: a list chosen in this light frame or later still holds (#clusterLights;
+   * 0: only one chosen in the current light frame).
    */
-  #chooseLights(scene: GpuScene, draw: Draw): void {
+  #chooseLights(scene: GpuScene, draw: Draw, heldFrom = 0): void {
     if (draw.sky) return;
     const kind = draw.part.part.material?.kind === 'effect' ? 'effect' : 'lighting';
-    this.#chooseSlotLights(scene, draw.uniformOffset, draw.center, draw.radius, kind);
+    this.#chooseSlotLights(scene, draw.uniformOffset, draw.center, draw.radius, kind, heldFrom);
+  }
+
+  /**
+   * The light frame from which the lists of an opaque cluster's draws hold: the last in which
+   * the light keys that reach its bound changed (which lights, and their place, reach,
+   * luminance, shadow, room and index). A draw's list is a function of the keys reaching its own
+   * bound, which lies within the cluster's, and of its room (fixed for a draw that stays put).
+   * Torches and fires flicker, so the keys of the frame change every frame; most clusters are
+   * reached by none of them.
+   */
+  #clusterLights(cluster: OpaqueCluster): number {
+    if (cluster.lightsChecked === this.#lightFrame) return cluster.lightsFrom;
+    cluster.lightsChecked = this.#lightFrame;
+    const keys = this.#lightKeys;
+    const [cx, cy, cz] = cluster.center;
+    const radius = cluster.radius;
+    let kept = cluster.lightKeys;
+    let at = 0;
+    let same = true;
+    for (let i = 0; i < this.#lightKeyCount; i++) {
+      const k = i * LIGHT_KEY_FLOATS;
+      const reach = keys[k + 3] ?? 0;
+      if (reach <= 0) continue;
+      const dx = (keys[k] ?? 0) - cx;
+      const dy = (keys[k + 1] ?? 0) - cy;
+      const dz = (keys[k + 2] ?? 0) - cz;
+      if (dx * dx + dy * dy + dz * dz >= (reach + radius) * (reach + radius)) continue;
+      // Its place among the keys, then its key.
+      if (at + 1 + LIGHT_KEY_FLOATS > kept.length) {
+        const grown = new Float32Array(Math.max(kept.length * 2, 4 * (1 + LIGHT_KEY_FLOATS)));
+        grown.set(kept);
+        cluster.lightKeys = kept = grown;
+      }
+      if (kept[at] !== i) {
+        kept[at] = i;
+        same = false;
+      }
+      at++;
+      for (let f = 0; f < LIGHT_KEY_FLOATS; f++, at++) {
+        const value = keys[k + f] ?? 0;
+        if (kept[at] !== value) {
+          kept[at] = value;
+          same = false;
+        }
+      }
+    }
+    if (at !== cluster.lightFloats) same = false;
+    cluster.lightFloats = at;
+    if (!same) cluster.lightsFrom = this.#lightFrame;
+    return cluster.lightsFrom;
   }
 
   /**
@@ -5085,11 +5319,14 @@ export class SceneRenderer {
     center: readonly [number, number, number],
     radius: number,
     kind: LightListKind,
+    heldFrom = 0,
   ): void {
     const lists = scene.lightLists;
     if (!lists) return;
     const slot = uniformOffset / DRAW_STRIDE;
-    if (slot >= NO_LIGHT_LIST || lists.chosen[slot] === this.#lightFrame) return;
+    if (slot >= NO_LIGHT_LIST) return;
+    const chosen = lists.chosen[slot] ?? 0;
+    if (chosen === this.#lightFrame || (heldFrom > 0 && chosen >= heldFrom)) return;
     lists.chosen[slot] = this.#lightFrame;
     const room = ((lists.uniformUints[uniformOffset / 4 + 38] ?? 0) >>> DRAW_ROOM_SHIFT) & 0xff;
     const at = slot * LIGHT_LIST_WORDS;
@@ -5462,6 +5699,7 @@ export class SceneRenderer {
         },
         multisample: { count: SAMPLE_COUNT },
       });
+      if (!depthTest) untestedPipelines.add(pipeline);
       this.#pipelines.set(key, pipeline);
     }
     return pipeline;
