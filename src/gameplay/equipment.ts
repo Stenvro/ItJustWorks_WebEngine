@@ -509,7 +509,7 @@ export function weaponDamage(
   skillMultiplier: number,
   multiplier = 1,
 ): number {
-  const quality = temperingIncrease(temperLevel, false);
+  const quality = temperingIncrease(temperLevel, false, true);
   return Math.round((base + quality) * skillMultiplier * multiplier + EPSILON);
 }
 

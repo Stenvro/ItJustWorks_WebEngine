@@ -305,7 +305,9 @@ out), UESP "Mod File Format/CLAS", "Leveled Lists".
 - **Encounter zone** of a reference: its own XEZN, its cell's XEZN, the ECZN whose location is
   its cell's location or the nearest parent location with one, its worldspace's XEZN. Its level
   is set as first met: the player's level within min and max (0: none); with "Match PC Below
-  Minimum Level" (0x2) below the minimum the player's own; kept (`GameState.zoneLevels`;
+  Minimum Level" (0x2) below the minimum the player's own. Observed in the original
+  (`zoneLevel`): from the minimum on it is min + (player level − min) × fLevelScalingMult,
+  rounded down (Skyrim.esm 1: the player's level; the engine's own 0.6); kept (`GameState.zoneLevels`;
   zones without "Never Resets", 0x1, are set again when their cells reset: M12).
 - **Leveled picks**: a reference's leveled lists (its LVLN templates, its containers' LVLI)
   are picked at its encounter's level × its level modifier (ACHR XLCM: easy
@@ -687,7 +689,9 @@ Format/SPEL"; the game settings.
 - The base cost is SPIT's own with 0x1 (an enchantment's with ENIT 0x1, no auto calc), else the
   sum of its effects': base cost × (magnitude × duration / 10)^1.1, a magnitude under 1 counted
   as 1, a duration of 0 (and any for concentration spells) as 10, × (1 + fMagicAreaBaseCostMult
-  × area) (0: areas cost nothing). Firebolt 41.39, Flames 24.6 a second. A spell delivered at a
+  × area) (0: areas cost nothing). fMagicAreaScaleMin (2.5) and fMagicAreaScaleMax (100) are
+  registered by the original and never read (an earlier game's area scaling: inert). Firebolt
+  41.39, Flames 24.6 a second. A spell delivered at a
   target (aimed, target actor, target location) × fMagicRangeTargetCostMult (1: TODO(M13), the
   earlier game's rule, Oblivion's "Spell Cost"; whether Skyrim's engine applies it is unknown).
 - Observed in the original: the caster pays base × (1 − (Base × skill)^Scale) × Mult, the
@@ -1296,8 +1300,23 @@ loses its data (the world's references carry none yet); a tempered item's value 
   Smithing of enchantments: SmithingMod %) × (1 + of potions: SmithingPowerMod %) + 13.29;
   level = floor((effective + 38) × 3 / 103): 1 Fine .. 6 Legendary. Improving only raises it
   (else sLackRequiredSkillToImprove); health = 1 + level / 10 (fHealthDataValue1 1.1).
-- What it adds: (3.6 × level − 1.6), × 1 for body armor and × 0.5 for everything else (armor
-  rounded up, damage rounded).
+- Observed in the original, which is the same rule by item health (`temperingHealthOf`; it
+  gives UESP's levels for every skill from 15 to 200, with and without the perk): with V1 ..
+  V6 the settings fHealthDataValue1 .. 6 (1.1 .. 1.6; Skyrim.esm sets only the first, to the
+  engine's 1.1), the improvement's health is max(1, V1 + (V6 − V1) × ((Smithing − 15) ×
+  fSmithingConditionFactor (0.5825) + 1) / 100); what it is past V1 the perks multiply (Mod
+  Tempering Health: the material perks double it, Fortify Smithing through the skill-boost
+  perks), and V1 plus that is rounded to tenths (a half up). At or below V1 it stays as it is
+  and shows no quality.
+- The quality shown after the name (observed in the original, `temperQualityTier`): the last of
+  V1 .. V6 at or below the item's health, its name sHealthDataPrefixWeap<n> or
+  sHealthDataPrefixArmo<n> (Fine .. Legendary; no name for a health of 1 or none).
+- What it adds (observed in the original, `temperingIncreaseOfHealth`): ((health − V1) /
+  (V6 − V1)) × (fSmithingWeaponMax − 1) + 1 for weapons (armour: fSmithingArmorMax, 10 each),
+  twice that for body armour, never below 0: UESP's (3.6 × level − 1.6) × 0.5 (body armour × 1;
+  armor rounded up, damage rounded). TODO(M13): the item card and the equip system use the
+  engine's values for V1 .. V6 and the two maxima (a mod's take only for the improvement's
+  health); the plugins set none but V1.
 - An enchanted variant is improved by its template's recipe (the recipe's conditions want
   Arcane Blacksmith for magical items: sLackRequiredPerkToImproveMagical).
 - Skill use (Update.esm's settings): fTemperingSkillUseMult × (fTemperingSkillUseItemValMult
@@ -1318,7 +1337,10 @@ loses its data (the world's references carry none yet); a tempered item's value 
   enchantment, more with the perks.
 - **Apparel**: magnitude = floor(base × soul share (Petty 1/12, Lesser 1/6, Common 1/3,
   Greater 2/3, Grand 1) × skill multiplier × perks × (1 + Fortify Enchanting)); the skill
-  multiplier is 1 + (s/100)(s/100 − 0.14)/3.4 (1.25 at 100, fEnchantingSkillFactor). Effects
+  multiplier (observed in the original, `enchantingSkillMultiplier`) is 1 + skill / 100 ×
+  (fEnchantingSkillFactor − 1) × max(0.01, (skill − 14) / 85): with Skyrim.esm's 1.25 UESP's
+  measured 1 + (s/100)(s/100 − 0.14)/3.4 (1.253 at 100; the engine's own factor is 3); below
+  skill 14.85 the share is held at 0.01, so it never falls under 1. Effects
   of a magnitude of 1 or less (Waterbreathing, Muffle) are not scaled (TODO(M13): inferred).
 - **Weapons**: the largest value = floor(base × skill multiplier × perks), chosen on the card's
   slider (1 .. largest); an effect the power scales by duration (Paralyze, Soul Trap: MGEF
@@ -1374,6 +1396,13 @@ loses its data (the world's references carry none yet); a tempered item's value 
   inferred from its name). Skill use: the potion's value (TODO(M13): whether the perks' share
   counts). Stats: Potions / Poisons Mixed.
 - Eating an ingredient learns its first effect (Ingredients Eaten).
+- Uses towards the next effect (observed in the original, `ingredientUsed`): each ingredient
+  counts its uses; eating one adds iIngredientWortcraftUses, each one brewed with
+  iIngredientAlchemyUses. Once the count reaches iIngredientUseEffectThreshold, the first of its
+  four effects not known yet is learned (the HUD's "%s discovered from %s") and the count drops
+  by the threshold. Skyrim.esm sets both uses to 0 (the threshold 25; the engine's 50), so in
+  the vanilla game the count never grows; a mod that sets them gets the rule
+  (`GameState.ingredientUses`). TODO(M12): the count is not kept in the save yet.
 
 ### Harvesting
 

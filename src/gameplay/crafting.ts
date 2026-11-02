@@ -393,11 +393,18 @@ export function canImprove(currentLevel: number, newLevel: number): boolean {
 
 /**
  * The armor rating or weapon damage an improvement adds (UESP): (3.6 x level - 1.6) x 1.0 for
- * chest (body) armor, x 0.5 for everything else (weapons too); nothing at level 0.
+ * chest (body) armor, x 0.5 for everything else (weapons too); nothing at level 0. The original's
+ * rule by the level's health (temperingIncreaseOfHealth), which gives these with its settings.
  */
-export function temperingIncrease(level: number, chestArmor: boolean): number {
+export function temperingIncrease(
+  level: number,
+  chestArmor: boolean,
+  weapon = false,
+  settings: TemperSettings = TEMPER_SETTINGS,
+): number {
   if (level <= 0) return 0;
-  return (3.6 * level - 1.6) * (chestArmor ? 1 : 0.5);
+  const kind = chestArmor ? 'chest' : weapon ? 'weapon' : 'armor';
+  return temperingIncreaseOfHealth(temperHealth(level), kind, settings);
 }
 
 /** An improved armor rating: rounded up (UESP). */
@@ -407,21 +414,28 @@ export function temperedArmorRating(base: number, level: number, chestArmor: boo
 
 /** Improved weapon damage: rounded to the nearest integer (UESP). */
 export function temperedWeaponDamage(base: number, level: number): number {
-  return Math.round(base + temperingIncrease(level, false));
+  return Math.round(base + temperingIncrease(level, false, true));
 }
 
 /**
  * The GMST of a quality's name ("Fine" .. "Legendary"), shown after the item's name, or
- * undefined at level 0. Levels above 6 keep the name "Legendary".
+ * undefined at level 0: the tier its health reaches (temperQualityTier; above 6: "Legendary").
  */
-export function temperQualityName(level: number, type: 'WEAP' | 'ARMO'): string | undefined {
+export function temperQualityName(
+  level: number,
+  type: 'WEAP' | 'ARMO',
+  settings: TemperSettings = TEMPER_SETTINGS,
+): string | undefined {
   if (level <= 0) return undefined;
-  return `sHealthDataPrefix${type === 'WEAP' ? 'Weap' : 'Armo'}${String(Math.min(6, level))}`;
+  const tier = temperQualityTier(temperHealth(level), settings);
+  if (tier <= 0) return undefined;
+  return `sHealthDataPrefix${type === 'WEAP' ? 'Weap' : 'Armo'}${String(tier)}`;
 }
 
 /**
  * The item health (ExtraHealth) an improvement stores: 1 + level / 10 (fHealthDataValue1 is
- * 1.1: Fine). TODO(M13): check the higher levels against the game.
+ * 1.1: Fine). The original rounds an improvement's health to tenths (temperingHealthOf), so
+ * with the vanilla thresholds (1.1 .. 1.6) a level is a tenth of health.
  */
 export function temperHealth(level: number): number {
   return 1 + level / 10;
@@ -430,6 +444,97 @@ export function temperHealth(level: number): number {
 /** The quality level of a stored item health (inverse of temperHealth; 1 or none: 0). */
 export function temperLevelOfHealth(health: number): number {
   return Math.max(0, Math.round((health - 1) * 10));
+}
+
+/** The game settings of improved items' health (observed in the original). */
+export interface TemperSettings {
+  /** fHealthDataValue1 .. 6: the health each quality starts at (Fine .. Legendary). */
+  readonly healthDataValues: readonly number[];
+  /** fSmithingConditionFactor: how the Smithing skill raises an improvement's health. */
+  readonly conditionFactor: number;
+  /** fSmithingWeaponMax, fSmithingArmorMax: the increase at the last quality's health. */
+  readonly weaponMax: number;
+  readonly armorMax: number;
+}
+
+/** The engine's values (Skyrim.esm sets only fHealthDataValue1, to the same 1.1). */
+export const TEMPER_SETTINGS: TemperSettings = {
+  healthDataValues: [1.1, 1.2, 1.3, 1.4, 1.5, 1.6],
+  conditionFactor: 0.5825,
+  weaponMax: 10,
+  armorMax: 10,
+};
+
+export function temperSettings(number: (editorId: string) => number | undefined): TemperSettings {
+  const d = TEMPER_SETTINGS;
+  return {
+    healthDataValues: d.healthDataValues.map(
+      (value, i) => number(`fHealthDataValue${String(i + 1)}`) ?? value,
+    ),
+    conditionFactor: number('fSmithingConditionFactor') ?? d.conditionFactor,
+    weaponMax: number('fSmithingWeaponMax') ?? d.weaponMax,
+    armorMax: number('fSmithingArmorMax') ?? d.armorMax,
+  };
+}
+
+const firstHealth = (s: TemperSettings): number => s.healthDataValues[0] ?? 1.1;
+const lastHealth = (s: TemperSettings): number => s.healthDataValues.at(-1) ?? 1.6;
+
+/**
+ * The health an improvement gives (observed in the original): with Smithing `skill`,
+ *   raw = max(1, V1 + (V6 − V1) × ((skill − 15) × fSmithingConditionFactor + 1) / 100)
+ * (V1, V6: fHealthDataValue1, ...6); what it is past V1 the perks multiply (Mod Tempering
+ * Health: the material perks double it; `perkMult`), and the sum is rounded to tenths (a half
+ * up). At or below V1 it stays raw: no quality. This is UESP's measured rule (effective skill
+ * (skill − 13.29) × perks + 13.29, level floor((skill + 38) × 3 / 103)) as the engine has it.
+ */
+export function temperingHealthOf(
+  skill: number,
+  perkMult: number,
+  settings: TemperSettings = TEMPER_SETTINGS,
+): number {
+  const first = firstHealth(settings);
+  const span = lastHealth(settings) - first;
+  const raw = Math.max(1, first + (span * ((skill - 15) * settings.conditionFactor + 1)) / 100);
+  const past = raw - first;
+  if (!(past > 0)) return raw;
+  const tenths = (Math.max(0, past * perkMult) + first) * 10;
+  return Math.floor(tenths + 0.5 + 1e-6) / 10;
+}
+
+/**
+ * The quality an item health shows (1 Fine .. 6 Legendary; 0 none), observed in the original:
+ * the last fHealthDataValue<n> at or below it; a health of 1 (or none) shows none.
+ */
+export function temperQualityTier(
+  health: number,
+  settings: TemperSettings = TEMPER_SETTINGS,
+): number {
+  if (!(health > 0) || health === 1) return 0;
+  let tier = 0;
+  settings.healthDataValues.forEach((value, i) => {
+    if (value <= health + 1e-6) tier = i + 1;
+  });
+  return tier;
+}
+
+/**
+ * What an improvement adds (observed in the original): the share of the way its health is from
+ * V1 to V6, times (fSmithingWeaponMax − 1) (armour: fSmithingArmorMax), plus 1; twice that on
+ * chest (body) armour; never below 0. With the vanilla settings it is UESP's (3.6 × level −
+ * 1.6) × 0.5 (chest × 1).
+ */
+export function temperingIncreaseOfHealth(
+  health: number,
+  kind: 'weapon' | 'armor' | 'chest',
+  settings: TemperSettings = TEMPER_SETTINGS,
+): number {
+  const first = firstHealth(settings);
+  const span = lastHealth(settings) - first;
+  const max = kind === 'weapon' ? settings.weaponMax : settings.armorMax;
+  const share = (health - first) / (span !== 0 ? span : 1);
+  const increase = share * (max - 1) + 1;
+  return Math.max(0, kind === 'chest' ? increase * 2 : increase);
 }
 
 // --- Enchanting -----------------------------------------------------------------------------
@@ -533,14 +638,27 @@ export const SOUL_LEVEL_NAME: readonly string[] = [
   'sSoulLevelNameGrand',
 ];
 
-/** UESP: 1 + (skill / 100) x (skill / 100 - 0.14) / 3.4 (1.25 at 100). */
-export function enchantingSkillMultiplier(skill: number): number {
-  const s = skill / 100;
-  return 1 + (s * (s - 0.14)) / 3.4;
+/** Skyrim.esm's fEnchantingSkillFactor (the engine's own is 3). */
+export const VANILLA_ENCHANTING_SKILL_FACTOR = 1.25;
+
+/**
+ * The Enchanting skill's multiplier (observed in the original):
+ *   1 + skill / 100 × (fEnchantingSkillFactor − 1) × max(0.01, (skill − 14) / 85)
+ * Skyrim.esm's 1.25 gives UESP's measured 1 + s(s − 0.14) / 3.4 (s = skill / 100; 1.253 at 100);
+ * below skill 14.85 the share is held at 0.01, so the multiplier never drops under 1.
+ */
+export function enchantingSkillMultiplier(
+  skill: number,
+  skillFactor: number = VANILLA_ENCHANTING_SKILL_FACTOR,
+): number {
+  const share = Math.max(0.01, (skill - 14) / 85);
+  return 1 + (skill / 100) * (skillFactor - 1) * share;
 }
 
 export interface EnchantingInputs {
   readonly skill: number;
+  /** fEnchantingSkillFactor (VANILLA_ENCHANTING_SKILL_FACTOR when left out). */
+  readonly skillFactor?: number;
   /** Fortify Enchanting potion, as a fraction. */
   readonly potion?: number;
   /** Enchanter perk: 0.2 per rank. */
@@ -552,7 +670,7 @@ export interface EnchantingInputs {
 }
 
 const perkFactor = (inputs: EnchantingInputs): number =>
-  enchantingSkillMultiplier(inputs.skill) *
+  enchantingSkillMultiplier(inputs.skill, inputs.skillFactor) *
   (1 + (inputs.potion ?? 0)) *
   (1 + (inputs.enchanter ?? 0)) *
   (1 + (inputs.specific ?? 0)) *
@@ -1049,6 +1167,15 @@ export interface CraftingSettings {
   readonly disenchantSkillUse: number;
   readonly skillUsageRechargeMult: number;
   readonly wortFailSkillUseMagnitude: number;
+  /** fEnchantingSkillFactor (enchantingSkillMultiplier). */
+  readonly enchantingSkillFactor: number;
+  /**
+   * iIngredientUseEffectThreshold, iIngredientAlchemyUses, iIngredientWortcraftUses: an
+   * ingredient's uses towards its next effect (ingredientUsed).
+   */
+  readonly ingredientUseEffectThreshold: number;
+  readonly ingredientAlchemyUses: number;
+  readonly ingredientWortcraftUses: number;
 }
 
 export const CRAFTING_SETTINGS: CraftingSettings = {
@@ -1062,6 +1189,10 @@ export const CRAFTING_SETTINGS: CraftingSettings = {
   disenchantSkillUse: 0.0025,
   skillUsageRechargeMult: 0.0002,
   wortFailSkillUseMagnitude: 5,
+  enchantingSkillFactor: VANILLA_ENCHANTING_SKILL_FACTOR,
+  ingredientUseEffectThreshold: 25,
+  ingredientAlchemyUses: 0,
+  ingredientWortcraftUses: 0,
 };
 
 /** The settings from GMSTs (`number(editorId)`), vanilla values for those not set. */
@@ -1084,7 +1215,38 @@ export function craftingSettings(
     disenchantSkillUse: number('fDisenchantSkillUse') ?? d.disenchantSkillUse,
     skillUsageRechargeMult: number('fSkillUsageRechargeMult') ?? d.skillUsageRechargeMult,
     wortFailSkillUseMagnitude: number('fWortFailSkillUseMagnitude') ?? d.wortFailSkillUseMagnitude,
+    // Not in the load order: the engine's own values (3, 50, 0, 0).
+    enchantingSkillFactor: number('fEnchantingSkillFactor') ?? 3,
+    ingredientUseEffectThreshold: number('iIngredientUseEffectThreshold') ?? 50,
+    ingredientAlchemyUses: number('iIngredientAlchemyUses') ?? 0,
+    ingredientWortcraftUses: number('iIngredientWortcraftUses') ?? 0,
   };
+}
+
+/**
+ * An ingredient used `uses` times more (observed in the original): its count of uses grows by
+ * them, and once it reaches iIngredientUseEffectThreshold the first of its four effects not
+ * known yet becomes known and the count drops by the threshold (one effect at a time). Eating
+ * one adds iIngredientWortcraftUses, each one brewed with iIngredientAlchemyUses (0 and 0 in
+ * Skyrim.esm: the uses never add up there). Returns the new count and the effect slot learned.
+ */
+export function ingredientUsed(
+  count: number,
+  uses: number,
+  known: ReadonlySet<number>,
+  settings: Pick<CraftingSettings, 'ingredientUseEffectThreshold'>,
+): { readonly count: number; readonly learned: number | undefined } {
+  const total = count + uses;
+  const left = total - settings.ingredientUseEffectThreshold;
+  if (left < 0) return { count: total, learned: undefined };
+  let learned: number | undefined;
+  for (let slot = 0; slot < 4; slot++) {
+    if (!known.has(slot)) {
+      learned = slot;
+      break;
+    }
+  }
+  return { count: left, learned };
 }
 
 /**

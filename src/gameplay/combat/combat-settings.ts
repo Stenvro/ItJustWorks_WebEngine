@@ -59,10 +59,17 @@ export interface CombatSettings {
   /** fBlockPowerAttackMult: what is blocked of a power attack. */
   readonly blockPowerAttackMult: number;
   /**
-   * The most a block takes off (UESP "Block": 85%). TODO(M13): the plugins' fBlockMax is 0.7;
-   * which cap the engine applies, and to what, is not documented.
+   * fPlayerMaxResistance (percent): the most a block takes off, for every blocker (observed in
+   * the original; UESP "Block" measures the same 85%). The plugins' fBlockMax, fBlockSkillMult
+   * and fBlockAmountWeaponMult are never read (docs/ai.md, "Blocking").
    */
-  readonly blockCap: number;
+  readonly playerMaxResistance: number;
+  /**
+   * fArmorRatingBase, fArmorRatingMax: a block's share grows with the Block skill as
+   * base + (max − base) × skill / 100 (observed in the original; the 1 + 1.5 × skill of UESP).
+   */
+  readonly armorRatingBase: number;
+  readonly armorRatingMax: number;
   /** fWeaponBash{PC}Min/Max, fShieldBash{PC}Min/Max: a bash's damage factor (UESP "Block"). */
   readonly weaponBashMin: number;
   readonly weaponBashMax: number;
@@ -96,6 +103,28 @@ export interface CombatSettings {
   /** fStaggerRunningMult, fStaggerRecoilingMult: a bash on one running, or recoiling. */
   readonly staggerRunningMult: number;
   readonly staggerRecoilingMult: number;
+  /**
+   * iStaggerAttackChance: the percent chance a plain melee hit's stagger is taken (observed in
+   * the original: staggerTaken).
+   */
+  readonly staggerAttackChance: number;
+  /**
+   * [Combat] bPlayerAlwaysStaggered (INI): the player takes every hit's stagger, without the
+   * iStaggerAttackChance roll.
+   */
+  readonly playerAlwaysStaggered: boolean;
+  // --- Knockback -----------------------------------------------------------------------------
+  /**
+   * An unblocked hit pushes its target back (observed in the original: knockback.ts):
+   * (physical damage × fKnockbackDamageMult + fKnockbackDamageBase) × (fKnockbackAgilBase +
+   * fKnockbackAgilMult × 50) game units, at most fKnockbackForceMax, over fKnockbackTime seconds.
+   */
+  readonly knockbackDamageMult: number;
+  readonly knockbackDamageBase: number;
+  readonly knockbackAgilBase: number;
+  readonly knockbackAgilMult: number;
+  readonly knockbackForceMax: number;
+  readonly knockbackTime: number;
   // --- Bleedout ------------------------------------------------------------------------------
   /** fBleedoutRate: health an actor bleeding out regains a second (% of its maximum ×100). */
   readonly bleedoutRate: number;
@@ -203,7 +232,9 @@ export const COMBAT_DEFAULTS: CombatSettings = {
   shieldBaseFactor: 0.45,
   shieldScalingFactor: 0.2,
   blockPowerAttackMult: 0.66,
-  blockCap: 0.85,
+  playerMaxResistance: 85,
+  armorRatingBase: 1,
+  armorRatingMax: 2.5,
   weaponBashMin: 0.1,
   weaponBashMax: 0.25,
   weaponBashPCMin: 0.1,
@@ -231,6 +262,14 @@ export const COMBAT_DEFAULTS: CombatSettings = {
   stagger2WeapMult: 0.5,
   staggerRunningMult: 1.5,
   staggerRecoilingMult: 1.5,
+  staggerAttackChance: 100,
+  playerAlwaysStaggered: true,
+  knockbackDamageMult: 10,
+  knockbackDamageBase: 50,
+  knockbackAgilBase: 1,
+  knockbackAgilMult: -0.008,
+  knockbackForceMax: 512,
+  knockbackTime: 1,
   bleedoutRate: 15,
   bleedoutMin: 5,
   bleedoutDefault: 0.15,
@@ -285,6 +324,9 @@ const SETTING_NAMES: Readonly<Partial<Record<keyof CombatSettings, string>>> = {
   shieldBaseFactor: 'fShieldBaseFactor',
   shieldScalingFactor: 'fShieldScalingFactor',
   blockPowerAttackMult: 'fBlockPowerAttackMult',
+  playerMaxResistance: 'fPlayerMaxResistance',
+  armorRatingBase: 'fArmorRatingBase',
+  armorRatingMax: 'fArmorRatingMax',
   weaponBashMin: 'fWeaponBashMin',
   weaponBashMax: 'fWeaponBashMax',
   weaponBashPCMin: 'fWeaponBashPCMin',
@@ -312,6 +354,13 @@ const SETTING_NAMES: Readonly<Partial<Record<keyof CombatSettings, string>>> = {
   stagger2WeapMult: 'fStagger2WeapMult',
   staggerRunningMult: 'fStaggerRunningMult',
   staggerRecoilingMult: 'fStaggerRecoilingMult',
+  staggerAttackChance: 'iStaggerAttackChance',
+  knockbackDamageMult: 'fKnockbackDamageMult',
+  knockbackDamageBase: 'fKnockbackDamageBase',
+  knockbackAgilBase: 'fKnockbackAgilBase',
+  knockbackAgilMult: 'fKnockbackAgilMult',
+  knockbackForceMax: 'fKnockbackForceMax',
+  knockbackTime: 'fKnockbackTime',
   bleedoutRate: 'fBleedoutRate',
   bleedoutMin: 'fBleedoutMin',
   bleedoutDefault: 'fBleedoutDefault',

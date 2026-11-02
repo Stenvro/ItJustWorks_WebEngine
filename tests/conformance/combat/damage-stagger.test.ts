@@ -19,7 +19,11 @@
 
 import { describe, expect, it } from 'vitest';
 import { criticalHitChance } from '../../../src/gameplay/combat/combat-hooks.ts';
-import { COMBAT_DEFAULTS } from '../../../src/gameplay/combat/combat-settings.ts';
+import {
+  COMBAT_DEFAULTS,
+  readCombatSettings,
+} from '../../../src/gameplay/combat/combat-settings.ts';
+import { knockbackApplies, knockbackForce } from '../../../src/gameplay/combat/knockback.ts';
 import {
   bashFactor,
   blockedShare,
@@ -31,6 +35,7 @@ import {
   bashStagger,
   blockStagger,
   staggerMagnitude,
+  staggerTaken,
 } from '../../../src/gameplay/combat/stagger.ts';
 import { EquippedItemType } from '../../../src/gameplay/equipment.ts';
 import { ActorValue } from '../../../src/world/actor-values.ts';
@@ -119,7 +124,14 @@ describe('weapon damage (formula)', () => {
     'the attacker’s Attack Damage Mult actor value (154) multiplies the damage  [CommonLibSSE]',
   );
   it.todo('NPC sneak attacks on the player and on NPCs (the attacker undetected)  [UESP Sneak]');
-  it.todo('fCombatSneakAttackBonusMult (Skyrim.esm 100) and the sneak attack messages  [settings]');
+  it('fCombatSneakAttackBonusMult and fCombatDamageBonusSneakingMult change nothing  [original]', () => {
+    // Registered by the original and never read: the sneak attack is the kind's mult alone.
+    const read = readCombatSettings(
+      (name) => ({ fCombatSneakAttackBonusMult: 100, fCombatDamageBonusSneakingMult: 2 })[name],
+    );
+    expect(read).toEqual(readCombatSettings(() => undefined));
+  });
+  it.todo('the sneak attack messages (sSneakAttack…, the critical strike’s)  [settings]');
   it.todo(
     'armour: rating × fArmorScalingFactor%, at most fMaxArmorRating (80 with Skyrim.esm)  [UESP]',
   );
@@ -187,10 +199,61 @@ describe('blocks (formula)', () => {
     expect(result.blockedDamage).toBeCloseTo(9.8);
   });
 
-  it.todo(
-    'the skill’s factor on a block (ours: fArmorRatingMax − Base) is the engine’s  [original]',
-  );
-  it.todo('the block cap (ours 0.85; fBlockMax 0.75 has no reader in the engine)  [original]');
+  it('the skill’s factor is fArmorRatingBase + (Max − Base) × Block / 100  [original]', () => {
+    const block = {
+      shieldRating: 20,
+      attackerWeaponDamage: 10,
+      blockSkill: 60,
+      blockMult: 1,
+      powerAttack: false,
+    };
+    // 1 + 1.5 × 0.6 = 1.9: 0.45 + 0.2 × 20 × 1.9 / 100.
+    expect(blockedShare(block, settings)).toBeCloseTo(0.45 + 0.076);
+    const steeper = { ...settings, armorRatingMax: 3 };
+    expect(blockedShare(block, steeper)).toBeCloseTo(0.45 + 0.2 * 20 * 2.2 * 0.01);
+  });
+
+  it('the cap is fPlayerMaxResistance (85) for every blocker; fBlockMax is not read  [original]', () => {
+    const block = {
+      shieldRating: 60,
+      attackerWeaponDamage: 10,
+      blockSkill: 100,
+      blockMult: 3,
+      powerAttack: false,
+    };
+    expect(blockedShare(block, settings)).toBeCloseTo(0.85);
+    expect(blockedShare(block, { ...settings, playerMaxResistance: 70 })).toBeCloseTo(0.7);
+    expect(Object.keys(settings)).not.toContain('blockMax');
+  });
+});
+
+describe('the stagger taken and the knockback  [original]', () => {
+  const half = { ...settings, staggerAttackChance: 50 }; // Skyrim.esm's iStaggerAttackChance
+  const melee = { blocked: false, bash: false, ranged: false, targetIsPlayer: false };
+
+  it('a plain melee hit staggers on the iStaggerAttackChance roll, the rest always', () => {
+    expect(staggerTaken({ ...melee, roll: 0.3 }, half)).toBe(true);
+    expect(staggerTaken({ ...melee, roll: 0.7 }, half)).toBe(false);
+    expect(staggerTaken({ ...melee, roll: 0.7, bash: true }, half)).toBe(true);
+    expect(staggerTaken({ ...melee, roll: 0.7, ranged: true }, half)).toBe(true);
+    // [Combat] bPlayerAlwaysStaggered (1).
+    expect(staggerTaken({ ...melee, roll: 0.7, targetIsPlayer: true }, half)).toBe(true);
+  });
+
+  it('an unblocked hit pushes (damage × mult + base) × (agility base + mult × 50) units', () => {
+    const vanilla = {
+      ...settings,
+      knockbackDamageMult: 5,
+      knockbackForceMax: 128,
+      knockbackTime: 0.3,
+    };
+    // A 20-point hit: (20 × 5 + 50) × 0.6 = 90 units over 0.3 s.
+    expect(knockbackForce(20, vanilla)).toBeCloseTo(90);
+    expect(knockbackForce(60, vanilla)).toBe(128);
+    expect(
+      knockbackApplies({ blocked: 0.2, inKillMove: false, notPushable: false, projectile: false }),
+    ).toBe(false);
+  });
 });
 
 describe('bashes (formula)', () => {

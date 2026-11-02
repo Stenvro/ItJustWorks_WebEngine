@@ -70,6 +70,12 @@ describe('the enchanting menu’s numbers (UESP)', () => {
     expect(apparelEnchantmentMagnitude(40, 5, { skill: 100 })).toBe(50);
     expect(enchantmentUses(3000, 133)).toBe(22);
   });
+
+  it('takes fEnchantingSkillFactor as (factor − 1), the share held at 0.01 low  [original]', () => {
+    // Skyrim.esm's 1.25; the engine's own 3 would give 1 + 2 × 86 / 85 at skill 100.
+    expect(enchantingSkillMultiplier(100, 3)).toBeCloseTo(1 + (2 * 86) / 85, 6);
+    expect(enchantingSkillMultiplier(10, 1.25)).toBeGreaterThan(1);
+  });
 });
 
 describe.skipIf(!hasGamedata())('the enchantments across the load order (data)', () => {

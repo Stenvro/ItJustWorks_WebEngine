@@ -1,7 +1,8 @@
 // How actors other than the player get their level and their stats, as the game computes them:
 //
 // - An encounter zone's level (ECZN; Creation Kit "Encounter Zone"): the player's level when
-//   the player first meets it, within its minimum and maximum (0: none); with "Match PC Below
+//   the player first meets it (its levels past the zone's minimum × fLevelScalingMult, 1 in
+//   Skyrim.esm), within its minimum and maximum (0: none); with "Match PC Below
 //   Minimum Level" a player below the minimum sets it to the player's own. It keeps that level
 //   until the zone resets (never, with "Never Resets").
 // - The level a leveled actor's lists are picked at: its encounter's level (the zone's, else
@@ -44,6 +45,11 @@ export interface LevelingSettings {
   readonly npcHealthPerLevel: number;
   /** fLeveledActorMultEasy, ...Medium, ...Hard, ...VeryHard (XLCM 0..3). */
   readonly levelModifierMults: readonly number[];
+  /**
+   * fLevelScalingMult: an encounter zone follows the player's levels past its minimum by this
+   * share (observed in the original: zoneLevel; Skyrim.esm 1, the engine 0.6).
+   */
+  readonly levelScalingMult: number;
 }
 
 export const LEVELING_DEFAULTS: LevelingSettings = {
@@ -51,6 +57,7 @@ export const LEVELING_DEFAULTS: LevelingSettings = {
   skillPoints: 8,
   npcHealthPerLevel: 5,
   levelModifierMults: [0.33, 0.67, 1, 1.25],
+  levelScalingMult: 0.6,
 };
 
 export function levelingSettings(
@@ -64,21 +71,31 @@ export function levelingSettings(
     levelModifierMults: ['Easy', 'Medium', 'Hard', 'VeryHard'].map(
       (name, i) => number(`fLeveledActorMult${name}`) ?? d.levelModifierMults[i] ?? 1,
     ),
+    levelScalingMult: number('fLevelScalingMult') ?? d.levelScalingMult,
   };
 }
 
 // --- Levels ---------------------------------------------------------------------------------
 
 /**
- * An encounter zone's level for a player of `playerLevel` meeting it: within its minimum and
- * maximum, below the minimum only with Match PC Below Minimum Level.
+ * An encounter zone's level for a player of `playerLevel` meeting it (observed in the
+ * original): below its minimum, the minimum (the player's own level with Match PC Below Minimum
+ * Level); from it, the minimum plus fLevelScalingMult of the levels past it, rounded down; at
+ * most its maximum (0: none).
  */
 export function zoneLevel(
   zone: Pick<EncounterZone, 'minLevel' | 'maxLevel' | 'flags'>,
   playerLevel: number,
+  settings: Pick<LevelingSettings, 'levelScalingMult'> = LEVELING_DEFAULTS,
 ): number {
   const matchBelow = (zone.flags & EncounterZoneFlag.matchPcBelowMinimum) !== 0;
-  let level = matchBelow ? playerLevel : Math.max(zone.minLevel, playerLevel);
+  const past = (playerLevel - zone.minLevel) * settings.levelScalingMult;
+  let level =
+    playerLevel < zone.minLevel
+      ? matchBelow
+        ? playerLevel
+        : zone.minLevel
+      : Math.trunc(zone.minLevel + past + 1e-6);
   if (zone.maxLevel > 0) level = Math.min(zone.maxLevel, level);
   return Math.max(1, level);
 }

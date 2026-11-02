@@ -435,6 +435,8 @@ export class CharacterBody {
   carriedTurn = 0;
   /** The speed a moving body that hit it gave it, dying away (game units per second). */
   #pushed: [number, number] = [0, 0];
+  /** A hit's push back (knockBack): its speed (game units per second) and the seconds left. */
+  #knock: { readonly velocity: readonly [number, number]; left: number } | undefined;
   /** The mass it pushes back with against moving bodies (kg; pushedSpeed). */
   mass = ACTOR_MASS;
 
@@ -995,6 +997,27 @@ export class CharacterBody {
     ];
   }
 
+  /**
+   * A hit's push back (src/gameplay/combat/knockback.ts): it moves at `velocity` (game units a
+   * second; the ground's plane) besides its own for `seconds`, unless a stronger push moves it
+   * already (observed in the original).
+   */
+  knockBack(velocity: readonly [number, number], seconds: number): void {
+    const now = this.#knock;
+    if (now && now.left > 0 && Math.hypot(...now.velocity) >= Math.hypot(...velocity)) return;
+    this.#knock = { velocity: [velocity[0], velocity[1]], left: seconds };
+  }
+
+  /** The push back moving it this step, and the time it has left after it. */
+  #knocked(seconds: number): readonly [number, number] {
+    const knock = this.#knock;
+    if (!knock) return [0, 0];
+    const share = Math.min(1, knock.left / Math.max(seconds, 1e-6));
+    knock.left -= seconds;
+    if (knock.left <= 0) this.#knock = undefined;
+    return [knock.velocity[0] * share, knock.velocity[1] * share];
+  }
+
   /** One fixed step: gravity, the wanted movement, sliding and stepping. Before world.step. */
   step(seconds: number): void {
     // Carried by what it stands on (#carrier): first by what that moved since its last step (a
@@ -1059,10 +1082,11 @@ export class CharacterBody {
     // Off another actor it stood on: away from it at least as fast as it falls (as off a slope).
     const off = this.#offActor;
     const slide = off ? Math.max(OFF_ACTOR_SPEED, -this.verticalSpeed) : 0;
+    const knock = this.#knocked(seconds);
     const [vx, vy] = recoveringVelocity(
       [
-        this.velocity[0] + this.#pushed[0] + (off ? off[0] * slide : 0),
-        this.velocity[1] + this.#pushed[1] + (off ? off[1] * slide : 0),
+        this.velocity[0] + this.#pushed[0] + knock[0] + (off ? off[0] * slide : 0),
+        this.velocity[1] + this.#pushed[1] + knock[1] + (off ? off[1] * slide : 0),
       ],
       [...inside.values()].map(({ way, depth }) => ({ way, depth: depth * HAVOK_SCALE })),
     );

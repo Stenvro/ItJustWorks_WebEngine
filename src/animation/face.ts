@@ -118,6 +118,11 @@ export interface BlinkSettings {
    * way round, which would let only downcast eyes blink).
    */
   readonly fLookDownDisableBlinkingAmt?: number;
+  /**
+   * The eyes turn towards where they look by at most this much a second (radians), heading and
+   * pitch each (observed in the original: the face's eye tracking; Skyrim.esm 5, the engine 2).
+   */
+  readonly fTrackSpeed?: number;
 }
 
 /** The engine's built-in expression settings (Skyrim.esm sets none). */
@@ -125,6 +130,7 @@ export const EXPRESSION_DEFAULTS = {
   fExpressionChangePerSec: 2,
   fExpressionStrengthAdd: 1,
   fLookDownDisableBlinkingAmt: 0.25,
+  fTrackSpeed: 2,
 } as const;
 
 /** Skyrim.esm's values. */
@@ -217,6 +223,8 @@ export class FaceAnimation implements FaceWeights {
   /** The eyes' random offset (eyesHeadingOffset, eyesPitchOffset) and the seconds it holds. */
   #eyesOffset = { heading: 0, pitch: 0 };
   #eyesOffsetTimer = 0;
+  /** Where the eyes look now (radians), turning towards the look and its offset. */
+  #eyesShown = { heading: 0, pitch: 0 };
 
   /**
    * A spoken line's head pitch, roll and yaw are its lip file's times these (observed in the
@@ -261,10 +269,15 @@ export class FaceAnimation implements FaceWeights {
       };
       this.#eyesOffsetTimer = 1 + 2 * this.#random();
     }
-    return {
-      heading: this.#eyesBase.heading + this.#eyesOffset.heading,
-      pitch: this.#eyesBase.pitch + this.#eyesOffset.pitch,
+    // They turn there at most fTrackSpeed a second on each axis (observed in the original).
+    const step = (this.#blink.fTrackSpeed ?? EXPRESSION_DEFAULTS.fTrackSpeed) * Math.max(0, dt);
+    const toward = (now: number, target: number): number =>
+      now + Math.min(step, Math.max(-step, target - now));
+    this.#eyesShown = {
+      heading: toward(this.#eyesShown.heading, this.#eyesBase.heading + this.#eyesOffset.heading),
+      pitch: toward(this.#eyesShown.pitch, this.#eyesBase.pitch + this.#eyesOffset.pitch),
     };
+    return this.#eyesShown;
   }
 
   #blinkDelay(): number {

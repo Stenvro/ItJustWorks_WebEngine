@@ -754,6 +754,7 @@ export class ActorPlacer {
       fLookDownDisableBlinkingAmt:
         settings.number('fLookDownDisableBlinkingAmt') ??
         EXPRESSION_DEFAULTS.fLookDownDisableBlinkingAmt,
+      fTrackSpeed: settings.number('fTrackSpeed') ?? EXPRESSION_DEFAULTS.fTrackSpeed,
     }));
     return this.#blink;
   }

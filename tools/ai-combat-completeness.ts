@@ -99,6 +99,22 @@ export const INERT: ReadonlyMap<string, string> = new Map([
   ['fProjectileInventoryGrenadeFreakoutTime', "an earlier game's grenades; no grenades here"],
   ['fProjectileInventoryGrenadeTimer', "an earlier game's grenades; no grenades here"],
   ['iProjectileMineShooterCanTrigger', "an earlier game's mines; no mines here"],
+  // Registered by the original and never read (observed in the original).
+  ...(
+    [
+      ['fBlockMax', 'the block is capped by fPlayerMaxResistance (docs/ai.md, "Blocking")'],
+      ['fBlockSkillMult', 'the block scales by fArmorRatingBase / Max (docs/ai.md, "Blocking")'],
+      ['fBlockAmountWeaponMult', 'a weapon block scales by fBlockWeaponScaling (docs/ai.md)'],
+      ['fConcussionTimer', "an earlier game's concussion; none here"],
+      ['fCombatSneakAttackBonusMult', 'the sneak attack takes fCombatSneak*Mult (docs/ai.md)'],
+      ['fCombatDamageBonusSneakingMult', 'the sneak attack takes fCombatSneak*Mult (docs/ai.md)'],
+      ['fTrackDeadZoneXY', "an earlier game's head tracking; the eyes read fTrackSpeed alone"],
+      ['fTrackDeadZoneZ', "an earlier game's head tracking; the eyes read fTrackSpeed alone"],
+    ] as const
+  ).map(([name, why]): [string, string] => [
+    name,
+    `registered by the original, never read: ${why}`,
+  ]),
 ]);
 
 /**
@@ -158,7 +174,6 @@ const EXPLAINED: ReadonlyMap<string, string> = new Map([
 ]);
 
 /** Items left open, by "part|name": why (what is not known, or who works on it). */
-const CODE = "needs the original's code: no document gives its use";
 const OPEN: ReadonlyMap<string, string> = new Map([
   [
     'Idle markers (IDLM)|looseOnly',
@@ -168,26 +183,6 @@ const OPEN: ReadonlyMap<string, string> = new Map([
     'Navmesh triangles (NVNM)|found',
     'open: set on nearly every triangle; whether the game reads it is not documented',
   ],
-  ...(['fTrackSpeed', 'fTrackDeadZoneXY', 'fTrackDeadZoneZ'] as const).map(
-    (name): [string, string] => [
-      `Game settings (GMST)|${name}`,
-      `open: the earlier game's head tracking set (eleven fTrack* settings, Skyrim.esm keeps three); this game's head tracking reads fHeadTrack*; ${CODE}`,
-    ],
-  ),
-  ...(
-    [
-      'fCombatSneakAttackBonusMult',
-      'fCombatDamageBonusSneakingMult',
-      'fBlockSkillMult',
-      'fBlockAmountWeaponMult',
-      'fBlockMax',
-      'fKnockbackTime',
-      'fKnockbackDamageMult',
-      'fKnockbackForceMax',
-      'fConcussionTimer',
-      'iStaggerAttackChance',
-    ] as const
-  ).map((name): [string, string] => [`Game settings (GMST)|${name}`, `open: ${CODE}`]),
   ...(['iCombatDismemberPartChance', 'iCombatExplodePartChance'] as const).map(
     (name): [string, string] => [
       `Game settings (GMST)|${name}`,
