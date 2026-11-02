@@ -1302,9 +1302,13 @@ export class ActorAi {
         };
       },
       destinationKind,
-      packageEvent: (actor, event, pack) => {
-        // A scene's package action is done when its package completes.
-        if (event === 'end') runtime()?.scenes.packageEnded(actor, pack.formId);
+      packageEvent: (actor, event, pack, _other, complete) => {
+        // A scene's package action is done when its package completes: a procedure's success
+        // that completes it, not its tree running out (observed in the original; docs/ai.md,
+        // "Scenes"). MQ106DelphineIntroGreet2 sits at her table until her ForceGreet completes.
+        if (event === 'end' && complete === true) {
+          runtime()?.scenes.packageEnded(actor, pack.formId);
+        }
         void this.#packageEvent(actor, event, pack);
       },
     };

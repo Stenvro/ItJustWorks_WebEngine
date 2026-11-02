@@ -460,7 +460,31 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   IvarsteadSSScene never ended. A Random branch runs one that may run, at random. A procedure
   runs until it
   succeeds or fails; one whose success completes the package (FNAM 0x1) ends it; a branch that
-  repeats when complete (PRCB 0x1) starts over. Chosen again (every evaluation, EvaluatePackage)
+  repeats when complete (PRCB 0x1) starts over.
+- **When a package is complete** (observed in the original). Each update the engine runs
+  the tree's root with a context that carries one "package complete" mark, cleared as the
+  update begins. A node reports to its parent only that it is done, and whether it succeeded;
+  only two things set the mark: a procedure whose success completes the package (FNAM 0x1)
+  reporting its success, and the Done procedure. A branch never sets it: its own "completes"
+  answer is always no. So a Sequence that has run its last child, a Stacked branch whose chosen
+  child is done, a Simultaneous branch whose child (or, with PRCB 0x2, all of whose children)
+  are done, report done upward and nothing more; the package is complete only if one of those
+  children was a completing procedure that succeeded. Only with the mark set does the engine
+  move the package on to its Done step, where its end is handled (inferred: OnPackageEnd and
+  its end actions). A tree that
+  ran out without it leaves the package running: the next update runs the node's state again
+  (a Sequence its last child, a Stacked branch its chosen child), and as branch conditions are
+  checked again (every fEvaluateProcedureTimer, 3 s, and when the package is evaluated) a
+  Stacked branch may take an earlier child that now may run. So MQ106DelphineIntroGreet2
+  (ForceGreetFromSitting: a Stacked branch of two ForceGreets, each completing, before a Sit
+  that does not) is not complete as Delphine sits, only once she has greeted the player; of
+  the 3,496 vanilla scene package actions, 148 have a first package with no completing
+  procedure at all (Follow, Sandbox after a Travel, ambushers' Sit): their actions end only
+  with their last phase. Here a tree that runs out still ends its package for its scripts and
+  its fallout (OnPackageEnd, the end fragment and actions; `ActorPackages`), but only a
+  completing procedure's success tells a scene its package is done (`packageEvent`'s
+  `complete`). TODO(M13): the rest of the lifecycle as the engine's (a tree run out raises no
+  OnPackageEnd and no fallout; its last procedure runs on). Chosen again (every evaluation, EvaluatePackage)
   while it stays the package chosen, its tree goes on, unless a branch it runs (or, ended, the
   branches its last procedure ran under) may no longer run: then the tree is taken again from its
   root, the package staying (no package events): DialogueFollower's follower travels to wait as
@@ -1647,7 +1671,12 @@ after `--package-seconds`).
   at once (MQ101DragonAttackScene1's first phase waits on Alduin's MQ101AlduinPerch1, whose
   conditions no longer hold by then). While it runs, the engine looks at it every update: with
   the actor running the action's package, it is done once the actor is dead or disabled or the
-  package has reached its end; with the actor in the scene but running another package, the
+  package has reached its Done step, which only a completing procedure's success brings
+  ([When a package is complete](#packages): a tree that runs out does not; MQ106IntroScene's
+  phase 8 waits for Delphine's greeting at her table, not for her sitting down, and
+  MQ104DragonDeathScene's phase 8, "Wait to forcegreet player or for player to leave area",
+  for the first soldier's greeting, not for his walk to where he waits); with the actor in the
+  scene but running another package, the
   action starts again (its packages again; with none that may run, done). Here the stack gives
   the action's packages back by itself, and an action whose actor runs another package is
   looked at again each second for packages that may run (`packagesRunnable` in
