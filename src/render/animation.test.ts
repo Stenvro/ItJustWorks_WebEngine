@@ -10,6 +10,7 @@ import {
   sampleTransform,
   type AnimationTrack,
   type Timing,
+  type TransformSource,
 } from './animation.ts';
 import { billboardWorld } from './billboard.ts';
 import { lightFlicker } from '../world/light-flicker.ts';
@@ -143,6 +144,33 @@ describe('sampleKeys', () => {
     expect(z).toBeCloseTo(Math.SQRT1_2, 5);
     expect(x).toBeCloseTo(0, 6);
     expect(y).toBeCloseTo(0, 6);
+  });
+
+  it('samples a source again at each new time, and a one-key source once', () => {
+    const data = (keys: number): TransformSource['data'] => ({
+      kind: 'transform-data',
+      rotationType: KeyType.linear,
+      quaternionKeys: [],
+      xyzRotations: [],
+      translations: {
+        interpolation: KeyType.linear,
+        keys: Array.from({ length: keys }, (_, i) => ({ time: i, value: [i * 10, 0, 0] })),
+      },
+      scales: { interpolation: KeyType.linear, keys: [] },
+    });
+    const moving: TransformSource = {
+      translation: undefined,
+      rotation: undefined,
+      scale: undefined,
+      data: data(2),
+    };
+    expect(sampleTransform(moving, 0.5).translation).toEqual([5, 0, 0]);
+    expect(sampleTransform(moving, 0.5).translation).toEqual([5, 0, 0]);
+    expect(sampleTransform(moving, 0.25).translation).toEqual([2.5, 0, 0]);
+    expect(sampleTransform(moving, 1).translation).toEqual([10, 0, 0]);
+    const still: TransformSource = { ...moving, data: data(1) };
+    expect(sampleTransform(still, 0).translation).toEqual([0, 0, 0]);
+    expect(sampleTransform(still, 7).translation).toEqual([0, 0, 0]);
   });
 });
 
