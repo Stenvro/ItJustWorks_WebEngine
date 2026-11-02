@@ -260,6 +260,11 @@ interface Flier {
   ranges: { readonly optimal: number; readonly max: number } | undefined;
   /** How it flew in its last steering step (its velocity, at a run or a walk): detection's. */
   flown: { readonly velocity: Vec3; readonly running: boolean } | undefined;
+  /**
+   * Where it was at the last frame, and how it moved over that frame (steered, or by its clips'
+   * root motion while hovering, taking off or landing): what shots at it lead by.
+   */
+  moved: { readonly from: Vec3; readonly velocity: Vec3 } | undefined;
 }
 
 /** A flier asks its graph again after this long without an answer (seconds). */
@@ -429,6 +434,15 @@ export class ActorFlight {
     };
   }
 
+  /**
+   * How a flier in the air moved over the last frame (units/s, its climb too), however it moved
+   * (steered or by root motion): what a shot at it is led by. Undefined on the ground.
+   */
+  velocity(reference: number): Vec3 | undefined {
+    const flier = this.#fliers.get(reference);
+    return flier && airborne(flier.state) ? flier.moved?.velocity : undefined;
+  }
+
   /** A loaded save had this flier in the air: placed, it cruises on from there. */
   restoreAloft(reference: number): void {
     this.#savedAloft.add(reference);
@@ -479,9 +493,15 @@ export class ActorFlight {
     };
   }
 
-  /** The size it had on the ground (blows reach it by it in the air too). */
+  /**
+   * The size it had on the ground (blows and shots reach it by it in the air too); one that has
+   * not stood on the ground here (enabled in the air) has its controller's shape from its
+   * skeleton's bound.
+   */
   shape(reference: number): { readonly radius: number; readonly height: number } | undefined {
-    return this.#fliers.get(reference)?.shape;
+    const flier = this.#fliers.get(reference);
+    if (!flier) return undefined;
+    return flier.shape ?? this.#options.movers.controllerShapeOf(flier.staged);
   }
 
   /** What a flier is asked to do now (undefined: it stays as it is: circling, hovering, perched). */
@@ -1630,6 +1650,19 @@ export class ActorFlight {
       const flier = this.#flier(staged.reference);
       if (!flier) continue;
       flier.staged = staged;
+      const at = staged.position;
+      const from = flier.moved?.from;
+      flier.moved = {
+        from: [at[0], at[1], at[2]],
+        velocity:
+          from && seconds > 0
+            ? [
+                (at[0] - from[0]) / seconds,
+                (at[1] - from[1]) / seconds,
+                (at[2] - from[2]) / seconds,
+              ]
+            : [0, 0, 0],
+      };
       try {
         this.#update(flier, runtime, seconds);
       } catch (error) {
@@ -2419,6 +2452,7 @@ export class ActorFlight {
       deferred: undefined,
       ranges: undefined,
       flown: undefined,
+      moved: undefined,
     };
     this.#fliers.set(reference, flier);
     void this.#readRadius(flier).catch(() => undefined);

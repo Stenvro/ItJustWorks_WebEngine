@@ -497,6 +497,8 @@ export class ActorStage {
         reference === PLAYER_REF
           ? options.player?.()?.play.playerMotion().velocity
           : this.movers.motion(reference)?.velocity,
+      // A flier in the air has no controller: how it flies, climb and all.
+      flightVelocity: (reference) => this.flight.velocity(reference),
       sneaking: (reference) =>
         reference === PLAYER_REF
           ? options.player?.()?.play.player.sneaking === true
