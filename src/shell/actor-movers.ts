@@ -296,6 +296,8 @@ const STALL_SECONDS = 0.5;
 const IDLE_STOP_INSTANT = 'ActionIdleStopInstant';
 /** The action an actor's path starts with (its idles: the turns it sets out with). */
 const PATH_START = 'ActionPathStart';
+/** The action an actor's path ends with (its idles: the turns into the heading it arrives with). */
+const PATH_END = 'ActionPathEnd';
 /**
  * A moving destination that moved less than this (units) from where its path led has not moved
  * on: one standing beyond the navmesh's reach is not searched for again and again (ours).
@@ -332,6 +334,8 @@ interface Travel {
   askedPlayer: boolean;
   /** Its path start was performed (ActionPathStart: the turn it sets out with). */
   pathStarted: boolean;
+  /** The heading it is to arrive with (ActionPathEnd's turn), if any. */
+  readonly heading: number | undefined;
   /** The navmesh obstacles' version its path was searched at. */
   obstacles: number;
 }
@@ -519,6 +523,8 @@ export class ActorMovers {
    * on from it, not from standing (moveStop, moveStart at every patrol point).
    */
   readonly #arrived = new Map<number, MoveRequest>();
+  /** The arrival heading's way while an actor's path end is performed (ActionPathEnd). */
+  readonly #endAims = new Map<number, readonly [number, number]>();
   /** Each actor's travels given up in a row, and where the last one was (the warp's count). */
   readonly #failures = new Map<number, { count: number; at: Vec3 }>();
   /** The warps waiting for the player to look away (or for their time to run out). */
@@ -568,6 +574,7 @@ export class ActorMovers {
         blockedBy: undefined,
         askedPlayer: false,
         pathStarted: false,
+        heading: options.heading,
         obstacles: this.#options.obstacles?.version ?? 0,
         done: (arrived) => {
           if (this.#travels.get(reference) !== travel) return;
@@ -706,6 +713,7 @@ export class ActorMovers {
     if (step.state === 'arrived') {
       // Where the path ends short of the place (another island), it got as near as it can.
       if (travel.follower.path.complete && this.#movedOn(mover.staged.position, travel)) return;
+      if (travel.follower.path.complete) this.#pathEnd(mover, travel);
       travel.done(travel.follower.path.complete);
       return;
     }
@@ -749,8 +757,7 @@ export class ActorMovers {
    * GetPathingTargetSpeed): standing, a canned turn on the spot or a turn into a walk
    * (NPC_TurnRight90, NPC_TurnToWalkLeft90, ...); already going (GetMovementSpeed 24 or more),
    * none. Its root motion turns it. TODO(M13): when exactly the engine performs it (each new
-   * path, or once a travel as here), and ActionPathEnd's turn into the heading it arrives with
-   * (its pathing target then is not kept).
+   * path, or once a travel as here).
    */
   #pathStart(mover: Mover, travel: Travel): void {
     if (travel.pathStarted) return;
@@ -758,6 +765,26 @@ export class ActorMovers {
     const perform = this.#options.performAction;
     if (!perform || travel.direct || mover.root.driven) return;
     void perform(mover.staged.reference, PATH_START);
+  }
+
+  /**
+   * An actor arrives with a heading to take (TravelOptions.heading: a furniture's entry): its
+   * path's end action (ActionPathEnd). While it is performed its pathing target is the arrival
+   * heading's way (motion's aim), so its idle tree picks the canned turn into it by how far that
+   * is from its facing (GetPathingTargetAngleOffset: NPC_TurnRight90 from 45°, NPC_TurnRight180
+   * from 135°, ...; within 45° none). Its root motion turns it. TODO(M13): whether the engine
+   * also gives an arrival heading to other travels (a package's travel to a marker).
+   */
+  #pathEnd(mover: Mover, travel: Travel): void {
+    const perform = this.#options.performAction;
+    const heading = travel.heading;
+    if (!perform || heading === undefined || travel.direct || mover.root.driven) return;
+    const reference = mover.staged.reference;
+    const aim: readonly [number, number] = [Math.sin(heading), Math.cos(heading)];
+    this.#endAims.set(reference, aim);
+    void perform(reference, PATH_END).finally(() => {
+      if (this.#endAims.get(reference) === aim) this.#endAims.delete(reference);
+    });
   }
 
   /**
@@ -1208,7 +1235,8 @@ export class ActorMovers {
       velocity: [mover.velocity[0], mover.velocity[1], mover.character.verticalSpeed],
       // What its controller is asked (the steering's velocity) and the way its path goes on.
       wish: [mover.character.velocity[0], mover.character.velocity[1]],
-      aim: pathing && direction ? [direction[0], direction[1]] : undefined,
+      // Arriving, the way of the heading it arrives with (ActionPathEnd).
+      aim: pathing && direction ? [direction[0], direction[1]] : this.#endAims.get(reference),
     };
   }
 

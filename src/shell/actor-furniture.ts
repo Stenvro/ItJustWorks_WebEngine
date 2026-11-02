@@ -562,7 +562,11 @@ export class ActorFurniture {
    * stops (ActionIdleStop) while it is only on its way there.
    */
   #takenBy(actor: number, action: string): boolean {
-    return action === 'ActionIdleStop' ? this.holds(actor) : this.#uses.has(actor);
+    if (action === 'ActionIdleStop') return this.holds(actor);
+    const use = this.#uses.get(actor);
+    // Its walk to the furniture ends with its path's end turn into the entry (ActionPathEnd).
+    if (action === 'ActionPathEnd') return use !== undefined && use.phase !== 'approaching';
+    return use !== undefined;
   }
 
   /** What sandboxing makes of a base object, read once per base. */
@@ -668,14 +672,14 @@ export class ActorFurniture {
 
   /**
    * Uses a furniture: picks its marker and entry, walks to where the enter begins (`walk`: the
-   * actor's travel), turns (`face`), enters. Resolves whether it is in it. `quick`: placed in
-   * it, it is in it at once (the instant idle). `types`: only markers of these animation types
-   * (bits: 1 sit, 2 sleep, 4 lean).
+   * actor's travel, arriving with the enter's heading), turns (`face`), enters. Resolves whether
+   * it is in it. `quick`: placed in it, it is in it at once (the instant idle). `types`: only
+   * markers of these animation types (bits: 1 sit, 2 sleep, 4 lean).
    */
   async use(
     user: FurnitureUser,
     furniture: number,
-    walk: (to: Vec3, arrive: number) => Promise<boolean>,
+    walk: (to: Vec3, arrive: number, heading?: number) => Promise<boolean>,
     face: (heading: number | undefined) => void,
     options: {
       readonly quick?: boolean;
@@ -758,7 +762,7 @@ export class ActorFurniture {
           ? user.position[2]
           : (this.#options.ground?.([sx, sy, sz + START_LIFT]) ?? sz);
       const start: Vec3 = [sx, sy, floor];
-      const arrived = await walk(start, 16);
+      const arrived = await walk(start, 16, heading);
       if (this.#uses.get(actor) !== use) return false;
       if (!arrived) {
         this.#uses.delete(actor);

@@ -17,6 +17,7 @@ import {
   type TelekinesisSettings,
 } from '../gameplay/magic/telekinesis.ts';
 import { pathHitsActor } from '../gameplay/magic/projectile-flight.ts';
+import { releasedTogether } from '../gameplay/combat/combat-actions.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import type { Vec3 } from '../render/math.ts';
 import { CastingSource } from '../scripting/runtime/casting-engine.ts';
@@ -54,6 +55,8 @@ export class PlayerCasting implements CastingButtons {
   /** What the hands hold to cast, as last read (the equip system answers asynchronously). */
   readonly #castable = new Set<number>();
   #reading = false;
+  /** Each hand's button last let go: when it went down and came up (ActionDualRelease). */
+  readonly #released = new Map<number, { readonly down: number; readonly up: number }>();
   /** The voice key went down then, if held. */
   #voiceSince: number | undefined;
   #clock = 0;
@@ -94,6 +97,7 @@ export class PlayerCasting implements CastingButtons {
       if (player.isHeld(BUTTONS[source] ?? '')) continue;
       this.#held.delete(source);
       if (entry.casting) void casting.letGo(PLAYER_REF, source);
+      this.#letGo(source, entry.since);
     }
     // The voice: a shout's words by the time the key is held; a power.
     const voice = player.isHeld('Shout');
@@ -278,6 +282,24 @@ export class PlayerCasting implements CastingButtons {
     entry.casting = await casting.start(PLAYER_REF, source);
     // Let go meanwhile: it goes (or is let go, not ready) at once.
     if (entry.casting && this.#held.get(source) !== entry) void casting.letGo(PLAYER_REF, source);
+  }
+
+  /**
+   * A hand's button came up (it went down at `down`): with the other hand's let go at once (both
+   * held together, up within [Controls] fDualCastChordTime of each other: combat-actions.ts
+   * releasedTogether), the hands' dual release (ActionDualRelease: StaffBashRelease with a staff
+   * in the left hand).
+   */
+  #letGo(source: number, down: number): void {
+    const up = { down, up: this.#clock };
+    const other = this.#released.get(
+      source === CastingSource.left ? CastingSource.right : CastingSource.left,
+    );
+    this.#released.set(source, up);
+    const chord = this.#options.session.ini.number('Controls', 'fDualCastChordTime');
+    if (!other || !releasedTogether(other, up, chord)) return;
+    this.#released.clear();
+    this.#options.casting.perform(PLAYER_REF, 'ActionDualRelease');
   }
 
   /** The play ended, or a menu opened: casts stop. */

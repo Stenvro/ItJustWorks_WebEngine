@@ -656,7 +656,8 @@ export class ActorAi {
         return furniture.use(
           user,
           target,
-          (to, arrive) => movers.travel(reference, to, 'walk', arrive),
+          (to, arrive, heading) =>
+            movers.travel(reference, to, 'walk', arrive, heading === undefined ? {} : { heading }),
           face,
           types === undefined ? { activates: true } : { types, activates: true },
         );
@@ -707,7 +708,14 @@ export class ActorAi {
           return furniture.use(
             user,
             target,
-            (to, arrive) => movers.travel(reference, to, 'walk', arrive),
+            (to, arrive, heading) =>
+              movers.travel(
+                reference,
+                to,
+                'walk',
+                arrive,
+                heading === undefined ? {} : { heading },
+              ),
             face,
             { activates: true },
           );

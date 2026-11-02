@@ -184,10 +184,13 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   to 135°, ...Right180, ...Left180, ...Left90); its path end turns so too. Ours performs
   ActionPathStart once a travel as its first request is made (`ActorMovers`; not for a straight
   way, nor while the graph is animation-driven); its tree picks the turn (none while it moves:
-  a patrol's next point). The case: tests/path-idles.int.test.ts. TODO(M13): when the engine
-  performs it (each new path or once); ActionPathEnd (the heading it arrives with is not kept
-  as its pathing target); our target speed is its controller's velocity, nought as it sets out,
-  so it turns on the spot where the engine may turn into a walk.
+  a patrol's next point). ActionPathEnd is performed as a travel given the heading to arrive
+  with (TravelOptions.heading: a walk to a furniture's entry) arrives, its pathing target that
+  heading's way while it is asked, so its tree picks the turn into it
+  (tests/engine-actions.int.test.ts). The case: tests/path-idles.int.test.ts. TODO(M13): when
+  the engine performs path start (each new path or once), and which other travels arrive with a
+  heading; our target speed is its controller's velocity, nought as it sets out, so it turns on
+  the spot where the engine may turn into a walk.
 - **Following it** (`src/ai/path-follower.ts`): the actor goes to the next point; a point is
   passed within 24 units or once the actor is beyond it: over the line through the point square
   to the bisector of the way in and the way out (a way that leaves its first triangle backwards,
@@ -2249,7 +2252,12 @@ meanwhile.
   gravity (0.35), against what L_PROJECTILE meets, until its range: by Skyrim.esm's COLL
   records the actors' character controllers (L_CHARCONTROLLER), not their bodies on L_BIPED;
   the player's and a flier's in the air (which keeps its controller there in the original, but
-  has none here) are tested as upright cylinders, entered through the side, top or bottom. Where it goes (the player's view tilted up and the aim assistance; an NPC's led aim
+  has none here) are tested as upright cylinders, entered through the side, top or bottom. Such a
+  stand-in hit (a dragon's cylinder is 320 wide, far wider than its body) lies where the
+  arrow's line meets the flier's own BIPED bodies, or on them at the point nearest the line
+  (bodies not in the world: by the skeleton node nearest it), within the cylinder's widest way
+  on: the hit's point, and the stuck arrow on that body's bone (before, it stuck on the
+  cylinder's surface, up to 300 units beside the dragon). Where it goes (the player's view tilted up and the aim assistance; an NPC's led aim
   at its target's upper body on the arrow's arc, astray by fBowNPCSpreadAngle as far as its
   Archery lacks): docs/gameplay.md, "Aiming projectiles". An actor hit takes the shot;
   hitting the world the arrow sticks fCombatMissileStickDepth deep, a reference of its

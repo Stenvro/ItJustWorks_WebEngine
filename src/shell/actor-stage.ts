@@ -2586,6 +2586,9 @@ export class ActorStage {
         // Its abilities, diseases and worn enchantments act while it is here.
         const scripts = session.scriptsReady;
         if (scripts) scripts.detach(scripts.magic.prepare(reference));
+        // A summon just conjured appears (ActionSummonedStart: its graph's summonStart).
+        if (scripts?.magic.takeSummoned(reference) === true)
+          void this.furniture.playAction(this.userOf(entry), 'ActionSummonedStart');
         // Riding a vehicle (SetVehicle, kept in the game state): on it again.
         this.vehicles.rideAgain(reference);
         // A loaded save's actor: in its furniture again at once, its package going on where
