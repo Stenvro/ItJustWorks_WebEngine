@@ -2197,10 +2197,14 @@ export class ActorMovers {
         // Its graph moves it: to its graph it stands (its walk would feed the root motion), and
         // turns as it turns now (the engine's TurnDelta is its rotation, its clip's while the
         // clip drives it: told it stopped, a drawn bow's canned turn was left and taken again
-        // every frame).
+        // every frame). Asked for nothing and not animation-driven, the clip's turn is no turn
+        // it wants: its graph is told it stands, as a walker's is (a turn in place, its speed
+        // read from TurnDelta, fed its own turn as the turn wanted and never stopped: an inn's
+        // patron spun on her idle marker for minutes once her facing was done).
         const turned = angleBetween(before, staged.heading);
-        mover.turned.angle += turned;
-        mover.wish = { velocity: [0, 0], turnRate: step > 0 ? turned / step : 0 };
+        const wanted = request !== undefined || root.driven ? turned : 0;
+        mover.turned.angle += wanted;
+        mover.wish = { velocity: [0, 0], turnRate: step > 0 ? wanted / step : 0 };
         // Its controller takes over at the speed its animation moved it, or at the speed it kept
         // where that is faster (a transition's frame without root motion does not stop it).
         const made = Math.hypot(root.velocity[0], root.velocity[1]);
