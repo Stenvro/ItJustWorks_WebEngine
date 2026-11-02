@@ -389,10 +389,14 @@ export class ActorFlight {
     );
   }
 
-  /** SetAllowFlying (the game state's; true unless a script said no) and no Dragonrend on it. */
+  /**
+   * SetAllowFlying (the game state's; true unless a script said no), not restrained
+   * (SetRestrained: the restrained life state holds an actor where it is) and no Dragonrend on it.
+   */
   allowed(reference: number): boolean {
     if (this.#fliers.get(reference)?.rended === true) return false;
-    return this.#options.session.scriptsReady?.state.actors.get(reference)?.allowFlying !== false;
+    const state = this.#options.session.scriptsReady?.state.actors.get(reference);
+    return state?.allowFlying !== false && state?.restrained !== true;
   }
 
   /** CanFlyHere: outside (interiors have no sky to fly). TODO(M13): worldspaces' own rule. */
@@ -2406,13 +2410,18 @@ export class ActorFlight {
     const physics = this.#options.movers.physics;
     if (!physics?.queriesCurrent) return false;
     const [x, y, z] = staged.position;
-    return !physics.raycast(
+    const ground = physics.raycast(
       [x, y, z + 16],
       [0, 0, -1],
-      AIR_START,
+      16384,
       Layer.charController,
       this.#options.movers.colliderOf(staged.reference),
     );
+    // With nothing under it at all it is under the world, not in the air: MQ106's Sahloknir
+    // lies in his burial mound below the landscape (FXDragonMoundScript restrains him there
+    // and keeps him from flying as the mound's cell loads, a frame after he is set down; he
+    // started cruising first).
+    return ground !== undefined && z - ground.point[2] > AIR_START;
   }
 
   // --- Reading --------------------------------------------------------------------------------
