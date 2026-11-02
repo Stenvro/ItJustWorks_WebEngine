@@ -364,6 +364,8 @@ describe('sandbox: scans, radius and the chair it sits on', () => {
 
 /** The Bannered Mare (Whiterun), interior. */
 const BANNERED_MARE = 0x1605e;
+/** BardSongs: the bards' songs, the Bannered Mare's Mikael's among them. */
+const BARD_SONGS = 0x74a55;
 
 describe.skipIf(!hasGamedata())('sandbox: an inn’s evening (headless simulation)', () => {
   // The sandboxers' tracks (horizontal), every 2 s for 120 s; and of the times one stood still
@@ -379,6 +381,11 @@ describe.skipIf(!hasGamedata())('sandbox: an inn’s evening (headless simulatio
   beforeAll(async () => {
     const sim = await openSim({ interior: BANNERED_MARE, hour: 20, seed: 1 });
     try {
+      // Without the bard's songs: after his instrumental he picks the next song at random, and
+      // one with an audience (BardAudienceQuest) draws the patrons off their sandbox to listen,
+      // as in the original. Whether the dice pick one within these two minutes shifts with any
+      // change to what rolls them, so the tracks would be short by chance, not by sandboxing.
+      await sim.runtime.quests.stop(BARD_SONGS);
       const markers = new Map<number, readonly [number, number]>();
       for (const reference of sim.db.cellReferences(BANNERED_MARE)) {
         const base = (await sim.db.get(reference))?.formIdField('NAME');
