@@ -483,6 +483,17 @@ export function essTempDecals(
   return decals;
 }
 
+/**
+ * An ingredient's game data as the INGR change form keeps it (4 bytes: CommonLibSSE's
+ * IngredientItem::GameData): the effects the player knows (the low u16, a bit per effect slot)
+ * and the player's uses of it (the high u16: the count behind iIngredientUseEffectThreshold).
+ */
+export function essIngredientUse(word: number): { effects: Set<number>; uses: number } {
+  const effects = new Set<number>();
+  for (let slot = 0; slot < 4; slot++) if (word & (1 << slot)) effects.add(slot);
+  return { effects, uses: (word >>> 16) & 0xffff };
+}
+
 /** A u32 word's bits as the float they hold. */
 function wordFloat(word: number): number {
   const view = new DataView(new ArrayBuffer(4));
@@ -941,6 +952,13 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
         if (id !== undefined && id !== 0) added.push(id);
       }
       formListAdded.set(formId, added);
+      applied |= ChangeBase.last;
+    } else if (typeName === 'INGR' && form.base?.knownEffects !== undefined) {
+      // INGR (kIngredientUse): CommonLibSSE's IngredientItem game data, a u16 of the effects the
+      // player knows (a bit each) and a u16 of the player's uses towards the next one.
+      const { effects, uses } = essIngredientUse(form.base.knownEffects);
+      if (effects.size > 0) state.ingredientEffects.set(formId, effects);
+      if (uses > 0) state.ingredientUses.set(formId, uses);
       applied |= ChangeBase.last;
     }
     if (form.formFlags !== undefined && entry.type > 5) applied |= CHANGE_FORM_FLAGS;

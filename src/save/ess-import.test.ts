@@ -14,6 +14,7 @@ import type { GameState } from '../scripting/runtime/game-state.ts';
 import { ObjectHandle } from '../scripting/values.ts';
 import {
   essGroupFights,
+  essIngredientUse,
   essTempDecals,
   formIdMapper,
   importEss,
@@ -584,5 +585,13 @@ describe('the combat groups (global data 101)', () => {
       radius: 1024,
     });
     expect(fights.get(SOLDIER)?.search).toBeUndefined();
+  });
+});
+
+describe('the ingredients (INGR change forms)', () => {
+  it('give the effects the player knows and the uses towards the next', () => {
+    // CommonLibSSE's IngredientItem game data: effects 0 and 2 known, used 3 times.
+    expect(essIngredientUse(0x0003_0005)).toEqual({ effects: new Set([0, 2]), uses: 3 });
+    expect(essIngredientUse(0)).toEqual({ effects: new Set(), uses: 0 });
   });
 });
