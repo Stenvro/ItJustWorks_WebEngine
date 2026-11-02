@@ -221,6 +221,13 @@ describe.skipIf(!hasGamedata() || known === undefined)('a known original save (l
       expect(imported.save.world?.playerGraphs?.firstPerson).toBeDefined();
       expect(imported.skipped.filter((line) => /(REFR|ACHR): animation/.test(line))).toEqual([]);
       await sim.step(1);
+      // What the actors held, put on them again from the save (their graphs raise no load).
+      const held = (actor: number): string[] =>
+        sim.world.stage.animObjects.held(actor).map((object) => object.editorId);
+      expect(held(HADVAR)).toEqual(expect.arrayContaining(['AnimObjectLedger', 'AnimObjectQuill']));
+      // And a save made now keeps them.
+      const again = sim.world.runtime.world.saveWorld?.();
+      expect(again?.animObjects?.filter((object) => object.actor === HADVAR).length).toBe(2);
       const going = runs.filter(
         (saved) =>
           sim.actor(saved.reference) !== undefined &&
@@ -431,6 +438,11 @@ describe.skipIf(!hasGamedata() || opening === undefined)('the opening, imported 
       expect([...sim.runtime.state.helpDone]).toEqual(expect.arrayContaining(['look', 'forward']));
       expect(sim.runtime.world.addedMusic?.()).toEqual([MUS_COMBAT_BOSS_CHARGEN]);
       expect(sim.runtime.world.currentWeather?.()).toBe(imported.save.weather);
+      // Alduin's burns: in the world's decal store, kept by a save made now (a view without
+      // drawn shapes builds none, so all wait for what they lie on).
+      const decals = sim.runtime.world.saveWorld?.().decals ?? [];
+      expect(decals.length).toBe(imported.save.world?.decals?.length);
+      expect(decals.every((decal) => decal.left !== undefined && decal.left > 0)).toBe(true);
       // What the player wears as the save has it (its inventory's Worn extra data).
       const worn = imported.save.worn?.find(([actor]) => actor === PLAYER_REF)?.[1] ?? [];
       expect(worn.length).toBeGreaterThan(0);
@@ -481,6 +493,10 @@ const ELENWEN_HORSE = 0x527f1;
 const STUCK = 0x32db7;
 /** SteelArrow, what the opening's archers shoot. */
 const STEEL_ARROW = 0x1397f;
+/** AnimObjectLedger, Hadvar's as the cart comes in. */
+const LEDGER = 0xeb058;
+/** DecalFlameBurn01, Alduin's fire on Helgen. */
+const FLAME_BURN = 0x2b95a;
 
 describe.skipIf(!hasGamedata() || known === undefined || opening === undefined)(
   "the procedures' states and the extra data, imported (local)",
@@ -531,9 +547,20 @@ describe.skipIf(!hasGamedata() || known === undefined || opening === undefined)(
         expect(stuck[0]?.age).toBeGreaterThan(stuck[1]?.age ?? 0);
         expect(stuck[0]?.age).toBeLessThan(60);
         expect(stuck[0]?.local.length).toBe(16);
+        // What the actors on the cart hold (cuffs, Hadvar's ledger and quill, the axe), shown.
+        const held = onCart.save.world?.animObjects ?? [];
+        expect(held.length).toBe(9);
+        expect(held).toContainEqual({ actor: HADVAR, animObject: LEDGER, shown: true });
+        // Alduin's burns on Helgen, on the rubble, the roads and the land of three cells.
+        const decals = imported.save.world?.decals ?? [];
+        expect(decals.length).toBeGreaterThan(20);
+        expect(decals.filter((decal) => decal.textureSet === FLAME_BURN).length).toBeGreaterThan(
+          20,
+        );
+        expect(decals.filter((decal) => 'cell' in decal.on).length).toBeGreaterThanOrEqual(4);
         expect(
           imported.skipped.filter((line) =>
-            /DismemberedLimbs|CannotWear|NonActorMagicTarget|AttachedArrows3D|PARW|global data 10[17]/.test(
+            /DismemberedLimbs|CannotWear|NonActorMagicTarget|AttachedArrows3D|PARW|temp effects|anim objects|global data (?:101|107|1000|1002)(?!\d)/.test(
               line,
             ),
           ),

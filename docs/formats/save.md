@@ -54,7 +54,10 @@ too: a function that fills an array it was given fills its caller's.)
 default, when the current came, an accelerated change's start: the change under way goes on
 after the load, and the weather stands in the region the player is in rather than a new pick),
 `music` (the music types scripts added, MusicType.Add, still in play: added again as it loads;
-the location's type and the fights' follow from the world), `unsaved` (what could not be saved,
+the location's type and the fights' follow from the world), `musicTrack` (`SavedMusicTrack`,
+src/audio/music.ts: the type playing, its track, MUST, the seconds into it and the tracks left
+in its pass: as that type next plays, within 10 seconds of the load, the track goes on from
+there, then the rest of the pass), `unsaved` (what could not be saved,
 logged again as it loads), `world` (the loaded world beside the scripts, below) and, from an
 imported .ess, `inventoryDeltas` and `worn` (what actors wear beside their outfits, put on after
 the deltas). As a save is made, the loaded cells' objects that physics moved note where they
@@ -89,6 +92,26 @@ the world loads again, as the original's change forms hold it (nothing of the re
   skeleton), its place on the bone (a 4x4 matrix) and the seconds it has been stuck. As the
   game loads each waits for its actor's body and is drawn on its bone for what is left of
   fAttachedArrowAgeMax (src/shell/combat-projectiles.ts); one already older is not.
+- `decals` (`SavedDecal`): the world's decal store (src/shell/combat-impacts.ts; the original's
+  temp effects): each decal a hit or a spell left on the world, its texture set and the impact
+  it was made with, what it lies on (a reference and the node whose shapes take it, the land in
+  world space, an imported save's cell land, or nothing known: projected), its clipping box in
+  that space (so it stays on a reference that moved), its atlas quarter, the face limit of its
+  impact's angle threshold and the seconds it has left. As the game loads each waits for what it
+  lies on to be drawn and is built on its shapes again (forced: no spacing, no per-frame cap)
+  for the time it had left; one whose time ran out goes. Taken by the view showing the world
+  (a view without drawn shapes, the headless one, keeps them waiting and saves them again).
+- `animObjects` (`SavedAnimObject`): the animation objects actors hold (the original's global
+  data 1002): the actor, its ANIO, whether it is shown. As each actor is placed they are loaded
+  on it and drawn (src/shell/actor-anim-objects.ts), since a graph put back by names raises no
+  AnimObjLoad again; those of actors not yet placed are kept by a save made meanwhile.
+- `motions` (`SavedMotion`): the loose objects in motion (an awake simulated body faster than
+  1 unit or 0.05 radians a second): their velocity, given back as each body settles after the
+  load (src/shell/play-session.ts), so one falling as the game is saved falls on.
+- `detection` (`DetectionSave`, src/ai/detection-states.ts): what each actor knew of the others
+  (noticed, searching, detected, with the level, when and where it last knew), who is alerted,
+  alarmed, attacked and the lasting offences, as seconds before or after the save: put back as
+  the senses' first frame runs, nothing told again.
 
 `RuntimeSave.scenes` (`SceneDirector.saveData`): each playing scene's phase, cast, clock and
 actions (status, done, a timer's seconds left), and the starts waiting for their actors or not
@@ -364,13 +387,11 @@ A save of ours made after the import keeps the graphs in our own form.
 
 - The procedures' own progress inside a step beyond a patrol's point and the furniture an
   actor is in (a sandbox's activity's time left: it chooses again); the
-  actors of cells not loaded when saving (their packages place them, as before); bodies in
-  motion keep their places but not their velocities (one falling as the game is saved falls
-  again from where it was: TODO(M13)); the track playing within a music type (it starts again;
-  the original keeps the track, MUST, in its global data 7); the combat groups' searches and
-  the actors' detection levels (the fight and the detection start again from what the actors
-  see); the world's decals (blood, scorch marks: they are made again by what makes them; the
-  original keeps its dynamic decals in its temp effects, global data 1000).
+  actors of cells not loaded when saving (their packages place them, as before); the combat
+  groups' searches (an actor searching for a target it lost searches again from what detection
+  kept, where it last knew the target to be: TODO(M13) the search's own place and progress);
+  each body of an articulated object in motion on its own (`motions` keeps the first's,
+  TODO(M13)).
 
 - The main menu's Load list and the save list's character filter (Continue loads the newest
   save), Save on Pause (bSaveOnPause with fAutosaveEveryXMins). (Each save has its thumbnail:

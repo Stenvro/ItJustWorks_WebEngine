@@ -11,11 +11,56 @@ import {
   ENVIRONMENT_BLOOD,
   environmentBloodWay,
   expireDecals,
+  landSpaceOrigin,
   parseTextureSet,
   placeDecal,
   placedSize,
+  savedDecalBox,
   struckNodeKey,
+  subtextureRect,
 } from './decal.ts';
+
+describe('saved decals (the temp effects of an original save)', () => {
+  it('build the box from the point, the rotation and the size: −Z the projection', () => {
+    // A burn on Helgen's rubble as a save keeps it: the rotation takes Z to the saved direction.
+    const box = savedDecalBox(
+      [-153.74, -237.76, 45.46],
+      [0.83745, 0.3398, 0.40968, -0.12401],
+      [224.33, 224.33, 32],
+    );
+    const direction = [0.6019, -0.67074, 0.43339];
+    for (let k = 0; k < 3; k++) {
+      expect(-(box[4 + k] ?? 0) / 64).toBeCloseTo(direction[k] ?? 0, 3);
+    }
+    expect(Math.hypot(box[0] ?? 0, box[1] ?? 0, box[2] ?? 0)).toBeCloseTo(224.33, 2);
+    expect(Math.hypot(box[8] ?? 0, box[9] ?? 0, box[10] ?? 0)).toBeCloseTo(224.33, 2);
+    expect([box[12], box[13], box[14]].map((v) => Math.round((v ?? 0) * 100) / 100)).toEqual([
+      -153.74, -237.76, 45.46,
+    ]);
+    // The width, height and projection are square to each other.
+    const dot = (a: number, b: number): number =>
+      (box[a] ?? 0) * (box[b] ?? 0) +
+      (box[a + 1] ?? 0) * (box[b + 1] ?? 0) +
+      (box[a + 2] ?? 0) * (box[b + 2] ?? 0);
+    expect(dot(0, 4)).toBeCloseTo(0, 2);
+    expect(dot(0, 8)).toBeCloseTo(0, 2);
+    expect(dot(4, 8)).toBeCloseTo(0, 2);
+  });
+
+  it('show the quarter their subtexture names, or the whole texture', () => {
+    expect(subtextureRect(3, 0)).toEqual([0.5, 0.5, 0.5, 0.5]);
+    expect(subtextureRect(1, 0)).toEqual([0.5, 0, 0.5, 0.5]);
+    expect(subtextureRect(255, 0)).toEqual([0, 0, 1, 1]);
+    expect(subtextureRect(2, DecalFlag.noSubtextures)).toEqual([0, 0, 1, 1]);
+  });
+
+  it("lie in a cell land's space: its centre, at the middle of its heights", () => {
+    const heights = new Float32Array(33 * 33).fill(8224);
+    heights[5] = 9440;
+    heights[7] = 8088;
+    expect(landSpaceOrigin(heights, 4, -20)).toEqual([18432, -79872, 8764]);
+  });
+});
 
 describe('decalTooNear', () => {
   it('skips a decal within (its larger side + the old width) / 4 of one on its node', () => {

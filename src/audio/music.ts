@@ -83,6 +83,20 @@ export interface MusicState {
   readonly leaving: readonly number[];
 }
 
+/** The track playing as a save keeps it (Music.save, resume). */
+export interface SavedMusicTrack {
+  /** Its music type (MUSC) and the track (MUST). */
+  readonly type: number;
+  readonly track: number;
+  /** Seconds into the track. */
+  readonly position: number;
+  /** The type's tracks left in its pass, in order. */
+  readonly queue: readonly number[];
+}
+
+/** A saved track waits this long (seconds) for its type to play and its track to load. */
+const RESUME_SECONDS = 10;
+
 /** Stops without a fade still ramp down this long (no click). */
 const CLICK_FREE = 0.05;
 /** When no track's conditions hold, a type looks again this much later. */
@@ -146,8 +160,43 @@ export class Music {
     };
   }
 
+  /**
+   * The track playing, for a save: the current type's, how far into it, and the tracks left in
+   * its pass (undefined: none playing).
+   */
+  save(): SavedMusicTrack | undefined {
+    const run = this.#current;
+    const track = run?.track;
+    if (!run || !track || this.#now === undefined) return undefined;
+    return {
+      type: run.type.formId,
+      track: track.track.formId,
+      position: track.position(this.#now),
+      queue: run.queue,
+    };
+  }
+
+  /**
+   * A loaded save's track: as its type next begins to play (within RESUME_SECONDS of the load),
+   * it goes on with that track from where it was, then the tracks left in its pass.
+   */
+  resume(saved: SavedMusicTrack): void {
+    this.#resume = saved;
+    this.#resumeUntil = undefined;
+  }
+
+  #resume: SavedMusicTrack | undefined;
+  #resumeUntil: number | undefined;
+  /** The clock's last time (update's `now`). */
+  #now: number | undefined;
+
   /** Every frame: `now` in seconds on the clock the voices play by. */
   update(now: number, context: SoundConditionContext): void {
+    this.#now = now;
+    if (this.#resume) {
+      this.#resumeUntil ??= now + RESUME_SECONDS;
+      if (now > this.#resumeUntil) this.#resume = undefined;
+    }
     const clock: Clock = { now, context };
     this.#transition(clock);
     for (const run of this.#leaving) run.update(clock, true);
@@ -261,6 +310,10 @@ export class Music {
       this.#leaving.push(current);
     }
     this.#current = new TypeRun(desired, this.#output.bus(), this.#runContext());
+    if (this.#resume?.type === desired.formId) {
+      this.#current.resume(this.#resume);
+      this.#resume = undefined;
+    }
   }
 
   /**
@@ -344,6 +397,20 @@ class TypeRun {
     return this.#leaving && (this.track === undefined || this.track.done);
   }
 
+  /** The tracks left in its pass, for a save. */
+  get queue(): readonly number[] {
+    return [...this.#queue];
+  }
+
+  /** A saved track to go on with first (its pass's other tracks after it). */
+  resume(saved: SavedMusicTrack): void {
+    this.#resumed = { track: saved.track, position: saved.position, until: undefined };
+    this.#queue = [...saved.queue];
+    this.#passes = 1;
+  }
+
+  #resumed: { track: number; position: number; until: number | undefined } | undefined;
+
   update(clock: Clock, mayStart: boolean): void {
     this.track?.update(clock);
     if (this.track?.done) {
@@ -351,6 +418,19 @@ class TypeRun {
       if ((this.type.flags & MusicTypeFlag.playsOneSelection) !== 0) this.finished = true;
     }
     if (this.track || this.finished || this.#leaving || !mayStart) return;
+    const resumed = this.#resumed;
+    if (resumed) {
+      // The saved track, once it has loaded (given up after RESUME_SECONDS).
+      resumed.until ??= clock.now + RESUME_SECONDS;
+      const track = this.#run.track(resumed.track);
+      if (track) {
+        this.#resumed = undefined;
+        this.track = new TrackRun(track, this.bus, this.#run, clock, resumed.position);
+        return;
+      }
+      if (clock.now < resumed.until) return;
+      this.#resumed = undefined;
+    }
     if (clock.now < this.#retryAt) return;
     const next = this.#next(clock.context);
     if (next) this.track = new TrackRun(next, this.bus, this.#run, clock);
@@ -425,10 +505,14 @@ class TrackRun {
   #fadingUntil: number | undefined;
   done = false;
 
-  constructor(track: MusicTrack, bus: MusicBus, run: RunContext, clock: Clock) {
+  /** Seconds into the track it starts at (a saved game's track going on). */
+  readonly #from: number;
+
+  constructor(track: MusicTrack, bus: MusicBus, run: RunContext, clock: Clock, from = 0) {
     this.track = track;
     this.#bus = bus;
     this.#run = run;
+    this.#from = Math.max(0, from);
     if (track.file) run.file(track.file);
     if (track.finale) run.file(track.finale);
     if (track.type === 'palette') {
@@ -490,15 +574,17 @@ class TrackRun {
     this.done = true;
   }
 
+  /** How far into the track it is at `now` (seconds). */
+  position(now: number): number {
+    if (!this.#started) return this.#from;
+    if (this.track.type === 'single') return this.#voice?.position ?? this.#from;
+    return Math.max(0, this.track.duration - (this.#until - now));
+  }
+
   #start(clock: Clock): void {
     const { track } = this;
-    if (track.type === 'silent') {
-      this.#until = clock.now + track.duration;
-      this.#started = true;
-      return;
-    }
-    if (track.type === 'palette') {
-      this.#until = clock.now + track.duration;
+    if (track.type === 'silent' || track.type === 'palette') {
+      this.#until = clock.now + Math.max(0, track.duration - this.#from);
       this.#started = true;
       return;
     }
@@ -511,6 +597,7 @@ class TrackRun {
         ? this.#run.output.play(file, this.#bus, 0, track.loop)
         : undefined;
     if (!this.#voice) this.done = true;
+    else if (this.#from > 0) this.#voice.seek(this.#from);
   }
 
   #updateSingle(clock: Clock): void {

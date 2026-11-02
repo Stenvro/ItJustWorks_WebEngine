@@ -39,7 +39,12 @@ import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { aliasOverrideLists } from '../ai/detection-records.ts';
 import { commanderOf } from '../ai/combat-profile.ts';
 import type { DetectionReport } from '../ai/combat-groups.ts';
-import { Detections, type DetectionEvent, type WitnessedAct } from '../ai/detection-states.ts';
+import {
+  Detections,
+  type DetectionEvent,
+  type DetectionSave,
+  type WitnessedAct,
+} from '../ai/detection-states.ts';
 import { brightestAmbient, lightLevel, type LightProbe } from '../ai/light-level.ts';
 import { InterruptFlag, PackageFlag, type PackageRecord } from '../ai/package-records.ts';
 import {
@@ -342,6 +347,11 @@ export class ActorSenses implements ScriptSenses {
   // --- Every frame ----------------------------------------------------------------------
 
   /** Every frame (real seconds), after the actors' AI. */
+  /** What actors know of each other, for a save (src/save/world-save.ts). */
+  saveDetection(): DetectionSave {
+    return this.detections.save(this.#clock);
+  }
+
   frame(seconds: number): void {
     const runtime = this.#options.session.scriptsReady;
     const world = this.#world;
@@ -355,6 +365,9 @@ export class ActorSenses implements ScriptSenses {
     }
     this.#clock += seconds;
     const now = this.#clock;
+    // A loaded save's detection: what each actor knew of the others goes on from there.
+    const saved = this.#options.session.restoring?.takeDetection();
+    if (saved) this.detections.load(saved, now);
     const settings = this.#settings;
     const bodies = this.#bodies();
     const player = bodies.get(PLAYER_REF);

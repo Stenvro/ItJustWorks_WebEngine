@@ -56,7 +56,10 @@ const GLOBAL_DATA: Readonly<Record<number, readonly [boolean, string]>> = {
   4: [false, 'created objects: made potions, poisons, enchantments (none in the saves read)'],
   5: [true, 'effects: image space modifiers running: empty in every save read'],
   6: [true, 'weather: the current, outgoing, override and default weathers, when it came'],
-  7: [true, 'audio: the music types in play (the location type follows from the place)'],
+  7: [
+    true,
+    'audio: the music types in play (the location type follows from the place; no track kept)',
+  ],
   8: [false, 'sky cells (not applied)'],
   100: [false, 'process lists: crimes being reported (not applied)'],
   101: [
@@ -82,12 +85,15 @@ const GLOBAL_DATA: Readonly<Record<number, readonly [boolean, string]>> = {
   112: [true, "ingredient shared: the ingredients' known effects: empty in every save read"],
   113: [false, 'menu controls (not applied)'],
   114: [false, 'menu topic manager (not applied)'],
-  1000: [false, 'temp effects: decals, shaders, particles in the world (not applied)'],
+  1000: [
+    true,
+    'temp effects: the decals on the world into the decal store (typed effects: none read, logged)',
+  ],
   1001: [
     true,
     'Papyrus: instances, stacks, messages, waits, suspended calls, registrations (LOS: none read)',
   ],
-  1002: [false, 'anim objects: what actors hold (not applied)'],
+  1002: [true, 'anim objects: what actors hold, put on as each is placed'],
   1003: [false, 'timer (not applied)'],
   1004: [true, 'synchronized animations: paired animations under way: empty in every save read'],
   1005: [true, 'main: empty in every save read'],
@@ -208,6 +214,7 @@ const FIELDS: Readonly<Record<string, readonly ['derived' | 'transient' | 'open'
   'magic-engine#changes': ['transient', 'within the frame'],
   'magic-engine#pulseWait': ['transient', 'the second between pulses'],
   'magic-engine#pulsing': ['transient', 'within the frame'],
+  'magic-engine#appearing': ['transient', 'a summon taken by the stage as it is first shown'],
   'magic-engine#cloakWait': ['transient', 'the cloak interval'],
   'magic-engine#cloaking': ['transient', 'within the frame'],
   'magic-engine#settingsRead': ['derived', 'settings read'],

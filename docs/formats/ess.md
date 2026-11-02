@@ -576,7 +576,31 @@ ess)` reads those places ahead);
 - the music (global data 7): the types in play beside the location's, oldest first (the
   table's last form is the location's type, which follows from the place): our save's `music`,
   added again as it loads (MQ101's MUSDungeonChargen on the cart, MUSCombatBossChargen as Alduin
-  attacks); TODO(M13): the first form (0 in the saves read);
+  attacks); TODO(M13): the first form (0 in the saves read). The table holds no track and no
+  position (ten bytes in both saves: three forms and the count), so the type picks its track as
+  it begins, where our own save goes on with the track (docs/formats/save.md `musicTrack`);
+- the temp effects (global data 1000), the decals on the world (`essTempDecals`, into
+  `WorldSave.decals`: the burns DecalFlameBurn01 left on Helgen's rubble, roads and land, and
+  DecalDragonLanding where Alduin lands; 51 entries, 38 decals, 7 on land, in the Helgen save, none on the
+  cart): each entry the decal on one shape of what it lies on, repeated for each (the same
+  values, the u32 at its end counting 1, 2, 3...), taken once. Flag 0: reference0 is the
+  reference and the point and direction are in its space; flag 1: reference0 is a cell (a
+  u32 after it, 1 to 3, repeated with another value for the same decal: TODO(M13)) and the space is its land's, observed in
+  the saves centred on the cell and at the middle of its heights' range (every land decal of
+  the save then lies on its land within the grid's sampling). reference1 is the texture set.
+  The quaternion (w, x, y, z) takes Z to vector1, the way out of the surface, so the decal
+  projects along −Z with X across floats0's width and Y up its height, floats0's third its
+  depth either side; bytes0's first is the subtexture (0 to 3, 255: the whole texture); floats2's
+  second is the face limit (cos 80°, the burns' impact angle threshold). No age is written:
+  each lasts a whole fDecalLifetime from the load (TODO(M13)); reference2 (a second texture set,
+  0 in the saves read), float1 (0.175 on the dragon's landing, else 1), byte1, floats2's others
+  and bytes2 are not used (TODO(M13)). The typed effect lists after them are logged when they
+  hold any (empty in both saves);
+- the animation objects actors hold (global data 1002: an actor, its ANIO and a byte; nine on
+  the cart: the prisoners' cuffs, Hadvar's ledger and quill, the headsman's axe), into
+  `WorldSave.animObjects`, loaded and drawn on each actor as it is placed (an imported graph
+  raises no AnimObjLoad again). The byte is 1 for all nine, taken as shown (TODO(M13): another
+  value's meaning);
 - the interface (global data 102): the input events whose help messages the player has done
   (the names list: "Look", "Forward"), not shown again (`GameState.helpDone`); the weapons,
   spells and shouts used last (counted once each). TODO(M13): the help messages shown (one
@@ -671,13 +695,7 @@ Read but not imported yet (TODO(M13)): the projectiles and hazards in flight; th
 other changes (values, names, known ingredient effects; the scenes' clocks); the global data
 tables of detection (105: each a reference with two values, 0, 2 or 3 and 0 or 7, whose meaning
 is not known), the process lists (100: their three floats, −0.0168 twice and a value that
-differs by save, meaning not known; the crimes, none in the saves read), temp effects (1000: the
-decals on objects, as DecalFlameBurn01 on the opening's carts: each entry the object (reference0),
-its texture set (reference1, TXST), a point and a direction in the object's space (vector0,
-vector1), the width, height and depth (floats0: 224, 224, 32), a quaternion, four bytes (the
-first: the texture's part), a float 1, a byte 4, five floats (4, sin 10°, 1, 1, 1) and a u32 1
-or 2; no age is written; ours keeps no decal to put them in: TODO(M13)), the anim objects actors
-hold (1002: an actor, an ANIO and a byte; ours attaches them by the graphs' events) and the
+differs by save, meaning not known; the crimes, none in the saves read) and the
 interface's help shown (102); the movement controller's state (the engine plans its paths
 anew); the high process's timers and held objects (six references with a byte each, whose
 meaning is not known); the combat controllers' searches and objects; the look-at modifiers'

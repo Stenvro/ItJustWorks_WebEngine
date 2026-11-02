@@ -13,6 +13,7 @@ import { CellResets } from './cell-reset.ts';
 import { LocationClearing } from './location-clearing.ts';
 import { TrapHits } from './trap-hits.ts';
 import { RecordFlag } from '../../formats/esm/record.ts';
+import type { SavedMusicTrack } from '../../audio/music.ts';
 import type { HeadTrackKind } from '../../ai/head-tracking.ts';
 import { view } from '../../formats/esm/fields.ts';
 import { LeveledFlag, parseLeveledList, type LeveledList } from '../../world/actor-records.ts';
@@ -468,6 +469,9 @@ export interface WorldBridge {
   music?(type: number, add: boolean): void;
   /** The music types scripts added that are still in play, oldest first (a save keeps them). */
   addedMusic?(): readonly number[];
+  /** The track playing and how far into it (a save keeps it), and a loaded save's going on. */
+  playingMusic?(): SavedMusicTrack | undefined;
+  resumeMusic?(saved: SavedMusicTrack): void;
   /**
    * An image-space modifier applied (value: strength), removed, cross-faded in (value:
    * seconds), the cross-fade chain's last one faded out (modifier 0, value: seconds) or popped
