@@ -326,6 +326,20 @@ describe.skipIf(!hasGamedata() || path === undefined)(
         const pending = (imported.save.runtime.storyManager as { pending?: unknown[] } | undefined)
           ?.pending;
         expect(pending?.length ?? 0).toBe(waiting);
+        // The missiles and flame sprays in flight fly on (with their graphs by names), not as
+        // references of their projectiles standing still.
+        const created = (imported.save.runtime.state as { created: Map<number, unknown> }).created;
+        const flying = ess.changeForms.filter((entry) => entry.type === 2 || entry.type === 5);
+        expect(imported.save.world.projectiles?.length ?? 0).toBe(flying.length);
+        for (const entry of flying) expect(created.has(entry.formId ?? 0)).toBe(false);
+        for (const projectile of imported.save.world.projectiles ?? []) {
+          expect(projectile.graph?.named?.sequences.length).toBe(1);
+          expect(projectile.age).toBeGreaterThan(0);
+        }
+        // Each member of a combat group knows what its group knew of its target.
+        for (const actor of imported.save.world.actors) {
+          if (actor.fight?.known) expect(actor.combatTarget).toBeDefined();
+        }
       }
     }, 300_000);
   },
