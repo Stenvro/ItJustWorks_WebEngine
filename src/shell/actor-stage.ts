@@ -48,7 +48,7 @@ import { GROUND_ABOVE, GROUND_BELOW } from '../world/actor-ground.ts';
 import { corpsePose } from '../animation/corpse-pose.ts';
 import { createdEnabled } from './created-objects.ts';
 import type { GameSession } from './game-session.ts';
-import type { SavedActor, SavedGraphs, SavedPlayer } from '../save/world-save.ts';
+import type { SavedActor, SavedFight, SavedGraphs, SavedPlayer } from '../save/world-save.ts';
 import type { CellRagdoll } from './play-session.ts';
 import type { Terminal } from './terminal.ts';
 import { Layer } from '../physics/collision-layers.ts';
@@ -1684,6 +1684,7 @@ export class ActorStage {
         package: this.ai.savedPackage(reference),
         combatTarget: this.combat.targetOf(reference),
         confidenceModifier: this.combat.confidenceModifier(reference),
+        fight: this.combat.saveFight(reference),
         ...(this.senses.scriptSneaking(reference) && { sneaking: true }),
         ...(weaponOut(this.combat.weaponState(reference)) && { weaponDrawn: true }),
         ...(this.flight.isFlying(reference) && { flying: true }),
@@ -1769,11 +1770,20 @@ export class ActorStage {
       pending.left -= seconds;
       if (this.combat.targetOf(actor) === pending.target || pending.left <= 0) {
         this.#restoredCombat.delete(actor);
+        // Its group's knowledge of the target and its search go on (src/save/world-save.ts).
+        if (pending.fight && this.combat.targetOf(actor) === pending.target) {
+          this.combat.resumeFight(actor, pending.fight);
+        }
         continue;
       }
       const target = pending.target;
       if (target === PLAYER_REF || this.#actors.has(target)) {
         this.combat.startCombat(actor, target, pending.modifier);
+        // Taken up at once: its search goes on before its fight is weighed again.
+        if (this.combat.targetOf(actor) === target) {
+          this.#restoredCombat.delete(actor);
+          if (pending.fight) this.combat.resumeFight(actor, pending.fight);
+        }
       }
     }
   }
@@ -1786,7 +1796,12 @@ export class ActorStage {
 
   readonly #restoredCombat = new Map<
     number,
-    { readonly target: number; readonly modifier: number | undefined; left: number }
+    {
+      readonly target: number;
+      readonly modifier: number | undefined;
+      readonly fight: SavedFight | undefined;
+      left: number;
+    }
   >();
 
   /** Where a staged actor stands now (scripts' live placement). */
@@ -2624,6 +2639,7 @@ export class ActorStage {
             this.#restoredCombat.set(reference, {
               target: saved.combatTarget,
               modifier: saved.confidenceModifier,
+              fight: saved.fight,
               left: 5,
             });
           }

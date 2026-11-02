@@ -51,6 +51,7 @@ import {
   readStoryEventManager,
   readTempEffects,
   StoryParameterKind,
+  type SavedCombat,
   type SavedStoryEvent,
   type TempEffectEntry,
 } from '../formats/ess/global-data-tables.ts';
@@ -94,6 +95,7 @@ import type {
   SavedAttachedArrow,
   SavedDecal,
   SavedGraphs,
+  SavedFight,
   SavedPlayer,
 } from './world-save.ts';
 import {
@@ -479,6 +481,75 @@ export function essTempDecals(
   return decals;
 }
 
+/** An AI time stamp the save never set (−FLT_MAX). */
+const NEVER = -3e38;
+
+/**
+ * What a combat group of the save knew of each of its targets (global data 101; docs/formats/
+ * ess.md "Combat groups"), as the fight its members take up again keeps it (SavedFight, by
+ * our target): the stealth points, known (flag 1) or lost (flag 2), the last known place with
+ * its time stamp (the first place and the third time) and the place it attacked from (the
+ * fourth and the fifth), the times as seconds before the save; and the group's search for the
+ * target it searches, from its place. TODO(M13): the detection's own place and time (taken as
+ * the last known ones while it is known), the other places and times, the search's points,
+ * doors and the time it has searched (none in the saves read: it searches from its start).
+ */
+export function essGroupFights(
+  group: SavedCombat,
+  ours: (formId: number) => number | undefined,
+): Map<number, SavedFight> {
+  const fights = new Map<number, SavedFight>();
+  const search = group.search;
+  const searched = search && search.unknown0 !== 0 ? ours(search.unknown0) : undefined;
+  const at = search?.position.position;
+  const searchAt: readonly [number, number, number] | undefined = at && [at[0], at[1], at[2]];
+  for (const entry of group.targets) {
+    const target = ours(entry.reference);
+    if (!target) continue;
+    const place = (
+      index: number,
+      time: number | undefined,
+    ): readonly [number, number, number] | undefined => {
+      const at = entry.positions[index];
+      return at && at.cell !== 0 && time !== undefined && time > NEVER
+        ? [at.position[0], at.position[1], at.position[2]]
+        : undefined;
+    };
+    const ago = (time: number | undefined): number | undefined =>
+      time !== undefined && time > NEVER ? Math.max(0, -time) : undefined;
+    const known = (entry.flags & 1) !== 0;
+    const lastKnown = place(0, entry.times[2]);
+    const attackedAt = place(3, entry.times[4]);
+    fights.set(target, {
+      known: {
+        stealthPoints: entry.stealthPoints,
+        known,
+        lost: (entry.flags & 2) !== 0,
+        searching: search !== undefined,
+        ...(lastKnown && { lastKnown, lastKnownAgo: ago(entry.times[2]) }),
+        ...(known && lastKnown && { detectedAt: lastKnown, detectedAgo: ago(entry.times[2]) }),
+        ...(attackedAt && { attackedAt, attackedAgo: ago(entry.times[4]) }),
+      },
+      ...(search &&
+        searchAt &&
+        searched === target && {
+          search: {
+            at: searchAt,
+            phase: 'go',
+            left: 0,
+            looks: 0,
+            elapsed: 0,
+            first: true,
+            atPlace: true,
+            target: searchAt,
+            ...(search.unknown2 > 0 && { radius: search.unknown2 }),
+          },
+        }),
+    });
+  }
+  return fights;
+}
+
 /** Moves form ids from the save's load order into ours (undefined: its plugin is not loaded). */
 export function formIdMapper(
   ess: Pick<EssFile, 'plugins' | 'lightPlugins'>,
@@ -627,20 +698,30 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     return { type: saved.type, forms, values, args };
   };
 
-  // The combat groups (global data 101): each member's target, for a member whose own combat
-  // controller names none (the group's fight goes on from its members' fights: ours puts the
-  // group together again as they fight). TODO(M13): a group's search (none in the saves read),
-  // its members' other values and its float pairs.
+  // The combat groups (global data 101): a target that attacked a member fights it, for one
+  // whose own combat controller names no target (ours puts the groups together again as their
+  // members fight); and each member's fight takes what its group knew of the target and the
+  // search it made for it (SavedFight). TODO(M13): the groups' timers, the members' threats,
+  // the search's points, doors and time searched.
   const groupTargets = new Map<number, number>();
+  const groupKnowledge = new Map<number, Map<number, SavedFight>>();
   const combatData = globalData(ess, 101);
   if (combatData) {
     try {
       for (const group of readCombat(combatData, resolve).combats) {
-        if (group.search) skips.add("combat: a group's search (TODO(M13))");
-        for (const member of group.members) {
-          const actor = ours(member.unknown0);
-          const target = ours(member.target);
+        for (const entry of group.targets) {
+          const actor = ours(entry.reference);
+          const target = ours(entry.attackedMember);
           if (actor && target) groupTargets.set(actor, target);
+        }
+        for (const [target, fight] of essGroupFights(group, ours)) {
+          for (const member of group.members) {
+            const actor = ours(member.reference);
+            if (!actor) continue;
+            const known = groupKnowledge.get(actor) ?? new Map<number, SavedFight>();
+            known.set(target, fight);
+            groupKnowledge.set(actor, known);
+          }
         }
       }
     } catch {
@@ -1377,6 +1458,10 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
         },
       }),
       ...(target && { combatTarget: target }),
+      ...(target &&
+        groupKnowledge.get(formId)?.has(target) && {
+          fight: groupKnowledge.get(formId)?.get(target),
+        }),
     };
   }
 
