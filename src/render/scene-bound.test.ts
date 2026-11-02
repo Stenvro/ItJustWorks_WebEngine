@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boundOf, orderByBindings, type BoundedDraw } from './scene-bound.ts';
+import { boundOf, mergeBounds, orderByBindings, type BoundedDraw } from './scene-bound.ts';
 
 describe('boundOf', () => {
   it('holds every draw', () => {
@@ -29,6 +29,20 @@ describe('boundOf', () => {
         { center: [0, 0, 0], radius: 1, firstPerson: true },
       ]),
     ).toBeNull();
+  });
+});
+
+describe('mergeBounds', () => {
+  it('holds both spheres, and is one of them when it holds the other', () => {
+    const a = { center: [0, 0, 0] as const, radius: 10 };
+    const b = { center: [30, 0, 0] as const, radius: 5 };
+    const merged = mergeBounds(a, b);
+    expect(merged.radius).toBeCloseTo(22.5, 9);
+    expect(merged.center[0]).toBeCloseTo(12.5, 9);
+    expect(mergeBounds(b, a)).toEqual(merged);
+    const inside = { center: [3, 0, 0] as const, radius: 2 };
+    expect(mergeBounds(a, inside)).toBe(a);
+    expect(mergeBounds(inside, a)).toBe(a);
   });
 });
 

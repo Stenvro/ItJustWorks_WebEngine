@@ -56,6 +56,23 @@ export function boundOf(draws: readonly BoundedDraw[]): SceneBound | null {
   return { center, radius };
 }
 
+/** The smallest sphere round two spheres. */
+export function mergeBounds(a: SceneBound, b: SceneBound): SceneBound {
+  const dx = b.center[0] - a.center[0];
+  const dy = b.center[1] - a.center[1];
+  const dz = b.center[2] - a.center[2];
+  const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  if (distance + b.radius <= a.radius) return a;
+  if (distance + a.radius <= b.radius) return b;
+  const radius = (distance + a.radius + b.radius) / 2;
+  // From a's centre towards b's, so that both lie inside.
+  const t = (radius - a.radius) / distance;
+  return {
+    center: [a.center[0] + dx * t, a.center[1] + dy * t, a.center[2] + dz * t],
+    radius,
+  };
+}
+
 /** Small ids for objects (ordering draws by what they bind). */
 const objectIds = new WeakMap<object, number>();
 let nextObjectId = 1;
