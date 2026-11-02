@@ -82,6 +82,8 @@ export interface ShotTarget {
   readonly feet: Vec3;
   readonly radius: number;
   readonly height: number;
+  /** A stand-in far wider than the actor's body (a flier's controller): a hit lies on its bodies. */
+  readonly standIn?: boolean;
 }
 
 export interface ProjectileOptions {
@@ -271,7 +273,8 @@ export class CombatProjectiles {
       ? physics.raycast(from, direction, met?.along ?? length, Layer.projectile)
       : undefined;
     if (met && (!hit || hit.distance >= met.along)) {
-      this.#actorHit(shot, met.reference, met.along, from, direction, met.shape);
+      const standIn = met.shape.standIn === true ? met.shape : undefined;
+      this.#actorHit(shot, met.reference, met.along, from, direction, standIn);
       return true;
     }
     if (!physics || !hit) return false;
