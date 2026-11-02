@@ -132,4 +132,28 @@ describe('RoomCuller', () => {
     culler.update(camera([0, 0, 0], [0, -1, 0]), [0, 0, 0]);
     expect(culler.visible([0, 1500, 0], 20)).toBe(true);
   });
+
+  it('decides the same focused on a scene bound as with every occluder', () => {
+    const occluders = Array.from({ length: 40 }, (_, i) => ({
+      reference: 100 + i,
+      box: box([-4000 + i * 200, 1000, 0], [90, 5, 90]),
+    }));
+    const culler = new RoomCuller([{ rooms: [], portals: [], occluders, multibounds: [] }]);
+    culler.update(camera([0, 0, 0], [0, 1, 0]), [0, 0, 0]);
+    // Spheres within a scene bound round (0, 1500, 0), radius 1200.
+    const spheres: [[number, number, number], number][] = [];
+    for (let x = -900; x <= 900; x += 75) {
+      for (const y of [600, 1100, 1500, 2000]) spheres.push([[x, y, (x % 150) / 3], 20 + (x % 40)]);
+    }
+    const unfocused = spheres.map(([center, radius]) => culler.visible(center, radius));
+    culler.focus([0, 1500, 0], 1200);
+    const focused = spheres.map(([center, radius]) => culler.visible(center, radius));
+    culler.unfocus();
+    expect(focused).toEqual(unfocused);
+    expect(unfocused).toContain(false);
+    // A bound far from every box: no occluder is tried, nothing is hidden.
+    culler.focus([0, -5000, 0], 100);
+    expect(culler.visible([0, -5000, 0], 10)).toBe(true);
+    culler.unfocus();
+  });
 });

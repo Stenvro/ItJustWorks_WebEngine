@@ -1361,6 +1361,77 @@ about 90. What keeps it down (`scene-renderer.ts`):
   objects of the Whiterun exterior) now compiles without it. The water's reflection costs
   one 256² face a frame (sky, land, LOD, a few references) once all five are drawn.
 
+### Frame budget
+
+Measured with the QA runner (docs/qa.md: `whiterun-day`, `riverwood` and the `streaming`
+flight, 60 s each, `--cpu-profile` for the breakdown; headless Chrome on a shared machine, so
+only runs on the same setup compare). The page is bound by the main thread: it idles 0.1 % of
+the time. Where a Whiterun market frame went (CPU profile, share of the main thread):
+
+| part                                                                 | share |
+| -------------------------------------------------------------------- | ----: |
+| physics step (actors' character controllers 11 %, Rapier's step 5 %) |  18 % |
+| actors (behavior graphs and skeletons 8 %, movers 5 %, the rest)     |  19 % |
+| `SceneRenderer.animate` (placed controllers, bone palettes, fades)   |  16 % |
+| sun shadow cascades (draw submission)                                |   8 % |
+| opaque pass (culling, light lists, draw submission)                  |   6 % |
+| Ruffle (the HUD's players)                                           |   6 % |
+| particles, water reflection, velocity, blended pass, lens flare      |   6 % |
+
+A Riverwood frame records about 3,700 draws in 51 passes: 6,500 `setBindGroup`, 3,300
+`setVertexBuffer`, 2,900 `setIndexBuffer` and 1,100 `setPipeline` calls; 7,244 draws are
+loaded (5,102 shadow casters, 1,528 animated: 600 actor parts, 641 placed controllers).
+
+What changed:
+
+- **Shadow casters by cluster in render bundles** (`#sceneCasters`, `#clusterBundle`): a
+  scene's casters that do not move are grouped by 1024-unit squares; each group is recorded
+  for a shadow layer once, as a `GPURenderBundle`, and replayed while the same casters are drawn
+  (the hash of which are shown, not faded out and big enough for the layer changes when a
+  reference is enabled or fades). A group in the layer's box is drawn whole: a depth-only pass
+  ends the same in any order and a caster outside the box is clipped there, so the map is the
+  same. Moving casters (actors, simulated clutter) are drawn one by one as before, and so is a
+  group whose casters have not stayed the same for 30 passes of the layer (`BUNDLE_SETTLE`):
+  in the streaming flight, recording a bundle for every passing set (cells just loaded, objects
+  fading at the loaded area's edge) cost more than it saved.
+- **One shape for every draw**: `Draw` and `AnimatedDraw` were built with optional fields
+  spread in, up to 2⁷ object shapes, and every pass's walk over thousands of them read their
+  fields through megamorphic lookups. All fields are now always set (undefined where absent).
+  An animated draw keeps its uniform view instead of making one each frame.
+- **Bone palette uploads in runs**: an actor's parts' palettes lie side by side; the rewritten
+  ones and their last frame's copies go up in one `writeBuffer` each per scene (two per skinned
+  part before).
+- **Occluders by scene**: every opaque draw was tested against every occlusion volume turned to
+  the camera; a scene's bound first picks the volumes that can hide anything in it
+  (`RoomCuller.focus`), most cells keeping none.
+- `multiply` is unrolled and writes into either operand without a scratch matrix; an object
+  fade's range is worked out again only when the fade settings change; the controllers'
+  evaluation asks each node once whether it or one above it moved (it walked to the root for
+  every node).
+
+Before, and two runs after (the second with BUNDLE_SETTLE; the machine was shared with other
+browsers, and the second run's streaming flight came first, its shaders not yet compiled):
+
+| scenario     | run    | fps  | p50 (ms) | p95 (ms) | p99 (ms) | > 33 ms | > 50 ms |
+| ------------ | ------ | ---- | -------- | -------- | -------- | ------- | ------- |
+| whiterun-day | before | 51.2 | 16.7     | 27.8     | 33.4     | 31      | 6       |
+|              | after  | 72.4 | 11.2     | 22.2     | 33.3     | 20      | 3       |
+|              | after² | 56.1 | 16.7     | 27.8     | 38.9     | 39      | 5       |
+| riverwood    | before | 79.1 | 11.1     | 16.8     | 22.3     | 5       | 3       |
+|              | after  | 91.5 | 11.1     | 16.8     | 22.3     | 7       | 3       |
+|              | after² | 89.1 | 11.1     | 16.8     | 22.3     | 7       | 3       |
+| streaming    | before | 92.2 | 11.1     | 22.2     | 33.4     | 51      | 16      |
+|              | after  | 82.4 | 11.1     | 22.2     | 38.9     | 62      | 18      |
+|              | after² | 65.9 | 11.2     | 27.8     | 44.5     | 93      | 36      |
+
+What is left (TODO(M13)): the opaque pass still binds and draws each draw (the same bundles
+would need the light lists chosen per draw and the room and occluder culling per cluster); the
+physics step and the actors' graphs (others' areas) are the largest parts now. The streaming
+flight's long frames come with each new row of cells and are not profiled yet (TODO(M13): a
+`streaming --cpu-profile` run to find which of the cell's scene, decals, collision and texture
+uploads holds the frame, then spread it over frames); the static scenes gain while the flight
+does not, so the bundles' recording as cells arrive is the first suspect.
+
 ## The lighting technique's flags and the fades (observed in the original)
 
 The original picks a lighting shape's technique from its shader flags alone, the later ones
