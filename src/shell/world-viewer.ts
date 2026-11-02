@@ -8,6 +8,7 @@ import { disabledControlFlags, povSwitchAllowed } from '../scripting/runtime/nat
 import { identity } from '../render/math.ts';
 import type { Mat4, Vec3 } from '../render/math.ts';
 import type { Camera, FocusBody, Renderer } from '../render/renderer.ts';
+import { frameTurn } from '../render/frame-work.ts';
 import { RoomCuller } from '../render/room-culler.ts';
 import type { CellRooms } from '../world/cell-rooms.ts';
 import { DestructionStageFlag } from '../world/destruction-records.ts';
@@ -29,7 +30,7 @@ import { projectDecals } from '../render/decal-projection.ts';
 import type { GpuDecals } from '../render/decals.ts';
 import type { GpuGrassField } from '../render/grass.ts';
 import { waterPlane } from '../render/water-data.ts';
-import { parseGrass, placeGrass, type GrassType } from '../world/grass.ts';
+import { parseGrass, type GrassListing, type GrassType } from '../world/grass.ts';
 import type { AmbientState } from '../audio/ambience.ts';
 import { waterAreaHeight } from '../audio/water-audio.ts';
 import { cellWater, DEFAULT_WATER } from '../world/water.ts';
@@ -2009,7 +2010,7 @@ export class WorldViewer {
     // Cells further than one past the grid are unloaded (one cell of slack against thrashing).
     for (const [key, cell] of this.#cells) {
       if (Math.max(Math.abs(cell.x - cx), Math.abs(cell.y - cy)) > radius + 1) {
-        this.#free(cell);
+        this.#free(cell, true);
         this.#cells.delete(key);
         this.#refreshSounds();
       }
@@ -2189,6 +2190,8 @@ export class WorldViewer {
     cell.exists = true;
     const land = await world.land(cell.x, cell.y);
 
+    // Each step that holds the main thread waits for its share of a frame (frame-work.ts).
+    await frameTurn();
     const terrain = land
       ? this.#renderer.terrain.createCell(
           buildTerrainCell(land, cell.x, cell.y),
@@ -2259,8 +2262,10 @@ export class WorldViewer {
       const type = await session.waterType(water.type ?? DEFAULT_WATER, flow);
       instances.push({ model: plane, world: IDENTITY, ...(type && { water: type }) });
     }
+    await frameTurn();
     const scene = this.#renderer.scene.createScene(instances);
     cell.sceneInstances = instances;
+    await frameTurn();
     // Decals land on the first surface along their projection (objects or landscape).
     const projected = projectDecals(
       data.decals,
@@ -2295,7 +2300,9 @@ export class WorldViewer {
           volumes: waterVolumes(await session.collision(model), matrix, type ?? 0),
         })),
     );
-    cell.navmesh = new NavmeshSurface(await cellNavmeshes(db, cellId));
+    const navmeshes = await cellNavmeshes(db, cellId);
+    await frameTurn();
+    cell.navmesh = new NavmeshSurface(navmeshes);
     this.#refreshCell(cell);
     this.#refreshSounds();
     // Load doors: where they lead (for the activation prompt).
@@ -2366,6 +2373,7 @@ export class WorldViewer {
     );
     const placed: PlacedObject[] = [];
     const sky = this.#sky;
+    await frameTurn();
     objects.forEach((object, i) => {
       const model = models[i];
       if (!model) return;
@@ -2454,6 +2462,7 @@ export class WorldViewer {
       (object) => large.references.has(object.reference) && isEnabled(object.reference),
     );
     const placed = await this.#place(session, objects, this.#flowMap(world, large.x, large.y));
+    await frameTurn();
     large.scene = this.#renderer.scene.createScene(placed.map(({ instance }) => instance));
   }
 
@@ -2470,17 +2479,24 @@ export class WorldViewer {
       textures.add(quadrant.base);
       for (const layer of quadrant.layers) textures.add(layer.texture);
     }
-    const lists = new Map<number | undefined, readonly GrassType[]>();
-    await Promise.all(
-      [...textures].map(async (ltex) => {
-        lists.set(ltex, ltex === undefined ? [] : await this.#grassOf(ltex));
-      }),
+    const listings = await Promise.all(
+      [...textures].map(async (ltex): Promise<GrassListing> => ({
+        ltex,
+        types: ltex === undefined ? [] : await this.#grassOf(ltex),
+      })),
     );
-    const placed = placeGrass(land, cell.x, cell.y, (ltex) => lists.get(ltex) ?? [], waterHeight);
+    if (listings.every(({ types }) => types.length === 0)) return [];
+    const types = new Map(
+      listings.flatMap(({ types }) => types.map((type) => [type.formId, type])),
+    );
+    // Placed and packed by an asset worker: on this thread a cell's grass held a frame 20–50 ms.
+    const placed = await session.loader.placeGrass(land, cell.x, cell.y, listings, waterHeight);
     const fields: GpuGrassField[] = [];
-    for (const [type, plants] of placed) {
-      const model = await session.model(type.model);
-      const field = model && this.#renderer.grass.createField(model, type, plants);
+    for (const plants of placed) {
+      const type = types.get(plants.formId);
+      const model = type && (await session.model(type.model));
+      await frameTurn();
+      const field = type && model && this.#renderer.grass.createField(model, type, plants);
       if (field) fields.push(field);
     }
     return fields;
@@ -2646,7 +2662,8 @@ export class WorldViewer {
     sounds.setCellAcousticSpace(undefined);
   }
 
-  #free(cell: LoadedCell): void {
+  /** `streamed`: a cell the streaming left (its collision goes over the next frames). */
+  #free(cell: LoadedCell, streamed = false): void {
     for (const entry of cell.placed)
       this.#stage?.effects.unglow(groundGlow(entry.object.reference));
     const runtime = this.#session?.scriptsReady;
@@ -2679,7 +2696,7 @@ export class WorldViewer {
       );
       if (key === cellKey(cell.x, cell.y)) this.#removeCreated(entry.reference);
     }
-    this.#play?.remove(cell.collision);
+    this.#play?.remove(cell.collision, streamed);
     for (const object of cell.data?.objects ?? []) {
       this.#flora?.remove(object.reference);
       this.#destruction?.remove(object.reference);

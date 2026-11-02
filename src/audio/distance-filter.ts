@@ -100,19 +100,60 @@ export function lowPassFor(coefficient: number, sampleRate: number): LowPass | u
   return filter;
 }
 
-/** Least squares in decibels over the audible band: cutoff and Q in turn, golden sections. */
+/**
+ * Least squares in decibels over the audible band: cutoff and Q in turn, golden sections. The
+ * sum runs about 150,000 times a fit (a frame's worth on first use of a coefficient as sounds
+ * stream in): each frequency's sines and cosines are taken once, and the biquad's coefficients
+ * once per trial (biquadLowPassGain's arithmetic, inlined).
+ */
 function fit(f: number, sampleRate: number): LowPass {
   const nyquist = sampleRate / 2;
   const frequencies: number[] = [];
   for (let frequency = 50; frequency <= Math.min(16000, nyquist * 0.9); frequency *= 1.08) {
     frequencies.push(frequency);
   }
-  const target = frequencies.map((frequency) => dB(xaudio2LowPassGain(f, frequency, sampleRate)));
-  const error = (cutoff: number, q: number): number => {
+  const count = frequencies.length;
+  const target = new Float64Array(count);
+  const cos1 = new Float64Array(count);
+  const cos2 = new Float64Array(count);
+  const sin1 = new Float64Array(count);
+  const sin2 = new Float64Array(count);
+  for (let i = 0; i < count; i++) {
+    const frequency = frequencies[i] ?? 0;
+    target[i] = dB(xaudio2LowPassGain(f, frequency, sampleRate));
+    const w = (2 * Math.PI * frequency) / sampleRate;
+    cos1[i] = Math.cos(w);
+    cos2[i] = Math.cos(2 * w);
+    sin1[i] = Math.sin(w);
+    sin2[i] = Math.sin(2 * w);
+  }
+  const error = (cutoff: number, qDb: number): number => {
+    if (cutoff >= nyquist) {
+      let sum = 0;
+      for (let i = 0; i < count; i++) sum += (dB(1) - (target[i] ?? 0)) ** 2;
+      return sum;
+    }
+    const w0 = (2 * Math.PI * cutoff) / sampleRate;
+    const alpha = Math.sin(w0) / (2 * 10 ** (qDb / 20));
+    const c = Math.cos(w0);
+    const b0 = (1 - c) / 2;
+    const b1 = 1 - c;
+    const a0 = 1 + alpha;
+    const a1 = -2 * c;
+    const a2 = 1 - alpha;
     let sum = 0;
-    frequencies.forEach((frequency, i) => {
-      sum += (dB(biquadLowPassGain(cutoff, q, frequency, sampleRate)) - (target[i] ?? 0)) ** 2;
-    });
+    for (let i = 0; i < count; i++) {
+      const c1 = cos1[i] ?? 0;
+      const c2 = cos2[i] ?? 0;
+      const s1 = sin1[i] ?? 0;
+      const s2 = sin2[i] ?? 0;
+      const reB = b0 + b1 * c1 + b0 * c2;
+      const imB = -(b1 * s1 + b0 * s2);
+      const reA = a0 + a1 * c1 + a2 * c2;
+      const imA = -(a1 * s1 + a2 * s2);
+      const gain = Math.sqrt((reB * reB + imB * imB) / (reA * reA + imA * imA));
+      sum += (dB(gain) - (target[i] ?? 0)) ** 2;
+    }
     return sum;
   };
   let cutoff = nyquist * 0.6;

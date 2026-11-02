@@ -12,11 +12,8 @@ import {
 import frameShader from './shaders/frame.wgsl?raw';
 import grassShader from './shaders/grass.wgsl?raw';
 import type { VertexLayout } from './model-data.ts';
-import type { GrassInstance, GrassType } from '../world/grass.ts';
-import { GrassFlag } from '../world/grass.ts';
-
-/** Per instance: position + rotation, scale across + up + shade + unused, ground normal. */
-const INSTANCE_FLOATS = 12;
+import type { GrassType, PackedGrass } from '../world/grass.ts';
+import { GRASS_INSTANCE_FLOATS, GrassFlag } from '../world/grass.ts';
 /** fGrassStartFadeDistance (High, Ultra) and the range over which plants shrink away. */
 export const GRASS_FADE_START = 7000;
 export const GRASS_FADE_RANGE = 1000;
@@ -103,33 +100,13 @@ export class GrassRenderer {
     this.#module = device.createShaderModule({ label: 'grass', code: frameShader + grassShader });
   }
 
-  createField(
-    model: GpuModel,
-    type: GrassType,
-    plants: readonly GrassInstance[],
-  ): GpuGrassField | undefined {
-    if (plants.length === 0 || model.parts.length === 0) return undefined;
+  /** A grass type's plants in a cell (placed and packed by an asset worker: world/grass.ts). */
+  createField(model: GpuModel, type: GrassType, plants: PackedGrass): GpuGrassField | undefined {
+    if (plants.count === 0 || model.parts.length === 0) return undefined;
     const device = this.#device;
-    const data = new Float32Array(plants.length * INSTANCE_FLOATS);
-    let minX = Infinity;
-    let minY = Infinity;
-    let minZ = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    let maxZ = -Infinity;
-    plants.forEach((plant, i) => {
-      const [x, y, z] = plant.position;
-      data.set(
-        [x, y, z, plant.rotation, plant.scaleXY, plant.scaleZ, plant.shade, 0, ...plant.normal, 0],
-        i * INSTANCE_FLOATS,
-      );
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      minZ = Math.min(minZ, z);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
-      maxZ = Math.max(maxZ, z);
-    });
+    const data = plants.data;
+    const [minX, minY, minZ] = plants.min;
+    const [maxX, maxY, maxZ] = plants.max;
     const instances = device.createBuffer({
       label: `grass-${type.editorId}`,
       size: data.byteLength,
@@ -170,7 +147,7 @@ export class GrassRenderer {
     return new GpuGrassField({
       model,
       instances,
-      count: plants.length,
+      count: plants.count,
       bindGroups,
       uniforms,
       center: [(minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2],
@@ -224,7 +201,7 @@ export class GrassRenderer {
           buffers: [
             ...vertexBuffers(layout),
             {
-              arrayStride: INSTANCE_FLOATS * 4,
+              arrayStride: GRASS_INSTANCE_FLOATS * 4,
               stepMode: 'instance',
               attributes: [
                 { shaderLocation: 6, format: 'float32x4', offset: 0 },

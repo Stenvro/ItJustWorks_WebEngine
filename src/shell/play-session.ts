@@ -77,6 +77,8 @@ const NOTICE_MS = 3000;
 
 /** Milliseconds per frame spent placing collision of loaded cells. */
 const COLLISION_BUDGET_MS = 3;
+/** Of that, milliseconds per frame spent removing collision of cells left behind. */
+const REMOVAL_BUDGET_MS = 1;
 /** The vanilla fAutoDoorActivateDistance. */
 const AUTO_DOOR_ACTIVATE_DISTANCE = 350;
 /**
@@ -704,6 +706,12 @@ export class PlaySession {
   readonly #groundReady: (feet: Vec3) => boolean;
   readonly #searchAbove: number;
   readonly #queue: { readonly group: CollisionGroup; readonly run: () => void }[] = [];
+  /**
+   * Collision of cells the streaming left, taken out of the world a few at a time (removing a
+   * cell's bodies at once held a frame for up to 30 ms). They lie two cells and more from the
+   * player meanwhile, and nothing draws or follows them any more.
+   */
+  readonly #removals: PlacedCollision[] = [];
   /** Callbacks of cells whose collision is complete, run once queries see it. */
   readonly #completed: (() => void)[] = [];
   readonly #groups = new Set<CollisionGroup>();
@@ -1065,6 +1073,11 @@ export class PlaySession {
     // the last physics step.
     if (this.#spawnPending) this.#trySpawn();
     const start = performance.now();
+    // Those left behind go first, at least one a frame, then within their share of the budget.
+    for (let placed = this.#removals.shift(); placed; placed = this.#removals.shift()) {
+      this.physics.remove(placed);
+      if (performance.now() - start >= REMOVAL_BUDGET_MS) break;
+    }
     while (this.#queue.length > 0 && performance.now() - start < COLLISION_BUDGET_MS) {
       const task = this.#queue.shift();
       if (!task) break;
@@ -1938,11 +1951,15 @@ export class PlaySession {
     }
   }
 
-  /** Takes a cell's collision out of the world (and out of the queue). */
-  remove(group: CollisionGroup): void {
+  /**
+   * Takes a cell's collision out of the world (and out of the queue). `later`: a cell the
+   * streaming left, its bodies removed over the next frames (#removals).
+   */
+  remove(group: CollisionGroup, later = false): void {
     for (let i = this.#queue.length - 1; i >= 0; i--) {
       if (this.#queue[i]?.group === group) this.#queue.splice(i, 1);
     }
+    if (later) this.#removals.push(...group.collision.splice(0));
     for (const placed of group.collision.splice(0)) this.physics.remove(placed);
     group.moving.length = 0;
     group.animated.length = 0;
@@ -2009,6 +2026,7 @@ export class PlaySession {
     this.#detach?.();
     this.#detach = undefined;
     this.#queue.length = 0;
+    this.#removals.length = 0;
     this.#groups.clear();
     this.player.free();
     this.particleBodies.clear();

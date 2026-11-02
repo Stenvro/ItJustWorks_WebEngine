@@ -1,6 +1,7 @@
 import './style.css';
 import { GpuUnavailableError, initGpu, trackCanvasSize, type GpuContext } from './render/gpu.ts';
 import { Renderer } from './render/renderer.ts';
+import { frameWorkFrameEnded, setFrameWorkRush } from './render/frame-work.ts';
 import { imageLensFlareSettings } from './render/image-lens-flare-data.ts';
 import { findCustomBackdrop } from './shell/custom-backdrop.ts';
 import { GameSession, MEMORY_BUDGET } from './shell/game-session.ts';
@@ -260,6 +261,8 @@ function startRenderLoop(
     last = now;
     renderer.render(reducedMotion ? 30 : gameTime, devicePixelRatio);
     everyFrame();
+    // Streaming work gets its share of the time until the next frame (frame-work.ts).
+    frameWorkFrameEnded();
 
     frames++;
     const elapsed = now - windowStart;
@@ -983,6 +986,8 @@ async function main(): Promise<void> {
       const loading = worldViewer.loading ?? modelViewer.loading;
       ui.loadingScreen.classList.toggle('visible', loading !== undefined);
       if (loading !== undefined) ui.loadingWhat.textContent = loading;
+      // Behind the loading screen streaming work runs at full speed (no frame to keep smooth).
+      setFrameWorkRush(loading !== undefined);
     },
     () => session?.menuMode === true,
     () => session?.time.multiplier ?? 1,

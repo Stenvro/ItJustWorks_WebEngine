@@ -3,7 +3,9 @@ import { Fields } from '../formats/esm/fields.ts';
 import {
   GrassFlag,
   parseGrass,
+  GRASS_INSTANCE_FLOATS,
   placeGrass,
+  placePackedGrass,
   textureWeightsAt,
   WaterRule,
   type GrassType,
@@ -134,5 +136,46 @@ describe('placeGrass', () => {
     expect(count(placeGrass(land({ height: 100 }), 0, 0, of, 50))).toBe(0);
     expect(count(placeGrass(land({ height: 200 }), 0, 0, of, 50))).toBeGreaterThan(0);
     expect(count(placeGrass(land({ height: 100 }), 0, 0, of, undefined))).toBeGreaterThan(0);
+  });
+});
+
+describe('placePackedGrass', () => {
+  it('packs what placeGrass places, a type copied per land texture counted once', () => {
+    const tundra = grass();
+    // As a worker gets them: the type copied into each listing that names it.
+    const listings = [
+      { ltex: 0x10, types: [{ ...tundra }] },
+      { ltex: 0x20, types: [{ ...tundra }] },
+    ];
+    const packed = placePackedGrass(land({ layerOpacity: 0.5 }), 1, 2, listings, undefined);
+    const placed = placeGrass(
+      land({ layerOpacity: 0.5 }),
+      1,
+      2,
+      (ltex) => (ltex === 0x10 || ltex === 0x20 ? [tundra] : []),
+      undefined,
+    );
+    const plants = placed.get(tundra) ?? [];
+    expect(packed).toHaveLength(1);
+    const [field] = packed;
+    expect(field?.formId).toBe(tundra.formId);
+    expect(field?.count).toBe(plants.length);
+    expect(field?.data.length).toBe(plants.length * GRASS_INSTANCE_FLOATS);
+    const plant = plants[7];
+    const at = 7 * GRASS_INSTANCE_FLOATS;
+    expect([...(field?.data.subarray(at, at + GRASS_INSTANCE_FLOATS) ?? [])]).toEqual(
+      [
+        ...(plant?.position ?? []),
+        plant?.rotation,
+        plant?.scaleXY,
+        plant?.scaleZ,
+        plant?.shade,
+        0,
+        ...(plant?.normal ?? []),
+        0,
+      ].map((value) => Math.fround(value ?? 0)),
+    );
+    expect(field?.min[0]).toBe(Math.min(...plants.map((p) => p.position[0])));
+    expect(field?.max[1]).toBe(Math.max(...plants.map((p) => p.position[1])));
   });
 });
