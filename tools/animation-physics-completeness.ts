@@ -114,6 +114,21 @@ const NOT_RUNTIME: ReadonlyMap<string, string> = new Map([
   ['other.name', 'a node of no class the runtime runs'],
 ]);
 
+/**
+ * Parsed node fields the runtime runs through the parser's own helpers (not named in the
+ * runtime's files), by "kind.field", with where.
+ */
+const RUN_BY_PARSER: ReadonlyMap<string, string> = new Map([
+  [
+    'blender.minCyclicBlendParameter',
+    "src/formats/hkx/behavior.ts (activeChildren, the runtime's blend weights: a cyclic parametric blend wraps within its range)",
+  ],
+  [
+    'blender.maxCyclicBlendParameter',
+    "src/formats/hkx/behavior.ts (activeChildren, the runtime's blend weights: a cyclic parametric blend wraps within its range)",
+  ],
+]);
+
 interface Source {
   readonly file: string;
   readonly text: string;
@@ -410,7 +425,8 @@ export async function animationPhysicsCompleteness(
         uses,
         reason !== undefined
           ? `not run: ${reason}`
-          : readIn(new RegExp(`(\\.|\\{\\s*|,\\s*)${escape(field)}\\b`), runtime),
+          : (RUN_BY_PARSER.get(key) ??
+              readIn(new RegExp(`(\\.|\\{\\s*|,\\s*)${escape(field)}\\b`), runtime)),
         'parsed, not run',
       );
     }

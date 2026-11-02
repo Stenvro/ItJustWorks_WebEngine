@@ -18,12 +18,12 @@ settings reader or named in the code. A field with one value in every mesh that 
 the physics counts as done with that reason. The mechanics are kept by hand below, against
 docs/physics.md. The count after an item is how many blocks (records) use it.
 
-## Count (2026-11-02, round 3)
+## Count (2026-11-02, round 4)
 
 | Part                          | Items | Done | Open |
 | ----------------------------- | ----: | ---: | ---: |
 | Collision blocks (NIF)        |    26 |   26 |    0 |
-| Collision fields (NIF)        |   179 |  176 |    3 |
+| Collision fields (NIF)        |   179 |  178 |    1 |
 | Motion systems, qualities     |     8 |    8 |    0 |
 | Responses, time, deactivators |     3 |    3 |    0 |
 | Body layers, COLL layers      |    24 |   24 |    0 |
@@ -32,7 +32,7 @@ docs/physics.md. The count after an item is how many blocks (records) use it.
 | Material types, impact data   |    17 |   17 |    0 |
 | Game settings (GMST)          |    45 |   35 |   10 |
 | Mechanics (by hand)           |    26 |   18 |    8 |
-| Total                         |   368 |  346 |   22 |
+| Total                         |   368 |  348 |   20 |
 
 Round 1 wrote the sweep and this list, and fixed deactivation: Havok deactivates a simulation
 island as a whole, ours put a body to sleep on its own while something still moved on it (a
@@ -53,6 +53,15 @@ by them in Rapier's step and the ragdolls crept or shook (32 of 52 at rest withi
 at their limits, not past them (docs/physics.md, "The cone"). Next biggest: the blend collision
 objects' gains with the keyframed ragdoll's blend duration, Havok's give at four iterations
 (Hulda's locked legs), water knockdowns, objects placed into what they lie on.
+
+Round 4 (346 to 348): the blend collision objects' gains, through Havok's hierarchy controller
+(src/physics/keyframe-hierarchy.ts): the living's bodies follow their nodes by it (1 and 1:
+exactly) and carry their velocity into the ragdoll as it is let go; a ragdoll in the world
+driven by its graph's rigid body controls (a creature's get-up, five dying graphs) is driven by
+it with their gains (docs/physics.md, "The hierarchy controller"). Not reached: objects placed
+into what they lie on, water knockdowns (the size against the current's speed is not
+documented), the chains' damping (Rapier's joints have no per-joint softness to give it).
+Next biggest: those, and Havok's give at four iterations (Hulda's locked legs).
 
 ## Meshes
 
@@ -79,10 +88,11 @@ objects' gains with the keyframed ragdoll's blend duration, Havok's give at four
       speed covers no more than it in a step is never swept (`sweptBody`; round 2).
       TODO(M13): within a step Havok's time of impact also waits for that depth; Rapier's CCD
       has no per-body depth.
-- [ ] bhkBlendCollisionObject heirGain, velocityGain (1193): how a keyframed ragdoll bone's
-      body follows the animation (hierarchy and velocity gains). Not read: the keyframed bodies
-      are moved to the pose (src/shell/actor-bodies.ts #follow), not driven toward it by Havok's
-      hierarchy controller. Next, with the keyframed ragdoll's blend duration.
+- [x] bhkBlendCollisionObject heirGain, velocityGain (1193; 1 and 1 in all): a living actor's
+      bodies follow their nodes by Havok's hierarchy controller with these gains (keyframed
+      exactly), and carry the velocity they were moved at into the ragdoll as it is let go
+      (src/physics/keyframe-hierarchy.ts, ActorBodies #follow; docs/physics.md, "The hierarchy
+      controller"; tests/conformance/animation/ragdoll-switch.test.ts; round 4).
 - [x] bhkBallSocketConstraintChain maxErrorDistance (6, 0.1 in every chain): each link's error
       is clipped to it as the constraints' is to the world's (PhysicsWorld.#clipChains; round 3).
 - [x] bhkBallSocketConstraintChain constraintForceMixing (6): float epsilon in every chain, no
@@ -148,7 +158,7 @@ objects' gains with the keyframed ragdoll's blend duration, Havok's give at four
 - [x] The character controller: slopes, stairs, steps, pushing, platforms, falling, swimming.
 - [ ] Leaving a moving platform keeps no velocity; Havok's proxy push response.
 - [x] Ragdolls: death, hits, powered, keyframed, get-up, penetration recovery, corpses saved.
-- [ ] The paralysed's stiff fall; the keyframed bones' blend gains (above); a body let go
+- [ ] The paralysed's stiff fall; a body let go
       standing on its joints' limits (Hulda killed at the Bannered Mare's counter 1, 2.5 or 3 s
       into her lean stays draped over it: Havok's give at four iterations, which Rapier at 4 or
       5 substeps has only with worse settling; round 3).

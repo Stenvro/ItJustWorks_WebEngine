@@ -29,6 +29,7 @@ import {
   type FootIkSetup,
   type LookAtBone,
   type MirrorSetup,
+  type RagdollControlData,
   type StateMachineState,
   type StateTransition,
   type Vec4,
@@ -60,7 +61,7 @@ import {
   type LookAtBoneValues,
   type LookAtState,
 } from './procedural.ts';
-import { isPaired, pairedTrackBones, type PairedSide } from './paired-clips.ts';
+import { isPaired, PARTNER_PREFIX, pairedTrackBones, type PairedSide } from './paired-clips.ts';
 import { graphEvent, type GraphEvent } from './graph-events.ts';
 import { namedOf, wordValue, type NamedGraphState } from './named-graph-state.ts';
 
@@ -330,7 +331,6 @@ type Clip = Extract<BehaviorGenerator, { kind: 'clip' }>;
 type Blender = Extract<BehaviorGenerator, { kind: 'blender' }>;
 type CyclicBlend = Extract<BehaviorGenerator, { kind: 'cyclic-blend' }>;
 type OffsetAnimation = Extract<BehaviorGenerator, { kind: 'offset-animation' }>;
-type RigidBodyRagdoll = Extract<BehaviorModifier, { kind: 'rigid-body-ragdoll' }>;
 
 /**
  * An active hkbPoweredRagdollControlsModifier's control data (hkbPoweredRagdollControlData):
@@ -343,6 +343,17 @@ export interface PoweredRagdollControl {
   readonly damping: number;
   readonly proportionalRecoveryVelocity: number;
   readonly constantRecoveryVelocity: number;
+  readonly bones: readonly string[];
+}
+
+/**
+ * The active hkbRigidBodyRagdollControlsModifier's controls this update (bound values read):
+ * the hierarchy controller's gains, the seconds it blends in over, and the animation bones of
+ * the ragdoll bones it drives (none named: all those not keyframed).
+ */
+export interface RigidBodyRagdollControl {
+  readonly control: RagdollControlData;
+  readonly durationToBlend: number;
   readonly bones: readonly string[];
 }
 
@@ -611,7 +622,7 @@ export class BehaviorRuntime {
    */
   pairedSide: PairedSide | undefined = undefined;
   /** The paired clips' track maps for a side set, by binding and side. */
-  readonly #pairedMaps = new WeakMap<AnimationBinding, Map<PairedSide, Int16Array>>();
+  readonly #pairedMaps = new WeakMap<AnimationBinding, Map<string, Int16Array>>();
   /** A buffer as long as a clip's tracks, where they are more than its bones (paired clips). */
   #trackBuffer = new Float32Array(0);
   /** Updates run (a clip moved in the current one counts for its root motion). */
@@ -703,7 +714,7 @@ export class BehaviorRuntime {
   /** The ragdoll controls active in this update. */
   #poweredForce = 0;
   #powered: PoweredRagdollControl | undefined;
-  #rigidBody: RigidBodyRagdoll | undefined;
+  #rigidBody: RigidBodyRagdollControl | undefined;
   /** The character's mirroring (mirrored clips), if it has one. */
   readonly #mirror: MirroredSkeleton | undefined;
   /** The project's default event mode of blending transitions (EVENT_MODE). */
@@ -1262,8 +1273,8 @@ export class BehaviorRuntime {
     return this.#powered;
   }
 
-  /** The active hkbRigidBodyRagdollControlsModifier this update (its gains), if any. */
-  rigidBodyRagdoll(): RigidBodyRagdoll | undefined {
+  /** The active hkbRigidBodyRagdollControlsModifier's controls this update, if any. */
+  rigidBodyRagdoll(): RigidBodyRagdollControl | undefined {
     return this.#rigidBody;
   }
 
@@ -1835,6 +1846,15 @@ export class BehaviorRuntime {
         ignoreMarkPlacement: sync.ignoreMarkPlacement,
         reorientSupport: sync.reorientSupport,
       };
+    }
+    return undefined;
+  }
+
+  /** The active synchronized clip's partner prefix (SyncAnimPrefix), if one names it. */
+  #syncPrefix(): string | undefined {
+    for (const node of this.#active) {
+      const sync = node as BehaviorGenerator;
+      if (sync.kind === 'synchronized-clip' && sync.syncPrefix) return sync.syncPrefix;
     }
     return undefined;
   }
@@ -3592,7 +3612,11 @@ export class BehaviorRuntime {
         return;
       }
       case 'rigid-body-ragdoll':
-        this.#rigidBody = modifier;
+        this.#rigidBody = {
+          control: modifier.control,
+          durationToBlend: this.#read(modifier.durationToBlend, scope),
+          bones: this.ragdollBoneNames(modifier.bones),
+        };
         return;
       case 'istate-manager':
         // The first state data whose machine is in its state sets the actor's state.
@@ -4447,14 +4471,19 @@ export class BehaviorRuntime {
       maps = new Map();
       this.#pairedMaps.set(binding, maps);
     }
-    let map = maps.get(side);
+    // The partner's tracks by the synchronized clip's SyncAnimPrefix ("2_" in every one that
+    // names one: the lead's), else the data's own.
+    const prefix = this.#syncPrefix() ?? PARTNER_PREFIX;
+    const key = `${side}:${prefix}`;
+    let map = maps.get(key);
     if (!map) {
       map = pairedTrackBones(
         names,
         this.skeleton.bones.map((bone) => bone.name),
         side,
+        prefix,
       );
-      maps.set(side, map);
+      maps.set(key, map);
     }
     return map;
   }
