@@ -1084,7 +1084,9 @@ The info's flags and timers (`src/scripting/runtime/dialogue-rules.ts`, UESP and
   stands, no menu).
 - **Walk Away** (709) / **Walk Away Invisible In Menu** (261): Tab while the topics are listed
   says the listed Walk Away topic's info where the actor stands, its fragments running as if
-  chosen; one marked invisible is not listed.
+  chosen. One marked invisible without text is kept for that alone; one with text is listed (175 of
+  the 261 are choices the player makes in the original: Brynjolf's "Tell me about the Goldenglow
+  job.", Delphine's questions in MQ106). TODO(M13): what the flag does to a listed topic.
 - **Requires Player Activation**: said only in a conversation the player starts (none in
   vanilla), never as a passing greeting or bark.
 
