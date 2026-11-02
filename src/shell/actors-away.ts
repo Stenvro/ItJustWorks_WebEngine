@@ -30,6 +30,7 @@ import {
   type RouteEnd,
   type RouteMap,
 } from '../ai/routes.ts';
+import { frameTurn } from '../render/frame-work.ts';
 import type { Vec3 } from '../render/math.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -628,8 +629,12 @@ export class ActorsAway {
   async #plan(actor: number, trip: Trip, from: AwayPlace): Promise<void> {
     try {
       const routes = await this.#options.session.routeMap();
+      // Its search takes turns between frames (src/render/frame-work.ts): a worldspace's ends
+      // and doors held one frame for 40 ms as actors set out while the player went on.
+      await frameTurn();
       const start = routes.nearestNavmesh(from.space, from.position);
       const end = routes.nearestNavmesh(trip.destination.space, trip.destination.position);
+      if (start !== undefined && end !== undefined) await frameTurn();
       const route =
         start === undefined || end === undefined
           ? undefined
@@ -650,6 +655,7 @@ export class ActorsAway {
         this.#reached(actor, trip);
         return;
       }
+      await frameTurn();
       const legs: Leg[] = [];
       let space = from.space;
       let at = from.position;

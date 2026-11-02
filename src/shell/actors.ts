@@ -18,6 +18,7 @@ import { parseLip, type LipFile } from '../formats/audio/lip.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
 import { alternateSwaps, thinModelPath, type ModelTextureSwaps } from '../render/actor-model.ts';
+import { frameTurn } from '../render/frame-work.ts';
 import { transformPoint, type Vec3 } from '../render/math.ts';
 import type { ModelPart } from '../render/model-data.ts';
 import type { GpuModel, GpuMorphs, InstanceFade, ModelInstance } from '../render/scene-renderer.ts';
@@ -1104,6 +1105,9 @@ export class ActorPlacer {
       behavior.setVariable('weapAdj', look.weaponAdjust);
       pose.update(behavior.pose);
     } else if (behaviors && havok && !dead) {
+      // Its graph is built and run on in turns between frames (src/render/frame-work.ts): an
+      // actor coming into the loaded area held a frame for 20–25 ms with all of it.
+      await frameTurn();
       const host = animation.host(behaviors, look.female);
       const random = seededRandom(actor.reference);
       // The player's graph is no NPC's (observed in the original: the player's graph is
@@ -1142,6 +1146,7 @@ export class ActorPlacer {
       behavior.setVariable('weapAdj', look.weaponAdjust);
       behavior.update(0);
       await host.loaded();
+      await frameTurn();
       behavior.update(options?.fresh === true ? 0 : random() * 4);
       await host.loaded();
       behavior.update(0);

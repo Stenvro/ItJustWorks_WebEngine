@@ -8,6 +8,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import type { Vec3 } from '../render/math.ts';
 import { HAVOK_SCALE } from './collision-data.ts';
 import { Layer } from './collision-layers.ts';
+import { queryShape } from './query-shape.ts';
 import type { PhysicsOwner, PhysicsWorld } from './physics-world.ts';
 
 /**
@@ -524,7 +525,7 @@ export class CharacterBody {
         from,
         NO_ROTATION,
         { x: 0, y: 0, z: -1 },
-        this.#collider.shape,
+        queryShape(this.#collider.shape),
         SKIN,
         toHavok(distance),
         false,
@@ -548,7 +549,7 @@ export class CharacterBody {
     this.physics.world.intersectionsWithShape(
       this.#body.translation(),
       NO_ROTATION,
-      this.#collider.shape,
+      queryShape(this.#collider.shape),
       (other) => {
         found = other;
         return false;
@@ -586,12 +587,12 @@ export class CharacterBody {
     this.physics.world.intersectionsWithShape(
       at,
       NO_ROTATION,
-      own.shape,
+      queryShape(own.shape),
       (other) => {
-        const contact = own.shape.contactShape(
+        const contact = queryShape(own.shape).contactShape(
           at,
           NO_ROTATION,
-          other.shape,
+          queryShape(other.shape),
           other.translation(),
           other.rotation(),
           0,
@@ -707,12 +708,12 @@ export class CharacterBody {
       this.physics.world.intersectionsWithShape(
         at,
         rotation,
-        own.shape,
+        queryShape(own.shape),
         (other) => {
-          const contact = own.shape.contactShape(
+          const contact = queryShape(own.shape).contactShape(
             at,
             rotation,
-            other.shape,
+            queryShape(other.shape),
             other.translation(),
             other.rotation(),
             0,
@@ -764,10 +765,10 @@ export class CharacterBody {
     for (let i = 0; i < this.#controller.numComputedCollisions(); i++) {
       const other = this.#controller.computedCollision(i)?.collider;
       if (!other || other.handle === wall?.handle) continue;
-      const contact = own.shape.contactShape(
+      const contact = queryShape(own.shape).contactShape(
         at,
         NO_ROTATION,
-        other.shape,
+        queryShape(other.shape),
         other.translation(),
         other.rotation(),
         SKIN,
@@ -807,7 +808,7 @@ export class CharacterBody {
     predicate: (collider: RAPIER.Collider) => boolean,
   ): RAPIER.Vector | undefined {
     const world = this.physics.world;
-    const shape = this.#collider.shape;
+    const shape = queryShape(this.#collider.shape);
     const cast = (from: RAPIER.Vector, direction: RAPIER.Vector, distance: number) =>
       world.castShape(
         from,
@@ -891,7 +892,7 @@ export class CharacterBody {
       at,
       NO_ROTATION,
       { x: 0, y: 0, z: 1 },
-      this.#collider.shape,
+      queryShape(this.#collider.shape),
       SKIN,
       EDGE_LIFT,
       false,
@@ -1284,7 +1285,7 @@ export class CharacterBody {
       center,
       NO_ROTATION,
       { x: 0, y: 0, z: -1 },
-      this.#collider.shape,
+      queryShape(this.#collider.shape),
       SKIN,
       toHavok(CARRIER_REACH),
       true,
@@ -1330,7 +1331,7 @@ export class CharacterBody {
       center,
       NO_ROTATION,
       { x: move.x / length, y: move.y / length, z: move.z / length },
-      this.#collider.shape,
+      queryShape(this.#collider.shape),
       SKIN,
       length,
       false,
