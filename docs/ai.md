@@ -2214,7 +2214,9 @@ meanwhile.
     vanilla: (damage × 5 + 50) × 0.6), at most fKnockbackForceMax (128), spread over
     fKnockbackTime (0.3 s): the controller moves at force / time units a second besides its own
     movement, unless a stronger push already moves it. A hit that names its own push (a trap's
-    ProcessTrapHit pushback) uses it instead of the formula. No push on an actor in a kill move,
+    ProcessTrapHit pushback: , away from the trap along the ground, the trap's
+    pushback at most fKnockbackForceMax over fKnockbackTime; the actor is not knocked down) uses
+    it instead of the formula. No push on an actor in a kill move,
     of a race that is Not Pushable (RACE DATA 0x400), or from a projectile (arrows, bolts).
     Inferred: the push is held for the whole time (TODO(M13): whether the controller lets it
     fade); the damage is the hit's physical damage after armour (TODO(M13): which stage of the
@@ -2233,8 +2235,7 @@ meanwhile.
     TODO(M13): whether its magnitude falls off towards the radius.
 - **Knock-downs** (`src/shell/actor-knockdowns.ts`, `actor-bodies.ts`, the player's:
   `player-knockdown.ts`): Actor.PushActorAway (Unrelenting Force's third
-  word is its effect's VoicePushEffectScript: PushActorAway with PushForce 15), a trap's
-  ProcessTrapHit push, an explosion with Knock Down Always (EXPL DATA 0x4; By Formula 0x8:
+  word is its effect's VoicePushEffectScript: PushActorAway with PushForce 15), an explosion with Knock Down Always (EXPL DATA 0x4; By Formula 0x8:
   those below fKnockdownCurrentHealthThreshold of their health, TODO(M13)), an attack whose
   attack data has a knockdown (ATKD @32: the beast forms' sprinting swipes, read as a chance),
   paralysis (it lies until the effect ends; TODO(M13): the game's paralysed fall stiff). The

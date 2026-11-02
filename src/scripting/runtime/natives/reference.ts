@@ -853,8 +853,10 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
   });
   // ProcessTrapHit(akTrap, afDamage, afPushback, velocity, position, material, stagger): a
   // trap's blow on this reference: the damage to an actor's health, blamed on the actor the
-  // trap's doings are (SetActorCause), and the push away from the trap. TODO(M13): the
-  // stagger (afStagger) and the hit's material impact (aeMaterial).
+  // trap's doings are (SetActorCause), and the push back away from the trap: its character
+  // controller pushed by the pushback (the trap's own push, as a hit's knockback: observed in
+  // the original; not knocked down). TODO(M13): the stagger (afStagger) and the hit's material
+  // impact (aeMaterial).
   n('objectreference.processtraphit', async (call) => {
     const reference = self(call);
     const trap = ref(call.args[0]);
@@ -864,7 +866,7 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
       await runtime.actors.damage(reference, ActorValue.health, num(call.args[1]), cause);
     }
     const pushback = num(call.args[2]);
-    if (pushback > 0 && trap !== undefined) world.pushAway?.(reference, trap, pushback);
+    if (pushback > 0 && trap !== undefined) world.trapPush?.(reference, trap, pushback);
     return null;
   });
   // InterruptCast: what this reference (an actor, a trap's caster) casts stops (casting-engine.ts).
