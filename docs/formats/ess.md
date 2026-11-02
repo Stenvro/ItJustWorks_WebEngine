@@ -712,9 +712,7 @@ ess)` reads those places ahead);
   where it attacked from, set with the fifth time stamp alone) and six AI time stamps (seconds
   relative to the save, −FLT_MAX never; the third the last known place's). A member entry is
   the actor, a timer f32 and its threat f32. The import: a target that attacked a member fights
-  it (for one whose own combat controller names none); each member's fight takes what its group
-  knew of each of its targets (`essGroupFights`: `SavedFight.known`) and, for the target its
-  group searches for, the search from its place and radius (none in the saves read).
+  it (for one whose own combat controller names none); for the target its group searches for, each member's fight takes the search from its place and radius with what the group knew of the target (`essGroupFights`: `SavedFight`; none in the saves read). TODO(M13): the group's knowledge of a target it does not search for is not put back (so put back, two of Helgen's fighters left the packages the save had them on; their fights start again from detection, as before).
   TODO(M13): the groups' timers, the members' threats, the other places and time stamps, the
   search's points, doors and time searched;
 - the spells' projectiles in flight (PMIS a missile, PFLA a flame's spray): not references of

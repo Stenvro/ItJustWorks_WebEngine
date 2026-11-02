@@ -1628,8 +1628,11 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
         },
       }),
       ...(target && { combatTarget: target }),
+      // A group's search goes on with what the group knew. TODO(M13): its knowledge alone (a
+      // fight not searching) is not put back: so put back, two of Helgen's fighters left the
+      // packages the save had them on (their fights start again from detection, as before).
       ...(target &&
-        groupKnowledge.get(formId)?.has(target) && {
+        groupKnowledge.get(formId)?.get(target)?.search && {
           fight: groupKnowledge.get(formId)?.get(target),
         }),
     };

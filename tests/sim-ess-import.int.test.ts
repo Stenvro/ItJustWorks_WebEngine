@@ -362,7 +362,7 @@ describe.skipIf(!hasGamedata() || path === undefined)(
         }
         // Each member of a combat group knows what its group knew of its target.
         for (const actor of imported.save.world?.actors ?? []) {
-          if (actor.fight?.known) expect(actor.combatTarget).toBeDefined();
+          if (actor.fight) expect(actor.combatTarget).toBeDefined();
         }
       }
     }, 300_000);
