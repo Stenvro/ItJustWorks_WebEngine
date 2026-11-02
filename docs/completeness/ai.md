@@ -16,7 +16,7 @@ code (comments left out), or the sweep's own table says why nothing more reads i
 each item is how many records (triangles, attacks) use it. The mechanics part is kept by hand
 against docs/ai.md and the conformance suites (tests/conformance/ai/).
 
-## Count (2026-11-01, round 3)
+## Count (2026-11-02, round 4)
 
 | Part                    | Items | Done | Open |
 | ----------------------- | ----: | ---: | ---: |
@@ -24,9 +24,9 @@ against docs/ai.md and the conformance suites (tests/conformance/ai/).
 | NPCs, races (data)      |    19 |   19 |    0 |
 | Idle markers, furniture |    25 |   22 |    3 |
 | Navmeshes (data)        |    12 |   11 |    1 |
-| Game settings           |   190 |  187 |    3 |
+| Game settings           |   190 |  190 |    0 |
 | Mechanics (by hand)     |    24 |   13 |   11 |
-| Total                   |   456 |  438 |   18 |
+| Total                   |   456 |  441 |   15 |
 
 Round 1 wrote the sweep and this list; Can Pickup Items (RACE DATA) became read: only a race that
 can pick up items runs the combat tree's Acquire Weapon.
@@ -85,8 +85,10 @@ Round 3 built down (the race flags' readers: src/ai/race-ai-flags.ts):
 The last four are their names' plain readings (TODO(M13)). Left open: IDLM Loose Only (CommonLibSSE
 names it kLooseOnly, xEdit only for a later game; 72 of 89 markers; its meaning is not
 documented), and fTrackSpeed, fTrackDeadZoneXY / Z: the earlier game's head tracking set (it had
-eleven fTrack\* settings; Skyrim.esm keeps three); this game's head tracking reads fHeadTrack\*;
-whether anything reads these needs the original's code.
+eleven fTrack\* settings; Skyrim.esm keeps three); this game's head tracking reads fHeadTrack\*.
+Round 4 (2026-11-02) read them from the original: fTrackSpeed is the face's eye tracking (the
+eyes turn to their look at most this many radians a second on each axis: src/animation/face.ts,
+docs/animation.md "Faces"); fTrackDeadZoneXY / Z are registered and never read (inert).
 
 ## Packages
 
@@ -168,8 +170,8 @@ the readers ask for by name.
 - [x] fAIForceGreetingTimer (3), fAIInDialogueModewithPlayerTimer (60),
       fFurnitureMarkerAngleTolerance (10), fActorDefaultTurningSpeed,
       fJogInterpolationBetweenWalkAndRun (round 3, above).
-- [ ] fTrackSpeed, fTrackDeadZoneXY, fTrackDeadZoneZ: the earlier game's head tracking set;
-      whether anything reads them needs the original's code (round 3, above).
+- [x] fTrackSpeed: the eyes' turn speed (face.ts); fTrackDeadZoneXY, fTrackDeadZoneZ:
+      registered, never read (inert; round 4, above).
 
 ## Mechanics (by hand)
 
@@ -205,6 +207,5 @@ the readers ask for by name.
 1. Avoidance: the engine's way round and who yields; what the advanced avoidance adds (the race
    flag's reading is the plain one).
 2. IDLM Loose Only (72 markers), FURN marker keyword (FNMK, 2), FURN Disables Activation (2).
-3. fTrackSpeed, fTrackDeadZoneXY / Z: the original's code must be read for them.
-4. The mechanics left by hand (Continue If PC Near's reach, sandbox radii, the light's sum, NPC
+3. The mechanics left by hand (Continue If PC Near's reach, sandbox radii, the light's sum, NPC
    crimes, the follow offset).

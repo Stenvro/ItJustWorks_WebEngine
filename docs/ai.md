@@ -2160,7 +2160,8 @@ meanwhile.
   weapon damage (skill, perks, tempering) × the attack data's damage mult (power attacks 2,
   bashes 0.5; a bash on the weapon's base damage or the shield's base rating × fWeaponBash{PC}
   Min..Max or fShieldBash{PC}Min..Max by Block); a sneak attack × the kind's fCombatSneak*Mult
-  (one-handed 3, two-handed and fists 2, bows 2) × fDamageSneakAttackMult; × (1 − the target's
+  (one-handed 3, two-handed and fists 2, bows 2) × fDamageSneakAttackMult (fCombatSneakAttackBonusMult
+  and fCombatDamageBonusSneakingMult are registered by the original and never read: inert); × (1 − the target's
   armour reduction: the equip system's 0.12% a point and 3% a piece, at most fMaxArmorRating);
   critical damage (CRDT; the perks' chance) passes the armour; × (1 − the share blocked);
   × fDiffMultHPByPC<level> for the player's hits, fDiffMultHPToPC<level> for hits on the player
@@ -2169,10 +2170,18 @@ meanwhile.
   arrows, armour piercing, incoming damage, stagger, Sweep, the spells a hit applies) are asked
   each hit (docs/gameplay.md, "Perks").
 - **Blocking**: held, the block covers fCombatHitConeAngle (35°) either side of the blocker's
-  facing: a shield blocks fShieldBaseFactor + fShieldScalingFactor × its base rating × (1 + 1.5
-  × Block / 100) %, a weapon fBlockWeaponBase + fBlockWeaponScaling × the attacker's weapon
-  damage × (1 + 1.5 × Block / 100) %, × fBlockPowerAttackMult against a power attack, at most
-  85% (UESP; the plugins' fBlockMax 0.7: TODO(M13)). The blocker's stamina pays (the skill
+  facing. Observed in the original (UESP's measured formulas are the same with the vanilla
+  values): the Block skill scales as skill = fArmorRatingBase + (fArmorRatingMax −
+  fArmorRatingBase) × Block / 100 (1 + 1.5 × Block / 100; the skill is not held to 100); a
+  shield blocks fShieldBaseFactor + fShieldScalingFactor × its base rating × skill / 100, a
+  weapon (or a shield the blocker blocks with its weapon) fBlockWeaponBase +
+  fBlockWeaponScaling × the attacker's weapon damage × skill / 100; × fBlockPowerAttackMult
+  against a power attack; then the blocker's perks (Mod Percent Blocked: Shield Wall, Fortify
+  Block); at most fPlayerMaxResistance percent (85), for every blocker, not the player alone.
+  The blocker's Shield Perks actor value adds to a shield's skill term there; no plugin effect
+  sets it (TODO(M13): read it once one does). fBlockMax (0.7), fBlockSkillMult (2) and
+  fBlockAmountWeaponMult (1) are registered by the original and never read: an earlier game's
+  block (inert). The blocker's stamina pays (the skill
   progression's blockCost) and its Block skill is used by the damage blocked (a shield's
   twice). A blocked plain attack recoils its attacker (recoilStart; a heavy shield's
   recoilLargeStart); a blocked power attack staggers the blocker by fStaggerBlockBase + the
@@ -2190,17 +2199,38 @@ meanwhile.
   The graph gets staggerMagnitude (its blend plays the smallest to the largest stagger) and
   staggerDirection (where the blow came from, clockwise from the facing in turns: 0
   StaggerBack, 0.5 StaggerForward).
-  The Stagger effect (MGEF archetype 33: Unrelenting Force's 0.75, 1.25, 1.5; the Incinerate
-  and Ice Spike perks' push 0.25; the giants' and atronachs' area slams) staggers by its
-  magnitude weighed so against the target's mass, from its caster's side.
-  ObjectReference.KnockAreaEffect(magnitude, radius) staggers so too (every actor within the
-  radius, from the reference, at the magnitude); it knocks nobody down. The original's scripts
-  use it as their stagger: a dragon's landings (DragonActorScript: 1 within its length, 2 lengths
-  for a forceful one) and the wall Alduin breaks in Helgen's tower (1.5 lengths), a giant's
-  stomp (0.5), the Greybeards' greeting (0.2, 0.25), the hall falling in Helgen's keep (1
-  within 2048; HelgenHallCollapseScript names its marker staggerOrigin). Allies in Helgen's
-  attack stagger as Alduin lands about them and run on (`tests/sim-opening-ride.int.test.ts`).
-  TODO(M13): whether its magnitude falls off towards the radius.
+  Whether a hit's stagger is taken (observed in the original, `staggerTaken`): a plain melee
+  hit (a melee weapon's or the fists', not blocked, not a bash) staggers only on an
+  iStaggerAttackChance percent roll (the engine's 100, Skyrim.esm's 50); the player is not
+  rolled for while [Combat] bPlayerAlwaysStaggered is on (1); blocked hits, bashes and the
+  shots of bows, crossbows and staves always stagger when they have any stagger. A timed bash
+  (one that meets an attack) is answered by another of the engine's default actions instead
+  (TODO(M13): which one). Inferred: a spell's hit, which has no weapon, is rolled for as a
+  melee hit.
+- **Knockback** (`knockback.ts`; observed in the original): a hit not blocked at all pushes its
+  target's character controller away from the attacker (from the hit's point without one) by
+  (the whole physical damage × fKnockbackDamageMult + fKnockbackDamageBase) × (fKnockbackAgilBase
+  - fKnockbackAgilMult × 50) game units (the 50 an earlier game's Agility at its middle;
+    vanilla: (damage × 5 + 50) × 0.6), at most fKnockbackForceMax (128), spread over
+    fKnockbackTime (0.3 s): the controller moves at force / time units a second besides its own
+    movement, unless a stronger push already moves it. A hit that names its own push (a trap's
+    ProcessTrapHit pushback) uses it instead of the formula. No push on an actor in a kill move,
+    of a race that is Not Pushable (RACE DATA 0x400), or from a projectile (arrows, bolts).
+    Inferred: the push is held for the whole time (TODO(M13): whether the controller lets it
+    fade); the damage is the hit's physical damage after armour (TODO(M13): which stage of the
+    hit's damage the engine reads). fConcussionTimer (40) is registered by the original and never
+    read (an earlier game's concussion: inert).
+    The Stagger effect (MGEF archetype 33: Unrelenting Force's 0.75, 1.25, 1.5; the Incinerate
+    and Ice Spike perks' push 0.25; the giants' and atronachs' area slams) staggers by its
+    magnitude weighed so against the target's mass, from its caster's side.
+    ObjectReference.KnockAreaEffect(magnitude, radius) staggers so too (every actor within the
+    radius, from the reference, at the magnitude); it knocks nobody down. The original's scripts
+    use it as their stagger: a dragon's landings (DragonActorScript: 1 within its length, 2 lengths
+    for a forceful one) and the wall Alduin breaks in Helgen's tower (1.5 lengths), a giant's
+    stomp (0.5), the Greybeards' greeting (0.2, 0.25), the hall falling in Helgen's keep (1
+    within 2048; HelgenHallCollapseScript names its marker staggerOrigin). Allies in Helgen's
+    attack stagger as Alduin lands about them and run on (`tests/sim-opening-ride.int.test.ts`).
+    TODO(M13): whether its magnitude falls off towards the radius.
 - **Knock-downs** (`src/shell/actor-knockdowns.ts`, `actor-bodies.ts`, the player's:
   `player-knockdown.ts`): Actor.PushActorAway (Unrelenting Force's third
   word is its effect's VoicePushEffectScript: PushActorAway with PushForce 15), a trap's

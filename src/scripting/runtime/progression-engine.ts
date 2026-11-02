@@ -614,7 +614,11 @@ export class ProgressionEngine {
     const playerLevel = await this.#runtime.actors.playerLevel();
     const record = await this.#runtime.forms.record(zone);
     if (record?.type !== 'ECZN') return playerLevel;
-    const level = zoneLevel(parseEncounterZone(record), playerLevel);
+    const level = zoneLevel(
+      parseEncounterZone(record),
+      playerLevel,
+      (await this.settings()).leveling,
+    );
     state.zoneLevels.set(zone, level);
     return level;
   }

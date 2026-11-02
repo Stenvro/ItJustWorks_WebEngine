@@ -222,6 +222,8 @@ export const INI_DEFAULTS = {
     bCombatPathSprinting: 1,
     // Combat lines are off (src/ai/combat-dialogue.ts; the executable's).
     bDisableCombatDialogue: 0,
+    // The player takes every hit's stagger (src/gameplay/combat/stagger.ts staggerTaken).
+    bPlayerAlwaysStaggered: 1,
     f1PArrowTiltUpAngle: 2,
     f1PBoltTiltUpAngle: 1,
     f3PArrowTiltUpAngle: 2.5,

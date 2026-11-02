@@ -120,4 +120,20 @@ describe('blocking (UESP "Block")', () => {
     expect(bashFactor(100, true, false, settings)).toBeCloseTo(0.25);
     expect(bashFactor(0, true, false, settings)).toBeCloseTo(0.05);
   });
+
+  it('caps at fPlayerMaxResistance and scales the skill by fArmorRatingBase / Max (observed)', () => {
+    const read = readCombatSettings(
+      (name) => ({ fPlayerMaxResistance: 60, fArmorRatingMax: 3.5, fBlockMax: 0.1 })[name],
+    );
+    // fBlockMax is not read: the cap is fPlayerMaxResistance's 60%.
+    expect(
+      blockedShare({ ...block, shieldRating: 60, blockSkill: 100, blockMult: 2 }, read),
+    ).toBeCloseTo(0.6);
+    // A steel shield at Block 50: 45 + 0.2 × 24 × (1 + 2.5 × 0.5) = 55.8%.
+    expect(blockedShare({ ...block, blockSkill: 50 }, read)).toBeCloseTo(0.45 + 0.048 * 2.25);
+    // The skill is not held to 100.
+    expect(blockedShare({ ...block, blockSkill: 120 }, settings)).toBeCloseTo(
+      0.45 + 0.048 * (1 + 1.5 * 1.2),
+    );
+  });
 });

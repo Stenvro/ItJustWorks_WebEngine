@@ -3,6 +3,7 @@ import {
   actorLevel,
   autoCalcStats,
   leveledPickLevel,
+  levelingSettings,
   sharePoints,
   zoneLevel,
 } from './actor-leveling.ts';
@@ -107,11 +108,26 @@ describe('levels', () => {
 
   it("set an encounter zone's level within its range", () => {
     const zone = { minLevel: 6, maxLevel: 30, flags: 0 };
+    const vanilla = { levelScalingMult: 1 }; // Skyrim.esm's fLevelScalingMult
+    expect(zoneLevel(zone, 2, vanilla)).toBe(6);
+    expect(zoneLevel(zone, 12, vanilla)).toBe(12);
+    expect(zoneLevel(zone, 45, vanilla)).toBe(30);
+    expect(zoneLevel({ ...zone, flags: EncounterZoneFlag.matchPcBelowMinimum }, 2, vanilla)).toBe(
+      2,
+    );
+    expect(zoneLevel({ minLevel: 0, maxLevel: 0, flags: 0 }, 17, vanilla)).toBe(17);
+  });
+
+  it('follow the levels past the minimum by fLevelScalingMult, rounded down', () => {
+    const zone = { minLevel: 6, maxLevel: 30, flags: 0 };
+    // The engine's 0.6: 6 + (12 - 6) × 0.6 = 9.6 → 9; 6 + 39 × 0.6 = 29.4 → 29.
+    expect(zoneLevel(zone, 12)).toBe(9);
+    expect(zoneLevel(zone, 45)).toBe(29);
+    expect(zoneLevel(zone, 6)).toBe(6);
     expect(zoneLevel(zone, 2)).toBe(6);
-    expect(zoneLevel(zone, 12)).toBe(12);
-    expect(zoneLevel(zone, 45)).toBe(30);
-    expect(zoneLevel({ ...zone, flags: EncounterZoneFlag.matchPcBelowMinimum }, 2)).toBe(2);
-    expect(zoneLevel({ minLevel: 0, maxLevel: 0, flags: 0 }, 17)).toBe(17);
+    expect(levelingSettings((name) => (name === 'fLevelScalingMult' ? 1 : undefined))).toEqual(
+      expect.objectContaining({ levelScalingMult: 1 }),
+    );
   });
 
   it("pick leveled lists at the encounter's level by the level modifier", () => {

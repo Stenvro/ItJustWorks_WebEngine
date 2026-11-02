@@ -20,7 +20,7 @@
 
 import { strengthDamage } from '../ai/combat-ai.ts';
 import { threatensPlayer } from '../ai/combat-reactions.ts';
-import { parseNpcCombat, parseRaceCombat } from '../ai/race-combat-records.ts';
+import { RaceAiFlag, parseNpcCombat, parseRaceCombat } from '../ai/race-combat-records.ts';
 import {
   behaviorGraphKey,
   readIdleTree,
@@ -128,7 +128,13 @@ import {
   blockStagger,
   recoilOf,
   staggerMagnitude,
+  staggerTaken,
 } from '../gameplay/combat/stagger.ts';
+import {
+  knockbackApplies,
+  knockbackForce,
+  knockbackVelocity,
+} from '../gameplay/combat/knockback.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import { transformPoint, type Mat4, type Vec3 } from '../render/math.ts';
 import type { RenderPort } from '../render/render-port.ts';
@@ -432,6 +438,9 @@ export interface ActorCombatOptions {
   readonly get: (reference: number) => StagedActor | undefined;
   /** The dead player's body (src/shell/player-death.ts): the killing blow pushes it. */
   readonly playerBody?: () => BodyHolder | undefined;
+  /** The player's character controller: a hit's push back moves it (knockback.ts). */
+  readonly playerCharacter?: () =>
+    { knockBack(velocity: readonly [number, number], seconds: number): void } | undefined;
   /**
    * The player began (true) or ended (false) bleeding out (src/shell/player-death.ts): their
    * controls stop and the bleedout camera looks at them meanwhile.
@@ -2678,7 +2687,39 @@ export class ActorCombat implements CombatBridge {
             },
             settings,
           );
-      if (stagger > 0) this.#stagger(target, stagger, attackerFeet);
+      // A plain melee hit's stagger is taken by iStaggerAttackChance (staggerTaken).
+      const taken = staggerTaken(
+        {
+          blocked: false,
+          bash: hit.bash,
+          ranged: ranged || stats?.weaponType === WeaponType.staff,
+          targetIsPlayer: target.player,
+          roll: Math.random(),
+        },
+        settings,
+      );
+      if (stagger > 0 && taken) this.#stagger(target, stagger, attackerFeet);
+      // The push back of a hit not blocked (knockback.ts), away from the attacker.
+      if (
+        knockbackApplies({
+          blocked: 0,
+          inKillMove: target.state.killMove,
+          notPushable: ((target.gear?.raceFlags ?? 0) & RaceAiFlag.notPushable) !== 0,
+          projectile: hit.shot !== undefined,
+        })
+      ) {
+        const push = knockbackVelocity(
+          attackerFeet,
+          targetFeet,
+          knockbackForce(result.physical, settings),
+          settings.knockbackTime,
+        );
+        if (push) {
+          const flat = [push.velocity[0], push.velocity[1]] as const;
+          if (target.player) this.#options.playerCharacter?.()?.knockBack(flat, push.seconds);
+          else this.#options.movers.knockBack(targetRef, flat, push.seconds);
+        }
+      }
       // An attack with a knockdown (ATKD: the beast forms' sprinting swipes, 1) knocks it down,
       // pushed as a killing blow of its damage pushes the dead (TODO(M13): the knockdown read
       // as a chance, the push as fDeathForce*).
@@ -4456,7 +4497,11 @@ export class ActorCombat implements CombatBridge {
     if (this.#settingsRead) return;
     this.#settingsRead = true;
     void this.#options.session.settings().then((settings) => {
-      this.#settings = readCombatSettings((name) => settings.number(name));
+      this.#settings = {
+        ...readCombatSettings((name) => settings.number(name)),
+        playerAlwaysStaggered:
+          this.#options.session.ini.number('Combat', 'bPlayerAlwaysStaggered') !== 0,
+      };
       this.#impulses = readImpulseSettings((name) => settings.number(name));
       this.#combatMusic.settings = readCombatMusicSettings((name) => settings.number(name));
     });

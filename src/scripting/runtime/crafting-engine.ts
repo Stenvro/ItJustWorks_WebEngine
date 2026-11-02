@@ -32,11 +32,13 @@ import {
   rechargeSkillUse,
   scaledValueOf,
   SOUL_CAPACITY,
+  ingredientUsed,
   temperHealth,
-  temperingEffectiveSkill,
-  temperingQualityLevel,
+  temperingHealthOf,
   temperingSkillUse,
   temperLevelOfHealth,
+  temperQualityTier,
+  temperSettings,
   weaponChargePerUse,
   weaponEffectAt,
   weaponEnchantmentMaxMagnitude,
@@ -47,6 +49,7 @@ import {
   type CraftingSettings,
   type EnchantingCostSettings,
   type EnchantingInputs,
+  type TemperSettings,
 } from '../../gameplay/crafting.ts';
 import { actorValueIndex } from '../../world/actor-values.ts';
 import {
@@ -228,6 +231,7 @@ export class CraftingEngine {
   #settings:
     | Promise<{
         crafting: CraftingSettings;
+        temper: TemperSettings;
         cost: EnchantingCostSettings;
         alchemy: AlchemySettings;
         of: string;
@@ -245,6 +249,7 @@ export class CraftingEngine {
 
   async settings(): Promise<{
     crafting: CraftingSettings;
+    temper: TemperSettings;
     cost: EnchantingCostSettings;
     alchemy: AlchemySettings;
     of: string;
@@ -270,6 +275,14 @@ export class CraftingEngine {
         'fEnchantingSkillCostScale',
         'fAlchemyIngredientInitMult',
         'fAlchemySkillFactor',
+        'fEnchantingSkillFactor',
+        'iIngredientUseEffectThreshold',
+        'iIngredientAlchemyUses',
+        'iIngredientWortcraftUses',
+        'fSmithingConditionFactor',
+        'fSmithingWeaponMax',
+        'fSmithingArmorMax',
+        ...[1, 2, 3, 4, 5, 6].map((n) => `fHealthDataValue${String(n)}`),
       ];
       const numbers = new Map<string, number>();
       for (const name of names) {
@@ -283,6 +296,7 @@ export class CraftingEngine {
       };
       return {
         crafting: craftingSettings(number),
+        temper: temperSettings(number),
         cost: enchantingCostSettings(number),
         alchemy: {
           ingredientInitMult:
@@ -782,13 +796,16 @@ export class CraftingEngine {
   // --- Smithing -------------------------------------------------------------------------------
 
   /**
-   * The quality an actor improves an item to (UESP "Skyrim:Smithing": its Smithing, the
-   * material perk, Fortify Smithing).
+   * The quality an actor improves an item to: the health its Smithing gives, the material perk
+   * and Fortify Smithing multiplying what it is past fHealthDataValue1 (observed in the
+   * original: temperingHealthOf; UESP "Skyrim:Smithing" measures the same).
    */
   async temperQuality(actor: number, item: ItemRecord): Promise<number> {
     const { skill, enchantments, potion } = await this.#skill(actor, SMITHING, FORTIFY.smithing);
     const perk = await this.perks.temperingHealth(actor, item);
-    return temperingQualityLevel(temperingEffectiveSkill({ skill, perk, enchantments, potion }));
+    const { temper } = await this.settings();
+    const health = temperingHealthOf(skill, perk * (1 + enchantments) * (1 + potion), temper);
+    return temperQualityTier(health, temper) === 0 ? 0 : temperLevelOfHealth(health);
   }
 
   /**
@@ -903,7 +920,7 @@ export class CraftingEngine {
       ENCHANTING,
       FORTIFY.enchanting,
     );
-    const { cost: costSettings } = await this.settings();
+    const { cost: costSettings, crafting } = await this.settings();
     const weapon = item.type === 'WEAP';
     const effects: CreatedEffect[] = [];
     let maxValue = 0;
@@ -916,6 +933,7 @@ export class CraftingEngine {
       const power = await this.perks.enchantmentPower(actor, enchantment, item);
       const inputs: EnchantingInputs = {
         skill,
+        skillFactor: crafting.enchantingSkillFactor,
         potion: enchantments + potion,
         enchanter: power - 1,
       };
@@ -1070,7 +1088,20 @@ export class CraftingEngine {
     for (let slot = 0; slot < Math.min(count, Math.max(1, item.effects.length)); slot++)
       known.add(slot);
     runtime.state.ingredientEffects.set(ingredient, known);
+    const { crafting } = await this.settings();
+    this.#ingredientUsed(ingredient, crafting.ingredientWortcraftUses, crafting);
     this.#stat('ingredients eaten');
+  }
+
+  /** An ingredient's uses towards its next effect (ingredientUsed): eaten, or brewed with. */
+  #ingredientUsed(ingredient: number, uses: number, settings: CraftingSettings): void {
+    const state = this.#runtime.state;
+    const known = new Set(state.ingredientEffects.get(ingredient) ?? []);
+    const used = ingredientUsed(state.ingredientUses.get(ingredient) ?? 0, uses, known, settings);
+    state.ingredientUses.set(ingredient, used.count);
+    if (used.learned === undefined) return;
+    known.add(used.learned);
+    state.ingredientEffects.set(ingredient, known);
   }
 
   /**
@@ -1136,6 +1167,7 @@ export class CraftingEngine {
         for (const [slot, effect] of (items[i]?.effects ?? []).entries())
           if (shared.has(effect.effect) || made.has(effect.effect)) known.add(slot);
         runtime.state.ingredientEffects.set(formId, known);
+        this.#ingredientUsed(formId, crafting.ingredientAlchemyUses, crafting);
       }
     }
     const made = await this.#potionForm(potion);

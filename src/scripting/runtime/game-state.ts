@@ -605,6 +605,8 @@ export class GameState {
   readonly knownEnchantments = new Set<number>();
   /** The effects the player found out on each ingredient, by effect slot (0..3). */
   readonly ingredientEffects = new Map<number, ReadonlySet<number>>();
+  /** Each ingredient's uses towards its next effect (src/gameplay/crafting.ts ingredientUsed). */
+  readonly ingredientUses = new Map<number, number>();
   /** Counts the quests' updates for the player (QuestState.updated). */
   questClock = 0;
   /** What Debug.Notification / MessageBox showed (the HUD's until M9). */

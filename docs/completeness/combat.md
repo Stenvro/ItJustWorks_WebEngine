@@ -13,7 +13,7 @@ item with where it is read); docs/completeness/ai.md says when an item counts as
 mechanics part is kept by hand against docs/ai.md ("Combat", "Combat AI", "Flying") and the
 conformance suites (tests/conformance/combat/).
 
-## Count (2026-11-01, round 3)
+## Count (2026-11-02, round 4)
 
 | Part                     | Items | Done | Open |
 | ------------------------ | ----: | ---: | ---: |
@@ -21,9 +21,9 @@ conformance suites (tests/conformance/combat/).
 | Attack data (ATKD, ATKE) |    16 |   16 |    0 |
 | Race combat (DATA, ATKR) |    15 |   15 |    0 |
 | Behaviour tree actions   |    63 |   63 |    0 |
-| Game settings            |   406 |  387 |   19 |
-| Mechanics (by hand)      |    22 |   14 |    8 |
-| Total                    |   557 |  530 |   27 |
+| Game settings            |   409 |  400 |    9 |
+| Mechanics (by hand)      |    23 |   15 |    8 |
+| Total                    |   561 |  544 |   17 |
 
 Round 1 wrote the sweep and this list, and built down:
 
@@ -66,7 +66,7 @@ the cap of the blocked share; fKnockback* (Time 0.3, DamageMult 5, ForceMax 128;
 built-in fKnockbackAgilBase / AgilMult beside them are Oblivion's agility knockdown) and
 fConcussionTimer (40; Fallout's crippled-head concussion) have no documented use in this game,
 though Skyrim.esm sets values of its own for the first three; iStaggerAttackChance (50) is
-undocumented. These need the original's code read for them.
+undocumented. These needed the original's code read for them (settled in round 4, below).
 
 Round 3 built down:
 
@@ -93,9 +93,27 @@ Round 3 built down:
 Looked for and not found (left open): fCombatSneakAttackBonusMult (100) and
 fCombatDamageBonusSneakingMult (2) are in no document; the sneak attack's documented rule is
 whole without them (the weapon kind's fCombatSneak*Mult × the perks × fDamageSneakAttackMult:
-src/gameplay/combat/damage.ts), so their use needs the original's code. The block, knockback
-and concussion settings and iStaggerAttackChance stay open for the same reason;
+src/gameplay/combat/damage.ts), so their use needed the original's code (round 4). The block,
+knockback and concussion settings and iStaggerAttackChance stayed open for the same reason;
 iCombatDismemberPartChance and iCombatExplodePartChance are left to the dismemberment work.
+
+Round 4 (2026-11-02) read them from the original (docs/ai.md, "Blocking", "Staggers",
+"Knockback", "Damage"):
+
+- fBlockMax, fBlockSkillMult, fBlockAmountWeaponMult: registered and never read (inert). The
+  block's share is capped at fPlayerMaxResistance (85, UESP's measured cap, for every blocker)
+  after the perks; its skill term is fArmorRatingBase + (fArmorRatingMax − fArmorRatingBase) ×
+  Block / 100, not held to 100 (damage.ts blockedShare).
+- iStaggerAttackChance: a plain melee hit (not blocked, not a bash, a melee weapon or the fists)
+  staggers on its percent roll; the player always while [Combat] bPlayerAlwaysStaggered; blocked
+  hits, bashes and shots always (stagger.ts staggerTaken).
+- fKnockbackTime, fKnockbackDamageMult, fKnockbackForceMax: an unblocked hit pushes its target
+  (damage × mult + fKnockbackDamageBase) × (fKnockbackAgilBase + fKnockbackAgilMult × 50) units,
+  at most the max, over the time; not in a kill move, a Not Pushable race or by a projectile
+  (knockback.ts; the controller's push: physics/character.ts knockBack). TODO(M13): whether the
+  push fades over the time, and which stage of the damage it reads.
+- fConcussionTimer, fCombatSneakAttackBonusMult, fCombatDamageBonusSneakingMult: registered and
+  never read (inert).
 
 ## Combat style (CSTY)
 
@@ -141,19 +159,21 @@ iCombatDismemberPartChance and iCombatExplodePartChance are left to the dismembe
 
 The load order's combat settings (120: fCombat*, stagger, block, bash, power attacks, knockback,
 kill camera, bleedout, confidence, flee, sneak damage, death force, bows, projectiles, mounted)
-and 286 built-in ones the readers ask for by name.
+and 289 built-in ones the readers ask for by name.
 
-- [x] 101 of 120 plugin settings (7 of them inert: never read, or an earlier game's grenades and
-      mines) and all 286 built-in ones; round 2: fMountedMaxLookingDown; round 3:
-      fPowerAttackCoolDownTime, fPowerAttackDefaultBonus.
-- [ ] iStaggerAttackChance (50): needs the original's code: undocumented (round 2, above).
-- [ ] fKnockbackTime, fKnockbackDamageMult, fKnockbackForceMax, fConcussionTimer: needs the
-      original's code: no documented use in this game (round 2, above).
+- [x] 111 of 120 plugin settings (13 of them inert: never read, or an earlier game's grenades and
+      mines) and all 289 built-in ones; round 2: fMountedMaxLookingDown; round 3:
+      fPowerAttackCoolDownTime, fPowerAttackDefaultBonus; round 4 (below).
+- [x] iStaggerAttackChance (50): a plain melee hit's stagger is taken on its percent roll
+      (stagger.ts staggerTaken; round 4).
+- [x] fKnockbackTime, fKnockbackDamageMult, fKnockbackForceMax (with the built-in
+      fKnockbackDamageBase, AgilBase, AgilMult): an unblocked hit's push back (knockback.ts;
+      round 4). fConcussionTimer: registered, never read (inert).
 - [ ] fKillCamBaseOdds (1): not read (the kill moves' odds are the INI's and the perks').
-- [ ] fBlockSkillMult, fBlockAmountWeaponMult, fBlockMax (0.7): needs the original's code; in
-      none of UESP's measured block formulas (round 2, above; combat-settings.ts TODO(M13)).
-- [ ] fCombatSneakAttackBonusMult (100), fCombatDamageBonusSneakingMult (2): needs the
-      original's code: in no document, the sneak attack's rule whole without them (round 3).
+- [x] fBlockSkillMult, fBlockAmountWeaponMult, fBlockMax: registered, never read (inert); the
+      block's cap is fPlayerMaxResistance, its skill scale fArmorRatingBase / Max (round 4).
+- [x] fCombatSneakAttackBonusMult, fCombatDamageBonusSneakingMult: registered, never read
+      (inert; round 4).
 - [ ] iCombatDismemberPartChance, iCombatExplodePartChance: the limb roll keeps its defaults
       (dismemberment.ts), the load order's values are not read; left to the dismemberment work.
 - [ ] fCombatPlayerLimbDamageMult, fCombatFollowRadiusMult, fAIUseWeaponDistance (15000),
@@ -170,7 +190,8 @@ and 286 built-in ones the readers ask for by name.
 - [x] Blocks, sustained block, block attack, bashes, offensive bash (block-bash.test.ts).
 - [ ] The block attack's timing against the swing is ours.
 - [x] Staggers, recoils, knockdowns, ragdolls on death (stagger.ts, actor-knockdowns.ts).
-- [ ] The blocked hit's stagger terms; knockback (its settings, above).
+- [ ] The blocked hit's stagger terms.
+- [x] Knockback: an unblocked hit's push back on the controller (knockback.ts, round 4).
 - [x] Ranged combat: draw, hold, release, strafe, cover (ranged.test.ts).
 - [ ] Line of fire; the cover score is ours.
 - [x] Magic in combat: casters by purpose, dual casting, concentration, potions.
@@ -189,8 +210,8 @@ and 286 built-in ones the readers ask for by name.
 
 ## Next biggest
 
-1. The block, knockback, concussion and sneak bonus settings and iStaggerAttackChance (11): no
-   document has their use; the original's code must be read for them.
+1. The knockback's fading (held for fKnockbackTime here) and which stage of a hit's damage it
+   reads; the timed bash's reaction (TODO(M13), docs/ai.md "Staggers").
 2. iCombatDismemberPartChance and iCombatExplodePartChance (dismemberment.ts).
 3. fCombatPlayerLimbDamageMult, fCombatFollowRadiusMult, fAIUseWeaponDistance,
    fCombatThreatProximityExplosionAvoidTime, fDeathForceSpellImpactMult,
