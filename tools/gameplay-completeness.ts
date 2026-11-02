@@ -194,23 +194,14 @@ const INERT: readonly (readonly [RegExp, string])[] = [
     /^fMagicLight(Forward|Height|Side)Offset$/,
     'registered by the original and never read (observed in the original): src/shell/actor-effects.ts LIGHT_OFFSET',
   ],
+  [
+    /^fMagicAreaScale(Min|Max)$/,
+    "registered by the original and never read (observed in the original): an earlier game's area scaling (docs/gameplay.md)",
+  ],
 ];
 
 /** Why an open item stays open, by name (the checklist's reason). */
 const OPEN: ReadonlyMap<string, string> = new Map([
-  ...[
-    'fMagicAreaScaleMin',
-    'fMagicAreaScaleMax',
-    'fHealthDataValue1',
-    'fLevelScalingMult',
-    'iIngredientAlchemyUses',
-    'iIngredientWortcraftUses',
-    'iIngredientUseEffectThreshold',
-  ].map((name) => [name, "needs the original's code (no document names its use)"] as const),
-  [
-    'fEnchantingSkillFactor',
-    "needs the original's code: UESP's measured skill multiplier (1 + s(s - 0.14) / 3.4, 1.253 at 100: src/gameplay/crafting.ts) does not show how the setting enters it",
-  ],
   [
     'fInvisibilityMaxRefraction',
     'the refraction shimmer through an invisible actor is not drawn yet (rendering: src/gameplay/magic/invisibility.ts dithers it)',

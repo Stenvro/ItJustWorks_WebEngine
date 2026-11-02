@@ -1176,6 +1176,11 @@ export class ActorMovers {
     return this.#movers.get(reference)?.character.collider;
   }
 
+  /** A hit's push back on an actor's controller (src/gameplay/combat/knockback.ts). */
+  knockBack(reference: number, velocity: readonly [number, number], seconds: number): void {
+    this.#movers.get(reference)?.character.knockBack(velocity, seconds);
+  }
+
   /** Seconds each actor has sprinted that its stamina has not paid for yet. */
   readonly #sprints = new Map<number, number>();
 

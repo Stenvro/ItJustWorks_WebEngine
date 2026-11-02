@@ -28,8 +28,20 @@ describe('faces', () => {
     expect(face.weights[at('BlinkLeft')]).toBe(0);
   });
 
+  it('turn the eyes to their look at fTrackSpeed a second on each axis', () => {
+    const z = { headingMin: 0, headingMax: 0, pitchMin: 0, pitchMax: 0 };
+    const still = { Neutral: z, Angry: z, Fear: z, Happy: z, Sad: z };
+    const face = new FaceAnimation(() => 0.5, { ...blink, fTrackSpeed: 1 }, still);
+    face.lookWith({ heading: 0.2, pitch: 0 });
+    face.update(0.1); // 0.1 rad of 0.2
+    expect(face.weights[at('LookRight')]).toBeCloseTo(0.1 / ((29 * Math.PI) / 180), 3);
+    face.update(0.5);
+    expect(face.weights[at('LookRight')]).toBeCloseTo(0.2 / ((29 * Math.PI) / 180), 3);
+  });
+
   it('hold the next blink back while the eyes look down (fLookDownDisableBlinkingAmt)', () => {
-    const face = new FaceAnimation(() => 0, blink);
+    // The eyes turn at once here (fTrackSpeed), so only the blink's timing counts.
+    const face = new FaceAnimation(() => 0, { ...blink, fTrackSpeed: 100 });
     // Eyes down a third of the look morph's range (and a little more, wandering): over 0.25.
     face.lookWith({ heading: 0, pitch: -EYE_MORPH_PITCH / 3 });
     face.update(1.05);

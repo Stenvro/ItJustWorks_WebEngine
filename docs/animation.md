@@ -1307,7 +1307,10 @@ the morphs to the FaceGen head's shapes (rendering.md, Skinning).
   by the look morphs (LookLeft/Right at 29°, LookUp/Down at 16°: measured on eyesmale.tri and
   eyesfemale.tri; the engine's BSFaceGenAnimationData eyesHeading and eyesPitch), wandering by
   a random offset in the range of the face's emotion (fEyeHeading/PitchMin/MaxOffsetEmotion*;
-  a new one every 1–3 s, TODO(M13)); a line's own looks join them.
+  a new one every 1–3 s, TODO(M13)); a line's own looks join them. They turn to where they look
+  at most fTrackSpeed radians a second on each axis (observed in the original: the face's eye
+  tracking; Skyrim.esm 5, the engine 2). fTrackDeadZoneXY and fTrackDeadZoneZ are registered by
+  the original and never read (inert).
 
 ## Casting
 

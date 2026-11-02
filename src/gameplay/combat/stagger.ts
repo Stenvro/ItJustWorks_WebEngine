@@ -136,3 +136,31 @@ export function recoilOf(
     settings.staggerBlockAttackShieldBase + shieldRating * settings.staggerBlockAttackShieldMult;
   return magnitude >= 0.5 ? 'large' : 'recoil';
 }
+
+/** What decides whether a hit's stagger is taken. */
+export interface StaggerTakenInput {
+  /** The hit was blocked, or is a bash. */
+  readonly blocked: boolean;
+  readonly bash: boolean;
+  /** The hit's weapon is a bow, a crossbow or a staff (not a melee weapon or the fists). */
+  readonly ranged: boolean;
+  readonly targetIsPlayer: boolean;
+  /** A roll 0..1 (Math.random). */
+  readonly roll: number;
+}
+
+/**
+ * Whether a hit with some stagger staggers its target (observed in the original): a plain melee
+ * hit (a weapon's or the fists', not blocked, not a bash) staggers only by an iStaggerAttackChance
+ * percent roll, except on the player while [Combat] bPlayerAlwaysStaggered is on; blocked hits,
+ * bashes and shots always do.
+ */
+export function staggerTaken(input: StaggerTakenInput, settings: CombatSettings): boolean {
+  const rolls =
+    !input.blocked &&
+    !input.bash &&
+    !input.ranged &&
+    !(input.targetIsPlayer && settings.playerAlwaysStaggered);
+  if (!rolls) return true;
+  return Math.floor(input.roll * 100) < settings.staggerAttackChance;
+}

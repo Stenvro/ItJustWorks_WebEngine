@@ -20,7 +20,7 @@ why the original reads nothing more there. The counts are the records (entries, 
 the item. Items no record uses are open but counted apart: only mods need them. The mechanics
 part is kept by hand against docs/gameplay.md and the conformance suites.
 
-## Count (2026-11-01, round 3)
+## Count (2026-11-02, round 4)
 
 | Part                               | Items | Done | Open | Open, unused |
 | ---------------------------------- | ----: | ---: | ---: | -----------: |
@@ -31,9 +31,9 @@ part is kept by hand against docs/gameplay.md and the conformance suites.
 | Crafting (FURN, COBJ)              |    26 |   25 |    1 |            1 |
 | Factions (FACT)                    |    40 |   40 |    0 |            0 |
 | Equipment (EQUP, ARMO, WEAP, AMMO) |    43 |   38 |    5 |            5 |
-| Game settings                      |   172 |  163 |    9 |            0 |
+| Game settings                      |   172 |  171 |    1 |            0 |
 | Mechanics (by hand)                |    20 |   20 |    0 |            0 |
-| Total                              |   580 |  549 |   31 |           22 |
+| Total                              |   580 |  557 |   23 |           22 |
 
 Round 1 wrote the sweep and this list, and built down Weapons Unequipped (the package takes the
 weapons from the actor's hands and does not give them back as the flag goes; observed in the
@@ -111,14 +111,27 @@ Round 3 built down:
   conjured familiar (a wolf by its template) picks a fight with the Bannered Mare's people, which
   the original's summons do not (the combat AI's part, open).
 
+Round 4 (2026-11-02) read the settings no document names from the original (docs/gameplay.md):
+
+- fEnchantingSkillFactor: the skill multiplier is 1 + skill / 100 × (factor − 1) × max(0.01,
+  (skill − 14) / 85); Skyrim.esm's 1.25 gives UESP's measured one (crafting.ts
+  enchantingSkillMultiplier, crafting-engine.ts).
+- fHealthDataValue1 (with the built-in ...2 .. 6, fSmithingConditionFactor, fSmithingWeaponMax,
+  fSmithingArmorMax): an improvement's health by the Smithing skill, rounded to tenths; the
+  quality name by the thresholds; the increase by the health (crafting.ts temperingHealthOf,
+  temperQualityTier, temperingIncreaseOfHealth: UESP's levels for every skill 15 .. 200).
+  TODO(M13): the item card and the equip system use the engine's values of all but the
+  improvement's health.
+- fLevelScalingMult: an encounter zone's level is its minimum plus the levels past it × the
+  setting, rounded down (actor-leveling.ts zoneLevel; Skyrim.esm 1).
+- iIngredientUseEffectThreshold, iIngredientAlchemyUses, iIngredientWortcraftUses: uses towards
+  an ingredient's next effect (crafting.ts ingredientUsed); Skyrim.esm's 0 uses keep it still.
+  TODO(M12): the count is not saved yet.
+- fMagicAreaScaleMin, fMagicAreaScaleMax: registered and never read (inert).
+
 ## Next biggest open items
 
-1. Settings whose use no document names (each 1): fMagicAreaScale{Min,Max} (2.5, 100),
-   fEnchantingSkillFactor (1.25: UESP's measured multiplier is 1.253 at 100; how the setting
-   enters it is unknown), iIngredient{AlchemyUses,WortcraftUses} (0) and
-   iIngredientUseEffectThreshold (25), fHealthDataValue1 (1.1), fLevelScalingMult (1): need the
-   original's code. fInvisibilityMaxRefraction (0.5): the refraction shimmer is not drawn yet
-   (rendering).
+1. fInvisibilityMaxRefraction (0.5): the refraction shimmer is not drawn yet (rendering).
 2. Unused by the load order (mods only, 22): 11 perk entry points, trait, concussion, disguise,
    enchant visuals, medicine, the workbench type None, two EQUP flags, three weapon flags 2.
 
@@ -235,7 +248,8 @@ Round 3 built down:
 - [x] enchantShader (191), enchantArt (21): src/gameplay/magic/enchantment-glow.ts
 - [x] minimumSkill (337): src/shell/magic-menu.ts
 - [x] actorValue (1072): src/gameplay/actor-leveling.ts
-- [x] projectile (527), explosion (161), aiScore (8), aiDelay (12): src/scripting/runtime/casting-engine.ts
+- [x] projectile (527): src/gameplay/combat/knockback.ts
+- [x] explosion (161), aiScore (8), aiDelay (12): src/scripting/runtime/casting-engine.ts
 - [x] castingType (1154): src/scripting/runtime/condition-values.ts
 - [x] delivery (751): src/gameplay/magic/casting.ts
 - [x] castingArt (731), dualCastArt (11), dualCastScale (1729), castingSoundLevel (424), sounds (1075): src/shell/actor-casting.ts
@@ -374,9 +388,10 @@ Round 3 built down:
 - [x] fLockpickSkillSweetSpotMult (1), fLockpickBrokenPicksMult (1), fLockpickSkillPartialPickMult (1), fLockpickSkillPartialPickBase (1): src/gameplay/lockpicking.ts
 - [x] iLockLevelMaxVeryEasy (1): a name built at run time
 
-### Settings: magic and shouts (42 of 46)
+### Settings: magic and shouts (45 of 46)
 
 - [x] fEnchantmentPointsMult (1), fEnchantmentEffectPointsMult (1): src/shell/inventory-menu.ts
+- [x] fEnchantingSkillFactor (1): src/gameplay/crafting.ts
 - [x] fMagicPCSkillCostScale (1), fMagicCasterSkillCostMult (1), fMagicAbsorbVisualTimer (1), fMagicCasterPCSkillCostBase (1), fMagicSkillCostScale (1), fMagicRangeTargetCostMult (1), fMagicAreaBaseCostMult (1), fMagicDualCastingTimeMult (1), fMagicDualCastingCostMult (1): src/gameplay/magic/casting.ts
 - [x] fShoutRumbleSmallMotorFrequencyV3 (1), fShoutRumbleSmallMotorDurationV3 (1), fShoutRumbleBigMotorFrequencyV3 (1), fShoutRumbleBigMotorDurationV3 (1), fShoutRumbleBigMotorDurationV2 (1), fShoutRumbleSmallMotorFrequencyV2 (1), fShoutRumbleSmallMotorDurationV2 (1), fShoutRumbleBigMotorFrequencyV2 (1), fShoutRumbleSmallMotorFrequencyV1 (1), fShoutRumbleSmallMotorDurationV1 (1), fShoutRumbleBigMotorFrequencyV1 (1), fShoutRumbleBigMotorDurationV1 (1): a name built at run time
 - [x] fSummonedCreatureFadeOutSeconds (1), iMagicGuideWaypoints (1), fMagicGuideSpacing (1), fMagicWardPowerMaxMult (1), fMagicWardPowerMaxBase (1): src/gameplay/magic/effect-rules.ts
@@ -385,27 +400,22 @@ Round 3 built down:
 - [x] fDetectionSneakLightMod (1): src/ai/detection.ts
 - [x] fMagicDualCastingEffectivenessBase (1): src/scripting/runtime/magic-engine.ts
 - [x] fMagicLightSideOffset (1), fMagicLightHeightOffset (1), fMagicLightForwardOffset (1): inert: registered by the original and never read (observed in the original): src/shell/actor-effects.ts LIGHT_OFFSET
+- [x] fMagicAreaScaleMin (1), fMagicAreaScaleMax (1): inert: registered by the original and never read (observed in the original): an earlier game's area scaling (docs/gameplay.md)
 - [x] fShoutTime2 (1), fShoutTime1 (1): src/scripting/runtime/casting-engine.ts
 - [x] fMagicGrabActorMinDistance (1), fMagicGrabActorThrowForce (1): src/shell/actor-combat.ts
-- [ ] fEnchantingSkillFactor (1): not read: needs the original's code: UESP's measured skill multiplier (1 + s(s - 0.14) / 3.4, 1.253 at 100: src/gameplay/crafting.ts) does not show how the setting enters it
 - [ ] fInvisibilityMaxRefraction (1): not read: the refraction shimmer through an invisible actor is not drawn yet (rendering: src/gameplay/magic/invisibility.ts dithers it)
-- [ ] fMagicAreaScaleMin (1): not read: needs the original's code (no document names its use)
-- [ ] fMagicAreaScaleMax (1): not read: needs the original's code (no document names its use)
 
-### Settings: stats (6 of 7)
+### Settings: stats (7 of 7)
 
+- [x] fHealthDataValue1 (1): a name built at run time
 - [x] fStaminaBlockBase (1), fStaminaBlockDmgMult (1), fStaminaPowerBashBase (1), fStaminaBashBase (1), fStaminaAttackWeaponBase (1), fStaminaAttackWeaponMult (1): src/gameplay/vitals.ts
-- [ ] fHealthDataValue1 (1): not read: needs the original's code (no document names its use)
 
-### Settings: alchemy and crafting (5 of 8)
+### Settings: alchemy and crafting (8 of 8)
 
-- [x] fTemperingSkillUseMult (1), fTemperingSkillUseItemValConst (1), fTemperingSkillUseItemValExp (1), fTemperingSkillUseItemValMult (1): src/gameplay/crafting.ts
+- [x] fTemperingSkillUseMult (1), iIngredientWortcraftUses (1), iIngredientUseEffectThreshold (1), iIngredientAlchemyUses (1), fTemperingSkillUseItemValConst (1), fTemperingSkillUseItemValExp (1), fTemperingSkillUseItemValMult (1): src/gameplay/crafting.ts
 - [x] fAlchemySkillFactor (1): src/scripting/runtime/crafting-engine.ts
-- [ ] iIngredientWortcraftUses (1): not read: needs the original's code (no document names its use)
-- [ ] iIngredientUseEffectThreshold (1): not read: needs the original's code (no document names its use)
-- [ ] iIngredientAlchemyUses (1): not read: needs the original's code (no document names its use)
 
-### Settings: skills and level-up (52 of 53)
+### Settings: skills and level-up (53 of 53)
 
 - [x] fSkillUsageRechargeMult (1): src/gameplay/crafting.ts
 - [x] fTrainingMultCost (1), iTrainingMasterCost (1), iTrainingExpertCost (1): src/shell/training-menu.ts
@@ -413,12 +423,11 @@ Round 3 built down:
 - [x] fSkillUsageLockPickHard (1), fSkillUsageLockPickVeryHard (1), fSkillUsageLockPickAverage (1), fSkillUsageLockPickEasy (1), fSkillUsageLockPickVeryEasy (1), fLeveledActorMultVeryHard (1), fLeveledActorMultMedium (1), fLeveledActorMultHard (1), fLeveledActorMultEasy (1): a name built at run time
 - [x] fSkillUsageLockPickBroken (1): src/shell/lock-picking.ts
 - [x] fLevelUpCarryWeightMod (1), fXPLevelUpMult (1), fXPLevelUpBase (1), fSkillUseCurve (1): src/gameplay/progression.ts
-- [x] iAVDSkillsLevelUp (1), iAVDhmsLevelUp (1): src/gameplay/actor-leveling.ts
+- [x] iAVDSkillsLevelUp (1), iAVDhmsLevelUp (1), fLevelScalingMult (1): src/gameplay/actor-leveling.ts
 - [x] iXPRewardSpeechChallengeVeryEasy (1), iXPRewardPickLockVeryHard (1), iXPRewardPickLockVeryEasy (1), iXPRewardPickLockHard (1), iXPRewardPickLockEasy (1), iXPRewardPickLockAverage (1), iXPRewardPickLock (1), iXPRewardKillOpponentVeryHard (1), iXPRewardKillOpponentVeryEasy (1), iXPRewardKillOpponentHard (1), iXPRewardKillOpponentEasy (1), iXPRewardKillOpponentAverage (1), iXPRewardHackComputerVeryHard (1), iXPRewardHackComputerVeryEasy (1), iXPRewardHackComputerHard (1), iXPRewardHackComputerEasy (1), iXPRewardHackComputerAverage (1), iXPRewardHackComputer (1), iXPRewardDiscoverMapMarker (1), iXPLevelKillNPCVeryHard (1), iXPLevelKillNPCVeryEasy (1), iXPLevelKillNPCHard (1), iXPLevelKillNPCEasy (1), iXPLevelKillNPCAverage (1), iXPLevelKillCreatureVeryHard (1), iXPLevelKillCreatureVeryEasy (1), iXPLevelKillCreatureHard (1), iXPLevelKillCreatureEasy (1), iXPLevelKillCreatureAverage (1), iXPDeathRewardHealthThreshold (1), iXPBumpBase (1): inert: an earlier game's experience points: nothing here gives any (the level comes from skills)
-- [ ] fLevelScalingMult (1): not read: needs the original's code (no document names its use)
 
 ### Settings: armor and weapons (31 of 31)
 
-- [x] fWeaponBashMax (1), fWeaponBloodLifetime (1), fWeaponBloodFalloffThreshold (1), fWeaponBloodFadeDuration (1): src/gameplay/combat/combat-settings.ts
-- [x] fArmorRatingPCMax (1), fArmorScalingFactor (1), fArmorBaseFactor (1), fArmorRatingMax (1), fArmorRatingBase (1): src/gameplay/equipment.ts
+- [x] fWeaponBashMax (1), fArmorRatingMax (1), fArmorRatingBase (1), fWeaponBloodLifetime (1), fWeaponBloodFalloffThreshold (1), fWeaponBloodFadeDuration (1): src/gameplay/combat/combat-settings.ts
+- [x] fArmorRatingPCMax (1), fArmorScalingFactor (1), fArmorBaseFactor (1): src/gameplay/equipment.ts
 - [x] fWeaponConditionSpread9 (1), fWeaponConditionSpread8 (1), fWeaponConditionSpread7 (1), fWeaponConditionSpread6 (1), fWeaponConditionSpread5 (1), fWeaponConditionSpread4 (1), fWeaponConditionSpread3 (1), fWeaponConditionSpread2 (1), fWeaponConditionSpread1 (1), fWeaponConditionRateOfFire9 (1), fWeaponConditionRateOfFire8 (1), fWeaponConditionRateOfFire7 (1), fWeaponConditionRateOfFire6 (1), fWeaponConditionRateOfFire5 (1), fWeaponConditionRateOfFire4 (1), fWeaponConditionRateOfFire3 (1), fWeaponConditionRateOfFire2 (1), fWeaponConditionRateOfFire1 (1), fWeaponConditionJam4 (1), fWeaponConditionJam3 (1), fWeaponConditionJam2 (1), fWeaponConditionJam1 (1): inert: an earlier game's weapon condition: weapons do not wear here
