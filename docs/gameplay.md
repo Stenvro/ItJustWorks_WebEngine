@@ -49,6 +49,12 @@ from the real data (`--player`, `--base <editor id>`, `--audit` for every placed
   book from the inventory are heard as equipping it. What the actor wears changing makes its
   look again (`WorldBridge.equipmentChanged`); listeners (`EquipmentEngine.listeners`) hear
   every change.
+- A hand's item changed while the actor's weapon is out (a script, an outfit, the menus) is
+  swapped in the hand as it stands: the combat code reads its gear again, tells the graphs the
+  hands' new types, then performs ActionForceEquip, whose idles pick the swap by
+  GetEquippedItemType and GetReplacedItemType (docs/animation.md, "Weapons in the hands": the
+  rarer actions). The same section has the crossbow's reload (ActionReload: an attack asked
+  of a crossbow whose bolt is not on reloads it) and the block's anticipation of a blow.
 
 ### Outfits and what NPCs take up
 

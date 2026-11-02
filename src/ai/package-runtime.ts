@@ -652,6 +652,11 @@ export interface TravelOptions {
   readonly pace?: number;
   /** The reference the place is (a flier flies to a sky marker, lands at anything else). */
   readonly target?: number;
+  /**
+   * The heading it is to arrive with (radians, compass; a furniture's entry): its path's end
+   * turns it into it (ActionPathEnd).
+   */
+  readonly heading?: number;
 }
 
 /**

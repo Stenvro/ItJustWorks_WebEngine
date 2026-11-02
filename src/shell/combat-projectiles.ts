@@ -12,14 +12,16 @@
 // stays stuck in its body (the engine's ExtraAttachedArrows3D: drawn only, no reference): its
 // model where it struck, as deep as one in the world, on the body's node nearest the hit and
 // moving with it, for fAttachedArrowAgeMax seconds, at most iMaxAttachedArrows in one actor (the
-// oldest goes); Actor.ClearExtraArrows takes an actor's away at once (clearAttached).
+// oldest goes); Actor.ClearExtraArrows takes an actor's away at once (clearAttached). One that
+// hit a stand-in shape (a flier's controller, far wider than its body) lies where its line meets
+// the actor's own bodies, on that body's bone (#onBody).
 
 import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
 import { invert } from '../render/frustum.ts';
 import type { RenderPort } from '../render/render-port.ts';
 import type { GpuModel, GpuScene, InstanceMotion } from '../render/scene-renderer.ts';
-import { multiply, type Mat4, type Vec3 } from '../render/math.ts';
+import { multiply, transformPoint, type Mat4, type Vec3 } from '../render/math.ts';
 import { nearestNode, type BleedingBody } from './combat-impacts.ts';
 import {
   expiredArrows,
@@ -27,9 +29,11 @@ import {
   homeOn,
   launch,
   MAX_STUCK_ARROWS,
+  nearestToLine,
   pointing,
   segmentEntersCylinder,
   spent,
+  standInReach,
   WORLD_GRAVITY,
   type Flight,
 } from '../gameplay/combat/projectile.ts';
@@ -78,6 +82,8 @@ export interface ShotTarget {
   readonly feet: Vec3;
   readonly radius: number;
   readonly height: number;
+  /** A stand-in far wider than the actor's body (a flier's controller): a hit lies on its bodies. */
+  readonly standIn?: boolean;
 }
 
 export interface ProjectileOptions {
@@ -110,6 +116,17 @@ export interface ProjectileOptions {
   readonly attachedArrows?: () => { readonly ageMax: number; readonly max: number };
   /** Character controllers tested as shapes (the player's, a flier's in the air), by reference. */
   readonly shapes: () => Iterable<ShotTarget>;
+  /**
+   * Where a shot's line (`direction` a unit vector, up to `reach` along it) meets an actor's own
+   * bodies (BIPED), or the point on them nearest it, and the skeleton node of that body:
+   * undefined when its bodies are not in the world.
+   */
+  readonly bodyHit?: (
+    target: number,
+    from: Vec3,
+    direction: Vec3,
+    reach: number,
+  ) => { readonly point: Vec3; readonly node: number } | undefined;
   /** A shot's way this step (one meeting the water stirs it: render/water-displacement.ts). */
   readonly shotWay?: (from: Vec3, to: Vec3) => void;
 }
@@ -244,19 +261,20 @@ export class CombatProjectiles {
     if (length < 1e-6) return false;
     const direction: Vec3 = [way[0] / length, way[1] / length, way[2] / length];
     // The shapes (the player's controller, a flier's in the air), as cylinders: the nearest.
-    let met: { reference: number; along: number } | undefined;
+    let met: { reference: number; along: number; shape: ShotTarget } | undefined;
     for (const shape of this.#options.shapes()) {
       if (shape.reference === shot.shooter) continue;
       const along = segmentEntersCylinder(from, direction, length, shape);
       if (along !== undefined && (!met || along < met.along))
-        met = { reference: shape.reference, along };
+        met = { reference: shape.reference, along, shape };
     }
     // What the ray meets before it (a wall in front of a flier).
     const hit = physics?.queriesCurrent
       ? physics.raycast(from, direction, met?.along ?? length, Layer.projectile)
       : undefined;
     if (met && (!hit || hit.distance >= met.along)) {
-      this.#actorHit(shot, met.reference, met.along, from, direction);
+      const standIn = met.shape.standIn === true ? met.shape : undefined;
+      this.#actorHit(shot, met.reference, met.along, from, direction, standIn);
       return true;
     }
     if (!physics || !hit) return false;
@@ -285,33 +303,76 @@ export class CombatProjectiles {
     return true;
   }
 
-  #actorHit(shot: Shot, target: number, along: number, from: Vec3, direction: Vec3): void {
-    this.#options.onActorHit({
-      shooter: shot.shooter,
-      target,
-      ammo: shot.ammo,
-      point: [
-        from[0] + direction[0] * along,
-        from[1] + direction[1] * along,
-        from[2] + direction[2] * along,
-      ],
-      direction,
-      payload: shot.payload,
-    });
-    this.#attach(shot, target, from, direction, along);
-  }
-
-  /** The arrow stays stuck in the actor it hit, on the body's node nearest the hit. */
-  #attach(shot: Shot, target: number, from: Vec3, direction: Vec3, along: number): void {
-    const body = this.#options.body?.(target);
-    const limits = this.#options.attachedArrows?.();
-    if (!shot.model || !body || !limits || limits.max <= 0) return;
-    const point: Vec3 = [
+  /**
+   * A shot hit an actor `along` its way from `from`. Through a stand-in shape (`standIn`: a
+   * flier's controller, far wider than its body), where it struck is where its line meets the
+   * actor's own bodies, or the point on them nearest it (#onBody): the hit's point and the
+   * stuck arrow's, on that body's bone. The hit itself is the shape's, as the layers have it.
+   */
+  #actorHit(
+    shot: Shot,
+    target: number,
+    along: number,
+    from: Vec3,
+    direction: Vec3,
+    standIn?: ShotTarget,
+  ): void {
+    const on = standIn && this.#onBody(target, from, direction, standInReach(along, standIn));
+    const point: Vec3 = on?.point ?? [
       from[0] + direction[0] * along,
       from[1] + direction[1] * along,
       from[2] + direction[2] * along,
     ];
-    const node = nearestNode(body, point);
+    this.#options.onActorHit({
+      shooter: shot.shooter,
+      target,
+      ammo: shot.ammo,
+      point,
+      direction,
+      payload: shot.payload,
+    });
+    this.#attach(shot, target, point, direction, on?.node);
+  }
+
+  /**
+   * Where a shot's line through an actor's stand-in shape lies on the actor: on its bodies
+   * (bodyHit), or, its bodies not in the world, at the line's point nearest the skeleton node
+   * nearest the line (inside the body, about its bone).
+   */
+  #onBody(
+    target: number,
+    from: Vec3,
+    direction: Vec3,
+    reach: number,
+  ): { readonly point: Vec3; readonly node: number } | undefined {
+    const met = this.#options.bodyHit?.(target, from, direction, reach);
+    if (met) return met;
+    const body = this.#options.body?.(target);
+    if (!body) return undefined;
+    const worlds = body.pose.worlds;
+    const nodes: Vec3[] = [];
+    for (let node = 0; node * 16 + 15 < worlds.length; node++) {
+      nodes.push(
+        transformPoint(body.world, [
+          worlds[node * 16 + 12] ?? 0,
+          worlds[node * 16 + 13] ?? 0,
+          worlds[node * 16 + 14] ?? 0,
+        ]),
+      );
+    }
+    const near = nearestToLine(nodes, from, direction, reach);
+    return near && { point: near.point, node: near.index };
+  }
+
+  /**
+   * The arrow stays stuck in the actor it hit at `point`, on `node` (else the body's node
+   * nearest the point).
+   */
+  #attach(shot: Shot, target: number, point: Vec3, direction: Vec3, given?: number): void {
+    const body = this.#options.body?.(target);
+    const limits = this.#options.attachedArrows?.();
+    if (!shot.model || !body || !limits || limits.max <= 0) return;
+    const node = given ?? nearestNode(body, point);
     const nodeWorld = attachedNode(body, node);
     const inverse = nodeWorld && invert(nodeWorld);
     if (!inverse) return;

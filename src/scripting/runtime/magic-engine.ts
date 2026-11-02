@@ -258,6 +258,8 @@ export class MagicEngine {
   readonly #did = new WeakMap<ActiveEffectState, number>();
   /** Summons fading out as their effects ended: the seconds left before they are gone. */
   readonly #fadingSummons = new Map<number, number>();
+  /** Summons just placed whose appearing the stage has not shown yet (takeSummoned). */
+  readonly #appearing = new Set<number>();
 
   constructor(runtime: ScriptRuntime) {
     this.#runtime = runtime;
@@ -1567,6 +1569,7 @@ export class MagicEngine {
     for (const [key] of summons.slice(0, Math.max(0, summons.length - limit + 1)))
       await this.end(key);
     const made = await runtime.placeAt(creature, summoner, 1);
+    this.#appearing.add(made);
     const at = await runtime.placement(summoner);
     if (at) {
       // Observed in the original: it stands ahead of its summoner, both actors' radii and
@@ -1602,6 +1605,16 @@ export class MagicEngine {
       runtime.move(made, position, [0, 0, facing], at.cell, at.world);
     }
     entry.made = made;
+  }
+
+  /**
+   * Whether an actor is a summon just placed (Summon Creature) that has not been shown appearing:
+   * true once, as the stage first shows it (its ActionSummonedStart: the atronachs', the
+   * draugr's, the dragon's summonStart). TODO(M13): whether the original performs it for
+   * actors a script conjures with PlaceAtMe too (the data's summon effects only here).
+   */
+  takeSummoned(reference: number): boolean {
+    return this.#appearing.delete(reference);
   }
 
   /** An actor's radius: half the wider of its bounds' sides (units). */

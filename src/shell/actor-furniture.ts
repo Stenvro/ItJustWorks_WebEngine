@@ -251,6 +251,14 @@ export class ActorFurniture {
   /** The idle tree once read, and each behavior project's graph key once known (actionEventNow). */
   #idleTreeNow: IdleTree | undefined;
   readonly #graphKeys = new Map<string, string | undefined>();
+  /**
+   * The turn each actor's path end played (ActionPathEnd's event) and when (performance.now
+   * ms): its furniture's enter waits for the turn to end.
+   */
+  readonly #pathTurns = new Map<
+    number,
+    Promise<{ readonly event: string; readonly at: number } | undefined>
+  >();
   /** When each idle with a replay delay last played, by actor (scripts' real seconds). */
   readonly #replays = new Map<number, Map<number, number>>();
   /**
@@ -466,7 +474,17 @@ export class ActorFurniture {
    * bump's direction). Whether one played.
    */
   async playAction(user: FurnitureUser, action: string, target?: ObjectHandle): Promise<boolean> {
-    return (await this.actionEvent(user, action, target)) !== undefined;
+    const event = this.actionEvent(user, action, target);
+    // A path end's turn (as a walk to furniture arrives): its enter waits for it (use).
+    if (action === 'ActionPathEnd') {
+      this.#pathTurns.set(
+        user.reference,
+        event.then((played) =>
+          played === undefined ? undefined : { event: played, at: performance.now() },
+        ),
+      );
+    }
+    return (await event) !== undefined;
   }
 
   /**
@@ -562,7 +580,11 @@ export class ActorFurniture {
    * stops (ActionIdleStop) while it is only on its way there.
    */
   #takenBy(actor: number, action: string): boolean {
-    return action === 'ActionIdleStop' ? this.holds(actor) : this.#uses.has(actor);
+    if (action === 'ActionIdleStop') return this.holds(actor);
+    const use = this.#uses.get(actor);
+    // Its walk to the furniture ends with its path's end turn into the entry (ActionPathEnd).
+    if (action === 'ActionPathEnd') return use !== undefined && use.phase !== 'approaching';
+    return use !== undefined;
   }
 
   /** What sandboxing makes of a base object, read once per base. */
@@ -668,14 +690,14 @@ export class ActorFurniture {
 
   /**
    * Uses a furniture: picks its marker and entry, walks to where the enter begins (`walk`: the
-   * actor's travel), turns (`face`), enters. Resolves whether it is in it. `quick`: placed in
-   * it, it is in it at once (the instant idle). `types`: only markers of these animation types
-   * (bits: 1 sit, 2 sleep, 4 lean).
+   * actor's travel, arriving with the enter's heading), turns (`face`), enters. Resolves whether
+   * it is in it. `quick`: placed in it, it is in it at once (the instant idle). `types`: only
+   * markers of these animation types (bits: 1 sit, 2 sleep, 4 lean).
    */
   async use(
     user: FurnitureUser,
     furniture: number,
-    walk: (to: Vec3, arrive: number) => Promise<boolean>,
+    walk: (to: Vec3, arrive: number, heading?: number) => Promise<boolean>,
     face: (heading: number | undefined) => void,
     options: {
       readonly quick?: boolean;
@@ -758,11 +780,22 @@ export class ActorFurniture {
           ? user.position[2]
           : (this.#options.ground?.([sx, sy, sz + START_LIFT]) ?? sz);
       const start: Vec3 = [sx, sy, floor];
-      const arrived = await walk(start, 16);
+      const arrived = await walk(start, 16, heading);
       if (this.#uses.get(actor) !== use) return false;
       if (!arrived) {
         this.#uses.delete(actor);
         return false;
+      }
+      // Its path's end turned it into the entry (ActionPathEnd: a canned turn of about 2 s): the
+      // enter waits for the turn's clip to end (its root motion still), as it begins from a
+      // standing graph.
+      const turn = await this.#pathTurns.get(actor);
+      this.#pathTurns.delete(actor);
+      if (turn) {
+        const seconds = (await this.#motion(user, turn.event))?.seconds ?? 0;
+        const left = seconds - (performance.now() - turn.at) / 1000;
+        if (left > 0) await sleep(left);
+        if (this.#uses.get(actor) !== use) return false;
       }
       // Its enter begins once it faces its way within fFurnitureMarkerAngleTolerance.
       const tolerance =
