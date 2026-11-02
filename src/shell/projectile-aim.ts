@@ -58,6 +58,8 @@ export interface ProjectileAimOptions {
   readonly hostile: (actor: number, target: number) => boolean;
   /** An actor's velocity (units/s), if it moves. */
   readonly velocity: (reference: number) => Vec3 | undefined;
+  /** A flier's velocity in the air (units/s, its climb too), if it flies. */
+  readonly flightVelocity?: (reference: number) => Vec3 | undefined;
   readonly sneaking?: (reference: number) => boolean;
   /** The screen's aspect (width / height). */
   readonly aspect: () => number;
@@ -254,9 +256,15 @@ export class ProjectileAim {
       Math.random(),
     ]);
     // Led along the ground: a character controller's vertical speed is its fall's (it builds up
-    // while it stands on a slope or a step). TODO(M13): a jumping or flying target's climb.
-    const moving = this.#options.velocity(target.reference);
-    const velocity: Vec3 = moving ? [moving[0], moving[1], 0] : [0, 0, 0];
+    // while it stands on a slope or a step). A flier in the air is led along its flight, its
+    // climb and dive too. TODO(M13): a jumping target's climb.
+    const flying = this.#options.flightVelocity?.(target.reference);
+    const moving = flying ? undefined : this.#options.velocity(target.reference);
+    const velocity: Vec3 = flying
+      ? [flying[0], flying[1], flying[2]]
+      : moving
+        ? [moving[0], moving[1], 0]
+        : [0, 0, 0];
     const point = leadPoint(origin, aimed, velocity, shot.speed, shot.gravity, settings);
     return unit([point[0] - origin[0], point[1] - origin[1], point[2] - origin[2]]);
   }
