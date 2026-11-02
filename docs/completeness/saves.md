@@ -54,7 +54,7 @@ Round 7 added the world part's projectiles' graphs (done) and built down:
   again, its time searched counting on to fDetectionStateExpireTime). The .ess's combat groups
   are read by what they hold (UESP's "members" are the group's targets, its "targets" the
   members: Alduin's group at Helgen holds the player and eleven soldiers as targets, Alduin as
-  its one member); each member's fight takes its group's knowledge (`essGroupFights`). Tests:
+  its one member); a group's search goes on with its members' fights and what the group knew (`essGroupFights`; its knowledge alone, put back, took two of Helgen's fighters off their saved packages: TODO(M13)). Tests:
   combat-search.test.ts, combat-groups.test.ts, ess-import.test.ts.
 - Flame sprays, cone waves sweeping out and Magelights stuck where they struck kept by our save
   (`SavedProjectile.kind`: a spray's origin and seconds, a wave's apex, front and those it
