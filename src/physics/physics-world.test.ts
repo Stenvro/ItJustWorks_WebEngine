@@ -116,6 +116,40 @@ describe('the physics world', () => {
   });
 });
 
+describe('a shot’s line on an actor’s own bodies (a flier’s stand-in shape hit)', () => {
+  // A dragon's torso: a box 80 wide, 200 long, 80 high round (0, 0, 1100), in the air.
+  const torso = (): CollisionData =>
+    collision({ ...body(box([-40, -100, 1060], [40, 100, 1140])), node: 'NPC Spine' });
+
+  it('lies where the line meets the body, on its bone', () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    const placed = physics.addObject(torso(), IDENTITY, { reference: 7, kind: 'actor' });
+    physics.step(1 / 60);
+    // Entered the 320-unit cylinder at x −320; the body's side is at x −40.
+    const met = physics.bodiesAlong(placed.bodies, [-1000, 0, 1100], [1, 0, 0], 1700);
+    expect(met?.met).toBe(true);
+    expect(met?.body.data.node).toBe('NPC Spine');
+    expect(met?.point[0]).toBeCloseTo(-40, 0);
+    expect(Math.abs((met?.point[1] ?? 99) - 0)).toBeLessThan(1);
+    physics.free();
+  });
+
+  it('missing the bodies, lies on them at the point nearest the line', () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    const placed = physics.addObject(torso(), IDENTITY, { reference: 7, kind: 'actor' });
+    physics.step(1 / 60);
+    // A shot 200 units to the side passes 100 units from the torso's flank.
+    const near = physics.bodiesAlong(placed.bodies, [-1000, 200, 1100], [1, 0, 0], 1700);
+    expect(near?.met).toBe(false);
+    const point = near?.point ?? [0, 0, 0];
+    // On the body's surface (within a few units), by its middle.
+    expect(point[1]).toBeCloseTo(100, 0);
+    expect(Math.abs(point[0])).toBeLessThan(41);
+    expect(Math.abs(point[2] - 1100)).toBeLessThan(41);
+    physics.free();
+  });
+});
+
 describe('placements scripts change', () => {
   const hits = (physics: PhysicsWorld): number | undefined =>
     physics.raycast([-50, 0, 100], [1, 0, 0], 100, Layer.charController)?.distance;

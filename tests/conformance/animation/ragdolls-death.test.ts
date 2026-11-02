@@ -108,10 +108,13 @@ const BANNERED_MARE = 0x1605e;
 const HULDA = 0x1a66e;
 /**
  * Seconds into her lean (after she settles into it) at which she is killed and slumps. Killed
- * at 1, 2.5 or 3 s she stands draped over the counter (STANDING_PHASES).
+ * at 1, 2, 2.5 or 3 s she stands draped over the counter (STANDING_PHASES). Which phases
+ * slump depends on how her lean began: since her walk to the counter ends with its path end's
+ * canned turn into the entry (ActionPathEnd: NPC_TurnLeft90), 2 s stands too (it slumped
+ * when she turned in place by her steering alone).
  */
-const PHASES = [1.5, 2] as const;
-const STANDING_PHASES = [1, 2.5, 3] as const;
+const PHASES = [1.5] as const;
+const STANDING_PHASES = [1, 2, 2.5, 3] as const;
 
 /** One kill at the counter. */
 interface CounterDeath {

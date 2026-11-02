@@ -235,6 +235,8 @@ export interface CombatAiHost {
   attack(reference: number, action: string): Promise<boolean>;
   release(reference: number, action: string): Promise<void>;
   block(reference: number, on: boolean): Promise<void>;
+  /** A blocking fighter sees a blow come at it: its block meets it (ActionBlockAnticipate). */
+  anticipateBlow?(reference: number, blow: object): Promise<boolean>;
   /** Plays an action's idle (ActionIdleWarn, ActionIdle, ...); its event, if one played. */
   act(reference: number, action: string, target?: number): Promise<string | undefined>;
   /** What flies at the actors now (arrows, spells, breath). */
@@ -3402,7 +3404,13 @@ export class ActorCombatAi {
           },
           // The block attack: the shield bash out of the block, against the target's swing.
           blockAttack: (f) => this.#melee(f, 'ActionRightAttack', 'Bash'),
-          holdBlock: () => 'success',
+          // Held, the block meets each blow that comes at it (ActionBlockAnticipate: its graph's
+          // block anticipation raises the shield or weapon at the attacker's weapon).
+          holdBlock: (f) => {
+            const blow = this.#blowAt(f);
+            if (blow) void host.anticipateBlow?.(f.mind.reference, blow);
+            return 'success';
+          },
           // Flee.
           fightCornered: (f) => {
             f.mind.corneredUntil = this.#clock + CORNERED_SECONDS;

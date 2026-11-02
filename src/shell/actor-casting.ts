@@ -459,6 +459,11 @@ export class ActorCasting {
   }
 
   /** Plays an idle tree action for a hand (its event reaches the casting art too). */
+  /** Performs an action on an actor's hands' graph through its idle tree (ActionDualRelease). */
+  perform(actor: number, action: string): void {
+    this.#play(actor, action);
+  }
+
   #play(actor: number, action: string | undefined): void {
     const user = this.#user(actor);
     if (user && action)

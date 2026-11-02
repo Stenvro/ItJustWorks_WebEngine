@@ -3041,6 +3041,72 @@ export class PhysicsWorld {
   }
 
   /**
+   * Where a ray (game units) meets one of `bodies` first within `maxDistance` (`met`), and
+   * which; missing them all, the point on them nearest the ray (each body's shapes asked for
+   * their point nearest the ray's point nearest the shape's centre). Whatever layers they are
+   * on: a shot that hit an actor's stand-in shape (a flier's controller) lies on its BIPED
+   * bodies. Undefined: no bodies with shapes.
+   */
+  bodiesAlong(
+    bodies: readonly PlacedBody[],
+    origin: Vec3,
+    direction: Vec3,
+    maxDistance: number,
+  ): { readonly body: PlacedBody; readonly point: Vec3; readonly met: boolean } | undefined {
+    const length = Math.hypot(...direction) || 1;
+    const unit: Vec3 = [direction[0] / length, direction[1] / length, direction[2] / length];
+    const ray = new RAPIER.Ray(
+      { x: toHavok(origin[0]), y: toHavok(origin[1]), z: toHavok(origin[2]) },
+      { x: unit[0], y: unit[1], z: unit[2] },
+    );
+    const along = (t: number): Vec3 => [
+      origin[0] + unit[0] * t,
+      origin[1] + unit[1] * t,
+      origin[2] + unit[2] * t,
+    ];
+    let first: { body: PlacedBody; distance: number } | undefined;
+    let nearest: { body: PlacedBody; point: Vec3; gap: number } | undefined;
+    for (const placed of bodies) {
+      for (let i = 0; i < placed.body.numColliders(); i++) {
+        const collider = placed.body.collider(i);
+        const toi = collider.castRay(ray, toHavok(maxDistance), true);
+        if (toi >= 0) {
+          const distance = toi * HAVOK_SCALE;
+          if (!first || distance < first.distance) first = { body: placed, distance };
+          continue;
+        }
+        if (first) continue;
+        const centre = collider.translation();
+        const c: Vec3 = [centre.x * HAVOK_SCALE, centre.y * HAVOK_SCALE, centre.z * HAVOK_SCALE];
+        const t = Math.min(
+          maxDistance,
+          Math.max(
+            0,
+            (c[0] - origin[0]) * unit[0] +
+              (c[1] - origin[1]) * unit[1] +
+              (c[2] - origin[2]) * unit[2],
+          ),
+        );
+        const p = along(t);
+        const projection = collider.projectPoint(
+          { x: toHavok(p[0]), y: toHavok(p[1]), z: toHavok(p[2]) },
+          false,
+        );
+        if (!projection) continue;
+        const q: Vec3 = [
+          projection.point.x * HAVOK_SCALE,
+          projection.point.y * HAVOK_SCALE,
+          projection.point.z * HAVOK_SCALE,
+        ];
+        const gap = Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]);
+        if (!nearest || gap < nearest.gap) nearest = { body: placed, point: q, gap };
+      }
+    }
+    if (first) return { body: first.body, point: along(first.distance), met: true };
+    return nearest && { body: nearest.body, point: nearest.point, met: false };
+  }
+
+  /**
    * Whether a surface that `layer` collides with lies between two points (game units), not of
    * the actor `ignore`: the ray from `from` to `to`, and if it meets nothing the ray back (a
    * surface met from behind); where, and the surface's normal as the ray met it. Rays start on
