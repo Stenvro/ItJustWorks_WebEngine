@@ -124,6 +124,54 @@ export function segmentEntersCylinder(
   return enter <= leave ? enter : undefined;
 }
 
+/**
+ * How far a shot's line through an actor's stand-in shape (a flier's controller, a cylinder far
+ * wider than its body) may look on for the actor's own body: past where it entered, the widest
+ * way through the cylinder (its diameter and height).
+ */
+export function standInReach(
+  entered: number,
+  shape: { readonly radius: number; readonly height: number },
+): number {
+  return entered + Math.hypot(2 * shape.radius, shape.height);
+}
+
+/**
+ * Of `points` (an actor's skeleton nodes, world space), the one nearest a line (`direction` a
+ * unit vector) between 0 and `reach` along it, and the line's point nearest it: where a shot
+ * through a stand-in shape lies on the actor when its bodies are not in the world. Undefined:
+ * no points.
+ */
+export function nearestToLine(
+  points: Iterable<Vec3>,
+  from: Vec3,
+  direction: Vec3,
+  reach: number,
+): { readonly index: number; readonly point: Vec3; readonly gap: number } | undefined {
+  let best: { index: number; point: Vec3; gap: number } | undefined;
+  let index = 0;
+  for (const p of points) {
+    const t = Math.min(
+      reach,
+      Math.max(
+        0,
+        (p[0] - from[0]) * direction[0] +
+          (p[1] - from[1]) * direction[1] +
+          (p[2] - from[2]) * direction[2],
+      ),
+    );
+    const point: Vec3 = [
+      from[0] + direction[0] * t,
+      from[1] + direction[1] * t,
+      from[2] + direction[2] * t,
+    ];
+    const gap = Math.hypot(p[0] - point[0], p[1] - point[1], p[2] - point[2]);
+    if (!best || gap < best.gap) best = { index, point, gap };
+    index++;
+  }
+  return best;
+}
+
 /** Whether an arrow has flown its PROJ's range (0: no limit) or lifetime (0: none). */
 export function spent(flight: Flight, range: number, lifetime: number): boolean {
   return (range > 0 && flight.distance >= range) || (lifetime > 0 && flight.age >= lifetime);

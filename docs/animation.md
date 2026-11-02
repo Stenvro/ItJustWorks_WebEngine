@@ -201,6 +201,42 @@ The nocked shot's node is the ammunition's (observed in the original, from the e
 an arrow (AMMO flag Non-Bolt) on WEAPON, a crossbow's bolt on NPC R MagicNode [RMag]; a
 non-playable ammunition shows none.
 
+**The rarer actions** (`src/gameplay/combat/combat-actions.ts`; the trees tested in
+`tests/engine-actions.int.test.ts`). Each goes through the idle tree as the others do (the
+action's idle for the actor's graph, its conditions on the actor), at a moment taken from the
+trees' conditions and the graphs' states (TODO(M13): the original's exact moments):
+
+- **ActionForceEquip**: what a hand holds changed (a script's EquipItem, an outfit, the menus)
+  while the weapon is out. The gear is read again and the graphs told the hands' new types
+  first; the tree then swaps in the hand by GetEquippedItemType and GetReplacedItemType:
+  WeapOutRightReplaceForceEquip when the right hand changed (and both), the left alone
+  WeapOutLeftReplaceForceEquip for a weapon, staff, spell or torch (that child comes before the
+  torch's and shield's own), ShdEquip for a shield, the magic hands MagicForceEquipRight,
+  MagicForceEquipLeft, MagicForceEquip, a bound weapon MagicWeap_ForceEquip, swimming
+  swimForceEquip. Sheathed, the tree's branch gives only torchEquip and ShdEquip, which the
+  hands' reading sends already.
+- **ActionReload**: the crossbow's release clip reloads it (CrossBow_Release raises the reload
+  sounds and arrowAttach at 0.6 s); cut short (a stagger, a recoil), the bolt is not on, and the
+  next attack asked reloads instead (ReloadRoot, GetWeaponAnimType 12: reloadStart, whose clip
+  detaches, plays 2.7 s and attaches the bolt). Attacks asked meanwhile wait for the bolt (3 s
+  at most).
+- **ActionDualRelease**: the player's two attack buttons, both held with magic or a staff in
+  the hands, come up within [Controls] fDualCastChordTime of each other. Its tree has one idle:
+  StaffBashRelease with a staff in the left hand (no vanilla graph state takes it).
+- **ActionBlockAnticipate**: an NPC holding its block (the combat tree's Block context) sees a
+  blow come at it (its target swinging at it within reach), once a blow: blockAnticipateStart
+  takes blockbehavior's Shd_BlockState_Behavior (and the weapon's) to BlockAnticipate, whose
+  clip raises the guard and ends by itself (blockAnticipateStop); its BSDirectAtModifier aims
+  at the attacker's weapon (head tracking above).
+- **ActionPathEnd**: a walk to furniture arrives with the enter's heading (the travel's
+  `heading`); while the action is asked, the actor's pathing target is that heading's way, so
+  GetPathingTargetAngleOffset picks the canned turn (NPC_TurnRight90 from 45°, NPC_TurnRight180
+  from 135°, NPC_TurnLeft180 from 180°, NPC_TurnLeft90 from 225 to 315°; none within 45°),
+  its root motion turning it before it enters.
+- **ActionSummonedStart**: a Summon Creature's actor, as the stage first shows it (the magic
+  engine marks it as it is placed): summonStart for the atronachs, the draugr, the dragon, the
+  vampire brute and Hermaeus Mora's Seekers and Lurkers; the other summons have none.
+
 ## Animation objects
 
 The props an idle or a furniture animation puts in an actor's hands: the smith's hammer and

@@ -4,7 +4,9 @@ import {
   fly,
   homeOn,
   launch,
+  nearestToLine,
   segmentEntersCylinder,
+  standInReach,
   WORLD_GRAVITY,
 } from './projectile.ts';
 
@@ -71,5 +73,33 @@ describe('a shot meeting a character controller', () => {
     expect(segmentEntersCylinder([-1000, 0, 1500], [1, 0, 0], 2000, dragon)).toBeUndefined();
     expect(segmentEntersCylinder([-1000, 0, 1200], [1, 0, 0], 600, dragon)).toBeUndefined();
     expect(segmentEntersCylinder([0, 0, 1100], [1, 0, 0], 50, dragon)).toBe(0);
+  });
+});
+
+describe('a shot through a flier’s stand-in shape', () => {
+  const dragon = { feet: [0, 0, 1000] as const, radius: 320, height: 384 };
+
+  it('looks on through the cylinder’s widest way past where it entered', () => {
+    const entered = segmentEntersCylinder([-1000, 0, 1100], [1, 0, 0], 2000, dragon) ?? 0;
+    expect(entered).toBeCloseTo(680);
+    expect(standInReach(entered, dragon)).toBeCloseTo(680 + Math.hypot(640, 384));
+  });
+
+  it('lies at the line’s point nearest the skeleton node nearest it, not on the cylinder', () => {
+    // A level shot 30 units beside a node: the arrow lies there, 320 units past the cylinder's
+    // side where the shot entered.
+    const nodes: [number, number, number][] = [
+      [0, 0, 1000],
+      [0, 30, 1100],
+      [150, 0, 1250],
+    ];
+    const from: [number, number, number] = [-1000, 0, 1100];
+    const near = nearestToLine(nodes, from, [1, 0, 0], standInReach(680, dragon));
+    expect(near?.index).toBe(1);
+    expect(near?.gap).toBeCloseTo(30);
+    expect(near?.point[0]).toBeCloseTo(0);
+    // Beyond its reach the line ends there.
+    expect(nearestToLine([[5000, 0, 1100]], from, [1, 0, 0], 2000)?.point[0]).toBeCloseTo(1000);
+    expect(nearestToLine([], from, [1, 0, 0], 2000)).toBeUndefined();
   });
 });

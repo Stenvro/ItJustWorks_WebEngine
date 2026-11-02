@@ -28,7 +28,7 @@ are kept by hand below, against docs/animation.md and the conformance suites
 (tests/conformance/animation/). The count after an item is how many objects (nodes,
 annotations, records) use it.
 
-## Count (2026-11-02, round 4)
+## Count (2026-11-02, round 5)
 
 | Part                        | Items | Done | Open |
 | --------------------------- | ----: | ---: | ---: |
@@ -39,10 +39,10 @@ annotations, records) use it.
 | Response handlers           |    97 |   97 |    0 |
 | Idles (IDLE fields)         |    10 |    9 |    1 |
 | Idle conditions (functions) |   111 |  111 |    0 |
-| Actions (AACT)              |    71 |   57 |   14 |
+| Actions (AACT)              |    71 |   63 |    8 |
 | Game settings (GMST)        |    20 |   20 |    0 |
 | Mechanics (by hand)         |    24 |   16 |    8 |
-| Total                       |  1146 | 1081 |   65 |
+| Total                       |  1146 | 1087 |   59 |
 
 Round 1 wrote the sweep and this list. Built: the animations' SoundStop.<descriptor> and
 SoundRelease.<descriptor> (17 and 8 annotations: the bow's draw loop, WPNBowPullLPM, stops as
@@ -73,6 +73,13 @@ stop after their time); SoundPlayAt for object graphs. Not reached: the 14 actio
 an engine moment in another system: the travel's arrival heading, the summon's appearance, the
 combat code's equip, reload, bash and block), the mark threshold, the powered ragdoll's
 world-from-model mode, bDisableInterp's setter.
+
+Round 5 (1081 to 1087): six actions get their engine moment (src/gameplay/combat/
+combat-actions.ts, tests/engine-actions.int.test.ts): ActionForceEquip as the hands change with
+the weapon out, ActionReload for a crossbow out without its bolt, ActionDualRelease as both
+attack buttons come up at once, ActionBlockAnticipate as a blow comes at a held block,
+ActionPathEnd as a furniture walk arrives with the entry's heading, ActionSummonedStart as a
+summon first appears. The eight left have no moment in the data or docs (below).
 
 ## Behavior graphs
 
@@ -172,22 +179,29 @@ world-from-model mode, bDisableInterp's setter.
       thresholds, at once where their idles ask only the actor's own state, else in order
       behind the tree (src/ai/locomotion.ts, ActorFurniture.actionEventNow); the player's
       ActionJump; the knock-downs' ActionGetUp and ActionKnockDown (combat's ActionKnockdown
-      was asked by a misspelt name the sweep did not find).
-- [ ] Actions never performed (14), each with what is missing:
-  - ActionPathEnd (24 graphs: the canned turn into the heading arrived with): the travel's
-    pathing target is not kept to its end (src/shell/actor-movers.ts #pathStart).
-  - ActionSummonedStart (summonStart, 8 graphs): the summoning lives in the scripts' magic
-    engine; the moment the summon appears is not handed to the stage yet.
-  - ActionForceEquip (19 graphs), ActionReload (the crossbow's reloadStart), ActionDualRelease
-    (StaffBashRelease), ActionBlockAnticipate (blockStart, blockAnticipateStart): combat's
-    equip, crossbow, bash and block code sends their events directly. Next.
-  - ActionRagdollInstant (RagdollInstant, 46 graphs), ActionResetGraph (returnToDefault, ...):
-    TODO(M13): when the original performs them is not known.
-  - ActionWaterwalkStart (WaterWalkStart, 1 graph: the levitating Dwemer sphere's): its
-    moment is not known. TODO(M13).
-  - ActionLook, ActionStopEffect, ActionShieldChange, ActionVoiceReady: no idles in any
-    vanilla graph (performed, nothing would play); ActionListen: one empty idle group. TODO(M13):
-    their moments.
+      was asked by a misspelt name the sweep did not find); round 5 (each with its moment
+      decided from plain state, src/gameplay/combat/combat-actions.ts, and its tree tested in
+      tests/engine-actions.int.test.ts): ActionForceEquip (a hand's item changed with the
+      weapon out: WeapOutRightReplaceForceEquip, WeapOutLeftReplaceForceEquip,
+      MagicForceEquipRight, ...), ActionReload (an attack asked of a crossbow out without its
+      bolt: reloadStart), ActionDualRelease (both attack buttons up within fDualCastChordTime:
+      StaffBashRelease with a staff in the left hand), ActionBlockAnticipate (a blow coming at
+      an NPC's held block, each blow once: blockAnticipateStart), ActionPathEnd (a furniture
+      walk arriving with its entry's heading: the canned turn by GetPathingTargetAngleOffset),
+      ActionSummonedStart (a Summon Creature's actor as the stage first shows it: summonStart).
+      TODO(M13): the original's exact moments (the player's block anticipation; an arrival
+      heading for other travels).
+- [ ] Actions never performed (8), each with what is missing:
+  - ActionRagdollInstant (RagdollInstant, 46 graphs), ActionResetGraph (returnToDefault, Reset,
+    RESET_GRAPH: 20 creature graphs): TODO(M13): when the original performs them is not known
+    (no record, script or setting names the moment).
+  - ActionWaterwalkStart (WaterWalkStart, 1 graph: the vampire lord's, if it is not
+    levitating): an actor walking on water (the Water Walking actor value) is not built yet.
+    TODO(M13).
+  - ActionVoiceReady: no idles in any vanilla graph, and two moments fit its name (a power's
+    charge done, the voice recovered); TODO(M13): which.
+  - ActionLook, ActionStopEffect, ActionShieldChange: no idles in any vanilla graph (performed,
+    nothing would play); ActionListen: one empty idle group. TODO(M13): their moments.
 
 ## Game settings
 

@@ -96,6 +96,12 @@ import {
   type CombatState,
 } from '../gameplay/combat/combat-state.ts';
 import {
+  anticipatesBlow,
+  forceEquips,
+  wantsReload,
+  type HandForms,
+} from '../gameplay/combat/combat-actions.ts';
+import {
   bashFactor,
   blockedShare,
   bowDrawPower,
@@ -221,6 +227,11 @@ const PERK_VARIABLE_SECONDS = 1;
 /** How wide a flying arrow is to those it may hit and who dodge it (units). */
 const SHOT_RADIUS = 8;
 /**
+ * A crossbow's reload (ActionReload) holds its attacks until its bolt is on, this long at most
+ * (seconds: CrossBow_Reload.hkx runs 2.7).
+ */
+const RELOAD_SECONDS = 3;
+/**
  * A paired idle's event begins so; its partner's event is the rest (observed in the
  * original: "pa_KillMoveB" for the leader, "KillMoveB" for the one it is done to).
  */
@@ -247,6 +258,15 @@ interface Fighter {
   gear: Gear | undefined;
   gearVersion: number;
   gearLoading: boolean;
+  /**
+   * What its hands held as the equip system changed them, and whether the weapon was out then
+   * (ActionForceEquip once the new gear is read).
+   */
+  handsBefore: { readonly forms: HandForms; readonly out: boolean } | undefined;
+  /** Its crossbow's reload began then (ActionReload), until its bolt is on. */
+  reloadSince: number | undefined;
+  /** The blow its block last anticipated (ActionBlockAnticipate, each blow once). */
+  anticipated: object | undefined;
   /** Its combat target (the combat AI's; the player's: the one they strike at). */
   target: number | undefined;
   /** When its current attack's power began to be held (the player's power attacks). */
@@ -571,6 +591,16 @@ export class ActorCombat implements CombatBridge {
         max: this.#settings.maxAttachedArrows,
       }),
       shapes: () => this.#controllerShapes(),
+      // A flier's stand-in shape hit: where the shot's line meets its own bodies, on their bone.
+      bodyHit: (reference, from, direction, reach) => {
+        const pose = this.#fighters.get(reference)?.body?.pose;
+        const physics = this.#play?.physics;
+        const bodies = options.bodies.placements(reference)[0]?.bodies;
+        if (!pose || !physics || !bodies || bodies.length === 0) return undefined;
+        const met = physics.bodiesAlong(bodies, from, direction, reach);
+        const node = met && pose.skeleton.nodeByName.get(met.body.data.node.toLowerCase());
+        return met && node !== undefined ? { point: met.point, node } : undefined;
+      },
       ...(options.shotWay && { shotWay: options.shotWay }),
       onActorHit: (shot) => {
         const payload = shot.payload as ShotPayload;
@@ -969,6 +999,9 @@ export class ActorCombat implements CombatBridge {
     ) {
       return false;
     }
+    // A crossbow out without its bolt on (its release clip's reload cut short): the attack
+    // reloads instead (ActionReload: reloadStart), and none goes until the bolt is on.
+    if (await this.#reload(fighter, action)) return true;
     if (fighter.player) fighter.target = this.#aimedAt(fighter);
     const target = fighter.target;
     // Power attacks need stamina (UESP "Damage": without it, a plain attack).
@@ -1051,6 +1084,46 @@ export class ActorCombat implements CombatBridge {
       this.#setVariable(fighter, 'iWantBlock', 0);
       this.#setVariable(fighter, 'IsBlocking', 0);
     }
+  }
+
+  /**
+   * An attack asked of a crossbow out without its bolt on goes to its reload (ActionReload:
+   * combat-actions.ts wantsReload); one under way (RELOAD_SECONDS at most, until the reload clip
+   * puts the bolt on: arrowAttach) takes the attacks asked meanwhile. Whether it took this one.
+   */
+  async #reload(fighter: Fighter, action: string): Promise<boolean> {
+    const state = fighter.state;
+    if (state.arrowNocked) fighter.reloadSince = undefined;
+    const since = fighter.reloadSince;
+    if (since !== undefined && this.#clock - since < RELOAD_SECONDS) return true;
+    fighter.reloadSince = undefined;
+    if (
+      !action.startsWith('ActionRight') ||
+      !wantsReload({
+        crossbow: fighter.gear?.right.weaponType === WeaponType.crossbow,
+        inHand: fighter.inHand && state.weapon === WeaponState.drawn,
+        attacking: attacking(state),
+        boltOn: state.arrowNocked,
+      })
+    ) {
+      return false;
+    }
+    if ((await this.#act(fighter, 'ActionReload')) === undefined) return false;
+    fighter.reloadSince = this.#clock;
+    return true;
+  }
+
+  /**
+   * A blocking fighter sees a blow come at it (the combat AI's block, each blow once): its block
+   * raises to meet it (ActionBlockAnticipate: blockAnticipateStart). Whether its graph took it.
+   */
+  async anticipateBlow(reference: number, blow: object): Promise<boolean> {
+    const fighter = this.#fighters.get(reference);
+    if (!fighter || !anticipatesBlow(fighter.state.blocking, blow, fighter.anticipated)) {
+      return false;
+    }
+    fighter.anticipated = blow;
+    return (await this.#act(fighter, 'ActionBlockAnticipate')) !== undefined;
   }
 
   /** Blocks (true) or stops (false): the left hand's attack when it holds a shield or nothing. */
@@ -1494,6 +1567,12 @@ export class ActorCombat implements CombatBridge {
       if (version !== fighter.gearVersion) return;
       fighter.gear = gear;
       this.#graphVariables(fighter, gear);
+      // Its hands changed with the weapon out: swapped in the hand (ActionForceEquip, its
+      // conditions reading the new types and the replaced ones: combat-actions.ts).
+      const before = fighter.handsBefore;
+      fighter.handsBefore = undefined;
+      if (forceEquips(before?.forms, handForms(gear), before?.out === true))
+        void this.#act(fighter, 'ActionForceEquip');
       await this.#makeModels(fighter, gear);
     } catch (error) {
       this.#warn(`${fighter.reference.toString(16)}: ${describe(error)}`);
@@ -2082,6 +2161,7 @@ export class ActorCombat implements CombatBridge {
         break;
       // Its Archery is read as each arrow is nocked (the shot strays by it as it is loosed).
       case 'arrow-attach':
+        fighter.reloadSince = undefined;
         this.#readArchery(fighter);
         break;
       case 'arrow-release':
@@ -3562,6 +3642,7 @@ export class ActorCombat implements CombatBridge {
       attack: (reference, action) => this.attack(reference, action),
       release: (reference, action) => this.release(reference, action),
       block: (reference, on) => this.block(reference, on),
+      anticipateBlow: (reference, blow) => this.anticipateBlow(reference, blow),
       act: (reference, action, target) => {
         const fighter = this.#fighters.get(reference);
         return fighter ? this.#act(fighter, action, target) : Promise.resolve(undefined);
@@ -4381,6 +4462,13 @@ export class ActorCombat implements CombatBridge {
     runtime.equipment.listeners.add((change) => {
       const fighter = this.#fighters.get(change.actor);
       if (!fighter) return;
+      // What it held before (the first change's, if several come before the gear is read).
+      if (fighter.gear && !fighter.handsBefore) {
+        fighter.handsBefore = {
+          forms: handForms(fighter.gear),
+          out: fighter.state.weapon === WeaponState.drawn,
+        };
+      }
       fighter.gearVersion++;
       fighter.gear = undefined;
     });
@@ -4726,6 +4814,18 @@ interface ShotPayload {
   readonly kind: AttackKind;
 }
 
+/** What a fighter's hands hold, by form (ActionForceEquip compares two readings). */
+function handForms(gear: Gear): HandForms {
+  return {
+    right: gear.right.weapon,
+    left: gear.left.weapon,
+    shield: gear.shield,
+    torch: gear.torch !== undefined,
+    rightSpell: gear.spellForms.right,
+    leftSpell: gear.spellForms.left,
+  };
+}
+
 function newFighter(reference: number, player: boolean): Fighter {
   return {
     reference,
@@ -4740,6 +4840,9 @@ function newFighter(reference: number, player: boolean): Fighter {
     gear: undefined,
     gearVersion: 0,
     gearLoading: false,
+    handsBefore: undefined,
+    reloadSince: undefined,
+    anticipated: undefined,
     target: undefined,
     heldSince: undefined,
     inHand: false,
