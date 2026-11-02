@@ -1303,7 +1303,7 @@ export class CharacterBody {
    * How much of `move` (Havok units) the shape at `center` gets being carried, before something
    * other than its carrier (and the placement's other moving bodies: a lift's cage), and other
    * actors (carried as well) stops it: a lift's shaft, a wall a turning platform passes. Ground it
-   * slides over (facing up) does not stop it.
+   * slides over (facing up) does not stop it, but it is not carried down through that ground.
    */
   #carryBlocked(
     center: RAPIER.Vector,
@@ -1340,8 +1340,12 @@ export class CharacterBody {
       undefined,
       (collider) => predicate(collider) && !carried(collider) && !this.#otherActor(collider),
     );
-    if (!hit || hit.normal1.z > 0.7) return move;
+    if (!hit) return move;
     const share = Math.max(0, hit.time_of_impact) / length;
+    // Ground it slides over goes on below it; it is carried down no further than onto it (a
+    // portcullis of Helgen Keep, placed raised as a save loaded and keyframed down to its pose in
+    // the first step, carried Ralof, set on it, 320 units down through the floor above it).
+    if (hit.normal1.z > 0.7) return move.z < 0 ? { x: move.x, y: move.y, z: move.z * share } : move;
     return { x: move.x * share, y: move.y * share, z: move.z * share };
   }
 
