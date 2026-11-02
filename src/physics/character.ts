@@ -9,7 +9,7 @@ import type { Vec3 } from '../render/math.ts';
 import { HAVOK_SCALE } from './collision-data.ts';
 import { Layer } from './collision-layers.ts';
 import { queryShape } from './query-shape.ts';
-import type { PhysicsOwner, PhysicsWorld } from './physics-world.ts';
+import { QueryGroups, type PhysicsOwner, type PhysicsWorld } from './physics-world.ts';
 
 /**
  * The controller shape, in game units: like the engine's hkCharControllerShape, two rings of
@@ -609,7 +609,8 @@ export class CharacterBody {
         return true;
       },
       RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
-      undefined,
+      // Only controllers (passed over in Rapier: no call back for each mesh it is near).
+      QueryGroups.controllers,
       own,
       undefined,
       (collider) => predicate(collider) && this.#otherController(collider),

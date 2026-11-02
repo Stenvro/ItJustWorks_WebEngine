@@ -720,7 +720,10 @@ forward, closes the tab; F5, Quicksave, reloads it): while a game runs the page 
 is left (beforeunload; Vite's reloads in development pass). A game key's release is the
 game's too (Alt, Sprint, let go would focus the browser's menu button). Tab stays with the
 menus (the menu layer keeps it from moving the page's focus), and menus that take no input are
-inert, so the page's focus never lands in the HUD's player.
+inert, so the page's focus never lands in the HUD's player. Their players are told once that
+the pointer left their stage (a `pointerleave` on Ruffle's canvas): a player starts as if the
+pointer were over it and searched all its clips for one to hover every frame (docs/rendering.md,
+"The main thread's CPU, round 4").
 
 The shell's brand (top left) leaves Play: in a game it asks as the journal's Quit to Desktop
 does ("Quit to desktop? Any unsaved progress will be lost.", Yes / No); Play ends with its

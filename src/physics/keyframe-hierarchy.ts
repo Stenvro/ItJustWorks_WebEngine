@@ -112,9 +112,20 @@ export function driveHierarchy(
   weight = 1,
 ): BodyVelocity[] {
   const out: (BodyVelocity | undefined)[] = new Array<BodyVelocity | undefined>(bodies.length);
-  /** Where each body will be after the step at its new velocity (children follow it). */
+  /**
+   * Where each body will be after the step at its new velocity (children follow it): worked
+   * out when a child first asks (most bodies are leaves).
+   */
   const next: (BodyFrame | undefined)[] = new Array<BodyFrame | undefined>(bodies.length);
   const dt = Math.max(seconds, 1e-6);
+  const nextOf = (i: number): BodyFrame | undefined => {
+    const known = next[i];
+    if (known) return known;
+    const velocity = out[i];
+    const motion = bodies[i]?.motion;
+    if (!velocity || !motion) return undefined;
+    return (next[i] = integrate(motion, velocity.linear, velocity.angular, dt));
+  };
   const solve = (i: number, depth: number): void => {
     if (out[i] || depth > bodies.length) return;
     const body = bodies[i];
@@ -131,7 +142,7 @@ export function driveHierarchy(
       ? scale(rotationVector(target.rotation, body.previous.rotation), 1 / dt)
       : [0, 0, 0];
     // Hierarchy: its pose relative to its parent's, where the parent goes this step.
-    const parentNext = parent ? next[body.parent] : undefined;
+    const parentNext = parent ? nextOf(body.parent) : undefined;
     let wanted: BodyFrame = target;
     if (parent && parentNext) {
       const local = relative(parent.target, target);
@@ -154,7 +165,12 @@ export function driveHierarchy(
     );
     // Position matching and snapping, on the error to the pose.
     const errorLinear = sub(target.position, motion.position);
-    const errorAngular = rotationVector(target.rotation, motion.rotation);
+    // (Its turn is needed only where a limit lets a share of it through: none of a blend
+    // collision object's control.)
+    const errorAngular =
+      !(c.positionMaxAngularVelocity <= 0) || !(c.snapMaxAngularVelocity <= 0)
+        ? rotationVector(target.rotation, motion.rotation)
+        : ZERO;
     linear = add(
       linear,
       limit(scale(errorLinear, c.positionGain / dt), c.positionMaxLinearVelocity),
@@ -184,7 +200,8 @@ export function driveHierarchy(
       angular = mix(motion.angular, angular, w);
     }
     out[i] = { linear, angular };
-    next[i] = integrate(motion, linear, angular, dt);
+    // (Solved again inside a loop of parents: its next place goes with its last velocity.)
+    next[i] = undefined;
   };
   for (let i = 0; i < bodies.length; i++) solve(i, 0);
   return out.map((velocity) => velocity ?? { linear: [0, 0, 0], angular: [0, 0, 0] });
@@ -209,6 +226,8 @@ export function integrate(
 }
 
 // --- Vector and quaternion helpers ---------------------------------------------------------------
+
+const ZERO: Vec3 = [0, 0, 0];
 
 function add(a: Vec3, b: Vec3): Vec3 {
   return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
