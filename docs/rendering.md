@@ -1563,6 +1563,93 @@ What is left (TODO(M13)):
 - The HUD's Ruffle player (6 %) is its own ActionScript running each frame, not its redraw.
 - The music stream did not hold a frame in these runs (its decode stays where it is).
 
+#### The main thread's CPU, round 4
+
+Profiled warm the same way (`riverwood`, `whiterun-day`, `streaming`, 55 s each, twice). Per
+rendered frame in the profiles, before → after (ms, the two passes averaged):
+
+| part                                              | riverwood   | whiterun-day | streaming   |
+| ------------------------------------------------- | ----------- | ------------ | ----------- |
+| the HUD's Ruffle player (its own animation frame) | 0.75 → 0.34 | 1.03 → 0.51  | 0.79 → 0.29 |
+| `ActorBodies.frame` (the bodies follow the poses) | 0.11 → 0.10 | 0.69 → 0.55  | 0.14 → 0.12 |
+| trigger and trap queries                          | 0.12 → 0.07 | 0.53 → 0.31  | 0.12 → 0.08 |
+| `#insideControllers`                              | 0.03 → 0.01 | 0.19 → 0.07  | 0.03 → 0.01 |
+| `render/animation.ts` `evaluate`                  | 0.68 → 0.59 | 0.57 → 0.48  | 0.46 → 0.35 |
+
+What changed (every result the same as before, as the tests and checks below say):
+
+- **The HUD's player picked for the pointer every frame**: half of its time was not its
+  ActionScript (0.7 % of a frame) but Ruffle's hover search: while a player believes the pointer
+  is over its stage, each tick walks every clip of the movie asking each whether it has a button
+  handler (`onPress`, `onRollOver`, ...), up its prototype chain. A player starts believing so,
+  and a menu that takes no input (the HUD, the fader, the cursor: `pointer-events: none`) never
+  gets the `pointerleave` that would tell it otherwise. `MenuHost` sends that event to such a
+  player's canvas once its movie runs (`pointerLeft`); the search no longer runs (3.6 % → 0 of a
+  Riverwood frame). The HUD's own scripts already run as the original's do: the engine sets its
+  values when they change (hud-controller.ts compares before it calls), and what runs each frame
+  is the movies' own `onEnterFrame` clips and the bridge's frame clock, too little to thin out.
+- **Kinds of collider as Rapier collision groups** (`QueryGroups`, physics-world.ts): each
+  collider's memberships say whether it is a trigger volume, a trap (L_TRAP, L_CLOUDTRAP), a
+  character controller or other, set with its layer (`#setLayer`); every collider's filter takes
+  all of them, so contacts and every other query are as without groups. The trigger, trap and
+  controller-overlap queries pass their kind as `filterGroups`: Rapier passes the other colliders
+  over before it calls the query's predicate back in JavaScript (most of their cost was those
+  calls, one per candidate the broadphase found). The predicates stay, for colliders made
+  without a layer.
+- **The bodies following their poses** (`ActorBodies.#steer`): an actor's placement is made
+  rigid once a frame, not once per body (`PhysicsWorld.bodyTargets`), and the node matrices,
+  the rigid parts and the products go into matrices kept for it; a keyframed body's velocities
+  (which it was driven at) are no longer read back from Rapier only to be replaced
+  (`bodyFrame`). The hierarchy controller (`driveHierarchy`) works out a body's next place only
+  when a child asks for it (most bodies are leaves), and its turn error only where a limit lets
+  some of it through (never for a blend collision object's control); a random test of 20,000
+  hierarchies (cycles of parents and every kind of gain among them) gave the same velocities to
+  the bit.
+- **The models' controllers** (`render/animation.ts`): a key search made a list of every key's
+  time for each sample (most of a sample's cost); it searches the keys themselves. Only the
+  subtrees of the moved objects are placed (each object of the model was asked whether one above
+  it moved, every frame), from each model's children, found once. The weighted layers keep
+  their sums by target instead of in string keys parsed back each frame, and the layers are
+  evaluated as given (no list of every track made first). Checked against the old code on all
+  1,796 animated models of the effects, architecture, clutter, dungeons, landscape and furniture
+  meshes, 40 moments each with their own controllers, three sequences blended and a sequence
+  played: the same frames; 22 → 15 µs an evaluation in Node.
+
+Before (main 1d9c7db7) and after, two runs each, warm, 60 s, no profiler, in the order
+`riverwood`, `whiterun-day`, `streaming` (headless Chrome on the shared machine):
+
+| scenario     | run     | fps   | p50 (ms) | p95 (ms) | p99 (ms) | > 33 ms | > 50 ms |
+| ------------ | ------- | ----- | -------- | -------- | -------- | ------- | ------- |
+| riverwood    | before  | 95.5  | 11.1     | 16.7     | 16.8     | 5       | 1       |
+|              | before² | 105.7 | 11.1     | 16.7     | 16.8     | 4       | 0       |
+|              | after   | 114.8 | 11.0     | 11.2     | 16.8     | 7       | 1       |
+|              | after²  | 99.5  | 11.1     | 16.7     | 16.8     | 8       | 1       |
+| whiterun-day | before  | 63.6  | 16.7     | 22.3     | 33.3     | 19      | 4       |
+|              | before² | 61.6  | 16.7     | 22.3     | 27.8     | 9       | 4       |
+|              | after   | 68.8  | 16.5     | 22.2     | 27.8     | 7       | 2       |
+|              | after²  | 68.6  | 16.6     | 22.2     | 27.8     | 8       | 3       |
+| streaming    | before  | 100.0 | 11.1     | 16.7     | 22.3     | 7       | 0       |
+|              | before² | 99.5  | 11.1     | 16.7     | 22.3     | 5       | 1       |
+|              | after   | 116.8 | 5.6      | 16.7     | 16.9     | 5       | 2       |
+|              | after²  | 112.6 | 5.6      | 16.7     | 22.2     | 4       | 1       |
+
+Whiterun's market went from 62–64 to 69 fps and its frames over 33 ms from 9–19 to 7–8; the
+flight from 100 to 113–117 fps. Riverwood moved with the machine's load (its runs 95–115 fps
+before and after alike); its long frames are single ones with no common cause.
+
+What is left (TODO(M13)):
+
+- The opaque pass still binds and draws each draw; render bundles there need the light lists
+  chosen per draw and the room and occluder culling (`RoomCuller.visible`: 2–3 % of a frame, the
+  most of it the occluders' planes per draw) per cluster.
+- The models' controllers are still 0.5–0.6 ms a frame: the behavior graphs' sequences of
+  Riverwood's objects (`graphFrame`) sample each of their tracks every frame.
+- The hierarchy controller's quaternion math (`rotationVector`, `integrate`) and the reads of
+  each body's place from Rapier are most of what is left of `ActorBodies.frame`.
+- The character controller's own sweep calls its predicate back in JavaScript for every
+  candidate (`touching`: 0.6 % of a Whiterun frame); its filter is the layer matrix, which the
+  16 bits of a collision group cannot hold.
+
 ## The lighting technique's flags and the fades (observed in the original)
 
 The original picks a lighting shape's technique from its shader flags alone, the later ones
