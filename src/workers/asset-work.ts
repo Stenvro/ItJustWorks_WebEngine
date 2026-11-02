@@ -11,11 +11,32 @@ import { buildRig } from '../animation/skeleton.ts';
 import { blendWeight, geometryOrder, swapTextures } from '../render/actor-model.ts';
 import { packMorphs } from '../render/face-morphs.ts';
 import { buildModel, type ModelData } from '../render/model-data.ts';
+import { placePackedGrass } from '../world/grass.ts';
 import type { AssetRequest, AssetResponse } from './protocol.ts';
 
 /** Handles one request: its response and the buffers the response owns (transferables). */
 export function handleAssetRequest(request: AssetRequest): [AssetResponse, ArrayBuffer[]] {
   const start = performance.now();
+  if (request.kind === 'grass') {
+    const fields = placePackedGrass(
+      request.land,
+      request.cellX,
+      request.cellY,
+      request.listings,
+      request.waterHeight,
+    );
+    const response: AssetResponse = {
+      id: request.id,
+      ok: true,
+      kind: 'grass',
+      fields,
+      workMs: performance.now() - start,
+    };
+    const transfer = fields.flatMap(({ data }) =>
+      data.buffer instanceof ArrayBuffer ? [data.buffer] : [],
+    );
+    return [response, transfer];
+  }
   const bytes = decodeBsaPayload(request.payload);
   const buffers = new Set<ArrayBuffer>();
   const own = (array: { buffer: ArrayBufferLike }): void => {

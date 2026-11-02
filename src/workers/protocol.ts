@@ -7,6 +7,8 @@ import type { CollisionData } from '../physics/collision-data.ts';
 import type { ModelTextureSwaps } from '../render/actor-model.ts';
 import type { MorphData } from '../render/face-morphs.ts';
 import type { ModelData } from '../render/model-data.ts';
+import type { GrassListing, PackedGrass } from '../world/grass.ts';
+import type { LandData } from '../world/land.ts';
 
 export type AssetKind = 'model' | 'texture' | 'actor-part' | 'rig' | 'expressions';
 
@@ -36,6 +38,19 @@ export type AssetRequest =
       /** 0..100. */
       readonly weight: number;
       readonly swaps: ModelTextureSwaps;
+    }
+  | {
+      readonly id: number;
+      /** A cell's grass: placed over its landscape and packed for drawing (src/world/grass.ts). */
+      readonly kind: 'grass';
+      /** For error messages only. */
+      readonly path: string;
+      readonly land: LandData;
+      readonly cellX: number;
+      readonly cellY: number;
+      /** The grass types of each land texture in the cell. */
+      readonly listings: readonly GrassListing[];
+      readonly waterHeight: number | undefined;
     };
 
 export type AssetResponse =
@@ -79,6 +94,14 @@ export type AssetResponse =
       readonly ok: true;
       readonly kind: 'texture';
       readonly texture: DdsTexture;
+      readonly workMs: number;
+    }
+  | {
+      readonly id: number;
+      readonly ok: true;
+      readonly kind: 'grass';
+      /** By grass type, those with plants. */
+      readonly fields: readonly PackedGrass[];
       readonly workMs: number;
     }
   | { readonly id: number; readonly ok: false; readonly error: string };

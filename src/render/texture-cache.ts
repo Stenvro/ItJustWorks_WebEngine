@@ -4,6 +4,7 @@
 // device (the headless simulation, src/sim/) nothing is drawn: no texture is read or made.
 
 import type { DdsTexture } from '../formats/dds/dds.ts';
+import { frameTurn } from './frame-work.ts';
 
 export type TextureLoader = (path: string) => Promise<DdsTexture>;
 
@@ -30,7 +31,19 @@ export interface DefaultTextures {
 const isCompressed = (format: string): boolean => format.startsWith('bc');
 const roundUp4 = (value: number): number => Math.ceil(value / 4) * 4;
 
-export function createGpuTexture(device: GPUDevice, dds: DdsTexture, label: string): GPUTexture {
+/** Bytes of mip levels written in one step of streaming work (frame-work.ts). */
+const UPLOAD_SLICE_BYTES = 2 * 1048576;
+
+/**
+ * A DDS texture on the GPU, its levels written in slices of about UPLOAD_SLICE_BYTES, each in a
+ * frame's share of streaming work (a 2048² texture with its mips held a frame for several ms in
+ * one go). Nothing samples it before all its levels are written: it is handed out at the end.
+ */
+export async function createGpuTexture(
+  device: GPUDevice,
+  dds: DdsTexture,
+  label: string,
+): Promise<GPUTexture> {
   const compressed = isCompressed(dds.format);
   const texture = device.createTexture({
     label,
@@ -40,7 +53,13 @@ export function createGpuTexture(device: GPUDevice, dds: DdsTexture, label: stri
     usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     ...(dds.cubemap && { textureBindingViewDimension: 'cube' as const }),
   });
+  let slice = UPLOAD_SLICE_BYTES;
   for (const level of dds.levels) {
+    if (slice >= UPLOAD_SLICE_BYTES) {
+      await frameTurn();
+      slice = 0;
+    }
+    slice += level.size;
     // Block-compressed copies cover whole 4x4 blocks, also for the 2x2 and 1x1 mips.
     const width = compressed ? roundUp4(level.width) : level.width;
     const height = compressed ? roundUp4(level.height) : level.height;
