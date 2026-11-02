@@ -816,6 +816,60 @@ export const PLACES: readonly Scenario[] = PLACE_CELLS.map((cell) => ({
   seconds: 45,
 }));
 
+/**
+ * The streaming flight: the player, without collision (tcl), carried north from Riverwood at a
+ * horse's sprint 600 units above where they stood, the view ahead; a new row of cells loads
+ * every few seconds (the frame times while cells load and unload: docs/rendering.md, "Frame
+ * time"). The page's own loop moves them, one step a frame.
+ */
+const STREAM_FLIGHT = `(() => {
+  if (window.__qaFlight) return 'running';
+  const W = engineDev.world;
+  const player = W.player;
+  if (!player) return 'no player';
+  const start = [...player.feet];
+  const flight = { stop: false, start: performance.now(), travelled: 0 };
+  window.__qaFlight = flight;
+  let before = performance.now();
+  const frame = (now) => {
+    if (flight.stop || window.__qaFlight !== flight) return;
+    const dt = Math.min(0.1, (now - before) / 1000);
+    before = now;
+    flight.travelled += 750 * dt;
+    player.teleport([start[0], start[1] + flight.travelled, start[2] + 600], 0);
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+  return 'flying from ' + start.map(Math.round).join(',');
+})()`;
+
+/** Scenarios for frame times (a run without names skips them). */
+export const PERFORMANCE: readonly Scenario[] = [
+  {
+    name: 'streaming',
+    description:
+      'Riverwood at 13:00, then the player flies north (tcl) at 750 units a second, 600 above the ground they stood on: cells load and unload all the way (the frame times of streaming).',
+    start: { kind: 'coc', cell: 'Riverwood' },
+    hour: 13,
+    bootSeconds: 240,
+    seconds: 60,
+    setup: async (ctx) => {
+      await ctx.console('tgm');
+      await ctx.console('tcl');
+      ctx.note(`flight: ${JSON.stringify(await ctx.page.eval(STREAM_FLIGHT, 30000))}`);
+    },
+    finish: async (ctx) => {
+      const travelled = await ctx.page
+        .eval<number | undefined>(
+          `(() => { const f = window.__qaFlight; if (!f) return undefined; f.stop = true; window.__qaFlight = undefined; return Math.round(f.travelled); })()`,
+          10000,
+        )
+        .catch(() => undefined);
+      ctx.note(`flew ${String(travelled)} units`);
+    },
+  },
+];
+
 /** The scenarios, in the order a run without names plays them (the long opening last). */
 export const SCENARIOS: readonly Scenario[] = [
   {

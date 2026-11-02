@@ -198,6 +198,12 @@ export class RoomCuller {
    */
   #occluderPlanes = new Float64Array(OCCLUDER_STRIDE * 16);
   #occluderCount = 0;
+  /**
+   * While a scene's draws are tested (focus): the start of each volume that may hide something
+   * within the scene's bound; -1 in `#focusCount`: no focus, every volume is tried.
+   */
+  #focusStarts = new Int32Array(16);
+  #focusCount = -1;
   #active = false;
   /** The rooms holding a draw's centre (cached by the centre's array: static draws keep it). */
   #membership = new WeakMap<Vec3, readonly number[]>();
@@ -294,6 +300,7 @@ export class RoomCuller {
     this.#rects = this.#boxes.map(() => []);
     const frustum = frustumPlanes(viewProj);
     this.#occluderCount = 0;
+    this.#focusCount = -1;
     for (const set of this.#sets) {
       for (const occluder of set.occluders) {
         const box = occluder.box;
@@ -390,30 +397,81 @@ export class RoomCuller {
     this.#occluderCount++;
   }
 
-  /** Whether a sphere lies wholly inside one of this frame's occlusion volumes. */
-  #occluded(center: Vec3, radius: number): boolean {
+  /**
+   * Narrows the occlusion test of the next `visible` calls to the volumes that may hide something
+   * within a sphere (a scene's bound, which holds its draws' spheres): a volume one of whose
+   * planes leaves the whole sphere outside hides none of them. Every draw of a scene was tested
+   * against every volume; most volumes lie nowhere near most cells. `unfocus` ends it.
+   */
+  focus(center: Vec3, radius: number): void {
     const packed = this.#occluderPlanes;
     const end = this.#occluderCount * OCCLUDER_STRIDE;
-    const x = center[0];
-    const y = center[1];
-    const z = center[2];
+    if (this.#focusStarts.length < this.#occluderCount) {
+      this.#focusStarts = new Int32Array(this.#occluderPlanes.length / OCCLUDER_STRIDE);
+    }
+    const starts = this.#focusStarts;
+    let count = 0;
     for (let at = 0; at < end; at += OCCLUDER_STRIDE) {
-      let inside = true;
+      let reaches = true;
       for (let o = at; o < at + OCCLUDER_STRIDE; o += 4) {
+        // A draw inside the volume has its centre at least its radius inside each plane; the
+        // centres within the sphere are at most `radius` outside of it.
         if (
-          (packed[o] ?? 0) * x +
-            (packed[o + 1] ?? 0) * y +
-            (packed[o + 2] ?? 0) * z +
+          (packed[o] ?? 0) * center[0] +
+            (packed[o + 1] ?? 0) * center[1] +
+            (packed[o + 2] ?? 0) * center[2] +
             (packed[o + 3] ?? 0) <
-          radius
+          -radius
         ) {
-          inside = false;
+          reaches = false;
           break;
         }
       }
-      if (inside) return true;
+      if (reaches) starts[count++] = at;
+    }
+    this.#focusCount = count;
+  }
+
+  /** Every volume is tried again (focus ends). */
+  unfocus(): void {
+    this.#focusCount = -1;
+  }
+
+  /** Whether a sphere lies wholly inside one of this frame's occlusion volumes. */
+  #occluded(center: Vec3, radius: number): boolean {
+    const focused = this.#focusCount;
+    if (focused >= 0) {
+      const starts = this.#focusStarts;
+      for (let i = 0; i < focused; i++) {
+        if (this.#insideVolume(starts[i] ?? 0, center, radius)) return true;
+      }
+      return false;
+    }
+    const end = this.#occluderCount * OCCLUDER_STRIDE;
+    for (let at = 0; at < end; at += OCCLUDER_STRIDE) {
+      if (this.#insideVolume(at, center, radius)) return true;
     }
     return false;
+  }
+
+  /** Whether a sphere lies wholly inside the packed volume starting at `at`. */
+  #insideVolume(at: number, center: Vec3, radius: number): boolean {
+    const packed = this.#occluderPlanes;
+    const x = center[0];
+    const y = center[1];
+    const z = center[2];
+    for (let o = at; o < at + OCCLUDER_STRIDE; o += 4) {
+      if (
+        (packed[o] ?? 0) * x +
+          (packed[o + 1] ?? 0) * y +
+          (packed[o + 2] ?? 0) * z +
+          (packed[o + 3] ?? 0) <
+        radius
+      ) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /**
