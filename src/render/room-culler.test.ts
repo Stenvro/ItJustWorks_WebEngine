@@ -156,4 +156,63 @@ describe('RoomCuller', () => {
     expect(culler.visible([0, -5000, 0], 10)).toBe(true);
     culler.unfocus();
   });
+
+  it('tells a cluster no occluder reaches, one hidden whole, and one to test draw by draw', () => {
+    const culler = new RoomCuller([
+      {
+        rooms: [],
+        portals: [],
+        occluders: [{ reference: 5, box: box([0, 1000, 0], [400, 5, 400]) }],
+        multibounds: [],
+      },
+    ]);
+    culler.update(camera([0, 0, 0], [0, 1, 0]), [0, 0, 0]);
+    expect(culler.occluding).toBeGreaterThan(0);
+    // Far to the side: no volume is tried for it.
+    culler.focus([5000, 1500, 0], 100);
+    expect(culler.occluding).toBe(0);
+    culler.unfocus();
+    // Wholly behind the box: hidden whole, and so is every sphere within it.
+    culler.focus([0, 1600, 0], 150);
+    expect(culler.occluding).toBeGreaterThan(0);
+    expect(culler.occludes([0, 1600, 0], 150)).toBe(true);
+    expect(culler.visible([50, 1650, 20], 40)).toBe(false);
+    culler.unfocus();
+    // Straddling its shadow's edge: not hidden whole, its draws decide one by one.
+    culler.focus([700, 1600, 0], 400);
+    expect(culler.occludes([700, 1600, 0], 400)).toBe(false);
+    expect(culler.visible([500, 1600, 0], 20)).toBe(false);
+    expect(culler.visible([1000, 1600, 0], 20)).toBe(true);
+    culler.unfocus();
+  });
+
+  it('decides the same narrowed to a cluster within a scene bound', () => {
+    const occluders = Array.from({ length: 40 }, (_, i) => ({
+      reference: 100 + i,
+      box: box([-4000 + i * 200, 1000, 0], [90, 5, 90]),
+    }));
+    const culler = new RoomCuller([{ rooms: [], portals: [], occluders, multibounds: [] }]);
+    culler.update(camera([0, 0, 0], [0, 1, 0]), [0, 0, 0]);
+    const spheres: [[number, number, number], number][] = [];
+    for (let x = -300; x <= 300; x += 25) spheres.push([[x, 1500, 0], 15]);
+    const unfocused = spheres.map(([center, radius]) => culler.visible(center, radius));
+    culler.focus([0, 1500, 0], 1200);
+    const all = culler.occluding;
+    culler.narrow([0, 1500, 0], 330);
+    expect(culler.occluding).toBeLessThan(all);
+    const narrowed = spheres.map(([center, radius]) => culler.visible(center, radius));
+    culler.widen();
+    expect(culler.occluding).toBe(all);
+    culler.unfocus();
+    expect(narrowed).toEqual(unfocused);
+    expect(unfocused).toContain(false);
+    expect(unfocused).toContain(true);
+  });
+
+  it('tells whether a room holds a point, seen or not', () => {
+    const culler = new RoomCuller([graph]);
+    expect(culler.inRoom([0, 0, 0])).toBe(true);
+    expect(culler.inRoom([-400, 0, 0])).toBe(true);
+    expect(culler.inRoom([0, -1000, 0])).toBe(false);
+  });
 });

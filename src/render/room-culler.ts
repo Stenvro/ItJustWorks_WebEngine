@@ -200,9 +200,14 @@ export class RoomCuller {
   #occluderCount = 0;
   /**
    * While a scene's draws are tested (focus): the start of each volume that may hide something
-   * within the scene's bound; -1 in `#focusCount`: no focus, every volume is tried.
+   * within the scene's bound; -1 in `#outerCount`: no focus, every volume is tried. Within it,
+   * those for a cluster of its draws (narrow). `#focusStarts` and `#focusCount` are the ones
+   * tried now.
    */
-  #focusStarts = new Int32Array(16);
+  #outerStarts = new Int32Array(16);
+  #outerCount = -1;
+  #innerStarts = new Int32Array(16);
+  #focusStarts = this.#outerStarts;
   #focusCount = -1;
   #active = false;
   /** The rooms holding a draw's centre (cached by the centre's array: static draws keep it). */
@@ -300,7 +305,7 @@ export class RoomCuller {
     this.#rects = this.#boxes.map(() => []);
     const frustum = frustumPlanes(viewProj);
     this.#occluderCount = 0;
-    this.#focusCount = -1;
+    this.unfocus();
     for (const set of this.#sets) {
       for (const occluder of set.occluders) {
         const box = occluder.box;
@@ -404,14 +409,62 @@ export class RoomCuller {
    * against every volume; most volumes lie nowhere near most cells. `unfocus` ends it.
    */
   focus(center: Vec3, radius: number): void {
+    this.#ensureFocusCapacity();
+    this.#outerCount = this.#gather(center, radius, undefined, -1, this.#outerStarts);
+    this.#focusStarts = this.#outerStarts;
+    this.#focusCount = this.#outerCount;
+  }
+
+  /**
+   * Narrows the test further, within the focus (a cluster of draws within a scene's bound),
+   * until `widen`.
+   */
+  narrow(center: Vec3, radius: number): void {
+    this.#ensureFocusCapacity();
+    const outer = this.#outerCount >= 0 ? this.#outerStarts : undefined;
+    this.#focusCount = this.#gather(center, radius, outer, this.#outerCount, this.#innerStarts);
+    this.#focusStarts = this.#innerStarts;
+  }
+
+  /** Back to the focus `narrow` narrowed (none: every volume). */
+  widen(): void {
+    this.#focusStarts = this.#outerStarts;
+    this.#focusCount = this.#outerCount;
+  }
+
+  /** Every volume is tried again (focus ends). */
+  unfocus(): void {
+    this.#outerCount = -1;
+    this.#focusStarts = this.#outerStarts;
+    this.#focusCount = -1;
+  }
+
+  #ensureFocusCapacity(): void {
+    if (this.#outerStarts.length >= this.#occluderCount) return;
+    const size = this.#occluderPlanes.length / OCCLUDER_STRIDE;
+    this.#outerStarts = new Int32Array(size);
+    this.#innerStarts = new Int32Array(size);
+    this.#focusStarts = this.#outerStarts;
+    this.#outerCount = -1;
+    this.#focusCount = -1;
+  }
+
+  /**
+   * Writes to `out` the start of each volume that may hide something within a sphere, of the
+   * `count` volumes at `from` (undefined: of all); returns how many.
+   */
+  #gather(
+    center: Vec3,
+    radius: number,
+    from: Int32Array | undefined,
+    count: number,
+    out: Int32Array,
+  ): number {
     const packed = this.#occluderPlanes;
-    const end = this.#occluderCount * OCCLUDER_STRIDE;
-    if (this.#focusStarts.length < this.#occluderCount) {
-      this.#focusStarts = new Int32Array(this.#occluderPlanes.length / OCCLUDER_STRIDE);
-    }
-    const starts = this.#focusStarts;
-    let count = 0;
-    for (let at = 0; at < end; at += OCCLUDER_STRIDE) {
+    const total = from ? count : this.#occluderCount;
+    let kept = 0;
+    for (let i = 0; i < total; i++) {
+      const at = from ? (from[i] ?? 0) : i * OCCLUDER_STRIDE;
       let reaches = true;
       for (let o = at; o < at + OCCLUDER_STRIDE; o += 4) {
         // A draw inside the volume has its centre at least its radius inside each plane; the
@@ -427,14 +480,40 @@ export class RoomCuller {
           break;
         }
       }
-      if (reaches) starts[count++] = at;
+      if (reaches) out[kept++] = at;
     }
-    this.#focusCount = count;
+    return kept;
   }
 
-  /** Every volume is tried again (focus ends). */
-  unfocus(): void {
-    this.#focusCount = -1;
+  /**
+   * How many occlusion volumes the next `visible` calls try: those `focus` kept, or all of this
+   * frame's (0: no occluder hides anything there).
+   */
+  get occluding(): number {
+    return this.#focusCount >= 0 ? this.#focusCount : this.#occluderCount;
+  }
+
+  /**
+   * Whether a sphere lies wholly inside one of the occlusion volumes `visible` tries (then all
+   * that lies within it is hidden too). Not counted in the statistics.
+   */
+  occludes(center: Vec3, radius: number): boolean {
+    return this.#occluderCount > 0 && this.#occluded(center, radius);
+  }
+
+  /** Whether one of the rooms holds a point (seen this frame or not). */
+  inRoom(point: Vec3): boolean {
+    return this.#roomsOf(point).length > 0;
+  }
+
+  /** The rooms holding a point (cached by the point's array: static draws keep theirs). */
+  #roomsOf(point: Vec3): readonly number[] {
+    let rooms = this.#membership.get(point);
+    if (!rooms) {
+      rooms = this.#boxes.flatMap((box, i) => (boxContains(box, point) ? [i] : []));
+      this.#membership.set(point, rooms);
+    }
+    return rooms;
   }
 
   /** Whether a sphere lies wholly inside one of this frame's occlusion volumes. */
@@ -481,11 +560,7 @@ export class RoomCuller {
    */
   inVisibleRoom(point: Vec3): boolean {
     if (!this.#active) return true;
-    let rooms = this.#membership.get(point);
-    if (!rooms) {
-      rooms = this.#boxes.flatMap((box, i) => (boxContains(box, point) ? [i] : []));
-      this.#membership.set(point, rooms);
-    }
+    const rooms = this.#roomsOf(point);
     if (rooms.length === 0) return true;
     return rooms.some((room) => (this.#seen[room]?.length ?? 0) > 0);
   }
@@ -498,11 +573,7 @@ export class RoomCuller {
       return false;
     }
     if (!this.#active) return true;
-    let rooms = this.#membership.get(center);
-    if (!rooms) {
-      rooms = this.#boxes.flatMap((box, i) => (boxContains(box, center) ? [i] : []));
-      this.#membership.set(center, rooms);
-    }
+    const rooms = this.#roomsOf(center);
     if (rooms.length === 0) return true;
     for (const room of rooms) {
       for (const planes of this.#seen[room] ?? []) {
