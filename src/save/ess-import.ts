@@ -81,6 +81,7 @@ import type { StoryEventData } from '../scripting/runtime/story-manager.ts';
 import { ObjectHandle, PapyrusArray, type Value } from '../scripting/values.ts';
 import { CELL_SIZE } from '../world/land.ts';
 import { parseScene } from '../ai/scene-records.ts';
+import { parseStoryNode } from '../world/story-manager-records.ts';
 import type { SavedScene } from '../ai/scene-runtime.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
 import { FACE_MORPH_COUNT } from '../world/chargen-records.ts';
@@ -215,6 +216,8 @@ export interface EssWorld {
   recordPlace?(formId: number): RecordPlace | undefined;
   /** A scene's quest and the aliases of its actors, by our form id (the scenes the save plays). */
   sceneCast?(formId: number): SceneCast | undefined;
+  /** A story manager quest node's quests in its record's order (NNAM), by our form id. */
+  nodeQuests?(formId: number): readonly number[] | undefined;
 }
 
 /** A scene's quest, the aliases of its actors and its actions' indices, in its record's order. */
@@ -377,6 +380,7 @@ export async function essWorld(db: RecordDatabase, ess?: EssFile): Promise<EssWo
   const plugins = db.plugins.map((plugin) => plugin.entry);
   const places = new Map<number, RecordPlace>();
   const casts = new Map<number, SceneCast>();
+  const nodes = new Map<number, readonly number[]>();
   if (ess) {
     const toOurs = formIdMapper(ess, plugins);
     const actors = ess.changeForms.flatMap((entry) => {
@@ -418,6 +422,21 @@ export async function essWorld(db: RecordDatabase, ess?: EssFile): Promise<EssWo
         });
       }),
     );
+    // The quest nodes whose runs it keeps: their quests.
+    const questNodes = ess.changeForms.flatMap((entry) => {
+      const id = entry.type === 36 && entry.formId !== undefined ? toOurs(entry.formId) : undefined;
+      return id === undefined ? [] : [id];
+    });
+    await Promise.all(
+      questNodes.map(async (formId) => {
+        const record = await db.get(formId);
+        if (record?.type !== 'SMQN') return;
+        nodes.set(
+          formId,
+          parseStoryNode(record).quests.map(({ quest }) => quest),
+        );
+      }),
+    );
   }
   return {
     plugins,
@@ -427,6 +446,7 @@ export async function essWorld(db: RecordDatabase, ess?: EssFile): Promise<EssWo
     },
     recordPlace: (formId) => places.get(formId),
     sceneCast: (formId) => casts.get(formId),
+    nodeQuests: (formId) => nodes.get(formId),
   };
 }
 
@@ -656,6 +676,9 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   const stats = new Map<string, number>();
   const inventoryDeltas = new Map<number, Map<number, number>>();
   const formListAdded = new Map<number, number[]>();
+  /** The story manager's runs: when it last started each quest (game days), by quest node. */
+  const lastStarted = new Map<number, number>();
+  const startedBy = new Map<number, Set<number>>();
   const updates: SavedUpdate[] = [];
   const saidOnce = new Set<number>();
   const scenesPlaying: [number, EssSceneChanges][] = [];
@@ -938,6 +961,25 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     } else if (entry.type === 13 && flags & ChangeBase.bookRead) {
       state.booksRead.add(formId);
       applied |= ChangeBase.bookRead;
+    } else if (entry.type === 36 && form.base?.questNode) {
+      // SMQN (its bit 31): a word per quest of the node, in its record's order (NNAM), as
+      // observed on the saves read: the game days (a float's bits) the node last started it,
+      // 0 never: the story manager's hours until reset count from it, and "do all before
+      // repeating" skips the quests it started.
+      const quests = world.nodeQuests?.(formId);
+      const runs = form.base.questNode;
+      if (quests?.length === runs.length) {
+        const started = new Set<number>();
+        runs.forEach((word, i) => {
+          const quest = quests[i];
+          const days = wordFloat(word);
+          if (quest === undefined || !(days > 0)) return;
+          lastStarted.set(quest, Math.max(lastStarted.get(quest) ?? 0, days));
+          started.add(quest);
+        });
+        if (started.size > 0) startedBy.set(formId, started);
+        applied |= ChangeBase.last;
+      } else skips.add('SMQN: runs not matching the node');
     } else if (entry.type === 37 && form.base?.scene) {
       // SCEN: a scene that plays, put together once the quests' aliases are read (below).
       if (form.base.scene.playing) scenesPlaying.push([formId, form.base.scene]);
@@ -2061,7 +2103,7 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   for (const table of [ess.globalData1, ess.globalData2, ess.globalData3]) {
     for (const entry of table) {
       if (
-        ![0, 1, 3, 6, 7, 101, 103, 107, 109, 111, 1000, 1001, 1002].includes(entry.type) &&
+        ![0, 1, 2, 3, 6, 7, 101, 103, 107, 109, 111, 1000, 1001, 1002].includes(entry.type) &&
         entry.data.length > 0 &&
         !empty(entry.type, entry.data)
       ) {
@@ -2094,7 +2136,8 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       saidOnce.size > 0
         ? { saidOnce, saidAt: new Map(), chosen: new Set(), saidInTopic: new Map() }
         : undefined,
-    storyManager: pending.length > 0 ? { pending } : undefined,
+    storyManager:
+      pending.length > 0 || lastStarted.size > 0 ? { pending, lastStarted, startedBy } : undefined,
     instances,
     ...(threads.length > 0 && { threads }),
     ...((scenesSaved.length > 0 || scenesWaiting.length > 0) && {

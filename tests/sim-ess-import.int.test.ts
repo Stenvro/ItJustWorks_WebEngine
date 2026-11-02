@@ -275,10 +275,14 @@ describe.skipIf(!hasGamedata() || path === undefined)(
         // no saves folder
       }
       const probe = await openSim();
-      const world = await essWorld(probe.db);
+      const saves = await Promise.all(
+        names.map(async (name) => {
+          const ess = readEss(new Uint8Array(readFileSync(join(SAVES, name))));
+          return { name, ess, world: await essWorld(probe.db, ess) };
+        }),
+      );
       await probe.close();
-      for (const name of names) {
-        const ess = readEss(new Uint8Array(readFileSync(join(SAVES, name))));
+      for (const { name, ess, world } of saves) {
         const resolve = refIdResolver(ess.formIds);
         const imported = importEss(ess, world, { name: 'Imported', number: 1, now: 0 });
         const state = imported.save.runtime.state as {
@@ -344,6 +348,17 @@ describe.skipIf(!hasGamedata() || path === undefined)(
           tes?.value as { deadCounts: { base: number; count: number }[] } | undefined
         )?.deadCounts ?? []) {
           expect([base, deadCounts.get(base)]).toEqual([base, count]);
+        }
+        // The quest nodes' runs (SMQN): a run for each quest the node started, in game days
+        // within the game's time so far.
+        const runs = (
+          imported.save.runtime.storyManager as { lastStarted?: Map<number, number> } | undefined
+        )?.lastStarted;
+        const nodes = ess.changeForms.filter((entry) => entry.type === 36);
+        if (nodes.length > 0) expect(runs?.size ?? 0).toBeGreaterThan(0);
+        for (const days of runs?.values() ?? []) {
+          expect(days).toBeGreaterThan(0);
+          expect(days).toBeLessThanOrEqual(imported.save.runtime.state.gameDaysPassed as number);
         }
         // Each member of a combat group knows what its group knew of its target.
         for (const actor of imported.save.world.actors) {
