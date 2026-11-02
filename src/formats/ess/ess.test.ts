@@ -154,7 +154,7 @@ describe('global data', () => {
         resolve,
       ),
     ).toEqual({
-      unknown0: [{ formId: 5, unknown: 7 }],
+      deadCounts: [{ base: 5, count: 7 }],
       unknown1: [6],
       unknown2: [8],
     });

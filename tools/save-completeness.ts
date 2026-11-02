@@ -51,7 +51,10 @@ const add = (part: string, name: string, done: boolean, note: string): void => {
 const GLOBAL_DATA: Readonly<Record<number, readonly [boolean, string]>> = {
   0: [true, 'misc stats into the runtime stats'],
   1: [true, "the player's place when their change form has none"],
-  2: [false, 'TES: visited worldspaces and the cell grid (not applied)'],
+  2: [
+    true,
+    'TES: the dead counts by actor base (GetDeadCount); its cell table and last list empty in every save read',
+  ],
   3: [true, 'global variables, GameDaysPassed sets the clock'],
   4: [false, 'created objects: made potions, poisons, enchantments (none in the saves read)'],
   5: [true, 'effects: image space modifiers running: empty in every save read'],
