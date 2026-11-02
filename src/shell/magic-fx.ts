@@ -134,6 +134,8 @@ export class MagicFx {
       readonly duration?: number;
       readonly speed?: number;
       readonly range?: number;
+      /** How far it has moved already (a loaded save's cone wave: it goes on from there). */
+      readonly travelled?: number;
       readonly fades?: boolean;
       readonly owner?: number;
     },
@@ -157,7 +159,7 @@ export class MagicFx {
       pitch: direction ? Math.atan2(direction[2], Math.hypot(direction[0], direction[1])) : 0,
       speed: options.speed ?? 0,
       range: options.range ?? 0,
-      travelled: 0,
+      travelled: options.travelled ?? 0,
       path: undefined,
       leg: 0,
       age: 0,
