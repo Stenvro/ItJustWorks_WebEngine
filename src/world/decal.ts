@@ -265,3 +265,67 @@ export function expireDecals<T extends { readonly until: number }>(
   }
   return gone;
 }
+
+/** The atlas quarter a decal's subtexture index shows (0..3; another: the whole texture). */
+export function subtextureRect(
+  index: number,
+  flags: number,
+): readonly [number, number, number, number] {
+  if ((flags & DecalFlag.noSubtextures) !== 0 || index < 0 || index > 3) return [0, 0, 1, 1];
+  return [(index % 2) * 0.5, Math.floor(index / 2) * 0.5, 0.5, 0.5];
+}
+
+/**
+ * A world decal's clipping box (as worldDecalBox makes it: X its width, Y the projection, made
+ * `depth` deep either side, Z its height) from what the original's temp effects keep of it
+ * (docs/formats/ess.md, "Temp effects"): its point, its rotation (a quaternion w, x, y, z) and
+ * its width, height and depth, all in the space of what it lies on. Observed in the saves: the
+ * rotation takes Z to the direction saved beside it, the way out of the surface (up on a
+ * floor), so the projection runs along −Z, X across the width and Y up the height.
+ */
+export function savedDecalBox(
+  point: readonly [number, number, number],
+  rotation: readonly number[],
+  size: readonly number[],
+): Mat4 {
+  const [w = 1, x = 0, y = 0, z = 0] = rotation;
+  const length = Math.hypot(w, x, y, z) || 1;
+  const [qw, qx, qy, qz] = [w / length, x / length, y / length, z / length];
+  // The rotation's columns: where it takes X, Y and Z.
+  const ax = [1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy + qw * qz), 2 * (qx * qz - qw * qy)];
+  const ay = [2 * (qx * qy - qw * qz), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz + qw * qx)];
+  const az = [2 * (qx * qz + qw * qy), 2 * (qy * qz - qw * qx), 1 - 2 * (qx * qx + qy * qy)];
+  const width = size[0] ?? 1;
+  const height = size[1] ?? width;
+  const depth = 2 * Math.max(0, size[2] ?? 0);
+  const box = identity();
+  for (let k = 0; k < 3; k++) {
+    box[k] = (ax[k] ?? 0) * width;
+    box[4 + k] = -(az[k] ?? 0) * depth;
+    box[8 + k] = (ay[k] ?? 0) * height;
+    box[12 + k] = point[k] ?? 0;
+  }
+  return box;
+}
+
+/**
+ * Where the space of a cell's land lies (world), in which the original's temp effects keep a
+ * decal on the land: observed in the saves, centred on the cell and at the middle of its
+ * heights' range (every land decal of the saves read then lies on its land, within the grid's
+ * sampling).
+ */
+export function landSpaceOrigin(
+  heights: Iterable<number>,
+  gridX: number,
+  gridY: number,
+  cellSize = 4096,
+): [number, number, number] {
+  let low = Infinity;
+  let high = -Infinity;
+  for (const height of heights) {
+    if (height < low) low = height;
+    if (height > high) high = height;
+  }
+  const middle = Number.isFinite(low) ? (low + high) / 2 : 0;
+  return [(gridX + 0.5) * cellSize, (gridY + 0.5) * cellSize, middle];
+}

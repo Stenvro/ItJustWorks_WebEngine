@@ -170,7 +170,7 @@ import { cellLight, type MagicFx } from './magic-fx.ts';
 import type { CellLight } from '../world/cell-loader.ts';
 import { parseLight, type LightRecord } from '../world/cell-records.ts';
 import { EffectSound, effectSound } from '../world/magic-effects.ts';
-import type { SavedAttachedArrow } from '../save/world-save.ts';
+import type { SavedAttachedArrow, SavedDecal } from '../save/world-save.ts';
 
 /** A human's shape for hits (its controller's radius and height at scale 1; game units). */
 /** The music type of a boss fight (MUSC; see #setMusic). */
@@ -750,6 +750,11 @@ export class ActorCombat implements CombatBridge {
 
   decals(): Iterable<GpuDecals> {
     return this.#impacts.decals();
+  }
+
+  /** The world's decals, for a save (src/save/world-save.ts). */
+  saveDecals(): SavedDecal[] {
+    return this.#impacts.save();
   }
 
   /** The hits' decals go at once (Game.ClearTempEffects). */

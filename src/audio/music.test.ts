@@ -196,6 +196,35 @@ describe('music', () => {
     expect(music.state.current).toBe(0x10);
   });
 
+  it('saves the track playing and its position, and a loaded game goes on with it', async () => {
+    const output = new FakeOutput();
+    output.types.set(0x20, type(0x20, { flags: MusicTypeFlag.maintainTrackOrder, tracks: [4, 5] }));
+    output.tracks.set(4, track(4, { file: 'a.wav' }));
+    output.tracks.set(5, track(5, { file: 'b.wav' }));
+    output.files.set('a.wav', 20);
+    output.files.set('b.wav', 20);
+    const music = new Music(output, SETTINGS, () => 0.99);
+    music.setLocation(0x20);
+    await run(music, output, 8);
+    const saved = music.save();
+    expect(saved).toMatchObject({ type: 0x20, track: 4, queue: [5] });
+    expect(saved?.position).toBeGreaterThan(6);
+
+    // A fresh game: the type plays again, the saved track from where it was, then the next.
+    const later = new FakeOutput();
+    for (const [id, value] of output.types) later.types.set(id, value);
+    for (const [id, value] of output.tracks) later.tracks.set(id, value);
+    for (const [file, length] of output.files) later.files.set(file, length);
+    const loaded = new Music(later, SETTINGS, () => 0.99);
+    if (saved) loaded.resume(saved);
+    loaded.setLocation(0x20);
+    await run(loaded, later, 1);
+    const voice = later.playing('a.wav');
+    expect(voice?.position).toBeGreaterThan(saved?.position ?? 0);
+    await run(loaded, later, 20);
+    expect(later.played).toEqual(['a.wav', 'b.wav']);
+  });
+
   it('keeps the order of types that maintain it, and ends types that do not cycle', async () => {
     const output = new FakeOutput();
     output.types.set(0x20, type(0x20, { flags: MusicTypeFlag.maintainTrackOrder, tracks: [4, 5] }));

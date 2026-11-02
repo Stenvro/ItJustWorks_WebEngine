@@ -148,6 +148,7 @@ import {
   type Activatable,
   type CollisionGroup,
 } from './play-session.ts';
+import { worldSaveParts } from './world-save-parts.ts';
 
 /**
  * Cells loaded around the cell of the streaming centre (#streamCenter: the player while playing)
@@ -850,6 +851,7 @@ export class WorldViewer {
     savePlayer: () => this.#stage?.savePlayer(),
     saveProjectiles: () => this.#stage?.projectiles.save() ?? [],
     saveAttachedArrows: () => this.#stage?.combat.saveAttachedArrows() ?? [],
+    saveWorldParts: () => worldSaveParts(this.#stage, this.#play),
     impactAt: (impactDataSet, from, direction, length) =>
       this.#stage?.combat.impactAt(impactDataSet, from, direction, length) ?? false,
     pathTo: (actor, target, walkRun) => {
@@ -1475,6 +1477,7 @@ export class WorldViewer {
       this.#ui.freeCamera.checked = free;
     };
     this.#play = play;
+    play.savedMotion = (reference) => this.#session?.restoring?.takeMotion(reference);
     // Rivers carry what floats along their cells' flow maps.
     const flows = new FlowMaps((path) =>
       session.vfs.has(path) ? session.vfs.read(path) : Promise.resolve(undefined),

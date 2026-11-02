@@ -51,6 +51,7 @@ import {
   type CellRagdoll,
   type CollisionGroup,
 } from '../shell/play-session.ts';
+import { worldSaveParts } from '../shell/world-save-parts.ts';
 import { noteMoved, placedAsMoved } from '../shell/moved-objects.ts';
 import { configurePhysics, Player } from '../shell/player.ts';
 import { PlayerAvatar } from '../shell/player-avatar.ts';
@@ -1153,6 +1154,7 @@ export class SimWorld {
       },
     });
     this.#play = play;
+    play.savedMotion = (reference) => this.session.restoring?.takeMotion(reference);
     // The view is the player's eyes, as the page's renderer looks through play.view.
     if (session.render instanceof HeadlessRender) session.render.view = { camera: play.view };
     this.stage.attachPlay(play);
@@ -1743,6 +1745,7 @@ export class SimWorld {
     savePlayer: () => this.stage.savePlayer(),
     saveProjectiles: () => this.stage.projectiles.save(),
     saveAttachedArrows: () => this.stage.combat.saveAttachedArrows(),
+    saveWorldParts: () => worldSaveParts(this.stage, this.#play),
     impactAt: (impactDataSet, from, direction, length) =>
       this.stage.combat.impactAt(impactDataSet, from, direction, length),
     pathTo: (actor, target, walkRun) => {
