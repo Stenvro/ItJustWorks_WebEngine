@@ -475,7 +475,15 @@ export class MagicEngine {
 
   /** What the AI reads of an actor's effects (the combat AI acts on them). */
   aiState(actor: number): MagicAiState {
-    const has = (archetype: number): boolean => this.#archetypeOn(actor, archetype).length > 0;
+    // The archetypes of its active effects, gathered in one walk over the effects (asked of
+    // every loaded actor each frame: a walk per archetype was 2 % of a Whiterun frame).
+    const archetypes = new Set<number>();
+    for (const [, entry] of this.effectsOn(actor)) {
+      if (entry.inactive) continue;
+      const archetype = this.#effects.get(entry.effect)?.archetype;
+      if (archetype !== undefined) archetypes.add(archetype);
+    }
+    const has = (archetype: number): boolean => archetypes.has(archetype);
     return {
       calmed: has(EffectArchetype.calm),
       frenzied: has(EffectArchetype.frenzy),

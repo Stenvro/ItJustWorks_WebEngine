@@ -16,6 +16,7 @@ import {
   type CollisionShape,
 } from './collision-data.ts';
 import { Layer, LayerFlag, type CollisionMatrix } from './collision-layers.ts';
+import { queryShape } from './query-shape.ts';
 import type { BodyPush } from '../gameplay/magic/explosions.ts';
 import { PENETRATION_DEFAULTS, type PenetrationSettings } from './ragdoll-penetration.ts';
 import { integrate, type BodyFrame, type BodyMotion } from './keyframe-hierarchy.ts';
@@ -2495,7 +2496,12 @@ export class PhysicsWorld {
    * their owners' references (a trap's trigger, a quest's activator box).
    */
   triggersOverlapping(collider: RAPIER.Collider): Set<number> {
-    return this.#triggersIn(collider.translation(), collider.rotation(), collider.shape, collider);
+    return this.#triggersIn(
+      collider.translation(),
+      collider.rotation(),
+      queryShape(collider.shape),
+      collider,
+    );
   }
 
   /**
@@ -2547,7 +2553,7 @@ export class PhysicsWorld {
    */
   trapsTouching(collider: RAPIER.Collider, margin: number): Map<number, TrapTouch> {
     const found = new Map<number, TrapTouch>();
-    const shape = collider.shape;
+    const shape = queryShape(collider.shape);
     const reach =
       shape instanceof RAPIER.Capsule
         ? new RAPIER.Capsule(shape.halfHeight, shape.radius + toHavok(margin))
@@ -2632,7 +2638,7 @@ export class PhysicsWorld {
         for (const trigger of this.#triggersIn(
           collider.translation(),
           collider.rotation(),
-          collider.shape,
+          queryShape(collider.shape),
           collider,
           layer,
         )) {
