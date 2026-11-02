@@ -1492,6 +1492,77 @@ over 33 ms; what holds them is no longer the streaming's own work (TODO(M13), ot
 (`actors.ts` `place`, a new behavior graph), the HUD's Ruffle player, a music track's stream;
 the records of a cell (`loadCellData`, zlib on the main thread) are read in 1–3 ms steps).
 
+#### The main thread's CPU
+
+Profiled warm (`riverwood`, `whiterun-day`, `streaming`, 55 s of each scenario's minute, twice),
+the costs split as the table above has them; under them, the largest single waste was Rapier's
+query shapes: every shape cast, intersection and contact test makes the query's shape anew in
+Rapier's own form and frees it after (`Shape.intoRaw`), and for a convex hull that is the hull
+computed again from its points. The actors' controllers (a round convex hull), their biped
+bodies and most clutter are hulls, and their queries (`#insideControllers`, `#findCarrier`,
+the trigger volumes and traps each actor reaches every frame) spent 3.6 % of a Whiterun market
+frame on it, more than on the queries themselves.
+
+What changed:
+
+- **Query shapes made once** (`src/physics/query-shape.ts` `queryShape`): those queries hand
+  Rapier a copy of the shape whose Rapier form is made at its first query and lent to every
+  later one (its `free` does nothing; the form goes with the copy, by wasm-bindgen's
+  finalizer). The same hull, the same answers; the character controller's step went from 1.9 to
+  1.0 ms a Whiterun frame, the physics step from 3.3 to 1.9 ms.
+- **The away actors' routes** (`ActorsAway.#plan`): the nearest navmesh and road marker are
+  found by squared distances and the route's door search measures with a square root (both
+  were `Math.hypot`, most of a 15 ms `findRoute`); the plan takes frame turns
+  (`frameTurn`, src/render/frame-work.ts) before its ends, its route and its legs.
+- **An actor's placement** (`actors.ts` `place`): its behavior graph is built, and run on by
+  its own moment, in frame turns (20–25 ms in one frame before).
+- **Animated draws** are uploaded only when their matrix or one of their animated material
+  values changed (`writeAnimatedMaterial` says which, compared as the 32-bit uniforms hold
+  them); every draw with an animation frame went up each frame.
+- **`MagicEngine.aiState`** gathers an actor's effects' archetypes in one walk; it walked all
+  active effects once per archetype for every loaded actor each frame (the invisibility veil
+  asks it): 2 % of a Whiterun frame.
+
+Per frame in the profiles (the render loop's callback; the machine shared, so its load moves
+these too): Whiterun 14.8 → 10.7 ms (actors 3.7 → 2.9, `SceneRenderer.animate` 2.9 → 2.1),
+Riverwood 9.5 → 7.2 ms. Before (main daebeb52) and after, two runs each, warm, 60 s, no
+profiler, in the order `riverwood`, `whiterun-day`, `streaming`:
+
+| scenario     | run     | fps   | p50 (ms) | p95 (ms) | p99 (ms) | > 33 ms | > 50 ms |
+| ------------ | ------- | ----- | -------- | -------- | -------- | ------- | ------- |
+| riverwood    | before  | 95.7  | 11.1     | 16.7     | 16.8     | 5       | 0       |
+|              | before² | 94.4  | 11.1     | 16.7     | 22.2     | 5       | 0       |
+|              | after   | 108.8 | 11.1     | 11.2     | 16.8     | 4       | 0       |
+|              | after²  | 111.1 | 11.1     | 11.2     | 16.8     | 5       | 0       |
+| whiterun-day | before  | 66.3  | 16.7     | 22.3     | 33.4     | 33      | 6       |
+|              | before² | 59.5  | 16.7     | 22.3     | 27.9     | 15      | 2       |
+|              | after   | 68.8  | 11.2     | 22.2     | 27.8     | 8       | 1       |
+|              | after²  | 73.7  | 11.2     | 22.2     | 27.8     | 7       | 1       |
+| streaming    | before  | 96.9  | 11.1     | 16.7     | 22.3     | 8       | 0       |
+|              | before² | 94.6  | 11.1     | 16.7     | 22.3     | 7       | 2       |
+|              | after   | 114.7 | 5.6      | 16.7     | 22.2     | 3       | 0       |
+|              | after²  | 115.3 | 5.6      | 16.7     | 22.2     | 6       | 0       |
+
+The profiled flight's frames over 33 ms went from 8–10 to 4–5; `#plan` and `place` are no
+longer among them. What holds those left: the first reads of records (an idle tree, the
+persistent actors, `#scheduleActor`'s package starts), conditions, and frames with no single
+cause.
+
+What is left (TODO(M13)):
+
+- The actors' bodies following their poses (`ActorBodies.#follow`: the hierarchy controller for
+  every biped body of every actor each frame, its math allocating) is 4.7 % of a Whiterun frame;
+  behavior graphs and skeletons 9 %.
+- The trigger and trap queries still ask Rapier's broadphase per actor each frame and per
+  biped body every fourth (2.7 %); collision groups as a prefilter (the layers are ours, the
+  predicate is a call back into JavaScript for every candidate) would drop most of the calls.
+- The models' own controllers (`render/animation.ts` `evaluate`: maps and matrices made per
+  model per frame) are 3–7 % (Riverwood's mill and water the most).
+- The character controller's sweep runs for actors standing still; skipping it would change
+  what they touch and their grounding, so it stays.
+- The HUD's Ruffle player (6 %) is its own ActionScript running each frame, not its redraw.
+- The music stream did not hold a frame in these runs (its decode stays where it is).
+
 ## The lighting technique's flags and the fades (observed in the original)
 
 The original picks a lighting shape's technique from its shader flags alone, the later ones
