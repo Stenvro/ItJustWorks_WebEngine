@@ -128,7 +128,18 @@ describe.skipIf(!hasGamedata())('actor graphs across a save (headless simulation
     expect(
       await before.until(() => stage.combat.weaponState(fighter) === WeaponState.drawn, 15),
     ).toBe(true);
-    await before.step(2.5);
+    // Saved with the seated and the idling clips part-way through, so a clip started again by
+    // the load would show. Their loops (a seated idle's runs some 8 to 9 s) wrap round, and
+    // where each stands at a fixed second depends on when it sat down (a walk to a chair now
+    // ends with the path end's turn into its entry first): wait a second, then for both to be
+    // past a wrap, while the fighter's weapon is still out (its fight ends some 3 s on).
+    await before.step(1);
+    expect(
+      await before.until(
+        () => furthest(graphOf(before, seated)) > 0.5 && furthest(graphOf(before, idler)) > 0.5,
+        1.5,
+      ),
+    ).toBe(true);
     const actors = [seated, fighter, idler, PLAYER_REF];
     const saved = new Map(actors.map((actor) => [actor, graphOf(before, actor)]));
     for (const actor of actors) {
