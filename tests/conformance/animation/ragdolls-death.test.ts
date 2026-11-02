@@ -101,29 +101,39 @@ describe.skipIf(!hasGamedata())('the death idles and furniture of the load order
 
 // Hulda (the Bannered Mare's innkeeper) leans at the bar counter, a sit marker
 // (IdleBarCounterEnter): killed there, the death tree drops her as a ragdoll from where she
-// leans (IsInFurnitureState 1), and her body slumps to the floor.
+// leans (IsInFurnitureState 1), and her body slumps to the floor, whatever point of her lean idle
+// she dies at.
 
 const BANNERED_MARE = 0x1605e;
 const HULDA = 0x1a66e;
+/**
+ * Seconds into her lean (after she settles into it) at which she is killed and slumps. Killed
+ * at 1, 2.5 or 3 s she stands draped over the counter (STANDING_PHASES).
+ */
+const PHASES = [1.5, 2] as const;
+const STANDING_PHASES = [1, 2.5, 3] as const;
 
-describe.skipIf(!hasGamedata())('Hulda killed at the bar counter (headless simulation)', () => {
-  let sim: Sim;
-  let leaning = false;
-  let animationType: number | undefined;
-  let deathIdle: string | undefined;
-  let headBefore = 0;
-  let headAfter = 0;
-  let held = true;
+/** One kill at the counter. */
+interface CounterDeath {
+  readonly leaning: boolean;
+  readonly animationType: number | undefined;
+  readonly deathIdle: string | undefined;
+  readonly headBefore: number;
+  readonly headAfter: number;
+  readonly held: boolean;
+}
 
-  beforeAll(async () => {
-    sim = await openSim({ interior: BANNERED_MARE, hour: 10 });
+async function killAtCounter(phase: number): Promise<CounterDeath> {
+  const sim = await openSim({ interior: BANNERED_MARE, hour: 10 });
+  try {
     const furniture = sim.world.stage.furniture;
-    leaning = await sim.until(() => furniture.interaction(HULDA)?.state === 3, 60);
-    animationType = furniture.interaction(HULDA)?.animationType;
-    await sim.step(2);
+    const leaning = await sim.until(() => furniture.interaction(HULDA)?.state === 3, 60);
+    const animationType = furniture.interaction(HULDA)?.animationType;
+    await sim.step(phase);
     const head = (): number =>
       sim.actor(HULDA)?.placed.pose.world('NPC Head [Head]')?.[14] ?? Number.NaN;
-    headBefore = head();
+    const headBefore = head();
+    let deathIdle: string | undefined;
     const actionEvent = furniture.actionEvent.bind(furniture);
     furniture.actionEvent = async (user, action, target, inFurniture) => {
       const event = await actionEvent(user, action, target, inFurniture);
@@ -133,46 +143,67 @@ describe.skipIf(!hasGamedata())('Hulda killed at the bar counter (headless simul
     };
     await sim.kill(HULDA, PLAYER_REF);
     await sim.step(5);
-    headAfter = head();
-    held = furniture.holds(HULDA);
-  }, 600_000);
-  afterAll(async () => {
+    return {
+      leaning,
+      animationType,
+      deathIdle,
+      headBefore,
+      headAfter: head(),
+      held: furniture.holds(HULDA),
+    };
+  } finally {
     await sim.close();
-  });
+  }
+}
+
+describe.skipIf(!hasGamedata())('Hulda killed at the bar counter (headless simulation)', () => {
+  const deaths = new Map<number, CounterDeath>();
+
+  beforeAll(async () => {
+    // One simulation at a time (each kills her).
+    for (const phase of PHASES) deaths.set(phase, await killAtCounter(phase));
+  }, 900_000);
 
   it('she leans at the counter on a sit marker (animation type 1)', () => {
-    expect(leaning).toBe(true);
-    expect(animationType).toBe(FurnitureMarkerType.sit);
+    for (const death of deaths.values()) {
+      expect(death.leaning).toBe(true);
+      expect(death.animationType).toBe(FurnitureMarkerType.sit);
+    }
   });
 
   it('her death idle is Ragdoll (IsInFurnitureState 1)', () => {
-    expect(deathIdle).toBe('Ragdoll');
+    for (const death of deaths.values()) expect(death.deathIdle).toBe('Ragdoll');
   });
 
   it('the counter lets go of her', () => {
-    expect(held).toBe(false);
+    for (const death of deaths.values()) expect(death.held).toBe(false);
   });
 
   // Killed still (a script's Kill: no blow pushes her), her ragdoll is let go from the lean pose.
   // Held by Rapier's box of swing limits alone, her joints lay within it but past Havok's cone
   // on its diagonals, and her friction kept her on her feet, asleep upright (head at 98 units);
   // with the cone (constraint-solver.ts) her joints are turned back into it and she slumps.
-  // Whether she does depends on the phase of her lean at the kill: at 8 solver iterations her
-  // feet are pressed flat against the ankles' limit within three steps, the calves lock upright
-  // and she drapes over the counter on straight legs (head at 96–99) in about half the phases.
-  // At Havok's 4 she slumps in every phase, but Rapier's ragdolls then no longer settle
-  // (world-time-step.test.ts: the solver's iterations). With the movement actions performed
-  // through the idle tree and the syncing blenders' sync points, the phase of her lean at the
-  // kill is one in which she slumps; the joints' limits are solved as before. TODO(M13): ragdoll joints at
-  // their limits solved as Havok's soft limits (the straight-legs drape of the other phases).
-  it(
-    'her body slumps: the head falls below the counter’s height (in the phase of her lean the ' +
-      'simulation reaches)',
-    () => {
-      expect(headBefore).toBeGreaterThan(100);
-      expect(headAfter).toBeLessThan(60);
+  it.each(PHASES)(
+    'killed %s s into her lean, her body slumps below the counter’s height',
+    (phase) => {
+      const death = deaths.get(phase);
+      expect(death?.headBefore).toBeGreaterThan(100);
+      expect(death?.headAfter).toBeLessThan(60);
     },
   );
+
+  // In the other phases her upper body tips onto the counter while her hips bend to their 45°
+  // limit and her knees straighten to theirs: her legs stand as a locked strut (feet flat at the
+  // ankles' limit, head at 96–99 units). Rapier at 4 or 5 substeps (Havok's world solves with
+  // four iterations) leaves the strut loose enough to buckle and she slumps in every phase, but
+  // the race skeletons' ragdolls then settle worse (tools/ragdoll-info.ts: at 5, 46 of 52 still
+  // and 47 of 52 pushed come to rest within 20 s, against 51 and 48 at 8). Easing every limit
+  // the joints lie past (by tau of the error a step, as Havok's soft limits correct) changes
+  // nothing: the strut's joints lie at their limits, not past them. TODO(M13): Havok's solver's
+  // give at four iterations with the settling of the eight.
+  for (const phase of STANDING_PHASES) {
+    it.todo(`killed ${phase} s into her lean, her body slumps below the counter’s height`);
+  }
 });
 
 describe('ragdolls and death (todo)', () => {

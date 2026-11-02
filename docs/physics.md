@@ -579,6 +579,13 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   changed wakes its bodies (and changed while asleep, its bodies woke and fell through the
   ground they lay on): only changes are set, never while both its bodies sleep. The eased bounds
   only close in (what pushes a joint further past them does not widen them).
+  Eased from any excess (not only past 0.05 radians), and with every angular limit solved in
+  the constraint solver before Rapier's step instead of Rapier's (the limits' push back taken
+  off after it), the ragdolls do not settle: a limit solved without the contacts is pushed
+  through by them within Rapier's step (a chicken's ankle 40° past its cone at rest), and its
+  push back, left in or taken off, kept the bodies creeping or shaking (32 of 52 race skeletons
+  at rest within 20 s). Easing every excess changes nothing for a body standing on its joints'
+  limits (Hulda below): they lie at their limits, not past them.
 - **Error clipping:** Havok clips a constraint's positional error to the world's maximum
   constraint violation (0.05 Havok units, above): a ragdoll or limited hinge joint whose two
   pivots lie farther apart (a ragdoll pulled apart: a limb pushed out of a rock the rest lies in)
@@ -586,8 +593,10 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   between them, so that it comes back by at most that much a step (`#clipViolation`); Rapier
   corrects all of it at once, and Lokir's corpse, half under a rock as Alduin's landing woke
   it, was flung about for five minutes. The large ragdolls settle later for it (the undead
-  dragon's, the Dwemer spider's, the gargoyle's within 26–32 s on a floor). TODO(M13): the
-  other kinds of joints (hinges, balls and sockets, stiff springs) are not clipped.
+  dragon's, the Dwemer spider's, the gargoyle's within 26–32 s on a floor). A chain's links
+  (bhkBallSocketConstraintChain: the traps' ropes and chains, 6 in the data) are clipped to the
+  chain's own maxErrorDistance (0.1 in every chain; `#clipChains`). TODO(M13): the other kinds
+  of joints (hinges, balls and sockets, stiff springs) are not clipped.
 - **Solver deactivation:** the engine's world (Havok's) slows slow bodies further: a body of
   solver deactivation class low, medium, high or max (the file's; every race skeleton's bodies
   are low) moving slower than 0.01, 0.017, 0.02, 0.025 × g (Havok units a second, g the
@@ -611,7 +620,17 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   limits' tau factor of the excess a step (pushed back only). Hulda, killed still where she
   leans at the Bannered Mare's counter (a Ragdoll death, no blow), stayed asleep on her feet,
   her hips and knees in the box but past the cone and held there by their friction; with the
-  cone she slumps to the floor (`ragdolls-death.test.ts`).
+  cone she slumps to the floor (`ragdolls-death.test.ts`) when killed 1.5 or 2 s into her lean
+  idle. Killed at 1, 2.5 or 3 s her upper body tips onto the counter while her hips bend to
+  their limit and her knees straighten to theirs, her feet flat at the ankles' limit: her legs
+  stand as a locked strut and she stays draped over the counter (head at 96–99 units). It is
+  the solver's give, not the limits' softness: Rapier at 4 or 5 substeps (the original's world
+  solves with four iterations) leaves the strut loose enough to buckle and she slumps in every
+  phase, but the race skeletons' ragdolls then settle worse (`node tools/ragdoll-info.ts`: at 5,
+  46 of 52 still and 47 of 52 pushed rest within 20 s, at 4 46 and 46, against 51 and 48 at 8;
+  Rapier's internal iterations at 2 stiffen it again). Lifting her out of the floor her animated
+  feet start 6 units into, or her joints' friction at 0 or 1.5 times, does not change it.
+  TODO(M13): Havok's give at four iterations with the settling of eight.
 - **Motors** (the powered ragdoll: Havok's position motors, as the behavior graph's
   hkbPoweredRagdollControlsModifier sets them; no constraint in the files has an enabled one):
   a powered joint pulls its second body's turn relative to its first toward the turn the
@@ -626,7 +645,8 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   ragdoll's root by its world-from-model mode, not done; the paralysed's stiff fall; a dying
   graph's powered bones (vanilla keeps them all keyframed: AnimateToRagdoll).
 
-Malleable strength and a chain's tau and damping are not applied. A joint is in the world only while one of its two bodies is simulated: between
+Malleable strength and a chain's damping (0.6 in every chain) are not applied; a chain's tau
+(1) and constraint force mixing (float epsilon) are Rapier's stiff joints'. A joint is in the world only while one of its two bodies is simulated: between
 two keyframed or held bodies (a living actor's ragdoll keyframed to its pose, an object placed
 to wait) it is left out and made again from its constraint as a body is let go (a death, a
 knock-down, a touch). Rapier solves a joint between two kinematic bodies in every substep all
