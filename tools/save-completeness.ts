@@ -67,7 +67,7 @@ const GLOBAL_DATA: Readonly<Record<number, readonly [boolean, string]>> = {
   100: [false, 'process lists: crimes being reported (not applied)'],
   101: [
     true,
-    "combat: each group member's fight (its target); a group's search is logged (none read)",
+    "combat: each group member's fight (its target, its group's knowledge of it, its search)",
   ],
   102: [
     false,

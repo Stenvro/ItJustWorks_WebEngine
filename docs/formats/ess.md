@@ -264,11 +264,13 @@ everywhere (the original reserves one byte and widens it when the count is known
   count u16).
 - **Base objects** (as observed in the original; `EssChangeForm.base`): ACTI, FURN, TACT: the
   full name (flag 2), TACT also its voice type (flag 23). ARMO, BOOK, LIGH, MISC, APPA, WEAP,
-  AMMO, KEYM: the value u32 (flag 1); BOOK then its flags byte (flag 5 or 6). INGR: which
-  effects are known, 4 bytes (flag 31). ECZN: a byte (flag 1) and four u32 (flag 31). RELA: a
+  AMMO, KEYM: the value u32 (flag 1); BOOK then its flags byte (flag 5 or 6). INGR (flag 31,
+  CommonLibSSE's kIngredientUse): its game data, a u16 of the effects the player knows (a bit
+  per effect slot) and a u16 of the player's uses of it. ECZN: a byte (flag 1) and four u32 (flag 31). RELA: a
   relationship the game made writes its two NPCs and association, then the rank u32 (flag 1).
   FLST: u32 count × refId (flag 31). LCTN: two bytes (flag 31), vsval × (keyword refId, f32)
-  (flag 30). SMQN: u32 count × u32. SCEN, whatever its flags: playing u8, u32, two bytes, the
+  (flag 30). SMQN: u32 count × u32: one per quest of the node in its record's order (NNAM),
+  as read on the saves the game days (a float's bits) the node last started that quest, 0 never. SCEN, whatever its flags: playing u8, u32, two bytes, the
   actions (u32 count: type u32, u32, a timer's two bytes, two flag bytes), two bytes, its time
   u32, the phases (u32 count × three bytes), four bytes. PACK: a package the game made writes
   no form flags (its save replaces the form's) and its whole definition as the AI process
@@ -650,8 +652,25 @@ ess)` reads those places ahead);
   clock reads 8.3 hours), what the player has seen (the local map's fog: 32 bytes, 16 × 16 bits
   per block, each 2 × 2 of ours; an exterior's one block, an interior's per part with its two
   signed bytes; TODO(M13): the block's size and the bits' order, and ours draws no fog on the
-  exterior local map), a public place (the flags' 0x20, as the record's DATA; TODO(M13): 0x40
-  and 0x200, whose meaning is not known), the owner;
+  exterior local map), a public place (the flags' 0x20, as the record's DATA; the change form keeps
+  only the flags the running game sets beside the record's; TODO(M13): 0x40 and 0x200,
+  CommonLibSSE's Hand Changed and Warn To Leave: 0x40 on some 40 interiors in each save read,
+  0x200 on two houses not visited, Carlotta Valentia's and Morthal's Highmoon Hall: their
+  run-time effect is not known), the owner;
+- the dead counts by actor base (global data 2, TES: its first list, a refId and a u16 each:
+  GetDeadCount): after Helgen a count of 1 for each base of the opening's dead, none on the
+  cart. TODO(M13): its square table of refIds (5 × 5, every one 0 in both saves) and its last
+  list (empty);
+- the story manager's quest nodes' runs (SMQN): the game days each node last started each of
+  its quests (the story manager's last starts: hours until reset count from them) and, for "do
+  all before repeating", the quests it started;
+- a faction's crime counts (FACT bit 31: CommonLibSSE's TESFaction majorCrime, minorCrime i32,
+  resistArrestTimeStamp f32, pcEnemyFlagTimeStamp as a u32 of a float): the counts are kept
+  (`FactionState.crimeCounts`: 4 and 0 for CrimeFactionImperial after Helgen's keep), a resist
+  stamp set (not −FLT_MAX) is the player resisting its arrest. TODO(M13): what counts and
+  reads the counts in the original, the enemy flag's stamp (FLT_MAX in the save read);
+- an ingredient's game data (INGR): the effects the player knows (`GameState.ingredientEffects`)
+  and the uses towards the next (`GameState.ingredientUses`); none in the saves read;
 - a quest's runs (instanceData: a u32, then each run's id, its aliases' references as alias id
   and reference, the text display globals' values as global and float, three bytes): the
   globals' values (`QuestState.instanceGlobals`); TODO(M13): the first u32 and the three bytes;
@@ -683,23 +702,50 @@ ess)` reads those places ahead);
   world: created, with their place and cell): a reference of the arrow's ammunition (the
   projectile's second form: bow, ammunition, shooter, ...), held where it stuck, falling where
   physics moved it (havokMoved), as ours makes one (src/shell/combat-projectiles.ts);
-- the combat groups (global data 101): each member's target (the member is the first of its
-  values), for a member whose own combat controller names none; ours puts the groups together
-  again as their members fight. TODO(M13): a group's search (logged; none in the saves read),
-  the members' other values, the groups' float pairs;
+- the combat groups (global data 101). Read on the saves, UESP's "members" are the group's
+  targets and its "targets" its members (CommonLibSSE's CombatTarget and CombatMember): Alduin's
+  group at Helgen holds the player and eleven soldiers as targets, each having attacked its one
+  member, Alduin, and Alduin as its member with its threat (117750; a soldier's 545). A target
+  entry is the target, its detection level (i32: 126, 27, −2, −4), its stealth points (f32),
+  a u16 that is 1 for the player (the members fighting it), its flags u16 (1 known, 2 lost),
+  the member it attacked, five places with their cells (the first the last known; the fourth
+  where it attacked from, set with the fifth time stamp alone) and six AI time stamps (seconds
+  relative to the save, −FLT_MAX never; the third the last known place's). A member entry is
+  the actor, a timer f32 and its threat f32. The import: a target that attacked a member fights
+  it (for one whose own combat controller names none); each member's fight takes what its group
+  knew of each of its targets (`essGroupFights`: `SavedFight.known`) and, for the target its
+  group searches for, the search from its place and radius (none in the saves read).
+  TODO(M13): the groups' timers, the members' threats, the other places and time stamps, the
+  search's points, doors and time searched;
+- the spells' projectiles in flight (PMIS a missile, PFLA a flame's spray): not references of
+  ours (ours fly without one) but `WorldSave.projectiles` that fly on, each with its graph by
+  names. Read on the saves: the shooter the third form, the spell the sixth, the age (seconds,
+  a float's bits) the fifth u32 (the graph's sequence time: 0.42 s for the Helgen save's
+  firebolt, 2.01 s for Alduin's breath), the units flown the 13th (a float's bits: 1053 for the
+  firebolt, its speed times its age within a frame; 0 for a spray), the velocity the three
+  floats after the three u32 and the form id (the 22nd to 24th). TODO(M13): dual casting, a
+  staff's or a scroll's source, a spray's units flown and origin (taken back along its way);
+- the menu topic manager (global data 114): two refIds, CommonLibSSE's speaker and last
+  speaker of a conversation: none in every save read (logged when one is set);
 - the quest static data (global data 107): its fourth list is the quests running (the same 451
   quests in both saves whose change forms say they run, which those apply; a listed quest that
   does not run is logged). TODO(M13): the other three lists (empty in the saves read).
 
-Read but not imported yet (TODO(M13)): the projectiles and hazards in flight; the base objects'
-other changes (values, names, known ingredient effects; the scenes' clocks); the global data
-tables of detection (105: each a reference with two values, 0, 2 or 3 and 0 or 7, whose meaning
-is not known), the process lists (100: their three floats, −0.0168 twice and a value that
-differs by save, meaning not known; the crimes, none in the saves read) and the
-interface's help shown (102); the movement controller's state (the engine plans its paths
-anew); the high process's timers and held objects (six references with a byte each, whose
-meaning is not known); the combat controllers' searches and objects; the look-at modifiers'
-bones of the animation graphs; the projectiles' graphs (PMIS, PFLA); the player's other lists.
+Read but not imported yet (TODO(M13)): the other projectiles in flight (beams, cones, barriers:
+none in the saves read); the base objects' other changes (values, names; the scenes' clocks);
+the global data tables whose meaning neither the saves nor CommonLibSSE settle, with what the
+two saves hold: 8 sky cells (64 pairs, all 0), detection (105: each a reference with two
+values, 0, 2 or 3 and 0 or 7: the triggers 2, Helgen's prisoner 3, Imperial and Stormcloak
+soldiers 0 or 7), location metadata (106: references, mostly persistent actors, a marker and a
+location, each with 1 to 3: Hadvar 3, Galmar and Klimmek 2), the story teller (108: a flag, 1),
+player controls (110: 0, 0, 0, 1, 1; CommonLibSSE's PlayerControlsData bools do not settle
+which), menu controls (113: 1, 0; CommonLibSSE's isProcessing, beastForm, remapMode bools), the
+timer (1003: 0, 0), the process lists (100: their three floats, −0.0168 twice and a value that
+differs by save, 0.646 and 0.0042; the crimes, none in the saves read) and the interface's help
+shown (102); the movement controller's state (the engine plans its paths anew); the high
+process's timers and held objects (six references with a byte each, whose meaning is not
+known); the combat controllers' objects; the look-at modifiers' bones of the animation graphs;
+the player's other lists.
 The tables empty in every save read (5 effects, 112 ingredients shared, 1004 synchronized
 animations) are logged only when they hold something.
 
