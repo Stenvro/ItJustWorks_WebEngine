@@ -336,6 +336,15 @@ describe.skipIf(!hasGamedata() || path === undefined)(
           expect(projectile.graph?.named?.sequences.length).toBe(1);
           expect(projectile.age).toBeGreaterThan(0);
         }
+        // The dead counts by actor base (global data 2): GetDeadCount answers them.
+        const tes = readGlobalData(2, globalData(ess, 2) ?? new Uint8Array(), resolve);
+        const deadCounts = (imported.save.runtime.state as { deadCounts: Map<number, number> })
+          .deadCounts;
+        for (const { base, count } of (
+          tes?.value as { deadCounts: { base: number; count: number }[] } | undefined
+        )?.deadCounts ?? []) {
+          expect([base, deadCounts.get(base)]).toEqual([base, count]);
+        }
         // Each member of a combat group knows what its group knew of its target.
         for (const actor of imported.save.world.actors) {
           if (actor.fight?.known) expect(actor.combatTarget).toBeDefined();

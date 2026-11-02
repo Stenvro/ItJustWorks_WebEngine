@@ -29,6 +29,7 @@ import {
   readGlobalVariables,
   readMiscStats,
   readPlayerLocation,
+  readTes,
   readWeather,
   refIdResolver,
   type RefIdResolver,
@@ -751,6 +752,23 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       }
     } catch {
       skips.add('combat: unreadable');
+    }
+  }
+
+  // The dead counts by actor base (global data 2, TES: GetDeadCount); its cell table and last
+  // list hold nothing in the saves read (logged when they do: TODO(M13) their meaning).
+  const tesData = globalData(ess, 2);
+  if (tesData) {
+    try {
+      const tes = readTes(tesData, resolve);
+      for (const { base, count } of tes.deadCounts) {
+        const id = ours(base);
+        if (id !== undefined && id !== 0 && count > 0) state.deadCounts.set(id, count);
+      }
+      if (tes.unknown1.some((id) => id !== 0) || tes.unknown2.length > 0)
+        skips.add('TES: its cell table and last list (TODO(M13))');
+    } catch {
+      skips.add('TES: unreadable');
     }
   }
 
