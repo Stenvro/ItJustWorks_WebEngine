@@ -22,7 +22,7 @@ import {
 } from '../physics/keyframe-hierarchy.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import { RagdollPenetration } from '../physics/ragdoll-penetration.ts';
-import type { CollisionBody, CollisionData } from '../physics/collision-data.ts';
+import { HAVOK_SCALE, type CollisionBody, type CollisionData } from '../physics/collision-data.ts';
 import type { PhysicsWorld, PlacedBody, PlacedCollision } from '../physics/physics-world.ts';
 import { invert } from '../render/frustum.ts';
 import { multiply, type Mat4, type Vec3 } from '../render/math.ts';
@@ -80,6 +80,8 @@ interface ActorBody {
   worldVersion: number;
   /** Dead or knocked down: its bodies move it (its ragdoll). */
   articulation: Articulation | undefined;
+  /** Where its first body was as it went limp (Havok units): how far it moved since (moved). */
+  limpFrom?: Vec3;
   /** Knocked down living: its ragdoll lies until it gets up (src/shell/actor-knockdowns.ts). */
   knocked: boolean;
   /** Dead: its limbs through the world are brought back for a while (ragdoll-penetration.ts). */
@@ -350,6 +352,27 @@ export class ActorBodies {
       });
     }
     entry.articulation = new Articulation(entry.placed, entry.pose, entry.world);
+    const first = entry.placed.bodies[0]?.body.translation();
+    if (first) entry.limpFrom = [first.x, first.y, first.z];
+  }
+
+  /**
+   * How far a limp ragdoll has carried its actor since it went limp (game units; undefined:
+   * none). A dead actor is where its ragdoll is: one killed in the air is where it fell to,
+   * not where it died (its distance to others, its scripts' GetPosition). TODO(M13): the
+   * engine's own point of the ragdoll its reference follows (here its first body's way).
+   */
+  moved(reference: number): Vec3 | undefined {
+    const entry = this.#bodies.get(reference);
+    const from = entry?.limpFrom;
+    const body = entry?.placed.bodies[0]?.body;
+    if (!from || !body?.isValid()) return undefined;
+    const now = body.translation();
+    return [
+      (now.x - from[0]) * HAVOK_SCALE,
+      (now.y - from[1]) * HAVOK_SCALE,
+      (now.z - from[2]) * HAVOK_SCALE,
+    ];
   }
 
   /**
