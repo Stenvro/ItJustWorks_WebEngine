@@ -442,7 +442,51 @@ export function sampleBool(source: BoolSource, time: number): boolean {
   return (keys[i]?.value ?? 0) !== 0;
 }
 
+/**
+ * A transform source's last sample (its time), and whether its samples never change with the
+ * time (no key group with more than one key). The tracks of a model's sequences are sampled
+ * every frame, most with one key or at the clamped end of a sequence that has finished.
+ */
+interface TransformMemo {
+  time: number;
+  sample: TransformSample;
+  readonly constant: boolean;
+}
+
+const transformMemos = new WeakMap<TransformSource, TransformMemo>();
+
+function constantTransform(source: TransformSource): boolean {
+  if (source.path) return false;
+  const data = source.data;
+  if (!data) return true;
+  return (
+    data.translations.keys.length <= 1 &&
+    data.scales.keys.length <= 1 &&
+    (data.rotationType === KeyType.xyzRotation
+      ? data.xyzRotations.every((group) => group.keys.length <= 1)
+      : data.quaternionKeys.length <= 1)
+  );
+}
+
+/**
+ * A transform source's sample at a time (the returned sample is shared: never changed by the
+ * caller). A source sampled at the time it was last sampled at, or one whose samples never
+ * change, gives its last sample again.
+ */
 export function sampleTransform(source: TransformSource, time: number): TransformSample {
+  const memo = transformMemos.get(source);
+  if (memo) {
+    if (memo.constant || memo.time === time) return memo.sample;
+    memo.time = time;
+    memo.sample = sampleTransformAt(source, time);
+    return memo.sample;
+  }
+  const sample = sampleTransformAt(source, time);
+  transformMemos.set(source, { time, sample, constant: constantTransform(source) });
+  return sample;
+}
+
+function sampleTransformAt(source: TransformSource, time: number): TransformSample {
   if (source.path) {
     const at = samplePath(source.path, time);
     return { translation: at.translation, rotation: at.rotation, scale: undefined };

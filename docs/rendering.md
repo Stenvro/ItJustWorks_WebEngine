@@ -1650,6 +1650,96 @@ What is left (TODO(M13)):
   candidate (`touching`: 0.6 % of a Whiterun frame); its filter is the layer matrix, which the
   16 bits of a collision group cannot hold.
 
+#### The opaque pass in render bundles, round 5
+
+The opaque pass bound and drew each draw every frame: in a Riverwood frame 1.7 ms of the main
+thread (15 % of it), most of it the calls into WebGPU (`setBindGroup` alone 0.6 ms) and the
+occluders' planes per draw (`RoomCuller.visible`, 0.4 ms). The draws' light lists were already
+replayable: each draw's list lies in the scene's `draw-lights` storage buffer at the draw's slot
+(flags.w bits 8-23), written when it is chosen, so a recorded draw reads whatever list was chosen
+for it this frame.
+
+What changed (the image the same: the same draws, lights, fades and depth state):
+
+- **Opaque draws by cluster in render bundles** (`#sceneOpaque`, `#opaqueBundle`,
+  `src/render/draw-clusters.ts`): a scene's opaque draws that never move are grouped by
+  1024-unit squares as the shadow casters are (one `groupBySquare` and one `BundleSlot` for
+  both). Per view (its frame bind group) a cluster in the frustum is recorded once as a
+  `GPURenderBundle` of the draws it draws now (shown, not faded out, not fading by blending, not
+  hidden by a room or an occluder) and replayed while that set holds; a set that has not stayed
+  for `BUNDLE_SETTLE` passes is drawn one by one, as before. Draws of the cluster outside the
+  frustum are recorded too (the GPU clips them; the set then does not change as the camera
+  turns); those in it take their lights and mark their fades seen as before. The bundles of a
+  scene go after its unsettled clusters' draws and before its loose draws: moving ones, the sky's
+  and first person's, object LOD (its segments follow the loaded cells), actors' parts and shapes
+  without Zbuffer_Test, whose result depends on the order of the draws (every bundled draw is
+  depth tested and writes depth, so only exact ties of depth could come out otherwise). Only the
+  opaque pass is bundled; the blended pass keeps its order.
+- **Rooms and occluders per cluster**: `RoomCuller.narrow` picks, within the scene's focus, the
+  occlusion volumes that can hide something of a cluster. None: its draws are not tested; its
+  sphere wholly inside a volume: all hidden; otherwise, or when the camera stands in a room and a
+  room holds one of its draws (`inRoom`), each draw is tested as before and the result is part of
+  the set.
+- **Light lists held per cluster** (`#clusterLights`): a list is a function of the light keys
+  reaching the draw's bound and of its room. The keys reaching a cluster's bound (which, their
+  place among the keys, and every value) are compared each light frame; while they stay the same
+  the lists its draws chose since hold and are not chosen again (most clusters are reached by
+  no light; flickering torches change the frame's keys every frame).
+- **Transform samples kept** (`sampleTransform` in `render/animation.ts`): a source sampled at
+  the time it was last sampled at, or one whose key groups hold at most one key (most tracks of
+  the objects' sequences), gives its last sample again.
+
+Per rendered frame in the profiles (ms, the main thread; `--cpu-profile 55`, warm):
+
+| part                    | riverwood   | whiterun-day | streaming   |
+| ----------------------- | ----------- | ------------ | ----------- |
+| `drawOpaque`            | 1.67 → 0.95 | 1.13 → 0.78  | 0.64 → 0.38 |
+| `setBindGroup` (all)    | 0.61 → 0.31 | 0.41 → 0.28  | 0.32 → 0.19 |
+| `RoomCuller.visible`    | 0.41 → 0.09 | 0.36 → 0.12  | 0.00 → 0.00 |
+| `graphFrame`            | 0.48 → 0.41 | 0.34 → 0.33  | 0.18 → 0.16 |
+| the whole frame (noisy) | 9.6 → 8.9   | 10.1 → 10.2  | 7.3 → 6.9   |
+
+Before (main e168c97c) and after, two runs each, warm (a riverwood run first), 60 s, no
+profiler, in the order `riverwood`, `whiterun-day`, `streaming` (headless Chrome on the shared
+machine; whiterun-day alone gave 69–93 fps over the runs of this round):
+
+| scenario     | run     | fps   | p50 (ms) | p95 (ms) | p99 (ms) | > 33 ms | > 50 ms |
+| ------------ | ------- | ----- | -------- | -------- | -------- | ------- | ------- |
+| riverwood    | before  | 112.1 | 11.0     | 11.2     | 16.8     | 7       | 2       |
+|              | before² | 108.9 | 11.1     | 11.2     | 16.8     | 7       | 1       |
+|              | after   | 117.1 | 5.7      | 11.2     | 16.8     | 2       | 0       |
+|              | after²  | 118.1 | 5.7      | 11.2     | 16.8     | 4       | 0       |
+| whiterun-day | before  | 73.9  | 11.2     | 22.2     | 27.8     | 6       | 1       |
+|              | before² | 70.8  | 11.2     | 22.2     | 27.8     | 7       | 1       |
+|              | after   | 79.7  | 11.1     | 22.1     | 27.8     | 13      | 3       |
+|              | after²  | 77.9  | 11.1     | 22.2     | 27.8     | 33      | 6       |
+| streaming    | before  | 125.4 | 5.6      | 16.7     | 16.8     | 3       | 1       |
+|              | before² | 143.1 | 5.6      | 11.2     | 16.7     | 4       | 1       |
+|              | after   | 120.8 | 5.6      | 16.7     | 22.2     | 5       | 3       |
+|              | after²  | 114.6 | 5.6      | 16.7     | 22.2     | 8       | 1       |
+
+The profiled runs (before → after: riverwood 114 → 119 fps, whiterun-day 75 → 73, streaming
+105 → 111) split into frames show no long frame held by the opaque pass or a bundle's recording;
+the flight's are the HUD's movies, `ActorsAway`, the records read for the first actors and
+frames with no single cause, as before, and whiterun-day's long frames moved with the machine's
+load (13 and 33 in two runs of the same code). Riverwood's frames halved their median (11 to
+5.7 ms between the display's ticks).
+
+What is left (TODO(M13)):
+
+- A cluster's draws are still walked every frame for their set (shown, faded, rooms and
+  occluders) and their lights: 0.4–0.5 ms in Riverwood and Whiterun. Change marks (a
+  reference enabled, a fade's level crossing 255, the camera moved) would let a settled cluster
+  skip the walk.
+- In interiors the camera stands in a room, so the clusters whose draws rooms hold are tested
+  draw by draw, and their sets change as the portals' rectangles do: those stay unbundled while
+  the camera moves.
+- The loose draws (actors' parts, moving clutter, object LOD) are still bound one by one
+  (0.3–0.5 ms).
+- The objects' behavior graphs (`graphFrame`, 0.3–0.4 ms) still evaluate every layer each frame
+  (most of it the maps `evaluate` builds); sampling only the tracks whose targets are drawn needs
+  which nodes a model's draws, particles and lag bones read.
+
 ## The lighting technique's flags and the fades (observed in the original)
 
 The original picks a lighting shape's technique from its shader flags alone, the later ones
