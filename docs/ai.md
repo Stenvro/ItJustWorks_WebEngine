@@ -2214,7 +2214,7 @@ meanwhile.
     vanilla: (damage × 5 + 50) × 0.6), at most fKnockbackForceMax (128), spread over
     fKnockbackTime (0.3 s): the controller moves at force / time units a second besides its own
     movement, unless a stronger push already moves it. A hit that names its own push (a trap's
-    ProcessTrapHit pushback: , away from the trap along the ground, the trap's
+    ProcessTrapHit pushback: `trapPushback`, away from the trap along the ground, the trap's
     pushback at most fKnockbackForceMax over fKnockbackTime; the actor is not knocked down) uses
     it instead of the formula. No push on an actor in a kill move,
     of a race that is Not Pushable (RACE DATA 0x400), or from a projectile (arrows, bolts).
