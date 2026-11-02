@@ -48,6 +48,25 @@ describe('matrices', () => {
     close([...multiply(identity(), scale)], [...scale]);
   });
 
+  it('multiplies into either operand as into a matrix of its own', () => {
+    const a = Float32Array.from({ length: 16 }, (_, i) => ((i * 7) % 5) - 2);
+    const b = Float32Array.from({ length: 16 }, (_, i) => ((i * 3) % 7) - 3);
+    const expected = multiply(a, b);
+    // The textbook product, entry by entry.
+    for (let col = 0; col < 4; col++) {
+      for (let row = 0; row < 4; row++) {
+        let sum = 0;
+        for (let k = 0; k < 4; k++) sum += (a[k * 4 + row] ?? 0) * (b[col * 4 + k] ?? 0);
+        expect(expected[col * 4 + row]).toBe(sum);
+      }
+    }
+    expect([...multiply(a, b, a.slice())]).toEqual([...expected]);
+    const intoA = a.slice();
+    expect([...multiply(intoA, b, intoA)]).toEqual([...expected]);
+    const intoB = b.slice();
+    expect([...multiply(a, intoB, intoB)]).toEqual([...expected]);
+  });
+
   it('puts the eye at the origin of view space, looking down −Z', () => {
     const view = lookAt([0, -10, 0], [0, 0, 0], [0, 0, 1]);
     close(transformPoint(view, [0, -10, 0]), [0, 0, 0]);

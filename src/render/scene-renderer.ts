@@ -496,20 +496,18 @@ const RUN_GAP = 4 * DRAW_SIZE;
  */
 const dynamicOffsets = new Uint32Array(2);
 
+/** What draws are recorded into: a pass, or a render bundle (the shadow casters' clusters). */
+type DrawEncoder = GPURenderPassEncoder | GPURenderBundleEncoder;
+
 /** Binds a group with one dynamic offset. */
-function bindAt(
-  pass: GPURenderPassEncoder,
-  index: number,
-  group: GPUBindGroup,
-  offset: number,
-): void {
+function bindAt(pass: DrawEncoder, index: number, group: GPUBindGroup, offset: number): void {
   dynamicOffsets[0] = offset;
   pass.setBindGroup(index, group, dynamicOffsets, 0, 1);
 }
 
 /** Binds a group with two dynamic offsets. */
 function bindAt2(
-  pass: GPURenderPassEncoder,
+  pass: DrawEncoder,
   index: number,
   group: GPUBindGroup,
   first: number,
@@ -576,7 +574,7 @@ const alphaTestedShadows = new WeakSet<GPURenderPipeline>();
  * alpha-tested casters read theirs, so the others keep whichever one is bound.
  */
 function bindShadowPart(
-  pass: GPURenderPassEncoder,
+  pass: DrawEncoder,
   state: PassState,
   pipeline: GPURenderPipeline,
   part: GpuPart,
@@ -957,11 +955,17 @@ interface FadeGroup {
   seen: number;
   /** The instances' fade it stands for (its veil, whether distance counts). */
   readonly of?: InstanceFade;
+  /** The fade settings its range (`start`, `end`: fadeRange) was worked out with. */
+  rangeOf: FadeSettings | undefined;
+  start: number;
+  end: number;
 }
 
 /** A draw that changes every frame (animated, or turning to the camera). */
 interface AnimatedDraw {
   readonly offset: number;
+  /** Its uniforms in the scene's CPU copy (a view kept, not made each frame). */
+  readonly floats: Float32Array;
   readonly instanceWorld: Mat4;
   readonly part: ModelPart;
   readonly animation: ModelAnimation | undefined;
@@ -1192,10 +1196,10 @@ interface SceneBones {
   readonly faces: ReadonlyMap<GpuMorphs, GPUBindGroup>;
   /** Byte offset of the empty morph region. */
   readonly noMorphs: number;
-  readonly data: Float32Array;
+  readonly data: Float32Array<ArrayBuffer>;
   /** The palettes as the last frame drew them (the motion vectors of skinned limbs). */
   readonly previous: GPUBuffer;
-  readonly previousData: Float32Array;
+  readonly previousData: Float32Array<ArrayBuffer>;
   /** The velocity pass before which each palette (by byte offset) was last rewritten. */
   readonly rewritten: Map<number, number>;
   /** Palettes whose last-frame copy is the current palette (the limbs hold still). */
@@ -1291,6 +1295,45 @@ export interface VelocityMatrices {
 const NO_DRAWS: readonly Draw[] = [];
 
 /** Whether any of a scene may be inside `planes` (its bound, when it has one). */
+/**
+ * Shadow casters of a scene that stay where they are, grouped by place (CASTER_CLUSTER_SIZE
+ * squares): each group goes into a shadow layer as one render bundle, recorded once and replayed
+ * while the same casters are drawn. A depth-only pass ends the same in any order, and a caster
+ * outside the layer's box writes nothing there (clipped), so a group in view is drawn whole.
+ */
+interface CasterCluster {
+  readonly center: readonly [number, number, number];
+  readonly radius: number;
+  /** In the scene's caster order (by bindings). */
+  readonly draws: readonly Draw[];
+  /** By shadow layer: its bundle and the casters it was recorded with (clusterKey). */
+  readonly bundles: ({ bundle: GPURenderBundle; key: number; count: number } | undefined)[];
+  /** By shadow layer: a set not yet recorded, and for how many passes it has stayed. */
+  readonly settling: ({ key: number; count: number; passes: number } | undefined)[];
+}
+
+/** Passes of a layer a cluster's casters stay the same before they are recorded as a bundle. */
+const BUNDLE_SETTLE = 30;
+
+/** A scene's casters: in clusters, and those that move (drawn one by one). */
+interface SceneCasters {
+  readonly clusters: readonly CasterCluster[];
+  readonly loose: readonly Draw[];
+}
+
+/** The side of a caster cluster's square (game units; a cell is 4096). */
+const CASTER_CLUSTER_SIZE = 1024;
+
+/** Whether a shadow layer with casters at least `minRadius` big draws a caster now. */
+function castsNow(draw: Draw, minRadius: number): boolean {
+  return (
+    draw.part.shadowPipeline !== undefined &&
+    draw.radius >= minRadius &&
+    draw.visibility?.hidden !== true &&
+    !(draw.fade && draw.fade.level >= 255)
+  );
+}
+
 function sceneInside(planes: readonly Plane[], scene: GpuScene): boolean {
   const bound = scene.bound;
   return !bound || sphereVisible(planes, bound.center, bound.radius);
@@ -1323,6 +1366,8 @@ export class GpuScene {
    * null: nothing in it moves).
    */
   motion: SceneMotion | null | undefined;
+  /** Its shadow casters by cluster (SceneRenderer #sceneCasters: made when first drawn). */
+  casters: SceneCasters | undefined;
   /** The models it draws (held while it exists). */
   readonly #models: readonly GpuModel[];
   /** A sphere round all its draws (see bound); null: never culled whole. */
@@ -2615,6 +2660,9 @@ export class SceneRenderer {
             updated: -1,
             seen: -1,
             of: instance.fade,
+            rangeOf: undefined,
+            start: 0,
+            end: 0,
           };
           fadeGroups.set(instance.fade, fade);
         }
@@ -2792,19 +2840,22 @@ export class SceneRenderer {
           face ||
           meshParticle
         ) {
+          // One shape for all (absent fields undefined): the frame's walk over them stays
+          // monomorphic.
           animated.push({
-            ...(follows && { follows }),
-            ...(meshParticle && { meshParticle }),
             offset,
+            floats: new Float32Array(uniforms, offset, DRAW_SIZE / 4),
             instanceWorld: instance.world,
             part: part.part,
             animation,
-            ...(playback && { playback }),
-            ...(graph && { graph }),
-            ...(bones !== undefined && { bones }),
-            ...(posed && { posed }),
-            ...(hung && { hung }),
-            ...(face && { face }),
+            playback,
+            graph,
+            bones,
+            posed,
+            hung,
+            face,
+            meshParticle,
+            follows,
           });
         }
         const floats = new Float32Array(uniforms, offset, DRAW_SIZE / 4);
@@ -2923,13 +2974,15 @@ export class SceneRenderer {
           sky,
           lodSegments: lodSegments(part.part, world),
           bones,
-          ...(ranges && { ranges }),
-          ...(face && { face: { morphs: face.morphs, offset: face.offset } }),
-          ...(instance.visibility && { visibility: instance.visibility }),
-          ...(firstPerson && { firstPerson }),
-          ...(fadeGroup && { fade: fadeGroup }),
-          ...(instance.reflected === true && { reflected: true }),
-          ...(fadeBlend && { fadeBlend }),
+          // Every field set, absent ones undefined: all draws share one shape, so the passes'
+          // walks over thousands of them a frame read their fields without megamorphic lookups.
+          ranges,
+          face: face && { morphs: face.morphs, offset: face.offset },
+          visibility: instance.visibility,
+          firstPerson: firstPerson || undefined,
+          fade: fadeGroup,
+          reflected: instance.reflected === true || undefined,
+          fadeBlend,
         };
         draws.push(draw);
         if (fadeGroup) {
@@ -2973,10 +3026,13 @@ export class SceneRenderer {
             sky,
             lodSegments: undefined,
             bones,
-            ...(ranges && { ranges }),
-            ...(instance.visibility && { visibility: instance.visibility }),
-            ...(firstPerson && { firstPerson }),
-            ...(fadeGroup && { fade: fadeGroup }),
+            ranges,
+            face: undefined,
+            visibility: instance.visibility,
+            firstPerson: firstPerson || undefined,
+            fade: fadeGroup,
+            reflected: undefined,
+            fadeBlend: undefined,
           };
           draws.push(passDraw);
           fadeGroup?.draws.push(passDraw);
@@ -3093,7 +3149,11 @@ export class SceneRenderer {
    * Uploads a scene's bone palettes and head parts' active morphs; every draw binds its own
    * at dynamic offsets (`noMorphs`: the empty morph region).
    */
-  #sceneBones(data: Float32Array, noMorphs: number, morphs: readonly GpuMorphs[]): SceneBones {
+  #sceneBones(
+    data: Float32Array<ArrayBuffer>,
+    noMorphs: number,
+    morphs: readonly GpuMorphs[],
+  ): SceneBones {
     const buffer = createBuffer(
       this.#device,
       new Uint8Array(data.buffer),
@@ -3136,17 +3196,24 @@ export class SceneRenderer {
    * Keeps a palette as the last frame drew it before it is rewritten (once per frame, for
    * placements sharing it too): the velocity pass moves its limbs from there.
    */
-  #keepLastPalette(bones: SceneBones, offset: number, floats: number): void {
+  #keepLastPalette(
+    bones: SceneBones,
+    offset: number,
+    floats: number,
+    /** Gathers the upload into runs (flushed by the caller) instead of writing it at once. */
+    runs?: UniformRuns,
+  ): void {
     if (bones.rewritten.get(offset) === this.#velocityFrame) return;
     const at = offset / 4;
     bones.previousData.set(bones.data.subarray(at, at + floats), at);
-    this.#device.queue.writeBuffer(bones.previous, offset, bones.previousData, at, floats);
+    if (runs) runs.add(offset, floats * 4);
+    else this.#device.queue.writeBuffer(bones.previous, offset, bones.previousData, at, floats);
     bones.rewritten.set(offset, this.#velocityFrame);
     bones.settled.delete(offset);
   }
 
   /** Binds a skinned draw's palette and morphs. */
-  #bindBones(pass: GPURenderPassEncoder, scene: GpuScene, draw: Draw): void {
+  #bindBones(pass: DrawEncoder, scene: GpuScene, draw: Draw): void {
     const bones = scene.bones;
     if (draw.bones === undefined || !bones) return;
     const face = draw.face;
@@ -3596,6 +3663,14 @@ export class SceneRenderer {
     };
     for (const scene of sceneList) {
       const uniforms = new UniformRuns(this.#device, scene.uniforms, scene.uniformData);
+      // The palettes rewritten this frame, and their last frame's copies, go up in runs too: an
+      // actor's parts' palettes lie side by side (one call each was two per skinned part).
+      const sceneBones = scene.bones;
+      const paletteRuns =
+        sceneBones && new UniformRuns(this.#device, sceneBones.buffer, sceneBones.data.buffer);
+      const previousRuns =
+        sceneBones &&
+        new UniformRuns(this.#device, sceneBones.previous, sceneBones.previousData.buffer);
       // Moving instances: add-ons follow, then the draws that moved get their new place.
       for (const addon of scene.movingAddons) {
         if (addon.version === addon.motion.version) continue;
@@ -3620,7 +3695,7 @@ export class SceneRenderer {
           (draw.hung || draw.posed
             ? frameOf(draw.animation)
             : this.#lagged(draw.animation, frameOf(draw.animation), draw.instanceWorld, seconds));
-        const floats = new Float32Array(scene.uniformData, draw.offset, DRAW_SIZE / 4);
+        const floats = draw.floats;
         const billboard = draw.part.billboard;
         // Uploaded only when something in it changed: an actor standing still keeps its
         // parts' matrices (its pose goes to the bone palette), and so does a door at rest.
@@ -3690,35 +3765,35 @@ export class SceneRenderer {
         if (posed && skin && bones && draw.bones !== undefined) {
           if (posed.version !== posed.pose.version) {
             posed.version = posed.pose.version;
-            this.#keepLastPalette(bones, draw.bones, skin.bones.length * PALETTE_BONE_FLOATS);
-            writePosePalette(skin, posed, bones.data, draw.bones / 4);
-            this.#device.queue.writeBuffer(
-              bones.buffer,
+            this.#keepLastPalette(
+              bones,
               draw.bones,
-              bones.data,
-              draw.bones / 4,
               skin.bones.length * PALETTE_BONE_FLOATS,
+              previousRuns,
             );
+            writePosePalette(skin, posed, bones.data, draw.bones / 4);
+            paletteRuns?.add(draw.bones, skin.bones.length * PALETTE_BONE_FLOATS * 4);
           }
         } else if (frame && skin && bones && draw.bones !== undefined) {
-          this.#keepLastPalette(bones, draw.bones, skin.bones.length * PALETTE_BONE_FLOATS);
+          this.#keepLastPalette(
+            bones,
+            draw.bones,
+            skin.bones.length * PALETTE_BONE_FLOATS,
+            previousRuns,
+          );
           writePosedPalette(
             skin,
             (i) => frame.worlds.get(skin.bones[i] ?? -1),
             bones.data,
             draw.bones / 4,
           );
-          this.#device.queue.writeBuffer(
-            bones.buffer,
-            draw.bones,
-            bones.data,
-            draw.bones / 4,
-            skin.bones.length * PALETTE_BONE_FLOATS,
-          );
+          paletteRuns?.add(draw.bones, skin.bones.length * PALETTE_BONE_FLOATS * 4);
         }
         if (changed) uniforms.add(draw.offset, DRAW_SIZE);
       }
       uniforms.flush();
+      paletteRuns?.flush();
+      previousRuns?.flush();
       // Emittance colours change with the hour (windows lit at night, sunbeams by day).
       for (const entry of scene.emittance) {
         if (entry.version === entry.source.version) continue;
@@ -3896,13 +3971,18 @@ export class SceneRenderer {
     pass.setBindGroup(0, this.#frame.bindGroup);
     pass.setVertexBuffer(1, this.#fallbackVertices);
     const state = passState();
+    const rooms = this.#frame.rooms;
     for (const scene of scenes) {
       if (!sceneInside(this.#frame.planes, scene)) continue;
+      // Its draws are tested only against the occluders that may hide something of it.
+      const bound = scene.bound;
+      if (rooms && bound) rooms.focus(bound.center, bound.radius);
       for (const draw of scene.draws) {
         if (draw.part.pass === 'opaque' && !blendFading(draw) && this.#visible(draw)) {
           this.#drawPart(pass, scene, draw, state);
         }
       }
+      rooms?.unfocus();
     }
     this.#flushLights(scenes);
   }
@@ -4578,23 +4658,152 @@ export class SceneRenderer {
     bindAt(pass, 0, this.#cascadeBindGroup, this.cascadeOffset(cascade));
     pass.setVertexBuffer(1, this.#fallbackVertices);
     const state = passState();
+    const bundles = this.#shadowBundles;
+    bundles.length = 0;
     for (const scene of scenes) {
       if (!sceneInside(planes, scene)) continue;
-      for (const draw of scene.shadowCasters) {
+      const casters = this.#sceneCasters(scene);
+      // Moving casters one by one, culled each.
+      for (const draw of casters.loose) {
         const { part } = draw;
-        if (!part.shadowPipeline || draw.radius < minRadius || draw.visibility?.hidden) continue;
-        if (draw.fade && draw.fade.level >= 255) continue;
+        if (!part.shadowPipeline || !castsNow(draw, minRadius)) continue;
         if (!sphereVisible(planes, draw.center, draw.radius)) continue;
-        bindShadowPart(pass, state, part.shadowPipeline, part);
-        bindAt(pass, 1, scene.drawBindGroup, draw.uniformOffset);
-        this.#bindBones(pass, scene, draw);
-        if (draw.ranges) {
-          for (const range of draw.ranges) pass.drawIndexed(range.count, 1, range.first);
-        } else {
-          pass.drawIndexed(part.indexCount);
+        this.#drawCaster(pass, state, scene, draw, part.shadowPipeline);
+      }
+      // The others by cluster, each a bundle (recorded again when what it draws changed); a
+      // cluster whose casters are still changing (fading at the loaded area's edge, a cell just
+      // loaded) is drawn one by one until they settle.
+      for (const cluster of casters.clusters) {
+        if (!sphereVisible(planes, cluster.center, cluster.radius)) continue;
+        const bundle = this.#clusterBundle(scene, cluster, cascade, minRadius);
+        if (bundle === 'unsettled') {
+          for (const draw of cluster.draws) {
+            const pipeline = draw.part.shadowPipeline;
+            if (!pipeline || !castsNow(draw, minRadius)) continue;
+            if (!sphereVisible(planes, draw.center, draw.radius)) continue;
+            this.#drawCaster(pass, state, scene, draw, pipeline);
+          }
+        } else if (bundle) {
+          bundles.push(bundle);
         }
       }
     }
+    // Last: a bundle leaves the pass's bindings unset behind it.
+    if (bundles.length > 0) pass.executeBundles(bundles);
+  }
+
+  /** The bundles a shadow pass replays (kept between passes). */
+  readonly #shadowBundles: GPURenderBundle[] = [];
+
+  /** One shadow caster, its pipeline, material, buffers and uniforms bound as needed. */
+  #drawCaster(
+    pass: DrawEncoder,
+    state: PassState,
+    scene: GpuScene,
+    draw: Draw,
+    pipeline: GPURenderPipeline,
+  ): void {
+    bindShadowPart(pass, state, pipeline, draw.part);
+    bindAt(pass, 1, scene.drawBindGroup, draw.uniformOffset);
+    this.#bindBones(pass, scene, draw);
+    if (draw.ranges) {
+      for (const range of draw.ranges) pass.drawIndexed(range.count, 1, range.first);
+    } else {
+      pass.drawIndexed(draw.part.indexCount);
+    }
+  }
+
+  /**
+   * A scene's shadow casters sorted into clusters by place; those that move (a moving instance's,
+   * a part following a skeleton) and those never culled stay loose.
+   */
+  #sceneCasters(scene: GpuScene): SceneCasters {
+    if (scene.casters) return scene.casters;
+    const moves = new Set<Draw>();
+    for (const entry of scene.moving) moves.add(entry.draw);
+    for (const draw of scene.animated)
+      for (const followed of draw.follows?.draws ?? []) moves.add(followed);
+    const loose: Draw[] = [];
+    const bySquare = new Map<number, Draw[]>();
+    for (const draw of scene.shadowCasters) {
+      if (moves.has(draw) || draw.sky || draw.firstPerson) {
+        loose.push(draw);
+        continue;
+      }
+      const x = Math.floor(draw.center[0] / CASTER_CLUSTER_SIZE) + 32768;
+      const y = Math.floor(draw.center[1] / CASTER_CLUSTER_SIZE) + 32768;
+      const square = x * 65536 + y;
+      let draws = bySquare.get(square);
+      if (!draws) bySquare.set(square, (draws = []));
+      draws.push(draw);
+    }
+    const clusters: CasterCluster[] = [];
+    for (const draws of bySquare.values()) {
+      const bound = boundOf(draws);
+      if (!bound) {
+        loose.push(...draws);
+        continue;
+      }
+      clusters.push({
+        center: bound.center,
+        radius: bound.radius,
+        draws,
+        bundles: [],
+        settling: [],
+      });
+    }
+    scene.casters = { clusters, loose };
+    return scene.casters;
+  }
+
+  /**
+   * A cluster's bundle for a shadow layer: the casters drawn now (castsNow), recorded once and
+   * replayed until that set changes (a reference enabled, faded out, or the layer's smallest
+   * caster changed). Undefined when none is drawn; 'unsettled' while the set has not stayed the
+   * same for BUNDLE_SETTLE passes of the layer (a bundle recorded for each passing set cost more
+   * than drawing it).
+   */
+  #clusterBundle(
+    scene: GpuScene,
+    cluster: CasterCluster,
+    layer: number,
+    minRadius: number,
+  ): GPURenderBundle | 'unsettled' | undefined {
+    const draws = cluster.draws;
+    // Which casters are drawn: their count and a hash of their places in the cluster.
+    let key = 0;
+    let count = 0;
+    for (let i = 0; i < draws.length; i++) {
+      const draw = draws[i];
+      if (!draw || !castsNow(draw, minRadius)) continue;
+      count++;
+      key = (Math.imul(key, 0x01000193) ^ (i + 1)) | 0;
+    }
+    if (count === 0) return undefined;
+    const kept = cluster.bundles[layer];
+    if (kept?.key === key && kept.count === count) return kept.bundle;
+    const seen = cluster.settling[layer];
+    if (seen?.key !== key || seen.count !== count) {
+      cluster.settling[layer] = { key, count, passes: 1 };
+      return 'unsettled';
+    }
+    if (++seen.passes < BUNDLE_SETTLE) return 'unsettled';
+    const encoder = this.#device.createRenderBundleEncoder({
+      label: 'shadow-casters',
+      colorFormats: [],
+      depthStencilFormat: DEPTH_FORMAT,
+    });
+    bindAt(encoder, 0, this.#cascadeBindGroup, this.cascadeOffset(layer));
+    encoder.setVertexBuffer(1, this.#fallbackVertices);
+    const state = passState();
+    for (const draw of draws) {
+      const pipeline = draw.part.shadowPipeline;
+      if (!pipeline || !castsNow(draw, minRadius)) continue;
+      this.#drawCaster(encoder, state, scene, draw, pipeline);
+    }
+    const bundle = encoder.finish();
+    cluster.bundles[layer] = { bundle, key, count };
+    return bundle;
   }
 
   /**
@@ -4609,7 +4818,14 @@ export class SceneRenderer {
     for (const group of scene.fades) {
       const center = group.draws[0]?.center;
       if (!center) continue;
-      const { start, end } = fadeRange(group.kind, group.radius, this.objectFade);
+      // Its range, worked out again only when the fade settings change.
+      if (group.rangeOf !== this.objectFade) {
+        const range = fadeRange(group.kind, group.radius, this.objectFade);
+        group.rangeOf = this.objectFade;
+        group.start = range.start;
+        group.end = range.end;
+      }
+      const { start, end } = group;
       // Not Math.hypot: this runs for every placed reference each frame, and hypot is slow.
       const dx = center[0] - camera[0];
       const dy = center[1] - camera[1];
