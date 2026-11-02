@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { PackfileBuilder } from '../../../tests/helpers/hkx-builder.ts';
 import {
+  activeChildren,
+  BLENDER_FLAGS,
   characterBehaviorFile,
   graphStart,
   EVENT_FLAGS,
@@ -264,5 +266,41 @@ describe('behavior graphs', () => {
     // A project naming a character that is not there gives no graph.
     files.delete('meshes\\fx\\characters\\fire.hkx');
     expect(await projectHasCharacter('meshes\\fx\\fire.hkx', read)).toBe(false);
+  });
+});
+
+describe('parametric blends', () => {
+  const child = (weight: number) => ({ weight: { value: weight }, generator: undefined });
+  const blender = (parameter: number, cyclic: boolean) =>
+    ({
+      kind: 'blender',
+      name: 'Turn',
+      referencePoseWeightThreshold: 0,
+      blendParameter: { value: parameter },
+      minCyclicBlendParameter: 0,
+      maxCyclicBlendParameter: 1,
+      indexOfSyncMasterChild: -1,
+      flags: BLENDER_FLAGS.parametricBlend | (cyclic ? BLENDER_FLAGS.isParametricBlendCyclic : 0),
+      subtractLastChild: false,
+      children: [child(0.25), child(0.5), child(0.75)],
+    }) as const;
+  const weights = (parameter: number, cyclic: boolean): number[] => {
+    const node = blender(parameter, cyclic);
+    const active = activeChildren(node, (bindable) => bindable.value);
+    return node.children.map((c) => active.find(([a]) => a === c)?.[1] ?? 0);
+  };
+
+  it('blends the two children around the parameter, clamped at the ends', () => {
+    expect(weights(0.375, false)).toEqual([0.5, 0.5, 0]);
+    expect(weights(0.9, false)).toEqual([0, 0, 1]);
+  });
+
+  it('wraps a cyclic blend within its range, from the last child back to the first', () => {
+    // 1.375 wraps to 0.375 in [0, 1).
+    expect(weights(1.375, true)).toEqual([0.5, 0.5, 0]);
+    // 0.875 lies between the last (0.75) and the first again (1.25): half way.
+    const [first = 0, , last = 0] = weights(0.875, true);
+    expect(first).toBeCloseTo(0.25, 5);
+    expect(last).toBeCloseTo(0.75, 5);
   });
 });

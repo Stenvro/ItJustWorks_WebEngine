@@ -103,6 +103,9 @@ describe.skipIf(!hasGamedata())('knock-downs on the local game data', () => {
     await step(0.5);
     expect(master()).toBe('FullyRagdoll');
     expect(raised).toContain('RemoveCharacterControllerFromWorld');
+    // No rigid body ragdoll controls lie in FullyRagdoll (the Root state's DriveRagdollRB is a
+    // sibling's): the powered controller has the ragdoll.
+    expect(runtime.rigidBodyRagdoll()).toBeUndefined();
     // The ragdoll lies in the first get-up pose (what the matcher shows now), turned by 0.7
     // radians about the up axis and 100, 50 units over.
     const pose = Float32Array.from(runtime.pose);
@@ -140,5 +143,12 @@ describe.skipIf(!hasGamedata())('knock-downs on the local game data', () => {
     await step(4);
     expect(raised).toContain('GetUpEnd');
     expect(master()).toBe('Root');
+    // Standing, the Root state's DriveRagdollRB: Havok's default control data, blended in over
+    // half a second (ActorBodies drives a ragdoll in the world by it), the lower body keyframed.
+    const rigid = runtime.rigidBodyRagdoll();
+    expect(rigid?.durationToBlend).toBeCloseTo(0.5, 5);
+    expect(rigid?.control.hierarchyGain).toBeCloseTo(0.17, 5);
+    expect(rigid?.control.velocityGain).toBeCloseTo(0.6, 5);
+    expect(runtime.keyframedRagdollBones().size).toBe(8);
   });
 });

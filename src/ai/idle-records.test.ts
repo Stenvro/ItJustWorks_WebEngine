@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { idleLoopSeconds } from './ambient-idles.ts';
 import { Fields } from '../formats/esm/fields.ts';
 import {
   behaviorGraphKey,
@@ -183,6 +184,24 @@ describe('the idle tree', () => {
     expect(tree.rootAction(0x13)?.editorId).toBe('ActionIdle');
     expect(tree.action('actionidle')?.formId).toBe(1);
     expect(tree.problems).toEqual([]);
+  });
+
+  it('gives an idle its loop seconds, its own or its group’s (255 and 255: forever)', () => {
+    const tree = new IdleTree(
+      [action(1, 'ActionIdle')],
+      [
+        // The troll's crouching idles: a group of 2 to 5 s; the goat's feeding its own 10 to 30.
+        idle(0x10, 1, undefined, { event: undefined, loopMin: 2, loopMax: 5 }),
+        idle(0x11, 0x10, undefined),
+        idle(0x12, 1, 0x10, { loopMin: 10, loopMax: 30 }),
+        idle(0x13, 1, 0x12, { loopMin: 255, loopMax: 255 }),
+        idle(0x14, 1, 0x13),
+      ],
+    );
+    expect(idleLoopSeconds(tree, 0x11)).toEqual({ min: 2, max: 5 });
+    expect(idleLoopSeconds(tree, 0x12)).toEqual({ min: 10, max: 30 });
+    expect(idleLoopSeconds(tree, 0x13)).toBeUndefined();
+    expect(idleLoopSeconds(tree, 0x14)).toBeUndefined();
   });
 
   it('puts a later plugin’s idle first where two name the same previous', () => {
