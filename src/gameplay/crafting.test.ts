@@ -47,6 +47,11 @@ import {
   temperingSkillUse,
   temperLevelOfHealth,
   temperQualityName,
+  temperingHealthOf,
+  temperingIncreaseOfHealth,
+  temperQualityTier,
+  temperSettings,
+  ingredientUsed,
   unpackEffectCategories,
   weaponChargePerUse,
   weaponEffectAt,
@@ -210,6 +215,63 @@ describe('smithing', () => {
     expect(canImprove(1, 2)).toBe(true);
   });
 
+  it('give the health of the observed rule, which is UESP’s thresholds', () => {
+    const level = (skill: number, perk: number) => {
+      const health = temperingHealthOf(skill, perk);
+      return temperQualityTier(health) === 0 ? 0 : temperLevelOfHealth(health);
+    };
+    expect([14, 30, 31, 64, 65, 99, 100, 134, 168].map((s) => level(s, 1))).toEqual([
+      1, 1, 2, 2, 3, 3, 4, 5, 6,
+    ]);
+    expect([21, 22, 39, 40, 57, 74, 91].map((s) => level(s, 2))).toEqual([1, 2, 2, 3, 4, 5, 6]);
+    for (let skill = 15; skill <= 200; skill++) {
+      for (const perk of [1, 2]) {
+        expect(level(skill, perk)).toBe(
+          temperingQualityLevel(temperingEffectiveSkill({ skill, perk })),
+        );
+      }
+    }
+    // At or below fHealthDataValue1 it stays unrounded: no quality.
+    expect(temperingHealthOf(0, 1)).toBeCloseTo(1.1 + (0.5 * (-15 * 0.5825 + 1)) / 100, 9);
+    expect(level(0, 2)).toBe(0);
+    expect(temperingHealthOf(-200, 1)).toBe(1);
+    // fHealthDataValue1 .. 6 and fSmithingConditionFactor from the load order.
+    const temper = temperSettings((name) =>
+      name === 'fHealthDataValue6' ? 2.1 : name === 'fSmithingConditionFactor' ? 1 : undefined,
+    );
+    // 1.1 + 1 × (85 × 1 + 1) / 100 = 1.96, rounded to tenths.
+    expect(temperingHealthOf(100, 1, temper)).toBeCloseTo(2, 6);
+  });
+
+  it('learn the next effect once the uses reach iIngredientUseEffectThreshold', () => {
+    const threshold = { ingredientUseEffectThreshold: 25 };
+    expect(ingredientUsed(0, 0, new Set([0]), threshold)).toEqual({ count: 0, learned: undefined });
+    expect(ingredientUsed(20, 4, new Set([0]), threshold)).toEqual({
+      count: 24,
+      learned: undefined,
+    });
+    expect(ingredientUsed(20, 10, new Set([0, 2]), threshold)).toEqual({ count: 5, learned: 1 });
+    // All four known: the count still drops.
+    expect(ingredientUsed(30, 0, new Set([0, 1, 2, 3]), threshold)).toEqual({
+      count: 5,
+      learned: undefined,
+    });
+  });
+
+  it('name a health by the last fHealthDataValue it reaches, and add by it', () => {
+    expect([1, 1.05, 1.1, 1.25, 1.6, 1.9].map((h) => temperQualityTier(h))).toEqual([
+      0, 0, 1, 2, 6, 6,
+    ]);
+    const temper = temperSettings((name) => (name === 'fHealthDataValue2' ? 1.3 : undefined));
+    expect(temperQualityTier(1.25, temper)).toBe(1);
+    // UESP's (3.6 × level − 1.6) × 0.5, chest armor twice; fSmithingWeaponMax at Legendary.
+    expect(temperingIncreaseOfHealth(1.3, 'weapon')).toBeCloseTo(4.6);
+    expect(temperingIncreaseOfHealth(1.3, 'chest')).toBeCloseTo(9.2);
+    expect(temperingIncreaseOfHealth(1, 'armor')).toBe(0);
+    const weaponMax = temperSettings((name) => (name === 'fSmithingWeaponMax' ? 4 : undefined));
+    expect(temperingIncreaseOfHealth(1.6, 'weapon', weaponMax)).toBeCloseTo(4);
+  });
+
   it("add UESP's ratings: armor rounded up, weapon damage rounded", () => {
     // Other armor: +1 Fine, +3 Superior, +5 Exquisite, +7 Flawless, +9 Epic, +10 Legendary.
     expect([1, 2, 3, 4, 5, 6].map((l) => temperedArmorRating(0, l, false))).toEqual([
@@ -252,7 +314,12 @@ describe('enchanting', () => {
 
   it("follow UESP's magnitudes and charges", () => {
     expect(enchantingSkillMultiplier(100)).toBeCloseTo(1.2529, 4);
-    expect(enchantingSkillMultiplier(14)).toBeCloseTo(1, 6);
+    expect(enchantingSkillMultiplier(14)).toBeCloseTo(1, 3);
+    // Observed in the original: fEnchantingSkillFactor enters as (factor − 1), and below skill
+    // 14.85 the (skill − 14) / 85 share is held at 0.01 (never under 1).
+    expect(enchantingSkillMultiplier(100, 3)).toBeCloseTo(1 + 2 * (86 / 85), 6);
+    expect(enchantingSkillMultiplier(5)).toBeCloseTo(1 + 0.05 * 0.25 * 0.01, 9);
+    expect(craftingSettings(() => undefined).enchantingSkillFactor).toBe(3);
     // An apparel enchantment of base 50 at skill 100 with all five Enchanter ranks.
     expect(apparelEnchantmentMagnitude(50, SoulLevel.grand, { skill: 100, enchanter: 1 })).toBe(
       125,

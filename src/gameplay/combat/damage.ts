@@ -90,15 +90,20 @@ export interface BlockInput {
 }
 
 /**
- * The share of a hit a block takes off (UESP "Block"):
- *   shield: fShieldBaseFactor + fShieldScalingFactor × rating × (1 + skill × 1.5 / 100) / 100
- *   weapon: fBlockWeaponBase + fBlockWeaponScaling × damage × (1 + skill × 1.5 / 100) / 100
- * times the perks, × fBlockPowerAttackMult against a power attack, at most the block cap. The
- * skill's 1.5 is fArmorRatingMax − fArmorRatingBase, as armour scales for NPCs (TODO(M13): which
- * setting the engine uses is not documented).
+ * The share of a hit a block takes off (observed in the original; UESP "Block" measures it):
+ *   skill  = fArmorRatingBase + (fArmorRatingMax − fArmorRatingBase) × Block / 100
+ *   shield: fShieldBaseFactor + fShieldScalingFactor × rating × skill / 100
+ *   weapon: fBlockWeaponBase + fBlockWeaponScaling × damage × skill / 100
+ * × fBlockPowerAttackMult against a power attack, then the perks (Mod Percent Blocked), at most
+ * fPlayerMaxResistance percent, for every blocker. fBlockMax, fBlockSkillMult and
+ * fBlockAmountWeaponMult are not read (docs/ai.md, "Blocking"); the skill is not held to 100
+ * there. The blocker's Shield Perks
+ * actor value adds to the shield's skill term in the original; no perk of the plugins sets it
+ * (TODO(M13): read it once an effect does).
  */
 export function blockedShare(input: BlockInput, settings: CombatSettings): number {
-  const skill = 1 + (1.5 * Math.min(100, Math.max(0, input.blockSkill))) / 100;
+  const base = settings.armorRatingBase;
+  const skill = base + ((settings.armorRatingMax - base) * Math.max(0, input.blockSkill)) / 100;
   const share =
     input.shieldRating !== undefined
       ? settings.shieldBaseFactor +
@@ -106,7 +111,8 @@ export function blockedShare(input: BlockInput, settings: CombatSettings): numbe
       : settings.blockWeaponBase +
         (settings.blockWeaponScaling * input.attackerWeaponDamage * skill) / 100;
   const mult = input.powerAttack ? settings.blockPowerAttackMult : 1;
-  return Math.min(settings.blockCap, Math.max(0, share * input.blockMult * mult));
+  const cap = settings.playerMaxResistance / 100;
+  return Math.min(cap, Math.max(0, share * input.blockMult * mult));
 }
 
 /** Everything that decides a hit's damage to its target. */

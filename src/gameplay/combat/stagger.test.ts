@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { COMBAT_DEFAULTS } from './combat-settings.ts';
 import { healthOut, bleedoutRecovered, bleedoutRegain } from './bleedout.ts';
-import { blockStagger, recoilOf, staggerMagnitude } from './stagger.ts';
+import { blockStagger, recoilOf, staggerMagnitude, staggerTaken } from './stagger.ts';
 
 const settings = COMBAT_DEFAULTS;
 const hit = {
@@ -72,5 +72,31 @@ describe('bleedout', () => {
     expect(bleedoutRecovered({ health: 90, max: 100, down: 60, noRecovery: true }, settings)).toBe(
       false,
     );
+  });
+});
+
+describe('the stagger taken (observed in the original)', () => {
+  const half = { ...settings, staggerAttackChance: 50 }; // Skyrim.esm's iStaggerAttackChance
+  const melee = { blocked: false, bash: false, ranged: false, targetIsPlayer: false, roll: 0 };
+
+  it("takes a plain melee hit's stagger by an iStaggerAttackChance percent roll", () => {
+    expect(staggerTaken({ ...melee, roll: 0.49 }, half)).toBe(true);
+    expect(staggerTaken({ ...melee, roll: 0.5 }, half)).toBe(false);
+    // The engine's own 100: always.
+    expect(staggerTaken({ ...melee, roll: 0.99 }, settings)).toBe(true);
+  });
+
+  it('always takes a blocked hit, a bash, a shot and (bPlayerAlwaysStaggered) the player', () => {
+    const roll = 0.99;
+    expect(staggerTaken({ ...melee, roll, blocked: true }, half)).toBe(true);
+    expect(staggerTaken({ ...melee, roll, bash: true }, half)).toBe(true);
+    expect(staggerTaken({ ...melee, roll, ranged: true }, half)).toBe(true);
+    expect(staggerTaken({ ...melee, roll, targetIsPlayer: true }, half)).toBe(true);
+    expect(
+      staggerTaken(
+        { ...melee, roll, targetIsPlayer: true },
+        { ...half, playerAlwaysStaggered: false },
+      ),
+    ).toBe(false);
   });
 });

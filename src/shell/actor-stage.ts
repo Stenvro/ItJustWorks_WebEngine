@@ -522,6 +522,7 @@ export class ActorStage {
       actors: () => this.#actors.values(),
       get: (reference) => this.#actors.get(reference),
       playerBody: () => this.playerDeath.body,
+      playerCharacter: () => options.player?.()?.play.player.character,
       playerBleedout: (on) => {
         this.playerDeath.bleedout(on);
       },
