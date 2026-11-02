@@ -12,15 +12,36 @@ export function identity(): Mat4 {
 
 /** out = a · b (b is applied first). */
 export function multiply(a: Mat4, b: Mat4, out: Mat4 = new Float32Array(16)): Mat4 {
-  const result = out === a || out === b ? new Float32Array(16) : out;
+  // Unrolled, both read whole before `out` is written (so `out` may be `a` or `b` without a
+  // scratch matrix): the renderer multiplies thousands of matrices a frame. Each sum adds its
+  // four products in the same order as a loop over k would.
+  const a0 = a[0] ?? 0,
+    a1 = a[1] ?? 0,
+    a2 = a[2] ?? 0,
+    a3 = a[3] ?? 0;
+  const a4 = a[4] ?? 0,
+    a5 = a[5] ?? 0,
+    a6 = a[6] ?? 0,
+    a7 = a[7] ?? 0;
+  const a8 = a[8] ?? 0,
+    a9 = a[9] ?? 0,
+    a10 = a[10] ?? 0,
+    a11 = a[11] ?? 0;
+  const a12 = a[12] ?? 0,
+    a13 = a[13] ?? 0,
+    a14 = a[14] ?? 0,
+    a15 = a[15] ?? 0;
   for (let col = 0; col < 4; col++) {
-    for (let row = 0; row < 4; row++) {
-      let sum = 0;
-      for (let k = 0; k < 4; k++) sum += (a[k * 4 + row] ?? 0) * (b[col * 4 + k] ?? 0);
-      result[col * 4 + row] = sum;
-    }
+    const at = col * 4;
+    const b0 = b[at] ?? 0;
+    const b1 = b[at + 1] ?? 0;
+    const b2 = b[at + 2] ?? 0;
+    const b3 = b[at + 3] ?? 0;
+    out[at] = a0 * b0 + a4 * b1 + a8 * b2 + a12 * b3;
+    out[at + 1] = a1 * b0 + a5 * b1 + a9 * b2 + a13 * b3;
+    out[at + 2] = a2 * b0 + a6 * b1 + a10 * b2 + a14 * b3;
+    out[at + 3] = a3 * b0 + a7 * b1 + a11 * b2 + a15 * b3;
   }
-  if (result !== out) out.set(result);
   return out;
 }
 

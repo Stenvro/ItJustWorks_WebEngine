@@ -1019,11 +1019,16 @@ function evaluate(
   const worlds = new Map<Ref, Mat4>();
   if (locals.size > 0) {
     const roots = new Set(animation.roots);
+    // Whether an object or one above it moved, kept per object: every object of the model is
+    // asked, and each walk up stops at an ancestor already answered.
+    const moved = new Map<Ref, boolean>();
     const affected = (ref: Ref): boolean => {
-      for (let r: Ref | undefined = ref; r !== undefined; r = animation.parents.get(r)) {
-        if (locals.has(r)) return true;
-      }
-      return false;
+      const known = moved.get(ref);
+      if (known !== undefined) return known;
+      const parent = animation.parents.get(ref);
+      const answer = locals.has(ref) || (parent !== undefined && affected(parent));
+      moved.set(ref, answer);
+      return answer;
     };
     const worldOf = (ref: Ref): Mat4 => {
       const cached = worlds.get(ref);
