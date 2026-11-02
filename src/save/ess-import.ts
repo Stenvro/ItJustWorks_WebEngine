@@ -24,6 +24,7 @@ import {
 } from '../formats/ess/change-forms.ts';
 import { changeFormTypeName, globalData, type EssFile } from '../formats/ess/ess.ts';
 import {
+  readAnimObjects,
   readAudio,
   readGlobalVariables,
   readMiscStats,
@@ -48,8 +49,10 @@ import {
   readMagicFavorites,
   readQuestStaticData,
   readStoryEventManager,
+  readTempEffects,
   StoryParameterKind,
   type SavedStoryEvent,
+  type TempEffectEntry,
 } from '../formats/ess/global-data-tables.ts';
 import type { EssPlayerData, EssTintMask } from '../formats/ess/player.ts';
 import type { EssProcedureState } from '../formats/ess/process.ts';
@@ -79,12 +82,20 @@ import { parseScene } from '../ai/scene-records.ts';
 import type { SavedScene } from '../ai/scene-runtime.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
 import { FACE_MORPH_COUNT } from '../world/chargen-records.ts';
+import { savedDecalBox, subtextureRect } from '../world/decal.ts';
 import { seenFromSave } from '../world/seen-data.ts';
 import type { SkySave } from '../world/sky-weather.ts';
 import { cellKey } from '../world/worldspace.ts';
 import type { GameSave } from './game-save.ts';
 import { SAVE_VERSION, type SaveHeader } from './save-codec.ts';
-import type { SavedActor, SavedAttachedArrow, SavedGraphs, SavedPlayer } from './world-save.ts';
+import type {
+  SavedActor,
+  SavedAnimObject,
+  SavedAttachedArrow,
+  SavedDecal,
+  SavedGraphs,
+  SavedPlayer,
+} from './world-save.ts';
 import {
   readAnimationGraphs,
   type EssAnimationGraph,
@@ -425,6 +436,47 @@ export interface EssImport {
   readonly save: GameSave;
   /** What was not imported, counted ("ACHR: actor data x 40"), for the log. */
   readonly skipped: readonly string[];
+}
+
+/**
+ * The decals of the temp effects' entries (global data 1000; docs/formats/ess.md "Temp
+ * effects") as the world's decal store keeps them: each on its reference (flag 0) or the land of
+ * its cell (flag 1), its box from the point, the rotation and the width, height and depth in
+ * that space, the subtexture its first byte names, the face limit its floats keep (the cosine
+ * of the impact's angle threshold: cos 80° on every burn). An entry repeated for each shape it
+ * was made on (the same decal: the u32 after it differs) is taken once. The save writes no age:
+ * each lasts a whole lifetime from the load (TODO(M13)), and the second texture set (none in
+ * the saves read) and the other values are not used (TODO(M13)).
+ */
+export function essTempDecals(
+  entries: readonly TempEffectEntry[],
+  ours: (formId: number) => number | undefined,
+): SavedDecal[] {
+  const decals: SavedDecal[] = [];
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    const key = JSON.stringify([
+      entry.flag,
+      entry.reference0,
+      entry.reference1,
+      entry.vector0,
+      entry.quaternion,
+      entry.floats0,
+    ]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const on = entry.reference0 === 0 ? undefined : ours(entry.reference0);
+    const textureSet = entry.reference1 === 0 ? undefined : ours(entry.reference1);
+    if (on === undefined || textureSet === undefined) continue;
+    decals.push({
+      textureSet,
+      on: entry.flag !== 0 ? { cell: on } : { reference: on },
+      box: Array.from(savedDecalBox(entry.vector0, entry.quaternion, entry.floats0)),
+      rect: subtextureRect(entry.bytes0[0] ?? 255, 0),
+      faceLimit: entry.floats2[1] ?? 0.01,
+    });
+  }
+  return decals;
 }
 
 /** Moves form ids from the save's load order into ours (undefined: its plugin is not loaded). */
@@ -1613,6 +1665,43 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     }
   }
 
+  // The temp effects (global data 1000): the decals on the world (the burns Alduin left on
+  // Helgen), into the world's decal store; the three lists of typed effects are logged when
+  // they hold any (empty in the saves read).
+  let decals: SavedDecal[] = [];
+  const tempData = globalData(ess, 1000);
+  if (tempData) {
+    try {
+      const effects = readTempEffects(tempData, resolve);
+      decals = essTempDecals(effects.entries, ours);
+      for (const effect of [...effects.effects1, ...effects.effects2, ...effects.effects3]) {
+        skips.add(`temp effects: an effect of type ${String(effect.type)} (TODO(M13))`);
+      }
+      if (effects.unread) skips.add('temp effects: an undocumented effect type');
+    } catch {
+      skips.add('temp effects: unreadable');
+    }
+  }
+
+  // The animation objects actors hold (global data 1002: the prisoners' cuffs on the cart,
+  // Hadvar's ledger and quill, the headsman's axe), put on again as each actor is placed.
+  // Observed in the saves: the byte beside each is 1 for every object, shown on its actor;
+  // TODO(M13): what another value means (taken as loaded, not shown).
+  const animObjects: SavedAnimObject[] = [];
+  const animData = globalData(ess, 1002);
+  if (animData) {
+    try {
+      for (const held of readAnimObjects(animData, resolve)) {
+        const actor = held.reference === 0 ? undefined : ours(held.reference);
+        const object = held.animObject === 0 ? undefined : ours(held.animObject);
+        if (actor === undefined || object === undefined) continue;
+        animObjects.push({ actor, animObject: object, shown: held.unknown === 1 });
+      }
+    } catch {
+      skips.add('anim objects: unreadable');
+    }
+  }
+
   // The interface (global data 102): the input events whose help messages the player has done
   // (the opening's "Look" and "Forward"), not shown again; the weapons, spells and shouts used
   // last (the journal's favorites, each counted once). TODO(M13): the help messages shown (one
@@ -1774,7 +1863,7 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   for (const table of [ess.globalData1, ess.globalData2, ess.globalData3]) {
     for (const entry of table) {
       if (
-        ![0, 1, 3, 6, 7, 101, 103, 107, 109, 111, 1001].includes(entry.type) &&
+        ![0, 1, 3, 6, 7, 101, 103, 107, 109, 111, 1000, 1001, 1002].includes(entry.type) &&
         entry.data.length > 0 &&
         !empty(entry.type, entry.data)
       ) {
@@ -1828,6 +1917,8 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       ...(savedPlayer && { player: savedPlayer }),
       ...(playerGraphs && { playerGraphs }),
       ...(attachedArrows.length > 0 && { attachedArrows }),
+      ...(decals.length > 0 && { decals }),
+      ...(animObjects.length > 0 && { animObjects }),
     },
     inventoryDeltas: [...inventoryDeltas].map(([container, items]) => [container, [...items]]),
     ...(worn.size > 0 && { worn: [...worn] }),

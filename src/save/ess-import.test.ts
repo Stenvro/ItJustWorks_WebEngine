@@ -7,11 +7,18 @@ import {
   ChangeRefr,
 } from '../formats/ess/change-forms.ts';
 import { readEss } from '../formats/ess/ess.ts';
+import type { TempEffectEntry } from '../formats/ess/global-data-tables.ts';
 import { EssWriter, writeSyntheticEss } from '../formats/ess/ess-test-writer.ts';
 import { PapyrusType } from '../formats/ess/papyrus.ts';
 import type { GameState } from '../scripting/runtime/game-state.ts';
 import { ObjectHandle } from '../scripting/values.ts';
-import { formIdMapper, importEss, procedurePath, type EssWorld } from './ess-import.ts';
+import {
+  essTempDecals,
+  formIdMapper,
+  importEss,
+  procedurePath,
+  type EssWorld,
+} from './ess-import.ts';
 
 const WHITERUN_WORLD = 0x1a26f;
 const BREEZEHOME = 0x165a7;
@@ -453,5 +460,40 @@ describe('ess import', () => {
     expect(state.cells.get(BREEZEHOME_CELL)?.public).toBe(true);
     expect(state.seen.get(BREEZEHOME_CELL)?.has('0,0')).toBe(true);
     expect(state.quests.get(QUEST)?.instanceGlobals?.get(GLOBAL)).toBe(10);
+  });
+});
+
+describe('the temp effects (global data 1000)', () => {
+  const entry = (flag: number, on: number, unknown1: number): TempEffectEntry => ({
+    flag,
+    reference0: on,
+    reference1: 0x2b95a,
+    reference2: 0,
+    vector0: [10, 20, 30],
+    vector1: [0, 0, 1],
+    floats0: [200, 200, 32],
+    quaternion: [1, 0, 0, 0],
+    bytes0: [3, 1, 0, 0],
+    float1: 1,
+    byte1: 4,
+    floats2: [4, 0.17364822, 1, 1, 1],
+    bytes2: [0, 0],
+    unknown1,
+  });
+
+  it("become decals on their references and on cells' land, each once", () => {
+    const decals = essTempDecals(
+      [entry(0, 0xc7ce0, 1), entry(0, 0xc7ce0, 2), entry(1, 0x982a, 1)],
+      (id) => id,
+    );
+    expect(decals.map((decal) => decal.on)).toEqual([{ reference: 0xc7ce0 }, { cell: 0x982a }]);
+    const [decal] = decals;
+    expect(decal?.textureSet).toBe(0x2b95a);
+    expect(decal?.rect).toEqual([0.5, 0.5, 0.5, 0.5]);
+    expect(decal?.faceLimit).toBeCloseTo(Math.cos((80 * Math.PI) / 180), 6);
+    // Facing up (no rotation): projected down, 32 deep either side.
+    expect(decal?.box.slice(4, 7).map((v) => v + 0)).toEqual([0, 0, -64]);
+    expect(decal?.box.slice(12, 15)).toEqual([10, 20, 30]);
+    expect(decal?.left).toBeUndefined();
   });
 });

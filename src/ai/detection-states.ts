@@ -395,4 +395,90 @@ export class Detections {
         return 0;
     }
   }
+
+  /**
+   * What a save keeps (docs/formats/save.md): each observer's knowledge of its targets but the
+   * unseen, the alerts, alarms, attacks and lasting offences; times as seconds before `now`.
+   */
+  save(now: number): DetectionSave {
+    const known: DetectionSave['known'][number][] = [];
+    for (const [observer, targets] of this.#known) {
+      for (const [target, entry] of targets) {
+        if (entry.state === 'unseen') continue;
+        known.push({
+          observer,
+          target,
+          state: entry.state,
+          ...(entry.level !== undefined && { level: entry.level }),
+          ago: Number.isFinite(entry.since) ? now - entry.since : 0,
+          ...(entry.at && { at: copy(entry.at) }),
+        });
+      }
+    }
+    return {
+      known,
+      alerted: [...this.#alerted].map(([actor, alert]) => ({
+        actor,
+        at: copy(alert.at),
+        left: alert.until - now,
+      })),
+      alarmed: [...this.#alarmed].map(([actor, until]) => ({ actor, left: until - now })),
+      attacked: [...this.#attacked].map(([actor, attack]) => ({
+        actor,
+        attacker: attack.attacker,
+        left: attack.until - now,
+      })),
+      offences: [...this.#offences].map(([actor, offence]) => ({
+        actor,
+        act: offence.act,
+        ...(offence.victim !== undefined && { victim: offence.victim }),
+      })),
+    };
+  }
+
+  /** A save's detection put back at `now` (nothing told: the states are as they were). */
+  load(saved: DetectionSave, now: number): void {
+    for (const entry of saved.known) {
+      const known = this.#knowledge(entry.observer, entry.target);
+      known.state = entry.state;
+      known.level = entry.level;
+      known.since = now - entry.ago;
+      known.at = entry.at && copy(entry.at);
+    }
+    for (const { actor, at, left } of saved.alerted) {
+      if (left > 0) this.#alerted.set(actor, { at: copy(at), until: now + left });
+    }
+    for (const { actor, left } of saved.alarmed) if (left > 0) this.#alarmed.set(actor, now + left);
+    for (const { actor, attacker, left } of saved.attacked) {
+      if (left > 0) this.#attacked.set(actor, { attacker, until: now + left });
+    }
+    for (const { actor, act, victim } of saved.offences) {
+      this.#offences.set(actor, { act, victim });
+    }
+  }
+}
+
+/** Detection as a save keeps it (Detections.save): times in seconds before or after the save. */
+export interface DetectionSave {
+  readonly known: readonly {
+    readonly observer: number;
+    readonly target: number;
+    readonly state: Exclude<DetectionState, 'unseen'>;
+    readonly level?: number;
+    /** Seconds since it last noticed, detected or heard the target. */
+    readonly ago: number;
+    readonly at?: Vec3;
+  }[];
+  readonly alerted: readonly { readonly actor: number; readonly at: Vec3; readonly left: number }[];
+  readonly alarmed: readonly { readonly actor: number; readonly left: number }[];
+  readonly attacked: readonly {
+    readonly actor: number;
+    readonly attacker: number;
+    readonly left: number;
+  }[];
+  readonly offences: readonly {
+    readonly actor: number;
+    readonly act: WitnessedAct;
+    readonly victim?: number;
+  }[];
 }

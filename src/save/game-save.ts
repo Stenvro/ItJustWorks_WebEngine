@@ -4,6 +4,7 @@
 // (the shell or the headless simulation), which then applies the player's place and the
 // weather. Free of browser APIs but for compression (save-codec.ts).
 
+import type { SavedMusicTrack } from '../audio/music.ts';
 import type { Hand } from '../gameplay/equipment.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -27,6 +28,8 @@ export interface GameSave {
   readonly sky?: SkySave | undefined;
   /** The music types scripts added (MusicType.Add) still in play, oldest first. */
   readonly music?: readonly number[] | undefined;
+  /** The track playing, how far into it and the rest of its pass (none in saves made before). */
+  readonly musicTrack?: SavedMusicTrack | undefined;
   /** What could not be saved (threads in flight, ...): logged again as it loads. */
   readonly unsaved: readonly string[];
   /**
@@ -82,6 +85,7 @@ export async function saveGame(
     weather: runtime.world.currentWeather?.(),
     sky: runtime.world.skyState?.(),
     music: runtime.world.addedMusic?.(),
+    musicTrack: runtime.world.playingMusic?.(),
     unsaved,
     world: runtime.world.saveWorld?.(),
     hazards: runtime.hazards.save(),
@@ -109,12 +113,13 @@ export async function saveGame(
 /**
  * A loaded save's sky and music put back once the world is in place: the sky's change under
  * way going on (a save of before kept the weather alone: it comes at once), the music types
- * scripts had added in play again.
+ * scripts had added in play again, the track that played going on from where it was.
  */
 export function restoreAmbience(runtime: ScriptRuntime, save: GameSave): void {
   if (save.sky) runtime.world.restoreSky?.(save.sky);
   else if (save.weather !== undefined) runtime.world.setWeather?.(save.weather, true, false, false);
   for (const type of save.music ?? []) runtime.world.music?.(type, true);
+  if (save.musicTrack) runtime.world.resumeMusic?.(save.musicTrack);
 }
 
 /** A save file read back: its header and body. */

@@ -29,6 +29,7 @@ import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { meshPath } from '../world/actors.ts';
 import { readAnimObjects, type AnimObjectRecord } from '../world/anim-object-records.ts';
 import { parseTextureSet } from '../world/decal.ts';
+import type { SavedAnimObject } from '../save/world-save.ts';
 import type { StagedActor } from './actor-stage.ts';
 import type { GameSession } from './game-session.ts';
 import type { PlayerView } from './race-menu.ts';
@@ -162,6 +163,7 @@ export class ActorAnimObjects {
    * 3D made again go (the engine's 3D unload).
    */
   frame(): void {
+    this.#putBackSaved();
     const gone = new Set<number>();
     for (const entry of this.#list.all()) {
       const attached = entry.attached;
@@ -179,6 +181,46 @@ export class ActorAnimObjects {
       attached.motion.version++;
     }
     for (const actor of gone) this.remove(actor);
+  }
+
+  /**
+   * What actors hold, for a save (src/save/world-save.ts): each object loaded on an actor and
+   * whether it is shown, and those of a loaded save not yet put back.
+   */
+  save(): SavedAnimObject[] {
+    return [
+      ...this.#list.all().map((entry) => ({
+        actor: entry.actor,
+        animObject: entry.form.formId,
+        shown: entry.shown || entry.drawRequested,
+      })),
+      ...(this.#options.session.restoring?.pendingAnimObjects() ?? []),
+    ];
+  }
+
+  /**
+   * A loaded save's objects go on their actors as each is placed: loaded and, if they were
+   * shown, drawn, as the graph's events did before the save (an imported graph or one put back
+   * by names raises no AnimObjLoad again).
+   */
+  #putBackSaved(): void {
+    const restoring = this.#options.session.restoring;
+    const pending = restoring?.pendingAnimObjects() ?? [];
+    if (!restoring || pending.length === 0) return;
+    if (!this.#records) {
+      this.#read();
+      return;
+    }
+    const byForm = new Map([...this.#records.values()].map((record) => [record.formId, record]));
+    for (const actor of new Set(pending.map((held) => held.actor))) {
+      if (!this.#body(actor, 'body') && !this.#body(actor, 'first')) continue;
+      for (const saved of restoring.takeAnimObjects(actor)) {
+        const form = byForm.get(saved.animObject);
+        if (!form) continue;
+        this.#handle(actor, 'load', form.editorId);
+        if (saved.shown) this.#handle(actor, 'draw', form.editorId);
+      }
+    }
   }
 
   #read(): void {

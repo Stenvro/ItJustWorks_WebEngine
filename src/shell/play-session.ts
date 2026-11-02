@@ -8,6 +8,7 @@ import { ActorPose } from '../animation/skeleton.ts';
 import { Articulation } from '../physics/articulation.ts';
 import { RagdollPenetration } from '../physics/ragdoll-penetration.ts';
 import { HAVOK_SCALE, settlesWhenPlaced, type CollisionData } from '../physics/collision-data.ts';
+import type { SavedMotion } from '../save/world-save.ts';
 import { GrabSpring } from '../physics/grab.ts';
 import {
   beginTelekinesis,
@@ -106,6 +107,9 @@ interface HeldObject {
 
 /** How far the console's click reaches (game units). */
 const CONSOLE_PICK_LENGTH = 20_000;
+/** A loose body slower than this (units, radians a second) is at rest for a save. */
+const MOVING_SPEED = 1;
+const MOVING_TURN = 0.05;
 
 /** The reference a pick met (an object's or an actor's), if it has one (not the landscape). */
 const ownReference = (hit: PickHit): number | undefined =>
@@ -1718,8 +1722,12 @@ export class PlaySession {
         const at = placed.bodies[0]?.body.translation();
         const ground =
           !at || this.#groundReady([at.x * HAVOK_SCALE, at.y * HAVOK_SCALE, at.z * HAVOK_SCALE]);
-        if (ground) this.physics.settle(placed);
-        else group.settle[kept++] = placed;
+        if (ground) {
+          this.physics.settle(placed);
+          // A loaded save's object in motion moves on as it moved.
+          const motion = this.savedMotion?.(placed.owner.reference);
+          if (motion) this.physics.setVelocity(placed, motion.linear, motion.angular);
+        } else group.settle[kept++] = placed;
       }
       group.settle.length = kept;
       this.#settleWaiting += kept;
@@ -1890,6 +1898,36 @@ export class PlaySession {
     }
     if (tasks.length === 0) this.#complete(group);
     for (const run of tasks) this.#queue.push({ group, run });
+  }
+
+  /** A loaded save's motion of a loose object, taken as its body settles (the world's restore). */
+  savedMotion: ((reference: number) => SavedMotion | undefined) | undefined;
+
+  /**
+   * The loose objects of the loaded cells in motion, for a save (src/save/world-save.ts): each
+   * awake simulated body's velocity, game units and radians a second (a placement of several
+   * bodies by its first). TODO(M13): each body of an articulated object on its own.
+   */
+  saveMotions(): SavedMotion[] {
+    const out: SavedMotion[] = [];
+    for (const group of this.#groups) {
+      for (const { placed } of group.moving) {
+        const body = placed.bodies.find(({ data }) => data.motion === 'dynamic')?.body;
+        if (!body || body.isSleeping() || !body.isDynamic()) continue;
+        const v = body.linvel();
+        const w = body.angvel();
+        const linear: [number, number, number] = [
+          v.x * HAVOK_SCALE,
+          v.y * HAVOK_SCALE,
+          v.z * HAVOK_SCALE,
+        ];
+        if (Math.hypot(...linear) < MOVING_SPEED && Math.hypot(w.x, w.y, w.z) < MOVING_TURN) {
+          continue;
+        }
+        out.push({ reference: placed.owner.reference, linear, angular: [w.x, w.y, w.z] });
+      }
+    }
+    return out;
   }
 
   /** A reference's collision in every loaded cell (placed so far). */

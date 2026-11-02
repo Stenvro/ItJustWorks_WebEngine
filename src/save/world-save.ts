@@ -10,6 +10,7 @@ import type { ActorGraphState, BehaviorGraphState } from '../animation/behavior-
 import type { VehicleOffset, VehiclePose } from '../ai/vehicles.ts';
 import type { SavedGraph } from '../animation/script-graphs.ts';
 import type { CastVia } from '../scripting/runtime/casting-engine.ts';
+import type { DetectionSave } from '../ai/detection-states.ts';
 
 /** An actor of the loaded area as the save found it. */
 export interface SavedActor {
@@ -114,7 +115,61 @@ export interface SavedAttachedArrow {
   readonly age: number;
 }
 
-export interface WorldSave {
+/**
+ * A decal on the world (a hit's blood, a spell's scorch: the original's temp effects): what it
+ * shows, the box it is clipped to in the space of what it lies on, and how long it has left.
+ * It is built again on the shapes in its box as what it lies on is drawn.
+ */
+export interface SavedDecal {
+  /** Its texture set (TXST). */
+  readonly textureSet: number;
+  /** The impact (IPCT) it was made with, whose own decal data wins over the set's. */
+  readonly impact?: number | undefined;
+  /**
+   * What it lies on, the space of its box: a reference (only its shapes under `node`, when
+   * given), the land (world space), the land of a cell (an imported save's: the cell land's
+   * space, src/world/decal.ts landSpaceOrigin), or nothing known (world space, projected).
+   */
+  readonly on:
+    | { readonly reference: number; readonly node?: string | undefined }
+    | { readonly land: true }
+    | { readonly cell: number }
+    | { readonly world: true };
+  /** Its clipping box (worldDecalBox's), a 4x4 matrix, column-major. */
+  readonly box: readonly number[];
+  /** The atlas quarter it shows (u, v, width, height). */
+  readonly rect: readonly [number, number, number, number];
+  /** The cosine a face's turn from the decal must stay above (worldDecalFaceLimit). */
+  readonly faceLimit: number;
+  /** Seconds it has left, its fade included (undefined: a whole lifetime, as made now). */
+  readonly left?: number | undefined;
+}
+
+/** An animation object an actor holds (the original's anim objects, global data 1002). */
+export interface SavedAnimObject {
+  readonly actor: number;
+  /** Its ANIO. */
+  readonly animObject: number;
+  /** Shown (drawn) on the actor, not only loaded. */
+  readonly shown: boolean;
+}
+
+/** A loose object in motion as the game was saved (game units and radians a second). */
+export interface SavedMotion {
+  readonly reference: number;
+  readonly linear: readonly [number, number, number];
+  readonly angular: readonly [number, number, number];
+}
+
+/** The parts of the world a view keeps beside its actors and graphs (merged by the world). */
+export interface WorldSaveParts {
+  readonly decals?: readonly SavedDecal[];
+  readonly animObjects?: readonly SavedAnimObject[];
+  readonly motions?: readonly SavedMotion[];
+  readonly detection?: DetectionSave;
+}
+
+export interface WorldSave extends WorldSaveParts {
   readonly actors: readonly SavedActor[];
   /** The graphs of loaded objects moved from where they start, by reference. */
   readonly graphs: readonly (readonly [number, SavedGraph])[];
@@ -140,6 +195,10 @@ export class WorldRestore {
   #attachedArrows: readonly SavedAttachedArrow[];
   #playerGraphs: SavedGraphs | undefined;
   #player: SavedPlayer | undefined;
+  #decals: readonly SavedDecal[];
+  #animObjects: readonly SavedAnimObject[];
+  readonly #motions = new Map<number, SavedMotion>();
+  #detection: DetectionSave | undefined;
 
   constructor(save: WorldSave) {
     this.#playerGraphs = save.playerGraphs;
@@ -148,6 +207,44 @@ export class WorldRestore {
     for (const [reference, graph] of save.graphs) this.#graphs.set(reference, graph);
     this.#projectiles = save.projectiles ?? [];
     this.#attachedArrows = save.attachedArrows ?? [];
+    this.#decals = save.decals ?? [];
+    this.#animObjects = save.animObjects ?? [];
+    for (const motion of save.motions ?? []) this.#motions.set(motion.reference, motion);
+    this.#detection = save.detection;
+  }
+
+  /** The world's decals as the game was saved, once (built again as what they lie on loads). */
+  takeDecals(): readonly SavedDecal[] {
+    const decals = this.#decals;
+    this.#decals = [];
+    return decals;
+  }
+
+  /** The animation objects an actor held, once (put on again as it is placed). */
+  takeAnimObjects(actor: number): readonly SavedAnimObject[] {
+    const objects = this.#animObjects.filter((held) => held.actor === actor);
+    if (objects.length > 0)
+      this.#animObjects = this.#animObjects.filter((held) => held.actor !== actor);
+    return objects;
+  }
+
+  /** The animation objects of actors not yet placed. */
+  pendingAnimObjects(): readonly SavedAnimObject[] {
+    return this.#animObjects;
+  }
+
+  /** A loose object's motion as the game was saved, once (given back as its body settles). */
+  takeMotion(reference: number): SavedMotion | undefined {
+    const motion = this.#motions.get(reference);
+    this.#motions.delete(reference);
+    return motion;
+  }
+
+  /** What actors knew of each other (detection), once. */
+  takeDetection(): DetectionSave | undefined {
+    const detection = this.#detection;
+    this.#detection = undefined;
+    return detection;
   }
 
   /** The arrows stuck in actors as the game was saved, once (drawn again as each is placed). */
