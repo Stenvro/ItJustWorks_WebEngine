@@ -395,7 +395,8 @@ export class ActorKnockdowns {
       ];
       subject.moveTo(position, frame.heading - (match?.yaw ?? 0));
     }
-    this.#options.bodies.standUp(subject.reference);
+    // Rising, its ragdoll stays in the world, driven by the get-up's controls until it is up.
+    this.#options.bodies.standUp(subject.reference, match !== undefined);
     if (!match) this.#finish(knock);
   }
 

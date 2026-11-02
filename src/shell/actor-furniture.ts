@@ -26,6 +26,7 @@ import {
   type IdleTree,
 } from '../ai/idle-records.ts';
 import { aiSettingsOf } from '../ai/ai-settings.ts';
+import { idleLoopSeconds } from '../ai/ambient-idles.ts';
 import type { SandboxSpot } from '../ai/package-runtime.ts';
 import { parseNif } from '../formats/nif/nif.ts';
 import type { Vec3 } from '../render/math.ts';
@@ -252,6 +253,12 @@ export class ActorFurniture {
   readonly #graphKeys = new Map<string, string | undefined>();
   /** When each idle with a replay delay last played, by actor (scripts' real seconds). */
   readonly #replays = new Map<number, Map<number, number>>();
+  /**
+   * Each actor's looping idle and when it is stopped (scripts' real seconds): an idle with loop
+   * seconds (idleLoopSeconds) plays that long, then the actor's idle stops (#loops).
+   */
+  readonly #looping = new Map<number, { readonly idle: number; readonly until: number }>();
+  readonly #loopRandom = seededRandom(0x1d1e);
 
   constructor(options: ActorFurnitureOptions) {
     this.#options = options;
@@ -336,6 +343,7 @@ export class ActorFurniture {
 
   /** The actor left the stage, died or was moved: what it used is free at once. */
   remove(actor: number): void {
+    this.#looping.delete(actor);
     this.#uses.delete(actor);
     this.#holding.delete(actor);
     this.#markers.delete(actor);
@@ -499,6 +507,7 @@ export class ActorFurniture {
     if (!inFurniture && this.#takenBy(user.reference, action)) return undefined;
     if (idle?.event === undefined || !user.send(idle.event)) return undefined;
     this.#replayed(user.reference, idle, runtime.state.realTime);
+    this.#loop(user.reference, tree, idle, runtime.state.realTime);
     return idle.event;
   }
 
@@ -512,6 +521,33 @@ export class ActorFurniture {
     if (!(idle.replayDelay > 0)) return true;
     const at = this.#replays.get(actor)?.get(idle.formId);
     return at === undefined || now - at >= idle.replayDelay;
+  }
+
+  /**
+   * An idle began for an actor: one with loop seconds (the goat's feeding, the sabre cat's
+   * lie-down, the troll's crouching) is stopped after a random time between its least and most;
+   * any other idle ends the one that looped. TODO(M13): inferred from the field's name, the
+   * Creation Kit's "looping" seconds: whether the original stops it by the idle stop action and
+   * draws the time evenly.
+   */
+  #loop(actor: number, tree: IdleTree, idle: IdleRecord, now: number): void {
+    const loop = idleLoopSeconds(tree, idle.formId);
+    if (!loop) {
+      this.#looping.delete(actor);
+      return;
+    }
+    const seconds = loop.min + (loop.max - loop.min) * this.#loopRandom();
+    this.#looping.set(actor, { idle: idle.formId, until: now + seconds });
+  }
+
+  /** A looping idle whose time is up stops (ActionIdleStop: the idle tree's IdleStop). */
+  #loops(user: FurnitureUser): void {
+    const looping = this.#looping.get(user.reference);
+    const now = this.#options.session.scriptsReady?.state.realTime;
+    if (!looping || now === undefined || now < looping.until) return;
+    this.#looping.delete(user.reference);
+    if (this.actionEventNow(user, 'ActionIdleStop') === undefined)
+      void this.actionEvent(user, 'ActionIdleStop');
   }
 
   #replayed(actor: number, idle: IdleRecord, now: number): void {
@@ -626,6 +662,7 @@ export class ActorFurniture {
     if (asked.unknown) return undefined;
     if (idle?.event === undefined || !user.send(idle.event)) return null;
     this.#replayed(user.reference, idle, now);
+    this.#loop(user.reference, tree, idle, now);
     return idle.event;
   }
 
@@ -824,6 +861,7 @@ export class ActorFurniture {
    * floor's; one entering makes up the rest to the marker as its enter ends.
    */
   animated(user: FurnitureUser, seconds: number): void {
+    this.#loops(user);
     const use = this.#uses.get(user.reference);
     if (!use || seconds <= 0 || (use.phase !== 'entering' && use.phase !== 'leaving')) return;
     const marker = use.worldMarker;

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { parseAnimationResponses } from '../formats/animdata/responses.ts';
-import { GraphEventDispatch, graphEvent, isEvent, type GraphEventSource } from './graph-events.ts';
+import {
+  GraphEventDispatch,
+  graphEvent,
+  isEvent,
+  soundPlayAt,
+  type GraphEventSource,
+} from './graph-events.ts';
 
 const ACTOR = parseAnimationResponses(
   ['swingEvent : SwingHandler', 'swingLeft : SwingHandler', 'sitDown : ChairHandler'].join('\n'),
@@ -29,6 +35,15 @@ describe('graphEvent', () => {
       text: 'AnimObjLoad',
     });
     expect(isEvent(graphEvent('SoundPlay.X'), 'soundplay')).toBe(true);
+  });
+
+  it('reads SoundPlayAt into its sound and the node it plays at', () => {
+    expect(soundPlayAt(graphEvent('SoundPlayAt.TRPSawmillSawLP.Saw Blade'))).toEqual({
+      descriptor: 'TRPSawmillSawLP',
+      node: 'Saw Blade',
+    });
+    expect(soundPlayAt(graphEvent('SoundPlayAt.NoNode'))).toBeUndefined();
+    expect(soundPlayAt(graphEvent('SoundPlay.X.Y'))).toBeUndefined();
   });
 });
 

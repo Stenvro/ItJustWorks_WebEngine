@@ -35,6 +35,19 @@ export function graphEvent(text: string, payload?: string): GraphEvent {
   return { name: text.slice(0, dot), payload: text.slice(dot + 1), text };
 }
 
+/**
+ * SoundPlayAt.<descriptor>.<node> (an object graph's clip annotation: the sawmill's saw): the
+ * sound to play and the node of the model it plays at; undefined for any other event.
+ */
+export function soundPlayAt(
+  event: GraphEvent,
+): { readonly descriptor: string; readonly node: string } | undefined {
+  if (!isEvent(event, 'SoundPlayAt') || event.payload === undefined) return undefined;
+  const dot = event.payload.indexOf('.');
+  if (dot <= 0 || dot === event.payload.length - 1) return undefined;
+  return { descriptor: event.payload.slice(0, dot), node: event.payload.slice(dot + 1) };
+}
+
 /** Whether an event's tag is `name` (any case). */
 export function isEvent(event: GraphEvent, name: string): boolean {
   return event.name.toLowerCase() === name.toLowerCase();
