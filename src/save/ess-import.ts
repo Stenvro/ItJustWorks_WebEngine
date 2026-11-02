@@ -97,6 +97,7 @@ import type {
   SavedGraphs,
   SavedFight,
   SavedPlayer,
+  SavedProjectile,
 } from './world-save.ts';
 import {
   readAnimationGraphs,
@@ -104,6 +105,7 @@ import {
   type EssAnimationGraphs,
 } from '../formats/ess/animation-graphs.ts';
 import type { ActorGraphState } from '../animation/behavior-runtime.ts';
+import type { SavedGraph } from '../animation/script-graphs.ts';
 
 /** GameState's open states (ReferenceState.openState): open, closed. */
 const OPEN_STATE_OPEN = 1;
@@ -481,6 +483,16 @@ export function essTempDecals(
   return decals;
 }
 
+/** A u32 word's bits as the float they hold. */
+function wordFloat(word: number): number {
+  const view = new DataView(new ArrayBuffer(4));
+  view.setUint32(0, word >>> 0, true);
+  return view.getFloat32(0, true);
+}
+
+/** The change form types of projectiles in flight the import flies on (applyProjectile). */
+const IN_FLIGHT: ReadonlySet<string> = new Set(['PMIS', 'PFLA']);
+
 /** An AI time stamp the save never set (−FLT_MAX). */
 const NEVER = -3e38;
 
@@ -647,6 +659,8 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   let playerGraphs: SavedGraphs | undefined;
   /** The arrows stuck in actors (their AttachedArrows3D extra data). */
   const attachedArrows: SavedAttachedArrow[] = [];
+  /** The spells' projectiles in flight (PMIS, PFLA): they fly on as the world loads. */
+  const projectiles: SavedProjectile[] = [];
   /** The map markers whose flags the save keeps (shown, travel to). */
   const mapMarkers = new Map<number, { visible: boolean; travel: boolean }>();
   /** Where actors' packages started, and the packages they ran once, for their saved actors. */
@@ -782,7 +796,9 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     let applied = 0;
     const flags = form.changeFlags;
 
-    if (entry.type <= 5 || (entry.type >= 40 && entry.type <= 42)) {
+    if (IN_FLIGHT.has(typeName)) {
+      applied |= applyProjectile(form, typeName);
+    } else if (entry.type <= 5 || (entry.type >= 40 && entry.type <= 42)) {
       applied |= applyReference(form, formId);
     } else if (typeName === 'PARW') {
       applied |= applyArrow(form, formId);
@@ -1366,6 +1382,67 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
    * the placed objects take); a reference with no graph plays its door's Open or Close.
    * Projectiles' graphs (a spell's hand effects) have no place in ours: left logged.
    */
+  /**
+   * A spell's projectile in flight (PMIS a missile, PFLA a flame's spray): not a reference of
+   * ours (ours fly without one) but a projectile flying on from its place (WorldSave.projectiles),
+   * its graph by names. Its data, as read on the saves (docs/formats/ess.md "Projectiles in
+   * flight"): the shooter the third form, the spell the sixth, its velocity the floats after
+   * the time stamps (22 to 24 of its numbers), its age the fifth number (the seconds its
+   * graph's sequence had played), a missile's units flown the thirteenth (its speed times its
+   * age, within a frame). TODO(M13): a spray's units flown (0 written: its speed times its
+   * age), dual casting, a staff's or a scroll's source, a spray's origin (back along its way).
+   */
+  function applyProjectile(form: EssChangeForm, typeName: string): number {
+    const initial = form.initial;
+    const data = form.projectile;
+    const projectile = initial?.kind === 'created' ? ours(initial.base) : undefined;
+    const caster = ours(data?.refs[2] ?? 0);
+    const item = ours(data?.refs[5] ?? 0);
+    const values = data?.values ?? [];
+    if (initial?.kind !== 'created' || !data || !projectile || !caster || !item) {
+      skips.add(`${typeName}: a projectile without its shooter or spell`);
+      return 0;
+    }
+    const velocity: [number, number, number] = [values[21] ?? 0, values[22] ?? 0, values[23] ?? 0];
+    // The fifth is written as a word: its bits are a float.
+    const age = Math.max(0, wordFloat(values[4] ?? 0));
+    const speed = Math.hypot(...velocity);
+    // The thirteenth (a word holding a float): the units flown (a missile's; a spray's is 0).
+    const flown = wordFloat(values[12] ?? 0);
+    const at = initial.position;
+    let graph: SavedGraph | undefined;
+    let applied = ChangeRefr.moved | ChangeRefr.havokMoved | ChangeRefr.cellChanged;
+    applied |= ChangeRefr.promoted | CHANGE_FORM_FLAGS;
+    if (form.animation && form.changeFlags & ChangeRefr.animation) {
+      try {
+        const named = readAnimationGraphs(form.animation).graphs.map(actorGraphState)[0]?.named;
+        if (named) graph = { named };
+        applied |= ChangeRefr.animation;
+      } catch {
+        skips.add(`${typeName}: an animation block not read`);
+      }
+    }
+    const spray = typeName === 'PFLA';
+    const recordType = world.recordType(item);
+    projectiles.push({
+      projectile,
+      item,
+      via: recordType === 'SCRL' ? 'scroll' : 'spell',
+      caster,
+      dual: false,
+      position: [at[0], at[1], at[2]],
+      velocity,
+      traveled: flown > 0 ? flown : speed * age,
+      age,
+      ...(spray && {
+        kind: 'spray' as const,
+        origin: [at[0] - velocity[0] * age, at[1] - velocity[1] * age, at[2] - velocity[2] * age],
+      }),
+      ...(graph && { graph }),
+    });
+    return applied;
+  }
+
   function applyAnimation(form: EssChangeForm, formId: number, reference: ReferenceState): number {
     if (!form.animation || !(form.changeFlags & ChangeRefr.animation)) return 0;
     if (form.type !== 0 && form.type !== 1) return 0;
@@ -2002,6 +2079,7 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       ...(savedPlayer && { player: savedPlayer }),
       ...(playerGraphs && { playerGraphs }),
       ...(attachedArrows.length > 0 && { attachedArrows }),
+      ...(projectiles.length > 0 && { projectiles }),
       ...(decals.length > 0 && { decals }),
       ...(animObjects.length > 0 && { animObjects }),
     },

@@ -112,6 +112,25 @@ export interface SavedProjectile {
   readonly traveled: number;
   readonly age: number;
   readonly resting?: boolean | undefined;
+  /**
+   * What it is beside a missile, lobber or bolt (undefined): a flame's spray (its stream shows
+   * it again where it left), a cone's wave sweeping out (`position` its apex, `velocity` its
+   * direction, `traveled` how far its front has come), a Magelight stuck where it struck.
+   */
+  readonly kind?: 'spray' | 'cone' | 'stuck' | undefined;
+  /** A concentration spell's seconds a spray or a wave carries. */
+  readonly seconds?: number | undefined;
+  /** Where a spray left the hand or mouth. */
+  readonly origin?: readonly [number, number, number] | undefined;
+  /** The actors and objects a cone's wave has reached (each is reached once). */
+  readonly reached?: readonly number[] | undefined;
+  /** A stuck Magelight's seconds left. */
+  readonly left?: number | undefined;
+  /**
+   * Its model's behavior graph (most projectiles' models have one: tools/projectile-graphs.ts):
+   * ours by its states (`sequences`), an imported .ess's by names (`named`).
+   */
+  readonly graph?: SavedGraph | undefined;
 }
 
 /**
