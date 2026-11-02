@@ -121,6 +121,11 @@ export interface CollisionConstraint {
   readonly data: ConstraintData;
   /** It breaks when the force on it exceeds the threshold (bhkBreakableConstraint). */
   readonly breakable?: { readonly threshold: number; readonly removeWhenBroken: boolean };
+  /**
+   * A chain link's largest positional error corrected in a step (bhkBallSocketConstraintChain
+   * maxErrorDistance, Havok units).
+   */
+  readonly maxError?: number;
 }
 
 export interface CollisionData {
@@ -782,6 +787,7 @@ export function buildCollision(
     b: Ref,
     data: ConstraintData,
     breakable?: CollisionConstraint['breakable'],
+    maxError?: number,
   ): void => {
     const bodyA = bodyOfBlock.get(a);
     const bodyB = bodyOfBlock.get(b);
@@ -794,6 +800,7 @@ export function buildCollision(
       bodyB: bodyB.index,
       data: scaleConstraint(data, bodyA.scale, bodyB.scale),
       ...(breakable && { breakable }),
+      ...(maxError !== undefined && { maxError }),
     });
   };
   for (const ref of constraintRefs) {
@@ -801,12 +808,17 @@ export function buildCollision(
     if (block?.kind === 'constraint') {
       link(block.entityA, block.entityB, block.data, block.breakable);
     } else if (block?.kind === 'constraint-chain') {
-      // TODO(M13): the chain's tau and damping (its softness); Rapier's joints are stiff.
+      // Its links are balls and sockets whose error is clipped to the chain's maxErrorDistance
+      // (0.1 in every chain of the data). Its constraint force mixing (its softness) is float
+      // epsilon in every chain and its tau 1: stiff, as Rapier's joints are. TODO(M13): its
+      // damping (0.6 in every chain: the share of the links' speed error taken out a step);
+      // Rapier's joints take all of it.
       block.links.forEach(({ pivotA, pivotB }, i) => {
         const a = block.entities[i];
         const b = block.entities[i + 1];
         if (a !== undefined && b !== undefined) {
-          link(a, b, { type: 'ball-and-socket', pivotA, pivotB });
+          const data: ConstraintData = { type: 'ball-and-socket', pivotA, pivotB };
+          link(a, b, data, undefined, block.maxErrorDistance);
         }
       });
     }

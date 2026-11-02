@@ -18,7 +18,14 @@
 //   bUseConstraintProjector 1.
 
 import { beforeAll, describe, expect, it } from 'vitest';
-import { HAVOK_SCALE, type CollisionData } from '../../../src/physics/collision-data.ts';
+import { parseNif } from '../../../src/formats/nif/nif.ts';
+import {
+  buildCollision,
+  HAVOK_SCALE,
+  type CollisionData,
+} from '../../../src/physics/collision-data.ts';
+import { Vfs } from '../../../src/vfs/vfs.ts';
+import { hasGamedata, openGameFolder } from '../../../tools/gamedata-path.ts';
 import { CollisionMatrix, Layer } from '../../../src/physics/collision-layers.ts';
 import {
   bodyOfNode,
@@ -68,6 +75,30 @@ describe('the constraint solver (the engine’s rule)', () => {
     'projects joints back together with the constraint projector ([HAVOK] ' +
       'bUseConstraintProjector 1)  [settings; original: unread]',
   );
+});
+
+// The six bhkBallSocketConstraintChain blocks of the data (the traps' ropes and chains: bone
+// alarms, the mace, the skull ram, the tripwire) all set tau 1, damping 0.6, constraint force
+// mixing float epsilon and maxErrorDistance 0.1.
+describe.skipIf(!hasGamedata())('the chains (the tripwire trap)', () => {
+  let collision: CollisionData | undefined;
+
+  beforeAll(async () => {
+    const vfs = await Vfs.mount(openGameFolder());
+    collision = buildCollision(
+      parseNif(await vfs.read('meshes\\traps\\tripwire\\traptripwire01.nif')),
+    );
+  });
+
+  it('makes a ball and socket of each link, its error clipped to the chain’s 0.1', () => {
+    const links = (collision?.constraints ?? []).filter(({ maxError }) => maxError !== undefined);
+    // Its two chains: 6 and 5 links.
+    expect(links).toHaveLength(11);
+    for (const link of links) {
+      expect(link.data.type).toBe('ball-and-socket');
+      expect(link.maxError).toBeCloseTo(0.1, 6);
+    }
+  });
 });
 
 describe('constraints made by scripts', () => {

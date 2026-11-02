@@ -83,6 +83,10 @@ const INERT_FIELDS: ReadonlyMap<string, string> = new Map([
   ['collisionResponse', '1 (simple contact) in every body: contacts are solved, as ours are'],
   ['timeFactor', '1 in every body: each steps with the world'],
   [
+    'constraintForceMixing',
+    "float epsilon in every chain (bhkBallSocketConstraintChain): no softness, as Rapier's joints have none",
+  ],
+  [
     'deactivatorType',
     "1 in every body, and bodies come to rest in the original: its world's deactivation runs for all (PhysicsWorld.#deactivate)",
   ],

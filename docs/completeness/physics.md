@@ -18,12 +18,12 @@ settings reader or named in the code. A field with one value in every mesh that 
 the physics counts as done with that reason. The mechanics are kept by hand below, against
 docs/physics.md. The count after an item is how many blocks (records) use it.
 
-## Count (2026-11-01, round 2)
+## Count (2026-11-02, round 3)
 
 | Part                          | Items | Done | Open |
 | ----------------------------- | ----: | ---: | ---: |
 | Collision blocks (NIF)        |    26 |   26 |    0 |
-| Collision fields (NIF)        |   179 |  174 |    5 |
+| Collision fields (NIF)        |   179 |  176 |    3 |
 | Motion systems, qualities     |     8 |    8 |    0 |
 | Responses, time, deactivators |     3 |    3 |    0 |
 | Body layers, COLL layers      |    24 |   24 |    0 |
@@ -32,7 +32,7 @@ docs/physics.md. The count after an item is how many blocks (records) use it.
 | Material types, impact data   |    17 |   17 |    0 |
 | Game settings (GMST)          |    45 |   35 |   10 |
 | Mechanics (by hand)           |    26 |   18 |    8 |
-| Total                         |   368 |  344 |   24 |
+| Total                         |   368 |  346 |   22 |
 
 Round 1 wrote the sweep and this list, and fixed deactivation: Havok deactivates a simulation
 island as a whole, ours put a body to sleep on its own while something still moved on it (a
@@ -43,6 +43,16 @@ explosions' vertical offset, the NPCs' fall settings (read already, by names the
 find). Next biggest: the blend collision objects' gains (1,193) with the keyframed ragdoll's
 blend duration (Havok's hierarchy controller), the chains' softness and error limit, water
 knockdowns, objects placed into what they lie on.
+
+Round 3 (344 to 346): the chains' error limit (their links clipped to maxErrorDistance) and
+their constraint force mixing (float epsilon in every chain: no softness). Ragdoll joints at
+their limits were tried as Havok's soft limits (every angular limit solved before Rapier's step,
+corrected by tau of its error a step): a limit solved without the contacts was pushed through
+by them in Rapier's step and the ragdolls crept or shook (32 of 52 at rest within 20 s, against
+51), and easing every excess of Rapier's own limits changed nothing for Hulda, whose legs lock
+at their limits, not past them (docs/physics.md, "The cone"). Next biggest: the blend collision
+objects' gains with the keyframed ragdoll's blend duration, Havok's give at four iterations
+(Hulda's locked legs), water knockdowns, objects placed into what they lie on.
 
 ## Meshes
 
@@ -73,8 +83,11 @@ knockdowns, objects placed into what they lie on.
       body follows the animation (hierarchy and velocity gains). Not read: the keyframed bodies
       are moved to the pose (src/shell/actor-bodies.ts #follow), not driven toward it by Havok's
       hierarchy controller. Next, with the keyframed ragdoll's blend duration.
-- [ ] bhkBallSocketConstraintChain constraintForceMixing, maxErrorDistance (6): the chains'
-      softness and error limit. Not read (round 2 did not reach it).
+- [x] bhkBallSocketConstraintChain maxErrorDistance (6, 0.1 in every chain): each link's error
+      is clipped to it as the constraints' is to the world's (PhysicsWorld.#clipChains; round 3).
+- [x] bhkBallSocketConstraintChain constraintForceMixing (6): float epsilon in every chain, no
+      softness, as Rapier's joints have none (round 3). TODO(M13): the chains' damping (0.6 in
+      every chain) is not applied; Rapier's joints take out all of a link's speed error.
 - [ ] bhkRigidBody bodyFlags (1 body): not read.
 - [x] Motion systems (2 sphere inertia 319, 3 sphere stabilized 2691, 4 box inertia 2362, 5 box
       stabilized 9510; fixed and keyframed by mass and node): motionOf, inertiaOf.
@@ -135,7 +148,10 @@ knockdowns, objects placed into what they lie on.
 - [x] The character controller: slopes, stairs, steps, pushing, platforms, falling, swimming.
 - [ ] Leaving a moving platform keeps no velocity; Havok's proxy push response.
 - [x] Ragdolls: death, hits, powered, keyframed, get-up, penetration recovery, corpses saved.
-- [ ] The paralysed's stiff fall; the keyframed bones' blend gains (above).
+- [ ] The paralysed's stiff fall; the keyframed bones' blend gains (above); a body let go
+      standing on its joints' limits (Hulda killed at the Bannered Mare's counter 1, 2.5 or 3 s
+      into her lean stays draped over it: Havok's give at four iterations, which Rapier at 4 or
+      5 substeps has only with worse settling; round 3).
 - [x] Projectiles' flight: gravity, speed, bounces, sticking, impacts.
 - [x] Explosions' impulses (force, falloff, the gameplay impulse settings).
 - [x] An explosion's vertical offset (above; round 2).
