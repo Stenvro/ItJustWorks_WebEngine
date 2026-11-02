@@ -4372,14 +4372,16 @@ export class ActorCombat implements CombatBridge {
    * L_CHARCONTROLLER, not with L_BIPED: Skyrim.esm's COLL records): the player's, and a flier's
    * in the air, which keeps its controller there in the original (its flying state) but has
    * none here (src/shell/actor-movers.ts holds it off, also on a perch): its ground
-   * controller's shape, upright at its root. The other actors' controllers are in the physics world (the shots' ray meets
-   * them). TODO(M13): the flier's controller in the air is taken to be its ground one.
+   * controller's shape, upright at its root, a stand-in far wider than its body (a hit lies on
+   * its bodies: bodyHit). The other actors' controllers are in the physics world (the shots'
+   * ray meets them). TODO(M13): the flier's controller in the air is taken to be its ground one.
    */
   *#controllerShapes(): Iterable<{
     reference: number;
     feet: Vec3;
     radius: number;
     height: number;
+    standIn?: boolean;
   }> {
     const player = this.#play?.player;
     if (player && this.#fighters.has(PLAYER_REF)) {
@@ -4399,7 +4401,7 @@ export class ActorCombat implements CombatBridge {
         continue;
       if (!flight.isFlying(reference) && !flight.perched(reference)) continue;
       const shape = flight.shape(reference);
-      if (shape) yield { reference, feet: staged.position, ...shape };
+      if (shape) yield { reference, feet: staged.position, ...shape, standIn: true };
     }
   }
 
