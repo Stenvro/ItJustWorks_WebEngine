@@ -747,9 +747,15 @@ export class ActorsAway {
       const at = runtime.state.references.get(out.actor)?.position;
       return at !== undefined && distance(at, out.spot) < 1;
     });
+    // The player standing there (come in through that door) holds a spot as well: an actor set
+    // onto them stood on their head, off the navmesh, and could not find its way (Carlotta
+    // coming into the Bannered Mare for her meal).
+    const player = await runtime.placement(PLAYER_REF);
+    const taken = standing.map((out) => out.spot);
+    if (player && sameSpace(spaceOf(player), space)) taken.push(player.position);
     const spot = doorArrivalSpot(
       { position: arrival.position, heading: arrival.heading ?? 0 },
-      standing.map((out) => out.spot),
+      taken,
     );
     const out = { actor, spot, moving: true };
     standing.push(out);
