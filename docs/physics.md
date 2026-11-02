@@ -720,6 +720,12 @@ original:
   L_DEADBIP meets clutter, weapons, projectiles, debris and other corpses, and no character
   controller; L_BIPED meets none of those (two corpses on L_BIPED passed through each other).
   Here too, for the placed dead and for every death (`ActorBodies.kill`, the dead player's too).
+- **Where a corpse is.** A dead actor is where its ragdoll carried it: one killed in the air
+  (a dragon struck down in flight, Actor.Kill on a flier) is where it fell to, for its distance
+  to others and its scripts' GetPosition (`ActorStage.livePlacement`: its placement moved by
+  its ragdoll's first body's way since it went limp, `ActorBodies.moved`). Before, it stayed
+  where it died, in the air, while its ragdoll lay on the ground. TODO(M13): the point of the
+  ragdoll the engine's reference follows.
 - **The placed ragdoll pose** (`src/world/ragdoll-data.ts`; XRGD: 28-byte entries of a bone id,
   a position and Euler angles; XRGB: the biped's turn). As the reference's 3D loads without a
   saved Havok state, the entries pose the model's nodes: walking its nodes depth first, every node
