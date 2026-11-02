@@ -943,19 +943,31 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       });
       state.leveledAdditions.set(formId, added);
       applied |= ChangeBase.last;
-    } else if (entry.type === 31 && form.faction?.reactions) {
+    } else if (entry.type === 31 && form.faction) {
       // FACT: its reactions to other factions as they stand (the record's list with what
       // SetReaction, ModReaction, SetAlly and SetEnemy changed): the modifier and the group
       // combat reaction, as ours keeps scripts' (they win over the record's XNAM).
-      // TODO(M13): its flags (bit 1) and crime counts (bit 31), whose meaning is not known.
+      // TODO(M13): its flags (bit 1).
       const faction = state.faction(formId);
-      for (const { faction: other, modifier, reaction } of form.faction.reactions) {
+      for (const { faction: other, modifier, reaction } of form.faction.reactions ?? []) {
         const id = ours(other);
         if (id === undefined || id === 0) continue;
         faction.reactionModifiers.set(id, modifier);
         faction.reactions.set(id, reaction);
       }
-      applied |= ChangeFaction.reactions;
+      if (form.faction.reactions) applied |= ChangeFaction.reactions;
+      // Its crime counts (bit 31: CommonLibSSE's TESFaction majorCrime, minorCrime,
+      // resistArrestTimeStamp, pcEnemyFlagTimeStamp): the counts kept; a resist time stamp
+      // set (not −FLT_MAX) is the player resisting its arrest. Read on the saves: 4 and 0
+      // with neither stamp set (CrimeFactionImperial after Helgen's keep). TODO(M13): what
+      // reads the counts, whether a stopped pursuit clears the stamp, the enemy flag's stamp.
+      const crime = form.faction.crime;
+      if (crime) {
+        const [major, minor, resisted] = crime;
+        faction.crimeCounts = [major | 0, minor | 0];
+        if (resisted > NEVER) faction.resisting = true;
+        applied |= ChangeFaction.crimeCounts;
+      }
     } else if (entry.type === 6) {
       applied |= applyCell(form, formId);
     } else if (entry.type === 13 && flags & ChangeBase.bookRead) {
@@ -1156,7 +1168,10 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     if (cell?.flags !== undefined) {
       state.cell(formId).public = (cell.flags & CellFlag.publicArea) !== 0;
       if (cell.flags & ~CellFlag.publicArea) {
-        skips.add('CELL: flags 0x40, 0x200 (their meaning is not known: TODO(M13))');
+        // CommonLibSSE names them Hand Changed (0x40) and Warn To Leave (0x200); set by the
+        // running game beside the record's flags (0x40 on some 40 interiors in each save read,
+        // 0x200 on two houses not visited). TODO(M13): what either does at run time.
+        skips.add('CELL: flags 0x40, 0x200 (Hand Changed, Warn To Leave: TODO(M13))');
       }
       applied |= ChangeCell.flags;
     }
@@ -2088,11 +2103,17 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   }
   // Tables that hold nothing to apply when their lists are empty (as in every save read): the
   // image space modifiers running (5), the ingredients' known effects (112), the paired
-  // animations under way (1004). TODO(M13): applied once a save holds some.
+  // animations under way (1004); the menu topic manager's two references (114: CommonLibSSE's
+  // MenuTopicManager speaker and lastSpeaker, a conversation's) none. TODO(M13): applied once
+  // a save holds some.
   const empty = (type: number, data: Uint8Array): boolean => {
-    if (type !== 5 && type !== 112 && type !== 1004) return false;
+    if (type !== 5 && type !== 112 && type !== 114 && type !== 1004) return false;
     try {
       const value = readGlobalData(type, data, resolve)?.value;
+      if (type === 114) {
+        const speakers = value as { unknown0: number; unknown1: number } | undefined;
+        return speakers?.unknown0 === 0 && speakers.unknown1 === 0;
+      }
       if (Array.isArray(value)) return value.length === 0;
       const effects = (value as { effects?: unknown } | undefined)?.effects;
       return Array.isArray(effects) && effects.length === 0;

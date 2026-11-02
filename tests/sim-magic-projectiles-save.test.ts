@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { SavedProjectile } from '../save/world-save.ts';
-import type { ProjectileRecord } from '../world/projectile-data.ts';
-import { ProjectileType } from '../world/projectile-data.ts';
-import type { GameSession } from './game-session.ts';
-import type { RenderPort } from '../render/render-port.ts';
-import type { Terminal } from './terminal.ts';
-import { MagicProjectiles } from './magic-projectiles.ts';
+import type { SavedProjectile } from '../src/save/world-save.ts';
+import type { ProjectileRecord } from '../src/world/projectile-data.ts';
+import { ProjectileType } from '../src/world/projectile-data.ts';
+import type { GameSession } from '../src/shell/game-session.ts';
+import type { RenderPort } from '../src/render/render-port.ts';
+import type { Terminal } from '../src/shell/terminal.ts';
+import { MagicProjectiles } from '../src/shell/magic-projectiles.ts';
 
 const CASTER = 0x1001;
 const SPELL = 0x2001;
