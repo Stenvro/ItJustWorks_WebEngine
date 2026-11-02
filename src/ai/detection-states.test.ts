@@ -118,6 +118,30 @@ describe('detection states', () => {
     expect([...detections.known(GUARD)]).toEqual([]);
   });
 
+  it('are kept by a save and go on from there after a load', () => {
+    const { detections } = book();
+    detections.observe(GUARD, PLAYER, 5, here, 10);
+    detections.observe(GUARD, BANDIT, 5, there, 10);
+    detections.observe(GUARD, BANDIT, -50, there, 12);
+    detections.attack(BANDIT, GUARD, here, 12);
+    detections.alarm(GUARD, [], 12);
+    const saved = detections.save(14);
+    const { detections: loaded, events } = book();
+    loaded.load(structuredClone(saved), 100);
+    expect(events).toEqual([]);
+    expect(loaded.state(GUARD, PLAYER)).toBe('detected');
+    expect(loaded.level(GUARD, PLAYER)).toBe(5);
+    expect(loaded.state(GUARD, BANDIT)).toBe('searching');
+    expect(loaded.lastKnown(GUARD, BANDIT)).toEqual(there);
+    expect(loaded.attackedBy(BANDIT)).toBe(GUARD);
+    expect(loaded.alarmed(GUARD)).toBe(true);
+    // The search runs out as it would have: fDetectionStateExpireTime after it last saw it.
+    loaded.tick(96 + settings.stateExpireTime - 1);
+    expect(loaded.state(GUARD, BANDIT)).toBe('searching');
+    loaded.tick(96 + settings.stateExpireTime);
+    expect(loaded.state(GUARD, BANDIT)).toBe('unseen');
+  });
+
   it('open the stealth eye by the state: shut, slightly, half, open', () => {
     const { detections } = book();
     expect(detections.eye(GUARD, PLAYER)).toBe(0);

@@ -33,7 +33,10 @@ import type {
   SavedAttachedArrow,
   SavedProjectile,
   WorldSave,
+  WorldSaveParts,
 } from '../save/world-save.ts';
+import { mergeWorldSaveParts } from './world-save-parts.ts';
+import type { SavedMusicTrack } from '../audio/music.ts';
 import type { ScreenModifiers } from './screen-modifiers.ts';
 import { SkyMode, type SkySave, type SkyWeather } from '../world/sky-weather.ts';
 import type { Terminal } from './terminal.ts';
@@ -183,6 +186,8 @@ export interface ScriptView {
   saveProjectiles?(): readonly SavedProjectile[];
   /** The arrows stuck in actors in this view, for a save. */
   saveAttachedArrows?(): readonly SavedAttachedArrow[];
+  /** The decals, held objects, moving objects and detection of this view, for a save. */
+  saveWorldParts?(): WorldSaveParts;
   /** The player passes into another cell or worldspace (a loading screen is up). */
   changingSpace?(): boolean;
   /** The regions of the player's cell (IsPlayerInRegion). */
@@ -650,6 +655,9 @@ export class ScriptWorld implements WorldBridge {
     }
     const projectiles = [...this.#views].flatMap((view) => view.saveProjectiles?.() ?? []);
     const attachedArrows = [...this.#views].flatMap((view) => view.saveAttachedArrows?.() ?? []);
+    const parts = mergeWorldSaveParts(
+      [...this.#views].map((view) => view.saveWorldParts?.() ?? {}),
+    );
     const playerGraphs = [...this.#views].map((view) => view.savePlayerGraphs?.()).find(Boolean);
     const player = [...this.#views].map((view) => view.savePlayer?.()).find(Boolean);
     return {
@@ -657,6 +665,7 @@ export class ScriptWorld implements WorldBridge {
       graphs,
       ...(projectiles.length > 0 && { projectiles }),
       ...(attachedArrows.length > 0 && { attachedArrows }),
+      ...parts,
       ...(playerGraphs && { playerGraphs }),
       ...(player && { player }),
     };
@@ -1129,6 +1138,14 @@ export class ScriptWorld implements WorldBridge {
 
   /** The music types scripts added (as told here), still in play when the music says so. */
   #musicAdded: number[] = [];
+
+  playingMusic(): SavedMusicTrack | undefined {
+    return this.sounds?.()?.music.save();
+  }
+
+  resumeMusic(saved: SavedMusicTrack): void {
+    this.sounds?.()?.music.resume(saved);
+  }
 
   addedMusic(): readonly number[] {
     const playing = this.sounds?.()?.music.state.added;

@@ -37,12 +37,14 @@ import {
 } from '../render/world-decal.ts';
 import {
   DECAL_SPACING,
+  DecalFlag,
   decalAlpha,
   decalGoneAt,
   decalTooNear,
   ENVIRONMENT_BLOOD,
   environmentBloodWay,
   expireDecals,
+  landSpaceOrigin,
   parseTextureSet,
   placeDecal,
   placedSize,
@@ -54,6 +56,7 @@ import {
   type TextureSet,
 } from '../world/decal.ts';
 import { impactFacing, type Impact } from '../world/impact-records.ts';
+import type { SavedDecal } from '../save/world-save.ts';
 import type { GameSession } from './game-session.ts';
 
 /** SLSF1 Decal: a shape that is itself a decal takes none. */
@@ -78,6 +81,19 @@ interface LivingDecal {
   readonly follow?: () => Mat4 | undefined;
   /** A decal on the world: the node it is on (struckNodeKey), where it was made, its width. */
   readonly spot?: DecalSpot & { readonly node: string };
+  /** What a save keeps of a world decal (on the first of the shapes made for it). */
+  readonly stored?: StoredDecal;
+}
+
+/** A world decal as the store keeps it: a save's, but for its time (kept as `until`). */
+type StoredDecal = Omit<SavedDecal, 'left'>;
+
+/** A saved world decal waiting for what it lies on to be drawn, and when it goes. */
+interface RestoredDecal {
+  readonly saved: SavedDecal;
+  readonly until: number;
+  /** Being built (its data or cell read). */
+  building?: boolean;
 }
 
 /**
@@ -211,6 +227,7 @@ export class CombatImpacts {
     // A new frame: the decals made per frame are counted again.
     this.#skinMadeThisFrame = 0;
     this.#rigidMadeThisFrame = 0;
+    this.#buildRestored();
     const now = this.#now();
     const fade = (scene: GpuScene, until: number): GpuScene => {
       const alpha = decalAlpha(until, now);
@@ -556,9 +573,11 @@ export class CombatImpacts {
     }
     const lifetime = ini.number('Display', 'fDecalLifetime');
     const spot = { node, point: surface.point, width: size.width };
+    const faceLimit = worldDecalFaceLimit(impact.angleThreshold);
+    const store = { textureSet: data.base, impact: impact.formId, rect: placed.rect, faceLimit };
     const surfaces = this.#surfaces?.();
     if (surfaces) {
-      await this.#onSurfaces(surfaces, data, impact, {
+      await this.#onSurfaces(surfaces, data, faceLimit, {
         box: worldDecalBox(placed.box, blood ? ENVIRONMENT_BLOOD.depth : decal.depth),
         rect: placed.rect,
         outward: normalize(surface.normal),
@@ -568,6 +587,7 @@ export class CombatImpacts {
         forced,
         until: decalGoneAt(this.#now(), lifetime),
         spot,
+        store,
       });
       return;
     }
@@ -586,7 +606,12 @@ export class CombatImpacts {
     );
     if (!gpu) return;
     gpu.select(() => true);
-    this.#decals.push({ gpu, until: decalGoneAt(this.#now(), lifetime), spot });
+    this.#decals.push({
+      gpu,
+      until: decalGoneAt(this.#now(), lifetime),
+      spot,
+      stored: { ...store, on: { world: true }, box: Array.from(placed.box) },
+    });
     this.#expire();
   }
 
@@ -615,7 +640,7 @@ export class CombatImpacts {
   async #onSurfaces(
     surfaces: DecalSurfaces,
     data: ImpactDecal,
-    impact: Impact,
+    faceLimit: number,
     at: {
       readonly box: Mat4;
       readonly rect: readonly [number, number, number, number];
@@ -626,6 +651,8 @@ export class CombatImpacts {
       readonly forced: boolean;
       readonly until: number;
       readonly spot: DecalSpot & { readonly node: string };
+      /** What the store keeps of it beside what it lies on and its box there. */
+      readonly store: Omit<StoredDecal, 'on' | 'box'>;
     },
   ): Promise<void> {
     const ini = this.#session.ini;
@@ -639,7 +666,6 @@ export class CombatImpacts {
       modelSpaceNormals: (textureSet.flags & TextureSetFlag.modelSpaceNormals) !== 0,
     });
     const look: WorldDecalLook = { material, alpha, color: data.decal.color, rect: at.rect };
-    const faceLimit = worldDecalFaceLimit(impact.angleThreshold);
     const perFrame = ini.number('Display', 'iMaxDecalsPerFrame');
     const room = (): boolean => at.forced || this.#rigidMadeThisFrame < perFrame;
     /** Each drawn instance's decal shapes (its pose nodes for those hung on one). */
@@ -684,6 +710,22 @@ export class CombatImpacts {
         if (entry.parts.length > 0) made.push(entry);
       }
     }
+    // The store keeps it once, its box in the space of what it lies on (the land's: the world).
+    const owner = made[0]?.instance;
+    const inOwner = owner && invert(owner.world);
+    let stored: StoredDecal | undefined =
+      at.owner?.kind === 'landscape'
+        ? { ...at.store, on: { land: true }, box: Array.from(at.box) }
+        : at.owner && inOwner
+          ? {
+              ...at.store,
+              on: {
+                reference: at.owner.reference,
+                ...(at.node !== undefined && { node: at.node }),
+              },
+              box: Array.from(multiply(inOwner, at.box)),
+            }
+          : undefined;
     for (const { instance, parts, hung } of made) {
       const model = await this.#renderer.scene.createModel(
         {
@@ -714,9 +756,187 @@ export class CombatImpacts {
         model.destroy();
         continue;
       }
-      this.#decals.push({ shapes: { model, scene }, until: at.until, spot: at.spot });
+      this.#decals.push({
+        shapes: { model, scene },
+        until: at.until,
+        spot: at.spot,
+        ...(stored && { stored }),
+      });
+      stored = undefined;
     }
     this.#expire();
+  }
+
+  /** A saved decal's data: its impact's (own decal data over its set's), else its set's. */
+  async #savedDecalData(saved: SavedDecal): Promise<ImpactDecal | undefined> {
+    if (saved.impact !== undefined) {
+      const data = await this.#decal(saved.impact);
+      if (data) return data;
+    }
+    const db = await this.#session.db;
+    const record = await db.get(saved.textureSet);
+    if (record?.type !== 'TXST') return undefined;
+    const textureSet = parseTextureSet(record);
+    const decal = textureSet.decal;
+    return decal && { decal, textureSet, base: saved.textureSet };
+  }
+
+  /**
+   * The world decals as a save keeps them (docs/formats/save.md): each with its time left, and
+   * those of a loaded save still waiting for what they lie on.
+   */
+  save(): SavedDecal[] {
+    this.#takeRestored();
+    const now = this.#now();
+    const out: SavedDecal[] = [];
+    for (const { saved, until } of this.#restored) {
+      if (until > now) out.push({ ...saved, left: until - now });
+    }
+    for (const { stored, until } of this.#decals) {
+      if (stored && until > now) out.push({ ...stored, left: until - now });
+    }
+    return out;
+  }
+
+  /** A loaded save's world decals, waiting to be built as what they lie on is drawn. */
+  #restored: RestoredDecal[] = [];
+
+  #takeRestored(): void {
+    const saved = this.#session.restoring?.takeDecals() ?? [];
+    if (saved.length === 0) return;
+    const now = this.#now();
+    const whole = decalGoneAt(now, this.#session.ini.number('Display', 'fDecalLifetime'));
+    for (const decal of saved) {
+      this.#restored.push({
+        saved: decal,
+        until: decal.left === undefined ? whole : now + decal.left,
+      });
+    }
+  }
+
+  /**
+   * Each frame: the saved decals whose surfaces are drawn now are built on them (a reference's
+   * shapes, the land of a cell; one known by no surface projected), as a hit made them, forced
+   * (no spacing, no per-frame cap); those whose time ran out go.
+   */
+  #buildRestored(): void {
+    // Taken by the impacts of a view showing the world (its shapes and land given).
+    const surfaces = this.#surfaces?.();
+    if (!surfaces) return;
+    this.#takeRestored();
+    if (this.#restored.length === 0) return;
+    const now = this.#now();
+    this.#restored = this.#restored.filter((entry) => entry.until > now);
+    for (const entry of this.#restored) {
+      if (entry.building) continue;
+      const on = entry.saved.on;
+      const ready =
+        'world' in on ||
+        ('reference' in on && (surfaces.instances(on.reference)?.length ?? 0) > 0) ||
+        'land' in on ||
+        'cell' in on;
+      if (!ready) continue;
+      entry.building = true;
+      void this.#buildSaved(entry, surfaces).then(
+        (done) => {
+          entry.building = false;
+          if (done) this.#restored = this.#restored.filter((other) => other !== entry);
+        },
+        () => {
+          this.#restored = this.#restored.filter((other) => other !== entry);
+        },
+      );
+    }
+  }
+
+  /** Builds a saved decal; whether it is done with (built, or never to be). */
+  async #buildSaved(entry: RestoredDecal, surfaces: DecalSurfaces): Promise<boolean> {
+    const { saved, until } = entry;
+    const data = await this.#savedDecalData(saved);
+    if (!data || saved.box.length !== 16) return true;
+    const rect: readonly [number, number, number, number] =
+      (data.decal.flags & DecalFlag.noSubtextures) !== 0 ? [0, 0, 1, 1] : saved.rect;
+    const on = saved.on;
+    let box: Mat4 = Float32Array.from(saved.box);
+    const point = (): Vec3 => [box[12] ?? 0, box[13] ?? 0, box[14] ?? 0];
+    if ('world' in on) {
+      const gpu = await this.#renderer.decals.createDecals(
+        [{ reference: 0, base: data.base, textureSet: data.textureSet, box, rect }],
+        this.#session.textures,
+      );
+      if (!gpu) return true;
+      gpu.select(() => true);
+      const width = Math.hypot(box[0] ?? 0, box[1] ?? 0, box[2] ?? 0);
+      const spot = { node: 'none', point: point(), width };
+      this.#decals.push({ gpu, until, spot, stored: { ...saved, box: Array.from(box) } });
+      this.#expire();
+      return true;
+    }
+    let owner: { readonly reference: number; readonly kind: string };
+    let node: string | undefined;
+    if ('reference' in on) {
+      const instance = surfaces.instances(on.reference)?.[0];
+      if (!instance) return false;
+      box = multiply(instance.world, box);
+      owner = { reference: on.reference, kind: 'object' };
+      node = on.node;
+    } else {
+      if ('cell' in on) {
+        const grid = await this.#cellGrid(on.cell);
+        const center = grid && [(grid[0] + 0.5) * 4096, (grid[1] + 0.5) * 4096];
+        const land = center && surfaces.land(center[0] ?? 0, center[1] ?? 0);
+        if (!grid) return true;
+        if (!land) return false;
+        const origin = landSpaceOrigin(land.heights, grid[0], grid[1]);
+        const toWorld = identity();
+        toWorld.set(origin, 12);
+        box = multiply(toWorld, box);
+      } else if (!surfaces.land(box[12] ?? 0, box[13] ?? 0)) {
+        return false;
+      }
+      owner = { reference: 0, kind: 'landscape' };
+    }
+    const at = point();
+    const outward = normalize([-(box[4] ?? 0), -(box[5] ?? 0), -(box[6] ?? 1)]);
+    const width = Math.hypot(box[0] ?? 0, box[1] ?? 0, box[2] ?? 0);
+    await this.#onSurfaces(surfaces, data, saved.faceLimit, {
+      box,
+      rect,
+      outward,
+      owner,
+      node,
+      point: at,
+      forced: true,
+      until,
+      spot: { node: struckNodeKey(owner, node, at), point: at, width },
+      store: {
+        textureSet: saved.textureSet,
+        ...(saved.impact !== undefined && { impact: saved.impact }),
+        rect: saved.rect,
+        faceLimit: saved.faceLimit,
+      },
+    });
+    return true;
+  }
+
+  readonly #cellGrids = new Map<number, Promise<readonly [number, number] | undefined>>();
+
+  /** An exterior cell's grid (XCLC), read once. */
+  #cellGrid(cell: number): Promise<readonly [number, number] | undefined> {
+    let grid = this.#cellGrids.get(cell);
+    if (!grid) {
+      grid = this.#session.db
+        .then((db) => db.get(cell))
+        .then((record) => {
+          const xclc = record?.type === 'CELL' ? record.fields.first('XCLC') : undefined;
+          if (!xclc || xclc.length < 8) return undefined;
+          const view = new DataView(xclc.buffer, xclc.byteOffset, xclc.byteLength);
+          return [view.getInt32(0, true), view.getInt32(4, true)] as const;
+        })
+        .catch(() => undefined);
+      this.#cellGrids.set(cell, grid);
+    }
+    return grid;
   }
 
   #decal(impact: number): Promise<ImpactDecal | undefined> {
@@ -746,6 +966,7 @@ export class CombatImpacts {
   }
 
   clear(): void {
+    this.#restored = [];
     for (const decal of this.#decals.splice(0)) destroyDecal(decal);
     for (const decal of this.#skin.splice(0)) {
       decal.scene.destroy();
