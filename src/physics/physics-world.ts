@@ -18,6 +18,7 @@ import {
 import { Layer, LayerFlag, type CollisionMatrix } from './collision-layers.ts';
 import type { BodyPush } from '../gameplay/magic/explosions.ts';
 import { PENETRATION_DEFAULTS, type PenetrationSettings } from './ragdoll-penetration.ts';
+import { integrate, type BodyFrame, type BodyMotion } from './keyframe-hierarchy.ts';
 import {
   slowBodyFactor,
   SOLVER_DEFAULTS,
@@ -1491,18 +1492,83 @@ export class PhysicsWorld {
    * under the placement `world`, by the next step.
    */
   moveBody(placed: PlacedCollision, body: PlacedBody, modelPose: Mat4, world: Mat4): void {
+    const { position, rotation } = this.bodyTarget(placed, modelPose, world);
+    body.body.setNextKinematicTranslation({ x: position[0], y: position[1], z: position[2] });
+    body.body.setNextKinematicRotation(rotation);
+  }
+
+  /**
+   * Where a body of a placement is with `modelPose` (its pose in the model, game units) under
+   * the placement `world`: Havok units, world space (as moveBody puts it).
+   */
+  bodyTarget(placed: PlacedCollision, modelPose: Mat4, world: Mat4): BodyFrame {
     const local = rigidPart(modelPose);
     local[12] = (local[12] ?? 0) * placed.scale;
     local[13] = (local[13] ?? 0) * placed.scale;
     local[14] = (local[14] ?? 0) * placed.scale;
     const pose = new Float32Array(16);
     multiplyInto(rigidPart(world), local, pose);
-    body.body.setNextKinematicTranslation({
-      x: toHavok(pose[12] ?? 0),
-      y: toHavok(pose[13] ?? 0),
-      z: toHavok(pose[14] ?? 0),
+    return {
+      position: [toHavok(pose[12] ?? 0), toHavok(pose[13] ?? 0), toHavok(pose[14] ?? 0)],
+      rotation: matrixQuaternion(pose),
+    };
+  }
+
+  /**
+   * A simulated body's velocities set (Havok units a second), at most its own maximum speeds
+   * (a body let go moving as its animation moved it).
+   */
+  setBodyVelocity(body: PlacedBody, linear: Vec3, angular: Vec3): void {
+    const most = (v: Vec3, limit: number): Vec3 => {
+      const length = Math.hypot(v[0], v[1], v[2]);
+      return length > limit && length > 0
+        ? [v[0] * (limit / length), v[1] * (limit / length), v[2] * (limit / length)]
+        : v;
+    };
+    const v = most(linear, body.data.maxLinearVelocity);
+    const w = most(angular, body.data.maxAngularVelocity);
+    body.body.setLinvel({ x: v[0], y: v[1], z: v[2] }, true);
+    body.body.setAngvel({ x: w[0], y: w[1], z: w[2] }, true);
+  }
+
+  /** A body's place and velocities (Havok units, world space). */
+  bodyMotion(body: PlacedBody): BodyMotion {
+    const t = body.body.translation();
+    const r = body.body.rotation();
+    const v = body.body.linvel();
+    const w = body.body.angvel();
+    return {
+      position: [t.x, t.y, t.z],
+      rotation: { x: r.x, y: r.y, z: r.z, w: r.w },
+      linear: [v.x, v.y, v.z],
+      angular: [w.x, w.y, w.z],
+    };
+  }
+
+  /**
+   * Drives a body by velocities (Havok units a second; the hierarchy controller's,
+   * keyframe-hierarchy.ts): a simulated body moves at them from now on, a keyframed one goes
+   * where they take it in `seconds` (its place `from`, else where it is), by the next step.
+   */
+  driveBody(
+    body: PlacedBody,
+    linear: Vec3,
+    angular: Vec3,
+    seconds: number,
+    from?: BodyFrame,
+  ): void {
+    const rapier = body.body;
+    if (rapier.isDynamic()) {
+      this.setBodyVelocity(body, linear, angular);
+      return;
+    }
+    const next = integrate(from ?? this.bodyMotion(body), linear, angular, seconds);
+    rapier.setNextKinematicTranslation({
+      x: next.position[0],
+      y: next.position[1],
+      z: next.position[2],
     });
-    body.body.setNextKinematicRotation(matrixQuaternion(pose));
+    rapier.setNextKinematicRotation(next.rotation);
   }
 
   /**

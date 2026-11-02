@@ -57,6 +57,14 @@ describe('paired clips', () => {
     expect([...pairedTrackBones(TRACKS, HORSE)]).toEqual([-1, 0, 1, 3, 2, -1, -1, -1, -1]);
   });
 
+  it("takes the partner's tracks by the synchronized clip's SyncAnimPrefix", () => {
+    const other = TRACKS.map((name) => name.replace(/^2_/, 'B_'));
+    expect(pairedSide(other, HORSE, 'B_')).toBe('second');
+    expect([...pairedTrackBones(other, HORSE, 'second', 'B_')]).toEqual([
+      -1, 0, 1, 3, 2, -1, -1, -1, -1,
+    ]);
+  });
+
   it('prefers the prefixed track of a bone both sides name', () => {
     const tracks = ['PairedRoot', 'NPC Root [Root]', '2_NPC Root [Root]'];
     expect([...pairedTrackBones(tracks, ['NPC Root [Root]'], 'second')]).toEqual([-1, -1, 0]);

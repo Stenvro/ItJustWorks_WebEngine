@@ -19,6 +19,8 @@
 //
 // Platform-independent: the caller values the gates and plays the action.
 
+import type { IdleTree } from './idle-records.ts';
+
 /** The ambient idles' game settings (the load order's values, else the engine's defaults). */
 export interface AmbientIdleSettings {
   /** fAIIdleWaitTime: the idle wait timer as an ambient idle plays (seconds). */
@@ -139,4 +141,32 @@ export class AmbientIdleFlags {
   remove(actor: number): void {
     this.#states.delete(actor);
   }
+}
+
+/**
+ * How long an idle loops before it is stopped (IDLE DATA loopMin, loopMax: seconds): its own,
+ * else its nearest parent idle's (a group's: the troll's crouching idles); undefined when none
+ * gives one, or 255 and 255 (it loops until something stops it: IdleInjured). Vanilla: the
+ * goat's feeding 10 to 30, the sabre cat's lie-down 4 to 8, the troll's crouching 2 to 5.
+ */
+export function idleLoopSeconds(
+  tree: IdleTree,
+  idle: number,
+): { readonly min: number; readonly max: number } | undefined {
+  const seen = new Set<number>();
+  let at: number | undefined = idle;
+  while (at !== undefined && !seen.has(at)) {
+    seen.add(at);
+    const record = tree.idles.get(at);
+    if (!record) return undefined;
+    if (record.loopMin !== 0 || record.loopMax !== 0) {
+      if (record.loopMin === 255 && record.loopMax === 255) return undefined;
+      return {
+        min: Math.min(record.loopMin, record.loopMax),
+        max: Math.max(record.loopMin, record.loopMax),
+      };
+    }
+    at = record.parent;
+  }
+  return undefined;
 }

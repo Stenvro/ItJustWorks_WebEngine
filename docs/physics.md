@@ -645,6 +645,38 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   ragdoll's root by its world-from-model mode, not done; the paralysed's stiff fall; a dying
   graph's powered bones (vanilla keeps them all keyframed: AnimateToRagdoll).
 
+**The hierarchy controller** (`src/physics/keyframe-hierarchy.ts`: Havok's
+hkaKeyFrameHierarchyUtility, as its rigid body ragdoll controller runs it) drives a ragdoll's
+bodies toward an animated pose by velocities instead of moving them there. Per body, parents
+first: the keyframe's own velocity (its pose against its last); hierarchy matching (the
+velocity that keeps its pose relative to its parent body where the parent goes this step, by
+hierarchyGain; the root against the world); velocity matching (damped by velocityDamping, toward
+velocityGain × that by accelerationGain); position matching (positionGain of the error a step,
+at most positionMaxLinear/AngularVelocity) and snapping (snapGain on the error taken at most
+snapMaxLinear/AngularDistance, at most the snap velocities). With full gains a body is on its
+pose each step (the tests check it). TODO(M13): the order Havok sums its stages in is not
+documented. It runs in two places (`ActorBodies`):
+
+- **The living's bodies** follow their nodes by it with their blend collision objects' gains
+  (bhkBlendCollisionObject heirGain, velocityGain: 1 and 1 in all 1,193 bodies of the data:
+  keyframed exactly), keeping the velocity they were moved at. Let go (a death, a knock-down),
+  every body carries that velocity into the ragdoll, as a keyframed Havok body does: the
+  ragdoll goes on from the pose as the animation moved it, without a stop
+  (`tests/conformance/animation/ragdoll-switch.test.ts`: Hulda's hand, 40 units a second in
+  her lean, goes on so).
+- **A ragdoll in the world driven by its graph** (AddRagdollToWorld while dying, until
+  RemoveRagdollFromWorld or limp; a knocked-down actor rising, until it is up): while the
+  graph's hkbRigidBodyRagdollControlsModifier is active and no powered ragdoll controls are
+  (FullyRagdoll's limp takes precedence), its bodies are simulated; the bones its keyframe
+  bones modifiers name are keyframed hard (full gains), the others are driven by the
+  modifier's control data (Havok's defaults in 49 of 55 graphs: hierarchy 0.17, velocity 0.6,
+  position 0.05; the draugr's and four others' softer), blended in from their own motion over
+  its durationToBlend (0.5 s in every graph). Its controls lie in 23 graphs' GetUpFromRagdoll
+  (the bear's upper body rises driven, its lower body keyframed), five AnimateToRagdoll states
+  and the root states (where the ragdoll is not in the world). Without them, the bodies
+  follow the pose as the living's do. TODO(M13): whether the original then lets them go limp,
+  and whether it draws the driven bones from their bodies (here the graph's pose is drawn).
+
 Malleable strength and a chain's damping (0.6 in every chain) are not applied; a chain's tau
 (1) and constraint force mixing (float epsilon) are Rapier's stiff joints'. A joint is in the world only while one of its two bodies is simulated: between
 two keyframed or held bodies (a living actor's ragdoll keyframed to its pose, an object placed

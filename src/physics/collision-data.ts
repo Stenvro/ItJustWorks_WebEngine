@@ -108,6 +108,12 @@ export interface CollisionBody {
    * slows the body when it is slow (src/physics/constraint-solver.ts, slowBodyFactor).
    */
   readonly solverDeactivation: number;
+  /**
+   * A bhkBlendCollisionObject's gains (a ragdoll bone's body: heirGain, velocityGain): how the
+   * body, keyframed, follows its node's animation by the hierarchy controller
+   * (src/physics/keyframe-hierarchy.ts, blendObjectControl). 1 and 1 in every body of the data.
+   */
+  readonly blend?: { readonly heirGain: number; readonly velocityGain: number };
   readonly shapes: readonly CollisionShape[];
 }
 
@@ -757,6 +763,7 @@ export function buildCollision(
       quality: rigid?.qualityType ?? 1,
       penetrationDepth: rigid?.penetrationDepth ?? 0,
       solverDeactivation: rigid?.solverDeactivation ?? 1,
+      ...(object.blend ? { blend: object.blend } : {}),
       shapes,
     });
   };

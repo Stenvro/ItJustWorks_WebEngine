@@ -594,14 +594,18 @@ export class ActorGraphEvents {
     const dying = this.#dying.get(reference);
     if (!dying) return;
     const driven = this.#options.session.ini.number('Animation', 'bDriveRagdollWithGraph') !== 0;
-    if (driven) dying.phase = 'driven';
-    else this.#limp(dying);
+    if (driven) {
+      dying.phase = 'driven';
+      this.#options.stage.bodies.driveRagdoll(reference, true);
+    } else this.#limp(dying);
   }
 
   /** RemoveRagdollFromWorld: the ragdoll leaves the world; a dying body follows its graph again. */
   #removeRagdoll(reference: number): void {
     const dying = this.#dying.get(reference);
-    if (dying) dying.phase = 'animating';
+    if (!dying) return;
+    dying.phase = 'animating';
+    this.#options.stage.bodies.driveRagdoll(reference, false);
   }
 
   /**

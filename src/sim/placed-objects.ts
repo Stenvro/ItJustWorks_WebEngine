@@ -5,11 +5,13 @@
 // rule for interiors, exteriors and the simulation alike.
 
 import type { AnimatedSkeleton } from '../animation/animated-skeleton.ts';
+import { isEvent, soundPlayAt } from '../animation/graph-events.ts';
 import { skeletonEventsToScripts, type SavedGraph } from '../animation/script-graphs.ts';
 import type { ActorPose } from '../animation/skeleton.ts';
 import { articulatedPose } from '../physics/articulation.ts';
 import type { CollisionData } from '../physics/collision-data.ts';
 import type { GpuModel } from '../render/gpu-model.ts';
+import { transformPoint, type Vec3 } from '../render/math.ts';
 import type {
   GpuWaterType,
   InstanceVisibility,
@@ -60,6 +62,33 @@ function takeUnloadedGraph(session: GameSession, object: CellObject): SavedGraph
   return graph;
 }
 
+/**
+ * An object graph's sounds (its clips' annotations): SoundPlay.<descriptor> at the object,
+ * SoundPlayAt.<descriptor>.<node> at that node of its model as it moves (the sawmill's saw at
+ * its blade), as the actors' animations sound theirs (src/shell/actor-sounds.ts).
+ */
+function objectSounds(session: GameSession, object: CellObject, skeleton: AnimatedSkeleton): void {
+  const previous = skeleton.onEvents;
+  const at = (node: string | undefined) => (): Vec3 => {
+    const model = node === undefined ? undefined : skeleton.pose.world(node);
+    const local: Vec3 = model ? [model[12] ?? 0, model[13] ?? 0, model[14] ?? 0] : [0, 0, 0];
+    return transformPoint(object.world, local);
+  };
+  skeleton.onEvents = (events) => {
+    previous?.(events);
+    const sounds = session.soundSystem;
+    if (!sounds) return;
+    for (const event of events) {
+      const placed = soundPlayAt(event);
+      if (placed) {
+        void sounds.playNamed(placed.descriptor, at(placed.node), object.reference);
+      } else if (isEvent(event, 'SoundPlay') && event.payload !== undefined) {
+        void sounds.playNamed(event.payload, at(undefined), object.reference);
+      }
+    }
+  };
+}
+
 /** Places a cell's object with its model (see the file's comment). */
 export function placeObject(
   session: GameSession,
@@ -93,6 +122,7 @@ export function placeObject(
     skeletonEventsToScripts(skeletal.skeleton, (event) =>
       session.scriptsReady?.animationEvent(object.reference, event),
     );
+    objectSounds(session, object, skeletal.skeleton);
   }
   // Bodies that move nodes one by one pose the model (ragdolls, hinged signs); objects
   // simulated as one body get a matrix of their own.

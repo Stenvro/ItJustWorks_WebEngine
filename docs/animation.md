@@ -59,6 +59,9 @@ limbs), Dwemer and Apocrypha mechanisms, the Eye of Magnus, Blackreach's glowing
 session reads such a project once (`AnimationAssets.skeletalGraph`, src/shell/animation-assets.ts):
 its character's Havok skeleton, every behavior file, and the clips its start states play.
 
+- **Sounds**: its clips' SoundPlay.<descriptor> play at the object, and
+  SoundPlayAt.<descriptor>.<node> (20 annotations: the sawmill's saw) at that node of the model
+  as it moves (`objectSounds`, src/sim/placed-objects.ts; the events reach its scripts too).
 - **Skeleton**: the model's node tree (ModelData.nodes, kept for every model with a graph) is
   the rig; Havok bones are matched to nodes by name, as for actors (ActorSkeleton). Nodes
   under no matched bone stay where the model, and its NIF sequences, put them; 5 meshes
@@ -456,6 +459,14 @@ picked again for the same actor until that long has passed since it played (the 
 seconds). TODO(M13): whether the original counts it per actor, and whether a group idle's
 delay holds its children (ours: the idle played).
 
+**Loop seconds.** An idle with loop seconds (IDLE DATA loopMin, loopMax; its own, else its
+nearest parent idle's: the goat's feeding 10 to 30, the sabre cat's lie-down 4 to 8, the troll's
+crouching group 2 to 5; IdleInjured's 255 and 255 loops until something stops it) plays a random
+time between the two, then the actor's idle stops (ActionIdleStop: the idle tree's IdleStop,
+whose PickNewIdle asks for the next). `idleLoopSeconds` (src/ai/ambient-idles.ts), the furniture's
+idle loop (`ActorFurniture`). TODO(M13): inferred from the Creation Kit's name for the field;
+how the original ends the loop and draws its time.
+
 **Where the values come from.** Every movement update the actor's movement controller says what
 it wants: a speed, the direction to go in (an angle against the actor's facing) and a rotation
 speed; the engine keeps them in the actor's process data and moves the actor by them. The graph
@@ -824,7 +835,8 @@ prefix their partner "2_"), the rest partners' (153 killmove victims'); every pa
 its mark at once (fGetToMarkTime 0; the vampire lord's three 0.05 s), turned to it. The mark is in the clip: the partner's placement is the track
 named the prefix alone ("2_"), the leader's the track "NPC" (both from the pair's root, which is
 the leader's place as the clip begins); the partner's bones are its "2_"-prefixed tracks, moving
-from there. Paired_1HMKillMoveB puts the victim 72.8 units ahead, turned about; a bear's clip
+from there (the prefix the active synchronized clip's SyncAnimPrefix names, else "2_":
+`pairedTrackBones`). Paired_1HMKillMoveB puts the victim 72.8 units ahead, turned about; a bear's clip
 157, a wolf's 116.6. Ours: the partner is moved to its mark as its clip begins (`partnerMark`),
 over fGetToMarkTime; not there within [Animation] fMaxTimeToMarkSec (3 s) the scene plays where
 they stand. While paired, both actors are held (no character controller, no locomotion events:
@@ -1637,9 +1649,10 @@ Tool's 30 Hz, made frame-rate independent (1 − (1 − g)^(30 dt); TODO(M13)).
   the giant's left thigh is "[RThg]01"). The living's bodies follow the pose (keyframed:
   actor-bodies.ts); a hit pushes a ragdoll lying (dead or knocked down) instead: vanilla keeps
   the living's whole ragdoll keyframed (the SKSE mods that add hit reactions to the living make
-  the point), and its rigid body controls (hkbRigidBodyRagdollControlsModifier:
-  rigidBodyRagdoll, its hkaKeyFrameHierarchyUtility gains) drive the get-up's upper body,
-  which is keyframed to the blend here.
+  the point). Its rigid body controls (hkbRigidBodyRagdollControlsModifier: rigidBodyRagdoll,
+  its hkaKeyFrameHierarchyUtility gains, durationToBlend and bones) drive the bones not
+  keyframed of a ragdoll in the world (a creature's get-up's upper body, five dying graphs'
+  AnimateToRagdoll) by the hierarchy controller: physics.md, "The hierarchy controller".
 - **Ragdolls and getting up** (docs/ai.md, "Combat": Knock-downs): `Ragdoll` (i1stPerson 0)
   and `RagdollInstant` take the human graph to FullyRagdoll; its pose matcher
   (hkbPoseMatchingGenerator, read as a blender with its own members) shows the matched get-up

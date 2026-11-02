@@ -32,14 +32,19 @@ export function isPaired(binding: AnimationBinding): boolean {
  * human killing a human) name the same bones on both sides: here the first is taken, and a
  * killmove sets its victim's graph to the second (BehaviorRuntime.pairedSide, set by combat).
  */
-export function pairedSide(trackNames: readonly string[], bones: readonly string[]): PairedSide {
+export function pairedSide(
+  trackNames: readonly string[],
+  bones: readonly string[],
+  prefix = PARTNER_PREFIX,
+): PairedSide {
   const own = new Set(bones.map((bone) => bone.toLowerCase()));
+  const lowerPrefix = prefix.toLowerCase();
   let first = 0;
   let second = 0;
   for (const name of trackNames) {
     const lower = name.toLowerCase();
-    if (lower.startsWith(PARTNER_PREFIX)) {
-      if (own.has(lower.slice(PARTNER_PREFIX.length))) second++;
+    if (lower.startsWith(lowerPrefix)) {
+      if (own.has(lower.slice(lowerPrefix.length))) second++;
     } else if (own.has(lower)) {
       first++;
     }
@@ -57,7 +62,9 @@ export function pairedTrackBones(
   trackNames: readonly string[],
   bones: readonly string[],
   side: PairedSide = pairedSide(trackNames, bones),
+  prefix = PARTNER_PREFIX,
 ): Int16Array {
+  const lowerPrefix = prefix.toLowerCase();
   const index = new Map<string, number>();
   bones.forEach((bone, i) => {
     const key = bone.toLowerCase();
@@ -66,15 +73,15 @@ export function pairedTrackBones(
   const prefixed = new Set(
     trackNames
       .map((name) => name.toLowerCase())
-      .filter((name) => name.startsWith(PARTNER_PREFIX))
-      .map((name) => name.slice(PARTNER_PREFIX.length)),
+      .filter((name) => name.startsWith(lowerPrefix))
+      .map((name) => name.slice(lowerPrefix.length)),
   );
   const result = new Int16Array(trackNames.length).fill(-1);
   trackNames.forEach((name, track) => {
     const lower = name.toLowerCase();
     if (lower === PAIRED_ROOT.toLowerCase()) return;
-    const partner = lower.startsWith(PARTNER_PREFIX);
-    const bone = partner ? lower.slice(PARTNER_PREFIX.length) : lower;
+    const partner = lower.startsWith(lowerPrefix);
+    const bone = partner ? lower.slice(lowerPrefix.length) : lower;
     if (side === 'first' && partner) return;
     if (side === 'second' && !partner && prefixed.has(bone)) return;
     result[track] = index.get(bone) ?? -1;

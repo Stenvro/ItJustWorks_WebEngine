@@ -11,6 +11,15 @@
 import type RAPIER from '@dimforge/rapier3d-compat';
 import type { ActorPose } from '../animation/skeleton.ts';
 import { Articulation } from '../physics/articulation.ts';
+import {
+  blendObjectControl,
+  driveHierarchy,
+  HARD_KEYFRAME,
+  type BodyFrame,
+  type BodyVelocity,
+  type HierarchyBody,
+  type HierarchyControl,
+} from '../physics/keyframe-hierarchy.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import { RagdollPenetration } from '../physics/ragdoll-penetration.ts';
 import type { CollisionBody, CollisionData } from '../physics/collision-data.ts';
@@ -43,7 +52,20 @@ interface PosedBody {
   readonly body: PlacedBody;
   readonly node: number;
   readonly offset: Mat4;
+  /** The body on the nearest node above its node (an index into the bodies; −1: none). */
+  readonly parent: number;
+  /** How it follows its node, keyframed (its blend collision object's gains). */
+  readonly control: HierarchyControl;
 }
+
+/**
+ * A target that moved farther than this in one update (Havok units) went there, not moved
+ * there (a placement moved by a script, a load door): its keyframe has no velocity.
+ */
+const JUMP = 2;
+
+/** Its bodies' velocities carry into its ragdoll when it was followed this lately (seconds). */
+const CARRY_SECONDS = 0.25;
 
 interface ActorBody {
   readonly staged: BodyHolder;
@@ -66,6 +88,17 @@ interface ActorBody {
   fixedContacts: boolean;
   /** Its ragdoll's joints are powered toward its graph's pose (#power). */
   powered: boolean;
+  /** Where the animation put each body last (Havok units, world), and how they moved since. */
+  targets: (BodyFrame | undefined)[];
+  velocities: (BodyVelocity | undefined)[];
+  /** Seconds since its bodies were last moved toward their nodes. */
+  since: number;
+  /**
+   * Its ragdoll in the world, driven by its graph (a dying graph's AnimateToRagdoll, a
+   * knocked-down actor getting up): undefined when not; `dynamic` while the graph's rigid
+   * body controls drive bodies of it (#drive), `blend` the seconds since they began.
+   */
+  driven: { dynamic: boolean; blend: number } | undefined;
 }
 
 export class ActorBodies {
@@ -176,8 +209,25 @@ export class ActorBodies {
         this.#free(entry);
         continue;
       }
-      this.#follow(entry, physics);
+      if (entry.driven) this.#drive(entry, physics, seconds);
+      else this.#follow(entry, physics, false, seconds);
     }
+  }
+
+  /**
+   * The graph adds the ragdoll to the world (AddRagdollToWorld while dying; a knocked-down
+   * actor's get-up) or removes it: added, its bodies are driven by its graph's controls
+   * (#drive), else they follow its pose as the living's do.
+   */
+  driveRagdoll(reference: number, on: boolean): void {
+    const entry = this.#bodies.get(reference);
+    if (!entry || entry.articulation) return;
+    if (on) {
+      entry.driven ??= { dynamic: false, blend: 0 };
+      return;
+    }
+    if (entry.driven?.dynamic && this.#physics) this.#physics.keyframe(entry.placed);
+    entry.driven = undefined;
   }
 
   /**
@@ -211,8 +261,7 @@ export class ActorBodies {
       entry.penetration = new RagdollPenetration(physics, entry.placed, staged.reference);
     }
     if (entry.articulation) return;
-    physics.setMotion(entry.placed, false);
-    entry.articulation = new Articulation(entry.placed, entry.pose, entry.world);
+    this.#letGo(entry, physics);
   }
 
   /**
@@ -243,8 +292,7 @@ export class ActorBodies {
     const physics = this.#physics;
     if (!entry || !physics || staged.dead) return false;
     if (entry.articulation) return entry.knocked;
-    physics.setMotion(entry.placed, false);
-    entry.articulation = new Articulation(entry.placed, entry.pose, entry.world);
+    this.#letGo(entry, physics);
     entry.knocked = true;
     return true;
   }
@@ -267,14 +315,41 @@ export class ActorBodies {
    * A knocked-down actor gets up: its bodies are keyframed again and follow its pose (its
    * graph's get-up) from now on.
    */
-  standUp(reference: number): void {
+  standUp(reference: number, rising = false): void {
     const entry = this.#bodies.get(reference);
-    if (!entry?.knocked) return;
+    if (!entry) return;
+    if (!entry.knocked) {
+      // Up: its ragdoll leaves the world (its bodies follow its pose as the living's do).
+      if (!rising) this.driveRagdoll(reference, false);
+      return;
+    }
     entry.knocked = false;
     entry.articulation = undefined;
     if (this.#physics) this.#unpower(entry, this.#physics);
     this.#physics?.keyframe(entry.placed);
     entry.poseVersion = -1;
+    entry.targets = [];
+    entry.velocities = [];
+    // Getting up, its ragdoll stays in the world, driven by its graph's get-up (#drive).
+    entry.driven = rising ? { dynamic: false, blend: 0 } : undefined;
+  }
+
+  /**
+   * Its bodies let go (a death, a knock-down): simulated from now on, each moving as the
+   * animation last moved it (Havok's keyframed bodies carry their velocities: the ragdoll goes
+   * on from the pose it had, as it moved), and its pose follows them.
+   */
+  #letGo(entry: ActorBody, physics: PhysicsWorld): void {
+    const wasDynamic = entry.driven?.dynamic === true;
+    entry.driven = undefined;
+    physics.setMotion(entry.placed, false);
+    if (!wasDynamic && entry.since <= CARRY_SECONDS) {
+      entry.bodies.forEach(({ body }, i) => {
+        const velocity = entry.velocities[i];
+        if (velocity) physics.setBodyVelocity(body, velocity.linear, velocity.angular);
+      });
+    }
+    entry.articulation = new Articulation(entry.placed, entry.pose, entry.world);
   }
 
   /**
@@ -423,6 +498,10 @@ export class ActorBodies {
       penetration: undefined,
       fixedContacts: false,
       powered: false,
+      targets: [],
+      velocities: [],
+      since: 0,
+      driven: undefined,
     };
     this.#bodies.set(reference, entry);
     this.#disableSevered(entry);
@@ -456,19 +535,24 @@ export class ActorBodies {
     physics.keyframe(placed);
     // Bodies keep their place relative to their node: from the rest pose to the node's pose.
     const rest = new Pose(pose.skeleton).worlds;
-    const posed: PosedBody[] = [];
+    const found: { body: PlacedBody; node: number; offset: Mat4 }[] = [];
     for (const body of placed.bodies) {
       const node = pose.skeleton.nodeByName.get(body.data.node.toLowerCase());
       if (node === undefined) continue;
       const restInverse = invert(rest.subarray(node * 16, node * 16 + 16));
       if (!restInverse) continue;
-      posed.push({ body, node, offset: multiply(restInverse, body.data.transform) });
+      found.push({ body, node, offset: multiply(restInverse, body.data.transform) });
     }
-    return { placed, posed };
+    return { placed, posed: withParents(found, pose) };
   }
 
-  /** The keyframed bodies go where the pose (and placement) puts their nodes now. */
-  #follow(entry: ActorBody, physics: PhysicsWorld, force = false): void {
+  /**
+   * The keyframed bodies go toward where the pose (and placement) puts their nodes now, by the
+   * hierarchy controller with their blend collision objects' gains (1 and 1 in the data: there
+   * by the next step, moving as the animation moves them).
+   */
+  #follow(entry: ActorBody, physics: PhysicsWorld, force = false, seconds = 0): void {
+    entry.since += seconds;
     const motion = entry.staged.placed.instances[0]?.motion;
     const worldVersion = motion?.version ?? 0;
     if (!force && entry.poseVersion === entry.pose.version && entry.worldVersion === worldVersion) {
@@ -476,11 +560,123 @@ export class ActorBodies {
     }
     entry.poseVersion = entry.pose.version;
     entry.worldVersion = worldVersion;
-    const worlds = entry.pose.worlds;
-    for (const { body, node, offset } of entry.bodies) {
-      const nodeWorld = worlds.subarray(node * 16, node * 16 + 16);
-      physics.moveBody(entry.placed, body, multiply(nodeWorld, offset), entry.world);
+    if (force) {
+      const worlds = entry.pose.worlds;
+      for (const { body, node, offset } of entry.bodies) {
+        const nodeWorld = worlds.subarray(node * 16, node * 16 + 16);
+        physics.moveBody(entry.placed, body, multiply(nodeWorld, offset), entry.world);
+      }
+      entry.targets = this.#targets(entry, physics);
+      entry.velocities = [];
+      entry.since = 0;
+      return;
     }
+    this.#steer(entry, physics, () => undefined);
+  }
+
+  /** Where the pose puts each body now (Havok units, world). */
+  #targets(entry: ActorBody, physics: PhysicsWorld): BodyFrame[] {
+    const worlds = entry.pose.worlds;
+    return entry.bodies.map(({ node, offset }) =>
+      physics.bodyTarget(
+        entry.placed,
+        multiply(worlds.subarray(node * 16, node * 16 + 16), offset),
+        entry.world,
+      ),
+    );
+  }
+
+  /**
+   * Drives the bodies toward their nodes by the hierarchy controller (keyframe-hierarchy.ts),
+   * each by the control `controlOf` gives it (undefined: its own, its blend object's), blended
+   * in from its own motion by its weight.
+   */
+  #steer(
+    entry: ActorBody,
+    physics: PhysicsWorld,
+    controlOf: (posed: PosedBody) => { control: HierarchyControl; weight: number } | undefined,
+  ): void {
+    const seconds = entry.since > 0 ? entry.since : 1 / 60;
+    entry.since = 0;
+    const targets = this.#targets(entry, physics);
+    const bodies: HierarchyBody[] = entry.bodies.map((posed, i) => {
+      const target = targets[i] ?? physics.bodyMotion(posed.body);
+      let previous = entry.targets[i];
+      if (previous && distance(previous.position, target.position) > JUMP) previous = undefined;
+      const own = physics.bodyMotion(posed.body);
+      const velocity = entry.velocities[i];
+      const chosen = controlOf(posed);
+      return {
+        parent: posed.parent,
+        control: chosen?.control ?? posed.control,
+        target,
+        previous,
+        // A keyframed body's velocity is the one it was driven at (Rapier keeps none).
+        motion:
+          posed.body.body.isDynamic() || !velocity
+            ? own
+            : { ...own, linear: velocity.linear, angular: velocity.angular },
+        weight: chosen?.weight ?? 1,
+      };
+    });
+    const velocities = driveHierarchy(bodies, seconds);
+    entry.bodies.forEach((posed, i) => {
+      const body = bodies[i];
+      const velocity = velocities[i];
+      if (!body || !velocity) return;
+      physics.driveBody(posed.body, velocity.linear, velocity.angular, seconds, body.motion);
+      entry.velocities[i] = velocity;
+    });
+    entry.targets = targets;
+  }
+
+  /**
+   * A ragdoll in the world driven by its graph (Havok's ragdoll driver, as the graph's
+   * modifiers ask): the bones its keyframe bones modifiers name are keyframed hard; the others
+   * follow the pose by its rigid body ragdoll controls (hkbRigidBodyRagdollControlsModifier:
+   * the hierarchy controller with its control data, blended in over its durationToBlend), as
+   * simulated bodies that meet the world, while those are active and no powered ragdoll
+   * controls are (the powered controller takes them: FullyRagdoll's limp). With neither, they
+   * follow the pose keyframed as the living's do. TODO(M13): whether the original then lets
+   * them go limp, and whether it draws the driven bones from their bodies.
+   */
+  #drive(entry: ActorBody, physics: PhysicsWorld, seconds: number): void {
+    const driven = entry.driven;
+    const graph = entry.staged.placed.behavior;
+    if (!driven || !graph) return;
+    const rigid = graph.rigidBodyRagdoll();
+    const active = rigid !== undefined && graph.poweredRagdoll() === undefined;
+    if (active !== driven.dynamic) {
+      driven.dynamic = active;
+      driven.blend = 0;
+      if (active) {
+        // Simulated from here, moving on as they were driven.
+        physics.setMotion(entry.placed, false);
+        entry.bodies.forEach(({ body }, i) => {
+          const velocity = entry.velocities[i];
+          if (velocity) physics.setBodyVelocity(body, velocity.linear, velocity.angular);
+        });
+      } else physics.keyframe(entry.placed);
+    }
+    if (!rigid || !active) {
+      this.#follow(entry, physics, false, seconds);
+      return;
+    }
+    driven.blend += seconds;
+    entry.since += seconds;
+    const keyframed = new Set(
+      graph.ragdollBoneNames(graph.keyframedRagdollBones()).map((name) => name.toLowerCase()),
+    );
+    const named = new Set(rigid.bones.map((name) => name.toLowerCase()));
+    const duration = rigid.durationToBlend;
+    const weight = duration > 0 ? Math.min(1, driven.blend / duration) : 1;
+    const nodes = entry.pose.skeleton.rig.names;
+    this.#steer(entry, physics, ({ node }) => {
+      const name = (nodes[node] ?? '').toLowerCase();
+      if (keyframed.has(name)) return { control: HARD_KEYFRAME, weight: 1 };
+      if (named.size === 0 || named.has(name)) return { control: rigid.control, weight };
+      return { control: HARD_KEYFRAME, weight: 1 };
+    });
   }
 
   /**
@@ -500,14 +696,15 @@ export class ActorBodies {
     });
     pose.place(nodes);
     const rest = new Pose(pose.skeleton).worlds;
-    const bodies: PosedBody[] = [];
+    const found: { body: PlacedBody; node: number; offset: Mat4 }[] = [];
     for (const { body } of entry.bodies) {
       const node = pose.skeleton.nodeByName.get(body.data.node.toLowerCase());
       const restInverse =
         node === undefined ? undefined : invert(rest.subarray(node * 16, node * 16 + 16));
       if (node === undefined || !restInverse) continue;
-      bodies.push({ body, node, offset: multiply(restInverse, body.data.transform) });
+      found.push({ body, node, offset: multiply(restInverse, body.data.transform) });
     }
+    const bodies = withParents(found, pose);
     const moved: ActorBody = {
       ...entry,
       staged,
@@ -544,4 +741,30 @@ const DEATH_PUSH_SHARES = [
 
 function deathPushShare(body: CollisionBody): number {
   return DEATH_PUSH_SHARES[body.part ?? 0] ?? 0;
+}
+
+/**
+ * The bodies with their parents (the body on the nearest node above each one's, as Havok's
+ * ragdoll orders its bones) and their controls (their blend collision objects' gains).
+ */
+function withParents(
+  found: readonly { body: PlacedBody; node: number; offset: Mat4 }[],
+  pose: ActorPose,
+): PosedBody[] {
+  const byNode = new Map(found.map(({ node }, i) => [node, i]));
+  const parents = pose.skeleton.rig.parents;
+  return found.map((posed) => {
+    let up = parents[posed.node] ?? -1;
+    while (up >= 0 && !byNode.has(up)) up = parents[up] ?? -1;
+    const blend = posed.body.data.blend;
+    return {
+      ...posed,
+      parent: up >= 0 ? (byNode.get(up) ?? -1) : -1,
+      control: blend ? blendObjectControl(blend) : HARD_KEYFRAME,
+    };
+  });
+}
+
+function distance(a: Vec3, b: Vec3): number {
+  return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 }

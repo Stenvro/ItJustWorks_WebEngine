@@ -28,21 +28,21 @@ are kept by hand below, against docs/animation.md and the conformance suites
 (tests/conformance/animation/). The count after an item is how many objects (nodes,
 annotations, records) use it.
 
-## Count (2026-11-02, round 3)
+## Count (2026-11-02, round 4)
 
 | Part                        | Items | Done | Open |
 | --------------------------- | ----: | ---: | ---: |
 | Behavior classes            |    66 |   66 |    0 |
 | Behavior members (read)     |   320 |  320 |    0 |
-| Behavior node fields (run)  |   292 |  254 |   38 |
+| Behavior node fields (run)  |   292 |  258 |   34 |
 | Annotations (tags)          |   135 |  127 |    8 |
 | Response handlers           |    97 |   97 |    0 |
-| Idles (IDLE fields)         |    10 |    7 |    3 |
+| Idles (IDLE fields)         |    10 |    9 |    1 |
 | Idle conditions (functions) |   111 |  111 |    0 |
 | Actions (AACT)              |    71 |   57 |   14 |
 | Game settings (GMST)        |    20 |   20 |    0 |
 | Mechanics (by hand)         |    24 |   16 |    8 |
-| Total                       |  1146 | 1075 |   71 |
+| Total                       |  1146 | 1081 |   65 |
 
 Round 1 wrote the sweep and this list. Built: the animations' SoundStop.<descriptor> and
 SoundRelease.<descriptor> (17 and 8 annotations: the bow's draw loop, WPNBowPullLPM, stops as
@@ -63,6 +63,16 @@ Round 3 (1075, unchanged): spent on the ragdolls' joints at their limits (Hulda 
 Bannered Mare's counter: she slumps when killed 1.5 or 2 s into her lean, and stays draped over
 the counter on locked legs at 1, 2.5 and 3 s; docs/physics.md, "The cone", and the physics
 list). The node fields, the actions and SoundPlayAt for object graphs were not reached.
+
+Round 4 (1075 to 1081): the rigid body ragdoll controls run (their gains through Havok's
+hierarchy controller, src/physics/keyframe-hierarchy.ts; their durationToBlend blends them in:
+docs/physics.md, "The hierarchy controller"); the cyclic blend range (run all along by the
+parser's activeChildren, which the sweep did not see: now named, and tested); the synchronized
+clip's SyncAnimPrefix picks the partner's tracks; IDLE loopMin and loopMax (the looping idles
+stop after their time); SoundPlayAt for object graphs. Not reached: the 14 actions (each needs
+an engine moment in another system: the travel's arrival heading, the summon's appearance, the
+combat code's equip, reload, bash and block), the mark threshold, the powered ragdoll's
+world-from-model mode, bDisableInterp's setter.
 
 ## Behavior graphs
 
@@ -94,16 +104,20 @@ list). The node fields, the actions and SoundPlayAt for object graphs were not r
 - [x] blender.indexOfSyncMasterChild (2080): a syncing blender's master child (13 of 1,369,
       the jumps' directional and the unequip blends) leads its cycle and its sync points while
       it plays (docs/animation.md, "Syncing blenders"; round 2).
-- [ ] blender.maxCyclicBlendParameter (2121), minCyclicBlendParameter (17): parsed, not run
-      (a cyclic parametric blend's range).
-- [ ] synchronized-clip.markErrorThreshold (540), syncPrefix (226), applyMotionFromRoot (13):
-      parsed, not run (paired animations: when the support is close enough to its mark, the
-      partner's clip prefix, root motion). Not reached in round 2.
+- [x] blender.maxCyclicBlendParameter (2121), minCyclicBlendParameter (17): a cyclic
+      parametric blend's parameter wraps within its range, from the last child back to the
+      first (activeChildren in src/formats/hkx/behavior.ts, which the runtime's blend weights
+      use; tested in behavior.test.ts; round 4).
+- [x] synchronized-clip.syncPrefix (226): the partner's tracks are the active synchronized
+      clip's SyncAnimPrefix ("2_" in all 226 that name one; pairedTrackBones; round 4).
+- [ ] synchronized-clip.markErrorThreshold (540), applyMotionFromRoot (13): parsed, not run
+      (when the support is close enough to its mark; root motion). Not reached in round 4.
 - [ ] powered-ragdoll.worldFromModelMode (95): the powered ragdoll's root (world-from-model
       mode, its pose-matching bones). TODO(M13) with the formats' list.
-- [ ] rigid-body-ragdoll.durationToBlend (56): how long the keyframed ragdoll blends in. Not
-      reached in round 2: the keyframed bones are moved to the pose (actor-bodies #follow), not
-      driven by Havok's hierarchy controller and its gains (the physics list's blend gains).
+- [x] rigid-body-ragdoll.durationToBlend (56; 0.5 s in all): the rigid body controls blend in
+      from the bodies' own motion over it as they drive a ragdoll in the world, their control
+      data through Havok's hierarchy controller (src/physics/keyframe-hierarchy.ts,
+      ActorBodies #drive; round 4).
 - [ ] get-up.alignWithGroundDuration, groundNormal (47): the get-up's turn to the ground.
 - [ ] foot-ik-controls.alignWithGroundRotation (25), foot-ik.alignWithGroundRotation (2).
 - [ ] damping.enableVectorDamping (43).
@@ -124,8 +138,9 @@ list). The node fields, the actions and SoundPlayAt for object graphs were not r
 - [ ] Spellfire (2): as above.
 - [ ] FrootBack (4), FootFornt (3), FottFront (1), FoorRight (1), and 11 empty annotations:
       misspelt in the data; nothing names them. TODO(M13): confirm the original ignores them.
-- [ ] SoundPlayAt.<descriptor>.<node> (20, the sawmill's saw): an object graph's sound at one
-      of its nodes; object graphs do not sound their events yet.
+- [x] SoundPlayAt.<descriptor>.<node> (20, the sawmill's saw): an object graph's sound at that
+      node of its model as it moves; its SoundPlay at the object (objectSounds in
+      src/sim/placed-objects.ts; round 4).
 - [x] Response handlers (97 of 97): actorresponse.txt and playercharacterresponse.txt. Two,
       StopHorseCameraHandler and RemoveCharacterControllerHandler, are no classes of the
       original: their events do nothing there and here (tests/conformance/animation/
@@ -136,7 +151,10 @@ list). The node fields, the actions and SoundPlayAt for object graphs were not r
 - [x] IDLE fields: parent 3779, behavior graph 3337, event 2982, conditions 2215, previous
       1489, flags 383 (src/ai/idle-records.ts, the idle tree's search).
 - [x] Idle conditions: all 111 functions the idles use are valued.
-- [ ] loopMin, loopMax (4 idles): the looping seconds. Not read.
+- [x] loopMin, loopMax (4 idles: the goat's feeding 10 to 30 s, the sabre cat's lie-down 4 to
+      8, the troll's crouching group 2 to 5, IdleInjured 255: forever): the idle stops
+      (ActionIdleStop) after a random time between them (idleLoopSeconds, ActorFurniture; round
+      4). TODO(M13): inferred from the Creation Kit's name; how the original ends the loop.
 - [x] replayDelay (126 idles): an idle is not picked again for the actor until its delay has
       passed (src/shell/actor-furniture.ts; round 2). TODO(M13): per actor or not; a group
       idle's delay over its children.
