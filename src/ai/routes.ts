@@ -66,7 +66,18 @@ const DOOR_COST = 256;
 /** A road is taken where it is at most this many times the straight way. */
 const ROAD_DETOUR = 1.5;
 
-const distance = (a: Vec3, b: Vec3): number => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+/**
+ * The squared distance (nearest-of comparisons) and the distance. Not Math.hypot: a route
+ * through a worldspace's thousands of doors asks for tens of thousands, and hypot cost most of
+ * the search.
+ */
+const squared = (a: Vec3, b: Vec3): number => {
+  const dx = a[0] - b[0];
+  const dy = a[1] - b[1];
+  const dz = a[2] - b[2];
+  return dx * dx + dy * dy + dz * dz;
+};
+const distance = (a: Vec3, b: Vec3): number => Math.sqrt(squared(a, b));
 
 /** The navmeshes and load doors routes are searched over. */
 export class RouteMap {
@@ -179,7 +190,7 @@ export class RouteMap {
     for (const id of this.#bySpace.get(spaceKey(space)) ?? []) {
       const navmesh = this.#navmeshes.get(id);
       if (!navmesh) continue;
-      const d = distance(navmesh.location, point);
+      const d = squared(navmesh.location, point);
       if (d < nearest) {
         nearest = d;
         best = id;
@@ -202,7 +213,7 @@ export class RouteMap {
       for (const marker of roads.markers) {
         const navmesh = this.#navmeshes.get(marker);
         if (!navmesh || !sameSpace(navmesh.space, space)) continue;
-        const d = distance(navmesh.location, point);
+        const d = squared(navmesh.location, point);
         if (d < nearest) {
           nearest = d;
           best = { navmesh: marker, at: navmesh.location };

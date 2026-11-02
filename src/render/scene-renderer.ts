@@ -1554,23 +1554,33 @@ interface MaterialSource {
   readonly layout?: VertexLayout;
 }
 
-/** Writes an animation frame's values over a part's material uniforms. */
+/**
+ * Writes an animation frame's values over a part's material uniforms; whether any of them
+ * changed (a draw whose values and place stay as they were is not uploaded again).
+ */
 function writeAnimatedMaterial(
   floats: Float32Array,
   part: MaterialSource,
   frame: AnimationFrame,
-): void {
+): boolean {
+  let changed = false;
+  // Compared as the uniforms hold them (32-bit floats).
+  const put = (index: number, value: number): void => {
+    if (floats[index] === Math.fround(value)) return;
+    floats[index] = value;
+    changed = true;
+  };
   const material = part.material;
   const values = frame.shaderFloats.get(part.shader);
   const colors = frame.shaderColors.get(part.shader);
   const alphaTest = frame.alphaTest.get(part.alphaProperty);
-  if (alphaTest !== undefined) floats[30] = alphaTest / 255;
-  if (!material || material.kind === 'water' || (!values && !colors)) return;
+  if (alphaTest !== undefined) put(30, alphaTest / 255);
+  if (!material || material.kind === 'water' || (!values && !colors)) return changed;
+  const set = (variable: number, index: number): void => {
+    const value = values?.get(variable);
+    if (value !== undefined) put(index, value);
+  };
   const uv = (u: number, uScale: number, v: number, vScale: number): void => {
-    const set = (variable: number, index: number): void => {
-      const value = values?.get(variable);
-      if (value !== undefined) floats[index] = value;
-    };
     set(u, 16);
     set(v, 17);
     set(uScale, 18);
@@ -1585,15 +1595,13 @@ function writeAnimatedMaterial(
     );
     const color = colors?.get(0) ?? material.baseColor;
     const scale = values?.get(EffectVariable.emissiveMultiple) ?? material.baseColorScale;
-    floats.set(color.slice(0, 3), 20);
-    floats[31] = scale;
-    const alpha = values?.get(EffectVariable.alphaTransparency);
-    if (alpha !== undefined) floats[23] = alpha;
-    for (let i = 0; i < 4; i++) {
-      const value = values?.get(EffectVariable.falloffStartAngle + i);
-      if (value !== undefined) floats[32 + i] = value;
-    }
-    return;
+    put(20, color[0]);
+    put(21, color[1]);
+    put(22, color[2]);
+    put(31, scale);
+    set(EffectVariable.alphaTransparency, 23);
+    for (let i = 0; i < 4; i++) set(EffectVariable.falloffStartAngle + i, 32 + i);
+    return changed;
   }
   uv(
     LightingVariable.uOffset,
@@ -1603,18 +1611,21 @@ function writeAnimatedMaterial(
   );
   const emissive = colors?.get(1) ?? material.emissiveColor;
   const multiple = values?.get(LightingVariable.emissiveMultiple) ?? material.emissiveMultiple;
-  floats.set([emissive[0] * multiple, emissive[1] * multiple, emissive[2] * multiple], 20);
+  put(20, emissive[0] * multiple);
+  put(21, emissive[1] * multiple);
+  put(22, emissive[2] * multiple);
   const specular = colors?.get(0);
-  if (specular) floats.set(specular, 24);
-  const set = (variable: number, index: number): void => {
-    const value = values?.get(variable);
-    if (value !== undefined) floats[index] = value;
-  };
+  if (specular) {
+    put(24, specular[0]);
+    put(25, specular[1]);
+    put(26, specular[2]);
+  }
   set(LightingVariable.specularStrength, 27);
   set(LightingVariable.glossiness, 28);
   set(LightingVariable.alpha, 29);
   set(LightingVariable.environmentMapScale, 31);
   set(LightingVariable.refractionStrength, 23);
+  return changed;
 }
 
 /** SLSF1 Refraction on the lighting shader (no vanilla effect shader uses it). */
@@ -3733,8 +3744,9 @@ export class SceneRenderer {
         const floats = draw.floats;
         const billboard = draw.part.billboard;
         // Uploaded only when something in it changed: an actor standing still keeps its
-        // parts' matrices (its pose goes to the bone palette), and so does a door at rest.
-        let changed = frame !== undefined;
+        // parts' matrices (its pose goes to the bone palette), and so does a door at rest, and a
+        // part whose animated material values stay as they were.
+        let changed = false;
         if (
           frame?.hidden.has(draw.part.block) ||
           (draw.hung && draw.hung.pose.hidden?.[draw.hung.node] === 1)
@@ -3778,7 +3790,7 @@ export class SceneRenderer {
           multiply(draw.instanceWorld, local, world);
           changed = writeMatrix(floats, world) || changed;
         }
-        if (frame) writeAnimatedMaterial(floats, draw.part, frame);
+        if (frame) changed = writeAnimatedMaterial(floats, draw.part, frame) || changed;
         if (draw.follows) {
           followBound(draw, draw.follows, world);
           scene.boundChanged();
