@@ -1,17 +1,18 @@
 // Arrows and bolts in flight (docs/ai.md, "Combat"; src/gameplay/combat/projectile.ts): loosed
 // at the bow's arrowRelease, drawn as the projectile's model (PROJ MODL: the arrow and its
 // tracer) along its flight, falling under the PROJ's gravity, until they meet the world or an
-// actor (what L_PROJECTILE collides with: the actors' bodies on BIPED; the player's character
-// controller) or have flown their range. An actor hit takes the shot's damage (the combat's
-// hit); iArrowInventoryChance % of the arrows go into its inventory. One that hits the world
-// sticks fCombatMissileStickDepth deep where it hit if the surface's material lets arrows stick
-// (MATT "Arrows Stick": wood, earth, snow, cloth, flesh; not stone, metal or glass), else it
-// drops there: either way an arrow lying there to pick up (a reference of the ammunition), at
-// most 15 of them (the oldest goes). One that hits an actor stays stuck in its body (the
-// engine's ExtraAttachedArrows3D: drawn only, no reference): its model where it struck, as deep
-// as one in the world, on the body's node nearest the hit and moving with it, for
-// fAttachedArrowAgeMax seconds, at most iMaxAttachedArrows in one actor (the oldest goes);
-// Actor.ClearExtraArrows takes an actor's away at once (clearAttached).
+// actor (what L_PROJECTILE collides with, by Skyrim.esm's COLL records: the actors' character
+// controllers on CHARCONTROLLER, not their bodies on BIPED; the player's and a flier's in the air
+// tested as shapes; the dead's ragdolls on DEADBIP) or have flown their range. An actor hit
+// takes the shot's damage (the combat's hit); iArrowInventoryChance % of the arrows go into its
+// inventory. One that hits the world sticks fCombatMissileStickDepth deep where it hit if the
+// surface's material lets arrows stick (MATT "Arrows Stick": wood, earth, snow, cloth, flesh;
+// not stone, metal or glass), else it drops there: either way an arrow lying there to pick up
+// (a reference of the ammunition), at most 15 of them (the oldest goes). One that hits an actor
+// stays stuck in its body (the engine's ExtraAttachedArrows3D: drawn only, no reference): its
+// model where it struck, as deep as one in the world, on the body's node nearest the hit and
+// moving with it, for fAttachedArrowAgeMax seconds, at most iMaxAttachedArrows in one actor (the
+// oldest goes); Actor.ClearExtraArrows takes an actor's away at once (clearAttached).
 
 import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
@@ -27,6 +28,7 @@ import {
   launch,
   MAX_STUCK_ARROWS,
   pointing,
+  segmentEntersCylinder,
   spent,
   WORLD_GRAVITY,
   type Flight,
@@ -106,7 +108,7 @@ export interface ProjectileOptions {
   readonly body?: (reference: number) => BleedingBody | undefined;
   /** fAttachedArrowAgeMax (seconds) and iMaxAttachedArrows: arrows stuck in actors. */
   readonly attachedArrows?: () => { readonly ageMax: number; readonly max: number };
-  /** Shapes tested as such (the player), with their reference. */
+  /** Character controllers tested as shapes (the player's, a flier's in the air), by reference. */
   readonly shapes: () => Iterable<ShotTarget>;
   /** A shot's way this step (one meeting the water stirs it: render/water-displacement.ts). */
   readonly shotWay?: (from: Vec3, to: Vec3) => void;
@@ -241,17 +243,23 @@ export class CombatProjectiles {
     const length = Math.hypot(way[0], way[1], way[2]);
     if (length < 1e-6) return false;
     const direction: Vec3 = [way[0] / length, way[1] / length, way[2] / length];
-    // The shapes (the player's controller), as cylinders.
+    // The shapes (the player's controller, a flier's in the air), as cylinders: the nearest.
+    let met: { reference: number; along: number } | undefined;
     for (const shape of this.#options.shapes()) {
       if (shape.reference === shot.shooter) continue;
-      const along = segmentCylinder(from, direction, length, shape);
-      if (along === undefined) continue;
-      this.#actorHit(shot, shape.reference, along, from, direction);
+      const along = segmentEntersCylinder(from, direction, length, shape);
+      if (along !== undefined && (!met || along < met.along))
+        met = { reference: shape.reference, along };
+    }
+    // What the ray meets before it (a wall in front of a flier).
+    const hit = physics?.queriesCurrent
+      ? physics.raycast(from, direction, met?.along ?? length, Layer.projectile)
+      : undefined;
+    if (met && (!hit || hit.distance >= met.along)) {
+      this.#actorHit(shot, met.reference, met.along, from, direction);
       return true;
     }
-    if (!physics?.queriesCurrent) return false;
-    const hit = physics.raycast(from, direction, length, Layer.projectile);
-    if (!hit) return false;
+    if (!physics || !hit) return false;
     const owner = hit.owner;
     const own = owner?.kind === 'actor' && owner.reference === shot.shooter;
     if (own && shot.flight.distance < OWN_REACH) return false;
@@ -517,28 +525,4 @@ function orient(out: Float32Array, direction: Vec3, position: Vec3): void {
     z,
     1,
   ]);
-}
-
-/** Where along a segment (0..length) it enters an upright cylinder, or undefined. */
-function segmentCylinder(
-  from: Vec3,
-  direction: Vec3,
-  length: number,
-  shape: ShotTarget,
-): number | undefined {
-  const ox = from[0] - shape.feet[0];
-  const oy = from[1] - shape.feet[1];
-  const a = direction[0] * direction[0] + direction[1] * direction[1];
-  const b = 2 * (ox * direction[0] + oy * direction[1]);
-  const c = ox * ox + oy * oy - shape.radius * shape.radius;
-  let enter = 0;
-  if (c > 0) {
-    if (a < 1e-9) return undefined;
-    const disc = b * b - 4 * a * c;
-    if (disc < 0) return undefined;
-    enter = (-b - Math.sqrt(disc)) / (2 * a);
-  }
-  if (enter < 0 || enter > length) return undefined;
-  const z = from[2] + direction[2] * enter;
-  return z >= shape.feet[2] && z <= shape.feet[2] + shape.height ? enter : undefined;
 }

@@ -210,7 +210,27 @@ describe.skipIf(!hasGamedata())('MQ104 Dragon Rising', () => {
       // It lands for a ground attack and fights there; the guards' arrows and Irileth wound it.
       const landed = (): boolean =>
         sim.world.stage.combat.engaged(dragon) && flight.state(dragon) === FlyingState.none;
-      expect(await sim.until(landed, 120)).toBe(true);
+      // Found 2026-11-02: of some 70 arrows the guards loosed at it, not one hit, not even
+      // those at it hovering still: shots meet character controllers (L_PROJECTILE collides with
+      // L_CHARCONTROLLER, not with the bodies on L_BIPED), and in the air it had none. Now its
+      // controller's shape goes with it, and the shots are led by how it flies.
+      const arrowHits = (): number =>
+        sim
+          .events('hit')
+          .filter(
+            (hit) =>
+              hit.target === dragon && hit.projectile !== undefined && hit.aggressor !== PLAYER_REF,
+          ).length;
+      let hitInTheAir = 0;
+      let down = false;
+      for (let second = 0; second < 120 && !down; second++) {
+        const before = arrowHits();
+        const flying = flight.isFlying(dragon);
+        down = await sim.until(landed, 1);
+        if (flying && flight.isFlying(dragon)) hitInTheAir += arrowHits() - before;
+      }
+      expect(down).toBe(true);
+      expect(hitInTheAir).toBeGreaterThan(0);
       let wounded = false;
       for (let second = 0; second < 60 && !wounded; second++) {
         await sim.step(1);

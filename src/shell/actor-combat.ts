@@ -570,7 +570,7 @@ export class ActorCombat implements CombatBridge {
         ageMax: this.#settings.attachedArrowAgeMax,
         max: this.#settings.maxAttachedArrows,
       }),
-      shapes: () => this.#playerShape(),
+      shapes: () => this.#controllerShapes(),
       ...(options.shotWay && { shotWay: options.shotWay }),
       onActorHit: (shot) => {
         const payload = shot.payload as ShotPayload;
@@ -4286,16 +4286,40 @@ export class ActorCombat implements CombatBridge {
     this.#enemy = { reference, changed: this.#clock, health: Number.NaN };
   }
 
-  /** The player's shape for shots (they have no bodies on BIPED). */
-  *#playerShape(): Iterable<{ reference: number; feet: Vec3; radius: number; height: number }> {
+  /**
+   * The character controllers shots meet as shapes (L_PROJECTILE collides with
+   * L_CHARCONTROLLER, not with L_BIPED: Skyrim.esm's COLL records): the player's, and a flier's
+   * in the air, which keeps its controller there in the original (its flying state) but has
+   * none here (src/shell/actor-movers.ts holds it off, also on a perch): its ground
+   * controller's shape, upright at its root. The other actors' controllers are in the physics world (the shots' ray meets
+   * them). TODO(M13): the flier's controller in the air is taken to be its ground one.
+   */
+  *#controllerShapes(): Iterable<{
+    reference: number;
+    feet: Vec3;
+    radius: number;
+    height: number;
+  }> {
     const player = this.#play?.player;
-    if (!player || !this.#fighters.has(PLAYER_REF)) return;
-    yield {
-      reference: PLAYER_REF,
-      feet: player.feet,
-      radius: BODY_RADIUS,
-      height: BODY_HEIGHT * player.height,
-    };
+    if (player && this.#fighters.has(PLAYER_REF)) {
+      yield {
+        reference: PLAYER_REF,
+        feet: player.feet,
+        radius: BODY_RADIUS,
+        height: BODY_HEIGHT * player.height,
+      };
+    }
+    const flight = this.#options.flight?.();
+    if (!flight) return;
+    const movers = this.#options.movers;
+    for (const staged of this.#options.actors()) {
+      const reference = staged.reference;
+      if (staged.dead || staged.visibility.hidden || movers.height(reference) !== undefined)
+        continue;
+      if (!flight.isFlying(reference) && !flight.perched(reference)) continue;
+      const shape = flight.shape(reference);
+      if (shape) yield { reference, feet: staged.position, ...shape };
+    }
   }
 
   /**

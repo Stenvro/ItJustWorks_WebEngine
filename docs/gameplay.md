@@ -881,7 +881,7 @@ same aim; what differs is where they leave from and, for an NPC, what it aims at
   forget spell, fCombatMagicConcentrationAimVariance 0 for a concentration spell; TODO(M13): the
   link from these settings to the aim controller's factor is inferred). The target is led: the
   flight time to the guessed point gives the target's place then (its velocity along the
-  ground), again until the time changes by less than fCombatAimDeltaThreshold (0.05 s), at most
+  ground; a flier in the air by how it flew over the last frame, its climb too), again until the time changes by less than fCombatAimDeltaThreshold (0.05 s), at most
   iCombatAimMaxIterations (10) times; a falling shot's point is raised onto its arc's launch
   line, so the NPC's arrows arc onto the target (no tilt for NPCs). A PROJ with Disable Combat Aim
   Correction keeps the caster's own aim. An NPC's arrow then strays by up to
