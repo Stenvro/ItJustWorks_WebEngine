@@ -177,6 +177,11 @@ export interface WorldBridge {
   summonPlace?(from: Vec3, to: Vec3, radius: number): Vec3 | undefined;
   /** PushActorAway: the actor is knocked down, pushed away from a reference by a force. */
   pushAway?(pushed: number, from: number, force: number): void;
+  /**
+   * A trap's push back (ProcessTrapHit's afPushback): the actor's character controller pushed
+   * away from the trap, as a hit's knockback (src/gameplay/combat/knockback.ts); not knocked down.
+   */
+  trapPush?(pushed: number, trap: number, force: number): void;
   /** An explosion's knock-down flags: the actor is knocked down, away from where it burst. */
   knockDown?(actor: number, from: Vec3, force: number): void;
   /**

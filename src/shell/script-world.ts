@@ -280,6 +280,8 @@ export interface CombatBridge {
   firstPerson(): boolean;
   /** Knocks an actor down, pushed away from a point (src/shell/actor-knockdowns.ts). */
   knockDown(actor: number, from: Vec3 | undefined, force: number): Promise<void>;
+  /** A trap's push back: the actor's character controller pushed away from a point. */
+  trapPush(actor: number, from: Vec3, force: number): void;
   /**
    * A Stagger effect's magnitude on an actor, from its caster's side (`from`: where the caster
    * stands when it is no fighter, a KnockAreaEffect's marker).
@@ -1018,10 +1020,17 @@ export class ScriptWorld implements WorldBridge {
     return false;
   }
 
-  /** PushActorAway, a trap's push: knocked down, away from a reference. */
+  /** PushActorAway: knocked down, away from a reference. */
   pushAway(pushed: number, from: number, force: number): void {
     const at = this.livePlacement(from)?.position;
     for (const fights of this.#fights()) void fights.knockDown(pushed, at && [...at], force);
+  }
+
+  /** A trap's push back (ProcessTrapHit): its controller pushed away from the trap. */
+  trapPush(pushed: number, trap: number, force: number): void {
+    const at = this.livePlacement(trap)?.position;
+    if (!at) return;
+    for (const fights of this.#fights()) fights.trapPush(pushed, [at[0], at[1], at[2]], force);
   }
 
   /** An explosion's knock-down: knocked down, away from where it burst. */

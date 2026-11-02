@@ -134,6 +134,7 @@ import {
   knockbackApplies,
   knockbackForce,
   knockbackVelocity,
+  trapPushback,
 } from '../gameplay/combat/knockback.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import { transformPoint, type Mat4, type Vec3 } from '../render/math.ts';
@@ -4699,6 +4700,28 @@ export class ActorCombat implements CombatBridge {
    * knock-down, staggers at full strength instead (UESP "Unrelenting Force": those immune to
    * the ragdoll are staggered). One lying already is pushed again.
    */
+  /** A trap's push back (ProcessTrapHit): the controller pushed away (knockback.ts trapPushback). */
+  trapPush(reference: number, from: Vec3, force: number): void {
+    const fighter = this.#fighters.get(reference);
+    const feet = fighter && this.#feet(fighter);
+    if (!fighter || !feet) return;
+    const settings = this.#settings;
+    const push = trapPushback(
+      from,
+      feet,
+      force,
+      {
+        inKillMove: fighter.state.killMove,
+        notPushable: ((fighter.gear?.raceFlags ?? 0) & RaceAiFlag.notPushable) !== 0,
+      },
+      settings,
+    );
+    if (!push) return;
+    const flat = [push.velocity[0], push.velocity[1]] as const;
+    if (fighter.player) this.#options.playerCharacter?.()?.knockBack(flat, push.seconds);
+    else this.#options.movers.knockBack(reference, flat, push.seconds);
+  }
+
   async knockDown(reference: number, from: Vec3 | undefined, force: number): Promise<void> {
     const fighter = this.#fighters.get(reference);
     const knockdowns = this.#options.knockdowns?.();
