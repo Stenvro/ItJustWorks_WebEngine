@@ -245,13 +245,16 @@ const VEC3_OPS: ValueOps<Vec3> = {
   combine: (a, b, wa, wb) => [a[0] * wa + b[0] * wb, a[1] * wa + b[1] * wb, a[2] * wa + b[2] * wb],
 };
 
-/** Index of the last key at or before `time` (keys sorted by time). */
-function keyIndex(times: readonly number[], time: number): number {
+/**
+ * Index of the last key at or before `time` (keys sorted by time), searched in the keys
+ * themselves (a list of their times made for every sample was most of a sample's cost).
+ */
+function keyIndex(keys: readonly { readonly time: number }[], time: number): number {
   let lo = 0;
-  let hi = times.length - 1;
+  let hi = keys.length - 1;
   while (lo < hi) {
     const mid = (lo + hi + 1) >> 1;
-    if ((times[mid] ?? 0) <= time) lo = mid;
+    if ((keys[mid]?.time ?? 0) <= time) lo = mid;
     else hi = mid - 1;
   }
   return lo;
@@ -265,10 +268,7 @@ export function sampleKeys<T>(group: KeyGroup<T>, time: number, ops: ValueOps<T>
   if (!first || !last) return undefined;
   if (keys.length === 1 || time <= first.time) return first.value;
   if (time >= last.time) return last.value;
-  const i = keyIndex(
-    keys.map((k) => k.time),
-    time,
-  );
+  const i = keyIndex(keys, time);
   const a = keys[i];
   const b = keys[i + 1];
   if (!a || !b) return last.value;
@@ -355,10 +355,7 @@ function rotationAt(data: TransformDataBlock, time: number): Quaternion | undefi
   if (!first || !last) return undefined;
   if (keys.length === 1 || time <= first.time) return first.value;
   if (time >= last.time) return last.value;
-  const i = keyIndex(
-    keys.map((k) => k.time),
-    time,
-  );
+  const i = keyIndex(keys, time);
   const a = keys[i];
   const b = keys[i + 1];
   if (!a || !b) return last.value;
@@ -441,10 +438,7 @@ export function sampleVec3(source: Vec3Source, time: number): Vec3 {
 export function sampleBool(source: BoolSource, time: number): boolean {
   const keys = source.keys?.keys;
   if (!keys || keys.length === 0) return source.constant;
-  const i = keyIndex(
-    keys.map((k) => k.time),
-    time,
-  );
+  const i = keyIndex(keys, time);
   return (keys[i]?.value ?? 0) !== 0;
 }
 
@@ -778,16 +772,7 @@ export function animateLayers(
   animation: Pick<ModelAnimation, 'parents' | 'transforms' | 'roots'>,
   layers: readonly AnimationLayer[],
 ): AnimationFrame {
-  return evaluate(
-    animation,
-    layers.flatMap((layer) =>
-      layer.tracks.map((track) => ({
-        track,
-        seconds: layer.seconds,
-        ...(layer.weight !== undefined && { weight: layer.weight }),
-      })),
-    ),
-  );
+  return evaluate(animation, layers);
 }
 
 /** Weighted values of one target, normalised when read. */
@@ -832,19 +817,38 @@ function animateTracks(
   tracks: readonly AnimationTrack[],
   seconds: number,
 ): AnimationFrame {
-  return evaluate(
-    animation,
-    tracks.map((track) => ({ track, seconds })),
-  );
+  return evaluate(animation, [{ tracks, seconds }]);
+}
+
+/** A model's scene graph read the other way: its roots as a set, each object's children. */
+interface GraphIndex {
+  readonly roots: ReadonlySet<Ref>;
+  readonly children: ReadonlyMap<Ref, readonly Ref[]>;
+  /** The roots it was made for. */
+  readonly rootList: readonly Ref[];
+}
+
+/** By a model's parents (a model's animation is evaluated every frame; its graph never changes). */
+const graphIndices = new WeakMap<ReadonlyMap<Ref, Ref>, GraphIndex>();
+
+function graphIndex(animation: Pick<ModelAnimation, 'parents' | 'roots'>): GraphIndex {
+  let index = graphIndices.get(animation.parents);
+  if (index?.rootList !== animation.roots) {
+    const children = new Map<Ref, Ref[]>();
+    for (const [child, parent] of animation.parents) {
+      let list = children.get(parent);
+      if (!list) children.set(parent, (list = []));
+      list.push(child);
+    }
+    index = { roots: new Set(animation.roots), children, rootList: animation.roots };
+    graphIndices.set(animation.parents, index);
+  }
+  return index;
 }
 
 function evaluate(
   animation: Pick<ModelAnimation, 'parents' | 'transforms' | 'roots'>,
-  timed: readonly {
-    readonly track: AnimationTrack;
-    readonly seconds: number;
-    readonly weight?: number;
-  }[],
+  layers: readonly AnimationLayer[],
 ): AnimationFrame {
   const locals = new Map<Ref, NifTransform>();
   const hidden = new Set<Ref>();
@@ -853,108 +857,123 @@ function evaluate(
   const alphaTest = new Map<Ref, number>();
   const lookAts: Extract<AnimationTrack, { kind: 'look-at' }>[] = [];
   // Weighted layers: per target, blended after the outright ones.
-  const blended = new Map<string, WeightedSum>();
+  const translations = new Map<Ref, WeightedSum>();
+  const scales = new Map<Ref, WeightedSum>();
   const rotations = new Map<Ref, WeightedRotation>();
+  const floats = new Map<Ref, Map<number, WeightedSum>>();
+  const colors = new Map<Ref, Map<number, WeightedSum>>();
+  const alphas = new Map<Ref, WeightedSum>();
   const visibility = new Map<Ref, { weight: number; visible: boolean }>();
-  const weighted = (key: string, size: number): WeightedSum => {
-    let entry = blended.get(key);
-    if (!entry) blended.set(key, (entry = new WeightedSum(size)));
+  const weighted = <K>(sums: Map<K, WeightedSum>, key: K, size: number): WeightedSum => {
+    let entry = sums.get(key);
+    if (!entry) sums.set(key, (entry = new WeightedSum(size)));
     return entry;
   };
-  for (const { track, seconds, weight } of timed) {
-    const time = controllerTime(track.timing, seconds);
-    if (weight !== undefined) {
-      if (!(weight > 0)) continue;
+  const weightedOf = (
+    sums: Map<Ref, Map<number, WeightedSum>>,
+    shader: Ref,
+    variable: number,
+    size: number,
+  ): WeightedSum => {
+    let variables = sums.get(shader);
+    if (!variables) sums.set(shader, (variables = new Map<number, WeightedSum>()));
+    return weighted(variables, variable, size);
+  };
+  for (const { tracks, seconds, weight } of layers) {
+    for (const track of tracks) {
+      const time = controllerTime(track.timing, seconds);
+      if (weight !== undefined) {
+        if (!(weight > 0)) continue;
+        switch (track.kind) {
+          case 'transform': {
+            const sample = sampleTransform(track.source, time);
+            if (sample.translation) {
+              weighted(translations, track.block, 3).add(sample.translation, weight);
+            }
+            if (sample.rotation) {
+              let rotation = rotations.get(track.block);
+              if (!rotation) rotations.set(track.block, (rotation = new WeightedRotation()));
+              rotation.add(sample.rotation, weight);
+            }
+            if (sample.scale !== undefined) {
+              weighted(scales, track.block, 1).add([sample.scale], weight);
+            }
+            break;
+          }
+          case 'visibility': {
+            const before = visibility.get(track.block);
+            if (!before || weight > before.weight) {
+              visibility.set(track.block, { weight, visible: sampleBool(track.source, time) });
+            }
+            break;
+          }
+          case 'shader-float':
+            weightedOf(floats, track.shader, track.variable, 1).add(
+              [sampleFloat(track.source, time)],
+              weight,
+            );
+            break;
+          case 'shader-color':
+            weightedOf(colors, track.shader, track.variable, 3).add(
+              sampleVec3(track.source, time),
+              weight,
+            );
+            break;
+          case 'alpha-test':
+            weighted(alphas, track.alpha, 1).add([sampleFloat(track.source, time)], weight);
+            break;
+          case 'look-at':
+            lookAts.push(track);
+            break;
+        }
+        continue;
+      }
       switch (track.kind) {
         case 'transform': {
+          const rest = animation.transforms.get(track.block);
+          if (!rest) break;
           const sample = sampleTransform(track.source, time);
-          if (sample.translation) {
-            weighted(`t${String(track.block)}`, 3).add(sample.translation, weight);
-          }
-          if (sample.rotation) {
-            let rotation = rotations.get(track.block);
-            if (!rotation) rotations.set(track.block, (rotation = new WeightedRotation()));
-            rotation.add(sample.rotation, weight);
-          }
-          if (sample.scale !== undefined) {
-            weighted(`s${String(track.block)}`, 1).add([sample.scale], weight);
-          }
+          locals.set(track.block, {
+            translation: sample.translation ?? rest.translation,
+            rotation: sample.rotation ? quaternionRotation(sample.rotation) : rest.rotation,
+            scale: sample.scale ?? rest.scale,
+          });
           break;
         }
-        case 'visibility': {
-          const before = visibility.get(track.block);
-          if (!before || weight > before.weight) {
-            visibility.set(track.block, { weight, visible: sampleBool(track.source, time) });
-          }
+        case 'visibility':
+          if (sampleBool(track.source, time)) hidden.delete(track.block);
+          else hidden.add(track.block);
+          break;
+        case 'shader-float': {
+          const values = shaderFloats.get(track.shader) ?? new Map<number, number>();
+          values.set(track.variable, sampleFloat(track.source, time));
+          shaderFloats.set(track.shader, values);
           break;
         }
-        case 'shader-float':
-          weighted(`f${String(track.shader)}:${String(track.variable)}`, 1).add(
-            [sampleFloat(track.source, time)],
-            weight,
-          );
+        case 'shader-color': {
+          const values = shaderColors.get(track.shader) ?? new Map<number, Vec3>();
+          values.set(track.variable, sampleVec3(track.source, time));
+          shaderColors.set(track.shader, values);
           break;
-        case 'shader-color':
-          weighted(`c${String(track.shader)}:${String(track.variable)}`, 3).add(
-            sampleVec3(track.source, time),
-            weight,
-          );
-          break;
+        }
         case 'alpha-test':
-          weighted(`a${String(track.alpha)}`, 1).add([sampleFloat(track.source, time)], weight);
+          alphaTest.set(track.alpha, sampleFloat(track.source, time));
           break;
         case 'look-at':
           lookAts.push(track);
           break;
       }
-      continue;
-    }
-    switch (track.kind) {
-      case 'transform': {
-        const rest = animation.transforms.get(track.block);
-        if (!rest) break;
-        const sample = sampleTransform(track.source, time);
-        locals.set(track.block, {
-          translation: sample.translation ?? rest.translation,
-          rotation: sample.rotation ? quaternionRotation(sample.rotation) : rest.rotation,
-          scale: sample.scale ?? rest.scale,
-        });
-        break;
-      }
-      case 'visibility':
-        if (sampleBool(track.source, time)) hidden.delete(track.block);
-        else hidden.add(track.block);
-        break;
-      case 'shader-float': {
-        const values = shaderFloats.get(track.shader) ?? new Map<number, number>();
-        values.set(track.variable, sampleFloat(track.source, time));
-        shaderFloats.set(track.shader, values);
-        break;
-      }
-      case 'shader-color': {
-        const values = shaderColors.get(track.shader) ?? new Map<number, Vec3>();
-        values.set(track.variable, sampleVec3(track.source, time));
-        shaderColors.set(track.shader, values);
-        break;
-      }
-      case 'alpha-test':
-        alphaTest.set(track.alpha, sampleFloat(track.source, time));
-        break;
-      case 'look-at':
-        lookAts.push(track);
-        break;
     }
   }
   // The weighted layers' means.
   const transformBlocks = new Set<Ref>(rotations.keys());
-  for (const key of blended.keys()) {
-    if (key.startsWith('t') || key.startsWith('s')) transformBlocks.add(Number(key.slice(1)));
-  }
+  for (const block of translations.keys()) transformBlocks.add(block);
+  for (const block of scales.keys()) transformBlocks.add(block);
   for (const block of transformBlocks) {
     const rest = locals.get(block) ?? animation.transforms.get(block);
     if (!rest) continue;
-    const translation = blended.get(`t${String(block)}`)?.mean();
-    const scale = blended.get(`s${String(block)}`)?.mean()[0];
+    const translation = translations.get(block)?.mean();
+    const scale = scales.get(block)?.mean()[0];
     const rotation = rotations.get(block)?.mean();
     locals.set(block, {
       translation: translation
@@ -968,24 +987,20 @@ function evaluate(
     if (visible) hidden.delete(block);
     else hidden.add(block);
   }
-  for (const [key, entry] of blended) {
-    const mean = entry.mean();
-    if (key.startsWith('f') || key.startsWith('c')) {
-      const [shader, variable] = key.slice(1).split(':').map(Number);
-      if (shader === undefined || variable === undefined) continue;
-      if (key.startsWith('f')) {
-        const values = shaderFloats.get(shader) ?? new Map<number, number>();
-        values.set(variable, mean[0] ?? 0);
-        shaderFloats.set(shader, values);
-      } else {
-        const values = shaderColors.get(shader) ?? new Map<number, Vec3>();
-        values.set(variable, [mean[0] ?? 0, mean[1] ?? 0, mean[2] ?? 0]);
-        shaderColors.set(shader, values);
-      }
-    } else if (key.startsWith('a')) {
-      alphaTest.set(Number(key.slice(1)), mean[0] ?? 0);
-    }
+  for (const [shader, variables] of floats) {
+    const values = shaderFloats.get(shader) ?? new Map<number, number>();
+    for (const [variable, entry] of variables) values.set(variable, entry.mean()[0] ?? 0);
+    shaderFloats.set(shader, values);
   }
+  for (const [shader, variables] of colors) {
+    const values = shaderColors.get(shader) ?? new Map<number, Vec3>();
+    for (const [variable, entry] of variables) {
+      const mean = entry.mean();
+      values.set(variable, [mean[0] ?? 0, mean[1] ?? 0, mean[2] ?? 0]);
+    }
+    shaderColors.set(shader, values);
+  }
+  for (const [alpha, entry] of alphas) alphaTest.set(alpha, entry.mean()[0] ?? 0);
   // Look-ats turn their node toward their target where everything else put both.
   for (const look of lookAts) {
     const rest = locals.get(look.block) ?? animation.transforms.get(look.block);
@@ -1018,18 +1033,7 @@ function evaluate(
   // World matrices of the moved objects and everything below them.
   const worlds = new Map<Ref, Mat4>();
   if (locals.size > 0) {
-    const roots = new Set(animation.roots);
-    // Whether an object or one above it moved, kept per object: every object of the model is
-    // asked, and each walk up stops at an ancestor already answered.
-    const moved = new Map<Ref, boolean>();
-    const affected = (ref: Ref): boolean => {
-      const known = moved.get(ref);
-      if (known !== undefined) return known;
-      const parent = animation.parents.get(ref);
-      const answer = locals.has(ref) || (parent !== undefined && affected(parent));
-      moved.set(ref, answer);
-      return answer;
-    };
+    const { roots, children } = graphIndex(animation);
     const worldOf = (ref: Ref): Mat4 => {
       const cached = worlds.get(ref);
       if (cached) return cached;
@@ -1044,7 +1048,17 @@ function evaluate(
       worlds.set(ref, world);
       return world;
     };
-    for (const ref of animation.transforms.keys()) if (affected(ref)) worldOf(ref);
+    // Each moved object's subtree (every object of the model was asked whether one above it
+    // moved; most of a model's objects never do).
+    const seen = new Set<Ref>();
+    const stack = [...locals.keys()];
+    for (let ref = stack.pop(); ref !== undefined; ref = stack.pop()) {
+      if (seen.has(ref)) continue;
+      seen.add(ref);
+      if (animation.transforms.has(ref)) worldOf(ref);
+      const below = children.get(ref);
+      if (below) stack.push(...below);
+    }
   }
   return { worlds, hidden, shaderFloats, shaderColors, alphaTest };
 }

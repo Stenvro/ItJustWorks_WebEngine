@@ -135,6 +135,19 @@ const FILL_FRAMES = 2;
 /** How long a menu waits for its frames (a movie that plays no more shows anyway). */
 const FRAMES_TIMEOUT_MS = 500;
 
+/**
+ * Tells a player the pointer is off its stage. A player starts as if the pointer were over it,
+ * and while it is, each of its frames searches every clip of the movie for one under the pointer
+ * to hover (half of the HUD's player's time); a menu that takes no input (the HUD, the fader,
+ * the cursor: no pointer events reach it) never hears the pointer leave, so it is told once.
+ * Ruffle listens on its canvas, in the player's shadow root.
+ */
+function pointerLeft(element: HTMLElement): void {
+  for (const canvas of element.shadowRoot?.querySelectorAll('canvas') ?? []) {
+    canvas.dispatchEvent(new PointerEvent('pointerleave'));
+  }
+}
+
 /** Whether a key's target is a field of the page that is typed into (the shell's own). */
 function editable(target: EventTarget | null): boolean {
   return (
@@ -835,6 +848,7 @@ export class MenuHost {
       return;
     }
     menu.updateStage();
+    if (!options.interactive) pointerLeft(element);
     // The player has the page's focus before the menu's setup runs: a movie's
     // Selection.setFocus (a message box's first button) holds only in a player with focus.
     if (options.interactive) menu.focus();

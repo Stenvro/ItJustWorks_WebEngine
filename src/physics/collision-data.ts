@@ -368,7 +368,13 @@ function scaleOf(m: Mat4): number {
 
 /** The matrix without its scale (rotation and translation). */
 export function rigidPart(m: Mat4): Mat4 {
-  const out = new Float32Array(m);
+  return rigidPartInto(m, new Float32Array(m));
+}
+
+/** rigidPart written into `out` (a matrix of 16, not `m`). */
+export function rigidPartInto(m: Mat4, out: Mat4): Mat4 {
+  for (let i = 12; i < 16; i++) out[i] = m[i] ?? 0;
+  for (let column = 0; column < 3; column++) out[column * 4 + 3] = m[column * 4 + 3] ?? 0;
   for (let column = 0; column < 3; column++) {
     const length =
       Math.hypot(m[column * 4] ?? 0, m[column * 4 + 1] ?? 0, m[column * 4 + 2] ?? 0) || 1;
