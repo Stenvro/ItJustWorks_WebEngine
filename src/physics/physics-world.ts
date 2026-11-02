@@ -752,6 +752,11 @@ export class PhysicsWorld {
   readonly #solverJoints = new Map<PlacedJoint, SolverJoint>();
   /** The joints whose second pivot is moved in for a step (#clipViolation). */
   readonly #clipped = new Map<PlacedJoint, RAPIER.Vector>();
+  /** A chain's links, with their pivots (Havok units) and the chain's largest error (#clipChains). */
+  readonly #chainLinks = new Map<
+    PlacedJoint,
+    { readonly pivotA: Vec3; readonly pivotB: Vec3; readonly most: number }
+  >();
   /** The joints whose limits are eased back to them, with their bounds now (#easeLimits). */
   readonly #easing = new Map<PlacedJoint, readonly number[]>();
   /** Bodies settling after being placed: silent until they first sleep (or this time). */
@@ -1184,6 +1189,15 @@ export class PhysicsWorld {
       this.#jointScales.set(placed, scale / HAVOK_SCALE);
       const solved = solverConstraint(constraint.data, scale / HAVOK_SCALE);
       if (solved) this.#solverJoints.set(placed, { a: a.body, b: b.body, constraint: solved });
+      if (constraint.maxError !== undefined && constraint.data.type === 'ball-and-socket') {
+        const toLocal = scale / HAVOK_SCALE;
+        const { pivotA, pivotB } = constraint.data;
+        this.#chainLinks.set(placed, {
+          pivotA: [pivotA[0] * toLocal, pivotA[1] * toLocal, pivotA[2] * toLocal],
+          pivotB: [pivotB[0] * toLocal, pivotB[1] * toLocal, pivotB[2] * toLocal],
+          most: constraint.maxError,
+        });
+      }
       for (const { body } of [a, b]) {
         const list = this.#jointsOf.get(body.handle);
         if (list) list.push(placed);
@@ -1390,6 +1404,7 @@ export class PhysicsWorld {
     this.#jointScales.delete(placed);
     this.#easing.delete(placed);
     this.#clipped.delete(placed);
+    this.#chainLinks.delete(placed);
     this.#solverJoints.delete(placed);
     for (const { body } of [placed.a, placed.b]) {
       const list = this.#jointsOf.get(body.handle);
@@ -1628,6 +1643,7 @@ export class PhysicsWorld {
       // Before the solver's changes: the joints' impulses (#breakJoints) include its own.
       this.#recordVelocities();
       if (this.#solverJoints.size > 0) this.#solveJoints();
+      if (this.#chainLinks.size > 0) this.#clipChains();
       this.world.step(this.#events, this.#hooks);
       this.#changed = false;
       if (this.#limits.size > 0) this.#limitVelocities();
@@ -1655,7 +1671,7 @@ export class PhysicsWorld {
       const made = placed.joint;
       if (!made?.isValid()) continue;
       active.push(joint);
-      this.#clipViolation(placed, made, joint);
+      this.#clipViolation(placed, made, joint, joint.constraint.a.pivot, joint.constraint.b.pivot);
     }
     solveJoints(
       active,
@@ -1667,6 +1683,26 @@ export class PhysicsWorld {
   }
 
   /**
+   * A chain's links (bhkBallSocketConstraintChain) clip their error as the constraints do
+   * (#clipViolation), to the chain's own maxErrorDistance (0.1 Havok units in every chain of
+   * the data: the traps' ropes and chains).
+   */
+  #clipChains(): void {
+    for (const [placed, { pivotA, pivotB, most }] of this.#chainLinks) {
+      const made = placed.joint;
+      if (!made?.isValid()) continue;
+      this.#clipViolation(
+        placed,
+        made,
+        { a: placed.a.body, b: placed.b.body },
+        pivotA,
+        pivotB,
+        most,
+      );
+    }
+  }
+
+  /**
    * Havok's maximum constraint violation (observed in the original: its world clips a
    * constraint's positional error to MAX_CONSTRAINT_VIOLATION): a joint whose two pivots lie
    * farther apart (a ragdoll pulled apart: a limb pushed out of a rock the rest lies in, a body
@@ -1675,11 +1711,15 @@ export class PhysicsWorld {
    * corrects all of the error at once: Lokir's corpse, half under a rock as Alduin's landing
    * woke it, was flung about for five minutes. The true pivot is set back once within.
    */
-  #clipViolation(placed: PlacedJoint, made: RAPIER.ImpulseJoint, joint: SolverJoint): void {
-    const { a, b } = joint;
+  #clipViolation(
+    placed: PlacedJoint,
+    made: RAPIER.ImpulseJoint,
+    { a, b }: { readonly a: RAPIER.RigidBody; readonly b: RAPIER.RigidBody },
+    pivotA: Vec3,
+    pivotB: Vec3,
+    most = MAX_CONSTRAINT_VIOLATION,
+  ): void {
     if (a.isSleeping() && b.isSleeping()) return;
-    const pivotA = joint.constraint.a.pivot;
-    const pivotB = joint.constraint.b.pivot;
     const ta = a.translation();
     const tb = b.translation();
     const pa = rotateVector(a.rotation(), { x: pivotA[0], y: pivotA[1], z: pivotA[2] });
@@ -1688,9 +1728,9 @@ export class PhysicsWorld {
     const dy = tb.y + pb.y - (ta.y + pa.y);
     const dz = tb.z + pb.z - (ta.z + pa.z);
     const gap = Math.hypot(dx, dy, dz);
-    if (gap > MAX_CONSTRAINT_VIOLATION) {
+    if (gap > most) {
       // The second body's anchor where the first's pivot plus the clipped error lies.
-      const k = MAX_CONSTRAINT_VIOLATION / gap;
+      const k = most / gap;
       const q = b.rotation();
       const local = rotateVector(
         { x: -q.x, y: -q.y, z: -q.z, w: q.w },
