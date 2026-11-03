@@ -468,11 +468,37 @@ How the engine drives an actor's behavior graph while it moves (`Locomotion`,
 and the player alike).
 
 **Which actions the engine performs.** The engine names the actions it performs through its
-default objects (the DOBJ uses; observed in the original: Action Ragdoll Instant, Action Reset
-Animation Graph, Action Waterwalk Start, Action VoiceReady, Action Look, Action Shield Change,
-Action Listen Idle among them, each still without its moment here: TODO(M13)). An action that
-is none of them, and that no record or script names, is never performed: ActionStopEffect
-(no vanilla graph has an idle for it either).
+default objects (the DOBJ uses), reading each by its place in the default objects' list, which
+follows the DOBJ order. Observed in the original, the moments of those that are no movement,
+combat or furniture action:
+
+- _Action Ragdoll Instant_: performed as an actor's graph is made (its 3D loaded, its graph
+  manager made again) while it should lie as a ragdoll: dead, knocked down (a knock state but
+  the getting up) or unconscious; before it, the graph's ragdoll is made dynamic and, for the
+  dead, its constraints are turned on. Also as an actor is killed with its ragdoll asked at
+  once (the kill's own flag) instead of the death actions, and as a reanimation that raised a
+  corpse ends while it is dead again. Here: an actor placed dead (src/shell/actor-stage.ts; its
+  bodies lie as its cell's ragdoll, ragdollsOf). TODO(M13): who asks a kill with its ragdoll at
+  once is not found; the reanimation's end kills the raised as before.
+- _Action Reset Animation Graph_: performed by Resurrect, after the actor's state is reset and
+  before its 3D is attached again (the creatures' graphs: returnToDefault, Reset, RESET_GRAPH).
+  Here the risen actor leaves the stage as a corpse and comes on again alive where its body lay
+  (ActorStage.resurrected), its graph then reset by the action.
+- _Action Waterwalk Start_: performed by the actor's update as an actor with Water Walking (the
+  actor value above 0, alive) takes to the water: any of its body under the surface and not yet
+  on it; the surface then bears it as ground and it does not swim (src/gameplay/swimming.ts
+  walksOnWater, Character.waterFloor; the vampire lord's graph: WaterWalkStart).
+- _Action Shield Change_: performed as an item is equipped and it is not swapped in a drawn
+  hand (ActionForceEquip): the left hand's graph type compared before and after, a shield put on
+  or taken off (one shield for another keeps the type: none). No vanilla graph has an idle for
+  it (src/gameplay/combat/combat-actions.ts changesShield).
+- _Action Look_, _Action VoiceReady_, _Action Listen Idle_: no read of them was found (none by
+  the list's place in the code, none by a constant handed to the list's reader); the list is
+  also read by places taken from tables, so they stay open. TODO(M13). No vanilla graph has an
+  idle for the first two; the third's group is empty.
+
+An action that is none of them, and that no record or script names, is never performed:
+ActionStopEffect (no vanilla graph has an idle for it either).
 
 **Movement actions.** The graph's events of moving come from actions (AACT), performed as the
 data channels cross their thresholds, and their idles' events reach the graph, not raw events:

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { floatSpeed, submersion, swims, SWIM_SUBMERSION } from './swimming.ts';
+import { floatSpeed, submersion, swims, SWIM_SUBMERSION, walksOnWater } from './swimming.ts';
 import { SPELL_INTERVAL, WaterHazard } from './water-hazard.ts';
 
 describe('water hazard', () => {
@@ -37,5 +37,20 @@ describe('swimming', () => {
     expect(floatSpeed(-200, 128, 0, 100, 1 / 60, false)).toBe(100);
     // Above its floating depth on the shore: the water does not pull it down.
     expect(floatSpeed(-10, 128, 0, 100, 1 / 60, true)).toBe(0);
+  });
+});
+
+describe('water walking', () => {
+  it('takes to the surface as the body touches the water, and stays on it', () => {
+    expect(walksOnWater(true, 0.02, -1, false)).toBe(true);
+    // Held at the surface: its feet on it, none of it under.
+    expect(walksOnWater(true, 0, 0, true)).toBe(true);
+    // Stepped up onto the shore: off it.
+    expect(walksOnWater(true, 0, 10, true)).toBe(false);
+  });
+
+  it('never without Water Walking, nor above the water', () => {
+    expect(walksOnWater(false, 0.5, -40, false)).toBe(false);
+    expect(walksOnWater(true, 0, 1, false)).toBe(false);
   });
 });

@@ -18,7 +18,7 @@ settings reader or named in the code. A field with one value in every mesh that 
 the physics counts as done with that reason. The mechanics are kept by hand below, against
 docs/physics.md. The count after an item is how many blocks (records) use it.
 
-## Count (2026-11-03, round 5)
+## Count (2026-11-03, round 6)
 
 | Part                          | Items | Done | Open |
 | ----------------------------- | ----: | ---: | ---: |
@@ -30,9 +30,9 @@ docs/physics.md. The count after an item is how many blocks (records) use it.
 | Projectiles (PROJ)            |    24 |   23 |    1 |
 | Explosions (EXPL)             |    16 |   16 |    0 |
 | Material types, impact data   |    17 |   17 |    0 |
-| Game settings (GMST)          |    45 |   40 |    5 |
-| Mechanics (by hand)           |    27 |   19 |    8 |
-| Total                         |   369 |  354 |   15 |
+| Game settings (GMST)          |    45 |   41 |    4 |
+| Mechanics (by hand)           |    28 |   20 |    8 |
+| Total                         |   370 |  356 |   14 |
 
 Round 1 wrote the sweep and this list, and fixed deactivation: Havok deactivates a simulation
 island as a whole, ours put a body to sleep on its own while something still moved on it (a
@@ -73,6 +73,13 @@ as they are (limits, friction, no motor) in the world's solver, with no solver s
 own; with the lift she still stands at 1, 2, 2.5 and 3 s (docs/physics.md, "The cone"). Not
 reached: objects placed into what they lie on, the chains' damping. Next biggest: those,
 Havok's give at four iterations, the recoiling and the mounted in a weak current.
+
+Round 6 (354 to 356, one item added): water walking, as observed in the original (an actor
+with the Water Walking actor value above 0 takes to the water's surface as its body touches
+it, and the surface bears it as ground; it does not swim: Character.waterFloor,
+src/gameplay/swimming.ts walksOnWater; NPCs and the player); fDeathForceSpellImpactMult was
+read already (src/gameplay/combat/combat-settings.ts). Not reached: objects placed into what
+they lie on, the chains' damping.
 
 ## Meshes
 
@@ -134,7 +141,7 @@ Havok's give at four iterations, the recoiling and the mounted in a weak current
 
 ## Game settings
 
-- [x] 32 of 45: fall damage (fJumpFall*), the jump, the swimming breath, the grab and
+- [x] 33 of 45: fall damage (fJumpFall*), the jump, the swimming breath, the grab and
       telekinesis (fZKey*, fMagicTelekinesis*, fMagicGrabActor*), the gameplay impulses
       (fGameplayImpulseMult*), the explosions' force (fExplosionForceMult*,
       fExplosionSourceRefMult), the death force (fDeathForce*), physics damage
@@ -147,7 +154,7 @@ Havok's give at four iterations, the recoiling and the mounted in a weak current
       only swims never (currentPush, src/physics/water-physics.ts, src/shell/actor-movers.ts;
       round 5). TODO(M13): the recoiling and the mounted in a weak current.
 - [ ] fExplosionWaterRadiusRatio, fExplosionSplashRadius: explosions on water.
-- [ ] fDeathForceSpellImpactMult: a killing spell's push.
+- [x] fDeathForceSpellImpactMult: a killing spell's push (src/gameplay/combat/combat-settings.ts).
 - [ ] fJumpSwimmingMult: a jump out of the water.
 - [ ] fMoveWeightMax: the most an actor's walk can push.
 
@@ -181,6 +188,10 @@ Havok's give at four iterations, the recoiling and the mounted in a weak current
 - [x] An explosion's vertical offset (above; round 2).
 - [x] Havok materials: impact data per material, footsteps, sounds (MATT, IPDS).
 - [x] Water: buoyancy by material, currents, swimming, drowning (src/physics/water-physics.ts).
+- [x] Water walking: an actor with Water Walking above 0 takes to the surface as its body
+      touches the water, and it bears it as ground (Character.waterFloor, walksOnWater; round
+      6). TODO(M13): the original holds it in its controller's own state; here its feet are
+      kept from going under the surface.
 - [x] Grabbing and telekinesis (src/physics/grab.ts).
 - [x] Physics damage (fPhysicsDamage1Mass ...).
 - [ ] Physics damage to destructibles from the listener (no vanilla impact reaches it).

@@ -97,6 +97,7 @@ import {
 } from '../gameplay/combat/combat-state.ts';
 import {
   anticipatesBlow,
+  changesShield,
   forceEquips,
   wantsReload,
   type HandForms,
@@ -1599,6 +1600,8 @@ export class ActorCombat implements CombatBridge {
       fighter.handsBefore = undefined;
       if (forceEquips(before?.forms, handForms(gear), before?.out === true))
         void this.#act(fighter, 'ActionForceEquip');
+      else if (changesShield(before?.forms, handForms(gear), before?.out === true))
+        void this.#act(fighter, 'ActionShieldChange');
       await this.#makeModels(fighter, gear);
     } catch (error) {
       this.#warn(`${fighter.reference.toString(16)}: ${describe(error)}`);

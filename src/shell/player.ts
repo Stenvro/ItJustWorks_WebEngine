@@ -69,7 +69,13 @@ import { readPlayerBody, type PlayerBody } from '../world/player-body.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
 import { parseWaterBody } from '../world/water.ts';
 import type { WaterHarm } from '../gameplay/water-hazard.ts';
-import { floatSpeed, submersion, SWIM_SUBMERSION, swims } from '../gameplay/swimming.ts';
+import {
+  floatSpeed,
+  submersion,
+  SWIM_SUBMERSION,
+  swims,
+  walksOnWater,
+} from '../gameplay/swimming.ts';
 import {
   SPLASH_DEFAULTS,
   WATER_KNOCKDOWN_DEFAULTS,
@@ -533,6 +539,8 @@ export class Player implements Camera {
   pace: (() => number) | undefined;
   /** The player landed after falling this far (units): falling damage. */
   onLanded: ((height: number) => void) | undefined;
+  /** Whether the player walks on water (their Water Walking above 0). */
+  walksOnWater: (() => boolean) | undefined;
   /** Each step: how deep the player is in water (its share of their height, 0..1): breath. */
   onSubmersion:
     | ((
@@ -1149,7 +1157,17 @@ export class Player implements Camera {
     const [fx, fy, fz] = character.feet;
     const water = this.#setup.waterHeight(fx, fy, fz);
     const depth = submersion(fz, character.shape.height, water);
-    const swimming = swims(depth, character.swimming);
+    // Water Walking: the surface bears the player as ground, and they never swim.
+    const onWater =
+      water !== undefined &&
+      walksOnWater(
+        this.walksOnWater?.() === true,
+        depth,
+        fz - water,
+        character.waterFloor !== undefined,
+      );
+    character.waterFloor = onWater ? water : undefined;
+    const swimming = !onWater && swims(depth, character.swimming);
     character.swimming = swimming;
     if (swimming) this.sneaking = false;
     this.onSubmersion?.(depth, seconds, depth > 0 ? this.waterOf?.(fx, fy, fz) : undefined);

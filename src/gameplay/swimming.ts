@@ -40,3 +40,27 @@ export function floatSpeed(
   if (feetZ > surface && supported) return 0;
   return Math.max(-rate, Math.min(rate, (surface - feetZ) / Math.max(seconds, 1e-3)));
 }
+
+/**
+ * Water depth over the body's height at which an actor with Water Walking takes to the water's
+ * surface (observed in the original: any of its body under the surface, 0.01 of it).
+ */
+export const WATER_WALK_SUBMERSION = 0.01;
+/** On the surface, its feet may be this high over it and it stays on it (units; no flicker). */
+const WATER_WALK_ABOVE = 2;
+
+/**
+ * Whether an actor walks on the water (Water Walking above 0: its swimming never starts and the
+ * surface bears it as ground; observed in the original, it takes to the surface as its body
+ * touches the water, ActionWaterwalkStart). `depth`: its submersion; `above`: its feet's height
+ * over the surface (negative under it); `was`: it walked on the water at the last step.
+ */
+export function walksOnWater(
+  waterWalking: boolean,
+  depth: number,
+  above: number,
+  was: boolean,
+): boolean {
+  if (!waterWalking) return false;
+  return depth >= WATER_WALK_SUBMERSION || (was && above <= WATER_WALK_ABOVE);
+}

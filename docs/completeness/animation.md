@@ -28,7 +28,7 @@ are kept by hand below, against docs/animation.md and the conformance suites
 (tests/conformance/animation/). The count after an item is how many objects (nodes,
 annotations, records) use it.
 
-## Count (2026-11-03, round 6)
+## Count (2026-11-03, round 7)
 
 | Part                        | Items | Done | Open |
 | --------------------------- | ----: | ---: | ---: |
@@ -39,10 +39,10 @@ annotations, records) use it.
 | Response handlers           |    97 |   97 |    0 |
 | Idles (IDLE fields)         |    10 |    9 |    1 |
 | Idle conditions (functions) |   111 |  111 |    0 |
-| Actions (AACT)              |    71 |   64 |    7 |
+| Actions (AACT)              |    71 |   68 |    3 |
 | Game settings (GMST)        |    20 |   20 |    0 |
 | Mechanics (by hand)         |    24 |   16 |    8 |
-| Total                       |  1146 | 1088 |   58 |
+| Total                       |  1146 | 1092 |   54 |
 
 Round 1 wrote the sweep and this list. Built: the animations' SoundStop.<descriptor> and
 SoundRelease.<descriptor> (17 and 8 annotations: the bow's draw loop, WPNBowPullLPM, stops as
@@ -89,6 +89,17 @@ the engine names it: inert. Not reached: those seven moments, the node fields (t
 threshold, applyMotionFromRoot, the powered ragdoll's world-from-model mode, bDisableInterp's
 setter, userData). Physics this round: a ragdoll made dynamic lifts its still bodies
 (docs/physics.md, "Made dynamic"); Hulda's locked legs stay open.
+
+Round 7 (1088 to 1092): the engine reads its default objects by their place in the list (the
+DOBJ order); four of the seven actions are read there, each at a moment now built (docs/
+animation.md, "Driving the graphs"; tests/engine-actions.int.test.ts): ActionRagdollInstant as an
+actor placed dead has its graph made, ActionResetGraph as an actor is resurrected (the stage
+now raises it: it was left lying), ActionWaterwalkStart as an actor with Water Walking takes to
+the water (water walking built: the surface bears it, NPCs and the player), ActionShieldChange
+as a shield goes on or off. ActionLook, ActionVoiceReady and ActionListen were found read
+nowhere the search reached. Not reached: the node fields (the mark threshold,
+applyMotionFromRoot, the powered ragdoll's world-from-model mode, bDisableInterp's setter,
+userData).
 
 ## Behavior graphs
 
@@ -203,18 +214,20 @@ setter, userData). Physics this round: a ragdoll made dynamic lifts its still bo
 - [x] ActionStopEffect: inert. It is not one of the engine's default objects (the engine names
       the actions it performs through them; the other seven below are), and no vanilla graph
       has an idle for it (round 6).
-- [ ] Actions never performed (7), each with what is missing (each is one of the engine's
-      default objects, observed in the original, so the engine performs it somewhere):
-  - ActionRagdollInstant (RagdollInstant, 46 graphs), ActionResetGraph (returnToDefault, Reset,
-    RESET_GRAPH: 20 creature graphs): TODO(M13): when the original performs them is not known
-    (no record, script or setting names the moment).
-  - ActionWaterwalkStart (WaterWalkStart, 1 graph: the vampire lord's, if it is not
-    levitating): an actor walking on water (the Water Walking actor value) is not built yet.
-    TODO(M13).
-  - ActionVoiceReady: no idles in any vanilla graph, and two moments fit its name (a power's
-    charge done, the voice recovered); TODO(M13): which.
-  - ActionLook, ActionShieldChange: no idles in any vanilla graph (performed, nothing would
-    play); ActionListen (Action Listen Idle): one empty idle group. TODO(M13): their moments.
+- [x] The engine's own (round 7, observed in the original; docs/animation.md, "Driving the
+      graphs"): ActionRagdollInstant (RagdollInstant, 46 graphs) as an actor placed dead has
+      its graph made (src/shell/actor-stage.ts); ActionResetGraph (returnToDefault, Reset,
+      RESET_GRAPH: 44 graphs) as Resurrect raises an actor (ActorStage.resurrected);
+      ActionWaterwalkStart (the vampire lord's WaterWalkStart) as an actor with Water Walking
+      takes to the water (src/gameplay/swimming.ts walksOnWater); ActionShieldChange (no idles)
+      as a shield goes on or off (combat-actions.ts changesShield). TODO(M13): the kill asked
+      with its ragdoll at once and a reanimation ending on the dead (both RagdollInstant in the
+      original) are not built; the knocked down and unconscious placed (a save) are not dropped
+      by it; the player's graph is not given ActionWaterwalkStart.
+- [ ] Actions never performed (3): ActionLook, ActionVoiceReady (no idles in any vanilla graph),
+      ActionListen (Action Listen Idle: one empty idle group). No read of them was found: none by
+      their place in the default objects' list in the code, none by a constant handed to the
+      list's reader; the list is also read at places taken from tables. TODO(M13).
 
 ## Game settings
 
