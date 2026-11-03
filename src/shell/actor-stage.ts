@@ -1706,6 +1706,7 @@ export class ActorStage {
         ...(this.senses.scriptSneaking(reference) && { sneaking: true }),
         ...(weaponOut(this.combat.weaponState(reference)) && { weaponDrawn: true }),
         ...(this.flight.isFlying(reference) && { flying: true }),
+        down: this.combat.saveDown(reference),
         // Its graph, as the original keeps every actor's: it goes on mid-animation as it loads
         // (seated, sneaking, its weapon out, in a scene's idle). A corpse lies by its pose.
         ...(!staged.dead && { graph: staged.placed.behavior?.saveActorState() }),
@@ -1714,6 +1715,13 @@ export class ActorStage {
           riding: this.mounts.horseOf(reference),
         }),
       });
+    }
+    // A loaded save's actors not placed yet (their cells not loaded since): kept as that save
+    // had them, so a save made now keeps their place, their package's progress and their
+    // graphs, as the original keeps every actor's process with it (not reset to where their
+    // packages or their records put them).
+    for (const pending of this.#options.session.restoring?.carried() ?? []) {
+      if (!this.#actors.has(pending.reference)) saved.push(pending);
     }
     return saved;
   }
@@ -1741,6 +1749,7 @@ export class ActorStage {
       ...(seated && use && { furniture: use.furniture }),
       pov: view.play.player.pov,
       fov: view.play.player.fov,
+      down: this.combat.saveDown(PLAYER_REF),
     };
   }
 
@@ -1766,6 +1775,8 @@ export class ActorStage {
       this.#restoredDraws.set(PLAYER_REF, { left: 5, resumed: graphs?.body !== undefined });
     }
     if (player.vehicleExit) this.vehicles.exitAgain(PLAYER_REF, player.vehicleExit);
+    // Bleeding out, in a killmove: on in it (their graph is in it already).
+    if (player.down) this.combat.restoreDown(PLAYER_REF, player.down);
     // In their furniture again (their graph, put back seated, is not told to enter it again):
     // before, the loaded player's graph sat while nothing held them in the seat.
     if (player.furniture !== undefined) {
@@ -2697,6 +2708,8 @@ export class ActorStage {
           if (saved.package) this.ai.resume(reference, saved.package, restart);
           // Sneaking as a script set it, in the package it set it in.
           if (saved.sneaking === true) this.senses.sneakAgain(reference, saved.package?.id);
+          // Bleeding out, or in a paired animation: on in it, a killmove to its end.
+          if (saved.down) this.combat.restoreDown(reference, saved.down);
           // Its weapon out: its graph has it out already (a save of before: drawn again).
           if (saved.weaponDrawn === true) {
             this.#restoredDraws.set(reference, { left: 5, resumed });

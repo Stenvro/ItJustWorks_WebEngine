@@ -3855,6 +3855,7 @@ export class ScriptRuntime implements VmHost {
         crime: this.crime.saveData(),
         trapHits: this.trapHits.saveData(),
         magic: this.magic.saveData(),
+        deferredKills: this.actors.saveData(),
       },
     };
   }
@@ -3945,6 +3946,7 @@ export class ScriptRuntime implements VmHost {
     this.crime.loadData(engines?.crime);
     this.trapHits.loadData(engines?.trapHits);
     this.magic.loadData(engines?.magic);
+    this.actors.loadData(engines?.deferredKills);
     // The player's abilities, diseases and worn enchantments act again (magic-engine.ts).
     await this.magic.prepare(PLAYER_REF);
     await this.vm.idle();

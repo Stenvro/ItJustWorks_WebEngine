@@ -125,14 +125,24 @@ keeps the values it loads; UESP's names kept for the numbers):
   all actors). The third is the crime check's countdown: each second the crimes are gone
   through and a crime whose witnesses are all dead (fKillWitnessesTimerSetting after it) is
   dropped with its bounty ("Last witness killed"), then the countdown is set to 1 again. The u32
-  (0 and 6 in the saves read; UESP: the next crime's number) is not used there (TODO(M13)).
-- 102 (Interface): the help messages shown (a sorted u32 list: one entry, 252, in both saves,
-  the same before the cart and after Helgen; TODO(M13): what it numbers, the help entries of
-  the help part are named, not numbered); a byte set as a Miscellaneous quest's objective is first shown, after
+  is the number the next crime gets (observed in the original: each crime made takes it as its
+  serial number and moves it on, from 0; 0 on the cart, 6 after Helgen, whose crimes were all
+  gone again). A crime's word after its serial is the calendar date it was made on, packed as
+  (year × 16 + month) × 512 + day, and the next float the game time then.
+- 102 (Interface): the tutorials shown (a sorted u32 list, observed in the original: each
+  tutorial message by its place among the default objects, added as it is first shown, with
+  bShowTutorials on, and never shown again; one entry, 252, in both saves: the journal's
+  tutorial, HBJL, which the journal shows as it first opens, as it did to save); a byte set
+  as a Miscellaneous quest's objective is first shown, after
   which the Miscellaneous objectives count among the objectives shown; the last used lists; a
   byte, the journal's other pages switched off (Game.DisablePlayerControls' abJournalTabs, as
-  IsJournalControlsEnabled reads it: 1 in both saves); then the help part: entries (two
-  strings and four u32), the input events whose help is done, and a u32 (−2: TODO(M13)).
+  IsJournalControlsEnabled reads it: 1 in both saves); then the help part (Message.
+  ShowAsHelpMessage's): its entries (the input event, the text, the seconds shown (none or
+  less: for ever), the interval, the times left (−1: no limit) and the seconds since last
+  shown), the input events whose help is done, and the entry showing now (its place among the
+  entries; none: −1, which becomes −2 when an earlier entry is dropped, as in both saves). Each
+  entry counts its seconds; past its interval its text shows and its times left go down; the
+  one showing goes once its seconds are up.
 - 104: none (the original writes no entry and its load reads none).
 - 105 (UESP: Detection Manager): a vsval count of (reference id, u32 flags, u32 hour): bit 0
   set as an actor is killed (cleared as it is resurrected), bit 1 as a reference with no enable
@@ -655,8 +665,16 @@ ess)` reads those places ahead);
 - the interface (global data 102): the input events whose help messages the player has done
   (the names list: "Look", "Forward"), not shown again (`GameState.helpDone`); the weapons,
   spells and shouts used last (counted once each); the journal's tabs switched off
-  (`controls.journalTabs`). TODO(M13): the help messages shown (one number, 252) and the help
-  part's last u32;
+  (`controls.journalTabs`); the tutorials shown, by their default objects' places
+  (src/save/ess-import.ts tutorialOfDefaultObject: CommonLibSSE's order of the help messages,
+  one place later in the runtime that wrote the saves: 252 is HBJL), into
+  `GameState.tutorialsShown`, not shown again. The help part's waiting messages (none in the
+  saves read) are logged (TODO(M13): ours keeps them in the HUD, unsaved); none showing (−2)
+  needs nothing;
+- the process lists (global data 100): the next crime's number becomes `GameState.nextCrime`,
+  the number our crime ledger gives the next crime (src/gameplay/crime.ts);
+- the graphs' event-driven modifiers (`NamedGraphState.modifiers`): one switched on stays on as
+  its behavior file is reached;
 - the sky cells (global data 8): a reference whose cell is a worldspace's sky cell is placed
   in that worldspace by its position;
 - the references' state (global data 105): a dead actor's last seen hour becomes the hour its

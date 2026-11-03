@@ -128,7 +128,8 @@ export function withoutStolen<T extends { readonly formId: number; readonly coun
 
 export class CrimeEngine {
   readonly #runtime: ScriptRuntime;
-  readonly ledger = new CrimeLedger();
+  /** The crimes open and known (their numbers counted in GameState.nextCrime). */
+  readonly ledger: CrimeLedger;
   /** What the stage answers (who witnesses); undefined: nobody sees anything. */
   world: CrimeWorld | undefined;
   readonly #listeners = new Set<(event: CrimeEvent) => void>();
@@ -141,6 +142,7 @@ export class CrimeEngine {
 
   constructor(runtime: ScriptRuntime) {
     this.#runtime = runtime;
+    this.ledger = new CrimeLedger(runtime.state);
   }
 
   /** What a save keeps (RuntimeSave.engines): the NPC assaults answered (attacker:victim). */

@@ -597,6 +597,11 @@ export class GameState {
    * player is named; the Load list groups the saves by it.
    */
   characterId: number | undefined;
+  /**
+   * The number the next crime gets (src/gameplay/crime.ts CrimeLedger): observed in the
+   * original, one counter that each crime made takes and moves on, kept with the process lists.
+   */
+  nextCrime = 0;
   /** Actors dead, by their base (GetDeadCount). */
   readonly deadCounts = new Map<number, number>();
   /**

@@ -16,6 +16,11 @@ export interface NamedGraphState {
    * an integer's or bool's value), read by the variable's type where it is found.
    */
   readonly words: readonly (readonly [string, number])[];
+  /**
+   * [the graph's name, the event-driven modifier's name, 1 active]: whether the event that
+   * turns each on came (BSEventDrivenModifier; saves imported before kept none).
+   */
+  readonly modifiers?: readonly (readonly [string, string, number])[];
 }
 
 const scratch = new DataView(new ArrayBuffer(4));
@@ -54,6 +59,7 @@ export function namedOf(
   machines: Map<string, number>;
   clips: Map<string, number>;
   sequences: Map<string, number>;
+  modifiers: Map<string, number>;
 } {
   const key = graph.toLowerCase();
   const pick = (list: readonly (readonly [string, string, number])[] | undefined) => {
@@ -68,5 +74,6 @@ export function namedOf(
     machines: pick(named.machines),
     clips: pick(named.clips),
     sequences: pick(named.sequences),
+    modifiers: pick(named.modifiers),
   };
 }

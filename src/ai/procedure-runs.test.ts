@@ -14,11 +14,13 @@ import type {
   PackageBody,
   PackageMind,
   ProcedureRun,
+  SavedStep,
   SayOptions,
   ShoutResult,
   WeaponBarrage,
 } from './package-runtime.ts';
 import { PROCEDURES } from './procedure-runs.ts';
+import { SandboxKind } from './sandbox.ts';
 import { ProcedureInputs } from './procedures.ts';
 
 const branch = (name: string, inputs: number[]): ProcedureBranch => ({
@@ -67,6 +69,8 @@ function harness(
   barrages: boolean[] = [],
   /** What its shouts answer, one each (then 'shouted'). */
   shouts: ShoutResult[] = [],
+  /** More of the run (a loaded save's step: resumedStep, setStep). */
+  extra: Partial<ProcedureRun> = {},
 ) {
   const done: string[] = [];
   let stopped = false;
@@ -214,6 +218,7 @@ function harness(
         return Promise.resolve();
       },
       random: () => 0,
+      ...extra,
     };
     return runner(procedureRun);
   };
@@ -660,5 +665,40 @@ describe('combat procedures', () => {
       'failure',
     );
     expect(done).toEqual([]);
+  });
+});
+
+describe('a sandbox after a load', () => {
+  const mind = {
+    day: () => 0,
+    time: () => ({ hour: 10.5 }),
+    around: () => Promise.resolve([]),
+  } as unknown as Partial<PackageMind>;
+
+  it('goes on with the activity it had, from when it began, its plan as it was', async () => {
+    const saved: SavedStep = {
+      kind: SandboxKind.wandering,
+      began: 10,
+      hours: 1,
+      counts: [3, 4, 5, 6, 1, 2, 7],
+    };
+    const steps: SavedStep[] = [];
+    const { run } = harness(undefined, 3, undefined, [], [], {
+      resumedStep: () => saved,
+      setStep: (step) => {
+        if (step) steps.push(step);
+      },
+    });
+    await run('Sandbox', [0], [NEAR_HOME], mind);
+    expect(steps[0]).toEqual(saved);
+    // Without one it picks anew, from now.
+    const fresh: SavedStep[] = [];
+    const again = harness(undefined, 3, undefined, [], [], {
+      setStep: (step) => {
+        if (step) fresh.push(step);
+      },
+    });
+    await again.run('Sandbox', [0], [NEAR_HOME], mind);
+    expect(fresh[0]?.began).toBe(10.5);
   });
 });

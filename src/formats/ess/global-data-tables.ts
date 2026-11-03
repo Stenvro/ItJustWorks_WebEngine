@@ -40,7 +40,7 @@ export interface SavedCrime {
   readonly quantity: number;
   readonly serialNum: number;
   readonly unknown2: number;
-  /** Possibly the crime's date (the low byte the day). */
+  /** The calendar date it was made on (observed in the original): (year × 16 + month) × 512 + day. */
   readonly unknown3: number;
   /** Negative: game time since the crime. */
   readonly elapsedTime: number;
@@ -73,7 +73,7 @@ export interface ProcessLists {
    * all dead is dropped and its bounty taken back ("Last witness killed").
    */
   readonly crimeCheckTimer: number;
-  /** UESP: the serial number the next crime gets (0 and 6 in the saves read). TODO(M13): its use. */
+  /** The serial number the next crime gets (observed in the original: each crime made takes it). */
   readonly nextNum: number;
   /** The crimes of each of the 7 types. */
   readonly crimes: readonly (readonly SavedCrime[])[];
@@ -406,7 +406,7 @@ function readLosGridMap(stream: PathingStream): CombatSearchGrids {
 // --- 102 Interface -------------------------------------------------------------------------------
 
 export interface InterfaceData {
-  /** Help messages already shown (a sorted list of numbers; TODO(M13): what they number). */
+  /** The tutorials shown, by their places among the default objects (a sorted list). */
   readonly shownHelpMessages: readonly number[];
   /**
    * Observed in the original: set as a Miscellaneous quest's objective is first shown; while
