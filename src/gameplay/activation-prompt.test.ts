@@ -150,6 +150,14 @@ describe('objectPrompt', () => {
         furniture: furniture('sit', { workbench: true }),
       })?.verb,
     ).toEqual(verb('sUse'));
+    // Disables Activation (a creature's exit marker): nothing.
+    expect(
+      objectPrompt({
+        baseType: 'FURN',
+        name: 'Coffin',
+        furniture: furniture('sit', { disablesActivation: true }),
+      }),
+    ).toBeUndefined();
   });
 
   it('takes items, a stack with its count; owned ones are stolen', () => {
