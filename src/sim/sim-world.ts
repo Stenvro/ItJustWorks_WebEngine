@@ -1827,6 +1827,8 @@ export class SimWorld {
     const at = await runtime.placement(reference, false);
     if (!at) return;
     if (reference === PLAYER_REF) {
+      // Out of the furniture they used (a carriage's seat), as an actor moved out of its own.
+      this.#seat?.movedAway();
       // As Play: the player goes where the scripts send them, to another place through a journey.
       // A journey goes as a load door's travel does: the settle under way waits for it (the
       // place it opens does not settle on its own within a drive, so it never waits for

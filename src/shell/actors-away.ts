@@ -520,6 +520,12 @@ export class ActorsAway {
     if (start.kind === 'at') return at(start.reference);
     if (start.kind === 'elsewhere')
       return start.reference === undefined ? undefined : at(start.reference);
+    // A travel to another actor (who moves; an alias's: MQ201RazelanToExteriorGuard to the
+    // Embassy's gate guard): to where that actor is now. Without it the trip a door handed on
+    // was dropped as the actor was asked again, and its travel never completed.
+    if (start.kind === 'here' && start.actor !== undefined) {
+      return start.procedure?.toLowerCase() === 'travel' ? at(start.actor) : undefined;
+    }
     if (start.kind === 'here' && start.editor === true) {
       // Back to its editor location (its home), if it is away from it.
       const editor = await runtime.editorPlacement(actor);

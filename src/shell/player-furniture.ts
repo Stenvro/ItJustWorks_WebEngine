@@ -165,6 +165,16 @@ export class PlayerFurniture {
     this.#stand();
   }
 
+  /**
+   * A script moved the player (MoveTo) while they used furniture: they are out of it at once and
+   * stand where they arrive (ActorFurniture.moveOut).
+   */
+  movedAway(): void {
+    if (!this.#seated) return;
+    this.#furniture.moveOut(this.user, true);
+    this.#stand();
+  }
+
   /** Gets up: the furniture's exit plays, then the player stands and moves again. */
   leave(): Promise<void> {
     this.#leaving ??= this.#furniture.leave(this.user).finally(() => {

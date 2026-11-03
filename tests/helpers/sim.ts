@@ -639,7 +639,12 @@ export class Sim {
       let current = first;
       for (let step = 0; current && step < 16; step++) {
         await say(current);
-        if (afterInfo(current.info) !== 'continue') return current.info.choices;
+        // Invisible Continue, or choices the menu could list none of (goesOnUnlisted).
+        if (
+          afterInfo(current.info) !== 'continue' &&
+          !(await engine.goesOnUnlisted(current, actor))
+        )
+          return current.info.choices;
         current = await engine.continueAfter(current, actor);
       }
       return undefined;
@@ -1026,7 +1031,11 @@ export class Sim {
     let current = spoken;
     let offered = spoken?.info.choices;
     for (let step = 0; current && step < MAX_CONTINUES; step++) {
-      if (afterInfo(current.info) !== 'continue') break;
+      if (
+        afterInfo(current.info) !== 'continue' &&
+        !(await this.#drive(engine.goesOnUnlisted(current, speaker)))
+      )
+        break;
       const next = await this.#drive(engine.continueAfter(current, speaker));
       if (!next) {
         offered = undefined;

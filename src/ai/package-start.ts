@@ -100,6 +100,8 @@ export interface PackageWorld {
    * no scene holds it (src/ai/scene-runtime.ts packagesOf).
    */
   scenePackages?(actor: PackageActor): readonly number[] | undefined;
+  /** The reference a quest's alias holds now (undefined: none, or no game running). */
+  aliasReference?(quest: number, alias: number): number | undefined;
   /** Where the player is now (undefined where it is not known: no game running). */
   player?():
     { readonly space: Space; readonly position: readonly [number, number, number] } | undefined;
@@ -149,6 +151,11 @@ export type PackageStart =
       readonly procedure?: string;
       /** Its place is its editor location (an actor away from it goes back there). */
       readonly editor?: boolean;
+      /**
+       * The actor its package goes to (a travel to another actor, who moves): placed as cells
+       * load it stays where it is; away, its trip goes to where that actor is now.
+       */
+      readonly actor?: number;
     }
   /** At a reference in its space: furniture it uses, a marker it starts at. */
   | {
@@ -487,7 +494,14 @@ export async function packageStart(
     // War's links beside the Patrol that moves Sven out of his house in Riverwood).
     let start: PackageStart = { kind: 'here', package: id };
     for (const procedure of procedures) {
-      start = await placeOf(id, procedure, inputs, actor, world);
+      start = await placeOf(
+        id,
+        procedure,
+        inputs,
+        actor,
+        world,
+        pack.ownerQuest ?? template?.ownerQuest,
+      );
       if (start.kind !== 'undecided' || start.reason !== LINK_MISSING) return start;
     }
     return start;
@@ -585,6 +599,8 @@ async function placeOf(
   inputs: ReadonlyMap<number, PackageInput>,
   actor: PackageActor,
   world: PackageWorld,
+  /** The package's quest (its aliases are its locations' and targets'). */
+  quest: number | undefined,
 ): Promise<PackageStart> {
   const name = procedure.procedure ?? '';
   for (const inputId of procedure.inputs) {
@@ -597,11 +613,11 @@ async function placeOf(
           ? inputs.get(value.location.form)?.value
           : undefined;
       if (named?.kind === 'singleRef' || named?.kind === 'targetSelector')
-        return targetPlace(id, name, named.target, actor, world, value.location.radius);
-      return locationPlace(id, name, value.location, actor, world);
+        return targetPlace(id, name, named.target, actor, world, quest, value.location.radius);
+      return locationPlace(id, name, value.location, actor, world, quest);
     }
     if (value?.kind === 'singleRef' || value?.kind === 'targetSelector') {
-      return targetPlace(id, name, value.target, actor, world);
+      return targetPlace(id, name, value.target, actor, world, quest);
     }
   }
   return { kind: 'here', package: id, procedure: name };
@@ -613,8 +629,11 @@ async function locationPlace(
   location: PackageLocation,
   actor: PackageActor,
   world: PackageWorld,
+  quest: number | undefined,
 ): Promise<PackageStart> {
   switch (location.type) {
+    case LocationType.aliasReference:
+      return aliasPlace(id, procedure, quest, location.form, actor, world, location.radius);
     case LocationType.nearReference:
       return referencePlace(id, procedure, location.form, actor, world, location.radius);
     case LocationType.nearLinkedReference: {
@@ -649,9 +668,12 @@ async function targetPlace(
   target: PackageTarget,
   actor: PackageActor,
   world: PackageWorld,
+  quest: number | undefined,
   radius = 0,
 ): Promise<PackageStart> {
   switch (target.type) {
+    case TargetType.referenceAlias:
+      return aliasPlace(id, procedure, quest, target.value, actor, world, radius);
     case TargetType.specificReference:
       return referencePlace(id, procedure, target.value, actor, world, radius);
     case TargetType.linkedReference: {
@@ -670,6 +692,26 @@ async function targetPlace(
   }
 }
 
+/**
+ * At the reference a quest's alias holds now (MQ201RazelanToExteriorGuard: to the Embassy's gate
+ * guard); not known without the game's scripts, or with the alias empty.
+ */
+async function aliasPlace(
+  id: number,
+  procedure: string,
+  quest: number | undefined,
+  alias: number,
+  actor: PackageActor,
+  world: PackageWorld,
+  radius: number,
+): Promise<PackageStart> {
+  const held = quest === undefined ? undefined : world.aliasReference?.(quest, alias);
+  if (held === undefined) {
+    return { kind: 'undecided', package: id, reason: `alias ${String(alias)} holds none` };
+  }
+  return referencePlace(id, procedure, held, actor, world, radius);
+}
+
 /** At a reference: in this space or elsewhere; actors (the player, others) move. */
 async function referencePlace(
   id: number,
@@ -682,7 +724,7 @@ async function referencePlace(
   const placed = await world.reference(reference);
   if (!placed) return { kind: 'undecided', package: id, reason: 'its reference is not placed' };
   if (placed.baseType === 'NPC_' || placed.baseType === 'LVLN') {
-    return { kind: 'here', package: id, procedure };
+    return { kind: 'here', package: id, procedure, actor: reference };
   }
   if (!sameSpace(placed.space, actor.space)) {
     return { kind: 'elsewhere', package: id, procedure, reference, radius };
