@@ -490,7 +490,13 @@ worldspaces on screen:
   the door's open sound plays). TODO(M13): the engine refuses a load door to an actor in some
   states (in furniture; a further check not read) and hands a near actor's passage to its AI
   process (the door's use played first); whether a picked lock stays locked and the pick is
-  used is not read. `tests/sim-actor-activation.int.test.ts`.
+  used is not read. `tests/sim-actor-activation.int.test.ts`. **An actor the player is made to
+  activate** (a script's Activate naming an actor, the player the activator) talks: its default
+  activation is the conversation the player's own crosshair starts (`src/shell/script-talk.ts`;
+  not for a dead one, one off the stage, or one a script keeps from talking). MQ202's
+  MQ202EsbernsDoorScript opens the slot of Esbern's door and has the player activate him, so they
+  talk through it; before, a script's Activate of an actor found no object to activate and did
+  nothing. TODO(M13): a dead actor's inventory and pickpocketing by a script's Activate.
 - **Triggers**: trigger volumes (activators' primitives and trigger-layer collision) tell
   their scripts when the player enters and leaves (OnTriggerEnter, OnTriggerLeave,
   GetTriggerObjectCount). Moving objects enter them too, but not the clutter a cell places
