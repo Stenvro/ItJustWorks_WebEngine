@@ -222,7 +222,7 @@ describe('global data', () => {
       readAudio(new EssWriter().refId(1, 1).vsval(1).refId(1, 2).refId(1, 3).done(), resolve),
     ).toEqual({ unknown: 1, tracks: [2], music: 3 });
     expect(readSkyCells(new EssWriter().vsval(1).refId(1, 1).refId(1, 2).done(), resolve)).toEqual([
-      { first: 1, second: 2 },
+      { worldspace: 1, cell: 2 },
     ]);
   });
 
@@ -230,7 +230,10 @@ describe('global data', () => {
     expect(
       readAnimObjects(new EssWriter().u32(1).refId(1, 0x14).refId(1, 0x99).u8(1).done(), resolve),
     ).toEqual([{ reference: 0x14, animObject: 0x99, unknown: 1 }]);
-    expect(readTimer(new EssWriter().u32(1).u32(2).done())).toEqual({ unknown1: 1, unknown2: 2 });
+    expect(readTimer(new EssWriter().f32(0.5).f32(0.75).done())).toEqual({
+      worldSlowdown: 0.5,
+      playerSlowdown: 0.75,
+    });
     expect(
       readSynchronizedAnimations(
         new EssWriter().u32(1).u32(1).u32(2).u32(1).refId(1, 0x14).wstring('a').done(),

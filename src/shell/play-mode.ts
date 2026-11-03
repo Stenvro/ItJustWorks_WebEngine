@@ -655,6 +655,9 @@ export class PlayMode {
     menus.onPassed = (slept) => {
       void this.#saves.autosave(slept ? 'rest' : 'wait');
     };
+    menus.onPause = () => {
+      void this.#saves.autosave('pause');
+    };
     menus.onQuit = (toDesktop) => {
       if (toDesktop) {
         this.onQuit?.();

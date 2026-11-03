@@ -25,24 +25,35 @@ both machine-checkable parts:
 The world beside the scripts (the stage's actors, graphs, physics, audio, the sky) is kept by
 hand below, against docs/formats/save.md.
 
-## Count (2026-11-02, round 7)
+## Count (2026-11-03, round 8)
 
 | Part                          | Items | Done | Open |
 | ----------------------------- | ----: | ---: | ---: |
 | .ess header                   |     4 |    4 |    0 |
-| .ess global data              |    30 |   19 |   11 |
+| .ess global data              |    30 |   27 |    3 |
 | .ess change forms (flags)     |    68 |   68 |    0 |
 | .ess other (import and hand)  |    11 |    9 |    2 |
 | Own save: runtime fields      |   162 |  162 |    0 |
-| Own save: the world (by hand) |    29 |   24 |    5 |
-| Total                         |   304 |  286 |   18 |
+| Own save: the world (by hand) |    30 |   25 |    5 |
+| Total                         |   305 |  295 |   10 |
 
-(Round 6: 303 items, 277 done; round 5: 299 items, 270 done; round 4: 299, 261; round 3: 297, 245; round 2: 291, 224; round 1: 290, 211. The
+(Round 7: 304 items, 286 done; round 6: 303 items, 277 done; round 5: 299 items, 270 done; round 4: 299, 261; round 3: 297, 245; round 2: 291, 224; round 1: 290, 211. The
 sweep itself prints 266 items: the ".ess other" part lists only what the import still logs, so
 its items done are kept by hand below. Round 4 split the AI process's item in two (the
 procedures' states, done; the high process's timers, open) and added NPCs riding to the world
 part. Round 6: the runtime's new field (magic-engine#appearing, transient), the world part's
 decals and animation objects, and its combat searches and detection levels split in two.)
+
+Round 8 read every global data table's meaning from the original (docs/formats/ess.md "Global
+data", "What the tables hold") and applied what maps onto the runtime: the worldspaces' sky
+cells (8: a reference in one is placed in its worldspace), the dead actors' last seen hours
+(105: `GameState.deathHours`, which respawns and cleared locations count from), the activation
+switched off and the camera switch's locks (110), the journal tabs (102) and the beast form
+(113) as the runtime's `controls` and `beastForm`; 104, 106 (the aliases' reservations,
+counted again), 108 (dropped by the original) and 1003 (Slow Time's rates, from the effect)
+need nothing more. It split the world part's last row and built Save on Pause (the original
+autosaves as the tween menu opens, within its health limit). Test: ess-import.test.ts "the
+global data tables of controls, references and sky cells".
 
 Round 7 added the world part's projectiles' graphs (done) and built down:
 
@@ -219,26 +230,26 @@ player's place").
 | 5 Effects                    | done   | image space modifiers running: empty in every save read (else logged)  |
 | 6 Weather                    | done   | current, outgoing, override, default; when it came (GameSave.sky)      |
 | 7 Audio                      | done   | the music types in play (GameSave.music); the table keeps no track     |
-| 8 Sky Cells                  | open   | 64 pairs, every one 0 in both saves (TODO(M13): their meaning)         |
-| 100 Process Lists            | open   | crimes (none read); floats −0.01683 twice, then 0.646 / 0.0042 (M13)   |
+| 8 Sky Cells                  | done   | each worldspace's sky cell: its references placed in the worldspace    |
+| 100 Process Lists            | open   | comment, crime check timers known; the u32 beside them (0, 6) unknown  |
 | 101 Combat                   | done   | members' fights, their groups' knowledge and searches (SavedFight)     |
-| 102 Interface                | open   | help done, last used applied; the help shown (meaning: TODO(M13))      |
+| 102 Interface                | open   | help done, last used, journal tabs applied; the help shown (252), −2   |
 | 103 Actor Causes             | done   | the actor each ActorCause extra blames                                 |
-| 104 Unknown                  | open   | not in the saves read                                                  |
-| 105 Detection Manager        | open   | references, 0/2/3 and 0/7: triggers 2, soldiers 0 or 7 (TODO(M13))     |
-| 106 Location MetaData        | open   | references (actors mostly) with 1 to 3; meaning not known (TODO(M13))  |
+| 104 Unknown                  | done   | the original writes no entry and its load reads none                   |
+| 105 Detection Manager        | done   | dead, disabled, last seen hour: dead actors' hours into deathHours     |
+| 106 Location MetaData        | done   | reserving aliases per reference: counted again by the alias fill       |
 | 107 Quest Static Data        | done   | the quests running (QUST change forms); 3 lists empty: TODO(M13)       |
-| 108 StoryTeller              | open   | a flag, 1 in both saves (TODO(M13): its meaning)                       |
+| 108 StoryTeller              | done   | a byte the original's load reads and drops                             |
 | 109 Magic Favorites          | done   | GameState favorites and hotkeys                                        |
-| 110 PlayerControls           | open   | 0,0,0,1,1 in both saves; CommonLibSSE's bools do not settle them (M13) |
+| 110 PlayerControls           | done   | keys held, camera switch locks, activation off: controls applied       |
 | 111 Story Event Manager      | done   | the events waiting, told again after the load                          |
 | 112 Ingredient Shared        | done   | the ingredients' known effects: empty in every save read (else logged) |
-| 113 MenuControls             | open   | 1,0 in both saves (CommonLibSSE: isProcessing, beastForm, remapMode)   |
+| 113 MenuControls             | done   | tween and favorites keys on (1; off logged), beast form applied        |
 | 114 MenuTopicManager         | done   | a conversation's speakers: none in every save read (else logged)       |
 | 1000 Temp Effects            | done   | the world's decals into the decal store (WorldSave.decals)             |
 | 1001 Papyrus                 | done   | instances, stacks, messages, waits, suspended calls, registrations     |
 | 1002 Anim Objects            | done   | WorldSave.animObjects: loaded and drawn as each actor is placed        |
-| 1003 Timer                   | open   | two u32, 0 and 0 in both saves (TODO(M13): their meaning)              |
+| 1003 Timer                   | done   | Slow Time's rates: from the effect on the player (0 in both saves)     |
 | 1004 Synchronized Animations | done   | paired animations under way: empty in every save read (else logged)    |
 | 1005 Main                    | done   | empty in every save read                                               |
 
@@ -373,22 +384,21 @@ loadData (RuntimeSave.engines; src/scripting/runtime/engine-save.test.ts):
 | Animation objects actors hold                                    | done   | WorldSave.animObjects                                   |
 | Flame sprays, cone waves, a Magelight stuck to a wall            | done   | SavedProjectile.kind                                    |
 | Thumbnails                                                       | done   | save-screenshot.ts takeScreenshot                       |
-| Save on Pause, the Load list's character filter                  | open   | docs/formats/save.md "Not saved yet"                    |
+| Save on Pause (autosave as the tween menu opens)                 | done   | src/shell/save-manager.ts (the reason `pause`)          |
+| The Load list's character filter                                 | open   | the original's rule not read (docs/formats/save.md)     |
 
 ## Next biggest open items
 
 1. Graph transitions' blends (a machine saved mid-transition goes on in the state it blends
    to), syncing blenders' phases and modifiers' own states; machines inside the placed objects'
    behavior references (docs/formats/save.md "Animation graphs").
-2. The global data tables whose meaning the saves and CommonLibSSE do not settle (TODO(M13),
-   their observed values in docs/formats/ess.md "Global data"): 8 sky cells (all 0), 100's three
-   floats, 102's help shown, 105 detection (a reference with 0/2/3 and 0/7), 106 (references
-   with 1 to 3), 108 (a flag 1), 110 (0,0,0,1,1), 113 (1,0), 1003 (0,0); the high process's
-   timers and held objects; the cell flags Hand Changed and Warn To Leave (named by
-   CommonLibSSE, their run-time effect not known).
+2. The high process's timers and held objects; the cell flags Hand Changed and Warn To Leave
+   (named by CommonLibSSE, their run-time effect not read yet); what 100's u32 beside the
+   crimes and 102's help messages shown number (docs/formats/ess.md "What the tables hold").
 3. Actors in cells not loaded as the game is saved (their packages place them), a procedure's
    progress inside a step (a sandbox's activity), bleedout's and paired animations' engine side.
 4. The decals' details the .ess leaves unsettled: their age (none written: a whole lifetime from
    the load), the land entries' u32 (it differs between an entry's copies, one per shape it was
    made on), float1 and the second texture set (none in the saves read) (TODO(M13)).
-5. Save on Pause, the Load list's character filter; created objects (4: none in the saves read).
+5. The Load list's character filter (the original's rule); created objects (4: none in the
+   saves read; the crafting engine's forms built as the save loads).
