@@ -1790,7 +1790,10 @@ Topics, branches and infos (`src/world/dialogue-records.ts`, `src/world/dialogue
 - DLBR: QNAM quest, TNAM u32 category (0 player dialogue, 1 favor dialogue: 2 of 4014
   branches), DNAM flags (0x1 top-level, 0x2 blocking, 0x4 exclusive), SNAM the starting topic.
 - INFO: ENAM (flags u16: 0x1 goodbye, 0x2 random, 0x4 say once, 0x8 requires player
-  activation, 0x40 invisible continue, 0x80 walk away, ...; reset hours u16), PNAM (the info it
+  activation, 0x40 invisible continue, 0x80 walk away, ...; reset hours u16); 920 older infos
+  (form versions 26 and 27) have DATA instead (u8, u8, u16 flags with ENAM's bits, f32 reset
+  hours: their values fit the bits, 0x40 on 79, 0x23 goodbye, random and random end on 15),
+  which counts as their ENAM, PNAM (the info it
   follows: a topic's infos are in this order), TCLT (the topics offered after it), DNAM (the
   info whose responses it shares), RNAM (the player's prompt), ANAM (the speaker), CNAM u8
   favor level (0 none, 1 small, 2 medium, 3 large; 2 vanilla infos medium, 213 without one),

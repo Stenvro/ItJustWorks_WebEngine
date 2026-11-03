@@ -1712,10 +1712,14 @@ export class ActorStage {
     const view = this.#options.player?.();
     if (!view) return undefined;
     const exit = this.vehicles.exitOf(PLAYER_REF);
+    // In furniture (not on the way to it): in it again as they load, as an actor is.
+    const use = this.furniture.interaction(PLAYER_REF);
+    const seated = this.#options.seat?.()?.seated === true && this.furniture.holds(PLAYER_REF);
     return {
       ...(view.play.player.sneaking && { sneaking: true }),
       ...(weaponOut(this.combat.weaponState(PLAYER_REF)) && { weaponDrawn: true }),
       ...(exit && { vehicleExit: exit }),
+      ...(seated && use && { furniture: use.furniture }),
       pov: view.play.player.pov,
       fov: view.play.player.fov,
     };
@@ -1743,6 +1747,11 @@ export class ActorStage {
       this.#restoredDraws.set(PLAYER_REF, { left: 5, resumed: graphs?.body !== undefined });
     }
     if (player.vehicleExit) this.vehicles.exitAgain(PLAYER_REF, player.vehicleExit);
+    // In their furniture again (their graph, put back seated, is not told to enter it again):
+    // before, the loaded player's graph sat while nothing held them in the seat.
+    if (player.furniture !== undefined) {
+      void this.#options.seat?.()?.resume(player.furniture, graphs?.body !== undefined);
+    }
   }
 
   /**
