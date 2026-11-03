@@ -467,6 +467,13 @@ How the engine drives an actor's behavior graph while it moves (`Locomotion`,
 `src/ai/locomotion.ts`; observed in the original, in our words; for NPCs, creatures, horses
 and the player alike).
 
+**Which actions the engine performs.** The engine names the actions it performs through its
+default objects (the DOBJ uses; observed in the original: Action Ragdoll Instant, Action Reset
+Animation Graph, Action Waterwalk Start, Action VoiceReady, Action Look, Action Shield Change,
+Action Listen Idle among them, each still without its moment here: TODO(M13)). An action that
+is none of them, and that no record or script names, is never performed: ActionStopEffect
+(no vanilla graph has an idle for it either).
+
 **Movement actions.** The graph's events of moving come from actions (AACT), performed as the
 data channels cross their thresholds, and their idles' events reach the graph, not raw events:
 ActionMoveStart / Stop (Speed), ActionMoveForward / Backward and ActionMoveRight / Left

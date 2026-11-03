@@ -9,6 +9,7 @@
 //   node tools/ragdoll-info.ts wolf             the skeletons whose path contains "wolf"
 //   node tools/ragdoll-info.ts --seconds 30     simulate longer (default 20)
 //   node tools/ragdoll-info.ts --still          no push as they are let go (a script's kill)
+//   node tools/ragdoll-info.ts --lift           their still bodies lifted as they are made dynamic
 //   node tools/ragdoll-info.ts --pose | --limits | --ref 97D60
 
 import { ActorPose, ActorSkeleton, buildRig, type RigData } from '../src/animation/skeleton.ts';
@@ -115,6 +116,9 @@ function drop(
   );
   posing?.(physics, placed, world);
   physics.setMotion(placed, false);
+  // Made dynamic, a death's ragdoll has its still bodies lifted (PhysicsWorld.liftStill), with
+  // --lift (dropped from the air, they fall at once either way).
+  if (args.includes('--lift')) physics.liftStill(placed);
   physics.setLayer(placed, Layer.deadBip);
   // A death's push: a little forward, as a blow gives it (none with --still: a script's kill).
   if (!args.includes('--still')) physics.kick(placed, [1, 0, 0], 1);
