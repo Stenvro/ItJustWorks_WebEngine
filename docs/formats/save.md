@@ -416,8 +416,17 @@ A save of ours made after the import keeps the graphs in our own form.
   TODO(M13)).
 
 - The main menu's Load list and the save list's character filter (Continue loads the newest
-  save), Save on Pause (bSaveOnPause with fAutosaveEveryXMins). (Each save has its thumbnail:
-  the frame drawn as it was made, src/shell/save-screenshot.ts; an import keeps the .ess's.)
+  save; TODO(M13): whether the original's Load list shows the current character's saves first
+  or alone is not read). (Each save has its thumbnail: the frame drawn as it was made,
+  src/shell/save-screenshot.ts; an import keeps the .ess's.)
+
+Save on Pause, as observed in the original: the "pause" is the tween menu opening. With
+bSaveOnPause on, once fAutosaveEveryXMins real minutes have passed since the last save and the
+player's health is above fPlayerHealthSaveOnPauseLimit (0.25) of its maximum, the game shows
+sAutoSaving ("Autosaving...") and autosaves (src/shell/save-manager.ts, the reason `pause`;
+GameMenus.onPause). The settings menu's defaults turn the four Save on rules on and set
+fAutosaveEveryXMins to 15. TODO(M13): one more check of the player the original makes there
+is not read (here: none).
 
 ## In Play
 

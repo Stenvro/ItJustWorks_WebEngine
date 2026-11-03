@@ -216,6 +216,9 @@ export class GameMenus {
     this.#journal.saves = saves;
   }
 
+  /** The tween menu opened: the original's "pause" (Save on Pause). */
+  onPause: (() => void) | undefined;
+
   /** The hours have passed in the sleep and wait menu (slept, or waited). */
   set onPassed(passed: ((slept: boolean) => void) | undefined) {
     this.#sleepWait.onPassed = passed;
@@ -1028,6 +1031,8 @@ export class GameMenus {
       return;
     }
     const leaveMenu = this.#held(MenuName.tween);
+    // The "pause" the original's Save on Pause autosaves on (Play's save manager decides).
+    this.onPause?.();
     // The view leans and zooms while it is open (the tween camera), and goes back as it closes.
     const camera = this.#world.tweenCamera();
     camera?.open();

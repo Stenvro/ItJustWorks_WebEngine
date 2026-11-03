@@ -56,9 +56,24 @@ export interface SavedCrime {
   readonly unknown4: number;
 }
 
+/**
+ * 100 Process Lists, as observed in the original: the AI process lists' two comment timers and
+ * crime check timer, a u32, then the crimes of each type.
+ */
 export interface ProcessLists {
-  readonly unknown: Vec3;
-  /** The serial number the next crime gets. */
+  /**
+   * Seconds until an actor may comment on what the player does again: one countdown for every
+   * actor, set to fCommentOnPlayerActionsTimer as one comments; at or below 0 one may.
+   */
+  readonly actionCommentTimer: number;
+  /** The same for the player knocking things over (fCommentOnPlayerKnockingThings). */
+  readonly knockCommentTimer: number;
+  /**
+   * Seconds until the crimes are checked again: once a second each crime whose witnesses are
+   * all dead is dropped and its bounty taken back ("Last witness killed").
+   */
+  readonly crimeCheckTimer: number;
+  /** UESP: the serial number the next crime gets (0 and 6 in the saves read). TODO(M13): its use. */
   readonly nextNum: number;
   /** The crimes of each of the 7 types. */
   readonly crimes: readonly (readonly SavedCrime[])[];
@@ -66,7 +81,9 @@ export interface ProcessLists {
 
 export function readProcessLists(data: EssSource, resolve: RefIdResolver): ProcessLists {
   const reader = essReader(data);
-  const unknown = reader.vec3();
+  const actionCommentTimer = reader.f32();
+  const knockCommentTimer = reader.f32();
+  const crimeCheckTimer = reader.f32();
   const nextNum = reader.u32();
   const crimes: SavedCrime[][] = [];
   for (let type = 0; type < 7; type++) {
@@ -108,7 +125,7 @@ export function readProcessLists(data: EssSource, resolve: RefIdResolver): Proce
     }
     crimes.push(list);
   }
-  return { unknown, nextNum, crimes };
+  return { actionCommentTimer, knockCommentTimer, crimeCheckTimer, nextNum, crimes };
 }
 
 function refIds(reader: EssReader, count: number, resolve: RefIdResolver): number[] {
@@ -389,13 +406,18 @@ function readLosGridMap(stream: PathingStream): CombatSearchGrids {
 // --- 102 Interface -------------------------------------------------------------------------------
 
 export interface InterfaceData {
-  /** Help messages already shown (ids of the tutorial messages). */
+  /** Help messages already shown (a sorted list of numbers; TODO(M13): what they number). */
   readonly shownHelpMessages: readonly number[];
-  readonly unknown0: number;
+  /**
+   * Observed in the original: set as a Miscellaneous quest's objective is first shown; while
+   * set, the Miscellaneous objectives count among the player's objectives shown.
+   */
+  readonly miscObjectivesShown: number;
   readonly lastUsedWeapons: readonly number[];
   readonly lastUsedSpells: readonly number[];
   readonly lastUsedShouts: readonly number[];
-  readonly unknown1: number;
+  /** Game.DisablePlayerControls' abJournalTabs (observed in the original): 1 disabled. */
+  readonly journalTabsDisabled: number;
   /** Present "in certain situations" (UESP): read when bytes are left. */
   readonly extra?: {
     readonly entries: readonly {
@@ -411,18 +433,18 @@ export interface InterfaceData {
 export function readInterface(data: EssSource, resolve: RefIdResolver): InterfaceData {
   const reader = essReader(data);
   const shownHelpMessages = u32s(reader, reader.u32());
-  const unknown0 = reader.u8();
+  const miscObjectivesShown = reader.u8();
   const lastUsedWeapons = refIds(reader, reader.vsval(), resolve);
   const lastUsedSpells = refIds(reader, reader.vsval(), resolve);
   const lastUsedShouts = refIds(reader, reader.vsval(), resolve);
-  const unknown1 = reader.u8();
+  const journalTabsDisabled = reader.u8();
   const base = {
     shownHelpMessages,
-    unknown0,
+    miscObjectivesShown,
     lastUsedWeapons,
     lastUsedSpells,
     lastUsedShouts,
-    unknown1,
+    journalTabsDisabled,
   };
   if (reader.remaining === 0) return base;
   const entries: NonNullable<InterfaceData['extra']>['entries'][number][] = [];
@@ -459,30 +481,57 @@ export function readActorCauses(data: EssSource, resolve: RefIdResolver): ActorC
   return { nextNum, causes };
 }
 
+/** 105 (UESP: Detection Manager): a reference's state the locations count, as observed. */
+export interface SavedReferenceState {
+  readonly reference: number;
+  /** `ReferenceStateFlag`: dead, disabled on its own. */
+  readonly flags: number;
+  /** The whole game hour it was last seen (an actor leaving the high process), 0 while seen. */
+  readonly lastSeenHour: number;
+}
+
+/**
+ * The flags of 105's entries, as observed in the original: the engine sets bit 0 as an actor is
+ * killed (cleared as it is resurrected), bit 1 as a reference without an enable parent is
+ * disabled (cleared as it is enabled).
+ */
+export const ReferenceStateFlag = { dead: 1, disabled: 2 } as const;
+
+/**
+ * 105, as observed in the original: per reference (by form id) its flags and the hour it was
+ * last seen, which the locations read without the reference loaded: GetRefTypeDeadCount and
+ * GetRefTypeAliveCount, a location's cleared state (a boss dead longer than the respawn wait
+ * counts as alive again, from its last seen hour).
+ */
 export function readDetectionManager(
   data: EssSource,
   resolve: RefIdResolver,
-): { reference: number; unknown0: number; unknown1: number }[] {
+): SavedReferenceState[] {
   const reader = essReader(data);
-  const out: { reference: number; unknown0: number; unknown1: number }[] = [];
+  const out: SavedReferenceState[] = [];
   for (let n = reader.vsval(), i = 0; i < n; i++) {
     out.push({
       reference: resolve(reader.refId()),
-      unknown0: reader.u32(),
-      unknown1: reader.u32(),
+      flags: reader.u32(),
+      lastSeenHour: reader.u32(),
     });
   }
   return out;
 }
 
+/**
+ * 106 (UESP: Location MetaData), as observed in the original: per reference (by form id) how
+ * many quest aliases that reserve their reference hold it (counted up as such an alias is
+ * filled, down as it is cleared; a reference reserved is not picked by another quest's alias).
+ */
 export function readLocationMetaData(
   data: EssSource,
   resolve: RefIdResolver,
-): { location: number; unknown: number }[] {
+): { reference: number; reservations: number }[] {
   const reader = essReader(data);
-  const out: { location: number; unknown: number }[] = [];
+  const out: { reference: number; reservations: number }[] = [];
   for (let n = reader.vsval(), i = 0; i < n; i++) {
-    out.push({ location: resolve(reader.refId()), unknown: reader.u32() });
+    out.push({ reference: resolve(reader.refId()), reservations: reader.u32() });
   }
   return out;
 }
@@ -561,7 +610,7 @@ export function readQuestStaticData(data: EssSource, resolve: RefIdResolver): Qu
 
 // --- 108 to 114 ----------------------------------------------------------------------------------
 
-/** 108 StoryTeller: a flag (0 or 1). */
+/** 108 StoryTeller: a flag (1 in the saves read); observed in the original, its load drops it. */
 export function readStoryTeller(data: EssSource): { flag: number } {
   return { flag: essReader(data).u8() };
 }
@@ -576,21 +625,26 @@ export function readMagicFavorites(
   return { favorites, hotkeys: refIds(reader, reader.vsval(), resolve) };
 }
 
-/** 110 PlayerControls. */
+/**
+ * 110 PlayerControls, as observed in the original: the held states of the sprint, attack and
+ * block, and run keys; the camera switch's locks by aiDisablePOVType (0 and 1: the switch works
+ * only with neither set); the activation switched off (Game.DisablePlayerControls' abActivate,
+ * as IsActivateControlsEnabled reads it).
+ */
 export function readPlayerControls(data: EssSource): {
-  unknown0: number;
-  unknown1: number;
-  unknown2: number;
-  unknown3: number;
-  unknown4: number;
+  sprintHeld: number;
+  attackBlockHeld: number;
+  runHeld: number;
+  povLocked: readonly [number, number];
+  activateDisabled: number;
 } {
   const reader = essReader(data);
   return {
-    unknown0: reader.u8(),
-    unknown1: reader.u8(),
-    unknown2: reader.u8(),
-    unknown3: reader.u16(),
-    unknown4: reader.u8(),
+    sprintHeld: reader.u8(),
+    attackBlockHeld: reader.u8(),
+    runHeld: reader.u8(),
+    povLocked: [reader.u8(), reader.u8()],
+    activateDisabled: reader.u8(),
   };
 }
 
@@ -674,10 +728,15 @@ export function readIngredientShared(data: EssSource, resolve: RefIdResolver): [
   return out;
 }
 
-/** 113 MenuControls. */
-export function readMenuControls(data: EssSource): { unknown0: number; unknown1: number } {
+/**
+ * 113 MenuControls, as observed in the original: whether the tween menu's key and the favorites
+ * key open their menus (off, or in a beast form, the tween key shows sTweenDisabledMessage; 1 in
+ * the saves read, as a new game has it; TODO(M13): what switches it off), then the beast form
+ * (Game.SetBeastForm).
+ */
+export function readMenuControls(data: EssSource): { menuKeys: number; beastForm: number } {
   const reader = essReader(data);
-  return { unknown0: reader.u8(), unknown1: reader.u8() };
+  return { menuKeys: reader.u8(), beastForm: reader.u8() };
 }
 
 /** 114 MenuTopicManager: two references. */
