@@ -496,7 +496,12 @@ worldspaces on screen:
   settle at load (the warm start), and a body settling is not looked at
   (`PhysicsWorld.movingInTriggers`). Disturbed later, it enters as it moves. Before, Whiterun's
   clutter entered CWDisableHoldPositionMarkerTrigger at every load, whose script took each for
-  an actor and failed on None.
+  an actor and failed on None. An actor in furniture (or on a mount) has no controller; its
+  bodies still reach into volumes, so it stays inside the one it sat down in (MQ201's
+  MQ106DelphineInSecretRoomTrigger counts Delphine at her table with the player). An actor a
+  script moves out of its furniture (MoveTo: the player out of MQ201's carriage seat) arrives
+  standing, its graph back in its default state (IdleForceDefaultState; TODO(M13): inferred
+  from the quick exit).
 - **Created references** (PlaceAtMe, an alias's Create Reference) are drawn, collide and
   light like placed ones, and go and come back with their cell.
 - **Moves**: MoveTo, SetPosition, SetAngle, MoveToNode move what is shown; keyframed

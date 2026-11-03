@@ -2145,8 +2145,8 @@ export class ActorStage {
         this.#remove(staged);
         return;
       }
-      // Moved out of the furniture it used (TODO(M13): the game's own state of it).
-      this.furniture.remove(reference);
+      // Moved out of the furniture it used, standing (ActorFurniture.moveOut).
+      this.furniture.moveOut(this.userOf(staged));
       staged.cell = key;
       staged.position = [...now.position];
       staged.heading = now.rotation[2];
