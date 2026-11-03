@@ -448,6 +448,7 @@ function promptFacts(
                 : undefined,
         workbench: furniture.workbench !== 0,
         special: facts?.specialFurniture(object.base) === true,
+        ...(furniture.disablesActivation === true && { disablesActivation: true }),
       },
     }),
   };

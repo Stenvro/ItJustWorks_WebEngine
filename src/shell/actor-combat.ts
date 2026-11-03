@@ -118,6 +118,7 @@ import {
   type StrikeTarget,
 } from '../gameplay/combat/hit-test.ts';
 import { rangedKillCameraPlays } from '../gameplay/combat/ranged-kill-camera.ts';
+import { deathForce, spellDeathForce } from '../gameplay/combat/death-force.ts';
 import type { INI_DEFAULTS } from '../world/ini-settings.ts';
 import { ARROW_TILT, tiltUp, WORLD_GRAVITY } from '../gameplay/combat/projectile.ts';
 import { anglesOf, directionOf, npcSpread } from '../gameplay/combat/aim.ts';
@@ -2984,11 +2985,26 @@ export class ActorCombat implements CombatBridge {
     damage: number,
     hit: { readonly direction: Vec3; readonly shot: ShotPayload | undefined },
   ): void {
+    this.#pushRagdoll(target, this.#pushForce(damage, hit.shot !== undefined), hit.direction);
+  }
+
+  /**
+   * An aimed fire-and-forget spell's projectile whose damage killed `victim`, or that hit it
+   * dead already (src/shell/magic-projectiles.ts), pushes its ragdoll along the projectile's
+   * flight (death-force.ts spellDeathForce: fDeathForceSpellImpactMult).
+   */
+  spellDeathPush(victim: number, damage: number, direction: Vec3, alreadyDead: boolean): void {
+    const target = this.#fighters.get(victim);
+    if (!target || target.state.paired !== undefined) return;
+    this.#pushRagdoll(target, spellDeathForce(damage, alreadyDead, this.#settings), direction);
+  }
+
+  /** Pushes a dead fighter's ragdoll: the force over the mass term along `direction`. */
+  #pushRagdoll(target: Fighter, force: number, direction: Vec3): void {
     const staged = target.player
       ? this.#options.playerBody?.()
       : this.#options.get(target.reference);
     if (!staged) return;
-    const force = this.#pushForce(damage, hit.shot !== undefined);
     const s = this.#settings;
     const runtime = this.#options.session.scriptsReady;
     const mass = runtime
@@ -2997,7 +3013,7 @@ export class ActorCombat implements CombatBridge {
     void mass.then((value) =>
       this.#options.bodies.push(
         staged,
-        hit.direction,
+        direction,
         force / Math.max(1e-3, s.deathForceMassBase + s.deathForceMassMult * Math.max(0, value)),
       ),
     );
@@ -3005,17 +3021,7 @@ export class ActorCombat implements CombatBridge {
 
   /** The push a blow of some damage gives a ragdoll (fDeathForce{Ranged}Min..Max by damage). */
   #pushForce(damage: number, ranged: boolean): number {
-    const s = this.#settings;
-    const [dMin, dMax, fMin, fMax] = ranged
-      ? [
-          s.deathForceRangedDamageMin,
-          s.deathForceRangedDamageMax,
-          s.deathForceRangedForceMin,
-          s.deathForceRangedForceMax,
-        ]
-      : [s.deathForceDamageMin, s.deathForceDamageMax, s.deathForceForceMin, s.deathForceForceMax];
-    const t = Math.min(1, Math.max(0, (damage - dMin) / Math.max(1e-6, dMax - dMin)));
-    return fMin + (fMax - fMin) * t;
+    return deathForce(damage, ranged, this.#settings);
   }
 
   /** A hit's armour skills: each skill of the armour worn (any piece of it) by the damage. */
