@@ -109,6 +109,54 @@ many bytes it left, and `ess-info` prints every entry not read to its end. Type 
 byte from form version 73 (read when there). Measured on the two saves: every reader ends
 exactly, combat with nine combats running included; 104 is in neither save.
 
+**What the tables hold**, as observed in the original (each table's load, and the code that
+keeps the values it loads; UESP's names kept for the numbers):
+
+- 8 (Sky Cells): a vsval count of (worldspace, cell) reference id pairs: each worldspace's sky
+  cell, the cell the engine makes for a worldspace as it runs (a created form, 0xFF…; a
+  worldspace whose parent flags say "use sky cell" has its parent's). As a save loads, each
+  listed worldspace's sky cell takes its saved form id again, so references the save puts in it
+  are found there. Pairs of 0 are unused entries (both saves: 85 pairs, Tamriel's and the
+  other worldspaces' after the empty ones).
+- 100 (Process Lists): three f32 and a u32, then the crimes. The first two are countdowns (in
+  seconds, run down each frame while above 0) before any actor may comment on the player's
+  actions again, and on the player knocking things over: as one comments the first is set to
+  fCommentOnPlayerActionsTimer, the second to fCommentOnPlayerKnockingThings (one countdown for
+  all actors). The third is the crime check's countdown: each second the crimes are gone
+  through and a crime whose witnesses are all dead (fKillWitnessesTimerSetting after it) is
+  dropped with its bounty ("Last witness killed"), then the countdown is set to 1 again. The u32
+  (0 and 6 in the saves read; UESP: the next crime's number) is not used there (TODO(M13)).
+- 102 (Interface): the help messages shown (a sorted u32 list; 252 in both saves: TODO(M13)
+  what they number); a byte set as a Miscellaneous quest's objective is first shown, after
+  which the Miscellaneous objectives count among the objectives shown; the last used lists; a
+  byte, the journal's other pages switched off (Game.DisablePlayerControls' abJournalTabs, as
+  IsJournalControlsEnabled reads it: 1 in both saves); then the help part: entries (two
+  strings and four u32), the input events whose help is done, and a u32 (−2: TODO(M13)).
+- 104: none (the original writes no entry and its load reads none).
+- 105 (UESP: Detection Manager): a vsval count of (reference id, u32 flags, u32 hour): bit 0
+  set as an actor is killed (cleared as it is resurrected), bit 1 as a reference with no enable
+  parent is disabled (cleared as it is enabled); the hour is the whole game hour the actor was
+  last seen (set as it leaves the high process, 0 as it enters it). The locations read it
+  without the references loaded: GetRefTypeDeadCount and GetRefTypeAliveCount, and a location's
+  cleared state (a boss dead longer than the respawn wait from its last seen hour counts as
+  alive again). Both saves: the triggers disabled (2), Helgen's executed prisoner dead and
+  disabled (3), the soldiers last seen at hour 7.
+- 106 (UESP: Location MetaData): a vsval count of (reference id, u32): how many quest aliases
+  with "reserves reference" hold the reference (counted up as such an alias is filled, down
+  as it is cleared); Hadvar 3, Galmar and Klimmek 2.
+- 108 (StoryTeller): a byte the load reads and drops.
+- 110 (PlayerControls): three bytes, the sprint, attack and block, and run keys' held states
+  (a key held as the save loads waits for its release); two bytes, the camera switch's locks
+  for aiDisablePOVType 0 and 1 (IsCamSwitchControlsEnabled: neither set); from save version
+  15 a byte, the activation switched off (abActivate, as IsActivateControlsEnabled reads it).
+  Both saves: 0, 0, 0, then type 0 locked and the activation off (the opening's controls).
+- 113 (MenuControls): a byte, whether the tween menu's and the favorites keys open their menus
+  (off, or in a beast form, the tween key shows sTweenDisabledMessage), then from version 42
+  the beast form (Game.SetBeastForm). Both saves: 1, 0.
+- 1003 (Timer): two f32, the Slow Time effect's rates (the world's and the player's; 0 with
+  none). A world rate above 0 sets the game's time multiplier as the save loads; 0 resets one
+  running. Both saves: 0, 0.
+
 **Papyrus** (read to its last byte on real saves: `ess-info`): version u16 (6 in Special
 Edition saves), strings, script types (name, parent, members: name and type as string indices),
 objects (VM handle, script, u16 flags, i16 high word, reference id, u8), detached objects,
@@ -605,8 +653,21 @@ ess)` reads those places ahead);
   value's meaning);
 - the interface (global data 102): the input events whose help messages the player has done
   (the names list: "Look", "Forward"), not shown again (`GameState.helpDone`); the weapons,
-  spells and shouts used last (counted once each). TODO(M13): the help messages shown (one
-  number, 252) and the two words beside it;
+  spells and shouts used last (counted once each); the journal's tabs switched off
+  (`controls.journalTabs`). TODO(M13): the help messages shown (one number, 252) and the help
+  part's last u32;
+- the sky cells (global data 8): a reference whose cell is a worldspace's sky cell is placed
+  in that worldspace by its position;
+- the references' state (global data 105): a dead actor's last seen hour becomes the hour its
+  death counts from (`GameState.deathHours`: respawns, cleared locations); dead and disabled
+  come from the change forms (a dead entry an actor's change form does not say is logged);
+- the aliases' reservations (global data 106): counted again from the quests' aliases;
+- the player controls (110) and menu controls (113): the activation switched off, the camera
+  switch's locks and the beast form become the runtime's `controls` and `beastForm`; the
+  tween and favorites keys' switch off is logged (on in both saves);
+- the process lists (100) and Slow Time (1003): a comment countdown still running, a crime or
+  a Slow Time rate is logged (none in the saves read; Slow Time follows from the effect on the
+  player); the story teller's byte (108) is dropped, as the original drops it;
 - the actor causes (global data 103): the actor each serial number blames, for the ActorCause
   extra data;
 - the extra data of references and actors (each extra comes with its change flag in the saves
@@ -731,16 +792,9 @@ ess)` reads those places ahead);
 
 Read but not imported yet (TODO(M13)): the other projectiles in flight (beams, cones, barriers:
 none in the saves read); the base objects' other changes (values, names; the scenes' clocks);
-the global data tables whose meaning neither the saves nor CommonLibSSE settle, with what the
-two saves hold: 8 sky cells (64 pairs, all 0), detection (105: each a reference with two
-values, 0, 2 or 3 and 0 or 7: the triggers 2, Helgen's prisoner 3, Imperial and Stormcloak
-soldiers 0 or 7), location metadata (106: references, mostly persistent actors, a marker and a
-location, each with 1 to 3: Hadvar 3, Galmar and Klimmek 2), the story teller (108: a flag, 1),
-player controls (110: 0, 0, 0, 1, 1; CommonLibSSE's PlayerControlsData bools do not settle
-which), menu controls (113: 1, 0; CommonLibSSE's isProcessing, beastForm, remapMode bools), the
-timer (1003: 0, 0), the process lists (100: their three floats, −0.0168 twice and a value that
-differs by save, 0.646 and 0.0042; the crimes, none in the saves read) and the interface's help
-shown (102); the movement controller's state (the engine plans its paths anew); the high
+the created objects (4: none in the saves read; they need the crafting engine's forms built
+as the save loads), the process lists' crimes and the number beside them (100), the help
+messages shown (102); the movement controller's state (the engine plans its paths anew); the high
 process's timers and held objects (six references with a byte each, whose meaning is not
 known); the combat controllers' objects; the look-at modifiers' bones of the animation graphs;
 the player's other lists.

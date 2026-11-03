@@ -147,11 +147,11 @@ describe('ESS global data, tables 2 and 3 (built from the documented layouts)', 
     const base = readInterface(w.done(), resolve);
     expect(base).toEqual({
       shownHelpMessages: [0xec, 0xfa],
-      unknown0: 1,
+      miscObjectivesShown: 1,
       lastUsedWeapons: [0x12eb7],
       lastUsedSpells: [],
       lastUsedShouts: [0x13e09],
-      unknown1: 0,
+      journalTabsDisabled: 0,
     });
     w.vsval(1).wstring('a').wstring('b').u32(1).u32(2).u32(3).u32(4).vsval(1).wstring('c').u32(5);
     expect(readInterface(w.done(), resolve).extra).toEqual({
@@ -169,10 +169,10 @@ describe('ESS global data, tables 2 and 3 (built from the documented layouts)', 
     });
     expect(
       readDetectionManager(ref(new EssWriter().vsval(1), 0x14).u32(1).u32(2).done(), resolve),
-    ).toEqual([{ reference: 0x14, unknown0: 1, unknown1: 2 }]);
+    ).toEqual([{ reference: 0x14, flags: 1, lastSeenHour: 2 }]);
     expect(
       readLocationMetaData(ref(new EssWriter().vsval(1), 0x18a56).u32(7).done(), resolve),
-    ).toEqual([{ location: 0x18a56, unknown: 7 }]);
+    ).toEqual([{ reference: 0x18a56, reservations: 7 }]);
   });
 
   it('reads quest static data and its run data', () => {
@@ -208,12 +208,12 @@ describe('ESS global data, tables 2 and 3 (built from the documented layouts)', 
       favorites: [0x12fcd, 0x13e09],
       hotkeys: [0x12fcd],
     });
-    expect(readPlayerControls(new EssWriter().u8(1).u8(2).u8(3).u16(4).u8(5).done())).toEqual({
-      unknown0: 1,
-      unknown1: 2,
-      unknown2: 3,
-      unknown3: 4,
-      unknown4: 5,
+    expect(readPlayerControls(new EssWriter().u8(1).u8(0).u8(0).u8(1).u8(0).u8(1).done())).toEqual({
+      sprintHeld: 1,
+      attackBlockHeld: 0,
+      runHeld: 0,
+      povLocked: [1, 0],
+      activateDisabled: 1,
     });
     // One event waiting: number 4, Script Event (SCPT), a reference, a number, another form
     // (kind 1, written by its form as a reference id) and a kind the original writes no
@@ -241,8 +241,8 @@ describe('ESS global data, tables 2 and 3 (built from the documented layouts)', 
       [0x34cdd, 0x3ad56],
     ]);
     expect(readMenuControls(new EssWriter().u8(0).u8(1).done())).toEqual({
-      unknown0: 0,
-      unknown1: 1,
+      menuKeys: 0,
+      beastForm: 1,
     });
     expect(readMenuTopicManager(ref(ref(new EssWriter(), 1), 2).done(), resolve)).toEqual({
       unknown0: 1,

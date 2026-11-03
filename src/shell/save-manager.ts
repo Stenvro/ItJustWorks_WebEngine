@@ -12,6 +12,8 @@ import { SaveStore } from '../save/save-store.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
 import { essScreenshot, takeScreenshot, type FrameSource } from './save-screenshot.ts';
+import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import { ActorValue } from '../world/actor-values.ts';
 
 /** How many autosaves the game keeps in turn ([SaveGame] iAutoSaveCount's default). */
 const AUTOSAVE_COUNT = 3;
@@ -139,9 +141,19 @@ export class SaveManager {
         if (!on('SaveGame', 'bSaveOnRest')) return;
         break;
       case 'pause': {
+        // Observed in the original: the tween menu opening (the "pause") autosaves with Save on
+        // Pause on, fAutosaveEveryXMins (real minutes) after the last save, while the player's
+        // health is above fPlayerHealthSaveOnPauseLimit of its maximum; it says so first.
         if (!on('Main', 'bSaveOnPause')) return;
         const minutes = ini.lookup('SaveGame', 'fAutosaveEveryXMins') ?? 15;
         if (performance.now() - this.#lastSave < minutes * 60_000) return;
+        const runtime = this.#session.scriptsReady;
+        if (!runtime) return;
+        const health = await runtime.actors.value(PLAYER_REF, ActorValue.health);
+        const limit = ini.lookup('GamePlay', 'fPlayerHealthSaveOnPauseLimit') ?? 0.25;
+        if (health.max > 0 && health.current / health.max <= limit) return;
+        const settings = await this.#session.settings();
+        this.#session.hud.notification(settings.string('sAutoSaving') ?? '');
         break;
       }
     }
