@@ -50,6 +50,25 @@ export interface SavedActor {
   readonly vehicleExit?: VehicleExit | undefined;
   /** The horse it rides: it sits on it again as both are placed (none in older saves). */
   readonly riding?: number | undefined;
+  /** Bleeding out, or in a paired animation (a killmove): it goes on in it. */
+  readonly down?: SavedDown | undefined;
+}
+
+/**
+ * An actor's bleedout and paired animation as a save keeps them (ActorCombat.saveDown): the
+ * seconds it has been bleeding out; its side of a pair, whether it is a killmove, the seconds
+ * in it and a victim's killer.
+ */
+export interface SavedDown {
+  readonly bleedout?: number | undefined;
+  readonly paired?:
+    | {
+        readonly side: 'lead' | 'support' | undefined;
+        readonly killMove: boolean;
+        readonly seconds: number;
+        readonly killer?: number | undefined;
+      }
+    | undefined;
 }
 
 /**
@@ -86,6 +105,8 @@ export interface SavedPlayer {
   readonly pov?: 'first' | 'third' | undefined;
   /** The world's and first person's fields of view (degrees). */
   readonly fov?: readonly [number, number] | undefined;
+  /** Bleeding out, or in a paired animation (a killmove). */
+  readonly down?: SavedDown | undefined;
 }
 
 /** The player's graphs as a save keeps them: the body's and the first-person one. */
@@ -315,6 +336,15 @@ export class WorldRestore {
   /** The saved actors not yet placed. */
   actors(): IterableIterator<SavedActor> {
     return this.#actors.values();
+  }
+
+  /**
+   * The saved actors not yet placed, for a save made now: an actor whose cell has not loaded
+   * since keeps its saved state (its place, its package's progress, its graph) into the next
+   * save, as the original keeps the process of an actor that is not loaded.
+   */
+  carried(): SavedActor[] {
+    return [...this.#actors.values()];
   }
 
   actor(reference: number): SavedActor | undefined {

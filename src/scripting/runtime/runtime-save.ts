@@ -75,6 +75,8 @@ export interface RuntimeSave {
     readonly crime?: readonly string[];
     readonly trapHits?: TrapHitsSave;
     readonly magic?: MagicSave;
+    /** The deferred kills under way (ActorEngine.saveData: a killmove's victim's). */
+    readonly deferredKills?: readonly (readonly [number, number, number])[];
   };
 }
 

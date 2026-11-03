@@ -71,16 +71,16 @@ const GLOBAL_DATA: Readonly<Record<number, readonly [boolean, string]>> = {
     "sky cells: each worldspace's created sky cell, its references placed in the worldspace",
   ],
   100: [
-    false,
-    'process lists: comment and crime check timers (none running), crimes (none); a number beside them (0, 6): its save code not found (TODO(M13))',
+    true,
+    "process lists: comment and crime check timers (none running), crimes (none); the next crime's number (GameState.nextCrime)",
   ],
   101: [
     true,
     "combat: each group member's fight (its target, its group's knowledge of it, its search)",
   ],
   102: [
-    false,
-    'interface: help done, last used, journal tabs applied; the one help message shown (252) and the last number (-2) not known (TODO(M13))',
+    true,
+    "interface: tutorials shown (252: the journal's), help done, last used, journal tabs; the help message showing (-2: none)",
   ],
   103: [true, "actor causes: the actor each reference's ActorCause extra blames"],
   104: [true, 'none: the original writes no entry and ignores one'],
@@ -201,7 +201,6 @@ async function essPart(): Promise<void> {
  * of a record, the settings) are found by their types and need no entry.
  */
 const FIELDS: Readonly<Record<string, readonly ['derived' | 'transient' | 'open', string]>> = {
-  'actor-engine#deferred': ['transient', 'a kill decided within the frame'],
   'actor-engine#relationRecords': ['derived', 'relationship records read'],
   'actor-engine#aliasFactionSets': ['derived', "aliases' faction lists read"],
   'actor-locations#tracked': ['derived', 'tracked again as actors load'],
