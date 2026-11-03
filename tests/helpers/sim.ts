@@ -604,7 +604,8 @@ export class Sim {
     let nearest = DOOR_REACH;
     for (const placed of this.world.placedObjects()) {
       const { object } = placed;
-      if (object.baseType !== 'DOOR') continue;
+      // A load door is not in the way: it would take them elsewhere.
+      if (object.baseType !== 'DOOR' || object.teleport !== undefined) continue;
       const state = this.openState(object.reference) || (object.openByDefault ? 1 : 3);
       if (state === 1 || state === 2) continue;
       const away = Math.hypot((object.world[12] ?? 0) - x, (object.world[13] ?? 0) - y);
