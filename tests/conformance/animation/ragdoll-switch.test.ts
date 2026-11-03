@@ -81,7 +81,11 @@ describe.skipIf(!hasGamedata())(
       velocities.forEach((v, i) => {
         const moved = minus(last[i] ?? ZERO, before[i] ?? ZERO);
         const animated: V = [moved[0] * 60, moved[1] * 60, moved[2] * 60];
-        const gap = length(minus(v, animated)) * HAVOK_SCALE;
+        // A body slower than half a Havok unit a second is lifted by that much as the ragdoll is
+        // made dynamic (PhysicsWorld.liftStill, observed in the original). Whether a body near that
+        // speed was lifted depends on its own velocity, which the sampled poses only estimate.
+        const lifted: V = [animated[0], animated[1], animated[2] + 0.5];
+        const gap = Math.min(length(minus(v, animated)), length(minus(v, lifted))) * HAVOK_SCALE;
         expect(gap).toBeLessThan(0.5 + 0.05 * length(animated) * HAVOK_SCALE);
       });
     });
