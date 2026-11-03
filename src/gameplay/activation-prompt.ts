@@ -88,6 +88,8 @@ export interface ObjectPromptFacts {
     readonly firstMarker: 'sit' | 'sleep' | 'lean' | undefined;
     readonly workbench: boolean;
     readonly special: boolean;
+    /** MNAM's Disables Activation: the crosshair shows nothing on it. */
+    readonly disablesActivation?: boolean;
   };
   /** ACTI: an ash pile, the actor it was carrying nothing (`empty`). */
   readonly ashPile?: { readonly empty: boolean };
@@ -157,6 +159,10 @@ export function objectPrompt(facts: ObjectPromptFacts): ActivationPrompt | undef
         : { verb: { setting: 'sHarvest' }, name };
     case 'FURN': {
       const furniture = facts.furniture;
+      // Disables Activation (two creatures' exit markers: the dragon priest's coffin, the
+      // Tentacle Word burn): no prompt, the player does not use it. TODO(M13): the flag's plain
+      // reading; where the original reads it is not found.
+      if (furniture?.disablesActivation === true) return undefined;
       if (!furniture || furniture.workbench) return { verb: { setting: 'sUse' }, name };
       if (furniture.firstMarker === 'sleep') {
         return {

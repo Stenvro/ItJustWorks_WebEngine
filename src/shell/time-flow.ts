@@ -17,7 +17,8 @@ import {
   drowningDamage,
   type BreathSettings,
 } from '../gameplay/breath.ts';
-import { DIFFICULTY_SUFFIXES } from '../gameplay/combat/combat-settings.ts';
+import { bowZoomStep } from '../gameplay/combat/bow-zoom.ts';
+import { COMBAT_DEFAULTS, DIFFICULTY_SUFFIXES } from '../gameplay/combat/combat-settings.ts';
 import { fallDamage, fallSettings } from '../gameplay/falling.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { WaterHazard, type WaterHarm, type WaterHarmStep } from '../gameplay/water-hazard.ts';
@@ -159,10 +160,45 @@ export class TimeFlow {
   }
 
   #zoomCost = 0;
+  /** fBowZoomStaminaDrainMult, fBowZoomStaminaRegenDelay (undefined: not read yet). */
+  #zoomDrain: { readonly mult: number; readonly regenDelay: number } | undefined;
 
+  /**
+   * A frame of the zoom spends stamina (bow-zoom.ts); the frame that empties it holds its
+   * regeneration for fBowZoomStaminaRegenDelay and blinks the stamina meter. TODO(M13): the
+   * original spends by its frame's update time; whether that is the slowed world's or the real
+   * clock's is not read (the real clock's is used).
+   */
   async #spendZoom(runtime: ScriptRuntime, seconds: number): Promise<void> {
-    if (this.#zoomCost > 0)
-      await runtime.progression.spend(PLAYER_REF, ActorValue.stamina, this.#zoomCost * seconds);
+    const stamina = this.#stamina;
+    const step = bowZoomStep(stamina, this.#zoomCost, seconds, runtime.godMode);
+    if (step.spend <= 0) return;
+    this.#stamina = stamina - step.spend;
+    await runtime.progression.spend(PLAYER_REF, ActorValue.stamina, step.spend);
+    if (step.emptied) {
+      runtime.progression.holdRegeneration(
+        PLAYER_REF,
+        ActorValue.stamina,
+        this.#zoomDrain?.regenDelay ?? COMBAT_DEFAULTS.bowZoomStaminaRegenDelay,
+      );
+      runtime.progression.refused(PLAYER_REF, 'stamina');
+    }
+  }
+
+  /** The player's stamina as last asked (the zoom's emptying is told against it). */
+  #stamina = 0;
+
+  async #readZoomDrain(runtime: ScriptRuntime): Promise<{ mult: number; regenDelay: number }> {
+    const read = async (name: string, fallback: number): Promise<number> => {
+      const value = await runtime.gameSetting(name);
+      return typeof value === 'number' ? value : fallback;
+    };
+    const [mult, regenDelay] = await Promise.all([
+      read('fBowZoomStaminaDrainMult', COMBAT_DEFAULTS.bowZoomStaminaDrainMult),
+      read('fBowZoomStaminaRegenDelay', COMBAT_DEFAULTS.bowZoomStaminaRegenDelay),
+    ]);
+    this.#zoomDrain = { mult, regenDelay };
+    return this.#zoomDrain;
   }
 
   /** The perks' and values' parts, asked a few times a second. */
@@ -170,9 +206,11 @@ export class TimeFlow {
     const weapon = this.#zoomWeapon;
     const perks = runtime.perks;
     const actors = runtime.actors;
+    const drain = this.#zoomDrain ?? (await this.#readZoomDrain(runtime));
     const [factor, cost, stamina, bowSpeed, pace, waterBreathing, health] = await Promise.all([
       perks.apply(EntryPoint.modBowZoom, PLAYER_REF, 1, [weapon]),
-      perks.apply(EntryPoint.modPowerAttackStamina, PLAYER_REF, 0, [weapon]),
+      // The zoom's drain a second: fBowZoomStaminaDrainMult through Mod Power Attack Stamina.
+      perks.apply(EntryPoint.modPowerAttackStamina, PLAYER_REF, drain.mult, [weapon]),
       actors.value(PLAYER_REF, ActorValue.stamina),
       actors.value(PLAYER_REF, BOW_SPEED_BONUS),
       runtime.magic.playerPace(),
@@ -183,6 +221,7 @@ export class TimeFlow {
     this.#baseHealth = health.base;
     this.#zoomFactor = factor > 0 ? factor : 1;
     this.#zoomCost = Math.max(0, cost);
+    this.#stamina = stamina.current;
     this.#canZoom = magic >= 1 && (this.#zoomCost <= 0 || stamina.current > 0);
     this.#bowSpeed = bowSpeed.current;
     this.#slowedPace = pace;

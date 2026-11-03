@@ -30,6 +30,7 @@ export { parseTeleport, type Teleport } from './cell-records.ts';
 import { parseTextureSet, placeDecal, type PlacedDecal, type TextureSet } from './decal.ts';
 import { alternateTextures, type AlternateTexture } from './actor-records.ts';
 import { BookFlag, parseItem } from './item-records.ts';
+import { FurnitureMarkerFlag } from './furniture-records.ts';
 import { parseStaticDirectional, type StaticDirectional } from './material-object.ts';
 import { parseRagdollData, type RagdollData } from './ragdoll-data.ts';
 import type { CorpsePose } from '../animation/corpse-pose.ts';
@@ -133,6 +134,8 @@ export interface CellObject {
     readonly workbench: number;
     /** Its first marker's type (FNPR's first: FurnitureMarkerType), what its prompt says. */
     readonly firstMarker?: number;
+    /** MNAM's Disables Activation: the player cannot use it. */
+    readonly disablesActivation?: boolean;
   };
 }
 
@@ -152,16 +155,22 @@ export function furnitureOf(base: Pick<GameRecord, 'fields'>): {
   readonly sit: boolean;
   readonly workbench: number;
   readonly firstMarker?: number;
+  /** MNAM's Disables Activation (FurnitureMarkerFlag): the player cannot use it. */
+  readonly disablesActivation?: boolean;
 } {
   const types = base.fields
     .all('FNPR')
     .filter((data) => data.length >= 2)
     .map((data) => view(data).getUint16(0, true));
+  const markerFlags = base.fields.u32('MNAM') ?? 0;
   return {
     sleep: types.some((type) => (type & 0x2) !== 0),
     sit: types.some((type) => (type & 0x5) !== 0),
     workbench: base.fields.first('WBDT')?.[0] ?? 0,
     ...(types[0] !== undefined && { firstMarker: types[0] }),
+    ...((markerFlags & FurnitureMarkerFlag.disablesActivation) !== 0 && {
+      disablesActivation: true,
+    }),
   };
 }
 

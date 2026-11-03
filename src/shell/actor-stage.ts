@@ -778,6 +778,9 @@ export class ActorStage {
         const crime = options.session.scriptsReady?.crime;
         if (target !== caster && crime) void crime.assault(caster, target);
       },
+      deathPush: (target, damage, direction, alreadyDead) => {
+        this.combat.spellDeathPush(target, damage, direction, alreadyDead);
+      },
     });
     this.casting = new ActorCasting({
       session: options.session,

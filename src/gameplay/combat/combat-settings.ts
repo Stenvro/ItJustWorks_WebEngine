@@ -187,6 +187,22 @@ export interface CombatSettings {
   /** fDeathForceMassBase, fDeathForceMassMult: the push is divided by base + mult × the actor's Mass. */
   readonly deathForceMassBase: number;
   readonly deathForceMassMult: number;
+  /**
+   * fDeathForceSpellImpactMult: an aimed fire-and-forget spell's killing push is its ranged push
+   * times this (docs/ai.md, "The death push").
+   */
+  readonly deathForceSpellImpactMult: number;
+  // --- Limbs ---------------------------------------------------------------------------------
+  /** iCombatDismemberPartChance, iCombatExplodePartChance: the limb roll's chances (percent). */
+  readonly dismemberPartChance: number;
+  readonly explodePartChance: number;
+  /** fCombatPlayerLimbDamageMult: a hit's limb damage on the player is this share of it. */
+  readonly playerLimbDamageMult: number;
+  // --- Bow zoom ------------------------------------------------------------------------------
+  /** fBowZoomStaminaDrainMult: the zoom's stamina a second (through Mod Power Attack Stamina). */
+  readonly bowZoomStaminaDrainMult: number;
+  /** fBowZoomStaminaRegenDelay: seconds stamina waits once the zoom has emptied it. */
+  readonly bowZoomStaminaRegenDelay: number;
   // --- Weapon blood --------------------------------------------------------------------------
   /** fWeaponBloodLifetime: seconds a weapon's blood stays fresh after a hit. */
   readonly weaponBloodLifetime: number;
@@ -303,6 +319,12 @@ export const COMBAT_DEFAULTS: CombatSettings = {
   deathForceRangedForceMax: 30,
   deathForceMassBase: 3,
   deathForceMassMult: 0.15,
+  deathForceSpellImpactMult: 2,
+  dismemberPartChance: 25,
+  explodePartChance: 5,
+  playerLimbDamageMult: 0.5,
+  bowZoomStaminaDrainMult: 15,
+  bowZoomStaminaRegenDelay: 3,
   weaponBloodLifetime: 10,
   weaponBloodFadeDuration: 60,
   weaponBloodFalloffThreshold: 0.07,
@@ -396,6 +418,12 @@ const SETTING_NAMES: Readonly<Partial<Record<keyof CombatSettings, string>>> = {
   deathForceRangedForceMax: 'fDeathForceRangedForceMax',
   deathForceMassBase: 'fDeathForceMassBase',
   deathForceMassMult: 'fDeathForceMassMult',
+  deathForceSpellImpactMult: 'fDeathForceSpellImpactMult',
+  dismemberPartChance: 'iCombatDismemberPartChance',
+  explodePartChance: 'iCombatExplodePartChance',
+  playerLimbDamageMult: 'fCombatPlayerLimbDamageMult',
+  bowZoomStaminaDrainMult: 'fBowZoomStaminaDrainMult',
+  bowZoomStaminaRegenDelay: 'fBowZoomStaminaRegenDelay',
   weaponBloodLifetime: 'fWeaponBloodLifetime',
   weaponBloodFadeDuration: 'fWeaponBloodFadeDuration',
   weaponBloodFalloffThreshold: 'fWeaponBloodFalloffThreshold',

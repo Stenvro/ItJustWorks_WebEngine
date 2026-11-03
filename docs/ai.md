@@ -855,6 +855,27 @@ Actors use furniture as the engine's furniture handling does, as far as the data
 - Measured in the Bannered Mare at 8:00: Hulda leans on the bar counter, Mikael sits on a bar
   stool at it and later leans, Sinmir sits on the bench by the hearth.
 
+### Marker keywords, Disables Activation, Loose Only, Found
+
+- **A marker's keyword** (FURN FNMK; two furniture, both chopping blocks: marker 0
+  isExecutioner, marker 2 isExecutionerGuard, marker 1 none): a marker with a keyword is taken
+  only by an actor with that keyword, and such an actor takes it before the markers without one
+  (src/ai/furniture-markers.ts `markerRank`). The data agrees: the headsmen (MQ101's, the two
+  Dark Brotherhood ones, Ahtar) carry isExecutioner, MQ101's Imperial officer and Solitude's
+  opening alias isExecutionerGuard. TODO(M13): the field's plain reading; where the original
+  chooses a marker by it was not found (its furniture activation and the reference's own
+  activation do not read it).
+- **Disables Activation** (FURN MNAM bit 25; two creatures' exit markers: the dragon priest's
+  coffin, Solstheim's Tentacle Word burn): the crosshair shows nothing on it, so the player does
+  not use it (activation-prompt.ts). TODO(M13): the flag's plain reading; the original's
+  furniture activation and its prompt text do not read it, where it does is not found.
+- **IDLM Loose Only** (IDLF bit 3, 72 of 89 markers): still open. Looked for in the original
+  and not found: its Use Idle Marker procedure and exec state, the walk onto a marker and the
+  sandbox's search for markers read no such bit of the marker's flags. TODO(M13): what reads it.
+- **Navmesh triangle flag Found** (0x800, 3.15 million triangles, nearly all): still open. The
+  original's path search set-up and its step's cost (which reads Water and Preferred) read no
+  such bit. TODO(M13): whether other navmesh code reads it.
+
 ### Executions
 
 Furniture an actor's AI goes to use (Sit, UseIdleMarker, Activate, a scene package, the player
@@ -2643,6 +2664,40 @@ fCombatAvoidThreatsChance (the style's avoid threat chance counts), fCombatSpeak
 fCombatSpeakTauntChance, fCombatTeammateFollowRadiusBase and Min, fCombatThreatExtrudeTime,
 fEnemyHealthBarTimer (the enemy bar is [Interface] iEnemyHealthDisplayTime's: 2 s after the
 enemy's health last changed). Our code does not use them.
+
+Round 4 of the completeness list (observed in the original): fCombatFollowRadiusMult (3),
+fAIUseWeaponDistance (5000; Skyrim.esm 15000) and fCombatThreatProximityExplosionAvoidTime (10)
+are registered and nothing takes their value: inert. fKillCamBaseOdds is taken only by the kill
+camera's odds by level (docs/gameplay.md, "Killmoves"), a function nothing calls: inert too.
+Read, and ours now (src/gameplay/combat/combat-settings.ts reads them by name):
+
+- **Limb damage** (fCombatPlayerLimbDamageMult, 0.5): as a hit is made up, the part it takes
+  gets a limb damage, the percent of that limb's health the hit's damage is (the damage over the
+  target's current Health times the part's health share, times 100; a part with no share takes
+  none). On the player it is half that. The limb damage only decides a crippled limb: on a part
+  flagged explodable whose limb value (the part's actor value) is above 0 and the limb damage
+  takes to 0 or below, the hit is marked crippling. A fatal hit on such a part rolls the limb
+  (iCombatDismemberPartChance 25, iCombatExplodePartChance 5: `rollLimb`). No vanilla body part
+  is explodable, so neither happens with the vanilla data (dismemberment.ts `limbDamage`,
+  `cripplesLimb`). Inferred: a hit that is not the player's also has the full share.
+- **The death push of a spell** (fDeathForceSpellImpactMult, 2): an aimed fire-and-forget
+  spell's projectile (not a scroll, not a concentration spell) that hits an actor first asks
+  whether its hostile Health effects will kill it. Hitting one already dead, the ragdoll is
+  pushed at once with the ranged death push of that damage (fDeathForceRanged\*) times the mult,
+  along the projectile's flight. Hitting the living, the projectile keeps that number (the push
+  times the mult) on the actor; when the actor then dies, the death takes the kept number as a
+  damage, maps it through the ranged death push again and multiplies by the mult once more: a
+  spell's kill flings harder than an arrow's. Both are divided by fDeathForceMassBase +
+  fDeathForceMassMult × the victim's Mass as a blow's push is (death-force.ts `spellDeathForce`;
+  magic-projectiles.ts asks after the spell took hold). TODO(M13): the original sums the
+  effects' magnitudes before the spell takes hold and counts an over-time kill by its longest
+  duration; ours takes the Health the spell took and pushes only a kill at once.
+- **The bow's zoom** (fBowZoomStaminaDrainMult, built in 15, Skyrim.esm 0;
+  fBowZoomStaminaRegenDelay, 3): every frame zoomed, unless the player is invulnerable (god
+  mode), stamina is damaged by the setting through the perks' Mod Power Attack Stamina (Eagle
+  Eye adds its 10) times the frame's seconds; the frame that takes stamina from above 0 to 0
+  holds its regeneration for the delay and blinks the stamina meter (bow-zoom.ts, time-flow.ts).
+  TODO(M13): whether the frame's seconds are the slowed world's or the real clock's (ours: real).
 
 ### The attack decision
 

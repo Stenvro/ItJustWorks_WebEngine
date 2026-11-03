@@ -1576,9 +1576,11 @@ HasBeenEaten, IsPoison.
   Player Magic Slowdown on the player's pace ("Magic effects").
 - **The bow** (src/shell/time-flow.ts, player-combat.ts): with a bow and an arrow drawn, block
   held zooms the view to Mod Bow Zoom's factor of the field of view (Eagle Eye's 0.6; 1, no
-  perk: no zoom), easing in and out; zoomed, stamina drains by Mod Power Attack Stamina on the
-  bow a second (Eagle Eye's 10: UESP "drains Stamina at 10 per second"; fBowZoomStaminaDrainMult
-  is 0) and the world slows by the player's BowSpeedBonus (Steady Hand's abilities −0.5, both
+  perk: no zoom), easing in and out; zoomed, stamina drains a second by fBowZoomStaminaDrainMult
+  (Skyrim.esm: 0) through Mod Power Attack Stamina on the bow (Eagle Eye's 10: UESP "drains
+  Stamina at 10 per second"), and the frame that empties it holds its regeneration for
+  fBowZoomStaminaRegenDelay (3 s) and blinks the meter (docs/ai.md, "The bow's zoom"); the world
+  slows by the player's BowSpeedBonus (Steady Hand's abilities −0.5, both
   ranks −0.75: 50 % and 75 %, as UESP measures them), the player with it; no zoom without
   stamina or under Slow Time. **Falls** (src/gameplay/falling.ts): landing from higher than
   fJumpFallHeightMin (600) takes ((height − 600) × fJumpFallHeightMult)^fJumpFallHeightExponent

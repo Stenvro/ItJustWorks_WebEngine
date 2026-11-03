@@ -110,11 +110,19 @@ export const INERT: ReadonlyMap<string, string> = new Map([
       ['fCombatDamageBonusSneakingMult', 'the sneak attack takes fCombatSneak*Mult (docs/ai.md)'],
       ['fTrackDeadZoneXY', "an earlier game's head tracking; the eyes read fTrackSpeed alone"],
       ['fTrackDeadZoneZ', "an earlier game's head tracking; the eyes read fTrackSpeed alone"],
+      ['fCombatFollowRadiusMult', 'nothing takes its value, as fCombatTeammateFollowRadiusMult'],
+      ['fAIUseWeaponDistance', 'nothing takes its value (docs/ai.md)'],
+      ['fCombatThreatProximityExplosionAvoidTime', 'nothing takes its value (docs/ai.md)'],
     ] as const
   ).map(([name, why]): [string, string] => [
     name,
     `registered by the original, never read: ${why}`,
   ]),
+  // Read in the original only by code nothing calls (observed in the original).
+  [
+    'fKillCamBaseOdds',
+    'read only by a kill camera odds by level (with fKillCamLevel*) that nothing calls; the kill moves follow the INI and the perks (docs/ai.md)',
+  ],
 ]);
 
 /**
@@ -177,18 +185,12 @@ const EXPLAINED: ReadonlyMap<string, string> = new Map([
 const OPEN: ReadonlyMap<string, string> = new Map([
   [
     'Idle markers (IDLM)|looseOnly',
-    'open: CommonLibSSE names it kLooseOnly, xEdit only for a later game; set on 72 of 89 markers (the 17 without it include the five with no idles); its meaning is not documented',
+    "open: CommonLibSSE names it kLooseOnly, xEdit only for a later game; set on 72 of 89 markers (the 17 without it include the five with no idles); the original's Use Idle Marker procedure, its walk onto the marker and the sandbox's marker search read no such bit (docs/ai.md); where else it is read is not found",
   ],
   [
     'Navmesh triangles (NVNM)|found',
-    'open: set on nearly every triangle; whether the game reads it is not documented',
+    "open: set on nearly every triangle; the original's path search set-up and its step's cost (which reads Water and Preferred) read no such bit (docs/ai.md); whether other navmesh code does is not found",
   ],
-  ...(['iCombatDismemberPartChance', 'iCombatExplodePartChance'] as const).map(
-    (name): [string, string] => [
-      `Game settings (GMST)|${name}`,
-      'open: the limb roll keeps its defaults (dismemberment.ts); worked on with dismemberment',
-    ],
-  ),
 ]);
 
 /** The game setting name patterns of each area (the load order's GMSTs matching them). */
