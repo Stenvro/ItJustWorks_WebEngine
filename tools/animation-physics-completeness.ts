@@ -75,6 +75,14 @@ const NOT_DATA: ReadonlyMap<string, string> = new Map([
   ['BSSynchronizedClipGenerator.sAnimationBindingIndex', "as the clip generator's (-1)"],
 ]);
 
+/** Actions the engine never performs, by editor id, with the reason (observed in the original). */
+const INERT_ACTIONS: ReadonlyMap<string, string> = new Map([
+  [
+    'ActionStopEffect',
+    'not one of the engine’s default objects (through which it names the actions it performs); no vanilla idle',
+  ],
+]);
+
 /**
  * Collision fields with one value in every mesh, which the physics has nothing to do with (the
  * value censuses "Collision responses", "Time factors", "Deactivator types" show it), by field.
@@ -512,7 +520,8 @@ export async function animationPhysicsCompleteness(
         'Actions (AACT)',
         name,
         1,
-        readIn(new RegExp(`['"]${escape(name)}['"]`), everywhere),
+        readIn(new RegExp(`['"]${escape(name)}['"]`), everywhere) ??
+          (INERT_ACTIONS.has(name) ? `inert: ${INERT_ACTIONS.get(name) ?? ''}` : undefined),
         'the engine never performs it',
       );
     }

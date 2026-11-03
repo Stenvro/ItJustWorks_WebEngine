@@ -201,6 +201,82 @@ export interface WaterRules {
   readonly harms: ReadonlyMap<number, WaterHarm>;
   /** The water types whose rivers flow along their cells' flow maps (WATR Enable Flowmap). */
   readonly flowmapTypes: ReadonlySet<number>;
+  /** How strong a current must be to carry an actor off (currentPush). */
+  readonly knockdown?: WaterKnockdownSettings;
+}
+
+/**
+ * fWaterKnockdownVelocity (Havok units a second) and fWaterKnockdownSizeSmall, ...Normal,
+ * ...Large, ...VeryLarge (its multipliers by the actor's race size, RACE DATA size 0 to 3).
+ */
+export interface WaterKnockdownSettings {
+  readonly velocity: number;
+  readonly sizes: readonly [number, number, number, number];
+}
+
+export const WATER_KNOCKDOWN_DEFAULTS: WaterKnockdownSettings = {
+  velocity: 10,
+  sizes: [0.25, 0.5, 0.75, 1],
+};
+
+/**
+ * An actor falling faster than this (game units a second, in the air) is carried by any
+ * current it falls into (observed in the original).
+ */
+const CURRENT_FALL_SPEED = 700;
+
+/** An actor in a current (currentPush). */
+export interface ActorInCurrent {
+  /** Its race's flags (RaceFlag: walks 0x100, swims 0x40, flies 0x80) and size (0 to 3). */
+  readonly raceFlags: number;
+  readonly raceSize: number;
+  /** Whether it is in the air, and its vertical speed (game units a second, up). */
+  readonly inAir: boolean;
+  readonly verticalSpeed: number;
+  /** Its own horizontal velocity and its top speed (game units a second). */
+  readonly velocity: readonly [number, number];
+  readonly topSpeed: number;
+}
+
+/**
+ * The push a current gives an actor's controller (observed in the original: the water's
+ * current applied to a character): none for a race that swims but neither walks nor flies
+ * (a slaughterfish keeps its place). Others are carried along when the current (Havok units a
+ * second) is faster than fWaterKnockdownVelocity × their size's multiplier, or whatever its
+ * speed while they fall into it faster than CURRENT_FALL_SPEED; a weak current then carries
+ * them at its speed plus their own, at most their top speed. The push is the controller's push
+ * (game units a second, the ground's plane), kept while it is the strongest
+ * (Character.knockBack). TODO(M13): the original also carries an actor in recoil, and one whose
+ * mount is in the air, by a weak current.
+ */
+export function currentPush(
+  current: Vec3,
+  actor: ActorInCurrent,
+  settings: WaterKnockdownSettings = WATER_KNOCKDOWN_DEFAULTS,
+): readonly [number, number] | undefined {
+  const flags = actor.raceFlags;
+  const walks = (flags & 0x100) !== 0;
+  const swims = (flags & 0x40) !== 0;
+  const flies = (flags & 0x80) !== 0;
+  if (!walks && swims && !flies) return undefined;
+  const size = settings.sizes[actor.raceSize] ?? 1;
+  const limit = settings.velocity * size;
+  const speed = Math.hypot(current[0], current[1], current[2]);
+  const strong = speed > limit;
+  const falling = actor.inAir && actor.verticalSpeed < -CURRENT_FALL_SPEED;
+  if (!strong && !falling) return undefined;
+  let x = current[0] * HAVOK_SCALE;
+  let y = current[1] * HAVOK_SCALE;
+  if (!strong) {
+    x += actor.velocity[0];
+    y += actor.velocity[1];
+    const length = Math.hypot(x, y);
+    if (length > actor.topSpeed && length > 0) {
+      x = (x / length) * actor.topSpeed;
+      y = (y / length) * actor.topSpeed;
+    }
+  }
+  return [x, y];
 }
 
 export const WATER_RULE_DEFAULTS: WaterRules = {

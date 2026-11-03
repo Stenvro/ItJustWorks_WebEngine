@@ -140,6 +140,8 @@ const HUNG_OVERLAP = 1 / HAVOK_SCALE;
  * frames, is not read.
  */
 const DEACTIVATION_DISTANCE = 0.02;
+/** The upward speed a ragdoll's still bodies are given as it is made dynamic (liftStill). */
+const RAGDOLL_LIFT = 0.5;
 const DEACTIVATION_TURN = 0.05;
 const DEACTIVATION_CHECK = 0.25;
 const DEACTIVATION_SECONDS = 1;
@@ -1580,6 +1582,20 @@ export class PhysicsWorld {
     const w = most(angular, body.data.maxAngularVelocity);
     body.body.setLinvel({ x: v[0], y: v[1], z: v[2] }, true);
     body.body.setAngvel({ x: w[0], y: w[1], z: w[2] }, true);
+  }
+
+  /**
+   * A ragdoll made dynamic (observed in the original: its driver's motion type set to dynamic):
+   * each of its simulated bodies moving slower than RAGDOLL_LIFT (Havok units a second) has
+   * that much added upward to its speed, so that no body let go still stays as it was placed.
+   */
+  liftStill(placed: PlacedCollision): void {
+    for (const { body, data } of placed.bodies) {
+      if (!dynamicBody(data) || !body.isDynamic()) continue;
+      const v = body.linvel();
+      if (v.x * v.x + v.y * v.y + v.z * v.z >= RAGDOLL_LIFT * RAGDOLL_LIFT) continue;
+      body.setLinvel({ x: v.x, y: v.y, z: v.z + RAGDOLL_LIFT }, true);
+    }
   }
 
   /** A body's place (Havok units, world space). */
