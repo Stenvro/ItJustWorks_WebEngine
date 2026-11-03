@@ -2,7 +2,10 @@
 // and actions"): at the moment each is performed (src/gameplay/combat/combat-actions.ts, the
 // movers' path end, the stage's summon), its idle tree gives the event that plays: the force
 // equip's swap in the hand, the crossbow's reload, the dual release's staff bash release, the
-// block's anticipation, the path end's turn into the arrival heading, a summon's appearing.
+// block's anticipation, the path end's turn into the arrival heading, a summon's appearing; the
+// engine's own (observed in the original): a graph made while its actor lies dead dropping to its
+// ragdoll, a resurrected creature's graph reset, the vampire lord taking to the water's surface,
+// the shield change (nothing to play).
 // Skipped without game data.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -15,6 +18,10 @@ import { hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
 
 const HUMAN = 'Actors\\Character\\Behaviors\\0_master.hkx';
 const FLAME_ATRONACH = 'Actors\\AtronachFlame\\Behaviors\\AtronachFlameBehavior.hkx';
+const CHICKEN = 'Actors\\Ambient\\Chicken\\Behaviors\\ChickenBehavior.hkx';
+const BEAR = 'Actors\\Bear\\Behaviors\\BearBehavior.hkx';
+const DRAGON = 'Actors\\Dragon\\Behaviors\\DragonBehavior.hkx';
+const VAMPIRE_LORD = 'Actors\\VampireLord\\Behaviors\\VampireLord.hkx';
 
 /** A hand's GetEquippedItemType / GetReplacedItemType: by the condition's hand (0 left, 1 right). */
 interface Hands {
@@ -102,5 +109,22 @@ describe.skipIf(!hasGamedata())('the engine’s rarer actions on the local game 
 
   it('ActionSummonedStart shows a summoned atronach appearing', () => {
     expect(perform('ActionSummonedStart', FLAME_ATRONACH)).toBe('summonStart');
+  });
+
+  it('ActionRagdollInstant drops a graph made while its actor lies dead to its ragdoll', () => {
+    expect(perform('ActionRagdollInstant', CHICKEN)).toBe('RagdollInstant');
+  });
+
+  it('ActionResetAnimationGraph resets a resurrected creature’s graph', () => {
+    expect(perform('ActionResetGraph', BEAR)).toBe('returnToDefault');
+    expect(perform('ActionResetGraph', DRAGON)).toBe('Reset');
+  });
+
+  it('ActionWaterwalkStart floats the vampire lord over the water', () => {
+    expect(perform('ActionWaterwalkStart', VAMPIRE_LORD)).toBe('WaterWalkStart');
+  });
+
+  it('ActionShieldChange has nothing to play in any vanilla graph', () => {
+    expect(perform('ActionShieldChange', HUMAN)).toBeUndefined();
   });
 });

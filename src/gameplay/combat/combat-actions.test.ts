@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   anticipatesBlow,
+  changesShield,
   forceEquips,
   handsChanged,
   releasedTogether,
@@ -34,6 +35,21 @@ describe('ActionForceEquip', () => {
     expect(forceEquips(hands(), hands(), true)).toBe(false);
     expect(forceEquips(undefined, hands(), true)).toBe(false);
     expect(handsChanged(hands(), hands())).toBe(false);
+  });
+});
+
+describe('ActionShieldChange', () => {
+  it('is performed as a shield goes on or off, not swapped in a drawn hand', () => {
+    expect(changesShield(hands(), hands({ shield: undefined }), false)).toBe(true);
+    expect(changesShield(hands({ shield: undefined }), hands(), false)).toBe(true);
+    // Drawn, the change is the force equip's swap instead.
+    expect(changesShield(hands(), hands({ shield: undefined, torch: true }), true)).toBe(false);
+  });
+
+  it('is not performed for one shield for another, other hands, or a first reading', () => {
+    expect(changesShield(hands(), hands({ shield: 0x13ab2 }), false)).toBe(false);
+    expect(changesShield(hands(), hands({ right: DAGGER }), false)).toBe(false);
+    expect(changesShield(undefined, hands(), false)).toBe(false);
   });
 });
 

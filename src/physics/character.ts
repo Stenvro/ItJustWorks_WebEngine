@@ -389,6 +389,11 @@ export class CharacterBody {
    */
   swimming = false;
   /**
+   * Water walking (the Water Walking actor value): the water's surface under it (game units),
+   * which bears its feet as ground does. Undefined: none.
+   */
+  waterFloor: number | undefined;
+  /**
    * Whether actors walk at a point (game units: the feet), for steps off the stairs: the
    * navigation meshes' surface. Undefined: steps are climbed on stairs only.
    * TODO(M13): how far the engine's TryStep goes off the stairs is not documented.
@@ -1237,6 +1242,15 @@ export class CharacterBody {
         const dy = at.y - other.y;
         const length = Math.hypot(dx, dy);
         this.#offActor = length > 1e-6 ? [dx / length, dy / length] : [1, 0];
+      }
+    }
+    // Water walking: its feet are not let under the water's surface, which it stands on.
+    const floor = this.waterFloor;
+    if (floor !== undefined && !this.swimming && !rising) {
+      const feet = (this.#body.translation().z + moved.z) * HAVOK_SCALE - this.shape.height / 2;
+      if (feet <= floor) {
+        moved = { x: moved.x, y: moved.y, z: moved.z + (floor - feet) / HAVOK_SCALE };
+        this.#grounded = true;
       }
     }
     if (this.#grounded || this.swimming) this.#offActor = undefined;

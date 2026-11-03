@@ -136,14 +136,14 @@ These run through every area and explain most of what breaks in play.
 ### Animation and bodies
 
 The item-by-item checklist (behavior classes and fields, annotations, idles, actions, settings,
-mechanics): [completeness/animation.md](completeness/animation.md), 1088 of 1146 done
-(2026-11-03, round 6).
+mechanics): [completeness/animation.md](completeness/animation.md), 1092 of 1146 done
+(2026-11-03, round 7).
 
 | System               | Status  | Main gaps                                                                                                                                                                                                                    |
 | -------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Graph runtime        | partial | bDisableInterp's setter; an event no node takes reported as not handled (sync points, a synced blend's master child, the cyclic blend range: done)                                                                           |
 | Clips                | partial | mirrored additive clips by our own rule                                                                                                                                                                                      |
-| Engine handlers      | partial | all 91 classes answered; what reads the camera override's and MTState's flags; NPCs' JumpBegin (their controllers do not jump); 14 actions never performed (path end, summoned start, force equip, reload, ...)              |
+| Engine handlers      | partial | all 91 classes answered; what reads the camera override's and MTState's flags; NPCs' JumpBegin (their controllers do not jump); 3 actions never performed (Look, VoiceReady, Listen Idle: read nowhere found)                |
 | Weapons and aim      | partial | the player's casting pitch (PitchOverride), a crossbow's launch node (the bow zoom by the graph's BowZoomStart / Stop: done)                                                                                                 |
 | Ambient idles        | partial | which specific idles skip the next PickNewIdle; the complex scene's wait; the frame's budget; the meal gate (loop seconds: done)                                                                                             |
 | Animation objects    | partial | the female hands' scale; the POV switch while the player holds one                                                                                                                                                           |
@@ -157,7 +157,7 @@ mechanics): [completeness/animation.md](completeness/animation.md), 1088 of 1146
 ### Physics
 
 The item-by-item checklist (bhk blocks and fields, layers, records, settings, mechanics):
-[completeness/physics.md](completeness/physics.md), 354 of 369 done (2026-11-03, round 5).
+[completeness/physics.md](completeness/physics.md), 356 of 370 done (2026-11-03, round 6).
 
 | System               | Status  | Main gaps                                                                                                                                                                                                                                                                                                                                     |
 | -------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -165,7 +165,7 @@ The item-by-item checklist (bhk blocks and fields, layers, records, settings, me
 | Triggers             | partial | projectiles in flight do not enter triggers (rays, no reference yet) (clutter settling at load enters none: done)                                                                                                                                                                                                                             |
 | Constraints          | partial | script-made joints across a cell reload; the chains' damping (their error limit, the blend collision objects' gains: done)                                                                                                                                                                                                                    |
 | Character controller | partial | leaving a moving platform keeps no velocity; Havok's proxy push response                                                                                                                                                                                                                                                                      |
-| Falling, swimming    | partial | the drowning sound and gasp (NPCs swim where their package allows, NPCs' fall damage, water knockdowns: done)                                                                                                                                                                                                                                 |
+| Falling, swimming    | partial | the drowning sound and gasp (NPCs swim where their package allows, NPCs' fall damage, water knockdowns, water walking: done)                                                                                                                                                                                                                  |
 | Water physics        | partial | the shader's terms and the WATR values behind each constant, its reflections by the original's rules (one cube around the eyes, or the planes' with the setting off), the cube map files in their place, the rivers' flow normals (NAM5), the underwater view and mask, the displacement field: done; when the water imagespace colours apply |
 | Physics damage       | partial | the listener's damage to destructibles (no vanilla impact reaches it)                                                                                                                                                                                                                                                                         |
 | Traps                | partial | hits on actors: done; material, initial flag, cloud traps unchecked                                                                                                                                                                                                                                                                           |
