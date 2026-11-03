@@ -68,6 +68,8 @@ let afterCourtyard: Uint8Array | undefined;
 let afterDragon: Uint8Array | undefined;
 /** The game with the dragon's soul absorbed (stage 90). */
 let afterAbsorb: Uint8Array | undefined;
+/** The lines (INFO) begun up to that save: the guards' talk may have begun by then. */
+const saidBeforeAbsorbSave = new Set<number>();
 /** The game after the guards' talk and the player's first Shout (108). */
 let afterGuards: Uint8Array | undefined;
 /** The game with the Jarl's outro talk done (150). */
@@ -256,8 +258,13 @@ describe.skipIf(!hasGamedata())('MQ104 Dragon Rising', () => {
       await sim.kill(dragon, PLAYER_REF);
       expect(await sim.until(() => sim.stageDone(MQ104, 80), 20)).toBe(true);
       // The player walks up to it: within its deathFXrange (1,024) MQ104DragonScript sets 85.
+      // Found 2026-11-03: where it falls varies with the fight's draws, and the player put down
+      // 500 units east of it dropped off the fort's hill, some 400 units below the guards and
+      // out of their sight; the guard's ForceGreet that the guards' talk waits for (phase 8) is
+      // for a detected player only, so the talk never went on. They walk up over the navmeshes,
+      // as a player does, and stop beside it.
       const at = await sim.position(dragon);
-      if (at) await sim.moveTo([at[0] + 500, at[1], at[2] + 50]);
+      if (at) await sim.walkPath(at, 60, 400);
       expect(await sim.until(() => sim.stageDone(MQ104, 85), 30)).toBe(true);
       // Found 2026-10-28: the absorption never came (90). The dragon's DragonActorScript comes
       // from its base's template (MQ104Dragon's), and a persistent actor whose scripts are not
@@ -276,6 +283,9 @@ describe.skipIf(!hasGamedata())('MQ104 Dragon Rising', () => {
       expect(fus).not.toBe(0);
       expect(await sim.until(() => sim.runtime.wordsLearned.get(fus) === true, 5)).toBe(true);
       expect((await sim.runtime.actors.value(PLAYER_REF, ActorValue.dragonSouls)).current).toBe(0);
+      for (const line of sim.events('topicInfo')) {
+        if (line.type === 'begin') saidBeforeAbsorbSave.add(line.topicInfo);
+      }
       afterAbsorb = await sim.save('MQ104 90');
     } finally {
       await sim.close();
@@ -292,8 +302,10 @@ describe.skipIf(!hasGamedata())('MQ104 Dragon Rising', () => {
     try {
       expect(await sim.until(() => sim.stageDone(MQ104, 95), 300)).toBe(true);
       // The first guard: "You... must be Dragonborn!"; then the old tales of the Dragonborn
-      // ("Dovahkiin") among them.
+      // ("Dovahkiin") among them. The talk begins as the absorption ends, so its first lines
+      // may have been said before the last segment saved.
       const said = (info: number): boolean =>
+        saidBeforeAbsorbSave.has(info) ||
         sim.events('topicInfo').some((line) => line.topicInfo === info && line.type === 'begin');
       expect(said(MUST_BE_DRAGONBORN)).toBe(true);
       expect(said(OLD_TALES)).toBe(true);
