@@ -53,7 +53,11 @@ describe('the cut piece’s partitions (original)', () => {
 
 describe('the limb roll of a killing blow (original, settings)', () => {
   it('the settings: iCombatDismemberPartChance 25, iCombatExplodePartChance 5', () => {
-    expect(LIMB_ROLL_DEFAULTS).toEqual({ dismemberPartChance: 25, explodePartChance: 5 });
+    expect(LIMB_ROLL_DEFAULTS).toEqual({
+      dismemberPartChance: 25,
+      explodePartChance: 5,
+      playerLimbDamageMult: 0.5,
+    });
   });
   it('only an explodable part rolls', () => {
     const part = { flags: 0, explosionChance: 100 };
