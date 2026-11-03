@@ -15,6 +15,8 @@
 // - ActionBlockAnticipate: a blocking actor sees a blow come at it (each blow once): its
 //   graph's block raises the shield or weapon to meet it (blockAnticipateStart: the
 //   BlockAnticipate state's clip, its BSDirectAtModifier at the attacker's weapon).
+// - ActionShieldChange: a shield put on or taken off, not swapped in a drawn hand (no vanilla
+//   graph has an idle for it: performed, nothing plays).
 //
 // TODO(M13): the original's exact moments are not documented; these follow from the trees'
 // conditions and the graphs' states. Platform-independent.
@@ -52,6 +54,21 @@ export function forceEquips(
   weaponOut: boolean,
 ): boolean {
   return before !== undefined && weaponOut && handsChanged(before, after);
+}
+
+/**
+ * Whether a change of the hands is performed as ActionShieldChange (observed in the original:
+ * as an item is equipped and it is not swapped in a drawn hand, ActionForceEquip, the left
+ * hand's graph type is compared before and after; a shield put on or taken off is the shield
+ * change; one shield for another keeps the type and is none).
+ */
+export function changesShield(
+  before: HandForms | undefined,
+  after: HandForms,
+  weaponOut: boolean,
+): boolean {
+  if (before === undefined || forceEquips(before, after, weaponOut)) return false;
+  return (before.shield !== undefined) !== (after.shield !== undefined);
 }
 
 /**

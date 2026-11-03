@@ -153,6 +153,8 @@ export interface ScriptView {
    * out unless the kill was silent (KillSilent).
    */
   killed?(reference: number, killer: number | undefined, silent: boolean): void;
+  /** An actor resurrected (Actor.Resurrect, a reanimation): the view makes it alive again. */
+  resurrected?(reference: number): void;
   /** A magic effect begins or ends on an actor: what it shows (src/shell/actor-effects.ts). */
   magicEffect?(shown: MagicEffectShown): void;
   /** EffectShader.Play / Stop and VisualEffect.Play / Stop on a reference of the view. */
@@ -619,6 +621,10 @@ export class ScriptWorld implements WorldBridge {
    */
   killed(actor: number, killer?: number, silent = false): void {
     for (const view of this.#views) view.killed?.(actor, killer, silent);
+  }
+
+  resurrected(actor: number): void {
+    for (const view of this.#views) view.resurrected?.(actor);
   }
 
   currentPackage(actor: number): number | undefined {

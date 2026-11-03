@@ -124,6 +124,7 @@ const REACT_DESTROYED_RADIUS = 1024;
 /** An actor's WaterBreathing (its breath under water) is read again after this (ms). */
 const WATER_BREATHING_READ_MS = 1000;
 const WATER_BREATHING = actorValueIndex('WaterBreathing') ?? 0;
+const WATER_WALKING = actorValueIndex('WaterWalking') ?? 0;
 
 /** Where something is: its position, and the cell and worldspace the game state gives it. */
 export interface StagePlace {
@@ -414,6 +415,12 @@ export class ActorStage {
           surfaceTo(() => top),
         ),
       breathesWater: (actor) => this.#breathesWater(actor),
+      walksOnWater: (actor) => this.#positiveValue(this.#waterWalking, actor, WATER_WALKING),
+      // Taking to the water's surface (the vampire lord's graph: WaterWalkStart).
+      waterWalkStarted: (actor) => {
+        const staged = this.#actors.get(actor);
+        if (staged) void this.furniture.playAction(this.userOf(staged), 'ActionWaterwalkStart');
+      },
       // A paired animation (a killmove) holds both actors: their clip places them.
       held: (actor) =>
         this.furniture.holds(actor) ||
@@ -1452,26 +1459,34 @@ export class ActorStage {
   #playing = false;
 
   /** Whether actors under water breathe it (WaterBreathing), read again each second. */
-  readonly #waterBreathing = new Map<number, { breathes: boolean; read: number }>();
+  readonly #waterBreathing = new Map<number, { positive: boolean; read: number }>();
+  readonly #waterWalking = new Map<number, { positive: boolean; read: number }>();
+
+  /** Whether an actor breathes water (its WaterBreathing above 0). */
+  #breathesWater(actor: number): boolean {
+    return this.#positiveValue(this.#waterBreathing, actor, WATER_BREATHING);
+  }
 
   /**
-   * Whether an actor breathes water (its WaterBreathing above 0): the last value read (none yet:
-   * not), read again once it is a second old.
+   * Whether an actor's value is above 0 (WaterBreathing, WaterWalking): the last value read
+   * (none yet: not), read again once it is a second old.
    */
-  #breathesWater(actor: number): boolean {
-    const known = this.#waterBreathing.get(actor);
+  #positiveValue(
+    cache: Map<number, { positive: boolean; read: number }>,
+    actor: number,
+    value: number,
+  ): boolean {
+    const known = cache.get(actor);
     const now = performance.now();
     const runtime = this.#options.session.scriptsReady;
     if (runtime && (!known || now - known.read > WATER_BREATHING_READ_MS)) {
-      this.#waterBreathing.set(actor, { breathes: known?.breathes ?? false, read: now });
+      cache.set(actor, { positive: known?.positive ?? false, read: now });
       void runtime.actors
-        .value(actor, WATER_BREATHING)
-        .then((value) =>
-          this.#waterBreathing.set(actor, { breathes: value.current > 0, read: now }),
-        )
+        .value(actor, value)
+        .then((read) => cache.set(actor, { positive: read.current > 0, read: now }))
         .catch(() => undefined);
     }
-    return known?.breathes ?? false;
+    return known?.positive ?? false;
   }
 
   /**
@@ -2197,6 +2212,31 @@ export class ActorStage {
     }
   }
 
+  /**
+   * Actor.Resurrect (a reanimation, the console's resurrect): observed in the original, the
+   * actor is made alive again where it lies, its 3D attached again and its graph reset
+   * (ActionResetAnimationGraph: the creatures' returnToDefault, Reset, RESET_GRAPH). Here its
+   * corpse leaves the stage and it comes on again, alive, where its body lay.
+   */
+  async resurrected(reference: number, physics: PhysicsWorld | undefined): Promise<void> {
+    const staged = this.#actors.get(reference);
+    const runtime = this.#options.session.scriptsReady;
+    if (!staged || !runtime) return;
+    const lying = await runtime.placement(reference);
+    if (this.#actors.get(reference) !== staged) return;
+    if (lying) {
+      const state = runtime.state.reference(reference);
+      state.position = [...lying.position];
+      state.rotation = [0, 0, lying.rotation[2]];
+    }
+    this.#remove(staged);
+    // Alive, it keeps no corpse pose (#keepCorpse wrote one as it left).
+    delete runtime.state.actor(reference).corpse;
+    await this.moved(reference, physics);
+    const risen = this.#actors.get(reference);
+    if (risen) void this.furniture.playAction(this.userOf(risen), 'ActionResetGraph');
+  }
+
   /** A script created a reference: an actor in a loaded cell comes onto the stage. */
   created(reference: number, physics: PhysicsWorld | undefined): Promise<void> {
     return this.moved(reference, physics);
@@ -2625,6 +2665,12 @@ export class ActorStage {
         // A summon just conjured appears (ActionSummonedStart: its graph's summonStart).
         if (scripts?.magic.takeSummoned(reference) === true)
           void this.furniture.playAction(this.userOf(entry), 'ActionSummonedStart');
+        // Placed dead: observed in the original, an actor whose graph is made while it lies as
+        // a ragdoll (dead, knocked down, unconscious) has it go to its ragdoll at once
+        // (ActionRagdollInstant: the graphs' RagdollInstant), its bodies dynamic, their
+        // constraints on (its ragdoll here: ragdollsOf).
+        if (actor.actor.startsDead)
+          void this.furniture.playAction(this.userOf(entry), 'ActionRagdollInstant');
         // Riding a vehicle (SetVehicle, kept in the game state): on it again.
         this.vehicles.rideAgain(reference);
         // A loaded save's actor: in its furniture again at once, its package going on where

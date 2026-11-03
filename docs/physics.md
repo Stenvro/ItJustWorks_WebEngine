@@ -248,6 +248,15 @@ the engine's are not documented (TODO(M13)):
   TODO(M13): the original also carries an actor in recoil, and one whose mount is in the air, by
   a weak current; whether the push's speed is the current's or the current's over the step is
   inferred (the current's).
+- **Water walking** (observed in the original: the actor's update, for a living actor whose
+  Water Walking actor value is above 0): it takes to the surface as any of its body goes under
+  it (a hundredth of its height), and performs ActionWaterwalkStart as it does (the vampire
+  lord's WaterWalkStart); from then the surface bears it as ground and it never swims. Here the
+  controller keeps its feet from going under the surface (`Character.waterFloor`), and it stays
+  on it while its feet are within 2 units over it (`walksOnWater`, src/gameplay/swimming.ts),
+  for NPCs (`ActorMovers`) and the player. Vanilla gives it by AbWaterwalking and a Creation
+  Club potion. TODO(M13): the original holds it in a state of its controller; how high over the
+  surface it stays on it is ours.
 - **Splashes.** A body or an actor coming into the water downwards, or out of it upwards,
   splashes by its vertical speed × `fSplashSoundVelocityMult` (× `fSplashSoundOutMult` coming out)
   against `fSplashSoundLight` / `Medium` / `Heavy` (5, 25, 50), at most once per

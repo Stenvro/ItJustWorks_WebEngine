@@ -39,6 +39,7 @@ export function connectPlayerTime(
           water?: { readonly type: number; readonly harm: WaterHarm | undefined },
         ) => void)
       | undefined;
+    walksOnWater?: (() => boolean) | undefined;
   },
   session: () =>
     | {
@@ -51,6 +52,20 @@ export function connectPlayerTime(
   physics?: { timeScale: (() => number) | undefined },
 ): void {
   player.pace = () => session()?.time.playerPace ?? 1;
+  // Water Walking above 0: the surface bears the player (read again once a second old).
+  let walks = { on: false, read: -Infinity };
+  player.walksOnWater = () => {
+    const runtime = session()?.scriptsReady;
+    const now = performance.now();
+    if (runtime && now - walks.read > 1000) {
+      walks = { on: walks.on, read: now };
+      void runtime.actors
+        .value(PLAYER_REF, WATER_WALKING)
+        .then((value) => (walks = { on: value.current > 0, read: now }))
+        .catch(() => undefined);
+    }
+    return walks.on;
+  };
   // The physics world steps at the world's clock's rate (PhysicsWorld.step).
   if (physics) physics.timeScale = () => session()?.time.multiplier ?? 1;
   player.onLanded = (height) => {
@@ -90,6 +105,7 @@ const REFRESH_SECONDS = 0.25;
 
 const BOW_SPEED_BONUS = actorValueIndex('BowSpeedBonus') ?? 0;
 const WATER_BREATHING = actorValueIndex('WaterBreathing') ?? 0;
+const WATER_WALKING = actorValueIndex('WaterWalking') ?? 0;
 /** fDiffMultHPToPC's built-in values by difficulty (combat-settings.ts). */
 const DAMAGE_TO_PLAYER = [0.5, 0.75, 1, 1.5, 2, 3];
 
