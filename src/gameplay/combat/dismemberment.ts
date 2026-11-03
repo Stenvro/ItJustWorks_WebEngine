@@ -5,6 +5,7 @@
 
 import { BodyPartFlag, BodyPartType, type BodyPart } from '../../world/body-part-data.ts';
 import type { Vec3 } from '../../render/math.ts';
+import { COMBAT_DEFAULTS, type CombatSettings } from './combat-settings.ts';
 
 /** The limb a decapitation takes (the body part data's head part). */
 export const HEAD_LIMB = BodyPartType.head;
@@ -98,18 +99,53 @@ export const WeaponHitBehavior = {
   noDismemberOrExplode: 3,
 } as const;
 
-/** The game settings of the limb roll. */
-export interface LimbRollSettings {
-  /** iCombatDismemberPartChance (25). */
-  readonly dismemberPartChance: number;
-  /** iCombatExplodePartChance (5). */
-  readonly explodePartChance: number;
-}
+/**
+ * The game settings of the limb roll and the limb damage (combat-settings.ts, read by name:
+ * iCombatDismemberPartChance, iCombatExplodePartChance, fCombatPlayerLimbDamageMult).
+ */
+export type LimbRollSettings = Pick<
+  CombatSettings,
+  'dismemberPartChance' | 'explodePartChance' | 'playerLimbDamageMult'
+>;
 
 export const LIMB_ROLL_DEFAULTS: LimbRollSettings = {
-  dismemberPartChance: 25,
-  explodePartChance: 5,
+  dismemberPartChance: COMBAT_DEFAULTS.dismemberPartChance,
+  explodePartChance: COMBAT_DEFAULTS.explodePartChance,
+  playerLimbDamageMult: COMBAT_DEFAULTS.playerLimbDamageMult,
 };
+
+/**
+ * The limb damage of a hit on a part (percent of the limb's health), observed in the original:
+ * the hit's damage over the target's current Health times the part's health share, times 100; a
+ * part with no health share takes none; a target with no health left takes the damage as it is.
+ * On the player it is fCombatPlayerLimbDamageMult of that.
+ */
+export function limbDamage(
+  damage: number,
+  health: number,
+  part: Pick<BodyPart, 'healthPercent'>,
+  targetIsPlayer: boolean,
+  settings: LimbRollSettings = LIMB_ROLL_DEFAULTS,
+): number {
+  const share = part.healthPercent * 0.01;
+  let limb = damage;
+  if (health > 0) limb = share <= 0 ? 0 : (damage / (health * share)) * 100;
+  return targetIsPlayer ? limb * settings.playerLimbDamageMult : limb;
+}
+
+/**
+ * Whether a hit cripples the limb it took (the hit's crippled flag), observed in the original:
+ * only on a part flagged explodable, whose limb value (the part's actor value) is above 0 and
+ * the limb damage takes to 0 or below. No vanilla body part is explodable, so no hit cripples
+ * there; kept for the hit's flags as the engine computes them.
+ */
+export function cripplesLimb(
+  part: Pick<BodyPart, 'flags'>,
+  limbValue: number,
+  damage: number,
+): boolean {
+  return (part.flags & BodyPartFlag.explodable) !== 0 && limbValue > 0 && limbValue - damage <= 0;
+}
 
 /** What a killing blow does to the limb it hit. */
 export interface LimbRoll {

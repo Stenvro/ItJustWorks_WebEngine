@@ -16,17 +16,17 @@ code (comments left out), or the sweep's own table says why nothing more reads i
 each item is how many records (triangles, attacks) use it. The mechanics part is kept by hand
 against docs/ai.md and the conformance suites (tests/conformance/ai/).
 
-## Count (2026-11-02, round 4)
+## Count (2026-11-03, round 4b)
 
 | Part                    | Items | Done | Open |
 | ----------------------- | ----: | ---: | ---: |
 | Packages (data)         |   186 |  186 |    0 |
 | NPCs, races (data)      |    19 |   19 |    0 |
-| Idle markers, furniture |    25 |   22 |    3 |
+| Idle markers, furniture |    25 |   24 |    1 |
 | Navmeshes (data)        |    12 |   11 |    1 |
 | Game settings           |   190 |  190 |    0 |
 | Mechanics (by hand)     |    24 |   13 |   11 |
-| Total                   |   456 |  441 |   15 |
+| Total                   |   456 |  443 |   13 |
 
 Round 1 wrote the sweep and this list; Can Pickup Items (RACE DATA) became read: only a race that
 can pick up items runs the combat tree's Acquire Weapon.
@@ -90,6 +90,19 @@ Round 4 (2026-11-02) read them from the original: fTrackSpeed is the face's eye 
 eyes turn to their look at most this many radians a second on each axis: src/animation/face.ts,
 docs/animation.md "Faces"); fTrackDeadZoneXY / Z are registered and never read (inert).
 
+Round 4b (2026-11-03; docs/ai.md, "Marker keywords, Disables Activation, Loose Only, Found"):
+
+- FURN marker keyword (FNMK: the two chopping blocks): a marker with a keyword is only for an
+  actor with it, who takes it before the others (src/ai/furniture-markers.ts markerRank; the
+  headsmen carry isExecutioner, MQ101's officer isExecutionerGuard).
+- FURN Disables Activation (the dragon priest's coffin marker, the Tentacle Word burn marker):
+  no prompt, the player does not use it (activation-prompt.ts).
+- Both are their names' plain readings and the data's (TODO(M13)): the original's furniture
+  activation and prompt text read neither, where it does was not found.
+- Still open: IDLM Loose Only (the original's Use Idle Marker procedure, the walk onto a marker
+  and the sandbox's marker search read no such bit) and the navmesh flag Found (its path search
+  set-up and step cost, which reads Water and Preferred, read no such bit).
+
 ## Packages
 
 - [x] Procedures (30 of 30 the data runs): every one has a runner (src/ai/procedure-runs.ts
@@ -140,14 +153,15 @@ docs/animation.md "Faces"); fTrackDeadZoneXY / Z are registered and never read (
 ## Idle markers and furniture
 
 - [x] IDLM: idles, timer, Run In Sequence, Do Once, Ignored By Sandbox, children can use.
-- [ ] IDLM flag Loose Only (72 markers): open; its meaning is not documented (round 3, above).
+- [ ] IDLM flag Loose Only (72 markers): open; its meaning is not documented, and the code
+      looked at in the original does not read it (round 4b, above).
 - [x] FURN: marker types (sit, sleep, lean), entry points (front, behind, left, right, up),
       disabled entries, the can-sit / sleep / lean bits, perch, Ignored By Sandbox, children can
       use (src/shell/actor-furniture.ts, actor-flight.ts).
 - [x] FURN Must Exit To Talk (184): the actor gets up to talk with the player (round 2).
 - [x] FURN interaction keyword (KNAM, 467): only actors with the keyword use it (round 3).
-- [ ] FURN marker keyword (FNMK, 2): not read.
-- [ ] FURN Disables Activation (2): not read.
+- [x] FURN marker keyword (FNMK, 2): a marker only for actors with its keyword (round 4b).
+- [x] FURN Disables Activation (2): no prompt for the player (round 4b).
 
 ## Navmeshes
 
@@ -156,7 +170,8 @@ docs/animation.md "Faces"); fTrackDeadZoneXY / Z are registered and never read (
       combat-subtrees.ts, src/world/navmesh.ts). Skyrim's navmeshes have no ladder or jump links
       beyond the ledges.
 - [ ] Triangle flag Found (3.15 million triangles): not read. TODO(M13): whether the game reads
-      it (xEdit names it; it is set on nearly every triangle).
+      it (xEdit names it; it is set on nearly every triangle; the original's path search set-up
+      and step cost do not: round 4b).
 
 ## Game settings
 
@@ -206,6 +221,7 @@ the readers ask for by name.
 
 1. Avoidance: the engine's way round and who yields; what the advanced avoidance adds (the race
    flag's reading is the plain one).
-2. IDLM Loose Only (72 markers), FURN marker keyword (FNMK, 2), FURN Disables Activation (2).
+2. IDLM Loose Only (72 markers) and the navmesh flag Found: where the original reads them
+   (round 4b ruled out the idle marker procedure, the sandbox's search and the path cost).
 3. The mechanics left by hand (Continue If PC Near's reach, sandbox radii, the light's sum, NPC
    crimes, the follow offset).

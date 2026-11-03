@@ -27,6 +27,7 @@ import {
 } from '../ai/idle-records.ts';
 import { aiSettingsOf } from '../ai/ai-settings.ts';
 import { idleLoopSeconds } from '../ai/ambient-idles.ts';
+import { markerRank } from '../ai/furniture-markers.ts';
 import type { SandboxSpot } from '../ai/package-runtime.ts';
 import { parseNif } from '../formats/nif/nif.ts';
 import type { Vec3 } from '../render/math.ts';
@@ -75,6 +76,8 @@ interface WorldMarker {
   readonly animationType: number;
   /** FurnitureEntry: the ways in it allows. */
   readonly entries: number;
+  /** FURN FNMK: only an actor with this keyword takes the marker (undefined: any). */
+  readonly keyword?: number;
 }
 
 interface FurnitureInfo {
@@ -722,7 +725,8 @@ export class ActorFurniture {
       }
       if (using) await this.leave(user);
       const info = await this.#info(furniture);
-      const chosen = info && this.#choose(info, user.position, options.types);
+      const keywords = info && (await this.#markerKeywords(info, actor));
+      const chosen = info && this.#choose(info, user.position, options.types, keywords);
       if (!info || !chosen) return false;
       const { marker, entry } = chosen;
       const use: Use = {
@@ -1034,22 +1038,41 @@ export class ActorFurniture {
     });
   }
 
-  /** The free active marker of the types nearest the actor, and its entry that faces it. */
+  /**
+   * The free active marker of the types nearest the actor, and its entry that faces it. With
+   * `keywords` (the markers' keywords the actor has: FURN FNMK), a marker with a keyword is only
+   * for an actor with it, taken before the others (src/ai/furniture-markers.ts markerRank).
+   */
   #choose(
     info: FurnitureInfo,
     from: Vec3,
     types: number | undefined,
+    keywords?: ReadonlySet<number>,
   ): { marker: WorldMarker; entry: number } | undefined {
-    let best: { marker: WorldMarker; entry: number; distance: number } | undefined;
+    let best: { marker: WorldMarker; entry: number; rank: number; distance: number } | undefined;
     for (const marker of info.markers) {
       if (types !== undefined && (marker.animationType & types) === 0) continue;
-      if (this.inUse(info.reference, marker.index)) continue;
+      const rank = markerRank(marker.keyword, keywords);
+      if (rank === undefined || this.inUse(info.reference, marker.index)) continue;
       const entry = facingEntry(marker, from);
       if (entry === undefined) continue;
       const distance = Math.hypot(marker.position[0] - from[0], marker.position[1] - from[1]);
-      if (!best || distance < best.distance) best = { marker, entry, distance };
+      if (!best || rank < best.rank || (rank === best.rank && distance < best.distance))
+        best = { marker, entry, rank, distance };
     }
     return best && { marker: best.marker, entry: best.entry };
+  }
+
+  /** The keywords of a furniture's markers (FNMK) that the actor has. */
+  async #markerKeywords(info: FurnitureInfo, actor: number): Promise<ReadonlySet<number>> {
+    const held = new Set<number>();
+    const runtime = this.#options.session.scriptsReady;
+    for (const marker of info.markers) {
+      const keyword = marker.keyword;
+      if (keyword === undefined || held.has(keyword)) continue;
+      if (runtime && (await runtime.hasKeyword(actor, keyword))) held.add(keyword);
+    }
+    return held;
   }
 
   /** A placed furniture's active markers in the world, read once. */
@@ -1108,13 +1131,15 @@ export class ActorFurniture {
         position.offset[2] > SEAT_HEIGHT_MAX,
       );
       const allowed = furniture.entryPoints[index]?.entries ?? position.entryPoints;
-      const disabled = markerData(furniture, index)?.disabledEntries ?? 0;
+      const data = markerData(furniture, index);
+      const disabled = data?.disabledEntries ?? 0;
       markers.push({
         index,
         position: placed.position,
         heading: placed.heading,
         animationType: furniture.entryPoints[index]?.type ?? position.animationType,
         entries: allowed & ~disabled,
+        ...(data?.keyword !== undefined && { keyword: data.keyword }),
       });
     });
     return { reference, base, markers };

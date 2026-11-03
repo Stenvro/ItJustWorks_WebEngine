@@ -3,7 +3,9 @@ import { BodyPartFlag } from '../../world/body-part-data.ts';
 import {
   decapitationLaunch,
   faceKeepsPartition,
+  cripplesLimb,
   HEAD_LIMB,
+  limbDamage,
   limbGone,
   pieceShowsPartition,
   redressing,
@@ -77,5 +79,25 @@ describe('dismemberment', () => {
       dismember: false,
       explode: false,
     });
+  });
+
+  it('takes a share of the limb by the damage and cripples only an explodable limb', () => {
+    // 20 damage on 100 health at a part of half the health: 40 percent of the limb.
+    expect(limbDamage(20, 100, { healthPercent: 50 }, false)).toBeCloseTo(40);
+    // The player takes fCombatPlayerLimbDamageMult (0.5) of it.
+    expect(limbDamage(20, 100, { healthPercent: 50 }, true)).toBeCloseTo(20);
+    expect(limbDamage(20, 100, { healthPercent: 0 }, false)).toBe(0);
+    expect(limbDamage(20, 0, { healthPercent: 50 }, false)).toBe(20);
+    expect(
+      limbDamage(20, 100, { healthPercent: 50 }, true, {
+        dismemberPartChance: 25,
+        explodePartChance: 5,
+        playerLimbDamageMult: 1,
+      }),
+    ).toBeCloseTo(40);
+    expect(cripplesLimb({ flags: BodyPartFlag.explodable }, 30, 40)).toBe(true);
+    expect(cripplesLimb({ flags: BodyPartFlag.explodable }, 50, 40)).toBe(false);
+    expect(cripplesLimb({ flags: BodyPartFlag.explodable }, 0, 40)).toBe(false);
+    expect(cripplesLimb({ flags: BodyPartFlag.severable }, 30, 40)).toBe(false);
   });
 });

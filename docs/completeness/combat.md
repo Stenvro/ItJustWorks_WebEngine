@@ -13,7 +13,7 @@ item with where it is read); docs/completeness/ai.md says when an item counts as
 mechanics part is kept by hand against docs/ai.md ("Combat", "Combat AI", "Flying") and the
 conformance suites (tests/conformance/combat/).
 
-## Count (2026-11-02, round 4)
+## Count (2026-11-03, round 4b)
 
 | Part                     | Items | Done | Open |
 | ------------------------ | ----: | ---: | ---: |
@@ -21,9 +21,9 @@ conformance suites (tests/conformance/combat/).
 | Attack data (ATKD, ATKE) |    16 |   16 |    0 |
 | Race combat (DATA, ATKR) |    15 |   15 |    0 |
 | Behaviour tree actions   |    63 |   63 |    0 |
-| Game settings            |   409 |  400 |    9 |
+| Game settings            |   410 |  410 |    0 |
 | Mechanics (by hand)      |    23 |   15 |    8 |
-| Total                    |   561 |  544 |   17 |
+| Total                    |   562 |  554 |    8 |
 
 Round 1 wrote the sweep and this list, and built down:
 
@@ -115,6 +115,15 @@ Round 4 (2026-11-02) read them from the original (docs/ai.md, "Blocking", "Stagg
 - fConcussionTimer, fCombatSneakAttackBonusMult, fCombatDamageBonusSneakingMult: registered and
   never read (inert).
 
+Round 4b (2026-11-03) read the last nine from the original (docs/ai.md, "The engine's built-in
+game settings"): fCombatPlayerLimbDamageMult (the player's limb damage is half), with
+iCombatDismemberPartChance and iCombatExplodePartChance now read by name for the limb roll;
+fDeathForceSpellImpactMult (an aimed fire-and-forget spell's death push); fBowZoomStaminaDrainMult
+and the built-in fBowZoomStaminaRegenDelay (the bow zoom's drain, the hold once it empties
+stamina). fCombatFollowRadiusMult, fAIUseWeaponDistance and
+fCombatThreatProximityExplosionAvoidTime are registered and never read; fKillCamBaseOdds is read
+only by a function nothing calls (all four inert).
+
 ## Combat style (CSTY)
 
 - [x] CSGD: offensive, defensive and group offensive mults, the six equipment score mults,
@@ -159,26 +168,32 @@ Round 4 (2026-11-02) read them from the original (docs/ai.md, "Blocking", "Stagg
 
 The load order's combat settings (120: fCombat*, stagger, block, bash, power attacks, knockback,
 kill camera, bleedout, confidence, flee, sneak damage, death force, bows, projectiles, mounted)
-and 289 built-in ones the readers ask for by name.
+and 290 built-in ones the readers ask for by name.
 
-- [x] 111 of 120 plugin settings (13 of them inert: never read, or an earlier game's grenades and
-      mines) and all 289 built-in ones; round 2: fMountedMaxLookingDown; round 3:
-      fPowerAttackCoolDownTime, fPowerAttackDefaultBonus; round 4 (below).
+- [x] 120 of 120 plugin settings (17 of them inert: never read, read only by code nothing
+      calls, or an earlier game's grenades and mines) and all 290 built-in ones; round 2:
+      fMountedMaxLookingDown; round 3: fPowerAttackCoolDownTime, fPowerAttackDefaultBonus;
+      rounds 4 and 4b (below).
 - [x] iStaggerAttackChance (50): a plain melee hit's stagger is taken on its percent roll
       (stagger.ts staggerTaken; round 4).
 - [x] fKnockbackTime, fKnockbackDamageMult, fKnockbackForceMax (with the built-in
       fKnockbackDamageBase, AgilBase, AgilMult): an unblocked hit's push back (knockback.ts;
       round 4). fConcussionTimer: registered, never read (inert).
-- [ ] fKillCamBaseOdds (1): not read (the kill moves' odds are the INI's and the perks').
+- [x] fKillCamBaseOdds (1): read in the original only by the kill camera's odds by level, which
+      nothing calls (inert; round 4b).
 - [x] fBlockSkillMult, fBlockAmountWeaponMult, fBlockMax: registered, never read (inert); the
       block's cap is fPlayerMaxResistance, its skill scale fArmorRatingBase / Max (round 4).
 - [x] fCombatSneakAttackBonusMult, fCombatDamageBonusSneakingMult: registered, never read
       (inert; round 4).
-- [ ] iCombatDismemberPartChance, iCombatExplodePartChance: the limb roll keeps its defaults
-      (dismemberment.ts), the load order's values are not read; left to the dismemberment work.
-- [ ] fCombatPlayerLimbDamageMult, fCombatFollowRadiusMult, fAIUseWeaponDistance (15000),
-      fCombatThreatProximityExplosionAvoidTime, fDeathForceSpellImpactMult,
-      fBowZoomStaminaDrainMult: not read.
+- [x] iCombatDismemberPartChance, iCombatExplodePartChance, fCombatPlayerLimbDamageMult: read by
+      name (combat-settings.ts); the limb roll and the limb damage (dismemberment.ts rollLimb,
+      limbDamage, cripplesLimb; round 4b).
+- [x] fCombatFollowRadiusMult, fAIUseWeaponDistance (15000),
+      fCombatThreatProximityExplosionAvoidTime: registered, never read (inert; round 4b).
+- [x] fDeathForceSpellImpactMult: a spell's death push (death-force.ts spellDeathForce,
+      magic-projectiles.ts; round 4b).
+- [x] fBowZoomStaminaDrainMult, with the built-in fBowZoomStaminaRegenDelay: the bow zoom's
+      stamina drain and its emptying (bow-zoom.ts, time-flow.ts; round 4b).
 
 ## Mechanics (by hand)
 
@@ -212,8 +227,6 @@ and 289 built-in ones the readers ask for by name.
 
 1. The knockback's fading (held for fKnockbackTime here) and which stage of a hit's damage it
    reads; the timed bash's reaction (TODO(M13), docs/ai.md "Staggers").
-2. iCombatDismemberPartChance and iCombatExplodePartChance (dismemberment.ts).
-3. fCombatPlayerLimbDamageMult, fCombatFollowRadiusMult, fAIUseWeaponDistance,
-   fCombatThreatProximityExplosionAvoidTime, fDeathForceSpellImpactMult,
-   fBowZoomStaminaDrainMult, fKillCamBaseOdds.
-4. The rates' unit (acceleration, deceleration) and what the advanced avoidance adds.
+2. The mechanics left by hand (the confidence roll's use, the block's timing, the blocked hit's
+   stagger, line of fire, the casters' order, flee past a load door, the magic kill camera).
+3. The rates' unit (acceleration, deceleration) and what the advanced avoidance adds.

@@ -59,6 +59,8 @@ import type { SoundInstance } from '../audio/sound-instance.ts';
 import { meshPath } from '../world/actors.ts';
 import { EffectArchetype, type MagicEffectRecord } from '../world/magic-effects.ts';
 import { Delivery } from '../world/magic-records.ts';
+import { ActorValue } from '../world/actor-values.ts';
+import { CastType } from '../world/spell-records.ts';
 import {
   ExplosionFlag,
   ProjectileFlag,
@@ -102,6 +104,16 @@ export interface MagicProjectilesOptions {
    * hostile effect of it is Painless (its target does not cry out).
    */
   readonly hit?: (target: number, caster: number, painful: boolean) => void;
+  /**
+   * An aimed fire-and-forget spell's projectile killed `target` by `damage`, or hit it dead
+   * already: its ragdoll is pushed along `direction` (actor-combat.ts spellDeathPush).
+   */
+  readonly deathPush?: (
+    target: number,
+    damage: number,
+    direction: Vec3,
+    alreadyDead: boolean,
+  ) => void;
   /** What shows for a moment (muzzle flashes, explosions, impacts, cones' waves). */
   readonly fx?: MagicFx;
   /** An impact on a surface: its sound and decal; the impact (IPCT) it was. */
@@ -1066,10 +1078,25 @@ export class MagicProjectiles {
       if (effects.length > 0)
         await casting.deliver(delivered, delivered.caster, { at: point, effects });
     } else if (actor) {
-      await this.#reach(runtime, delivered, actor.reference, {
+      // An aimed fire-and-forget spell's kill (or a hit on the dead) pushes the ragdoll along
+      // its flight (death-force.ts). TODO(M13): the original decides the kill before the spell
+      // takes hold, by the sum of its hostile Health effects; here it is the Health it took.
+      const deathPush = this.#options.deathPush;
+      const pushes =
+        deathPush !== undefined &&
+        delivered.item.delivery === Delivery.aimed &&
+        delivered.item.castType === CastType.fireAndForget;
+      const reference = actor.reference;
+      const before = pushes ? await healthOf(runtime, reference) : 0;
+      const alreadyDead = pushes && (await runtime.actors.isDead(reference));
+      await this.#reach(runtime, delivered, reference, {
         facing: facing(actor, [point[0] - aim[0], point[1] - aim[1], point[2] - aim[2]]),
         ...(seconds !== undefined && { seconds }),
       });
+      if (pushes && (alreadyDead || (await runtime.actors.isDead(reference)))) {
+        const damage = Math.max(0, before - (await healthOf(runtime, reference)));
+        deathPush(reference, damage, aim, alreadyDead);
+      }
     } else if (hit?.reference !== undefined) {
       // An object hit takes the spell (its scripts hear of it; a destructible one's health
       // takes its Damage Health effects: the magic engine's, destruction-engine.ts).
@@ -1368,6 +1395,11 @@ function placementOf(flight: Flight): Float32Array {
     flight.position,
     vx === 0 && vy === 0 && vz === 0 ? [0, 1, 0] : normalize(flight.velocity),
   );
+}
+
+/** An actor's Health now. */
+async function healthOf(runtime: ScriptRuntime, reference: number): Promise<number> {
+  return (await runtime.actors.value(reference, ActorValue.health)).current;
 }
 
 /** Whether a target faces a point (within 90° of its heading: a ward meets it). */
