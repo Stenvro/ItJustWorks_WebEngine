@@ -351,6 +351,7 @@ export class ActorBodies {
         if (velocity) physics.setBodyVelocity(body, velocity.linear, velocity.angular);
       });
     }
+    physics.liftStill(entry.placed);
     entry.articulation = new Articulation(entry.placed, entry.pose, entry.world);
     const first = entry.placed.bodies[0]?.body.translation();
     if (first) entry.limpFrom = [first.x, first.y, first.z];
@@ -683,6 +684,7 @@ export class ActorBodies {
           const velocity = entry.velocities[i];
           if (velocity) physics.setBodyVelocity(body, velocity.linear, velocity.angular);
         });
+        physics.liftStill(entry.placed);
       } else physics.keyframe(entry.placed);
     }
     if (!rigid || !active) {

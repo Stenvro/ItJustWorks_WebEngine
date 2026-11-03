@@ -72,6 +72,7 @@ import type { WaterHarm } from '../gameplay/water-hazard.ts';
 import { floatSpeed, submersion, SWIM_SUBMERSION, swims } from '../gameplay/swimming.ts';
 import {
   SPLASH_DEFAULTS,
+  WATER_KNOCKDOWN_DEFAULTS,
   WATER_RULE_DEFAULTS,
   type SplashSettings,
   type WaterRules,
@@ -219,6 +220,15 @@ export async function readPlayerData(
       ragdollExtremity:
         settings.number('fBuoyancyMultExtremity') ?? WATER_RULE_DEFAULTS.ragdollExtremity,
       splash: splashSettings(settings),
+      knockdown: {
+        velocity: settings.number('fWaterKnockdownVelocity') ?? WATER_KNOCKDOWN_DEFAULTS.velocity,
+        sizes: [
+          settings.number('fWaterKnockdownSizeSmall') ?? WATER_KNOCKDOWN_DEFAULTS.sizes[0],
+          settings.number('fWaterKnockdownSizeNormal') ?? WATER_KNOCKDOWN_DEFAULTS.sizes[1],
+          settings.number('fWaterKnockdownSizeLarge') ?? WATER_KNOCKDOWN_DEFAULTS.sizes[2],
+          settings.number('fWaterKnockdownSizeVeryLarge') ?? WATER_KNOCKDOWN_DEFAULTS.sizes[3],
+        ],
+      },
       waterMaterials,
       waterMaterial: materialId('Water'),
       harms,

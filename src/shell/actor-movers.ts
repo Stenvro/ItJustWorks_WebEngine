@@ -88,7 +88,7 @@ import { controllerSettings, controllerShape } from './player.ts';
 import { actorFell, waterHarmed } from './time-flow.ts';
 import { floatSpeed, submersion, swims } from '../gameplay/swimming.ts';
 import { WaterHazard } from '../gameplay/water-hazard.ts';
-import type { WaterPhysics } from '../physics/water-physics.ts';
+import { currentPush, type WaterPhysics } from '../physics/water-physics.ts';
 import { materialId } from '../world/material-type.ts';
 import type { Terminal } from './terminal.ts';
 
@@ -2503,6 +2503,23 @@ export class ActorMovers {
     const swimming =
       canSwim && at.surface !== undefined && swims(at.submersion, character.swimming);
     character.swimming = swimming;
+    // A strong current carries it off (or any current it falls into fast).
+    if (at.type !== undefined && at.submersion > 0) {
+      const feet = character.feet;
+      const push = currentPush(
+        water.current(at.type, feet[0], feet[1]),
+        {
+          raceFlags: mover.staged.placed.look.raceFlags,
+          raceSize: mover.race?.size ?? RaceSize.medium,
+          inAir: !character.grounded && !swimming,
+          verticalSpeed: character.verticalSpeed,
+          velocity: mover.velocity,
+          topSpeed: this.#types(mover)?.run.run.forward ?? 0,
+        },
+        water.rules.knockdown,
+      );
+      if (push) character.knockBack(push, step);
+    }
     // Harmful water (none in vanilla): its damage and spell.
     let hazard = this.#hazards.get(reference);
     if (!hazard && at.type !== undefined) {

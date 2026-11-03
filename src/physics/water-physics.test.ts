@@ -5,6 +5,7 @@ import { CollisionMatrix, Layer } from './collision-layers.ts';
 import { GRAVITY, initPhysics, PhysicsWorld } from './physics-world.ts';
 import {
   buoyancyForce,
+  currentPush,
   floatingShare,
   splashSize,
   submergedShare,
@@ -195,5 +196,37 @@ describe('water physics', () => {
     expect(z).toBeLessThan(-200);
     // Slowed by the water: well under the speed of a free fall.
     expect(velocity.z).toBeGreaterThan(-9);
+  });
+});
+
+describe('a current carrying an actor off (currentPush, observed in the original)', () => {
+  const walker = {
+    raceFlags: 0x100,
+    raceSize: 1,
+    inAir: false,
+    verticalSpeed: 0,
+    velocity: [0, 0] as const,
+    topSpeed: 300,
+  };
+
+  it('carries one off where the current beats fWaterKnockdownVelocity × its size', () => {
+    // Normal size: 10 × 0.5 = 5 Havok units a second.
+    expect(currentPush([4, 0, 0], walker)).toBeUndefined();
+    const push = currentPush([6, 0, 0], walker);
+    expect(push?.[0]).toBeCloseTo(6 * HAVOK_SCALE);
+    // Small (0.25): 2.5 is enough; very large (1): 10 is not.
+    expect(currentPush([3, 0, 0], { ...walker, raceSize: 0 })).toBeDefined();
+    expect(currentPush([9, 0, 0], { ...walker, raceSize: 3 })).toBeUndefined();
+  });
+
+  it('never carries a race that only swims', () => {
+    expect(currentPush([50, 0, 0], { ...walker, raceFlags: 0x40 })).toBeUndefined();
+    expect(currentPush([50, 0, 0], { ...walker, raceFlags: 0x40 | 0x100 })).toBeDefined();
+  });
+
+  it('a weak current carries one falling into it fast, with its own speed, at most its top', () => {
+    const falling = { ...walker, inAir: true, verticalSpeed: -800, velocity: [200, 0] as const };
+    expect(currentPush([1, 0, 0], { ...falling, verticalSpeed: -600 })).toBeUndefined();
+    expect(currentPush([1, 0, 0], falling)?.[0]).toBeCloseTo(Math.min(300, HAVOK_SCALE + 200));
   });
 });

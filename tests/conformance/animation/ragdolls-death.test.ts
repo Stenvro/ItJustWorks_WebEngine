@@ -197,10 +197,11 @@ describe.skipIf(!hasGamedata())('Hulda killed at the bar counter (headless simul
 
   // In the other phases her upper body tips onto the counter while her hips bend to their 45°
   // limit and her knees straighten to theirs: her legs stand as a locked strut (feet flat at the
-  // ankles' limit, head at 96–99 units). Rapier at 4 or 5 substeps (Havok's world solves with
-  // four iterations) leaves the strut loose enough to buckle and she slumps in every phase, but
-  // the race skeletons' ragdolls then settle worse (tools/ragdoll-info.ts: at 5, 46 of 52 still
-  // and 47 of 52 pushed come to rest within 20 s, against 51 and 48 at 8). Easing every limit
+  // ankles' limit, head at 96–99 units). The original sets her ragdoll up with nothing of its
+  // own (its files' constraints, the world's solver; made dynamic, its still bodies lifted:
+  // PhysicsWorld.liftStill), and with all of that Rapier at four substeps (Havok's world solves
+  // with four iterations) keeps her standing too (head at 91–93 units); only two buckle the
+  // strut, and fewer substeps settle the race skeletons' ragdolls worse. Easing every limit
   // the joints lie past (by tau of the error a step, as Havok's soft limits correct) changes
   // nothing: the strut's joints lie at their limits, not past them. TODO(M13): Havok's solver's
   // give at four iterations with the settling of the eight.
