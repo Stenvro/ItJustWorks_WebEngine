@@ -709,7 +709,7 @@ export class ActorMovers {
     }
     // A door in its way (the navmesh marks only load doors): it opens it and waits, or the door
     // is shut to it and it goes round.
-    const ahead = this.#doorAhead(mover);
+    const ahead = this.#doorAhead(mover, travel.follower.ahead);
     if (ahead?.passage === 'opening') {
       travel.follower.hold();
       const target = travel.follower.target;
@@ -1066,11 +1066,16 @@ export class ActorMovers {
   }
 
   /**
-   * A door just ahead of an actor on its way (a ray at its chest along the way it goes): opened
-   * if it may open it (the door's passage), and where it is.
+   * A door just ahead of an actor on its way (a ray at its chest along the way it goes, no
+   * farther than the way left to it and its radius): opened if it may open it (the door's
+   * passage), and where it is. A door past the way's end is not in its way: MQ106's Delphine,
+   * walking up to her wardrobe, met its false back (a door, shut until the player closes her
+   * room's door) beyond the spot she was making for, gave up her travel there, and her later
+   * ways kept off that door after it opened.
    */
   #doorAhead(
     mover: Mover,
+    way: readonly Vec3[],
   ): { readonly door: number; readonly passage: DoorPassage; readonly at: Vec3 } | undefined {
     const physics = this.#world?.physics;
     const direction = this.#requests.get(mover.staged.reference)?.direction;
@@ -1078,10 +1083,17 @@ export class ActorMovers {
     const length = Math.hypot(direction[0], direction[1]);
     if (length < 1e-6) return undefined;
     const [x, y, z] = mover.character.feet;
+    let left = 0;
+    let from: Vec3 = [x, y, z];
+    for (const point of way) {
+      left += Math.hypot(point[0] - from[0], point[1] - from[1]);
+      from = point;
+    }
+    const radius = mover.character.shape.radius;
     const hit = physics.raycast(
       [x, y, z + DOOR_RAY_HEIGHT],
       [direction[0] / length, direction[1] / length, 0],
-      mover.character.shape.radius + DOOR_LOOKAHEAD,
+      radius + Math.min(DOOR_LOOKAHEAD, left),
       Layer.charController,
       mover.character.collider,
     );
