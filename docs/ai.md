@@ -297,7 +297,11 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   line ([Talking](#talking)). TODO(M13): whether actors bumping each other react too.
 - **Doors** (`src/shell/actor-doors.ts`): the navmeshes mark only load doors (all 1,220 door
   triangles of the interiors' navmeshes are load doors), so an actor finds a door in its way by
-  a ray at its chest along its way, 96 units beyond its shape. A door that is shut opens with
+  a ray at its chest along its way, 96 units beyond its shape, no farther than the way it has
+  left: a door past its way's end is not in its way (MQ106's Delphine, walking up to her
+  wardrobe, met its false back beyond the spot she was making for while it was still shut, gave
+  up that travel and kept off the door for 30 seconds after it opened, so her room's scene
+  waited a minute for her). A door that is shut opens with
   its open sequence and sound and stays open while actors come to it, shutting 3 seconds after
   the last (its close sequence and sound; TODO(M13): when the engine shuts them is not
   documented); one the player opened stays open. The actor waits before it, facing its way,

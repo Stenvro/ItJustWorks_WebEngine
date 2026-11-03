@@ -221,25 +221,38 @@ describe.skipIf(!hasGamedata())('MQ104 Dragon Rising', () => {
             (hit) =>
               hit.target === dragon && hit.projectile !== undefined && hit.aggressor !== PLAYER_REF,
           ).length;
+      // The hits are counted over the whole fight, in each second it spends wholly in the air:
+      // its approach and its later flights alike. How soon it first lands varies with the
+      // fight's draws (found 2026-11-03: down within 10 s, before an arrow had met it).
       let hitInTheAir = 0;
-      let down = false;
-      for (let second = 0; second < 120 && !down; second++) {
+      const second = async (done: () => boolean = () => false): Promise<boolean> => {
         const before = arrowHits();
         const flying = flight.isFlying(dragon);
-        down = await sim.until(landed, 1);
+        const met = await sim.until(done, 1);
         if (flying && flight.isFlying(dragon)) hitInTheAir += arrowHits() - before;
-      }
+        return met;
+      };
+      let down = false;
+      for (let seconds = 0; seconds < 120 && !down; seconds++) down = await second(landed);
       expect(down).toBe(true);
-      expect(hitInTheAir).toBeGreaterThan(0);
       let wounded = false;
-      for (let second = 0; second < 60 && !wounded; second++) {
-        await sim.step(1);
+      for (let seconds = 0; seconds < 60 && !wounded; seconds++) {
+        await second();
         wounded = (await health()) < full;
       }
       expect(wounded).toBe(true);
+      // It takes off again between its ground attacks; the fight goes on until an arrow has met
+      // it in the air.
+      const alive = async (): Promise<boolean> => !(await sim.runtime.actors.isDead(dragon));
+      for (let seconds = 0; seconds < 300 && hitInTheAir === 0 && (await alive()); seconds++) {
+        await second();
+      }
+      expect(hitInTheAir).toBeGreaterThan(0);
       // The player finishes it on the ground (TODO(M13): the player's own blows; the sim has no
       // aimed attacks yet): its death sets 80, the guards gather round it (DragonDeathScene).
-      await sim.until(landed, 120);
+      for (let seconds = 0; seconds < 120 && !landed() && (await alive()); seconds++) {
+        await second(landed);
+      }
       await sim.kill(dragon, PLAYER_REF);
       expect(await sim.until(() => sim.stageDone(MQ104, 80), 20)).toBe(true);
       // The player walks up to it: within its deathFXrange (1,024) MQ104DragonScript sets 85.
