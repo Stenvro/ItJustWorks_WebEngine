@@ -330,6 +330,8 @@ interface Travel {
   /** How long others in its way have kept it from going on (seconds), and the last that did. */
   blockedFor: number;
   blockedBy: AvoidNode | undefined;
+  /** Where it was held on its way by what the navmesh does not know (its searches go round). */
+  readonly held: AvoidNode[];
   /** It asked the player standing in its way to move (once a travel, before it goes round). */
   askedPlayer: boolean;
   /** Its path start was performed (ActionPathStart: the turn it sets out with). */
@@ -368,8 +370,16 @@ function navGoal(
   return { goal: on, arrive: Math.max(arrive - off, NAVMESH_ARRIVE) };
 }
 
+/** The avoid nodes a travel's search goes round: the last actor in its way, where it was held. */
+function avoidsOf(travel: Travel): { readonly avoid?: readonly AvoidNode[] } {
+  const avoid = travel.blockedBy ? [travel.blockedBy, ...travel.held] : travel.held;
+  return avoid.length > 0 ? { avoid } : {};
+}
+
 /** A stuck actor searches its way again this many times before it gives up. */
 const SEARCHES = 3;
+/** fDefaultAvoidNodeCost: each unit of a step through a static avoid node costs this many. */
+const STATIC_AVOID_COST = 32;
 /** An actor beyond the high process walks its paths this wide (units; a human's radius). */
 const WALKER_RADIUS = 20;
 /** It keeps to the navmesh within this of where it steps (units). */
@@ -579,6 +589,7 @@ export class ActorMovers {
         pace: options.pace,
         blockedFor: 0,
         blockedBy: undefined,
+        held: [],
         askedPlayer: false,
         pathStarted: false,
         heading: options.heading,
@@ -684,7 +695,7 @@ export class ActorMovers {
           closedDoors: this.#closedFor(reference, travel),
           ...this.#raceRules(reference, mover.staged),
           blocked: this.#blockedFor(reference, travel),
-          ...(travel.blockedBy && { avoid: [travel.blockedBy] }),
+          ...avoidsOf(travel),
           obstacles: this.#options.obstacles?.index,
         });
       const path =
@@ -737,6 +748,7 @@ export class ActorMovers {
       const target = travel.follower.target;
       travel.follower = undefined;
       this.#requests.delete(reference);
+      if (target) this.#heldAt(mover, travel, target);
       // Still stuck on a path searched wider (wedged where seeking a way round does not get it
       // out): set on the point it went to, if that is near and has a floor.
       // TODO(M13): the engine's own way out (not documented).
@@ -1093,6 +1105,30 @@ export class ActorMovers {
     if (changes && !obstaclesTouch(changes, follower.remaining, follower.path.complete)) return;
     travel.follower = undefined;
     travel.searches = Math.max(0, travel.searches - 1);
+  }
+
+  /**
+   * An actor stuck on its way towards `target`, held by what the navmesh does not know (a static
+   * enabled across its way after its path was searched: Helgen's fallen rubble, which reaches out
+   * past the collision boxes cutting the navmesh round it, wedged Hadvar between the two): its
+   * next searches go round the place it was held, as the original's static avoider does (docs/ai.md,
+   * "Blocked"): an avoid node one radius ahead of the actor, at fDefaultAvoidNodeCost. Each place
+   * it was held on this travel is kept. TODO(M13): the node's own width (ours: the actor's radius
+   * and fAvoidNodeRadiusAdd, as for an actor in its way), and the avoider's own trigger (a window
+   * of recent updates against fAcceptableErrorRatio; ours: the path follower's stuck check).
+   */
+  #heldAt(mover: Mover, travel: Travel, target: Vec3): void {
+    const [x, y, z] = mover.character.feet;
+    const dx = target[0] - x;
+    const dy = target[1] - y;
+    const length = Math.hypot(dx, dy);
+    if (length < 1e-3) return;
+    const radius = mover.character.shape.radius;
+    travel.held.push({
+      at: [x + (dx / length) * radius, y + (dy / length) * radius, z],
+      radius: radius + this.#options.session.ini.number('Pathfinding', 'fAvoidNodeRadiusAdd'),
+      cost: STATIC_AVOID_COST,
+    });
   }
 
   /** The places an actor's search keeps off: doors the navmesh does not mark, shut to it. */

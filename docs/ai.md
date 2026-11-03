@@ -214,8 +214,17 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   it is blocked, whose MovementBlocked handler would put it in an engine-made "movement blocked"
   package (procedure 36; bUseMovementBlockedPackage, off, is read in the actor's update, its role
   not read).
-  TODO(M13): ours searches wider instead of laying a static avoid node (findPath's avoid nodes
-  are laid only on actors, below).
+  Ours lays that node when the path follower finds the actor stuck (above): one radius ahead of
+  it towards the point it was making for, the actor's radius and fAvoidNodeRadiusAdd wide, at
+  cost 32; each node it laid on a travel is kept for that travel's later searches, which also
+  search wider as before (`ActorMovers`, `#heldAt`). Found in the opening: Helgen's fallen rubble
+  (BurntRubbleNoDirt03, enabled by dunCGRubbleDMarker) reaches some 50 units out past the
+  CollisionMarker boxes that cut the navmesh round it; Hadvar, leading the player to the keep
+  as it fell, ran along a box's face into the rubble and stood wedged between the two, his
+  searches finding the same way each time, until he was warped and his scene stopped. Round the
+  node he goes north of the rubble and on.
+  TODO(M13): the avoider's own trigger (the window against fAcceptableErrorRatio) and the
+  node's own width.
 - **Against a wall** (observed in the original): its graph is told what the actor wants,
   not what its controller made of it, whenever the two disagree (motion feedback:
   [animation.md](animation.md#driving-the-graphs)), and the player's graph always
