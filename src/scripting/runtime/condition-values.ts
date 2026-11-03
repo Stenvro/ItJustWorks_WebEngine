@@ -1638,7 +1638,8 @@ async function moreConditionValue(
       ]);
       return self && other ? fullCircle(self.rotation[axis] - other.rotation[axis]) : 0;
     }
-    // GetWithinDistance(reference, distance).
+    // GetWithinDistance(reference, distance). With Use packdata both are the running package's
+    // data inputs (a UseWeapon template's Trigger Ref and Trigger Radius).
     case Fn.getWithinDistance: {
       const [self, other] = await Promise.all([placed(reference), placed(referenceParameter())]);
       if (!self || !other) return 0;
@@ -1647,7 +1648,10 @@ async function moreConditionValue(
         self.position[1] - other.position[1],
         self.position[2] - other.position[2],
       );
-      return flag(distance <= floatParam2(condition));
+      const within = condition.usePackData
+        ? context.packageData?.(condition.param2)
+        : floatParam2(condition);
+      return flag(typeof within === 'number' && distance <= within);
     }
     // Within the place a data input of its running package names (xEdit ptPackdata).
     case Fn.getWithinPackageLocation: {

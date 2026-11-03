@@ -1248,7 +1248,11 @@ game state has there) and for the load order's persistent actors wherever they a
 process: ACHR records in a cell's persistent children, 2,411 in the vanilla load order, 1,653 of
 them living and enabled at the start), each where its package has it now (the placement above,
 from its packages, factions, race and sex, read once). Actors that are not persistent exist only
-with their cells: they are put where their packages have them as their cells load.
+with their cells: they are put where their packages have them as their cells load. An actor
+created in the game (PlaceAtMe, a quest alias's Create Reference) has no plugin reference; the
+game state has it in its space, and it keeps its schedule there as a placed one does (MQ201's
+escape guards, created by Elenwen's office marker and enabled at 220, walk down to the dungeon
+for MQ201EscapeScene; left out, the scene waited for them for good).
 
 The middle-low process also asks the actors the player's location lists as its own (LCTN: its
 references of a location reference type, LCSR/ACSR, and its unique actors, LCUN/ACUN), wherever

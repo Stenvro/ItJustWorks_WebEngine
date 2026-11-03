@@ -156,6 +156,35 @@ export class PlayerFurniture {
   }
 
   /**
+   * A loaded save's player sat in furniture: in it again at once, at its marker (the quick
+   * enter). `resumed`: their graph was put back in the furniture's state, part-way through its
+   * idle, and is not told to enter again. Resolves whether they are in it.
+   */
+  async resume(reference: number, resumed: boolean): Promise<boolean> {
+    if (this.#seated) return false;
+    this.#hold(true);
+    const forced = await this.#forcedPov(reference);
+    if (forced) {
+      this.#pov = this.#play.player.pov;
+      this.#play.player.setPov(forced);
+      this.#play.player.povLocked = true;
+    }
+    const inside = await this.#furniture.use(
+      this.user,
+      reference,
+      () => Promise.resolve(false),
+      () => undefined,
+      { quick: true, ...(resumed && { resumed: true }) },
+    );
+    if (!inside) {
+      this.#stand();
+      return false;
+    }
+    this.#inside = true;
+    return true;
+  }
+
+  /**
    * The player died in the furniture: it lets go of them at once, no exit played (their body
    * falls from it: src/shell/player-death.ts).
    */

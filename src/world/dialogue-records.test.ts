@@ -73,6 +73,18 @@ describe('dialogue records', () => {
     });
   });
 
+  it("read an older info's flags and reset hours from DATA where it has no ENAM", () => {
+    const data = new Uint8Array(8);
+    data.set([0, 0, 0x44, 0]);
+    new DataView(data.buffer).setFloat32(4, 12, true);
+    expect(parseInfo(record([['DATA', data]]))).toMatchObject({ flags: 0x44, resetHours: 32768 });
+    expect(parseInfo(record([['ENAM', bytes(0x1, 0, 0x55, 0x05)]]))).toMatchObject({
+      flags: 0x1,
+      resetHours: 1365,
+    });
+    expect(parseInfo(record([]))).toMatchObject({ flags: 0, resetHours: 0 });
+  });
+
   it('know every topic subtype: its code, its place in the order and its tab', () => {
     expect(DIALOGUE_SUBTYPES).toHaveLength(103);
     expect(new Set(DIALOGUE_SUBTYPES.map((subtype) => subtype.code)).size).toBe(103);

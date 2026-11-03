@@ -283,7 +283,12 @@ each kind. Ours:
   before graphs were kept draws it again as it is loaded.
 - The player's (`WorldSave.player`, `SavedPlayer`): sneaking, the weapon out, getting out of
   their vehicle; with their graphs, as an NPC's. The camera: first or third person and the
-  world's and first person's fields of view (the original's player camera keeps both).
+  world's and first person's fields of view (the original's player camera keeps both). The
+  furniture they sit, sleep or lean in (`furniture`): as their body is there they are in it
+  again at once, at its marker, their graph (put back seated) not told to enter it again, and a
+  movement key gets them up as before. Before, the loaded player's graph sat while nothing held
+  them in the seat. TODO(M13): the camera they had before the furniture forced one is not kept
+  (they stand with the forced one).
 - `flying` (a flier in the air: cruising, hovering, landing): as it loads it is not set on the
   ground but stays where it was saved, and its flight, finding it high above the ground, has it
   cruise on from there (before, MQ104's dragon circling the Western Watchtower came down at

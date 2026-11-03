@@ -1021,8 +1021,18 @@ export class ActorAi {
           },
           packageTarget: (input) => {
             const value = data.inputs.get(input)?.value;
-            return value?.kind === 'singleRef' && value.target.type === TargetType.specificReference
-              ? value.target.value
+            if (value?.kind !== 'singleRef') return undefined;
+            const { target } = value;
+            // A reference alias of the package's quest, or the actor itself, as the procedures
+            // read them (MQ201GuardHitPrisoner's UseWeapon runs while the guard is within its
+            // Trigger Radius of its Trigger Ref, the Prisoner alias: read as no reference, the
+            // guard never struck and MQ201's torture scene waited for him for good).
+            if (target.type === TargetType.referenceAlias) {
+              return aliasReference(data.context?.quest, target.value);
+            }
+            if (target.type === TargetType.self) return actor;
+            return target.type === TargetType.specificReference && target.value !== 0
+              ? target.value
               : undefined;
           },
           // Within the place a location input names (GetWithinPackageLocation): its radius
