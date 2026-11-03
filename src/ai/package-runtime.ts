@@ -432,6 +432,12 @@ export interface ProcedureRun {
    */
   resumedGoal?(): number | undefined;
   setGoal?(point: number | undefined): void;
+  /**
+   * A loaded save's progress inside the procedure's step (a sandbox's activity: what it does,
+   * since when, for how long), once: it goes on with it. setStep keeps it for a save.
+   */
+  resumedStep?(): SavedStep | undefined;
+  setStep?(step: SavedStep | undefined): void;
   /** Whether the package was left: a procedure ends at once. */
   stopped(): boolean;
   /** Waits real seconds (shorter if the package is left meanwhile). */
@@ -584,6 +590,21 @@ export interface SavedPackage {
   readonly fallout?: boolean | undefined;
   /** A procedure's success completed it (Running.finished). */
   readonly finished?: boolean | undefined;
+  /** Its procedure's progress inside its step (ProcedureRun.setStep). */
+  readonly step?: SavedStep | undefined;
+}
+
+/**
+ * A procedure's progress inside its step as a save keeps it: a sandbox's activity (its kind,
+ * the furniture or marker it uses, the game hour it began and how many hours it lasts) and the
+ * sandbox's plan (how lately each kind was done).
+ */
+export interface SavedStep {
+  readonly kind: number;
+  readonly reference?: number | undefined;
+  readonly began: number;
+  readonly hours: number;
+  readonly counts?: readonly number[] | undefined;
 }
 
 /** A package that runs, with its template's tree and its data. */
@@ -604,6 +625,9 @@ interface Running {
   /** The point its procedure goes to (ProcedureRun.setGoal), and a loaded save's, once. */
   goal?: number | undefined;
   resumedGoal?: number | undefined;
+  /** Its procedure's progress inside its step (ProcedureRun.setStep), and a loaded save's, once. */
+  step?: SavedStep | undefined;
+  resumedStep?: SavedStep | undefined;
   /** A scene's package action gave it (not the actor's own choice). */
   readonly fromScene: boolean;
   /** Set when it is left: its tree stops. */
@@ -884,6 +908,7 @@ export class ActorPackages {
       found: [...running.found],
       ranOn,
       ...(running.goal !== undefined && { goal: running.goal }),
+      ...(running.step && { step: running.step }),
       ...(this.#fallingOut === running && { fallout: true }),
       ...(running.finished === true && { finished: true }),
     };
@@ -907,6 +932,8 @@ export class ActorPackages {
       found: new Map(saved.found),
       goal: saved.goal,
       resumedGoal: saved.goal,
+      step: saved.step,
+      resumedStep: saved.step,
       completed: saved.completed,
       ...(saved.finished === true && { finished: true }),
       ended: saved.ended,
@@ -1420,6 +1447,14 @@ export class ActorPackages {
       },
       setGoal: (point) => {
         running.goal = point;
+      },
+      resumedStep: () => {
+        const step = running.resumedStep;
+        running.resumedStep = undefined;
+        return step;
+      },
+      setStep: (step) => {
+        running.step = step;
       },
       stopped: () => this.#looping(running) || isStopped(running),
       wait: (seconds) => this.#wait(running, seconds),

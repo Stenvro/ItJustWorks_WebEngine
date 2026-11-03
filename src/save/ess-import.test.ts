@@ -10,6 +10,7 @@ import { readEss } from '../formats/ess/ess.ts';
 import type { SavedCombat, TempEffectEntry } from '../formats/ess/global-data-tables.ts';
 import { EssWriter, writeSyntheticEss } from '../formats/ess/ess-test-writer.ts';
 import { PapyrusType } from '../formats/ess/papyrus.ts';
+import { WorldRestore } from './world-save.ts';
 import type { GameState } from '../scripting/runtime/game-state.ts';
 import { ObjectHandle } from '../scripting/values.ts';
 import {
@@ -644,8 +645,41 @@ describe('the global data tables of controls, references and sky cells', () => {
         },
       ],
       globalData2: [
-        // 102: nothing shown or used, the journal's tabs switched off.
-        { type: 102, data: new EssWriter().u32(0).u8(0).vsval(0).vsval(0).vsval(0).u8(1).done() },
+        // 100: no countdown running, the next crime's number 6, no crimes.
+        {
+          type: 100,
+          data: new EssWriter()
+            .f32(0)
+            .f32(0)
+            .f32(1)
+            .u32(6)
+            .vsval(0)
+            .vsval(0)
+            .vsval(0)
+            .vsval(0)
+            .vsval(0)
+            .vsval(0)
+            .vsval(0)
+            .done(),
+        },
+        // 102: the journal's tutorial shown (252), nothing used, the journal's tabs switched
+        // off; the help part: no messages waiting, "Look" done, none showing (−2).
+        {
+          type: 102,
+          data: new EssWriter()
+            .u32(1)
+            .u32(252)
+            .u8(0)
+            .vsval(0)
+            .vsval(0)
+            .vsval(0)
+            .u8(1)
+            .vsval(0)
+            .vsval(1)
+            .wstring('Look')
+            .u32(0xfffffffe)
+            .done(),
+        },
         // 105: an actor dead, last seen at hour 30.
         { type: 105, data: new EssWriter().vsval(1).refId(1, DEAD).u32(1).u32(30).done() },
         // 110: nothing held, the camera switch locked for type 0, activation off.
@@ -689,7 +723,12 @@ describe('the global data tables of controls, references and sky cells', () => {
       position: [100, 200, 300],
     });
     expect(state.references.get(MOVED)?.cell).toBeUndefined();
-    for (const type of [8, 102, 105, 110, 113]) {
+    // The tutorials shown by their default objects' places, the next crime's number.
+    expect([...state.tutorialsShown]).toEqual(['HBJL']);
+    expect(state.helpDone.has('look')).toBe(true);
+    expect(state.nextCrime).toBe(6);
+    expect(imported.skipped.some((line) => line.startsWith('interface'))).toBe(false);
+    for (const type of [8, 100, 102, 105, 110, 113]) {
       expect(imported.skipped).not.toContain(`global data ${String(type)}`);
     }
   });
@@ -749,5 +788,21 @@ describe('the global data tables of controls, references and sky cells', () => {
     expect(state.nextCreated).toBe(POTION + 1);
     expect(imported.header.characterId).toBe(0x51ff9a07);
     expect(imported.skipped.join('\n')).not.toMatch(/CELL|created objects/);
+  });
+});
+
+describe('the actors of a loaded save not placed yet', () => {
+  it('are kept into the next save, their place and package as the save had them', () => {
+    const away = {
+      reference: 0x1a2b3,
+      cell: '3,-2',
+      position: [100, 200, 300] as const,
+      heading: 1,
+      package: { id: 0x5000, completed: false, ended: false, path: [1], found: [], ranOn: [] },
+    };
+    const here = { ...away, reference: 0x1a2b4 };
+    const restore = new WorldRestore({ actors: [away, here], graphs: [] });
+    restore.drop(here.reference);
+    expect(restore.carried()).toEqual([away]);
   });
 });

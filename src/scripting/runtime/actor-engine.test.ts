@@ -204,3 +204,22 @@ describe('vendors', () => {
     expect(await vendor(22, 0x1).offersServicesNow(0x800)).toBe(true);
   });
 });
+
+describe('a deferred kill across a save', () => {
+  it('keeps a killmove victim deferred, so the killmove’s end kills it after the load', async () => {
+    const { actors } = dyingEngine();
+    actors.startDeferredKill(PLAYER_REF);
+    await actors.damage(PLAYER_REF, ActorValue.health, 120, 0x1234);
+    expect(await actors.isDead(PLAYER_REF)).toBe(false);
+    const saved = actors.saveData();
+    expect(saved).toEqual([[PLAYER_REF, 1, 0x1234]]);
+    // Loaded: its health runs out without its dying until the deferral ends, by its killer.
+    const loaded = dyingEngine();
+    loaded.actors.loadData(saved);
+    await loaded.actors.damage(PLAYER_REF, ActorValue.health, 120, 0x1234);
+    expect(await loaded.actors.isDead(PLAYER_REF)).toBe(false);
+    await loaded.actors.endDeferredKill(PLAYER_REF);
+    expect(await loaded.actors.isDead(PLAYER_REF)).toBe(true);
+    expect(loaded.log.calls[0]).toBe('killed 14 by 1234');
+  });
+});

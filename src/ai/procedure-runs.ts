@@ -735,12 +735,30 @@ const sandboxing: ProcedureRunner = async (run) => {
   // save's actor seated as it was saved): it goes on in it, a stay of that kind, before its
   // first pick. Else it gets up and goes into its place. A loaded save's sandboxer at the
   // Bannered Mare's counter got up from it at once, its graph leaving the state it was saved in.
-  // TODO(M13): the original's save keeps what is left of the stay (ours: a new one).
   const seat = run.body.inFurniture?.();
   const kept = spots.find(
     (spot) => spot.reference === seat && spot.kind !== 'idle' && allows[spot.kind],
   );
-  if (!kept) {
+  // A loaded save's activity goes on with what was left of it (the original's sandbox keeps
+  // its activity and its times in the save): in the furniture it sits in, at its idle marker,
+  // wandering or eating standing, until the hours it was given from when it began; and its
+  // plan's counts (what it did least lately) are as they were.
+  const step = run.resumedStep?.();
+  const stepKind = Object.values(SandboxKind).find((kind) => kind === step?.kind);
+  step?.counts?.forEach((count, kind) => {
+    if (kind < plan.counts.length) plan.counts[kind] = count;
+  });
+  let resume: { pick: SandboxChoice; began: number; hours: number } | undefined;
+  if (step && stepKind !== undefined && kept && step.reference === seat) {
+    resume = { pick: { kind: stepKind, reference: seat, spot: kept }, ...step };
+  } else if (step && stepKind !== undefined && !kept && step.reference === undefined) {
+    resume = { pick: { kind: stepKind }, ...step };
+  } else if (step && stepKind !== undefined && !kept && step.kind === SandboxKind.idleMarker) {
+    const marker = spots.find((spot) => spot.reference === step.reference);
+    if (marker)
+      resume = { pick: { kind: stepKind, reference: step.reference, spot: marker }, ...step };
+  }
+  if (!kept && !resume) {
     await run.body.leaveFurniture();
     if (run.stopped()) return 'failure';
     await goTo(run, place);
@@ -754,15 +772,32 @@ const sandboxing: ProcedureRunner = async (run) => {
     }
   })();
   if (kept) {
-    at = { kind: SPOT_KINDS[kept.kind], reference: kept.reference, spot: kept };
-    plan.began(at.kind);
-    await stayFor(run, gameHours(run), sandboxDuration(at.kind, energy, settings, random));
+    at = {
+      kind: resume?.pick.kind ?? SPOT_KINDS[kept.kind],
+      reference: kept.reference,
+      spot: kept,
+    };
+    if (!resume) plan.began(at.kind);
+    const began = resume?.began ?? gameHours(run);
+    const hours = resume?.hours ?? sandboxDuration(at.kind, energy, settings, random);
+    resume = undefined;
+    run.setStep?.({
+      kind: at.kind,
+      reference: at.reference,
+      began,
+      hours,
+      counts: [...plan.counts],
+    });
+    await stayFor(run, began, hours);
   }
   while (!run.stopped()) {
+    const resumed = resume;
+    resume = undefined;
     const here = run.body.position();
     // Outside its place by more than fSandBoxRadiusHysteresis (and in no furniture there): it
     // goes back in first. Within the band it stays where it is.
     if (
+      !resumed &&
       here &&
       at?.reference === undefined &&
       place.radius > 0 &&
@@ -825,7 +860,9 @@ const sandboxing: ProcedureRunner = async (run) => {
     // TODO(M13): what the engine does when its pick finds nothing is not read (inferred: it
     // goes on with what it does; in a seat it stays seated, below).
     const pick =
-      pickSandbox(open, weights, random) ?? (at?.kind === SandboxKind.idleMarker ? at : undefined);
+      resumed?.pick ??
+      pickSandbox(open, weights, random) ??
+      (at?.kind === SandboxKind.idleMarker ? at : undefined);
     if (run.stopped()) break;
     if (!pick) {
       // Nothing to do here: it stands a while and looks again (fMin..MaxSandboxRescanSeconds).
@@ -835,13 +872,21 @@ const sandboxing: ProcedureRunner = async (run) => {
       );
       continue;
     }
-    plan.began(pick.kind);
-    const hours = sandboxDuration(pick.kind, energy, settings, random);
+    if (!resumed) plan.began(pick.kind);
+    const hours = resumed?.hours ?? sandboxDuration(pick.kind, energy, settings, random);
     // Up from what it uses first, unless it stays in it (to eat at the chair it sits on).
     const seated = at?.reference !== undefined && pick.reference === at.reference;
     if (at?.reference !== undefined && !seated) await run.body.leaveFurniture();
     at = pick;
-    const began = gameHours(run);
+    const began = resumed?.began ?? gameHours(run);
+    // What it does now, for a save (its activity goes on after a load).
+    run.setStep?.({
+      kind: pick.kind,
+      reference: pick.reference,
+      began,
+      hours,
+      counts: [...plan.counts],
+    });
     switch (pick.kind) {
       case SandboxKind.eatStanding:
       case SandboxKind.eatSitting: {

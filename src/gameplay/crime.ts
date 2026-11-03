@@ -578,10 +578,19 @@ export const REPORT_HOURS = 24;
 
 /** The crimes committed and not yet reported or forgiven, and the ones known (GetCrimeKnown). */
 export class CrimeLedger {
-  #next = 1;
+  /**
+   * The number the next crime gets: observed in the original, the process lists keep one
+   * counter (saved with them, global data 100) that each crime made takes and moves on, from 0.
+   * Kept in the game state where one is given (GameState.nextCrime), so a save keeps it.
+   */
+  readonly #numbers: { nextCrime: number };
   readonly #open = new Map<number, Crime>();
   /** Known crimes by "type:criminal:victim". */
   readonly #known = new Set<string>();
+
+  constructor(numbers: { nextCrime: number } = { nextCrime: 0 }) {
+    this.#numbers = numbers;
+  }
 
   /** A crime seen by `witnesses` (none: unseen, it is not recorded). */
   commit(
@@ -590,7 +599,7 @@ export class CrimeLedger {
     const witnesses = new Set(entry.witnesses);
     witnesses.delete(entry.criminal);
     if (witnesses.size === 0) return undefined;
-    const crime: Crime = { ...entry, id: this.#next++, witnesses, reported: false };
+    const crime: Crime = { ...entry, id: this.#numbers.nextCrime++, witnesses, reported: false };
     this.#open.set(crime.id, crime);
     this.#known.add(knownKey(crime.type, crime.criminal, crime.victim));
     return crime;
