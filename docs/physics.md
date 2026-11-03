@@ -281,6 +281,14 @@ slide, whichever way the player went, and they stuck there for good (the stairs 
 plates in Ustengrav02). Havok's character proxy walks off such an edge (TODO(M13): its own
 handling of edges was not read).
 
+Held in the gap the controller keeps to a wall (a hair nearer than its 0.01 Havok units), the
+sweep and every slide meet that wall at once, whichever way it goes: the shape is set out of the
+gap and swept again (`#outOfSkin`). On the ground that is a step getting nowhere across; in the
+air, one getting nowhere at all. Ustengrav's door before the Horn's hall (NorWoodDoor01) swung
+open as the player stepped through it; they hung beside its leaf 14 units over the floor,
+falling ever faster without moving, until the air was taken in too
+(`src/physics/character-gap.test.ts`).
+
 Off the stairs the same step is tried — the engine's controller has a TryStep (CommonLibSSE:
 `bhkCharacterController` flags kTryStep beside kOnStairs) — but only onto ground actors walk:
 the cells' navigation meshes (`NavmeshSurface`, within 24 units of the mesh). Rubble piles,

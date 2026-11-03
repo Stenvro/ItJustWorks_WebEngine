@@ -1117,14 +1117,14 @@ export class CharacterBody {
     let moved: RAPIER.Vector = this.#controller.computedMovement();
     // Held inside the gap the controller keeps to a surface (a hair nearer than SKIN), its sweep
     // and every slide meet that surface at once, whichever way it goes: out of the gap first,
-    // as the character proxy recovers, then the way swept again.
-    if (
-      wasGrounded &&
-      !this.swimming &&
-      (desired.x !== 0 || desired.y !== 0) &&
-      Math.hypot(moved.x, moved.y) < HELD_MOVEMENT &&
-      this.#outOfSkin()
-    ) {
+    // as the character proxy recovers, then the way swept again. In the air too: the player
+    // stepping through Ustengrav's door (NorWoodDoor01) as it swung open hung beside its leaf,
+    // held in its gap, falling ever faster without moving at all.
+    const held = wasGrounded
+      ? (desired.x !== 0 || desired.y !== 0) && Math.hypot(moved.x, moved.y) < HELD_MOVEMENT
+      : (desired.x !== 0 || desired.y !== 0 || desired.z !== 0) &&
+        Math.hypot(moved.x, moved.y, moved.z) < HELD_MOVEMENT;
+    if (held && !this.swimming && this.#outOfSkin()) {
       this.#controller.computeColliderMovement(
         own,
         desired,
