@@ -964,8 +964,8 @@ list the movie passes is an object reference (`__itjwRef:N`, the bridge's), read
   each `{text, name, level, raceName, playTime, index, fileNum}`, then
   `onSaveLoadBatchComplete(true, entries, entries)`. The journal's `SAVE` and `LOAD(list, batch
 size)` list the character playing. The list is filled at once (`ForceStopSaveListLoading` has
-  nothing to stop). Characters are told apart by the player's name (TODO(M13): the original keeps
-  a character id in the save).
+  nothing to stop). Characters are told apart by their id (src/save/character-id.ts; saves made before it by
+  the player's name), as the original by the id its save files' names carry.
 - `IsOKtoLoad` is answered `ConfirmOKToLoad`; `LoadGame(index)` loads the save at that index of
   the list (the main menu fades out first, `FadeOutAndCall`). After a delete the main menu asks
   `DoDeleteSaveUISanityCheck` and hears `OnDeleteSaveUISanityCheck(has recent save, can load)`.

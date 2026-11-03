@@ -86,6 +86,34 @@ export interface EssProcess {
   readonly pushedPackage?: EssActorPackage;
   /** The animation graph states the high process keeps for its extra graphs. */
   readonly graphStates: number;
+  /** The high process's own part (an actor near the player). */
+  readonly high?: EssHighProcess;
+}
+
+/**
+ * What the high process keeps, as observed in the original (its save, matched with
+ * CommonLibSSE's HighProcessData): its timers (seconds, counting down), and the six things it
+ * looks at, one per head tracking kind (default, action, script, combat, dialogue, procedure:
+ * HEAD_TRACK_TYPE), each with whether it tracks it.
+ */
+export interface EssHighProcess {
+  /** Seconds before it greets the player again (greetingTimer). */
+  readonly greetingTimer: number;
+  /** Seconds to its next idle chatter (idleTimer), and before it may ask to talk (checkToTalk). */
+  readonly idleTimer: number;
+  readonly checkToTalkTimer: number;
+  /** Seconds before those it talked with are forgotten (clearTalkToListTimer). */
+  readonly clearTalkToListTimer: number;
+  /** Its fade (0 none, as CommonLibSSE's FADE_STATE) and how far it is (its alpha). */
+  readonly fadeState: number;
+  readonly fadeAlpha: number;
+  /** The detection modifier a sneak attack or an effect left on it, and its seconds left. */
+  readonly detectionModifier: number;
+  readonly detectionModifierTimer: number;
+  /** It was arrested (it goes with the guard). */
+  readonly arrested: boolean;
+  /** Head tracking: the reference each kind looks at (0: none), and whether it tracks it. */
+  readonly headTrack: readonly { readonly target: number; readonly tracked: boolean }[];
 }
 
 /** A timer as the original writes it: a game time and a duration. */
@@ -785,15 +813,51 @@ function readHigh(
 ): void {
   const reader = stream.reader;
   const ref = (): number => stream.form();
-  reader.skip(3 + 2 + 9 * 4 + 3 * 2 + 1 + 12 + 12 + 6 * 4);
-  reader.skip(1 + 4 + 1 + 4 + 1 + 4 + 4 + 1 + 4 + 3 * 4 + 1 + 1 + 4 + 4 + 1 + 1 + 4 + 4 + 1);
-  reader.skip(4 * 4 + 3 + 4 + 1 + 1 + 4 + 1 + 1);
+  // As observed in the original, in its order (CommonLibSSE's names): three switches, the
+  // animation action's u16, the timers (one unnamed, the sound delay, greeting, idle, the
+  // detect-greet and aware-player timers, three unnamed), three u16, the detected alert, the
+  // weapons' last places, then a float, the fade's state and alpha, the breath timer and more.
+  reader.skip(3 + 2 + 4 + 4);
+  const greetingTimer = reader.f32();
+  const idleTimer = reader.f32();
+  reader.skip(5 * 4 + 3 * 2 + 1 + 12 + 12 + 4);
+  const fadeState = reader.u32();
+  const fadeAlpha = reader.f32();
+  reader.skip(3 * 4);
+  // A switch, the guards pursuing, a switch, the re-equip timer, a switch, then the detection
+  // modifier and its timer.
+  reader.skip(1 + 4 + 1 + 4 + 1);
+  const detectionModifier = reader.f32();
+  const detectionModifierTimer = reader.f32();
+  reader.skip(1 + 4 + 3 * 4 + 1 + 1 + 4 + 4 + 1 + 1 + 4 + 4 + 1);
+  // The maximum alpha, the check-to-talk timer, the head track timer, a float, three switches
+  // (planted explosive, approaching an auto-teleport door, arrested), the avoid wait timer, two
+  // switches, the clear-talk-to-list timer, then a byte always 0 and a byte for the greet topic.
+  reader.skip(4);
+  const checkToTalkTimer = reader.f32();
+  reader.skip(4 + 4 + 1 + 1);
+  const arrested = reader.u8() !== 0;
+  reader.skip(4 + 1 + 1);
+  const clearTalkToListTimer = reader.f32();
+  reader.skip(1 + 1);
+  // Eight references: the actor it greets, one the engine keeps for every process, the fade
+  // trigger, its last target, an actor, its idle, one more and what its path looks at.
   for (let i = 0; i < 8; i++) ref();
-  // Six held objects with a byte each.
-  for (let i = 0; i < 6; i++) {
-    ref();
-    reader.u8();
-  }
+  // The six head track targets (one per kind), each with whether it is tracked.
+  const headTrack: { target: number; tracked: boolean }[] = [];
+  for (let i = 0; i < 6; i++) headTrack.push({ target: ref(), tracked: reader.u8() !== 0 });
+  process.high = {
+    greetingTimer,
+    idleTimer,
+    checkToTalkTimer,
+    clearTalkToListTimer,
+    fadeState,
+    fadeAlpha,
+    detectionModifier,
+    detectionModifierTimer,
+    arrested,
+    headTrack,
+  };
   // The dialogue it is in: its lines (two names, numbers, three references), a position and
   // four references.
   if (reader.u8() !== 0) {
