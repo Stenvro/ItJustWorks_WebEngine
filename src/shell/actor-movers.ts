@@ -86,7 +86,7 @@ import type { StagedActor } from './actor-stage.ts';
 import type { GameSession } from './game-session.ts';
 import { controllerSettings, controllerShape } from './player.ts';
 import { actorFell, waterHarmed } from './time-flow.ts';
-import { floatSpeed, submersion, swims } from '../gameplay/swimming.ts';
+import { floatSpeed, submersion, swims, walksOnWater } from '../gameplay/swimming.ts';
 import { WaterHazard } from '../gameplay/water-hazard.ts';
 import { currentPush, type WaterPhysics } from '../physics/water-physics.ts';
 import { materialId } from '../world/material-type.ts';
@@ -228,6 +228,10 @@ export interface ActorMoversOptions {
   readonly surface?: (actor: number, top: number) => void;
   /** Whether an actor breathes water (WaterBreathing): it never runs short of breath. */
   readonly breathesWater?: (actor: number) => boolean;
+  /** Whether an actor walks on water (WaterWalking above 0): the surface bears it. */
+  readonly walksOnWater?: (actor: number) => boolean;
+  /** An actor took to the water's surface walking on it (ActionWaterwalkStart). */
+  readonly waterWalkStarted?: (actor: number) => void;
   readonly terminal: Terminal;
   /** An actor walked into (true) or out of a trigger volume of a reference. */
   readonly onTrigger?: (trigger: number, actor: number, entered: boolean) => void;
@@ -2489,6 +2493,7 @@ export class ActorMovers {
     const character = mover.character;
     if (!water) {
       character.swimming = false;
+      character.waterFloor = undefined;
       return undefined;
     }
     const reference = mover.staged.reference;
@@ -2500,8 +2505,20 @@ export class ActorMovers {
       ACTOR_SPLASH_MATERIAL,
     );
     const canSwim = (mover.staged.placed.look.raceFlags & RaceFlag.swims) !== 0;
+    // Water Walking: the surface bears it as ground, and it never swims.
+    const wasOn = character.waterFloor !== undefined;
+    const onWater =
+      at.surface !== undefined &&
+      walksOnWater(
+        this.#options.walksOnWater?.(reference) === true,
+        at.submersion,
+        character.feet[2] - at.surface,
+        wasOn,
+      );
+    character.waterFloor = onWater ? at.surface : undefined;
+    if (onWater && !wasOn) this.#options.waterWalkStarted?.(reference);
     const swimming =
-      canSwim && at.surface !== undefined && swims(at.submersion, character.swimming);
+      canSwim && !onWater && at.surface !== undefined && swims(at.submersion, character.swimming);
     character.swimming = swimming;
     // A strong current carries it off (or any current it falls into fast).
     if (at.type !== undefined && at.submersion > 0) {
