@@ -1272,7 +1272,10 @@ location's lists.
   through a door (a script asking for its cell or worldspace gets that one; TODO(M13): its
   place along the way between). On a cell that is loaded it comes onto the
   stage there and walks on with its package (it comes out of a load door into the loaded area,
-  or walks into it).
+  or walks into it). A travel to another actor (a reference, or the reference a quest's alias
+  holds: MQ201RazelanToExteriorGuard, to the Embassy's gate guard) goes to where that actor is
+  now; asked again on the way, such a trip had no place and was dropped, so its travel never
+  completed and the scene that waited for it (MQ201PartyIntroScene) held Razelan for good.
 - **A flier** (its race flies, RACE DATA Flies: the dragons) whose place is in its own space
   flies there straight through the air at its flying speed (its race's flying movement type,
   FLMV, running forward), with no road or navmesh under it, and comes onto the stage where it

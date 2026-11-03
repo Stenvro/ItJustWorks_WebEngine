@@ -184,6 +184,10 @@ export class PackageData implements PackageWorld {
     return this.#scripts()?.scenes.packagesOf(actor.reference);
   }
 
+  aliasReference(quest: number, alias: number): number | undefined {
+    return this.#scripts()?.state.quests.get(quest)?.aliases.get(alias);
+  }
+
   player(): { space: Space; position: readonly [number, number, number] } | undefined {
     const shown = this.#scripts()?.world.livePlacement?.(PLAYER);
     if (!shown) return undefined;

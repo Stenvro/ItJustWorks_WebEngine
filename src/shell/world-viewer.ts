@@ -1039,7 +1039,9 @@ export class WorldViewer {
     if (reference === PLAYER_REF) {
       // Play: the player goes where the scripts send them, through a journey as a load door
       // does when it is elsewhere. The sandbox is not the game: scripts do not move its player
-      // (a new game's opening would send them to the cart to Helgen).
+      // (a new game's opening would send them to the cart to Helgen). Out of the furniture
+      // they used (a carriage's seat), as an actor moved out of its own.
+      if (this.followsScripts) this.#seat?.movedAway();
       if (this.followsScripts && !this.sendPlayer(at)) this.onPlayerSent?.(at);
       return;
     }

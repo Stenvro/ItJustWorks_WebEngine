@@ -1079,7 +1079,14 @@ The info's flags and timers (`src/scripting/runtime/dialogue-rules.ts`, UESP and
   valid is said at once, unlisted and unchosen by the player, then the next one's choices show;
   where none is valid the actor's topics show. An Invisible Continue greeting opens the menu
   even with no topic to list. With Goodbye as well (37) the conversation ends after the line
-  it goes on to.
+  it goes on to. An info whose choices the menu could list none of (no prompt, no topic text,
+  as MQ201's Razelan: a blocking info that says nothing and offers only MQ201RazelanIntro1, his
+  introduction) goes on the same way (`DialogueEngine.goesOnUnlisted`; TODO(M13): inferred,
+  the engine's rule for such a choice is not read).
+- **Blocking branches** (DLBR type 2): a valid blocking topic without text is said at once in
+  place of the greeting (the Creation Kit's Blocking type: said as the player activates the
+  actor); one with text is offered alone (TODO(M13): whether the engine says that one at once
+  too).
 - **Goodbye**: the conversation ends after the info (a Goodbye greeting is said where the actor
   stands, no menu).
 - **Walk Away** (709) / **Walk Away Invisible In Menu** (261): Tab while the topics are listed

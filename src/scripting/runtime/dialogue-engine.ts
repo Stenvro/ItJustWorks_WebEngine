@@ -18,7 +18,13 @@ import {
   type TopicRecord,
 } from '../../world/dialogue-records.ts';
 import { DialogueIndex, voiceFileName } from '../../world/dialogue.ts';
-import { InfoMemory, hiddenInMenu, saidOnWalkAway, saysUnasked } from './dialogue-rules.ts';
+import {
+  InfoMemory,
+  afterInfo,
+  hiddenInMenu,
+  saidOnWalkAway,
+  saysUnasked,
+} from './dialogue-rules.ts';
 import { ObjectHandle } from '../values.ts';
 import { PLAYER_BASE, PLAYER_REF } from './forms.ts';
 import { questText } from './quest-text.ts';
@@ -113,11 +119,48 @@ export class DialogueEngine {
   }
 
   /**
-   * The greeting an actor says as the player starts the conversation (its Hello topics' first
-   * valid info; one that requires the player's activation may be said).
+   * The greeting an actor says as the player starts the conversation: a blocking branch's
+   * topic without text (nothing the menu could list) with a valid info is said at once in its
+   * place (the Creation Kit's Blocking branch type: said as the player activates the actor,
+   * other dialogue blocked; MQ201's Razelan at the party, MQ201PartyRazelanBlockingTopic: its
+   * infos, his introduction among them, were never said), else its Hello topics' first valid
+   * info (one that requires the player's activation may be said). A blocking topic with text
+   * is offered alone (topics). TODO(M13): whether the engine says that one at once too.
    */
-  greeting(speaker: number): Promise<SpokenInfo | undefined> {
+  async greeting(speaker: number): Promise<SpokenInfo | undefined> {
+    const runtime = this.#runtime;
+    for (const branch of await this.#topLevelBranches()) {
+      if ((branch.flags & BranchFlag.blocking) === 0 || branch.startingTopic === undefined)
+        continue;
+      if (branch.quest === undefined || !runtime.quests.isRunning(branch.quest)) continue;
+      const topic = await this.index.topic(branch.startingTopic);
+      const quest = topic?.quest;
+      if (topic?.category !== TopicCategory.topic || quest === undefined) continue;
+      if (!(await this.#questSpeaks(quest, speaker))) continue;
+      const info = await this.#validInfo(topic, quest, speaker);
+      if (!info || (info.prompt ?? topic.text) !== '') continue;
+      this.#chosen.add(topic.formId);
+      return this.#spoken(info, topic, quest);
+    }
     return this.subtypeLine(speaker, HELLO, PLAYER_REF, { activated: true });
+  }
+
+  /**
+   * Whether the dialogue goes on after an info without the player choosing, though it is no
+   * Invisible Continue: it has choices and the menu could list none of them (no prompt, no
+   * topic text: MQ201's Razelan, whose blocking info says nothing and offers only
+   * MQ201RazelanIntro1, a topic without text that has his introduction). The first of them with
+   * a valid info is said then (continueAfter). TODO(M13): the engine's own rule for a choice
+   * without text is not known (inferred: the menu has nothing to show).
+   */
+  async goesOnUnlisted(spoken: SpokenInfo, speaker: number): Promise<boolean> {
+    const info = spoken.info;
+    if (info.choices.length === 0 || afterInfo(info) !== 'topics') return false;
+    if ((await this.topics(speaker, info.choices)).length > 0) return false;
+    for (const choice of info.choices) {
+      if ((await this.index.topic(choice))?.text === '') return true;
+    }
+    return false;
   }
 
   /** What an actor says as the player ends the conversation (its Goodbye topics). */
