@@ -128,7 +128,11 @@ export class DialogueMenu {
     }
     // With nothing to list, or a Goodbye greeting, the greeting is said where the actor stands;
     // an Invisible Continue greeting goes on in the menu.
-    const after = greeting && afterInfo(greeting.info);
+    const after =
+      greeting &&
+      (afterInfo(greeting.info) === 'topics' && (await engine.goesOnUnlisted(greeting, reference))
+        ? 'continue'
+        : afterInfo(greeting.info));
     if (
       (choices.every((choice) => choice.hidden === true) && after !== 'continue') ||
       after === 'close'
@@ -227,7 +231,12 @@ export class DialogueMenu {
     let offered = spoken?.info.choices;
     for (let step = 0; current && step < MAX_CONTINUES; step++) {
       if ((current.info.flags & InfoFlag.goodbye) !== 0) closing = true;
-      if (afterInfo(current.info) !== 'continue') break;
+      // Invisible Continue, or choices the menu could list none of (goesOnUnlisted).
+      if (
+        afterInfo(current.info) !== 'continue' &&
+        !(await engine.goesOnUnlisted(current, speaker.actor.reference))
+      )
+        break;
       const next = await engine.continueAfter(current, speaker.actor.reference);
       if (!next) {
         offered = undefined;

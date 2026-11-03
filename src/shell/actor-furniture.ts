@@ -407,6 +407,21 @@ export class ActorFurniture {
     return this.#markers.get(actor);
   }
 
+  /**
+   * A script moved an actor (MoveTo) out of the furniture it used (`seated`: the player's seat
+   * says so): it is out at once, its graph back in its default state as the quick exit leaves
+   * it (IdleForceDefaultState); it arrives standing. Without it the player's graph stayed in
+   * the carriage's seat (MQ201's ride to the Embassy: bAnimationDriven with no motion) and
+   * they could not walk. TODO(M13): the engine's own reset of the moved actor's graph
+   * (inferred from the quick exit).
+   */
+  moveOut(user: FurnitureUser, seated = false): void {
+    const reference = user.reference;
+    const used = seated || this.#uses.has(reference) || this.#holding.has(reference);
+    this.remove(reference);
+    if (used) user.send(FORCE_DEFAULT_STATE);
+  }
+
   /** An actor leaves the idle marker it took: its idle ends. */
   leaveMarker(user: FurnitureUser): void {
     if (!this.#markers.delete(user.reference)) return;

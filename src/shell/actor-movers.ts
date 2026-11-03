@@ -499,6 +499,12 @@ export class ActorMovers {
   readonly #ignored = new Map<number, ReadonlySet<number>>();
   /** Frames so far (actors' body trigger checks take turns). */
   #frames = 0;
+  /**
+   * The trigger volumes a held actor's bodies are in (one in furniture, on a mount or a
+   * vehicle: it has no controller, its bodies still reach in). Its controller's when it was let
+   * go carry over, as a new controller takes these over.
+   */
+  readonly #heldTriggers = new Map<number, Set<number>>();
   readonly #step = (step: number): void => {
     this.#stepAll(step);
   };
@@ -511,6 +517,7 @@ export class ActorMovers {
   attach(world: MoverWorld | undefined): void {
     if (world === this.#world) return;
     for (const mover of [...this.#movers.values()]) this.#free(mover);
+    for (const reference of [...this.#heldTriggers.keys()]) this.#leaveHeldTriggers(reference);
     this.#world?.stepHooks.delete(this.#step);
     this.#world = world;
     world?.stepHooks.add(this.#step);
@@ -1368,6 +1375,7 @@ export class ActorMovers {
     this.#warps.delete(reference);
     const mover = this.#movers.get(reference);
     if (mover) this.#free(mover);
+    this.#leaveHeldTriggers(reference);
     this.#travels.get(reference)?.done(false);
     this.#requests.delete(reference);
   }
@@ -1467,12 +1475,14 @@ export class ActorMovers {
       }
       this.#dropWalker(reference);
       if (!mover) {
-        if (near && !held && this.#moves(staged)) void this.#add(staged);
+        const getsMover = near && !held && this.#moves(staged);
+        this.#heldTriggersFrame(staged, near && held && this.#lives(staged), getsMover);
+        if (getsMover) void this.#add(staged);
         continue;
       }
       // Not set down (moved into a cell whose collision is not in place yet): it waits, standing.
       if (!near || staged.visibility.hidden || held || !staged.grounded) {
-        this.#free(mover);
+        this.#free(mover, near && held && !staged.visibility.hidden);
         continue;
       }
       // Its AI disabled (EnableAI false): it stands where it is, its way and wish dropped.
@@ -1492,6 +1502,9 @@ export class ActorMovers {
     }
     for (const reference of [...this.#walkers.keys()]) {
       if (!seen.has(reference)) this.#dropWalker(reference);
+    }
+    for (const reference of [...this.#heldTriggers.keys()]) {
+      if (!seen.has(reference)) this.#leaveHeldTriggers(reference);
     }
     for (const reference of [...this.#warps.keys()]) {
       if (!seen.has(reference)) this.#warps.delete(reference);
@@ -2114,10 +2127,12 @@ export class ActorMovers {
         ends: { length: sized.halfExtents[1] * scale, width: sized.halfExtents[0] * scale },
         stood: undefined,
         fallCheckedAt: -Infinity,
-        triggers: new Set(),
+        // A held actor's volumes (#heldTriggers) are its controller's now.
+        triggers: this.#heldTriggers.get(reference) ?? new Set(),
         bodyTriggers: new Set(),
       });
       character.ignored = this.#ignored.get(reference) ?? new Set();
+      this.#heldTriggers.delete(reference);
     } catch (error) {
       this.#options.terminal.log(
         'actor',
@@ -2151,13 +2166,56 @@ export class ActorMovers {
     this.#walkers.delete(reference);
   }
 
-  #free(mover: Mover): void {
+  /** Its controller goes; `held`: it is held (furniture, a mount), its triggers stay its own. */
+  #free(mover: Mover, held = false): void {
     this.#movers.delete(mover.staged.reference);
     mover.locomotion.release();
     mover.character.free();
+    if (held) {
+      this.#heldTriggers.set(mover.staged.reference, new Set(mover.triggers));
+      return;
+    }
     for (const trigger of mover.triggers) {
       this.#options.onTrigger?.(trigger, mover.staged.reference, false);
     }
+  }
+
+  /**
+   * An actor without a controller, each frame: held (`checks`), the trigger volumes its bodies
+   * reach are its own (every fourth frame, each actor on a frame of its own, as a mover's bodies
+   * are looked at): a seated actor stays inside the volume it sat down in (MQ201's
+   * DelphineInSecretRoomTrigger counts Delphine at her table with the player). Not held, a
+   * controller about to be made (`getsMover`) takes them over; else it has left them.
+   */
+  #heldTriggersFrame(staged: StagedActor, checks: boolean, getsMover: boolean): void {
+    const reference = staged.reference;
+    const physics = this.#world?.physics;
+    if (!checks) {
+      if (!getsMover) this.#leaveHeldTriggers(reference);
+      return;
+    }
+    if (!physics?.queriesCurrent || (this.#frames + reference) % 4 !== 0) return;
+    const before = this.#heldTriggers.get(reference) ?? new Set<number>();
+    const inside = new Set<number>();
+    for (const body of this.#options.bodyColliders?.(reference) ?? []) {
+      for (const trigger of physics.triggersOverlapping(body)) inside.add(trigger);
+    }
+    for (const trigger of inside) {
+      if (!before.has(trigger)) this.#options.onTrigger?.(trigger, reference, true);
+    }
+    for (const trigger of before) {
+      if (!inside.has(trigger)) this.#options.onTrigger?.(trigger, reference, false);
+    }
+    if (inside.size > 0) this.#heldTriggers.set(reference, inside);
+    else this.#heldTriggers.delete(reference);
+  }
+
+  /** A held actor's trigger volumes are left (it is gone, hidden or let go far away). */
+  #leaveHeldTriggers(reference: number): void {
+    const inside = this.#heldTriggers.get(reference);
+    if (!inside) return;
+    this.#heldTriggers.delete(reference);
+    for (const trigger of inside) this.#options.onTrigger?.(trigger, reference, false);
   }
 
   /** The collision bound "BBX" of a skeleton model, unscaled (read once per skeleton). */
