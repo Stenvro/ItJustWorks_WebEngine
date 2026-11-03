@@ -80,6 +80,8 @@ export interface SavedPlayer {
   readonly weaponDrawn?: boolean | undefined;
   /** Getting out of their vehicle. */
   readonly vehicleExit?: VehicleExit | undefined;
+  /** The furniture they sit, sleep or lean in (none in older saves). */
+  readonly furniture?: number | undefined;
   /** The camera: first or third person (the original's player camera keeps it in its saves). */
   readonly pov?: 'first' | 'third' | undefined;
   /** The world's and first person's fields of view (degrees). */

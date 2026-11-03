@@ -449,10 +449,19 @@ export class ActorsAway {
     if (this.#options.session.restoring?.actor(actor)) return false;
     if (mode === 'walk' && !again && this.#trips.has(actor)) return false;
     const now = await runtime.placement(actor, false);
-    const record = await runtime.forms.record(actor);
-    if (!now || record?.type !== 'ACHR') return false;
+    if (!now) return false;
+    // One a script or a quest created (PlaceAtMe, an alias's Create Reference) keeps its
+    // schedule as a placed one does: MQ201's escape guards, created by Elenwen's solar and
+    // enabled as the player reads the dossier, never set out for the dungeon, and its escape
+    // scene waited for them for good.
+    const created = runtime.state.created.get(actor);
+    const record = created ? undefined : await runtime.forms.record(actor);
+    if (!created && record?.type !== 'ACHR') return false;
     const current: AwayPlace = { space: spaceOf(now), position: now.position };
-    const placed = cellActor(record, now.position, now.rotation[2]);
+    const placed = created
+      ? createdActor(actor, created.base, now.position, now.rotation[2], runtime)
+      : record && cellActor(record, now.position, now.rotation[2]);
+    if (!placed) return false;
     const start = await placer.whereNow(placed, current.space).catch(() => undefined);
     const destination = start && (await this.#destination(runtime, actor, start, current));
     const walk: AwayPackage | undefined =
@@ -827,6 +836,26 @@ function pointAlong(points: readonly Vec3[], along: number): Vec3 {
     left -= length;
   }
   return points[points.length - 1] ?? [0, 0, 0];
+}
+
+/** An actor created in the game (no plugin reference), where it is now. */
+function createdActor(
+  reference: number,
+  base: number,
+  position: Vec3,
+  heading: number,
+  runtime: ScriptRuntime,
+): CellActor {
+  return {
+    reference,
+    editorId: '',
+    base,
+    position: [...position],
+    rotation: [0, 0, heading],
+    scale: runtime.state.references.get(reference)?.scale ?? 1,
+    links: new Map(),
+    startsDead: false,
+  };
 }
 
 /** A placed actor's reference as a cell gives it, where it is now. */

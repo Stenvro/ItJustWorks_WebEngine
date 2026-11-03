@@ -492,6 +492,7 @@ export const RECORD_LAYOUTS: Readonly<Record<string, Readonly<Record<string, str
   },
   INFO: {
     ENAM: 'flags:u16 resetHours:u16',
+    DATA: 'unknown:u8 x1 flags:u16 resetHours:f32',
     CNAM: 'favorLevel:u8',
     TRDT: 'emotionType:u32 emotionValue:u32 x4 responseNumber:u8 x3 sound:fid useEmotionAnimation:u8 x3',
     NAM1: 'responseText:lz',
@@ -499,7 +500,6 @@ export const RECORD_LAYOUTS: Readonly<Record<string, Readonly<Record<string, str
     NAM3: 'edits:z',
     DNAM: 'responseData:fid',
     ONAM: 'audioOutputOverride:fid',
-    DATA: 'x8',
     QNAM: 'unknown:fid',
     NEXT: '',
     RNAM: 'prompt:lz',

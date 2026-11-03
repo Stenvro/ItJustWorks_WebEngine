@@ -249,6 +249,10 @@ Every condition (CTDA) of the running game is valued by `ScriptRuntime.condition
 package data input, the event's data), the CTDA flags (xEdit: Or; Use aliases and Use packdata,
 which make a reference parameter an alias of the quest or a data input of the running package;
 Use global for the comparand; Swap Subject and Target), the function, the comparison; an
+input that names a reference does so as the procedures read it (a reference, the package
+quest's alias, the actor itself); with Use packdata GetWithinDistance's distance is a data
+input too (the UseWeapon templates' Trigger Radius round their Trigger Ref: MQ201's torture
+chamber guard strikes Etienne only so); an
 OR-flagged condition joins the next. What follows a failed AND is not valued (it cannot change
 the answer): a quest's alias search asks every reference of the loaded area, and most fail on
 their first condition. A function no evaluator values holds and is reported

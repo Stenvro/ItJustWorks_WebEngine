@@ -175,4 +175,57 @@ describe.skipIf(!hasGamedata())('actor graphs across a save (headless simulation
       ),
     ).toBe(true);
   }, 600_000);
+
+  // Found 2026-11-03: a save made while the player sat loaded with their graph seated but
+  // nothing holding them in the seat.
+  it('keeps the player seated in their chair, and a movement key gets them up', async () => {
+    const before = await openSim({ interior: BANNERED_MARE, hour: 10 });
+    sims.push(before);
+    const stage = before.world.stage;
+    const feet = await before.position(PLAYER_REF);
+    const chair = before.world
+      .placedObjects()
+      .filter(({ object }) => object.furniture?.sit === true)
+      .filter(({ object }) => !stage.furniture.inUse(object.reference))
+      .map(({ object }) => object)
+      .sort(
+        (a, b) =>
+          Math.hypot((a.world[12] ?? 0) - (feet?.[0] ?? 0), (a.world[13] ?? 0) - (feet?.[1] ?? 0)) -
+          Math.hypot((b.world[12] ?? 0) - (feet?.[0] ?? 0), (b.world[13] ?? 0) - (feet?.[1] ?? 0)),
+      )[0]?.reference;
+    expect(chair).toBeDefined();
+    if (chair === undefined) return;
+    expect(before.activate(chair)).toBe(true);
+    const sitting = (sim: Sim): boolean =>
+      sim.world.stage.furniture.interaction(PLAYER_REF)?.state === 3;
+    expect(await before.until(() => sitting(before), 15)).toBe(true);
+    await before.step(2);
+    const saved = graphOf(before, PLAYER_REF);
+    const seat = await before.position(PLAYER_REF);
+    const bytes = await before.save();
+    await before.close();
+    sims.splice(0);
+
+    const after = await loadSim(bytes);
+    sims.push(after);
+    await after.step(0.1);
+    // In the chair again, their graph going on seated where it was.
+    expect(after.world.stage.furniture.interaction(PLAYER_REF)?.furniture).toBe(chair);
+    expect(sitting(after)).toBe(true);
+    expect(differences(saved, graphOf(after, PLAYER_REF), 0.5)).toEqual([]);
+    await after.step(1);
+    const still = await after.position(PLAYER_REF);
+    expect(
+      Math.hypot((still?.[0] ?? 0) - (seat?.[0] ?? 0), (still?.[1] ?? 0) - (seat?.[1] ?? 0)),
+    ).toBeLessThan(8);
+    // Forward gets them up and walking again.
+    after.press('Forward', true);
+    expect(
+      await after.until(
+        () => after.world.stage.furniture.interaction(PLAYER_REF) === undefined,
+        10,
+      ),
+    ).toBe(true);
+    after.press('Forward', false);
+  }, 600_000);
 });

@@ -159,6 +159,31 @@ export function parseBranch(record: RecordSource): BranchRecord {
   };
 }
 
+/**
+ * An info's flags and reset hours (in ENAM's units): from ENAM, or from the older DATA that 920
+ * vanilla infos (form versions 26 and 27) have instead: u8, u8, u16 flags with ENAM's bits, f32
+ * reset hours. Its flags are those of its lines: MQ201's "You made it out alive" (DATA flags
+ * 0x44: say once, invisible continue) goes on to Delphine's "Did you learn anything useful?";
+ * read as none, the talk ended on her first line.
+ */
+function flagsOf(
+  enam: Uint8Array | undefined,
+  data: Uint8Array | undefined,
+): { readonly flags: number; readonly resetHours: number } {
+  if (enam) {
+    return {
+      flags: enam.length >= 2 ? view(enam).getUint16(0, true) : 0,
+      resetHours: enam.length >= 4 ? view(enam).getUint16(2, true) : 0,
+    };
+  }
+  if (!data || data.length < 4) return { flags: 0, resetHours: 0 };
+  const hours = data.length >= 8 ? view(data).getFloat32(4, true) : 0;
+  return {
+    flags: view(data).getUint16(2, true),
+    resetHours: Number.isFinite(hours) && hours > 0 ? Math.round((hours * 65535) / 24) : 0,
+  };
+}
+
 export function parseInfo(record: RecordSource): InfoRecord {
   const fields = record.fields.list;
   const enam = record.fields.first('ENAM');
@@ -251,8 +276,7 @@ export function parseInfo(record: RecordSource): InfoRecord {
   closeResponse();
   return {
     formId: record.formId,
-    flags: enam && enam.length >= 2 ? view(enam).getUint16(0, true) : 0,
-    resetHours: enam && enam.length >= 4 ? view(enam).getUint16(2, true) : 0,
+    ...flagsOf(enam, record.fields.first('DATA')),
     previous,
     choices,
     sharedInfo,
