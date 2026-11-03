@@ -237,6 +237,17 @@ the engine's are not documented (TODO(M13)):
   along their cell's flow map (`src/world/flow-map.ts`) at 160 units/s. The map's R/G direction
   is smooth across the river; its alpha is striped from texel to texel, so the physics leaves it
   out.
+- **An actor in a current** (observed in the original: the water's current applied to a
+  character; `currentPush`, run for every moved actor in water in `ActorMovers`): a race that
+  swims but neither walks nor flies keeps its place. Any other is carried off by a current
+  faster than `fWaterKnockdownVelocity` (10 Havok units/s) × its race size's multiplier
+  (`fWaterKnockdownSizeSmall` 0.25, `Normal` 0.5, `Large` 0.75, `VeryLarge` 1), or by any
+  current while it falls into the water faster than 700 units/s in the air; a weak current then
+  carries it at its speed plus the actor's own, at most the actor's top speed. The carry is the
+  controller's push (`Character.knockBack`: kept while it is the strongest), for the step.
+  TODO(M13): the original also carries an actor in recoil, and one whose mount is in the air, by
+  a weak current; whether the push's speed is the current's or the current's over the step is
+  inferred (the current's).
 - **Splashes.** A body or an actor coming into the water downwards, or out of it upwards,
   splashes by its vertical speed × `fSplashSoundVelocityMult` (× `fSplashSoundOutMult` coming out)
   against `fSplashSoundLight` / `Medium` / `Heavy` (5, 25, 50), at most once per
@@ -638,7 +649,24 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   46 of 52 still and 47 of 52 pushed rest within 20 s, at 4 46 and 46, against 51 and 48 at 8;
   Rapier's internal iterations at 2 stiffen it again). Lifting her out of the floor her animated
   feet start 6 units into, or her joints' friction at 0 or 1.5 times, does not change it.
-  TODO(M13): Havok's give at four iterations with the settling of eight.
+  Observed in the original (round 5): a dead actor's ragdoll is set up with nothing of its own.
+  Its constraints are its files' (the behavior's ragdoll takes the mesh's constraint data as it
+  is: the limits, their tau factors, the friction, no motor), solved in the world's solver
+  (above: no per-ragdoll tau, damping or iterations), and made dynamic it is only woken and its
+  still bodies lifted (below). With today's joints and that lift, Rapier at four substeps keeps
+  her standing too (head at 91–93 units at 1, 2, 2.5 and 3 s; 44 of 52 still and 45 of 52 pushed
+  at rest within 20 s); only two substeps buckle the strut. The foot capsules point 36° toe
+  down at the skeleton's rest, and the ankle's limit (3.6°) leaves them 5° short of flat: a
+  foot pressed flat holds its calf leaning back, the knee behind the line from hip to ankle,
+  locked at its limit. TODO(M13): Havok's give at four iterations with the settling of eight.
+- **Made dynamic** (observed in the original: the behavior's ragdoll driver set to dynamic):
+  every body of it that is then of a dynamic motion type and moves slower than 0.5 Havok units
+  a second is activated and given 0.5 Havok units a second more upward speed, so that nothing
+  let go still stays as it was placed (`PhysicsWorld.liftStill`, after the bodies take their
+  keyframed velocities in `ActorBodies`, at a death's or a knock-down's let-go; that these are
+  the moments the driver is set dynamic is inferred). `node tools/ragdoll-info.ts --lift` lifts
+  the dropped skeletons too: 49 of 52 still and 50 of 52 pushed at rest within 20 s, against 51
+  and 48 without.
 - **Motors** (the powered ragdoll: Havok's position motors, as the behavior graph's
   hkbPoweredRagdollControlsModifier sets them; no constraint in the files has an enabled one):
   a powered joint pulls its second body's turn relative to its first toward the turn the

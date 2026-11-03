@@ -18,7 +18,7 @@ settings reader or named in the code. A field with one value in every mesh that 
 the physics counts as done with that reason. The mechanics are kept by hand below, against
 docs/physics.md. The count after an item is how many blocks (records) use it.
 
-## Count (2026-11-02, round 4)
+## Count (2026-11-03, round 5)
 
 | Part                          | Items | Done | Open |
 | ----------------------------- | ----: | ---: | ---: |
@@ -30,9 +30,9 @@ docs/physics.md. The count after an item is how many blocks (records) use it.
 | Projectiles (PROJ)            |    24 |   23 |    1 |
 | Explosions (EXPL)             |    16 |   16 |    0 |
 | Material types, impact data   |    17 |   17 |    0 |
-| Game settings (GMST)          |    45 |   35 |   10 |
-| Mechanics (by hand)           |    26 |   18 |    8 |
-| Total                         |   368 |  348 |   20 |
+| Game settings (GMST)          |    45 |   40 |    5 |
+| Mechanics (by hand)           |    27 |   19 |    8 |
+| Total                         |   369 |  354 |   15 |
 
 Round 1 wrote the sweep and this list, and fixed deactivation: Havok deactivates a simulation
 island as a whole, ours put a body to sleep on its own while something still moved on it (a
@@ -62,6 +62,17 @@ it with their gains (docs/physics.md, "The hierarchy controller"). Not reached: 
 into what they lie on, water knockdowns (the size against the current's speed is not
 documented), the chains' damping (Rapier's joints have no per-joint softness to give it).
 Next biggest: those, and Havok's give at four iterations (Hulda's locked legs).
+
+Round 5 (348 to 354, one item added): water knockdowns, as observed in the original: a current
+carries off an actor of a race that walks, flies or does not swim when it is faster than
+fWaterKnockdownVelocity × the race size's multiplier (fWaterKnockdownSize\*), or whatever its
+speed while the actor falls into it fast (`currentPush`, src/physics/water-physics.ts;
+docs/physics.md, "Water"); a ragdoll made dynamic lifts its still bodies (added, done). Read
+from the original for Hulda's locked legs: a dead actor's ragdoll keeps its files' constraints
+as they are (limits, friction, no motor) in the world's solver, with no solver setting of its
+own; with the lift she still stands at 1, 2, 2.5 and 3 s (docs/physics.md, "The cone"). Not
+reached: objects placed into what they lie on, the chains' damping. Next biggest: those,
+Havok's give at four iterations, the recoiling and the mounted in a weak current.
 
 ## Meshes
 
@@ -131,9 +142,10 @@ Next biggest: those, and Havok's give at four iterations (Hulda's locked legs).
 - [x] fJumpFallHeightMultNPC, fJumpFallHeightMinNPC, fJumpFallHeightExponentNPC: NPCs' fall
       damage (their controllers' landings and ragdolls' get-ups: src/gameplay/falling.ts, read
       by built names until round 2, so the sweep did not find them).
-- [ ] fWaterKnockdownSizeSmall, Normal, Large, VeryLarge, fWaterKnockdownVelocity: water
-      knocking actors down (a strong current, a waterfall). Not read. TODO(M13): how the
-      engine weighs a race's size against the current's speed is not documented.
+- [x] fWaterKnockdownSizeSmall, Normal, Large, VeryLarge, fWaterKnockdownVelocity: a current
+      faster than the velocity × the race size's multiplier carries an actor off, a race that
+      only swims never (currentPush, src/physics/water-physics.ts, src/shell/actor-movers.ts;
+      round 5). TODO(M13): the recoiling and the mounted in a weak current.
 - [ ] fExplosionWaterRadiusRatio, fExplosionSplashRadius: explosions on water.
 - [ ] fDeathForceSpellImpactMult: a killing spell's push.
 - [ ] fJumpSwimmingMult: a jump out of the water.
@@ -158,6 +170,8 @@ Next biggest: those, and Havok's give at four iterations (Hulda's locked legs).
 - [x] The character controller: slopes, stairs, steps, pushing, platforms, falling, swimming.
 - [ ] Leaving a moving platform keeps no velocity; Havok's proxy push response.
 - [x] Ragdolls: death, hits, powered, keyframed, get-up, penetration recovery, corpses saved.
+- [x] A ragdoll made dynamic: each of its bodies moving slower than 0.5 Havok units a second is
+      given that much more upward speed (PhysicsWorld.liftStill; round 5).
 - [ ] The paralysed's stiff fall; a body let go
       standing on its joints' limits (Hulda killed at the Bannered Mare's counter 1, 2.5 or 3 s
       into her lean stays draped over it: Havok's give at four iterations, which Rapier at 4 or

@@ -28,7 +28,7 @@ are kept by hand below, against docs/animation.md and the conformance suites
 (tests/conformance/animation/). The count after an item is how many objects (nodes,
 annotations, records) use it.
 
-## Count (2026-11-02, round 5)
+## Count (2026-11-03, round 6)
 
 | Part                        | Items | Done | Open |
 | --------------------------- | ----: | ---: | ---: |
@@ -39,10 +39,10 @@ annotations, records) use it.
 | Response handlers           |    97 |   97 |    0 |
 | Idles (IDLE fields)         |    10 |    9 |    1 |
 | Idle conditions (functions) |   111 |  111 |    0 |
-| Actions (AACT)              |    71 |   63 |    8 |
+| Actions (AACT)              |    71 |   64 |    7 |
 | Game settings (GMST)        |    20 |   20 |    0 |
 | Mechanics (by hand)         |    24 |   16 |    8 |
-| Total                       |  1146 | 1087 |   59 |
+| Total                       |  1146 | 1088 |   58 |
 
 Round 1 wrote the sweep and this list. Built: the animations' SoundStop.<descriptor> and
 SoundRelease.<descriptor> (17 and 8 annotations: the bow's draw loop, WPNBowPullLPM, stops as
@@ -80,6 +80,15 @@ the weapon out, ActionReload for a crossbow out without its bolt, ActionDualRele
 attack buttons come up at once, ActionBlockAnticipate as a blow comes at a held block,
 ActionPathEnd as a furniture walk arrives with the entry's heading, ActionSummonedStart as a
 summon first appears. The eight left have no moment in the data or docs (below).
+
+Round 6 (1087 to 1088): of the eight actions, seven are the engine's own default objects
+(observed in the original: Action Ragdoll Instant, Action Reset Animation Graph, Action
+Waterwalk Start, Action VoiceReady, Action Look, Action Shield Change, Action Listen Idle), so
+the engine asks for them at moments still to be found; ActionStopEffect is none, so nothing in
+the engine names it: inert. Not reached: those seven moments, the node fields (the mark
+threshold, applyMotionFromRoot, the powered ragdoll's world-from-model mode, bDisableInterp's
+setter, userData). Physics this round: a ragdoll made dynamic lifts its still bodies
+(docs/physics.md, "Made dynamic"); Hulda's locked legs stay open.
 
 ## Behavior graphs
 
@@ -191,7 +200,11 @@ summon first appears. The eight left have no moment in the data or docs (below).
       ActionSummonedStart (a Summon Creature's actor as the stage first shows it: summonStart).
       TODO(M13): the original's exact moments (the player's block anticipation; an arrival
       heading for other travels).
-- [ ] Actions never performed (8), each with what is missing:
+- [x] ActionStopEffect: inert. It is not one of the engine's default objects (the engine names
+      the actions it performs through them; the other seven below are), and no vanilla graph
+      has an idle for it (round 6).
+- [ ] Actions never performed (7), each with what is missing (each is one of the engine's
+      default objects, observed in the original, so the engine performs it somewhere):
   - ActionRagdollInstant (RagdollInstant, 46 graphs), ActionResetGraph (returnToDefault, Reset,
     RESET_GRAPH: 20 creature graphs): TODO(M13): when the original performs them is not known
     (no record, script or setting names the moment).
@@ -200,8 +213,8 @@ summon first appears. The eight left have no moment in the data or docs (below).
     TODO(M13).
   - ActionVoiceReady: no idles in any vanilla graph, and two moments fit its name (a power's
     charge done, the voice recovered); TODO(M13): which.
-  - ActionLook, ActionStopEffect, ActionShieldChange: no idles in any vanilla graph (performed,
-    nothing would play); ActionListen: one empty idle group. TODO(M13): their moments.
+  - ActionLook, ActionShieldChange: no idles in any vanilla graph (performed, nothing would
+    play); ActionListen (Action Listen Idle): one empty idle group. TODO(M13): their moments.
 
 ## Game settings
 

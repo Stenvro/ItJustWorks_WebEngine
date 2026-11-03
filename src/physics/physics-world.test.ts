@@ -102,6 +102,31 @@ describe('the physics world', () => {
     physics.free();
   });
 
+  it('a ragdoll made dynamic lifts its still bodies (observed in the original), not moving ones', () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    const moving = (z: number): CollisionBody => ({
+      ...body(box([-5, -5, z], [5, 5, z + 10])),
+      motion: 'dynamic',
+      mass: 5,
+      inertia: [0.1, 0.1, 0.1],
+      maxLinearVelocity: 100,
+      maxAngularVelocity: 30,
+    });
+    const placed = physics.addObject(collision(moving(500), moving(800)), IDENTITY, {
+      reference: 1,
+      kind: 'actor',
+    });
+    const [still, fast] = placed.bodies;
+    if (!still || !fast) throw new Error('two bodies');
+    physics.setMotion(placed, false);
+    physics.setBodyVelocity(fast, [2, 0, 0], [0, 0, 0]);
+    physics.liftStill(placed);
+    expect(still.body.linvel().z).toBeCloseTo(0.5);
+    expect(fast.body.linvel().z).toBeCloseTo(0);
+    expect(fast.body.linvel().x).toBeCloseTo(2);
+    physics.free();
+  });
+
   it('answers queries about placed collision only after a step', () => {
     const physics = new PhysicsWorld(matrix, GRAVITY);
     expect(physics.queriesCurrent).toBe(true);
