@@ -98,6 +98,22 @@ const DISALLOW_ENCHANTING = 'DIEN';
  * How perks change crafting: the perk entry points, filled by the perk system (perk-hooks.ts;
  * each default changes nothing).
  */
+/**
+ * A form the game made, as an imported save (.ess global data 4) keeps it: its form id, what
+ * it is and its effects (each with its price, the effect's share of the cost).
+ */
+export interface SavedCreatedObject {
+  readonly formId: number;
+  readonly kind: 'weapon' | 'armor' | 'potion' | 'poison';
+  readonly effects: readonly {
+    readonly effect: number;
+    readonly magnitude: number;
+    readonly duration: number;
+    readonly area: number;
+    readonly price: number;
+  }[];
+}
+
 export interface CraftingPerks {
   /**
    * Fortify Smithing and Fortify Alchemy (the skills' Mod and PowerMod actor values) reach
@@ -1181,6 +1197,12 @@ export class CraftingEngine {
 
   /** The created ALCH of a brewed potion. */
   async #potionForm(potion: BrewedPotion): Promise<number | undefined> {
+    const form = await this.#potionRecord(potion);
+    return form && this.create(form);
+  }
+
+  /** A brewed potion's ALCH: the template's, named for its strongest effect, its effects'. */
+  async #potionRecord(potion: BrewedPotion): Promise<CreatedForm | undefined> {
     const runtime = this.#runtime;
     const defaults = await this.#defaultObjects();
     const templateId = defaults.get(potion.poison ? DEFAULT_POISON : DEFAULT_POTION);
@@ -1222,7 +1244,45 @@ export class CraftingEngine {
     fields.splice(0, 0, createdField.zstring('FULL', name));
     fields.push(createdField.bytes('ENIT', enit));
     fields.push(...effectFields(potion.effects));
-    return this.create({ type: 'ALCH', fields });
+    return { type: 'ALCH', fields };
+  }
+
+  /**
+   * The created objects of an imported save (.ess global data 4) built again under their own
+   * form ids, as the save loads: a potion or poison as alchemy makes one of those effects (its
+   * value their prices'), an enchantment as enchanting makes one (a weapon's cast on touch, an
+   * apparel's constant on the wearer; its cost the effects' prices). TODO(M13): the original
+   * keeps no charge or base enchantment with them; a made enchantment's are 0 here.
+   */
+  async restoreCreated(objects: readonly SavedCreatedObject[]): Promise<void> {
+    const runtime = this.#runtime;
+    for (const object of objects) {
+      const effects = object.effects.map((effect) => ({ ...effect, value: effect.price }));
+      const value = effects.reduce((sum, effect) => sum + effect.value, 0);
+      let form: CreatedForm | undefined;
+      if (object.kind === 'potion' || object.kind === 'poison') {
+        form = await this.#potionRecord({ effects, poison: object.kind === 'poison', value });
+      } else {
+        const weapon = object.kind === 'weapon';
+        const first = effects[0] && (await runtime.magic.effect(effects[0].effect));
+        const enit = new Uint8Array(36);
+        const data = new DataView(enit.buffer);
+        data.setInt32(0, Math.round(value), true);
+        data.setUint32(4, EnchantmentFlag.noAutoCalc, true);
+        data.setUint32(8, weapon ? CastType.fireAndForget : CastType.constantEffect, true);
+        data.setUint32(16, weapon ? Delivery.touch : Delivery.self, true);
+        data.setUint32(20, EnchantType.enchantment, true);
+        form = {
+          type: 'ENCH',
+          fields: [
+            createdField.zstring('FULL', first?.name ?? ''),
+            createdField.bytes('ENIT', enit),
+            ...effectFields(effects),
+          ],
+        };
+      }
+      if (form) runtime.state.createdForms.set(object.formId, form);
+    }
   }
 
   /** The plugins' first potion (and poison) of each first effect ("effect:poison"). */

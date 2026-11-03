@@ -126,8 +126,9 @@ keeps the values it loads; UESP's names kept for the numbers):
   through and a crime whose witnesses are all dead (fKillWitnessesTimerSetting after it) is
   dropped with its bounty ("Last witness killed"), then the countdown is set to 1 again. The u32
   (0 and 6 in the saves read; UESP: the next crime's number) is not used there (TODO(M13)).
-- 102 (Interface): the help messages shown (a sorted u32 list; 252 in both saves: TODO(M13)
-  what they number); a byte set as a Miscellaneous quest's objective is first shown, after
+- 102 (Interface): the help messages shown (a sorted u32 list: one entry, 252, in both saves,
+  the same before the cart and after Helgen; TODO(M13): what it numbers, the help entries of
+  the help part are named, not numbered); a byte set as a Miscellaneous quest's objective is first shown, after
   which the Miscellaneous objectives count among the objectives shown; the last used lists; a
   byte, the journal's other pages switched off (Game.DisablePlayerControls' abJournalTabs, as
   IsJournalControlsEnabled reads it: 1 in both saves); then the help part: entries (two
@@ -379,7 +380,7 @@ current one), the objects it knows (a vsval count: a reference, a byte, a vsval 
 data prefixed by its size), a reference, the items equipped by hand (a vsval count: a reference,
 u32, u8, u32, two references, five bytes), switches and timers; for the high process (0) inside
 it, before the middle-high part's last byte: switches, values, positions and timers, eight
-references, six held objects with a byte each, the dialogue it is in (a byte; lines with two
+references, the six head track targets with a byte each (below), the dialogue it is in (a byte; lines with two
 names, two u32, a byte, three references and a byte; a u16 and four references), points through
 the pathing stream (eight values, two u32 and a reference each), a byte and when set a u32, a
 point, a time stamp and a reference, the character controller's state prefixed by its size, two
@@ -713,11 +714,16 @@ ess)` reads those places ahead);
   clock reads 8.3 hours), what the player has seen (the local map's fog: 32 bytes, 16 × 16 bits
   per block, each 2 × 2 of ours; an exterior's one block, an interior's per part with its two
   signed bytes; TODO(M13): the block's size and the bits' order, and ours draws no fog on the
-  exterior local map), a public place (the flags' 0x20, as the record's DATA; the change form keeps
-  only the flags the running game sets beside the record's; TODO(M13): 0x40 and 0x200,
-  CommonLibSSE's Hand Changed and Warn To Leave: 0x40 on some 40 interiors in each save read,
-  0x200 on two houses not visited, Carlotta Valentia's and Morthal's Highmoon Hall: their
-  run-time effect is not known), the owner;
+  exterior local map), a public place (the flags' 0x20, as the record's DATA), the owner. As
+  observed in the original, the flags' word is the record flags a running game may change
+  (0x20 public, 0x40 and 0x200: CommonLibSSE's Hand Changed and Warn To Leave) over the cell's
+  game flags (the other bits; none in the saves read, logged if seen). Warn To Leave: in an
+  interior with it, an owner of the cell takes a living actor that owns no part of it for an
+  intruder to warn off (the trespass warning), which is ours off limits (`CrimeState.offLimits`,
+  where the player trespasses): the import sets it (two homes in the saves read, Carlotta
+  Valentia's and Morthal's Highmoon Hall, neither visited). Hand Changed: set by the running
+  game on some 40 shops and homes in each save read (none in their records); no code of the
+  original was found that reads it, so it needs nothing (TODO(M13): what sets it);
 - the dead counts by actor base (global data 2, TES: its first list, a refId and a u16 each:
   GetDeadCount): after Helgen a count of 1 for each base of the opening's dead, none on the
   cart. TODO(M13): its square table of refIds (5 × 5, every one 0 in both saves) and its last
@@ -792,14 +798,45 @@ ess)` reads those places ahead);
 
 Read but not imported yet (TODO(M13)): the other projectiles in flight (beams, cones, barriers:
 none in the saves read); the base objects' other changes (values, names; the scenes' clocks);
-the created objects (4: none in the saves read; they need the crafting engine's forms built
-as the save loads), the process lists' crimes and the number beside them (100), the help
-messages shown (102); the movement controller's state (the engine plans its paths anew); the high
-process's timers and held objects (six references with a byte each, whose meaning is not
-known); the combat controllers' objects; the look-at modifiers' bones of the animation graphs;
+the process lists' crimes and the number beside them (100), the help messages shown (102);
+the movement controller's state (the engine plans its paths anew); the combat controllers'
+objects; the look-at modifiers' bones of the animation graphs;
 the player's other lists.
 The tables empty in every save read (5 effects, 112 ingredients shared, 1004 synchronized
 animations) are logged only when they hold something.
+
+The created objects (global data 4: the enchantments, potions and poisons the game made, each
+its form id, a use count and its effects with their magnitude, duration, area and price) go
+into our save as `GameSave.createdObjects` and are built again as it loads by the crafting
+engine (`CraftingEngine.restoreCreated`) under the same form ids (the save's own 0xFF…, which
+the items and inventories name): a potion or poison as alchemy makes one of those effects (its
+look the plugins' first potion of its strongest effect, its value the prices'), an enchantment as
+enchanting makes one (a weapon's fire and forget on touch, an apparel's constant on the wearer,
+its cost the prices'). None in the saves read (tested on a buffer). TODO(M13): the enchanted
+items' own extra data (ExtraEnchantment) waits on a save that holds one.
+
+The high process (an actor near the player) keeps, as observed in the original and named after
+CommonLibSSE's HighProcessData: its countdowns (the greeting timer, 5 seconds after a greeting
+(fAIGreetingTimer), counting on below 0; the idle chatter's; the check-to-talk timer, drawn
+in fAISocialTimerForConversations; the clear-talk-to-list timer, fAItalktosameNPCtimer's 120;
+the detection modifier's), its fade (state and alpha), whether it was arrested, eight
+references (the actor it greets, its last target, its idle, what its path looks at, ...) and
+the six things it looks at, one per head tracking kind (default, action, script, combat,
+dialogue, procedure), each with whether it tracks it (`EssHighProcess`). The script's (an
+Actor.SetLookAt: 14 actors at the cart, as the opening's scripts set them) becomes the actor's
+`lookAt`, told to the world as the save loads; the other kinds are asked every frame by their
+systems (combat's target: 12 actors at Helgen), and the countdowns start again from the load,
+as the talk's planner gives each actor it meets a place in its timers.
+
+The character's id: as observed in the original, a game's character has an id (a random u32
+drawn as the game first needs one, not one a known character uses), which the original
+writes into every save's file name (`Save1_<id, 8 hex digits>_<modded 0 or 1>_<the player's
+name as hex>_<place>_<play time>_<date>_<level>_...`), not into the file. The Load list
+groups the saves by it (one entry per character, as its saves name the player); naming the
+player in the race menu keeps the id while the name is the one the id goes by (or the player
+was never named) and draws a new one for another name. The import takes the id from the
+picked file's name (src/save/character-id.ts), so an imported game's saves are listed with
+its character's.
 
 The arrows stuck in actors (the AttachedArrows3D extra data: three in a Helgen soldier) become
 `WorldSave.attachedArrows` (docs/formats/save.md): each its PROJ, its bone (TODO(M13): taken as

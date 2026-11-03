@@ -56,6 +56,34 @@ describe('the menus’ save list', () => {
     ]);
   });
 
+  it("tells characters apart by their id, a name's two characters too", async () => {
+    const byId = [
+      { ...header('Save 4', 'Lydia', 400), characterId: 0xb },
+      { ...header('Save 3', 'Lydia', 300), characterId: 0xa },
+      { ...header('Save 2', 'Lydia', 200), characterId: 0xb },
+    ];
+    expect(savedCharacters(byId)).toEqual([
+      { text: 'Lydia', id: 0, flags: 0 },
+      { text: 'Lydia', id: 1, flags: 0 },
+    ]);
+    const menu = new FakeMenu();
+    const list = new SaveList<FakeMenu>({
+      source: () => ({ list: () => Promise.resolve(byId), delete: () => Promise.resolve() }),
+      playTime: () => '',
+      load: () => undefined,
+      log: () => undefined,
+    });
+    const handlers = list.handlers();
+    handlers.PopulateCharacterList?.(menu, [0, '__itjwRef:3', 10]);
+    await settle();
+    handlers.CharacterSelected?.(menu, [0, 0, 0, false, '__itjwRef:3', 10]);
+    await settle();
+    expect(menu.entries.map((entry) => entry.text)).toEqual([
+      'Save 4  Whiterun',
+      'Save 2  Whiterun',
+    ]);
+  });
+
   it('shows game days as a time played', () => {
     expect(gameDaysText(2.25)).toBe('2 days, 06:00');
     expect(gameDaysText(1.5)).toBe('1 day, 12:00');

@@ -10,7 +10,9 @@ import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { RuntimeSave } from '../scripting/runtime/runtime-save.ts';
 import { readSave, SAVE_VERSION, writeSave, type SaveHeader } from './save-codec.ts';
+import { drawCharacterId } from './character-id.ts';
 import type { SavedHazard } from '../scripting/runtime/hazard-engine.ts';
+import type { SavedCreatedObject } from '../scripting/runtime/crafting-engine.ts';
 import type { WorldSave } from './world-save.ts';
 import type { SkySave } from '../world/sky-weather.ts';
 
@@ -49,6 +51,12 @@ export interface GameSave {
    * inventory entries' Worn extra data): put on once the inventory deltas are in.
    */
   readonly worn?: readonly (readonly [number, readonly (readonly [number, Hand | undefined])[]])[];
+  /**
+   * The enchantments, potions and poisons the original made, by their form ids (an imported
+   * .ess keeps them as their effects: ess-import.ts): built again as the save loads. Our own
+   * saves keep the forms themselves (GameState.createdForms).
+   */
+  readonly createdObjects?: readonly SavedCreatedObject[];
 }
 
 export interface SaveRequest {
@@ -78,6 +86,8 @@ export async function saveGame(
   const player = await runtime.placement(PLAYER_REF);
   if (!player) throw new Error('the player is nowhere');
   const unsaved: string[] = [];
+  // The character's id, drawn as its first save is made if the race menu has not named it.
+  runtime.state.characterId ??= drawCharacterId();
   const data = await runtime.saveData((what) => unsaved.push(what));
   const body: GameSave = {
     runtime: data,
@@ -96,6 +106,7 @@ export async function saveGame(
     kind: request.kind,
     number: request.number,
     playerName: runtime.state.playerName ?? 'Prisoner',
+    characterId: runtime.state.characterId,
     playerLevel: runtime.state.actors.get(PLAYER_REF)?.level ?? 1,
     location: await locationName(runtime, player),
     gameDays: runtime.state.gameDaysPassed,
@@ -154,6 +165,7 @@ export async function loadGameScripts(
     if (state.lookAt !== undefined) runtime.world.lookAt?.(actor, state.lookAt, 'script');
   }
   await runtime.hazards.restore(save.hazards ?? []);
+  await runtime.crafting.restoreCreated(save.createdObjects ?? []);
   for (const [container, items] of save.inventoryDeltas ?? []) {
     const inventory = await runtime.inventory(container);
     for (const [item, delta] of items) {

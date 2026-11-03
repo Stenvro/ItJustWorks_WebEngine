@@ -46,6 +46,7 @@ import type { PlaySession } from './play-session.ts';
 import type { PlayerAvatar } from './player-avatar.ts';
 import { RaceMenuCamera, raceMenuSettings } from './race-menu-camera.ts';
 import type { Terminal } from './terminal.ts';
+import { namedCharacterId } from '../save/character-id.ts';
 
 /** The menu's panels (RaceSexPanels): where bLimitedMenu is set. */
 const PANELS = '_root.RaceSexMenuBaseInstance.RaceSexPanelsInstance';
@@ -405,7 +406,12 @@ class Editing {
       }
       this.#awaitingName = false;
       const runtime = this.#session.scriptsReady;
-      if (runtime) runtime.state.playerName = name;
+      if (runtime) {
+        // A new name makes a new character (its saves listed apart), as observed in the original.
+        const state = runtime.state;
+        state.characterId = namedCharacterId(state.characterId, state.playerName, name);
+        state.playerName = name;
+      }
       menu.call('SetNameText', name);
       this.#finish(menu);
     } finally {
