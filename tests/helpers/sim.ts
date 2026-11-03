@@ -86,12 +86,25 @@ const LINE_SECONDS = 30;
 
 /** The player's radius on the navmeshes (a human's collision capsule). */
 const PLAYER_RADIUS = 20;
+/**
+ * The player's ways: their radius, and ledges no higher than their jump (fJumpHeightMin's 76):
+ * a ledge-up link the navmesh gives for a drop (the Ratway Warrens' drop-down room) is no way up.
+ */
+const WAY = { radius: PLAYER_RADIUS, ledgeUp: 76 } as const;
 /** How far across a walked-to point may lie from the navmesh under it. */
 const PATH_GOAL_REACH = 256;
 /** A door the player is held up by is within this of their feet (across). */
 const DOOR_REACH = 160;
 /** How far the player steps aside round someone standing in their way (doubling each time). */
 const SIDESTEP = 48;
+/**
+ * Held up this far beside a closed door's centre (across the doorway), the player steps back
+ * in front of it, this far from it, before opening it (units): out of the leaf's swing.
+ */
+const DOORWAY_ASIDE = 40;
+const DOORWAY_STAND = 140;
+/** How long a door opened in the way is waited for to stand open (s). */
+const DOOR_SWING_WAIT = 3;
 /**
  * Held up at one point this many times (stepped aside each time, and back into the same spot: an
  * open door's leaf against a wall), the player looks for their way again from where they stand.
@@ -250,6 +263,8 @@ export class Sim {
     if (!at) throw new Error(`No place for ${destination.toString(16)}`);
     const enter = async (place: Placement): Promise<void> => {
       const arrival: Arrival = { position: place.position, heading: place.rotation[2] };
+      // Play's journey brings the followers, and the player's horse, along (main.ts).
+      await this.world.stage.followers.comeAlong(place, true);
       if (place.world !== undefined) await this.world.openExterior(place.world, { arrival });
       else if (place.cell !== undefined) await this.world.openInterior(place.cell, arrival);
     };
@@ -455,11 +470,13 @@ export class Sim {
     // Off the navmesh (a floor it leaves out), the way starts where it is nearest.
     const feet = this.world.player.feet;
     const from = navmeshes.locate(feet) ? feet : navmeshes.nearest?.(feet, PATH_GOAL_REACH);
-    const path = from && findPath(navmeshes, from, goal, { radius: PLAYER_RADIUS });
+    const path = from && findPath(navmeshes, from, goal, WAY);
     if (!path) return false;
     const until = this.time + seconds;
     // Blockers whose activate parent was pulled in this walk (not pulled shut again).
     const pulled = new Set<number>();
+    // The open doors they lined up with and went through (#openDoorNear).
+    const lined = new Set<number>();
     let points = path.points.slice(from === feet ? 1 : 0);
     let complete = path.complete;
     let searched = false;
@@ -480,7 +497,8 @@ export class Sim {
         // the way is cleared (#clearWay); down in a dip off the navmesh (a gap between rocks under
         // it), with the way on above, they jump out; someone in the way is stepped round.
         const [x1, y1, z1] = this.world.player.feet;
-        if (Math.hypot(x1 - x0, y1 - y0) >= 4 || this.#openDoorNear([x1, y1])) continue;
+        if (Math.hypot(x1 - x0, y1 - y0) >= 4 || (await this.#openDoorNear([x1, y1], goal, lined)))
+          continue;
         if (await this.#clearWay([x1, y1, z1], point, pulled)) continue;
         if (!jumped && point[2] > z1 + JUMP_OUT && !navmeshes.locate([x1, y1, z1])) {
           jumped = true;
@@ -496,7 +514,7 @@ export class Sim {
           searched = true;
           const here: Vec3 = [x1, y1, z1];
           const start = navmeshes.locate(here) ? here : navmeshes.nearest?.(here, PATH_GOAL_REACH);
-          const again = start && findPath(navmeshes, start, goal, { radius: PLAYER_RADIUS });
+          const again = start && findPath(navmeshes, start, goal, WAY);
           if (again) {
             points = again.points.slice(start === here ? 1 : 0);
             complete = again.complete;
@@ -597,24 +615,78 @@ export class Sim {
    * Activates the nearest closed door within reach of a point (true if there was one). A door
    * not swung yet is as the plugin placed it (GetOpenState's rule: open by default, ONAM, or
    * closed); an open or opening one is left alone, as activating it would swing it shut again
-   * (onto the player held up beside it).
+   * (onto the player held up beside it). Held up beside the doorway (at its frame), they first
+   * step back in front of it, as a player lines up with a door: the leaf swings round its hinge
+   * at the doorway's side, and opened from beside it, it swept the player behind it. Held at
+   * the frame of an open one (`lined`: once a walk) with the way on beyond it (`goal`), they line
+   * up in front of it and go through straight: the navmesh's way rounds the frame too closely.
    */
-  #openDoorNear([x, y]: readonly [number, number]): boolean {
-    let door: number | undefined;
-    let nearest = DOOR_REACH;
+  async #openDoorNear(
+    [x, y]: readonly [number, number],
+    goal: readonly number[],
+    lined: Set<number>,
+  ): Promise<boolean> {
+    // The nearest closed door within reach, else the nearest open one.
+    let closed: { reference: number; world: ArrayLike<number>; away: number } | undefined;
+    let opened: { reference: number; world: ArrayLike<number>; away: number } | undefined;
     for (const placed of this.world.placedObjects()) {
       const { object } = placed;
       // A load door is not in the way: it would take them elsewhere.
       if (object.baseType !== 'DOOR' || object.teleport !== undefined) continue;
       const state = this.openState(object.reference) || (object.openByDefault ? 1 : 3);
-      if (state === 1 || state === 2) continue;
+      if (state === 2) continue;
       const away = Math.hypot((object.world[12] ?? 0) - x, (object.world[13] ?? 0) - y);
-      if (away < nearest) {
-        nearest = away;
-        door = object.reference;
-      }
+      if (away >= DOOR_REACH) continue;
+      const found = { reference: object.reference, world: object.world, away };
+      if (state === 1) {
+        if (!opened || away < opened.away) opened = found;
+      } else if (!closed || away < closed.away) closed = found;
     }
-    return door !== undefined && this.activate(door);
+    const chosen = closed ?? opened;
+    if (!chosen) return false;
+    const { reference: door, world } = chosen;
+    const open = !closed;
+    // The doorway's centre, its facing (the door's local Y) and how far aside of it they are.
+    const [cx, cy] = [world[12] ?? 0, world[13] ?? 0];
+    const length = Math.hypot(world[4] ?? 0, world[5] ?? 0) || 1;
+    const [fx, fy] = [(world[4] ?? 0) / length, (world[5] ?? 0) / length];
+    const ahead = (x - cx) * fx + (y - cy) * fy;
+    const aside = (x - cx) * -fy + (y - cy) * fx;
+    const side = ahead >= 0 ? 1 : -1;
+    const z = this.world.player.feet[2];
+    // Out from the wall straight (round the end of a leaf swung open beside them), then across to
+    // in front of the doorway.
+    const out = (along: number, across: number): Vec3 => [
+      cx + fx * along - fy * across,
+      cy + fy * along + fx * across,
+      z,
+    ];
+    const lineUp = async (): Promise<void> => {
+      await this.walkTo(out(side * DOORWAY_STAND, aside), 3, 24);
+      await this.walkTo(out(side * DOORWAY_STAND, 0), 3, 24);
+    };
+    const beyond = (((goal[0] ?? cx) - cx) * fx + ((goal[1] ?? cy) - cy) * fy) * ahead < 0;
+    if (open) {
+      // Held at an open doorway's frame with the way on beyond it: they line up in front of it
+      // and go through straight, once.
+      if (lined.has(door) || Math.abs(aside) <= DOORWAY_ASIDE || !beyond) return false;
+      lined.add(door);
+      await lineUp();
+      await this.walkTo(out(-side * DOORWAY_STAND, 0), 3, 24);
+      return true;
+    }
+    if (Math.abs(aside) > DOORWAY_ASIDE || Math.abs(ahead) < DOORWAY_STAND - DOORWAY_ASIDE) {
+      await lineUp();
+    }
+    if (!this.activate(door)) return false;
+    // Opened, and the way goes on beyond it: through the doorway's middle, not along the way's
+    // corner by its frame (the leaf stands open there).
+    if (beyond && !lined.has(door)) {
+      lined.add(door);
+      await this.until(() => this.openState(door) === 1, DOOR_SWING_WAIT);
+      await this.walkTo(out(-side * DOORWAY_STAND, 0), 4, 24);
+    }
+    return true;
   }
 
   /**

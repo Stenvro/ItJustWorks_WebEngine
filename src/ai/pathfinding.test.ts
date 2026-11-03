@@ -157,6 +157,28 @@ describe('findPath', () => {
     expect(path?.points[path.points.length - 1]).toEqual([150, 80, 0]);
   });
 
+  it('takes a ledge up no higher than the jump it is given', () => {
+    const below = gridMesh(1, [[0, 0]]);
+    const above = gridMesh(2, [[1, 0]]);
+    // The east square lies 260 units up; the west's triangle 0 leads onto it by a ledge-up link.
+    const raised: Navmesh = {
+      ...above,
+      vertices: above.vertices.map((value, i) => (i % 3 === 2 ? 260 : value)),
+    };
+    const ledge: Navmesh = {
+      ...below,
+      triangles: below.triangles.map((t, i) =>
+        i === 0 ? { ...t, edges: [t.edges[0], 0, t.edges[2]], flags: NavmeshFlag.edge12Link } : t,
+      ),
+      links: [{ type: NavmeshLinkType.ledgeUp, navmesh: 2, triangle: 1 }],
+    };
+    const set = setOf([ledge, raised]);
+    const up = findPath(set, [50, 20, 0], [150, 80, 260], { radius: 5 });
+    expect(up?.complete).toBe(true);
+    const jump = findPath(set, [50, 20, 0], [150, 80, 260], { radius: 5, ledgeUp: 76 });
+    expect(jump?.complete).toBe(false);
+  });
+
   it('keeps large creatures off triangles flagged for them', () => {
     const set = setOf([
       gridMesh(1, L_SQUARES, (square) => (square === 1 ? NavmeshFlag.noLargeCreatures : 0)),
