@@ -293,15 +293,22 @@ export function readAudio(
   return { unknown, tracks, music: resolve(reader.refId()) };
 }
 
+/**
+ * 8 (UESP: Sky Cells), as observed in the original: each worldspace's sky cell, the cell the
+ * engine makes for a worldspace as it runs (a created form; a worldspace that uses its parent's
+ * sky cell has none of its own), by its form id. As the save loads, each listed worldspace's sky
+ * cell takes its form id again, so the references the save puts in it are found there. A
+ * worldspace of 0 is an unused entry.
+ */
 export function readSkyCells(
   data: EssSource,
   resolve: RefIdResolver,
-): { first: number; second: number }[] {
+): { worldspace: number; cell: number }[] {
   const reader = essReader(data);
   const count = reader.vsval();
-  const cells: { first: number; second: number }[] = [];
+  const cells: { worldspace: number; cell: number }[] = [];
   for (let i = 0; i < count; i++) {
-    cells.push({ first: resolve(reader.refId()), second: resolve(reader.refId()) });
+    cells.push({ worldspace: resolve(reader.refId()), cell: resolve(reader.refId()) });
   }
   return cells;
 }
@@ -323,9 +330,14 @@ export function readAnimObjects(
   return objects;
 }
 
-export function readTimer(data: EssSource): { unknown1: number; unknown2: number } {
+/**
+ * 1003 (UESP: Timer), as observed in the original: the Slow Time effect's two rates, the world's
+ * and the player's (0 with none running); a world rate above 0 sets the game's time multiplier
+ * as the save loads.
+ */
+export function readTimer(data: EssSource): { worldSlowdown: number; playerSlowdown: number } {
   const reader = essReader(data);
-  return { unknown1: reader.u32(), unknown2: reader.u32() };
+  return { worldSlowdown: reader.f32(), playerSlowdown: reader.f32() };
 }
 
 export interface SynchronizedAnimation {

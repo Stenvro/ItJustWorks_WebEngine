@@ -63,30 +63,45 @@ const GLOBAL_DATA: Readonly<Record<number, readonly [boolean, string]>> = {
     true,
     'audio: the music types in play (the location type follows from the place; no track kept)',
   ],
-  8: [false, 'sky cells (not applied)'],
-  100: [false, 'process lists: crimes being reported (not applied)'],
+  8: [
+    true,
+    "sky cells: each worldspace's created sky cell, its references placed in the worldspace",
+  ],
+  100: [
+    false,
+    'process lists: comment and crime check timers (none running), crimes (none); a number beside them (0, 6): its use not known',
+  ],
   101: [
     true,
     "combat: each group member's fight (its target, its group's knowledge of it, its search)",
   ],
   102: [
     false,
-    'interface: help events done, last used applied; the help messages shown (meaning: TODO(M13))',
+    'interface: help done, last used, journal tabs applied; the help messages shown (252) and the last number (-2) not known',
   ],
   103: [true, "actor causes: the actor each reference's ActorCause extra blames"],
-  104: [false, 'unknown 104'],
-  105: [false, 'detection manager (not applied)'],
-  106: [false, 'location metadata (not applied)'],
+  104: [true, 'none: the original writes no entry and ignores one'],
+  105: [
+    true,
+    "references' state for the locations: dead actors' last seen hour (deathHours); dead, disabled as their change forms",
+  ],
+  106: [true, "aliases' reservations: counted again from the quests' aliases (alias fill)"],
   107: [
     true,
     'quest static data: the quests running (as their QUST change forms); run data lists logged',
   ],
-  108: [false, 'story teller (not applied)'],
+  108: [true, "story teller: a flag the original's load reads and drops"],
   109: [true, 'magic favorites and their hotkeys'],
-  110: [false, "player controls: the controls' state (its fields not known)"],
+  110: [
+    true,
+    'player controls: activation off, camera switch locks applied; keys held wait for release',
+  ],
   111: [true, 'the story event manager: events waiting, told again'],
   112: [true, "ingredient shared: the ingredients' known effects: empty in every save read"],
-  113: [false, 'menu controls (not applied)'],
+  113: [
+    true,
+    'menu controls: beast form applied; the tween and favorites keys on (1, as a new game: an off one is logged)',
+  ],
   114: [
     true,
     "menu topic manager: a conversation's speakers (none in every save read; else logged)",
@@ -100,7 +115,7 @@ const GLOBAL_DATA: Readonly<Record<number, readonly [boolean, string]>> = {
     'Papyrus: instances, stacks, messages, waits, suspended calls, registrations (LOS: none read)',
   ],
   1002: [true, 'anim objects: what actors hold, put on as each is placed'],
-  1003: [false, 'timer (not applied)'],
+  1003: [true, "Slow Time's rates: from the effect on the player (none running in the saves read)"],
   1004: [true, 'synchronized animations: paired animations under way: empty in every save read'],
   1005: [true, 'main: empty in every save read'],
 };

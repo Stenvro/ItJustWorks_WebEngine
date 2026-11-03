@@ -29,7 +29,9 @@ import {
   readGlobalVariables,
   readMiscStats,
   readPlayerLocation,
+  readSkyCells,
   readTes,
+  readTimer,
   readWeather,
   refIdResolver,
   type RefIdResolver,
@@ -45,10 +47,16 @@ import {
 import {
   readActorCauses,
   readCombat,
+  readDetectionManager,
   readGlobalData,
   readInterface,
+  readLocationMetaData,
   readMagicFavorites,
+  readMenuControls,
+  readPlayerControls,
+  readProcessLists,
   readQuestStaticData,
+  ReferenceStateFlag,
   readStoryEventManager,
   readTempEffects,
   StoryParameterKind,
@@ -825,7 +833,23 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     }
   }
 
+  // The worldspaces' sky cells (global data 8): created cells by form id, whose references are
+  // in that worldspace (placed by their positions as any exterior reference).
+  const skyCells = new Map<number, number>();
+  const skyData = globalData(ess, 8);
+  if (skyData) {
+    try {
+      for (const { worldspace, cell } of readSkyCells(skyData, resolve)) {
+        const id = worldspace === 0 ? undefined : ours(worldspace);
+        if (id !== undefined && cell !== 0) skyCells.set(cell, id);
+      }
+    } catch {
+      skips.add('sky cells: unreadable');
+    }
+  }
   const placeOf = (cellOrWorld: number): { cell?: number; world?: number } => {
+    const sky = skyCells.get(cellOrWorld);
+    if (sky !== undefined) return { world: sky };
     const id = ours(cellOrWorld);
     if (id === undefined) return {};
     return world.recordType(id) === 'WRLD' ? { world: id } : { cell: id };
@@ -1960,14 +1984,22 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     }
   }
 
+  /** The player's controls the tables keep (102, 110), as the runtime's saved switch. */
+  const controls: { activate?: boolean; journalTabs?: boolean; povLocks?: number[] } = {};
+  /** The runtime's switches the tables keep (RuntimeSave.fields). */
+  const fields: Record<string, unknown> = {};
+
   // The interface (global data 102): the input events whose help messages the player has done
   // (the opening's "Look" and "Forward"), not shown again; the weapons, spells and shouts used
-  // last (the journal's favorites, each counted once). TODO(M13): the help messages shown (one
-  // number, 252 in the saves read) and the two words beside them, whose meaning is not known.
+  // last (the journal's favorites, each counted once); the journal's other pages switched off
+  // (Game.DisablePlayerControls' abJournalTabs). The Miscellaneous objectives' flag needs
+  // nothing: the journal lists every objective shown. TODO(M13): the help messages shown (one
+  // number, 252 in the saves read) and the help part's last number (−2), not known.
   const interfaceData = globalData(ess, 102);
   if (interfaceData) {
     try {
       const read = readInterface(interfaceData, resolve);
+      controls.journalTabs = read.journalTabsDisabled === 0;
       for (const name of read.extra?.names ?? []) state.helpDone.add(name.toLowerCase());
       for (const [list, usage] of [
         [read.lastUsedWeapons, state.usage.weapons],
@@ -2104,6 +2136,96 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       );
     }
   }
+  // The process lists (global data 100), as observed in the original: two countdowns before an
+  // actor may comment on the player's actions again (one for every actor), the crime check's
+  // (a second at most: gone within it), a number whose use is not known, and the crimes. The
+  // talk here keeps each actor's own wait, so a countdown still running is logged, as a crime.
+  // TODO(M13): what the number counts; the crimes into the crime engine once a save holds some.
+  const processData = globalData(ess, 100);
+  if (processData) {
+    try {
+      const lists = readProcessLists(processData, resolve);
+      if (lists.actionCommentTimer > 0 || lists.knockCommentTimer > 0)
+        skips.add('process lists: comment timers not applied');
+      if (lists.crimes.some((crimes) => crimes.length > 0))
+        skips.add('process lists: crimes not applied');
+    } catch {
+      skips.add('process lists: unreadable');
+    }
+  }
+
+  // The references' state the locations count (global data 105): a dead actor's last seen hour
+  // is the hour its death counts from (GameState.deathHours: the respawn wait and a location's
+  // clearing). Dead and disabled follow from the change forms; a save where they differ logs it.
+  const referenceData = globalData(ess, 105);
+  if (referenceData) {
+    try {
+      for (const entry of readDetectionManager(referenceData, resolve)) {
+        const id = entry.reference === 0 ? undefined : ours(entry.reference);
+        if (id === undefined) continue;
+        const dead = (entry.flags & ReferenceStateFlag.dead) !== 0;
+        if (dead && entry.lastSeenHour > 0) state.deathHours.set(id, entry.lastSeenHour);
+        if (dead && state.actors.get(id)?.dead !== true && state.actors.has(id))
+          skips.add('reference states: dead, not by its change form');
+      }
+    } catch {
+      skips.add('reference states: unreadable');
+    }
+  }
+
+  // The aliases' reservations (global data 106): how many reserving aliases hold each reference.
+  // The alias fill counts them again from the quests' aliases as the save loads (alias-fill.ts).
+  const reservationData = globalData(ess, 106);
+  if (reservationData) {
+    try {
+      readLocationMetaData(reservationData, resolve);
+    } catch {
+      skips.add('alias reservations: unreadable');
+    }
+  }
+
+  // The player controls (110): the activation switched off and the camera switch's locks by
+  // aiDisablePOVType. The keys held need nothing: observed in the original, a key held as the
+  // save loads waits for its release.
+  const playerControlsData = globalData(ess, 110);
+  if (playerControlsData) {
+    try {
+      const read = readPlayerControls(playerControlsData);
+      controls.activate = read.activateDisabled === 0;
+      controls.povLocks = read.povLocked.flatMap((locked, type) => (locked ? [type] : []));
+    } catch {
+      skips.add('player controls: unreadable');
+    }
+  }
+  if (Object.keys(controls).length > 0) fields.controls = controls;
+
+  // The menu controls (113): the beast form (Game.SetBeastForm). The tween and favorites keys'
+  // switch is on in every save read, as a new game has it; one off is logged (TODO(M13): what
+  // switches it off).
+  const menuControlsData = globalData(ess, 113);
+  if (menuControlsData) {
+    try {
+      const read = readMenuControls(menuControlsData);
+      fields.beastForm = read.beastForm !== 0;
+      if (read.menuKeys === 0) skips.add('menu controls: the menu keys off (TODO)');
+    } catch {
+      skips.add('menu controls: unreadable');
+    }
+  }
+
+  // The Slow Time rates (1003): they follow from the Slow Time effect on the player, restored
+  // with the player's effects; a rate without that effect is logged.
+  const timerData = globalData(ess, 1003);
+  if (timerData) {
+    try {
+      const rates = readTimer(timerData);
+      if (rates.worldSlowdown > 0 || rates.playerSlowdown > 0)
+        skips.add('slow time: rates not applied');
+    } catch {
+      skips.add('slow time: unreadable');
+    }
+  }
+
   // Tables that hold nothing to apply when their lists are empty (as in every save read): the
   // image space modifiers running (5), the ingredients' known effects (112), the paired
   // animations under way (1004); the menu topic manager's two references (114: CommonLibSSE's
@@ -2127,7 +2249,10 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   for (const table of [ess.globalData1, ess.globalData2, ess.globalData3]) {
     for (const entry of table) {
       if (
-        ![0, 1, 2, 3, 6, 7, 101, 103, 107, 109, 111, 1000, 1001, 1002].includes(entry.type) &&
+        ![
+          0, 1, 2, 3, 6, 7, 8, 100, 101, 102, 103, 105, 106, 107, 108, 109, 110, 111, 113, 1000,
+          1001, 1002, 1003,
+        ].includes(entry.type) &&
         entry.data.length > 0 &&
         !empty(entry.type, entry.data)
       ) {
@@ -2143,7 +2268,7 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     clocks: { realTime: 0, gameTime: state.gameDaysPassed, wallTime: 0 },
     startDate: undefined,
     startDays: 0,
-    fields: {},
+    fields,
     stats,
     wordsLearned: new Map(),
     iniOverrides: new Map(),

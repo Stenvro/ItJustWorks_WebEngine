@@ -595,3 +595,97 @@ describe('the ingredients (INGR change forms)', () => {
     expect(essIngredientUse(0)).toEqual({ effects: new Set(), uses: 0 });
   });
 });
+
+describe('the global data tables of controls, references and sky cells', () => {
+  const SKY_CELL = 0xff000a33;
+  const MOVED = 0x1c1b0;
+  const DEAD = 0x1c1b1;
+  /** The player in Breezehome; a reference moved into Whiterun's sky cell; the tables. */
+  function tablesSave(): Uint8Array {
+    const player = actorData(
+      new EssWriter()
+        .refId(1, BREEZEHOME)
+        .f32(10)
+        .f32(20)
+        .f32(30)
+        .f32(0)
+        .f32(0)
+        .f32(1)
+        .u32(0xffffffff)
+        .u32(0)
+        .vsval(0)
+        .vsval(0)
+        .refId(0, 0)
+        .u8(0)
+        .vsval(0)
+        .vsval(0),
+    ).done();
+    return writeSyntheticEss({
+      playerName: 'Dragonborn',
+      playerLevel: 1,
+      location: 'Whiterun',
+      plugins: ['Skyrim.esm'],
+      globalData1: [
+        // 8: an unused entry, then Whiterun's sky cell.
+        {
+          type: 8,
+          data: new EssWriter()
+            .vsval(2)
+            .refId(0, 0)
+            .refId(0, 0)
+            .refId(1, WHITERUN_WORLD)
+            .refId(2, SKY_CELL & 0x3fffff)
+            .done(),
+        },
+      ],
+      globalData2: [
+        // 102: nothing shown or used, the journal's tabs switched off.
+        { type: 102, data: new EssWriter().u32(0).u8(0).vsval(0).vsval(0).vsval(0).u8(1).done() },
+        // 105: an actor dead, last seen at hour 30.
+        { type: 105, data: new EssWriter().vsval(1).refId(1, DEAD).u32(1).u32(30).done() },
+        // 110: nothing held, the camera switch locked for type 0, activation off.
+        { type: 110, data: new EssWriter().u8(0).u8(0).u8(0).u8(1).u8(0).u8(1).done() },
+        // 113: the menu keys on, in a beast form.
+        { type: 113, data: new EssWriter().u8(1).u8(1).done() },
+      ],
+      globalData3: [],
+      changeForms: [
+        { refId: [1, 0x14], type: 1, flags: ChangeRefr.moved, data: player },
+        {
+          refId: [1, MOVED],
+          type: 0,
+          flags: ChangeRefr.moved,
+          data: new EssWriter()
+            .refId(2, SKY_CELL & 0x3fffff)
+            .f32(100)
+            .f32(200)
+            .f32(300)
+            .f32(0)
+            .f32(0)
+            .f32(0)
+            .done(),
+        },
+      ],
+      formIds: [],
+    });
+  }
+
+  it("apply the controls, the beast form, the dead actors' hours and the sky cells", () => {
+    const imported = importEss(readEss(tablesSave()), world, { name: 'T', number: 1, now: 0 });
+    const runtime = imported.save.runtime;
+    expect(runtime.fields).toEqual({
+      controls: { journalTabs: false, activate: false, povLocks: [0] },
+      beastForm: true,
+    });
+    const state = runtime.state as unknown as GameState;
+    expect(state.deathHours.get(DEAD)).toBe(30);
+    expect(state.references.get(MOVED)).toMatchObject({
+      world: WHITERUN_WORLD,
+      position: [100, 200, 300],
+    });
+    expect(state.references.get(MOVED)?.cell).toBeUndefined();
+    for (const type of [8, 102, 105, 110, 113]) {
+      expect(imported.skipped).not.toContain(`global data ${String(type)}`);
+    }
+  });
+});
