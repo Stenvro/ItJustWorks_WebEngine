@@ -28,6 +28,7 @@ import { GRAVITY, initPhysics, PhysicsWorld } from '../physics/physics-world.ts'
 import type { Vec3 } from '../render/math.ts';
 import type { InstanceVisibility } from '../render/scene-renderer.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import { talkOnActivate } from '../shell/script-talk.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { ActorStage, type StageObstacleCell, type StagePlace } from '../shell/actor-stage.ts';
 import type { AdoptedVehicle } from '../shell/actor-vehicles.ts';
@@ -581,6 +582,17 @@ export class SimWorld {
     const destination = await doorDestination(db, teleport);
     if (!destination) return;
     const arrival: Arrival = { position: teleport.position, heading: teleport.rotation[2] };
+    // The player's followers come through the door with them (Play's load doors: main.ts).
+    await this.stage.followers.comeAlong(
+      {
+        position: [...teleport.position],
+        rotation: [...teleport.rotation],
+        cell: destination.world === undefined ? destination.cell : undefined,
+        world: destination.world,
+        scale: 1,
+      },
+      false,
+    );
     if (destination.world === undefined) await this.#openInterior(destination.cell, arrival);
     else await this.#openExterior(destination.world, { arrival });
   }
@@ -1705,7 +1717,9 @@ export class SimWorld {
       this.#track(this.stage.projectiles.burst(explosion, at, source ?? 0));
     },
     activate: (reference, activator) => {
-      this.#defaultActivation(reference, activator)?.activate();
+      const target = this.#defaultActivation(reference, activator);
+      if (target) target.activate();
+      else talkOnActivate(this.stage, this.session, reference, activator);
     },
     triggerCount: (reference) =>
       (this.#play?.triggerCount(reference) ?? 0) + this.stage.movers.triggerCount(reference),

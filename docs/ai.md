@@ -153,7 +153,9 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
 
 - **The search** is A\* over triangles, entering each across the middle of the edge it shares
   with the last: within a mesh, through the links into neighbouring meshes (cell borders) and
-  over ledges (a jump up or a drop, at a cost of 256 units more). Triangles flagged for no large
+  over ledges (a jump up or a drop, at a cost of 256 units more; a way given a highest jump,
+  `ledgeUp`, takes no ledge-up link rising more: the headless player's ways, at fJumpHeightMin,
+  so the Ratway Warrens' drop-down room, 260 units up, is no way up). Triangles flagged for no large
   creatures are closed to large and extra large races (RACE DATA size); water costs four times
   its length to those that do not swim, preferred triangles (roads) half (twice to a race that
   Avoids Roads: the giants, mammoths, the ghost frost giant, lurkers; TODO(M13): the engine's
@@ -1351,6 +1353,13 @@ location's lists.
   completes that package, so a scene waiting on it goes on: MQ101TorriLedgeScene's last phase
   waits for Haming's walk into his house, which he finishes beyond its door. TODO(M13): the low
   process's other procedures (a sit, a sandbox) are not done by getting there.
+- **A follower away** (its package a Follow of another actor) goes after its leader once the
+  leader is in another space, to where it is now, and is asked again at once as its leader
+  goes through a load door. MQ202's Thalmor agents follow the first of them
+  (MQ202FlagonAmbushFollowLeader) from the Ratway into the Ragged Flagon; asked only as the
+  schedules came round, they still stood in the Ratway when he fell, and their follow ended with
+  the scene. Within one space a follower away stays put. TODO(M13): the low process's own rule
+  for a follow (read nowhere yet).
 - Asked 16 at a time: at Whiterun's plains district 449 actors in 38 spaces in 8 seconds at the
   start (the jump as the game loads), 0.6 seconds at an hour's change. At 9:00 Mila Valentia
   steps out of her house's door and walks to her stall at the market; set to 10:00 she stands

@@ -51,6 +51,11 @@ export interface PathOptions {
   readonly large?: boolean;
   /** It swims (water triangles cost it no more). */
   readonly swims?: boolean;
+  /**
+   * The highest ledge it can jump up (units; the player's: fJumpHeightMin): a ledge-up link
+   * rising more is closed to it. Without it every ledge-up link is open.
+   */
+  readonly ledgeUp?: number;
   /** At most this many triangles are searched (a path to the nearest one reached instead). */
   readonly limit?: number;
   /** Doors it cannot pass (locked to it): their triangles are closed. */
@@ -351,6 +356,15 @@ export function findPath(
       }
       const target = navmesh.triangles[triangle];
       if (!target || (target.flags & NavmeshFlag.deleted) !== 0) continue;
+      if (
+        options.ledgeUp !== undefined &&
+        typeof across !== 'number' &&
+        across.type === NavmeshLinkType.ledgeUp &&
+        triangleCentre(navmesh, triangle)[2] - triangleCentre(node.navmesh, node.triangle)[2] >
+          options.ledgeUp
+      ) {
+        continue;
+      }
       // A door it cannot pass closes its triangles.
       if (doorClosed(navmesh, triangle, options)) continue;
       if (options.blocked?.length && isBlocked(navmesh, triangle, options.blocked)) continue;
