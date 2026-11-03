@@ -24,6 +24,7 @@ describe('the settings', () => {
       fExpressionChangePerSec: 2,
       fExpressionStrengthAdd: 1,
       fLookDownDisableBlinkingAmt: 0.25,
+      fTrackSpeed: 2,
     });
   });
   it('the blink: Skyrim.esm’s values', () => {
