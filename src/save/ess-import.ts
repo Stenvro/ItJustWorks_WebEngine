@@ -26,6 +26,7 @@ import { changeFormTypeName, globalData, type EssFile } from '../formats/ess/ess
 import {
   readAnimObjects,
   readAudio,
+  readCreatedObjects,
   readGlobalVariables,
   readMiscStats,
   readPlayerLocation,
@@ -89,6 +90,7 @@ import type { StoryEventData } from '../scripting/runtime/story-manager.ts';
 import { ObjectHandle, PapyrusArray, type Value } from '../scripting/values.ts';
 import { CELL_SIZE } from '../world/land.ts';
 import { parseScene } from '../ai/scene-records.ts';
+import { HEAD_TRACK_KINDS } from '../ai/head-tracking.ts';
 import { parseStoryNode } from '../world/story-manager-records.ts';
 import type { SavedScene } from '../ai/scene-runtime.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
@@ -98,7 +100,9 @@ import { seenFromSave } from '../world/seen-data.ts';
 import type { SkySave } from '../world/sky-weather.ts';
 import { cellKey } from '../world/worldspace.ts';
 import type { GameSave } from './game-save.ts';
+import type { SavedCreatedObject } from '../scripting/runtime/crafting-engine.ts';
 import { SAVE_VERSION, type SaveHeader } from './save-codec.ts';
+import { characterIdOfEssName, drawCharacterId } from './character-id.ts';
 import type {
   SavedActor,
   SavedAnimObject,
@@ -195,7 +199,7 @@ const LifeState = { alive: 0, dying: 1, dead: 2, unconscious: 3, restrained: 6 }
 /** ACBS's flags (UESP NPC_): those scripts set on a base. */
 const ActorBaseFlag = { essential: 0x2, protected: 0x800, invulnerable: 0x80000000 } as const;
 /** A cell's flags as its change form keeps them (its record's DATA has the same 0x20). */
-const CellFlag = { publicArea: 0x20 } as const;
+const CellFlag = { publicArea: 0x20, handChanged: 0x40, warnToLeave: 0x200 } as const;
 
 /** A loaded plugin's place in our load order (RecordDatabase plugins' entries). */
 export interface PluginSlot {
@@ -462,6 +466,11 @@ export interface EssImportRequest {
   readonly name: string;
   readonly number: number;
   readonly now: number;
+  /**
+   * The .ess file's name: the original writes the character's id into it, which the imported
+   * game keeps (its saves are listed with the character's); without it one is drawn.
+   */
+  readonly fileName?: string;
 }
 
 export interface EssImport {
@@ -681,6 +690,10 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   };
   const resolve: RefIdResolver = refIdResolver(ess.formIds);
   const state = new GameState();
+  // The character's id, as the original's file name carries it (src/save/character-id.ts).
+  state.characterId =
+    (request.fileName === undefined ? undefined : characterIdOfEssName(request.fileName)) ??
+    drawCharacterId();
   const stats = new Map<string, number>();
   const inventoryDeltas = new Map<number, Map<number, number>>();
   const formListAdded = new Map<number, number[]>();
@@ -1190,13 +1203,17 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
       applied |= ChangeCell.seenData;
     }
     if (cell?.flags !== undefined) {
+      // As observed in the original, the word is the record flags the running game may change
+      // (0x20 public, 0x40 Hand Changed, 0x200 Warn To Leave, CommonLibSSE's names) over the
+      // cell's game flags (none in the saves read). Warn To Leave: in an interior with it, an
+      // owner of the cell takes a living actor that does not own it for an intruder to warn
+      // off, which is ours off limits (CrimeState.offLimits: there the player trespasses).
+      // Hand Changed: set by the running game on some 40 shops and homes in each save read;
+      // no code of the original was found that reads it (TODO(M13): what sets it).
       state.cell(formId).public = (cell.flags & CellFlag.publicArea) !== 0;
-      if (cell.flags & ~CellFlag.publicArea) {
-        // CommonLibSSE names them Hand Changed (0x40) and Warn To Leave (0x200); set by the
-        // running game beside the record's flags (0x40 on some 40 interiors in each save read,
-        // 0x200 on two houses not visited). TODO(M13): what either does at run time.
-        skips.add('CELL: flags 0x40, 0x200 (Hand Changed, Warn To Leave: TODO(M13))');
-      }
+      if (cell.flags & CellFlag.warnToLeave) state.crime.offLimits.add(formId);
+      if (cell.flags & ~(CellFlag.publicArea | CellFlag.handChanged | CellFlag.warnToLeave))
+        skips.add("CELL: the cell's game flags");
       applied |= ChangeCell.flags;
     }
     if (cell?.owner !== undefined) {
@@ -1587,9 +1604,18 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
 
   function savedActor(form: EssChangeForm, formId: number): SavedActor | undefined {
     const actor = form.actor;
-    if (actor?.process) {
-      // TODO(M13): the high process's timers and the six objects it holds (their meaning).
-      skips.add("ACHR: the high process's timers and held objects (TODO(M13))");
+    // The high process (docs/formats/ess.md "AI process"): of the six things it looks at, one per
+    // head tracking kind, the script's (Actor.SetLookAt) is the one kept apart from the
+    // systems that ask every frame (combat, dialogue, a procedure, the engine's own choice, an
+    // action's): it looks on at it (ActorState.lookAt, told to the world as the save loads).
+    // Its countdowns (greeting, idle chatter, the talk's, the detection modifier's: seconds) start
+    // again from the load, as the talk's planner gives each actor it meets a place in its
+    // timers.
+    const high = actor?.process?.high;
+    const scriptLook = high?.headTrack[HEAD_TRACK_KINDS.indexOf('script')];
+    if (scriptLook && scriptLook.target !== 0) {
+      const target = ours(scriptLook.target);
+      if (target !== undefined) state.actor(formId).lookAt = target;
     }
     const running = actor?.process?.package;
     const pkg = running?.package;
@@ -2016,6 +2042,39 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     }
   }
 
+  // The created objects (global data 4): the enchantments, potions and poisons the game made,
+  // each by its form id (the save's own, 0xFF…, which items and inventories name) and its
+  // effects. They are built again as the save loads through the crafting engine (the forms its
+  // enchanting and alchemy make), under the same form ids. None in the saves read.
+  const createdObjects: SavedCreatedObject[] = [];
+  const createdData = globalData(ess, 4);
+  if (createdData) {
+    try {
+      const read = readCreatedObjects(createdData, resolve);
+      for (const [kind, list] of [
+        ['weapon', read.weaponEnchantments],
+        ['armor', read.armourEnchantments],
+        ['potion', read.potions],
+        ['poison', read.poisons],
+      ] as const) {
+        for (const made of list) {
+          const effects = made.effects.flatMap((effect) => {
+            const id = ours(effect.effect);
+            return id === undefined ? [] : [{ ...effect, effect: id }];
+          });
+          if (made.formId === 0 || effects.length === 0) {
+            skips.add('created objects: one without its effects');
+            continue;
+          }
+          createdObjects.push({ formId: made.formId, kind, effects });
+          state.nextCreated = Math.max(state.nextCreated, made.formId + 1);
+        }
+      }
+    } catch {
+      skips.add('created objects: unreadable');
+    }
+  }
+
   // Papyrus: the script instances' variables, the threads, the registrations.
   let instances: SavedInstance[] = [];
   let threads: SavedThread[] = [];
@@ -2250,7 +2309,7 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     for (const entry of table) {
       if (
         ![
-          0, 1, 2, 3, 6, 7, 8, 100, 101, 102, 103, 105, 106, 107, 108, 109, 110, 111, 113, 1000,
+          0, 1, 2, 3, 4, 6, 7, 8, 100, 101, 102, 103, 105, 106, 107, 108, 109, 110, 111, 113, 1000,
           1001, 1002, 1003,
         ].includes(entry.type) &&
         entry.data.length > 0 &&
@@ -2313,6 +2372,7 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     },
     inventoryDeltas: [...inventoryDeltas].map(([container, items]) => [container, [...items]]),
     ...(worn.size > 0 && { worn: [...worn] }),
+    ...(createdObjects.length > 0 && { createdObjects }),
   };
   const header: SaveHeader = {
     version: SAVE_VERSION,
@@ -2320,6 +2380,7 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
     kind: 'save',
     number: request.number,
     playerName: state.playerName ?? ess.header.playerName,
+    characterId: state.characterId,
     playerLevel: ess.header.playerLevel,
     location: ess.header.location,
     gameDays: state.gameDaysPassed,

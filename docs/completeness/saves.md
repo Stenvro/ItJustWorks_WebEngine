@@ -25,24 +25,33 @@ both machine-checkable parts:
 The world beside the scripts (the stage's actors, graphs, physics, audio, the sky) is kept by
 hand below, against docs/formats/save.md.
 
-## Count (2026-11-03, round 8)
+## Count (2026-11-03, round 9)
 
 | Part                          | Items | Done | Open |
 | ----------------------------- | ----: | ---: | ---: |
 | .ess header                   |     4 |    4 |    0 |
-| .ess global data              |    30 |   27 |    3 |
+| .ess global data              |    30 |   28 |    2 |
 | .ess change forms (flags)     |    68 |   68 |    0 |
-| .ess other (import and hand)  |    11 |    9 |    2 |
+| .ess other (import and hand)  |    11 |   11 |    0 |
 | Own save: runtime fields      |   162 |  162 |    0 |
-| Own save: the world (by hand) |    30 |   25 |    5 |
-| Total                         |   305 |  295 |   10 |
+| Own save: the world (by hand) |    30 |   26 |    4 |
+| Total                         |   305 |  299 |    6 |
 
-(Round 7: 304 items, 286 done; round 6: 303 items, 277 done; round 5: 299 items, 270 done; round 4: 299, 261; round 3: 297, 245; round 2: 291, 224; round 1: 290, 211. The
+(Round 8: 305 items, 295 done; round 7: 304 items, 286 done; round 6: 303 items, 277 done; round 5: 299 items, 270 done; round 4: 299, 261; round 3: 297, 245; round 2: 291, 224; round 1: 290, 211. The
 sweep itself prints 266 items: the ".ess other" part lists only what the import still logs, so
 its items done are kept by hand below. Round 4 split the AI process's item in two (the
 procedures' states, done; the high process's timers, open) and added NPCs riding to the world
 part. Round 6: the runtime's new field (magic-engine#appearing, transient), the world part's
 decals and animation objects, and its combat searches and detection levels split in two.)
+
+Round 9 settled from the original and built: the high process's part (its countdowns, its
+fade, the six head track targets by kind: the script's look-at applied, the rest asked every
+frame by their systems), the cell flags' word (Warn To Leave: the owner warns an intruder off,
+ours off limits; Hand Changed: nothing reads it), the character id the original writes into
+every save's file name (the Load list groups by it; the race menu's naming rule), and the
+created objects built again through the crafting engine. Tests: ess-import.test.ts "keep the
+created objects, a cell's Warn To Leave and the file name's character", character-id.test.ts,
+save-list.test.ts "tells characters apart by their id".
 
 Round 8 read every global data table's meaning from the original (docs/formats/ess.md "Global
 data", "What the tables hold") and applied what maps onto the runtime: the worldspaces' sky
@@ -226,14 +235,14 @@ player's place").
 | 1 Player Location            | done   | the player's place when their change form has none                     |
 | 2 TES                        | done   | dead counts by base (GetDeadCount); cell table, last list: none read   |
 | 3 Global Variables           | done   | GameState globals; GameDaysPassed sets the clock                       |
-| 4 Created Objects            | open   | made potions, poisons, enchantments (none in the saves read)           |
+| 4 Created Objects            | done   | built again by the crafting engine under their ids (none in the saves) |
 | 5 Effects                    | done   | image space modifiers running: empty in every save read (else logged)  |
 | 6 Weather                    | done   | current, outgoing, override, default; when it came (GameSave.sky)      |
 | 7 Audio                      | done   | the music types in play (GameSave.music); the table keeps no track     |
 | 8 Sky Cells                  | done   | each worldspace's sky cell: its references placed in the worldspace    |
-| 100 Process Lists            | open   | comment, crime check timers known; the u32 beside them (0, 6) unknown  |
+| 100 Process Lists            | open   | comment, crime check timers known; the u32 (0, 6): not read (TODO M13) |
 | 101 Combat                   | done   | members' fights, their groups' knowledge and searches (SavedFight)     |
-| 102 Interface                | open   | help done, last used, journal tabs applied; the help shown (252), −2   |
+| 102 Interface                | open   | help done, last used, tabs applied; the one help shown (252), −2: M13  |
 | 103 Actor Causes             | done   | the actor each ActorCause extra blames                                 |
 | 104 Unknown                  | done   | the original writes no entry and its load reads none                   |
 | 105 Detection Manager        | done   | dead, disabled, last seen hour: dead actors' hours into deathHours     |
@@ -290,7 +299,7 @@ By type, each change flag the saves use (forms counted over both saves).
 | QUST | stages                   |   232 | done   | stages done (the current stage: the highest done, TODO(M13))  |
 | QUST | objectives, runtimeData  |   903 | done   | objectives, aliases, the story event                          |
 | QUST | instanceData             |   244 | done   | the runs' text display globals (instanceGlobals)              |
-| CELL | flags (bit 1)            |   225 | done   | public (0x20); 0x40 and 0x200 unknown (listed below)          |
+| CELL | flags (bit 1)            |   225 | done   | public (0x20), Warn To Leave (0x200: off limits), 0x40 kept   |
 | CELL | exterior bits 29, 30     |   128 | done   | detach time: cellDetached (whole game hours)                  |
 | CELL | seen data (bit 31)       |    30 | done   | GameState.seen (seenFromSave); no exterior fog drawn: M13     |
 | INFO | said (bit 31)            |   179 | done   | Say Once marks                                                |
@@ -320,10 +329,10 @@ By type, each change flag the saves use (forms counted over both saves).
 | ------------------------------------------------------------------- | ------ | --------------------------------------------------------------------------- |
 | The package's branch reached; the package GetCurrentPackage answers | done   | procedurePath; combat override, scene package done                          |
 | The procedures' own states inside the branch                        | done   | a Patrol's point, furniture being entered; Travel, Sandbox: their packages' |
-| The high process's timers and six held objects                      | open   | their meaning is not known (TODO(M13))                                      |
+| The high process's timers and six held objects                      | done   | head track targets by kind: the script's applied; countdowns restart        |
 | Papyrus running stacks                                              | done   | resumed at the compiled instruction (by hand: the import no longer logs it) |
 | Papyrus messages, waits, registrations other than updates           | done   | LOS and latent functors: none in the saves read, logged if seen             |
-| CELL flags 0x40, 0x200                                              | open   | CommonLibSSE: Hand Changed, Warn To Leave; their run-time effect (M13)      |
+| CELL flags 0x40, 0x200                                              | done   | Warn To Leave: off limits; Hand Changed: no reader in the original          |
 | ACHR extra Interaction                                              | done   | SavedActor.riding (both saves' riders)                                      |
 | ACHR extra AttachedArrows3D                                         | done   | WorldSave.attachedArrows (drawn again on their bones)                       |
 | ACHR extra DismemberedLimbs                                         | done   | ActorState.dismembered                                                      |
@@ -385,20 +394,21 @@ loadData (RuntimeSave.engines; src/scripting/runtime/engine-save.test.ts):
 | Flame sprays, cone waves, a Magelight stuck to a wall            | done   | SavedProjectile.kind                                    |
 | Thumbnails                                                       | done   | save-screenshot.ts takeScreenshot                       |
 | Save on Pause (autosave as the tween menu opens)                 | done   | src/shell/save-manager.ts (the reason `pause`)          |
-| The Load list's character filter                                 | open   | the original's rule not read (docs/formats/save.md)     |
+| The Load list's character filter                                 | done   | src/save/character-id.ts (the id, the naming rule)      |
 
 ## Next biggest open items
 
 1. Graph transitions' blends (a machine saved mid-transition goes on in the state it blends
    to), syncing blenders' phases and modifiers' own states; machines inside the placed objects'
-   behavior references (docs/formats/save.md "Animation graphs").
-2. The high process's timers and held objects; the cell flags Hand Changed and Warn To Leave
-   (named by CommonLibSSE, their run-time effect not read yet); what 100's u32 beside the
-   crimes and 102's help messages shown number (docs/formats/ess.md "What the tables hold").
-3. Actors in cells not loaded as the game is saved (their packages place them), a procedure's
+   behavior references (docs/formats/save.md "Animation graphs"). Not started this round.
+2. Actors in cells not loaded as the game is saved (their packages place them), a procedure's
    progress inside a step (a sandbox's activity), bleedout's and paired animations' engine side.
+   Not started this round.
+3. What 100's u32 beside the crimes counts (UESP: the next crime's number; 0 at the cart, 6
+   after Helgen with no crime listed; the original's per-frame update does not use it) and
+   102's help list (one entry, 252, in both saves) and its last number (−2): their save code
+   was not found from the global data tables' names (TODO(M13)).
 4. The decals' details the .ess leaves unsettled: their age (none written: a whole lifetime from
    the load), the land entries' u32 (it differs between an entry's copies, one per shape it was
    made on), float1 and the second texture set (none in the saves read) (TODO(M13)).
-5. The Load list's character filter (the original's rule); created objects (4: none in the
-   saves read; the crafting engine's forms built as the save loads).
+5. What sets the cells' Hand Changed (0x40) at run time; the character's "modded" key.

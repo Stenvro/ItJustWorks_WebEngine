@@ -56,7 +56,10 @@ const GLOBAL_DATA: Readonly<Record<number, readonly [boolean, string]>> = {
     'TES: the dead counts by actor base (GetDeadCount); its cell table and last list empty in every save read',
   ],
   3: [true, 'global variables, GameDaysPassed sets the clock'],
-  4: [false, 'created objects: made potions, poisons, enchantments (none in the saves read)'],
+  4: [
+    true,
+    'created objects: enchantments, potions, poisons built again by the crafting engine under their ids (none in the saves read)',
+  ],
   5: [true, 'effects: image space modifiers running: empty in every save read'],
   6: [true, 'weather: the current, outgoing, override and default weathers, when it came'],
   7: [
@@ -69,7 +72,7 @@ const GLOBAL_DATA: Readonly<Record<number, readonly [boolean, string]>> = {
   ],
   100: [
     false,
-    'process lists: comment and crime check timers (none running), crimes (none); a number beside them (0, 6): its use not known',
+    'process lists: comment and crime check timers (none running), crimes (none); a number beside them (0, 6): its save code not found (TODO(M13))',
   ],
   101: [
     true,
@@ -77,7 +80,7 @@ const GLOBAL_DATA: Readonly<Record<number, readonly [boolean, string]>> = {
   ],
   102: [
     false,
-    'interface: help done, last used, journal tabs applied; the help messages shown (252) and the last number (-2) not known',
+    'interface: help done, last used, journal tabs applied; the one help message shown (252) and the last number (-2) not known (TODO(M13))',
   ],
   103: [true, "actor causes: the actor each reference's ActorCause extra blames"],
   104: [true, 'none: the original writes no entry and ignores one'],

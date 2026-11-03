@@ -6,6 +6,7 @@
 // loaded (LoadGame), deleted (DeleteSave) or saved over (SaveGame) by its index in the list
 // shown. Notes: docs/ui.md ("Saves in the menus").
 
+import { characterKey } from '../save/character-id.ts';
 import type { SaveHeader } from '../save/save-codec.ts';
 
 /** Load's last entry: the import of an original save. */
@@ -46,16 +47,22 @@ export interface CharacterEntry {
 }
 
 /**
- * The characters of a set of saves, the one saved last first (the saves come newest first).
- * TODO(M13): the original tells characters apart by an id kept in the save; ours by the
- * player's name.
+ * The characters of a set of saves, the one saved last first, each named as its newest save
+ * names the player. Saves are told apart by their character's id (src/save/character-id.ts, as
+ * observed in the original), saves made before it was kept by the player's name.
  */
 export function savedCharacters(headers: readonly SaveHeader[]): CharacterEntry[] {
-  const names: string[] = [];
+  return characterGroups(headers).map(({ text }, id) => ({ text, id, flags: 0 }));
+}
+
+/** The characters of a set of saves (as savedCharacters) with the key their saves share. */
+function characterGroups(headers: readonly SaveHeader[]): { text: string; key: string }[] {
+  const groups: { text: string; key: string }[] = [];
   for (const header of [...headers].sort((a, b) => b.realTime - a.realTime)) {
-    if (!names.includes(header.playerName)) names.push(header.playerName);
+    const key = characterKey(header);
+    if (!groups.some((group) => group.key === key)) groups.push({ text: header.playerName, key });
   }
-  return names.map((text, id) => ({ text, id, flags: 0 }));
+  return groups;
 }
 
 /** Game days passed as a time played ("12 days, 06:30"). */
@@ -95,7 +102,10 @@ export interface SaveListOptions<M extends SaveListMenu> {
   readonly source: () => SaveListSource | undefined;
   /** A save's game time as the list shows it. */
   readonly playTime: (header: SaveHeader) => string;
-  /** The character playing now (the journal's Save and Load show only theirs); none: all. */
+  /**
+   * The character playing now (the journal's Save and Load show only theirs), as its saves'
+   * key (characterKey); none: all.
+   */
   readonly character?: () => string | undefined;
   /** Load's last entry: the import of an original save (its text), when there is one. */
   readonly importText?: () => string | undefined;
@@ -122,7 +132,7 @@ export class SaveList<M extends SaveListMenu = SaveListMenu> {
   /** The saves the list shows now, and whether it saves (its first entry the new save). */
   #listed: { headers: SaveHeader[]; saving: boolean; list: string } | undefined;
   /** The characters the list showed last (CharacterSelected's id is a place among them). */
-  #characters: CharacterEntry[] = [];
+  #characters: { text: string; key: string }[] = [];
 
   constructor(options: SaveListOptions<M>) {
     this.#options = options;
@@ -162,7 +172,7 @@ export class SaveList<M extends SaveListMenu = SaveListMenu> {
       // CharacterSelected(id, flags, saving, list, batch size): that character's saves.
       CharacterSelected: (menu, args) => {
         const id = typeof args[0] === 'number' ? args[0] : -1;
-        const character = this.#characters.find((entry) => entry.id === id)?.text;
+        const character = this.#characters[id]?.key;
         void this.#fill(menu, args[3], args[2] === true, character);
       },
       // PrepSaveGameScreenshot(index, entry): the movie asks for the highlighted save's
@@ -203,7 +213,8 @@ export class SaveList<M extends SaveListMenu = SaveListMenu> {
         const name = listed?.headers[index]?.name;
         const source = this.#options.source();
         if (!listed || name === undefined || !source) return;
-        const character = listed.headers[index]?.playerName;
+        const header = listed.headers[index];
+        const character = header && characterKey(header);
         source
           .delete(name)
           .then(
@@ -241,9 +252,11 @@ export class SaveList<M extends SaveListMenu = SaveListMenu> {
   async #fillCharacters(menu: M, list: unknown): Promise<void> {
     const path = listPath(menu, list);
     if (!path) return;
-    this.#characters = savedCharacters((await this.#options.source()?.list()) ?? []);
+    this.#characters = characterGroups((await this.#options.source()?.list()) ?? []);
     menu.set(`${path}.length`, 0);
-    for (const entry of this.#characters) menu.invoke(`${path}.push`, { ...entry });
+    this.#characters.forEach(({ text }, id) => {
+      menu.invoke(`${path}.push`, { text, id, flags: 0 });
+    });
     menu.call('onFillCharacterListComplete', true);
   }
 
@@ -261,9 +274,9 @@ export class SaveList<M extends SaveListMenu = SaveListMenu> {
     if (!path) return;
     const all = (await this.#options.source()?.list()) ?? [];
     const headers =
-      character === undefined || !all.some((header) => header.playerName === character)
+      character === undefined || !all.some((header) => characterKey(header) === character)
         ? all
-        : all.filter((header) => header.playerName === character);
+        : all.filter((header) => characterKey(header) === character);
     this.#listed = { headers, saving, list: path };
     menu.set(`${path}.length`, 0);
     headers.forEach((header, index) => {
