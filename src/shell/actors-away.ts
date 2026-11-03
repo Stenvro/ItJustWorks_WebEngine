@@ -169,6 +169,8 @@ export class ActorsAway {
    * was put at: one standing there still (or on its way there) holds it (doorArrivalSpot).
    */
   readonly #outOfDoors = new Map<string, { actor: number; spot: Vec3; moving: boolean }[]>();
+  /** Actors away whose package follows another actor: the one each follows. */
+  readonly #followers = new Map<number, number>();
 
   constructor(options: ActorsAwayOptions) {
     this.#options = options;
@@ -464,6 +466,10 @@ export class ActorsAway {
     if (!placed) return false;
     const start = await placer.whereNow(placed, current.space).catch(() => undefined);
     const destination = start && (await this.#destination(runtime, actor, start, current));
+    // A follower is asked again as its leader goes through a load door (#leaderMoved).
+    if (start?.kind === 'here' && start.procedure?.toLowerCase() === 'follow' && start.actor) {
+      this.#followers.set(actor, start.actor);
+    } else this.#followers.delete(actor);
     const walk: AwayPackage | undefined =
       start && start.kind !== 'undecided' && start.package !== undefined
         ? { id: start.package, procedure: start.procedure ?? '' }
@@ -533,7 +539,17 @@ export class ActorsAway {
     // Embassy's gate guard): to where that actor is now. Without it the trip a door handed on
     // was dropped as the actor was asked again, and its travel never completed.
     if (start.kind === 'here' && start.actor !== undefined) {
-      return start.procedure?.toLowerCase() === 'travel' ? at(start.actor) : undefined;
+      const procedure = start.procedure?.toLowerCase();
+      if (procedure === 'travel') return at(start.actor);
+      // A follower whose leader has gone through a load door goes after it, to where it is now
+      // (MQ202's Thalmor agents follow the first of them from the Ratway into the Ragged
+      // Flagon; left where they were, they never came). Within one space it stays put.
+      // TODO(M13): the low process's own rule for a follow within one space.
+      if (procedure === 'follow') {
+        const leader = await at(start.actor);
+        return leader && !sameSpace(leader.space, current.space) ? leader : undefined;
+      }
+      return undefined;
     }
     if (start.kind === 'here' && start.editor === true) {
       // Back to its editor location (its home), if it is away from it.
@@ -722,12 +738,16 @@ export class ActorsAway {
         // Through a door into the loaded area: it comes out of it there (the door swings).
         this.#trips.delete(actor);
         this.#options.doors?.arrive(door.destination, actor);
-        void this.#comeOut(runtime, actor, arrival);
+        void this.#comeOut(runtime, actor, arrival).then(() => {
+          this.#leaderMoved(actor);
+        });
         return;
       }
       // Through a door: the game state has it in the space it came into (a script asking for
       // its cell or worldspace gets that one). TODO(M13): its place along the way between.
-      void this.#comeOut(runtime, actor, arrival);
+      void this.#comeOut(runtime, actor, arrival).then(() => {
+        this.#leaderMoved(actor);
+      });
     }
   }
 
@@ -743,7 +763,21 @@ export class ActorsAway {
    */
   async comeOut(actor: number, arrival: AwayPlace): Promise<void> {
     const runtime = this.#options.session.scriptsReady;
-    if (runtime) await this.#comeOut(runtime, actor, arrival);
+    if (!runtime) return;
+    await this.#comeOut(runtime, actor, arrival);
+    this.#leaderMoved(actor);
+  }
+
+  /**
+   * An actor went through a load door: the actors away that follow it are asked again at once,
+   * so they set out after it through the door (MQ202's Thalmor agents after the first of them,
+   * from the Ratway into the Ragged Flagon). Asked only as the schedules came round, they were
+   * still where they stood when he fell, and their follow had ended with the scene.
+   */
+  #leaderMoved(leader: number): void {
+    for (const [follower, followed] of this.#followers) {
+      if (followed === leader) this.reconsider(follower);
+    }
   }
 
   /**

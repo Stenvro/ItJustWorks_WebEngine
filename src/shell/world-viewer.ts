@@ -101,6 +101,7 @@ import { controlsRequest, keepOffsetRequest } from '../ai/movement-overrides.ts'
 import { terrainEffectPlacement } from '../world/terrain-effect.ts';
 import { summonPlace, type NavmeshSet } from '../ai/pathfinding.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import { talkOnActivate } from './script-talk.ts';
 import type { Placement } from '../scripting/runtime/runtime.ts';
 import { noteMoved, placedAsMoved } from './moved-objects.ts';
 import {
@@ -809,7 +810,11 @@ export class WorldViewer {
       void this.#stage?.projectiles.burst(explosion, at, source ?? 0);
     },
     activate: (reference, activator) => {
-      this.#defaultActivation(reference, activator)?.activate();
+      const target = this.#defaultActivation(reference, activator);
+      if (target) target.activate();
+      else if (this.#stage && this.#session) {
+        talkOnActivate(this.#stage, this.#session, reference, activator);
+      }
     },
     triggerCount: (reference) =>
       (this.#play?.triggerCount(reference) ?? 0) +
