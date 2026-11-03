@@ -17,6 +17,7 @@ import { questTargets } from './compass.ts';
 import type { Terminal } from './terminal.ts';
 import { settingsHandlers } from './journal-settings.ts';
 import { controlsHandlers } from './journal-controls.ts';
+import { characterKey } from '../save/character-id.ts';
 import {
   DEFAULT_PLAYER_NAME,
   IMPORT_ESS_TEXT,
@@ -102,7 +103,13 @@ export class JournalMenu {
       source: () => this.saves,
       playTime: (header) => session.scriptsReady?.gameTimeString(header.gameDays) ?? '',
       // A game runs while the journal is open: its player's saves.
-      character: () => session.scriptsReady?.state.playerName ?? DEFAULT_PLAYER_NAME,
+      character: () => {
+        const state = session.scriptsReady?.state;
+        return characterKey({
+          characterId: state?.characterId,
+          playerName: state?.playerName ?? DEFAULT_PLAYER_NAME,
+        });
+      },
       importText: () => (this.saves?.importEss ? IMPORT_ESS_TEXT : undefined),
       // A load cancelled while the journal is open (observed in the original: the engine's
       // CancelLoading with the journal open) backs the system page out of its load list

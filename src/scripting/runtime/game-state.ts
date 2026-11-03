@@ -592,6 +592,11 @@ export class GameState {
   playerAppearance: PlayerAppearance | undefined;
   /** The name the player chose in the race menu (else the Player record's). */
   playerName: string | undefined;
+  /**
+   * The character's id (src/save/character-id.ts): drawn as the first save is made or the
+   * player is named; the Load list groups the saves by it.
+   */
+  characterId: number | undefined;
   /** Actors dead, by their base (GetDeadCount). */
   readonly deadCounts = new Map<number, number>();
   /**

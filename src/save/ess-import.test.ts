@@ -600,9 +600,9 @@ describe('the global data tables of controls, references and sky cells', () => {
   const SKY_CELL = 0xff000a33;
   const MOVED = 0x1c1b0;
   const DEAD = 0x1c1b1;
-  /** The player in Breezehome; a reference moved into Whiterun's sky cell; the tables. */
-  function tablesSave(): Uint8Array {
-    const player = actorData(
+  /** The player's change form: moved into Breezehome. */
+  function playerInBreezehome(): Uint8Array {
+    return actorData(
       new EssWriter()
         .refId(1, BREEZEHOME)
         .f32(10)
@@ -620,6 +620,11 @@ describe('the global data tables of controls, references and sky cells', () => {
         .vsval(0)
         .vsval(0),
     ).done();
+  }
+
+  /** The player in Breezehome; a reference moved into Whiterun's sky cell; the tables. */
+  function tablesSave(): Uint8Array {
+    const player = playerInBreezehome();
     return writeSyntheticEss({
       playerName: 'Dragonborn',
       playerLevel: 1,
@@ -687,5 +692,62 @@ describe('the global data tables of controls, references and sky cells', () => {
     for (const type of [8, 102, 105, 110, 113]) {
       expect(imported.skipped).not.toContain(`global data ${String(type)}`);
     }
+  });
+
+  it("keep the created objects, a cell's Warn To Leave and the file name's character", () => {
+    const POTION = 0xff000a40;
+    const EFFECT = 0x3eb15;
+    const bytes = writeSyntheticEss({
+      playerName: 'Dragonborn',
+      playerLevel: 1,
+      location: 'Whiterun',
+      plugins: ['Skyrim.esm'],
+      globalData1: [
+        // 4: no enchantments, one potion of one effect, no poisons.
+        {
+          type: 4,
+          data: new EssWriter()
+            .vsval(0)
+            .vsval(0)
+            .vsval(1)
+            .refId(2, POTION & 0x3fffff)
+            .u32(1)
+            .vsval(1)
+            .refId(1, EFFECT)
+            .f32(25)
+            .u32(0)
+            .u32(0)
+            .f32(12)
+            .vsval(0)
+            .done(),
+        },
+      ],
+      globalData2: [],
+      globalData3: [],
+      changeForms: [
+        { refId: [1, 0x14], type: 1, flags: ChangeRefr.moved, data: playerInBreezehome() },
+        // Breezehome: Hand Changed and Warn To Leave.
+        { refId: [1, BREEZEHOME], type: 6, flags: 0x2, data: new EssWriter().u16(0x240).done() },
+      ],
+      formIds: [],
+    });
+    const imported = importEss(readEss(bytes), world, {
+      name: 'T',
+      number: 1,
+      now: 0,
+      fileName: 'Save1_51FF9A07_0_447261676F6E626F726E_Whiterun_000005_20261030080455_1_1.ess',
+    });
+    expect(imported.save.createdObjects).toEqual([
+      {
+        formId: POTION,
+        kind: 'potion',
+        effects: [{ effect: EFFECT, magnitude: 25, duration: 0, area: 0, price: 12 }],
+      },
+    ]);
+    const state = imported.save.runtime.state as unknown as GameState;
+    expect(state.crime.offLimits.has(BREEZEHOME)).toBe(true);
+    expect(state.nextCreated).toBe(POTION + 1);
+    expect(imported.header.characterId).toBe(0x51ff9a07);
+    expect(imported.skipped.join('\n')).not.toMatch(/CELL|created objects/);
   });
 });

@@ -245,6 +245,27 @@ describe.skipIf(!hasGamedata())('crafting in a running game on the local game da
     expect(await count(PLAYER_REF, made)).toBe(1);
   }, 120_000);
 
+  it("build an imported save's created objects again under their own form ids", async () => {
+    let fortifyHealth = 0;
+    for (const formId of db.formIdsOfType('MGEF')) {
+      if ((await db.get(formId))?.editorId === 'AlchFortifyHealth') fortifyHealth = formId;
+    }
+    const effects = [{ effect: fortifyHealth, magnitude: 20, duration: 60, area: 0, price: 30 }];
+    await runtime.crafting.restoreCreated([
+      { formId: 0xff100000, kind: 'potion', effects },
+      { formId: 0xff100001, kind: 'armor', effects },
+    ]);
+    const potion = await runtime.magic.item(0xff100000);
+    expect((await runtime.forms.record(0xff100000))?.text('FULL')).toBe('Potion of Fortify Health');
+    expect(potion?.kind).toBe('potion');
+    expect(potion?.effects.map((e) => [e.effect, e.magnitude, e.duration])).toEqual([
+      [fortifyHealth, 20, 60],
+    ]);
+    expect((await runtime.equipment.item(0xff100000))?.value).toBe(30);
+    expect((await runtime.forms.record(0xff100001))?.type).toBe('ENCH');
+    expect((await runtime.magic.item(0xff100001))?.effects.length).toBe(1);
+  }, 60_000);
+
   it('brew a poison, and nothing from ingredients that share no effect', async () => {
     await give(NIGHTSHADE, 2);
     await give(DEATHBELL);

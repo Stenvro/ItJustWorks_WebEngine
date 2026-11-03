@@ -20,6 +20,11 @@ export interface SaveHeader {
   /** Its number in the list (the original numbers saves as they are made). */
   readonly number: number;
   readonly playerName: string;
+  /**
+   * The character the save belongs to (GameState.characterId): the Load list groups saves by
+   * it, as the original by the id its save files' names carry. None in saves made before.
+   */
+  readonly characterId?: number | undefined;
   readonly playerLevel: number;
   /** Where the player is (the location's or cell's name). */
   readonly location: string;

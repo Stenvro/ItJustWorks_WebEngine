@@ -197,6 +197,8 @@ export class PlayMode {
   readonly #mainSaveList: SaveList<Menu>;
   /** The original save picked from the main menu's Load, loaded once the menu has faded out. */
   #pickedEss: Uint8Array | undefined;
+  /** The file name of the original save picked last (it carries the character's id). */
+  #pickedEssName: string | undefined;
   /** The player's data: its bindings (the menus show the keys of the events their texts name). */
   #playerData: PlayerData | undefined;
   /** The loading menu's text (the loading screen's, once chosen). */
@@ -876,7 +878,9 @@ export class PlayMode {
         types: [{ description: 'Skyrim saves', accept: { 'application/octet-stream': ['.ess'] } }],
       });
       if (!handle) return undefined;
-      return new Uint8Array(await (await handle.getFile()).arrayBuffer());
+      const file = await handle.getFile();
+      this.#pickedEssName = file.name;
+      return new Uint8Array(await file.arrayBuffer());
     } catch (error) {
       // The picker closed without a choice.
       if (!(error instanceof DOMException && error.name === 'AbortError')) {
@@ -897,7 +901,11 @@ export class PlayMode {
   #importPicked(bytes: Uint8Array, mainMenu?: Menu): void {
     void (async () => {
       const db = await this.#session.db;
-      const name = await this.#saves.importEss(bytes, (ess) => essWorld(db, ess));
+      const name = await this.#saves.importEss(
+        bytes,
+        (ess) => essWorld(db, ess),
+        this.#pickedEssName,
+      );
       this.#loadSaved(name);
     })().catch((error: unknown) => {
       this.#terminal.log(

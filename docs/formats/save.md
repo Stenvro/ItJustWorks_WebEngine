@@ -415,10 +415,21 @@ A save of ours made after the import keeps the graphs in our own form.
   group's own timers (its dialogue and update timers: they run from the load); each body of an articulated object in motion on its own (`motions` keeps the first's,
   TODO(M13)).
 
-- The main menu's Load list and the save list's character filter (Continue loads the newest
-  save; TODO(M13): whether the original's Load list shows the current character's saves first
-  or alone is not read). (Each save has its thumbnail: the frame drawn as it was made,
-  src/shell/save-screenshot.ts; an import keeps the .ess's.)
+- (Each save has its thumbnail: the frame drawn as it was made, src/shell/save-screenshot.ts;
+  an import keeps the .ess's.)
+
+The character a save belongs to, as observed in the original (src/save/character-id.ts): a
+game's character has an id, a random u32 drawn as it is first needed (here as the race menu
+names the player, else as the first save is made), never 0 and not one a known character
+uses; it is kept with the game (`GameState.characterId`) and in each save's header
+(`characterId`; the original writes it into the save file's name). The Load list groups the
+saves by it: one entry per character, the one saved last first, named as its newest save names
+the player; the journal's Save and Load list the playing character's. Naming the player keeps
+the id while the name is the one the id goes by (or the player was never named), else draws a
+new one, so a new character with a name used before is listed apart. Saves made before the id
+was kept are grouped by the player's name. An imported .ess keeps the id its file name carries.
+TODO(M13): the original also keys a character by whether its saves had mods (the file name's
+"modded" digit), which ours does not.
 
 Save on Pause, as observed in the original: the "pause" is the tween menu opening. With
 bSaveOnPause on, once fAutosaveEveryXMins real minutes have passed since the last save and the
