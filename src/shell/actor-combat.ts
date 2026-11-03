@@ -179,7 +179,7 @@ import { cellLight, type MagicFx } from './magic-fx.ts';
 import type { CellLight } from '../world/cell-loader.ts';
 import { parseLight, type LightRecord } from '../world/cell-records.ts';
 import { EffectSound, effectSound } from '../world/magic-effects.ts';
-import type { SavedAttachedArrow, SavedDecal, SavedFight } from '../save/world-save.ts';
+import type { SavedAttachedArrow, SavedDecal, SavedDown, SavedFight } from '../save/world-save.ts';
 
 /** A human's shape for hits (its controller's radius and height at scale 1; game units). */
 /** The music type of a boss fight (MUSC; see #setMusic). */
@@ -674,7 +674,9 @@ export class ActorCombat implements CombatBridge {
     if (fighter) this.#drop(fighter);
     this.#input = undefined;
     if (play && avatar) {
-      this.#fighters.set(PLAYER_REF, newFighter(PLAYER_REF, true));
+      const player = newFighter(PLAYER_REF, true);
+      this.#fighters.set(PLAYER_REF, player);
+      this.#takeDown(player);
       // Drawn (or being drawn), the third-person camera moves behind the back.
       play.player.weaponDrawn = () => {
         const state = this.weaponState(PLAYER_REF);
@@ -908,6 +910,64 @@ export class ActorCombat implements CombatBridge {
   /** A loaded save's fight goes on (its target set again already). */
   resumeFight(actor: number, saved: SavedFight): void {
     this.#brain.resumeFight(actor, saved);
+  }
+
+  /**
+   * What a save keeps of an actor's bleedout and paired animation (the original's actor state
+   * keeps its life state and its process the killmove and the paired idle): bleeding out for
+   * how long, its side of a pair, whether a killmove, how long in it, and a victim's killer.
+   */
+  saveDown(actor: number): SavedDown | undefined {
+    const fighter = this.#fighters.get(actor);
+    if (!fighter) return undefined;
+    const state = fighter.state;
+    const bleedout = bleedingOut(state) ? fighter.down : undefined;
+    const paired =
+      state.paired !== undefined || state.killMove
+        ? {
+            side: state.paired,
+            killMove: state.killMove,
+            seconds: fighter.pairedFor,
+            ...(fighter.killer !== undefined && { killer: fighter.killer }),
+          }
+        : undefined;
+    if (bleedout === undefined && !paired) return undefined;
+    return { ...(bleedout !== undefined && { bleedout }), ...(paired && { paired }) };
+  }
+
+  /**
+   * A loaded save's bleedout and paired animation, put back as the actor fights again: its
+   * graph is in them already (put back with it), so nothing is played or told again. A
+   * killmove's victim keeps its killer, so the killmove's end kills it (with its deferred kill,
+   * kept by the actors' engine) and neither partner is left half-way.
+   */
+  restoreDown(actor: number, saved: SavedDown): void {
+    this.#savedDowns.set(actor, saved);
+    const fighter = this.#fighters.get(actor);
+    if (fighter) this.#takeDown(fighter);
+  }
+
+  readonly #savedDowns = new Map<number, SavedDown>();
+
+  #takeDown(fighter: Fighter): void {
+    const saved = this.#savedDowns.get(fighter.reference);
+    if (!saved) return;
+    this.#savedDowns.delete(fighter.reference);
+    const state = fighter.state;
+    if (saved.bleedout !== undefined) {
+      state.life = LifeState.bleedout;
+      fighter.down = saved.bleedout;
+      if (fighter.player) this.#options.playerBleedout?.(true);
+    }
+    const paired = saved.paired;
+    if (paired) {
+      state.paired = paired.side;
+      state.killMove = paired.killMove;
+      fighter.pairedFor = paired.seconds;
+      fighter.killer = paired.killer;
+      const side = paired.side === 'lead' ? 'first' : paired.side ? 'second' : undefined;
+      for (const graph of this.#graphs(fighter)) graph.pairedSide = side;
+    }
   }
 
   stopCombat(actor: number): void {
@@ -1427,6 +1487,7 @@ export class ActorCombat implements CombatBridge {
       if (!fighter) {
         fighter = newFighter(staged.reference, false);
         this.#fighters.set(staged.reference, fighter);
+        this.#takeDown(fighter);
       }
       this.#follow(fighter, staged.placed, runtime);
       this.#unanswered(fighter);
@@ -4609,6 +4670,7 @@ export class ActorCombat implements CombatBridge {
 
   /** An actor left the stage or died: it fights no more. */
   remove(reference: number): void {
+    this.#savedDowns.delete(reference);
     const fighter = this.#fighters.get(reference);
     if (fighter && !fighter.player) this.#drop(fighter);
     for (const other of this.#fighters.values()) {

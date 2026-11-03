@@ -25,17 +25,30 @@ both machine-checkable parts:
 The world beside the scripts (the stage's actors, graphs, physics, audio, the sky) is kept by
 hand below, against docs/formats/save.md.
 
-## Count (2026-11-03, round 9)
+## Count (2026-11-03, round 10)
 
 | Part                          | Items | Done | Open |
 | ----------------------------- | ----: | ---: | ---: |
 | .ess header                   |     4 |    4 |    0 |
-| .ess global data              |    30 |   28 |    2 |
+| .ess global data              |    30 |   30 |    0 |
 | .ess change forms (flags)     |    68 |   68 |    0 |
 | .ess other (import and hand)  |    11 |   11 |    0 |
 | Own save: runtime fields      |   162 |  162 |    0 |
-| Own save: the world (by hand) |    30 |   26 |    4 |
-| Total                         |   305 |  299 |    6 |
+| Own save: the world (by hand) |    30 |   29 |    1 |
+| Total                         |   305 |  304 |    1 |
+
+Round 10 settled from the original and built: table 100's number (the next crime's serial,
+`GameState.nextCrime`, which our crime ledger numbers from), table 102's list (the tutorials
+shown, by their default objects' places: 252 is the journal's) and the help part's last number
+(the help message showing: none); graphs saved mid-transition blend on, with their modifiers'
+own states and cyclic blends (an import's event-driven modifiers too), and a placed object's
+skeletal graph keeps its behavior references; a sandbox's activity goes on after a load; a
+bleedout and a paired animation (a killmove, its victim's deferred kill) go on to their end; a
+loaded save's actors not placed yet are kept into the next save. Tests: ess-import.test.ts
+"apply the controls ..." and "the actors of a loaded save not placed yet",
+graph-save-events.int.test.ts "blends on from a transition caught mid-blend",
+procedure-runs.test.ts "a sandbox after a load", actor-engine.test.ts "a deferred kill across
+a save". The sweep: 264 items, all done (the runtime's deferred kills now saved).
 
 (Round 8: 305 items, 295 done; round 7: 304 items, 286 done; round 6: 303 items, 277 done; round 5: 299 items, 270 done; round 4: 299, 261; round 3: 297, 245; round 2: 291, 224; round 1: 290, 211. The
 sweep itself prints 266 items: the ".ess other" part lists only what the import still logs, so
@@ -240,9 +253,9 @@ player's place").
 | 6 Weather                    | done   | current, outgoing, override, default; when it came (GameSave.sky)      |
 | 7 Audio                      | done   | the music types in play (GameSave.music); the table keeps no track     |
 | 8 Sky Cells                  | done   | each worldspace's sky cell: its references placed in the worldspace    |
-| 100 Process Lists            | open   | comment, crime check timers known; the u32 (0, 6): not read (TODO M13) |
+| 100 Process Lists            | done   | comment, crime check timers; the next crime's number (nextCrime)       |
 | 101 Combat                   | done   | members' fights, their groups' knowledge and searches (SavedFight)     |
-| 102 Interface                | open   | help done, last used, tabs applied; the one help shown (252), −2: M13  |
+| 102 Interface                | done   | tutorials shown (252: HBJL), help done, last used, tabs; −2: none      |
 | 103 Actor Causes             | done   | the actor each ActorCause extra blames                                 |
 | 104 Unknown                  | done   | the original writes no entry and its load reads none                   |
 | 105 Detection Manager        | done   | dead, disabled, last seen hour: dead actors' hours into deathHours     |
@@ -379,11 +392,11 @@ loadData (RuntimeSave.engines; src/scripting/runtime/engine-save.test.ts):
 | Time, weather, the player's stats, perks, effects, bounty, map   | done   | GameState, the sky's current weather                    |
 | Crime (bounties, stolen items, jail), factions                   | done   | GameState                                               |
 | The player's camera, sneaking, weapon, vehicle                   | done   | SavedPlayer                                             |
-| Actors in cells not loaded as the game is saved                  | open   | their packages place them                               |
-| A procedure's progress inside a step (a sandbox's activity)      | open   | it chooses again                                        |
-| Graph transitions' blends, modifiers' states, behavior refs      | open   | docs/formats/save.md "Animation graphs"                 |
+| Actors in cells not loaded as the game is saved                  | open   | a save's unplaced kept; left the stage: package anew    |
+| A procedure's progress inside a step (a sandbox's activity)      | done   | SavedPackage.step (ProcedureRun.setStep)                |
+| Graph transitions' blends, modifiers' states, behavior refs      | done   | SavedGraphFile transitions, modifiers, cyclic           |
 | Projectiles' graphs (in flight, sprays' streams, stuck lights)   | done   | SavedProjectile.graph                                   |
-| Bleedout and paired animations' engine side                      | open   | their bookkeeping                                       |
+| Bleedout and paired animations' engine side                      | done   | SavedActor.down, deferred kills (engines)               |
 | Physics bodies in motion (loose objects knocked about)           | done   | WorldSave.motions, given back as each body settles      |
 | The sky's transition between weathers                            | done   | GameSave.sky (SkyWeather save, restore)                 |
 | The music playing (audio state)                                  | done   | GameSave.music, musicTrack: the track and its position  |
@@ -398,16 +411,16 @@ loadData (RuntimeSave.engines; src/scripting/runtime/engine-save.test.ts):
 
 ## Next biggest open items
 
-1. Graph transitions' blends (a machine saved mid-transition goes on in the state it blends
-   to), syncing blenders' phases and modifiers' own states; machines inside the placed objects'
-   behavior references (docs/formats/save.md "Animation graphs"). Not started this round.
-2. Actors in cells not loaded as the game is saved (their packages place them), a procedure's
-   progress inside a step (a sandbox's activity), bleedout's and paired animations' engine side.
-   Not started this round.
-3. What 100's u32 beside the crimes counts (UESP: the next crime's number; 0 at the cart, 6
-   after Helgen with no crime listed; the original's per-frame update does not use it) and
-   102's help list (one entry, 252, in both saves) and its last number (−2): their save code
-   was not found from the global data tables' names (TODO(M13)).
+1. Actors in cells not loaded as the game is saved (open): a loaded save's actors not placed
+   yet are kept into the next save, but an actor that left the stage during play keeps only the
+   place the game state has for it (its package places it anew as its cell loads; the original
+   keeps its process, place and package's progress), and one walking away between load doors
+   is where it last came through a door (its trip is planned again).
+2. The import's side of round 10's own-save work: the .ess Sandbox state's activity times, an
+   actor's bleedout (its life state's dying, its bleedout seconds) and a paired animation
+   (global data 1004, empty in the saves read), the help part's waiting messages into the HUD
+   (none in the saves read; ours does not save them yet) (TODO(M13)).
+3. Tutorials of a save written by an earlier runtime (1.5: numbered one lower).
 4. The decals' details the .ess leaves unsettled: their age (none written: a whole lifetime from
    the load), the land entries' u32 (it differs between an entry's copies, one per shape it was
    made on), float1 and the second texture set (none in the saves read) (TODO(M13)).

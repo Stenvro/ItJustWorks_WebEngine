@@ -106,6 +106,38 @@ export interface SavedGraphFile {
   readonly machines: readonly (readonly [number, number, number])[];
   /** [the clip's place among the file's clips, its local time, 1 playing backward (ping-pong)]. */
   readonly clips: readonly (readonly [number, number, number])[];
+  /** The machines caught blending from one state into another (saves made before kept none). */
+  readonly transitions?: readonly SavedTransition[];
+  /**
+   * The active modifiers' own states (a timer's seconds, an event-driven modifier switched on,
+   * a damping's values): [its place among the file's modifiers, elapsed, fired (1), count,
+   * target, active (1), sum, previous error, ...values]. Not the is-active ones (from what is
+   * active as it runs again).
+   */
+  readonly modifiers?: readonly (readonly number[])[];
+  /** The cyclic blends frozen or cross-blending: [place, 0 frozen / 1 cross, parameter, seconds]. */
+  readonly cyclic?: readonly (readonly [number, number, number, number])[];
+}
+
+/** A machine's transition under way as a save keeps it (SavedGraphFile.transitions). */
+export interface SavedTransition {
+  /** The machine's place among the file's machines. */
+  readonly machine: number;
+  /** The blends, the outermost (into the machine's state) first; each blends from the next. */
+  readonly blends: readonly SavedBlend[];
+  /** What the innermost blends from: a state's id, or the pose the machine had (a self blend). */
+  readonly from: number | readonly number[];
+}
+
+/** One blend of a transition: into which state, how far, and its effect's settings. */
+export interface SavedBlend {
+  readonly to: number;
+  readonly elapsed: number;
+  readonly duration: number;
+  readonly curve: number;
+  readonly flags: number;
+  readonly effectFlags: number;
+  readonly eventMode: number;
 }
 
 /** A file's machines and clips in the order reached from its root (shared by every runtime). */
@@ -115,6 +147,9 @@ interface FileNodes {
   readonly places: ReadonlyMap<object, number>;
   /** Its BSIsActiveModifiers: their outputs say whether they are active. */
   readonly isActive: readonly Extract<BehaviorModifier, { kind: 'is-active' }>[];
+  /** Its modifiers and cyclic blends, in the order reached (their places: `places`). */
+  readonly modifiers: readonly BehaviorModifier[];
+  readonly cyclic: readonly CyclicBlend[];
 }
 
 const fileNodes = new WeakMap<BehaviorGraph, FileNodes>();
@@ -126,10 +161,14 @@ function nodesOf(graph: BehaviorGraph): FileNodes {
   const clips: Clip[] = [];
   const places = new Map<object, number>();
   const isActive: Extract<BehaviorModifier, { kind: 'is-active' }>[] = [];
+  const modifiers: BehaviorModifier[] = [];
+  const cyclic: CyclicBlend[] = [];
   const seen = new Set<object>();
   const visitModifier = (modifier: BehaviorModifier): void => {
     if (seen.has(modifier)) return;
     seen.add(modifier);
+    places.set(modifier, modifiers.length);
+    modifiers.push(modifier);
     if (modifier.kind === 'is-active') isActive.push(modifier);
     for (const child of modifierChildren(modifier)) visitModifier(child);
   };
@@ -142,13 +181,16 @@ function nodesOf(graph: BehaviorGraph): FileNodes {
     } else if (node.kind === 'clip') {
       places.set(node, clips.length);
       clips.push(node);
+    } else if (node.kind === 'cyclic-blend') {
+      places.set(node, cyclic.length);
+      cyclic.push(node);
     } else if (node.kind === 'modifier-generator' && node.modifier) {
       visitModifier(node.modifier);
     }
     for (const child of children(node)) visit(child);
   };
   visit(graph.root);
-  nodes = { machines, clips, places, isActive };
+  nodes = { machines, clips, places, isActive, modifiers, cyclic };
   fileNodes.set(graph, nodes);
   return nodes;
 }
@@ -482,6 +524,8 @@ interface MachineState {
    * there, its enter events not raised again).
    */
   resumeTime?: number | undefined;
+  /** ... and the transition it was blending in (it blends on from there, not snapping). */
+  resumeTransition?: SavedTransition | undefined;
   /** Events received in the current state (global id → the time in the state then). */
   readonly received: Map<number, number>;
   /** A transition triggered before its initiate interval: taken when the interval begins. */
@@ -991,6 +1035,15 @@ export class BehaviorRuntime {
   }
 
   /**
+   * What a save keeps of a placed object's skeletal graph, in the actors' form (its behavior
+   * references' machines too, its clips' times, transitions and modifiers); undefined while
+   * nothing has told it anything (it runs as it started).
+   */
+  savePlacedState(): ActorGraphState | undefined {
+    return this.#told ? this.saveActorState() : undefined;
+  }
+
+  /**
    * A saved graph put back before it first runs: its variables, and each machine starts in its
    * saved state (what that state plays starts there).
    */
@@ -1024,12 +1077,20 @@ export class BehaviorRuntime {
    * state (docs/formats/save.md, "Animation graphs"): each active state machine's state and the
    * seconds it has been in it, each playing clip's local time, and the variables (those moved
    * from their initial values: put back over a graph that starts at them, the same), and the
-   * events not handled yet. Not kept, as there: a transition's blend (the machine goes on in
-   * the state it blends to), the pose.
+   * events not handled yet; a transition under way (it blends on), the modifiers' own states
+   * and the cyclic blends held. Not kept, as there: the pose (a syncing blender's phase follows
+   * from its clips' times, which are kept).
    */
   saveActorState(): ActorGraphState {
     type Places = (readonly [number, number, number])[];
-    const files = new Map<string, { machines: Places; clips: Places }>();
+    interface Entry {
+      machines: Places;
+      clips: Places;
+      transitions: SavedTransition[];
+      modifiers: (readonly number[])[];
+      cyclic: (readonly [number, number, number, number])[];
+    }
+    const files = new Map<string, Entry>();
     const entryOf = (node: object) => {
       const graph = this.#scopeOf(node).graph;
       const file = this.#files.get(graph);
@@ -1037,19 +1098,50 @@ export class BehaviorRuntime {
       if (file === undefined || place === undefined) return undefined;
       let entry = files.get(file);
       if (!entry) {
-        entry = { machines: [], clips: [] };
+        entry = { machines: [], clips: [], transitions: [], modifiers: [], cyclic: [] };
         files.set(file, entry);
       }
       return { entry, place };
     };
     for (const node of this.#active) {
       const generator = node as BehaviorGenerator | BehaviorModifier;
-      if ('enable' in generator) continue;
+      if ('enable' in generator) {
+        // A modifier's own state (not an is-active one's: from what is active as it runs).
+        const state = generator.kind === 'is-active' ? undefined : this.#modifiers.get(generator);
+        const at = state && entryOf(generator);
+        if (at) {
+          at.entry.modifiers.push([
+            at.place,
+            state.elapsed,
+            state.fired ? 1 : 0,
+            state.count,
+            state.target,
+            state.active ? 1 : 0,
+            state.sum,
+            state.previousError,
+            ...state.values,
+          ]);
+        }
+        continue;
+      }
       if (generator.kind === 'state-machine') {
         const machine = this.#machines.get(generator);
         const at = machine?.current && entryOf(generator);
         if (at && machine.current) {
           at.entry.machines.push([at.place, machine.current.id, machine.timeInState]);
+          const blending = machine.transition && this.#savedBlends(machine.transition);
+          if (blending) at.entry.transitions.push({ machine: at.place, ...blending });
+        }
+      } else if (generator.kind === 'cyclic-blend') {
+        const state = this.#cyclic.get(generator);
+        const at = state && entryOf(generator);
+        if (at) {
+          at.entry.cyclic.push([
+            at.place,
+            state.mode === 'frozen' ? 0 : 1,
+            state.frozen,
+            state.elapsed,
+          ]);
         }
       } else if (generator.kind === 'clip') {
         const clip = this.#clips.get(generator);
@@ -1058,8 +1150,15 @@ export class BehaviorRuntime {
       }
     }
     // Machines not entered yet since a load keep the state they will start in.
-    for (const [file, saved] of this.#resumeFiles)
-      files.set(file, { machines: [...saved.machines], clips: [...saved.clips] });
+    for (const [file, saved] of this.#resumeFiles) {
+      files.set(file, {
+        machines: [...saved.machines],
+        clips: [...saved.clips],
+        transitions: [...(saved.transitions ?? [])],
+        modifiers: [...(saved.modifiers ?? [])],
+        cyclic: [...(saved.cyclic ?? [])],
+      });
+    }
     const variables: [string, number][] = [];
     this.#values.forEach((value, index) => {
       const name = this.#variableNames[index];
@@ -1079,7 +1178,14 @@ export class BehaviorRuntime {
       return payload === undefined ? ([name] as const) : ([name, payload] as const);
     });
     return {
-      files: [...files].map(([file, { machines, clips }]) => ({ file, machines, clips })),
+      files: [...files].map(([file, { machines, clips, transitions, modifiers, cyclic }]) => ({
+        file,
+        machines,
+        clips,
+        ...(transitions.length > 0 && { transitions }),
+        ...(modifiers.length > 0 && { modifiers }),
+        ...(cyclic.length > 0 && { cyclic }),
+      })),
       variables,
       ...(vectors.length > 0 && { vectors }),
       ...(events.length > 0 && { events }),
@@ -1147,11 +1253,22 @@ export class BehaviorRuntime {
   #withNamed(graph: BehaviorGraph, saved: SavedGraphFile): SavedGraphFile {
     if (!this.#resumeNamed) return saved;
     const named = namedOf(this.#resumeNamed, graph.name);
-    if (named.machines.size === 0 && named.clips.size === 0) return saved;
+    if (named.machines.size === 0 && named.clips.size === 0 && named.modifiers.size === 0)
+      return saved;
     const nodes = nodesOf(graph);
     const machines = [...saved.machines];
     const clips = [...saved.clips];
+    const modifiers = [...(saved.modifiers ?? [])];
     const found = new Set<string>();
+    // An event-driven modifier switched on (its event came) stays on as it is reached.
+    nodes.modifiers.forEach((node, place) => {
+      if (node.kind !== 'event-driven') return;
+      const name = node.name.toLowerCase();
+      const active = named.modifiers.get(name);
+      if (active === undefined || found.has(`e${name}`)) return;
+      found.add(`e${name}`);
+      modifiers.push([place, 0, 0, 0, 0, active, 0, 0]);
+    });
     nodes.machines.forEach((node, place) => {
       const name = node.name.toLowerCase();
       const id = named.machines.get(name);
@@ -1166,7 +1283,61 @@ export class BehaviorRuntime {
       found.add(`c${name}`);
       clips.push([place, time, 0]);
     });
-    return { file: saved.file, machines, clips };
+    return { ...saved, machines, clips, ...(modifiers.length > 0 && { modifiers }) };
+  }
+
+  /** A transition's blends as a save keeps them (SavedTransition), outermost first. */
+  #savedBlends(transition: Transition): Omit<SavedTransition, 'machine'> {
+    const blends: SavedBlend[] = [];
+    let at: Transition = transition;
+    for (let depth = 0; depth < 64; depth++) {
+      blends.push({
+        to: at.to.id,
+        elapsed: at.elapsed,
+        duration: at.duration,
+        curve: at.curve,
+        flags: at.flags,
+        effectFlags: at.effectFlags,
+        eventMode: at.eventMode,
+      });
+      const from = at.from;
+      if (from.kind === 'transition') {
+        at = from.transition;
+        continue;
+      }
+      return { blends, from: from.kind === 'state' ? from.state.id : Array.from(from.pose) };
+    }
+    return { blends, from: at.to.id };
+  }
+
+  /** A saved transition made again on its machine (undefined: its states are gone). */
+  #savedTransition(node: StateMachine, saved: SavedTransition): Transition | undefined {
+    const stateOf = (id: number) => node.states.find((state) => state.id === id);
+    let from: TransitionFrom;
+    if (typeof saved.from === 'number') {
+      const state = stateOf(saved.from);
+      if (!state) return undefined;
+      from = { kind: 'state', state };
+    } else {
+      from = { kind: 'pose', pose: Float32Array.from(saved.from) };
+    }
+    let transition: Transition | undefined;
+    for (let i = saved.blends.length - 1; i >= 0; i--) {
+      const blend = saved.blends[i];
+      const to = blend && stateOf(blend.to);
+      if (!blend || !to) return undefined;
+      transition = {
+        from: transition ? { kind: 'transition', transition } : from,
+        to,
+        duration: Math.max(blend.duration, 1e-4),
+        curve: blend.curve,
+        flags: blend.flags,
+        effectFlags: blend.effectFlags,
+        eventMode: blend.eventMode,
+        elapsed: blend.elapsed,
+      };
+    }
+    return transition;
   }
 
   /** One file's saved machines and clips, to go on as they are reached. */
@@ -1200,6 +1371,52 @@ export class BehaviorRuntime {
       const node = nodes.clips[place];
       if (!node) continue;
       this.#resumeClips.set(node, { time, backward: backward === 1 });
+      this.#resuming.add(node);
+    }
+    // A machine caught mid-transition blends on from there (its states as saved).
+    for (const transition of saved.transitions ?? []) {
+      const node = nodes.machines[transition.machine];
+      const machine = node && this.#machines.get(node);
+      if (machine?.resumeTime !== undefined) machine.resumeTransition = transition;
+    }
+    // The modifiers' own states: they go on as they were (not activated anew: a modify-once
+    // modifier does not run again, a timer goes on counting).
+    for (const [
+      place,
+      elapsed,
+      fired,
+      count,
+      target,
+      active,
+      sum,
+      error,
+      ...values
+    ] of saved.modifiers ?? []) {
+      const node = place === undefined ? undefined : nodes.modifiers[place];
+      if (!node || node.kind === 'is-active') continue;
+      this.#modifiers.set(node, {
+        elapsed: elapsed ?? 0,
+        fired: fired === 1,
+        count: count ?? 0,
+        target: target ?? 0,
+        active: active === 1,
+        values,
+        sum: sum ?? 0,
+        previousError: error ?? 0,
+      });
+      this.#resuming.add(node);
+    }
+    // A cyclic blend frozen at its parameter, or fading from it, goes on so.
+    for (const [place, mode, frozen, elapsed] of saved.cyclic ?? []) {
+      const node = nodes.cyclic[place];
+      if (!node) continue;
+      this.#cyclic.set(node, { mode: mode === 0 ? 'frozen' : 'cross', frozen, elapsed });
+      const blender = node.generator?.kind === 'blender' ? node.generator : undefined;
+      if (blender) {
+        this.#drivenBy.set(blender, node);
+        if (mode === 0) this.#heldParameters.set(blender, frozen);
+        else this.#fadingParameters.set(blender, frozen);
+      }
       this.#resuming.add(node);
     }
   }
@@ -1482,6 +1699,8 @@ export class BehaviorRuntime {
       if (active.has(node)) continue;
       this.#resumeClips.delete(node);
       if (this.#machines.get(node)?.current === undefined) this.#machines.delete(node);
+      this.#modifiers.delete(node);
+      this.#cyclic.delete(node);
     }
     this.#resuming.clear();
     this.#motion = this.#tween(this.#host.rootMotion ? this.#rootMotion() : NO_MOTION);
@@ -2164,6 +2383,13 @@ export class BehaviorRuntime {
     machine.resumeTime = undefined;
     machine.current = start;
     machine.timeInState = resumed ?? 0;
+    // Caught blending into it: the blend goes on from where it was (what it blends from plays on
+    // from its saved times beside it).
+    const blending = machine.resumeTransition;
+    machine.resumeTransition = undefined;
+    if (blending && start?.id === blending.blends[0]?.to) {
+      machine.transition = this.#savedTransition(node, blending);
+    }
     machine.received.clear();
     machine.pending = undefined;
     if (start) this.#syncState(node, start.id);
@@ -2899,7 +3125,7 @@ export class BehaviorRuntime {
       const saved = this.#resumeFiles.get(file);
       if (saved) this.#resumeFiles.delete(file);
       const resumed = this.#withNamed(graph, saved ?? { file, machines: [], clips: [] });
-      if (saved || resumed.machines.length > 0 || resumed.clips.length > 0) {
+      if (saved || resumed.machines.length > 0 || resumed.clips.length > 0 || resumed.modifiers) {
         this.#resumeFile(graph, resumed);
       }
     }

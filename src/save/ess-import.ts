@@ -178,8 +178,59 @@ export function actorGraphState(graph: EssAnimationGraph): ActorGraphState {
       clips: graph.clips.map((clip) => [clip.graph, clip.node, clip.time]),
       sequences: graph.generators.map((clip) => [clip.graph, clip.node, clip.time]),
       words: graph.words,
+      // The event-driven modifiers by "File.hkb/Node": whether their event came.
+      modifiers: graph.eventModifiers.map(([name, active]) => {
+        const at = name.indexOf('/');
+        return [at < 0 ? '' : name.slice(0, at), name.slice(at + 1), active ? 1 : 0] as const;
+      }),
     },
   };
+}
+
+/**
+ * The tutorials (help messages, MESG default objects) by their place among the default objects,
+ * as the interface's list of those shown keeps them (global data 102): CommonLibSSE's
+ * DEFAULT_OBJECT order from kHelpBasicLockpickingPC (236 there), one place later in the
+ * runtime that wrote the saves read (a help manual entry comes before them), as observed in
+ * the original: its journal passes 252 for the journal's (HBJL) as it first opens. Their DOBJ
+ * uses, as ours shows them (GameState.tutorialsShown); '' the Kinect help list, no message.
+ * TODO(M13): a save of an earlier runtime (1.5) numbers them one lower.
+ */
+const FIRST_TUTORIAL = 237;
+const TUTORIALS = [
+  'HBLK',
+  'HBLX',
+  'HBFG',
+  'HBCO',
+  'HBML',
+  'HBTA',
+  'HBOC',
+  'HBEC',
+  'HBSM',
+  'HBSA',
+  'HBAL',
+  'HBBR',
+  'HBLU',
+  'HBSK',
+  'HBMM',
+  'HBJL',
+  'HBLH',
+  'HBLM',
+  'HBLS',
+  'HBHJ',
+  'HBFT',
+  'HBWC',
+  'HBFS',
+  '',
+  'HBFM',
+  'HBTL',
+  'HBAT',
+] as const;
+
+/** A tutorial's DOBJ use by its place among the default objects (undefined: not a tutorial). */
+export function tutorialOfDefaultObject(index: number): string | undefined {
+  const use = TUTORIALS[index - FIRST_TUTORIAL];
+  return use === undefined || use === '' ? undefined : use;
 }
 
 const PLAYER_REF = 0x14;
@@ -2019,13 +2070,25 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   // (the opening's "Look" and "Forward"), not shown again; the weapons, spells and shouts used
   // last (the journal's favorites, each counted once); the journal's other pages switched off
   // (Game.DisablePlayerControls' abJournalTabs). The Miscellaneous objectives' flag needs
-  // nothing: the journal lists every objective shown. TODO(M13): the help messages shown (one
-  // number, 252 in the saves read) and the help part's last number (−2), not known.
+  // nothing: the journal lists every objective shown. The tutorials shown (observed in the
+  // original: each by its place among the default objects, put in the list as it is first
+  // shown, never shown again; 252, the journal's, in both saves read) are ours shown
+  // (GameState.tutorialsShown). The help part's last number is the help message showing (by its
+  // place among the help part's entries; none: −1, or −2 once an earlier entry was dropped).
   const interfaceData = globalData(ess, 102);
   if (interfaceData) {
     try {
       const read = readInterface(interfaceData, resolve);
       controls.journalTabs = read.journalTabsDisabled === 0;
+      for (const index of read.shownHelpMessages) {
+        const use = tutorialOfDefaultObject(index);
+        if (use) state.tutorialsShown.add(use);
+        else skips.add('interface: a tutorial shown not known');
+      }
+      // The help messages waiting (ShowAsHelpMessage's: their event, text, seconds, interval,
+      // times left and seconds since shown): none in the saves read. TODO(M13): into the HUD's
+      // help messages, which ours does not save yet.
+      if ((read.extra?.entries.length ?? 0) > 0) skips.add('interface: help messages waiting');
       for (const name of read.extra?.names ?? []) state.helpDone.add(name.toLowerCase());
       for (const [list, usage] of [
         [read.lastUsedWeapons, state.usage.weapons],
@@ -2197,13 +2260,16 @@ export function importEss(ess: EssFile, world: EssWorld, request: EssImportReque
   }
   // The process lists (global data 100), as observed in the original: two countdowns before an
   // actor may comment on the player's actions again (one for every actor), the crime check's
-  // (a second at most: gone within it), a number whose use is not known, and the crimes. The
-  // talk here keeps each actor's own wait, so a countdown still running is logged, as a crime.
-  // TODO(M13): what the number counts; the crimes into the crime engine once a save holds some.
+  // (a second at most: gone within it), the number the next crime gets (observed in the
+  // original: each crime made takes it and moves it on; 6 after Helgen, whose crimes were all
+  // gone again: GameState.nextCrime), and the crimes. The talk here keeps each actor's own
+  // wait, so a countdown still running is logged, as a crime. TODO(M13): the crimes into the
+  // crime engine once a save holds some.
   const processData = globalData(ess, 100);
   if (processData) {
     try {
       const lists = readProcessLists(processData, resolve);
+      state.nextCrime = lists.nextNum;
       if (lists.actionCommentTimer > 0 || lists.knockCommentTimer > 0)
         skips.add('process lists: comment timers not applied');
       if (lists.crimes.some((crimes) => crimes.length > 0))

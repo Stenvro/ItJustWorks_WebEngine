@@ -467,6 +467,22 @@ export class ActorEngine {
   }
 
   /**
+   * What a save keeps (RuntimeSave.engines): the deferred kills under way, [actor, its health
+   * ran out meanwhile (1), who dealt the blow (0: none)]. A killmove caught in a save keeps its
+   * victim's: the killmove's end kills it after the load, as it would have.
+   */
+  saveData(): readonly (readonly [number, number, number])[] {
+    return [...this.#deferred].map(([actor, { due, killer }]) => [actor, due ? 1 : 0, killer ?? 0]);
+  }
+
+  /** A save's deferred kills (saveData). */
+  loadData(saved: readonly (readonly [number, number, number])[] | undefined): void {
+    for (const [actor, due, killer] of saved ?? []) {
+      this.#deferred.set(actor, { due: due === 1, ...(killer !== 0 && { killer }) });
+    }
+  }
+
+  /**
    * Actor.StartDeferredKill: from now on its health may run out without its dying (CommonLibSSE
    * MiddleHighProcessData inDeferredKill) until EndDeferredKill.
    */

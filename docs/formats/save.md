@@ -316,10 +316,15 @@ each kind. Ours:
   belongs to its 3D, which the save does not hold; neither the actor's nor its process's save
   writes it).
 
-A procedure's step after a load begins again (no progress inside a step is saved), except a
-patrol's: the package keeps the point its patrol goes to (`SavedPackage.goal`, as the original's
-patrol package data holds it), and the loaded patrol goes on to that point (before, the
-opening's horses turned back to their patrols' first points). A Travel to a
+A procedure's step after a load goes on: a patrol's, to the point it went to
+(`SavedPackage.goal`, as the original's patrol package data holds it; before, the opening's
+horses turned back to their patrols' first points); a sandbox's, with its activity
+(`SavedPackage.step`, `SavedStep`, ProcedureRun.setStep: its kind, the furniture or idle marker
+it uses, the game hour it began and its hours, and the plan's counts of what it did least
+lately): seated, at its marker, wandering or eating, until its hours from when it began, as the
+original's sandbox keeps its activity and times in the save (before, it chose again, a new stay
+of a new length). Test: procedure-runs.test.ts "a sandbox after a load". TODO(M13): an imported
+.ess's sandbox activity (its times are among the Sandbox state's values, not read). A Travel to a
 reference that moves aims where the reference is as it begins; to end where the original's
 continuing travel would, a travel to a moving destination ends within reach of where the
 destination is now, not of where its path led: an actor at its path's end whose target moved on
@@ -392,11 +397,27 @@ active as the graph runs again: one of a state a transition still blended from s
 active, and kept so, the player saved just up from the opening's block stayed animation-driven
 (bAnimationDriven) and could not walk.
 
-Not kept (TODO(M13)): a transition's blend (the machine goes on in the state it blends to), a
-syncing blender's phase, the modifiers' own states (a timer's seconds); the
-engine's own side of a bleedout and of a paired animation (who holds whom: their graphs go on in
-those states, the systems' bookkeeping is not saved yet). Machines inside behavior references of
-the placed objects' graphs (`graphs`, above) are not kept either.
+Also kept per file (`SavedGraphFile`): each transition under way (`transitions`: the machine,
+its blends from the outermost in, each its state, seconds blended, duration, curve and flags,
+and what the innermost blends from: a state, or the pose the machine had for a blend into
+itself), so a machine saved mid-blend blends on from where it was instead of snapping into the
+state it blended to (what it blends from plays on from its saved clip times beside it); the
+active modifiers' own states (`modifiers`, by their place among the file's modifiers: a timer's
+seconds, a modify-once that ran, an event-driven modifier switched on, a damping's values),
+put back without activating them again; the cyclic blends frozen or cross-blending (`cyclic`).
+A syncing blender's phase follows from its clips' local times, which are kept. A placed
+object's skeletal graph is kept in the same form (`SavedGraph.skeleton`, its behavior
+references' machines included); saves made before kept its own machines' states alone. Test:
+tests/graph-save-events.int.test.ts "blends on from a transition caught mid-blend".
+
+Bleedout and paired animations (`SavedActor.down`, `SavedPlayer.down`: `SavedDown`,
+ActorCombat.saveDown): the seconds an actor has been bleeding out (it goes on bleeding out,
+regaining, and gets up as before; its graph is in its bleedout already), its side of a paired
+animation, whether it is a killmove, the seconds in it and a victim's killer; the deferred kills
+under way are kept by the actors' engine (`RuntimeSave.engines.deferredKills`). A killmove caught
+in a save plays on to its end, which kills its victim by its killer: neither partner is left
+half-way (before, the victim's deferral and the pair were lost, and it stood with no health,
+alive). Test: actor-engine.test.ts "a deferred kill across a save".
 
 An imported .ess keeps each graph by names instead (`ActorGraphState.named`, `SavedGraph.named`:
 `NamedGraphState`, src/animation/named-graph-state.ts; docs/formats/ess.md "Animation
@@ -409,9 +430,11 @@ A save of ours made after the import keeps the graphs in our own form.
 
 ## Not saved yet
 
-- The procedures' own progress inside a step beyond a patrol's point and the furniture an
-  actor is in (a sandbox's activity's time left: it chooses again); the
-  actors of cells not loaded when saving (their packages place them, as before); a combat
+- The actors of cells not loaded when saving, beyond a loaded save's actors not placed since
+  (kept into the next save as that save had them: `WorldRestore.carried`) and the places the
+  game state holds: an actor that left the stage keeps no package progress (its package places
+  it as its cell loads again), and one walking away between load doors is where it last came
+  through a door (its trip is planned again; TODO(M13)); a combat
   group's own timers (its dialogue and update timers: they run from the load); each body of an articulated object in motion on its own (`motions` keeps the first's,
   TODO(M13)).
 

@@ -3,7 +3,7 @@
 // the graph raises (OnAnimationEvent). Platform-independent.
 
 import type { AnimatedSkeleton } from './animated-skeleton.ts';
-import type { BehaviorGraphState, BehaviorRuntime } from './behavior-runtime.ts';
+import type { ActorGraphState, BehaviorGraphState, BehaviorRuntime } from './behavior-runtime.ts';
 import type { NamedGraphState } from './named-graph-state.ts';
 import type { ObjectGraph, ObjectGraphState } from './object-graph.ts';
 
@@ -13,7 +13,11 @@ import type { ObjectGraph, ObjectGraphState } from './object-graph.ts';
  */
 export interface SavedGraph {
   readonly sequences?: ObjectGraphState | undefined;
-  readonly skeleton?: BehaviorGraphState | undefined;
+  /**
+   * The skeleton's graph: in the actors' form (its behavior references' machines, transitions
+   * and modifiers too; saves made before kept its own machines' states alone).
+   */
+  readonly skeleton?: ActorGraphState | BehaviorGraphState | undefined;
   /** An imported original save's state, by names: put back over whichever graph the object has. */
   readonly named?: NamedGraphState | undefined;
 }
@@ -99,7 +103,7 @@ export function placedScriptGraph(
   );
   const save = (): SavedGraph | undefined => {
     const sequences = graph?.saveState();
-    const skeletal = skeleton?.saveState();
+    const skeletal = skeleton?.savePlacedState();
     return sequences || skeletal ? { sequences, skeleton: skeletal } : undefined;
   };
   if (parts.length === 0) return undefined;
