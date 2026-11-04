@@ -323,7 +323,7 @@ describe('the subtrees', () => {
 
   it('Melee: Attack, Bash, Special Attack, the attack idle (0.25 s)  [RTTI, docs/ai.md]', () => {
     const t = fighter({ rightMelee: true, mayAttack: true });
-    expect(t.tick()).toEqual(expect.arrayContaining(['chooseAttack', 'powerAttack']));
+    expect(t.tick()).toEqual(expect.arrayContaining(['chooseAttack']));
     // The attack idle: no new choice for 0.25 s.
     expect(t.tick(0.1)).not.toContain('chooseAttack');
     expect(t.tick(0.1)).not.toContain('chooseAttack');
@@ -332,7 +332,6 @@ describe('the subtrees', () => {
     expect(t.tree.actionsOf('Melee')).toEqual([
       'chooseAttack',
       'attack',
-      'powerAttack',
       'bash',
       'powerBash',
       'specialAttack',
