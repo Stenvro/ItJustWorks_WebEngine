@@ -122,7 +122,8 @@ const SOLVER_ITERATIONS = 8;
  * into a shelf's back panel, a cover into the board under it): for this long after they are
  * placed to settle, the solver's push out of those overlaps only moves them, without the speed
  * it would give them (Havok recovers penetrations slowly; Rapier's push sent books off their
- * shelves). TODO(M13): how far the engine's warm start goes.
+ * shelves). TODO(M13): the original's warm start is plain stepping (docs/physics.md, "The warm
+ * start"); Rapier's push out is the harder one.
  */
 const DEPENETRATE_SECONDS = 0.5;
 /**
@@ -2203,6 +2204,19 @@ export class PhysicsWorld {
       }
     }
     this.#changed = true;
+  }
+
+  /**
+   * Makes a placement's simulated bodies fixed: nothing moves them (a static's, as it is
+   * placed: observed in the original). SetMotionType can make them move again.
+   */
+  fix(placed: PlacedCollision): void {
+    for (const { body, data } of placed.bodies) {
+      if (!dynamicBody(data)) continue;
+      this.#held.delete(body.handle);
+      body.setBodyType(RAPIER.RigidBodyType.Fixed, false);
+    }
+    this.#syncJoints(placed.bodies.map(({ body }) => body));
   }
 
   /**

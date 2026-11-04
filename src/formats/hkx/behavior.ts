@@ -245,7 +245,8 @@ export interface ClipTrigger {
  * BSIsActiveModifier, hkbEvaluateExpressionModifier, BSInterpValueModifier, BSSpeedSamplerModifier
  * and the other value modifiers; 3 on the event modifiers (BSEventOnDeactivateModifier,
  * BSEventEveryNEventsModifier, BSModifyOnceModifier, BSIStateManagerModifier); 0 elsewhere.
- * TODO(M13): what, if anything, the original's runtime does with it is unknown.
+ * Observed in the original, nothing compares those values: its runtime keeps its own state in
+ * the field on clip and offset generators (their animation still loading, or loaded).
  */
 export interface NodeUserData {
   readonly userData?: number;

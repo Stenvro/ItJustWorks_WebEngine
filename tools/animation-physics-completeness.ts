@@ -122,6 +122,14 @@ const NOT_RUNTIME: ReadonlyMap<string, string> = new Map([
   ['other.name', 'a node of no class the runtime runs'],
 ]);
 
+/** Parsed fields of every node kind the runtime has no use for, by field, with the reason. */
+const NOT_RUNTIME_FIELDS: ReadonlyMap<string, string> = new Map([
+  [
+    'userData',
+    "the authoring tool's per-class 1, 2 or 3, compared by nothing in the original; its runtime keeps its own state there on clip and offset generators (their animation still loading or loaded: ClipHost's load on first use)",
+  ],
+]);
+
 /**
  * Parsed node fields the runtime runs through the parser's own helpers (not named in the
  * runtime's files), by "kind.field", with where.
@@ -425,7 +433,7 @@ export async function animationPhysicsCompleteness(
     // The parsed nodes' fields (the parser's names for the members): named by the runtime.
     for (const [key, uses] of [...nodeFields].sort((a, b) => a[0].localeCompare(b[0]))) {
       const field = key.slice(key.indexOf('.') + 1);
-      const reason = NOT_RUNTIME.get(key);
+      const reason = NOT_RUNTIME.get(key) ?? NOT_RUNTIME_FIELDS.get(field);
       push(
         'animation',
         'Behavior node fields',

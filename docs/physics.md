@@ -68,12 +68,21 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
   alone until an active one touches it; Rapier wakes a sleeping body at its first contact,
   even with the wall it hangs on, so waiting bodies are kinematic until touched (they meet
   nothing fixed and cost nothing).
-- **Statics do not settle:** a STAT whose model has simulated bodies (the "...Static" clutter
-  such as GlazedCandlesStatic, mounted antlers, the "...ForDisplay" weapons on Jorrvaskr's and
-  Dragonsreach's walls) can be knocked over, but waits until it is (`settlesWhenPlaced`).
-  Settled, Dragonsreach's antlers fell 600 units off its walls, which they never do in the
-  game; only 13 of 379 such statics carry "Don't Havok Settle". TODO(M13): inferred from the
-  data.
+- **Statics are fixed:** a STAT or SCOL whose model has simulated bodies (the "...Static"
+  clutter such as GlazedCandlesStatic, mounted antlers, the "...ForDisplay" weapons on
+  Jorrvaskr's and Dragonsreach's walls) has its bodies made fixed as it is placed (observed in
+  the original: its reference's collision, once in the world, is set to the fixed motion
+  type; `fixedWhenPlaced`, `PhysicsWorld.fix`): nothing knocks them over. Settled, Dragonsreach's
+  antlers fell 600 units off its walls; only 13 of 379 such statics carry "Don't Havok Settle".
+- **The warm start, observed in the original:** as a cell is set up, its world is stepped at
+  once at [HAVOK] fMaxTime (1/60 s) until [HAVOK] fWarmStartMaxTime (4 s) has passed, with
+  deactivation off (bAllowDeactivationWhileWarmStarting 0; with it on, the stepping would stop
+  once nothing moves), and then every island still active is deactivated. Meanwhile the bodies
+  of its references that are keyframed, and every moving body of a reference flagged "Don't
+  Havok Settle", are held: made keyframed with no speed, then given back their motion type and
+  any speed they had. Ours settles over the first fWarmStartMaxTime of play instead (above) and
+  leaves what still moves at its end moving. TODO(M13): the settling at once, and the
+  deactivation at its end.
 - **Weapon racks** are the game's own WeaponRackActivateSCRIPT (docs/scripting.md): as its
   cell attaches, the rack takes the reference it links to without a keyword, checks it against
   its RackType (1: anything but a shield; 2: a shield; 3: neither a dagger, a shield nor a
@@ -83,7 +92,8 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
   panel, a cover into the board under it) is pushed out by the solver; for the first half
   second after a body is set to settle its speed is taken away after every step, so the push
   only moves it (Havok recovers penetrations slowly; Rapier's push sent Jorrvaskr's books
-  off their shelves). TODO(M13): how far the engine's warm start goes. Settled over 10 s:
+  off their shelves). TODO(M13): the original takes no speed away (its warm start, above, is
+  plain stepping); Rapier's push out is the harder one. Settled over 10 s:
   Breezehome, Warmaiden's, Belethor's, the Bannered Mare and the Sleeping Giant keep
   everything in place; Jorrvaskr 3 books (placed over a shelf's edge). A placement a script
   enables (`PhysicsWorld.setEnabled`) is pushed out so too for its first half second back:

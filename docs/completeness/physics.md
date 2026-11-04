@@ -18,7 +18,7 @@ settings reader or named in the code. A field with one value in every mesh that 
 the physics counts as done with that reason. The mechanics are kept by hand below, against
 docs/physics.md. The count after an item is how many blocks (records) use it.
 
-## Count (2026-11-03, round 6)
+## Count (2026-11-03, round 7)
 
 | Part                          | Items | Done | Open |
 | ----------------------------- | ----: | ---: | ---: |
@@ -80,6 +80,15 @@ it, and the surface bears it as ground; it does not swim: Character.waterFloor,
 src/gameplay/swimming.ts walksOnWater; NPCs and the player); fDeathForceSpellImpactMult was
 read already (src/gameplay/combat/combat-settings.ts). Not reached: objects placed into what
 they lie on, the chains' damping.
+
+Round 7 (356, unchanged), observed in the original: a cell's load settles its world at once
+(the warm start: steps of [HAVOK] fMaxTime until fWarmStartMaxTime, 4 s, without deactivation,
+then every island deactivated), its keyframed bodies and the bodies of its "Don't Havok Settle"
+references held still (keyframed, without speed) meanwhile and given back their motion after;
+a static's or a static collection's bodies are made fixed as it is placed (built: `fix`,
+`fixedWhenPlaced`; they waited for a touch before). Not built: the settling at once and the
+deactivation at its end (ours settles over the first 4 s of play); the objects placed into what
+they lie on and the chains' damping stay open.
 
 ## Meshes
 
@@ -196,5 +205,9 @@ they lie on, the chains' damping.
 - [x] Physics damage (fPhysicsDamage1Mass ...).
 - [ ] Physics damage to destructibles from the listener (no vanilla impact reaches it).
 - [ ] Objects placed into what they lie on fall through it (340 in the interiors:
-      `tools/settle-audit.ts`). TODO(M13): round 2 did not reach it.
+      `tools/settle-audit.ts`). Round 7 read the original's warm start (docs/physics.md, "What
+      is placed"): nothing in it keeps a penetrating body from leaving through the far side; it
+      settles 4 s at once and then deactivates every island. TODO(M13): that end (ours keeps
+      simulating what still moves), and Havok's one-sided contacts with meshes (ours are
+      two-sided: a body more than half into a surface is pushed out below it).
 - [ ] Traps: material, initial flag, cloud traps unchecked.

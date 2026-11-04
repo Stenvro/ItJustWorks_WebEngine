@@ -189,18 +189,24 @@ export const FILTER_BIPED_PART = 0x1f;
 
 /**
  * Whether a placed object's simulated bodies settle once its cell's collision is in place (the
- * warm start). Not those flagged "Don't Havok Settle", and not statics: a STAT whose model has
- * simulated bodies (the "...Static" clutter, mounted antlers, the "...ForDisplay" weapons on
- * Jorrvaskr's and Dragonsreach's walls) stays where it was placed until something knocks it,
- * then falls like any item. Settled, Dragonsreach's antlers fell 600 units off its walls,
- * which they never do in the game; only 13 of 379 such statics carry the flag. TODO(M13):
- * inferred from the data, not documented.
+ * warm start). Not those flagged "Don't Havok Settle" (held still while their cell settles,
+ * then left at rest), and not statics (fixedWhenPlaced).
  */
 export function settlesWhenPlaced(object: {
   readonly baseType: string;
   readonly dontHavokSettle?: boolean;
 }): boolean {
-  return object.dontHavokSettle !== true && object.baseType !== 'STAT';
+  return object.dontHavokSettle !== true && !fixedWhenPlaced(object.baseType);
+}
+
+/**
+ * Whether a placed object's simulated bodies are made fixed as it is placed: a static's or a
+ * static collection's (observed in the original). The "...Static" clutter, mounted antlers and
+ * the "...ForDisplay" weapons on Jorrvaskr's and Dragonsreach's walls never move; left to
+ * settle, Dragonsreach's antlers fell 600 units off its walls.
+ */
+export function fixedWhenPlaced(baseType: string): boolean {
+  return baseType === 'STAT' || baseType === 'SCOL';
 }
 
 /**

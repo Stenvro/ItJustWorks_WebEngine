@@ -2064,6 +2064,8 @@ export class BehaviorRuntime {
         readonly time: number;
         readonly lead: boolean;
         readonly getToMarkTime: number;
+        /** How near its mark (game units; with reorienting, its turn too) counts as there. */
+        readonly markErrorThreshold: number;
         readonly ignoreMarkPlacement: boolean;
         readonly reorientSupport: boolean;
       }
@@ -2077,6 +2079,7 @@ export class BehaviorRuntime {
         time: this.#clips.get(sync.generator)?.time ?? 0,
         lead: sync.leadCharacter,
         getToMarkTime: sync.getToMarkTime,
+        markErrorThreshold: sync.markErrorThreshold,
         ignoreMarkPlacement: sync.ignoreMarkPlacement,
         reorientSupport: sync.reorientSupport,
       };

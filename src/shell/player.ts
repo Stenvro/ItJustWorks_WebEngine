@@ -541,6 +541,8 @@ export class Player implements Camera {
   onLanded: ((height: number) => void) | undefined;
   /** Whether the player walks on water (their Water Walking above 0). */
   walksOnWater: (() => boolean) | undefined;
+  /** The player took to the water's surface walking on it (their ActionWaterwalkStart). */
+  onWaterWalkStart: (() => void) | undefined;
   /** Each step: how deep the player is in water (its share of their height, 0..1): breath. */
   onSubmersion:
     | ((
@@ -1166,6 +1168,7 @@ export class Player implements Camera {
         fz - water,
         character.waterFloor !== undefined,
       );
+    if (onWater && character.waterFloor === undefined) this.onWaterWalkStart?.();
     character.waterFloor = onWater ? water : undefined;
     const swimming = !onWater && swims(depth, character.swimming);
     character.swimming = swimming;

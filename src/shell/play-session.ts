@@ -7,7 +7,12 @@ import type RAPIER from '@dimforge/rapier3d-compat';
 import { ActorPose } from '../animation/skeleton.ts';
 import { Articulation } from '../physics/articulation.ts';
 import { RagdollPenetration } from '../physics/ragdoll-penetration.ts';
-import { HAVOK_SCALE, settlesWhenPlaced, type CollisionData } from '../physics/collision-data.ts';
+import {
+  fixedWhenPlaced,
+  HAVOK_SCALE,
+  settlesWhenPlaced,
+  type CollisionData,
+} from '../physics/collision-data.ts';
 import type { SavedMotion } from '../save/world-save.ts';
 import { GrabSpring } from '../physics/grab.ts';
 import {
@@ -1811,6 +1816,7 @@ export class PlaySession {
             : undefined;
         const settles = posed ? !posed.complete : settlesWhenPlaced(object);
         if (settles && placed.dynamic) group.settle.push(placed);
+        else if (placed.dynamic && fixedWhenPlaced(object.baseType)) physics.fix(placed);
         if (instance?.motion) group.moving.push({ placed, instance, motion: instance.motion });
         if (articulated && instance) {
           group.articulated.push(new Articulation(placed, articulated, instance.world));

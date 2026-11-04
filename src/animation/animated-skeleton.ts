@@ -75,6 +75,13 @@ export function boneLeftBound(
 
 const EVERY_FRAME: AnimationRate = { interval: 0, interpolate: false, slop: 0 };
 
+/**
+ * The graph variables that keep a graph from being updated ahead and interpolated: a paired or
+ * speed-synced clip, or the graph's own say (observed in the original). TODO(M13): the original
+ * also updates every frame an actor in some states of its own (four flags not yet named).
+ */
+const INTERP_BLOCKERS = ['bIsSynced', 'bSpeedSynced', 'bDisableInterp'] as const;
+
 /** A skeleton updated ahead of time: the pose before the update, shown blending into its pose. */
 interface Interpolation {
   /** The renderer's clock at the last frame. */
@@ -136,8 +143,10 @@ export function animateSkeletons(
       behavior.rootAway = wanted.rootAway === true;
     }
     let interval = wanted.interval;
-    // The graph may forbid it (bDisableInterp: inferred from the engine's variable names).
-    if (interval > 0 && behavior?.variable('bDisableInterp') === 1) interval = 0;
+    // The graph forbids it while any of its bIsSynced, bSpeedSynced or bDisableInterp is set
+    // (observed in the original: the engine reads the three and sets none; the graphs do).
+    if (interval > 0 && behavior && INTERP_BLOCKERS.some((name) => behavior.variable(name) === 1))
+      interval = 0;
     if (interval > 0 && behavior) interval = Math.min(interval, behavior.nextEventIn() - frame / 2);
     const ahead =
       behavior !== undefined &&
