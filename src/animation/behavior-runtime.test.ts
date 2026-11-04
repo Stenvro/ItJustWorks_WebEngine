@@ -1319,6 +1319,9 @@ describe('transitions as Havok runs them', () => {
   });
 });
 
+/** The event flag of a graph's sync point events (EVENT_FLAGS.syncPoint). */
+const SYNC_POINT = 2;
+
 describe('syncing blenders', () => {
   /** A syncing parametric blender of looping clips sitting at their weights. */
   const syncBlend = (
@@ -1395,6 +1398,65 @@ describe('syncing blenders', () => {
       runtime.playing().find((c) => c.animation === name)?.time;
     expect(time('walk')).toBeCloseTo(0.5, 5);
     expect(time('trot')).toBeCloseTo(0.25, 5);
+  });
+
+  /**
+   * Two clips with their sync point at 0.2 of the one and 0.6 of the other, blended 3:1: as the
+   * blend goes towards the second, the cycle's sync point moves on and the clips' phase steps back.
+   */
+  const shiftingBlend = (): BehaviorRuntime => {
+    const synced = (name: string, at: number): BehaviorGenerator => ({
+      kind: 'clip',
+      name,
+      animation: name,
+      mode: 1,
+      playbackSpeed: 1,
+      triggers: [
+        {
+          localTime: at,
+          event: { id: 0 },
+          relativeToEndOfClip: false,
+          acyclic: false,
+          isAnnotation: false,
+        },
+      ],
+    });
+    const blend = syncBlend('Speed', 0, [
+      [0, synced('a', 0.2)],
+      [1, synced('b', 0.6)],
+    ]);
+    return new BehaviorRuntime({
+      root: {
+        ...graph(blend, ['SyncLeft'], [{ name: 'Speed', initial: 0.25 }]),
+        eventFlags: [SYNC_POINT],
+      },
+      host: { ...host({ a: animation(0), b: animation(10) }), rootMotion: forward },
+      skeleton,
+    });
+  };
+
+  it('moves no stride when its phase steps back as its sync points shift', () => {
+    // Read as past the loop's end, that step back was most of a cycle of root motion at once.
+    const runtime = shiftingBlend();
+    runtime.update(0);
+    runtime.update(0.5);
+    runtime.setVariable('Speed', 0.5);
+    runtime.update(0.02);
+    expect(Math.abs(runtime.rootMotion().translation[1])).toBeLessThan(0.2);
+  });
+
+  it('moves no stride when that step back crosses the loop’s seam', () => {
+    // Clip a just past its start (its time is the phase less 0.1 at this blend, less 0.2 at the
+    // next): the shift takes it back over its start, to the end of its loop.
+    const runtime = shiftingBlend();
+    const time = (): number | undefined => runtime.playing().find((c) => c.animation === 'a')?.time;
+    runtime.update(0);
+    runtime.update(0.12);
+    expect(time()).toBeLessThan(0.1);
+    runtime.setVariable('Speed', 0.5);
+    runtime.update(0.02);
+    expect(time()).toBeGreaterThan(0.9);
+    expect(Math.abs(runtime.rootMotion().translation[1])).toBeLessThan(0.2);
   });
 });
 

@@ -3520,7 +3520,14 @@ export class BehaviorRuntime {
       // Joining a syncing blender's cycle, it starts at its phase: it has not moved the
       // character from its start (a horse's trot joining its walk jumped a stride ahead).
       if (state.updated < 0) previous = time;
-      wrapped = time < previous;
+      // A cycle's sync points shift as its blend's weights change (alignPhase), so its phase may
+      // step back a little: more than half a cycle "on" in a step of less than that is such a
+      // step, not most of a cycle played (a run's stride and more of root motion in one frame
+      // threw an actor some 1900 units in a second). Over the loop's seam it moves it nowhere.
+      const on = time - previous + (time < previous ? duration : 0);
+      const stepBack = on > duration / 2 && dt < duration / 2;
+      if (stepBack && time > previous) previous = time;
+      wrapped = time < previous && !stepBack;
       state.time = time;
     } else {
       const speed = this.#read(node.speed ?? { value: node.playbackSpeed }, scope);
