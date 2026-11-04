@@ -755,6 +755,14 @@ export function chooseAttack(
   return 'attack';
 }
 
+/** No power attack is chosen sooner than fPowerAttackCoolDownTime after the last. */
+export function powerAttackCooling(
+  sinceLast: number | undefined,
+  settings: CombatAiSettings,
+): boolean {
+  return sinceLast !== undefined && sinceLast < settings.powerAttackCoolDown;
+}
+
 /**
  * The angle (radians) its target may be off its facing for an attack to start: the attack's own
  * angle (its attack data's ATKD strike angle, degrees; 0: none, the default below) ×

@@ -21,6 +21,11 @@
 import {
   acceptsYield,
   actorStrength,
+  firstTauntTime,
+  oddsWeighed,
+  UNWEIGHED_ODDS,
+  zonesAllow,
+  type CombatZone,
   aggroResponse,
   Assistance,
   assists,
@@ -53,6 +58,7 @@ import { AttackPick, combatRegistry } from '../ai/combat-tree.ts';
 import {
   CombatDialogue,
   isCombatLine,
+  type CombatLine,
   readCombatDialogueSettings,
   spectatorComments,
 } from '../ai/combat-dialogue.ts';
@@ -93,6 +99,9 @@ import {
   holdsRestore,
   lowCombatBlow,
   pickCover,
+  coverRange,
+  fallbackPlace,
+  hideFails,
   pickFleeDoor,
   pickWeapon,
   readCombatSubtreeSettings,
@@ -119,6 +128,7 @@ import {
   chooseEquipment,
   leftHandSpell,
   leftHandWeapon,
+  powerAttackCooling,
   shoutAim,
   restoreShare,
   chooseManeuver,
@@ -244,12 +254,13 @@ export interface CombatAiHost {
   sheathe(reference: number): Promise<boolean>;
   /**
    * `melee`: the melee attack node's own attack (attackReaches, chooseAttackData), a power attack
-   * among them no sooner than its cool-down; else the action's idle.
+   * among them no sooner than its cool-down, from the left hand's attacks with `left`; else the
+   * action's idle.
    */
   attack(
     reference: number,
     action: string,
-    melee?: { readonly powerCooling: boolean },
+    melee?: { readonly powerCooling: boolean; readonly left?: boolean },
   ): Promise<boolean>;
   release(reference: number, action: string): Promise<void>;
   block(reference: number, on: boolean): Promise<void>;
@@ -340,6 +351,10 @@ export interface ActorCombatAiOptions {
   readonly casting?: () => CombatCasting | undefined;
   /** The fliers' fights (M10 5.4). */
   readonly flight?: () => CombatFlight | undefined;
+  /** It goes through a load door it fled to (off the stage, on the other side). */
+  readonly leaveThroughDoor?: (actor: number, door: number) => Promise<boolean>;
+  /** Whether a load door may serve one fleeing: it has its other side and passes it. */
+  readonly doorLeads?: (actor: number, door: number) => Promise<boolean>;
 }
 
 type Mode = 'idle' | 'fight' | 'search' | 'flee' | 'yield';
@@ -408,6 +423,8 @@ interface Mind {
   nextAttack: number;
   /** When it last attacked, shot or cast (its clock; undefined: not yet in this fight). */
   lastAttack: number | undefined;
+  /** When its fight began or a blow last met it (with lastAttack, the odds' engagement). */
+  engagedAt: number;
   /** When it last power attacked (its clock; undefined: not yet in this fight). */
   lastPowerAttack: number | undefined;
   /** When it was last hurt (a blow landed or blocked; undefined: not in this fight). */
@@ -448,11 +465,27 @@ interface Mind {
   /** A target its way could not reach, until it looks again (Check Unreachable Target). */
   unreachable: { readonly target: number; readonly until: number } | undefined;
   /** Use Cover: the cover it holds and what it does there; when it may look for cover again. */
-  cover: { readonly at: Vec3; phase: 'going' | 'wait' | 'attack'; until: number } | undefined;
+  cover:
+    | {
+        readonly at: Vec3;
+        /** Where it shoots from (coverSpots' attackAt). */
+        readonly attackAt: Vec3;
+        phase: 'going' | 'wait' | 'attack';
+        until: number;
+      }
+    | undefined;
   coverRetry: number;
   /** Flee: where it flees to (a door, cover), and when it last fled through a door. */
   fleeGoal: Vec3 | undefined;
   fleeDoorAt: number;
+  /** Flee: the door it last went through, and when; its hide. */
+  lastDoor: { readonly door: number; readonly at: number } | undefined;
+  hideSince: number | undefined;
+  /** The load door its flee goal stands at: on reaching it, it goes through. */
+  fleeDoor: number | undefined;
+  /** Fallback To Ranged's next look. */
+  nextFallback: number;
+  nextHideCheck: number;
   /** Exit Water: the shore it makes for. */
   shore: Vec3 | undefined;
   /** Acquire Weapon: the weapon it goes for, the step under way, when it may look again. */
@@ -569,6 +602,15 @@ const fightsByMelee = (gear: FighterGear | undefined): boolean =>
   gear === undefined || gear.weaponType < WeaponType.bow;
 /** Use Cover, Flee To Cover: at its cover within this (units). */
 const COVER_ARRIVE = 48;
+/** fCombatCoverSecondaryThreatLastSeenTime: its other enemies seen this lately count. */
+const COVER_SECONDARY_THREAT_SECONDS = 5;
+/** A hide and a fallback weigh again this often (observed in the original). */
+const HIDE_CHECK_SECONDS = 0.5;
+const FALLBACK_RECHECK_SECONDS = 0.5;
+/** Fallback To Ranged backs off only turned to its target within this (60°). */
+const FALLBACK_FACING = Math.PI / 3;
+/** A person's radius where a hide's nearness is weighed. */
+const HIDE_RADIUS = 32;
 /** An offensive bash raises its block this long at most before the bash (seconds; TODO(M13)). */
 const OFFENSIVE_BASH_RAISE = 0.5;
 /** Its target's retreat speed is sampled this often while it blocks (seconds). */
@@ -631,6 +673,8 @@ export class ActorCombatAi {
   readonly #dualCasts = new Map<string, boolean>();
   /** Actors' levels (daresHelp), read with their health. */
   readonly #levels = new Map<number, number>();
+  /** Actors' encounter zones (the target restriction), read with their health. */
+  readonly #zones = new Map<number, CombatZone>();
   readonly #random = seededRandom(0xc0ba7);
   readonly #spectating = new Set<number>();
   #settings: CombatAiSettings = COMBAT_AI_DEFAULTS;
@@ -695,7 +739,7 @@ export class ActorCombatAi {
   strength(reference: number): number {
     return actorStrength(
       this.#health.get(reference)?.points ?? 100,
-      this.#damageOf(reference),
+      this.#dpsOf(reference),
       this.#reduction(reference),
     );
   }
@@ -780,6 +824,7 @@ export class ActorCombatAi {
     if (victim === PLAYER_REF) return;
     const mind = this.#mind(victim);
     mind.damagedAt = this.#clock;
+    mind.engagedAt = this.#clock;
     // Its group knows where the blow came from (the target's stealth points drop).
     this.#groups.attacked(
       victim,
@@ -866,6 +911,7 @@ export class ActorCombatAi {
     this.#locations.release(reference);
     this.#health.delete(reference);
     this.#levels.delete(reference);
+    this.#zones.delete(reference);
     this.#spectating.delete(reference);
     for (const other of this.#minds.values()) {
       other.enemies.delete(reference);
@@ -884,6 +930,7 @@ export class ActorCombatAi {
     this.#reactions.clear();
     this.#health.clear();
     this.#levels.clear();
+    this.#zones.clear();
     this.#spectating.clear();
   }
 
@@ -1080,6 +1127,7 @@ export class ActorCombatAi {
         nextAim: 0,
         nextAttack: 0,
         lastAttack: undefined,
+        engagedAt: this.#clock,
         lastPowerAttack: undefined,
         damagedAt: undefined,
         bowHold: 0,
@@ -1113,6 +1161,11 @@ export class ActorCombatAi {
         coverRetry: 0,
         fleeGoal: undefined,
         fleeDoorAt: -Infinity,
+        lastDoor: undefined,
+        hideSince: undefined,
+        fleeDoor: undefined,
+        nextFallback: 0,
+        nextHideCheck: 0,
         shore: undefined,
         acquire: undefined,
         acquireRetry: 0,
@@ -1236,7 +1289,12 @@ export class ActorCombatAi {
     // the original: the strengths themselves each fCombatStrengthUpdateTime).
     if (this.#clock >= mind.nextOdds) {
       mind.nextOdds = this.#clock + this.#settings.threatRatioUpdateTime;
-      mind.ratio = this.#strengthRatio(mind, candidates);
+      // A frenzied actor, or one not engaged for its while, weighs nothing: its odds stand at
+      // 100 (observed in the original).
+      const engaged = Math.max(mind.engagedAt, mind.lastAttack ?? -Infinity);
+      mind.ratio = oddsWeighed(this.#clock - engaged, profile.aggression)
+        ? this.#strengthRatio(mind, candidates)
+        : UNWEIGHED_ODDS;
     }
     const flee = shouldFlee(
       {
@@ -1349,6 +1407,8 @@ export class ActorCombatAi {
         tracked !== undefined || (lastKnown !== undefined && mind.enemies.has(reference));
       if (!sees && !remembered) continue;
       if (!this.#hostileTo(mind, view, profile, magic, other, views, sees || detected)) continue;
+      // Its encounter zone bounds its fight (observed in the original).
+      if (!this.#withinZone(mind.reference, reference)) continue;
       if (mind.mode !== 'idle' && !tracked) this.#track(mind, reference);
       // A copy: the position seen is the actor's own, and it moves on.
       if (lastKnown) mind.lastKnown.set(reference, [lastKnown[0], lastKnown[1], lastKnown[2]]);
@@ -1515,7 +1575,7 @@ export class ActorCombatAi {
         level: own,
         strength: actorStrength(
           mind.healthPoints,
-          this.#damageOf(mind.reference),
+          this.#dpsOf(mind.reference),
           this.#reduction(mind.reference),
         ),
       },
@@ -1523,7 +1583,7 @@ export class ActorCombatAi {
         level: theirs,
         strength: actorStrength(
           this.#health.get(foe.reference)?.points ?? 100,
-          foe.gear?.strengthDamage ?? 1,
+          this.#dps(foe.gear),
           this.#reduction(foe.reference),
         ),
       },
@@ -1607,11 +1667,6 @@ export class ActorCombatAi {
     );
   }
 
-  /** The damage its strength weighs (combat music's and daresHelp's actorStrength). */
-  #damageOf(reference: number): number {
-    return this.#options.host.fighter(reference)?.gear?.strengthDamage ?? 1;
-  }
-
   #dpsOf(reference: number): number {
     return this.#dps(this.#options.host.fighter(reference)?.gear);
   }
@@ -1623,6 +1678,17 @@ export class ActorCombatAi {
       gear?.bow === true,
       this.#settings,
     );
+  }
+
+  /** Whether its encounter zone lets an actor fight another (zonesAllow; zones as last read). */
+  #withinZone(reference: number, other: number): boolean {
+    if (this.#options.session.ini.number('Combat', 'bEncounterZoneTargetRestrict') === 0) {
+      return true;
+    }
+    const own = this.#zones.get(reference);
+    const theirs = this.#zones.get(other);
+    if (!own || !theirs) return true;
+    return zonesAllow(own, theirs);
   }
 
   /** An actor's armour's damage reduction (0 .. 1), as last read. */
@@ -1638,7 +1704,7 @@ export class ActorCombatAi {
     mind.mode = 'fight';
     mind.warned.clear();
     mind.sheatheAt = undefined;
-    mind.nextLine = this.#clock + this.#between(this.#settings.tauntMin, this.#settings.tauntMax);
+    mind.nextLine = this.#clock + firstTauntTime(this.#random, this.#settings);
     mind.nextEquip = 0;
     // The fight's confidence modifier, drawn once; its strengths weighed at once.
     mind.modifier = drawConfidenceModifier(this.#random, this.#settings);
@@ -1867,6 +1933,11 @@ export class ActorCombatAi {
     mind.lowTree = undefined;
     mind.cover = undefined;
     mind.fleeGoal = undefined;
+    mind.fleeDoor = undefined;
+    if (mind.hideSince !== undefined) {
+      mind.hideSince = undefined;
+      this.#options.movers.sneak(mind.reference, false);
+    }
     mind.shore = undefined;
     mind.acquire = undefined;
     mind.unreachable = undefined;
@@ -2592,6 +2663,19 @@ export class ActorCombatAi {
         ? undefined
         : await spells.chooseSpell(reference, 'reanimate', corpse.reference);
     const health = await share(ActorValue.health);
+    const heal = await spells.chooseSpell(reference, 'heal');
+    // The combat inventory takes its items by their scores (spell-score.ts).
+    const score = async (
+      item: Awaited<ReturnType<typeof spells.chooseSpell>>,
+      purpose: Parameters<typeof spells.chooseSpell>[1],
+    ): Promise<number> => (item ? await spells.spellWorth(reference, item, purpose) : 0);
+    const scores = {
+      ward: await score(ward, 'ward'),
+      restore: await score(heal, 'heal'),
+      summon: await score(summon, 'summon'),
+      reanimate: await score(raise, 'reanimate'),
+      buff: await score(buff, 'buff'),
+    };
     const choice = chooseCombatSupport(
       {
         health,
@@ -2599,7 +2683,7 @@ export class ActorCombatAi {
         restoreHealthBelow: restoreBelow,
         wardThreat: ward !== undefined,
         sinceWard: this.#clock - mind.wardedAt,
-        canHeal: (await spells.chooseSpell(reference, 'heal')) !== undefined,
+        canHeal: heal !== undefined,
         sinceHealthRestore: this.#clock - mind.healthRestoredAt,
         restoreHealthRestrictTime: settings.restoreHealthRestrictTime,
         canSummon: summon !== undefined && (await runtime.magic.summonsOf(reference)).length === 0,
@@ -2608,6 +2692,7 @@ export class ActorCombatAi {
         canReanimate: raise !== undefined,
         sinceReanimate: this.#clock - mind.reanimatedAt,
         canBuff: buff !== undefined && !runtime.magic.hasItemOn(reference, buff.formId),
+        scores,
       },
       {
         restoreMagickaBelow: restoreShare(style, 'magicka', settings),
@@ -2850,9 +2935,10 @@ export class ActorCombatAi {
    * attack data's recovery time. A pick that comes to nothing goes on to the Special Attack, by
    * its chance (the Attack Selector). Without an animation set naming its attacks, its idle.
    */
-  #meleeAttack(f: CombatFrame): Status {
+  #meleeAttack(f: CombatFrame, hand: 'right' | 'left' = 'right'): Status {
     const gear = f.view.gear;
-    if (gear?.attackLunge === undefined) return this.#melee(f, 'ActionRightAttack', 'Attack');
+    const action = hand === 'left' ? 'ActionLeftAttack' : 'ActionRightAttack';
+    if (gear?.attackLunge === undefined) return this.#melee(f, action, 'Attack');
     const mind = f.mind;
     const asked = this.#clock;
     mind.nextAttack = asked + attackCooldown(gear.recoveryTime ?? 0);
@@ -2860,11 +2946,13 @@ export class ActorCombatAi {
     const special = near ? specialAttackChance(f.profile.style, this.#settings) : 0;
     const reference = mind.reference;
     const state = f.view.state;
-    const powerCooling =
-      mind.lastPowerAttack !== undefined &&
-      asked - mind.lastPowerAttack < this.#settings.powerAttackCoolDown;
+    const powerCooling = powerAttackCooling(
+      mind.lastPowerAttack === undefined ? undefined : asked - mind.lastPowerAttack,
+      this.#settings,
+    );
+    if (gear.leftWeapon === true) mind.hand = hand === 'left' ? 'right' : 'left';
     void this.#options.host
-      .attack(reference, 'ActionRightAttack', { powerCooling })
+      .attack(reference, action, { powerCooling, left: hand === 'left' })
       .then((began) => {
         if (began) {
           mind.lastAttack = asked;
@@ -2918,6 +3006,68 @@ export class ActorCombatAi {
     if (!run) return 'failure';
     f.mind.run = run;
     return 'success';
+  }
+
+  /**
+   * The hide after Flee To Cover (Hide Parallel: Track Target, Turn Around, the Hide Selector with
+   * Boost Confidence last; observed in the original): its back to its enemy it stays down until
+   * the enemy comes near or engages it (hideFails, weighed each half second); then Boost
+   * Confidence: it turns and fights.
+   */
+  #hide(f: CombatFrame): Status {
+    const mind = f.mind;
+    const now = this.#clock;
+    if (mind.hideSince === undefined) {
+      mind.hideSince = now;
+      mind.nextHideCheck = now;
+      this.#options.movers.sneak(mind.reference, true);
+    }
+    this.#stopRun(mind);
+    this.#options.movers.request(mind.reference, this.#standing(headingTo(f.there, f.feet)));
+    if (now < mind.nextHideCheck) return 'running';
+    mind.nextHideCheck = now + HIDE_CHECK_SECONDS;
+    const anticipate = this.#movement.anticipateTime;
+    const target = this.#options.movers.motion(f.target.reference)?.velocity ?? [0, 0, 0];
+    const ahead: Vec3 = [
+      f.there[0] + target[0] * anticipate,
+      f.there[1] + target[1] * anticipate,
+      f.there[2],
+    ];
+    const sees = this.#options.senses?.()?.sees(mind.reference, f.there) ?? false;
+    if (
+      !hideFails(
+        {
+          distance: f.distance,
+          distanceAhead: flat(f.feet, ahead),
+          radii: 2 * HIDE_RADIUS,
+          sees,
+          engagedSince: mind.engagedAt > mind.hideSince,
+        },
+        this.#subtrees,
+      )
+    ) {
+      return 'running';
+    }
+    mind.hideSince = undefined;
+    this.#options.movers.sneak(mind.reference, false);
+    // Boost Confidence, the Hide Selector's last: as one cornered, it turns and fights.
+    if (this.#canBoost(mind)) mind.confidenceBoost++;
+    else mind.corneredUntil = now + CORNERED_SECONDS;
+    mind.mode = 'fight';
+    return 'success';
+  }
+
+  /** Its other enemies its side has seen lately (fCombatCoverSecondaryThreatLastSeenTime). */
+  #otherEnemies(f: CombatFrame): Vec3[] {
+    const others: Vec3[] = [];
+    for (const [reference, place] of f.mind.lastKnown) {
+      if (reference === f.target.reference) continue;
+      const tracked = this.#groups.target(f.mind.reference, reference);
+      if (tracked && this.#clock - tracked.lastKnownTime < COVER_SECONDARY_THREAT_SECONDS) {
+        others.push(place);
+      }
+    }
+    return others;
   }
 
   /** Standing where it is, facing its target, its movement behaviour ended. */
@@ -3216,9 +3366,21 @@ export class ActorCombatAi {
             return search.update(0) === 'gave-up' ? 'success' : 'running';
           },
           hide: (f) => this.#hold(f),
-          // It stands while its equipment choice takes up its ranged weapon (scored by range).
-          // TODO(M13): the engine's back-off to fCombatRangedDistance meanwhile.
-          fallbackToRanged: (f) => this.#hold(f),
+          // Fallback To Ranged: turned to its target it backs to fCombatRangedDistance from it,
+          // looking again each half second, while its equipment choice takes up its weapon.
+          fallbackToRanged: (f, run) => {
+            const mind = f.mind;
+            if (!run.first && this.#clock < mind.nextFallback) return 'running';
+            mind.nextFallback = this.#clock + FALLBACK_RECHECK_SECONDS;
+            const off = turnBetween(f.view.heading, headingTo(f.feet, f.there));
+            if (Math.abs(off) > FALLBACK_FACING) {
+              return this.#hold(f);
+            }
+            const place = fallbackPlace(f.feet, f.there, this.#subtrees);
+            if (!place) return this.#hold(f);
+            void movers.travel(mind.reference, place, 'run', COVER_ARRIVE);
+            return 'running';
+          },
           // Use Cover: Find Cover (the navmeshes' cover edges between it and its target, at
           // least fCombatCoverMinimumRange off it, within its range × fCombatCoverMaxRangeMult),
           // runs there; none found, it looks again fCombatCoverSearchFailedDelay later.
@@ -3236,20 +3398,39 @@ export class ActorCombatAi {
               s.coverSearchDistanceMax,
               Math.max(s.coverSearchDistanceMin, f.distance),
             );
+            const range = coverRange(
+              {
+                minimum: 0,
+                optimal: f.range,
+                maximum: f.range * s.coverMaxRangeMult,
+              },
+              s,
+            );
             const spot =
               set &&
-              pickCover(coverSpots(set, f.feet, radius), f.feet, {
-                threat: f.there,
-                minRange: s.coverMinimumRange,
-                maxRange: f.range * s.coverMaxRangeMult,
-                height: s.coverCheckHeightMin,
-                avoid: s.coverAvoidTargetRadius,
-              });
+              pickCover(
+                coverSpots(set, f.feet, radius),
+                f.feet,
+                {
+                  threat: f.there,
+                  minRange: range.min,
+                  maxRange: range.max,
+                  height: s.coverCheckHeightMin,
+                  avoid: s.coverAvoidTargetRadius,
+                  others: this.#otherEnemies(f),
+                },
+                s,
+              );
             if (!spot) {
               mind.coverRetry = this.#clock + s.coverSearchFailedDelay;
               return 'failure';
             }
-            const cover = { at: spot.at, phase: 'going' as const, until: Infinity };
+            const cover = {
+              at: spot.at,
+              attackAt: spot.attackAt ?? spot.at,
+              phase: 'going' as const,
+              until: Infinity,
+            };
             mind.cover = cover;
             this.#stopRun(mind);
             void movers.travel(mind.reference, spot.at, 'run', COVER_ARRIVE / 2).then((there) => {
@@ -3271,6 +3452,10 @@ export class ActorCombatAi {
             cover.phase = 'attack';
             cover.until = this.#clock + coverTimes(style(f).general, this.#subtrees).attack;
             movers.sneak(f.mind.reference, false);
+            // A tall cover's shot is from past its end, a ledge's from the edge.
+            if (cover.attackAt !== cover.at) {
+              void movers.travel(f.mind.reference, cover.attackAt, 'run', COVER_ARRIVE / 2);
+            }
             return 'success';
           },
           // Attack From Cover: up out of it its attack time, its Ranged subtree shooting; then
@@ -3283,11 +3468,14 @@ export class ActorCombatAi {
               mind.cover = undefined;
               return 'failure';
             }
-            this.#hold(f);
+            if (flat(f.feet, cover.attackAt) <= COVER_ARRIVE) this.#hold(f);
             if (this.#clock < cover.until) return 'running';
             cover.phase = 'wait';
             cover.until = this.#clock + coverTimes(style(f).general, this.#subtrees).wait;
             movers.sneak(mind.reference, true);
+            if (cover.attackAt !== cover.at) {
+              void movers.travel(mind.reference, cover.at, 'run', COVER_ARRIVE / 2);
+            }
             return 'success';
           },
           // Acquire Weapon: Find Weapon (pickWeapon over the weapons lying near), Move to
@@ -3524,7 +3712,7 @@ export class ActorCombatAi {
             if (f.view.gear?.canBlock !== true) void host.block(reference, false);
             return status;
           },
-          leftAttack: (f) => this.#melee(f, 'ActionLeftAttack', 'Attack'),
+          leftAttack: (f) => this.#meleeAttack(f, 'left'),
           drawShot: (f) => {
             this.#strike(f, 'ActionRightAttack');
             f.mind.bowHold = bowHoldTime(
@@ -3632,7 +3820,16 @@ export class ActorCombatAi {
           // Flee Through Door: by its chance, a door near that leads away from its enemy.
           fleeThroughDoor: (f, run) => {
             const mind = f.mind;
-            if (!run.first) return mind.fleeGoal ? 'running' : 'success';
+            if (!run.first) {
+              if (mind.fleeGoal) return 'running';
+              const through = mind.fleeDoor;
+              mind.fleeDoor = undefined;
+              if (through !== undefined) {
+                mind.lastDoor = { door: through, at: this.#clock };
+                void this.#options.leaveThroughDoor?.(mind.reference, through);
+              }
+              return 'success';
+            }
             const set = this.#navmeshes();
             const s = this.#subtrees;
             const door =
@@ -3644,10 +3841,21 @@ export class ActorCombatAi {
                 this.#clock - mind.fleeDoorAt,
                 this.#random,
                 s,
+                (spot) =>
+                  (mind.lastDoor?.door !== spot.door ||
+                    this.#clock - mind.lastDoor.at >= s.fleeLastDoorRestrictTime) &&
+                  true,
               );
             if (!door) return 'failure';
             mind.fleeDoorAt = this.#clock;
+            mind.fleeDoor = door.door;
             this.#fleeTo(f, door.at);
+            // A door it cannot take (its race, the other side out of its zone) serves it not.
+            void this.#options.doorLeads?.(mind.reference, door.door).then((leads) => {
+              if (leads || mind.fleeDoor !== door.door) return;
+              mind.fleeDoor = undefined;
+              mind.fleeGoal = undefined;
+            });
             return 'running';
           },
           // Flee To Cover: cover hidden from its enemy, at least fCombatFleeCoverMinDistance off
@@ -3656,20 +3864,26 @@ export class ActorCombatAi {
             const mind = f.mind;
             if (!run.first) {
               if (mind.fleeGoal) return 'running';
-              this.#hold(f);
-              return 'running';
+              return this.#hide(f);
             }
             const set = this.#navmeshes();
             const s = this.#subtrees;
             const spot =
               set &&
-              pickCover(coverSpots(set, f.feet, s.fleeCoverSearchRadius), f.feet, {
-                threat: f.there,
-                minRange: s.fleeCoverMinDistance,
-                maxRange: Infinity,
-                height: s.coverCheckHeightMin,
-                avoid: s.coverAvoidTargetRadius,
-              });
+              pickCover(
+                coverSpots(set, f.feet, s.fleeCoverSearchRadius),
+                f.feet,
+                {
+                  threat: f.there,
+                  minRange: s.fleeCoverMinDistance,
+                  maxRange: Infinity,
+                  height: s.coverCheckHeightMin,
+                  avoid: s.coverAvoidTargetRadius,
+                  hide: true,
+                  others: this.#otherEnemies(f),
+                },
+                s,
+              );
             if (!spot) return 'failure';
             this.#fleeTo(f, spot.at);
             return 'running';
@@ -4266,6 +4480,8 @@ export class ActorCombatAi {
     if (!this.#levels.has(mind.reference)) {
       this.#levels.set(mind.reference, await runtime.actors.level(mind.reference));
     }
+    this.#zones.set(mind.reference, await runtime.progression.combatZone(mind.reference));
+    this.#zones.set(PLAYER_REF, await runtime.progression.combatZone(PLAYER_REF));
     // The player's too, for the odds (their level as they level up).
     const player = this.#health.get(PLAYER_REF);
     if (!player || this.#clock - player.read > 1) {
@@ -4306,6 +4522,20 @@ export class ActorCombatAi {
    * A line of a topic subtype (src/shell/actor-talk.ts bark); a combat line only through its
    * gates (src/ai/combat-dialogue.ts: its cooldown, the player within its distance, its chance).
    */
+  /** A combat line through its gate (its cooldown and distance), said as `subtype`. */
+  line(actor: number, gate: CombatLine, subtype: string): void {
+    const own = this.#options.host.fighter(actor)?.feet;
+    const player = this.#options.host.fighter(PLAYER_REF)?.feet;
+    const listener = own && player ? flat(own, player) : 0;
+    if (!this.#dialogue.may(actor, gate, this.#clock, { listener, random: this.#random })) return;
+    this.#options
+      .talk?.()
+      ?.bark(actor, subtype, PLAYER_REF)
+      .catch((error: unknown) => {
+        this.#warn(`a ${subtype} line: ${describe(error)}`);
+      });
+  }
+
   #bark(actor: number, subtype: string, target?: number): void {
     const talk = this.#options.talk?.();
     if (!talk) return;

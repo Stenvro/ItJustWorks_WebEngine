@@ -20,6 +20,7 @@
 // IsDualCasting, GetCurrentCastingType, GetCurrentDeliveryType, IsCurrentSpell,
 // SpellHasKeyword, GetCurrentShoutVariation, IsWardState). Platform-independent.
 
+import { combatSpellScore, type ScoredEffect } from '../../gameplay/combat/spell-score.ts';
 import {
   advanceCast,
   beginCast,
@@ -1649,26 +1650,60 @@ export class CastingEngine {
     target?: number,
   ): Promise<number> {
     const runtime = this.#runtime;
-    let worth = 0;
+    const effects: ScoredEffect[] = [];
+    const base = await this.baseCost(item);
     for (const [index, entry] of item.effects.entries()) {
       const effect = await runtime.magic.effect(entry.effect);
       if (!effect) continue;
-      const amount = Math.max(0, entry.magnitude) * Math.max(1, entry.duration);
-      if (purpose === 'attack') {
-        if ((effect.flags & EffectFlag.hostile) === 0) continue;
-        const share =
-          target === undefined ? 1 : await runtime.magic.foresee(item, index, target, actor);
-        worth += (amount > 0 ? amount : 1) * share + effect.aiScore * (share > 0 ? 1 : 0);
-      } else if (purpose === 'heal') {
-        if (effect.archetype === EffectArchetype.valueModifier && effect.actorValue === HEALTH)
-          worth += amount;
-      } else {
-        worth += effect.aiScore;
-      }
+      const keeps =
+        target !== undefined && (effect.flags & EffectFlag.hostile) !== 0
+          ? await runtime.magic.foresee(item, index, target, actor)
+          : 1;
+      // None where its conditions or level cap leave the target out, as Turn Undead the living.
+      if (purpose === 'attack' && keeps <= 0) continue;
+      effects.push({
+        archetype: effect.archetype,
+        actorValue: effect.actorValue,
+        secondActorValue: effect.secondActorValue,
+        secondValueWeight: effect.secondValueWeight,
+        flags: effect.flags,
+        taperDuration: effect.taperDuration,
+        taperWeight: effect.taperWeight,
+        magnitude: Math.max(0, entry.magnitude),
+        duration: Math.max(0, entry.duration),
+        cost: Math.max(1, base) / Math.max(1, item.effects.length),
+        kept: keeps,
+      });
     }
-    if (purpose !== 'attack' && purpose !== 'heal')
-      worth += Math.max(1, (await this.cost(actor, { item, via: 'spell' })).magicka);
-    return worth;
+    const seconds = await runtime.gameSetting('fCombatMagicConcentrationScoreDuration');
+    const { score, caster } = combatSpellScore(
+      {
+        self: item.delivery === Delivery.self,
+        concentration: item.castType === CastType.concentration,
+        effects,
+      },
+      typeof seconds === 'number' ? seconds : undefined,
+    );
+    return caster === undefined ? 0 : Math.max(score, 1e-3);
+  }
+
+  /**
+   * The health a cast of an item would take from a target (the magic kill camera's prediction):
+   * each hostile effect on Health, its magnitude by its seconds (a concentration spell's a
+   * second's) through what the target keeps of it.
+   */
+  async predictedDamage(actor: number, item: MagicItemRecord, target: number): Promise<number> {
+    const runtime = this.#runtime;
+    let damage = 0;
+    for (const [index, entry] of item.effects.entries()) {
+      const effect = await runtime.magic.effect(entry.effect);
+      if (!effect || (effect.flags & EffectFlag.hostile) === 0) continue;
+      if (effect.actorValue !== HEALTH) continue;
+      const seconds = item.castType === CastType.concentration ? 1 : Math.max(1, entry.duration);
+      const keeps = await runtime.magic.foresee(item, index, target, actor);
+      damage += Math.max(0, entry.magnitude) * seconds * keeps;
+    }
+    return damage;
   }
 
   /** Whether the AI waits yet to cast an item again (its effects' MGEF AI Delay Time). */

@@ -22,6 +22,9 @@ import {
 } from '../../../src/ai/combat-ai.ts';
 import {
   COMBAT_SUBTREE_DEFAULTS,
+  coverRange,
+  fallbackPlace,
+  hideFails,
   pickCover,
   pickFleeDoor,
 } from '../../../src/ai/combat-subtrees.ts';
@@ -170,8 +173,88 @@ describe('who flees (formula)', () => {
     expect(JSON.stringify(COMBAT_TREES.Flee)).toContain('"action":"fightCornered"');
   });
 
-  // fFleeIsSafeTimer and fFleeDoneDistance* are read by the Flee package's procedure in the
-  // original, not by the combat tree: its fight ends on fFleeDistance* and sight of no enemy.
+  it('Flee Through Door: the nearest load door with no enemy at it; not the one it came by  [original]', () => {
+    const at: readonly [number, number, number] = [0, 0, 0];
+    const near = { at: [100, 0, 0] as [number, number, number], door: 1 };
+    const far = { at: [800, 0, 0] as [number, number, number], door: 2 };
+    const pick = (
+      enemy: readonly [number, number, number],
+      allowed?: (door: { door: number }) => boolean,
+    ) => pickFleeDoor([far, near], at, enemy, Infinity, () => 0, COMBAT_SUBTREE_DEFAULTS, allowed);
+    expect(pick([-500, 0, 0])).toBe(near);
+    // An enemy within fCombatFleeDoorTargetCheckDistance (128) of it: that door is out.
+    expect(pick([150, 0, 0])).toBe(far);
+    // Not the door it came by (fCombatFleeLastDoorRestrictTime), nor one out of its zone.
+    expect(pick([-500, 0, 0], (door) => door.door !== 1)).toBe(far);
+    expect(COMBAT_SUBTREE_DEFAULTS.fleeLastDoorRestrictTime).toBe(30);
+  });
+
+  it('the hide after Flee To Cover ends as its enemy comes near or engages it  [original]', () => {
+    const check = {
+      distance: 2000,
+      distanceAhead: 2000,
+      radii: 64,
+      sees: false,
+      engagedSince: false,
+    };
+    expect(hideFails(check)).toBe(false);
+    // Out of sight: within fCombatHideFailedTargetDistance (128) and the radii.
+    expect(hideFails({ ...check, distance: 191 })).toBe(true);
+    expect(hideFails({ ...check, distance: 193 })).toBe(false);
+    // In sight: within fCombatHideFailedTargetLOSDistance (384) a moment ahead.
+    expect(hideFails({ ...check, sees: true, distanceAhead: 447 })).toBe(true);
+    expect(hideFails({ ...check, sees: true, distanceAhead: 449 })).toBe(false);
+    expect(hideFails({ ...check, engagedSince: true })).toBe(true);
+  });
+
+  it('Fallback To Ranged backs to fCombatRangedDistance from its target  [original]', () => {
+    const place = fallbackPlace([100, 0, 0], [0, 0, 0], COMBAT_SUBTREE_DEFAULTS);
+    expect(place).toEqual([COMBAT_SUBTREE_DEFAULTS.rangedDistance, 0, 0]);
+    // Far enough: it stays.
+    expect(fallbackPlace([2000, 0, 0], [0, 0, 0], COMBAT_SUBTREE_DEFAULTS)).toBeUndefined();
+  });
+
+  it('Find Cover: the first edge its way reaches that holds, no score  [original]', () => {
+    const edge = (x: number, over: object = {}) => ({
+      at: [x, 0, 0] as [number, number, number],
+      height: 96,
+      facing: [1, 0] as const,
+      open: true,
+      ...over,
+    });
+    const need = {
+      threat: [2000, 0, 0] as [number, number, number],
+      minRange: 768,
+      maxRange: 2000,
+      height: 64,
+      avoid: 0,
+    };
+    const first = edge(500);
+    const second = edge(100);
+    // In the way search's order, though the second lies nearer.
+    expect(pickCover([first, second], [0, 0, 0], need)).toBe(first);
+    // Taller than it crouched needs an end open to lean out at.
+    expect(pickCover([edge(500, { open: false }), second], [0, 0, 0], need)).toBe(second);
+    // Low cover it shoots over needs none.
+    const low = edge(500, { height: 64, open: false });
+    expect(pickCover([low], [0, 0, 0], need)).toBe(low);
+    // A ledge holds, but no one hides at it.
+    const ledge = edge(500, { height: 0, ledge: true, open: false });
+    expect(pickCover([ledge], [0, 0, 0], need)).toBe(ledge);
+    expect(pickCover([ledge, second], [0, 0, 0], { ...need, hide: true })).toBe(second);
+    // Another enemy within fCombatCoverSecondaryThreatMinDistance (512) of it.
+    expect(pickCover([first], [0, 0, 0], { ...need, others: [[500, 400, 0]] })).toBeUndefined();
+    // The range: its weapon's minimum less the buffer, at least the least range; its optimal
+    // plus the buffer, at most its maximum.
+    expect(coverRange({ minimum: 2000, optimal: 1500, maximum: 4000 })).toEqual({
+      min: 1488,
+      max: 2268,
+    });
+  });
+
+  // Stays, not combat's: fFleeIsSafeTimer and fFleeDoneDistance* are read by the Flee package's
+  // procedure in the original (docs/completeness/ai.md), not by the combat tree: its fight ends on
+  // fFleeDistance* and sight of no enemy.
   it.todo(
     'safe after fFleeIsSafeTimer (30 s) beyond fFleeDoneDistance* (2500, 600): the Flee package’s, not combat’s  [settings]',
   );

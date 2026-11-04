@@ -15,6 +15,18 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { COMBAT_AI_DEFAULTS } from '../../../src/ai/combat-ai.ts';
+import { NO_STYLE } from '../../../src/ai/combat-profile.ts';
+import { COMBAT_TREES } from '../../../src/ai/combat-tree.ts';
+import {
+  equipmentMult,
+  leftHandWeapon,
+  powerAttackCooling,
+} from '../../../src/ai/combat-tactics.ts';
+import { maneuverWeights, readFlightSettings } from '../../../src/ai/flight.ts';
+import { RaceAiFlag } from '../../../src/ai/race-combat-records.ts';
+import { AttackFlag } from '../../../src/ai/race-combat-records.ts';
+import { attackEventKind } from '../../../src/gameplay/combat/attacks.ts';
+import type { AttackData } from '../../../src/ai/race-combat-records.ts';
 import {
   CombatStyleFlag,
   parseCombatStyle,
@@ -113,12 +125,63 @@ describe('each value on its settings’ scale (formula)', () => {
     );
   });
 
-  it.todo(
-    'CSFL: each flight chance on its fCombat…ChanceMin .. Max, times on Min .. Max  [docs/ai.md]',
-  );
-  it.todo('the CSGD score mults weigh each kind of equipment (Inventory)  [original]');
-  it.todo('the dueling and flanking flags choose the close movement’s trees  [original]');
-  it.todo('Allow Dual Wielding: the left hand’s attacks  [CommonLibSSE TESCombatStyle]');
+  it('CSFL: each flight chance on its fCombat…ChanceMin .. Max  [docs/ai.md]', () => {
+    const flights = readFlightSettings();
+    const all = (value: number) => ({
+      ...NO_STYLE.flight,
+      hoverChance: value,
+      diveBombChance: value,
+      groundAttackChance: value,
+      perchAttackChance: value,
+      flyingAttackChance: value,
+    });
+    expect(maneuverWeights(all(0), flights).hover).toBe(flights.hoverChanceMin);
+    expect(maneuverWeights(all(1), flights).hover).toBe(flights.hoverChanceMax);
+    expect(maneuverWeights(all(1), flights).diveBomb).toBe(flights.diveBombChanceMax);
+    expect(maneuverWeights(all(0), flights).groundAttack).toBe(flights.groundAttackChanceMin);
+    expect(maneuverWeights(all(1), flights).perchAttack).toBe(flights.perchAttackChanceMax);
+    expect(maneuverWeights(all(1), flights).flyingAttack).toBe(flights.flyingAttackChanceMax);
+  });
+  it('the CSGD score mults weigh each kind of equipment (Inventory)  [original]', () => {
+    const mults = { melee: 1, ranged: 2, magic: 3, staff: 4, unarmed: 5, shout: 6 };
+    const style = styleWith({ equipmentScoreMult: mults });
+    for (const [kind, mult] of Object.entries(mults)) {
+      expect(equipmentMult(style, kind as keyof typeof mults)).toBe(mult);
+    }
+  });
+  it('the flanking flag chooses the close movement’s trees (dueling its complement)  [original]', () => {
+    const trees = JSON.stringify(COMBAT_TREES);
+    expect(trees).toContain('"flanking"');
+    expect(trees).toContain('FlankingMovement');
+    expect(trees).toContain('CloseMovement');
+  });
+  it('Allow Dual Wielding: the left hand’s own attacks  [CommonLibSSE TESCombatStyle]', () => {
+    const allowed = styleWith({}, { flags: CombatStyleFlag.allowDualWielding });
+    const hands = { weapon: 1, weaponType: 1, shield: false, leftWeapon: false, leftSpell: false };
+    const second = {
+      kind: 'melee',
+      id: 2,
+      damage: 10,
+      range: 150,
+      equipped: false,
+      weaponType: 1,
+    } as const;
+    const pick = (style: typeof allowed) =>
+      leftHandWeapon(hands, RaceAiFlag.canDualWield, [second], 100, style, settings);
+    expect(pick(allowed)).toBe(2);
+    expect(pick(NO_STYLE)).toBeUndefined();
+    // A Left Attack's data is the left hand's alone (the actor's melee options keep them apart).
+    const left = { event: 'attackStartLeft', flags: AttackFlag.leftAttack } as AttackData;
+    expect(attackEventKind(left.event, left)?.left).toBe(true);
+    const right = { event: 'attackStart', flags: 0 } as AttackData;
+    expect(attackEventKind(right.event, right)?.left).toBe(false);
+  });
+  it('the power attack’s cool-down holds the melee node’s pick back  [settings]', () => {
+    const cooling = { ...settings, powerAttackCoolDown: 5 };
+    expect(powerAttackCooling(undefined, cooling)).toBe(false);
+    expect(powerAttackCooling(4.9, cooling)).toBe(true);
+    expect(powerAttackCooling(5, cooling)).toBe(false);
+  });
 });
 
 describe.skipIf(!hasGamedata())('the combat styles of the load order (data)', () => {

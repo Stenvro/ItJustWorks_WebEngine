@@ -104,6 +104,10 @@ async function option(
       ? undefined
       : await runtime.casting.projectile(effect.projectile);
   const damage = await runtime.casting.spellWorth(actor, item, 'attack', target);
+  const setting = async (name: string, fallback: number): Promise<number> => {
+    const value = await runtime.gameSetting(name);
+    return typeof value === 'number' ? value : fallback;
+  };
   // A Touch spell reaches as far as its caster's race unarmed; others their projectile's range.
   const range =
     item.delivery === Delivery.touch
@@ -114,7 +118,11 @@ async function option(
   return {
     kind,
     id,
-    damage,
+    // The combat inventory doubles what reaches past fCombatRangedDistance.
+    damage:
+      range > (await setting('fCombatRangedDistance', 1024))
+        ? damage * (await setting('fCombatInventoryRangedScoreMult', 2))
+        : damage,
     range,
     equipped: false,
     concentration: item.castType === CastType.concentration,

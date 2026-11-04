@@ -31,6 +31,14 @@ export interface CombatSubtreeSettings {
   readonly coverSearchDistanceMax: number;
   readonly coverMinimumRange: number;
   readonly coverMaxRangeMult: number;
+  readonly coverRangeMinBufferDistance: number;
+  readonly coverRangeMaxBufferDistance: number;
+  readonly coverMidPointMaxRangeBuffer: number;
+  readonly coverCheckHeightOffset: number;
+  readonly coverEdgeOffsetDistance: number;
+  readonly coverLedgeOffsetDistance: number;
+  readonly coverAttackOffsetDistance: number;
+  readonly coverSecondaryThreatMinDistance: number;
   readonly coverCheckHeightMin: number;
   readonly coverAvoidTargetRadius: number;
   readonly coverWaitTimeMin: number;
@@ -44,6 +52,9 @@ export interface CombatSubtreeSettings {
   readonly fleeDoorDistanceMax: number;
   readonly fleeDoorTargetCheckDistance: number;
   readonly fleeUseDoorRestrictTime: number;
+  readonly fleeLastDoorRestrictTime: number;
+  readonly hideFailedTargetDistance: number;
+  readonly hideFailedTargetLosDistance: number;
   readonly fleeCoverMinDistance: number;
   readonly fleeCoverSearchRadius: number;
   readonly acquireUnarmedDistanceMin: number;
@@ -99,6 +110,17 @@ const SETTINGS: readonly (readonly [keyof CombatSubtreeSettings, string, number]
   ['fleeDoorDistanceMax', 'fCombatFleeDoorDistanceMax', 1024],
   ['fleeDoorTargetCheckDistance', 'fCombatFleeDoorTargetCheckDistance', 128],
   ['fleeUseDoorRestrictTime', 'fCombatFleeUseDoorRestrictTime', 15],
+  ['fleeLastDoorRestrictTime', 'fCombatFleeLastDoorRestrictTime', 30],
+  ['hideFailedTargetDistance', 'fCombatHideFailedTargetDistance', 128],
+  ['hideFailedTargetLosDistance', 'fCombatHideFailedTargetLOSDistance', 384],
+  ['coverRangeMinBufferDistance', 'fCombatCoverRangeMinBufferDistance', 512],
+  ['coverRangeMaxBufferDistance', 'fCombatCoverRangeMaxBufferDistance', 768],
+  ['coverMidPointMaxRangeBuffer', 'fCombatCoverMidPointMaxRangeBuffer', 256],
+  ['coverCheckHeightOffset', 'fCombatCoverCheckCoverHeightOffset', 32],
+  ['coverEdgeOffsetDistance', 'fCombatCoverEdgeOffsetDistance', 16],
+  ['coverLedgeOffsetDistance', 'fCombatCoverLedgeOffsetDistance', 128],
+  ['coverAttackOffsetDistance', 'fCombatCoverAttackOffsetDistance', 16],
+  ['coverSecondaryThreatMinDistance', 'fCombatCoverSecondaryThreatMinDistance', 512],
   ['fleeCoverMinDistance', 'fCombatFleeCoverMinDistance', 1024],
   ['fleeCoverSearchRadius', 'fCombatFleeCoverSearchRadius', 3072],
   ['acquireUnarmedDistanceMin', 'fCombatAcquireWeaponUnarmedDistanceMin', 256],
@@ -251,22 +273,51 @@ export interface CoverSpot {
   readonly height: number;
   /** Out across the edge (unit, flat): the side the cover keeps off. */
   readonly facing: readonly [number, number];
+  /** The edge's ends. */
+  readonly ends?: readonly [Vec3, Vec3];
+  /** A ledge (the drop's edge): it stands back from it and shoots from the edge itself. */
+  readonly ledge?: boolean;
+  /** The edge's end is open on its left or right (NAVM cover flags): one can lean out there. */
+  readonly open?: boolean;
+  /** Where it steps to shoot (past the edge's nearer open end; on a ledge, at the edge). */
+  readonly attackAt?: Vec3;
 }
 
+/** The actor a cover edge is weighed for (a person where unknown). */
+export interface CoverActor {
+  readonly radius: number;
+  /** Its height standing and crouched (units). */
+  readonly height: number;
+  readonly crouched: number;
+}
+
+const COVER_ACTOR: CoverActor = { radius: 32, height: 128, crouched: 64 };
+
+/** The units a NAVM cover value counts in (a value is that many × 16 units high). */
+const COVER_UNIT = 16;
+
 /**
- * The cover edges of the navmeshes an actor reaches within `radius` (NAVM triangle cover: edges
- * 0–1 and 1–2, a value 4–14 is that many × 16 units high, 15 full cover; 1 a wall without
- * cover and 2 a ledge give none).
+ * The cover edges of the navmeshes an actor reaches within `radius`, in the order its way search
+ * reaches them (NAVM triangle cover: edges 0–1 and 1–2, a value 4–14 is that many × 16 units high,
+ * 15 full cover, 2 a ledge; 1 a wall without cover gives none).
  */
-export function coverSpots(set: NavmeshSet, from: Vec3, radius: number, back = 32): CoverSpot[] {
+export function coverSpots(
+  set: NavmeshSet,
+  from: Vec3,
+  radius: number,
+  actor: CoverActor = COVER_ACTOR,
+  settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
+): CoverSpot[] {
   const spots: CoverSpot[] = [];
   for (const visit of reachable(set, from, radius) ?? []) {
     const t = visit.navmesh.triangles[visit.triangle];
     if (!t || t.cover === 0) continue;
     const corners = navmeshTriangle(visit.navmesh, visit.triangle);
     for (let edge = 0; edge < 2; edge++) {
-      const value = (t.cover >> (edge * 6)) & 0xf;
-      if (value < 4) continue;
+      const bits = t.cover >> (edge * 6);
+      const value = bits & 0xf;
+      const ledge = value === 2;
+      if (value < 4 && !ledge) continue;
       const a = corners[edge];
       const b = corners[edge + 1];
       if (!a || !b) continue;
@@ -275,15 +326,45 @@ export function coverSpots(set: NavmeshSet, from: Vec3, radius: number, back = 3
       const length = Math.hypot(out[0], out[1]);
       if (length <= 0) continue;
       const facing = [out[0] / length, out[1] / length] as const;
-      const step = Math.min(back, length);
+      // The actor must fit along the edge; it stands its radius and the offset back from it.
+      if (flat(a, b) < actor.radius * 2) continue;
+      const back = actor.radius + settings.coverEdgeOffsetDistance;
+      const step = Math.min(ledge ? back + settings.coverLedgeOffsetDistance : back, length);
+      const at: Vec3 = [mid[0] - facing[0] * step, mid[1] - facing[1] * step, mid[2]];
+      const open = (bits & 0x30) !== 0;
       spots.push({
-        at: [mid[0] - facing[0] * step, mid[1] - facing[1] * step, mid[2]],
-        height: value === 15 ? Infinity : value * 16,
+        at,
+        height: value === 15 ? Infinity : ledge ? 0 : value * COVER_UNIT,
         facing,
+        ends: [a, b],
+        ledge,
+        open,
+        attackAt: ledge
+          ? [mid[0] - facing[0] * back, mid[1] - facing[1] * back, mid[2]]
+          : value * COVER_UNIT > actor.crouched
+            ? coverAttackPlace(at, a, b, actor, settings)
+            : at,
       });
     }
   }
   return spots;
+}
+
+/** Past the nearer end of a tall cover's edge: there it steps out of it to shoot. */
+function coverAttackPlace(
+  at: Vec3,
+  a: Vec3,
+  b: Vec3,
+  actor: CoverActor,
+  settings: CombatSubtreeSettings,
+): Vec3 {
+  const length = flat(a, b) || 1;
+  const along = [(b[0] - a[0]) / length, (b[1] - a[1]) / length] as const;
+  const past = actor.radius * 2 + settings.coverAttackOffsetDistance;
+  // The spot stands at the edge's middle: past its second end by half the edge and the offset.
+  const sign = flat(at, b) <= flat(at, a) ? 1 : -1;
+  const shift = length / 2 + past;
+  return [at[0] + along[0] * shift * sign, at[1] + along[1] * shift * sign, at[2]];
 }
 
 export interface CoverNeed {
@@ -291,40 +372,151 @@ export interface CoverNeed {
   readonly threat: Vec3;
   /** At least this far from the threat ... */
   readonly minRange: number;
-  /** ... and at most this far (a shooter: its weapon's range × fCombatCoverMaxRangeMult). */
+  /** ... and at most this far (coverRange). */
   readonly maxRange: number;
   /** The cover must be at least this high (fCombatCoverCheckCoverHeightMin). */
   readonly height: number;
   /** Its way there keeps this far from the threat (fCombatCoverAvoidTargetRadius). */
   readonly avoid: number;
+  /** Who is weighed (a person where unknown). */
+  readonly actor?: CoverActor;
+  /** Find Hide Cover (fleeing): cover it hides behind crouched, no ledge, no leaning out. */
+  readonly hide?: boolean;
+  /** Its other enemies seen lately (fCombatCoverSecondaryThreatLastSeenTime). */
+  readonly others?: readonly Vec3[];
 }
 
 /**
- * Find Cover: of the cover spots, those whose cover lies between them and the threat (the edge
- * faces it within 60°), high enough, within the range from it and not past it on the way; the
- * nearest to the actor. TODO(M13): the engine's scoring of cover (ours: the nearest that holds).
+ * The range from its target cover is looked for at: its weapon's minimum range less
+ * fCombatCoverRangeMinBufferDistance, at least fCombatCoverMinimumRange, to its optimal range
+ * plus fCombatCoverRangeMaxBufferDistance, at most its maximum range.
+ */
+export function coverRange(
+  weapon: { readonly minimum: number; readonly optimal: number; readonly maximum: number },
+  settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
+): { readonly min: number; readonly max: number } {
+  return {
+    min: Math.max(
+      settings.coverMinimumRange,
+      weapon.minimum - settings.coverRangeMinBufferDistance,
+    ),
+    max: Math.min(weapon.maximum, weapon.optimal + settings.coverRangeMaxBufferDistance),
+  };
+}
+
+/** Where a line from `from` to `to` crosses the edge a .. b (flat), if it does. */
+function crossing(from: Vec3, to: Vec3, a: Vec3, b: Vec3): Vec3 | undefined {
+  const rx = to[0] - from[0];
+  const ry = to[1] - from[1];
+  const sx = b[0] - a[0];
+  const sy = b[1] - a[1];
+  const cross = rx * sy - ry * sx;
+  if (Math.abs(cross) < 1e-6) return undefined;
+  const t = ((a[0] - from[0]) * sy - (a[1] - from[1]) * sx) / cross;
+  const u = ((a[0] - from[0]) * ry - (a[1] - from[1]) * rx) / cross;
+  if (t < 0 || t > 1 || u < 0 || u > 1) return undefined;
+  return [from[0] + rx * t, from[1] + ry * t, from[2] + (to[2] - from[2]) * t];
+}
+
+/**
+ * Find Cover (observed in the original: its way search stops at the first triangle with an edge
+ * that holds, so no score weighs them: the first the way reaches). An edge holds with:
+ * a ledge, or cover no taller than the actor crouched, or taller with an end open to lean out
+ * (hiding, fleeing: cover at least its crouched height, no ledge); its middle within the range of
+ * the threat (the far end by fCombatCoverMidPointMaxRangeBuffer more) and the line from it to the
+ * threat crossing the edge below the cover's top (the height at least the check height, less
+ * fCombatCoverCheckCoverHeightOffset); no other enemy within
+ * fCombatCoverSecondaryThreatMinDistance of the place. `spots` come in the way search's order.
+ * TODO(M13): the reservation slots along an edge (ours: its middle) and an obstacle's move.
  */
 export function pickCover(
   spots: readonly CoverSpot[],
   from: Vec3,
   need: CoverNeed,
+  settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
 ): CoverSpot | undefined {
-  let best: CoverSpot | undefined;
-  let bestDistance = Infinity;
+  const actor = need.actor ?? COVER_ACTOR;
   for (const spot of spots) {
-    if (spot.height < need.height) continue;
-    const range = flat(spot.at, need.threat);
-    if (range < need.minRange || range > need.maxRange) continue;
+    if (need.hide) {
+      if (spot.ledge === true || spot.height < actor.crouched) continue;
+    } else if (spot.ledge !== true && spot.height > actor.crouched && spot.open === false) {
+      continue;
+    }
+    if (spot.ledge !== true && spot.height < need.height) continue;
+    const range = Math.hypot(spot.at[0] - need.threat[0], spot.at[1] - need.threat[1]);
+    if (range < need.minRange) continue;
+    if (range > need.maxRange + settings.coverMidPointMaxRangeBuffer) continue;
     const toward = [(need.threat[0] - spot.at[0]) / range, (need.threat[1] - spot.at[1]) / range];
     if (spot.facing[0] * (toward[0] ?? 0) + spot.facing[1] * (toward[1] ?? 0) < 0.5) continue;
-    if (passesNear(from, spot.at, need.threat, need.avoid)) continue;
-    const distance = flat(from, spot.at);
-    if (distance < bestDistance) {
-      best = spot;
-      bestDistance = distance;
+    if (spot.ends) {
+      const crossed = crossing(spot.at, need.threat, spot.ends[0], spot.ends[1]);
+      if (!crossed) continue;
+      const top = spot.at[2] + Math.max(spot.height, need.height);
+      if (crossed[2] + settings.coverCheckHeightOffset >= top) continue;
     }
+    if (
+      need.others?.some(
+        (other) =>
+          Math.hypot(spot.at[0] - other[0], spot.at[1] - other[1], spot.at[2] - other[2]) <
+          settings.coverSecondaryThreatMinDistance,
+      )
+    ) {
+      continue;
+    }
+    if (passesNear(from, spot.at, need.threat, need.avoid)) continue;
+    return spot;
   }
-  return best;
+  return undefined;
+}
+
+/** What a hide weighs, each half second (Hide: observed in the original). */
+export interface HideCheck {
+  /** Between it and its enemy now (units), and fCombatAnticipateTime ahead. */
+  readonly distance: number;
+  readonly distanceAhead: number;
+  /** Its and its enemy's radii added. */
+  readonly radii: number;
+  /** It has its enemy in sight. */
+  readonly sees: boolean;
+  /** Its enemy has engaged it since the hide began. */
+  readonly engagedSince: boolean;
+}
+
+/**
+ * A hide is over once its enemy comes near: within fCombatHideFailedTargetDistance out of sight,
+ * or (in sight) fCombatHideFailedTargetLOSDistance fCombatAnticipateTime ahead, or once it is
+ * engaged after all. The Hide Selector then goes on to Boost Confidence: it turns and fights.
+ */
+export function hideFails(
+  check: HideCheck,
+  settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
+): boolean {
+  const near = check.sees
+    ? check.distanceAhead < check.radii + settings.hideFailedTargetLosDistance
+    : check.distance < check.radii + settings.hideFailedTargetDistance;
+  return near || check.engagedSince;
+}
+
+/**
+ * Fallback To Ranged (observed in the original): turned to its target (within 60°) it backs along
+ * the line from its target to fCombatRangedDistance from it; farther already, it stays.
+ */
+export function fallbackPlace(
+  feet: Vec3,
+  target: Vec3,
+  settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
+): Vec3 | undefined {
+  const dx = feet[0] - target[0];
+  const dy = feet[1] - target[1];
+  const dz = feet[2] - target[2];
+  const distance = Math.hypot(dx, dy, dz);
+  const back = settings.rangedDistance - distance;
+  if (back <= 0 || distance <= 1e-6) return undefined;
+  return [
+    feet[0] + (dx / distance) * back,
+    feet[1] + (dy / distance) * back,
+    feet[2] + (dz / distance) * back,
+  ];
 }
 
 /** Whether the straight way from `a` to `b` passes within `radius` of `point`. */
@@ -390,10 +582,12 @@ export function doorSpots(set: NavmeshSet, from: Vec3, radius: number): DoorSpot
 }
 
 /**
- * Flee Through Door: by fCombatFleeUseDoorChance, not within fCombatFleeUseDoorRestrictTime of
- * its last, the nearest door within fCombatFleeDoorDistanceMax that lies farther from its enemy
- * than it stands and whose way keeps fCombatFleeDoorTargetCheckDistance off the enemy.
- * TODO(M13): the engine's choice among doors and what it does past a load door.
+ * Flee Through Door (observed in the original): by fCombatFleeUseDoorChance, not within
+ * fCombatFleeUseDoorRestrictTime of its last and only while its enemy stands in its cell, the
+ * nearest load door within fCombatFleeDoorDistanceMax with no enemy within
+ * fCombatFleeDoorTargetCheckDistance of it, not the door it came by within
+ * fCombatFleeLastDoorRestrictTime; not one leading out of its encounter zone (`allowed`). Its
+ * way goes on through it to the other side.
  */
 export function pickFleeDoor(
   doors: readonly DoorSpot[],
@@ -402,17 +596,17 @@ export function pickFleeDoor(
   sinceLastDoor: number,
   random: () => number,
   settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
+  allowed?: (door: DoorSpot) => boolean,
 ): DoorSpot | undefined {
   if (sinceLastDoor < settings.fleeUseDoorRestrictTime) return undefined;
   if (random() >= settings.fleeUseDoorChance) return undefined;
-  const own = flat(from, enemy);
   let best: DoorSpot | undefined;
   let bestDistance = Infinity;
   for (const door of doors) {
     const distance = flat(from, door.at);
     if (distance > settings.fleeDoorDistanceMax || distance >= bestDistance) continue;
-    if (flat(door.at, enemy) <= own) continue;
-    if (passesNear(from, door.at, enemy, settings.fleeDoorTargetCheckDistance)) continue;
+    if (flat(door.at, enemy) <= settings.fleeDoorTargetCheckDistance) continue;
+    if (allowed && !allowed(door)) continue;
     best = door;
     bestDistance = distance;
   }
@@ -517,47 +711,61 @@ export interface CasterState {
   readonly canReanimate: boolean;
   readonly sinceReanimate: number;
   readonly canBuff: boolean;
+  /** Its best spell's combat inventory score by purpose (combatSpellScore): the order weighed. */
+  readonly scores?: Partial<Record<CasterPurpose, number>>;
 }
 
 export type CasterPurpose = 'ward' | 'restore' | 'summon' | 'reanimate' | 'buff';
 
 /**
- * Which of its casters acts now, in the order its tree weighs them: a ward against what comes
- * at it (with fCombatMagicWardMagickaCastLimit of its magicka, not within its cooldown);
- * restoring below its restore share; a summons (not within fCombatMagicSummonRestrictTime); a
- * corpse raised within fCombatMagicReanimateDistance (not within its restrict time); a buff.
- * Potions come before the hands' spells (the Action Equipment Selector's Potion before Magic):
- * chooseSupport. TODO(M13): the engine's weighing between casters (ours: this fixed order).
+ * Which of its casters acts now. The original has no order between them: each spell has its one
+ * caster by its effect, and the combat inventory takes its items by their score (observed in the
+ * original: combatSpellScore), the first whose caster's own check holds. Those checks: a ward
+ * against what comes at it (with fCombatMagicWardMagickaCastLimit of its magicka, not within its
+ * cooldown); restoring below its restore share; a summons (not within
+ * fCombatMagicSummonRestrictTime); a corpse raised within fCombatMagicReanimateDistance (not
+ * within its restrict time); a buff. Scores equal or not given keep that order. Potions come
+ * before the hands' spells (the Action Equipment Selector's Potion before Magic): chooseSupport.
  */
 export function chooseCaster(
   state: CasterState,
   settings: CombatSubtreeSettings = COMBAT_SUBTREE_DEFAULTS,
 ): CasterPurpose | undefined {
+  const ready: CasterPurpose[] = [];
   if (
     state.wardThreat &&
     state.magicka >= settings.wardMagickaCastLimit &&
     state.sinceWard >= settings.wardCooldownTime
   ) {
-    return 'ward';
+    ready.push('ward');
   }
   if (
     state.canHeal &&
     state.health < state.restoreHealthBelow &&
     state.sinceHealthRestore >= state.restoreHealthRestrictTime
   ) {
-    return 'restore';
+    ready.push('restore');
   }
-  if (state.canSummon && state.sinceSummon >= settings.summonRestrictTime) return 'summon';
+  if (state.canSummon && state.sinceSummon >= settings.summonRestrictTime) ready.push('summon');
   if (
     state.canReanimate &&
     state.corpseDistance !== undefined &&
     state.corpseDistance <= settings.reanimateDistance &&
     state.sinceReanimate >= settings.reanimateRestrictTime
   ) {
-    return 'reanimate';
+    ready.push('reanimate');
   }
-  if (state.canBuff) return 'buff';
-  return undefined;
+  if (state.canBuff) ready.push('buff');
+  let best: CasterPurpose | undefined;
+  let bestScore = -Infinity;
+  for (const purpose of ready) {
+    const score = state.scores?.[purpose] ?? 0;
+    if (best === undefined || score > bestScore) {
+      best = purpose;
+      bestScore = score;
+    }
+  }
+  return best;
 }
 
 /** Its potions as the Action Equipment Selector's Potion slot weighs them. */

@@ -13,7 +13,7 @@ item with where it is read); docs/completeness/ai.md says when an item counts as
 mechanics part is kept by hand against docs/ai.md ("Combat", "Combat AI", "Flying") and the
 conformance suites (tests/conformance/combat/).
 
-## Count (2026-11-03, round 4b)
+## Count (2026-11-04, round 5)
 
 | Part                     | Items | Done | Open |
 | ------------------------ | ----: | ---: | ---: |
@@ -22,8 +22,8 @@ conformance suites (tests/conformance/combat/).
 | Race combat (DATA, ATKR) |    15 |   15 |    0 |
 | Behaviour tree actions   |    63 |   63 |    0 |
 | Game settings            |   410 |  410 |    0 |
-| Mechanics (by hand)      |    24 |   17 |    7 |
-| Total                    |   563 |  556 |    7 |
+| Mechanics (by hand)      |    24 |   24 |    0 |
+| Total                    |   563 |  563 |    0 |
 
 Round 1 wrote the sweep and this list, and built down:
 
@@ -123,6 +123,28 @@ and the built-in fBowZoomStaminaRegenDelay (the bow zoom's drain, the hold once 
 stamina). fCombatFollowRadiusMult, fAIUseWeaponDistance and
 fCombatThreatProximityExplosionAvoidTime are registered and never read; fKillCamBaseOdds is read
 only by a function nothing calls (all four inert).
+
+Round 5 (2026-11-04) read the mechanics left from the original (docs/ai.md "Use Cover", "Flee",
+"The odds", "Targets", "What it fights with"; docs/gameplay.md "The kill camera"):
+
+- The cover has no score: the way search stops at the first triangle with an edge that holds
+  (combat-subtrees.ts coverSpots, pickCover; hiding has its own test of an edge).
+- The combat inventory's score of a spell (src/gameplay/combat/spell-score.ts): one caster per
+  spell by its strongest effect; the casters are weighed in their spells' scores, each with its
+  own check (chooseCaster).
+- Flee Through Door goes through a load door (actor-stage.ts fleeThrough), not the one it came by,
+  none with an enemy at it, none out of its encounter zone; the hide after Flee To Cover
+  (#hide, hideFails) ends in Boost Confidence.
+- The magic kill camera (actor-combat.ts spellLoosed).
+- The encounter zone bounds a fight (zonesAllow); the odds stand at 100 for a frenzied actor and
+  after 120 s unengaged (oddsWeighed); combat music and daresHelp weigh damage per second;
+  left-hand attacks have their own attack data (the actor's melee options keep them apart);
+  Fallback To Ranged backs to fCombatRangedDistance (fallbackPlace).
+
+Left of the conformance list, each with its reason at the test: GroupStrategy (nothing found that
+says it), the Fixed target selector (what makes it an actor's), an NPC's kill move above its idle
+conditions, an actor's own yield rule, torches in a fight, the Flee package's safety (the AI's, not
+combat's).
 
 ## Combat style (CSTY)
 
@@ -225,18 +247,18 @@ and 290 built-in ones the readers ask for by name.
 - [x] Ranged combat: draw, hold, release, strafe, cover (ranged.test.ts).
 - [x] Line of fire: an actor in the way holds the shot, given up after
       fCombatAimProjectileBlockedTime (ranged.test.ts).
-- [ ] The cover score is ours: the original filters the navmesh's cover edges by height and its
-      mid-point by range; its choice among them was not read.
+- [x] The cover: no score; the first edge that holds as the way search reaches it (round 5).
+      TODO(M13): the reservation slots along an edge, an obstacle's move.
 - [x] Magic in combat: casters by purpose, dual casting, concentration, potions.
-- [ ] The casters' order is ours: the original has no fixed order (one caster per spell by its
-      effect; the combat inventory's score chooses among spells, not read yet).
+- [x] The casters by their spells' combat inventory scores, each with its own check (round 5).
+      TODO(M13): a drain's count only for a target that uses the resource (ours: any).
 - [x] The dragons' fight: the Flight subtree, perches, breath, landing (flight.ts,
       actor-flight.ts).
 - [x] Flee: the strength ratio, to an ally, through a door, to cover; yield and surrender.
-- [ ] Flee past a load door; the hide after Flee To Cover is a hold (the original's Hide Parallel:
-      Track Target, Turn Around, Hide Selector with Boost Confidence last).
+- [x] Flee past a load door; the hide after Flee To Cover (round 5). TODO(M13): how long a hide
+      lasts when nothing ends it (the Hide behaviour's own time was not read: ours until then).
 - [x] Kill moves and the kill cameras (kill-moves.test.ts, kill-camera-shots.test.ts).
-- [ ] The magic kill camera.
+- [x] The magic kill camera (round 5).
 - [x] Sneak attacks by the player and by NPCs (sneaking, undetected: actor-combat.ts).
 - [x] Dual wielding (round 1, above).
 - [x] Mounted combat (round 2, above; the rider's own attacks from the saddle TODO(M13)).
@@ -247,6 +269,5 @@ and 290 built-in ones the readers ask for by name.
 
 1. The knockback's fading (held for fKnockbackTime here) and which stage of a hit's damage it
    reads; the timed bash's reaction (TODO(M13), docs/ai.md "Staggers").
-2. The mechanics left by hand (the cover score, the combat inventory's score of a spell, flee
-   past a load door, the magic kill camera).
-3. The rates' unit (acceleration, deceleration) and what the advanced avoidance adds.
+2. The rates' unit (acceleration, deceleration) and what the advanced avoidance adds.
+3. The cases left in the conformance list (round 5, above).

@@ -6,7 +6,10 @@
 
 import { describe, expect, it } from 'vitest';
 import { COMBAT_DEFAULTS } from '../../../src/gameplay/combat/combat-settings.ts';
-import { rangedKillCameraChance } from '../../../src/gameplay/combat/ranged-kill-camera.ts';
+import {
+  rangedKillCameraChance,
+  spellPredictedKill,
+} from '../../../src/gameplay/combat/ranged-kill-camera.ts';
 import { ENGINE } from './settings.ts';
 
 const vats = {
@@ -41,10 +44,16 @@ describe('kill moves', () => {
   // (docs/completeness/combat.md, round 4b): nothing to test. The paired idle's choice by weapon,
   // races and conditions: tests/killmoves.int.test.ts. The radial blur between shots:
   // kill-camera-shots.test.ts and src/gameplay/combat/kill-camera-transition.test.ts.
+  // Stays: an NPC's kill move comes by its Special Attack under ActionRightPowerAttack, by the idle
+  // tree's conditions, tested in real-fight.test.ts and melee-choice.test.ts; a rule of the
+  // engine's own above those conditions was not found.
   it.todo(
     'NPCs’ kill moves on the last enemy: which rule starts an NPC’s was not read  [UESP Kill moves]',
   );
-  it.todo(
-    'the magic kill cam: needs the spells’ projectile predicted to kill (rules read: docs/gameplay.md)  [original]',
-  );
+  it('the magic kill cam: a cast predicted to kill, on the ranged one’s odds  [original]', () => {
+    expect(spellPredictedKill(49, 50)).toBe(false);
+    expect(spellPredictedKill(50, 50)).toBe(true);
+    expect(spellPredictedKill(0, 0)).toBe(false);
+    expect(rangedKillCameraChance({ ...shot, distance: 2000 }, vats)).toBe(100);
+  });
 });
