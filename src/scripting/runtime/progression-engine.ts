@@ -946,7 +946,7 @@ export class ProgressionEngine {
   }
 
   /** Stamina blocking `damage` costs (combat). */
-  async blockCost(damage: number): Promise<number> {
-    return blockCost(damage, (await this.settings()).vitals);
+  async blockCost(damage: number, stagger = 0): Promise<number> {
+    return blockCost(damage, stagger, (await this.settings()).vitals);
   }
 }

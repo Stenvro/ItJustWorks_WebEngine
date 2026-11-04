@@ -452,8 +452,17 @@ export function armorPieceRating(
  * each), at most fMaxArmorRating percent.
  */
 export function armorDamageReduction(rating: number, pieces: number, s: ArmorSettings): number {
-  const percent = rating * s.fArmorScalingFactor + pieces * s.fArmorBaseFactor * 100;
-  return Math.max(0, Math.min(s.fMaxArmorRating, percent)) / 100;
+  return armorReductionCapped(armorShare(rating, pieces, s), s);
+}
+
+/** The share armor would take off before its cap (the attacker's perks scale this share). */
+export function armorShare(rating: number, pieces: number, s: ArmorSettings): number {
+  return (rating * s.fArmorScalingFactor + pieces * s.fArmorBaseFactor * 100) / 100;
+}
+
+/** A share of armor held to fMaxArmorRating percent. */
+export function armorReductionCapped(share: number, s: ArmorSettings): number {
+  return Math.max(0, Math.min(s.fMaxArmorRating / 100, share));
 }
 
 /** The game settings of weapon damage by skill. */

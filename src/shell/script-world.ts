@@ -288,7 +288,7 @@ export interface CombatBridge {
    * A Stagger effect's magnitude on an actor, from its caster's side (`from`: where the caster
    * stands when it is no fighter, a KnockAreaEffect's marker).
    */
-  staggerEffect(actor: number, magnitude: number, caster: number | undefined, from?: Vec3): void;
+  staggerEffect(actor: number, magnitude: number): void;
   /** Paralysis begins or ends on an actor: it lies as its ragdoll meanwhile. */
   paralyze(actor: number, on: boolean): void;
   /** Grab Actor: the target hangs as its ragdoll before its caster while it lasts. */
@@ -1044,10 +1044,8 @@ export class ScriptWorld implements WorldBridge {
     for (const fights of this.#fights()) void fights.knockDown(actor, from, force);
   }
 
-  stagger(actor: number, magnitude: number, caster: number | undefined, from?: Vec3): void {
-    const at = from ?? (caster === undefined ? undefined : this.livePlacement(caster)?.position);
-    for (const fights of this.#fights())
-      fights.staggerEffect(actor, magnitude, caster, at && [at[0], at[1], at[2]]);
+  stagger(actor: number, magnitude: number): void {
+    for (const fights of this.#fights()) fights.staggerEffect(actor, magnitude);
   }
 
   paralyze(actor: number, on: boolean): void {

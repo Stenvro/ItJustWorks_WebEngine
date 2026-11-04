@@ -5,6 +5,11 @@
 // GMST records), which count in the game. Only the settings the suites check are listed.
 
 export const ENGINE = {
+  fStaggerMaxDuration: 3,
+  fStaggerDaggerAR: 5,
+  fStagger1WeapAR: 10,
+  fStagger2WeapAR: 15,
+  fStaggerBowAR: 5,
   fCombatSneakBowMult: 2,
   fCombatSneakCrossbowMult: 2,
   fCombatSneakStaffMult: 1,
@@ -131,6 +136,8 @@ export const ENGINE = {
 } as const;
 
 export const LOAD_ORDER = {
+  fDamageToArmorPercentage: 0.35,
+  fCombatUnarmedCritDamageMult: 1,
   fCombatSneak1HSwordMult: 3,
   fCombatSneak1HDaggerMult: 3,
   fCombatSneak1HAxeMult: 3,

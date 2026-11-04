@@ -9,7 +9,9 @@
 
 import { describe, expect, it } from 'vitest';
 import { COMBAT_AI_DEFAULTS } from '../../../src/ai/combat-ai.ts';
+import { holdsRestore } from '../../../src/ai/combat-subtrees.ts';
 import { chooseSupport, restoreShare } from '../../../src/ai/combat-tactics.ts';
+import { strongestPotion } from '../../../src/scripting/runtime/casting-engine.ts';
 import { ENGINE } from './settings.ts';
 import { styleWith } from './style.ts';
 
@@ -54,7 +56,36 @@ describe('restoring (formula)', () => {
     expect(settings.drinkPotionWaitTime).toBe(ENGINE.fCombatMagicDrinkPotionWaitTime);
   });
 
-  it.todo('the casters’ order in the tree (ward, heal, potion, summon, buff)  [RTTI]');
-  it.todo('the stop-cast threshold of a held healing spell  [original]');
-  it.todo('the potion chosen: the strongest of its kind  [original]');
+  it('the casters’ order in the tree (ward, heal, potion, summon, buff)  [RTTI]', () => {
+    const style = styleWith({ defensiveMult: 1 });
+    const all = { ...state, health: 0.1, magicka: 0.1 };
+    const ready = { ...all, canWard: true, canHeal: true, canSummon: true, canBuff: true };
+    expect(chooseSupport(ready, style, settings)).toEqual({ kind: 'ward' });
+    const noWard = { ...ready, canWard: false };
+    expect(chooseSupport(noWard, style, settings)).toEqual({ kind: 'heal' });
+    const noHeal = { ...noWard, canHeal: false };
+    expect(chooseSupport(noHeal, style, settings)).toEqual({ kind: 'potion', value: 'health' });
+    const noPotion = { ...noHeal, potions: { health: false, magicka: false } };
+    expect(chooseSupport(noPotion, style, settings)).toEqual({ kind: 'summon' });
+    expect(chooseSupport({ ...noPotion, canSummon: false }, style, settings)).toEqual({
+      kind: 'buff',
+    });
+  });
+  it('the stop-cast threshold of a held healing spell (0.25)  [settings]', () => {
+    expect(holdsRestore(0.5, 0.5)).toBe(true);
+    expect(holdsRestore(0.74, 0.5)).toBe(true);
+    expect(holdsRestore(0.75, 0.5)).toBe(false);
+    // Full: over, whatever the share.
+    expect(holdsRestore(1, 0.9)).toBe(false);
+  });
+  it('the potion chosen: the one restoring the most  [original]', () => {
+    const potions = [
+      { formId: 1, amount: 25 },
+      { formId: 2, amount: 100 },
+      { formId: 3, amount: 50 },
+      { formId: 4, amount: 0 },
+    ];
+    expect(strongestPotion(potions)).toBe(2);
+    expect(strongestPotion([{ formId: 4, amount: 0 }])).toBeUndefined();
+  });
 });

@@ -366,6 +366,9 @@ export class ActorEngine {
         return reference === PLAYER_REF ? 100 : 0;
       case ActorValue.voiceRate:
         return 5;
+      // A multiplier every actor starts with at 1 (the original multiplies a hit by it).
+      case ActorValue.attackDamageMult:
+        return 1;
       case ActorValue.healRateMult:
       case ActorValue.magickaRateMult:
       case ActorValue.staminaRateMult:

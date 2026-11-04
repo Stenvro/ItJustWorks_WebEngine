@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { COMBAT_DEFAULTS } from './combat-settings.ts';
 import { healthOut, bleedoutRecovered, bleedoutRegain } from './bleedout.ts';
-import { blockStagger, recoilOf, staggerMagnitude, staggerTaken } from './stagger.ts';
+import { blockedStagger, recoilOf, staggerMagnitude, staggerTaken } from './stagger.ts';
 
 const settings = COMBAT_DEFAULTS;
 const hit = {
@@ -36,16 +36,18 @@ describe('staggers', () => {
     expect(player).toBeGreaterThan(0);
   });
 
-  it('stagger a blocker by the damage of a power attack it blocked', () => {
-    expect(blockStagger(false, 30, settings)).toBe(0);
-    expect(blockStagger(true, 30, settings)).toBeCloseTo(0.151);
+  it('stagger a blocker by the hit less its gear and Block skill', () => {
+    const blocked = { rating: 25, blockSkill: 50, targetMass: 1 };
+    expect(blockedStagger({ ...blocked, hit: 0 }, settings)).toBe(0);
+    // 0.001 × 25 + 0.01 + 0.005 × 50 + 0.001 held off.
+    expect(blockedStagger({ ...blocked, hit: 0.75 }, settings)).toBeCloseTo(0.75 - 0.286);
   });
 
   it('recoil plain attacks that meet a block or a wall', () => {
-    expect(recoilOf({ power: false, bash: false }, 'block', undefined, settings)).toBe('recoil');
-    expect(recoilOf({ power: false, bash: false }, 'wall', undefined, settings)).toBe('large');
-    expect(recoilOf({ power: true, bash: false }, 'block', 24, settings)).toBe('none');
-    expect(recoilOf({ power: false, bash: true }, 'wall', undefined, settings)).toBe('none');
+    expect(recoilOf({ power: false, bash: false }, 'block')).toBe('recoil');
+    expect(recoilOf({ power: false, bash: false }, 'wall')).toBe('large');
+    expect(recoilOf({ power: true, bash: false }, 'block')).toBe('none');
+    expect(recoilOf({ power: false, bash: true }, 'wall')).toBe('none');
   });
 });
 

@@ -4,12 +4,14 @@
 // the graph gets staggerMagnitude (0..1: its blend plays the smallest to the largest stagger)
 // and staggerDirection (where the blow came from) and the event staggerStart. A plain attack
 // that meets a block, or a wall before its target, recoils the attacker (recoilStart,
-// recoilLargeStart); a power attack that meets a block staggers the blocker by the damage
-// blocked (fStaggerBlockBase + blocked × fStaggerBlockMult). A hit's and a bash's stagger weigh
-// the target's Mass actor value (its race's base mass: humans 1, trolls and sabre cats 3.5,
-// giants and mammoths 4), observed in the original (see staggerMagnitude, bashStagger).
+// recoilLargeStart); a hit on one blocking staggers it less, by its gear and Block skill
+// (blockedStagger). A hit's and a bash's stagger weigh the target's Mass actor value (its race's
+// base mass: humans 1, trolls and sabre cats 3.5, giants and mammoths 4), observed in the
+// original (see hitStagger, bashStagger). The perks scale what comes out, and a stagger holds at
+// most fStaggerMaxDuration.
 // Platform-independent.
 
+import { WeaponType } from '../../world/item-records.ts';
 import type { CombatSettings } from './combat-settings.ts';
 
 /** What decides a hit's stagger. */
@@ -38,24 +40,93 @@ function massOffset(mass: number, settings: CombatSettings): number {
 }
 
 /**
- * How hard a hit staggers its target (0: not at all; at most 1), observed in the original:
+ * A hit's stagger before the perks and any block (it may be below 0), observed in the original:
  *   weapon stagger × attack stagger / (fStaggerMassMult × mass + fStaggerMassBase)
  *   − max(0, (mass − fStaggerMassOffsetBase) × fStaggerMassOffsetMult)
  *   + the attacker's Bow Stagger Bonus (a bow's or crossbow's shot),
- * the mass the target's Mass actor value (the player's × fStaggerPlayerMassMult). The perks
- * multiply the weapon's part. At most fStaggerMin it does not stagger (TODO(M13): the engine's
- * caller's threshold is inferred).
+ * the mass the target's Mass actor value (the player's × fStaggerPlayerMassMult). A Stagger
+ * effect is weighed the same, its magnitude standing for weapon × attack (no bonus).
  */
-export function staggerMagnitude(input: StaggerInput, settings: CombatSettings): number {
-  const raw = input.weaponStagger * input.attackStagger * input.perkMult;
-  const bonus = Math.max(0, input.bowStaggerBonus ?? 0);
-  if (raw <= 0 && bonus <= 0) return 0;
+export function hitStagger(
+  input: Omit<StaggerInput, 'perkMult'>,
+  settings: CombatSettings,
+): number {
+  const raw = input.weaponStagger * input.attackStagger;
   const mass = staggerMass(input.targetMass, input.targetIsPlayer, settings);
   const weight = settings.staggerMassMult * mass + settings.staggerMassBase;
   const weighed = Math.abs(weight) > 1e-4 ? raw / weight : raw;
-  const magnitude = weighed - massOffset(mass, settings) + bonus;
-  if (magnitude <= settings.staggerMin) return 0;
-  return Math.min(1, magnitude);
+  return weighed - massOffset(mass, settings) + Math.max(0, input.bowStaggerBonus ?? 0);
+}
+
+/**
+ * What a stagger's start makes of a value (observed in the original): the perks multiply it
+ * (Mod Target Stagger, Mod Incoming Stagger), at most 1; at 0 or less there is no stagger.
+ */
+export function staggerStrength(value: number, perkMult: number): number {
+  const strength = value * perkMult;
+  return strength <= 0 ? 0 : Math.min(1, strength);
+}
+
+/** How hard a hit staggers its target (0: not at all; at most 1): hitStagger, staggerStrength. */
+export function staggerMagnitude(input: StaggerInput, settings: CombatSettings): number {
+  return staggerStrength(hitStagger(input, settings), input.perkMult);
+}
+
+/**
+ * What a weapon counts for against a blocked hit's stagger when no shield is held (observed in
+ * the original): a dagger fStaggerDaggerAR, a sword, axe or mace fStagger1WeapAR, a two-handed
+ * weapon fStagger2WeapAR, a bow or crossbow fStaggerBowAR; fists and staves nothing.
+ */
+export function weaponStaggerRating(weaponType: number, settings: CombatSettings): number {
+  switch (weaponType) {
+    case WeaponType.oneHandDagger:
+      return settings.staggerDaggerAR;
+    case WeaponType.oneHandSword:
+    case WeaponType.oneHandAxe:
+    case WeaponType.oneHandMace:
+      return settings.stagger1WeapAR;
+    case WeaponType.twoHandSword:
+    case WeaponType.twoHandAxe:
+      return settings.stagger2WeapAR;
+    case WeaponType.bow:
+    case WeaponType.crossbow:
+      return settings.staggerBowAR;
+    default:
+      return 0;
+  }
+}
+
+/** What decides the stagger of a hit on one blocking. */
+export interface BlockedStaggerInput {
+  /** The hit's stagger (hitStagger, or a bash's). */
+  readonly hit: number;
+  /** The blocker's shield's rating, else its drawn weapon's (weaponStaggerRating; fists 0). */
+  readonly rating: number;
+  /** The blocker's Block skill and its Mass actor value (not the player's doubled one). */
+  readonly blockSkill: number;
+  readonly targetMass: number;
+}
+
+/**
+ * The stagger of a hit on one blocking, the hit's own stagger less what the block holds off
+ * (observed in the original), at least fStaggerMin:
+ *   fStaggerBlockAttackShieldMult × rating + fStaggerBlockAttackShieldBase
+ *   + fStaggerBlockMult × Block + fStaggerBlockBase
+ *   + max(0, (mass − fStaggerMassOffsetBase) × fStaggerMassOffsetMult).
+ * A hit with no stagger (a plain attack: its attack stagger 0) stays without. It holds for one
+ * who blocks whichever way it faces: the facing only decides the damage blocked. The damage
+ * blocked has no part in it; fStaggerBlockAttackBase and fStaggerBlockAttackMult are not read.
+ * TODO(M13): the original also skips this for an actor with one flag set, unnamed so far.
+ */
+export function blockedStagger(input: BlockedStaggerInput, settings: CombatSettings): number {
+  if (input.hit <= 0) return input.hit;
+  const held =
+    settings.staggerBlockAttackShieldMult * input.rating +
+    settings.staggerBlockAttackShieldBase +
+    settings.staggerBlockMult * input.blockSkill +
+    settings.staggerBlockBase +
+    massOffset(input.targetMass, settings);
+  return Math.max(settings.staggerMin, input.hit - held);
 }
 
 /** What decides a bash's stagger. */
@@ -102,39 +173,21 @@ export function bashStagger(input: BashStaggerInput, settings: CombatSettings): 
   return Math.min(1, Math.max(settings.staggerMin, magnitude));
 }
 
-/** A blocker staggered by a power attack it blocked (0 for a plain attack). */
-export function blockStagger(
-  power: boolean,
-  blockedDamage: number,
-  settings: CombatSettings,
-): number {
-  if (!power) return 0;
-  return Math.min(
-    1,
-    Math.max(0, settings.staggerBlockBase + Math.max(0, blockedDamage) * settings.staggerBlockMult),
-  );
-}
-
 /** How an attack that did not land recoils its attacker. */
 export type Recoil = 'none' | 'recoil' | 'large';
 
 /**
- * A plain attack that meets a block recoils (a shield's block more: recoilLargeStart from
- * magnitude 0.5, fStaggerBlockAttackShieldBase + rating × fStaggerBlockAttackShieldMult); one
- * that strikes a wall first recoils large. Power attacks and bashes go through.
+ * A plain attack that meets a block recoils; one that strikes a wall first recoils large. Power
+ * attacks and bashes go through. The fStaggerBlockAttackShield* settings are not the recoil's:
+ * they are the blocked hit's stagger's (blockedStagger).
+ * TODO(M13): what else in the original picks the large recoil against a block.
  */
 export function recoilOf(
   hit: { readonly power: boolean; readonly bash: boolean },
   met: 'block' | 'wall',
-  shieldRating: number | undefined,
-  settings: CombatSettings,
 ): Recoil {
   if (hit.power || hit.bash) return 'none';
-  if (met === 'wall') return 'large';
-  if (shieldRating === undefined) return 'recoil';
-  const magnitude =
-    settings.staggerBlockAttackShieldBase + shieldRating * settings.staggerBlockAttackShieldMult;
-  return magnitude >= 0.5 ? 'large' : 'recoil';
+  return met === 'wall' ? 'large' : 'recoil';
 }
 
 /** What decides whether a hit's stagger is taken. */

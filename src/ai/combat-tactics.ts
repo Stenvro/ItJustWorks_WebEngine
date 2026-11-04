@@ -254,6 +254,8 @@ export type EquipKind = 'melee' | 'ranged' | 'magic' | 'staff' | 'unarmed' | 'sh
 /** Something an actor may fight with. */
 export interface EquipOption {
   readonly kind: EquipKind;
+  /** A bound weapon (WEAP Flags2): it counts fCombatBoundWeaponDPSBonus more. */
+  readonly bound?: boolean;
   /** The weapon, spell or shout (undefined: its fists). */
   readonly id: number | undefined;
   /** What a blow, shot or cast deals (its damage as the menus show it). */
@@ -330,6 +332,18 @@ export function rangeFit(
   return least + (1 - least) * (distance / close) ** 2;
 }
 
+/**
+ * What an option's damage counts for as it is weighed (observed in the original): fists' ×
+ * fDamageUnarmedPenalty, a bound weapon's + fCombatBoundWeaponDPSBonus. A weapon flagged Not
+ * Used in Normal Combat counts for nothing: its actor's options leave it out (combat-profile.ts).
+ * TODO(M13): the original holds the fists' penalty to races by a flag not named so far; those
+ * without one have nothing else to weigh it against in the load order.
+ */
+export function weighedDamage(option: EquipOption, settings: CombatAiSettings): number {
+  if (option.kind === 'unarmed') return option.damage * settings.damageUnarmedPenalty;
+  return option.bound === true ? option.damage + settings.boundWeaponBonus : option.damage;
+}
+
 /** An option's score: its damage × the style's mult for its kind × its fit to the range. */
 export function equipmentScore(
   option: EquipOption,
@@ -338,7 +352,7 @@ export function equipmentScore(
   settings: CombatAiSettings,
 ): number {
   return (
-    Math.max(1, option.damage) *
+    Math.max(1, weighedDamage(option, settings)) *
     equipmentMult(style, option.kind) *
     rangeFit(option, distance, settings) *
     (option.equipped ? EQUIPPED_BONUS : 1)
@@ -820,13 +834,25 @@ export function holdsBlock(
  * × fCombatBlockAttackReachMult and within the strike angle × fCombatBlockAttackStrikeAngleMult.
  */
 export function blockAttackOpening(
-  input: { readonly distance: number; readonly off: number; readonly strikeAngle: number },
+  input: {
+    /** Its target is drawing back its swing (the attack's draw, before the swing itself). */
+    readonly drawing: boolean;
+    /** The distance to its target, now and fCombatAnticipateTime ahead. */
+    readonly distance: number;
+    readonly distanceSoon: number;
+    /** How far it stands off its target's facing, and the target's attack's strike angle. */
+    readonly off: number;
+    readonly strikeAngle: number;
+    /** The target's weapon reach, and what the limit adds to it (TODO(M13): read as its radius). */
+    readonly reach: number;
+    readonly radius: number;
+  },
   settings: CombatAiSettings,
 ): boolean {
-  return (
-    input.distance <= settings.bashReach * settings.blockAttackReachMult &&
-    input.off <= input.strikeAngle * settings.blockAttackStrikeAngleMult
-  );
+  if (!input.drawing) return false;
+  if (input.off > input.strikeAngle * settings.blockAttackStrikeAngleMult) return false;
+  const limit = input.reach * settings.blockAttackReachMult + input.radius;
+  return input.distance < limit || input.distanceSoon < limit;
 }
 
 export interface ShotInput extends Opponent {
