@@ -56,9 +56,15 @@ const WHITERUN_WORLD = 0x1a26f;
 const TAMRIEL = 0x3c;
 /** Where the player stands by the guards' marks (MQ104BSoldierWaitMarker1-6) in Whiterun. */
 const COURTYARD = { position: [20400, -7100, -3600], heading: 0 } as const;
-/** On the road east of the Western Watchtower, and inside its ruined walls. */
+/** On the road east of the Western Watchtower. */
 const WATCHTOWER_ROAD = { position: [5600, -13500, -4990], heading: 0 } as const;
-const WATCHTOWER: [number, number, number] = [700, -14400, -4990];
+/**
+ * Inside its ruined walls, on the navmesh. Found 2026-11-04: the spot here was 700, -14400 on the
+ * fort's east edge, off the navmesh, and the player could not get from it onto the navmesh: the
+ * walk to the dragon's body ended under the hill, so only a dragon that fell within 1,024 units
+ * of that spot gave stage 85, which the fight's draws decide.
+ */
+const WATCHTOWER: [number, number, number] = [632, -14466, -4990];
 
 /** The game after the Jarl sent the player to the watchtower (stage 40), for the next segment. */
 let afterJarl: Uint8Array | undefined;
@@ -264,7 +270,7 @@ describe.skipIf(!hasGamedata())('MQ104 Dragon Rising', () => {
       // for a detected player only, so the talk never went on. They walk up over the navmeshes,
       // as a player does, and stop beside it.
       const at = await sim.position(dragon);
-      if (at) await sim.walkPath(at, 60, 400);
+      expect(at && (await sim.walkPath(at, 60, 400))).toBe(true);
       expect(await sim.until(() => sim.stageDone(MQ104, 85), 30)).toBe(true);
       // Found 2026-10-28: the absorption never came (90). The dragon's DragonActorScript comes
       // from its base's template (MQ104Dragon's), and a persistent actor whose scripts are not
