@@ -772,21 +772,28 @@ export class ActorCombatAi {
     if (!runtime) return;
     const reaction = await reactionOf(runtime, mind.reference, attacker);
     const hits = (mind.friendHits.get(attacker) ?? 0) + 1;
-    // A script may have it ignore friends' blows (IgnoreFriendlyHits): a friend or ally never
-    // makes it turn.
     const friendly = reaction === FightReaction.friend || reaction === FightReaction.ally;
-    if (friendly && runtime.state.references.get(mind.reference)?.ignoreFriendlyHits === true) {
-      return;
-    }
-    // Another actor's blow on one neutral to it turns it only if it would be hostile to that
+    const byPlayer = attacker === PLAYER_REF;
+    // Another actor's blow on one not its enemy turns it only if it would be hostile to that
     // actor anyway, by its own aggression (observed in the original): a townsman caught by a
-    // swing at a common foe does not start a brawl. TODO(M13): the original reports such a blow
-    // as an assault, which those who see it answer (crime-engine.ts has only the player's).
-    if (attacker !== PLAYER_REF && reaction === FightReaction.neutral) {
+    // swing at a common foe does not start a brawl, and no allowance is counted for it (those
+    // are the player's blows). TODO(M13): the original reports such a blow as an assault, which
+    // those who see it answer (crime-engine.ts has only the player's).
+    if (!byPlayer && reaction !== FightReaction.enemy) {
       const magic = runtime.magic.aiState(mind.reference);
+      if (friendly && !mind.profile) return;
       if (mind.profile && !this.#onSight(mind, mind.profile, magic, attacker)) return;
     }
-    if (turnsOnAttacker(reaction, hits, mind.mode !== 'idle', this.#settings)) {
+    // A script may have it ignore friends' blows (IgnoreFriendlyHits): the player's never make
+    // it turn, and it still comments on them (observed in the original).
+    const ignores =
+      byPlayer &&
+      friendly &&
+      runtime.state.references.get(mind.reference)?.ignoreFriendlyHits === true;
+    if (
+      !ignores &&
+      turnsOnAttacker(reaction, hits, mind.mode !== 'idle', byPlayer, this.#settings)
+    ) {
       mind.friendHits.delete(attacker);
       mind.enemies.add(attacker);
       mind.quarrels.add(attacker);
@@ -3011,7 +3018,8 @@ export class ActorCombatAi {
               gap <= blockStartDistance(style(f), settings())
             );
           },
-          // The block attack's opening: its target swinging within the bash reach and angle.
+          // The block attack's opening: its target draws back its swing, with it inside that
+          // swing's strike angle and within its weapon's reach, now or as it closes.
           mayBlockAttack: (f) => {
             const blow = this.#blowAt(f);
             return (
@@ -3020,9 +3028,17 @@ export class ActorCombatAi {
               f.view.gear?.canBash === true &&
               blockAttackOpening(
                 {
+                  drawing: f.target.state.attack === AttackState.draw,
                   distance: f.distance,
-                  off: this.#off(f),
-                  strikeAngle: attackStrikeAngle(f.view.gear.strikeAngle ?? 0, false, settings()),
+                  distanceSoon: f.distance + this.#retreatSpeed(f) * this.#movement.anticipateTime,
+                  off: Math.abs(turnBetween(f.target.heading, f.facing + Math.PI)),
+                  strikeAngle: attackStrikeAngle(
+                    f.target.gear?.strikeAngle ?? 0,
+                    false,
+                    settings(),
+                  ),
+                  reach: f.target.reach,
+                  radius: f.view.radius,
                 },
                 settings(),
               )

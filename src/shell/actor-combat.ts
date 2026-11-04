@@ -91,6 +91,7 @@ import {
   graphEvent,
   newCombatState,
   startAttack,
+  tickStagger,
   weaponOut,
   type CombatEffect,
   type CombatState,
@@ -106,8 +107,13 @@ import {
   bashFactor,
   blockedShare,
   bowDrawPower,
+  criticalSpellApplies,
+  damageBeforeCritical,
   hitDamage,
+  sneakAttackApplies,
   sneakAttackMult,
+  strikeNotices,
+  unarmedCriticalDamage,
 } from '../gameplay/combat/damage.ts';
 import {
   blockCovers,
@@ -127,10 +133,13 @@ import { ProjectileFlag } from '../world/projectile-data.ts';
 import type { AimTarget, ProjectileAim, ShotKind } from './projectile-aim.ts';
 import {
   bashStagger,
-  blockStagger,
+  blockedStagger,
+  hitStagger,
   recoilOf,
   staggerMagnitude,
+  staggerStrength,
   staggerTaken,
+  weaponStaggerRating,
 } from '../gameplay/combat/stagger.ts';
 import {
   knockbackApplies,
@@ -1959,6 +1968,7 @@ export class ActorCombat implements CombatBridge {
   /** One frame of a fighter: its models, its graph's flags, bleeding out, its AI. */
   #update(fighter: Fighter, seconds: number, runtime: ScriptRuntime): void {
     const state = fighter.state;
+    tickStagger(state, seconds);
     // Knocked down or getting up it does not act (canAct).
     state.knock = this.#options.knockdowns?.()?.state(fighter.reference) ?? KnockState.normal;
     fighter.held?.update(fighter.inHand, state.arrowNocked, seconds);
@@ -2349,7 +2359,7 @@ export class ActorCombat implements CombatBridge {
         );
       }
       if (wall && wall.owner?.kind !== 'actor') {
-        const recoil = recoilOf(current, 'wall', undefined, this.#settings);
+        const recoil = recoilOf(current, 'wall');
         if (recoil !== 'none')
           void this.#act(fighter, recoil === 'large' ? 'ActionRecoilLarge' : 'ActionRecoil');
         if (recoil !== 'none') fighter.state.recoiling = true;
@@ -2390,7 +2400,7 @@ export class ActorCombat implements CombatBridge {
 
   /**
    * A strike meets an object: a destructible one takes the weapon's damage (as the equip system
-   * reckons it, × the attack's), fists the unarmed damage; external damage (destruction-engine.ts).
+   * reckons it, Ã— the attack's), fists the unarmed damage; external damage (destruction-engine.ts).
    */
   async #objectHit(fighter: Fighter, reference: number, mult: number): Promise<void> {
     const runtime = this.#options.session.scriptsReady;
@@ -2441,8 +2451,24 @@ export class ActorCombat implements CombatBridge {
       const value = await runtime.gameSetting(setting);
       return typeof value === 'string' ? value : '';
     };
+    const [criticalStrike, sneakMain, sneakEnd] = await Promise.all([
+      text('sCriticalStrike'),
+      text('sSuccessfulSneakAttackMain'),
+      text('sSuccessfulSneakAttackEnd'),
+    ]);
+    const notices = strikeNotices(
+      critical,
+      sneakMult,
+      critical ? await referenceName(runtime, targetRef) : '',
+      (setting) =>
+        setting === 'sCriticalStrike'
+          ? criticalStrike
+          : setting === 'sSuccessfulSneakAttackMain'
+            ? sneakMain
+            : sneakEnd,
+    );
+    for (const notice of notices) this.#notice(notice);
     if (critical) {
-      this.#notice(`${await text('sCriticalStrike')} ${await referenceName(runtime, targetRef)}`);
       runtime.events.emit('criticalHit', {
         aggressor: PLAYER_REF,
         weapon: stats?.weapon,
@@ -2459,11 +2485,6 @@ export class ActorCombat implements CombatBridge {
         ? this.#settings.sneakAttackSkillUsageRanged
         : this.#settings.sneakAttackSkillUsageMelee,
     );
-    const [main, end] = await Promise.all([
-      text('sSuccessfulSneakAttackMain'),
-      text('sSuccessfulSneakAttackEnd'),
-    ]);
-    this.#notice(`${main}${sneakMult.toFixed(1)}${end}`);
     runtime.events.emit('criticalHit', {
       aggressor: PLAYER_REF,
       weapon: stats?.weapon,
@@ -2512,8 +2533,8 @@ export class ActorCombat implements CombatBridge {
         ? this.#attackData(attacker, current.event)
         : DEFAULT_ATTACK;
     // The physical damage: the weapon's (the equip system's, with skill and perks: Mod Attack
-    // Damage against this target) × the attack's; a bash by the weapon's base damage or the
-    // shield's rating × the Block skill (Mod Bashing Damage); a shot its bow's and arrow's × its
+    // Damage against this target) Ã— the attack's; a bash by the weapon's base damage or the
+    // shield's rating Ã— the Block skill (Mod Bashing Damage); a shot its bow's and arrow's Ã— its
     // draw. Then the perks' Calculate Weapon Damage and, for a power attack, Mod Power Attack
     // Damage (the attack's type: IsAttackType).
     const weapon = hit.shot ? hit.shot.weapon : stats?.weapon;
@@ -2571,39 +2592,19 @@ export class ActorCombat implements CombatBridge {
         context,
       );
     }
-    // A critical hit: the attacker's Critical Chance actor value (percent) as its perks change
-    // it (and the target's against it), the weapon's critical damage (fists: × the setting) as
-    // the perks change it.
-    const chance = criticalHitChance(
-      await perks.apply(
-        EntryPoint.calculateMyCriticalHitChance,
-        attackerRef,
-        (await runtime.actors.value(attackerRef, ActorValue.criticalChance)).current,
-        [weapon, targetRef],
-        context,
-      ),
-      stats?.critMult ?? 1,
-      await perks.apply(EntryPoint.modEnemyCriticalHitChance, targetRef, 1, [weapon, attackerRef]),
-    );
-    const critical =
-      chance > 0 && Math.random() < chance
-        ? (await perks.apply(
-            EntryPoint.calculateMyCriticalHitDamage,
-            attackerRef,
-            stats?.critDamage ?? 0,
-            [weapon, targetRef],
-            context,
-          )) * (stats?.weapon === undefined ? settings.unarmedCritDamageMult : 1)
-        : 0;
-    attacker.lastCritical = critical > 0;
-    // A sneak attack: the attacker sneaks and the target does not detect it (detection:
-    // src/shell/actor-senses.ts; without it, one that does not fight the attacker).
-    const sneaking = attacker.player
-      ? this.#play?.player.sneaking === true
-      : this.#options.movers.motion(attackerRef)?.sneaking === true;
+    // The attacker's own scale weighs its blow, whatever it strikes with (the original's).
+    physical *= attacker.body?.actor.scale ?? 1;
+    // A sneak attack: the player's alone (sneakAttackApplies), sneaking and not detected by the
+    // target (detection: src/shell/actor-senses.ts; without it, one not fighting the player).
+    const sneaking = attacker.player && this.#play?.player.sneaking === true;
     const senses = this.#options.senses?.();
     const aware = senses ? senses.detects(targetRef, attackerRef) : target.target === attackerRef;
-    const sneak = sneaking && !aware && !hit.bash;
+    const sneak = sneakAttackApplies({
+      attackerIsPlayer: attacker.player,
+      sneaking,
+      detected: aware,
+      bash: hit.bash,
+    });
     const equipped =
       stats?.weaponType === WeaponType.crossbow
         ? EquippedItemType.crossbow
@@ -2618,17 +2619,54 @@ export class ActorCombat implements CombatBridge {
           context,
         )
       : 1;
+    // What the target's perks take off the blow (Mod Incoming Damage: Fortify Heavy / Light
+    // Armor while wearing it, Dragonhide, creatures' resistances).
+    const incomingMult = await perks.apply(EntryPoint.modIncomingDamage, targetRef, 1, [
+      attackerRef,
+      weapon,
+    ]);
+    // A critical hit: the attacker's Critical Chance actor value (percent) as its perks change
+    // it (and the target's against it), the weapon's critical damage (fists: the setting Ã— the
+    // damage so far) as the perks change it.
+    const chance = criticalHitChance(
+      await perks.apply(
+        EntryPoint.calculateMyCriticalHitChance,
+        attackerRef,
+        (await runtime.actors.value(attackerRef, ActorValue.criticalChance)).current,
+        [weapon, targetRef],
+        context,
+      ),
+      stats?.critMult ?? 1,
+      await perks.apply(EntryPoint.modEnemyCriticalHitChance, targetRef, 1, [weapon, attackerRef]),
+    );
+    const critical =
+      chance > 0 && Math.random() < chance
+        ? await perks.apply(
+            EntryPoint.calculateMyCriticalHitDamage,
+            attackerRef,
+            stats?.weapon === undefined
+              ? unarmedCriticalDamage(
+                  damageBeforeCritical(physical, sneakMult, incomingMult, settings),
+                  settings,
+                )
+              : stats.critDamage,
+            [weapon, targetRef],
+            context,
+          )
+        : 0;
+    attacker.lastCritical = critical > 0;
     if (attacker.player && targetRef !== PLAYER_REF)
       void this.#playerStrike(runtime, targetRef, stats, critical > 0, sneak ? sneakMult : 0);
-    // The block: the target blocks and faces the blow (fCombatHitConeAngle).
+    // The block: the target blocks and faces the blow (fCombatHitConeAngle). Observed in the
+    // original: a shot is blocked too, by a shield or a weapon, not by bare hands.
     const targetFeet = this.#feet(target) ?? hit.point;
     const attackerFeet = this.#feet(attacker) ?? hit.point;
-    const blocks =
-      target.state.blocking &&
-      !hit.shot &&
-      blockCovers(targetFeet, this.#heading(target), attackerFeet, settings.combatHitConeAngle);
     const targetGear = target.gear;
     const shielded = targetGear?.shield !== undefined;
+    const blocks =
+      target.state.blocking &&
+      (!hit.shot || shielded || targetGear?.right.weapon !== undefined) &&
+      blockCovers(targetFeet, this.#heading(target), attackerFeet, settings.combatHitConeAngle);
     // An arrow at a raised shield may glance off (Mod Shield Deflect Arrow Chance, percent:
     // Deflect Arrows).
     if (
@@ -2658,21 +2696,21 @@ export class ActorCombat implements CombatBridge {
           settings,
         )
       : 0;
-    // The target's armour, as the attacker's perks pierce it (Mod Target Damage Resistance:
-    // Bone Breaker, Skullcrusher), and what the target's perks take off the blow (Mod Incoming
-    // Damage: Fortify Heavy / Light Armor while wearing it, Dragonhide, creatures' resistances).
+    // The target's armour, as the attacker's perks pierce the share it takes off (Mod Target
+    // Damage Resistance: Bone Breaker, Skullcrusher), before its cap.
     const armor = await runtime.equipment.armorRating(targetRef);
-    const pierced = await perks.apply(
-      EntryPoint.modTargetDamageResistance,
-      attackerRef,
+    const reduction = await runtime.equipment.armorReductionScaled(
       armor.rating,
-      [weapon, targetRef],
-      context,
+      armor.pieces,
+      (share) =>
+        perks.apply(
+          EntryPoint.modTargetDamageResistance,
+          attackerRef,
+          share,
+          [weapon, targetRef],
+          context,
+        ),
     );
-    const reduction =
-      pierced === armor.rating
-        ? armor.reduction
-        : await runtime.equipment.armorReduction(pierced, armor.pieces);
     const result = hitDamage(
       {
         physical,
@@ -2680,35 +2718,94 @@ export class ActorCombat implements CombatBridge {
         sneakMult,
         armorReduction: reduction,
         blocked,
-        incomingMult: await perks.apply(EntryPoint.modIncomingDamage, targetRef, 1, [
-          attackerRef,
-          weapon,
-        ]),
+        incomingMult,
+        attackDamageMult: (await runtime.actors.value(attackerRef, ActorValue.attackDamageMult))
+          .current,
+        ...(stats !== undefined &&
+          stats.resist >= 0 && {
+            weaponResistance: (await runtime.actors.value(targetRef, stats.resist)).current,
+          }),
         difficulty: this.#difficulty(),
         attackerIsPlayer: attacker.player,
         targetIsPlayer: target.player,
       },
       settings,
     );
+    // The hit's stagger (hitStagger, a bash's bashStagger), less what a block holds off whichever
+    // way the blocker faces (blockedStagger). The target's Mass actor value is its race's base
+    // mass, as scripts left it; the attacker's perks (Mod Target Stagger) and the target's (Mod
+    // Incoming Stagger) scale what comes out.
+    const targetMass = (await runtime.actors.value(targetRef, ActorValue.mass)).current;
+    const staggerPerks =
+      (await perks.apply(EntryPoint.modTargetStagger, attackerRef, 1, [targetRef])) *
+      (await perks.apply(EntryPoint.modIncomingStagger, targetRef, 1, [attackerRef]));
+    const ranged =
+      stats?.weaponType === WeaponType.bow || stats?.weaponType === WeaponType.crossbow;
+    const bashedWith =
+      gear?.shield !== undefined && (stats?.weapon === undefined || left)
+        ? 'shield'
+        : stats?.weapon === undefined
+          ? 'none'
+          : stats.weaponType >= WeaponType.twoHandSword && stats.weaponType !== WeaponType.staff
+            ? 'twoHanded'
+            : 'oneHanded';
+    const unblockedStagger = hit.bash
+      ? bashStagger(
+          {
+            gear: bashedWith,
+            blockSkill,
+            attackStagger: data.stagger,
+            targetMass,
+            running: this.#options.movers.motion(targetRef)?.running === true,
+            recoiling: target.state.recoiling,
+            blocking: target.state.blocking,
+          },
+          settings,
+        )
+      : hitStagger(
+          {
+            weaponStagger: stats?.weapon === undefined ? 1 : stats.stagger,
+            attackStagger: hit.shot ? 0 : data.stagger,
+            targetMass,
+            targetIsPlayer: target.player,
+            // A shot of a bow or crossbow: the attacker's Bow Stagger Bonus.
+            ...(hit.shot &&
+              ranged && {
+                bowStaggerBonus: (
+                  await runtime.actors.value(attackerRef, ActorValue.bowStaggerBonus)
+                ).current,
+              }),
+          },
+          settings,
+        );
+    const staggerValue = target.state.blocking
+      ? blockedStagger(
+          {
+            hit: unblockedStagger,
+            rating: shielded
+              ? targetGear.shieldRating
+              : weaponStaggerRating(targetGear?.right.weaponType ?? 0, settings),
+            blockSkill: targetBlockSkill,
+            targetMass,
+          },
+          settings,
+        )
+      : unblockedStagger;
+    const stagger = staggerStrength(staggerValue, staggerPerks);
     // Blocked: a plain attack recoils its attacker, the block takes the hit (ActionBlockHit),
-    // a power attack staggers the blocker; the blocker's stamina pays for it.
+    // the stagger left goes on; the blocker's stamina pays for it (the share of the hit before
+    // armour, and the stagger).
     if (blocks) {
       void this.#act(target, 'ActionBlockHit');
       this.#bark(targetRef, 'Block', attackerRef);
-      const recoil = recoilOf(
-        hit,
-        'block',
-        shielded ? targetGear.shieldRating : undefined,
-        settings,
-      );
+      const recoil = hit.shot ? 'none' : recoilOf(hit, 'block');
       if (recoil !== 'none') {
         attacker.state.recoiling = true;
         void this.#act(attacker, recoil === 'large' ? 'ActionRecoilLarge' : 'ActionRecoil');
       }
-      const stagger = blockStagger(hit.power, result.blockedDamage, settings);
       if (stagger > 0) this.#stagger(target, stagger, attackerFeet);
       void runtime.progression
-        .blockCost(result.blockedDamage)
+        .blockCost(result.beforeArmor * blocked, staggerValue)
         .then((cost) => runtime.progression.spend(targetRef, ActorValue.stamina, cost));
       // The Block skill: by the damage blocked (a shield's twice: UESP "Block").
       void runtime.progression.useSkill(
@@ -2717,52 +2814,6 @@ export class ActorCombat implements CombatBridge {
         result.blockedDamage * (shielded ? 2 : 1),
       );
     } else {
-      // The target's Mass actor value (its race's base mass, as scripts left it).
-      const targetMass = (await runtime.actors.value(targetRef, ActorValue.mass)).current;
-      // The attacker's perks (Mod Target Stagger) and the target's (Mod Incoming Stagger).
-      const perkMult =
-        (await perks.apply(EntryPoint.modTargetStagger, attackerRef, 1, [targetRef])) *
-        (await perks.apply(EntryPoint.modIncomingStagger, targetRef, 1, [attackerRef]));
-      const ranged =
-        stats?.weaponType === WeaponType.bow || stats?.weaponType === WeaponType.crossbow;
-      const bashedWith =
-        gear?.shield !== undefined && (stats?.weapon === undefined || left)
-          ? 'shield'
-          : stats?.weapon === undefined
-            ? 'none'
-            : stats.weaponType >= WeaponType.twoHandSword && stats.weaponType !== WeaponType.staff
-              ? 'twoHanded'
-              : 'oneHanded';
-      const stagger = hit.bash
-        ? bashStagger(
-            {
-              gear: bashedWith,
-              blockSkill,
-              attackStagger: data.stagger * perkMult,
-              targetMass,
-              running: this.#options.movers.motion(targetRef)?.running === true,
-              recoiling: target.state.recoiling,
-              blocking: target.state.blocking,
-            },
-            settings,
-          )
-        : staggerMagnitude(
-            {
-              weaponStagger: stats?.weapon === undefined ? 1 : stats.stagger,
-              attackStagger: hit.shot ? 0 : data.stagger,
-              perkMult,
-              targetMass,
-              targetIsPlayer: target.player,
-              // A shot of a bow or crossbow: the attacker's Bow Stagger Bonus.
-              ...(hit.shot &&
-                ranged && {
-                  bowStaggerBonus: (
-                    await runtime.actors.value(attackerRef, ActorValue.bowStaggerBonus)
-                  ).current,
-                }),
-            },
-            settings,
-          );
       // A plain melee hit's stagger is taken by iStaggerAttackChance (staggerTaken).
       const taken = staggerTaken(
         {
@@ -2926,7 +2977,17 @@ export class ActorCombat implements CombatBridge {
       ? result.total * this.#settings.killMoveDamageMult
       : result.total;
     await runtime.actors.damage(targetRef, ActorValue.health, dealt, attackerRef);
-    if (await runtime.actors.isDead(targetRef)) {
+    const died = await runtime.actors.isDead(targetRef);
+    // A critical hit's spell (CRDT), unless it is only a killing blow's.
+    if (
+      critical > 0 &&
+      stats?.critEffect !== undefined &&
+      criticalSpellApplies(stats.critEffectOnDeath, died)
+    ) {
+      const item = await runtime.magic.item(stats.critEffect);
+      if (item) await runtime.magic.apply(item, targetRef, { caster: attackerRef, source: weapon });
+    }
+    if (died) {
       // One dying in its paired clip falls as the clip has it.
       if (target.state.paired === undefined) this.#deathPush(target, dealt, hit);
       if (weapon !== undefined && !hit.bash) await this.#siphonSoul(attackerRef, targetRef, weapon);
@@ -3041,7 +3102,7 @@ export class ActorCombat implements CombatBridge {
 
   /**
    * The blow that killed pushes the ragdoll by its damage (fDeathForce{Ranged}*): observed in the
-   * original, the force over fDeathForceMassBase + fDeathForceMassMult × the victim's
+   * original, the force over fDeathForceMassBase + fDeathForceMassMult Ã— the victim's
    * Mass is the speed its bodies gain along the blow (src/shell/actor-bodies.ts, push).
    */
   #deathPush(
@@ -3104,6 +3165,8 @@ export class ActorCombat implements CombatBridge {
   /** Staggers a fighter by a magnitude from where the blow came (ActionStaggerStart). */
   #stagger(fighter: Fighter, magnitude: number, from: Vec3): void {
     const feet = this.#feet(fighter);
+    // One staggered already takes no second stagger (observed in the original).
+    if (fighter.state.staggered) return;
     if (!feet || fighter.state.paired !== undefined || bleedingOut(fighter.state)) return;
     this.#setVariable(fighter, 'staggerMagnitude', magnitude);
     this.#setVariable(
@@ -3114,6 +3177,7 @@ export class ActorCombat implements CombatBridge {
     void this.#act(fighter, 'ActionStaggerStart').then((event) => {
       if (event !== undefined && event !== '00NextClip') {
         fighter.state.staggered = true;
+        fighter.state.staggerLeft = this.#settings.staggerMaxDuration;
         fighter.state.current = undefined;
         fighter.state.attack = AttackState.none;
       }
@@ -3586,7 +3650,7 @@ export class ActorCombat implements CombatBridge {
     await runtime.actors.endDeferredKill(fighter.reference);
   }
 
-  /** A killmove's hit frame: its victim takes the blow (#hit: × fCombatKillMoveDamageMult). */
+  /** A killmove's hit frame: its victim takes the blow (#hit: Ã— fCombatKillMoveDamageMult). */
   async #killMoveStrike(leader: Fighter): Promise<void> {
     const victim = this.#victimOf(leader);
     const from = this.#feet(leader);
@@ -4945,26 +5009,38 @@ export class ActorCombat implements CombatBridge {
    * spells' 0.05 .. 1; KnockAreaEffect's), weighed against its mass as a hit's stagger is
    * (stagger.ts), from its caster's side (`from` where the caster is no fighter).
    */
-  staggerEffect(
-    reference: number,
-    magnitude: number,
-    caster: number | undefined,
-    from?: Vec3,
-  ): void {
+  staggerEffect(reference: number, magnitude: number): void {
     const fighter = this.#fighters.get(reference);
     if (!fighter) return;
+    void this.#staggerEffect(reference, fighter, magnitude).catch((error: unknown) => {
+      console.warn(`stagger effect on ${reference.toString(16)}: ${String(error)}`);
+    });
+  }
+
+  /**
+   * The Stagger effect weighed as a hit is, by the target's Mass actor value (the player's Ã—
+   * fStaggerPlayerMassMult), with the target's Mod Incoming Stagger; observed in the original,
+   * it comes from no direction (staggerDirection 0, whoever cast it).
+   */
+  async #staggerEffect(reference: number, fighter: Fighter, magnitude: number): Promise<void> {
+    const runtime = this.#options.session.scriptsReady;
+    const targetMass = runtime
+      ? (await runtime.actors.value(reference, ActorValue.mass)).current
+      : (fighter.gear?.race?.mass ?? 1);
+    const perkMult = runtime
+      ? await runtime.perks.apply(EntryPoint.modIncomingStagger, reference, 1, [undefined])
+      : 1;
     const weighed = staggerMagnitude(
       {
         weaponStagger: magnitude,
         attackStagger: 1,
-        perkMult: 1,
-        targetMass: fighter.gear?.race?.mass ?? 1,
+        perkMult,
+        targetMass,
         targetIsPlayer: fighter.player,
       },
       this.#settings,
     );
-    const source = caster === undefined ? undefined : this.#fighters.get(caster);
-    this.stagger(reference, weighed, (source && this.#feet(source)) ?? from);
+    this.stagger(reference, weighed, undefined);
   }
 }
 

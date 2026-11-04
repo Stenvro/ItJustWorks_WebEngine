@@ -44,5 +44,6 @@ describe('stamina', () => {
     expect(bashCost(false)).toBe(35);
     expect(bashCost(true)).toBe(55);
     expect(blockCost(40)).toBe(10);
+    expect(blockCost(40, 0.5)).toBe(12.5);
   });
 });

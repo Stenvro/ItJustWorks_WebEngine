@@ -79,16 +79,26 @@ describe('combat AI: entering combat', () => {
   });
 
   it('turns on an attacker at once, on a friend or ally after the blows it lets pass', () => {
-    expect(turnsOnAttacker(FightReaction.neutral, 1, false, settings)).toBe(true);
-    expect(turnsOnAttacker(FightReaction.enemy, 1, true, settings)).toBe(true);
-    // A friend: iFriendHitCombatAllowed 4 in combat (the fifth blow), none out of it.
-    expect(turnsOnAttacker(FightReaction.friend, 4, true, settings)).toBe(false);
-    expect(turnsOnAttacker(FightReaction.friend, 5, true, settings)).toBe(true);
-    expect(turnsOnAttacker(FightReaction.friend, 1, false, settings)).toBe(true);
+    const byPlayer = (reaction: number, hits: number, inCombat: boolean): boolean =>
+      turnsOnAttacker(reaction, hits, inCombat, true, settings);
+    expect(byPlayer(FightReaction.neutral, 1, false)).toBe(true);
+    expect(byPlayer(FightReaction.enemy, 1, true)).toBe(true);
+    // A friend: iFriendHitCombatAllowed in combat (the engine's 3: the fourth blow), none out.
+    expect(settings.friendHitCombatAllowed).toBe(3);
+    expect(byPlayer(FightReaction.friend, 3, true)).toBe(false);
+    expect(byPlayer(FightReaction.friend, 4, true)).toBe(true);
+    expect(byPlayer(FightReaction.friend, 1, false)).toBe(true);
+    // Skyrim.esm's 4: the fifth blow.
+    const esm = { ...settings, friendHitCombatAllowed: 4 };
+    expect(turnsOnAttacker(FightReaction.friend, 4, true, true, esm)).toBe(false);
+    expect(turnsOnAttacker(FightReaction.friend, 5, true, true, esm)).toBe(true);
     // An ally: any number in combat (iAllyHitCombatAllowed 1000), three out of it.
-    expect(turnsOnAttacker(FightReaction.ally, 50, true, settings)).toBe(false);
-    expect(turnsOnAttacker(FightReaction.ally, 3, false, settings)).toBe(false);
-    expect(turnsOnAttacker(FightReaction.ally, 4, false, settings)).toBe(true);
+    expect(byPlayer(FightReaction.ally, 50, true)).toBe(false);
+    expect(byPlayer(FightReaction.ally, 3, false)).toBe(false);
+    expect(byPlayer(FightReaction.ally, 4, false)).toBe(true);
+    // The allowances are the player's: another actor's blow counts none of them.
+    expect(turnsOnAttacker(FightReaction.friend, 1, true, false, settings)).toBe(true);
+    expect(turnsOnAttacker(FightReaction.ally, 1, true, false, settings)).toBe(true);
   });
 
   it('warns within its aggro radius before it attacks', () => {

@@ -16,7 +16,7 @@ import { Fields } from '../formats/esm/fields.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { ActorValue } from '../world/actor-values.ts';
-import { AmmoFlag, WeaponType } from '../world/item-records.ts';
+import { AmmoFlag, WeaponFlag2, WeaponType } from '../world/item-records.ts';
 import { Assistance, fightingAggression } from './combat-ai.ts';
 import { parseCombatStyle, type CombatStyle } from './combat-style-records.ts';
 import type { EquipOption } from './combat-tactics.ts';
@@ -159,6 +159,8 @@ export async function weaponOptions(
     }
     const weapon = item.weapon;
     if (item.type !== 'WEAP' || !weapon) continue;
+    // Not for a fight (WEAP Flags2): it scores nothing in the original.
+    if ((weapon.flags2 & WeaponFlag2.notUsedInNormalCombat) !== 0) continue;
     if (weapon.weaponType === WeaponType.bow || weapon.weaponType === WeaponType.crossbow) {
       ranged.push({ id: form, crossbow: weapon.weaponType === WeaponType.crossbow });
       continue;
@@ -168,6 +170,7 @@ export async function weaponOptions(
       kind: 'melee',
       id: form,
       damage: await equipment.weaponDamage(actor, form),
+      bound: (weapon.flags2 & WeaponFlag2.boundWeapon) !== 0,
       range: combatDistance * Math.max(0.1, weapon.reach),
       equipped: false,
       weaponType: weapon.weaponType,

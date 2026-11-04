@@ -91,6 +91,10 @@ export interface CombatAiSettings {
   readonly advanceOuterRadiusMax: number;
   /** fCombatBlockChanceWeaponMult: blocking with a weapon, against a shield. */
   readonly blockChanceWeaponMult: number;
+  /** fDamageUnarmedPenalty: fists' damage counts for this as weapons are weighed (not on a hit). */
+  readonly damageUnarmedPenalty: number;
+  /** fCombatBoundWeaponDPSBonus: a bound weapon counts this more as weapons are weighed. */
+  readonly boundWeaponBonus: number;
   /** fCombatDialogueTauntMin / MaxElapsedTime: between taunts (seconds). */
   readonly tauntMin: number;
   readonly tauntMax: number;
@@ -296,7 +300,7 @@ const SETTINGS: readonly (readonly [keyof CombatAiSettings, string | undefined, 
   ['threatRatioUpdateTime', 'fCombatThreatRatioUpdateTime', 5],
   ['fleeDistanceExterior', 'fFleeDistanceExterior', 5000],
   ['fleeDistanceInterior', 'fFleeDistanceInterior', 3000],
-  ['friendHitCombatAllowed', 'iFriendHitCombatAllowed', 4],
+  ['friendHitCombatAllowed', 'iFriendHitCombatAllowed', 3],
   ['friendHitNonCombatAllowed', 'iFriendHitNonCombatAllowed', 0],
   ['allyHitCombatAllowed', 'iAllyHitCombatAllowed', 1000],
   ['allyHitNonCombatAllowed', 'iAllyHitNonCombatAllowed', 3],
@@ -326,6 +330,8 @@ const SETTINGS: readonly (readonly [keyof CombatAiSettings, string | undefined, 
   ['yieldTime', 'fCombatYieldTime', 10],
   ['yieldRetryTime', 'fCombatYieldRetryTime', 600],
   ['acceptYieldTime', undefined, 3],
+  ['damageUnarmedPenalty', 'fDamageUnarmedPenalty', 0.2],
+  ['boundWeaponBonus', 'fCombatBoundWeaponDPSBonus', 100000],
   ['minEquipTimeWeapon', 'fCombatInventoryMinEquipTimeWeapon', 5],
   ['minEquipTimeMagic', 'fCombatInventoryMinEquipTimeMagic', 3],
   ['minEquipTimeShout', 'fCombatInventoryMinEquipTimeShout', 3],
@@ -508,17 +514,21 @@ export function assists(assistance: number, reaction: number): boolean {
 
 /**
  * A blow from one it does not fight: whether it turns on the attacker. An enemy or a neutral
- * it fights at once (another actor's blow on one neutral to it: only if it would attack that
- * actor on sight, ActorCombatAi #attacked); a friend once it has taken more blows from it than iFriendHitCombatAllowed
- * in combat (iFriendHitNonCombatAllowed out of it: none), an ally more than
- * iAllyHitCombatAllowed (1000 or more: never) or iAllyHitNonCombatAllowed.
+ * it fights at once; a friend once it has taken more of the player's blows than
+ * iFriendHitCombatAllowed in combat (iFriendHitNonCombatAllowed out of it: none), an ally more
+ * than iAllyHitCombatAllowed (1000 or more: never) or iAllyHitNonCombatAllowed. Observed in the
+ * original, these allowances are the player's alone: another actor's blow is not counted, and
+ * it turns its victim only if the victim would attack that actor on sight (ActorCombatAi
+ * #attacked, which asks that first), whatever the reaction.
  */
 export function turnsOnAttacker(
   reaction: number,
   hits: number,
   inCombat: boolean,
+  attackerIsPlayer: boolean,
   settings: CombatAiSettings,
 ): boolean {
+  if (!attackerIsPlayer) return true;
   if (reaction !== FightReaction.ally && reaction !== FightReaction.friend) return true;
   const allowed =
     reaction === FightReaction.friend
