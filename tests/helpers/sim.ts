@@ -10,6 +10,7 @@
 //   expect(sim.scriptEvents({ event: 'OnActivate', target: lever })).toHaveLength(1);
 //   sim.close();
 
+import { afterAll } from 'vitest';
 import { findPath } from '../../src/ai/pathfinding.ts';
 import { WeaponState } from '../../src/gameplay/combat/combat-state.ts';
 import { Layer } from '../../src/physics/collision-layers.ts';
@@ -197,6 +198,15 @@ export async function loadSim(
   return sim;
 }
 
+/**
+ * The sims not closed yet. A test file's are closed as it ends: one left open would have its
+ * file handles closed by the garbage collector, an error in whichever file runs by then.
+ */
+const openSims = new Set<Sim>();
+afterAll(async () => {
+  for (const sim of [...openSims]) await sim.close();
+});
+
 export class Sim {
   readonly world: SimWorld;
   readonly db: RecordDatabase;
@@ -209,6 +219,7 @@ export class Sim {
   #menusSeen = 0;
 
   constructor(world: SimWorld, vfs: Vfs, db: RecordDatabase) {
+    openSims.add(this);
     this.world = world;
     this.#vfs = vfs;
     this.db = db;
@@ -1259,6 +1270,7 @@ export class Sim {
 
   /** Ends the simulation (the page's clock and dice come back) and closes the game data. */
   async close(): Promise<void> {
+    if (!openSims.delete(this)) return;
     this.world.dispose();
     await this.db.close();
     await this.#vfs.close();
