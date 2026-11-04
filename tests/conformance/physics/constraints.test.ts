@@ -21,6 +21,8 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { parseNif } from '../../../src/formats/nif/nif.ts';
 import {
   buildCollision,
+  type CollisionBody,
+  type CollisionConstraint,
   HAVOK_SCALE,
   type CollisionData,
 } from '../../../src/physics/collision-data.ts';
@@ -98,6 +100,93 @@ describe.skipIf(!hasGamedata())('the chains (the tripwire trap)', () => {
       expect(link.data.type).toBe('ball-and-socket');
       expect(link.maxError).toBeCloseTo(0.1, 6);
     }
+  });
+});
+
+describe('what the world does to joints', () => {
+  const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  const body = (node: string, x: number, dynamic: boolean): CollisionBody => ({
+    node,
+    transform: new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, 0, 1]),
+    motion: dynamic ? 'dynamic' : 'fixed',
+    phantom: false,
+    layer: Layer.clutter,
+    mass: dynamic ? 1 : 0,
+    inertia: [0.01, 0.01, 0.01],
+    centerOfMass: [0, 0, 0],
+    friction: 0.5,
+    restitution: 0,
+    linearDamping: 0,
+    angularDamping: 0,
+    gravityFactor: 1,
+    maxLinearVelocity: 0,
+    maxAngularVelocity: 0,
+    quality: 0,
+    solverDeactivation: 1,
+    shapes: [{ type: 'sphere', layer: Layer.clutter, material: 0, center: [0, 0, 0], radius: 5 }],
+  });
+  const pair = (data: CollisionConstraint['data']): CollisionData => ({
+    bodies: [body('A', 0, false), body('B', 0, true)],
+    constraints: [{ bodyA: 0, bodyB: 1, data }],
+    skipped: [],
+  });
+  const frame = {
+    pivot: [0, 0, 0] as const,
+    axes: [
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1],
+    ],
+  };
+  const kinds: readonly [string, CollisionConstraint['data']][] = [
+    ['a ball and socket', { type: 'ball-and-socket', pivotA: [0, 0, 0], pivotB: [0, 0, 0] }],
+    ['a hinge', { type: 'hinge', a: frame, b: frame } as unknown as CollisionConstraint['data']],
+    ['a stiff spring', { type: 'stiff-spring', pivotA: [0, 0, 0], pivotB: [0, 0, 0], length: 0 }],
+  ];
+
+  beforeAll(async () => {
+    await initPhysics();
+  });
+
+  it.each(kinds)(
+    'brings %s pulled apart back by Havok’s violation a step, not at once',
+    (_, data) => {
+      const physics = new PhysicsWorld(new CollisionMatrix([]), 0);
+      const placed = physics.addObject(pair(data), IDENTITY, { reference: 1, kind: 'object' });
+      const moved = placed.bodies[1]?.body;
+      if (!moved) throw new Error('no body');
+      physics.settle(placed);
+      physics.step(1 / 60);
+      // Pulled 350 units (5 Havok units) off its pivot.
+      moved.setTranslation({ x: 5, y: 0, z: 0 }, true);
+      physics.step(1 / 60);
+      // It comes back by little in a step; unclipped, the solver took all of it at once.
+      expect(moved.translation().x).toBeGreaterThan(4);
+      for (let i = 0; i < 600; i++) physics.step(1 / 60);
+      expect(moved.translation().x).toBeLessThan(0.5);
+      physics.free();
+    },
+  );
+
+  it('holds a ragdoll stiff in the pose it was taken in, and lets it go (the paralysed)', () => {
+    const physics = new PhysicsWorld(new CollisionMatrix([]), GRAVITY);
+    const placed = physics.addObject(
+      pair({ type: 'ball-and-socket', pivotA: [0, 0, 0], pivotB: [-20, 0, 0] }),
+      IDENTITY,
+      { reference: 1, kind: 'object' },
+    );
+    const moved = placed.bodies[1]?.body;
+    if (!moved) throw new Error('no body');
+    physics.settle(placed);
+    moved.setTranslation({ x: 20 / HAVOK_SCALE, y: 0, z: 0 }, true);
+    physics.stiffen(placed, true);
+    for (let i = 0; i < 60; i++) physics.step(1 / 60);
+    // Held out level from what it hangs on, as it was.
+    expect(moved.translation().z * HAVOK_SCALE).toBeGreaterThan(-3);
+    physics.stiffen(placed, false);
+    for (let i = 0; i < 60; i++) physics.step(1 / 60);
+    expect(moved.translation().z * HAVOK_SCALE).toBeLessThan(-10);
+    physics.free();
   });
 });
 

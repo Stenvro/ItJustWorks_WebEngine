@@ -13,7 +13,11 @@
 //   SpeedMin 500.
 
 import { describe, expect, it } from 'vitest';
+import RAPIER from '@dimforge/rapier3d-compat';
+import { CollisionMatrix } from '../../../src/physics/collision-layers.ts';
+import { type HardContact, initPhysics, PhysicsWorld } from '../../../src/physics/physics-world.ts';
 import {
+  contactDamage,
   damagingContact,
   FIXED_BODY_MASS,
   PHYSICS_DAMAGE_DEFAULTS,
@@ -50,11 +54,62 @@ describe('physics damage (the engine’s formula)', () => {
     expect(damagingContact(landing, ESM)).toBe(false);
   });
 
-  it.todo(
-    'queues the damage on a destructible object (its destruction data takes it as a hit)  ' +
-      '[original] (sim: a contact faster than the minimum)',
-  );
-  it.todo('damages neither side when one of them is an actor  [original]');
+  it('damages both objects of a contact, each by the other’s mass  [original]', () => {
+    const rock = { reference: 1, actor: false, mass: 120 };
+    const urn = { reference: 2, actor: false, mass: 25 };
+    const taken = new Map(contactDamage(rock, urn, 600, ESM));
+    expect(taken.get(1)).toBeCloseTo(1.06, 9);
+    expect(taken.get(2)).toBeCloseTo(10.6, 9);
+    // The ground is no object, and counts as a fixed body's mass.
+    const ground = { reference: undefined, actor: false, mass: 0 };
+    expect(contactDamage(urn, ground, 600, ESM)).toEqual([[2, expect.closeTo(10.6, 9)]]);
+  });
+  it('damages neither side when one of them is an actor  [original]', () => {
+    const urn = { reference: 2, actor: false, mass: 25 };
+    expect(contactDamage(urn, { reference: 3, actor: true, mass: 80 }, 600, ESM)).toEqual([]);
+  });
+  it('tells a contact from the minimum on, not below it (the world’s listener)', async () => {
+    await initPhysics();
+    const told = (speed: number): HardContact[] => {
+      const matrix = new CollisionMatrix([
+        { formId: 1, editorId: 'L_STATIC', index: 1, name: '', flags: 0, collidesWith: [2] },
+        { formId: 2, editorId: 'L_CLUTTER', index: 4, name: '', flags: 0, collidesWith: [1] },
+      ]);
+      const physics = new PhysicsWorld(matrix, 0);
+      const contacts: HardContact[] = [];
+      physics.onHardContact = (contact) => contacts.push(contact);
+      physics.hardContactSpeed = 100;
+      const wall = physics.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+      physics.register(
+        physics.world.createCollider(RAPIER.ColliderDesc.cuboid(20, 20, 1), wall),
+        1,
+        {
+          reference: 0,
+          kind: 'landscape',
+        },
+      );
+      const stone = physics.world.createRigidBody(
+        RAPIER.RigidBodyDesc.dynamic()
+          .setTranslation(0, 0, 3 + speed / 60)
+          .setLinvel(0, 0, -speed)
+          .setCcdEnabled(true),
+      );
+      const collider = physics.world.createCollider(
+        RAPIER.ColliderDesc.ball(1)
+          .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
+          .setContactForceEventThreshold(0),
+        stone,
+      );
+      physics.register(collider, 4, { reference: 7, kind: 'object' });
+      for (let i = 0; i < 6; i++) physics.step(1 / 60);
+      physics.free();
+      return contacts;
+    };
+    const fast = told(150);
+    expect(fast.length).toBeGreaterThan(0);
+    expect(fast[0]?.speed).toBeGreaterThanOrEqual(100);
+    expect(told(50)).toEqual([]);
+  });
   it.todo(
     'hurts actors under falling rock traps through the traps’ scripts, not by physics damage  ' +
       '[data: TrapRockFall; original] (sim)',

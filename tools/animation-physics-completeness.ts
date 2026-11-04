@@ -88,6 +88,7 @@ const INERT_ACTIONS: ReadonlyMap<string, string> = new Map([
  * value censuses "Collision responses", "Time factors", "Deactivator types" show it), by field.
  */
 const INERT_FIELDS: ReadonlyMap<string, string> = new Map([
+  ['bodyFlags', 'value 1 on one clutter bottle (dwarvenoil.nif), 0 on every other body'],
   ['collisionResponse', '1 (simple contact) in every body: contacts are solved, as ours are'],
   ['timeFactor', '1 in every body: each steps with the world'],
   [

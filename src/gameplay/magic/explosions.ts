@@ -48,6 +48,8 @@ const EXPLOSION_SETTING_TABLE = {
   impulseMultTrap: ['fGameplayImpulseMultTrap', 0.15],
   impulseMultDebrisLarge: ['fGameplayImpulseMultDebrisLarge', 1],
   wardAngle: ['fWardAngleForExplosions', 90],
+  waterRadiusRatio: ['fExplosionWaterRadiusRatio', 0.75],
+  splashRadius: ['fExplosionSplashRadius', 1],
 } as const satisfies Readonly<Record<string, readonly [string, number]>>;
 
 export type ExplosionSettings = {
@@ -63,6 +65,26 @@ export const EXPLOSION_SETTING_NAMES = Object.fromEntries(
 ) as Readonly<Record<keyof ExplosionSettings, string>>;
 
 /** The share of an explosion an actor `distance` from it takes: 1 − (distance / radius)². */
+/** The model and the sound of an explosion under water, at the surface above it. */
+export const EXPLOSION_SPLASH_MODEL = 'Effects\\ExplosionSplash.NIF';
+export const EXPLOSION_SPLASH_SOUND = 'CWaterExplosionSplash';
+
+/**
+ * The scale of the splash an explosion under water raises at the surface, observed in the original:
+ * it is under water once fExplosionWaterRadiusRatio of its radius above its centre is still below
+ * the surface; the splash is its radius over fExplosionSplashRadius. Undefined: no splash (dry,
+ * or breaking the surface).
+ */
+export function explosionSplashScale(
+  z: number,
+  radius: number,
+  surface: number | undefined,
+  settings: Pick<ExplosionSettings, 'waterRadiusRatio' | 'splashRadius'> = EXPLOSION_DEFAULTS,
+): number | undefined {
+  if (surface === undefined || radius * settings.waterRadiusRatio + z >= surface) return undefined;
+  return radius / settings.splashRadius;
+}
+
 export function explosionShare(distance: number, radius: number): number {
   if (radius <= 0 || distance > radius) return 0;
   const part = Math.max(0, distance) / radius;

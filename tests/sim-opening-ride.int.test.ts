@@ -232,10 +232,8 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
         true,
       );
       // It comes down at the basket: within its bounds, below its rim's height plus the head's
-      // radius. TODO(M13): ours comes down at 45 degrees and reaches the rim's height while still
-      // over the near wall (the crate, scaled 0.66, leaves the head 1.3 units of play across),
-      // strikes both rims and rolls off along the far one; where the original's flight starts
-      // (the chop's moment of the cut) is not known, so where it lies later is not checked.
+      // radius, and lies in it. TODO(M13): where the original's flight starts (the chop's moment
+      // of the cut) is not known.
       const basket = await sim.position(HEAD_BASKET);
       let nearest = Infinity;
       for (let i = 0; i < 10; i++) {
@@ -245,6 +243,13 @@ describe.skipIf(!hasGamedata())('MQ101 from a new game (simulation)', () => {
           nearest = Math.min(nearest, Math.hypot(head[0] - basket[0], head[1] - basket[1]));
       }
       expect(nearest).toBeLessThan(BASKET_REACH);
+      await sim.step(3);
+      const lying = stage.dismemberment.headAt(prisoner);
+      expect(
+        Math.hypot((lying?.[0] ?? 0) - (basket?.[0] ?? 0), (lying?.[1] ?? 0) - (basket?.[1] ?? 0)),
+        'the head lies in the basket',
+      ).toBeLessThan(15);
+      expect(Math.abs((lying?.[2] ?? 0) - (basket?.[2] ?? 0))).toBeLessThan(20);
       // The decapitation equips nothing but its armor, and his hands hold what they held.
       const equipped = sim
         .records()

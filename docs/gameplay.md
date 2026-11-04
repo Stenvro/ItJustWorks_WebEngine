@@ -403,6 +403,16 @@ Observed in the original (`src/gameplay/breath.ts`; the player's in `src/shell/t
   Leave Water Breath line (dialogue subtype LWBS, 102). TODO(M13): the drowning sound and that
   line are not played yet.
 
+### What slows a run
+
+Observed in the original (`src/gameplay/move-weight.ts`): the weight of what an actor has equipped,
+held to `fMoveWeightMax` (150), as a share of `fMoveWeightMin` to `fMoveWeightMax`, takes that share
+× `fMoveEncumEffect` (0.4) off its run speeds with a weapon drawn, × `fMoveEncumEffectNoWeapon`
+(0.3) without; a run never falls below the walk. Over-encumbered or holding something heavy, the
+run speeds are the walk's. All speeds then go by the Speed Mult (a percentage: 0 counts as 100, a
+negative as its size) and the actor's scale. The player's speeds do; TODO(M13): NPCs' locomotion,
+and the player's scale.
+
 ### Physics damage
 
 Observed in the original (`src/gameplay/physics-damage.ts`): the world's collision listener

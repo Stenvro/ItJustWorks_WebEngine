@@ -18,21 +18,21 @@ settings reader or named in the code. A field with one value in every mesh that 
 the physics counts as done with that reason. The mechanics are kept by hand below, against
 docs/physics.md. The count after an item is how many blocks (records) use it.
 
-## Count (2026-11-03, round 7)
+## Count (2026-11-04, round 8)
 
 | Part                          | Items | Done | Open |
 | ----------------------------- | ----: | ---: | ---: |
 | Collision blocks (NIF)        |    26 |   26 |    0 |
-| Collision fields (NIF)        |   179 |  178 |    1 |
+| Collision fields (NIF)        |   179 |  179 |    0 |
 | Motion systems, qualities     |     8 |    8 |    0 |
 | Responses, time, deactivators |     3 |    3 |    0 |
 | Body layers, COLL layers      |    24 |   24 |    0 |
 | Projectiles (PROJ)            |    24 |   23 |    1 |
 | Explosions (EXPL)             |    16 |   16 |    0 |
 | Material types, impact data   |    17 |   17 |    0 |
-| Game settings (GMST)          |    45 |   41 |    4 |
-| Mechanics (by hand)           |    28 |   20 |    8 |
-| Total                         |   370 |  356 |   14 |
+| Game settings (GMST)          |    45 |   45 |    0 |
+| Mechanics (by hand)           |    28 |   24 |    4 |
+| Total                         |   370 |  365 |    5 |
 
 Round 1 wrote the sweep and this list, and fixed deactivation: Havok deactivates a simulation
 island as a whole, ours put a body to sleep on its own while something still moved on it (a
@@ -90,6 +90,23 @@ a static's or a static collection's bodies are made fixed as it is placed (built
 deactivation at its end (ours settles over the first 4 s of play); the objects placed into what
 they lie on and the chains' damping stay open.
 
+Round 8 (356 to 365), from the maintainer's playtest of the opening. Measured in the sim with the
+real keys: the keep's leaves swing in small steps and end where their sequences end; a door
+shutting on the player pushes them out to one side and holds them there, from both sides; a door
+opened and shut before they reach it holds them too. The jump on the keep's stairs (standing, up
+and down) lands grounded, at rest, its graph out of its jump, at the height it left from; the
+gap of up to 13 units under the shape's middle on a tread's edge is the lower cone's, the same
+before a jump as after (`sim-helgen-keep-bodies`). Neither walking through a door nor floating
+was reproduced. The executed prisoner's head comes down at 45 degrees and now lies in the basket,
+3.5 units from its middle (`sim-opening-ride`). Ralof and Hadvar do not fall on their ways to the
+keep (KnockAreaEffect staggers; `sim-opening-ride`). Built: the explosion's splash on water, the
+jump out of the water, what is worn slowing the run (fMoveWeightMax was listed here as a push
+limit; observed in the original it is the top of the worn weight's range), the error clipped on
+hinges, balls and sockets and stiff springs, projectiles telling the triggers they fly through,
+the velocity kept leaving a moving platform, the paralysed's stiff fall, physics damage to
+destructibles (hard contacts from the world's listener), the trap's material. Still open, and why:
+below.
+
 ## Meshes
 
 - [x] Block types (26 of 26): bhkCollisionObject 13689, bhkRigidBody 11334,
@@ -125,7 +142,9 @@ they lie on and the chains' damping stay open.
 - [x] bhkBallSocketConstraintChain constraintForceMixing (6): float epsilon in every chain, no
       softness, as Rapier's joints have none (round 3). TODO(M13): the chains' damping (0.6 in
       every chain) is not applied; Rapier's joints take out all of a link's speed error.
-- [ ] bhkRigidBody bodyFlags (1 body): not read.
+- [x] bhkRigidBody bodyFlags (1 body, value 1): meshes/clutter/ingredients/dwarvenoil.nif alone
+      sets it; a bottle's body does nothing the others do not. TODO(M13): what the flag asks is
+      not read (nif.xml leaves it unnamed).
 - [x] Motion systems (2 sphere inertia 319, 3 sphere stabilized 2691, 4 box inertia 2362, 5 box
       stabilized 9510; fixed and keyframed by mass and node): motionOf, inertiaOf.
 - [x] Collidable qualities (0 9546, 1 2338, 2 14, 4 2984): the engine's debris rule.
@@ -134,11 +153,13 @@ they lie on and the chains' damping stay open.
 
 ## Records
 
-- [x] Projectiles (23 of 24): speed, gravity, range, collision radius and layer, impact force,
+- [x] Projectiles (23 of 24, the other below): speed, gravity, range, collision radius and layer, impact force,
       explosion, proximity, timer, lifetime, cone spread, relaunch interval, tracer chance,
       flags, model, light, muzzle flash, sound, decal (src/world/projectile-data.ts and its
       readers).
-- [ ] PROJ defaultWeaponSource (1 projectile): not read.
+- [ ] PROJ defaultWeaponSource (1 projectile: DLC2BloodskalProjectile01, DLC2BloodskalBlade):
+      parsed, unused. What the original does with it was not found (nothing names the field);
+      the blade's wave does its harm by its spell here. Stays until that is read.
 - [x] Explosions (15 of 16): force, radius, damage, flags, placed object, spawned projectile,
       image space and its radius, impact data set, model, light, sounds, enchantment.
 - [x] EXPL verticalOffsetMult (34 explosions): the push comes from below the explosion's
@@ -162,10 +183,16 @@ they lie on and the chains' damping stay open.
       faster than the velocity × the race size's multiplier carries an actor off, a race that
       only swims never (currentPush, src/physics/water-physics.ts, src/shell/actor-movers.ts;
       round 5). TODO(M13): the recoiling and the mounted in a weak current.
-- [ ] fExplosionWaterRadiusRatio, fExplosionSplashRadius: explosions on water.
+- [x] fExplosionWaterRadiusRatio, fExplosionSplashRadius: an explosion with that share of its
+      radius above its centre still below the surface raises ExplosionSplash.nif at the surface,
+      at its radius over the second, and CWaterExplosionSplash (explosionSplashScale; round 8).
+      TODO(M13): explosions of what is not a projectile (a destruction stage's).
 - [x] fDeathForceSpellImpactMult: a killing spell's push (src/gameplay/combat/combat-settings.ts).
-- [ ] fJumpSwimmingMult: a jump out of the water.
-- [ ] fMoveWeightMax: the most an actor's walk can push.
+- [x] fJumpSwimmingMult: swimming, the jump key jumps at once at that many times the height
+      (src/shell/player.ts, tests/sim-water.int.test.ts; round 8).
+- [x] fMoveWeightMax, fMoveWeightMin, fMoveEncumEffect, fMoveEncumEffectNoWeapon: the weight of
+      what is equipped slows the run, never below the walk; the Speed Mult takes all speeds
+      (src/gameplay/move-weight.ts, the player's; round 8). TODO(M13): NPCs' locomotion.
 
 ## Mechanics (by hand)
 
@@ -175,20 +202,28 @@ they lie on and the chains' damping stay open.
 - [x] Friction and restitution combined as Havok's square root of the product.
 - [x] Settling (the warm start), waiting bodies, statics that do not settle, hung objects.
 - [x] Deactivation: the distance rule, by island (round 1), solver deactivation.
-- [ ] Solver deactivation's relative-speed threshold per class (docs/physics.md). TODO(M13).
+- [ ] Solver deactivation's relative-speed threshold per class (docs/physics.md). Stays: the
+      values are read, how Havok measures the relative speed is not (in its linked solver, no
+      names to find it by).
 - [x] Constraints: ragdoll, limited hinge, hinge, ball and socket, prismatic, stiff spring,
       malleable, breakable, the chain; the ragdoll cone, friction, motors, violation clipping.
-- [ ] Violation clipping for hinges, balls and sockets, stiff springs. TODO(M13).
+- [x] Violation clipping for hinges, balls and sockets, stiff springs (#clipLinks; round 8).
 - [x] Continuous collision for small fast bodies (the engine's debris rule).
 - [x] Collision layers and the group filter (an object's bodies never collide).
 - [x] Triggers and phantoms.
-- [ ] Projectiles in flight do not enter triggers.
+- [x] Projectiles in flight tell the triggers whose layers collide with theirs
+      (src/shell/projectile-triggers.ts, PhysicsWorld.triggersAlong; round 8). TODO(M13): the
+      cone projectiles' waves.
 - [x] The character controller: slopes, stairs, steps, pushing, platforms, falling, swimming.
-- [ ] Leaving a moving platform keeps no velocity; Havok's proxy push response.
+- [x] Leaving a moving platform keeps its velocity until it lands (CharacterBody; round 8).
+- [ ] Havok's proxy push response (pushedSpeed is a share by the masses). Stays: the proxy's
+      solver is Havok's, not read.
 - [x] Ragdolls: death, hits, powered, keyframed, get-up, penetration recovery, corpses saved.
 - [x] A ragdoll made dynamic: each of its bodies moving slower than 0.5 Havok units a second is
       given that much more upward speed (PhysicsWorld.liftStill; round 5).
-- [ ] The paralysed's stiff fall; a body let go
+- [x] The paralysed's stiff fall: fixed joints hold its ragdoll in its pose while it is paralysed
+      (PhysicsWorld.stiffen; round 8). TODO(M13): how the original holds it.
+- [ ] A body let go
       standing on its joints' limits (Hulda killed at the Bannered Mare's counter 1, 2.5 or 3 s
       into her lean stays draped over it: Havok's give at four iterations, which Rapier at 4 or
       5 substeps has only with worse settling; round 3).
@@ -203,11 +238,13 @@ they lie on and the chains' damping stay open.
       kept from going under the surface.
 - [x] Grabbing and telekinesis (src/physics/grab.ts).
 - [x] Physics damage (fPhysicsDamage1Mass ...).
-- [ ] Physics damage to destructibles from the listener (no vanilla impact reaches it).
+- [x] Physics damage to destructibles from the listener (no vanilla impact reaches it:
+      PhysicsWorld.onHardContact, contactDamage; round 8).
 - [ ] Objects placed into what they lie on fall through it (340 in the interiors:
       `tools/settle-audit.ts`). Round 7 read the original's warm start (docs/physics.md, "What
       is placed"): nothing in it keeps a penetrating body from leaving through the far side; it
       settles 4 s at once and then deactivates every island. TODO(M13): that end (ours keeps
       simulating what still moves), and Havok's one-sided contacts with meshes (ours are
       two-sided: a body more than half into a surface is pushed out below it).
-- [ ] Traps: material, initial flag, cloud traps unchecked.
+- [x] Traps: the material of the trap's shape touched; the initial flag clear on the contact
+      listener's entries, as observed in the original; cloud traps (L_CLOUDTRAP) as traps (round 8).

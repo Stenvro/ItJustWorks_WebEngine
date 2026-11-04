@@ -633,8 +633,8 @@ constraint solver does before each Rapier step (`constraint-solver.ts`):
   it, was flung about for five minutes. The large ragdolls settle later for it (the undead
   dragon's, the Dwemer spider's, the gargoyle's within 26–32 s on a floor). A chain's links
   (bhkBallSocketConstraintChain: the traps' ropes and chains, 6 in the data) are clipped to the
-  chain's own maxErrorDistance (0.1 in every chain; `#clipChains`). TODO(M13): the other kinds
-  of joints (hinges, balls and sockets, stiff springs) are not clipped.
+  chain's own maxErrorDistance (0.1 in every chain), hinges, balls and sockets and stiff springs
+  (past their length) to the world's (`#clipLinks`).
 - **Solver deactivation:** the engine's world (Havok's) slows slow bodies further: a body of
   solver deactivation class low, medium, high or max (the file's; every race skeleton's bodies
   are low) moving slower than 0.01, 0.017, 0.02, 0.025 × g (Havok units a second, g the

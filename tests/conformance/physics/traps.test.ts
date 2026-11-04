@@ -17,6 +17,9 @@
 //   RiftenMercerFreyHouse [00037CC6] at (−2371.1, 2148.9, −814.6).
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import RAPIER from '@dimforge/rapier3d-compat';
+import { CollisionMatrix as Matrix, Layer } from '../../../src/physics/collision-layers.ts';
+import { initPhysics, PhysicsWorld } from '../../../src/physics/physics-world.ts';
 import { EventHub, type GameEvents } from '../../../src/scripting/runtime/event-hub.ts';
 import {
   TRAP_HIT_EVENT_DELAY_MS,
@@ -174,15 +177,37 @@ describe('what traps do', () => {
     'swings a log trap set off by its tripwire into an actor in its way, which OnTrapHit tells  ' +
       '[data: TrapSwingingLog, Tripwire] (sim)',
   );
-  it.todo('tells the hits of a gas cloud (L_CLOUDTRAP) on the actors in it  [original] (sim)');
+  it('takes a body on L_CLOUDTRAP as a trap, its material told  [original]', async () => {
+    await initPhysics();
+    const physics = new PhysicsWorld(new Matrix([]), 0);
+    const cloud = physics.world.createCollider(
+      RAPIER.ColliderDesc.ball(1),
+      physics.world.createRigidBody(RAPIER.RigidBodyDesc.fixed()),
+    );
+    physics.register(cloud, Layer.cloudTrap, { reference: 0x55, kind: 'object' });
+    const actor = physics.world.createCollider(
+      RAPIER.ColliderDesc.capsule(1, 0.5),
+      physics.world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased()),
+    );
+    physics.step(1 / 60);
+    expect([...physics.trapsTouching(actor, 2).keys()]).toEqual([0x55]);
+    physics.free();
+  });
   it.todo(
     'tells an NPC’s contact with a trap as the player’s (the movers check their controllers)  ' +
       '[original] (sim)',
   );
-  it.todo(
-    'carries the trap body’s material (aeMaterial) and the initial-hit flag as the engine sets ' +
-      'them  [original: unread]',
-  );
+  it('carries the material of the trap’s shape touched (aeMaterial), the initial flag clear  [original]', () => {
+    const hub = new EventHub();
+    const told: GameEvents['trapHit'][] = [];
+    hub.on('trapHit', (event) => {
+      told.push(event);
+    });
+    const hits = new TrapHits(hub, () => 0);
+    hits.touching(PLAYER_REF, new Map([[0x123, { ...TOUCH, material: 0x1234 }]]));
+    expect(told[0]?.material).toBe(0x1234);
+    expect(told[0]?.initial).toBe(false);
+  });
   it.todo(
     'lets an activator trap with a keyword pass actors that have it (the listener asks the ' +
       'actor)  [original: the keyword is not identified]',
