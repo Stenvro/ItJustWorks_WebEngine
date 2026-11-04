@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { TRANSFORM_FLOATS, type AnimationBinding } from '../formats/hkx/animation.ts';
-import { bindPaired, isPaired, pairedSide, pairedTrackBones, partnerMark } from './paired-clips.ts';
+import {
+  atMark,
+  bindPaired,
+  isPaired,
+  pairedSide,
+  pairedTrackBones,
+  partnerMark,
+} from './paired-clips.ts';
 
 /** The human and horse mount's layout (Paired_Mount.hkx), shortened. */
 const TRACKS = [
@@ -110,5 +117,16 @@ describe('paired clips', () => {
     expect(turned?.offset[1]).toBeCloseTo(0);
     expect(turned?.yaw).toBeCloseTo(Math.PI / 2);
     expect(partnerMark(binding(TRACKS))).toBeUndefined();
+  });
+});
+
+describe('atMark', () => {
+  it('asks each axis within the threshold, and the turn only when the clip reorients', () => {
+    expect(atMark([0.5, -0.5, 0.9], 0, [0, 0, 0], 2, 1, false)).toBe(true);
+    expect(atMark([0, 1.5, 0], 0, [0, 0, 0], 0, 1, false)).toBe(false);
+    expect(atMark([0, 0, 0], 0, [0, 0, 0], 0.5, 0.5, true)).toBe(true);
+    expect(atMark([0, 0, 0], 0, [0, 0, 0], 2, 0.5, true)).toBe(false);
+    // A heading a full turn round is the same turn.
+    expect(atMark([0, 0, 0], 0.1, [0, 0, 0], 0.1 + 2 * Math.PI, 0.01, true)).toBe(true);
   });
 });

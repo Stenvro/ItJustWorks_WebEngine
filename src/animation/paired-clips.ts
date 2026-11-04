@@ -141,6 +141,33 @@ export function partnerMark(
 }
 
 /**
+ * Whether a paired clip's partner is at its mark (observed in the original): once its
+ * get-to-mark time is over, it is there when each of its x, y and z is within the clip's
+ * fMarkErrorThreshold of the mark's; a clip that reorients it (bReorientSupportChar) asks its
+ * turn too, each component of its rotation (about z: the half angle's sine and cosine) within
+ * the threshold of the mark's. Until it is, the clip keeps putting it on its mark.
+ */
+export function atMark(
+  position: readonly [number, number, number],
+  heading: number,
+  mark: readonly [number, number, number],
+  markHeading: number,
+  threshold: number,
+  reorient: boolean,
+): boolean {
+  for (let axis = 0; axis < 3; axis++) {
+    if (Math.abs((position[axis] ?? 0) - (mark[axis] ?? 0)) > threshold) return false;
+  }
+  if (!reorient) return true;
+  // Rotations about z as quaternions: (0, 0, sin(h/2), cos(h/2)); q and -q are one turn.
+  const dz = Math.abs(Math.sin(heading / 2) - Math.sin(markHeading / 2));
+  const dw = Math.abs(Math.cos(heading / 2) - Math.cos(markHeading / 2));
+  const flipZ = Math.abs(Math.sin(heading / 2) + Math.sin(markHeading / 2));
+  const flipW = Math.abs(Math.cos(heading / 2) + Math.cos(markHeading / 2));
+  return (dz <= threshold && dw <= threshold) || (flipZ <= threshold && flipW <= threshold);
+}
+
+/**
  * A paired clip's binding for a skeleton (its bones by name): its tracks mapped to that
  * skeleton's bones. Other bindings are returned as they are.
  */

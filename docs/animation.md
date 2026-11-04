@@ -453,9 +453,11 @@ animated objects alike.
   its own graph at its beginning.
 
 Ours besides: a skeleton behind the camera beyond the far distance is not interpolated (it steps:
-nothing of it is seen), a nearer one is (its shadow is). A graph whose variable bDisableInterp is
-set updates every frame (inferred from the engine's graph variable names: the manager checks a
-flag of its own there; how it is set was not read). The skeleton's `time` is its graph's, ahead
+nothing of it is seen), a nearer one is (its shadow is). A graph with any of its variables
+bIsSynced, bSpeedSynced or bDisableInterp set updates every frame (observed in the original: the
+engine reads the three, with [Animation] bAnimInterpEnable, and sets none of them; only the
+graphs do. TODO(M13): it also updates every frame an actor in four states of its own, not yet
+named). The skeleton's `time` is its graph's, ahead
 of the clock between such updates, so the time its root motion covers is the graph's step and the
 movers spread that motion over the interval. Before (every frame within 512 units in front of the
 camera, else 10 or 5 times a second by 2048 and 4096 units, without interpolation) far actors'
@@ -487,15 +489,19 @@ combat or furniture action:
 - _Action Waterwalk Start_: performed by the actor's update as an actor with Water Walking (the
   actor value above 0, alive) takes to the water: any of its body under the surface and not yet
   on it; the surface then bears it as ground and it does not swim (src/gameplay/swimming.ts
-  walksOnWater, Character.waterFloor; the vampire lord's graph: WaterWalkStart).
+  walksOnWater, Character.waterFloor; the vampire lord's graph: WaterWalkStart). The player too,
+  through their body's graph (Player.onWaterWalkStart; no vanilla player graph has an idle for
+  it).
 - _Action Shield Change_: performed as an item is equipped and it is not swapped in a drawn
   hand (ActionForceEquip): the left hand's graph type compared before and after, a shield put on
   or taken off (one shield for another keeps the type: none). No vanilla graph has an idle for
   it (src/gameplay/combat/combat-actions.ts changesShield).
 - _Action Look_, _Action VoiceReady_, _Action Listen Idle_: no read of them was found (none by
-  the list's place in the code, none by a constant handed to the list's reader); the list is
-  also read by places taken from tables, so they stay open. TODO(M13). No vanilla graph has an
-  idle for the first two; the third's group is empty.
+  the list's place in the code, none by a constant handed to the list's reader). The reads by
+  a computed place are of the actor's process's queue of actions: places put there to be
+  performed on its next update, each as a plain action on the actor; what puts places in that
+  queue was not found, so these three stay open. TODO(M13). No vanilla graph has an idle for
+  the first two; the third's group is empty.
 
 An action that is none of them, and that no record or script names, is never performed:
 ActionStopEffect (no vanilla graph has an idle for it either).
@@ -908,7 +914,18 @@ from there (the prefix the active synchronized clip's SyncAnimPrefix names, else
 `pairedTrackBones`). Paired_1HMKillMoveB puts the victim 72.8 units ahead, turned about; a bear's clip
 157, a wolf's 116.6. Ours: the partner is moved to its mark as its clip begins (`partnerMark`),
 over fGetToMarkTime; not there within [Animation] fMaxTimeToMarkSec (3 s) the scene plays where
-they stand. While paired, both actors are held (no character controller, no locomotion events:
+they stand. Observed in the original: the clip's get-to-mark progress runs from 0 to 1 over
+fGetToMarkTime (at once with 0); from then on, each update, the partner is at its mark once each
+of its x, y and z is within fMarkErrorThreshold of the mark's (1 unit for the people's, 0.5 for
+the dragon's), and with bReorientSupportChar its rotation's components too; until then the clip
+keeps putting it on the mark (its placement taken from the start toward the mark by the
+progress, turned by it with bReorientSupportChar), and once there it moves by its own motion
+(`atMark`). bApplyMotionFromRoot (13 clips: the rider's Mount and Dismount, DragonMount and
+DragonDismount, the dragon's grapple and mount) moves the actor itself by its skeleton's root
+bone (the first without a parent) as the clip plays: the actor's placement becomes the mark's
+composed with that bone's pose, and the bone is left at the origin. TODO(M13): not built; ours
+draws the rider at the horse's root with the bone moving it, the same picture, but the actor's
+own place does not follow (a dismount's end stands it by `dismountOffset`). While paired, both actors are held (no character controller, no locomotion events:
 a teleported victim would otherwise fall and turn its graph out of the clip; the player's keys
 do not move them). The pair lasts as long as its clips: a graph that leaves its synchronized clip
 is in its pair no more, whether or not it raised PairEnd (a bear killmove's leader raises none).

@@ -28,13 +28,13 @@ are kept by hand below, against docs/animation.md and the conformance suites
 (tests/conformance/animation/). The count after an item is how many objects (nodes,
 annotations, records) use it.
 
-## Count (2026-11-03, round 7)
+## Count (2026-11-03, round 8)
 
 | Part                        | Items | Done | Open |
 | --------------------------- | ----: | ---: | ---: |
 | Behavior classes            |    66 |   66 |    0 |
 | Behavior members (read)     |   320 |  320 |    0 |
-| Behavior node fields (run)  |   292 |  258 |   34 |
+| Behavior node fields (run)  |   292 |  283 |    9 |
 | Annotations (tags)          |   135 |  127 |    8 |
 | Response handlers           |    97 |   97 |    0 |
 | Idles (IDLE fields)         |    10 |    9 |    1 |
@@ -42,7 +42,7 @@ annotations, records) use it.
 | Actions (AACT)              |    71 |   68 |    3 |
 | Game settings (GMST)        |    20 |   20 |    0 |
 | Mechanics (by hand)         |    24 |   16 |    8 |
-| Total                       |  1146 | 1092 |   54 |
+| Total                       |  1146 | 1117 |   29 |
 
 Round 1 wrote the sweep and this list. Built: the animations' SoundStop.<descriptor> and
 SoundRelease.<descriptor> (17 and 8 annotations: the bow's draw loop, WPNBowPullLPM, stops as
@@ -101,6 +101,19 @@ nowhere the search reached. Not reached: the node fields (the mark threshold,
 applyMotionFromRoot, the powered ragdoll's world-from-model mode, bDisableInterp's setter,
 userData).
 
+Round 8 (1092 to 1117), observed in the original: hkbNode.userData (24 node kinds, 4,950 nodes)
+is compared by nothing; the runtime keeps its own state there on clip and offset generators
+(their animation still loading, or loaded), which ClipHost's load on first use is (inert). The
+synchronized clip's fMarkErrorThreshold: once its get-to-mark time is over, the partner is at
+its mark when within it on each axis (and turn, reorienting); until then it is put there again
+(`atMark`, src/shell/actor-combat.ts). bDisableInterp has no setter in the engine: it reads it
+with bIsSynced and bSpeedSynced, any of them set keeping the graph from interpolation (all three
+now asked). The player's graph is given ActionWaterwalkStart. Read, not built:
+bApplyMotionFromRoot (the actor moved by its root bone; docs/animation.md, "Killmoves"). Not
+reached: the powered ragdoll's world-from-model mode; ActionLook, ActionVoiceReady and
+ActionListen (the computed reads of the default objects are the actor's queue of actions, and
+what fills it was not found).
+
 ## Behavior graphs
 
 - [x] Classes (66 of 66 in the 433 graphs, characters and projects of the archives): the
@@ -124,10 +137,12 @@ userData).
       and the graph's data (src/formats/hkx/behavior.ts, src/animation/behavior-runtime.ts).
 - [x] Members: all 320 serialized members the files set are read (the two clip binding
       indexes are -1 in every file: the runtime binds clips as they activate).
-- [x] Node fields run (253 of 292): everything the state machines, transitions, clips,
+- [x] Node fields run (283 of 292): everything the state machines, transitions, clips,
       blenders, selectors and modifiers carry, but for:
-- [ ] `userData` of 24 node kinds (4,950 nodes): hkbNode's user data. TODO(M13): what the
-      original does with it is unknown (the formats' list has it open too).
+- [x] `userData` of 24 node kinds (4,950 nodes): inert, observed in the original: the files'
+      per-class 1, 2 and 3 are compared by nothing; the runtime keeps its own state there on clip
+      and offset generators (8: their animation still loading, a stand-in played; 12: loaded),
+      as ClipHost loads a clip on its first use (round 8).
 - [x] blender.indexOfSyncMasterChild (2080): a syncing blender's master child (13 of 1,369,
       the jumps' directional and the unequip blends) leads its cycle and its sync points while
       it plays (docs/animation.md, "Syncing blenders"; round 2).
@@ -137,10 +152,16 @@ userData).
       use; tested in behavior.test.ts; round 4).
 - [x] synchronized-clip.syncPrefix (226): the partner's tracks are the active synchronized
       clip's SyncAnimPrefix ("2_" in all 226 that name one; pairedTrackBones; round 4).
-- [ ] synchronized-clip.markErrorThreshold (540), applyMotionFromRoot (13): parsed, not run
-      (when the support is close enough to its mark; root motion). Not reached in round 4.
+- [x] synchronized-clip.markErrorThreshold (540): the partner is at its mark once within it on
+      each axis (with bReorientSupportChar, its rotation too) after its get-to-mark time; until
+      then it is put there again (observed in the original; `atMark`; round 8).
+- [ ] synchronized-clip.applyMotionFromRoot (13: Mount, Dismount, DragonMount, DragonDismount,
+      the dragon's grapple and mount): observed in the original, the actor's placement follows
+      its skeleton's root bone (the mark composed with the bone's pose, the bone left at the
+      origin). TODO(M13): not built (the drawn picture is the same; the actor's own place does
+      not follow).
 - [ ] powered-ragdoll.worldFromModelMode (95): the powered ragdoll's root (world-from-model
-      mode, its pose-matching bones). TODO(M13) with the formats' list.
+      mode, its pose-matching bones). TODO(M13) with the formats' list; not reached in round 8.
 - [x] rigid-body-ragdoll.durationToBlend (56; 0.5 s in all): the rigid body controls blend in
       from the bodies' own motion over it as they drive a ragdoll in the world, their control
       data through Havok's hierarchy controller (src/physics/keyframe-hierarchy.ts,
@@ -219,15 +240,16 @@ userData).
       its graph made (src/shell/actor-stage.ts); ActionResetGraph (returnToDefault, Reset,
       RESET_GRAPH: 44 graphs) as Resurrect raises an actor (ActorStage.resurrected);
       ActionWaterwalkStart (the vampire lord's WaterWalkStart) as an actor with Water Walking
-      takes to the water (src/gameplay/swimming.ts walksOnWater); ActionShieldChange (no idles)
+      takes to the water (src/gameplay/swimming.ts walksOnWater; the player's graph too, round 8); ActionShieldChange (no idles)
       as a shield goes on or off (combat-actions.ts changesShield). TODO(M13): the kill asked
       with its ragdoll at once and a reanimation ending on the dead (both RagdollInstant in the
       original) are not built; the knocked down and unconscious placed (a save) are not dropped
-      by it; the player's graph is not given ActionWaterwalkStart.
+      by it.
 - [ ] Actions never performed (3): ActionLook, ActionVoiceReady (no idles in any vanilla graph),
       ActionListen (Action Listen Idle: one empty idle group). No read of them was found: none by
       their place in the default objects' list in the code, none by a constant handed to the
-      list's reader; the list is also read at places taken from tables. TODO(M13).
+      list's reader; the reads by a computed place are of the actor's queue of actions, and
+      what fills it was not found (round 8). TODO(M13).
 
 ## Game settings
 
@@ -246,7 +268,9 @@ userData).
       cycle is between its layout's (src/animation/sync-points.ts; round 2).
 - [ ] Mirrored additive clips: by our own rule (docs/animation.md, "Mirrored clips").
 - [x] Engine handlers: the response files' 95 of 97 (above).
-- [ ] An event no node takes is not reported as not handled; bDisableInterp's setter.
+- [ ] An event no node takes is not reported as not handled. (bDisableInterp has no setter in
+      the engine, observed in the original: the graphs set it; it is read with bIsSynced and
+      bSpeedSynced: round 8.)
 - [x] Head tracking (docs/animation.md, "Head tracking"; the settings above).
 - [x] Look-at, direct-at (BSLookAtModifier, BSDirectAtModifier) and limb IK.
 - [ ] Foot IK: the narrow quadrupeds' (the formats' list); align with ground rotation.

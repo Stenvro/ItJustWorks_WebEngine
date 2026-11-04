@@ -155,6 +155,11 @@ export class PlayerAvatar {
           if (!took) refused();
         }, refused);
     };
+    // Taking to the water's surface with Water Walking: the engine's ActionWaterwalkStart, as
+    // for every actor (observed in the original; no vanilla player graph has an idle for it).
+    player.onWaterWalkStart = () => {
+      void this.#actions?.perform('ActionWaterwalkStart').catch(() => undefined);
+    };
     player.cameraOffset = () => this.#cameraOffset();
     player.taggedMovement = () => this.#taggedMovement();
     player.animationMotion = () => this.#animationMotion();

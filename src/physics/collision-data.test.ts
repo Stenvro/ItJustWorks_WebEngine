@@ -5,6 +5,7 @@ import {
   buildCollision,
   compressedMeshTriangles,
   HAVOK_SCALE,
+  fixedWhenPlaced,
   havokRotation,
   settlesWhenPlaced,
 } from './collision-data.ts';
@@ -239,10 +240,14 @@ describe('CollisionMatrix', () => {
 });
 
 describe('settlesWhenPlaced', () => {
-  it('settles items, not statics (mounted antlers stay up until knocked)', () => {
+  it('settles items, not statics (mounted antlers are fixed)', () => {
     expect(settlesWhenPlaced({ baseType: 'MISC' })).toBe(true);
     expect(settlesWhenPlaced({ baseType: 'MSTT' })).toBe(true);
     expect(settlesWhenPlaced({ baseType: 'STAT' })).toBe(false);
+    expect(settlesWhenPlaced({ baseType: 'SCOL' })).toBe(false);
     expect(settlesWhenPlaced({ baseType: 'MISC', dontHavokSettle: true })).toBe(false);
+    expect(fixedWhenPlaced('STAT')).toBe(true);
+    expect(fixedWhenPlaced('SCOL')).toBe(true);
+    expect(fixedWhenPlaced('MSTT')).toBe(false);
   });
 });

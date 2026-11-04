@@ -139,8 +139,9 @@ What the members read in round 4 hold, and who takes them:
 - **Bindings**: the bit index (−1 in every binding: no bit bindings; the runtime sets or clears
   the bit when one has it) and the index of the enable binding (it names `enable` in each of
   the 290 sets that have one).
-- **Nodes**: hkbNode.userData, set per class by the authoring tool (1, 2 or 3; what the
-  original does with it is TODO(M13)).
+- **Nodes**: hkbNode.userData, set per class by the authoring tool (1, 2 or 3). Observed in
+  the original, nothing compares those values; its runtime keeps its own state in the field on
+  clip and offset generators (8: the animation still loading, a stand-in played; 12: loaded).
 - **Blender children**: worldFromModelWeight (1 in 6,057 children, 0 in 475); **damping**:
   enableScalarDamping (set in all 43) and enableVectorDamping (in none); **powered ragdoll**:
   its world-from-model mode (2 compute from the pose matching bones, or 4 from the ragdoll) and

@@ -28,7 +28,7 @@ import {
   type IdleTree,
 } from '../ai/idle-records.ts';
 import type { BehaviorRuntime } from '../animation/behavior-runtime.ts';
-import { partnerMark } from '../animation/paired-clips.ts';
+import { atMark, partnerMark } from '../animation/paired-clips.ts';
 import type { AnimationBinding } from '../formats/hkx/animation.ts';
 import type { GraphEvent } from '../animation/graph-events.ts';
 import type { ActorGraphSource } from './actor-graph-events.ts';
@@ -3548,6 +3548,18 @@ export class ActorCombat implements CombatBridge {
       from[2] + (at[2] - from[2]) * share,
     ];
     const turned = mark.from.heading + turnBetween(mark.from.heading, facing) * share;
+    // Its time over, it is at its mark once within the clip's threshold of it (where this
+    // frame found it); until then it is put there again.
+    const there =
+      share >= 1 &&
+      atMark(
+        now,
+        this.#heading(fighter),
+        at,
+        facing,
+        sync.markErrorThreshold,
+        sync.reorientSupport,
+      );
     if (fighter.player) {
       this.#play?.player.teleport(position, turned);
     } else {
@@ -3558,7 +3570,7 @@ export class ActorCombat implements CombatBridge {
         this.#options.movers.teleport(staged);
       }
     }
-    if (share >= 1) fighter.toMark = undefined;
+    if (there) fighter.toMark = undefined;
   }
 
   /** A killmove's end (KillMoveEnd): its victim dies by its killer, deaths deferred come. */
