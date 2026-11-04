@@ -151,7 +151,7 @@ describe.skipIf(!hasGamedata())('actor graphs across a save (headless simulation
     expect(stage.furniture.holds(seated)).toBe(true);
     const bytes = await before.save();
     await before.close();
-    sims.splice(0);
+    sims.pop();
 
     const after = await loadSim(bytes);
     sims.push(after);
@@ -204,7 +204,7 @@ describe.skipIf(!hasGamedata())('actor graphs across a save (headless simulation
     const seat = await before.position(PLAYER_REF);
     const bytes = await before.save();
     await before.close();
-    sims.splice(0);
+    sims.pop();
 
     const after = await loadSim(bytes);
     sims.push(after);
