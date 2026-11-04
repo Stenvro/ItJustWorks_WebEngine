@@ -508,7 +508,8 @@ export function assists(assistance: number, reaction: number): boolean {
 
 /**
  * A blow from one it does not fight: whether it turns on the attacker. An enemy or a neutral
- * it fights at once; a friend once it has taken more blows from it than iFriendHitCombatAllowed
+ * it fights at once (another actor's blow on one neutral to it: only if it would attack that
+ * actor on sight, ActorCombatAi #attacked); a friend once it has taken more blows from it than iFriendHitCombatAllowed
  * in combat (iFriendHitNonCombatAllowed out of it: none), an ally more than
  * iAllyHitCombatAllowed (1000 or more: never) or iAllyHitNonCombatAllowed.
  */

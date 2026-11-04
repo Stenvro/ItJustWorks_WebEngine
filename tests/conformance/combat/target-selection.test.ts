@@ -61,5 +61,8 @@ describe('target selection', () => {
   it.todo('a target engaged and not seen for fCombatTargetEngagedLastSeenTime (3 s)  [settings]');
   it.todo('crowding: how many already fight a target  [original]');
   it.todo('reachability: an unreachable target is passed over (Check Unreachable Target)  [original]');
+  it.todo(
+    'another actor’s blow on one neutral to it is an assault those who see it answer  [original]',
+  );
   it.todo('a scripted target (StartCombat) is kept  [CK StartCombat]');
 });

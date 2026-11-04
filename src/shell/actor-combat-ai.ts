@@ -778,6 +778,14 @@ export class ActorCombatAi {
     if (friendly && runtime.state.references.get(mind.reference)?.ignoreFriendlyHits === true) {
       return;
     }
+    // Another actor's blow on one neutral to it turns it only if it would be hostile to that
+    // actor anyway, by its own aggression (observed in the original): a townsman caught by a
+    // swing at a common foe does not start a brawl. TODO(M13): the original reports such a blow
+    // as an assault, which those who see it answer (crime-engine.ts has only the player's).
+    if (attacker !== PLAYER_REF && reaction === FightReaction.neutral) {
+      const magic = runtime.magic.aiState(mind.reference);
+      if (mind.profile && !this.#onSight(mind, mind.profile, magic, attacker)) return;
+    }
     if (turnsOnAttacker(reaction, hits, mind.mode !== 'idle', this.#settings)) {
       mind.friendHits.delete(attacker);
       mind.enemies.add(attacker);
