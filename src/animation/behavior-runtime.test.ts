@@ -1651,3 +1651,147 @@ describe('float slots', () => {
     expect(runtime.floatSlotWeights[0]).toBeCloseTo(0.25);
   });
 });
+
+describe('a clip still being read', () => {
+  /** The host's clip, read after `ready` is set; `stand` it has from the start. */
+  const loading = (): { host: BehaviorHost; ready: { land: boolean } } => {
+    const ready = { land: false };
+    return {
+      ready,
+      host: {
+        clip: (name) => (name === 'stand' ? animation(5) : ready.land ? animation(9) : undefined),
+        clipLoading: (name) => name === 'land' && !ready.land,
+        behavior: () => undefined,
+      },
+    };
+  };
+  const machine: BehaviorGenerator = {
+    kind: 'state-machine',
+    name: 'Machine',
+    startStateId: { value: 0 },
+    startStateMode: 0,
+    wildcardTransitions: [],
+    states: [
+      {
+        id: 0,
+        name: 'Stand',
+        probability: 1,
+        enable: true,
+        generator: clip('stand'),
+        transitions: [transition(0, 1)],
+      },
+      {
+        id: 1,
+        name: 'Land',
+        probability: 1,
+        enable: true,
+        generator: clip('land'),
+        transitions: [],
+      },
+    ],
+  };
+
+  it('holds the pose it had, not the reference pose, until the clip is there', () => {
+    const { host: reading, ready } = loading();
+    const runtime = new BehaviorRuntime({
+      root: graph(machine, ['land']),
+      host: reading,
+      skeleton,
+    });
+    runtime.update(0.1);
+    expect(runtime.pose[0]).toBeGreaterThanOrEqual(5);
+    const held = runtime.pose[0];
+    runtime.sendEvent('land');
+    runtime.update(0.1);
+    runtime.update(0.1);
+    expect(runtime.pose[0]).toBe(held);
+    ready.land = true;
+    runtime.update(0.1);
+    expect(runtime.pose[0]).toBeGreaterThanOrEqual(9);
+  });
+
+  it('holds it too where a clip will never come', () => {
+    const runtime = new BehaviorRuntime({
+      root: graph(machine, ['land']),
+      host: {
+        clip: (name) => (name === 'stand' ? animation(5) : undefined),
+        behavior: () => undefined,
+      },
+      skeleton,
+    });
+    runtime.update(0.1);
+    const held = runtime.pose[0];
+    runtime.sendEvent('land');
+    runtime.update(0.1);
+    runtime.update(0.1);
+    expect(runtime.pose[0]).toBe(held);
+  });
+});
+
+describe('modifiers of the open fields', () => {
+  it('damps a vector by the same controller as a value, each component', () => {
+    const damping: BehaviorModifier = {
+      kind: 'damping',
+      name: 'Damp',
+      enable: { value: 1 },
+      enableScalarDamping: { value: 0 },
+      enableVectorDamping: { value: 1 },
+      kP: { value: 0.5 },
+      kI: { value: 0 },
+      kD: { value: 0 },
+      rawValue: { value: 0 },
+      dampedValue: { value: 0 },
+      rawVector: { value: [0, 0, 0, 0], variable: 0 },
+      dampedVector: { value: [0, 0, 0, 0], variable: 1 },
+    };
+    const runtime = new BehaviorRuntime({
+      root: graph(
+        { kind: 'modifier-generator', name: 'Mods', modifier: damping, generator: clip('idle') },
+        [],
+        [
+          { name: 'raw', initial: 0 },
+          { name: 'out', initial: 0 },
+        ],
+      ),
+      host: host({ idle: animation(0) }),
+      skeleton,
+    });
+    runtime.setVector('raw', [4, 0, 0, 0]);
+    runtime.update(0.1);
+    // It starts at its raw vector, then goes half way to where that moves.
+    expect(runtime.vector('out')?.[0]).toBeCloseTo(4);
+    runtime.setVector('raw', [8, 0, 0, 0]);
+    runtime.update(0.1);
+    expect(runtime.vector('out')?.[0]).toBeCloseTo(6);
+  });
+
+  it('turns the character by a rotate-character not bound to a variable, not by one bound', () => {
+    const rotating = (variable: number | undefined): number => {
+      const modifier: BehaviorModifier = {
+        kind: 'rotate-character',
+        name: 'Turn',
+        enable: { value: 1 },
+        degreesPerSecond: { value: 90, ...(variable === undefined ? {} : { variable }) },
+        speedMultiplier: { value: 1 },
+        axis: [0, 0, 1],
+      };
+      const runtime = new BehaviorRuntime({
+        root: graph(
+          { kind: 'modifier-generator', name: 'Mods', modifier, generator: clip('idle') },
+          [],
+          [{ name: 'TurnDelta', initial: 90 }],
+        ),
+        host: {
+          ...host({ idle: animation(0) }),
+          rootMotion: () => undefined,
+        },
+        skeleton,
+      });
+      runtime.update(0.5);
+      runtime.update(0.5);
+      return runtime.rootMotion().yaw;
+    };
+    expect(rotating(undefined)).toBeCloseTo(Math.PI / 4);
+    expect(rotating(0)).toBe(0);
+  });
+});

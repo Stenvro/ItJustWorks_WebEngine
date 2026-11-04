@@ -5,6 +5,7 @@ import {
   checkAbove,
   easeTilt,
   GROUND_ABOVE,
+  averagedProbes,
   groundedPlacement,
   MAX_TILT,
   probedTilt,
@@ -71,6 +72,20 @@ describe('actors on the ground', () => {
     expect(probedTilt({ front: 0, back: 0, left: 10, right: 0 }, 142, BEAR).roll).toBe(0);
     expect(probedTilt({ front: 500, back: 0 }, 142, BEAR).pitch).toBeCloseTo(MAX_TILT);
     expect(probedTilt({ front: 500, back: 0 }, 142, NORD)).toEqual(UPRIGHT);
+  });
+
+  it('average each end with the height it had', () => {
+    expect(averagedProbes(undefined, { front: 10, back: 20 })).toEqual({
+      front: 10,
+      back: 20,
+      left: undefined,
+      right: undefined,
+    });
+    const next = averagedProbes(
+      { front: 10, back: 20, left: 2 },
+      { front: 20, back: 40, left: 4, right: 8 },
+    );
+    expect(next).toEqual({ front: 15, back: 30, left: 3, right: 8 });
   });
 
   it('ease into a new lean by fQuadrupedPitchMult a second', () => {

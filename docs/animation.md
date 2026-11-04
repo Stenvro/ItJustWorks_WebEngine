@@ -1812,3 +1812,18 @@ fAIHeadTrack*'s random offset (0 in Skyrim.esm); it reaches the graph as bHeadTr
 TargetLocation, the camera as camerafromx/y/z. The player's body looks the same way at what
 scripts, scenes and dialogue ask and else, in third person, where the camera looks
 (TODO(M13): the engine's own player head tracking is not documented).
+
+## Frame-by-frame motion
+
+What moves is measured per frame in the headless simulation (world position and heading through the
+matrix it is drawn with, at 37, 60 and 144 frames a second and at 60 with noise). The rules that keep
+it smooth:
+
+- A controller's actor is drawn between its last two physics steps, its heading too (a frame holds
+  one step's turn or two's where frames and steps do not line up). A walker (no controller) likewise.
+- A far graph that runs ahead blends from its pose at the graph's own time, not from the clock's at
+  the update: from the clock, a frame stood still at each update and the next blend ran fast.
+- A race's lean takes each end's height from above that end, each averaged with the height it had
+  ([physics.md](physics.md#actors-on-the-ground)).
+- A graph with no pose to give holds the pose it had (a clip still being read, a clip in no archive),
+  never the reference pose.

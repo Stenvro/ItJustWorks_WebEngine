@@ -13,6 +13,9 @@ export const INI_DEFAULTS = {
   // world (AddRagdollToWorld) is driven by the graph's pose (the engine's built-in default).
   Animation: {
     bDriveRagdollWithGraph: 1,
+    bAlwaysDriveRagdoll: 0,
+    bFootIK: 1,
+    bUseSpeedSampler: 1,
     // A mount or dismount not ended by its paired animation is ended (src/shell/actor-mounts.ts).
     fMountDismountTimeout: 8,
     // An actor's graph is driven by how its controller moved it once that agrees with what it

@@ -77,8 +77,6 @@ describe('how often a graph updates (original, [Animation] settings)', () => {
 });
 
 describe('the graph runtime (todo)', () => {
-  it.todo('every generator and modifier class of the vanilla graphs runs (a data sweep)  [data]');
-  it.todo('the graph’s bDisableInterp: the manager’s own flag, how it is set  [original]');
   it.todo('an event no active node takes reports not handled (the death idle’s check)  [original]');
   it.todo('graph variables and states in saves  [M12]');
   // TODO(M13): MQ101's walk to the block plays IdleWalkingCameraStart (an idle for 0_Master.hkx)

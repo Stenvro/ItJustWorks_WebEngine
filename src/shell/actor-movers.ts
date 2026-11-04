@@ -66,6 +66,7 @@ import type { Vec3 } from '../render/math.ts';
 import {
   CHECK_FALL_DISTANCE,
   checkAbove,
+  averagedProbes,
   easeTilt,
   GROUND_BELOW,
   groundedPlacement,
@@ -75,6 +76,7 @@ import {
   tiltNormal,
   UPRIGHT,
   type Tilt,
+  type TiltProbes,
 } from '../world/actor-ground.ts';
 import type { IniSettings } from '../world/ini-settings.ts';
 import { RaceFlag } from '../world/actor-records.ts';
@@ -113,6 +115,8 @@ export interface MoverWorld {
 export { HIGH_PROCESS_DISTANCE };
 /** A tilting race probes the ground under its ends again once it moved this far (game units), */
 const TILT_AGAIN = 4;
+/** A heading changed by more than this in a step was set (a script, a warp): drawn at once. */
+const SNAP_HEADING = 0.5;
 /** or turned this far (radians). */
 const TILT_TURN_AGAIN = 0.05;
 /** How far below its ends the ground is looked for (game units: the engine's 2.5 Havok units). */
@@ -201,7 +205,15 @@ interface Mover {
    * How it leans with the ground (its race tilts): where its ends were last probed, the lean
    * the ground there gives and the lean it has now, easing towards that (easeTilt).
    */
-  tilt: { at: Vec3 | undefined; heading: number; target: Tilt; now: Tilt };
+  /** Its heading before the last physics step (it is drawn between that and its heading). */
+  headingFrom: number;
+  tilt: {
+    at: Vec3 | undefined;
+    heading: number;
+    target: Tilt;
+    now: Tilt;
+    probes: TiltProbes | undefined;
+  };
   /** Its body's half length and half width (its bound's, scaled): where its lean is probed. */
   readonly ends: { readonly length: number; readonly width: number };
   /** Where it last stood on something (its feet), and when its fall was last looked under. */
@@ -472,6 +484,10 @@ interface Walker {
   idleStoppedAt: number;
   /** Its graph has been driven since it became a walker. */
   driven: boolean;
+  /** Where its last step began (it is drawn between that and where it is), if it stepped last. */
+  from?: Vec3 | undefined;
+  /** It stepped since it was last drawn. */
+  stepped?: boolean;
   /**
    * How its graph moves it (its clips' root motion: world velocity, the turn in radians per
    * second counter-clockwise), as a moved actor's (Mover.root).
@@ -1475,6 +1491,7 @@ export class ActorMovers {
     mover.turning.reset();
     mover.drawn = [...staged.position];
     mover.tilt.at = undefined;
+    mover.headingFrom = staged.heading;
   }
 
   /**
@@ -1523,6 +1540,7 @@ export class ActorMovers {
           slicer.turn('walk', reference, seconds, (owed) => {
             this.#walk(staged, owed);
           });
+        this.#drawWalker(reference, seconds > 0);
         continue;
       }
       this.#dropWalker(reference);
@@ -1891,6 +1909,8 @@ export class ActorMovers {
     // on (no headway in its searches).
     const behavior = staged.placed.behavior;
     const held = behavior !== undefined && this.#readDrive(reference, behavior) !== 'controller';
+    walker.from = [...staged.position];
+    walker.stepped = true;
     const travel = this.#travels.get(reference);
     if (travel && !this.#walkerTravel(walker, travel, seconds)) return;
     const request = this.#requests.get(reference);
@@ -2050,18 +2070,40 @@ export class ActorMovers {
   }
 
   /** A walker drawn where it is, upright. */
-  #placeWalker(staged: StagedActor): void {
+  #placeWalker(staged: StagedActor, at: Vec3 = staged.position): void {
     const placed = staged.placed;
     const instance = placed.instances[0];
     if (!instance?.motion) return;
     instance.world.set(
       referenceMatrix({
-        position: staged.position,
+        position: at,
         rotation: [0, 0, staged.heading],
         scale: placed.actor.scale * placed.look.scale,
       }),
     );
     instance.motion.version++;
+  }
+
+  /**
+   * Draws a walker between its last step's ends, as a controller's actor is drawn between its
+   * last two physics steps (at a display faster than the steps it stood still and leapt, and a
+   * frame's time a little off a step's made a frame's distance double or none). `stepping`: the
+   * physics stepped this frame, so one that had no turn in it stands where it is.
+   */
+  #drawWalker(reference: number, stepping: boolean): void {
+    const walker = this.#walkers.get(reference);
+    if (!walker?.driven) return;
+    if (stepping && walker.stepped !== true) walker.from = undefined;
+    walker.stepped = false;
+    const from = walker.from;
+    if (!from) return;
+    const to = walker.staged.position;
+    const alpha = this.#world?.physics.alpha ?? 1;
+    this.#placeWalker(walker.staged, [
+      from[0] + (to[0] - from[0]) * alpha,
+      from[1] + (to[1] - from[1]) * alpha,
+      from[2] + (to[2] - from[2]) * alpha,
+    ]);
   }
 
   /**
@@ -2175,7 +2217,8 @@ export class ActorMovers {
         idleStoppedAt: -Infinity,
         walked: false,
         stalled: 0,
-        tilt: { at: undefined, heading: 0, target: UPRIGHT, now: UPRIGHT },
+        headingFrom: staged.heading,
+        tilt: { at: undefined, heading: 0, target: UPRIGHT, now: UPRIGHT, probes: undefined },
         ends: { length: sized.halfExtents[1] * scale, width: sized.halfExtents[0] * scale },
         stood: undefined,
         fallCheckedAt: -Infinity,
@@ -2307,6 +2350,7 @@ export class ActorMovers {
     const avoiding = this.#avoidanceSettings();
     for (const mover of this.#movers.values()) {
       const staged = mover.staged;
+      mover.headingFrom = staged.heading;
       // Its movement controller steered by a script's override (KeepOffsetFromActor, the
       // player's controls) instead of its AI's wish.
       const steered = this.steering?.(staged.reference);
@@ -2639,7 +2683,6 @@ export class ActorMovers {
       const { length, width } = mover.ends;
       const forward: Vec3 = [Math.sin(heading), Math.cos(heading), 0];
       const right: Vec3 = [Math.cos(heading), -Math.sin(heading), 0];
-      const top = feet[2] + width;
       // Its ground, not what walks on it: other actors (a soldier beside a horse, its rider) and
       // what its controller passes (its cart, in its collision group as in the engine); a rock or
       // a log its end's ray starts in is met where the ray leaves it, as Havok's ray passes what
@@ -2658,33 +2701,31 @@ export class ActorMovers {
           skip,
           false,
         )?.point[2];
-      // On a slope its uphill end's ray starts under the ground and meets nothing (a road's
-      // surface met from below): then from as high as the steepest lean reaches over its length
-      // (inferred: the engine has its contact points there). Nothing either way: level with its
-      // feet (inferred; taken as 175 below, a cart horse's back on the road down to Helgen fell
-      // away and it reared 37° for a third of a second).
+      // The ray starts as high as the steepest lean reaches over its length. From its end's radius
+      // above its feet, on a slope its uphill end's ray began under the road, passed it and met
+      // what lies below, at another depth at every probe (a horse's lean jumping 8° several times
+      // a second on the road down to Helgen, its rider with it, and a third of the slope's lean
+      // in all). The engine has its controller's contact points for that end (inferred: what
+      // they give is the surface there). Nothing there: level with its feet (inferred; taken as
+      // 175 below, a cart horse's back on that road fell away and it reared 37° for a third of a
+      // second).
       const high = feet[2] + length * Math.tan(MAX_TILT);
+      const depth = high - feet[2] + TILT_PROBE_DEPTH;
       const ground = (along: Vec3, by: number): number => {
         const x = feet[0] + along[0] * by;
         const y = feet[1] + along[1] * by;
-        return (
-          cast(x, y, top, TILT_PROBE_DEPTH) ??
-          cast(x, y, high, high - top + TILT_PROBE_DEPTH) ??
-          feet[2]
-        );
+        return cast(x, y, high, depth) ?? feet[2];
       };
       const across = (flags & RaceFlag.tiltLeftRight) !== 0;
-      tilt.target = probedTilt(
-        {
-          front: ground(forward, length),
-          back: ground(forward, -length),
-          left: across ? ground(right, -width) : undefined,
-          right: across ? ground(right, width) : undefined,
-        },
-        2 * length,
-        flags,
-        2 * width,
-      );
+      // Each end's height is averaged with the height it had (observed in the original).
+      const probes = averagedProbes(last ? tilt.probes : undefined, {
+        front: ground(forward, length),
+        back: ground(forward, -length),
+        left: across ? ground(right, -width) : undefined,
+        right: across ? ground(right, width) : undefined,
+      });
+      tilt.probes = probes;
+      tilt.target = probedTilt(probes, 2 * length, flags, 2 * width);
       tilt.at = [...feet];
       tilt.heading = heading;
       // Put down (a body made again, a teleport): it stands as the ground has it at once.
@@ -2709,11 +2750,17 @@ export class ActorMovers {
     mover.velocity = velocity;
     mover.drawn = [...stepped];
     staged.position = [...feet];
+    // Its heading too: stepped while its place is drawn between steps, a turning actor's frames
+    // turned by one step's angle or two's (a horse's 4.8° then 2° at 37 frames a second).
+    const turned = angleBetween(mover.headingFrom, staged.heading);
+    const heading =
+      Math.abs(turned) > SNAP_HEADING ? staged.heading : mover.headingFrom + turned * physics.alpha;
+    staged.drawnHeading = heading;
     const instance = placed.instances[0];
     if (instance?.motion) {
       const upright = referenceMatrix({
         position: feet,
-        rotation: [0, 0, staged.heading],
+        rotation: [0, 0, heading],
         scale: placed.actor.scale * placed.look.scale,
       });
       const flags = placed.look.raceFlags;
@@ -2723,7 +2770,7 @@ export class ActorMovers {
         tilts
           ? groundedPlacement(upright, flags, {
               point: feet,
-              normal: tiltNormal(mover.tilt.now, staged.heading),
+              normal: tiltNormal(mover.tilt.now, heading),
             })
           : upright,
       );

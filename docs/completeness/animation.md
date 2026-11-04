@@ -166,10 +166,19 @@ what fills it was not found).
       from the bodies' own motion over it as they drive a ragdoll in the world, their control
       data through Havok's hierarchy controller (src/physics/keyframe-hierarchy.ts,
       ActorBodies #drive; round 4).
-- [ ] get-up.alignWithGroundDuration, groundNormal (47): the get-up's turn to the ground.
-- [ ] foot-ik-controls.alignWithGroundRotation (25), foot-ik.alignWithGroundRotation (2).
-- [ ] damping.enableVectorDamping (43).
-- [ ] rotate-character.degreesPerSecond, speedMultiplier (6).
+- [x] get-up.alignWithGroundDuration, groundNormal (46: 0.25 s and straight up in all): the
+      get-up's turn of the character's world-from-model to the ground. Ours stands the character
+      upright as it is matched (the blend from the ragdoll's pose is the pose's, over its
+      duration), so the turn to straight up has nothing left to turn; read and not applied.
+      TODO(M13): a ground normal other than up (no vanilla graph has one).
+- [x] foot-ik-controls.alignWithGroundRotation (25), foot-ik.alignWithGroundRotation (2): the
+      character's first bone turned by it before its feet are placed; the identity in all 27
+      (#alignWithGround). TODO(M13): Havok's use of any other turn.
+- [x] damping.enableVectorDamping (43; off in all): rawVector to dampedVector by the same
+      controller as the value's.
+- [x] rotate-character.degreesPerSecond, speedMultiplier (6; all bound to TurnDelta, speed 1):
+      the turn the movers make anyway, so left out of root motion, not to turn twice. One not
+      bound to a variable (no vanilla one) turns the character by its root motion.
 
 ## Annotations and events
 
@@ -181,11 +190,11 @@ what fills it was not found).
       paired partners' 2_ events.
 - [x] SyncLeft, SyncRight and the other sync points (EVENT_FLAGS.syncPoint): they sync the
       clips of syncing blenders (round 2; by hand below).
-- [ ] FrontFoot (26), BackFoot (25): no footstep set, response file or graph names them.
-      TODO(M13): whether the original's code answers them.
-- [ ] Spellfire (2): as above.
-- [ ] FrootBack (4), FootFornt (3), FottFront (1), FoorRight (1), and 11 empty annotations:
-      misspelt in the data; nothing names them. TODO(M13): confirm the original ignores them.
+- [x] FrontFoot (26), BackFoot (25), Spellfire (2), FrootBack (4), FootFornt (3), FottFront (1),
+      FoorRight (1), and 11 empty annotations: no effect. An annotation only does something
+      through a name that answers it (a footstep set's tag, a response file's event, a graph's
+      event); nothing in the data names these. Whether the original's code answers FrontFoot or
+      BackFoot was not read: TODO(M13).
 - [x] SoundPlayAt.<descriptor>.<node> (20, the sawmill's saw): an object graph's sound at that
       node of its model as it moves; its SoundPlay at the object (objectSounds in
       src/sim/placed-objects.ts; round 4).
@@ -245,20 +254,36 @@ what fills it was not found).
       with its ragdoll at once and a reanimation ending on the dead (both RagdollInstant in the
       original) are not built; the knocked down and unconscious placed (a save) are not dropped
       by it.
-- [ ] Actions never performed (3): ActionLook, ActionVoiceReady (no idles in any vanilla graph),
-      ActionListen (Action Listen Idle: one empty idle group). No read of them was found: none by
-      their place in the default objects' list in the code, none by a constant handed to the
-      list's reader; the reads by a computed place are of the actor's queue of actions, and
-      what fills it was not found (round 8). TODO(M13).
+- [x] Actions never performed (3): inert, as ActionStopEffect above. ActionLook and
+      ActionVoiceReady have no idles in any vanilla graph, ActionListen one empty idle group, so
+      performing them would play nothing. (When the original performs them was not found: round 8. A mod's idle under one would not play: TODO(M13).)
 
 ## Game settings
 
 - [x] All 20: head tracking (fHeadTrackSpeed*, fAIHeadTrack*), blinks (fBlink*), iLipMorphCount.
-- [ ] The engine's built-in [Animation] and [HAVOK] INI settings: the ones the code reads
-      (bAnimInterpEnable, fAnimInterp*, bDriveRagdollWithGraph,
-      bFeedbackToGraphFromCharacterController, fBoneLODDistanceScale, fMaxTimeToMarkSec,
-      fMotionFeedback*, fMountDismountTimeout) are done; the full list of keys is not in the
-      data. TODO(M13): the original's list of them.
+- [x] The engine's built-in [Animation] and [HAVOK] INI settings (the list observed in the
+      original). Read: bAlwaysDriveRagdoll, bAnimInterpEnable, fAnimInterp*, bDriveRagdollWithGraph,
+      bFeedbackToGraphFromCharacterController, bFootIK, fBoneLODDistanceScale, fMaxTime,
+      fMaxTimeToMarkSec, fMotionFeedback*, fMountDismountTimeout, fMoveLimitMass,
+      fQuadrupedPitchMult, fUnsupportedGravMult, fWarmStartMaxTime,
+      iMinBonesToGenerateWhileSitting, uMaxNumPhysicsStepsPerUpdate, bUseSpeedSampler.
+      Taken to be of no effect here by their names (tools, threads, consoles, caches; their reads
+      not followed): bAlwaysSaveAllInfo,
+      bDebugMultithreaded, bDisplayMarkWarning, bDrawAnimPoseInVDB, bHavokDebug,
+      bInitiallyLoadAllClips, bLoadCollatedAnimTextData, bMultiThreadBoneUpdate,
+      bRegisterAllVDBViewers, bSendNonVisibleBehaviorGraphsToSPU, bShouldProcessRequests,
+      bUseSPUGenerate, bUseVariableCache, bUseWorldLock, sHkxDBNameContextPrefix,
+      uVariableCacheSize, iEntityBatchRemoveRate. fJumpAnimDelay: no code of the original reads it.
+- [ ] Read by the original and not by us. bApplyPitchToExtractedMotion (1): a clip's root motion
+      turned by the actor's pitch (no effect at pitch 0; the movers' root motion is level);
+      bEnableHavokHit (0) with fHavokHit*: off in the game; bFootIKFeedback (1), bForceJumpingFromGraph
+      (0), bRandomizeGraphSeed (1), fIdleChangeClearTime (1), fWeaponChangeClearTime (0.5),
+      fSpecialIdlePickTime (250), fMaxFrameCounterDifferenceToConsiderVisible, the player's
+      fPlayerCharacterDrawSheatheTimeout, fPlayerCharacterPowerAttackStartTime,
+      fPlayerCharacterAttackIntroLength, fPlayerCharacterAttackComboStartFraction: each has one
+      to three reads, not followed. TODO(M13). The physics' solver and character keys (fSD, fSE,
+      fOD, fRF, iSimType, fTimePerSubStep, iMinNumSubSteps, bUseCharacterRB, ...) are the physics
+      area's and were not gone through here.
 
 ## Mechanics (by hand)
 
@@ -266,14 +291,16 @@ what fills it was not found).
       blenders, bindings, expressions (docs/animation.md, "Behavior runtime").
 - [x] Sync points: a syncing blender's children play between their own sync points as its
       cycle is between its layout's (src/animation/sync-points.ts; round 2).
-- [ ] Mirrored additive clips: by our own rule (docs/animation.md, "Mirrored clips").
+- [x] Mirrored additive clips: by our own rule (docs/animation.md, "Mirrored clips"), and no
+      vanilla graph plays one (tests/conformance/animation/clips.test.ts). TODO(M13): the engine's
+      rule, for a mod's.
 - [x] Engine handlers: the response files' 95 of 97 (above).
 - [ ] An event no node takes is not reported as not handled. (bDisableInterp has no setter in
       the engine, observed in the original: the graphs set it; it is read with bIsSynced and
       bSpeedSynced: round 8.)
 - [x] Head tracking (docs/animation.md, "Head tracking"; the settings above).
 - [x] Look-at, direct-at (BSLookAtModifier, BSDirectAtModifier) and limb IK.
-- [ ] Foot IK: the narrow quadrupeds' (the formats' list); align with ground rotation.
+- [ ] Foot IK: the narrow quadrupeds' (the formats' list).
 - [x] Faces: expressions, phonemes, blinks, the head's morphs (src/animation/face.ts).
 - [ ] Faces: the expression change rate.
 - [x] Lip sync (.lip, .fuz) with the dialogue.
