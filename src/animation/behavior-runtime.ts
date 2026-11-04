@@ -49,6 +49,7 @@ import {
   lookAtState,
   ModelSpace,
   quatConjugate,
+  quatMultiply,
   quatRotate,
   turnHead,
   twist,
@@ -202,6 +203,8 @@ export interface BehaviorHost {
    * it cannot (the clip then gives no pose).
    */
   clip(animation: string): AnimationBinding | undefined;
+  /** Whether a clip `clip` has no binding for yet is on its way (read once, in the background). */
+  clipLoading?(animation: string): boolean;
   /** A referenced behavior file by its name (relative to the project's folder). */
   behavior(name: string): BehaviorGraph | undefined;
   /**
@@ -761,6 +764,12 @@ export class BehaviorRuntime {
   #rigidBody: RigidBodyRagdollControl | undefined;
   /** The character's mirroring (mirrored clips), if it has one. */
   readonly #mirror: MirroredSkeleton | undefined;
+  /** The turn its rotate-character modifiers make in this update (radians, counter-clockwise). */
+  #rotating = 0;
+  /** How many clips this update asked for are still being read. */
+  #awaitingClips = 0;
+  /** It has made a pose. */
+  #posed = false;
   /** The project's default event mode of blending transitions (EVENT_MODE). */
   readonly #eventMode: number;
   /**
@@ -804,6 +813,10 @@ export class BehaviorRuntime {
    * animates only its minimum bones; undefined: not known, its bone LOD's distance decides.
    */
   seen: boolean | undefined = undefined;
+  /** [Animation] bFootIK: whether foot IK runs at all. */
+  footIkAllowed = true;
+  /** [Animation] bUseSpeedSampler: whether its speed samplers look the goal up in the speed data. */
+  useSpeedSampler = true;
   /**
    * Whether its first bone has left its 3D's bound (that bone's place in the world outside the
    * bounding sphere of the actor's model; AnimationRate.rootAway): one not seen and with no
@@ -1700,6 +1713,7 @@ export class BehaviorRuntime {
     const active = new Set<object>();
     this.#keyframed = new Set();
     this.#tweens = [];
+    this.#rotating = 0;
     this.#poweredForce = 0;
     this.#powered = undefined;
     this.#rigidBody = undefined;
@@ -1722,7 +1736,17 @@ export class BehaviorRuntime {
     if (!pose) return;
     this.#footIkControls = undefined;
     this.#eyes = undefined;
+    this.#awaitingClips = 0;
     const generated = this.#generate(this.#root, 0);
+    // A clip it needs is still being read (a landing's, first played on the stairs), or nothing
+    // it plays gives a pose (17 clips vanilla graphs name are in no archive): it holds the pose it
+    // had rather than show what is missing at the reference pose (a T-pose). The first pose it
+    // ever makes has nothing to hold. TODO(M13): what the original shows for a clip it never has.
+    if ((this.#awaitingClips > 0 || !generated) && this.#posed) {
+      this.forceOneUpdate = true;
+      return;
+    }
+    this.#posed ||= generated !== undefined;
     const reference = this.skeleton.referencePose;
     const bones = this.#boneCount * TRANSFORM_FLOATS;
     // Bone LOD: far from the camera the last bones keep their pose (setBoneLod).
@@ -1827,7 +1851,7 @@ export class BehaviorRuntime {
   }
 
   #rootMotion(): RootMotion {
-    const sum = { x: 0, y: 0, z: 0, yaw: 0 };
+    const sum = { x: 0, y: 0, z: 0, yaw: this.#rotating };
     this.#collectMotion(this.#root, 1, 0, sum);
     if (sum.x === 0 && sum.y === 0 && sum.z === 0 && sum.yaw === 0) return NO_MOTION;
     return { translation: [sum.x, sum.y, sum.z], yaw: sum.yaw };
@@ -3765,9 +3789,11 @@ export class BehaviorRuntime {
         });
         return;
       case 'damping': {
-        // A PID controller per update (TODO(M13): Havok's exact discretisation). Without
-        // enableScalarDamping the value is left alone (every vanilla damping modifier sets it;
-        // none damps a vector: TODO(M13) rawVector when a file asks for it).
+        // A PID controller per update (TODO(M13): Havok's exact discretisation). Without its
+        // enable the value or vector is left alone (every vanilla damping modifier damps its
+        // value and none its vector; a mod's may).
+        if (this.#read(modifier.enableVectorDamping, scope) !== 0)
+          this.#dampVector(modifier, state, scope);
         if (this.#read(modifier.enableScalarDamping, scope) === 0) return;
         const raw = this.#read(modifier.rawValue, scope);
         const damped = state.values[0] ?? raw;
@@ -3812,11 +3838,14 @@ export class BehaviorRuntime {
         // table, the goal speed itself. Before, Speed went through as it was: a cart horse
         // walking at 125 units a second blended its trot in (its walk is 125.11 in the blend).
         const goal = this.#read(modifier.goalSpeed, scope);
-        const sampled = this.#host.speedParameter?.(
-          this.#read(modifier.state, scope),
-          this.#read(modifier.direction, scope),
-          goal,
-        );
+        // ([Animation] bUseSpeedSampler off: the goal speed itself.)
+        const sampled = !this.useSpeedSampler
+          ? undefined
+          : this.#host.speedParameter?.(
+              this.#read(modifier.state, scope),
+              this.#read(modifier.direction, scope),
+              goal,
+            );
         this.#write(modifier.speedOut, scope, sampled ?? goal);
         return;
       }
@@ -3831,9 +3860,20 @@ export class BehaviorRuntime {
         // They move bones: the pose they are laid on is generated after the update (#modify).
         return;
       case 'rotate-character':
-        // It turns the character at degreesPerSecond (bound to TurnDelta: the turn the engine
-        // makes it anyway, in the equip and unequip states it wraps): the movers turn the actor
-        // (src/ai/locomotion.ts), so the graph's root motion leaves it out, not to turn twice.
+        // It turns the character at degreesPerSecond. All six vanilla ones are bound to TurnDelta
+        // (speed 1, about the character's up): the turn the engine makes it anyway, in the equip
+        // and unequip states they wrap. The movers turn the actor (src/ai/locomotion.ts), so the
+        // graph's root motion leaves that out, not to turn twice (TurnDelta is fed its own turn:
+        // it would never stop). One that is not bound to a variable turns it by its root motion.
+        if (modifier.degreesPerSecond.variable === undefined) {
+          this.#rotating +=
+            ((this.#read(modifier.degreesPerSecond, scope) *
+              this.#read(modifier.speedMultiplier, scope) *
+              modifier.axis[2] *
+              Math.PI) /
+              180) *
+            this.#dt;
+        }
         return;
       case 'get-up':
         state.elapsed += dt;
@@ -4012,6 +4052,33 @@ export class BehaviorRuntime {
    * clips below the tweener as it began. Without the character's place it rests.
    * TODO(M13): Havok's interpolation curve (linear here).
    */
+  /** hkbDampingModifier's vector: the same controller as its value's, on each component. */
+  #dampVector(
+    modifier: Extract<BehaviorModifier, { kind: 'damping' }>,
+    state: { values: number[] },
+    scope: Scope,
+  ): void {
+    const raw = this.#readVector(modifier.rawVector, scope);
+    const kP = this.#read(modifier.kP, scope);
+    const kI = this.#read(modifier.kI, scope);
+    const kD = this.#read(modifier.kD, scope);
+    const values = state.values;
+    const damped: [number, number, number, number] = [0, 0, 0, 0];
+    for (let k = 0; k < 4; k++) {
+      // After the value's slot: each component's damped value, error sum and last error.
+      const slot = 1 + k * 3;
+      const was = values[slot] ?? raw[k] ?? 0;
+      const error = (raw[k] ?? 0) - was;
+      const sum = (values[slot + 1] ?? 0) + error;
+      const next = was + kP * error + kI * sum + kD * (error - (values[slot + 2] ?? 0));
+      values[slot] = next;
+      values[slot + 1] = sum;
+      values[slot + 2] = error;
+      damped[k] = next;
+    }
+    this.#writeVector(modifier.dampedVector, scope, damped);
+  }
+
   #tween(motion: RootMotion): RootMotion {
     const world = this.world;
     if (this.#tweens.length === 0 || !world) return motion;
@@ -4176,8 +4243,10 @@ export class BehaviorRuntime {
         this.#footIkControls = modifier;
         return;
       case 'foot-ik': {
+        if (!this.footIkAllowed) return;
         const { state, advance } = this.#proceduralState(modifier);
         state.footIk ??= footIkState(modifier.setup.legs.length);
+        this.#alignWithGround(modifier.alignWithGroundRotation, scope, pose);
         this.#space.update(pose);
         const result = footIk(
           modifier.setup,
@@ -4336,6 +4405,18 @@ export class BehaviorRuntime {
     this.#write(modifier.currentPitchOffset, scope, turned.pitch / DEGREES);
   }
 
+  /**
+   * A foot IK's alignWithGroundRotation: the character's first bone turned by it before its feet
+   * are placed. The identity in all 25 vanilla controls and the 2 vanilla foot IK modifiers, which
+   * then leaves the pose alone. TODO(M13): Havok's use of a turn other than the identity (a mod's).
+   */
+  #alignWithGround(rotation: VectorBindable, scope: Scope, pose: Float32Array): void {
+    const q = this.#readVector(rotation, scope);
+    if (q[0] === 0 && q[1] === 0 && q[2] === 0) return;
+    const turned = quatMultiply(q, [pose[3] ?? 0, pose[4] ?? 0, pose[5] ?? 0, pose[6] ?? 1]);
+    pose.set(turned, 3);
+  }
+
   #footIkGains(gains: FootIkGains, scope: Scope): FootIkGainValues {
     const read = (bindable: Bindable): number => this.#read(bindable, scope);
     return {
@@ -4406,11 +4487,12 @@ export class BehaviorRuntime {
       ? this.#footIkGains(controls.gains, scope)
       : { ...EASING_OFF, onOffGain: this.#lastOnOffGain };
     if (controls) this.#lastOnOffGain = gains.onOffGain;
+    if (controls) this.#alignWithGround(controls.alignWithGroundRotation, scope, this.pose);
     this.#space.update(this.pose);
     const result = footIk(
       setup,
       gains,
-      controls !== undefined && !disabled,
+      controls !== undefined && !disabled && this.footIkAllowed,
       this.#footIkState,
       this.pose,
       this.#space,
@@ -4529,6 +4611,7 @@ export class BehaviorRuntime {
     const t = blendCurve(transition.curve, transition.elapsed / transition.duration);
     const to = this.#generate(transition.to.generator, depth + 1);
     const toPose = to && this.#own(to, depth + 1);
+    const awaiting = this.#awaitingClips;
     const source = transition.from;
     const from =
       source.kind === 'state'
@@ -4537,7 +4620,11 @@ export class BehaviorRuntime {
           ? this.#generateTransition(source.transition, depth + 2)
           : { pose: source.pose, additive: false };
     if (!from) return toPose && this.#own(toPose, depth);
-    if (!toPose) return this.#own(from, depth);
+    if (!toPose) {
+      // What it blends from plays on until the state's clip is there.
+      this.#awaitingClips = awaiting;
+      return this.#own(from, depth);
+    }
     const out = this.#buffer(depth);
     blendPoses(this.#solid(from, depth + 3), this.#solid(toPose, depth + 4), t, out);
     return { pose: out, additive: false };
@@ -4566,7 +4653,10 @@ export class BehaviorRuntime {
 
   #generateClip(node: Clip, depth: number): Generated | undefined {
     const binding = this.#host.clip(node.animation);
-    if (!binding) return undefined;
+    if (!binding) {
+      if (this.#host.clipLoading?.(node.animation) === true) this.#awaitingClips++;
+      return undefined;
+    }
     const state = this.#clips.get(node);
     const sampled = this.#sample(binding, (state?.time ?? 0) + (node.cropStart ?? 0), depth);
     // A mirrored clip: its pose mirrored across the character (src/animation/mirror.ts).

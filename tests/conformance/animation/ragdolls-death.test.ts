@@ -214,9 +214,7 @@ describe('ragdolls and death (todo)', () => {
   it.todo('powered ragdoll motors: the graph’s powered bones by the RagdollAnim gains  [INI]');
   it.todo('fDyingTimer (2): how long an actor dies before it is dead  [settings, original]');
   it.todo('[Animation] bAlwaysDriveRagdoll (0): a ragdoll driven while alive  [INI]');
-  it.todo('iDeathDropWeaponChance (0): the weapon dropped at death  [settings]');
   it.todo('a death in a lean marker (type 4): Ragdoll half the time, else DeathAnim  [data]');
-  it.todo('fEssentialDeathTime (30): an essential actor’s bleedout time  [settings]');
   it.todo(
     'ragdoll feedback (bRagdollFeedback, fFeedback*): hit impulses on a driven ragdoll  [INI]',
   );

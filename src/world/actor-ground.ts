@@ -140,6 +140,21 @@ export function probedTilt(
 }
 
 /**
+ * The heights the lean takes from: each end's probe averaged with the height that end had
+ * (observed in the original), the probe alone where it has none (put down, or newly probed).
+ */
+export function averagedProbes(had: TiltProbes | undefined, probed: TiltProbes): TiltProbes {
+  const mean = (old: number | undefined, now: number | undefined): number | undefined =>
+    now === undefined ? undefined : old === undefined ? now : (old + now) / 2;
+  return {
+    front: mean(had?.front, probed.front) ?? probed.front,
+    back: mean(had?.back, probed.back) ?? probed.back,
+    left: mean(had?.left, probed.left),
+    right: mean(had?.right, probed.right),
+  };
+}
+
+/**
  * One update of the engine's lean (observed in the original): its pitch and roll move towards the ground's
  * by fQuadrupedPitchMult ([HAVOK], 10) times the update's time of what is left, so a step onto
  * another slope is leaned into over about a tenth of a second instead of at once.

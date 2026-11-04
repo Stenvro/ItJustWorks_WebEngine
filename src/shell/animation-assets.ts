@@ -47,6 +47,7 @@ export class ClipHost implements BehaviorHost {
   readonly #has: (path: string) => boolean;
   readonly #clips = new Map<string, AnimationBinding | undefined>();
   readonly #pending = new Set<Promise<unknown>>();
+  readonly #loading = new Set<string>();
   /** The project's animation data (its clips' root motion), once read. */
   data: ProjectAnimationData | undefined;
 
@@ -66,14 +67,20 @@ export class ClipHost implements BehaviorHost {
     const key = animation.toLowerCase();
     if (this.#clips.has(key)) return this.#clips.get(key);
     this.#clips.set(key, undefined);
+    this.#loading.add(key);
     const path = projectRelative(this.#behaviors.project, animation);
     const own = this.#female ? path.replace(/\\male\\/, '\\female\\') : path;
     const loading = this.#load(this.#has(own) ? own : path).then((binding) => {
       this.#clips.set(key, binding);
+      this.#loading.delete(key);
     });
     this.#pending.add(loading);
     void loading.finally(() => this.#pending.delete(loading));
     return undefined;
+  }
+
+  clipLoading(animation: string): boolean {
+    return this.#loading.has(animation.toLowerCase());
   }
 
   behavior(name: string): BehaviorGraph | undefined {

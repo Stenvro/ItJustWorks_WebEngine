@@ -231,7 +231,6 @@ describe('ambient idles (todo)', () => {
     'in a complex scene the next try waits fAIIdleWaitTimeComplexScene after an idle  [original]',
   );
   it.todo('the frame’s idle time budget: tries stop when it is spent  [original]');
-  it.todo('an Eat package’s eating step picks none  [original]');
   it.todo('the player picks ActionIdle in the camera states that allow it  [original]');
   it.todo('a dying or unconscious actor’s idle update  [original]');
   it.todo('a restrained actor (life state 6) picks none  [original]');
