@@ -10,6 +10,8 @@ import { describe, expect, it } from 'vitest';
 import {
   COMBAT_AI_DEFAULTS,
   maySwitchTarget,
+  targetEngaged,
+  zonesAllow,
   mayReselect,
   selectTarget,
   targetScore,
@@ -109,9 +111,21 @@ describe('target selection', () => {
   // Another actor's blow on one neutral to it, as an assault: src/scripting/runtime/
   // crime-engine.test.ts. The weight the original adds for a target others already fight is 0.
   // The Preferred selector named before is not in the original: only Standard and Fixed are.
-  it.todo(
-    'a target engaged and not seen for fCombatTargetEngagedLastSeenTime (3 s): the seven behaviours that read it were not followed  [settings]',
-  );
+  it('a target counts as engaged when seen within fCombatTargetEngagedLastSeenTime (3 s)  [settings]', () => {
+    expect(targetEngaged(2.9, settings)).toBe(true);
+    expect(targetEngaged(3, settings)).toBe(false);
+  });
+  it('its encounter zone bounds its fight: the same zone, or its own unbounded  [original]', () => {
+    const zone = (id: number | undefined, unbounded = false) => ({ zone: id, unbounded });
+    expect(zonesAllow(zone(1), zone(1))).toBe(true);
+    expect(zonesAllow(zone(undefined), zone(undefined))).toBe(true);
+    expect(zonesAllow(zone(1), zone(2))).toBe(false);
+    expect(zonesAllow(zone(1, true), zone(2))).toBe(true);
+    // Its own zone decides, not the other's.
+    expect(zonesAllow(zone(1), zone(2, true))).toBe(false);
+  });
+  // Stays: a script's target is hostile to it for the fight (startCombat) and weighed as any
+  // other; what makes the original's Fixed selector the actor's was not read.
   it.todo(
     'a scripted target (StartCombat) is kept: what makes the Fixed selector the actor’s was not read  [CK StartCombat]',
   );

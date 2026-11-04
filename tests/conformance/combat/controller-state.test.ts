@@ -16,8 +16,16 @@ import {
   attacksOnSight,
   COMBAT_AI_DEFAULTS,
   drawConfidenceModifier,
+  actorStrength,
+  attackDps,
+  Confidence,
+  mayReselect,
+  oddsWeighed,
+  shouldFlee,
+  UNWEIGHED_ODDS,
   yields,
 } from '../../../src/ai/combat-ai.ts';
+import { CombatSearch } from '../../../src/ai/combat-search.ts';
 import { CombatGroups } from '../../../src/ai/combat-groups.ts';
 import { FightReaction } from '../../../src/ai/combat-reactions.ts';
 import { regenPerSecond, VITAL_DEFAULTS } from '../../../src/gameplay/vitals.ts';
@@ -67,12 +75,59 @@ describe('the controller (todo)', () => {
     expect(settings.tauntMin).toBe(10);
     expect(settings.tauntMax).toBe(30);
   });
-  // TODO(M13): the combat tree runs each frame with its nodes' own fCombat*UpdateTime gates
-  // (strength, threat ratio, target choice); a behaviour-wide update timer is not modelled.
-  it.todo('per-behaviour timers (fCombat*UpdateTime) instead of every frame  [settings]');
-  // TODO(M13): the search and stand-down are the shell's (combat-search.ts is tested on its own);
-  // a sim case belongs to the combat scenario suite.
-  it.todo('the fight ends when no target is left: the search, then the stand-down  [original]');
+  it('per-behaviour timers (fCombat*UpdateTime) gate what they weigh  [settings]', () => {
+    // The tree runs each frame; its nodes weigh on their own timers: the odds every
+    // fCombatThreatRatioUpdateTime, the target every fCombatSelectTargetUpdateTime.
+    expect(settings.threatRatioUpdateTime).toBe(ENGINE.fCombatThreatRatioUpdateTime);
+    expect(mayReselect(0.5, settings)).toBe(false);
+    expect(mayReselect(1, settings)).toBe(true);
+  });
+  it('the odds stand at 100 for a frenzied actor or after 120 s unengaged  [original]', () => {
+    expect(UNWEIGHED_ODDS).toBe(100);
+    expect(oddsWeighed(119, Aggression.aggressive)).toBe(true);
+    expect(oddsWeighed(120, Aggression.aggressive)).toBe(false);
+    expect(oddsWeighed(1, Aggression.frenzied)).toBe(false);
+    // At such odds no confidence but a coward's flees.
+    expect(
+      shouldFlee(
+        {
+          ratio: UNWEIGHED_ODDS,
+          confidence: Confidence.average,
+          modifier: 0,
+          afraid: false,
+          rallied: false,
+        },
+        settings,
+      ),
+    ).toBe(false);
+  });
+  it('the strength weighs damage per second, not the raw blow  [original]', () => {
+    const fast = attackDps(10, 2, false, settings);
+    const bow = attackDps(10, 1, true, settings);
+    expect(fast).toBe(20);
+    expect(bow).toBeCloseTo(10 * settings.dpsBowSpeedMult);
+    expect(actorStrength(100, fast)).toBe(2000);
+    // Armour counts as more health, at most 0.99 of a blow taken.
+    expect(actorStrength(100, 10, 0.5)).toBe(2000);
+    expect(actorStrength(100, 10, 1)).toBeCloseTo(100000);
+  });
+  it('the fight ends when no target is left: the search gives up, then the stand-down  [original]', () => {
+    const body = {
+      position: (): [number, number, number] => [0, 0, 0],
+      travel: () => Promise.resolve(false),
+      face: () => undefined,
+      stop: () => undefined,
+    };
+    const search = new CombatSearch(
+      [0, 0, 0],
+      body,
+      { searchInvestigateDistance: 256, searchInvestigateTime: 2.5, stateExpireTime: 30 },
+      () => 0,
+    );
+    // Its state expires after fCombatStateExpireTime however it searched.
+    expect(search.update(0)).toBe('searching');
+    expect(search.update(31)).toBe('gave-up');
+  });
   it('fCombatHealthRegenRateMult: health regenerates slower in combat  [settings]', () => {
     const base = { max: 100, rate: 1, rateMult: 100, inCombat: false };
     const out = regenPerSecond(0, base);
@@ -83,8 +138,8 @@ describe('the controller (todo)', () => {
     expect(regenPerSecond(0, { ...base, inCombat: true, regenInCombat: true })).toBeCloseTo(out);
     expect(regenPerSecond(0, { ...base, inCombat: true, combatHealthMult: 1 })).toBeCloseTo(out);
   });
-  // TODO(M13): the original's yield rule lives in the player-side routine that reads
-  // fCombatYieldTime and fCombatYieldRetryTime; it has not been read to its end.
+  // Stays: the original's rule lives in the player-side routine that reads fCombatYieldTime and
+  // fCombatYieldRetryTime, not read to its end; the settings' test is above (yields).
   it.todo('the actor’s yield rule (ours borrows the player’s settings)  [original]');
   it('combat groups: one per side, its members sharing their fight  [CommonLibSSE CombatGroup]', () => {
     const groups = new CombatGroups();

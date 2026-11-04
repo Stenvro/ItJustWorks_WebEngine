@@ -63,6 +63,7 @@ import {
 import { ActorAi } from './actor-ai.ts';
 import { ActorScenes } from './actor-scenes.ts';
 import { ActorSearch } from './actor-search.ts';
+import { zonesAllow } from '../ai/combat-ai.ts';
 import { ActorsAway, type AwayPlace } from './actors-away.ts';
 import type { RouteDoor } from '../ai/routes.ts';
 import { ActorBodies, type BodyHolder } from './actor-bodies.ts';
@@ -298,6 +299,7 @@ export class ActorStage {
   readonly away: ActorsAway;
   /** The doors the actors go through (src/shell/actor-doors.ts). */
   readonly doors: ActorDoors;
+  readonly #session: GameSession;
   /** The navmesh obstacles' cuts of the loaded area (src/ai/navmesh-obstacles.ts). */
   readonly obstacles = new NavmeshObstacleField();
   /** The cells whose obstacles are in the field. */
@@ -519,7 +521,10 @@ export class ActorStage {
     const shotWay = (from: Vec3, to: Vec3): void => {
       options.player?.()?.play.shotThroughWater(from, to);
     };
+    this.#session = options.session;
     this.combat = new ActorCombat({
+      leaveThroughDoor: (actor, door) => this.fleeThrough(actor, door),
+      doorLeads: (actor, door) => this.fleeDoorLeads(actor, door),
       session: options.session,
       renderer: options.renderer,
       terminal: options.terminal,
@@ -790,6 +795,9 @@ export class ActorStage {
       },
     });
     this.casting = new ActorCasting({
+      spellLoosed: (actor, item, from, aim) => {
+        this.combat.spellLoosed(actor, item, from, aim, () => this.projectiles.flying());
+      },
       session: options.session,
       renderer: options.renderer,
       terminal: options.terminal,
@@ -1317,6 +1325,39 @@ export class ActorStage {
   }
 
   /**
+   * Whether one fleeing may take a load door (observed in the original): its race opens doors,
+   * the door has its other side, and that side lies in the zone it fights in (or its zone has no
+   * combat boundary, with [Combat] bEncounterZoneTargetRestrict).
+   */
+  async fleeDoorLeads(actor: number, door: number): Promise<boolean> {
+    const staged = this.#actors.get(actor);
+    const runtime = this.#session.scriptsReady;
+    if (!staged || !runtime) return false;
+    const routeDoor = (await this.#session.routeMap()).door(door);
+    if (!routeDoor) return false;
+    if (!this.#session.ini.number('Combat', 'bEncounterZoneTargetRestrict')) return true;
+    const own = await runtime.progression.combatZone(actor);
+    const there = await runtime.progression.combatZone(routeDoor.destination);
+    return zonesAllow(own, there);
+  }
+
+  /** One fleeing, at the load door it fled to, goes through it (Flee Through Door). */
+  async fleeThrough(actor: number, door: number): Promise<boolean> {
+    const staged = this.#actors.get(actor);
+    if (!staged) return false;
+    const routeDoor = (await this.#session.routeMap()).door(door);
+    if (!routeDoor) return false;
+    await this.doors.through(door, actor);
+    const arrival: AwayPlace = {
+      space: routeDoor.arrivalSpace,
+      position: routeDoor.arrival,
+      heading: routeDoor.arrivalHeading,
+    };
+    await this.leaveThrough(staged, routeDoor, arrival);
+    return true;
+  }
+
+  /**
    * An actor goes through a load door on its way to a place in another cell or worldspace: it
    * leaves the stage and comes out on the other side, on the stage again if that is loaded,
    * else away (the low process walks it on).
@@ -1529,6 +1570,7 @@ export class ActorStage {
     this.senses.killed(reference);
     this.casting.remove(reference);
     // Its weapons fall from its hands (iDeathDropWeaponChance).
+    this.combat.deathLine(reference);
     this.combat.dropWeaponsOnDeath(reference).catch((error: unknown) => {
       this.#options.terminal.log('actor', `a death's weapons: ${describe(error)}`, 'warn');
     });

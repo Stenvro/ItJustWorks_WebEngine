@@ -66,6 +66,8 @@ export interface CombatAiSettings {
   /** fCombatDPSMeleeSpeedMult / BowSpeedMult: × a melee weapon's (a bow's) speed for its DPS. */
   readonly dpsMeleeSpeedMult: number;
   readonly dpsBowSpeedMult: number;
+  /** fCombatTargetEngagedLastSeenTime: its target seen this lately counts as engaged. */
+  readonly targetEngagedLastSeenTime: number;
   /** fCombatThreatRatioUpdateTime: the odds are weighed again this often (seconds). */
   readonly threatRatioUpdateTime: number;
   /** fFleeDistanceExterior / Interior: how far a fleeing actor runs from its enemies. */
@@ -287,6 +289,7 @@ const SETTINGS: readonly (readonly [keyof CombatAiSettings, string | undefined, 
   ['strengthUpdateTime', 'fCombatStrengthUpdateTime', 1],
   ['dpsMeleeSpeedMult', 'fCombatDPSMeleeSpeedMult', 1],
   ['dpsBowSpeedMult', 'fCombatDPSBowSpeedMult', 0.2],
+  ['targetEngagedLastSeenTime', 'fCombatTargetEngagedLastSeenTime', 3],
   ['threatRatioUpdateTime', 'fCombatThreatRatioUpdateTime', 5],
   ['fleeDistanceExterior', 'fFleeDistanceExterior', 5000],
   ['fleeDistanceInterior', 'fFleeDistanceInterior', 3000],
@@ -725,6 +728,52 @@ export function attackDps(
   return Math.max(0, damage) * Math.max(0, speed || 1) * mult;
 }
 
+/** When a fight's first taunt falls due (its controller's taunt timer, as it begins). */
+export function firstTauntTime(random: () => number, settings: CombatAiSettings): number {
+  return settings.tauntMin + (settings.tauntMax - settings.tauntMin) * random();
+}
+
+/**
+ * Whether its target counts as engaged (observed in the original): its target seen within
+ * fCombatTargetEngagedLastSeenTime. Beyond it, one it still fights in sight of its group counts.
+ * TODO(M13): the seven behaviours that ask it (casters' checks) ask no such thing here yet.
+ */
+export function targetEngaged(sinceSeen: number, settings: CombatAiSettings): boolean {
+  return sinceSeen < settings.targetEngagedLastSeenTime;
+}
+
+/** The odds of one that weighs none: as good as they get (it does not flee). */
+export const UNWEIGHED_ODDS = 100;
+
+/** Seconds since it was engaged past which the odds stand at UNWEIGHED_ODDS. */
+const ENGAGED_SECONDS = 120;
+
+/**
+ * Whether an actor's odds are weighed (observed in the original): not for a frenzied one (its
+ * Aggression at 3) nor one that has not been engaged for 120 s: its odds stand at 100.
+ * TODO(M13): what engages it is read here as its target in sight, a hit or an attack of its.
+ */
+export function oddsWeighed(sinceEngaged: number, aggression: number): boolean {
+  return sinceEngaged < ENGAGED_SECONDS && aggression !== Aggression.frenzied;
+}
+
+/** An actor's encounter zone as the target restriction reads it. */
+export interface CombatZone {
+  /** Its form id (undefined: the default zone). */
+  readonly zone: number | undefined;
+  /** The zone has Disable Combat Boundary (ECZN DATA). */
+  readonly unbounded: boolean;
+}
+
+/**
+ * Whether an actor's encounter zone lets it fight, or flee towards, another's (observed in the
+ * original, with [Combat] bEncounterZoneTargetRestrict): the same zone, or its own without a
+ * combat boundary.
+ */
+export function zonesAllow(own: CombatZone, other: CombatZone): boolean {
+  return own.zone === other.zone || own.unbounded;
+}
+
 /** The strength ratio of a side: its strengths against its enemies' (Infinity: no enemy). */
 export function strengthRatio(side: readonly number[], enemies: readonly number[]): number {
   const own = side.reduce((sum, strength) => sum + strength, 0);
@@ -767,9 +816,9 @@ export interface Measure {
  * Whether its confidence lets an actor take up another's fight against `foe` (its assistance
  * said it would help): UESP "Confidence": cowardly never (it flees), cautious "attacks only
  * lower level enemies", average "avoids higher level" ones, brave "attacks unless being
- * outmatched" (the foe twice its strength or more, as confidenceModifier's worst odds),
- * foolhardy always. Those that do not dare keep out of the fight (a spectator flees from it).
- * TODO(M13): the engine's own measure of being outmatched.
+ * outmatched" (the foe twice its strength or more, as confidenceModifier's worst odds; strength
+ * by damage per second, as the odds'), foolhardy always. Those that do not dare keep out of the
+ * fight (a spectator flees from it). TODO(M13): the engine's own measure of being outmatched.
  */
 export function daresHelp(confidence: number, own: Measure, foe: Measure): boolean {
   switch (Math.round(confidence)) {
