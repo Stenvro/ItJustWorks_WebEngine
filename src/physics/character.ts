@@ -893,6 +893,43 @@ export class CharacterBody {
   }
 
   /**
+   * A movement against its way, or further than its way goes, is the controller putting the shape
+   * out of what moved into it (a door's leaf swung over it): by the whole depth in one step, and
+   * unswept. So it went through the wall beside the door, into the wall's hollow, where it could
+   * move no more. What stands fixed stops that movement, as it stops the character proxy.
+   */
+  #heldByFixed(
+    moved: RAPIER.Vector,
+    desired: RAPIER.Vector,
+    predicate: (collider: RAPIER.Collider) => boolean,
+  ): RAPIER.Vector {
+    const across = Math.hypot(moved.x, moved.y);
+    const against = moved.x * desired.x + moved.y * desired.y < 0;
+    if (across <= SKIN || (!against && across <= Math.hypot(desired.x, desired.y) + SKIN)) {
+      return moved;
+    }
+    const at = this.#body.translation();
+    const hit = this.physics.world.castShape(
+      // From above the ground it stands on, which is no wall.
+      { x: at.x, y: at.y, z: at.z + EDGE_LIFT },
+      NO_ROTATION,
+      { x: moved.x / across, y: moved.y / across, z: 0 },
+      queryShape(this.#collider.shape),
+      SKIN,
+      across,
+      false,
+      RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+      undefined,
+      this.#collider,
+      undefined,
+      (collider) => predicate(collider) && collider.parent()?.isFixed() !== false,
+    );
+    if (!hit) return moved;
+    const share = hit.time_of_impact / across;
+    return { x: moved.x * share, y: moved.y * share, z: moved.z };
+  }
+
+  /**
    * The movement swept again from EDGE_LIFT above where the shape stands (then down onto the
    * ground by the controller's snap), or undefined if that gets no further along the way.
    */
@@ -1267,6 +1304,7 @@ export class CharacterBody {
         this.#grounded = true;
       }
     }
+    moved = this.#heldByFixed(moved, desired, predicate);
     if (this.#grounded || this.swimming) this.#offActor = undefined;
     this.#unsupported = !this.#grounded && !this.swimming && below;
     this.#below = below;

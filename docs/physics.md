@@ -508,7 +508,10 @@ taken from their references) it goes at least that fast, walking off freely and 
 in, and its sweep leaves that actor out. Rapier's controller, started inside another
 controller, moved out by the whole depth in one step, the other the same way: three Greybeards
 set at one door's arrival point went off together at some 1,800 units a second and over High
-Hrothgar's ledge (`src/physics/character-overlap.test.ts`). The rays leave out the player's
+Hrothgar's ledge (`src/physics/character-overlap.test.ts`). A body that moves into the shape (a
+door's leaf swinging shut over the player) has it put out the same way, by the whole depth and
+unswept; what stands fixed stops that movement (`CharacterBody`'s `#heldByFixed`), or it goes
+through the wall beside the door into the wall's hollow, and moves no more. The rays leave out the player's
 own shape and phantoms (trigger volumes), as the character controller does. Waiting has no
 time limit but a 60 s safety net: a 10 s limit placed players under their floor where a heavy
 cell's collision took longer (frames are slow in a hidden tab). While walking, a player whose
