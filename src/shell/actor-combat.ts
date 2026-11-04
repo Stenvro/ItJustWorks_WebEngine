@@ -336,6 +336,10 @@ interface Fighter {
   lastCritical: boolean;
   /** When its current attack began, while it has not got past its wind-up (see #unanswered). */
   attackSince: number | undefined;
+  /** Its current attack followed another, whose clip may still raise its end (#event). */
+  attackChained: boolean;
+  /** When a clip last ended an attack of its (attackStop, #event). */
+  attackStoppedAt: number | undefined;
   /** Attack events its graph took (past their wind-up) and those it never did (#unanswered). */
   readonly liveAttacks: Set<string>;
   readonly deadAttacks: Set<string>;
@@ -1177,6 +1181,9 @@ export class ActorCombat implements CombatBridge {
     if (!kind) return true;
     const left = kind.left || action.includes('Left');
     const dual = action.includes('Dual');
+    const stopped = fighter.attackStoppedAt;
+    fighter.attackChained =
+      attacking(state) || (stopped !== undefined && this.#clock - stopped < CHAIN_BLEND_SECONDS);
     startAttack(state, {
       event,
       hand: dual ? 'dual' : left ? 'left' : 'right',
@@ -2185,10 +2192,14 @@ export class ActorCombat implements CombatBridge {
     const answer = handler?.toLowerCase();
     // The attack before a chained one, its clip still blending out, raises its attackStop just
     // after the new attack began: that ended the new one, whose hit frame then struck nothing
-    // (every second swing of a fight). Only the attack it belongs to may end by it.
+    // (every second swing of a fight). Only the attack it belongs to may end by it. One that
+    // followed no attack has no clip before it to blame: a graph that takes the attack as its
+    // draw ends comes to its ready state raising attackStop and plays no swing, so the attack
+    // must end there and be asked again (kept, its fighter waited in its wind-up for good).
     if (
       answer === 'attackstophandler' &&
       fighter.state.attack === AttackState.draw &&
+      fighter.attackChained &&
       fighter.attackSince !== undefined &&
       this.#clock - fighter.attackSince < CHAIN_BLEND_SECONDS
     ) {
@@ -2197,6 +2208,9 @@ export class ActorCombat implements CombatBridge {
     // Only the striking graph's release lets the arrow go: the other's (raised first, some
     // frames) would take the nocked arrow and the shot with it.
     const released = answer === 'arrowreleasehandler';
+    if (answer === 'attackstophandler' && attacking(fighter.state)) {
+      fighter.attackStoppedAt = this.#clock;
+    }
     const effects = !strikes && released ? [] : graphEvent(fighter.state, event.name, handler);
     for (const effect of effects) {
       if (!strikes && (effect.kind === 'strike' || effect.kind === 'arrow-release')) continue;
@@ -5285,6 +5299,8 @@ function newFighter(reference: number, player: boolean): Fighter {
     unbled: 0,
     lastCritical: false,
     attackSince: undefined,
+    attackChained: false,
+    attackStoppedAt: undefined,
     liveAttacks: new Set(),
     deadAttacks: new Set(),
     refusals: new Map(),
