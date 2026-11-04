@@ -178,6 +178,28 @@ describe('crimes and their witnesses', () => {
     ]);
   });
 
+  it('another actor’s blow on one not hostile to it: reported once a pair, to those who see it', async () => {
+    const { crime } = engine();
+    const told: CrimeEvent[] = [];
+    crime.listen((event) => told.push(event));
+    crime.world = { witnesses: () => [CITIZEN, RIFTEN_CITIZEN] };
+    await crime.assault(CITIZEN, VICTIM);
+    await crime.assault(CITIZEN, VICTIM);
+    expect(told.filter((event) => event.kind === 'npcCrime')).toHaveLength(1);
+    expect(told[0]).toMatchObject({ kind: 'npcCrime', criminal: CITIZEN, victim: VICTIM });
+    // A swing back at the one who struck first is no crime of its own (a brawl ends here).
+  });
+
+  it('a guard’s blow is no crime: nobody is told', async () => {
+    const { crime } = engine();
+    const told: CrimeEvent[] = [];
+    crime.listen((event) => told.push(event));
+    crime.world = { witnesses: () => [CITIZEN] };
+    crime.isGuard = (actor) => Promise.resolve(actor === GUARD);
+    await crime.assault(GUARD, VICTIM);
+    expect(told).toEqual([]);
+  });
+
   it('are nothing unseen, or seen only by those who do not care', async () => {
     const { crime, state } = engine();
     expect(

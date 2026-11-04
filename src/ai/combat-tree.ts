@@ -391,7 +391,7 @@ export const COMBAT_TREES: Readonly<Record<string, NodeSpec>> = {
   },
   // Flee (observed in the original: Flee Context, Start Flee, the Flee Selector's Flee To Ally, Flee Through
   // Door, Flee To Cover, Flee, Unrestricted Flee, Boost Confidence): back to the fight once
-  // cornered (Boost Confidence), done once safe; else to an ally fCombatFleeAllyDistanceMin ..
+  // with nowhere left to go (Boost Confidence: combat-ai.ts mayBoostConfidence), done once safe; else to an ally fCombatFleeAllyDistanceMin ..
   // Max away, through a door (fCombatFleeUseDoorChance), to cover hidden from its enemy
   // (fCombatFleeCover*), away from its enemy, else it cowers.
   Flee: {

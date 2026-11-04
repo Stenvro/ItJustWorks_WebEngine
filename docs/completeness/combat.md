@@ -22,8 +22,8 @@ conformance suites (tests/conformance/combat/).
 | Race combat (DATA, ATKR) |    15 |   15 |    0 |
 | Behaviour tree actions   |    63 |   63 |    0 |
 | Game settings            |   410 |  410 |    0 |
-| Mechanics (by hand)      |    23 |   15 |    8 |
-| Total                    |   562 |  554 |    8 |
+| Mechanics (by hand)      |    24 |   17 |    7 |
+| Total                    |   563 |  556 |    7 |
 
 Round 1 wrote the sweep and this list, and built down:
 
@@ -198,7 +198,8 @@ and 290 built-in ones the readers ask for by name.
 ## Mechanics (by hand)
 
 - [x] Controller and state, target selection, combat groups (combat-ai.ts, combat-groups.ts).
-- [ ] The per-fight confidence roll's use; target selection's score weights are ours.
+- [x] The per-fight confidence roll's use; target selection's score weights (docs/ai.md,
+      "Targets", "The odds", "Fleeing"; target-selection.test.ts, flee.test.ts).
 - [x] Attacks from attack data; power attacks; the special attack; left attacks (attacks.ts,
       combat-tactics.ts chooseAttack).
 - [ ] Attacks while closing in; the special attack's own attack data.
@@ -208,13 +209,18 @@ and 290 built-in ones the readers ask for by name.
 - [ ] The blocked hit's stagger terms.
 - [x] Knockback: an unblocked hit's push back on the controller (knockback.ts, round 4).
 - [x] Ranged combat: draw, hold, release, strafe, cover (ranged.test.ts).
-- [ ] Line of fire; the cover score is ours.
+- [x] Line of fire: an actor in the way holds the shot, given up after
+      fCombatAimProjectileBlockedTime (ranged.test.ts).
+- [ ] The cover score is ours: the original filters the navmesh's cover edges by height and its
+      mid-point by range; its choice among them was not read.
 - [x] Magic in combat: casters by purpose, dual casting, concentration, potions.
-- [ ] The casters' order is ours.
+- [ ] The casters' order is ours: the original has no fixed order (one caster per spell by its
+      effect; the combat inventory's score chooses among spells, not read yet).
 - [x] The dragons' fight: the Flight subtree, perches, breath, landing (flight.ts,
       actor-flight.ts).
 - [x] Flee: the strength ratio, to an ally, through a door, to cover; yield and surrender.
-- [ ] Flee past a load door; the hide after Flee To Cover is a hold.
+- [ ] Flee past a load door; the hide after Flee To Cover is a hold (the original's Hide Parallel:
+      Track Target, Turn Around, Hide Selector with Boost Confidence last).
 - [x] Kill moves and the kill cameras (kill-moves.test.ts, kill-camera-shots.test.ts).
 - [ ] The magic kill camera.
 - [x] Sneak attacks by the player and by NPCs (sneaking, undetected: actor-combat.ts).
@@ -227,6 +233,6 @@ and 290 built-in ones the readers ask for by name.
 
 1. The knockback's fading (held for fKnockbackTime here) and which stage of a hit's damage it
    reads; the timed bash's reaction (TODO(M13), docs/ai.md "Staggers").
-2. The mechanics left by hand (the confidence roll's use, the block's timing, the blocked hit's
-   stagger, line of fire, the casters' order, flee past a load door, the magic kill camera).
+2. The mechanics left by hand (the block's timing, the blocked hit's stagger, the cover score,
+   the combat inventory's score of a spell, flee past a load door, the magic kill camera).
 3. The rates' unit (acceleration, deceleration) and what the advanced avoidance adds.

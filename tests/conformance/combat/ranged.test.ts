@@ -10,7 +10,14 @@
 
 import { describe, expect, it } from 'vitest';
 import { COMBAT_AI_DEFAULTS } from '../../../src/ai/combat-ai.ts';
-import { bowHoldTime, rangedAttackChance } from '../../../src/ai/combat-tactics.ts';
+import {
+  aimGivenUp,
+  bowHoldTime,
+  lineOfFireBlocker,
+  rangedAttackChance,
+} from '../../../src/ai/combat-tactics.ts';
+import { COMBAT_TREES } from '../../../src/ai/combat-tree.ts';
+import { AIM_DEFAULTS, leadPoint } from '../../../src/gameplay/combat/aim.ts';
 import { ENGINE } from './settings.ts';
 import { styleWith } from './style.ts';
 
@@ -52,9 +59,53 @@ describe('the shot (formula)', () => {
     expect(settings.rangedAttackMaximumHoldTime).toBe(ENGINE.fCombatRangedAttackMaximumHoldTime);
   });
 
-  it.todo('an archer in the sim looses only with its target inside the firing arc  [original]');
-  it.todo('the line of fire: an ally in the way holds the shot (fAIAimBlocked*)  [settings]');
-  it.todo('cover: Find Cover, Attack From Cover, Wait Behind Cover  [original]');
-  it.todo('fCombatAimProjectileBlockedTime (1.5 s): a blocked aim is given up  [settings]');
-  it.todo('the aim leads a moving target (projectile speed, gravity)  [original]');
+  const body = (reference: number, x: number) => ({
+    reference,
+    feet: [x, 0, 0] as [number, number, number],
+    radius: 30,
+    height: 120,
+  });
+
+  it('the line of fire: an actor in the way holds the shot  [original]', () => {
+    const from: [number, number, number] = [0, 0, 90];
+    const to: [number, number, number] = [1000, 0, 90];
+    expect(lineOfFireBlocker(from, to, [body(1, 500)])).toBe(1);
+    // The nearest of two; none beside the line, behind the target or behind the shooter.
+    expect(lineOfFireBlocker(from, to, [body(1, 700), body(2, 300)])).toBe(2);
+    const beside = { ...body(1, 500), feet: [500, 100, 0] as [number, number, number] };
+    expect(lineOfFireBlocker(from, to, [beside])).toBeUndefined();
+    expect(lineOfFireBlocker(from, to, [body(1, 1200), body(2, -100)])).toBeUndefined();
+    // Over one's head.
+    expect(lineOfFireBlocker([0, 0, 400], [1000, 0, 400], [body(1, 500)])).toBeUndefined();
+  });
+
+  it('fCombatAimProjectileBlockedTime (1.5 s): a blocked aim is given up', () => {
+    expect(settings.aimProjectileBlockedTime).toBe(ENGINE.fCombatAimProjectileBlockedTime);
+    expect(aimGivenUp(undefined, settings)).toBe(false);
+    expect(aimGivenUp(1.5, settings)).toBe(false);
+    expect(aimGivenUp(1.6, settings)).toBe(true);
+  });
+
+  it('cover: Find Cover, Attack From Cover, Wait Behind Cover  [original]', () => {
+    const tree = JSON.stringify(COMBAT_TREES.UseCover);
+    for (const action of ['findCover', 'waitBehindCover', 'attackFromCover']) {
+      expect(tree).toContain(`"action":"${action}"`);
+    }
+  });
+
+  it('the aim leads a moving target (projectile speed, gravity)  [original]', () => {
+    // Crossing at 300 units a second, a shot of 1500 a second over 1500 units takes 1 s.
+    const point = leadPoint([0, 0, 0], [0, 1500, 0], [300, 0, 0], 1500, 0, AIM_DEFAULTS);
+    expect(point[0]).toBeGreaterThan(280);
+    // Under gravity the aim rises above the point.
+    const falling = leadPoint([0, 0, 0], [0, 1500, 0], [0, 0, 0], 1500, 500, AIM_DEFAULTS);
+    expect(falling[2]).toBeGreaterThan(0);
+  });
+
+  it('an archer looses only with its target inside the firing arc  [original]', () => {
+    // The tree's Release needs shotInArc while the bow is held; shotOverheld lets it down.
+    const tree = JSON.stringify(COMBAT_TREES);
+    expect(tree).toContain('"shotInArc"');
+    expect(tree).toContain('"shotOverheld"');
+  });
 });
