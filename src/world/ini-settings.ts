@@ -223,6 +223,9 @@ export const INI_DEFAULTS = {
     fMountedAttackRange: 135,
     // A fighter's advance from afar sprints (src/shell/actor-combat-ai.ts; the original's).
     bCombatPathSprinting: 1,
+    // A fight stays within its fighter's encounter zone (src/shell/actor-combat-ai.ts; the
+    // original's).
+    bEncounterZoneTargetRestrict: 1,
     // Combat lines are off (src/ai/combat-dialogue.ts; the original's).
     bDisableCombatDialogue: 0,
     // The player takes every hit's stagger (src/gameplay/combat/stagger.ts staggerTaken).

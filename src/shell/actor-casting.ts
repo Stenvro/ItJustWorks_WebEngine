@@ -33,6 +33,7 @@
 // A staff's or a scroll's start, or one the tree does not play, is sent as the tree would pick
 // it.
 
+import type { MagicItemRecord } from '../world/magic-records.ts';
 import type { ObjectGraph } from '../animation/object-graph.ts';
 import type { GraphEvent } from '../animation/graph-events.ts';
 import type { ActorGraphSource } from './actor-graph-events.ts';
@@ -88,6 +89,8 @@ export interface ActorCastingOptions {
   readonly terminal: Terminal;
   readonly furniture: ActorFurniture;
   readonly projectiles: MagicProjectiles;
+  /** The player's spell has left the hand (the magic kill camera). */
+  readonly spellLoosed?: (actor: number, item: MagicItemRecord, from: Vec3, aim: Vec3) => void;
   /** Where the casts go: the player's aim assistance, an NPC's aim at its target. */
   readonly aim?: ProjectileAim;
   readonly get: (reference: number) => StagedActor | undefined;
@@ -970,6 +973,7 @@ export class ActorCasting {
       // A beam stays on the hand that cast it.
       follow: () => this.origin(actor, source),
     });
+    if (actor === PLAYER_REF) this.#options.spellLoosed?.(actor, delivered.item, origin, aim);
   }
 
   /**

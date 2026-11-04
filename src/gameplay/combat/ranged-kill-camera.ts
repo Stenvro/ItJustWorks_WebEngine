@@ -59,6 +59,14 @@ export function rangedKillCameraChance(
 }
 
 /** Rolls the chance (roll: 0..100, as the engine's). */
+/**
+ * A spell's cast predicted to kill (the magic kill camera, as a shot's prediction): the health its
+ * aimed effects take at once, through what the target keeps of them, reaches its health.
+ */
+export function spellPredictedKill(damage: number, health: number): boolean {
+  return damage > 0 && damage >= health;
+}
+
 export function rangedKillCameraPlays(
   shot: RangedKillCameraShot,
   settings: RangedKillCameraSettings,

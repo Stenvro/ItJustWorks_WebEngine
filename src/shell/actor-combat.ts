@@ -127,7 +127,10 @@ import {
   turnBetween,
   type StrikeTarget,
 } from '../gameplay/combat/hit-test.ts';
-import { rangedKillCameraPlays } from '../gameplay/combat/ranged-kill-camera.ts';
+import {
+  rangedKillCameraPlays,
+  spellPredictedKill,
+} from '../gameplay/combat/ranged-kill-camera.ts';
 import { deathForce, spellDeathForce } from '../gameplay/combat/death-force.ts';
 import type { INI_DEFAULTS } from '../world/ini-settings.ts';
 import { ARROW_TILT, tiltUp, WORLD_GRAVITY } from '../gameplay/combat/projectile.ts';
@@ -173,6 +176,7 @@ import type { PlaySession } from './play-session.ts';
 import type { PlayerAvatar } from './player-avatar.ts';
 import type { CombatBridge } from './script-world.ts';
 import type { Terminal } from './terminal.ts';
+import type { MagicItemRecord } from '../world/magic-records.ts';
 import { KillmoveCamera, type KillmoveSubjects } from './killmove-camera.ts';
 import { PlayerCombat, type CastingButtons } from './player-combat.ts';
 import type { ActorTalk } from './actor-talk.ts';
@@ -268,6 +272,8 @@ interface MeleeOption {
   readonly data: AttackData;
   readonly hit: AttackHit;
   readonly power: boolean;
+  /** One of its left hand's attacks (ATKD Left Attack): only the left hand's node picks them. */
+  readonly left: boolean;
 }
 
 interface Fighter {
@@ -463,6 +469,9 @@ interface Gear {
 }
 
 export interface ActorCombatOptions {
+  /** One fleeing goes through a load door (the combat AI's Flee Through Door). */
+  readonly leaveThroughDoor?: (actor: number, door: number) => Promise<boolean>;
+  readonly doorLeads?: (actor: number, door: number) => Promise<boolean>;
   readonly session: GameSession;
   readonly renderer: RenderPort;
   readonly terminal: Terminal;
@@ -610,6 +619,8 @@ export class ActorCombat implements CombatBridge {
       ...(options.ridden && { ridden: options.ridden }),
       ...(options.npcCasting && { casting: options.npcCasting }),
       ...(options.flight && { flight: options.flight }),
+      ...(options.leaveThroughDoor && { leaveThroughDoor: options.leaveThroughDoor }),
+      ...(options.doorLeads && { doorLeads: options.doorLeads }),
     });
     // The wait menu asks whether someone fights the player.
     options.session.combatWatch = this;
@@ -1111,7 +1122,7 @@ export class ActorCombat implements CombatBridge {
   async attack(
     reference: number,
     action: string,
-    melee?: { readonly powerCooling: boolean },
+    melee?: { readonly powerCooling: boolean; readonly left?: boolean },
   ): Promise<boolean> {
     const fighter = this.#fighters.get(reference);
     const runtime = this.#options.session.scriptsReady;
@@ -1147,7 +1158,7 @@ export class ActorCombat implements CombatBridge {
     const creature =
       !fighter.player && !(fighter.body?.behavior?.declares('WeapEquip_Out') ?? true);
     const event = melee
-      ? await this.#meleeAttack(fighter, target, melee.powerCooling)
+      ? await this.#meleeAttack(fighter, target, melee.powerCooling, melee.left === true)
       : ((await this.#act(fighter, action, target, (idle) => {
           const lower = idle.toLowerCase();
           return (
@@ -2058,6 +2069,8 @@ export class ActorCombat implements CombatBridge {
 
   /** Bleeding out: health regained, up again once recovered (ActionBleedoutStop). */
   async #bleed(fighter: Fighter, seconds: number, runtime: ScriptRuntime): Promise<void> {
+    // Its line, on its cooldown, while it lies there (fCombatDialogueBleedOut*ElapsedTime).
+    if (!fighter.player) this.#brain.line(fighter.reference, 'Bleedout', 'BleedOut');
     const actors = runtime.actors;
     const value = await actors.value(fighter.reference, ActorValue.health);
     let now = bleedoutRegain(value.current, value.max, seconds, this.#settings);
@@ -3766,16 +3779,9 @@ export class ActorCombat implements CombatBridge {
     power: number,
     key: object | undefined,
   ): Promise<void> {
-    const play = this.#play;
-    const session = this.#options.session;
-    const runtime = session.scriptsReady;
     const gear = fighter.gear;
-    if (!play || !runtime || !gear?.projectile || key === undefined || this.#camera) return;
-    const vats = (name: keyof (typeof INI_DEFAULTS)['VATS']): number =>
-      session.ini.number('VATS', name);
-    if (vats('bVATSDisable') !== 0) return;
-    if (runtime.world.mountOf?.(fighter.reference) !== undefined) return;
-    if (this.enemiesOfPlayer().length > 1 && vats('bVATSMultipleCombatants') === 0) return;
+    if (!this.#options.session.scriptsReady || !gear?.projectile || key === undefined) return;
+    if (!this.#shotCameraMay(fighter)) return;
     const speed = gear.projectile.speed * Math.min(1, Math.max(0.35, power));
     const victim = this.#shotAt(fighter, from, aim, Math.min(10000, gear.projectile.range), {
       speed,
@@ -3784,8 +3790,119 @@ export class ActorCombat implements CombatBridge {
     if (!victim || victim.state.life === LifeState.dead) return;
     const bow = gear.right.weaponType === WeaponType.bow;
     if (bow && power < 0.8) return;
-    const allowNoKill = vats('bVATSAllowNoKill') !== 0;
     const fatal = await this.#predictedKill(fighter, victim, gear.right.shotDamage * power);
+    const projectile = (): { position: Vec3; heading: number } | undefined => {
+      for (const shot of this.#projectiles.flying()) {
+        if (shot.key !== key) continue;
+        const [vx, vy] = shot.velocity;
+        return { position: shot.position, heading: Math.atan2(vx, vy) };
+      }
+      return undefined;
+    };
+    await this.#shotCamera(fighter, victim, fatal, {
+      projectile,
+      projectileType: gear.projectile.type,
+    });
+  }
+
+  /**
+   * The magic kill camera (observed in the original): as the ranged one, for a spell or staff cast
+   * whose projectile is predicted to kill, the camera riding it, the casting type and delivery in
+   * GetVATSValue. A beam or flame has no flight to ride: no camera.
+   */
+  spellLoosed(
+    actor: number,
+    item: MagicItemRecord,
+    from: Vec3,
+    aim: Vec3,
+    flying: () => Iterable<{
+      readonly projectile: string;
+      readonly at: Vec3;
+      readonly caster: number;
+    }>,
+  ): void {
+    const fighter = this.#fighters.get(actor);
+    if (!fighter?.player) return;
+    this.#magicKillCamera(fighter, item, from, aim, flying).catch((error: unknown) => {
+      this.#warn(`a spell's kill camera: ${describe(error)}`);
+    });
+  }
+
+  async #magicKillCamera(
+    fighter: Fighter,
+    item: MagicItemRecord,
+    from: Vec3,
+    aim: Vec3,
+    flying: () => Iterable<{
+      readonly projectile: string;
+      readonly at: Vec3;
+      readonly caster: number;
+    }>,
+  ): Promise<void> {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime || !this.#shotCameraMay(fighter)) return;
+    const effect = await runtime.casting.mainEffect(item);
+    const fired =
+      effect?.projectile === undefined
+        ? undefined
+        : await runtime.casting.projectile(effect.projectile);
+    if (!fired) return;
+    const flight = (): Vec3 | undefined => {
+      let last: Vec3 | undefined;
+      for (const shot of flying()) {
+        if (shot.caster === fighter.reference && shot.projectile === fired.editorId) last = shot.at;
+      }
+      return last;
+    };
+    if (!flight()) return;
+    const victim = this.#shotAt(fighter, from, aim, Math.min(10000, fired.range), {
+      speed: fired.speed,
+      gravity: WORLD_GRAVITY * fired.gravity,
+    });
+    if (!victim || victim.state.life === LifeState.dead) return;
+    const health = await runtime.actors.value(victim.reference, ActorValue.health);
+    const damage = await runtime.casting.predictedDamage(fighter.reference, item, victim.reference);
+    const fatal =
+      spellPredictedKill(damage, health.current) &&
+      !(await runtime.actors.isEssential(victim.reference));
+    const heading = Math.atan2(aim[0], aim[1]);
+    await this.#shotCamera(fighter, victim, fatal, {
+      projectile: () => {
+        const position = flight();
+        return position && { position, heading };
+      },
+      projectileType: fired.type,
+      spell: { delivery: item.delivery, castingType: item.castType },
+    });
+  }
+
+  /** Whether a shot's or spell's kill camera may begin at all: [VATS], a mount, its enemies. */
+  #shotCameraMay(fighter: Fighter): boolean {
+    const session = this.#options.session;
+    const runtime = session.scriptsReady;
+    if (!this.#play || !runtime || this.#camera) return false;
+    if (session.ini.number('VATS', 'bVATSDisable') !== 0) return false;
+    if (runtime.world.mountOf?.(fighter.reference) !== undefined) return false;
+    return (
+      this.enemiesOfPlayer().length <= 1 ||
+      session.ini.number('VATS', 'bVATSMultipleCombatants') !== 0
+    );
+  }
+
+  /** A shot's or spell's kill camera on its victim, by its prediction, odds and clear way. */
+  async #shotCamera(
+    fighter: Fighter,
+    victim: Fighter,
+    fatal: boolean,
+    shot: Pick<KillmoveSubjects, 'projectile' | 'projectileType' | 'spell'>,
+  ): Promise<void> {
+    const play = this.#play;
+    const session = this.#options.session;
+    const runtime = session.scriptsReady;
+    if (!play || !runtime) return;
+    const vats = (name: keyof (typeof INI_DEFAULTS)['VATS']): number =>
+      session.ini.number('VATS', name);
+    const allowNoKill = vats('bVATSAllowNoKill') !== 0;
     if (!fatal && !allowNoKill) return;
     if (vats('bVATSRangedSelective') !== 0) {
       const feet = this.#feet(fighter);
@@ -3817,21 +3934,12 @@ export class ActorCombat implements CombatBridge {
       if (!plays) return;
     }
     if (vats('bVATSIgnoreProjectileTest') === 0 && !this.#seen(fighter, victim)) return;
-    const projectile = (): { position: Vec3; heading: number } | undefined => {
-      for (const shot of this.#projectiles.flying()) {
-        if (shot.key !== key) continue;
-        const [vx, vy] = shot.velocity;
-        return { position: shot.position, heading: Math.atan2(vx, vy) };
-      }
-      return undefined;
-    };
     const camera = await KillmoveCamera.choose(session, {
       attacker: () => this.#feet(fighter),
       attackerHeading: () => this.#heading(fighter),
       target: () => this.#feet(victim),
       targetHeading: () => this.#heading(victim),
-      projectile,
-      projectileType: gear.projectile.type,
+      ...shot,
       maxSeconds: this.#settings.vatsSafetyMaxTimeRanged,
       ...this.#killCameraBodies(),
       fatal,
@@ -4256,11 +4364,11 @@ export class ActorCombat implements CombatBridge {
     const options: MeleeOption[] = [];
     for (const data of fighter.gear.attacks.all()) {
       const kind = attackEventKind(data.event, data);
-      if (!kind || kind.bash || kind.left || data.attackChance <= 0) continue;
+      if (!kind || kind.bash || data.attackChance <= 0) continue;
       const wanted = data.event.toLowerCase();
       const attack = attacks.find((candidate) => candidate.event.toLowerCase() === wanted);
       const hit = attack && project.attackHit(attack);
-      if (hit && hit.hitTime > 0) options.push({ data, hit, power: kind.power });
+      if (hit && hit.hitTime > 0) options.push({ data, hit, power: kind.power, left: kind.left });
     }
     fighter.meleeOptions = { key, gear: fighter.gear, options };
     return options;
@@ -4289,6 +4397,7 @@ export class ActorCombat implements CombatBridge {
     fighter: Fighter,
     target: number | undefined,
     powerCooling: boolean,
+    left = false,
   ): Promise<string | undefined> {
     const runtime = this.#options.session.scriptsReady;
     const other = target === undefined ? undefined : this.#fighters.get(target);
@@ -4297,7 +4406,7 @@ export class ActorCombat implements CombatBridge {
     if (!runtime || !other || !feet || !there) return undefined;
     const stamina = await runtime.progression.canPowerAttack(fighter.reference);
     const options = this.#meleeOptions(fighter).filter(
-      (option) => !option.power || (stamina && !powerCooling),
+      (option) => option.left === left && (!option.power || (stamina && !powerCooling)),
     );
     const graphs = this.#graphs(fighter);
     const usable = options.filter(
@@ -4909,6 +5018,11 @@ export class ActorCombat implements CombatBridge {
    * TODO(M13): inferred (a weapon the death drops is the one held); to be observed in the
    * original, with the moment it lets go of them (ours: as its death begins).
    */
+  /** Its Death line, at once as it dies (the DIAL subtype, by its distance gate). */
+  deathLine(reference: number): void {
+    if (reference !== PLAYER_REF) this.#brain.line(reference, 'Death', 'Death');
+  }
+
   async dropWeaponsOnDeath(reference: number): Promise<void> {
     const runtime = this.#options.session.scriptsReady;
     if (!runtime || reference === PLAYER_REF) return;

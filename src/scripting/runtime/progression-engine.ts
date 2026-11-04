@@ -70,6 +70,7 @@ import { parseItem } from '../../world/item-records.ts';
 import {
   levelModifier,
   parseClassStats,
+  EncounterZoneFlag,
   parseEncounterZone,
   type ClassStats,
 } from '../../world/leveling-records.ts';
@@ -554,10 +555,10 @@ export class ProgressionEngine {
   }
 
   /** The cell a reference was placed in (a worldspace's persistent one: the cell at its place). */
-  async #placedCell(reference: number): Promise<number | undefined> {
+  async #placedCell(reference: number, live = false): Promise<number | undefined> {
     const runtime = this.#runtime;
     const db = runtime.forms.db;
-    const at = await runtime.placement(reference, false);
+    const at = await runtime.placement(reference, live);
     if (!at) return undefined;
     if (
       at.world !== undefined &&
@@ -585,7 +586,12 @@ export class ProgressionEngine {
       ? undefined
       : (await forms.record(reference))?.formIdField('XEZN');
     if (own !== undefined) return own;
-    const cell = await this.#placedCell(reference);
+    return this.#zoneOfCell(await this.#placedCell(reference));
+  }
+
+  /** A cell's encounter zone: its own, its location's, else its worldspace's. */
+  async #zoneOfCell(cell: number | undefined): Promise<number | undefined> {
+    const forms = this.#runtime.forms;
     const record = cell === undefined ? undefined : await forms.record(cell);
     if (!record || cell === undefined) return undefined;
     const zone = record.formIdField('XEZN');
@@ -621,6 +627,19 @@ export class ProgressionEngine {
     );
     state.zoneLevels.set(zone, level);
     return level;
+  }
+
+  /**
+   * A reference's encounter zone as combat's target restriction reads it, and whether that zone
+   * has no combat boundary.
+   */
+  async combatZone(reference: number): Promise<{ zone: number | undefined; unbounded: boolean }> {
+    // The zone of the cell it stands in now (observed in the original).
+    const zone = await this.#zoneOfCell(await this.#placedCell(reference, true));
+    if (zone === undefined) return { zone, unbounded: false };
+    const record = await this.#runtime.forms.record(zone);
+    const flags = record ? parseEncounterZone(record).flags : 0;
+    return { zone, unbounded: (flags & EncounterZoneFlag.disableCombatBoundary) !== 0 };
   }
 
   /** The level of what a reference meets with: its encounter zone's, else the player's. */

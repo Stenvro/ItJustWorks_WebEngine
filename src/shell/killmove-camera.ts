@@ -74,6 +74,8 @@ export interface KillmoveSubjects {
   readonly projectile?: () => { readonly position: Vec3; readonly heading: number } | undefined;
   /** What the kill was done with, for GetVATSValue: a projectile's type bits (PROJ DATA). */
   readonly projectileType?: number;
+  /** A spell's kill: its delivery and casting type for GetVATSValue (its action is magic). */
+  readonly spell?: { readonly delivery: number; readonly castingType: number };
   /** The camera ends after this long whatever its shots (fVATSSafetyMaxTime{Ranged}, seconds). */
   readonly maxSeconds?: number;
   /** The move between shots' settings (none: the engine's values). */
@@ -515,13 +517,13 @@ async function killOf(
       attacker && target
         ? Math.hypot(attacker[0] - target[0], attacker[1] - target[1], attacker[2] - target[2])
         : 0,
-    action: actionOf(type),
+    action: subjects.spell ? VatsAction.magic : actionOf(type),
     critical: false,
     fatal: subjects.fatal ?? true,
     weaponType: type,
     projectileType: projectileTypeOf(subjects.projectileType),
-    delivery: undefined,
-    castingType: undefined,
+    delivery: subjects.spell?.delivery,
+    castingType: subjects.spell?.castingType,
     areaFree: (reference, side) => areaFree(subjects, smart, reference, side),
     targetVisible: (reference, side) => targetVisible(subjects, smart, reference, side),
   };

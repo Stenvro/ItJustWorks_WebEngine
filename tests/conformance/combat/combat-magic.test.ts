@@ -17,7 +17,11 @@ import {
   dualCastHold,
   type CasterState,
 } from '../../../src/ai/combat-subtrees.ts';
-import { castChance } from '../../../src/ai/combat-tactics.ts';
+import { NO_STYLE } from '../../../src/ai/combat-profile.ts';
+import { castChance, equipmentMult, equipmentScore } from '../../../src/ai/combat-tactics.ts';
+import { combatSpellScore, type ScoredEffect } from '../../../src/gameplay/combat/spell-score.ts';
+import { ActorValue } from '../../../src/world/actor-values.ts';
+import { EffectArchetype, EffectFlag } from '../../../src/world/magic-effects.ts';
 import { COMBAT_TREES } from '../../../src/ai/combat-tree.ts';
 import { ENGINE } from './settings.ts';
 import { styleWith } from './style.ts';
@@ -81,11 +85,82 @@ describe('the cast decision (formula)', () => {
     expect(chooseCaster({ ...raising, corpseDistance: undefined })).toBeUndefined();
   });
 
-  // Fifteen casters in the original, one per spell by its effect: no fixed order between them
-  // exists; each decides for its own spell, and the combat inventory scores the spells. The
-  // inventory's scoring of a magic item was not read, so these two stay.
-  it.todo(
-    'the spell chosen by its effect’s score (damage per magicka, range): the inventory’s score was not read  [original]',
-  );
-  it.todo('the magic score mult (CSGD) against melee and ranged: with the same score  [original]');
+  const effect = (over: Partial<ScoredEffect>): ScoredEffect => ({
+    archetype: EffectArchetype.valueModifier,
+    actorValue: ActorValue.health,
+    secondActorValue: -1,
+    secondValueWeight: 0,
+    flags: EffectFlag.hostile,
+    taperDuration: 0,
+    taperWeight: 0,
+    magnitude: 10,
+    duration: 0,
+    cost: 50,
+    kept: 1,
+    ...over,
+  });
+
+  it('the spell’s score: what it does × its seconds × what is kept × its kind’s weight  [original]', () => {
+    const aimed = (...effects: ScoredEffect[]) =>
+      combatSpellScore({ self: false, concentration: false, effects });
+    // Damage to health, one second at least; for 3 s three times that.
+    expect(aimed(effect({}))).toEqual({ score: 10, caster: 'offensive' });
+    expect(aimed(effect({ duration: 3 })).score).toBe(30);
+    // A concentration spell counts fCombatMagicConcentrationScoreDuration (3).
+    expect(
+      combatSpellScore({ self: false, concentration: true, effects: [effect({})] }).score,
+    ).toBe(30);
+    // Half a target's resistance is half the score; a taper adds half its seconds × weight.
+    expect(aimed(effect({ kept: 0.5 })).score).toBe(5);
+    expect(aimed(effect({ taperDuration: 2, taperWeight: 1 })).score).toBe(20);
+    // Stagger counts ten times; magicka half and no caster of its own.
+    const stagger = effect({ archetype: EffectArchetype.stagger, actorValue: -1 });
+    expect(aimed(stagger)).toEqual({ score: 100, caster: 'stagger' });
+    expect(aimed(effect({ actorValue: ActorValue.magicka }))).toEqual({
+      score: 5,
+      caster: undefined,
+    });
+    // Both together: the sum, the caster the strongest's.
+    expect(aimed(effect({}), stagger)).toEqual({ score: 110, caster: 'stagger' });
+    // A summons by its cost; a heal on the caster itself.
+    const summon = effect({
+      archetype: EffectArchetype.summonCreature,
+      actorValue: -1,
+      flags: 0,
+      duration: 60,
+    });
+    expect(combatSpellScore({ self: true, concentration: false, effects: [summon] })).toEqual({
+      score: 3000,
+      caster: 'summon',
+    });
+    expect(
+      combatSpellScore({
+        self: true,
+        concentration: false,
+        effects: [effect({ flags: 0 })],
+      }).caster,
+    ).toBe('restore');
+  });
+
+  it('its casters by their spells’ scores, no fixed order  [original]', () => {
+    const both = { ...idle, canSummon: true, canBuff: true };
+    // Without scores, the checks' order.
+    expect(chooseCaster(both)).toBe('summon');
+    expect(chooseCaster({ ...both, scores: { summon: 5, buff: 9 } })).toBe('buff');
+    expect(chooseCaster({ ...both, scores: { summon: 9, buff: 5 } })).toBe('summon');
+  });
+
+  it('the magic score mult (CSGD) against melee and ranged, at the same score  [original]', () => {
+    const score = { damage: 20, range: 2000, equipped: false } as const;
+    const bow = { kind: 'ranged', id: 1, ...score } as const;
+    const spell = { kind: 'magic', id: 2, ...score } as const;
+    const style = styleWith({
+      equipmentScoreMult: { ...NO_STYLE.general.equipmentScoreMult, magic: 3 },
+    });
+    expect(equipmentMult(style, 'magic')).toBe(3);
+    // The same score at the same fit: only the style's mult between them.
+    expect(equipmentScore(spell, 1500, style, COMBAT_AI_DEFAULTS)).toBeCloseTo(
+      3 * equipmentScore(bow, 1500, style, COMBAT_AI_DEFAULTS),
+    );
+  });
 });
