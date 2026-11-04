@@ -16,11 +16,24 @@ const BANNERED_MARE = 0x1605e;
 const BLIND_CLIFF_CAVE = 0x152b7;
 const WALL_LEVER = 0x8cabc;
 
+const savedGraphOf = (sim: Sim, reference: number) =>
+  sim.world.session.scriptWorld.saveWorld().graphs.find(([graphed]) => graphed === reference)?.[1];
+
+/**
+ * Where a placed object's graph is: its sequences, and its skeletal graph's machines' states,
+ * clips and variables; not the seconds a machine has been in its state (they go on) nor the
+ * events waiting for its next update.
+ */
 const graphOf = (sim: Sim, reference: number): string | undefined => {
-  const entry = sim.world.session.scriptWorld
-    .saveWorld()
-    .graphs.find(([graphed]) => graphed === reference);
-  return entry && JSON.stringify(entry[1]);
+  const saved = savedGraphOf(sim, reference);
+  const skeleton = saved?.skeleton;
+  if (!saved || !skeleton || !('files' in skeleton)) return saved && JSON.stringify(saved);
+  const files = skeleton.files.map(({ file, machines, clips }) => ({
+    file,
+    machines: machines.map(([place, state]) => [place, state]),
+    clips,
+  }));
+  return JSON.stringify({ ...saved, skeleton: { files, variables: skeleton.variables } });
 };
 
 describe.skipIf(!hasGamedata())('the world a save keeps (simulation)', () => {
@@ -106,7 +119,11 @@ describe.skipIf(!hasGamedata())('the world a save keeps (simulation)', () => {
 
     const after = await loadSim(bytes);
     sims.push(after);
-    // Down as it is placed again (before its script's OnLoad), and after.
+    // Down as it is placed again, and after. Its script's OnLoad has run as the cell loaded:
+    // SetDefaultState sent FullPush (the lever not in its pull position), which waits for the
+    // graph's next update (and leaves it in the state it is in).
+    const placed = savedGraphOf(after, WALL_LEVER)?.skeleton;
+    expect(placed && 'files' in placed ? placed.events : undefined).toEqual([['FullPush']]);
     expect(graphOf(after, WALL_LEVER)).toBe(pulled);
     await after.step(1);
     expect(graphOf(after, WALL_LEVER)).toBe(pulled);

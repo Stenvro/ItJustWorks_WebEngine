@@ -170,6 +170,10 @@ describe.skipIf(!hasGamedata())('MQ102 Before the Storm (Hadvar’s route)', () 
   // player, who stood by, and Hadvar's combat (and the scene's pause) lasted for ever. The
   // player now fights back, and the scene then takes some 410 s to stage 47.
   // TODO(M10): Hadvar stayed in combat with no target while the bandit fought the player.
+  // Found 2026-11-04: as the bandit fought Hadvar, Alvor and a neighbour by the smithy, a swing at
+  // him caught a neutral friend, who turned on the swinger, and the three fought on for ever with
+  // the scene paused. Another actor's blow on one neutral to it now turns it only if it would
+  // attack that actor on sight (src/shell/actor-combat-ai.ts, #attacked).
   it('plays Hadvar and Alvor’s scene into the house; Alvor comes to the player by the door and sends them to Whiterun (MQ102 30)', async () => {
     expect(inRiverwood).toBeDefined();
     if (!inRiverwood) return;

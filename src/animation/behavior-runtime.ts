@@ -1103,7 +1103,12 @@ export class BehaviorRuntime {
       }
       return { entry, place };
     };
-    for (const node of this.#active) {
+    // The active nodes, and a loaded save's nodes put back and not run yet (a graph saved
+    // again before its first update keeps them as they will go on: a lever placed down from a
+    // save and saved at once stays down).
+    const nodes = new Set<object>(this.#active);
+    for (const node of this.#resuming) nodes.add(node);
+    for (const node of nodes) {
       const generator = node as BehaviorGenerator | BehaviorModifier;
       if ('enable' in generator) {
         // A modifier's own state (not an is-active one's: from what is active as it runs).
@@ -1131,6 +1136,16 @@ export class BehaviorRuntime {
           at.entry.machines.push([at.place, machine.current.id, machine.timeInState]);
           const blending = machine.transition && this.#savedBlends(machine.transition);
           if (blending) at.entry.transitions.push({ machine: at.place, ...blending });
+        } else if (machine?.startOverride !== undefined && machine.resumeTime !== undefined) {
+          // Put back from a save, not entered yet: as it was saved.
+          const resumed = entryOf(generator);
+          if (resumed) {
+            resumed.entry.machines.push([resumed.place, machine.startOverride, machine.resumeTime]);
+            if (machine.resumeTransition) {
+              const { blends, from } = machine.resumeTransition;
+              resumed.entry.transitions.push({ machine: resumed.place, blends, from });
+            }
+          }
         }
       } else if (generator.kind === 'cyclic-blend') {
         const state = this.#cyclic.get(generator);
@@ -1144,7 +1159,7 @@ export class BehaviorRuntime {
           ]);
         }
       } else if (generator.kind === 'clip') {
-        const clip = this.#clips.get(generator);
+        const clip = this.#clips.get(generator) ?? this.#resumeClips.get(generator);
         const at = clip && entryOf(generator);
         if (at) at.entry.clips.push([at.place, clip.time, clip.backward ? 1 : 0]);
       }
