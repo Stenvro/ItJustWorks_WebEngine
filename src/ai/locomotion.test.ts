@@ -189,6 +189,10 @@ describe("turning (the engine's angle controller)", () => {
     expect(keptSpeed(100, 300, 370, types, 1 / 60)).toBe(300);
     // Where its race gives no rate, standing stops it.
     expect(keptSpeed(370, 0, 370, {}, 1 / 60)).toBe(0);
+    // A frame's root motion far past any speed of its own raises it to its full speed at most,
+    // and what it kept from a sprint no further than it is.
+    expect(keptSpeed(100, 90000, 370, types, 1 / 60)).toBe(370);
+    expect(keptSpeed(500, 90000, 370, types, 1 / 60)).toBe(500);
   });
 
   it("holds its facing standing within its race's angular tolerance (a horker's 45°)", () => {

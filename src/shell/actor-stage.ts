@@ -136,6 +136,8 @@ export interface StagePlace {
 /** An actor of the loaded area. */
 export interface StagedActor {
   readonly reference: number;
+  /** The heading it is drawn at now (between its last two physics steps), if it has a controller. */
+  drawnHeading?: number | undefined;
   /** Its look, pose and graph (made again when its race changes). */
   placed: PlacedActor;
   /** Its own draws. */

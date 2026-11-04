@@ -475,6 +475,8 @@ export type BehaviorModifier = {
       readonly kD: Bindable;
       readonly rawValue: Bindable;
       readonly dampedValue: Bindable;
+      readonly rawVector: VectorBindable;
+      readonly dampedVector: VectorBindable;
     }
   | {
       readonly kind: 'interp-value';
@@ -1434,6 +1436,8 @@ class GraphReader {
           kD: bindable('kD', file.f32(at + 88)),
           rawValue: bindable('rawValue', file.f32(at + 96)),
           dampedValue: bindable('dampedValue', file.f32(at + 100)),
+          rawVector: vector('rawVector', vec4(file, at + 112)),
+          dampedVector: vector('dampedVector', vec4(file, at + 128)),
         };
       case 'BSInterpValueModifier':
         return {

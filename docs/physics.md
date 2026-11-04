@@ -143,7 +143,10 @@ the ground under its middle: the engine probes the ground under the two ends of 
 game units, down; its contact points, where it has them, give the heights too, each averaged
 with the height its end had), and its pitch is the angle whose tangent is their height difference
 over its length less its two radii, clamped to 47° (a built-in constant); the roll the same across
-for races that tilt left and right. The lean is not taken at once: every update it moves towards
+for races that tilt left and right. Ours has no contact points: its rays start as high as the
+steepest lean reaches over its length, so the uphill end meets the surface there (from its radius
+above its feet, that ray began under a road on a slope and met what lies below it, at another depth
+at every probe). The lean is not taken at once: every update it moves towards
 the probed one by [HAVOK] fQuadrupedPitchMult (10) times the update's time of what is left, and
 falls back to upright the same way for a race that does not tilt that way. Bipeds lean by their
 support's normal (the engine's biped orientation controller, the same clamp and ease); no vanilla

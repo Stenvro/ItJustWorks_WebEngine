@@ -183,14 +183,26 @@ export function animateSkeletons(
     interpolation.before.set(behavior.pose);
     const dt = Math.min(Math.max(MAX_STEP, 2 * interval), Math.max(0, seconds + interval - time));
     animated.time = seconds + interval;
-    interpolation.from = seconds;
+    // Its pose before is its graph's at the time its graph had, a little behind the clock when the
+    // last interval ended between frames: the blend runs from then, so the pose moves on this
+    // frame too. From the clock, the frame showed the pose the last one ended on (standing still
+    // for a frame at every update, a far horse's saddle and its rider stopping and leaping on)
+    // and the next interval's blend ran faster to make up for it.
+    interpolation.from = Math.min(time, seconds);
     interpolation.until = seconds + interval;
     interpolation.interpolating = true;
     interpolation.shown = wanted.interpolate;
     step(animated, dt);
-    // It shows the pose it had (the interpolation's start); not interpolated (unseen), the pose
-    // ahead at once.
-    animated.pose.update(wanted.interpolate ? interpolation.before : behavior.pose);
+    // It shows the pose the clock has it at on the way from the pose it had; not interpolated
+    // (unseen), the pose ahead at once.
+    if (wanted.interpolate) {
+      const t =
+        (seconds - interpolation.from) / Math.max(1e-6, interpolation.until - interpolation.from);
+      blendPoses(interpolation.before, behavior.pose, t, interpolation.blended);
+      animated.pose.update(interpolation.blended);
+    } else {
+      animated.pose.update(behavior.pose);
+    }
     animated.pose.showBySlots(behavior);
   }
 }

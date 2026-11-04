@@ -730,7 +730,7 @@ export class ActorMounts {
 
   /** Where a rider's root is now: at the horse's root in a paired animation, else its saddle. */
   #riderPlace(ride: Ride, horse: StagedActor): Placed {
-    const at: Placed = { position: horse.position, heading: horse.heading };
+    const at: Placed = { position: horse.position, heading: horse.drawnHeading ?? horse.heading };
     if (ride.phase !== 'riding') return at;
     const node = horse.placed.pose.world(KIND_EVENTS[ride.kind].saddle);
     const world = horse.placed.instances[0]?.world;
