@@ -78,6 +78,7 @@ import { ActorCrime } from './actor-crime.ts';
 import { ActorSenses, type SensesWorld } from './actor-senses.ts';
 import { ActorMounts } from './actor-mounts.ts';
 import { ActorVehicles, type AdoptedVehicle } from './actor-vehicles.ts';
+import { ProjectileTriggers } from './projectile-triggers.ts';
 import { ActorFavors } from './actor-favors.ts';
 import { ActorFollowers } from './actor-followers.ts';
 import type { PlayerView } from './race-menu.ts';
@@ -524,6 +525,12 @@ export class ActorStage {
       options.player?.()?.play.shotThroughWater(from, to);
     };
     this.#session = options.session;
+    // They tell the trigger volumes they fly through.
+    const triggers = new ProjectileTriggers(
+      () => options.session.scriptsReady,
+      (from, to, layer) =>
+        options.player?.()?.play.physics.triggersAlong([...from], [...to], layer) ?? new Set(),
+    );
     this.combat = new ActorCombat({
       leaveThroughDoor: (actor, door) => this.fleeThrough(actor, door),
       doorLeads: (actor, door) => this.fleeDoorLeads(actor, door),
@@ -531,6 +538,7 @@ export class ActorStage {
       renderer: options.renderer,
       terminal: options.terminal,
       shotWay,
+      triggers,
       movers: this.movers,
       bodies: this.bodies,
       actors: () => this.#actors.values(),
@@ -774,11 +782,13 @@ export class ActorStage {
       renderer: options.renderer,
       terminal: options.terminal,
       shotWay,
+      triggers,
       fx: this.fx,
       impact: (hit) => this.combat.surfaceImpact(hit),
       shake: (explosion, at) => {
         this.graphEvents.shakeForExplosion(explosion, at);
       },
+      waterSurface: (at) => options.player?.()?.play.water?.surface(at[0], at[1], at[2])?.height,
       targets: () => this.#projectileTargets(),
       noise: (at, owner, soundLevel) => {
         this.senses.noise(at, owner, soundLevel);

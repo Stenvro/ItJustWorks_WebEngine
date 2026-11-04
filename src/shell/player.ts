@@ -77,6 +77,13 @@ import {
   walksOnWater,
 } from '../gameplay/swimming.ts';
 import {
+  burdenedRun,
+  MOVE_WEIGHT_DEFAULTS,
+  type MoveWeightSettings,
+  runWeightFactor,
+  speedMultFactor,
+} from '../gameplay/move-weight.ts';
+import {
   SPLASH_DEFAULTS,
   WATER_KNOCKDOWN_DEFAULTS,
   WATER_RULE_DEFAULTS,
@@ -107,6 +114,10 @@ export interface PlayerData {
   readonly dragonRangedShoulder: readonly [number, number, number];
   /** GMST fJumpHeightMin: how high a jump goes (game units). */
   readonly jumpHeight: number;
+  /** GMST fJumpSwimmingMult: a jump out of the water goes this many times as high. */
+  readonly jumpSwimmingMult?: number;
+  /** GMST fMoveWeight*, fMoveEncumEffect*: how what is worn slows the run. */
+  readonly moveWeight?: MoveWeightSettings;
   /** GMST fMountedMaxLookingDown: how far down the view looks from a mount (degrees; 30). */
   readonly mountedMaxLookingDown?: number;
   /**
@@ -251,6 +262,14 @@ export async function readPlayerData(
       swim: type('NPCSwimming'),
     },
     jumpHeight: settings.number('fJumpHeightMin') ?? JUMP_HEIGHT_MIN,
+    jumpSwimmingMult: settings.number('fJumpSwimmingMult') ?? JUMP_SWIMMING_MULT,
+    moveWeight: {
+      weightMin: settings.number('fMoveWeightMin') ?? MOVE_WEIGHT_DEFAULTS.weightMin,
+      weightMax: settings.number('fMoveWeightMax') ?? MOVE_WEIGHT_DEFAULTS.weightMax,
+      encumEffect: settings.number('fMoveEncumEffect') ?? MOVE_WEIGHT_DEFAULTS.encumEffect,
+      encumEffectNoWeapon:
+        settings.number('fMoveEncumEffectNoWeapon') ?? MOVE_WEIGHT_DEFAULTS.encumEffectNoWeapon,
+    },
     mountedMaxLookingDown: settings.number('fMountedMaxLookingDown') ?? MOUNTED_MAX_LOOKING_DOWN,
     // The engine's built-in values where no plugin sets them.
     dragonRangedShoulder: [
@@ -305,6 +324,8 @@ export function configurePhysics(
 
 /** fJumpHeightMin's and fJumpFallVelocityMin's built-in values (Skyrim.esm: 76 and 700). */
 const JUMP_HEIGHT_MIN = 64;
+/** fJumpSwimmingMult's built-in value. */
+const JUMP_SWIMMING_MULT = 2;
 const FALL_VELOCITY_MIN = 600;
 /** fHavokTauRatio's built-in value (observed in the original; Skyrim.esm does not set it). */
 const HAVOK_TAU_RATIO = 0.5;
@@ -594,6 +615,10 @@ export class Player implements Camera {
    * overEncumbered): they walk, and neither run nor sprint (UESP "Skyrim:Carry Weight").
    */
   overEncumbered: (() => boolean) | undefined;
+  /** The weight of what they have equipped and their Speed Mult (GameSession's). */
+  burden: (() => { readonly weight: number; readonly speedMult: number }) | undefined;
+  /** A jump out of the water under way: they do not swim until it has risen. */
+  #leaping = false;
   /** The tween menu's camera while it is open (it leans and zooms the view). */
   readonly tween: TweenCamera;
   /**
@@ -782,18 +807,21 @@ export class Player implements Camera {
 
   /**
    * Jumps now, if on the ground: the avatar's graph's JumpBegin (the engine's
-   * JumpAnimEventHandler, observed in the original: the character controller jumps fJumpHeightMin high).
-   * TODO(M13): the actor's jump height mult and fJumpSwimmingMult in water (we do not jump
-   * while swimming).
+   * JumpAnimEventHandler, observed in the original: the character controller jumps fJumpHeightMin
+   * high, times the actor's scale; TODO(M13): the player's reference scale is taken as 1).
    */
   launchJump(): void {
     // Asked for on the ground (#move); the push-off comes with the animation, grounded or not by
     // then (CharacterBody.jump): the graph is in its jump state and lands only from the air.
     if (this.character.swimming) return;
     this.onAction?.('JUMP');
-    // fJumpHeightMin: the height of the jump; with constant gravity v = √(2 g h).
+    this.character.jump(this.#jumpSpeed(this.#setup.jumpHeight));
+  }
+
+  /** A jump's upward speed for its height: with constant gravity v = √(2 g h). */
+  #jumpSpeed(height: number): number {
     const g = -this.#setup.physics.world.gravity.z * HAVOK_SCALE;
-    this.character.jump(Math.sqrt(2 * g * this.#setup.jumpHeight));
+    return Math.sqrt(2 * g * height);
   }
 
   get forward(): Vec3 {
@@ -1170,7 +1198,19 @@ export class Player implements Camera {
       );
     if (onWater && character.waterFloor === undefined) this.onWaterWalkStart?.();
     character.waterFloor = onWater ? water : undefined;
-    const swimming = !onWater && swims(depth, character.swimming);
+    // Swimming, the jump key jumps at once, fJumpSwimmingMult times as high (the engine's jump
+    // action, observed in the original: no graph's JumpBegin is waited for in the water).
+    if (jump && character.swimming && !onWater) {
+      this.#leaping = true;
+      this.onAction?.('JUMP');
+      character.swimming = false;
+      character.jump(
+        this.#jumpSpeed(
+          this.#setup.jumpHeight * (this.#setup.jumpSwimmingMult ?? JUMP_SWIMMING_MULT),
+        ),
+      );
+    } else if (character.grounded || character.verticalSpeed <= 0) this.#leaping = false;
+    const swimming = !onWater && !this.#leaping && swims(depth, character.swimming);
     character.swimming = swimming;
     if (swimming) this.sneaking = false;
     this.onSubmersion?.(depth, seconds, depth > 0 ? this.waterOf?.(fx, fy, fz) : undefined);
@@ -1207,13 +1247,29 @@ export class Player implements Camera {
     // In slowed time the player keeps their own pace against the world's clock (Slow Time:
     // GameSession.playerPace).
     const pace = this.pace?.() ?? 1;
+    // What they wear slows the run, never below the walk; their Speed Mult takes all of it.
+    const burden = this.burden?.();
+    const walkSpeed = directionalSpeed(type.walk, x, y);
+    const runSpeed = directionalSpeed(type.run, x, y);
     const speed = moving
       ? stickPace(
-          directionalSpeed(type.walk, x, y),
-          directionalSpeed(type.run, x, y),
+          walkSpeed,
+          burden
+            ? burdenedRun(
+                runSpeed,
+                walkSpeed,
+                runWeightFactor(
+                  burden.weight,
+                  this.weaponDrawn?.() === true,
+                  this.#setup.moveWeight,
+                ),
+              )
+            : runSpeed,
           running,
           share,
-        ) * pace
+        ) *
+        pace *
+        (burden ? speedMultFactor(burden.speedMult) : 1)
       : 0;
     this.motion = { inputX: x, inputY: y, moving, running, sprinting };
     const length = Math.hypot(x, y) || 1;

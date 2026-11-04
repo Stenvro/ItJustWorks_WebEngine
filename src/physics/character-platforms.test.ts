@@ -180,6 +180,46 @@ describe('moving bodies push the character controller', () => {
 });
 
 describe('the jump and the step velocity', () => {
+  it('keeps the velocity of the platform it jumps off until it lands', () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    const lift = platform(physics, 'kinematic');
+    physics.step(1 / 60);
+    const character = settled(physics, [0, 0, 1]);
+    // The platform moves along x at 120 units a second, the character on it.
+    const move = (seconds: number): void => {
+      for (let i = 0; i < seconds * 60; i++) {
+        const at = lift.translation();
+        lift.setNextKinematicTranslation({ x: at.x + h(2), y: at.y, z: at.z });
+        character.step(1 / 60);
+        physics.step(1 / 60);
+      }
+    };
+    move(0.5);
+    expect(character.feet[0]).toBeGreaterThan(50);
+    character.jump(200);
+    move(1 / 60);
+    const from = character.feet[0];
+    move(0.2);
+    expect(character.grounded).toBe(false);
+    // In the air it goes on along x at the platform's speed, with nothing under it to carry it.
+    expect((character.feet[0] - from) / 0.2).toBeGreaterThan(100);
+    expect((character.feet[0] - from) / 0.2).toBeLessThan(140);
+  });
+
+  it('keeps nothing of a fixed floor it jumps off', () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    platform(physics, 'fixed');
+    physics.step(1 / 60);
+    const character = settled(physics, [0, 0, 1]);
+    character.jump(200);
+    for (let i = 0; i < 12; i++) {
+      character.step(1 / 60);
+      physics.step(1 / 60);
+    }
+    expect(character.grounded).toBe(false);
+    expect(Math.abs(character.feet[0])).toBeLessThan(0.01);
+  });
+
   it('pushes off when asked even if a step left it off the ground (a stair’s edge)', () => {
     const physics = new PhysicsWorld(matrix, GRAVITY);
     platform(physics, 'fixed');
