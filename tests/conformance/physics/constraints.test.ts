@@ -87,9 +87,13 @@ describe.skipIf(!hasGamedata())('the chains (the tripwire trap)', () => {
 
   beforeAll(async () => {
     const vfs = await Vfs.mount(openGameFolder());
-    collision = buildCollision(
-      parseNif(await vfs.read('meshes\\traps\\tripwire\\traptripwire01.nif')),
-    );
+    try {
+      collision = buildCollision(
+        parseNif(await vfs.read('meshes\\traps\\tripwire\\traptripwire01.nif')),
+      );
+    } finally {
+      await vfs.close();
+    }
   });
 
   it('makes a ball and socket of each link, its error clipped to the chain’s 0.1', () => {

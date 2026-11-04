@@ -2,7 +2,7 @@
 // read and applied as the engine walks them, and race skeletons' ragdolls coming to rest.
 // Skipped without game data.
 
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ActorPose, ActorSkeleton, buildRig } from '../src/animation/skeleton.ts';
 import { parseNif } from '../src/formats/nif/nif.ts';
 import { buildCollision, HAVOK_SCALE, type CollisionData } from '../src/physics/collision-data.ts';
@@ -25,6 +25,11 @@ describe.skipIf(!hasGamedata())('ragdolls on the local game data', () => {
   let vfs: Vfs;
   let db: RecordDatabase;
   let matrix: CollisionMatrix;
+
+  afterAll(async () => {
+    await db.close();
+    await vfs.close();
+  });
 
   beforeAll(async () => {
     vfs = await Vfs.mount(openGameFolder());
