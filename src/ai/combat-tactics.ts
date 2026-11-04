@@ -629,8 +629,7 @@ export interface AttackInput extends Opponent {
   readonly sinceLastPowerAttack?: number | undefined;
 }
 
-export type AttackChoice =
-  'none' | 'attack' | 'power' | 'bash' | 'powerBash' | 'special' | 'offensiveBash';
+export type AttackChoice = 'none' | 'attack' | 'bash' | 'powerBash' | 'special' | 'offensiveBash';
 
 /** An attack is decided this often: the combat tree's "Attack Idle" (and its ranged and cast idles; seconds). */
 export const ATTACK_DECISION_SECONDS = 0.25;
@@ -731,38 +730,30 @@ export function chooseAttack(
   settings: CombatAiSettings,
 ): AttackChoice {
   const melee = style.melee;
-  const cooling =
-    input.sinceLastPowerAttack !== undefined &&
-    input.sinceLastPowerAttack < settings.powerAttackCoolDown;
-  const power = (): boolean =>
-    !cooling &&
-    random() <
+  if (input.blocking && input.canBash && random() < bashChance(style, input, settings)) {
+    // Its bash attack data (bashStart, bashPowerStart) by their chances.
+    const power =
+      random() <
       input.powerChance *
         (input.targetStaggered
           ? melee.powerAttackStaggeredMult
           : input.targetBlocking
             ? melee.powerAttackBlockingMult
             : 1);
-  if (input.blocking && input.canBash && random() < bashChance(style, input, settings)) {
-    return power() ? 'powerBash' : 'bash';
+    return power ? 'powerBash' : 'bash';
   }
-  if (random() >= attackChance(style, input, settings)) return 'none';
-  if (power()) return 'power';
-  // Else the offensive bash (not blocking: its block raised to bash, offensiveBashChance), the
-  // special attack (the tree's Special Attack, by its chance) or a normal attack.
-  // TODO(M13): which attack data the special attack plays (here a power attack).
+  // The Attack Selector, in turn: the Attack (by the attack chance), whose node then picks the
+  // attack data, plain and power alike (chooseAttackData; a pick that comes to nothing tries the
+  // Special Attack too: the combat AI's #melee); the Special Attack, by its chance.
+  if (random() >= attackChance(style, input, settings)) {
+    return random() < specialAttackChance(style, settings) ? 'special' : 'none';
+  }
+  // The offensive bash (not blocking: its block raised to bash, offensiveBashChance).
   if (!input.blocking && input.canBash && random() < offensiveBashChance(style, input, settings)) {
     return 'offensiveBash';
   }
-  if (random() < specialAttackChance(style, settings) * SPECIAL_ATTACK_SHARE) return 'special';
   return 'attack';
 }
-
-/**
- * The share of the special attack chance one attack decision takes (ours: the style's chance
- * spread over its attacks; TODO(M13): the engine's).
- */
-export const SPECIAL_ATTACK_SHARE = 0.1;
 
 /**
  * The angle (radians) its target may be off its facing for an attack to start: the attack's own

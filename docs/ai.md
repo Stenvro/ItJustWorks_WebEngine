@@ -2756,8 +2756,15 @@ Immediate / Concentration Spell Idles) by their own chances (Style values); a sh
 each second while its voice has recovered.
 
 **Which attack** (observed in the original; `chooseAttackData` in
-`src/gameplay/combat/attacks.ts`): the melee attack node picks among the actor's attack data
-(its race's ATKD/ATKE, its own over them). Each attack of the kind asked whose recovery time
+`src/gameplay/combat/attacks.ts`): the Attack Selector tries the Attack by the attack chance,
+then the Special Attack by fCombatSpecialAttackChance on the style's mult, also when the Attack's
+pick came to nothing. The Attack names no kind: its node holds one list of the actor's attack
+data (its race's ATKD/ATKE, its own over them), neither bash nor left, plain and power together,
+each with a clip with a hit frame in the one animation set of what it holds (1HMShield: no dual
+wielder's attacks, no fists), a power attack only with stamina left. A bash's node holds the
+bashes, a left hand's the left attacks. The Special Attack has no attack data: it asks the idle
+tree's ActionRightPowerAttack, whose power attacks are the player's alone (GetIsID), so an NPC's
+are its kill moves and paired attacks. Each attack of the list whose recovery time
 (ATKD) since its last use has passed is weighed by its attack chance, times the style's attack
 staggered mult (power attack staggered mult for a power attack) against a staggered or
 recoiling target, times its power attack blocking mult for a power attack on a target that
@@ -2765,10 +2772,26 @@ blocks facing it. One is picked by weight and taken with its weight as the chanc
 target must lie within its strike angle × fCombatAttackStrikeAngleMult (0.67) about the
 attacker's facing turned by its attack angle (twice as wide on the dead). One that fails is
 dropped and the pick made again among the rest; the one taken sends its event to the graph and
-its recovery time starts. A power attack is chosen no sooner than fPowerAttackCoolDownTime
+its recovery time starts. Its target must also be in reach of it at its hit frame
+(`attackReaches`): its lunge is its clip's move by then, or for the set's flagged attacks
+(attackStart: no move of their own) its own speed by then; the target must lie within the lunge,
+its reach, its extents (from its own centre) and the target's way by then; then, from where it
+will be (the clip's offset turned by its facing past fCombatAttackStationaryAttackDistance, its
+way clear past fCombatAttackMovingAttackDistance short of fCombatAttackAllowedOverrunDistance)
+to where the target will be (the player, unless going away from it, ×
+fCombatAttackPlayerAnticipateMult), its reach, × fCombatAttackMovingAttackReachMult if it moved,
+plus its extents, and if it moved the strike angle × fCombatAttackMovingStrikeAngleMult. So it
+swings as it closes in, a plain attack keeps its way while it swings, and a forward power attack
+(its clip goes hundreds of units) is an attack from afar and none at arm's length. Its node looks
+at all within fCombatAttackCheckTargetRangeDistance past its farthest lunge. What was wrong
+before: one power roll at the largest chance of any power attack in the race's data (1, for
+attacks it could not even play), so every attack was a power attack until stamina ran out, the
+stagger locked the player out of their swings, and the race's dual wielder's power attack and
+fists were played for want of the player's own idles. A chained attack is not ended by the attack
+before it, whose clip still blends out and raises its attackStop (every second swing of the
+player's struck nothing). A power attack is chosen no sooner than fPowerAttackCoolDownTime
 (Skyrim.esm 0) after the last (by the setting's name, TODO(M13)); one without attack data of its
-own (a paired kill move's) deals 1 + fPowerAttackDefaultBonus (1) times the damage. The engine also measures the attack's reach with the lunge its clip
-moves (the animation set's root motion; TODO(M13): the combat AI's reach check stands for it).
+own (a paired kill move's) deals 1 + fPowerAttackDefaultBonus (1) times the damage.
 Creatures fight so: their idle trees hold no attack for ActionRightAttack, or one that is no
 attack (the frostbite spider's has only combatStanceStart, which takes it back from its spit
 stance; an idle of the tree that is neither an attack data's event nor an attack's, a draw or a
@@ -3231,9 +3254,10 @@ nearest to itself whose way out from the target the navmesh allows (cut short to
 fCombatTargetLocationMinDistanceMult of the distance); its own place counts
 fCombatTargetLocationCurrentReservationDistanceMult nearer. So a group spreads round its target
 instead of piling onto one point. TODO(M13): the second size of the width rule (a cached size of
-the actor's) is read as its radius; the selector's split of out of range, out of position and
-in range, and Fallback To Ranged's condition, are inferred (its behaviour, backing to
-fCombatRangedDistance to shoot, is the equipment choice's here).
+the actor's) is read as its radius. Out of range (observed in the original) is beyond its range
+at its target's place fCombatAnticipateTime ahead, unless a place it holds nearer keeps it there.
+Fallback To Ranged's condition: it has something reaching past fCombatRangedDistance (its
+behaviour, backing to that distance to shoot, is the equipment choice's here).
 
 **While it attacks** its controller does not move it (it stands, still turning to its aim): a
 standing attack's clip has no root motion and the controller's way made it glide. Its attack
