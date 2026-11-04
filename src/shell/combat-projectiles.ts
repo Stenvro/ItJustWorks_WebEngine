@@ -17,6 +17,7 @@
 // the actor's own bodies, on that body's bone (#onBody).
 
 import { Layer } from '../physics/collision-layers.ts';
+import type { ProjectileTriggers } from './projectile-triggers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
 import { invert } from '../render/frustum.ts';
 import type { RenderPort } from '../render/render-port.ts';
@@ -129,6 +130,8 @@ export interface ProjectileOptions {
   ) => { readonly point: Vec3; readonly node: number } | undefined;
   /** A shot's way this step (one meeting the water stirs it: render/water-displacement.ts). */
   readonly shotWay?: (from: Vec3, to: Vec3) => void;
+  /** A shot's way in the trigger volumes (src/shell/projectile-triggers.ts). */
+  readonly triggers?: ProjectileTriggers;
 }
 
 /** Steps a frame is cut into, at most this long (seconds). */
@@ -241,6 +244,7 @@ export class CombatProjectiles {
         const gravity = target ? 0 : shot.projectile.gravity * WORLD_GRAVITY;
         const { from, to } = fly(shot.flight, dt, gravity);
         this.#options.shotWay?.(from, to);
+        this.#options.triggers?.step(shot, shot.projectile.formId, from, to, Layer.projectile);
         if (this.#meets(shot, from, to, physics)) {
           this.#end(shot);
           break;
@@ -532,6 +536,7 @@ export class CombatProjectiles {
   }
 
   #end(shot: Shot): void {
+    this.#options.triggers?.end(shot);
     const index = this.#shots.indexOf(shot);
     if (index >= 0) this.#shots.splice(index, 1);
     shot.scene?.destroy();

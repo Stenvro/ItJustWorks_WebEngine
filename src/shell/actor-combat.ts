@@ -160,6 +160,7 @@ import type { GpuDecals } from '../render/decals.ts';
 import type { GpuScene, InstanceVisibility } from '../render/scene-renderer.ts';
 import type { StagedActor } from './actor-stage.ts';
 import type { ActorMovers } from './actor-movers.ts';
+import type { ProjectileTriggers } from './projectile-triggers.ts';
 import type { ActorBodies, BodyHolder } from './actor-bodies.ts';
 import type { ActorKnockdowns } from './actor-knockdowns.ts';
 import { RaceFlag } from '../world/actor-records.ts';
@@ -477,6 +478,8 @@ export interface ActorCombatOptions {
   readonly terminal: Terminal;
   /** A shot's way this step (one meeting the water stirs it: render/water-displacement.ts). */
   readonly shotWay?: (from: Vec3, to: Vec3) => void;
+  /** A shot's way in the trigger volumes (src/shell/projectile-triggers.ts). */
+  readonly triggers?: ProjectileTriggers;
   readonly movers: ActorMovers;
   readonly bodies: ActorBodies;
   readonly actors: () => Iterable<StagedActor>;
@@ -661,6 +664,7 @@ export class ActorCombat implements CombatBridge {
         return met && node !== undefined ? { point: met.point, node } : undefined;
       },
       ...(options.shotWay && { shotWay: options.shotWay }),
+      ...(options.triggers && { triggers: options.triggers }),
       onActorHit: (shot) => {
         const payload = shot.payload as ShotPayload;
         void this.#arrowKept(payload.attacker, shot.target, shot.ammo);
@@ -5236,8 +5240,8 @@ export class ActorCombat implements CombatBridge {
 
   /**
    * Paralysis begins or ends on an actor: it falls as its ragdoll (its graph's Ragdoll) and lies
-   * until it ends, then gets up. TODO(M13): the paralysed fall stiff in the game (the ragdoll's
-   * powered controls holding the pose); here they fall limp.
+   * stiff, in the pose it was taken in (ActorKnockdowns), until it ends, then gets up.
+   * TODO(M13): how the original holds the pose is not read (here: fixed joints in the world).
    */
   paralyze(reference: number, on: boolean): void {
     const knockdowns = this.#options.knockdowns?.();

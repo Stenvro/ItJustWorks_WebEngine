@@ -20,6 +20,12 @@ import {
 import { bowZoomStep } from '../gameplay/combat/bow-zoom.ts';
 import { COMBAT_DEFAULTS, DIFFICULTY_SUFFIXES } from '../gameplay/combat/combat-settings.ts';
 import { fallDamage, fallSettings } from '../gameplay/falling.ts';
+import {
+  contactDamage,
+  PHYSICS_DAMAGE_DEFAULTS,
+  type PhysicsDamageSettings,
+} from '../gameplay/physics-damage.ts';
+import type { HardContact } from '../physics/physics-world.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { WaterHazard, type WaterHarm, type WaterHarmStep } from '../gameplay/water-hazard.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -28,9 +34,43 @@ import type { SoundSystem } from '../audio/sound-system.ts';
 import { ActorValue, actorValueIndex } from '../world/actor-values.ts';
 
 /** The player's part: their pace in slowed time, their falls (a viewer's player). */
+/** A hard contact's side as physics damage asks it. */
+function sideOf(side: HardContact['a']): {
+  readonly reference: number | undefined;
+  readonly actor: boolean;
+  readonly mass: number;
+} {
+  return {
+    reference: side.owner?.kind === 'object' ? side.owner.reference : undefined,
+    actor: side.owner?.kind === 'actor',
+    mass: side.mass,
+  };
+}
+
+/** The settings of physics damage: the load order's, else the engine's built-in values. */
+async function physicsDamageSettings(runtime: ScriptRuntime): Promise<PhysicsDamageSettings> {
+  const read = async (name: string, fallback: number): Promise<number> => {
+    const value = await runtime.gameSetting(name);
+    return typeof value === 'number' ? value : fallback;
+  };
+  const d = PHYSICS_DAMAGE_DEFAULTS;
+  return {
+    mass1: await read('fPhysicsDamage1Mass', d.mass1),
+    mass2: await read('fPhysicsDamage2Mass', d.mass2),
+    mass3: await read('fPhysicsDamage3Mass', d.mass3),
+    damage1: await read('fPhysicsDamage1Damage', d.damage1),
+    damage2: await read('fPhysicsDamage2Damage', d.damage2),
+    damage3: await read('fPhysicsDamage3Damage', d.damage3),
+    speedBase: await read('fPhysicsDamageSpeedBase', d.speedBase),
+    speedMult: await read('fPhysicsDamageSpeedMult', d.speedMult),
+    speedMin: await read('fPhysicsDamageSpeedMin', d.speedMin),
+  };
+}
+
 export function connectPlayerTime(
   player: {
     pace: (() => number) | undefined;
+    burden?: (() => { readonly weight: number; readonly speedMult: number }) | undefined;
     onLanded: ((height: number) => void) | undefined;
     onSubmersion:
       | ((
@@ -44,14 +84,20 @@ export function connectPlayerTime(
   session: () =>
     | {
         readonly time: TimeFlow;
+        readonly burden?: { readonly weight: number; readonly speedMult: number };
         readonly scriptsReady: ScriptRuntime | undefined;
         readonly ini: { number(section: string, key: string): number };
         readonly soundSystem?: Pick<SoundSystem, 'playNamed'> | undefined;
       }
     | undefined,
-  physics?: { timeScale: (() => number) | undefined },
+  physics?: {
+    timeScale: (() => number) | undefined;
+    onHardContact?: ((contact: HardContact) => void) | undefined;
+    hardContactSpeed?: number;
+  },
 ): void {
   player.pace = () => session()?.time.playerPace ?? 1;
+  player.burden = () => session()?.burden ?? { weight: 0, speedMult: 100 };
   // Water Walking above 0: the surface bears the player (read again once a second old).
   let walks = { on: false, read: -Infinity };
   player.walksOnWater = () => {
@@ -68,6 +114,27 @@ export function connectPlayerTime(
   };
   // The physics world steps at the world's clock's rate (PhysicsWorld.step).
   if (physics) physics.timeScale = () => session()?.time.multiplier ?? 1;
+  // Physics damage: the world's collision listener's hard contacts on destructible objects.
+  if (physics) {
+    let settings: Promise<PhysicsDamageSettings> | undefined;
+    physics.onHardContact = (contact) => {
+      const runtime = session()?.scriptsReady;
+      if (!runtime) return;
+      settings ??= physicsDamageSettings(runtime);
+      void settings
+        .then(async (read) => {
+          for (const [reference, damage] of contactDamage(
+            sideOf(contact.a),
+            sideOf(contact.b),
+            contact.speed,
+            read,
+          )) {
+            await runtime.destruction.damage(reference, damage, { external: true });
+          }
+        })
+        .catch(() => undefined);
+    };
+  }
   player.onLanded = (height) => {
     const current = session();
     const runtime = current?.scriptsReady;

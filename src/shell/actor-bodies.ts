@@ -300,6 +300,12 @@ export class ActorBodies {
   }
 
   /** Whether an actor lies knocked down as a ragdoll. */
+  /** Holds a knocked-down actor's ragdoll in its pose, or lets it go on its joints again. */
+  stiffen(reference: number, on: boolean): void {
+    const entry = this.#bodies.get(reference);
+    if (entry) this.#physics?.stiffen(entry.placed, on);
+  }
+
   knocked(reference: number): boolean {
     return this.#bodies.get(reference)?.knocked === true;
   }

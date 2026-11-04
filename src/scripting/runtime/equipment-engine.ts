@@ -1243,6 +1243,20 @@ export class EquipmentEngine {
     return total;
   }
 
+  /** What an actor has equipped, in weight (what it wears as its perks make it, what it holds). */
+  async equippedWeight(actor: number): Promise<number> {
+    let total = 0;
+    for (const base of this.#runtime.state.actors.get(actor)?.equipped ?? []) {
+      const item = await this.item(base);
+      if (!item) continue;
+      total +=
+        item.armor && this.modifiers.wornWeight
+          ? await this.modifiers.wornWeight(actor, item)
+          : item.weight;
+    }
+    return total;
+  }
+
   /** The most it can carry (the CarryWeight actor value, as its perks make it: Get Max Carry Weight). */
   async carryWeight(actor: number): Promise<number> {
     const value = await this.#value(actor, ActorValue.carryWeight);

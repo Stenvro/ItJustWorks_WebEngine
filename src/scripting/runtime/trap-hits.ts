@@ -5,9 +5,10 @@
 // OnTrapHitStart), a contact that goes on tells a hit once more than [Havok]
 // fTrapHitEventDelayMS (500 ms by default) has passed since the entry's last telling (OnTrapHit;
 // the first 500 ms after the start), and the contact's end tells the stop (OnTrapHitStop). Each
-// carries the trap body's velocity, where it touches, the material and the body's motion type;
-// the "initial hit" flag is false for these contacts (the entry's flag; what sets it is not
-// read). The scripts hear the hits only on living actors (script-events.ts). Platform-independent.
+// carries the trap body's velocity, where it touches, the material of the trap's shape it touches
+// and the body's motion type; the "initial hit" flag is the entry's, and the contact's listener
+// makes its entries with it clear, so it is false for these contacts. The scripts hear the hits
+// only on living actors (script-events.ts). Platform-independent.
 
 import type { EventHub } from './event-hub.ts';
 
@@ -27,6 +28,8 @@ export interface TrapTouchNow {
   readonly position: Vec3;
   readonly velocity: Vec3;
   readonly motionType: number;
+  /** The material of the trap's shape it touches (a save from before kept none). */
+  readonly material?: number;
 }
 
 interface Entry {
@@ -118,8 +121,7 @@ export class TrapHits {
       target,
       velocity: touch.velocity,
       position: touch.position,
-      // TODO(M13): the material of the trap's body at the contact (aeMaterial).
-      material: undefined,
+      material: touch.material,
       initial: false,
       motionType: touch.motionType,
     });

@@ -30,6 +30,7 @@ export type FxKind = 'muzzle-flash' | 'cone' | 'explosion' | 'impact' | 'trail';
 /** A model (and light) shown for a while. */
 interface Fx {
   readonly key: object;
+  readonly scale: number;
   readonly kind: FxKind;
   readonly model: string | undefined;
   scene: GpuScene | undefined;
@@ -138,6 +139,8 @@ export class MagicFx {
       readonly travelled?: number;
       readonly fades?: boolean;
       readonly owner?: number;
+      /** The model's scale (an explosion's splash); 1 without. */
+      readonly scale?: number;
     },
   ): void {
     if (model === undefined && light === undefined) return;
@@ -167,6 +170,7 @@ export class MagicFx {
       light: undefined,
       fades: options.fades ?? false,
       done: false,
+      scale: options.scale ?? 1,
     };
     this.#fx.add(fx);
     if (owner !== undefined) this.#muzzles.set(owner, fx);
@@ -208,11 +212,13 @@ export class MagicFx {
 
   #placement(fx: Fx): Float32Array {
     const c = Math.cos(fx.pitch);
-    return alongMatrix(fx.position, [
+    const world = alongMatrix(fx.position, [
       Math.sin(fx.yaw) * c,
       Math.cos(fx.yaw) * c,
       Math.sin(fx.pitch),
     ]);
+    if (fx.scale !== 1) for (let i = 0; i < 12; i++) world[i] = (world[i] ?? 0) * fx.scale;
+    return world;
   }
 
   /**
@@ -229,6 +235,7 @@ export class MagicFx {
       const first = path[0] ?? [0, 0, 0];
       const fx: Fx = {
         key: {},
+        scale: 1,
         kind: 'trail',
         model: record.model,
         scene: undefined,
