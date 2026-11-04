@@ -433,7 +433,14 @@ describe('the subtrees', () => {
     expect(t.tick()).not.toContain('support');
   });
 
-  it.todo('Acquire Weapon: Find Weapon, Acquire Item / Resource  [RTTI]');
+  it('Acquire Weapon: Find Weapon, Acquire Item / Resource  [RTTI]', () => {
+    const t = fighter({ mayAcquireWeapon: true });
+    expect(t.tick()).toEqual(
+      expect.arrayContaining(['findWeapon', 'moveToWeapon', 'pickUpWeapon']),
+    );
+    const armed = fighter({ mayAcquireWeapon: false });
+    expect(armed.tick()).not.toContain('findWeapon');
+  });
 
   it('Close Movement: Advance, Backoff, Circle, Fallback, Surround, Strafe  [RTTI]', () => {
     // Far: the chase; near, the run under way is kept and a new one chosen when due.
@@ -599,7 +606,8 @@ describe('the subtrees', () => {
     expect(t.tick()).toEqual(['fleeThroughDoor', 'fleeToCover', 'fleeAway']);
   });
 
-  it.todo('Flight: Takeoff, Land, Hover, Orbit, Dive Bomb, Perch / Ground / Flying Attack  [RTTI]');
+  // Flight runs on the fliers' own stage (src/shell/actor-flight.ts), not this tree: its case is
+  // tests/flight.int.test.ts (takes off, hovers, breathes, lands where the flight asks).
 
   it('names every subtree of the original it runs', () => {
     for (const name of [

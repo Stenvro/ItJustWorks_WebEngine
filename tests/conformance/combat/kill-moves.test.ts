@@ -37,9 +37,14 @@ describe('kill moves', () => {
     expect(rangedKillCameraChance(shot, vats)).toBe(25);
   });
 
-  it.todo('the kill move’s chance: fKillCamBaseOdds 0.1 + the level bias  [settings]');
-  it.todo('the paired idle chosen by the weapon, the races and the conditions (IDLE)  [original]');
-  it.todo('NPCs’ kill moves on the last enemy  [UESP Kill moves]');
-  it.todo('the magic kill cam (rules read: docs/gameplay.md)  [original]');
-  it.todo('the kill camera’s radial blur between shots  [original]');
+  // fKillCamBaseOdds and its level bias are read in the original only by a function nothing calls
+  // (docs/completeness/combat.md, round 4b): nothing to test. The paired idle's choice by weapon,
+  // races and conditions: tests/killmoves.int.test.ts. The radial blur between shots:
+  // kill-camera-shots.test.ts and src/gameplay/combat/kill-camera-transition.test.ts.
+  it.todo(
+    'NPCs’ kill moves on the last enemy: which rule starts an NPC’s was not read  [UESP Kill moves]',
+  );
+  it.todo(
+    'the magic kill cam: needs the spells’ projectile predicted to kill (rules read: docs/gameplay.md)  [original]',
+  );
 });

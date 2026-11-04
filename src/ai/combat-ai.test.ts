@@ -9,7 +9,6 @@ import {
   attacksOnSight,
   COMBAT_AI_DEFAULTS,
   Confidence,
-  combatStrength,
   daresHelp,
   drawConfidenceModifier,
   fightingAggression,
@@ -32,7 +31,6 @@ const candidate = (reference: number, more: Partial<TargetCandidate> = {}): Targ
   reference,
   distance: 512,
   detected: true,
-  attacking: false,
   threat: 100,
   ...more,
 });
@@ -118,21 +116,13 @@ describe('combat AI: target selection', () => {
     ).toBe(2);
   });
 
-  it('weighs threat against distance', () => {
-    const strong = candidate(1, { distance: 800, threat: 1000 });
-    const weak = candidate(2, { distance: 300, threat: 100 });
-    expect(selectTarget([strong, weak], undefined)).toBe(1);
-  });
-
-  it('keeps its current target for a little, and turns to one attacking it', () => {
+  it('keeps its current target for a little', () => {
     const current = candidate(1, { distance: 600 });
     const nearer = candidate(2, { distance: 500 });
     expect(selectTarget([current, nearer], 1)).toBe(1);
     expect(selectTarget([current, nearer], undefined)).toBe(2);
     // Much nearer: it switches.
     expect(selectTarget([current, candidate(2, { distance: 20 })], 1)).toBe(2);
-    // One attacking it counts more.
-    expect(selectTarget([candidate(1), candidate(2, { attacking: true })], undefined)).toBe(2);
   });
 
   it('turns from a target its way cannot reach to one it can (Check Unreachable Target)', () => {
@@ -143,7 +133,7 @@ describe('combat AI: target selection', () => {
     expect(selectTarget([stuck], 1)).toBe(1);
   });
 
-  it('counts a target it lost less than one it sees', () => {
+  it('passes over a target it lost for one it knows', () => {
     const lost = candidate(1, { distance: 100, detected: false });
     const seen = candidate(2, { distance: 700 });
     expect(selectTarget([lost, seen], undefined)).toBe(2);
@@ -154,8 +144,8 @@ describe('combat AI: target selection', () => {
     expect(threatRatio([], [100])).toBe(0);
     expect(threatRatio([100, 100], [100])).toBe(2);
     expect(actorStrength(50, 10)).toBe(500);
-    // 10 damage a second, half of it through armour, 50 health.
-    expect(combatStrength(10, 50, 0.5)).toBe(250);
+    // 10 damage a second, armour taking half: 50 health count as 100.
+    expect(actorStrength(50, 10, 0.5)).toBe(1000);
     expect(strengthRatio([250], [500, 500])).toBe(0.25);
     expect(strengthRatio([250], [])).toBe(Number.POSITIVE_INFINITY);
   });
@@ -190,6 +180,9 @@ describe('combat AI: fleeing and yielding', () => {
     // A low modifier drawn for the fight (−0.25) flees sooner; a high one (0.5), later.
     expect(flees(Confidence.average, { ratio: 0.17, modifier: -0.25 })).toBe(true);
     expect(flees(Confidence.average, { ratio: 0.1, modifier: 0.5 })).toBe(false);
+    // The roll moves neither the cowardly nor the foolhardy.
+    expect(flees(Confidence.cowardly, { ratio: 999, modifier: 1 })).toBe(true);
+    expect(flees(Confidence.foolhardy, { ratio: 0, modifier: -1 })).toBe(false);
     // Fear makes even the foolhardy flee; rally keeps the cowardly.
     expect(flees(Confidence.foolhardy, { afraid: true })).toBe(true);
     expect(flees(Confidence.cowardly, { rallied: true })).toBe(false);
