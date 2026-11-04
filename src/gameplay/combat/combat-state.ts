@@ -93,6 +93,8 @@ export interface CombatState {
   wantBlocking: boolean;
   blocking: boolean;
   staggered: boolean;
+  /** Seconds a stagger may yet hold it (fStaggerMaxDuration: tickStagger). */
+  staggerLeft: number;
   recoiling: boolean;
   life: number;
   knock: number;
@@ -117,6 +119,7 @@ export function newCombatState(): CombatState {
     wantBlocking: false,
     blocking: false,
     staggered: false,
+    staggerLeft: 0,
     recoiling: false,
     life: LifeState.alive,
     knock: KnockState.normal,
@@ -430,6 +433,17 @@ export function attacking(state: CombatState): boolean {
 /** Whether it bleeds out (essential down or bleeding out). */
 export function bleedingOut(state: CombatState): boolean {
   return state.life === LifeState.bleedout || state.life === LifeState.essentialDown;
+}
+
+/**
+ * A stagger holds at most its time (observed in the original: its start and a change of process
+ * set the timer to fStaggerMaxDuration; that its end lets the actor go is inferred): one whose
+ * graph never ends it (a graph with no staggerStop) goes free.
+ */
+export function tickStagger(state: CombatState, seconds: number): void {
+  if (!state.staggered) return;
+  state.staggerLeft -= seconds;
+  if (state.staggerLeft <= 0) state.staggered = false;
 }
 
 /**

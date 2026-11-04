@@ -10,6 +10,7 @@
 // block damage: combat/damage-stagger.test.ts.
 
 import { describe, expect, it } from 'vitest';
+import { blockCost } from '../../../src/gameplay/vitals.ts';
 import { COMBAT_AI_DEFAULTS } from '../../../src/ai/combat-ai.ts';
 import {
   bashChance,
@@ -78,15 +79,26 @@ describe('blocking and bashing (formula)', () => {
     expect(holdsBlock({ distance: 100, targetRetreatSpeed: 200 }, style, settings)).toBe(false);
   });
 
-  it('the block attack’s opening: within the bash reach × 1.5, the strike angle × 1.25', () => {
-    const angle = 0.5;
-    expect(blockAttackOpening({ distance: 180, off: 0.6, strikeAngle: angle }, settings)).toBe(
-      true,
-    );
-    expect(blockAttackOpening({ distance: 200, off: 0, strikeAngle: angle }, settings)).toBe(false);
-    expect(blockAttackOpening({ distance: 100, off: 0.7, strikeAngle: angle }, settings)).toBe(
-      false,
-    );
+  it('the block attack’s opening: its target drawing, reach × 1.5, strike angle × 1.25  [original]', () => {
+    // A weapon's reach 100, a radius of 30: inside 180. The strike angle 0.5 × 1.25: 0.625.
+    const opening = {
+      drawing: true,
+      distance: 170,
+      distanceSoon: 170,
+      off: 0.6,
+      strikeAngle: 0.5,
+      reach: 100,
+      radius: 30,
+    };
+    expect(blockAttackOpening(opening, settings)).toBe(true);
+    // Only as the swing is drawn back: not once it has been swung.
+    expect(blockAttackOpening({ ...opening, drawing: false }, settings)).toBe(false);
+    // Out of reach now and fCombatAnticipateTime ahead; inside only as it closes.
+    const far = { ...opening, distance: 200, distanceSoon: 190 };
+    expect(blockAttackOpening(far, settings)).toBe(false);
+    expect(blockAttackOpening({ ...far, distanceSoon: 170 }, settings)).toBe(true);
+    // Outside the swing's own strike angle.
+    expect(blockAttackOpening({ ...opening, off: 0.7 }, settings)).toBe(false);
   });
 
   it('the offensive bash: chosen out of no block by its chance  [original]', () => {
@@ -97,5 +109,12 @@ describe('blocking and bashing (formula)', () => {
       'offensiveBash',
     );
   });
-  it.todo('a blocked hit costs the blocker stamina (fBlockScoreNoShieldMult …)  [settings]');
+  it('a blocked hit costs the blocker stamina: share × damage, stagger, base  [original]', () => {
+    // fStaminaBlockDmgMult 0.25 × (share × the damage before armour), fStaminaBlockStaggerMult 5
+    // × its stagger, fStaminaBlockBase (Skyrim.esm 0). fBlockScoreNoShieldMult is the combat
+    // inventory's and has no part in it.
+    expect(blockCost(0.5 * 40)).toBe(5);
+    expect(blockCost(0.5 * 40, 0.4)).toBe(7);
+    expect(blockCost(0, 0)).toBe(0);
+  });
 });

@@ -41,6 +41,7 @@ export interface VitalSettings {
   readonly powerBashBase: number;
   readonly blockBase: number;
   readonly blockDamageMult: number;
+  readonly blockStaggerMult: number;
 }
 
 export const VITAL_DEFAULTS: VitalSettings = {
@@ -58,6 +59,7 @@ export const VITAL_DEFAULTS: VitalSettings = {
   powerBashBase: 55,
   blockBase: 0,
   blockDamageMult: 0.25,
+  blockStaggerMult: 5,
 };
 
 export function vitalSettings(number: (editorId: string) => number | undefined): VitalSettings {
@@ -86,6 +88,7 @@ export function vitalSettings(number: (editorId: string) => number | undefined):
     powerBashBase: pick('fStaminaPowerBashBase', d.powerBashBase),
     blockBase: pick('fStaminaBlockBase', d.blockBase),
     blockDamageMult: pick('fStaminaBlockDmgMult', d.blockDamageMult),
+    blockStaggerMult: pick('fStaminaBlockStaggerMult', d.blockStaggerMult),
   };
 }
 
@@ -168,9 +171,21 @@ export function bashCost(power: boolean, settings: VitalSettings = VITAL_DEFAULT
   return power ? settings.powerBashBase : settings.bashBase;
 }
 
-/** Stamina blocking `damage` costs. */
-export function blockCost(damage: number, settings: VitalSettings = VITAL_DEFAULTS): number {
-  return settings.blockBase + settings.blockDamageMult * Math.max(0, damage);
+/**
+ * Stamina a blocked hit costs its blocker (observed in the original): the share blocked × the
+ * hit's damage before armour × fStaminaBlockDmgMult + its stagger × fStaminaBlockStaggerMult +
+ * fStaminaBlockBase. `damage` is the share × the damage.
+ */
+export function blockCost(
+  damage: number,
+  stagger = 0,
+  settings: VitalSettings = VITAL_DEFAULTS,
+): number {
+  return (
+    settings.blockBase +
+    settings.blockDamageMult * Math.max(0, damage) +
+    settings.blockStaggerMult * Math.max(0, stagger)
+  );
 }
 
 /** Stamina a jump costs: none (UESP "Stamina": "Jumping does not reduce stamina"). */

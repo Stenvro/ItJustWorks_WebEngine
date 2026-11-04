@@ -3,11 +3,18 @@
 // target's armour reduction are the equip system's (src/gameplay/equipment.ts: the menus'
 // damage, armorDamageReduction); combat adds what the attack makes of them:
 //
-//   damage        = weapon damage (a bow's: its shot, with its arrow) × the attack's damage
-//                   mult (ATKD: power attacks 2, bashes 0.5) × a bow's draw
+// In the order observed in the original:
+//
+//   damage        = weapon damage (a bow's: its shot, with its arrow; fists: the Unarmed Damage
+//                   actor value) × the attack's damage mult (ATKD: power attacks 2, bashes 0.5)
+//                   × a bow's draw × the attacker's own scale × the perks
 //   sneak attack  × the weapon kind's fCombatSneak*Mult × perks × fDamageSneakAttackMult
-//   armour        × (1 − the target's armour reduction)      (critical damage passes it)
-//   critical      + critical damage (CRDT; fists × fCombatUnarmedCritDamageMult) × perks
+//                   (only the player's: sneakAttackApplies)
+//   critical      + critical damage (CRDT; fists: fCombatUnarmedCritDamageMult × the damage
+//                   so far) × perks
+//   attacker      × its Attack Damage Mult actor value
+//   armour        × (1 − the target's armour reduction)      (critical damage does not pass it)
+//   resistance    × (1 − the actor value the weapon names, percent; DNAM's resist)
 //   blocked       × (1 − blocked share)
 //   difficulty    × fDiffMultHPByPC<level> (the player hits) or fDiffMultHPToPC<level> (is hit)
 //
@@ -115,11 +122,65 @@ export function blockedShare(input: BlockInput, settings: CombatSettings): numbe
   return Math.min(cap, Math.max(0, share * input.blockMult * mult));
 }
 
+/**
+ * Whether a hit is a sneak attack (observed in the original): the player's alone, sneaking,
+ * undetected by a living actor, and not a bash. An NPC gets no sneak attack, undetected or not.
+ */
+export function sneakAttackApplies(input: {
+  readonly attackerIsPlayer: boolean;
+  readonly sneaking: boolean;
+  readonly detected: boolean;
+  readonly bash: boolean;
+}): boolean {
+  return input.attackerIsPlayer && input.sneaking && !input.detected && !input.bash;
+}
+
+/**
+ * The notices the player's strike gives (observed in the original): a critical "sCriticalStrike
+ * <target>", a sneak attack "sSuccessfulSneakAttackMain <mult> sSuccessfulSneakAttackEnd".
+ * `sneakMult` 0: no sneak attack.
+ */
+export function strikeNotices(
+  critical: boolean,
+  sneakMult: number,
+  targetName: string,
+  text: (setting: string) => string,
+): string[] {
+  const notices: string[] = [];
+  if (critical) notices.push(`${text('sCriticalStrike')} ${targetName}`);
+  if (sneakMult > 0) {
+    notices.push(
+      `${text('sSuccessfulSneakAttackMain')}${sneakMult.toFixed(1)}${text('sSuccessfulSneakAttackEnd')}`,
+    );
+  }
+  return notices;
+}
+
+/** Whether a weapon's critical spell (CRDT) takes: unless "on death only", a death needed. */
+export function criticalSpellApplies(onDeathOnly: boolean, targetDied: boolean): boolean {
+  return !onDeathOnly || targetDied;
+}
+
+/** A critical of the fists (observed in the original): the damage so far × the setting. */
+export function unarmedCriticalDamage(damageSoFar: number, settings: CombatSettings): number {
+  return settings.unarmedCritDamageMult * damageSoFar;
+}
+
+/** The damage a hit has come to as its critical is weighed (see the file's comment). */
+export function damageBeforeCritical(
+  physical: number,
+  sneakMult: number,
+  incomingMult: number,
+  settings: CombatSettings,
+): number {
+  return physical * incomingMult * sneakMult * settings.damageSneakAttackMult;
+}
+
 /** Everything that decides a hit's damage to its target. */
 export interface DamageInput {
   /** The weapon's damage × the attack's damage mult × a bow's draw. */
   readonly physical: number;
-  /** Critical damage added (0: none; it passes the armour). */
+  /** Critical damage added (0: none; armour and block weigh it as the rest). */
   readonly critical: number;
   /** The sneak attack multiplier (1: none). */
   readonly sneakMult: number;
@@ -129,6 +190,10 @@ export interface DamageInput {
   readonly blocked: number;
   /** Damage taken times this otherwise (the target's damage-reducing perks). */
   readonly incomingMult?: number;
+  /** The attacker's Attack Damage Mult actor value (undefined: 1). */
+  readonly attackDamageMult?: number;
+  /** The actor value the weapon's resistance names, on the target (percent; undefined: none). */
+  readonly weaponResistance?: number;
   /** [GamePlay] iDifficulty (0 Novice .. 5 Legendary). */
   readonly difficulty: number;
   readonly attackerIsPlayer: boolean;
@@ -142,9 +207,14 @@ export interface DamageResult {
   /** The physical part after sneak and armour (before the block and difficulty). */
   readonly physical: number;
   readonly critical: number;
-  /** Damage the block took off (its stamina cost, the block skill's use). */
+  /** The whole hit before armour (a block's stamina cost weighs it). */
+  readonly beforeArmor: number;
+  /** Damage the block took off (the block skill's use). */
   readonly blockedDamage: number;
-  /** Damage the armour took off. */
+  /**
+   * The resisted physical damage: the hit × the armour's share × fDamageToArmorPercentage, as a
+   * block leaves it (× the share blocked), observed in the original.
+   */
   readonly resisted: number;
   readonly difficultyMult: number;
 }
@@ -159,15 +229,24 @@ export function hitDamage(input: DamageInput, settings: CombatSettings): DamageR
       : 1;
   const sneaked = input.physical * input.sneakMult * settings.damageSneakAttackMult;
   const reduction = Math.min(1, Math.max(0, input.armorReduction));
-  const physical = sneaked * (1 - reduction);
-  const before = (physical + Math.max(0, input.critical)) * (input.incomingMult ?? 1);
-  const blockedDamage = before * Math.min(1, Math.max(0, input.blocked));
+  const critical = Math.max(0, input.critical);
+  const beforeArmor =
+    (damageBeforeCritical(input.physical, input.sneakMult, input.incomingMult ?? 1, settings) +
+      critical) *
+    (input.attackDamageMult ?? 1);
+  // The weapon's resistance counts in (0, 100] percent; below it does nothing.
+  const resistance = Math.min(100, input.weaponResistance ?? 0) / 100;
+  const before = beforeArmor * (1 - reduction) * (resistance > 0 ? 1 - resistance : 1);
+  const share = Math.min(1, Math.max(0, input.blocked));
+  const blockedDamage = before * share;
+  const resisted = beforeArmor * reduction * settings.damageToArmorPercentage;
   return {
     total: Math.max(0, (before - blockedDamage) * difficultyMult),
-    physical,
-    critical: Math.max(0, input.critical),
+    physical: sneaked * (1 - reduction),
+    critical,
+    beforeArmor,
     blockedDamage,
-    resisted: sneaked * reduction,
+    resisted: share > 0 ? resisted * share : resisted,
     difficultyMult,
   };
 }

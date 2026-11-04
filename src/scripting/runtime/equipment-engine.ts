@@ -14,6 +14,8 @@ import { EntryPoint } from '../../gameplay/perk-entry-points.ts';
 import {
   armorDamageReduction,
   armorPieceRating,
+  armorReductionCapped,
+  armorShare,
   armorSettings,
   armorSkillMultiplier,
   equipItem,
@@ -143,6 +145,11 @@ export interface WeaponStats {
   readonly stagger: number;
   readonly critDamage: number;
   readonly critMult: number;
+  /** Its critical spell (CRDT), which may take only on a death. */
+  readonly critEffect: number | undefined;
+  readonly critEffectOnDeath: boolean;
+  /** The actor value that resists it on its target (an index; -1 none). */
+  readonly resist: number;
   /** The skill it uses (an actor value index; -1 none). */
   readonly skill: number;
   readonly ammo: number | undefined;
@@ -1121,6 +1128,19 @@ export class EquipmentEngine {
   }
 
   /**
+   * The share of damage armor takes off as the attacker's perks scale it (combat: Mod Target
+   * Damage Resistance works on the share before its cap, observed in the original).
+   */
+  async armorReductionScaled(
+    rating: number,
+    pieces: number,
+    scale: (share: number) => Promise<number>,
+  ): Promise<number> {
+    const { armor: settings } = await this.#readSettings();
+    return armorReductionCapped(await scale(armorShare(rating, pieces, settings)), settings);
+  }
+
+  /**
    * A weapon's damage for an actor (UESP "Skyrim:Weapons"): its base and improvement by the
    * actor's skill, its perks and its skill's fortifications by items (the skill's Mod actor
    * value, percent) and potions (PowerMod). `level`: an instance's improvement (else the one
@@ -1178,6 +1198,9 @@ export class EquipmentEngine {
       reach: data?.reach ?? 1,
       stagger: data?.stagger ?? 0,
       critDamage: data?.critDamage ?? 0,
+      critEffect: data?.critEffect,
+      critEffectOnDeath: data?.critEffectOnDeath ?? false,
+      resist: data?.resist ?? -1,
       critMult: data?.critMult ?? 1,
       skill: data?.skill ?? -1,
       ammo: ranged ? ammo : undefined,

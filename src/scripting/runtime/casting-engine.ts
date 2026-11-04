@@ -215,6 +215,21 @@ export interface SavedCast {
   readonly graphBegan?: boolean;
 }
 
+/** A potion an actor carries and how much of a value it restores (magnitude × seconds). */
+export interface PotionStrength {
+  readonly formId: number;
+  readonly amount: number;
+}
+
+/** The potion an NPC drinks: the one restoring the most of what it needs. */
+export function strongestPotion(potions: readonly PotionStrength[]): number | undefined {
+  let best: PotionStrength | undefined;
+  for (const potion of potions) {
+    if (potion.amount > 0 && (!best || potion.amount > best.amount)) best = potion;
+  }
+  return best?.formId;
+}
+
 export class CastingEngine {
   readonly #runtime: ScriptRuntime;
   /** Casts going on, by "actor:source". */
@@ -1674,7 +1689,7 @@ export class CastingEngine {
    */
   async choosePotion(actor: number, value: number): Promise<number | undefined> {
     const runtime = this.#runtime;
-    let best: { formId: number; amount: number } | undefined;
+    const potions: PotionStrength[] = [];
     for (const [formId, count] of await runtime.inventory(actor)) {
       if (count <= 0) continue;
       const item = await runtime.magic.item(formId);
@@ -1690,9 +1705,9 @@ export class CastingEngine {
           continue;
         amount += entry.magnitude * Math.max(1, entry.duration);
       }
-      if (amount > 0 && (!best || amount > best.amount)) best = { formId, amount };
+      potions.push({ formId, amount });
     }
-    return best?.formId;
+    return strongestPotion(potions);
   }
 
   async #serves(item: MagicItemRecord, purpose: CastPurpose): Promise<boolean> {

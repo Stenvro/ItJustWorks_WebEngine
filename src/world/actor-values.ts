@@ -68,6 +68,7 @@ export const ActorValue = {
   carryWeight: 32,
   criticalChance: 33,
   unarmedDamage: 35,
+  attackDamageMult: 154,
   mass: 36,
   voicePoints: 37,
   voiceRate: 38,
