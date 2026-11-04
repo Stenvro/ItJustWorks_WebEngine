@@ -827,7 +827,8 @@ export class CrimeEngine {
   // --- Violence and the rest ------------------------------------------------------------------
 
   /**
-   * An attack on an actor (combat's hits: actor-combat.ts; spells': magic-engine.ts cast): an assault if the victim
+   * An attack on an actor (combat's hits: actor-combat.ts; spells': magic-engine.ts cast; another
+   * actor's blow is reported the same way, unless it is a guard's): an assault if the victim
    * was not hostile to the attacker (an enemy is fair game) nor already attacked by them;
    * reported to the victim's crime faction (iCrimeGoldAttack). The story manager's Assault
    * Actor event (OnStoryAssaultActor).
@@ -836,11 +837,13 @@ export class CrimeEngine {
     const runtime = this.#runtime;
     if (victim === attacker) return undefined;
     // An actor's first blow on one not hostile to it: an NPC crime (no bounty) its witnesses
-    // and the guards answer.
+    // and the guards answer. Not a guard's (observed in the original: its blows are no crime),
+    // and one pair's only once, so a stray swing does not grow into an endless brawl.
     if (attacker !== PLAYER_REF) {
       const key = `${String(attacker)}:${String(victim)}`;
       if (this.#npcAssaults.has(key) || (await this.reaction(victim, attacker)) === 'hostile')
         return undefined;
+      if (await this.isGuard(attacker)) return undefined;
       this.#npcAssaults.add(key);
       const others = this.world?.witnesses(attacker, 'attack', victim) ?? [];
       await this.commit(CrimeType.attack, attacker, {

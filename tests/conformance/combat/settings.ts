@@ -131,6 +131,12 @@ export const ENGINE = {
   fCombatMusicGroupThreatRatioMin: 0.5,
   fCombatMusicGroupThreatRatioMax: 2,
   fCombatThreatRatioUpdateTime: 5,
+  fCombatFleeAllyDistanceMin: 1536,
+  fCombatFleeAllyDistanceMax: 4096,
+  fCombatFleeUseDoorChance: 0.33,
+  fCombatFleeCoverMinDistance: 1024,
+  fCombatFleeCoverSearchRadius: 3072,
+  fCombatAimProjectileBlockedTime: 1.5,
   fFleeDoneDistanceExterior: 2500,
   fFleeDoneDistanceInterior: 600,
 } as const;

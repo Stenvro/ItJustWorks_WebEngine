@@ -111,20 +111,6 @@ export interface CombatAiSettings {
    * after it last chose one (seconds).
    */
   readonly selectTargetSwitchUpdateTime: number;
-  /**
-   * The target selector's additive scores (CommonLibSSE CombatTargetSelector adds them up per
-   * candidate; the weights are ours, TODO(M13)): nearness (1 at its feet, 0 at targetMaxDistance
-   * and beyond), its threat against the strongest candidate's, its current target, one attacking
-   * it, the player, less per ally already on it (crowding), less for one it does not detect now.
-   */
-  readonly targetDistanceScore: number;
-  readonly targetMaxDistance: number;
-  readonly targetThreatScore: number;
-  readonly currentTargetBonus: number;
-  readonly attackerBonus: number;
-  readonly playerTargetBonus: number;
-  readonly crowdingPenalty: number;
-  readonly lostTargetPenalty: number;
   /** fCombatYieldTime: a yielding actor stays out of the fight this long (seconds). */
   readonly yieldTime: number;
   /**
@@ -256,6 +242,8 @@ export interface CombatAiSettings {
    */
   readonly rangedAttackMaximumHoldTime: number;
   readonly rangedProjectileFiringArc: number;
+  /** fCombatAimProjectileBlockedTime: a shot's line blocked this long is given up (seconds). */
+  readonly aimProjectileBlockedTime: number;
   /**
    * fCombatAttackAnimationDrivenDelayTime: an actor still in its last attack chooses no new one
    * until this long after it chose it (observed in the original).
@@ -321,14 +309,6 @@ const SETTINGS: readonly (readonly [keyof CombatAiSettings, string | undefined, 
   ['guardPackageAttackRadiusMult', 'fGuardPackageAttackRadiusMult', 0.5],
   ['selectTargetUpdateTime', 'fCombatSelectTargetUpdateTime', 1],
   ['selectTargetSwitchUpdateTime', 'fCombatSelectTargetSwitchUpdateTime', 3],
-  ['targetDistanceScore', undefined, 1],
-  ['targetMaxDistance', undefined, 2048],
-  ['targetThreatScore', undefined, 1],
-  ['currentTargetBonus', undefined, 0.2],
-  ['attackerBonus', undefined, 0.25],
-  ['playerTargetBonus', undefined, 0.1],
-  ['crowdingPenalty', undefined, 0.1],
-  ['lostTargetPenalty', undefined, 0.5],
   ['yieldTime', 'fCombatYieldTime', 10],
   ['yieldRetryTime', 'fCombatYieldRetryTime', 600],
   ['acceptYieldTime', undefined, 3],
@@ -410,6 +390,7 @@ const SETTINGS: readonly (readonly [keyof CombatAiSettings, string | undefined, 
   ['rangedAttackHoldTimeMinDistance', 'fCombatRangedAttackHoldTimeMinDistance', 256],
   ['rangedAttackMaximumHoldTime', 'fCombatRangedAttackMaximumHoldTime', 10],
   ['rangedProjectileFiringArc', 'fCombatRangedProjectileFiringArc', 30],
+  ['aimProjectileBlockedTime', 'fCombatAimProjectileBlockedTime', 1.5],
   ['attackAnimationDrivenDelayTime', 'fCombatAttackAnimationDrivenDelayTime', 1.5],
   ['attackCheckTargetRangeDistance', 'fCombatAttackCheckTargetRangeDistance', 512],
   ['attackStrikeAngleMult', 'fCombatAttackStrikeAngleMult', 0.67],
@@ -571,20 +552,28 @@ export function aggroResponse(
 /** One an actor may fight now. */
 export interface TargetCandidate {
   readonly reference: number;
-  /** Horizontal distance (units). */
+  /** Distance (units). */
   readonly distance: number;
-  /** It detects it now (else it knows where it was). */
+  /** Its side knows of it now and has not lost it (else it knows only where it was). */
   readonly detected: boolean;
-  /** It attacked the actor lately (or fights it now). */
-  readonly attacking: boolean;
-  /** How dangerous it is (combatStrength against the actor). */
+  /** How strong it is (actorStrength): the fight's odds weigh it, not target selection. */
   readonly threat: number;
-  /** It is the player. */
-  readonly player?: boolean;
-  /** How many of the actor's allies already fight it (crowding). */
-  readonly crowd?: number;
-  /** Its way cannot reach it and it has nothing that reaches from afar (Check Unreachable Target). */
+  /** Its own senses have it: it sees it now, or (its current target) saw it within 2 s. */
+  readonly sees?: boolean;
+  /** It hears it now. */
+  readonly hears?: boolean;
+  /** It fights as the actor does: both by melee (the hands empty count), or neither. */
+  readonly sameKind?: boolean;
+  /** It flees (a fleeing target counts less). */
+  readonly fleeing?: boolean;
+  /** It stands in another space (cell or worldspace) than the actor. */
+  readonly elsewhere?: boolean;
+  /** In another space, and no way there is known (no load door between). */
+  readonly unconnected?: boolean;
+  /** The actor's weapon does not reach afar and its way cannot reach it. */
   readonly unreachable?: boolean;
+  /** Seconds since its side last knew of it (the fallback when none is known now). */
+  readonly sinceKnown?: number;
 }
 
 /**
@@ -610,9 +599,9 @@ export function strengthDamage(
 const STRENGTH_REDUCTION_CAP = 0.99;
 
 /**
- * How strong an actor is in a fight (observed in the original: the measure the combat
- * music's odds and GetThreatRatio weigh): the damage it deals × its health now / (1 − its
- * armour's damage reduction, at most 0.99), so armour counts as more health.
+ * How strong an actor is in a fight (observed in the original: the measure the fight's odds, the
+ * combat music's and GetThreatRatio weigh): the damage it deals a second (attackDps) × its health
+ * now / (1 − its armour's damage reduction, at most 0.99), so armour counts as more health.
  */
 export function actorStrength(health: number, damage: number, reduction = 0): number {
   const kept = 1 - Math.min(STRENGTH_REDUCTION_CAP, Math.max(0, reduction));
@@ -620,56 +609,66 @@ export function actorStrength(health: number, damage: number, reduction = 0): nu
 }
 
 /**
- * The target it fights (CommonLibSSE CombatTargetSelector: the scores of each candidate added
- * up; the highest wins): see targetScore.
+ * The target it fights (observed in the original: the standard selector). Among the targets its
+ * side knows and has not lost, and its current target, the highest targetScore wins; a sole
+ * target of the side needs no score. With none known, the one known most recently.
  */
 export function selectTarget(
   candidates: readonly TargetCandidate[],
   current: number | undefined,
-  settings: CombatAiSettings = COMBAT_AI_DEFAULTS,
 ): number | undefined {
-  let strongest = 0;
-  for (const candidate of candidates) strongest = Math.max(strongest, candidate.threat);
+  const scored = candidates.length > 1;
   let best: { reference: number; score: number } | undefined;
   for (const candidate of candidates) {
-    const score = targetScore(candidate, candidate.reference === current, strongest, settings);
+    if (!candidate.detected) continue;
+    const score = scored ? targetScore(candidate, candidate.reference === current) : 0;
     if (!best || score > best.score) best = { reference: candidate.reference, score };
   }
-  return best?.reference;
+  if (best) return best.reference;
+  let latest: TargetCandidate | undefined;
+  for (const candidate of candidates) {
+    const since = candidate.sinceKnown ?? Infinity;
+    if (!latest || since < (latest.sinceKnown ?? Infinity)) latest = candidate;
+  }
+  return latest?.reference;
 }
 
+/** Target selection's weights and its distance's reach (observed in the original). */
+const TARGET_SENSED_SCORE = 1000;
+const TARGET_HEARD_SCORE = 100;
+const TARGET_CURRENT_SCORE = 100;
+const TARGET_SAME_KIND_SCORE = 100;
+const TARGET_NEAR_SCORE = 1000;
+const TARGET_NEAR_DISTANCE = 2048;
+const TARGET_UNREACHABLE_LOSS = 2000;
+const TARGET_UNCONNECTED_LOSS = 2500;
+const TARGET_FLEEING_LOSS = 500;
+
 /**
- * A candidate's score, the sum of: its nearness (targetDistanceScore at its feet down to 0 at
- * targetMaxDistance), its threat against the strongest candidate's (targetThreatScore), the
- * current target's bonus (it does not switch for a little), one attacking it, the player; less
- * per ally already on it (crowding) and for one it does not detect now. TODO(M13): the engine's
- * weights (no setting names them).
+ * A candidate's score, the sum of (observed in the original): its own senses having it, heard,
+ * being its current target, fighting the same way as the actor; its nearness (full at its feet,
+ * nothing from 2048 units; in another space as far, its current target as near); less for one it
+ * cannot reach (a weapon short of fCombatRangedDistance, or in another space), one with no way
+ * there, and one that flees. How many allies already fight it is counted by the original and
+ * added with a weight of 0, so crowding does not move the choice; a target's strength, whether
+ * it attacks the actor and whether it is the player do not count at all.
+ * TODO(M13): the two sense flags' names are inferred from the fields beside them.
  */
-export function targetScore(
-  candidate: TargetCandidate,
-  current: boolean,
-  strongest: number,
-  settings: CombatAiSettings,
-): number {
-  const near = Math.max(0, 1 - candidate.distance / settings.targetMaxDistance);
-  const threat = strongest > 0 ? Math.max(0, candidate.threat) / strongest : 1;
+export function targetScore(candidate: TargetCandidate, current: boolean): number {
+  const away =
+    candidate.elsewhere === true ? (current ? 0 : TARGET_NEAR_DISTANCE) : candidate.distance;
+  const near = 1 - Math.min(away, TARGET_NEAR_DISTANCE) / TARGET_NEAR_DISTANCE;
   return (
-    settings.targetDistanceScore * near +
-    settings.targetThreatScore * threat +
-    (current ? settings.currentTargetBonus : 0) +
-    (candidate.attacking ? settings.attackerBonus : 0) +
-    (candidate.player === true ? settings.playerTargetBonus : 0) -
-    settings.crowdingPenalty * (candidate.crowd ?? 0) -
-    (candidate.detected ? 0 : settings.lostTargetPenalty) -
-    (candidate.unreachable === true ? UNREACHABLE_TARGET_PENALTY : 0)
+    (candidate.sees === true ? TARGET_SENSED_SCORE : 0) +
+    (candidate.hears === true ? TARGET_HEARD_SCORE : 0) +
+    (current ? TARGET_CURRENT_SCORE : 0) +
+    (candidate.sameKind === true ? TARGET_SAME_KIND_SCORE : 0) +
+    near * TARGET_NEAR_SCORE -
+    (candidate.unreachable === true ? TARGET_UNREACHABLE_LOSS : 0) -
+    (candidate.unconnected === true ? TARGET_UNCONNECTED_LOSS : 0) -
+    (candidate.fleeing === true ? TARGET_FLEEING_LOSS : 0)
   );
 }
-
-/**
- * An unreachable target's score is lowered by this, so a reachable one is fought first (the
- * engine's reachability in target selection; TODO(M13): its weight, no setting names it).
- */
-export const UNREACHABLE_TARGET_PENALTY = 2;
 
 /**
  * Whether it chooses its target again now (re-selection timing): every
@@ -715,7 +714,6 @@ export function drawConfidenceModifier(random: () => number, settings: CombatAiS
 /**
  * A weapon's damage per second as strength weighs it: its blow × its speed ×
  * fCombatDPSMeleeSpeedMult (fCombatDPSBowSpeedMult for a bow: a shot takes long to draw).
- * TODO(M13): the engine's attack timing (the attack data's recovery, power attacks).
  */
 export function attackDps(
   damage: number,
@@ -725,16 +723,6 @@ export function attackDps(
 ): number {
   const mult = bow ? settings.dpsBowSpeedMult : settings.dpsMeleeSpeedMult;
   return Math.max(0, damage) * Math.max(0, speed || 1) * mult;
-}
-
-/**
- * An actor's strength in a fight (the engine's: damage per second × health against armour): its
- * damage per second less what the enemy's armour takes off it (reduction 0 .. 1, the armour
- * rating's damage reduction), times its health now.
- */
-export function combatStrength(dps: number, health: number, enemyReduction: number): number {
-  const through = 1 - Math.min(1, Math.max(0, enemyReduction));
-  return Math.max(0, health) * Math.max(0, dps) * through;
 }
 
 /** The strength ratio of a side: its strengths against its enemies' (Infinity: no enemy). */
@@ -751,7 +739,7 @@ export function strengthRatio(side: readonly number[], enemies: readonly number[
  * The strength ratio below which an actor flees, by its confidence for this fight (its
  * Confidence actor value plus the fight's confidence modifier): fConfidenceCowardly (1000: at
  * once), Cautious, Average, Brave, fConfidenceFoolhardy (0: never), between two levels
- * interpolated. TODO(M13): how the engine applies the modifier (here a shift of the level).
+ * interpolated (observed in the original).
  */
 export function fleeRatio(confidence: number, settings: CombatAiSettings): number {
   const levels = [
@@ -804,22 +792,54 @@ export interface FleeInput {
   readonly confidence: number;
   /** The fight's confidence modifier (drawConfidenceModifier). */
   readonly modifier: number;
+  /** The levels Boost Confidence raised it by in this fight (mayBoostConfidence). */
+  readonly boost?: number;
+  /** A child or one essential and down: it flees whatever the odds (observed in the original). */
+  readonly always?: boolean;
   /** Fear or Turn Undead on it (it flees), Rally (it does not). */
   readonly afraid: boolean;
   readonly rallied: boolean;
 }
 
+/** The confidence level this fight weighs: its value plus the boosts, foolhardy at most. */
+function confidenceLevel(confidence: number, boost: number): number {
+  return Math.min(Confidence.foolhardy, Math.max(0, Math.trunc(confidence) + boost));
+}
+
 /**
- * Whether it flees: fear makes it, rally keeps it; else its side's strength ratio below its
- * confidence's flee ratio (fleeRatio, its confidence moved by the fight's modifier). Cowardly
- * actors flee at once, foolhardy ones never (but for fear).
+ * Whether it flees (observed in the original): a child or one essential and down always; else
+ * its side's strength ratio below the flee ratio of its confidence level. The fight's modifier
+ * moves that level only between cowardly and foolhardy: those two ignore the roll. Fear and rally
+ * are the magic's.
  */
 export function shouldFlee(input: FleeInput, settings: CombatAiSettings): boolean {
   if (input.afraid) return true;
   if (input.rallied) return false;
-  const threshold = fleeRatio(input.confidence + input.modifier, settings);
-  if (threshold <= 0) return false;
-  return input.ratio < threshold;
+  if (input.always === true) return true;
+  const level = confidenceLevel(input.confidence, input.boost ?? 0);
+  const moved =
+    level === Confidence.cowardly || level === Confidence.foolhardy
+      ? level
+      : level + input.modifier;
+  return input.ratio < fleeRatio(moved, settings);
+}
+
+/** A confidence level with a flee ratio of this or more cannot be boosted. */
+const CONFIDENCE_BOOST_LIMIT = 100;
+
+/**
+ * Boost Confidence (observed in the original: the last entry of the Flee and Hide selectors, for
+ * one with nowhere left to go): it may raise its level by one for the rest of the fight, while
+ * below foolhardy and while its level's flee ratio is under 100. So the cowardly (1000) never
+ * can.
+ */
+export function mayBoostConfidence(
+  confidence: number,
+  boost: number,
+  settings: CombatAiSettings,
+): boolean {
+  const level = confidenceLevel(confidence, boost);
+  return level < Confidence.foolhardy && fleeRatio(level, settings) < CONFIDENCE_BOOST_LIMIT;
 }
 
 // --- Yielding -----------------------------------------------------------------------------------
