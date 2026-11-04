@@ -26,9 +26,9 @@ import {
   assists,
   attackDps,
   attacksOnSight,
-  combatStrength,
   daresHelp,
   drawConfidenceModifier,
+  mayBoostConfidence,
   maySwitchTarget,
   readCombatAiSettings,
   COMBAT_AI_DEFAULTS,
@@ -141,6 +141,9 @@ import {
   type Maneuver,
   type Opponent,
   type Threat,
+  aimGivenUp,
+  lineOfFireBlocker,
+  type ShotObstacle,
 } from '../ai/combat-tactics.ts';
 import { InterruptFlag, PackageFlag } from '../ai/package-records.ts';
 import { CombatStyleFlag, type CombatStyle } from '../ai/combat-style-records.ts';
@@ -421,6 +424,10 @@ interface Mind {
   equipping: boolean;
   search: CombatSearch | undefined;
   nextLine: number;
+  /** Since when an actor stands in its shot's way (undefined: its line is clear). */
+  aimBlockedAt: number | undefined;
+  /** The levels Boost Confidence raised it by in this fight. */
+  confidenceBoost: number;
   /** Fleeing: its way away under way, cornered until, scared by a fight until. */
   fleeWay: Promise<boolean> | undefined;
   fleeFailed: boolean;
@@ -553,6 +560,13 @@ const SUPPORT_SECONDS = 1;
 const SUPPORT_CAST_SECONDS = 1.5;
 /** Acquire Weapon: it bends to a weapon from this near (with fCombatAcquireWeaponReachDistance). */
 const PICK_UP_ARRIVE = 64;
+/** How high up its body a shooter's line of fire runs, at both ends (a share of its height). */
+const AIM_HEIGHT_SHARE = 0.75;
+/** Target selection: its senses count this long after they last had the target (seconds). */
+const TARGET_SENSED_SECONDS = 2;
+/** Whether what it holds fights by melee: empty hands, or a weapon short of bow and staff. */
+const fightsByMelee = (gear: FighterGear | undefined): boolean =>
+  gear === undefined || gear.weaponType < WeaponType.bow;
 /** Use Cover, Flee To Cover: at its cover within this (units). */
 const COVER_ARRIVE = 48;
 /** An offensive bash raises its block this long at most before the bash (seconds; TODO(M13)). */
@@ -565,7 +579,11 @@ const DODGE_SECONDS = 0.6;
 const SHOUT_DECISION_SECONDS = 1;
 /** After combat it sheathes its weapon this long after (seconds). TODO(M13). */
 const SHEATHE_DELAY = 3;
-/** A cornered actor fights this long before it flees again (seconds). */
+/**
+ * A cornered actor that cannot be boosted fights this long before it tries to flee again
+ * (seconds). TODO(M13): the original's tree tries every check; here a way is not searched for so
+ * often.
+ */
 const CORNERED_SECONDS = 10;
 /** A cowardly spectator flees a fight this long after its last blow (seconds). */
 const SCARED_SECONDS = 10;
@@ -791,8 +809,8 @@ export class ActorCombatAi {
     // Another actor's blow on one not its enemy turns it only if it would be hostile to that
     // actor anyway, by its own aggression (observed in the original): a townsman caught by a
     // swing at a common foe does not start a brawl, and no allowance is counted for it (those
-    // are the player's blows). TODO(M13): the original reports such a blow as an assault, which
-    // those who see it answer (crime-engine.ts has only the player's).
+    // are the player's blows). The blow is an assault all the same, which those who see it
+    // answer (crime-engine.ts assault).
     if (!byPlayer && reaction !== FightReaction.enemy) {
       const magic = runtime.magic.aiState(mind.reference);
       if (friendly && !mind.profile) return;
@@ -1079,6 +1097,8 @@ export class ActorCombatAi {
         fleeFailed: false,
         fleeRetry: 0,
         corneredUntil: 0,
+        confidenceBoost: 0,
+        aimBlockedAt: undefined,
         scaredFrom: undefined,
         scaredUntil: 0,
         yieldedAt: -Infinity,
@@ -1161,7 +1181,7 @@ export class ActorCombatAi {
     if (mind.mode === 'idle') {
       // Into combat: on sight of an enemy; attacked by one it does not see, it searches.
       if (detected.length > 0) {
-        const target = selectTarget(detected, undefined, this.#settings);
+        const target = selectTarget(detected, undefined);
         const alerted = senses?.detections.alerted(mind.reference) !== undefined;
         if (target !== undefined) this.#enter(mind, target, alerted);
         return;
@@ -1187,7 +1207,7 @@ export class ActorCombatAi {
     let target = mind.target;
     if (!kept || this.#clock >= mind.nextSelect) {
       mind.nextSelect = this.#clock + this.#settings.selectTargetUpdateTime;
-      target = selectTarget(candidates, mind.target, this.#settings);
+      target = selectTarget(candidates, mind.target);
       const switches = !kept || maySwitchTarget(this.#clock - mind.switchedAt, this.#settings);
       if (target !== undefined && target !== mind.target && switches) {
         mind.switchedAt = this.#clock;
@@ -1203,7 +1223,7 @@ export class ActorCombatAi {
       return;
     }
     if (mind.mode === 'search' && !searching) {
-      const found = selectTarget(detected, mind.target, this.#settings) ?? mind.target ?? target;
+      const found = selectTarget(detected, mind.target) ?? mind.target ?? target;
       mind.search?.cancel();
       mind.search = undefined;
       mind.mode = 'fight';
@@ -1212,9 +1232,10 @@ export class ActorCombatAi {
       return;
     }
     if (mind.mode === 'search') return;
-    // Its side's strength against its enemies', now and then (fCombatStrengthUpdateTime).
+    // Its side's strength against its enemies', every fCombatThreatRatioUpdateTime (observed in
+    // the original: the strengths themselves each fCombatStrengthUpdateTime).
     if (this.#clock >= mind.nextOdds) {
-      mind.nextOdds = this.#clock + this.#settings.strengthUpdateTime;
+      mind.nextOdds = this.#clock + this.#settings.threatRatioUpdateTime;
       mind.ratio = this.#strengthRatio(mind, candidates);
     }
     const flee = shouldFlee(
@@ -1222,6 +1243,8 @@ export class ActorCombatAi {
         ratio: mind.ratio,
         confidence: profile.confidence,
         modifier: mind.modifier,
+        boost: mind.confidenceBoost,
+        always: profile.child,
         afraid: magic.fleeing,
         rallied: magic.rallied || magic.frenzied,
       },
@@ -1299,6 +1322,8 @@ export class ActorCombatAi {
       if (reference === mind.reference || !other.feet) continue;
       if (other.state.life === LifeState.dead || bleedingOut(other.state)) continue;
       if (runtime?.state.actors.get(reference)?.dead === true) continue;
+      // The player's teammates pass children over (observed in the original).
+      if (profile.teammate && this.#minds.get(reference)?.profile?.child === true) continue;
       // Teammates fight near the player (fCombatTeammateFollowRadiusMult).
       if (
         leash &&
@@ -1332,11 +1357,17 @@ export class ActorCombatAi {
       candidates.push({
         reference,
         distance: flat(feet, where),
-        detected,
-        attacking: this.#fightTarget(other, views) === mind.reference,
-        threat: combatStrength(this.#dps(other.gear), health, this.#reduction(mind.reference)),
-        player: reference === PLAYER_REF,
-        crowd: this.#alliesOn(mind, reference),
+        detected: detected || (reference === mind.target && tracked?.known === true),
+        threat: actorStrength(health, this.#dps(other.gear), this.#reduction(reference)),
+        sees:
+          sees ||
+          (reference === mind.target &&
+            tracked !== undefined &&
+            this.#clock - tracked.detectedTime < TARGET_SENSED_SECONDS),
+        hears: tracked !== undefined && this.#clock - tracked.eventTime < TARGET_SENSED_SECONDS,
+        sameKind: fightsByMelee(view.gear) === fightsByMelee(other.gear),
+        fleeing: this.#minds.get(reference)?.mode === 'flee',
+        sinceKnown: tracked && this.#clock - tracked.lastKnownTime,
         // Unreachable by its way, and nothing in its hands that reaches from afar.
         unreachable:
           mind.unreachable?.target === reference &&
@@ -1553,16 +1584,22 @@ export class ActorCombatAi {
   }
 
   /**
-   * Its side's strength ratio: its own and its group's strength (damage per second against its
-   * target's armour × health) against its enemies' (theirs against its armour: the candidates'
-   * threat).
+   * Its side's strength against its enemies' (each actorStrength: the candidates' threat); its
+   * fleeing allies count for nothing.
    */
   #strengthRatio(mind: Mind, candidates: readonly TargetCandidate[]): number {
-    const against = mind.target === undefined ? 0 : this.#reduction(mind.target);
-    const side = [combatStrength(this.#dpsOf(mind.reference), mind.healthPoints, against)];
+    const side = [
+      actorStrength(
+        mind.healthPoints,
+        this.#dpsOf(mind.reference),
+        this.#reduction(mind.reference),
+      ),
+    ];
     for (const ally of this.#groups.allies(mind.reference)) {
+      // Its fleeing allies count for nothing (observed in the original).
+      if (this.#minds.get(ally)?.mode === 'flee') continue;
       const health = this.#health.get(ally)?.points ?? 100;
-      side.push(combatStrength(this.#dpsOf(ally), health, against));
+      side.push(actorStrength(health, this.#dpsOf(ally), this.#reduction(ally)));
     }
     return strengthRatio(
       side,
@@ -1605,6 +1642,7 @@ export class ActorCombatAi {
     mind.nextEquip = 0;
     // The fight's confidence modifier, drawn once; its strengths weighed at once.
     mind.modifier = drawConfidenceModifier(this.#random, this.#settings);
+    mind.confidenceBoost = 0;
     mind.nextOdds = 0;
     mind.ratio = Number.POSITIVE_INFINITY;
     mind.switchedAt = this.#clock;
@@ -3021,14 +3059,21 @@ export class ActorCombatAi {
             this.#mayStrike(f) && f.view.gear?.leftWeapon === true && f.mind.hand === 'left',
           specialAttackChance: (f) => specialAttackChance(style(f), settings()),
           // Observed in the original: held its hold time, the bow is loosed once its target
-          // lies within fCombatRangedProjectileFiringArc of its aim (else it looks again a
-          // quarter second later; TODO(M13): the line of fire it also asks for); held past
-          // fCombatRangedAttackMaximumHoldTime it is let down unloosed. Its facing gates only a
-          // new draw: a drawn bow waiting on its archer's turn was never loosed.
+          // lies within fCombatRangedProjectileFiringArc of its aim and no actor stands in the
+          // line of fire (else it looks again a quarter second later); held past
+          // fCombatRangedAttackMaximumHoldTime, or its line blocked past
+          // fCombatAimProjectileBlockedTime, it is let down unloosed. Its facing gates only a new
+          // draw: a drawn bow waiting on its archer's turn was never loosed.
           shotHeld: bowState,
-          shotOverheld: (f) => f.view.state.drawnFor > this.#settings.rangedAttackMaximumHoldTime,
+          shotOverheld: (f) =>
+            f.view.state.drawnFor > this.#settings.rangedAttackMaximumHoldTime ||
+            aimGivenUp(
+              f.mind.aimBlockedAt === undefined ? undefined : this.#clock - f.mind.aimBlockedAt,
+              this.#settings,
+            ),
           shotInArc: (f) =>
-            this.#off(f) <= (this.#settings.rangedProjectileFiringArc * Math.PI) / 180,
+            this.#off(f) <= (this.#settings.rangedProjectileFiringArc * Math.PI) / 180 &&
+            !this.#lineOfFireBlocked(f),
           // Behind its cover (and on its way there) it does not draw.
           mayDraw: (f) =>
             (f.mind.cover === undefined || f.mind.cover.phase === 'attack') &&
@@ -3116,7 +3161,7 @@ export class ActorCombatAi {
           cornered: (f) =>
             f.mind.scaredFrom === undefined &&
             f.mind.fleeFailed &&
-            f.distance < this.#settings.corneredDistance &&
+            (this.#canBoost(f.mind) || f.distance < this.#settings.corneredDistance) &&
             this.#options.session.scriptsReady?.magic.aiState(f.mind.reference).fleeing !== true,
           fleeSafe: (f) =>
             f.mind.scaredFrom === undefined &&
@@ -3564,8 +3609,13 @@ export class ActorCombatAi {
             return 'success';
           },
           // Flee.
+          // Boost Confidence: nowhere left to go, its level rises for the rest of the fight (the
+          // next weighing may have it flee again, a level braver). One that cannot be boosted
+          // (the cowardly) is left to the rest of the tree: it fights while cornered.
           fightCornered: (f) => {
-            f.mind.corneredUntil = this.#clock + CORNERED_SECONDS;
+            if (this.#canBoost(f.mind)) f.mind.confidenceBoost++;
+            else f.mind.corneredUntil = this.#clock + CORNERED_SECONDS;
+            f.mind.fleeFailed = false;
             f.mind.mode = 'fight';
             return 'success';
           },
@@ -3883,11 +3933,41 @@ export class ActorCombatAi {
         ratio: mind.ratio,
         confidence: profile.confidence,
         modifier: mind.modifier,
+        boost: mind.confidenceBoost,
+        always: profile.child,
         afraid: magic?.fleeing === true,
         rallied: magic?.rallied === true || magic?.frenzied === true,
       },
       this.#settings,
     );
+  }
+
+  /**
+   * Whether an actor stands in its shot's way: not its target, nor one of its side's targets (it
+   * may hit those). Notes since when, for fCombatAimProjectileBlockedTime; let down, it starts
+   * over.
+   */
+  #lineOfFireBlocked(f: CombatFrame): boolean {
+    const others: ShotObstacle[] = [];
+    for (const other of this.#options.host.fighters()) {
+      const { reference, feet } = other;
+      if (reference === f.mind.reference || reference === f.target.reference || !feet) continue;
+      if (other.state.life === LifeState.dead) continue;
+      if (this.#groups.target(f.mind.reference, reference) !== undefined) continue;
+      others.push({ reference, feet, radius: other.radius, height: other.height });
+    }
+    const from: Vec3 = [f.feet[0], f.feet[1], f.feet[2] + f.view.height * AIM_HEIGHT_SHARE];
+    const to: Vec3 = [f.there[0], f.there[1], f.there[2] + f.target.height * AIM_HEIGHT_SHARE];
+    const blocked = lineOfFireBlocker(from, to, others) !== undefined;
+    if (!blocked) f.mind.aimBlockedAt = undefined;
+    else f.mind.aimBlockedAt ??= this.#clock;
+    return blocked;
+  }
+
+  /** Boost Confidence: whether its level can rise (the cowardly's cannot). */
+  #canBoost(mind: Mind): boolean {
+    const confidence = mind.profile?.confidence ?? 0;
+    return mayBoostConfidence(confidence, mind.confidenceBoost, this.#settings);
   }
 
   #fleeDistance(): number {

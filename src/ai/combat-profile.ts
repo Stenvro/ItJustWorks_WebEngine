@@ -44,6 +44,8 @@ export interface CombatProfile {
   readonly style: CombatStyle;
   readonly guard: boolean;
   readonly teammate: boolean;
+  /** A child (its race's flag): it flees any fight, and teammates pass it over as a target. */
+  readonly child: boolean;
   readonly options: readonly EquipOption[];
 }
 
@@ -107,6 +109,7 @@ export class CombatProfiles {
       guard: await runtime.crime.isGuard(actor),
       teammate:
         runtime.state.actors.get(actor)?.playerTeammate === true || commander === PLAYER_REF,
+      child: await runtime.actors.isChild(actor),
       options: await weaponOptions(runtime, actor, held),
     };
   }

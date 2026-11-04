@@ -2999,11 +2999,22 @@ bash behaviours (their values are ready); the flanking and ranged movement selec
   alerted), gets off its horse (one on a mount that fights ridden stays on: "Horses and
   followers" below), its detection reaction or override
   package ends, and its package's way stops.
-- **Targets** (`selectTarget`): the most threatening (health × its blow's damage), nearest
-  first (half as much at 1024 units), its current target counting 1.5 times (it does not switch
-  for a little), one attacking it 1.5 times, one it lost a quarter. The odds (its enemies'
-  strength against its group's) move its confidence between fCombatConfidenceModifierMin and
-  Max every fCombatThreatRatioUpdateTime.
+- **Targets** (`selectTarget`, observed in the original: the standard selector): among those
+  its group knows and has not lost, and its current target if known, the highest sum wins; a
+  group's sole target needs none; with none known, the one known most recently. The sum: its own
+  senses have it within the last 2 s 1000 (its current target also if seen 2 s ago), heard 100,
+  its current target 100, fighting the same way as the actor (melee or not) 100, nearness up to
+  1000 (nothing from 2048 units; in another space counted as that far, its current target as
+  near); less 2000 if out of reach (a weapon short of fCombatRangedDistance, or in another space),
+  2500 in another space with no way there, 500 if it flees. How many allies fight it is added with
+  a weight of 0, and strength, being attacked by it or being the player do not count. A target in
+  another encounter zone, unless that zone has Disable Combat Boundary, is no candidate
+  (bEncounterZoneTargetRestrict; TODO(M13): not applied here, the zones of references are not
+  looked up in combat), and the player's teammates pass children over.
+- **The odds**: every fCombatThreatRatioUpdateTime (5 s) its side's strength against its enemies'
+  (each `actorStrength`: damage per second × health / (1 − its own armour's reduction, at most
+  0.99)); its fleeing allies count nothing, itself always. TODO(M13): the original also sets the
+  odds to 100 when it has not been engaged for 120 s.
 - **Combat groups**: an actor entering combat joins the group of an ally or friend fighting;
   its target, and any enemy it detects in combat, becomes the group's; the group keeps what
   its members know of its targets ([Combat detection](#combat-detection)): a target the group
@@ -3089,12 +3100,16 @@ bash behaviours (their values are ready); the flanking and ranged movement selec
   second; TODO(M13)) whose line passes through it within 1.2 s (TODO(M13): phase 5, the
   engine's fCombatThreat\* model) it sidesteps by its dodge chance, out of the line to the side
   it stands on, saying AvoidThreat.
-- **Fleeing** (`shouldFlee`): below its confidence's share of health (cowardly at once,
-  cautious fConfidenceCautious 37.5%, average fConfidenceAverage 15%, brave fConfidenceBrave
-  3.75%, foolhardy never) × (1 − the odds' modifier), or with Fear or Turn Undead on it; Rally
-  and frenzy keep it in the fight. It says Flee, runs fFleeDistanceExterior (5000) / Interior
+- **Fleeing** (`shouldFlee`, observed in the original): with its odds below the flee ratio of its
+  confidence level (fConfidenceCowardly 1000, Cautious 0.375, Average 0.15, Brave 0.0375,
+  Foolhardy 0, interpolated between two levels); the fight's roll
+  (fCombatConfidenceModifierMin .. Max, drawn once) moves the level only for the three in between.
+  A child always, or with Fear or Turn Undead on it; Rally and frenzy keep it in the fight.
+  Nowhere left to go, Boost Confidence raises its level by one for the rest of the fight, below
+  foolhardy and from a level whose ratio is under 100 (never a coward's, which fights cornered a
+  while: TODO(M13) the original's tree tries to flee each check). It says Flee, runs fFleeDistanceExterior (5000) / Interior
   (3000) away from its enemy over the navmeshes, cowers where it can go no farther (ActionIdle:
-  the idles IsFleeing picks), fights again cornered (within 192 units, for 10 s), and its combat
+  the idles IsFleeing picks), and its combat
   ends once it is that far and detects no enemy. IsFleeing: fleeing in combat, a Flee procedure
   that counts as fleeing, or fear.
 - **Searching** (`CombatSearch`): once its group has lost all its targets

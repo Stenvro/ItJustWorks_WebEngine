@@ -1064,3 +1064,53 @@ export function chooseSupport(
   if (state.canBuff) return { kind: 'buff' };
   return undefined;
 }
+
+/** One who may stand in a shot's way: where its feet are, its radius and height. */
+export interface ShotObstacle {
+  readonly reference: number;
+  readonly feet: Vec3;
+  readonly radius: number;
+  readonly height: number;
+}
+
+/**
+ * The first actor a shot from `from` at `to` would meet, if any (observed in the original: a
+ * shot held in its firing arc is traced to its target, and an actor other than the target met on
+ * the way blocks it; the caller leaves out those the shooter is hostile to, who may be hit).
+ * TODO(M13): the flag that lets a shooter's line pass through those, read only from its use.
+ */
+export function lineOfFireBlocker(
+  from: Vec3,
+  to: Vec3,
+  others: readonly ShotObstacle[],
+): number | undefined {
+  const dx = to[0] - from[0];
+  const dy = to[1] - from[1];
+  const dz = to[2] - from[2];
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared <= 0) return undefined;
+  let nearest: number | undefined;
+  let nearestAlong = Infinity;
+  for (const other of others) {
+    const along = ((other.feet[0] - from[0]) * dx + (other.feet[1] - from[1]) * dy) / lengthSquared;
+    if (along <= 0 || along >= 1 || along >= nearestAlong) continue;
+    const off = Math.hypot(
+      from[0] + dx * along - other.feet[0],
+      from[1] + dy * along - other.feet[1],
+    );
+    if (off > other.radius) continue;
+    const height = from[2] + dz * along;
+    if (height < other.feet[2] || height > other.feet[2] + other.height) continue;
+    nearest = other.reference;
+    nearestAlong = along;
+  }
+  return nearest;
+}
+
+/**
+ * A blocked aim is given up once blocked longer than fCombatAimProjectileBlockedTime (observed in
+ * the original). `blockedFor`: seconds since it was first blocked, undefined while it is clear.
+ */
+export function aimGivenUp(blockedFor: number | undefined, settings: CombatAiSettings): boolean {
+  return blockedFor !== undefined && blockedFor > settings.aimProjectileBlockedTime;
+}
