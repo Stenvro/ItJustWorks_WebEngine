@@ -593,7 +593,12 @@ export class ActorGraphEvents {
   #addRagdoll(reference: number): void {
     const dying = this.#dying.get(reference);
     if (!dying) return;
-    const driven = this.#options.session.ini.number('Animation', 'bDriveRagdollWithGraph') !== 0;
+    const { ini } = this.#options.session;
+    // (bAlwaysDriveRagdoll: observed in the original, the check of what the graph drives answers
+    // yes at once with it on. Off in the game's settings.)
+    const driven =
+      ini.number('Animation', 'bDriveRagdollWithGraph') !== 0 ||
+      ini.number('Animation', 'bAlwaysDriveRagdoll') !== 0;
     if (driven) {
       dying.phase = 'driven';
       this.#options.stage.bodies.driveRagdoll(reference, true);

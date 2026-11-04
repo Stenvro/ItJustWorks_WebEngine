@@ -102,6 +102,39 @@ describe('object skeletons', () => {
     expect(pose.worlds[2 * 16 + 12]).toBeCloseTo(3);
   });
 
+  it('moves on every frame at the clock’s pace across the updates of a far graph', () => {
+    const object = startObjectSkeleton(nodes, graph, () => 0.5);
+    if (!object) throw new Error('no skeleton');
+    const { skeleton } = object;
+    const rate = (): AnimationRate => ({ interval: 0.08, interpolate: true, slop: 0.25 });
+    animateSkeletons([skeleton], 0, rate);
+    // Frames that fall short of each update's end and pass it (37 a second, updates of 80 ms):
+    // the clip moves x at 10 a second, so each frame shows the clock's time.
+    const frame = 1 / 37;
+    for (let i = 1; i < 60; i++) {
+      animateSkeletons([skeleton], i * frame, rate);
+      expect(skeleton.pose.worlds[2 * 16 + 12]).toBeCloseTo(i * frame * 10, 3);
+    }
+  });
+
+  it('runs every frame while the graph forbids running ahead (bDisableInterp)', () => {
+    const object = startObjectSkeleton(
+      nodes,
+      {
+        ...graph,
+        root: { ...graph.root, variables: [{ name: 'bDisableInterp', type: 0, initial: 1 }] },
+      },
+      () => 0.5,
+    );
+    if (!object) throw new Error('no skeleton');
+    const { skeleton } = object;
+    const rate = (): AnimationRate => ({ interval: 0.2, interpolate: true, slop: 0.25 });
+    animateSkeletons([skeleton], 0, rate);
+    animateSkeletons([skeleton], 0.05, rate);
+    animateSkeletons([skeleton], 0.1, rate);
+    expect(skeleton.time).toBeCloseTo(0.1);
+  });
+
   it('raises a clip annotation on time while its graph updates at the slow rate', () => {
     // A strike's HitFrame at 0.3 s: behind the camera the graph updates every 0.25 s, yet the
     // event comes once and on its frame (combat's strike hangs on it, not on the pose).

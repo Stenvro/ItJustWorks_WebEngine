@@ -355,6 +355,9 @@ export class ActorLooks {
     if (!matrix) return;
     this.#prepared.add(behavior);
     behavior.setVariable('bHumanoidFootIKEnable', 1);
+    const ini = this.#options.session.ini;
+    behavior.footIkAllowed = ini.number('Animation', 'bFootIK') !== 0;
+    behavior.useSpeedSampler = ini.number('Animation', 'bUseSpeedSampler') !== 0;
     const reference = staged.reference;
     const passBy = this.#options.passByTarget;
     behavior.world = {
