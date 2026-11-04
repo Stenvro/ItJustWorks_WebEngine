@@ -81,6 +81,11 @@ export interface WeaponData {
   /** The skill it uses (an actor value index; -1 none). */
   readonly skill: number;
   readonly critDamage: number;
+  /** CRDT: its critical spell (0 none), and whether that takes only on a killing blow. */
+  readonly critEffect: number | undefined;
+  readonly critEffectOnDeath: boolean;
+  /** DNAM: the actor value that resists it on its target (an index; -1 none). */
+  readonly resist: number;
   readonly stagger: number;
   /** DNAM flags (WeaponFlag) and Flags2 (WeaponFlag2). */
   readonly flags: number;
@@ -180,6 +185,16 @@ const u16 = (data: Uint8Array | undefined, at: number): number =>
   data && data.length >= at + 2 ? view(data).getUint16(at, true) : 0;
 
 /** The record's effects: EFID (the magic effect) each followed by EFIT and its CTDA. */
+function criticalEffect(
+  record: Pick<GameRecord, 'formIdAt'>,
+  crdt: Uint8Array | undefined,
+): number | undefined {
+  const at = crdt && crdt.length >= 24 ? 16 : 12;
+  if (!crdt || crdt.length < at + 4) return undefined;
+  const form = record.formIdAt(crdt, at);
+  return form === 0 ? undefined : form;
+}
+
 export function parseEffects(record: Pick<GameRecord, 'fields' | 'formIdAt'>): ItemEffect[] {
   const effects: ItemEffect[] = [];
   let current: { effect: number; magnitude: number; area: number; duration: number } | undefined;
@@ -253,6 +268,10 @@ export function parseItem(record: RecordSource): ItemRecord | undefined {
           reach: f32(dnam, 8),
           skill: dnam && dnam.length >= 80 ? i32(dnam, 76) : -1,
           critDamage: u16(crdt, 0),
+          // SSE's CRDT is 24 bytes: the effect at 16 (the original's 16 bytes: at 12).
+          critEffect: criticalEffect(record, crdt),
+          critEffectOnDeath: (crdt?.[8] ?? 0) !== 0,
+          resist: dnam && dnam.length >= 92 ? i32(dnam, 88) : -1,
           stagger: f32(dnam, 96),
           // DNAM: flags u16 at 12, Flags2 u32 at 40 (xEdit); CRDT: % mult f32 at 4.
           flags: u16(dnam, 12),

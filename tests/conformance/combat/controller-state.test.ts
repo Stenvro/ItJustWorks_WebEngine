@@ -15,9 +15,12 @@ import {
   Aggression,
   attacksOnSight,
   COMBAT_AI_DEFAULTS,
+  drawConfidenceModifier,
   yields,
 } from '../../../src/ai/combat-ai.ts';
+import { CombatGroups } from '../../../src/ai/combat-groups.ts';
 import { FightReaction } from '../../../src/ai/combat-reactions.ts';
+import { regenPerSecond, VITAL_DEFAULTS } from '../../../src/gameplay/vitals.ts';
 import { hasGamedata, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
 import { ENGINE, LOAD_ORDER } from './settings.ts';
 
@@ -54,17 +57,43 @@ describe('yielding (formula)', () => {
 });
 
 describe('the controller (todo)', () => {
-  it.todo(
-    'a fight draws its confidence modifier in fCombatConfidenceModifierMin .. Max  [original]',
-  );
-  it.todo('the first taunt after fCombatDialogueTauntMin .. MaxElapsedTime  [original]');
+  it('a fight draws its confidence modifier in fCombatConfidenceModifierMin .. Max  [original]', () => {
+    expect(drawConfidenceModifier(() => 0, settings)).toBe(LOAD_ORDER.fCombatConfidenceModifierMin);
+    expect(drawConfidenceModifier(() => 1, settings)).toBe(LOAD_ORDER.fCombatConfidenceModifierMax);
+  });
+  it('fCombatDialogueTauntMin .. MaxElapsedTime: Skyrim.esm’s 10 .. 30  [settings]', () => {
+    // A fight draws its first taunt's time as it begins (ActorCombatAi #begin), the original's
+    // controller the same, from these.
+    expect(settings.tauntMin).toBe(10);
+    expect(settings.tauntMax).toBe(30);
+  });
+  // TODO(M13): the combat tree runs each frame with its nodes' own fCombat*UpdateTime gates
+  // (strength, threat ratio, target choice); a behaviour-wide update timer is not modelled.
   it.todo('per-behaviour timers (fCombat*UpdateTime) instead of every frame  [settings]');
+  // TODO(M13): the search and stand-down are the shell's (combat-search.ts is tested on its own);
+  // a sim case belongs to the combat scenario suite.
   it.todo('the fight ends when no target is left: the search, then the stand-down  [original]');
-  it.todo('fCombatHealthRegenRateMult (0.75): health regenerates slower in combat  [settings]');
+  it('fCombatHealthRegenRateMult: health regenerates slower in combat  [settings]', () => {
+    const base = { max: 100, rate: 1, rateMult: 100, inCombat: false };
+    const out = regenPerSecond(0, base);
+    expect(regenPerSecond(0, { ...base, inCombat: true })).toBeCloseTo(
+      out * VITAL_DEFAULTS.combatRegenMult[0],
+    );
+    // A race that regenerates in combat keeps its rate; the actor value may raise it.
+    expect(regenPerSecond(0, { ...base, inCombat: true, regenInCombat: true })).toBeCloseTo(out);
+    expect(regenPerSecond(0, { ...base, inCombat: true, combatHealthMult: 1 })).toBeCloseTo(out);
+  });
+  // TODO(M13): the original's yield rule lives in the player-side routine that reads
+  // fCombatYieldTime and fCombatYieldRetryTime; it has not been read to its end.
   it.todo('the actor’s yield rule (ours borrows the player’s settings)  [original]');
-  it.todo(
-    'combat groups: one per side, the group’s targets and strategy  [CommonLibSSE CombatGroup]',
-  );
+  it('combat groups: one per side, its members sharing their fight  [CommonLibSSE CombatGroup]', () => {
+    const groups = new CombatGroups();
+    const first = groups.join(1, []);
+    expect(groups.join(2, [1])).toBe(first);
+    expect(groups.join(3, [])).not.toBe(first);
+    expect(groups.size(2)).toBe(2);
+    expect([...groups.allies(1)]).toEqual([2]);
+  });
 });
 
 // A wolf placed in the Bannered Mare fights the five patrons: the fight runs in game time, the

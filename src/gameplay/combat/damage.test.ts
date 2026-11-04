@@ -29,11 +29,12 @@ describe('a hit on its target (UESP "Damage")', () => {
     targetIsPlayer: false,
   };
 
-  it('is reduced by armour; critical damage passes it', () => {
+  it('is reduced by armour, critical damage with the rest', () => {
     const result = hitDamage({ ...base, critical: 5, armorReduction: 0.24 }, settings);
     expect(result.physical).toBeCloseTo(20 * 0.76);
-    expect(result.total).toBeCloseTo(20 * 0.76 + 5);
-    expect(result.resisted).toBeCloseTo(20 * 0.24);
+    expect(result.total).toBeCloseTo(25 * 0.76);
+    // fDamageToArmorPercentage (Skyrim.esm 0.35) of the armour's part.
+    expect(result.resisted).toBeCloseTo(25 * 0.24 * 0.35);
   });
 
   it('multiplies sneak attacks by the weapon kind (fCombatSneak*Mult)', () => {

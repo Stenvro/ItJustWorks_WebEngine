@@ -203,9 +203,21 @@ and 290 built-in ones the readers ask for by name.
       combat-tactics.ts chooseAttack).
 - [ ] Attacks while closing in; the special attack's own attack data.
 - [x] Blocks, sustained block, block attack, bashes, offensive bash (block-bash.test.ts).
-- [ ] The block attack's timing against the swing is ours.
+- [x] The block attack's opening, observed in the original: only while its target draws back the
+      swing, inside that swing's strike angle × fCombatBlockAttackStrikeAngleMult and within the
+      target's weapon reach × fCombatBlockAttackReachMult plus a radius, now or
+      fCombatAnticipateTime ahead (combat-tactics.ts blockAttackOpening). TODO(M13): the original
+      adds a value to that reach read here as the actor's radius, and its node's 1 .. 2 s and
+      0.25 s timers are not modelled.
 - [x] Staggers, recoils, knockdowns, ragdolls on death (stagger.ts, actor-knockdowns.ts).
-- [ ] The blocked hit's stagger terms.
+- [x] The blocked hit's stagger, observed in the original: the hit's own stagger less
+      fStaggerBlockAttackShieldMult × rating (a shield's, else fStaggerDaggerAR, 1WeapAR, 2WeapAR,
+      BowAR) + fStaggerBlockAttackShieldBase + fStaggerBlockMult × Block + fStaggerBlockBase + the
+      mass offset, at least fStaggerMin (stagger.ts blockedStagger), for one blocking whichever
+      way it faces. The stamina cost: share × damage before armour × fStaminaBlockDmgMult + stagger
+      × fStaminaBlockStaggerMult + fStaminaBlockBase (vitals.ts blockCost). A shot is blocked too,
+      by a shield or a weapon. A stagger's start takes the perks last and holds at most
+      fStaggerMaxDuration (combat-state.ts tickStagger).
 - [x] Knockback: an unblocked hit's push back on the controller (knockback.ts, round 4).
 - [x] Ranged combat: draw, hold, release, strafe, cover (ranged.test.ts).
 - [ ] Line of fire; the cover score is ours.
@@ -227,6 +239,5 @@ and 290 built-in ones the readers ask for by name.
 
 1. The knockback's fading (held for fKnockbackTime here) and which stage of a hit's damage it
    reads; the timed bash's reaction (TODO(M13), docs/ai.md "Staggers").
-2. The mechanics left by hand (the confidence roll's use, the block's timing, the blocked hit's
-   stagger, line of fire, the casters' order, flee past a load door, the magic kill camera).
+2. The mechanics left by hand (the confidence roll's use, line of fire, the casters' order, flee past a load door, the magic kill camera).
 3. The rates' unit (acceleration, deceleration) and what the advanced avoidance adds.

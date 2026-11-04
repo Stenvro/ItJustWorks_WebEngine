@@ -2242,7 +2242,10 @@ meanwhile.
   (one-handed 3, two-handed and fists 2, bows 2) × fDamageSneakAttackMult (fCombatSneakAttackBonusMult
   and fCombatDamageBonusSneakingMult are registered by the original and never read: inert); × (1 − the target's
   armour reduction: the equip system's 0.12% a point and 3% a piece, at most fMaxArmorRating);
-  critical damage (CRDT; the perks' chance) passes the armour; × (1 − the share blocked);
+  critical damage (CRDT; the fists': fCombatUnarmedCritDamageMult × the damage so far; the perks'
+  chance) added before the attacker's Attack Damage Mult and the armour, which weigh it as the
+  rest (observed in the original); × (1 − the actor value the weapon's DNAM resist names, percent);
+  a sneak attack is the player's alone; × (1 − the share blocked);
   × fDiffMultHPByPC<level> for the player's hits, fDiffMultHPToPC<level> for hits on the player
   (Novice 2 / 0.5 .. Legendary 0.25 / 3; [GamePlay] iDifficulty). The perks' entry points
   (weapon, power attack and bash damage, critical chance and damage, sneak, block, deflected
@@ -2954,9 +2957,12 @@ bash behaviours (their values are ready); the flanking and ranged movement selec
   arrest are crime's: `src/shell/actor-crime.ts`); the player's teammates help
   the player at least as friends and allies, and fight within fCombatTeammateFollowRadiusMult ×
   512 of them. A blow turns its victim on the attacker: an enemy or a neutral at once, a friend
-  or ally after iFriendHitCombatAllowed (4) blows in combat (2 out of it,
-  iFriendHitNonCombatAllowed: TODO(M13)), each blow let pass a friendly fire comment (its Hit
-  line, GetFriendHit) where its package has the friendly fire interrupt; attacked by one it does
+  or ally after iFriendHitCombatAllowed (the engine's 3, Skyrim.esm's 4) blows in combat
+  (iFriendHitNonCombatAllowed 0: the first out of it; an ally iAllyHitCombatAllowed 1000: never,
+  iAllyHitNonCombatAllowed 3), each blow let pass a friendly fire comment (its Hit line,
+  GetFriendHit) where its package has the friendly fire interrupt. Observed in the original,
+  these allowances count the player's blows alone: another actor's blow on one not its enemy
+  turns it only if it would attack that actor on sight, and has it comment on nothing; attacked by one it does
   not detect, it searches. A package with Ignore Combat (PKDT) keeps it out of fights it would
   pick, and holds the fights it is in (observed in the original: as its package changes,
   the process is marked as ignoring combat by that flag, and meanwhile the combat controller's

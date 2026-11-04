@@ -28,17 +28,36 @@ import {
   bashFactor,
   blockedShare,
   bowDrawPower,
+  criticalSpellApplies,
+  damageBeforeCritical,
   hitDamage,
+  sneakAttackApplies,
   sneakAttackMult,
+  strikeNotices,
+  unarmedCriticalDamage,
 } from '../../../src/gameplay/combat/damage.ts';
 import {
   bashStagger,
-  blockStagger,
+  blockedStagger,
+  hitStagger,
   staggerMagnitude,
+  staggerStrength,
   staggerTaken,
+  weaponStaggerRating,
 } from '../../../src/gameplay/combat/stagger.ts';
-import { EquippedItemType } from '../../../src/gameplay/equipment.ts';
+import { newCombatState, tickStagger } from '../../../src/gameplay/combat/combat-state.ts';
+import {
+  armorDamageReduction,
+  armorReductionCapped,
+  armorShare,
+  VANILLA_ARMOR_SETTINGS,
+  EquippedItemType,
+  weaponDamage,
+  weaponSkillMultiplier,
+  VANILLA_WEAPON_SETTINGS,
+} from '../../../src/gameplay/equipment.ts';
 import { ActorValue } from '../../../src/world/actor-values.ts';
+import { WeaponType } from '../../../src/world/item-records.ts';
 import { ENGINE, LOAD_ORDER } from './settings.ts';
 
 // The settings as the game runs with Skyrim.esm (its GMSTs over the engine's defaults).
@@ -92,8 +111,8 @@ describe('weapon damage (formula)', () => {
     expect(hitDamage({ ...plain, armorReduction: 0.4 }, settings).total).toBeCloseTo(12);
   });
 
-  it('passes the critical damage past the armour (UESP Critical hits)', () => {
-    expect(hitDamage({ ...plain, armorReduction: 0.5, critical: 6 }, settings).total).toBe(16);
+  it('weighs the critical damage by the armour as the rest of the blow  [original]', () => {
+    expect(hitDamage({ ...plain, armorReduction: 0.5, critical: 6 }, settings).total).toBe(13);
   });
 
   it('multiplies a sneak attack by the weapon kind’s fCombatSneak*Mult × fDamageSneakAttackMult', () => {
@@ -118,12 +137,39 @@ describe('weapon damage (formula)', () => {
     expect(bowDrawPower(2, 1)).toBe(1);
   });
 
-  it.todo('weapon damage = (base + tempering) × (1 + skill / 200) × perks (UESP Damage)  [UESP]');
-  it.todo('unarmed: the race’s unarmed damage + gauntlets, × fDamageUnarmedPenalty?  [settings]');
-  it.todo(
-    'the attacker’s Attack Damage Mult actor value (154) multiplies the damage  [CommonLibSSE]',
-  );
-  it.todo('NPC sneak attacks on the player and on NPCs (the attacker undetected)  [UESP Sneak]');
+  it('weapon damage = (base + tempering) × (1 + skill / 200) × perks (UESP Damage)  [UESP]', () => {
+    // The player at skill 100: × 1.5 (Skyrim.esm's fDamagePCSkillMax); no tempering, no perks.
+    const skill = weaponSkillMultiplier(100, true, VANILLA_WEAPON_SETTINGS);
+    expect(skill).toBeCloseTo(1.5);
+    expect(weaponDamage(10, 0, skill)).toBe(15);
+    // A temper adds before the skill (rounded up); the perks multiply at the end.
+    expect(weaponDamage(10, 1, skill)).toBe(17);
+    expect(weaponDamage(10, 0, skill, 2)).toBe(30);
+  });
+  it('unarmed: the Unarmed Damage actor value alone; no penalty on the hit  [original]', () => {
+    // The hit's damage is the actor value (ActorValue.unarmedDamage: the race's, as the perks
+    // and items fortify it); fDamageUnarmedPenalty is the combat inventory's weighing only
+    // (tests/conformance/combat/inventory.test.ts), not read for a hit.
+    expect(ActorValue.unarmedDamage).toBe(35);
+    expect(Object.keys(settings)).not.toContain('damageUnarmedPenalty');
+    expect(hitDamage({ ...plain, physical: 4 }, settings).total).toBe(4);
+  });
+  it('the attacker’s Attack Damage Mult actor value (154) multiplies the damage  [original]', () => {
+    expect(ActorValue.attackDamageMult).toBe(154);
+    expect(hitDamage({ ...plain, attackDamageMult: 2 }, settings).total).toBe(40);
+    // Before the armour: all of it is weighed by it.
+    expect(hitDamage({ ...plain, attackDamageMult: 2, armorReduction: 0.5 }, settings).total).toBe(
+      20,
+    );
+  });
+  it('a sneak attack is the player’s alone: an NPC gets none, undetected or not  [original]', () => {
+    const hidden = { sneaking: true, detected: false, bash: false };
+    expect(sneakAttackApplies({ ...hidden, attackerIsPlayer: true })).toBe(true);
+    expect(sneakAttackApplies({ ...hidden, attackerIsPlayer: false })).toBe(false);
+    expect(sneakAttackApplies({ ...hidden, attackerIsPlayer: true, detected: true })).toBe(false);
+    expect(sneakAttackApplies({ ...hidden, attackerIsPlayer: true, sneaking: false })).toBe(false);
+    expect(sneakAttackApplies({ ...hidden, attackerIsPlayer: true, bash: true })).toBe(false);
+  });
   it('fCombatSneakAttackBonusMult and fCombatDamageBonusSneakingMult change nothing  [original]', () => {
     // Registered by the original and never read: the sneak attack is the kind's mult alone.
     const read = readCombatSettings(
@@ -131,11 +177,44 @@ describe('weapon damage (formula)', () => {
     );
     expect(read).toEqual(readCombatSettings(() => undefined));
   });
-  it.todo('the sneak attack messages (sSneakAttack…, the critical strike’s)  [settings]');
-  it.todo(
-    'armour: rating × fArmorScalingFactor%, at most fMaxArmorRating (80 with Skyrim.esm)  [UESP]',
-  );
-  it.todo('fDamageToArmorPercentage and weapon and armour condition (fDamage*Cond*)  [settings]');
+  it('the sneak attack and critical notices (sSuccessfulSneakAttack…, sCriticalStrike)  [settings]', () => {
+    const text = (setting: string): string =>
+      ({
+        sCriticalStrike: 'Critical strike on',
+        sSuccessfulSneakAttackMain: 'Sneak attack for ',
+        sSuccessfulSneakAttackEnd: 'X damage!',
+      })[setting] ?? '';
+    expect(strikeNotices(true, 0, 'Bandit', text)).toEqual(['Critical strike on Bandit']);
+    expect(strikeNotices(false, 3, 'Bandit', text)).toEqual(['Sneak attack for 3.0X damage!']);
+    expect(strikeNotices(false, 0, 'Bandit', text)).toEqual([]);
+  });
+  it('armour: rating × fArmorScalingFactor%, pieces, at most fMaxArmorRating (80)  [UESP]', () => {
+    expect(armorDamageReduction(100, 0, VANILLA_ARMOR_SETTINGS)).toBeCloseTo(0.12);
+    expect(armorDamageReduction(10000, 4, VANILLA_ARMOR_SETTINGS)).toBe(0.8);
+    // The attacker's perks scale the share before its cap (Mod Target Damage Resistance).
+    const share = armorShare(1000, 0, VANILLA_ARMOR_SETTINGS);
+    expect(share).toBeCloseTo(1.2);
+    expect(armorReductionCapped(share * 0.5, VANILLA_ARMOR_SETTINGS)).toBeCloseTo(0.6);
+  });
+  it('fDamageToArmorPercentage: the resisted part; no condition in this game  [original]', () => {
+    const armored = hitDamage({ ...plain, armorReduction: 0.5 }, settings);
+    expect(armored.resisted).toBeCloseTo(20 * 0.5 * LOAD_ORDER.fDamageToArmorPercentage);
+    // A block leaves its share of that.
+    const blocked = hitDamage({ ...plain, armorReduction: 0.5, blocked: 0.5 }, settings);
+    expect(blocked.resisted).toBeCloseTo(armored.resisted * 0.5);
+    // fDamageMeleeWeapCond*, fDamageGunWeapCond*, fDamageArmCondition* are registered and never
+    // read: nothing in the game wears down. They have no place in the settings combat reads.
+    for (const name of ['fDamageMeleeWeapCondBase', 'fDamageGunWeapCondBase']) {
+      const read = readCombatSettings((setting) => (setting === name ? 99 : undefined));
+      expect(read).toEqual(COMBAT_DEFAULTS);
+    }
+  });
+  it('the weapon’s resistance: the actor value it names, percent, off the blow  [original]', () => {
+    expect(hitDamage({ ...plain, weaponResistance: 25 }, settings).total).toBe(15);
+    expect(hitDamage({ ...plain, weaponResistance: 200 }, settings).total).toBe(0);
+    // None at zero or less.
+    expect(hitDamage({ ...plain, weaponResistance: -50 }, settings).total).toBe(20);
+  });
 });
 
 describe('critical hits (formula)', () => {
@@ -148,10 +227,20 @@ describe('critical hits (formula)', () => {
     expect(criticalHitChance(10, 2, 0.5)).toBeCloseTo(0.1);
   });
 
-  it.todo(
-    'critical damage: CRDT damage, fists × fCombatUnarmedCritDamageMult (Skyrim.esm 1)  [UESP]',
-  );
-  it.todo('CRDT “Critical effect on death only” and the critical spell  [xEdit WEAP CRDT]');
+  it('critical damage: CRDT’s; the fists’, fCombatUnarmedCritDamageMult × the damage so far  [original]', () => {
+    expect(settings.unarmedCritDamageMult).toBe(LOAD_ORDER.fCombatUnarmedCritDamageMult);
+    // A sneak attack by fists is weighed before: 4 × 2 × 1, × Skyrim.esm's 1.
+    const soFar = damageBeforeCritical(4, 2, 1, settings);
+    expect(soFar).toBe(8);
+    expect(unarmedCriticalDamage(soFar, settings)).toBe(8);
+    expect(unarmedCriticalDamage(soFar, { ...settings, unarmedCritDamageMult: 0.5 })).toBe(4);
+  });
+  it('CRDT “Critical effect on death only” and the critical spell  [xEdit WEAP CRDT]', () => {
+    expect(criticalSpellApplies(false, false)).toBe(true);
+    expect(criticalSpellApplies(false, true)).toBe(true);
+    expect(criticalSpellApplies(true, false)).toBe(false);
+    expect(criticalSpellApplies(true, true)).toBe(true);
+  });
 });
 
 describe('blocks (formula)', () => {
@@ -321,14 +410,54 @@ describe('staggers (formula, observed in the original)', () => {
     expect(bashStagger({ ...bash, blocking: true }, settings)).toBe(0);
   });
 
-  it('a blocked power attack staggers the blocker by fStaggerBlockBase + blocked × Mult', () => {
-    expect(blockStagger(true, 30, settings)).toBeCloseTo(0.001 + 30 * 0.005);
+  it('a blocked hit: the hit’s stagger less its rating, Block skill and mass offset  [original]', () => {
+    // A power attack with a sword (0.75 × 1) on a human, with a shield of 25, Block 50:
+    // 0.001 × 25 + 0.01 + 0.005 × 50 + 0.001 = 0.286 held off.
+    const blocked = { hit: 0.75, rating: 25, blockSkill: 50, targetMass: 1 };
+    expect(blockedStagger(blocked, settings)).toBeCloseTo(0.464);
+    // A plain attack has no stagger to block.
+    expect(blockedStagger({ ...blocked, hit: 0 }, settings)).toBe(0);
+    expect(blockedStagger({ ...blocked, hit: -0.1 }, settings)).toBe(-0.1);
+    // The heavy hold off more: the mass offset, (3.5 − 2.1) × 0.15.
+    expect(blockedStagger({ ...blocked, targetMass: 3.5 }, settings)).toBeCloseTo(0.464 - 0.21);
+    // Held off all of it: at least fStaggerMin (Skyrim.esm 0, the engine's 0.05).
+    expect(blockedStagger({ ...blocked, hit: 0.1 }, settings)).toBe(0);
+    expect(blockedStagger({ ...blocked, hit: 0.1 }, { ...settings, staggerMin: 0.05 })).toBe(0.05);
+    // The damage blocked has no part in it: no such input; fStaggerBlockAttackBase and
+    // fStaggerBlockAttackMult are not read.
+    expect(Object.keys(settings)).not.toContain('staggerBlockAttackBase');
   });
-
-  it.todo(
-    'the blocked-hit stagger’s other terms (fStaggerBlockAttack*, the mass offset)  [original]',
-  );
-  it.todo('fStaggerMaxDuration (3 s): a stagger lasts at most this  [settings]');
-  it.todo('fStaggerDaggerAR, fStagger1WeapAR, fStagger2WeapAR, fStaggerBowAR  [settings]');
-  it.todo('a Stagger effect weighed by the Mass actor value as a hit is  [original]');
+  it('fStaggerMaxDuration (3 s): a stagger holds at most this  [settings]', () => {
+    expect(settings.staggerMaxDuration).toBe(ENGINE.fStaggerMaxDuration);
+    const state = newCombatState();
+    state.staggered = true;
+    state.staggerLeft = settings.staggerMaxDuration;
+    tickStagger(state, 2.9);
+    expect(state.staggered).toBe(true);
+    tickStagger(state, 0.2);
+    expect(state.staggered).toBe(false);
+  });
+  it('fStaggerDaggerAR, fStagger1WeapAR, fStagger2WeapAR, fStaggerBowAR: a weapon’s block  [original]', () => {
+    expect(weaponStaggerRating(WeaponType.oneHandDagger, settings)).toBe(ENGINE.fStaggerDaggerAR);
+    expect(weaponStaggerRating(WeaponType.oneHandSword, settings)).toBe(ENGINE.fStagger1WeapAR);
+    expect(weaponStaggerRating(WeaponType.oneHandAxe, settings)).toBe(ENGINE.fStagger1WeapAR);
+    expect(weaponStaggerRating(WeaponType.oneHandMace, settings)).toBe(ENGINE.fStagger1WeapAR);
+    expect(weaponStaggerRating(WeaponType.twoHandSword, settings)).toBe(ENGINE.fStagger2WeapAR);
+    expect(weaponStaggerRating(WeaponType.twoHandAxe, settings)).toBe(ENGINE.fStagger2WeapAR);
+    expect(weaponStaggerRating(WeaponType.bow, settings)).toBe(ENGINE.fStaggerBowAR);
+    expect(weaponStaggerRating(WeaponType.crossbow, settings)).toBe(ENGINE.fStaggerBowAR);
+    expect(weaponStaggerRating(WeaponType.handToHand, settings)).toBe(0);
+    expect(weaponStaggerRating(WeaponType.staff, settings)).toBe(0);
+  });
+  it('a Stagger effect weighed by the Mass actor value as a hit is  [original]', () => {
+    const effect = { weaponStagger: 0.5, attackStagger: 1, targetIsPlayer: false };
+    // A human: its magnitude. A giant (mass 4): / 4, less the offset (4 − 2.1) × 0.15 < 0: none.
+    expect(hitStagger({ ...effect, targetMass: 1 }, settings)).toBeCloseTo(0.5);
+    expect(hitStagger({ ...effect, targetMass: 4 }, settings)).toBeCloseTo(0.125 - 0.285);
+    expect(staggerMagnitude({ ...effect, targetMass: 4, perkMult: 1 }, settings)).toBe(0);
+    // The start's own rule: the perks scale it, at most 1, none at 0 or less.
+    expect(staggerStrength(0.8, 2)).toBe(1);
+    expect(staggerStrength(0.5, 0.5)).toBe(0.25);
+    expect(staggerStrength(-0.1, 2)).toBe(0);
+  });
 });

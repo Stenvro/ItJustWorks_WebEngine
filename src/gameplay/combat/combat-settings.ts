@@ -89,6 +89,15 @@ export interface CombatSettings {
   readonly staggerBlockAttackMult: number;
   readonly staggerBlockAttackShieldBase: number;
   readonly staggerBlockAttackShieldMult: number;
+  /** fStaggerDaggerAR, fStagger1WeapAR, fStagger2WeapAR, fStaggerBowAR: a weapon's block. */
+  readonly staggerDaggerAR: number;
+  readonly stagger1WeapAR: number;
+  readonly stagger2WeapAR: number;
+  readonly staggerBowAR: number;
+  /** fStaggerMaxDuration: the longest a stagger holds its actor (seconds). */
+  readonly staggerMaxDuration: number;
+  /** fDamageToArmorPercentage: the share of the armour's part a hit keeps as resisted. */
+  readonly damageToArmorPercentage: number;
   /** fStaggerMassMult, fStaggerMassBase, fStaggerMassOffsetMult: the target's mass (stagger.ts). */
   readonly staggerMassMult: number;
   readonly staggerMassBase: number;
@@ -264,6 +273,12 @@ export const COMBAT_DEFAULTS: CombatSettings = {
   staggerPlayerMassMult: 2.5,
   staggerBlockBase: 0.001,
   staggerBlockMult: 0.005,
+  staggerDaggerAR: 5,
+  stagger1WeapAR: 10,
+  stagger2WeapAR: 15,
+  staggerBowAR: 5,
+  staggerMaxDuration: 3,
+  damageToArmorPercentage: 0.35,
   staggerBlockingMult: 0,
   staggerBlockAttackMult: -0.0001,
   staggerBlockAttackShieldBase: 0.01,
@@ -364,6 +379,12 @@ const SETTING_NAMES: Readonly<Partial<Record<keyof CombatSettings, string>>> = {
   staggerBlockMult: 'fStaggerBlockMult',
   staggerBlockingMult: 'fStaggerBlockingMult',
   staggerBlockAttackMult: 'fStaggerBlockAttackMult',
+  staggerDaggerAR: 'fStaggerDaggerAR',
+  stagger1WeapAR: 'fStagger1WeapAR',
+  stagger2WeapAR: 'fStagger2WeapAR',
+  staggerBowAR: 'fStaggerBowAR',
+  staggerMaxDuration: 'fStaggerMaxDuration',
+  damageToArmorPercentage: 'fDamageToArmorPercentage',
   staggerBlockAttackShieldBase: 'fStaggerBlockAttackShieldBase',
   staggerBlockAttackShieldMult: 'fStaggerBlockAttackShieldMult',
   staggerMassMult: 'fStaggerMassMult',
