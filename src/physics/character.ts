@@ -896,7 +896,8 @@ export class CharacterBody {
    * A movement against its way, or further than its way goes, is the controller putting the shape
    * out of what moved into it (a door's leaf swung over it): by the whole depth in one step, and
    * unswept. So it went through the wall beside the door, into the wall's hollow, where it could
-   * move no more. What stands fixed stops that movement, as it stops the character proxy.
+   * move no more. What stands fixed stops that movement, as it stops the character proxy; not
+   * what it stands in now, which is what it is being put out of (an urn placed on it).
    */
   #heldByFixed(
     moved: RAPIER.Vector,
@@ -909,12 +910,29 @@ export class CharacterBody {
       return moved;
     }
     const at = this.#body.translation();
+    // From above the ground it stands on, which is no wall.
+    const from = { x: at.x, y: at.y, z: at.z + EDGE_LIFT };
+    const shape = queryShape(this.#collider.shape);
+    const within = new Set<number>();
+    this.physics.world.intersectionsWithShape(
+      from,
+      NO_ROTATION,
+      shape,
+      (collider) => {
+        within.add(collider.handle);
+        return true;
+      },
+      RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+      undefined,
+      this.#collider,
+      undefined,
+      predicate,
+    );
     const hit = this.physics.world.castShape(
-      // From above the ground it stands on, which is no wall.
-      { x: at.x, y: at.y, z: at.z + EDGE_LIFT },
+      from,
       NO_ROTATION,
       { x: moved.x / across, y: moved.y / across, z: 0 },
-      queryShape(this.#collider.shape),
+      shape,
       SKIN,
       across,
       false,
@@ -922,7 +940,10 @@ export class CharacterBody {
       undefined,
       this.#collider,
       undefined,
-      (collider) => predicate(collider) && collider.parent()?.isFixed() !== false,
+      (collider) =>
+        predicate(collider) &&
+        !within.has(collider.handle) &&
+        collider.parent()?.isFixed() !== false,
     );
     if (!hit) return moved;
     const share = hit.time_of_impact / across;
