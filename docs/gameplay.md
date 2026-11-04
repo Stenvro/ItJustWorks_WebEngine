@@ -1043,9 +1043,12 @@ rides the projectile (CAMS location 1) through the kill cameras' tree (GetVATSVa
 action and arrow projectile type lead it into MagicOrBowCams), for at most
 fVATSSafetyMaxTimeRanged (6 s).
 
-The magic kill camera (TODO(M13): not played yet; the spells' projectiles are another system's):
-the engine starts it the same way for a spell or staff cast whose projectile is predicted to kill,
-with the casting type and delivery in GetVATSValue.
+The magic kill camera (observed in the original; `spellLoosed` in `src/shell/actor-combat.ts`, from
+`src/shell/actor-casting.ts`): the same way for a spell the player looses whose projectile flies at
+one it is predicted to kill (each hostile effect on Health, its magnitude by its seconds through
+what the target keeps: `CastingEngine.predictedDamage`), the camera riding the projectile, with the
+casting type and delivery in GetVATSValue and its action magic. A beam or flame has no flight to
+ride: no camera (TODO(M13): the original's own for them).
 
 ## Crime and factions
 

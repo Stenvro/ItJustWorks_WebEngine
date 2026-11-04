@@ -2823,7 +2823,9 @@ choices its leaves make, `src/shell/actor-combat-ai.ts` runs it.
   reaches.
 - **Check Unreachable Target**: a way that could not be found marks the target unreachable for
   fCombatUnreachableTargetCheckTime (3 s). With a ranged option the close movement falls back to
-  ranged (Fallback To Ranged); without one it holds where it stands, and target selection weighs
+  ranged (Fallback To Ranged: turned to its target within 60° it backs along the line from it to
+  fCombatRangedDistance, looking again each half second; farther already, it stays); without one it
+  holds where it stands, and target selection weighs
   the unreachable target down so a reachable one is fought first (TODO(M13): the weight).
 - **Acquire Weapon** (Find Weapon Sequence, Move to Weapon, the pick-up; only a race with Can
   Pickup Items, RACE DATA): one that held a weapon
@@ -2838,22 +2840,41 @@ choices its leaves make, `src/shell/actor-combat-ai.ts` runs it.
   settings' names).
 - **Use Cover** (Find Cover Sequence; Use Cover Repeat: Wait Behind Cover, Attack From Cover),
   the first of Ranged Movement's entries: the navmeshes' cover edges (NAVM triangle cover: a
-  value 4–14 is that many × 16 units high, 15 full) within fCombatCoverSearchDistanceMin ..
-  Max, facing the target (within 60°), at least fCombatCoverCheckCoverHeightMin high, at least
-  fCombatCoverMinimumRange from it and at most its range × fCombatCoverMaxRangeMult, its way
-  keeping fCombatCoverAvoidTargetRadius off it; the nearest is taken. There it crouches its wait
-  time (fCombatCoverWaitTimeMin / Mid / Max on its defensive mult) without drawing, stands to
-  shoot its attack time (fCombatCoverAttackTime\* on its offensive mult), and again; none found,
-  it looks again fCombatCoverSearchFailedDelay later (TODO(M13): the engine's scoring of cover
-  and the style value on the time scales).
+  value 4–14 is that many × 16 units high, 15 full, 2 a ledge; flags for an end open left or
+  right) within fCombatCoverSearchDistanceMin .. Max. There is no score (observed in the original):
+  the way search goes out over the navmesh and stops at the first triangle with an edge that holds.
+  An edge holds if it is as wide as the actor; a ledge, cover it fits behind crouched, or taller
+  with an end open; facing the target (within 60°; ours); the line from it to the target crossing
+  the edge under the cover's top (the height at least fCombatCoverCheckCoverHeightMin, less
+  fCombatCoverCheckCoverHeightOffset); from the target at least its range's minimum (its weapon's
+  less fCombatCoverRangeMinBufferDistance, at least fCombatCoverMinimumRange), at most the maximum
+  (its optimal range plus fCombatCoverRangeMaxBufferDistance, at most its maximum range) plus
+  fCombatCoverMidPointMaxRangeBuffer; no other enemy seen within
+  fCombatCoverSecondaryThreatLastSeenTime within fCombatCoverSecondaryThreatMinDistance of it; its
+  way keeping fCombatCoverAvoidTargetRadius off the target. It stands
+  fCombatCoverEdgeOffsetDistance and its radius from the edge (a ledge
+  fCombatCoverLedgeOffsetDistance more). There it crouches its wait time
+  (fCombatCoverWaitTimeMin / Mid / Max on its defensive mult) without drawing, stands to shoot its
+  attack time (fCombatCoverAttackTime\* on its offensive mult) at the place it shoots from (past the
+  end of a tall cover's edge by its width and fCombatCoverAttackOffsetDistance, a ledge's edge),
+  and again; none found, it looks again fCombatCoverSearchFailedDelay later (TODO(M13): the
+  reservation slots along an edge, an obstacle's move within fCombatCoverObstacleMovedTime, the
+  sight of other enemies at 2048 units and the style value on the time scales).
 - **Flee** (Flee Context: Start Flee; the Flee Selector's Flee To Ally, Flee Through Door, Flee
-  To Cover, Flee, Unrestricted Flee, Boost Confidence; then Hide): through a door by
-  fCombatFleeUseDoorChance (0.33), the nearest within fCombatFleeDoorDistanceMax that lies
-  farther from its enemy than it stands and whose way keeps fCombatFleeDoorTargetCheckDistance
-  off it, not again within fCombatFleeUseDoorRestrictTime; to cover hidden from its enemy at
-  least fCombatFleeCoverMinDistance from it within fCombatFleeCoverSearchRadius, where it stays
-  turned to it; else away (fFleeDistance\*), cowering where it can go no farther (TODO(M13):
-  what it does past a load door).
+  To Cover, Flee, Unrestricted Flee, Boost Confidence; then Hide): through a door (observed in
+  the original) by fCombatFleeUseDoorChance (0.33), with a race that opens doors, not within
+  fCombatFleeUseDoorRestrictTime of its last: the nearest load door within
+  fCombatFleeDoorDistanceMax with no enemy within fCombatFleeDoorTargetCheckDistance of it, not
+  the one it came by within fCombatFleeLastDoorRestrictTime, none whose other side lies out of its
+  encounter zone; it runs there and goes through (it leaves the stage and comes out on the other
+  side: `ActorStage.fleeThrough`). To cover hidden from its enemy (Find Hide Cover: cover at least
+  its crouched height, no ledge) at least fCombatFleeCoverMinDistance from it within
+  fCombatFleeCoverSearchRadius, where it hides (Hide Parallel: Track Target, Turn Around, the Hide
+  Selector with Boost Confidence last): down, its back to the enemy, weighing each half second:
+  the enemy within fCombatHideFailedTargetDistance of it out of sight, or in sight
+  fCombatHideFailedTargetLOSDistance fCombatAnticipateTime ahead, or a blow since it began ends the
+  hide, and Boost Confidence turns it to fight. TODO(M13): the Hide behaviour's own time limit.
+  Else away (fFleeDistance\*), cowering where it can go no farther.
 - **Flanking Movement** (Stalk, then the Flank Selector: Flank, Chase, Flank Distant, Watch
   Target): far off the chase; else the maneuver (flank or stalk), out of range Flank Distant
   (circling at a distance), else the close movement selector.
@@ -3008,13 +3029,15 @@ bash behaviours (their values are ready); the flanking and ranged movement selec
   near); less 2000 if out of reach (a weapon short of fCombatRangedDistance, or in another space),
   2500 in another space with no way there, 500 if it flees. How many allies fight it is added with
   a weight of 0, and strength, being attacked by it or being the player do not count. A target in
-  another encounter zone, unless that zone has Disable Combat Boundary, is no candidate
-  (bEncounterZoneTargetRestrict; TODO(M13): not applied here, the zones of references are not
-  looked up in combat), and the player's teammates pass children over.
+  another encounter zone (each the zone of the cell it stands in), unless the actor's own has
+  Disable Combat Boundary, is no candidate ([Combat] bEncounterZoneTargetRestrict: `zonesAllow`),
+  and the player's teammates pass children over.
 - **The odds**: every fCombatThreatRatioUpdateTime (5 s) its side's strength against its enemies'
   (each `actorStrength`: damage per second × health / (1 − its own armour's reduction, at most
-  0.99)); its fleeing allies count nothing, itself always. TODO(M13): the original also sets the
-  odds to 100 when it has not been engaged for 120 s.
+  0.99)); its fleeing allies count nothing, itself always. They stand at 100 unweighed for a
+  frenzied actor (Aggression 3) or one not engaged for 120 s (`oddsWeighed`; TODO(M13): what
+  engages it is read here as a blow given or taken). The combat music and daresHelp weigh the same
+  strength.
 - **Combat groups**: an actor entering combat joins the group of an ally or friend fighting;
   its target, and any enemy it detects in combat, becomes the group's; the group keeps what
   its members know of its targets ([Combat detection](#combat-detection)): a target the group
@@ -3042,9 +3065,13 @@ bash behaviours (their values are ready); the flanking and ranged movement selec
   worth most against its target (`CastingEngine.spellWorth`: each hostile effect's magnitude
   by its seconds times the share the target keeps through its resistances, Magic Resistance
   and the effect's own resist value, so a frost-resistant target draws fire; none where its
-  conditions or level cap leave the target out, as Turn Undead on the living; plus the MGEF
-  Script Effect AI Score; a spell cast again only after its effects' AI Delay Time;
-  TODO(M13): the engine's CombatMagicCaster weighing), each staff it carries with charge left
+  conditions or level cap leave the target out, as Turn Undead on the living: the combat
+  inventory's score, `src/gameplay/combat/spell-score.ts`: per effect what it does (its magnitude;
+  a summons, bound weapon, invisibility, paralysis and script its cost) × its seconds (a
+  concentration spell's fCombatMagicConcentrationScoreDuration, else its duration, at least 1, plus
+  half its taper) × what the target keeps × its kind's weight, doubled by
+  fCombatInventoryRangedScoreMult when it reaches past fCombatRangedDistance; a spell cast again
+  only after its effects' AI Delay Time), each staff it carries with charge left
   (taken up as a weapon), and its voice's shout. A concentration spell it holds while its
   target is alive, within the spell's range and before it.
 - **Its support** (`chooseSupport`, weighed every second): a ward (MagicWard on the spell or
@@ -3271,8 +3298,9 @@ fCombatTargetLocationCurrentReservationDistanceMult nearer. So a group spreads r
 instead of piling onto one point. TODO(M13): the second size of the width rule (a cached size of
 the actor's) is read as its radius. Out of range (observed in the original) is beyond its range
 at its target's place fCombatAnticipateTime ahead, unless a place it holds nearer keeps it there.
-Fallback To Ranged's condition: it has something reaching past fCombatRangedDistance (its
-behaviour, backing to that distance to shoot, is the equipment choice's here).
+Fallback To Ranged's condition: it has something reaching past fCombatRangedDistance; it backs to
+that distance from its target ("Check Unreachable Target", above) while the equipment choice takes
+up its weapon.
 
 **While it attacks** its controller does not move it (it stands, still turning to its aim): a
 standing attack's clip has no root motion and the controller's way made it glide. Its attack

@@ -85,9 +85,10 @@ describe('what it keeps', () => {
     expect(chooseEquipment([sword, bow], 2000, style, settings)?.id).toBe(2);
   });
 
-  // TODO(M13): torches: no NPC in a fight takes up a torch yet, in the dark or out of it; the
-  // original's rule has not been read. Ammunition for a bow is taken up with it (the combat AI's
-  // #equipAmmo; tests/conformance/combat/ranged.test.ts).
+  // Stays: no NPC in a fight takes up a torch yet; the torch's own inventory item (its range
+  // fCombatInventoryTorchEquipRange and min equip time) was not followed to its check.
+  // Ammunition for a bow is taken up with it (the combat AI's #equipAmmo;
+  // tests/conformance/combat/ranged.test.ts).
   it.todo('torches in the dark  [original]');
 
   it('the weapon’s score: its damage, the fists’ penalty, the bound bonus, its reach  [original]', () => {

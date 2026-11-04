@@ -10,7 +10,7 @@
 // AllyKilled).
 
 import { describe, expect, it } from 'vitest';
-import { COMBAT_AI_DEFAULTS } from '../../../src/ai/combat-ai.ts';
+import { COMBAT_AI_DEFAULTS, firstTauntTime } from '../../../src/ai/combat-ai.ts';
 import {
   CombatDialogue,
   COMBAT_DIALOGUE_DEFAULTS,
@@ -77,10 +77,32 @@ describe('combat dialogue', () => {
     expect(spectatorComments(chances, true, () => 0.39)).toBe(true);
   });
 
-  it.todo('Bleedout lines every 1 .. 5 s (no Bleedout line is said yet)  [settings]');
-  it.todo(
-    'the first taunt drawn as the fight begins (original: the controller’s taunt timer)  [original]',
-  );
-  it.todo('Hit and Death lines at once, PowerAttack and Bash as they start  [xEdit DIAL]');
+  it('Bleedout lines every 1 .. 5 s  [settings]', () => {
+    const lines = new CombatDialogue();
+    const late = { listener: 0, random: () => 1 };
+    expect(lines.may(1, 'Bleedout', 0, late)).toBe(true);
+    expect(lines.may(1, 'Bleedout', 4.9, late)).toBe(false);
+    expect(lines.may(1, 'Bleedout', 5, late)).toBe(true);
+  });
+
+  it('the first taunt drawn as the fight begins (the controller’s taunt timer)  [original]', () => {
+    expect(firstTauntTime(() => 0, settings)).toBe(settings.tauntMin);
+    expect(firstTauntTime(() => 1, settings)).toBe(settings.tauntMax);
+  });
+
+  it('Hit and Death lines at once, PowerAttack and Bash as they start  [xEdit DIAL]', () => {
+    const lines = new CombatDialogue();
+    const sure = { listener: 0, blow: 1, random: () => 0 };
+    // No cooldown of their own: again and again as they come.
+    expect(lines.may(1, 'Hit', 0, sure)).toBe(true);
+    expect(lines.may(1, 'Hit', 0, sure)).toBe(true);
+    expect(lines.may(1, 'Death', 0, sure)).toBe(true);
+    expect(lines.may(1, 'Death', 0, sure)).toBe(true);
+    expect(lines.may(1, 'PowerAttack', 0, sure)).toBe(true);
+    expect(lines.may(1, 'Bash', 0, sure)).toBe(true);
+  });
+
+  // The original's subtype and its distance mult are all that is found of it (the gate above has
+  // them): nothing was found that says one, so no rule is there to run.
   it.todo('GroupStrategy: the group’s leader calls the strategy  [xEdit DIAL]');
 });

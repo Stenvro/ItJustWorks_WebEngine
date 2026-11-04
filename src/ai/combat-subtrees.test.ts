@@ -32,7 +32,7 @@ const mesh: Navmesh = {
   triangles: [
     { vertices: [0, 1, 2], edges: [-1, 1, -1], flags: NavmeshFlag.water, cover: 0 },
     { vertices: [1, 3, 2], edges: [-1, 2, 0], flags: NavmeshFlag.water, cover: 0 },
-    { vertices: [2, 3, 4], edges: [1, -1, -1], flags: 0, cover: 15 << 6 },
+    { vertices: [2, 3, 4], edges: [1, -1, -1], flags: 0, cover: (15 | 0x10) << 6 },
   ],
   links: [],
   doors: [{ triangle: 2, type: 0, door: 0xd00 }],
@@ -72,15 +72,15 @@ describe('the combat subtrees', () => {
     ).toBeUndefined();
   });
 
-  it('Flee Through Door: by its chance, a door away from the enemy, not again too soon', () => {
+  it('Flee Through Door: by its chance, a door with no enemy at it, not again too soon', () => {
     const doors = doorSpots(set, swimmer, S.fleeDoorDistanceMax);
     expect(doors.map((door) => door.door)).toEqual([0xd00]);
     const enemy: Vec3 = [-500, 0, 0];
     expect(pickFleeDoor(doors, swimmer, enemy, Infinity, () => 0)?.door).toBe(0xd00);
     expect(pickFleeDoor(doors, swimmer, enemy, Infinity, () => 0.9)).toBeUndefined();
     expect(pickFleeDoor(doors, swimmer, enemy, 1, () => 0)).toBeUndefined();
-    // The enemy beyond the door: not that way.
-    expect(pickFleeDoor(doors, swimmer, [500, 50, 0], Infinity, () => 0)).toBeUndefined();
+    // An enemy at the door (fCombatFleeDoorTargetCheckDistance): not that one.
+    expect(pickFleeDoor(doors, swimmer, [150, 50, 0], Infinity, () => 0)).toBeUndefined();
   });
 
   it('Acquire Weapon: the best weapon near enough that beats its fists', () => {
