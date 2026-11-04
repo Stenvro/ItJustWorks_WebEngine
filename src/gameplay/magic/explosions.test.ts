@@ -8,10 +8,20 @@ import {
   explosionKnocksDown,
   explosionShare,
   explosionSightStart,
+  explosionSplashScale,
   knockdownShareEnough,
 } from './explosions.ts';
 
 describe('explosions', () => {
+  it('splash at the surface once 0.75 of their radius above them is under it', () => {
+    expect(explosionSplashScale(-100, 100, 0)).toBe(100);
+    expect(explosionSplashScale(-75, 100, 0)).toBeUndefined();
+    expect(explosionSplashScale(-100, 100, undefined)).toBeUndefined();
+    expect(explosionSplashScale(-100, 100, 0, { waterRadiusRatio: 0.75, splashRadius: 2 })).toBe(
+      50,
+    );
+  });
+
   it('fall off with the square of the distance', () => {
     expect(explosionShare(0, 200)).toBe(1);
     expect(explosionShare(100, 200)).toBeCloseTo(0.75, 9);

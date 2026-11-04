@@ -43,7 +43,13 @@ import {
   type LobberSettings,
 } from '../gameplay/magic/projectile-flight.ts';
 import { castStrength, DUAL_CASTING_POWER } from '../gameplay/magic/effect-rules.ts';
-import { chainEffectiveness } from '../gameplay/magic/explosions.ts';
+import type { ProjectileTriggers } from './projectile-triggers.ts';
+import {
+  chainEffectiveness,
+  EXPLOSION_SPLASH_MODEL,
+  EXPLOSION_SPLASH_SOUND,
+  explosionSplashScale,
+} from '../gameplay/magic/explosions.ts';
 import { ImpactPlacements } from '../gameplay/magic/impact-placement.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import type { SavedProjectile } from '../save/world-save.ts';
@@ -120,6 +126,10 @@ export interface MagicProjectilesOptions {
   readonly impact?: (hit: HitImpact) => Promise<Impact | undefined>;
   /** An explosion bursts: the camera shakes by its radius (src/shell/camera-shake.ts). */
   readonly shake?: (explosion: ExplosionRecord, at: Vec3) => void;
+  /** A shot's way in the trigger volumes (src/shell/projectile-triggers.ts). */
+  readonly triggers?: ProjectileTriggers;
+  /** The height of the water's surface over a point in or under it (undefined: no water). */
+  readonly waterSurface?: (at: Vec3) => number | undefined;
 }
 
 /** One projectile on its way. */
@@ -974,6 +984,7 @@ export class MagicProjectiles {
       if (flying.done) continue;
       const { from, to } = stepFlight(flying.flight, seconds);
       this.#options.shotWay?.(from, to);
+      this.#options.triggers?.step(flying, flying.projectile.formId, from, to, Layer.spell);
       const hit = this.#sweep(flying.delivered.caster, from, to, flying.projectile.collisionRadius);
       // Its alternative trigger: within its proximity of an actor it bursts.
       const near =
@@ -1257,6 +1268,19 @@ export class MagicProjectiles {
       ...(!upright && { direction: aim }),
       fades: true,
     });
+    // Well under water it raises a splash at the surface over it (explosionSplashScale).
+    const surface = this.#options.waterSurface?.(point);
+    const settings = await runtime.casting.explosionSettings();
+    const splash = explosionSplashScale(point[2], explosion.radius, surface, settings);
+    if (splash !== undefined && surface !== undefined) {
+      const above: Vec3 = [point[0], point[1], surface];
+      fx?.show(EXPLOSION_SPLASH_MODEL, undefined, above, {
+        kind: 'explosion',
+        scale: splash,
+        fades: true,
+      });
+      void session.soundSystem?.playNamed(EXPLOSION_SPLASH_SOUND, above);
+    }
     const modifier = explosion.imageSpaceModifier;
     const player = [...this.#options.targets()].find((target) => target.reference === PLAYER_REF);
     if (modifier !== undefined && player) {
@@ -1338,6 +1362,7 @@ export class MagicProjectiles {
     const entry = flying.delivered.item.effects.find((item) => item.effect === effect?.formId);
     flying.done = true;
     this.#flying.delete(flying);
+    this.#options.triggers?.end(flying);
     void flying.sound?.then((sound) => sound?.stop());
     if (!effect || !entry) {
       flying.scene?.destroy();
@@ -1363,6 +1388,7 @@ export class MagicProjectiles {
   #end(flying: Flying): void {
     flying.done = true;
     this.#flying.delete(flying);
+    this.#options.triggers?.end(flying);
     flying.scene?.destroy();
     flying.scene = undefined;
     void flying.sound?.then((sound) => sound?.stop());

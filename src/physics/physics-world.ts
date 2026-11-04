@@ -255,6 +255,23 @@ export interface PlacedJoint {
   readonly constraint: CollisionConstraint;
 }
 
+/**
+ * The pivots of a joint the constraint solver does not take, whose error is clipped outside it,
+ * and the distance they keep (game units in the bodies' spaces); undefined for the others.
+ */
+function linkPivots(data: ConstraintData): readonly [Vec3, Vec3, number] | undefined {
+  switch (data.type) {
+    case 'ball-and-socket':
+      return [data.pivotA, data.pivotB, 0];
+    case 'stiff-spring':
+      return [data.pivotA, data.pivotB, data.length];
+    case 'hinge':
+      return [data.a.pivot, data.b.pivot, 0];
+    default:
+      return undefined;
+  }
+}
+
 /** A keyframed body pulling a placed body by a joint (PhysicsWorld.addHitch). */
 export interface Hitch {
   readonly body: RAPIER.RigidBody;
@@ -533,11 +550,26 @@ const toHavok = (v: number): number => v / HAVOK_SCALE;
 /** Papyrus's motion types (ObjectReference.SetMotionType, OnTrapHit's aeMotionType). */
 export const MotionType = { dynamic: 1, keyframed: 4, fixed: 5 } as const;
 
+/** One side of a hard contact: who it is, and its body's mass (0: fixed or keyframed). */
+export interface ContactSide {
+  readonly owner: PhysicsOwner | undefined;
+  readonly mass: number;
+}
+
+/** A contact at fPhysicsDamageSpeedMin or more (speed in Havok units a second). */
+export interface HardContact {
+  readonly a: ContactSide;
+  readonly b: ContactSide;
+  readonly speed: number;
+}
+
 /** A trap an actor touches (trapsTouching): where (game units), its body's velocity, its motion. */
 export interface TrapTouch {
   readonly position: Vec3;
   readonly velocity: Vec3;
   readonly motionType: number;
+  /** The material (MATT id) of the trap's shape it touches. */
+  readonly material: number;
 }
 
 /** Rapier's raw joint set, which takes limits on any axis of any joint. */
@@ -783,12 +815,27 @@ export class PhysicsWorld {
   readonly #jointScales = new Map<PlacedJoint, number>();
   /** The placed ragdoll and limited hinge joints whose friction the constraint solver gives. */
   readonly #solverJoints = new Map<PlacedJoint, SolverJoint>();
+  /** The ragdolls held in one pose (stiffen): the fixed joints that hold them. */
+  readonly #stiff = new Map<PlacedCollision, RAPIER.ImpulseJoint[]>();
+  /** Contacts at this speed or more are told (Havok units a second: fPhysicsDamageSpeedMin). */
+  hardContactSpeed = 500;
+  /** A contact at hardContactSpeed or more: the world's collision listener's physics damage. */
+  onHardContact: ((contact: HardContact) => void) | undefined;
   /** The joints whose second pivot is moved in for a step (#clipViolation). */
   readonly #clipped = new Map<PlacedJoint, RAPIER.Vector>();
-  /** A chain's links, with their pivots (Havok units) and the chain's largest error (#clipChains). */
-  readonly #chainLinks = new Map<
+  /**
+   * The joints outside the constraint solver: a chain's links, hinges, balls and sockets and
+   * stiff springs, with their pivots (Havok units), their largest error and the distance kept
+   * between their pivots (#clipLinks).
+   */
+  readonly #linksClipped = new Map<
     PlacedJoint,
-    { readonly pivotA: Vec3; readonly pivotB: Vec3; readonly most: number }
+    {
+      readonly pivotA: Vec3;
+      readonly pivotB: Vec3;
+      readonly most: number;
+      readonly rest: number;
+    }
   >();
   /** The joints whose limits are eased back to them, with their bounds now (#easeLimits). */
   readonly #easing = new Map<PlacedJoint, readonly number[]>();
@@ -1232,13 +1279,15 @@ export class PhysicsWorld {
       this.#jointScales.set(placed, scale / HAVOK_SCALE);
       const solved = solverConstraint(constraint.data, scale / HAVOK_SCALE);
       if (solved) this.#solverJoints.set(placed, { a: a.body, b: b.body, constraint: solved });
-      if (constraint.maxError !== undefined && constraint.data.type === 'ball-and-socket') {
+      const pivots = linkPivots(constraint.data);
+      if (pivots) {
         const toLocal = scale / HAVOK_SCALE;
-        const { pivotA, pivotB } = constraint.data;
-        this.#chainLinks.set(placed, {
+        const [pivotA, pivotB, rest] = pivots;
+        this.#linksClipped.set(placed, {
           pivotA: [pivotA[0] * toLocal, pivotA[1] * toLocal, pivotA[2] * toLocal],
           pivotB: [pivotB[0] * toLocal, pivotB[1] * toLocal, pivotB[2] * toLocal],
-          most: constraint.maxError,
+          most: constraint.maxError ?? MAX_CONSTRAINT_VIOLATION,
+          rest: rest * toLocal,
         });
       }
       for (const { body } of [a, b]) {
@@ -1447,7 +1496,7 @@ export class PhysicsWorld {
     this.#jointScales.delete(placed);
     this.#easing.delete(placed);
     this.#clipped.delete(placed);
-    this.#chainLinks.delete(placed);
+    this.#linksClipped.delete(placed);
     this.#solverJoints.delete(placed);
     for (const { body } of [placed.a, placed.b]) {
       const list = this.#jointsOf.get(body.handle);
@@ -1740,6 +1789,7 @@ export class PhysicsWorld {
   readonly #scriptJoints: { joint: RAPIER.ImpulseJoint; a: number; b: number }[] = [];
 
   remove(placed: PlacedCollision): void {
+    this.#stiff.delete(placed);
     // Removing a body removes its joints.
     for (const joint of placed.joints) this.#forgetJoint(joint);
     for (const collider of placed.colliders) this.unregister(collider);
@@ -1784,7 +1834,7 @@ export class PhysicsWorld {
       // Before the solver's changes: the joints' impulses (#breakJoints) include its own.
       this.#recordVelocities();
       if (this.#solverJoints.size > 0) this.#solveJoints();
-      if (this.#chainLinks.size > 0) this.#clipChains();
+      if (this.#linksClipped.size > 0) this.#clipLinks();
       this.world.step(this.#events, this.#hooks);
       this.#changed = false;
       if (this.#limits.size > 0) this.#limitVelocities();
@@ -1824,12 +1874,13 @@ export class PhysicsWorld {
   }
 
   /**
-   * A chain's links (bhkBallSocketConstraintChain) clip their error as the constraints do
-   * (#clipViolation), to the chain's own maxErrorDistance (0.1 Havok units in every chain of
-   * the data: the traps' ropes and chains).
+   * The joints the constraint solver does not take clip their error as those it takes do
+   * (#clipViolation): a chain's links (bhkBallSocketConstraintChain) to the chain's own
+   * maxErrorDistance (0.1 Havok units in every chain of the data: the traps' ropes and chains),
+   * hinges, balls and sockets and stiff springs to the world's.
    */
-  #clipChains(): void {
-    for (const [placed, { pivotA, pivotB, most }] of this.#chainLinks) {
+  #clipLinks(): void {
+    for (const [placed, { pivotA, pivotB, most, rest }] of this.#linksClipped) {
       const made = placed.joint;
       if (!made?.isValid()) continue;
       this.#clipViolation(
@@ -1839,6 +1890,7 @@ export class PhysicsWorld {
         pivotA,
         pivotB,
         most,
+        rest,
       );
     }
   }
@@ -1859,6 +1911,8 @@ export class PhysicsWorld {
     pivotA: Vec3,
     pivotB: Vec3,
     most = MAX_CONSTRAINT_VIOLATION,
+    /** What the pivots keep between them (a stiff spring's length); the error is past it. */
+    rest = 0,
   ): void {
     if (a.isSleeping() && b.isSleeping()) return;
     const ta = a.translation();
@@ -1869,9 +1923,9 @@ export class PhysicsWorld {
     const dy = tb.y + pb.y - (ta.y + pa.y);
     const dz = tb.z + pb.z - (ta.z + pa.z);
     const gap = Math.hypot(dx, dy, dz);
-    if (gap > most) {
+    if (gap - rest > most) {
       // The second body's anchor where the first's pivot plus the clipped error lies.
-      const k = most / gap;
+      const k = (rest + most) / gap;
       const q = b.rotation();
       const local = rotateVector(
         { x: -q.x, y: -q.y, z: -q.z, w: q.w },
@@ -1891,6 +1945,46 @@ export class PhysicsWorld {
     } else if (this.#clipped.delete(placed)) {
       made.setAnchor2({ x: pivotB[0], y: pivotB[1], z: pivotB[2] });
     }
+  }
+
+  /**
+   * Holds a ragdoll in the pose it has now, as one piece (`on`), or lets it move on its joints
+   * again: the paralysed fall stiff. Each of its joints gets a fixed joint at the two bodies'
+   * places as they are. Asking again for what it is does nothing.
+   */
+  stiffen(placed: PlacedCollision, on: boolean): void {
+    const made = this.#stiff.get(placed);
+    if (on === (made !== undefined)) return;
+    if (made) {
+      for (const joint of made) if (joint.isValid()) this.world.removeImpulseJoint(joint, true);
+      this.#stiff.delete(placed);
+      return;
+    }
+    const joints: RAPIER.ImpulseJoint[] = [];
+    for (const { a, b } of placed.joints) {
+      const ta = a.body.translation();
+      const tb = b.body.translation();
+      const qa = a.body.rotation();
+      const qb = b.body.rotation();
+      const inverse = { x: -qa.x, y: -qa.y, z: -qa.z, w: qa.w };
+      const anchor = rotateVector(inverse, { x: tb.x - ta.x, y: tb.y - ta.y, z: tb.z - ta.z });
+      // The second body's turn in the first's frame (its anchor at its own origin, unturned).
+      const frame = {
+        w: inverse.w * qb.w - inverse.x * qb.x - inverse.y * qb.y - inverse.z * qb.z,
+        x: inverse.w * qb.x + inverse.x * qb.w + inverse.y * qb.z - inverse.z * qb.y,
+        y: inverse.w * qb.y - inverse.x * qb.z + inverse.y * qb.w + inverse.z * qb.x,
+        z: inverse.w * qb.z + inverse.x * qb.y - inverse.y * qb.x + inverse.z * qb.w,
+      };
+      joints.push(
+        this.world.createImpulseJoint(
+          RAPIER.JointData.fixed(anchor, frame, { x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0, w: 1 }),
+          a.body,
+          b.body,
+          true,
+        ),
+      );
+    }
+    this.#stiff.set(placed, joints);
   }
 
   /**
@@ -2603,6 +2697,36 @@ export class PhysicsWorld {
   }
 
   /**
+   * The trigger volumes a way passes through (game units) whose layers collide with `layer`
+   * (a projectile's in flight): their owners' references.
+   */
+  triggersAlong(from: Vec3, to: Vec3, layer: number): Set<number> {
+    const found = new Set<number>();
+    const way = [to[0] - from[0], to[1] - from[1], to[2] - from[2]] as const;
+    const length = Math.hypot(way[0], way[1], way[2]);
+    if (length === 0) return found;
+    this.world.intersectionsWithRay(
+      new RAPIER.Ray(
+        { x: toHavok(from[0]), y: toHavok(from[1]), z: toHavok(from[2]) },
+        { x: way[0] / length, y: way[1] / length, z: way[2] / length },
+      ),
+      toHavok(length),
+      true,
+      (hit) => {
+        const reference = this.ownerOf(hit.collider)?.reference;
+        if (hit.collider.isEnabled() && reference) found.add(reference);
+        return true;
+      },
+      undefined,
+      QueryGroups.triggers,
+      undefined,
+      undefined,
+      (other) => this.#isTriggerVolume(other) && this.matrix.collides(this.layerOf(other), layer),
+    );
+    return found;
+  }
+
+  /**
    * The placed objects whose collision a ball overlaps (`center`, `radius` in game units) on
    * bodies that collide with `layer` (a cone's: L_CONEPROJECTILE): each reference once, with
    * the middle of its body nearest the centre (game units).
@@ -2666,6 +2790,7 @@ export class PhysicsWorld {
               : body.isDynamic()
                 ? MotionType.dynamic
                 : MotionType.keyframed,
+          material: this.materialOf(other),
         });
         return true;
       },
@@ -3037,6 +3162,13 @@ export class PhysicsWorld {
       const vb = velocity(bodyB);
       const speed =
         Math.abs((va.x - vb.x) * n.x + (va.y - vb.y) * n.y + (va.z - vb.z) * n.z) * HAVOK_SCALE;
+      if (this.onHardContact && speed / HAVOK_SCALE >= this.hardContactSpeed) {
+        const side = (collider: RAPIER.Collider, body: RAPIER.RigidBody | null): ContactSide => ({
+          owner: this.ownerOf(collider),
+          mass: body?.isDynamic() === true ? body.mass() : 0,
+        });
+        this.onHardContact({ a: side(a, bodyA), b: side(b, bodyB), speed: speed / HAVOK_SCALE });
+      }
       if (speed < this.impactSpeed) return;
       // The simulated side hits the other (of two simulated bodies, the faster one).
       const speedOf = (v: RAPIER.Vector): number => Math.hypot(v.x, v.y, v.z);

@@ -441,6 +441,10 @@ export class CharacterBody {
   carriedTurn = 0;
   /** The speed a moving body that hit it gave it, dying away (game units per second). */
   #pushed: [number, number] = [0, 0];
+  /** How fast what it stands on carried it in its last step (game units a second). */
+  #ridden: readonly [number, number, number] | undefined;
+  /** What it left a moving body with: it keeps it in the air (game units a second). */
+  #leftWith: [number, number] = [0, 0];
   /** A hit's push back (knockBack): its speed (game units per second) and the seconds left. */
   #knock: { readonly velocity: readonly [number, number]; left: number } | undefined;
   /** The mass it pushes back with against moving bodies (kg; pushedSpeed). */
@@ -669,6 +673,8 @@ export class CharacterBody {
     this.landedFrom = undefined;
     this.#carrier = undefined;
     this.#pushed = [0, 0];
+    this.#ridden = undefined;
+    this.#leftWith = [0, 0];
     this.#body.setTranslation(this.#center(feet), true);
     this.#body.setNextKinematicTranslation(this.#center(feet));
   }
@@ -1092,8 +1098,16 @@ export class CharacterBody {
     const knock = this.#knocked(seconds);
     const [vx, vy] = recoveringVelocity(
       [
-        this.velocity[0] + this.#pushed[0] + knock[0] + (off ? off[0] * slide : 0),
-        this.velocity[1] + this.#pushed[1] + knock[1] + (off ? off[1] * slide : 0),
+        this.velocity[0] +
+          this.#pushed[0] +
+          this.#leftWith[0] +
+          knock[0] +
+          (off ? off[0] * slide : 0),
+        this.velocity[1] +
+          this.#pushed[1] +
+          this.#leftWith[1] +
+          knock[1] +
+          (off ? off[1] * slide : 0),
       ],
       [...inside.values()].map(({ way, depth }) => ({ way, depth: depth * HAVOK_SCALE })),
     );
@@ -1265,8 +1279,14 @@ export class CharacterBody {
     const standing =
       this.#grounded && !this.swimming ? this.#findCarrier(next, predicate, seconds) : undefined;
     // Then by what the body it stands on does in this step (its next keyframe, its velocity),
-    // as far as nothing else stops the shape.
-    // TODO(M13): leaving it (a jump, a step off) the actor does not keep its velocity.
+    // as far as nothing else stops the shape. Leaving it (a jump, a step off) it keeps that
+    // velocity through the air, until it lands.
+    if (this.#grounded || this.swimming) this.#leftWith = [0, 0];
+    if (!standing && !this.#grounded && !this.swimming && this.#ridden) {
+      this.#leftWith = [this.#ridden[0], this.#ridden[1]];
+      if (this.#ridden[2] > 0) this.verticalSpeed += this.#ridden[2];
+    }
+    this.#ridden = undefined;
     if (standing) {
       const now = { at: standing.body.translation(), turn: standing.body.rotation() };
       const to = carryPoint(now, standing.pose, next);
@@ -1279,6 +1299,10 @@ export class CharacterBody {
       next.x += carried.x;
       next.y += carried.y;
       next.z += carried.z;
+      if (seconds > 0) {
+        const perSecond = HAVOK_SCALE / seconds;
+        this.#ridden = [carried.x * perSecond, carried.y * perSecond, carried.z * perSecond];
+      }
       this.carriedTurn -= yawBetween(now, standing.pose);
     }
     this.#carrier = standing;

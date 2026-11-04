@@ -1386,6 +1386,8 @@ export class GameSession {
 
   /** The player carries more than they can (the equip system): no running (src/shell/player.ts). */
   overEncumbered = false;
+  /** The weight of what the player has equipped and their Speed Mult, as last looked at. */
+  burden: { readonly weight: number; readonly speedMult: number } = { weight: 0, speedMult: 100 };
   #encumbranceWait = 0;
   #encumbranceAsked = false;
 
@@ -1406,6 +1408,11 @@ export class GameSession {
           if (typeof text === 'string') runtime.world.notification?.(text);
         }
         this.overEncumbered = over;
+        const [weight, speedMult] = await Promise.all([
+          runtime.equipment.equippedWeight(PLAYER_REF),
+          runtime.actors.value(PLAYER_REF, ActorValue.speedMult),
+        ]);
+        this.burden = { weight, speedMult: speedMult.current };
       })
       .catch(() => undefined)
       .finally(() => {

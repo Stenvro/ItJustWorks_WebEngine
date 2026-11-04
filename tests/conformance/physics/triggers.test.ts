@@ -12,6 +12,8 @@
 // - The data: a trigger is an activator placed with a primitive (REFR XPRM, its volume on
 //   L_TRIGGER: src/world/cell-loader.ts).
 
+import type { ScriptRuntime } from '../../../src/scripting/runtime/runtime.ts';
+import { ProjectileTriggers } from '../../../src/shell/projectile-triggers.ts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   CollisionMatrix as Matrix,
@@ -257,7 +259,49 @@ describe('what enters a trigger', () => {
       still.free();
     },
   );
-  it.todo('tells a trigger an arrow or spell flying through it (L_PROJECTILE)  [COLL] (sim)');
+  it('tells a trigger an arrow or spell flying through it, in and out  [COLL]', () => {
+    const told: (readonly [number, number, boolean])[] = [];
+    let made = 0;
+    let deleted = 0;
+    const runtime = {
+      state: {
+        create: () => ++made + 0xff000000,
+        reference: () => ({ position: [0, 0, 0] }),
+      },
+      triggered: (trigger: number, reference: number, entered: boolean) => {
+        told.push([trigger, reference, entered]);
+      },
+      deleteReference: () => {
+        deleted++;
+      },
+    } as unknown as ScriptRuntime;
+    // A box of a trigger from x 10 to x 20.
+    const along = (from: readonly number[]): ReadonlySet<number> =>
+      (from[0] ?? 0) >= 10 && (from[0] ?? 0) < 20 ? new Set([7]) : new Set();
+    const triggers = new ProjectileTriggers(() => runtime, along);
+    const shot = {};
+    const way = (x: number): void => {
+      triggers.step(shot, 0x99, [x, 0, 0], [x + 5, 0, 0], 6);
+    };
+    way(0);
+    expect(made).toBe(0);
+    way(10);
+    way(15);
+    way(20);
+    const reference = 0xff000001;
+    expect(told).toEqual([
+      [7, reference, true],
+      [7, reference, false],
+    ]);
+    triggers.end(shot);
+    expect(deleted).toBe(1);
+    // One whose flight ends inside leaves as it ends.
+    const other = {};
+    triggers.step(other, 0x99, [10, 0, 0], [12, 0, 0], 6);
+    triggers.end(other);
+    expect(told.at(-1)?.[2]).toBe(false);
+    expect(deleted).toBe(2);
+  });
   it.todo('tells a trigger a dead body in it (L_DEADBIP)  [COLL] (sim)');
   it.todo('tells a trigger a weapon dropped into it (L_WEAPON)  [COLL] (sim)');
   it.todo(

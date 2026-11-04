@@ -237,6 +237,7 @@ export class ActorKnockdowns {
       const subject = knock.subject;
       if (subject.dead || subject.placed !== knock.placed) {
         // Dead (it lies as the dead do) or its body made again (it stands in the new one).
+        this.#options.bodies.stiffen(reference, false);
         this.#knocks.delete(reference);
         if (!subject.dead) this.#end(knock);
         continue;
@@ -250,6 +251,8 @@ export class ActorKnockdowns {
           this.#stand(knock, undefined);
           continue;
         }
+        // The paralysed fall and lie stiff, in the pose paralysis took them in.
+        bodies.stiffen(reference, knock.paralyzed);
         const held = knock.held?.();
         if (held) {
           // Held: its root drawn to the point (HOLD_GAIN of the way a second, at most

@@ -136,7 +136,7 @@ describe('swimming', () => {
     'swims every actor whose submersion reaches 0.7 (the engine marks it swimming), not only ' +
       'the player  [original] (sim: an NPC led into a river)',
   );
-  it.todo('jumps out of water by fJumpSwimmingMult (2)  [settings]');
+  // Jumps out of water by fJumpSwimmingMult (2): tests/sim-water.int.test.ts, with the Jump key.
   it.todo(
     'knocks an actor down in fast water: fWaterKnockdownVelocity (5 with Skyrim.esm) and ' +
       'fWaterKnockdownSize* by size  [settings; original: unread]',

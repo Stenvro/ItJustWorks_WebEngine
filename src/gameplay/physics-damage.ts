@@ -77,6 +77,23 @@ export function physicsDamage(
   return tier * pace;
 }
 
+/**
+ * What a hard contact damages: both sides that are placed objects, each by the other's mass;
+ * nothing when either side is an actor. By reference.
+ */
+export function contactDamage(
+  a: { readonly reference: number | undefined; readonly actor: boolean; readonly mass: number },
+  b: { readonly reference: number | undefined; readonly actor: boolean; readonly mass: number },
+  speed: number,
+  settings: PhysicsDamageSettings = PHYSICS_DAMAGE_DEFAULTS,
+): readonly (readonly [number, number])[] {
+  if (a.actor || b.actor) return [];
+  const taken: (readonly [number, number])[] = [];
+  if (a.reference) taken.push([a.reference, physicsDamage(b.mass, speed, settings)]);
+  if (b.reference) taken.push([b.reference, physicsDamage(a.mass, speed, settings)]);
+  return taken.filter(([, damage]) => damage > 0);
+}
+
 /** Whether a contact damages at all: its speed reaches the minimum (contacts are told from it). */
 export function damagingContact(
   speed: number,

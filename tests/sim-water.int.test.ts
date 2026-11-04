@@ -24,6 +24,61 @@ describe.skipIf(!hasGamedata())('water in the simulation', () => {
     await sim.close();
   });
 
+  it('jumps out of the water fJumpSwimmingMult times as high, and swims again', async () => {
+    const play = sim.world.play;
+    const water = play?.water;
+    if (!play || !water) throw new Error('no play');
+    // The deepest water of the river's cells (they load as the world steps).
+    const deepest = (): { floor: [number, number, number]; depth: number } | undefined => {
+      let found: { floor: [number, number, number]; depth: number } | undefined;
+      for (const [cx, cy] of RIVER_CELLS) {
+        for (let x = 64; x < 4096; x += 128) {
+          for (let y = 64; y < 4096; y += 128) {
+            const at: [number, number] = [cx * 4096 + x, cy * 4096 + y];
+            const hit = play.physics.raycast(
+              [...at, 6000],
+              [0, 0, -1],
+              12_000,
+              Layer.charController,
+            );
+            const surface = hit && water.surface(at[0], at[1], hit.point[2]);
+            if (surface && surface.height - hit.point[2] > (found?.depth ?? 0)) {
+              found = {
+                floor: [at[0], at[1], hit.point[2]],
+                depth: surface.height - hit.point[2],
+              };
+            }
+          }
+        }
+      }
+      return found;
+    };
+    let deep = deepest();
+    for (let i = 0; i < 30 && (deep?.depth ?? 0) < 110; i++) {
+      await sim.step(0.2);
+      deep = deepest();
+    }
+    if (!deep) throw new Error('no water');
+    expect(deep.depth).toBeGreaterThan(110);
+    await sim.moveTo([deep.floor[0], deep.floor[1], deep.floor[2] + 5]);
+    const player = sim.world.player;
+    expect(await sim.until(() => player.swimming, 3)).toBe(true);
+    await sim.step(1.5);
+    const swum = player.feet[2];
+    sim.press('Jump', true);
+    await sim.step(1 / 60);
+    sim.press('Jump', false);
+    let top = swum;
+    for (let i = 0; i < 60; i++) {
+      await sim.step(1 / 60);
+      top = Math.max(top, player.feet[2]);
+    }
+    // fJumpHeightMin (76) × 2, less what a step's gravity takes.
+    expect(top - swum).toBeGreaterThan(130);
+    expect(top - swum).toBeLessThan(165);
+    expect(await sim.until(() => player.swimming, 5)).toBe(true);
+  }, 120_000);
+
   it('floats firewood dropped into Riverwood’s river downstream', async () => {
     const play = sim.world.play;
     const water = play?.water;

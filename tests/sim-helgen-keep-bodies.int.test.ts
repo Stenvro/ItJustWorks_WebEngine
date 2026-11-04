@@ -131,6 +131,137 @@ describe.skipIf(!hasGamedata())('the player in Helgen Keep', () => {
     }
   }, 600_000);
 
+  // Reported again 2026-11-04 (doors that open and close vaguely, walked through). A leaf swings
+  // without a jump and ends where its sequence ends, and neither a door shutting on the player
+  // in its way nor one opened and shut again as they walk at it lets them through a shut leaf.
+  it('walks into doors as they swing, and only through while they stand open', async () => {
+    const sim = await inTheKeep();
+    try {
+      for (const door of [0x938f3, 0x9b0a5]) {
+        const body = sim.world.play
+          ?.placementsOf(door)[0]
+          ?.bodies.find((placed) => placed.data.motion === 'keyframed')?.body;
+        const closed = leaf(sim, door);
+        if (!body || !closed) throw new Error('no leaf');
+        const [nx, ny] = closed.normal;
+        const at = (d: number): Vec3 => [
+          closed.mid[0] + nx * d,
+          closed.mid[1] + ny * d,
+          closed.mid[2],
+        ];
+        const side = (): number => {
+          const [x, y] = sim.world.player.feet;
+          return (x - closed.mid[0]) * nx + (y - closed.mid[1]) * ny;
+        };
+        const yaw = (): number => {
+          const q = body.rotation();
+          return (2 * Math.atan2(q.z, q.w) * 180) / Math.PI;
+        };
+        // How far apart two yaws are, across the wrap at ±180.
+        const turned = (a: number, b: number): number => {
+          const apart = Math.abs(a - b) % 360;
+          return Math.min(apart, 360 - apart);
+        };
+        // The swing: small steps of the leaf, never a jump, to a wide open door and back.
+        const shut = yaw();
+        for (const open of [true, false]) {
+          sim.runtime.setOpen(door, open);
+          let last = yaw();
+          let swing = 0;
+          for (let i = 0; i < 90; i++) {
+            await sim.step(1 / 60);
+            const now = yaw();
+            swing = Math.max(swing, turned(now, last));
+            last = now;
+          }
+          expect(swing, door.toString(16)).toBeLessThan(15);
+          if (open) expect(turned(last, shut)).toBeGreaterThan(60);
+          else expect(turned(last, shut)).toBeLessThan(0.5);
+        }
+        // It shuts on the player: out of its way, and the shut leaf holds them on that side.
+        for (const off of [-20, 0, 20]) {
+          sim.runtime.setOpen(door, true);
+          await sim.step(1.5);
+          await sim.moveTo(at(off));
+          await sim.step(0.2);
+          sim.runtime.setOpen(door, false);
+          await sim.step(1.5);
+          const after = side();
+          expect(Math.abs(after), door.toString(16)).toBeGreaterThan(10);
+          const dir = after >= 0 ? -1 : 1;
+          await sim.walkTo(at(dir * 120), 1.5, 10);
+          expect(side() * dir, door.toString(16)).toBeLessThan(-10);
+        }
+        // Walked at from each side, opened for a moment and shut before they reach it.
+        for (const from of [1, -1]) {
+          await sim.moveTo(at(from * 100));
+          await sim.step(0.1);
+          sim.look(at(-from * 100));
+          sim.press('Forward', true);
+          for (let i = 0; i < 180 && side() * from > 45; i++) await sim.step(1 / 60);
+          sim.runtime.setOpen(door, true);
+          await sim.step(0.1);
+          sim.runtime.setOpen(door, false);
+          await sim.step(1.5);
+          sim.press('Forward', false);
+          expect(side() * from, door.toString(16)).toBeGreaterThan(10);
+        }
+      }
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+
+  // Reported 2026-11-04: floating after a jump on stairs. With the jump key, up and down the
+  // keep's stairs (MQ101's way to the storeroom) and standing on them: the controller lands, on
+  // the ground, at rest, its graph out of its jump. What is left between its feet and the tread
+  // under its middle (up to a tread's edge under its lower cone, as the shape stands anywhere on
+  // stairs) is no more after a jump than before it.
+  it('lands from a jump on the stairs, at rest and on the ground', async () => {
+    const sim = await inTheKeep();
+    try {
+      const character = sim.world.player.character;
+      const graph = sim.world.playerView?.avatar?.body.behavior;
+      const spots: readonly (readonly [Vec3, number])[] = [
+        [[-547, 4148, 382], 1.86],
+        [[-405, 4115, 308], 1.81],
+        [[-345, 4101, 268], 1.81],
+      ];
+      for (const [spot, along] of spots) {
+        for (const mode of ['still', 'down', 'up']) {
+          await sim.moveTo([spot[0], spot[1], spot[2] + 2]);
+          await sim.step(0.5);
+          const before = character.feet[2];
+          sim.world.look(mode === 'up' ? along + Math.PI : along);
+          if (mode !== 'still') sim.press('Forward', true);
+          await sim.step(0.2);
+          const leaving = character.feet[2];
+          sim.press('Jump', true);
+          await sim.step(1 / 60);
+          sim.press('Jump', false);
+          let top = character.feet[2];
+          for (let i = 0; i < 40; i++) {
+            await sim.step(1 / 60);
+            top = Math.max(top, character.feet[2]);
+          }
+          sim.press('Forward', false);
+          expect(top - leaving, `${mode} at ${String(spot[0])}`).toBeGreaterThan(30);
+          await sim.step(2);
+          const rest = character.feet[2];
+          await sim.step(0.5);
+          expect(character.grounded, `${mode} at ${spot[0]}`).toBe(true);
+          expect(character.verticalSpeed).toBe(0);
+          expect(Math.abs(character.feet[2] - rest)).toBeLessThan(0.5);
+          const jumping = graph?.states().filter(({ state }) => /jump|fall/i.test(state)) ?? [];
+          expect(jumping).toEqual([]);
+          if (mode === 'still') expect(Math.abs(rest - before)).toBeLessThan(1);
+        }
+      }
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+
   // Reported 2026-11-01: the keep's Imperial armor drawn in its bind pose (arms out, the helmet
   // turned). Put on in first person and seen in third, every bone of every piece is the body's
   // skeleton's, and its vertices go where that pose puts them, away from the bind pose.
