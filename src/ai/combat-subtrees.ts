@@ -583,7 +583,8 @@ export function doorSpots(set: NavmeshSet, from: Vec3, radius: number): DoorSpot
 
 /**
  * Flee Through Door (observed in the original): by fCombatFleeUseDoorChance, not within
- * fCombatFleeUseDoorRestrictTime of its last and only while its enemy stands in its cell, the
+ * fCombatFleeUseDoorRestrictTime of its last (TODO(M13): the original also asks that its enemy
+ * stand in its cell), the
  * nearest load door within fCombatFleeDoorDistanceMax with no enemy within
  * fCombatFleeDoorTargetCheckDistance of it, not the door it came by within
  * fCombatFleeLastDoorRestrictTime; not one leading out of its encounter zone (`allowed`). Its
