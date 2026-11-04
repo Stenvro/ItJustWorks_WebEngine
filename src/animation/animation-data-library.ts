@@ -60,6 +60,12 @@ export function animationDataKey(project: string): string {
  */
 export type EquipState = Readonly<Record<string, number>>;
 
+/** An attack's hit frame in its clip: when, and where its clip has moved the actor by then. */
+export interface AttackHit {
+  readonly hitTime: number;
+  readonly motion: readonly [number, number, number] | undefined;
+}
+
 /** One behavior project's animation data, sets and speed tables. */
 export class ProjectAnimationData {
   readonly name: string;
@@ -149,6 +155,38 @@ export class ProjectAnimationData {
       }
     }
     return [...attacks.values()];
+  }
+
+  /**
+   * The attacks of the one set an equip state plays: the set whose conditions it meets (the
+   * sword and shield's 1HMShield), else those without conditions (a creature's only set). As the
+   * melee attack node reads them (observed in the original): an attack of another set (the
+   * dual wielder's power attack, the race's fists) is no choice for this actor now.
+   */
+  equippedAttacks(equip: EquipState): AnimationSetAttack[] {
+    const sets = this.sets(equip);
+    const conditioned = sets.filter((set) => set.conditions.length > 0);
+    return (conditioned.length > 0 ? conditioned : sets).flatMap((set) => set.attacks);
+  }
+
+  /**
+   * Where an attack's clip has its hit frame (seconds, by the clip's own speed) and where it has
+   * moved the actor by then (its space: x right, y forward); undefined without a clip that has a
+   * hit frame. A set's flagged attack (attackStart, its sprints) carries no such move of its own:
+   * how far it goes is the actor's own speed by then (`motion` undefined).
+   */
+  attackHit(attack: AnimationSetAttack): AttackHit | undefined {
+    for (const generator of attack.clips) {
+      const clip = this.clip(generator);
+      const hit = clip?.events.find((event) => event.name.toLowerCase() === 'hitframe');
+      if (!clip || !hit) continue;
+      const moved = attack.flag === 0 ? this.rootMotionAt(generator, hit.time) : undefined;
+      return {
+        hitTime: Math.max(0, hit.time - clip.cropStart) / (clip.playbackSpeed || 1),
+        motion: attack.flag === 0 ? (moved?.translation ?? [0, 0, 0]) : undefined,
+      };
+    }
+    return undefined;
   }
 
   /** The attack an attack event (any case) starts in an equip state. */

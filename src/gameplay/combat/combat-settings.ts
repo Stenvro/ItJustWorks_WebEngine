@@ -25,6 +25,18 @@ export interface CombatSettings {
    * angle times this (observed in the original).
    */
   readonly attackStrikeAngleMult: number;
+  /**
+   * The melee attack's reach with its clip's move (attackReaches): how far a clip moves its actor
+   * before its attack is no longer a standing one, or one that needs its way clear, and the
+   * overrun that way may fall short by; the reach while moving; how much of the player's motion it
+   * counts unless they go away from it.
+   */
+  readonly attackStationaryAttackDistance: number;
+  readonly attackMovingAttackDistance: number;
+  readonly attackMovingAttackReachMult: number;
+  readonly attackMovingStrikeAngleMult: number;
+  readonly attackAllowedOverrunDistance: number;
+  readonly attackPlayerAnticipateMult: number;
   // --- Damage --------------------------------------------------------------------------------
   /** fDamageSneakAttackMult: times the sneak attack multiplier (1). */
   readonly damageSneakAttackMult: number;
@@ -227,6 +239,12 @@ export const COMBAT_DEFAULTS: CombatSettings = {
   combatHitConeAngle: 35,
   deadActorHitConeMult: 2,
   attackStrikeAngleMult: 0.67,
+  attackStationaryAttackDistance: 5,
+  attackMovingAttackDistance: 32,
+  attackMovingAttackReachMult: 0.9,
+  attackMovingStrikeAngleMult: 1.5,
+  attackAllowedOverrunDistance: 128,
+  attackPlayerAnticipateMult: 0.5,
   damageSneakAttackMult: 1,
   sneakMult: {
     hand: 2,
@@ -396,6 +414,12 @@ const SETTING_NAMES: Readonly<Partial<Record<keyof CombatSettings, string>>> = {
   hostileFlyingActorExteriorDistance: 'fHostileFlyingActorExteriorDistance',
   deadActorHitConeMult: 'fCombatDeadActorHitConeMult',
   attackStrikeAngleMult: 'fCombatAttackStrikeAngleMult',
+  attackStationaryAttackDistance: 'fCombatAttackStationaryAttackDistance',
+  attackMovingAttackDistance: 'fCombatAttackMovingAttackDistance',
+  attackMovingAttackReachMult: 'fCombatAttackMovingAttackReachMult',
+  attackMovingStrikeAngleMult: 'fCombatAttackMovingStrikeAngleMult',
+  attackAllowedOverrunDistance: 'fCombatAttackAllowedOverrunDistance',
+  attackPlayerAnticipateMult: 'fCombatAttackPlayerAnticipateMult',
   vatsImageSpaceTransitionTime: 'fVATSImageSpaceTransitionTime',
   vatsSafetyMaxTime: 'fVATSSafetyMaxTime',
   vatsSafetyMaxTimeRanged: 'fVATSSafetyMaxTimeRanged',

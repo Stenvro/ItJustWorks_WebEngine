@@ -90,7 +90,7 @@ describe('blocking and bashing (formula)', () => {
   });
 
   it('the offensive bash: chosen out of no block by its chance  [RTTI]', () => {
-    const rolls = [0, 0.99, 0];
+    const rolls = [0, 0];
     const random = (): number => rolls.shift() ?? 0.5;
     const style = styleWith({ offensiveMult: 1 });
     expect(chooseAttack(style, { ...input, blocking: false }, random, settings)).toBe(

@@ -817,6 +817,46 @@ export class Sim {
     await this.step(BREAK_PAUSE);
   }
 
+  /**
+   * The player swings their drawn weapon at an actor by real input: turned to it, stepping up
+   * until it is within `within` units, the attack button tapped, then waiting out the swing. What
+   * came of it: whether the swing began, and whether a blow of theirs fell on the actor.
+   */
+  async swingAt(
+    actor: number,
+    within: number,
+    seconds = 1.2,
+  ): Promise<{ readonly began: boolean; readonly landed: boolean }> {
+    const combat = this.world.stage.combat;
+    const facing = async (): Promise<number> => {
+      const at = await this.position(actor);
+      if (!at) return Infinity;
+      this.look([at[0], at[1], at[2] + EYE_HEIGHT]);
+      const [x, y] = this.world.player.feet;
+      return Math.hypot(at[0] - x, at[1] - y);
+    };
+    this.press('Forward', true);
+    for (let t = 0; t < 3 && (await facing()) > within; t += SIM_STEP) await this.step(SIM_STEP);
+    this.press('Forward', false);
+    await facing();
+    const before = this.events('hit').filter(
+      (hit) => hit.aggressor === PLAYER_REF && hit.target === actor,
+    ).length;
+    this.press(RIGHT_ATTACK, true);
+    await this.step(SIM_STEP);
+    this.press(RIGHT_ATTACK, false);
+    await this.step(SIM_STEP);
+    const began = combat.state(PLAYER_REF)?.attacking === true;
+    for (let t = 0; t < seconds; t += SIM_STEP) {
+      await facing();
+      await this.step(SIM_STEP);
+    }
+    const landed =
+      this.events('hit').filter((hit) => hit.aggressor === PLAYER_REF && hit.target === actor)
+        .length > before;
+    return { began, landed };
+  }
+
   /** The player turns to look at a point (from their eyes). */
   look(at: Vec3): void {
     const [x, y, z] = this.world.player.feet;
