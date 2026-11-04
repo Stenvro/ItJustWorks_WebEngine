@@ -194,7 +194,13 @@ export interface FighterGear {
   readonly strengthDamage: number;
   /** Its attack data has a bash, and its power attacks' chance (ATKD). */
   readonly canBash: boolean;
+  /** Its power bash's share of its bashes (bashPowerStart against bashStart, by their chances). */
   readonly powerChance: number;
+  /**
+   * How far its clips take it to a hit at most, if its animation set names its attacks: the melee
+   * attack node then looks at each attack's own reach, within that (attackReaches).
+   */
+  readonly attackLunge?: number;
   /** Its right weapon's speed (WEAP DNAM; 1 for fists): its damage per second. */
   readonly speed?: number;
   /** A one-handed weapon in its left hand (it dual wields). */
@@ -233,7 +239,15 @@ export interface CombatAiHost {
   setTarget(reference: number, target: number | undefined): void;
   draw(reference: number): Promise<boolean>;
   sheathe(reference: number): Promise<boolean>;
-  attack(reference: number, action: string): Promise<boolean>;
+  /**
+   * `melee`: the melee attack node's own attack (attackReaches, chooseAttackData), a power attack
+   * among them no sooner than its cool-down; else the action's idle.
+   */
+  attack(
+    reference: number,
+    action: string,
+    melee?: { readonly powerCooling: boolean },
+  ): Promise<boolean>;
   release(reference: number, action: string): Promise<void>;
   block(reference: number, on: boolean): Promise<void>;
   /** A blocking fighter sees a blow come at it: its block meets it (ActionBlockAnticipate). */
@@ -2734,8 +2748,17 @@ export class ActorCombatAi {
   #mayStrike(f: CombatFrame): boolean {
     const state = f.view.state;
     const moving = f.mind.run !== undefined || f.mind.chase !== undefined;
-    const angle = attackStrikeAngle(f.view.gear?.strikeAngle ?? 0, moving, this.#settings);
-    if (f.tethered || f.distance > f.reach || this.#off(f) > angle) return false;
+    if (f.tethered) return false;
+    // Its attack node asks each attack's reach and angle (attackReaches, chooseAttackData), once
+    // its target is within the farthest of them and fCombatAttackCheckTargetRangeDistance.
+    const lunge = f.view.gear?.attackLunge;
+    if (lunge !== undefined) {
+      if (f.distance > f.reach + lunge + this.#settings.attackCheckTargetRangeDistance) {
+        return false;
+      }
+    } else if (!this.#inReach(f, moving)) {
+      return false;
+    }
     if (this.#clock < f.mind.nextAttack) return false;
     if (
       !withinReach(
@@ -2756,6 +2779,12 @@ export class ActorCombatAi {
     );
   }
 
+  /** Its target within its reach and its attack's angle (attackStrikeAngle) now. */
+  #inReach(f: CombatFrame, moving: boolean): boolean {
+    const angle = attackStrikeAngle(f.view.gear?.strikeAngle ?? 0, moving, this.#settings);
+    return f.distance <= f.reach && this.#off(f) <= angle;
+  }
+
   /**
    * A melee attack: asked of its graph, its line (the combat dialogue's gates), its next attack
    * after its attack data's recovery time; a dual wielder's hands take turns.
@@ -2768,6 +2797,39 @@ export class ActorCombatAi {
     if (gear?.leftWeapon === true) f.mind.hand = f.mind.hand === 'left' ? 'right' : 'left';
     this.#bark(f.mind.reference, line, f.target.reference);
     return this.#strike(f, action);
+  }
+
+  /**
+   * The Attack: its node picks among its attack data, plain and power alike (attackReaches,
+   * chooseAttackData), its line (the attack it picked: the host's) and its next attack after its
+   * attack data's recovery time. A pick that comes to nothing goes on to the Special Attack, by
+   * its chance (the Attack Selector). Without an animation set naming its attacks, its idle.
+   */
+  #meleeAttack(f: CombatFrame): Status {
+    const gear = f.view.gear;
+    if (gear?.attackLunge === undefined) return this.#melee(f, 'ActionRightAttack', 'Attack');
+    const mind = f.mind;
+    const asked = this.#clock;
+    mind.nextAttack = asked + attackCooldown(gear.recoveryTime ?? 0);
+    const near = this.#inReach(f, false);
+    const special = near ? specialAttackChance(f.profile.style, this.#settings) : 0;
+    const reference = mind.reference;
+    const state = f.view.state;
+    const powerCooling =
+      mind.lastPowerAttack !== undefined &&
+      asked - mind.lastPowerAttack < this.#settings.powerAttackCoolDown;
+    void this.#options.host
+      .attack(reference, 'ActionRightAttack', { powerCooling })
+      .then((began) => {
+        if (began) {
+          mind.lastAttack = asked;
+          if (state.current?.power === true) mind.lastPowerAttack = asked;
+          return undefined;
+        }
+        if (this.#random() >= special) return undefined;
+        return this.#options.host.attack(reference, 'ActionRightPowerAttack');
+      });
+    return 'success';
   }
 
   /** How fast its target backs off from it (units per second; sampled while it blocks). */
@@ -2930,7 +2992,12 @@ export class ActorCombatAi {
           flanking: (f) => (style(f).flags & CombatStyleFlag.flanking) !== 0,
           farAway: (f) => f.distance > f.reach + CHASE_BEYOND,
           beyondRange: (f) => f.distance > f.range,
-          outOfRange: (f) => f.distance > this.#close(f).range,
+          // Beyond its range, its target's place fCombatAnticipateTime ahead (a place of its
+          // own it holds nearer keeps it in range: the target locations' Reposition).
+          outOfRange: (f) => {
+            const close = this.#close(f);
+            return flat(f.feet, close.moving.anticipated) > close.range;
+          },
           outOfPosition: (f) =>
             this.#locations.outOfPosition(
               f.mind.reference,
@@ -3244,10 +3311,14 @@ export class ActorCombatAi {
             f.mind.side = this.#random() < 0.5 ? -1 : 1;
             return 'success';
           },
-          // An attack plays where it stands: its controller does not move it meanwhile (its
-          // clip's own root motion carries it: a forward power attack's lunge).
+          // A power attack or a bash plays where it stands: its controller does not move it
+          // meanwhile (its clip's own root motion carries it: a forward power attack's lunge). A
+          // plain attack has no move of its own (the set's flag; attackReaches reckons it by its
+          // own speed): it goes on with its way, swinging as it closes in.
           driveRun: (f) => {
-            if (!ranged(f) && attacking(f.view.state)) {
+            const current = f.view.state.current;
+            const animated = current !== undefined && (current.power || current.bash);
+            if (!ranged(f) && attacking(f.view.state) && animated) {
               movers.request(f.mind.reference, { ...this.#standing(f.face), rootMotion: true });
             } else this.#driveRun(f.mind, f.feet, f.face, ranged(f) ? 0 : f.distance);
             return 'success';
@@ -3362,15 +3433,21 @@ export class ActorCombatAi {
               this.#random,
               this.#settings,
             );
-            run.blackboard.set('attack', AttackPick[choice]);
-            return choice === 'none' ? 'failure' : 'success';
+            // The attack's node asks its own reach (#meleeAttack); the others want it near.
+            const near =
+              choice === 'attack' && gear?.attackLunge !== undefined
+                ? true
+                : this.#inReach(f, f.mind.run !== undefined || f.mind.chase !== undefined);
+            const picked = near ? choice : 'none';
+            run.blackboard.set('attack', AttackPick[picked]);
+            return picked === 'none' ? 'failure' : 'success';
           },
-          attack: (f) => this.#melee(f, 'ActionRightAttack', 'Attack'),
-          powerAttack: (f) => this.#melee(f, 'ActionRightPowerAttack', 'PowerAttack'),
+          attack: (f) => this.#meleeAttack(f),
           // Blocking, its graph turns an attack into a bash.
           bash: (f) => this.#melee(f, 'ActionRightAttack', 'Bash'),
           powerBash: (f) => this.#melee(f, 'ActionRightPowerAttack', 'Bash'),
-          // TODO(M13): the special attack's own attack data (here its power attack).
+          // The Special Attack has no attack data: the action's idle within its reach (an
+          // NPC's tree under ActionRightPowerAttack holds its kill moves and paired attacks).
           specialAttack: (f) => this.#melee(f, 'ActionRightPowerAttack', 'PowerAttack'),
           // The offensive bash: its block raised first, then the bash out of it (its graph
           // turns the attack into a bash); the block goes down after (the Block subtree's block

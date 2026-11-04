@@ -53,12 +53,15 @@ import type { WeaponStats } from '../scripting/runtime/equipment-engine.ts';
 import {
   AttackSet,
   attackEventKind,
+  attackReaches,
   chooseAttackData,
+  type AttackReachContext,
   DEFAULT_ATTACK,
   powerAttackDefault,
   rotatesThrough,
 } from '../gameplay/combat/attacks.ts';
 import type { AttackData } from '../ai/race-combat-records.ts';
+import type { AnimationDataLibrary, AttackHit } from '../animation/animation-data-library.ts';
 import { bleedoutRecovered, bleedoutRegain } from '../gameplay/combat/bleedout.ts';
 import { criticalHitChance, type AttackKind } from '../gameplay/combat/combat-hooks.ts';
 import { SOUL_CAPACITY } from '../gameplay/crafting.ts';
@@ -188,6 +191,8 @@ const BOSS_MUSIC = 'MUSCombatBoss';
 const LEVITATION_TOGGLE = 'LevitationToggle';
 const LEVITATION_TOGGLE_MOVING = 'LevitationToggleMoving';
 const BODY_RADIUS = 20;
+/** How long the attack before a chained one may still raise its end (its clip blending out). */
+const CHAIN_BLEND_SECONDS = 0.25;
 const BODY_HEIGHT = 128;
 /** The chest a strike or shot comes from and aims at (of the height). */
 const CHEST = 0.75;
@@ -249,6 +254,13 @@ const PAIRED_PREFIX = 'pa_';
 const MARK_SETTLE = 0.25;
 
 /** One who fights: an actor of the stage or the player. */
+/** An attack its melee attack node may pick: its data, its clip's hit, whether it is a power attack. */
+interface MeleeOption {
+  readonly data: AttackData;
+  readonly hit: AttackHit;
+  readonly power: boolean;
+}
+
 interface Fighter {
   readonly reference: number;
   readonly player: boolean;
@@ -336,6 +348,14 @@ interface Fighter {
   leftHand: { readonly body: PlacedActor | undefined; readonly kind: string } | undefined;
   /** When each of its attack data (by event) has recovered from its last use (the clock). */
   readonly attackReady: Map<string, number>;
+  /** Its melee attack node's options, for what it holds (#meleeOptions). */
+  meleeOptions:
+    | {
+        readonly key: string;
+        readonly gear: Gear;
+        readonly options: readonly MeleeOption[];
+      }
+    | undefined;
   /**
    * Attacks its graph took (past their first answer: one refused is none), arrows it loosed
    * and hits it dealt (the QA monitors count them).
@@ -515,6 +535,9 @@ export class ActorCombat implements CombatBridge {
   readonly #impacts: CombatImpacts;
   readonly #projectiles: CombatProjectiles;
   #settings: CombatSettings = COMBAT_DEFAULTS;
+  /** The animation data, once read: which attacks an actor's set has, and their clips' moves. */
+  #animationLibrary: AnimationDataLibrary | undefined;
+  #animationLibraryAsked = false;
   /** The gameplay impulses' settings (a blow's knock: src/gameplay/impulses.ts). */
   #impulses = IMPULSE_DEFAULTS;
   #settingsRead = false;
@@ -1072,7 +1095,11 @@ export class ActorCombat implements CombatBridge {
    * DrawWeapon idles). Power attacks and bashes cost stamina (the skill progression's costs);
    * without stamina a power attack is a plain one. Whether something played.
    */
-  async attack(reference: number, action: string): Promise<boolean> {
+  async attack(
+    reference: number,
+    action: string,
+    melee?: { readonly powerCooling: boolean },
+  ): Promise<boolean> {
     const fighter = this.#fighters.get(reference);
     const runtime = this.#options.session.scriptsReady;
     if (!fighter || !runtime || !canAct(fighter.state)) return false;
@@ -1106,21 +1133,22 @@ export class ActorCombat implements CombatBridge {
     // draws under the attack actions too, as they should.)
     const creature =
       !fighter.player && !(fighter.body?.behavior?.declares('WeapEquip_Out') ?? true);
-    const event =
-      (await this.#act(fighter, action, target, (idle) => {
-        const lower = idle.toLowerCase();
-        return (
-          !creature ||
-          !attacks ||
-          attacks.size === 0 ||
-          attacks.of(idle) !== undefined ||
-          lower.startsWith(PAIRED_PREFIX) ||
-          lower === 'weapequip' ||
-          lower === 'blockstart' ||
-          lower.includes('attack') ||
-          lower.includes('bash')
-        );
-      })) ?? this.#creatureAttack(fighter, action);
+    const event = melee
+      ? await this.#meleeAttack(fighter, target, melee.powerCooling)
+      : ((await this.#act(fighter, action, target, (idle) => {
+          const lower = idle.toLowerCase();
+          return (
+            !creature ||
+            !attacks ||
+            attacks.size === 0 ||
+            attacks.of(idle) !== undefined ||
+            lower.startsWith(PAIRED_PREFIX) ||
+            lower === 'weapequip' ||
+            lower === 'blockstart' ||
+            lower.includes('attack') ||
+            lower.includes('bash')
+          );
+        })) ?? (creature ? this.#creatureAttack(fighter, action) : undefined));
     if (event === undefined) return false;
     const lower = event.toLowerCase();
     if (lower === 'weapequip') {
@@ -2145,6 +2173,17 @@ export class ActorCombat implements CombatBridge {
     // still moves the models.
     const strikes = !fighter.player || (this.#play?.player.pov === 'first') === firstPerson;
     const answer = handler?.toLowerCase();
+    // The attack before a chained one, its clip still blending out, raises its attackStop just
+    // after the new attack began: that ended the new one, whose hit frame then struck nothing
+    // (every second swing of a fight). Only the attack it belongs to may end by it.
+    if (
+      answer === 'attackstophandler' &&
+      fighter.state.attack === AttackState.draw &&
+      fighter.attackSince !== undefined &&
+      this.#clock - fighter.attackSince < CHAIN_BLEND_SECONDS
+    ) {
+      return;
+    }
     // Only the striking graph's release lets the arrow go: the other's (raised first, some
     // frames) would take the nocked arrow and the shot with it.
     const released = answer === 'arrowreleasehandler';
@@ -3808,6 +3847,7 @@ export class ActorCombat implements CombatBridge {
       right.weaponType >= WeaponType.twoHandSword &&
       right.weaponType !== WeaponType.staff;
     let powerChance = 0;
+    let plainBash = 0;
     let canBash = false;
     // The attack data's strike angle and recovery times (its normal and power attacks').
     let strikeAngle = 0;
@@ -3815,15 +3855,23 @@ export class ActorCombat implements CombatBridge {
     let powerRecoveryTime = 0;
     for (const attack of gear?.attacks.all() ?? []) {
       const kind = attackEventKind(attack.event, attack);
-      if (kind?.bash) canBash = true;
-      else if (kind?.power) {
-        powerChance = Math.max(powerChance, attack.attackChance);
+      if (kind?.bash) {
+        canBash = true;
+        if (kind.power) powerChance = Math.max(powerChance, attack.attackChance);
+        else plainBash = Math.max(plainBash, attack.attackChance);
+      } else if (kind?.power) {
         powerRecoveryTime = Math.max(powerRecoveryTime, attack.recoveryTime);
       } else if (kind?.left !== true) {
         strikeAngle = Math.max(strikeAngle, attack.strikeAngle);
         recoveryTime = Math.max(recoveryTime, attack.recoveryTime);
       }
     }
+    // How far its clips take it to a hit, at most (those of its set with a move of their own).
+    const melee = fighter.player ? [] : this.#meleeOptions(fighter);
+    const attackLunge =
+      melee.length === 0
+        ? undefined
+        : Math.max(...melee.map(({ hit }) => (hit.motion ? Math.hypot(...hit.motion) : 0)));
     return {
       reference: fighter.reference,
       player: fighter.player,
@@ -3848,7 +3896,8 @@ export class ActorCombat implements CombatBridge {
         shotDamage: gear.right.shotDamage,
         range: gear.projectile?.range ?? 0,
         canBash,
-        powerChance,
+        powerChance: powerChance === 0 ? 0 : powerChance / (powerChance + plainBash),
+        ...(attackLunge === undefined ? {} : { attackLunge }),
         speed: gear.rightRecord?.speed ?? 1,
         leftWeapon: gear.left.weapon !== undefined && gear.shield === undefined && !twoHanded,
         raceFlags: gear.raceFlags,
@@ -4104,6 +4153,137 @@ export class ActorCombat implements CombatBridge {
     return chosen.event;
   }
 
+  /**
+   * The attacks its animation set offers it now, each with its hit (observed in the original: the
+   * right hand's attack data, neither bash nor left, whose event the one set of what it holds has
+   * a clip with a hit frame for); read once for what it holds. Empty: no set names them, or the
+   * animation data is not there yet.
+   */
+  #meleeOptions(fighter: Fighter): readonly MeleeOption[] {
+    const library = this.#animationLibrary;
+    const project = fighter.body && library?.project(fighter.body.look.behavior ?? '');
+    const types = fighter.handTypes;
+    if (!project || !fighter.gear) {
+      if (!library) this.#loadAnimationLibrary();
+      return [];
+    }
+    const key = `${types?.right ?? 0},${types?.left ?? 0}`;
+    if (fighter.meleeOptions?.key === key && fighter.meleeOptions.gear === fighter.gear) {
+      return fighter.meleeOptions.options;
+    }
+    const attacks = project.equippedAttacks({
+      iRightHandType: types?.right ?? 0,
+      iLeftHandType: types?.left ?? 0,
+    });
+    const options: MeleeOption[] = [];
+    for (const data of fighter.gear.attacks.all()) {
+      const kind = attackEventKind(data.event, data);
+      if (!kind || kind.bash || kind.left || data.attackChance <= 0) continue;
+      const wanted = data.event.toLowerCase();
+      const attack = attacks.find((candidate) => candidate.event.toLowerCase() === wanted);
+      const hit = attack && project.attackHit(attack);
+      if (hit && hit.hitTime > 0) options.push({ data, hit, power: kind.power });
+    }
+    fighter.meleeOptions = { key, gear: fighter.gear, options };
+    return options;
+  }
+
+  #loadAnimationLibrary(): void {
+    if (this.#animationLibraryAsked) return;
+    this.#animationLibraryAsked = true;
+    void this.#options.session.animation.animationData().then(
+      (library) => {
+        this.#animationLibrary = library;
+      },
+      (error: unknown) => {
+        this.#warn(`the animation data for attacks: ${describe(error)}`);
+      },
+    );
+  }
+
+  /**
+   * The melee attack node's attack (observed in the original; docs/ai.md, "Which attack"): one of
+   * its options by chooseAttackData, its target in reach of it (attackReaches), a power attack
+   * while it has stamina and past its cool-down; the event goes to its graph, its recovery time
+   * runs from now. Undefined: none, this time.
+   */
+  async #meleeAttack(
+    fighter: Fighter,
+    target: number | undefined,
+    powerCooling: boolean,
+  ): Promise<string | undefined> {
+    const runtime = this.#options.session.scriptsReady;
+    const other = target === undefined ? undefined : this.#fighters.get(target);
+    const feet = this.#feet(fighter);
+    const there = other && this.#feet(other);
+    if (!runtime || !other || !feet || !there) return undefined;
+    const stamina = await runtime.progression.canPowerAttack(fighter.reference);
+    const options = this.#meleeOptions(fighter).filter(
+      (option) => !option.power || (stamina && !powerCooling),
+    );
+    const graphs = this.#graphs(fighter);
+    const usable = options.filter(
+      (option) =>
+        !fighter.deadAttacks.has(option.data.event.toLowerCase()) &&
+        graphs.some(
+          (graph) => graph.declares(option.data.event) && graph.wouldHandle(option.data.event),
+        ),
+    );
+    const heading = this.#heading(fighter);
+    const motion = (who: Fighter): readonly [number, number] => {
+      const moved = who.player
+        ? this.#play?.player.character.velocity
+        : this.#options.movers.motion(who.reference)?.velocity;
+      return moved ? [moved[0], moved[1]] : [0, 0];
+    };
+    const body = (who: Fighter, at: Vec3) => ({ feet: at, velocity: motion(who) });
+    const targetBody = body(other, there);
+    const [goesX, goesY] = targetBody.velocity;
+    const goingAway =
+      Math.hypot(goesX, goesY) > 1e-4 &&
+      (feet[0] - there[0]) * goesX + (feet[1] - there[1]) * goesY < 0;
+    const context: AttackReachContext = {
+      attacker: body(fighter, feet),
+      heading,
+      target: targetBody,
+      targetHeld: other.player && !goingAway,
+      reach: this.#reach(fighter, false),
+      extents: this.#size(fighter).radius,
+      clearTo: (point) => this.#options.movers.straightReach(fighter.reference, point),
+      settings: this.#settings,
+    };
+    const style = this.#brain.styleOf(fighter.reference)?.melee;
+    const targetState = other.state;
+    const chosen = chooseAttackData(
+      usable.map((option) => option.data),
+      {
+        targetStaggered: targetState.staggered || targetState.recoiling,
+        targetBlockingFacing:
+          targetState.blocking &&
+          blockCovers(there, this.#heading(other), feet, this.#settings.combatHitConeAngle),
+        targetDead: targetState.life === LifeState.dead,
+        bearing: turnBetween(heading, headingTo(feet, there)),
+        attackStaggeredMult: style?.attackStaggeredMult ?? 1,
+        powerAttackStaggeredMult: style?.powerAttackStaggeredMult ?? 1,
+        powerAttackBlockingMult: style?.powerAttackBlockingMult ?? 1,
+        strikeAngleMult: this.#settings.attackStrikeAngleMult,
+        deadConeMult: this.#settings.deadActorHitConeMult,
+        recovering: (attack) =>
+          (fighter.attackReady.get(attack.event.toLowerCase()) ?? -Infinity) > this.#clock,
+        reaches: (attack) => {
+          const option = usable.find((entry) => entry.data === attack);
+          return option !== undefined && attackReaches(attack, option.hit, context);
+        },
+      },
+    );
+    if (!chosen) return undefined;
+    let taken = false;
+    for (const graph of graphs) taken = graph.sendEvent(chosen.event) || taken;
+    if (!taken) return undefined;
+    fighter.attackReady.set(chosen.event.toLowerCase(), this.#clock + chosen.recoveryTime);
+    return chosen.event;
+  }
+
   #graphKey(project: string | undefined): Promise<string | undefined> {
     if (project === undefined) return Promise.resolve(undefined);
     let entry = this.#graphKeys.get(project);
@@ -4215,6 +4395,9 @@ export class ActorCombat implements CombatBridge {
       const flown = this.#options.flight?.()?.shape(fighter.reference);
       if (flown) return flown;
     }
+    // The player's controller as an NPC's (its skeleton's bound): the same reach between them.
+    const shape = fighter.player ? this.#play?.player.character.shape : undefined;
+    if (shape) return { radius: shape.radius, height: shape.height };
     return { radius: BODY_RADIUS * scale, height: BODY_HEIGHT * scale };
   }
 
@@ -5015,6 +5198,7 @@ function newFighter(reference: number, player: boolean): Fighter {
     heldSince: undefined,
     inHand: false,
     handTypes: undefined,
+    meleeOptions: undefined,
     drawSounded: false,
     down: 0,
     pairedFor: 0,

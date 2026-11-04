@@ -257,6 +257,8 @@ export interface CombatAiSettings {
    * until this long after it chose it (observed in the original).
    */
   readonly attackAnimationDrivenDelayTime: number;
+  /** fCombatAttackCheckTargetRangeDistance: the attack node looks at all this far past its reach. */
+  readonly attackCheckTargetRangeDistance: number;
   /** fCombatAttackStrikeAngleMult / MovingStrikeAngleMult: × an attack's angle (moving: × too). */
   readonly attackStrikeAngleMult: number;
   readonly attackMovingStrikeAngleMult: number;
@@ -403,6 +405,7 @@ const SETTINGS: readonly (readonly [keyof CombatAiSettings, string | undefined, 
   ['rangedAttackMaximumHoldTime', 'fCombatRangedAttackMaximumHoldTime', 10],
   ['rangedProjectileFiringArc', 'fCombatRangedProjectileFiringArc', 30],
   ['attackAnimationDrivenDelayTime', 'fCombatAttackAnimationDrivenDelayTime', 1.5],
+  ['attackCheckTargetRangeDistance', 'fCombatAttackCheckTargetRangeDistance', 512],
   ['attackStrikeAngleMult', 'fCombatAttackStrikeAngleMult', 0.67],
   ['attackMovingStrikeAngleMult', 'fCombatAttackMovingStrikeAngleMult', 1.5],
   ['blockStartDistanceMin', 'fCombatBlockStartDistanceMin', 32],

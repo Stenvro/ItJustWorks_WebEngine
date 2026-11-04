@@ -141,7 +141,6 @@ export const COMBAT_ACTIONS = [
   // Melee.
   'chooseAttack',
   'attack',
-  'powerAttack',
   'bash',
   'powerBash',
   'specialAttack',
@@ -183,11 +182,10 @@ export type CombatAction = (typeof COMBAT_ACTIONS)[number];
 export const AttackPick = {
   none: -1,
   attack: 0,
-  power: 1,
-  bash: 2,
-  powerBash: 3,
-  special: 4,
-  offensiveBash: 5,
+  bash: 1,
+  powerBash: 2,
+  special: 3,
+  offensiveBash: 4,
 } as const;
 
 const v = (value: CombatValue): Expr => ({ value });
@@ -247,7 +245,6 @@ function melee(): NodeSpec {
         choose: { data: 'attack' },
         children: [
           act('attack'),
-          act('powerAttack'),
           act('bash'),
           act('powerBash'),
           act('specialAttack'),

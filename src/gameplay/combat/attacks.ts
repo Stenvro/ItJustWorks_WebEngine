@@ -122,6 +122,8 @@ export interface AttackChoiceContext {
   readonly deadConeMult: number;
   /** Whether an attack is still recovering from its last use (its recovery time). */
   readonly recovering: (attack: AttackData) => boolean;
+  /** Whether its target is in reach of this attack (attackReaches); none: not asked. */
+  readonly reaches?: (attack: AttackData) => boolean;
 }
 
 /**
@@ -174,9 +176,117 @@ export function chooseAttackData(
       (context.targetDead ? context.deadConeMult : 1);
     const off = Math.abs(angleBetween(context.bearing, (entry.attack.attackAngle * Math.PI) / 180));
     if ((off * 180) / Math.PI > cone) continue;
+    if (context.reaches && !context.reaches(entry.attack)) continue;
     return entry.attack;
   }
   return undefined;
+}
+
+/** An actor's feet and its velocity (units a second) as an attack's reach is reckoned. */
+export interface AttackBody {
+  readonly feet: readonly [number, number, number];
+  readonly velocity: readonly [number, number];
+}
+
+/** What an attack's reach is reckoned from besides the two actors. */
+export interface AttackReachContext {
+  readonly attacker: AttackBody;
+  /** The attacker's facing (compass, radians). */
+  readonly heading: number;
+  readonly target: AttackBody;
+  /** The target is the player and does not go away from the attacker: its motion counts less. */
+  readonly targetHeld: boolean;
+  /** Its weapon's reach, and its own extents (its controller's radius): from its centre. */
+  readonly reach: number;
+  readonly extents: number;
+  /** How far its way is clear towards a point its clip takes it to (none: not asked). */
+  readonly clearTo?: (point: readonly [number, number, number]) => number;
+  readonly settings: {
+    readonly attackStationaryAttackDistance: number;
+    readonly attackMovingAttackDistance: number;
+    readonly attackMovingAttackReachMult: number;
+    readonly attackMovingStrikeAngleMult: number;
+    readonly attackAllowedOverrunDistance: number;
+    readonly attackPlayerAnticipateMult: number;
+  };
+}
+
+/**
+ * Whether an attack's target will be in its reach at its hit frame (observed in the original; the
+ * melee attack node's check, in our words). Its clip's move by then, or for a flagged attack
+ * (attackStart) its own speed by then, is its lunge: the target must first lie within the lunge,
+ * its reach, its extents and how far the target goes by then. Then where the attacker will be
+ * (a lunge of more than fCombatAttackStationaryAttackDistance: its clip's offset turned by its
+ * facing, its way clear for one past fCombatAttackMovingAttackDistance, short of its end by the
+ * allowed overrun; flagged: its velocity on) against where the target will be (the player, unless
+ * going away from it: fCombatAttackPlayerAnticipateMult of that), its reach ×
+ * fCombatAttackMovingAttackReachMult if it moved past fCombatAttackMovingAttackDistance, plus its
+ * extents. One moving that far must also have its target within the strike angle ×
+ * fCombatAttackMovingStrikeAngleMult from there. So a forward power attack, whose clip goes
+ * hundreds of units, is an attack from afar and no attack at arm's length.
+ * TODO(M13): the inferred curve of the way that must be clear below twice the overrun.
+ */
+export function attackReaches(
+  attack: AttackData,
+  hit: {
+    readonly hitTime: number;
+    readonly motion: readonly [number, number, number] | undefined;
+  },
+  context: AttackReachContext,
+): boolean {
+  const { attacker, target, settings } = context;
+  const time = hit.hitTime;
+  const lunge = hit.motion
+    ? Math.hypot(hit.motion[0], hit.motion[1], hit.motion[2])
+    : Math.hypot(attacker.velocity[0], attacker.velocity[1]) * time;
+  const targetGoes = Math.hypot(target.velocity[0], target.velocity[1]) * time;
+  const apart = flatDistance(attacker.feet, target.feet);
+  if (apart > lunge + context.reach + context.extents + targetGoes) return false;
+  let at: readonly [number, number, number] = attacker.feet;
+  if (hit.motion) {
+    if (lunge > settings.attackStationaryAttackDistance) {
+      const sin = Math.sin(context.heading);
+      const cos = Math.cos(context.heading);
+      at = [
+        attacker.feet[0] + hit.motion[0] * cos + hit.motion[1] * sin,
+        attacker.feet[1] - hit.motion[0] * sin + hit.motion[1] * cos,
+        attacker.feet[2] + hit.motion[2],
+      ];
+      if (lunge > settings.attackMovingAttackDistance && context.clearTo) {
+        const overrun = settings.attackAllowedOverrunDistance;
+        const least = settings.attackMovingAttackDistance;
+        const wanted =
+          lunge > overrun * 2
+            ? lunge - overrun
+            : least + ((lunge - least) * (overrun - least)) / (overrun * 2 - least);
+        if (context.clearTo(at) < wanted) return false;
+      }
+    }
+  } else {
+    at = [
+      attacker.feet[0] + attacker.velocity[0] * time,
+      attacker.feet[1] + attacker.velocity[1] * time,
+      attacker.feet[2],
+    ];
+  }
+  const ahead = context.targetHeld ? time * settings.attackPlayerAnticipateMult : time;
+  const there: readonly [number, number, number] = [
+    target.feet[0] + target.velocity[0] * ahead,
+    target.feet[1] + target.velocity[1] * ahead,
+    target.feet[2],
+  ];
+  const moves = flatDistance(at, attacker.feet) > settings.attackMovingAttackDistance;
+  const limit =
+    (moves ? settings.attackMovingAttackReachMult : 1) * context.reach + context.extents;
+  if (flatDistance(at, there) > limit) return false;
+  if (!moves) return true;
+  const bearing = angleBetween(context.heading, Math.atan2(there[0] - at[0], there[1] - at[1]));
+  const off = Math.abs(angleBetween(bearing, (attack.attackAngle * Math.PI) / 180));
+  return (off * 180) / Math.PI <= attack.strikeAngle * settings.attackMovingStrikeAngleMult;
+}
+
+function flatDistance(a: readonly number[], b: readonly number[]): number {
+  return Math.hypot((a[0] ?? 0) - (b[0] ?? 0), (a[1] ?? 0) - (b[1] ?? 0));
 }
 
 /** The signed angle from a to b (radians, within ±π). */

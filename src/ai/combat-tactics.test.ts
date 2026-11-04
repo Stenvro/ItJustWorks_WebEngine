@@ -411,25 +411,15 @@ describe('combat tactics: attacks, blocks, threats', () => {
   };
   const brute = style([0.8, 0.2, 1, 1, 1, 1, 1, 1, 1, 0.2], [2, 1, 0.5, 2, 1, 2, 1, 0.1]);
 
-  it('attacks by its offensive mult on fCombatAttackChanceMin .. Max, power attacks by its data', () => {
+  it('attacks by its offensive mult on fCombatAttackChanceMin .. Max', () => {
     // Offensive 0.8: 0.05 + 0.95 × 0.8 = 0.81.
     expect(attackChance(brute, attack, settings)).toBeCloseTo(0.81);
     expect(chooseAttack(brute, attack, randoms(0.9), settings)).toBe('none');
     expect(chooseAttack(brute, attack, randoms(0.5, 0.9), settings)).toBe('attack');
-    expect(chooseAttack(brute, attack, randoms(0.5, 0.2), settings)).toBe('power');
     // Offensive 0 still attacks at fCombatAttackChanceMin 0.05.
     const timid = style([0, 0.5, 1, 1, 1, 1, 1, 1, 1, 0.2]);
     expect(chooseAttack(timid, attack, randoms(0.06), settings)).toBe('none');
     expect(chooseAttack(timid, attack, randoms(0.04, 0.9), settings)).toBe('attack');
-  });
-
-  it('power attacks no sooner than fPowerAttackCoolDownTime after its last', () => {
-    const cooling = { ...settings, powerAttackCoolDown: 3 };
-    const since = (seconds: number) => ({ ...attack, sinceLastPowerAttack: seconds });
-    expect(chooseAttack(brute, since(2), randoms(0.5, 0.2), cooling)).toBe('attack');
-    expect(chooseAttack(brute, since(3), randoms(0.5, 0.2), cooling)).toBe('power');
-    // Skyrim.esm's 0: no cool-down.
-    expect(chooseAttack(brute, since(0), randoms(0.5, 0.2), settings)).toBe('power');
   });
 
   it('attacks more the longer since its last attack, less in a crowd on the player', () => {
