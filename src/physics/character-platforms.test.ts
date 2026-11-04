@@ -246,6 +246,37 @@ describe('the jump and the step velocity', () => {
     expect(landed).toBe(true);
   });
 
+  it('is not put through a wall by a leaf that swings over it', () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    platform(physics, 'fixed');
+    // A thin wall just beside it, its face at x 18 (a shape of radius 14.42 stands at x 0).
+    const wall = physics.world.createRigidBody(
+      RAPIER.RigidBodyDesc.fixed().setTranslation(h(22), 0, h(100)),
+    );
+    physics.register(
+      physics.world.createCollider(RAPIER.ColliderDesc.cuboid(h(4), h(200), h(100)), wall),
+      Layer.static,
+      { reference: 2, kind: 'object' },
+    );
+    // A leaf coming from the other side, far quicker than the shape is put out of it.
+    const leaf = physics.world.createRigidBody(
+      RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(h(-40), 0, h(100)),
+    );
+    physics.register(
+      physics.world.createCollider(RAPIER.ColliderDesc.cuboid(h(4), h(50), h(100)), leaf),
+      Layer.static,
+      { reference: 3, kind: 'object' },
+    );
+    physics.step(1 / 60);
+    const character = settled(physics, [0, 0, 1]);
+    for (let x = -40; x < 18; x += 8) {
+      leaf.setNextKinematicTranslation({ x: h(x), y: 0, z: h(100) });
+      character.step(1 / 60);
+      physics.step(1 / 60);
+      expect(character.feet[0] + 14.42).toBeLessThanOrEqual(18.5);
+    }
+  });
+
   it('measures its velocity over its last step, not over a frame', () => {
     const physics = new PhysicsWorld(matrix, GRAVITY);
     platform(physics, 'fixed');
