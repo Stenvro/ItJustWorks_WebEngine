@@ -286,6 +286,8 @@ export interface FactionState {
   infamy?: number;
   infamyViolent?: number;
   playerEnemy?: boolean;
+  /** When SetPlayerEnemy set it (game hours): iCrimeEnemyCoolDownTimer later it ends. */
+  playerEnemySince?: number;
   playerExpelled?: boolean;
   /** The player resisted its guards' arrest (SetPlayerResistingArrest): they attack. */
   resisting?: boolean;

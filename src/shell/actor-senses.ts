@@ -17,6 +17,7 @@
 // `warn`, and Detections' `witness` / `offence` (the player seen stealing, trespassing, ...).
 
 import {
+  alarmReaches,
   ambushOf,
   angleOff,
   detectionLevel,
@@ -169,8 +170,6 @@ interface Body {
 
 /** An actor's profile is read again this often (seconds). */
 const PROFILE_SECONDS = 3;
-/** The light on an actor is measured again this often (seconds). */
-const LIGHT_SECONDS = 0.5;
 /** A pair's sight is kept this long (seconds). */
 const SIGHT_SECONDS = 0.25;
 /** The pairs scripts watch (RegisterForLOS) are looked at this often (seconds). */
@@ -725,18 +724,22 @@ export class ActorSenses implements ScriptSenses {
     return hit.owner?.reference === target && hit.owner.kind !== 'landscape';
   }
 
-  /** The light level on a body (measured every LIGHT_SECONDS). */
+  /** The light level on a body (worked out every fLightRecalcTimer, the player's every fLightRecalcTimerPlayer). */
   #lightOn(body: Body): number {
     const kept = this.#lights.get(body.reference);
-    if (kept && this.#clock - kept.at < LIGHT_SECONDS) return kept.level;
+    const settings = this.#settings;
+    const timer =
+      body.reference === PLAYER_REF ? settings.lightRecalcTimerPlayer : settings.lightRecalcTimer;
+    if (kept && this.#clock - kept.at < timer) return kept.level;
     const probe = this.#options.light?.(body.chest);
     let level = 0;
     let ambient = 0;
     if (probe) {
-      // Inside the cell's directional light lights everything; outside only where nothing
-      // stands between the sun and the actor.
+      // Observed in the original: only the player's light asks whether anything stands between
+      // the sun and them, outside; another actor's takes the sun as it is.
       const [dx, dy, dz] = probe.sunDirection;
       const sunlit =
+        body.reference !== PLAYER_REF ||
         probe.interior ||
         (this.#ray(
           body.chest,
@@ -1071,17 +1074,18 @@ export class ActorSenses implements ScriptSenses {
     if (place) this.noise(place, owner, soundLevel);
   }
 
+  /** An alarm is raised: returns who hears it. */
   alarm(
     source: number,
     criminal: number | undefined,
     act: 'attack' | 'trespass' | 'steal' | 'stop',
-  ): void {
+  ): readonly number[] {
     if (act === 'stop') {
       this.detections.stopAlarm(source);
-      return;
+      return [];
     }
     const runtime = this.#options.session.scriptsReady;
-    if (!runtime) return;
+    if (!runtime) return [];
     const bodies = this.#bodies();
     const at = bodies.get(source)?.feet ?? this.#placementOf(runtime, source);
     // Observed in the original: the actors of the criminal's process level hear it within
@@ -1095,19 +1099,22 @@ export class ActorSenses implements ScriptSenses {
     if (at && by) {
       for (const body of bodies.values()) {
         if (body.reference === PLAYER_REF || body.reference === source) continue;
-        if (distance(body.feet, by) <= this.#settings.alarmDistance) hearers.push(body.reference);
+        if (alarmReaches(this.#settings, true, distance(body.feet, by))) {
+          hearers.push(body.reference);
+        }
       }
       for (const staged of this.#options.actors()) {
         const reference = staged.reference;
         if (bodies.has(reference) || reference === source || staged.dead) continue;
         if (!this.#options.movers.runsAi(reference)) continue;
-        if (distance(staged.position, at) <= this.#settings.lowAlarmDistance) {
+        if (alarmReaches(this.#settings, false, distance(staged.position, at))) {
           hearers.push(reference);
         }
       }
     }
     const crime: WitnessedAct = act;
     this.detections.alarm(source, hearers, this.#clock, criminal, crime);
+    return hearers;
   }
 
   startSneaking(actor: number): void {

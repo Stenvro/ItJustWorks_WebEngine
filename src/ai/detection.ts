@@ -155,6 +155,9 @@ export interface DetectionSettings {
   readonly searchLookTime: number;
   /** fCombatSearchInvestigateTime: a searcher looks round this long each time (seconds). */
   readonly searchInvestigateTime: number;
+  /** fLightRecalcTimer, fLightRecalcTimerPlayer: how often an actor's light is worked out. */
+  readonly lightRecalcTimer: number;
+  readonly lightRecalcTimerPlayer: number;
   /** iCrimeAlarmRecDistance: an alarm reaches the actors this near (units). */
   readonly alarmDistance: number;
 }
@@ -236,6 +239,8 @@ const SETTINGS: readonly (readonly [
   ['searchLookTime', 'fCombatSearchLookTime', 1],
   ['searchInvestigateTime', 'fCombatSearchInvestigateTime', 2.5],
   ['alarmDistance', 'iCrimeAlarmRecDistance', 4000],
+  ['lightRecalcTimer', 'fLightRecalcTimer', 2],
+  ['lightRecalcTimerPlayer', 'fLightRecalcTimerPlayer', 0.5],
 ];
 
 /** fSneakDetectionSize* by RACE DATA size (small, medium, large, extra large). */
@@ -440,12 +445,27 @@ export interface DetectionLevel {
 export const AMBUSH_PACKAGE_TYPE = 9;
 
 /**
+ * Whether an alarm reaches an actor. Observed in the original: an actor of the criminal's process
+ * level within iCrimeAlarmRecDistance of the criminal; one of another level within
+ * iCrimeAlarmLowRecDistance of one who raised it.
+ */
+export function alarmReaches(
+  settings: Pick<DetectionSettings, 'alarmDistance' | 'lowAlarmDistance'>,
+  sameLevel: boolean,
+  apart: number,
+): boolean {
+  return apart <= (sameLevel ? settings.alarmDistance : settings.lowAlarmDistance);
+}
+
+/**
  * How an observer's ambush weighs a target (Observer.ambush): an observer whose running package
  * is an Ambush waits for whom it would fight ('target': fSneakAmbushTargetMod, heard without a
  * line of sight too), and is less watchful of anyone else ('other': fSneakAmbushNonTargetMod).
  * Skyrim.esm has no package of that type (its ambushes are Sleep and Sit packages in ambush
- * furniture, sprung by masterAmbushScript); plugins may. TODO(M13): the Ambush package's own
- * target (TESAmbushPackageData) is not read; whom it is hostile to stands in for it.
+ * furniture, sprung by masterAmbushScript); plugins may. Observed in the original: the running
+ * package is asked whether the target is its own. TODO(M13): what an Ambush package's data
+ * (TESAmbushPackageData) names is not read, no plugin of the load order having one; whom it is
+ * hostile to stands in for it.
  */
 export function ambushOf(packageType: number | undefined, hostile: boolean): Observer['ambush'] {
   if (packageType !== AMBUSH_PACKAGE_TYPE) return undefined;

@@ -79,10 +79,8 @@ Round 3 built down (the race flags' readers: src/ai/race-ai-flags.ts):
   enter's way within it (actor-furniture.ts).
 - fAIForceGreetingTimer (3): a force greeter at the player whose greeting could not begin tries
   again after it (procedure-runs.ts forceGreet).
-- fAIInDialogueModewithPlayerTimer (60): a greeting holds its actor at most this long, beside
-  its distance twin (talk.ts greetingHolds).
 
-The last four are their names' plain readings (TODO(M13)). Left open: IDLM Loose Only (CommonLibSSE
+The last three are their names' plain readings (TODO(M13)). Left open: IDLM Loose Only (CommonLibSSE
 names it kLooseOnly, xEdit only for a later game; 72 of 89 markers; its meaning is not
 documented), and fTrackSpeed, fTrackDeadZoneXY / Z: the earlier game's head tracking set (it had
 eleven fTrack\* settings; Skyrim.esm keeps three); this game's head tracking reads fHeadTrack\*.
@@ -182,7 +180,7 @@ the readers ask for by name.
 - [x] 81 of 84 plugin settings and all 106 built-in ones (src/ai/ai-settings.ts, detection.ts,
       talk.ts, head-tracking.ts, combat-dialogue.ts, src/gameplay/crime.ts, ...).
 - [x] fAISocialchanceForConversation, ...Interior: the spectators' comment chance (round 2).
-- [x] fAIForceGreetingTimer (3), fAIInDialogueModewithPlayerTimer (60),
+- [x] fAIForceGreetingTimer (3),
       fFurnitureMarkerAngleTolerance (10), fActorDefaultTurningSpeed,
       fJogInterpolationBetweenWalkAndRun (round 3, above).
 - [x] fTrackSpeed: the eyes' turn speed (face.ts); fTrackDeadZoneXY, fTrackDeadZoneZ:
@@ -199,14 +197,34 @@ the readers ask for by name.
 - [ ] Navmesh obstacles cut approximately (no re-triangulation).
 - [ ] Avoidance: the engine's way round and who yields (ours: the slower gait).
 - [x] Detection: sight, sound, light, line of sight, stealth, detection states (detection.ts).
-- [ ] Detection: the light's sum is ours.
+- [x] Detection: the light's sum: each light's mean channel × its fade × (1 − (d / r)²), the
+      directional light's ambient and diffuse means, × 100; worked out every fLightRecalcTimer, the
+      player's every fLightRecalcTimerPlayer; only the player's light asks for a line to the sun
+      (src/ai/light-level.ts, tested there).
+- [ ] Detection: which lights count (the original: those its renderer gave the body; here a ray to
+      each), the factor on the diffuse part (a renderer value not read), the ambient part's source.
+- [ ] Detection: an Ambush package's own target. Observed: the running package is asked whether the
+      target is its own; no plugin of the load order has an Ambush package, so its data is unread.
 - [x] Crime: witnesses, alarms, guards' warnings and arrests, NPC assault alarms.
-- [ ] Crime: guards that only hear an NPC's alarm; fCrimeAlarmRespMult (NPC theft, pickpocketing and
-      murder alarms: docs/completeness/gameplay.md, round 3).
+- [x] Crime: guards that only hear an NPC's alarm: the first in reach of the crime's group, not
+      fighting, answers; iNumberGuardsCrimeResponse at most (tests/conformance/ai/crime.test.ts).
+- [x] Crime: fKillWitnessesTimerSetting (a crime stands 30 s after it, guard or no guard),
+      iCrimeEnemyCoolDownTimer, iCrimeMaxNumberofDaysinJail, fCrimeGoldSkillPenaltyMult, only assault
+      and murder violent, all the original's and tested.
+- [x] Crime settings never read by the original (registered only; the sweep's INERT):
+      fCrimeAlarmRespMult, fCrimeSoundBase / Mult, iCrimeGoldMinValue, the fCrimeDisp*, fCrimeRegardMult,
+      fCrimePersonalRegardMult, fCrimeWitnessRegardMult, iCrimeRegardBaseValue.
+- [ ] Crime: the NPC criminal not fighting flees the guard that answers (observed; the stage starts
+      no flee from here); the answering guard attacks at once (inferred; the original's Alarm
+      package); a guard of another faction taking the crime over; which witnesses of an NPC's crime
+      report it (inferred). fCrimeFavorMult, iCrimeFavorBaseValue belong to the favor check.
 - [x] Followers, horses, vehicles (followers.ts, mounts.ts, vehicles.ts).
 - [ ] Followers: the follow offset and walk zone's built-in values ours; mounting from the right.
 - [x] Dialogue-driven AI: greetings, force greet, dialogue activate, conversations (talk.ts).
-- [ ] The greeting hold distance chosen by its setting's name.
+- [x] The greeting hold: as long as its line lasts, wherever the player goes.
+      fAIInDialogueModeWithPlayerDistance is registered and never read by the original;
+      fAIInDialogueModewithPlayerTimer is read for a conversation with the player, not a greeting
+      (the conversation's use is not built).
 - [x] Scenes (scene-runtime.ts).
 - [x] Travel, escort, flee, follow to, keep an eye on, ambush (procedure-runs.ts).
 - [x] Engine packages: get up, avoid player, steal warning, movement blocked (engine-packages.ts).

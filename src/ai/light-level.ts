@@ -4,12 +4,14 @@
 // placed lights near it). What the engine makes of it is observed in the original (detectionLight): less
 // iLightLevelExteriorMod outside or, inside, the lesser of iLightLevelInteriorMod and 100 × the
 // brightest channel of the cell's ambient light, between 0 and iLightLevelMax; GetLightLevel
-// gives that × fSneakLightMult (fSneakLightExteriorMult outside). TODO(M13): the engine keeps
-// each actor's light from its renderer's lighting, a sum not read yet; here the light's
-// luminance (Rec. 709) at the actor, as the renderer has it: the mean of the six directional
-// ambients, the directional light unless something stands between it and the actor, each point
-// light within its radius with the renderer's falloff (1 − (d / r)²) unless a wall stands
-// between it and the actor, all times 100.
+// gives that × fSneakLightMult (fSneakLightExteriorMult outside). The sum is the original's: each
+// light's mean channel × its fade × (1 − (d / r)²) within its radius, plus the directional light's
+// ambient and diffuse parts as means of their channels, all times 100, worked out every
+// fLightRecalcTimer (the player: fLightRecalcTimerPlayer). What stays ours (TODO(M13)): the ambient
+// part is the mean of the view's six directional ambients; the original multiplies the diffuse
+// part by a renderer value not read yet (here 1); and which lights count: the original takes the
+// lights its renderer gave the actor's body and, for the player, tests only the shadow casting
+// ones for a line to them; here a ray to each.
 // Platform-independent.
 
 type Vec3 = readonly [number, number, number];
@@ -35,12 +37,12 @@ export interface LightProbe {
   readonly interior: boolean;
 }
 
-/** A colour's luminance (Rec. 709). */
-export function luminance(color: Vec3): number {
-  return 0.2126 * color[0] + 0.7152 * color[1] + 0.0722 * color[2];
+/** How bright a colour counts: the mean of its channels (observed in the original). */
+export function colorLevel(color: Vec3): number {
+  return (color[0] + color[1] + color[2]) / 3;
 }
 
-/** The light level a light of luminance 1 gives. */
+/** The light level a light of level 1 gives. */
 const LEVEL_SCALE = 100;
 
 /**
@@ -58,10 +60,10 @@ export function lightLevel(
   let light = 0;
   if (probe.ambient.length > 0) {
     let sum = 0;
-    for (const color of probe.ambient) sum += luminance(color);
+    for (const color of probe.ambient) sum += colorLevel(color);
     light += sum / probe.ambient.length;
   }
-  if (sunlit) light += luminance(probe.sunColor);
+  if (sunlit) light += colorLevel(probe.sunColor);
   for (const point of probe.lights) {
     if (point.radius <= 0) continue;
     const distance = Math.hypot(
@@ -72,7 +74,7 @@ export function lightLevel(
     const falloff = distance / point.radius;
     if (falloff >= 1) continue;
     if (reaches && !reaches(point)) continue;
-    light += luminance(point.color) * (1 - falloff * falloff);
+    light += colorLevel(point.color) * (1 - falloff * falloff);
   }
   return Math.max(0, light * LEVEL_SCALE);
 }

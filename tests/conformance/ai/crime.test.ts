@@ -25,17 +25,22 @@ import {
   crimeBounty,
   CrimeType,
   crimeValues,
+  guardAnswers,
   isViolent,
   jailDays,
+  jailSkillLosses,
   readCrimeSettings,
   TrespassWarnings,
 } from '../../../src/gameplay/crime.ts';
+import { alarmReaches, readDetectionSettings } from '../../../src/ai/detection.ts';
 import { overlooksCrime, RelationshipRank } from '../../../src/gameplay/factions.ts';
+import { ObjectHandle } from '../../../src/scripting/values.ts';
 import { Vfs } from '../../../src/vfs/vfs.ts';
 import { parseNpcStats } from '../../../src/world/actor-stats-records.ts';
 import { RecordDatabase } from '../../../src/world/record-db.ts';
 import { openGameFolder } from '../../../tools/gamedata-path.ts';
 import { hasGamedata, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
+import { INERT } from '../../../tools/ai-combat-completeness.ts';
 import { ENGINE, LOAD_ORDER } from '../combat/settings.ts';
 
 /** The settings as the game runs: Skyrim.esm's GMSTs over the engine's defaults. */
@@ -118,14 +123,31 @@ describe('every crime type and its bounty (Use Defaults: the settings)', () => {
     expect(crimeBounty(CrimeType.attack, ignoring)).toBe(40);
   });
 
-  it('jail: a day per iCrimeDaysInPrisonMod (100) gold, at least one (UESP Jail)', () => {
-    expect(jailDays(1040, settings)).toBe(10);
+  it('jail: a day per iCrimeDaysInPrisonMod (100) gold, one to iCrimeMaxNumberofDaysinJail (7)', () => {
+    expect(jailDays(500, settings)).toBe(5);
+    expect(jailDays(1040, settings)).toBe(7);
     expect(jailDays(5, settings)).toBe(1);
   });
 
-  it.todo('iCrimeGoldMinValue (10): the least theft bounty?  [settings]');
-  it.todo('fCrimeGoldSkillPenaltyMult (0.1) and iCrimeMaxNumberofDaysinJail  [settings]');
-  it.todo('the werewolf counted as violent crime gold  [original]');
+  it('iCrimeGoldMinValue is never read: a cheap theft costs no least bounty (original)', () => {
+    expect(INERT.has('iCrimeGoldMinValue')).toBe(true);
+    expect(crimeBounty(CrimeType.steal, defaults, { value: 2 })).toBe(1);
+  });
+
+  it('jail resets the bounty × fCrimeGoldSkillPenaltyMult (0.1) skills of least progress', () => {
+    const progress = [
+      [6, 5],
+      [10, 1],
+      [14, 3],
+    ] as const;
+    expect(settings.goldSkillPenaltyMult).toBeCloseTo(0.1, 6);
+    expect(jailSkillLosses(20, progress, settings)).toEqual([10, 14]);
+    expect(jailSkillLosses(5, progress, settings)).toEqual([]);
+  });
+
+  it('the werewolf is not violent crime gold: only assault and murder are (original)', () => {
+    expect(isViolent(CrimeType.werewolf)).toBe(false);
+  });
 });
 
 describe('who must witness it', () => {
@@ -160,7 +182,7 @@ describe('who must witness it', () => {
     expect(ledger.witnessDied(0x101)).toHaveLength(1);
   });
 
-  it('a guard who saw it reports it at once', () => {
+  it('a guard among the witnesses is no exception: forgiven within the timer (original)', () => {
     const ledger = new CrimeLedger();
     ledger.commit({
       type: CrimeType.murder,
@@ -172,7 +194,8 @@ describe('who must witness it', () => {
       witnesses: [0x300],
       at: 0,
     });
-    expect(ledger.expire(0, (actor) => actor === 0x300)).toHaveLength(1);
+    expect(ledger.expire(29, settings.killWitnessesTimer)).toHaveLength(0);
+    expect(ledger.witnessDied(0x300)).toHaveLength(1);
   });
 
   it('friends overlook theft, trespass and pickpocketing; allies an assault; nobody murder', () => {
@@ -190,17 +213,62 @@ describe('who must witness it', () => {
     expect(warnings.seen(2 * LOAD_ORDER.fAITrespassWarningTimer, settings)).toBe('crime');
   });
 
-  it.todo('the engine’s report rule (ours: a guard saw it, or a game day passed)  [original]');
-  it.todo('an alarm reaches those within iCrimeAlarmRecDistance (4000), low 2000  [settings]');
-  it.todo('at most iNumberGuardsCrimeResponse (4) guards answer a crime  [settings]');
-  it.todo('fCrimeAlarmRespMult, fCrimeSoundBase / Mult: who hears a crime  [settings]');
-  it.todo('NPC crimes: an NPC’s theft, assault and murder seen by others  [engine map]');
-  it.todo(
-    'iCrimeEnemyCoolDownTimer: how long a crime faction stays the player’s enemy  [settings]',
-  );
-  it.todo(
-    'the fCrimeDisp* and fCrimeRegard* / fCrimeFavor* settings: disposition after a crime  [settings]',
-  );
+  it('the report rule: after fKillWitnessesTimerSetting (30 s) a crime stands (original)', () => {
+    const ledger = new CrimeLedger();
+    ledger.commit({
+      type: CrimeType.attack,
+      criminal: PLAYER_REF,
+      victim: 0x100,
+      faction: 0x200,
+      gold: 40,
+      violent: true,
+      witnesses: [0x100],
+      at: 0,
+    });
+    expect(settings.killWitnessesTimer).toBe(30);
+    expect(ledger.expire(30, settings.killWitnessesTimer)).toHaveLength(1);
+    expect(ledger.witnessDied(0x100)).toEqual([]);
+  });
+
+  it('an alarm reaches iCrimeAlarmRecDistance (4000) at the criminal’s level, else 2000', () => {
+    const detection = readDetectionSettings();
+    expect(alarmReaches(detection, true, 4000)).toBe(true);
+    expect(alarmReaches(detection, true, 4001)).toBe(false);
+    expect(alarmReaches(detection, false, 2000)).toBe(true);
+    expect(alarmReaches(detection, false, 2001)).toBe(false);
+  });
+
+  it('at most iNumberGuardsCrimeResponse (4) guards answer a criminal (original)', () => {
+    expect(guardAnswers(3, 4)).toBe(true);
+    expect(guardAnswers(4, 4)).toBe(false);
+  });
+
+  it('fCrimeAlarmRespMult, fCrimeSoundBase / Mult are never read (original)', () => {
+    for (const name of ['fCrimeAlarmRespMult', 'fCrimeSoundBase', 'fCrimeSoundMult']) {
+      expect(INERT.get(name)).toBe('never read');
+    }
+  });
+
+  it('the fCrimeDisp* and fCrimeRegard* settings are never read: no disposition (original)', () => {
+    for (const name of [
+      'fCrimeDispAttack',
+      'fCrimeDispMurder',
+      'fCrimeDispSteal',
+      'fCrimeDispPickpocket',
+      'fCrimeDispTresspass',
+      'fCrimeDispPersonal',
+      'fCrimeRegardMult',
+      'fCrimePersonalRegardMult',
+      'fCrimeWitnessRegardMult',
+      'iCrimeRegardBaseValue',
+    ]) {
+      expect(INERT.get(name)).toBe('never read');
+    }
+  });
+
+  // Stays: the original reads these two only in its check of whether an actor does the player a
+  // favor (the cost against the relationship rank), which is the favors' system, not crime's.
+  it.todo('fCrimeFavorMult, iCrimeFavorBaseValue in the favor check  [favors, not crime]');
 });
 
 describe.skipIf(!hasGamedata())('the crime faction of an actor crime (data)', () => {
@@ -253,6 +321,7 @@ const BANNERED_MARE = 0x1605e;
 describe.skipIf(!hasGamedata())('killing a wild creature (headless simulation)', () => {
   let sim: Sim;
   let wolf = 0;
+  let guard = 0;
   let murders = 0;
 
   beforeAll(async () => {
@@ -289,16 +358,124 @@ describe.skipIf(!hasGamedata())('killing a wild creature (headless simulation)',
     expect(kill?.values.V1).toBe(0);
   });
 
-  it.todo(
-    'an owned chicken killed in sight: an assault, then murder, to its owner’s crime faction  [UESP Crime]',
-  );
-  it.todo(
-    'a guard who sees the player murder a citizen reports it: 1000 on the hold  [UESP Crime]',
-  );
-  it.todo(
-    'a crime by the player while sneaking unseen: no bounty, the items still stolen  [UESP Crime]',
-  );
+  it('a crime by the player unseen: no bounty, the items still stolen  [UESP Crime]', async () => {
+    const { crime } = sim.runtime;
+    const world = crime.world;
+    const apple = await sim.formId('MISC', 'Lockpick');
+    const item = await sim.place(apple, PLAYER_REF);
+    crime.world = { witnesses: () => [] };
+    const committed = await crime.steal(PLAYER_REF, apple, 1, item);
+    crime.world = world;
+    expect(committed).toBeUndefined();
+    expect(crime.stolenCount(PLAYER_REF, apple)).toBe(1);
+    const owed = [...sim.runtime.state.factions.values()].reduce(
+      (sum, entry) => sum + entry.crimeGold + entry.crimeGoldViolent,
+      0,
+    );
+    expect(owed).toBe(0);
+  });
+
+  it('a guard who only hears an NPC’s alarm answers it', async () => {
+    const { runtime } = sim;
+    const whiterun = await sim.formId('FACT', 'CrimeFactionWhiterun');
+    const placedGuard = await sim.place(await guardBase(sim, whiterun), PLAYER_REF);
+    guard = placedGuard;
+    expect(await sim.until(() => sim.actor(guard) !== undefined, 20)).toBe(true);
+    expect(await runtime.crime.isGuard(placedGuard)).toBe(true);
+    const citizens: number[] = [];
+    for (const actor of sim.actors()) {
+      if (actor.dead || actor.reference === guard) continue;
+      if ((await runtime.actors.crimeFaction(actor.reference)) !== whiterun) continue;
+      if (!(await runtime.crime.isGuard(actor.reference))) citizens.push(actor.reference);
+    }
+    const [victim, criminal] = citizens;
+    expect(criminal).toBeDefined();
+    if (victim === undefined || criminal === undefined) return;
+    expect(await runtime.actors.crimeFaction(placedGuard)).toBe(whiterun);
+    // The senses take it up a moment after it is staged.
+    const senses = sim.world.stage.senses;
+    await sim.until(() => senses.alarm(victim, criminal, 'steal').includes(placedGuard), 20);
+    const started: [number, number][] = [];
+    const start = runtime.world.startCombat?.bind(runtime.world);
+    runtime.world.startCombat = (actor, target) => {
+      started.push([actor, target]);
+    };
+    // Only the victim sees it: the guard beside them hears the alarm.
+    await runtime.crime.commit(CrimeType.steal, criminal, {
+      act: 'steal',
+      victim,
+      faction: whiterun,
+      witnesses: [victim],
+    });
+    await sim.step(0.5);
+    expect(started).toContainEqual([placedGuard, criminal]);
+    runtime.world.startCombat = start;
+  });
+
+  it('SetPlayerEnemy lasts iCrimeEnemyCoolDownTimer (24) game hours (original)', async () => {
+    const { runtime } = sim;
+    const faction = await sim.formId('FACT', 'CrimeFactionRift');
+    await sim.native(new ObjectHandle(faction, 'faction'), 'Faction', 'SetPlayerEnemy', [true]);
+    expect(runtime.state.factions.get(faction)?.playerEnemy).toBe(true);
+    await runtime.crime.update();
+    expect(runtime.state.factions.get(faction)?.playerEnemy).toBe(true);
+    runtime.state.gameDaysPassed += 1.01;
+    await runtime.crime.update();
+    expect(runtime.state.factions.get(faction)?.playerEnemy).toBe(false);
+  });
+
+  it('a guard who sees the player murder a citizen: 1000 on the hold  [UESP Crime]', async () => {
+    const { runtime } = sim;
+    const whiterun = await sim.formId('FACT', 'CrimeFactionWhiterun');
+    const before = runtime.state.factions.get(whiterun)?.crimeGoldViolent ?? 0;
+    let victim: number | undefined;
+    for (const actor of sim.actors()) {
+      if (actor.dead || (await runtime.actors.crimeFaction(actor.reference)) !== whiterun) continue;
+      if (!(await runtime.crime.isGuard(actor.reference))) victim ??= actor.reference;
+    }
+    expect(victim).toBeDefined();
+    if (victim === undefined) return;
+    const world = runtime.crime.world;
+    runtime.crime.world = { witnesses: () => [guard] };
+    const seen = await runtime.crime.murder(PLAYER_REF, victim);
+    runtime.crime.world = world;
+    expect(seen?.gold).toBe(1000);
+    expect(runtime.state.factions.get(whiterun)?.crimeGoldViolent).toBe(before + 1000);
+  });
+
+  it('an owned chicken killed in sight: an assault, then murder, to its owner’s faction  [UESP Crime]', async () => {
+    const { runtime } = sim;
+    const whiterun = await sim.formId('FACT', 'CrimeFactionWhiterun');
+    const before = runtime.state.factions.get(whiterun)?.crimeGoldViolent ?? 0;
+    const chicken = await sim.place(await sim.formId('NPC_', 'EncChicken'), PLAYER_REF);
+    runtime.state.reference(chicken).ownerActor = await sim.formId('NPC_', 'Hulda');
+    await sim.step(0.5);
+    const world = runtime.crime.world;
+    const witnesses = sim
+      .actors()
+      .map((actor) => actor.reference)
+      .filter((actor) => actor !== chicken);
+    runtime.crime.world = { witnesses: () => witnesses };
+    const assault = await runtime.crime.assault(PLAYER_REF, chicken);
+    const murder = await runtime.crime.murder(PLAYER_REF, chicken);
+    runtime.crime.world = world;
+    expect(assault?.faction).toBe(whiterun);
+    expect(murder?.faction).toBe(whiterun);
+    expect(runtime.state.factions.get(whiterun)?.crimeGoldViolent).toBe(before + 1040);
+  });
 });
+
+/** A guard base of a crime faction (a named NPC_ whose base says so, placed to be asked). */
+async function guardBase(sim: Sim, faction: number): Promise<number> {
+  const { db } = sim.runtime.forms;
+  for (const base of db.formIdsOfType('NPC_')) {
+    const npc = await db.get(base);
+    if (!npc || !/guard/i.test(npc.editorId ?? '') || !/whiterun/i.test(npc.editorId ?? ''))
+      continue;
+    if (parseNpcStats(npc).crimeFaction === faction) return base;
+  }
+  throw new Error('no guard base');
+}
 
 describe.skipIf(!hasGamedata())('jailed with a follower (headless simulation)', () => {
   let sim: Sim;

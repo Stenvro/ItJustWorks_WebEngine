@@ -4,7 +4,6 @@ import {
   NO_PACKAGE_INTERRUPTS,
   TalkPlanner,
   getsUpToTalk,
-  greetingHolds,
   sceneLineFaces,
   talkSettings,
   triggerDistance,
@@ -252,27 +251,9 @@ describe('settings', () => {
     expect(settings.talkedWithTimer).toBe(120);
   });
 
-  it('greets from fAIMinGreetingDistance and lets go when the player walks off', () => {
-    const settings = talkSettings((name) =>
-      name === 'fAIMinGreetingDistance'
-        ? 200
-        : name === 'fAIInDialogueModeWithPlayerDistance'
-          ? 400
-          : undefined,
-    );
+  it('greets from fAIMinGreetingDistance', () => {
+    const settings = talkSettings((name) => (name === 'fAIMinGreetingDistance' ? 200 : undefined));
     expect(settings.greetingDistance).toBe(200);
-    expect(greetingHolds([0, 0, 0], [399, 0, 0], settings)).toBe(true);
-    expect(greetingHolds([0, 0, 0], [401, 0, 0], settings)).toBe(false);
-    expect(greetingHolds([0, 0, 0], undefined, VANILLA_TALK)).toBe(false);
-  });
-
-  it('lets a greeting go after fAIInDialogueModewithPlayerTimer', () => {
-    expect(VANILLA_TALK.greetingHoldTimer).toBe(60);
-    const settings = talkSettings((name) =>
-      name === 'fAIInDialogueModewithPlayerTimer' ? 10 : undefined,
-    );
-    expect(greetingHolds([0, 0, 0], [100, 0, 0], settings, 9)).toBe(true);
-    expect(greetingHolds([0, 0, 0], [100, 0, 0], settings, 10)).toBe(false);
   });
 
   it('starts a scene line by the speaker turning, 80 degrees while it moves', () => {

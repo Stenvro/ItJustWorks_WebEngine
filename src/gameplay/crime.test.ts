@@ -16,7 +16,6 @@ import {
   pickpocketChance,
   pickpocketUses,
   readCrimeSettings,
-  REPORT_HOURS,
   TrespassWarnings,
   type GuardSituation,
 } from './crime.ts';
@@ -74,10 +73,11 @@ describe('bounties', () => {
     expect(crimeBounty(CrimeType.attack, values)).toBe(40);
   });
 
-  it('go to the violent crime gold for assault, murder and the werewolf', () => {
+  it('go to the violent crime gold for assault and murder alone', () => {
     expect(isViolent(CrimeType.attack)).toBe(true);
     expect(isViolent(CrimeType.murder)).toBe(true);
-    expect(isViolent(CrimeType.werewolf)).toBe(true);
+    expect(isViolent(CrimeType.werewolf)).toBe(false);
+    expect(isViolent(CrimeType.escape)).toBe(false);
     expect(isViolent(CrimeType.steal)).toBe(false);
     expect(isViolent(CrimeType.trespass)).toBe(false);
   });
@@ -124,17 +124,19 @@ describe('jail', () => {
   it('is a day per 100 gold of bounty, at least one', () => {
     expect(jailDays(40, settings)).toBe(1);
     expect(jailDays(250, settings)).toBe(2);
-    expect(jailDays(1040, settings)).toBe(10);
+    expect(jailDays(1040, settings)).toBe(7);
   });
 
-  it("takes a skill's progress each day, each skill once", () => {
-    let n = 0;
-    const random = (): number => [0.1, 0.9, 0.5, 0.2][n++ % 4] ?? 0;
-    const lost = jailSkillLosses(3, [6, 10, 14], random);
-    expect(lost).toHaveLength(3);
-    expect(new Set(lost)).toEqual(new Set([6, 10, 14]));
-    expect(jailSkillLosses(5, [6], random)).toEqual([6]);
-    expect(jailSkillLosses(2, [], random)).toEqual([]);
+  it('resets the skills with the least progress, a tenth of the bounty of them', () => {
+    const progress = [
+      [6, 5],
+      [10, 1],
+      [14, 3],
+      [15, 0],
+    ] as const;
+    expect(jailSkillLosses(20, progress, settings)).toEqual([10, 14]);
+    expect(jailSkillLosses(9, progress, settings)).toEqual([]);
+    expect(jailSkillLosses(1000, progress, settings)).toEqual([10, 14, 6]);
   });
 });
 
@@ -225,15 +227,13 @@ describe('witnesses', () => {
     expect([...ledger.open()]).toEqual([]);
   });
 
-  it('report after REPORT_HOURS, or at once to a guard; reported, killing them is too late', () => {
+  it('close after fKillWitnessesTimerSetting; closed, killing the witnesses is too late', () => {
     const ledger = new CrimeLedger();
     const first = ledger.commit(crime([0x200]));
-    expect(ledger.expire(10 + REPORT_HOURS / 2)).toEqual([]);
-    expect(ledger.expire(10 + REPORT_HOURS)).toEqual([first]);
+    expect(ledger.expire(10 + 29, 30)).toEqual([]);
+    expect(ledger.expire(10 + 30, 30)).toEqual([first]);
+    expect(first?.reported).toBe(true);
     expect(ledger.witnessDied(0x200)).toEqual([]);
-    const second = ledger.commit(crime([0x300]));
-    expect(ledger.expire(11, (actor) => actor === 0x300)).toEqual([second]);
-    expect(second?.reported).toBe(true);
   });
 
   it("are settled with the faction's bounty", () => {
