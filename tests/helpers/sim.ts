@@ -97,6 +97,8 @@ const WAY = { radius: PLAYER_RADIUS, ledgeUp: 76 } as const;
  * the navmesh's edge: cutting a corner by more walked the player over a ledge beside it.
  */
 const CORNER_REACH = PLAYER_RADIUS / 2;
+/** How near a corner they are held before the way goes on from there (units). */
+const HELD_CORNER_REACH = 24;
 /** How far across a walked-to point may lie from the navmesh under it. */
 const PATH_GOAL_REACH = 256;
 /** A door the player is held up by is within this of their feet (across). */
@@ -552,6 +554,9 @@ export class Sim {
           }
         }
         if (Math.hypot(x1 - x0, y1 - y0) >= 4) continue;
+        // Held this near a corner they cannot stand on (a passage narrower than they are wide at
+        // that corner): it is as good as reached, and the way goes on.
+        if (!last && Math.hypot(point[0] - x1, point[1] - y1) <= HELD_CORNER_REACH) break;
         // Held at the way's last corner within reach of the goal (a shut door that is the goal
         // itself takes up the corner's room): there is nowhere further to go, and no door to open.
         if (
