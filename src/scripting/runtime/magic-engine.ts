@@ -229,6 +229,8 @@ export interface MagicSave {
     { readonly rate: number; readonly hold: number },
   ])[];
   readonly did: readonly (readonly [string, number])[];
+  /** Lasting effects saved before their first frame: their training waits for it (#firstFrame). */
+  readonly firstFrame?: readonly string[];
   readonly fadingSummons: readonly (readonly [number, number])[];
 }
 
@@ -261,7 +263,10 @@ export class MagicEngine {
   readonly #accumulating = new WeakMap<ActiveEffectState, { rate: number; hold: number }>();
   /** The share of its magnitude an effect at once did to its actor value (its skill use). */
   readonly #did = new WeakMap<ActiveEffectState, number>();
-  /** Told effects on objects, to name each (they have no active effect's key). */
+  /**
+   * Told effects on objects, to name each (they have no active effect's key): the name goes no
+   * further than the visuals a view shows once, never into the game state or a save.
+   */
   #objectHits = 0;
   /** A lasting effect's training, waiting for what its first frame does (#train). */
   readonly #firstFrame = new WeakMap<ActiveEffectState, () => Promise<void>>();
@@ -972,6 +977,12 @@ export class MagicEngine {
       share: byEffect ? (this.#did.get(entry) ?? 1) : 1,
     });
     if (uses > 0) await runtime.progression.useSkill(caster, skill, uses);
+  }
+
+  /** The training of an effect a save caught before its first frame, its records read again. */
+  async #trainLoaded(entry: ActiveEffectState): Promise<void> {
+    const [item, effect] = await Promise.all([this.item(entry.item), this.effect(entry.effect)]);
+    if (item && effect) await this.#train(item, entry.index, effect, entry, {});
   }
 
   /** A spell that fails on a target: the player hears of it (sMagicEffectResisted, ...). */
@@ -2061,19 +2072,26 @@ export class MagicEngine {
   /**
    * What a save keeps (RuntimeSave.engines) beside the active effects themselves (GameState):
    * by effect key, an Accumulate Magnitude effect's growth (its rate and how much it holds)
-   * and the share of a value effect done at once (its skill use as it ends); the summons fading
-   * out, with their seconds left.
+   * and the share of a value effect done at once (its skill use as it ends), those whose
+   * training waits for their first frame; the summons fading out, with their seconds left.
    */
   saveData(): MagicSave {
     const accumulating: [string, { rate: number; hold: number }][] = [];
     const did: [string, number][] = [];
+    const firstFrame: string[] = [];
     for (const [key, entry] of this.#runtime.state.activeEffects) {
+      if (this.#firstFrame.has(entry)) firstFrame.push(key);
       const growing = this.#accumulating.get(entry);
       if (growing) accumulating.push([key, { ...growing }]);
       const share = this.#did.get(entry);
       if (share !== undefined) did.push([key, share]);
     }
-    return { accumulating, did, fadingSummons: [...this.#fadingSummons] };
+    return {
+      accumulating,
+      did,
+      ...(firstFrame.length > 0 && { firstFrame }),
+      fadingSummons: [...this.#fadingSummons],
+    };
   }
 
   /** A save's magic state (saveData), once its active effects are back in the game state. */
@@ -2086,6 +2104,10 @@ export class MagicEngine {
     for (const [key, share] of data?.did ?? []) {
       const entry = effects.get(key);
       if (entry) this.#did.set(entry, share);
+    }
+    for (const key of data?.firstFrame ?? []) {
+      const entry = effects.get(key);
+      if (entry) this.#firstFrame.set(entry, () => this.#trainLoaded(entry));
     }
     for (const [made, seconds] of data?.fadingSummons ?? []) this.#fadingSummons.set(made, seconds);
   }
