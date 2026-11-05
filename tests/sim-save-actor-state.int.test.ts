@@ -6,9 +6,11 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import type { Value } from '../src/scripting/values.ts';
 import { WeaponState } from '../src/gameplay/combat/combat-state.ts';
+import { parseMagicItem, type MagicItemRecord } from '../src/world/magic-records.ts';
 import { hasGamedata, loadSim, openSim, PLAYER_REF, type Sim } from './helpers/sim.ts';
 
 const BANNERED_MARE = 0x1605e;
+const DESTRUCTION = 20;
 
 /** Calls an Actor native on an actor, as a script would. */
 async function actorNative(sim: Sim, actor: number, fn: string, args: Value[]): Promise<void> {
@@ -96,5 +98,35 @@ describe.skipIf(!hasGamedata())('actor state across a save (headless simulation)
     await after.until(() => after.world.stage.combat.weaponState(b) === WeaponState.drawn, 5);
     await after.step(0.5);
     expect(kept(after, a, b)).toEqual(saved);
+  }, 600_000);
+
+  it('trains a lasting effect saved before its first frame by that frame, after the load', async () => {
+    const before = await openSim({ interior: BANNERED_MARE, hour: 10 });
+    sims.push(before);
+    await before.step(1);
+    // Its burn lasts a second, with no conditions (weakened here, the player its target).
+    const record = await before.db.get(await before.formId('SPEL', 'FireboltStormBasic'));
+    const spell = record && parseMagicItem(record);
+    const burn = spell?.effects[0];
+    expect(burn?.duration).toBeGreaterThan(0);
+    if (!spell || !burn) return;
+    const burning: MagicItemRecord = {
+      ...spell,
+      effects: [{ ...burn, magnitude: 1, duration: 5 }],
+    };
+    const { magic } = before.runtime;
+    await magic.apply(burning, PLAYER_REF, { caster: PLAYER_REF, effects: [0], trains: true });
+    await before.world.settle();
+    const uses = before.runtime.state.skillExperience.get(DESTRUCTION) ?? 0;
+    expect(magic.saveData().firstFrame).toHaveLength(1);
+    const bytes = await before.save();
+    await before.close();
+    sims.splice(0);
+
+    const after = await loadSim(bytes);
+    sims.push(after);
+    await after.step(1);
+    expect(after.runtime.state.skillExperience.get(DESTRUCTION) ?? 0).toBeGreaterThan(uses);
+    expect(after.runtime.magic.saveData().firstFrame).toBeUndefined();
   }, 600_000);
 });

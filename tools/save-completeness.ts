@@ -230,6 +230,7 @@ const FIELDS: Readonly<Record<string, readonly ['derived' | 'transient' | 'open'
   'harvest-engine#sweeping': ['transient', 'a sweep under way'],
   'hazard-engine#hitting': ['transient', 'within the frame'],
   'magic-engine#effects': ['derived', 'effects read'],
+  'magic-engine#objectHits': ['transient', 'names a visual shown once; in no state, and no save'],
   'magic-engine#prepared': ['derived', 'prepared again as actors load'],
   'magic-engine#finishing': ['transient', "OnEffectFinish's scripts running"],
   'magic-engine#scripts': ['transient', 'script work in order'],
@@ -313,7 +314,9 @@ function ownPart(): void {
         add('own runtime', key, true, 'its save method keeps it');
         continue;
       }
-      if (/Promise<|Record\b|Settings|settings/.test(type) && !FIELDS[key]) {
+      // A function that returns a promise is no cached record (#firstFrame's training).
+      const cache = /Promise<|Record\b|Settings|settings/.test(type) && !/=> Promise</.test(type);
+      if (cache && !FIELDS[key]) {
         add('own runtime', key, true, 'a record or settings cache (read again)');
         continue;
       }
