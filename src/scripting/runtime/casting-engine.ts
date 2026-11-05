@@ -34,6 +34,7 @@ import {
   powerReady,
   regeneratesWhileCasting,
   releaseCast,
+  staffChargeCost,
   touchReach,
   type CastingSettings,
   type CastPhase,
@@ -441,10 +442,15 @@ export class CastingEngine {
     const school = main && main.skill >= 0 ? main.skill : undefined;
     const charge = chargeSeconds(item.chargeTime, dual, casting);
     if (castable.via !== 'spell') {
+      const schoolSkill =
+        castable.via === 'staff' && school !== undefined
+          ? (await this.#runtime.actors.value(actor, school)).current
+          : 0;
       return {
         base,
         magicka: 0,
-        charge: castable.via === 'staff' ? base : 0,
+        // A staff lasts longer with its school's skill; NPCs use no charge (#usesCharge).
+        charge: castable.via === 'staff' ? staffChargeCost(base, schoolSkill, casting) : 0,
         // Staffs, scrolls, powers and shouts train nothing (UESP "Staffs", "Scrolls").
         school: undefined,
         chargeTime: charge,
@@ -532,7 +538,10 @@ export class CastingEngine {
       const item = enchantment === undefined ? undefined : await runtime.magic.item(enchantment);
       if (item?.kind !== 'staffEnchantment') continue;
       const castable: Castable = { item, via: 'staff', object: form };
-      if ((await this.charge(actor, castable)) < (await this.cost(actor, castable)).charge)
+      if (
+        usesCharge(actor) &&
+        (await this.charge(actor, castable)) < (await this.cost(actor, castable)).charge
+      )
         continue;
       staffs.push({ staff: form, item });
     }
@@ -581,7 +590,7 @@ export class CastingEngine {
         break;
       }
       case 'staff':
-        if ((await this.charge(actor, castable)) < cost.charge - 1e-6)
+        if (usesCharge(actor) && (await this.charge(actor, castable)) < cost.charge - 1e-6)
           return this.#refuse(actor, source, 'charge');
         break;
       case 'power':
@@ -759,6 +768,7 @@ export class CastingEngine {
         return true;
       }
       case 'staff': {
+        if (!usesCharge(actor)) return true;
         const left = await this.charge(actor, castable);
         if (left < cost.charge - 1e-6) return false;
         // Kept on the staff itself (ExtraCharge: the crafting engine's item stacks).
@@ -895,6 +905,8 @@ export class CastingEngine {
       if (began) this.#emit({ actor: cast.actor, source: cast.source, kind: 'ready', cast });
       if (casting > 0 && cast.castable.via === 'spell' && cast.cost.magicka > 0)
         runtime.detach(this.#concentrate(key, cast, cast.cost.magicka * casting));
+      if (casting > 0 && cast.castable.via === 'staff' && usesCharge(cast.actor))
+        runtime.detach(this.#concentrateStaff(key, cast, cast.cost.charge * casting));
     }
     // The voice recovers (ActorState voiceRecoveryTime: SetVoiceRecoveryTime, shouts).
     for (const [actor, state] of runtime.state.actors) {
@@ -925,6 +937,19 @@ export class CastingEngine {
     runtime.progression.refused(cast.actor, 'magicka');
     if (cast.actor === PLAYER_REF) await this.#failSound(cast.source);
     this.#emit({ actor: cast.actor, source: cast.source, kind: 'stop', cast, reason: 'magicka' });
+  }
+
+  /** A staff's concentration spell (Staff of Flames) uses its charge a second; out, it stops. */
+  async #concentrateStaff(key: string, cast: ActiveCast, amount: number): Promise<void> {
+    const runtime = this.#runtime;
+    const { castable, actor } = cast;
+    if (castable.object === undefined) return;
+    const left = Math.max(0, (await this.charge(actor, castable)) - amount);
+    runtime.crafting.setCharge(actor, castable.object, left, await this.#fullCharge(castable));
+    if (left > 0 || this.#casts.get(key) !== cast) return;
+    this.#casts.delete(key);
+    cast.hand.phase = 'done';
+    this.#emit({ actor, source: cast.source, kind: 'stop', cast, reason: 'charge' });
   }
 
   // --- Delivery ------------------------------------------------------------------------------
@@ -1840,6 +1865,15 @@ export class CastingEngine {
     const ward = this.#wards.get(actor);
     return ward && ward.until >= this.#clock ? ward.state : 0;
   }
+}
+
+/**
+ * Only the player's staffs use their charge: an NPC's enchantments never run out (UESP
+ * "Skyrim:Enchanting" for its weapons; crafting-engine.ts useCharge. TODO(M13): inferred for its
+ * staffs, as no document names them).
+ */
+function usesCharge(actor: number): boolean {
+  return actor === PLAYER_REF;
 }
 
 /** A delivery that costs and trains nothing (an explosion's enchantment). */

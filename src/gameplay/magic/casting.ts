@@ -297,6 +297,19 @@ export function staffCastsLeft(charge: number, costPerCast: number): number {
   return costPerCast > 0 ? Math.floor(charge / costPerCast + 1e-9) : Infinity;
 }
 
+/**
+ * The charge a player's cast of a staff uses: its base cost × their skill in its school's factor,
+ * the same as a spell's magicka (UESP "Skyrim:Staves": a staff lasts longer with the skill, about
+ * 1.7 times as many uses at 100; 1 / (1 − (0.0025 × 100) ^ 0.65) = 1.68). Perks do not change it.
+ */
+export function staffChargeCost(
+  baseCost: number,
+  skill: number,
+  settings: CastingSettings = CASTING_DEFAULTS,
+): number {
+  return baseCost * skillCostFactor(skill, true, settings);
+}
+
 /** A power used at `usedDay` (game days) can be used again from a game day later on. */
 export function powerReady(usedDay: number | undefined, nowDay: number): boolean {
   return usedDay === undefined || nowDay - usedDay >= 1 - 1e-9;
