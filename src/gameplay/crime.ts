@@ -77,6 +77,14 @@ export interface CrimeSettings {
   readonly steal: number;
   readonly stealHorse: number;
   readonly daysInPrisonMod: number;
+  /** iCrimeMaxNumberofDaysinJail: the longest sentence. */
+  readonly maxDaysInJail: number;
+  /** fCrimeGoldSkillPenaltyMult: skills reset per gold of bounty served. */
+  readonly goldSkillPenaltyMult: number;
+  /** fKillWitnessesTimerSetting: seconds a crime can still be forgiven (its witnesses killed). */
+  readonly killWitnessesTimer: number;
+  /** iCrimeEnemyCoolDownTimer: game hours SetPlayerEnemy lasts. */
+  readonly enemyCoolDown: number;
   readonly guardWarnings: number;
   readonly trespassWarningTimer: number;
   readonly pickpocketActorSkillBase: number;
@@ -125,6 +133,10 @@ const SETTINGS: readonly (readonly [keyof CrimeSettings, string, number])[] = [
   ['steal', 'fCrimeGoldSteal', 0.5],
   ['stealHorse', 'iCrimeGoldStealHorse', 100],
   ['daysInPrisonMod', 'iCrimeDaysInPrisonMod', 100],
+  ['maxDaysInJail', 'iCrimeMaxNumberofDaysinJail', 7],
+  ['goldSkillPenaltyMult', 'fCrimeGoldSkillPenaltyMult', 0.1],
+  ['killWitnessesTimer', 'fKillWitnessesTimerSetting', 30],
+  ['enemyCoolDown', 'iCrimeEnemyCoolDownTimer', 24],
   ['guardWarnings', 'iGuardWarnings', 2],
   ['trespassWarningTimer', 'fAITrespassWarningTimer', 5],
   ['pickpocketActorSkillBase', 'fPickPocketActorSkillBase', 20],
@@ -230,11 +242,11 @@ export function ignoresCrime(values: Pick<CrimeValues, 'flags'>, type: CrimeType
 }
 
 /**
- * Violent crimes go to the violent crime gold (GetCrimeGoldViolent): assault and murder, and a
- * werewolf seen changing. TODO(M13): whether the engine counts the werewolf as violent.
+ * Violent crimes go to the violent crime gold (GetCrimeGoldViolent). Observed in the original:
+ * assault and murder only; a werewolf seen changing and an escape are not violent.
  */
 export function isViolent(type: CrimeType): boolean {
-  return type === CrimeType.attack || type === CrimeType.murder || type === CrimeType.werewolf;
+  return type === CrimeType.attack || type === CrimeType.murder;
 }
 
 /**
@@ -338,33 +350,47 @@ export function pickpocketUses(value: number, settings: CrimeSettings): number {
 
 // --- Jail ---------------------------------------------------------------------------------
 
-/** Days in jail for a bounty: one per iCrimeDaysInPrisonMod gold, at least one (UESP "Jail"). */
-export function jailDays(bounty: number, settings: Pick<CrimeSettings, 'daysInPrisonMod'>): number {
-  return Math.max(1, Math.floor(Math.max(0, bounty) / Math.max(1, settings.daysInPrisonMod)));
+/**
+ * Days in jail for a bounty. Observed in the original: one per iCrimeDaysInPrisonMod gold, at
+ * least one, at most iCrimeMaxNumberofDaysinJail.
+ */
+export function jailDays(
+  bounty: number,
+  settings: Pick<CrimeSettings, 'daysInPrisonMod' | 'maxDaysInJail'>,
+): number {
+  const days = Math.floor(Math.max(0, bounty) / Math.max(1, settings.daysInPrisonMod));
+  return Math.min(settings.maxDaysInJail, Math.max(1, days));
 }
 
 /**
- * The skills that lose their progress towards their next level for a stay in jail (UESP
- * "Skyrim:Jail": since patch 1.9 a skill's progress is lost for each day, its level kept): one
- * skill a day, picked at random among those with progress (each once). TODO(M13): the engine's
- * choice of skills.
+ * The skills that lose their progress towards their next level for a stay in jail, their levels
+ * kept. Observed in the original: the bounty × fCrimeGoldSkillPenaltyMult, rounded down, is how
+ * many are reset, each time the skill with the least progress above 0 (the lower skill on a tie),
+ * until none is left. So the days do not count, and a large bounty takes all of them.
  */
 export function jailSkillLosses(
-  days: number,
-  progressed: readonly number[],
-  random: () => number,
+  bounty: number,
+  progress: readonly (readonly [skill: number, experience: number])[],
+  settings: Pick<CrimeSettings, 'goldSkillPenaltyMult'>,
 ): number[] {
-  const left = [...progressed];
-  const lost: number[] = [];
-  for (let day = 0; day < days && left.length > 0; day++) {
-    const index = Math.min(left.length - 1, Math.floor(random() * left.length));
-    const [skill] = left.splice(index, 1);
-    if (skill !== undefined) lost.push(skill);
-  }
-  return lost;
+  const count = Math.floor(Math.fround(Math.fround(bounty) * settings.goldSkillPenaltyMult));
+  return progress
+    .filter(([, experience]) => experience > 0)
+    .sort((a, b) => a[1] - b[1] || a[0] - b[0])
+    .slice(0, Math.max(0, count))
+    .map(([skill]) => skill);
 }
 
 // --- Guards -------------------------------------------------------------------------------
+
+/**
+ * Whether a guard goes after a criminal's crime (the alarm's first guard, or a witness). Observed
+ * in the original: at most iNumberGuardsCrimeResponse guards answer one criminal; more leave it
+ * to them.
+ */
+export function guardAnswers(answering: number, guardsCrimeResponse: number): boolean {
+  return answering < guardsCrimeResponse;
+}
 
 /** What a guard does about a criminal: nothing, arrest them (a force greet), or attack. */
 export type GuardResponse = 'none' | 'arrest' | 'attack';
@@ -563,18 +589,11 @@ export interface Crime {
   readonly violent: boolean;
   /** Those who saw it, alive. */
   readonly witnesses: Set<number>;
-  /** When it was committed (game hours). */
+  /** When it was committed (seconds). */
   readonly at: number;
   /** Reported: it stays on the criminal's bounty whatever becomes of the witnesses. */
   reported: boolean;
 }
-
-/**
- * How long a crime waits to be reported (game hours): until then killing its last witness
- * takes its bounty back (UESP "Skyrim:Crime": kill every witness and the bounty is gone; the
- * game's sWitnessKilled, "Last witness killed."). TODO(M13): the engine's report rule.
- */
-export const REPORT_HOURS = 24;
 
 /** The crimes committed and not yet reported or forgiven, and the ones known (GetCrimeKnown). */
 export class CrimeLedger {
@@ -605,7 +624,7 @@ export class CrimeLedger {
     return crime;
   }
 
-  /** A crime is reported (a guard saw it, or its time passed): it is no longer open. */
+  /** A crime is closed (its time passed, or it was settled): it is no longer open. */
   report(id: number): void {
     const crime = this.#open.get(id);
     if (!crime) return;
@@ -613,13 +632,14 @@ export class CrimeLedger {
     this.#open.delete(id);
   }
 
-  /** Crimes reported now: those older than REPORT_HOURS, and those a guard witnessed. */
-  expire(now: number, isGuard: (actor: number) => boolean = () => false): Crime[] {
+  /**
+   * The crimes that can no longer be forgiven. Observed in the original: killing every witness
+   * takes a crime's bounty back only within fKillWitnessesTimerSetting seconds of it (`timer`),
+   * whoever the witnesses are; a guard among them is no exception.
+   */
+  expire(now: number, timer: number): Crime[] {
     const reported: Crime[] = [];
-    for (const crime of this.#open.values()) {
-      if (now - crime.at < REPORT_HOURS && ![...crime.witnesses].some(isGuard)) continue;
-      reported.push(crime);
-    }
+    for (const crime of this.#open.values()) if (now - crime.at >= timer) reported.push(crime);
     for (const crime of reported) this.report(crime.id);
     return reported;
   }

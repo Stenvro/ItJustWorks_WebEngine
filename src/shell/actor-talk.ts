@@ -14,7 +14,6 @@ import {
   NO_PACKAGE_INTERRUPTS,
   TalkPlanner,
   talkSettings,
-  greetingHolds,
   sceneLineFaces,
   triggerDistance,
   type TalkActor,
@@ -91,7 +90,9 @@ interface Ask {
 
 /**
  * Seconds a scene speaker's turn toward its target has to begin before standing still counts as
- * not turning (the Face Target hold starts it within a frame or two). Ours.
+ * not turning (the Face Target hold starts it within a frame or two). Ours: observed in the
+ * original, no time is involved, the speaker's animation graph says whether it turns; here its
+ * measured turn rate stands in. TODO(M13).
  */
 const TURN_START = 0.5;
 
@@ -117,7 +118,7 @@ export class ActorTalk {
    * Those a greeting holds (stopped, facing the player) until it ends or the player walks off,
    * and since when (the clock below, so a run's timing is its frames', not the wall clock's).
    */
-  readonly #greetingHeld = new Map<number, number>();
+  readonly #greetingHeld = new Set<number>();
   /** When a scene line's speaker began to wait to face its target (clock), by speaker:target. */
   readonly #facingSince = new Map<string, number>();
   /** Who says a line of idle chatter now. */
@@ -178,11 +179,11 @@ export class ActorTalk {
       });
     }
     this.#seen = seen;
-    // A greeting the player walks off from lets its actor go on; its line plays out.
-    for (const [reference, since] of this.#greetingHeld) {
-      const at = this.#staged.get(reference)?.position;
-      const heldFor = this.#clock - since;
-      if (at && this.#settings && greetingHolds(at, player, this.#settings, heldFor)) continue;
+    // Observed in the original: a greeting holds its actor as long as its line lasts, wherever the
+    // player goes (fAIInDialogueModeWithPlayerDistance is never read). One that left the stage
+    // lets go.
+    for (const reference of this.#greetingHeld) {
+      if (this.#staged.has(reference)) continue;
       this.#greetingHeld.delete(reference);
       ai.releaseFromTalk(reference);
     }
@@ -296,7 +297,7 @@ export class ActorTalk {
     const stops = (spoken.info.flags & InfoFlag.canMoveWhileGreeting) === 0;
     if (stops) {
       this.#options.ai.holdToTalk(reference, () => this.#scene.player);
-      this.#greetingHeld.set(reference, this.#clock);
+      this.#greetingHeld.add(reference);
     }
     try {
       await this.#speak(reference, spoken, PLAYER_REF);

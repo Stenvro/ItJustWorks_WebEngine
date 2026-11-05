@@ -92,6 +92,26 @@ export interface CompletenessItem {
  * "The engine's built-in game settings"; the earlier games' leftovers), with the reason.
  */
 export const INERT: ReadonlyMap<string, string> = new Map([
+  // Registered and never read by the original (the values' only references are their registration).
+  ['fAIInDialogueModeWithPlayerDistance', 'never read: a greeting holds as long as its line'],
+  [
+    'fAIInDialogueModewithPlayerTimer',
+    'the original reads it for a conversation with the player, not a greeting (docs/ai.md)',
+  ],
+  ['fCrimeAlarmRespMult', 'never read'],
+  ['fCrimeSoundBase', 'never read'],
+  ['fCrimeSoundMult', 'never read'],
+  ['iCrimeGoldMinValue', 'never read'],
+  ['fCrimeDispAttack', 'never read'],
+  ['fCrimeDispMurder', 'never read'],
+  ['fCrimeDispSteal', 'never read'],
+  ['fCrimeDispPickpocket', 'never read'],
+  ['fCrimeDispTresspass', 'never read'],
+  ['fCrimeDispPersonal', 'never read'],
+  ['fCrimeRegardMult', 'never read'],
+  ['fCrimePersonalRegardMult', 'never read'],
+  ['fCrimeWitnessRegardMult', 'never read'],
+  ['iCrimeRegardBaseValue', 'never read'],
   ['fCombatItemRestoreTimer', 'never read: restoring follows the style (docs/ai.md)'],
   ['iAICombatRestoreHealthPercentage', 'never read: restoring follows the style (docs/ai.md)'],
   ['fCombatSpeakAttackChance', 'never read: the combat dialogue chances are its own'],

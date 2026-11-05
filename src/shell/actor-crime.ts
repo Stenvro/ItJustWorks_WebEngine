@@ -12,7 +12,12 @@
 
 import { aiSettingsOf } from '../ai/ai-settings.ts';
 import { StealWarnings, warnThief } from '../ai/engine-packages.ts';
-import { CrimeType, TrespassWarnings, type CrimeSettings } from '../gameplay/crime.ts';
+import {
+  CrimeType,
+  guardAnswers,
+  TrespassWarnings,
+  type CrimeSettings,
+} from '../gameplay/crime.ts';
 import type { CrimeAct, CrimeEvent } from '../scripting/runtime/crime-engine.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -106,6 +111,8 @@ export class ActorCrime {
   readonly #warners = new Set<number>();
   /** The player's steal warnings (iStealWarnings, fWarningTimer). */
   readonly #stealWarnings = new StealWarnings();
+  /** The guards answering each NPC criminal's crimes (iNumberGuardsCrimeResponse at most). */
+  readonly #answering = new Map<number, Set<number>>();
   /** The player has been inside the jail's cell (leaving it unserved is an escape). */
   #inJail = false;
 
@@ -151,6 +158,7 @@ export class ActorCrime {
   remove(reference: number): void {
     this.#responses.delete(reference);
     this.#attacking.delete(reference);
+    this.#answering.delete(reference);
     this.#warners.delete(reference);
     if (this.#arrest?.guard === reference) this.#endArrest(false);
   }
@@ -192,19 +200,22 @@ export class ActorCrime {
         return;
       }
       case 'npcCrime': {
-        // An NPC's crime: its witnesses raise the alarm (those near hear it), and the guards
-        // among them fight the criminal. TODO(M13): guards that only hear the alarm.
-        for (const witness of event.witnesses) {
-          senses.alarm(witness, event.criminal, ALARMS[event.act]);
-          void this.#isGuard(runtime, witness).then((guard) => {
-            if (guard) runtime.world.startCombat?.(witness, event.criminal);
-          });
-        }
+        void this.#npcCrime(runtime, event);
         return;
       }
       case 'forgiven':
+        // Observed in the original: "Last witness killed. <gold> crimegold removed from <faction>".
         void session.settings().then((settings) => {
-          session.hud.notification(settings.string('sWitnessKilled') ?? '');
+          const gold = event.crimes.reduce((sum, crime) => sum + crime.gold, 0);
+          const faction = event.crimes[event.crimes.length - 1]?.faction;
+          const name = faction === undefined ? undefined : runtime.crime.name(faction);
+          const parts = [
+            settings.string('sWitnessKilled') ?? '',
+            ...(gold > 0
+              ? [String(gold), settings.string('sRemoveCrimeGold') ?? '', name ?? '']
+              : []),
+          ];
+          session.hud.notification(parts.join(' ').trim());
         });
         return;
       case 'caught':
@@ -218,6 +229,50 @@ export class ActorCrime {
         return;
       default:
         this.#endArrest(true);
+    }
+  }
+
+  /**
+   * An NPC's crime: its witnesses raise the alarm. Observed in the original: the guards among
+   * those who hear it (within the alarm's reach, of the crime's faction or its crime group, not
+   * fighting) need not see the crime, but only the first of them answers it; a guard who
+   * witnessed it answers too, and no more than iNumberGuardsCrimeResponse answer one criminal.
+   * TODO(M13): the criminal not fighting flees the guard that answers (the original's rule; the
+   * stage has no flee to start from here), and how the answering guard's Alarm package ends up
+   * attacking an NPC (here: at once).
+   */
+  async #npcCrime(
+    runtime: ScriptRuntime,
+    event: Extract<CrimeEvent, { readonly kind: 'npcCrime' }>,
+  ): Promise<void> {
+    const { senses, engaged } = this.#options;
+    const { criminal } = event;
+    let hearers: readonly number[] = [];
+    for (const witness of event.witnesses) {
+      hearers = senses.alarm(witness, criminal, ALARMS[event.act]);
+    }
+    const guards: number[] = [];
+    for (const witness of event.witnesses) {
+      if (await this.#isGuard(runtime, witness)) guards.push(witness);
+    }
+    if (guards.length === 0) {
+      for (const hearer of hearers) {
+        if (hearer === criminal || engaged?.(hearer) === true) continue;
+        if (!(await this.#isGuard(runtime, hearer))) continue;
+        const faction = await runtime.actors.crimeFaction(hearer);
+        if (faction === undefined || !event.group.includes(faction)) continue;
+        guards.push(hearer);
+        break;
+      }
+    }
+    const answering = this.#answering.get(criminal) ?? new Set<number>();
+    this.#answering.set(criminal, answering);
+    for (const guard of answering) if (engaged?.(guard) !== true) answering.delete(guard);
+    const limit = aiSettingsOf(this.#options.session).guardsCrimeResponse;
+    for (const guard of guards) {
+      if (!guardAnswers(answering.size, limit)) break;
+      answering.add(guard);
+      runtime.world.startCombat?.(guard, criminal);
     }
   }
 

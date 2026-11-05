@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { brightestAmbient, lightLevel, luminance, type LightProbe } from './light-level.ts';
+import { brightestAmbient, lightLevel, colorLevel, type LightProbe } from './light-level.ts';
 
 const grey = (value: number): [number, number, number] => [value, value, value];
 const dark: LightProbe = {
@@ -11,9 +11,9 @@ const dark: LightProbe = {
 };
 
 describe('light level', () => {
-  it('weighs colours by their luminance', () => {
-    expect(luminance([1, 1, 1])).toBeCloseTo(1, 9);
-    expect(luminance([0, 1, 0])).toBeCloseTo(0.7152, 9);
+  it('weighs colours by their colorLevel', () => {
+    expect(colorLevel([1, 1, 1])).toBeCloseTo(1, 9);
+    expect(colorLevel([0, 1, 0])).toBeCloseTo(1 / 3, 9);
   });
 
   it('is 0 in the dark', () => {
@@ -39,7 +39,7 @@ describe('light level', () => {
       lights: [{ position: [0, 0, 100], radius: 400, color: [1, 0.6, 0.3] }],
     };
     const at = (distance: number): number => lightLevel(torch, [0, 0, 100 - distance], true);
-    const bright = luminance([1, 0.6, 0.3]) * 100;
+    const bright = colorLevel([1, 0.6, 0.3]) * 100;
     expect(at(0)).toBeCloseTo(bright, 9);
     expect(at(200)).toBeCloseTo(bright * 0.75, 9);
     expect(at(400)).toBe(0);

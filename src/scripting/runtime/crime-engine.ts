@@ -76,6 +76,8 @@ export type CrimeEvent =
       readonly victim: number | undefined;
       readonly witnesses: readonly number[];
       readonly act: CrimeAct;
+      /** The crime's faction and those sharing its crimes: the guards that may answer it. */
+      readonly group: readonly number[];
     }
   /** The last witness of crimes died before they were reported: their bounty is gone. */
   | { readonly kind: 'forgiven'; readonly crimes: readonly Crime[] }
@@ -383,7 +385,7 @@ export class CrimeEngine {
       gold,
       violent,
       witnesses,
-      at: runtime.state.gameDaysPassed * 24,
+      at: runtime.state.realTime,
     });
     if (!crime) return undefined;
     if (faction !== undefined && gold > 0) {
@@ -447,7 +449,7 @@ export class CrimeEngine {
       witnesses.push(witness);
     }
     if (witnesses.length === 0) return;
-    this.#emit({ kind: 'npcCrime', criminal, victim, witnesses, act: options.act });
+    this.#emit({ kind: 'npcCrime', criminal, victim, witnesses, act: options.act, group });
   }
 
   /** A witness overlooks the crime: a friend of the criminal (minor crimes; allies assault). */
@@ -466,13 +468,22 @@ export class CrimeEngine {
     this.#emit({ kind: 'forgiven', crimes: forgiven });
   }
 
-  /** Every game hour or so: crimes older than REPORT_HOURS, or seen by a guard, are reported. */
+  /**
+   * Now and then: crimes past fKillWitnessesTimerSetting can no longer be forgiven. Observed in
+   * the original: SetPlayerEnemy lasts iCrimeEnemyCoolDownTimer game hours from when it was set;
+   * one without a time (an imported save's) holds.
+   */
   async update(): Promise<void> {
-    const guards = new Set<number>();
-    for (const crime of this.ledger.open()) {
-      for (const witness of crime.witnesses) if (await this.isGuard(witness)) guards.add(witness);
+    const { state } = this.#runtime;
+    const settings = await this.settings();
+    this.ledger.expire(state.realTime, settings.killWitnessesTimer);
+    const hours = state.gameDaysPassed * 24;
+    for (const entry of state.factions.values()) {
+      if (entry.playerEnemy !== true || entry.playerEnemySince === undefined) continue;
+      if (hours <= entry.playerEnemySince + settings.enemyCoolDown) continue;
+      entry.playerEnemy = false;
+      delete entry.playerEnemySince;
     }
-    this.ledger.expire(this.#runtime.state.gameDaysPassed * 24, (actor) => guards.has(actor));
   }
 
   // --- Stealing -------------------------------------------------------------------------------
@@ -1467,10 +1478,9 @@ export class CrimeEngine {
     if (!jail) return;
     delete runtime.state.crime.jail;
     await runtime.world.passTime?.(jail.days * 24);
-    const progressed = [...runtime.state.skillExperience]
-      .filter(([, experience]) => experience > 0)
-      .map(([skill]) => skill);
-    for (const skill of jailSkillLosses(jail.days, progressed, this.random))
+    const bounty = jail.violent + jail.nonviolent;
+    const progress = [...runtime.state.skillExperience];
+    for (const skill of jailSkillLosses(bounty, progress, await this.settings()))
       runtime.state.skillExperience.set(skill, 0);
     const crime = await this.factionCrime(jail.faction);
     const evidence = crime?.playerInventoryContainer;
