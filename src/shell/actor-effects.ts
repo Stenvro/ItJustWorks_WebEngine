@@ -14,8 +14,9 @@
 // with its alpha timeline (fade in, full, fade out to a persistent share, pulsing), the fill
 // texture scrolling; and its particles off the actor's skin (src/shell/surface-particles.ts).
 // Art objects hang on the actor's skeleton: their nodes and skinned shapes follow its bones by
-// name. TODO(M13): the shaders' holes (NAM7, burning away), addon models (DEBR) and ambient
-// sounds, the membrane's palette animation over its colour keys' times.
+// name. The fill follows its colour keys over the shader's age, the keys' times taken as seconds as
+// its alpha timeline's are (TODO(M13): inferred, no document says what the times count). TODO(M13):
+// the shaders' holes (NAM7, burning away), addon models (DEBR).
 
 import { ActorPose, ActorSkeleton, wearOnRig } from '../animation/skeleton.ts';
 import type { Vec3 } from '../render/math.ts';
@@ -42,7 +43,7 @@ import {
   type EffectShaderRecord,
 } from '../world/effect-shader-records.ts';
 import type { EnchantmentGlow } from '../gameplay/magic/enchantment-glow.ts';
-import { EffectArchetype } from '../world/magic-effects.ts';
+import { EffectArchetype, parseVisualEffect } from '../world/magic-effects.ts';
 import { parseArtObject } from '../world/magic-records.ts';
 import type { GameSession } from './game-session.ts';
 import { alphaFlags, SurfaceParticles, texturePath, Z_TEST_ALWAYS } from './surface-particles.ts';
@@ -183,17 +184,20 @@ export class ActorEffects {
   // --- What starts and stops them ---------------------------------------------------------
 
   /** A magic effect begins or ends on an actor (the magic system's WorldBridge.magicEffect). */
-  effect(shown: MagicEffectShown): void {
+  effect(shown: MagicEffectShown, body?: () => EffectBody | undefined): void {
     const key = `effect:${shown.key}`;
     if (shown.event === 'stop') {
       this.#stop(key);
+      this.#stop(`${key}:visuals`);
       return;
     }
     // Its visuals last while it does with FX Persist, else their own time once.
     const lasting = shown.persist ? undefined : 0;
     if (shown.shader !== undefined && shown.archetype !== EffectArchetype.detectLife)
-      void this.#startShader(key, shown.target, shown.shader, lasting);
-    if (shown.art !== undefined) this.#startArt(key, shown.target, shown.art, lasting);
+      void this.#startShader(key, shown.target, shown.shader, lasting, body);
+    if (shown.art !== undefined) this.#startArt(key, shown.target, shown.art, lasting, body);
+    if (shown.visuals !== undefined)
+      this.#startVisuals(`${key}:visuals`, shown.target, shown.visuals, lasting, body);
     if (shown.light !== undefined) void this.#startLight(key, shown.target, shown.light);
     if (shown.archetype === EffectArchetype.detectLife && shown.shader !== undefined) {
       this.#detects.set(key, {
@@ -230,15 +234,24 @@ export class ActorEffects {
       this.#stop(key);
       return;
     }
+    this.#startVisuals(key, target, effect, duration < 0 ? undefined : duration);
+  }
+
+  /** A visual effect's (RFCT) art and shader on what it covers. */
+  #startVisuals(
+    key: string,
+    target: number,
+    effect: number,
+    seconds: number | undefined,
+    body?: () => EffectBody | undefined,
+  ): void {
     void (async () => {
       const record = await this.#options.session.scriptsReady?.forms.record(effect);
-      const data = record?.type === 'RFCT' ? record.fields.first('DATA') : undefined;
-      if (!record || !data || data.length < 8) return;
-      const art = record.formIdAt(data, 0);
-      const shader = record.formIdAt(data, 4);
-      const seconds = duration < 0 ? undefined : duration;
-      if (art !== 0) this.#startArt(key, target, art, seconds);
-      if (shader !== 0) await this.#startShader(key, target, shader, seconds);
+      const visual = record && parseVisualEffect(record);
+      if (!visual) return;
+      if (visual.art !== undefined) this.#startArt(key, target, visual.art, seconds, body);
+      if (visual.shader !== undefined)
+        await this.#startShader(key, target, visual.shader, seconds, body);
     })().catch((error: unknown) => {
       this.#options.terminal.log('magic', `visual effect: ${describe(error)}`, 'warn');
     });
@@ -257,6 +270,8 @@ export class ActorEffects {
     const own = `glow:${key}`;
     if (glow.shader !== undefined) void this.#startShader(own, owner, glow.shader, undefined, body);
     if (glow.art !== undefined) this.#startArt(own, owner, glow.art, undefined, body);
+    if (glow.visuals !== undefined)
+      this.#startVisuals(`${own}:visuals`, owner, glow.visuals, undefined, body);
   }
 
   /** An item's glow goes (unequipped, picked up, unloaded). */
@@ -645,7 +660,11 @@ export class ActorEffects {
       const built = show.built;
       const fill = timelineAlpha(show.shader.membrane.fill, show.age, show.stopping);
       const edge = timelineAlpha(show.shader.membrane.edge, show.age, show.stopping);
-      if (built?.fill) renderer.scene.fadeScene(built.fill, fill);
+      if (built?.fill) {
+        renderer.scene.fadeScene(built.fill, fill);
+        if (show.shader.membrane.colors.length > 1)
+          renderer.scene.tintScene(built.fill, fillColor(show.shader, show.age));
+      }
       if (built?.edge) renderer.scene.fadeScene(built.edge, edge);
       if (show.stopping !== undefined) built?.particles?.source.stop();
       const particlesDone = !built?.particles || built.particles.source.finished;

@@ -49,6 +49,8 @@ export interface ScenePort {
   ): GpuScene | undefined;
   /** Fades a scene's draws (an effect shader's fill and edge). */
   fadeScene(scene: GpuScene, fade: number): void;
+  /** Colours a scene's effect draws (an effect shader's fill over its colour keys). */
+  tintScene(scene: GpuScene, color: readonly [number, number, number]): void;
   /**
    * Whether the camera saw a scene in the last frame drawn (a draw within its view); absent
    * headless, where nothing is seen or unseen.

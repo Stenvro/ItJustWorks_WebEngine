@@ -96,6 +96,10 @@ class HeadlessScene implements ScenePort {
     // Nothing is drawn.
   }
 
+  tintScene(): void {
+    // Nothing is drawn.
+  }
+
   createMorphs(): GpuMorphs | undefined {
     return undefined;
   }

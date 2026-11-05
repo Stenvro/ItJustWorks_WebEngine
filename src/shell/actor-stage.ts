@@ -1050,8 +1050,8 @@ export class ActorStage {
   readonly #guides = new Map<string, { readonly hazard: number; wait: number }>();
 
   /** A magic effect begins or ends on an actor: what it shows (WorldBridge.magicEffect). */
-  magicEffect(shown: MagicEffectShown): void {
-    this.effects.effect(shown);
+  magicEffect(shown: MagicEffectShown, body?: () => EffectBody | undefined): void {
+    this.effects.effect(shown, body);
     if (shown.archetype !== EffectArchetype.guide || shown.target !== PLAYER_REF) return;
     if (shown.event === 'stop') {
       this.#guides.delete(shown.key);

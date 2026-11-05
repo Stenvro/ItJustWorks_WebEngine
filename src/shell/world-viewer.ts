@@ -743,7 +743,11 @@ export class WorldViewer {
       void this.#scriptMoved(reference);
     },
     magicEffect: (shown) => {
-      this.#stage?.magicEffect(shown);
+      const target = shown.target;
+      this.#stage?.magicEffect(
+        shown,
+        shown.onObject === true ? () => this.#objectBody(target) : undefined,
+      );
     },
     effectShader: (shader, target, play, duration) => {
       this.#stage?.effects.shader(shader, target, play, duration);

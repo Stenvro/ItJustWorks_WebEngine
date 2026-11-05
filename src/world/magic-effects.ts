@@ -226,6 +226,24 @@ export interface MagicEffectRecord {
   readonly scripted: boolean;
 }
 
+/** RFCT (xEdit: DATA, Effect Art, Shader, Flags): what a visual effect shows. */
+export interface VisualEffectRecord {
+  readonly art: number | undefined;
+  readonly shader: number | undefined;
+  readonly flags: number;
+}
+
+/** A visual effect's record; undefined for other records and short data. */
+export function parseVisualEffect(
+  record: Pick<GameRecord, 'type' | 'fields' | 'formIdAt'>,
+): VisualEffectRecord | undefined {
+  const data = record.type === 'RFCT' ? record.fields.first('DATA') : undefined;
+  if (!data || data.length < 12) return undefined;
+  const form = (at: number): number | undefined => record.formIdAt(data, at) || undefined;
+  const flags = new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(8, true);
+  return { art: form(0), shader: form(4), flags };
+}
+
 export function parseMagicEffect(record: RecordSource): MagicEffectRecord {
   const data = record.fields.first('DATA');
   const d = data && data.length >= 72 ? view(data) : undefined;
