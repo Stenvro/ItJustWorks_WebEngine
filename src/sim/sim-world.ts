@@ -333,6 +333,13 @@ export class SimWorld {
           this.runtime.triggered(trigger, actor, entered);
         },
         cellOf: (at) => this.#stageCellOf(at),
+        space: () => {
+          const place = this.#place;
+          if (!place) return undefined;
+          return place.kind === 'interior'
+            ? { kind: 'interior', cell: place.cell }
+            : { kind: 'world', world: place.world.record.formId };
+        },
         // A cell still being read has no collision in place yet (as the page's world viewer
         // holds it from the start of its load): an actor near it waits for it.
         collided: (key) =>

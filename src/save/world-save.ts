@@ -5,6 +5,7 @@
 // as the world loads again, the way the original's change forms do; nothing of the rendering.
 // Platform-independent.
 
+import type { Space } from '../ai/package-start.ts';
 import type { SavedPackage } from '../ai/package-runtime.ts';
 import type { ActorGraphState, BehaviorGraphState } from '../animation/behavior-runtime.ts';
 import type { VehicleOffset, VehiclePose } from '../ai/vehicles.ts';
@@ -52,6 +53,33 @@ export interface SavedActor {
   readonly riding?: number | undefined;
   /** Bleeding out, or in a paired animation (a killmove): it goes on in it. */
   readonly down?: SavedDown | undefined;
+  /**
+   * It had left the stage as the game was saved (OffStageActors): its cell is one of `space`,
+   * not of the loaded area. The low process may take it over as it chooses another package.
+   */
+  readonly offStage?: boolean | undefined;
+  /** The worldspace or interior of its cell (an exterior's key names only the grid cell). */
+  readonly space?: Space | undefined;
+}
+
+/**
+ * An actor on its way between load doors (src/shell/actors-away.ts) as a save keeps it: where
+ * it is along its way, where it is going, for which package; its road is planned again from
+ * there. The game state has it only where it last came through a door.
+ */
+export interface SavedTrip {
+  readonly actor: number;
+  readonly space: Space;
+  readonly position: readonly [number, number, number];
+  readonly destination: {
+    readonly space: Space;
+    readonly position: readonly [number, number, number];
+    readonly heading?: number | undefined;
+  };
+  readonly package?: { readonly id: number; readonly procedure: string } | undefined;
+  readonly speed: number;
+  /** A flier's way: straight through the air, no road under it. */
+  readonly flies?: boolean | undefined;
 }
 
 /**
@@ -225,6 +253,8 @@ export interface WorldSaveParts {
   readonly animObjects?: readonly SavedAnimObject[];
   readonly motions?: readonly SavedMotion[];
   readonly detection?: DetectionSave;
+  /** The actors on their way between load doors. */
+  readonly trips?: readonly SavedTrip[];
 }
 
 export interface WorldSave extends WorldSaveParts {
@@ -242,6 +272,60 @@ export interface WorldSave extends WorldSaveParts {
 }
 
 /**
+ * How many actors that left the stage are kept for a save: those that left last. What each
+ * holds is small (no graph, no fight), and an actor's cell the player has not come back to in
+ * this many actors' time gets what the game state has for it, as before.
+ */
+export const OFF_STAGE_KEPT = 512;
+
+/** An actor's place in the game state as it left the stage (undefined: it has none). */
+type StatePlace = readonly [number, number, number] | undefined;
+
+/**
+ * What a save keeps of the actors that left the stage during play, as the original keeps the
+ * process of an actor that is not loaded: place, package and its progress (OFF_STAGE_KEPT
+ * says how many). Only a save reads them: an actor that comes back during play is placed by its
+ * package and the game state as before, and its record goes.
+ */
+export class OffStageActors {
+  readonly #kept = new Map<number, { record: SavedActor; statePlace: StatePlace }>();
+
+  keep(record: SavedActor, statePlace: StatePlace): void {
+    this.#kept.delete(record.reference);
+    this.#kept.set(record.reference, { record, statePlace });
+    for (const oldest of this.#kept.keys()) {
+      if (this.#kept.size <= OFF_STAGE_KEPT) break;
+      this.#kept.delete(oldest);
+    }
+  }
+
+  /** It is on the stage again (or no longer as it left): its record is gone. */
+  drop(reference: number): void {
+    this.#kept.delete(reference);
+  }
+
+  clear(): void {
+    this.#kept.clear();
+  }
+
+  /**
+   * The records still true: one whose place in the game state changed since it left (a script
+   * moved it, the low process took it through a door) has its place there, and is gone.
+   */
+  current(statePlaceOf: (reference: number) => StatePlace): SavedActor[] {
+    const records: SavedActor[] = [];
+    for (const [reference, { record, statePlace }] of this.#kept) {
+      if (samePlace(statePlaceOf(reference), statePlace)) records.push(record);
+      else this.#kept.delete(reference);
+    }
+    return records;
+  }
+}
+
+const samePlace = (a: StatePlace, b: StatePlace): boolean =>
+  a === b || (a !== undefined && b !== undefined && a.every((value, axis) => value === b[axis]));
+
+/**
  * A loaded save's world, handed out as the world loads again: each actor's and graph's saved
  * state is taken once, as its reference is placed. Actors whose cell goes before they were
  * placed are dropped with it (they come back where their packages have them, as before).
@@ -257,6 +341,7 @@ export class WorldRestore {
   #animObjects: readonly SavedAnimObject[];
   readonly #motions = new Map<number, SavedMotion>();
   #detection: DetectionSave | undefined;
+  #trips: readonly SavedTrip[];
 
   constructor(save: WorldSave) {
     this.#playerGraphs = save.playerGraphs;
@@ -269,6 +354,14 @@ export class WorldRestore {
     this.#animObjects = save.animObjects ?? [];
     for (const motion of save.motions ?? []) this.#motions.set(motion.reference, motion);
     this.#detection = save.detection;
+    this.#trips = save.trips ?? [];
+  }
+
+  /** The actors on their way between load doors, once (they go on from where they were). */
+  takeTrips(): readonly SavedTrip[] {
+    const trips = this.#trips;
+    this.#trips = [];
+    return trips;
   }
 
   /** The world's decals as the game was saved, once (built again as what they lie on loads). */

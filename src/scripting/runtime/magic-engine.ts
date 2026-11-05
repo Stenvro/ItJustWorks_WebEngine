@@ -981,8 +981,10 @@ export class MagicEngine {
 
   /** The training of an effect a save caught before its first frame, its records read again. */
   async #trainLoaded(entry: ActiveEffectState): Promise<void> {
-    const [item, effect] = await Promise.all([this.item(entry.item), this.effect(entry.effect)]);
-    if (item && effect) await this.#train(item, entry.index, effect, entry, {});
+    const { item: formId, index } = entry;
+    if (formId === undefined || index === undefined) return;
+    const [item, effect] = await Promise.all([this.item(formId), this.effect(entry.effect)]);
+    if (item && effect) await this.#train(item, index, effect, entry, {});
   }
 
   /** A spell that fails on a target: the player hears of it (sMagicEffectResisted, ...). */

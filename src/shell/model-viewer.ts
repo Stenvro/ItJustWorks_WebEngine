@@ -1150,6 +1150,8 @@ export class ModelViewer {
       },
       cellOf: (at) =>
         at.cell !== undefined && at.cell === this.#stageCell ? String(at.cell) : undefined,
+      space: () =>
+        this.#stageCell === undefined ? undefined : { kind: 'interior', cell: this.#stageCell },
       navmeshes: () => this.#navmeshes,
       objects: () => this.#stageObjects(),
       obstacles: () => this.#stageObstacles(),
