@@ -156,7 +156,10 @@ export class ActorPractice {
     const runtime = this.#options.session.scriptsReady;
     if (!runtime) return false;
     const spell = cast.spell && (await this.#spell(actor, cast.spell));
-    if (target !== undefined) this.#face(actor, target);
+    if (target !== undefined) {
+      this.#options.session.scriptWorld.lookAt(actor, target, 'procedure');
+      this.#face(actor, target);
+    }
     const began = await this.#options
       .casting()
       .castAt(actor, cast.dual ? 'both' : 'right', target, {

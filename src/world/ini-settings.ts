@@ -417,6 +417,9 @@ export const INI_DEFAULTS = {
   // frame, each again after 1–1.5 s, a new target held 3–8 s (the original's defaults).
   HeadTracking: {
     iUpdateActorsPerFrame: 10,
+    fMinPathLookAtPointDist: 128,
+    fMaxPathLookAtPointDist: 512,
+    fPathLookAtPointTime: 2,
     fUpdateDelaySecondsMin: 1,
     fUpdateDelaySecondsMax: 1.5,
     fUpdateDelayNewTargetSecondsMin: 3,
@@ -429,6 +432,8 @@ export const INI_DEFAULTS = {
     fAvoidanceTimeDelta: 3,
     fMinAvoidanceRadius: 256,
     fMaxAvoidanceRadius: 512,
+    fMaxTimeSizeAvoidNode: 1,
+    fObstacleUpdateDeltaWhenMoving: 1,
     fMaxTimeBlockedByActors: 1,
     fAvoidNodeRadiusAdd: 11,
     fAvoidNodeCost: 24,
