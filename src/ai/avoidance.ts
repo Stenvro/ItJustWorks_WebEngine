@@ -2,11 +2,12 @@
 // that the way would bring within reach (their radii and a margin) in the next moment is passed
 // on the side away from it, two that meet head-on both keeping right; the way turns just as far
 // as passing needs. Which it looks at is the engine's (observed in the original: the nearest
-// iMaxActorsToAvoid within its avoidance radius); how the engine's own avoidance turns the way is
-// not read yet (TODO(M13)). Only an actor whose race uses the advanced avoidance (RACE DATA Flags 2:
-// race-ai-flags.ts) foresees where those moving will be and keeps right of one coming head-on;
-// the others (the wolves, bears, deer, horses) go round those in their way as they stand now.
-// Platform-independent.
+// iMaxActorsToAvoid within its avoidance radius). The advanced avoidance is the engine's velocity
+// obstacles (observed in the original: a race's RACE DATA Flags 2 bit with
+// bUseVelocityObstacles): an actor with it steers round those moving and lays avoid nodes only on
+// those standing; one without it has no such steering and lays nodes on those moving too
+// (layAvoidNode). The turn itself is ours (TODO(M13): the velocity obstacles' cones, built with
+// the navmesh's open edges, are not reproduced). Platform-independent.
 
 type Vec2 = readonly [number, number];
 
@@ -112,6 +113,67 @@ export function avoidance<N extends Neighbour>(
   };
 }
 
+/** One moving no faster than this (units a second) stands, for its avoid node. */
+const STANDING_SPEED = 5;
+
+/** A neighbour as an actor's avoidance last saw it. */
+export interface AvoidedNeighbour {
+  readonly moving: boolean;
+  /** Seconds since its node was last looked at. */
+  readonly age: number;
+  /** It has a node across the way. */
+  readonly noded: boolean;
+}
+
+/** The shortest distance from a place to a way, seen from above. */
+function distanceToWay(at: Vec2, way: readonly (readonly number[])[]): number {
+  let nearest = Infinity;
+  for (let i = 1; i < way.length; i++) {
+    const [ax = 0, ay = 0] = way[i - 1] ?? [];
+    const [bx = 0, by = 0] = way[i] ?? [];
+    const dx = bx - ax;
+    const dy = by - ay;
+    const t = Math.min(
+      1,
+      Math.max(0, ((at[0] - ax) * dx + (at[1] - ay) * dy) / (dx * dx + dy * dy || 1)),
+    );
+    nearest = Math.min(nearest, Math.hypot(at[0] - ax - dx * t, at[1] - ay - dy * t));
+  }
+  return nearest;
+}
+
+/**
+ * Whether an actor on its way lays an avoid node on a neighbour now and searches round it
+ * (observed in the original). A node goes on one whose middle lies within half the actor's width
+ * and its own radius of the way. With the advanced avoidance it is looked at only as the neighbour
+ * comes to stand (5 units a second or less; one that sets off keeps none: the actor steers round
+ * it). Without it, also whenever the neighbour starts or stops and at least every
+ * fMaxTimeSizeAvoidNode: those moving get nodes too, where they are then.
+ */
+export function layAvoidNode(
+  before: AvoidedNeighbour | undefined,
+  other: Neighbour,
+  width: number,
+  way: readonly (readonly number[])[],
+  rule: { readonly advanced: boolean; readonly step: number; readonly refresh: number },
+): { readonly lay: boolean; readonly state: AvoidedNeighbour } {
+  const moving = Math.hypot(other.velocity[0], other.velocity[1]) > STANDING_SPEED;
+  const wasMoving = before?.moving ?? true;
+  const age = (before?.age ?? 0) + rule.step;
+  const look = rule.advanced
+    ? wasMoving && !moving
+    : wasMoving !== moving || age > rule.refresh || before === undefined;
+  if (!look) {
+    const noded = (before?.noded ?? false) && !(rule.advanced && moving);
+    return { lay: false, state: { moving, age, noded } };
+  }
+  const across = distanceToWay(other.position, way) < width / 2 + other.radius;
+  return {
+    lay: across && !(before?.noded ?? false),
+    state: { moving, age: 0, noded: across },
+  };
+}
+
 /** Two actors on their way that keep each other from going on: who gives way. */
 export interface WayGiver {
   readonly reference: number;
@@ -124,9 +186,11 @@ export interface WayGiver {
 /**
  * Of two actors on their way into each other (a narrow way, neither able to go round), the one
  * that gives way: the slower gait, else the lower reference (always the same one of a pair,
- * whichever of the two asks). The engine lays no avoid node for an actor that moves (observed in
- * the original), so going round a moving one does not part them. TODO(M13): the engine's own rule for
- * who yields is not read; this one only ensures one of the two does.
+ * whichever of the two asks). Ours, not the original's (inferred): the original's avoider has no
+ * rule for who yields (observed in it): each with the advanced avoidance lays no node for the
+ * other moving and after fMaxTimeBlockedByActors reports its way blocked by actors. What its path
+ * manager does with that report was not read (TODO(M13)); this one only ensures one of the two
+ * goes on.
  */
 export function givesWay<A extends WayGiver>(a: A, b: A): A {
   // One its race keeps from being pushed (the dragons) gives way to no one.

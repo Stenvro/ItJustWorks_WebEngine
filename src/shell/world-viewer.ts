@@ -1847,7 +1847,15 @@ export class WorldViewer {
   *#stageObstacles(): Iterable<StageObstacleCell> {
     for (const [key, cell] of this.#cells) {
       if (!cell.ready || !cell.data?.obstacles?.length) continue;
-      yield { key, obstacles: cell.data.obstacles, isEnabled: cell.isEnabled };
+      yield {
+        key,
+        obstacles: cell.data.obstacles,
+        isEnabled: cell.isEnabled,
+        placedNow: (reference) => {
+          const placed = placedByReference(cell, reference);
+          return placed?.instance.motion ? placed.instance.world : undefined;
+        },
+      };
     }
   }
 

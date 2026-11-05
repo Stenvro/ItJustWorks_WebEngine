@@ -1798,11 +1798,21 @@ chooses its own look (observed in the original): every [HeadTracking]
 fUpdateDelaySecondsMin–Max (1–1.5 s), at most iUpdateActorsPerFrame (10) actors a frame, only
 within fAIMaxHeadTrackDistanceFromPC (2000; an extra large race fAIMaxLargeCreatureHeadTrackDistance, 12000) of the player, the player or another actor it detects (detection: docs/ai.md,
 "Detection") within fAIMaxHeadTrackDistance (400; extra large 12000) and 120° of its facing,
-the nearest; a new one held fUpdateDelayNewTargetSecondsMin–Max (3–8 s) while it still may be
-looked at. fAIBestHeadTrackDistance and fAIInteriorHeadTrackMult the engine never reads.
-TODO(M13): how the engine scores the candidates (here the nearest), its look along the path
-(fMin/MaxPathLookAtPointDist, fPathLookAtPointTime), a package target's look
-(fAIActorPackTargetHeadTrackMod).
+with no favourites: the score the engine asks of each candidate is 0 for all, so the player
+(asked first) has it if it may be looked at, else the first of the actors in its process list that
+may; speaking, moving or nearness count for nothing. Other than the player and the one it looks at,
+no one nearer than 100 units is chosen; the one it looks at may stand anywhere round it; two in
+furniture do not look at each other. It chooses anew only with no Action, Combat, Dialogue or
+Procedure look asked, once the last has been held fAIHoldDefaultHeadTrackTimer (5 s).
+With no one to look at, walking its way, it looks along it (only then): as far ahead as its speed takes
+it in fPathLookAtPointTime (2 s), between fMinPathLookAtPointDist (128) plus its radius and
+fMaxPathLookAtPointDist (512), at its head's height over that point; a way left shorter than that is
+looked along to its end, shorter than the least not at all.
+A package's target is looked at only by Use Weapon, Use Magic and Shout (the Procedure look, at their
+target; fAIActorPackTargetHeadTrackMod has no reader).
+fAIBestHeadTrackDistance and fAIInteriorHeadTrackMult the look's choice never reads.
+TODO(M13): the exceptions for a commanded actor and a teammate, whose fields were not identified;
+what ends a look that may no longer be chosen (ours: at its next look).
 Actor.SetHeadTracking(false)
 and the graph's HeadTrackingOff (graphs' and clips' events; actorresponse.txt's
 HeadTrackingOffHandler; HeadTrackingOn again) stop it. The point looked at turns towards the

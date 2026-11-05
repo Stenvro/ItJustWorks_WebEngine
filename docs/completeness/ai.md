@@ -25,8 +25,8 @@ against docs/ai.md and the conformance suites (tests/conformance/ai/).
 | Idle markers, furniture |    25 |   24 |    1 |
 | Navmeshes (data)        |    12 |   11 |    1 |
 | Game settings           |   190 |  190 |    0 |
-| Mechanics (by hand)     |    24 |   13 |   11 |
-| Total                   |   456 |  443 |   13 |
+| Mechanics (by hand)     |    27 |   15 |   12 |
+| Total                   |   459 |  445 |   14 |
 
 Round 1 wrote the sweep and this list; Can Pickup Items (RACE DATA) became read: only a race that
 can pick up items runs the combat tree's Acquire Weapon.
@@ -196,8 +196,15 @@ the readers ask for by name.
 - [x] Sandbox: rescan, search radius, hysteresis, meals, idle markers (sandbox.ts).
 - [ ] Sandbox: the places the engine gives no radius, extra dialogue range, the delay on arrival.
 - [x] Paths: navmesh A\*, edge links, ledges, doors on the way, routes through load doors.
-- [ ] Navmesh obstacles cut approximately (no re-triangulation).
-- [ ] Avoidance: the engine's way round and who yields (ours: the slower gait).
+- [x] Navmesh obstacles: the ground under one cut out of each triangle by the rule's footprint and
+      height band, its free parts stay open; a moving body's cut (5 units, 5°, the update delta)
+      (navmesh-obstacles.ts; tests/conformance/ai/movement-paths.test.ts, a real hall's triangles).
+      Ours in form: convex parts for the original's new triangles, which were not read.
+- [x] Avoidance: whom it lays avoid nodes on, standing or moving, by the advanced avoidance
+      (avoidance.ts layAvoidNode; the flag read: it is the velocity obstacles' switch).
+- [ ] Avoidance: the velocity obstacles' steering (ours: foresee and keep right; that only those
+      races steer is inferred); who yields: the original's avoider has no such rule, it reports
+      its way blocked; what its path manager does then is not read (ours: the slower gait).
 - [x] Detection: sight, sound, light, line of sight, stealth, detection states (detection.ts).
 - [ ] Detection: the light's sum is ours.
 - [x] Crime: witnesses, alarms, guards' warnings and arrests, NPC assault alarms.
@@ -211,16 +218,22 @@ the readers ask for by name.
 - [x] Travel, escort, flee, follow to, keep an eye on, ambush (procedure-runs.ts).
 - [x] Engine packages: get up, avoid player, steal warning, movement blocked (engine-packages.ts).
 - [ ] Wear Sleep Outfit has no simulation case.
-- [x] Head tracking (head-tracking.ts).
-- [ ] Head tracking: the candidates' scores and look-ahead ours.
+- [x] Head tracking (head-tracking.ts): no favourites (the player asked first, else the first it may
+      look at), who may be looked at (distance, 100 units, 120° or the one it has, two in
+      furniture), the hold (fAIHoldDefaultHeadTrackTimer), the look along the way
+      (fMin/fMaxPathLookAtPointDist, fPathLookAtPointTime) only with no one to look at.
+- [ ] A package target's look: read (only Use Weapon, Use Magic and Shout ask the Procedure look;
+      actor-practice.ts asks it so), no test has it.
+- [ ] Head tracking: which fields a commanded actor's and a teammate's exceptions read; what
+      ends a look that may no longer be chosen (ours: at the next look).
 - [x] Furniture use: entry, exit, idle markers (actor-furniture.ts).
 - [x] Process levels and their budget (process-levels.ts).
 - [ ] Process levels: the high-process distance ours; actors away keep a schedule (ours).
 
 ## Next biggest
 
-1. Avoidance: the engine's way round and who yields; what the advanced avoidance adds (the race
-   flag's reading is the plain one).
+1. Avoidance: the velocity obstacles' steering, and what the path manager does with a way
+   reported blocked by actors.
 2. IDLM Loose Only (72 markers) and the navmesh flag Found: where the original reads them
    (round 4b ruled out the idle marker procedure, the sandbox's search and the path cost).
 3. The mechanics left by hand (Continue If PC Near's reach, sandbox radii, the light's sum, NPC

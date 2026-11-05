@@ -28,6 +28,8 @@ import { Breath, HEAD_UNDER } from '../ai/engine-packages.ts';
 import {
   avoidance,
   avoidanceNeighbours,
+  layAvoidNode,
+  type AvoidedNeighbour,
   givesWay,
   type AvoidanceSettings,
   type Neighbour,
@@ -343,6 +345,8 @@ interface Travel {
   readonly speedMult: TravelOptions['speedMult'];
   /** Its pace (a jogging package's: TravelOptions). */
   readonly pace: number | undefined;
+  /** Those near it on its way, as its avoidance last saw them (avoidance.ts AvoidedNeighbour). */
+  readonly neighbours: Map<number, AvoidedNeighbour>;
   /** How long others in its way have kept it from going on (seconds), and the last that did. */
   blockedFor: number;
   blockedBy: AvoidNode | undefined;
@@ -608,6 +612,7 @@ export class ActorMovers {
         speedMult: options.speedMult,
         pace: options.pace,
         blockedFor: 0,
+        neighbours: new Map(),
         blockedBy: undefined,
         held: [],
         askedPlayer: false,
@@ -880,7 +885,10 @@ export class ActorMovers {
   }
 
   /** The INI's avoidance settings ([Pathfinding]). */
-  #avoidanceSettings(): AvoidanceSettings & { readonly maxTimeBlocked: number } {
+  #avoidanceSettings(): AvoidanceSettings & {
+    readonly maxTimeBlocked: number;
+    readonly maxTimeSizeNode: number;
+  } {
     const ini = this.#options.session.ini;
     return {
       maxActors: ini.number('Pathfinding', 'iMaxActorsToAvoid'),
@@ -888,7 +896,42 @@ export class ActorMovers {
       minRadius: ini.number('Pathfinding', 'fMinAvoidanceRadius'),
       maxRadius: ini.number('Pathfinding', 'fMaxAvoidanceRadius'),
       maxTimeBlocked: ini.number('Pathfinding', 'fMaxTimeBlockedByActors'),
+      maxTimeSizeNode: ini.number('Pathfinding', 'fMaxTimeSizeAvoidNode'),
     };
+  }
+
+  /**
+   * An actor's avoid nodes on those near it (observed in the original; avoidance.ts layAvoidNode):
+   * one its rule says lies across its way has its path searched again round it at once. The
+   * player is left to #blockedByActors, who asks them to move first. TODO(M13): the original's
+   * own order of the player's line and its node was not read.
+   */
+  #avoidNodes(
+    mover: Mover,
+    near: readonly (Neighbour & { readonly mover: Mover | undefined })[],
+    step: number,
+    refresh: number,
+    advanced: boolean,
+  ): void {
+    const reference = mover.staged.reference;
+    const travel = this.#travels.get(reference);
+    const way = travel?.follower?.path.points;
+    if (!travel || !way || this.#reactions.has(reference)) return;
+    const seen = new Set<number>();
+    for (const other of near) {
+      const key = other.mover?.staged.reference;
+      if (key === undefined) continue;
+      seen.add(key);
+      const before = travel.neighbours.get(key);
+      const { lay, state } = layAvoidNode(before, other, mover.character.shape.radius, way, {
+        advanced,
+        step,
+        refresh,
+      });
+      travel.neighbours.set(key, state);
+      if (lay) this.#searchRound(mover, travel, other);
+    }
+    for (const key of travel.neighbours.keys()) if (!seen.has(key)) travel.neighbours.delete(key);
   }
 
   /**
@@ -950,9 +993,15 @@ export class ActorMovers {
     if (this.#options.session.ini.bool('General', 'bUseMovementBlockedPackage')) {
       this.#options.movementBlocked?.(reference, most);
     }
-    // Its search goes round the last one that blocked it (it moves on: only that one): an avoid
-    // node where it stands, its radius and fAvoidNodeRadiusAdd wide, each unit of a step through
-    // it costing fAvoidNodeCost (observed in the original), the actor's own width kept off.
+    this.#searchRound(mover, travel, blocker);
+  }
+
+  /**
+   * Its search goes round the last one that blocked it (it moves on: only that one): an avoid
+   * node where it stands, its radius and fAvoidNodeRadiusAdd wide, each unit of a step through
+   * it costing fAvoidNodeCost (observed in the original), the actor's own width kept off.
+   */
+  #searchRound(mover: Mover, travel: Travel, blocker: Neighbour): void {
     const z = mover.character.feet[2];
     const ini = this.#options.session.ini;
     travel.blockedBy = {
@@ -1295,6 +1344,12 @@ export class ActorMovers {
   }
 
   /** How a moved actor moves now (its conditions and natives read it). */
+  /** How fast an actor goes now (units a second; 0: it has no mover). */
+  speed(reference: number): number {
+    const velocity = this.#movers.get(reference)?.velocity;
+    return velocity ? Math.hypot(...velocity) : 0;
+  }
+
   motion(reference: number): ActorMotion | undefined {
     const mover = this.#movers.get(reference);
     if (!mover) return undefined;
@@ -2376,8 +2431,11 @@ export class ActorMovers {
           others.filter((other) => other.mover !== mover),
           avoiding,
         );
+        this.#avoidNodes(mover, near, step, avoiding.maxTimeSizeNode, self.advanced);
         const passing = avoidance(self, near);
-        request = { ...wanted, direction: passing.direction };
+        // Only the advanced avoidance steers round those near (avoidance.ts); the others keep
+        // their way, and their nodes take them round.
+        if (self.advanced) request = { ...wanted, direction: passing.direction };
         this.#blockedByActors(mover, passing.blocker, step, avoiding.maxTimeBlocked);
       }
       const surface = this.#atWater(mover, step);
