@@ -111,6 +111,18 @@ const DOOR_SWING_WAIT = 3;
  * open door's leaf against a wall), the player looks for their way again from where they stand.
  */
 const HELD_SEARCH_AGAIN = 3;
+/** This far under the way they were walking (a step down is far less), the player fell off it. */
+const FELL_OFF_THE_WAY = 128;
+
+/** The height of a way's step (`from` to `to`) nearest a place. */
+function wayHeightAt(from: readonly number[], to: readonly number[], x: number, y: number): number {
+  const toZ = to[2] ?? 0;
+  const [fx = 0, fy = 0, fz = 0] = from;
+  const dx = (to[0] ?? 0) - fx;
+  const dy = (to[1] ?? 0) - fy;
+  const t = ((x - fx) * dx + (y - fy) * dy) / (dx * dx + dy * dy || 1);
+  return fz + (toZ - fz) * Math.min(1, Math.max(0, t));
+}
 /** Held up off the navmesh with the way on this much above the feet, the player jumps. */
 const JUMP_OUT = 16;
 /** What holds the player up is looked for this far ahead, this high above the feet. */
@@ -491,6 +503,8 @@ export class Sim {
     let points = path.points.slice(from === feet ? 1 : 0);
     let complete = path.complete;
     let searched = false;
+    let fellTo = Infinity;
+    let origin: readonly number[] = from;
     for (let index = 0; index < points.length; index++) {
       const point = points[index];
       if (!point) break;
@@ -508,6 +522,26 @@ export class Sim {
         // the way is cleared (#clearWay); down in a dip off the navmesh (a gap between rocks under
         // it), with the way on above, they jump out; someone in the way is stepped round.
         const [x1, y1, z1] = this.world.player.feet;
+        // They fell (off a ledge, down a slope): the old way's points lie above them now, and
+        // heading for those leaves them stuck under them. The way on is searched from here, once
+        // for each drop (a way that starts above them, off the navmesh, is not searched for
+        // again and again).
+        if (
+          z1 <= fellTo - FELL_OFF_THE_WAY &&
+          wayHeightAt(points[index - 1] ?? origin, point, x1, y1) - z1 >= FELL_OFF_THE_WAY
+        ) {
+          const here: Vec3 = [x1, y1, z1];
+          const start = navmeshes.locate(here) ? here : navmeshes.nearest?.(here, PATH_GOAL_REACH);
+          const again = start && findPath(navmeshes, start, goal, WAY);
+          if (again) {
+            fellTo = z1;
+            origin = start;
+            points = again.points.slice(start === here ? 1 : 0);
+            complete = again.complete;
+            index = -1;
+            break;
+          }
+        }
         if (Math.hypot(x1 - x0, y1 - y0) >= 4 || (await this.#openDoorNear([x1, y1], goal, lined)))
           continue;
         if (await this.#clearWay([x1, y1, z1], point, pulled)) continue;

@@ -9,9 +9,8 @@
 //
 // The engine re-triangulates the cut navmesh (BSNavmeshObstacleData per triangle, undone by
 // BSNavmeshObstacleUndoData): a triangle partly covered is split and its free part stays open.
-// Ours closes the triangles wholly in a footprint and the path steps that cross one, and keeps a
-// path pulled tight off the footprints. TODO(M13): the engine's exact re-triangulation (a path
-// step between two edge middles under a footprint closes a partly covered triangle's free part).
+// Ours cuts the same ground out of a triangle as a path search comes to it (freeParts): convex
+// parts instead of new triangles, the search going from part to part.
 
 type Vec3 = readonly [number, number, number];
 type Vec2 = readonly [number, number];
@@ -282,10 +281,187 @@ export function crossesObstacle(obstacle: NavmeshObstacle, a: Vec3, b: Vec3): bo
 /** A step's stretch over a footprint is tested at this many points and one. */
 const CROSSING_SAMPLES = 4;
 
+/** A half-plane seen from above: a·x + b·y + c ≥ 0. */
+type HalfPlane = readonly [number, number, number];
+
+/** A part of a triangle thinner than this (square units) is no part. */
+const LEAST_PART_AREA = 1;
+
+/**
+ * The half-planes whose common part is what an obstacle cuts of a triangle's plane (`z` at x,y:
+ * z0 + zx·x + zy·y): inside the footprint, not below the box's bottom straight above it by more
+ * than the band, nor above its top straight below it (underObstacle). Each of the box's faces is
+ * a plane, so each limit is a straight line across the triangle: what is cut is convex.
+ */
+function cutPlanes(obstacle: NavmeshObstacle, z0: number, zx: number, zy: number): HalfPlane[] {
+  const planes: HalfPlane[] = [];
+  const outline = obstacle.outline;
+  for (let i = 0; i < outline.length; i++) {
+    const p = outline[i];
+    const q = outline[(i + 1) % outline.length];
+    if (!p || !q) continue;
+    const ex = q[0] - p[0];
+    const ey = q[1] - p[1];
+    planes.push([-ey, ex, ey * p[0] - ex * p[1]]);
+  }
+  const { toLocal, origin, min, max } = obstacle.box;
+  for (let i = 0; i < 3; i++) {
+    const lx = toLocal[i * 3] ?? 0;
+    const ly = toLocal[i * 3 + 1] ?? 0;
+    const rate = toLocal[i * 3 + 2] ?? 0;
+    // Along this axis, a point of the vertical line is at fx·x + fy·y + f + rate·z.
+    const f = -lx * origin[0] - ly * origin[1] - rate * origin[2];
+    if (Math.abs(rate) < 1e-9) continue; // The footprint's outline holds it.
+    const lo = min[i] ?? 0;
+    const hi = max[i] ?? 0;
+    // The face the line leaves the box by at its bottom, and at its top: z = (v − f − …) / rate.
+    const face = (v: number): HalfPlane => [-lx / rate, -ly / rate, (v - f) / rate];
+    const [bottom, top] = rate > 0 ? [face(lo), face(hi)] : [face(hi), face(lo)];
+    // z + below − bottom ≥ 0.
+    planes.push([zx - bottom[0], zy - bottom[1], z0 + NAVMESH_BELOW_OBSTACLE - bottom[2]]);
+    // top + above − z ≥ 0.
+    planes.push([top[0] - zx, top[1] - zy, top[2] + NAVMESH_ABOVE_OBSTACLE - z0]);
+  }
+  return planes;
+}
+
+/** A convex outline's part on one side of a half-plane's line (`inside`: the plane's side). */
+function clipped(polygon: readonly Vec2[], plane: HalfPlane, inside: boolean): Vec2[] {
+  const sign = inside ? 1 : -1;
+  const out: Vec2[] = [];
+  for (let i = 0; i < polygon.length; i++) {
+    const p = polygon[i];
+    const q = polygon[(i + 1) % polygon.length];
+    if (!p || !q) continue;
+    const sp = sign * (plane[0] * p[0] + plane[1] * p[1] + plane[2]);
+    const sq = sign * (plane[0] * q[0] + plane[1] * q[1] + plane[2]);
+    if (sp >= 0) out.push(p);
+    if (sp >= 0 !== sq >= 0) {
+      const t = sp / (sp - sq);
+      out.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]);
+    }
+  }
+  return out;
+}
+
+function outlineArea(polygon: readonly Vec2[]): number {
+  let twice = 0;
+  for (let i = 0; i < polygon.length; i++) {
+    const p = polygon[i];
+    const q = polygon[(i + 1) % polygon.length];
+    if (p && q) twice += p[0] * q[1] - q[0] * p[1];
+  }
+  return Math.abs(twice) / 2;
+}
+
+/** A convex part less what the half-planes' common part covers (itself if that misses it). */
+function withoutCut(part: readonly Vec2[], planes: readonly HalfPlane[]): readonly Vec2[][] {
+  const free: Vec2[][] = [];
+  let rest: readonly Vec2[] = part;
+  for (const plane of planes) {
+    const outside = clipped(rest, plane, false);
+    if (outlineArea(outside) >= LEAST_PART_AREA) free.push(outside);
+    rest = clipped(rest, plane, true);
+    if (outlineArea(rest) < LEAST_PART_AREA) return [[...part]];
+  }
+  return free;
+}
+
+/**
+ * What the obstacles leave of a navmesh triangle, as the engine's cut leaves it: convex parts
+ * (outlines with their heights on the triangle's plane), none where it lies wholly under them;
+ * undefined where they cut nothing of it. The original lays new triangles over the free part;
+ * these parts cover the same ground.
+ */
+export function freeParts(
+  [a, b, c]: readonly [Vec3, Vec3, Vec3],
+  obstacles: Iterable<NavmeshObstacle>,
+): readonly (readonly Vec3[])[] | undefined {
+  // The triangle's plane; one standing on edge (no such walkable triangle) is not cut.
+  const nx = (b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1]);
+  const ny = (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2]);
+  const nz = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  if (Math.abs(nz) < 1e-6) return undefined;
+  const zx = -nx / nz;
+  const zy = -ny / nz;
+  const z0 = a[2] - zx * a[0] - zy * a[1];
+  const whole: Vec2[] = [
+    [a[0], a[1]],
+    [b[0], b[1]],
+    [c[0], c[1]],
+  ];
+  let parts: readonly (readonly Vec2[])[] = [whole];
+  let cut = false;
+  for (const obstacle of obstacles) {
+    const planes = cutPlanes(obstacle, z0, zx, zy);
+    const next: (readonly Vec2[])[] = [];
+    for (const part of parts) {
+      const free = withoutCut(part, planes);
+      if (free.length !== 1 || (free[0] ?? []).length !== part.length || free[0]?.[0] !== part[0]) {
+        cut = true;
+      }
+      next.push(...free);
+    }
+    parts = next;
+  }
+  if (!cut) return undefined;
+  return parts.map((part) => part.map(([x, y]) => [x, y, z0 + zx * x + zy * y] as const));
+}
+
+/** Whether a point lies inside a convex outline, seen from above. */
+export function insidePart(part: readonly Vec3[], x: number, y: number): boolean {
+  let sign = 0;
+  for (let i = 0; i < part.length; i++) {
+    const p = part[i];
+    const q = part[(i + 1) % part.length];
+    if (!p || !q) continue;
+    const side = (q[0] - p[0]) * (y - p[1]) - (q[1] - p[1]) * (x - p[0]);
+    if (Math.abs(side) < 1e-6) continue;
+    if (sign === 0) sign = Math.sign(side);
+    else if (Math.sign(side) !== sign) return false;
+  }
+  return true;
+}
+
+/**
+ * The stretch (shares of `a` to `b`) of the line through them along which a convex part lies,
+ * its corners within `tolerance` of the line, seen from above; undefined if it only touches.
+ */
+export function partSpan(
+  part: readonly Vec3[],
+  a: Vec3,
+  b: Vec3,
+  tolerance: number,
+): readonly [number, number] | undefined {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const length2 = dx * dx + dy * dy;
+  if (length2 < 1e-9) return undefined;
+  const length = Math.sqrt(length2);
+  let from = Infinity;
+  let to = -Infinity;
+  for (const point of part) {
+    const rx = point[0] - a[0];
+    const ry = point[1] - a[1];
+    if (Math.abs(dx * ry - dy * rx) / length > tolerance) continue;
+    const t = (rx * dx + ry * dy) / length2;
+    from = Math.min(from, t);
+    to = Math.max(to, t);
+  }
+  const start = Math.max(0, from);
+  const end = Math.min(1, to);
+  return (end - start) * length >= LEAST_GATE ? [start, end] : undefined;
+}
+
+/** A stretch of an edge shorter than this (units) is no way through. */
+const LEAST_GATE = 0.5;
+
 /** Obstacles bucketed on a grid (a path search asks only those near each step). */
 export class ObstacleIndex {
   static readonly #SIZE = 512;
   readonly #buckets = new Map<number, NavmeshObstacle[]>();
+  /** What the obstacles leave of each triangle looked at (`null`: all of it). */
+  readonly #parts = new Map<object, Map<number, readonly (readonly Vec3[])[] | null>>();
 
   constructor(obstacles: readonly NavmeshObstacle[]) {
     const size = ObstacleIndex.#SIZE;
@@ -345,24 +521,44 @@ export class ObstacleIndex {
   }
 
   /**
-   * Whether a triangle lies wholly under one obstacle (its three corners in the footprint, at
-   * heights it cuts). One only partly covered keeps its free part: the steps into the footprint
-   * are closed instead (`crosses`).
+   * What the obstacles leave of a triangle of a navmesh (`owner`: anything that stands for the
+   * navmesh, `corners`: its triangle's): freeParts, kept for this set of obstacles.
    */
-  coversTriangle(a: Vec3, b: Vec3, c: Vec3): boolean {
+  partsOf(
+    owner: object,
+    triangle: number,
+    corners: readonly [Vec3, Vec3, Vec3],
+  ): readonly (readonly Vec3[])[] | undefined {
+    let known = this.#parts.get(owner);
+    if (!known) {
+      known = new Map();
+      this.#parts.set(owner, known);
+    }
+    const kept = known.get(triangle);
+    if (kept !== undefined) return kept ?? undefined;
+    const [a, b, c] = corners;
+    const low = Math.min(a[2], b[2], c[2]);
+    const high = Math.max(a[2], b[2], c[2]);
     const x0 = Math.min(a[0], b[0], c[0]);
+    const x1 = Math.max(a[0], b[0], c[0]);
     const y0 = Math.min(a[1], b[1], c[1]);
-    for (const obstacle of this.near(
-      x0,
-      y0,
-      Math.max(a[0], b[0], c[0]),
-      Math.max(a[1], b[1], c[1]),
-    )) {
-      if (underObstacle(obstacle, a) && underObstacle(obstacle, b) && underObstacle(obstacle, c)) {
-        return true;
+    const y1 = Math.max(a[1], b[1], c[1]);
+    const touching: NavmeshObstacle[] = [];
+    for (const obstacle of this.near(x0, y0, x1, y1)) {
+      if (
+        x1 >= obstacle.minX &&
+        x0 <= obstacle.maxX &&
+        y1 >= obstacle.minY &&
+        y0 <= obstacle.maxY &&
+        high >= obstacle.low &&
+        low <= obstacle.high
+      ) {
+        touching.push(obstacle);
       }
     }
-    return false;
+    const parts = touching.length > 0 ? freeParts(corners, touching) : undefined;
+    known.set(triangle, parts ?? null);
+    return parts;
   }
 
   /** Whether a step from `a` to `b` crosses one of the obstacles. */
@@ -371,6 +567,80 @@ export class ObstacleIndex {
       if (crossesObstacle(obstacle, a, b)) return true;
     }
     return false;
+  }
+}
+
+/** Moved farther than this (units) since its cut, an obstacle's body is cut anew. */
+const OBSTACLE_MOVED = 5;
+/** Turned more than this (radians, 5°) since its cut, an obstacle's body is cut anew. */
+const OBSTACLE_TURNED = (5 * Math.PI) / 180;
+
+/**
+ * Whether an obstacle whose body moves is cut anew where it is now (observed in the original):
+ * at most every fObstacleUpdateDeltaWhenMoving seconds (`since`: since its last cut), once it
+ * is more than 5 units from where it was cut or turned more than 5° (`moved`, `turned`).
+ */
+export function obstacleCutAnew(
+  moved: number,
+  turned: number,
+  since: number,
+  updateDelta: number,
+): boolean {
+  return since >= updateDelta && (moved > OBSTACLE_MOVED || turned > OBSTACLE_TURNED);
+}
+
+/** A column-major placement's axis, its scale taken out. */
+function placementAxis(world: ArrayLike<number>, column: number): Vec3 {
+  const x = world[column * 4] ?? 0;
+  const y = world[column * 4 + 1] ?? 0;
+  const z = world[column * 4 + 2] ?? 0;
+  const length = Math.hypot(x, y, z) || 1;
+  return [x / length, y / length, z / length];
+}
+
+/**
+ * The cuts of obstacles whose bodies move: each stays where it was last cut until
+ * obstacleCutAnew says otherwise, so one that came to rest is cut where it rests, no later than
+ * the update delta after.
+ */
+export class MovingObstacleCuts {
+  readonly #last = new Map<
+    number,
+    {
+      readonly world: ArrayLike<number>;
+      readonly cut: NavmeshObstacle | null;
+      readonly at: number;
+    }
+  >();
+
+  /** An obstacle's cut now: `placed` is its cut as placed, `now` where its body is. */
+  cut(
+    box: ObstacleBox,
+    placed: NavmeshObstacle | null,
+    now: ArrayLike<number>,
+    clock: number,
+    updateDelta: number,
+  ): NavmeshObstacle | null {
+    const last = this.#last.get(box.reference);
+    const from = last?.world ?? box.world;
+    let turned = 0;
+    for (let column = 0; column < 3; column++) {
+      const a = placementAxis(from, column);
+      const b = placementAxis(now, column);
+      const cosine = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+      turned = Math.max(turned, Math.acos(Math.min(1, Math.max(-1, cosine))));
+    }
+    const moved = Math.hypot(
+      (from[12] ?? 0) - (now[12] ?? 0),
+      (from[13] ?? 0) - (now[13] ?? 0),
+      (from[14] ?? 0) - (now[14] ?? 0),
+    );
+    if (!obstacleCutAnew(moved, turned, last ? clock - last.at : Infinity, updateDelta)) {
+      return last ? last.cut : placed;
+    }
+    const cut = obstacleCut({ ...box, world: now }) ?? null;
+    this.#last.set(box.reference, { world: Array.from(now), cut, at: clock });
+    return cut;
   }
 }
 
@@ -404,13 +674,15 @@ export class NavmeshObstacleField {
   setCell(key: string, active: Iterable<NavmeshObstacle>): void {
     const before = this.#cells.get(key) ?? new Map<number, NavmeshObstacle>();
     const now = new Map<number, NavmeshObstacle>();
-    for (const obstacle of active)
-      now.set(obstacle.reference, before.get(obstacle.reference) ?? obstacle);
+    for (const obstacle of active) {
+      const was = before.get(obstacle.reference);
+      now.set(obstacle.reference, was?.outline === obstacle.outline ? was : obstacle);
+    }
     for (const [reference, obstacle] of before) {
-      if (!now.has(reference)) this.#changed(obstacle, false);
+      if (now.get(reference) !== obstacle) this.#changed(obstacle, false);
     }
     for (const [reference, obstacle] of now) {
-      if (!before.has(reference)) this.#changed(obstacle, true);
+      if (before.get(reference) !== obstacle) this.#changed(obstacle, true);
     }
     if (now.size > 0) this.#cells.set(key, now);
     else this.#cells.delete(key);

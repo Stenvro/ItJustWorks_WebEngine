@@ -7,6 +7,8 @@ import {
 } from '../world/navmesh.ts';
 import {
   crossesObstacle,
+  freeParts,
+  insidePart,
   NavmeshObstacleField,
   obstacleCut,
   obstaclesTouch,
@@ -341,6 +343,65 @@ describe('findPath with navmesh obstacles', () => {
       const b = points[i];
       if (a && b && wheel) expect(crossesObstacle(wheel, a, b)).toBe(false);
     }
+  });
+
+  it('cuts a partly covered triangle along the footprint: its free part stays whole', () => {
+    // Two triangles 100 across; a box over the middle of their shared edge, leaving a way along
+    // the far corners that no step between edge middles would find.
+    const set = setOf([gridMesh(1, [[0, 0]])]);
+    const wide = box(9, [50, 50, 64], [42, 42, 64]);
+    expect(wide).toBeDefined();
+    const obstacles = wide ? [wide] : [];
+    const path = findPath(set, [4, 50, 0], [96, 50, 0], { radius: 1, obstacles });
+    expect(path?.complete).toBe(true);
+    const points = path?.points ?? [];
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1];
+      const b = points[i];
+      if (a && b && wide) expect(crossesObstacle(wide, a, b)).toBe(false);
+    }
+    // Round a corner of the box: within the free band, off the straight line.
+    expect(points.length).toBeGreaterThan(2);
+  });
+
+  it('shuts a triangle a wall crosses from side to side, whose parts do not meet', () => {
+    const set = setOf([gridMesh(1, [[0, 0]])]);
+    const wall = box(9, [50, 50, 64], [4, 80, 64]);
+    const path = findPath(set, [10, 50, 0], [90, 50, 0], {
+      radius: 1,
+      obstacles: wall ? [wall] : [],
+    });
+    expect(path?.complete).toBe(false);
+    for (const point of path?.points ?? []) expect(point[0]).toBeLessThan(46);
+  });
+
+  it('keeps the free part of the same triangle apart from what is under the box', () => {
+    const corners = [
+      [0, 0, 0],
+      [1000, 0, 0],
+      [0, 1000, 0],
+    ] as const;
+    const inside = box(9, [100, 100, 64], [50, 50, 64]);
+    const parts = inside && freeParts(corners, [inside]);
+    expect(parts?.length).toBeGreaterThan(0);
+    // The part's areas sum to the triangle's less the box's.
+    const area = (part: readonly (readonly number[])[]): number => {
+      let twice = 0;
+      part.forEach((p, n) => {
+        const q = part[(n + 1) % part.length] ?? p;
+        twice += (p[0] ?? 0) * (q[1] ?? 0) - (q[0] ?? 0) * (p[1] ?? 0);
+      });
+      return Math.abs(twice) / 2;
+    };
+    const total = (parts ?? []).reduce((sum, part) => sum + area(part), 0);
+    expect(total).toBeCloseTo(500_000 - 100 * 100, 3);
+    expect(parts?.some((part) => insidePart(part, 100, 100))).toBe(false);
+    expect(parts?.some((part) => insidePart(part, 500, 100))).toBe(true);
+    // Far off, or over the whole of it.
+    const off = box(9, [3000, 3000, 64], [50, 50, 64]);
+    expect(off && freeParts(corners, [off])).toBeUndefined();
+    const over = box(9, [300, 300, 64], [1000, 1000, 64]);
+    expect(over && freeParts(corners, [over])).toEqual([]);
   });
 
   // Found 2026-10-28 in Helgen Keep's collapsed hall: tilted collision boxes under the rubble's

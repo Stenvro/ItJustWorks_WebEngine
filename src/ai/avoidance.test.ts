@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  layAvoidNode,
   avoid,
   avoidance,
   avoidanceNeighbours,
@@ -15,6 +16,61 @@ const standing = (x: number, y: number): Neighbour => ({
   position: [x, y],
   velocity: [0, 0],
   radius: 20,
+});
+
+describe('avoid nodes on those near its way', () => {
+  const way = [
+    [0, 0, 0],
+    [1000, 0, 0],
+  ];
+  const near = (speed: number, y = 20) => ({
+    position: [500, y] as const,
+    velocity: [speed, 0] as const,
+    radius: 20,
+  });
+  const advanced = { advanced: true, step: 0.1, refresh: 1 };
+  const plain = { advanced: false, step: 0.1, refresh: 1 };
+
+  it('with the advanced avoidance: one that comes to stand across the way, once', () => {
+    // First seen standing, within half its width and the other's radius of the way.
+    const first = layAvoidNode(undefined, near(0), 40, way, advanced);
+    expect(first.lay).toBe(true);
+    // No more for it while it stands.
+    const again = layAvoidNode(first.state, near(0), 40, way, advanced);
+    expect(again.lay).toBe(false);
+    expect(again.state.noded).toBe(true);
+    // One moving gets none, one standing beside the way none.
+    expect(layAvoidNode(undefined, near(100), 40, way, advanced).lay).toBe(false);
+    expect(layAvoidNode(undefined, near(0, 100), 40, way, advanced).lay).toBe(false);
+    // Moving at 5 units a second counts as standing.
+    expect(layAvoidNode(undefined, near(5), 40, way, advanced).lay).toBe(true);
+    // It sets off and stops again: looked at anew.
+    const off = layAvoidNode(again.state, near(100), 40, way, advanced);
+    expect(off.lay).toBe(false);
+    expect(layAvoidNode(off.state, near(0), 40, way, advanced).lay).toBe(true);
+  });
+
+  it('without it: those moving too, looked at again every fMaxTimeSizeAvoidNode', () => {
+    const first = layAvoidNode(undefined, near(100), 40, way, plain);
+    expect(first.lay).toBe(true);
+    // Beside the way a moment later: no node on it; back across it after the second: one.
+    let state = layAvoidNode(first.state, near(100, 100), 40, way, plain).state;
+    expect(state.age).toBeCloseTo(0.1);
+    for (let i = 0; i < 9; i++) state = layAvoidNode(state, near(100, 100), 40, way, plain).state;
+    expect(state.age).toBeCloseTo(1);
+    const beside = layAvoidNode(state, near(100, 100), 40, way, plain);
+    expect(beside.lay).toBe(false);
+    expect(beside.state.noded).toBe(false);
+    expect(beside.state.age).toBe(0);
+    let across = beside.state;
+    let laid = false;
+    for (let i = 0; i < 11; i++) {
+      const next = layAvoidNode(across, near(100), 40, way, plain);
+      laid ||= next.lay;
+      across = next.state;
+    }
+    expect(laid).toBe(true);
+  });
 });
 
 describe('avoidance', () => {

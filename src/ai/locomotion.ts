@@ -90,8 +90,9 @@ export class Turning {
  * read as the seconds from standing to `full` speed and from it to a stop, as its angular
  * acceleration rate is the seconds to its full turn rate: a person 1 and 1, a wolf 0.6 and 2, a
  * deer 0.4 and 0.3, a giant 3 and 3, a netch 5 and 5, a dragon 0.01). Rates of 0 (or none)
- * reach the speed wanted at once. TODO(M13): the rates' unit is unconfirmed (no document gives
- * it, and the locomotion clips have no start or stop clip whose root motion would show it).
+ * reach the speed wanted at once. The engine's movement parameters take all three rates alike, as
+ * 1 / the rate (observed in the original). TODO(M13): what spends the linear two was not found, so
+ * the seconds are inferred (the locomotion clips have no start or stop clip to show it either).
  */
 export function rampSpeed(
   current: number,

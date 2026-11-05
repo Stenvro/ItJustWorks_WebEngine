@@ -13,7 +13,7 @@ import {
   HEAD_TRACK_KINDS,
   HEAD_TRACK_SETTINGS,
   HeadTracker,
-  LookPriority,
+  pathLookAhead,
   pathLookPoint,
   raceHeadTracks,
   VANILLA_HEAD_TRACK,
@@ -50,6 +50,8 @@ export interface ActorLooksOptions {
   readonly actor: (reference: number) => StagedActor | undefined;
   /** Whether an actor detects another (src/shell/actor-senses.ts): it looks at the player only then. */
   readonly detects?: (observer: number, target: number) => boolean;
+  /** Whether an actor sits, sleeps or leans in furniture (src/shell/actor-furniture.ts). */
+  readonly inFurniture?: (reference: number) => boolean;
   /**
    * The point an actor's graph watches it fly past (BSPassByTargetTriggerModifier: a dragon's
    * combat target; src/shell/actor-flight.ts), if any.
@@ -70,13 +72,10 @@ export class ActorLooks {
   readonly #trackers = new Map<number, HeadTracker>();
   /**
    * Each actor's choice of whom to look at when nothing else is asked of it (made every
-   * fUpdateDelaySecondsMin–Max), the seconds to the next choice, and how long a new one is held
-   * (fUpdateDelayNewTargetSecondsMin–Max), and what it is worth (LookPriority).
+   * fUpdateDelaySecondsMin–Max), the seconds to the next choice, and how long the one chosen is
+   * held (fAIHoldDefaultHeadTrackTimer).
    */
-  readonly #choices = new Map<
-    number,
-    { wait: number; chosen: number | undefined; hold: number; priority: number }
-  >();
+  readonly #choices = new Map<number, { wait: number; chosen: number | undefined; hold: number }>();
   /** The choices made this frame (at most iUpdateActorsPerFrame). */
   #chosenThisFrame = 0;
   /**
@@ -184,22 +183,21 @@ export class ActorLooks {
     if (chosen?.kind === 'script' && this.#restsFromScript(reference, dt)) chosen = undefined;
     else if (chosen?.kind !== 'script') this.#scriptLooks.delete(reference);
     if (chosen) return chosen;
-    // Its own choice: the player (once it has detected them) or another actor; walking its
-    // way, it looks along it unless someone speaks or the player is close (LookPriority).
+    // Its own choice: the player (once it has detected them) or another actor; with no one to
+    // look at, walking its way, it looks along it.
     const choice = this.#choices.get(reference);
     const other = choice?.chosen;
-    const along = (choice?.priority ?? LookPriority.idle) < LookPriority.speaking;
-    const path = along ? this.#alongPath(staged) : undefined;
-    if (path) return { target: path, kind: 'default' };
     if (other === PLAYER_REF) {
       return this.#options.detects?.(reference, PLAYER_REF) !== false
         ? { target: PLAYER_REF, kind: 'default' }
         : undefined;
     }
     const seen = other === undefined ? undefined : this.#options.actor(other);
-    return seen && !seen.dead && !seen.visibility.hidden
-      ? { target: seen.reference, kind: 'default' }
-      : undefined;
+    if (seen && !seen.dead && !seen.visibility.hidden) {
+      return { target: seen.reference, kind: 'default' };
+    }
+    const path = this.#alongPath(staged);
+    return path && { target: path, kind: 'default' };
   }
 
   /** Where an actor walking its travel's path looks: along it (pathLookPoint). */
@@ -210,7 +208,21 @@ export class ActorLooks {
     const way = movers.wayAhead(reference);
     if (!way || way.length === 0) return undefined;
     const head = headPosition(staged.placed);
-    return pathLookPoint(staged.position, head[2] - staged.position[2], way);
+    const ini = this.#options.session.ini;
+    const settings = {
+      minDistance: ini.number('HeadTracking', 'fMinPathLookAtPointDist'),
+      maxDistance: ini.number('HeadTracking', 'fMaxPathLookAtPointDist'),
+      time: ini.number('HeadTracking', 'fPathLookAtPointTime'),
+    };
+    const radius = movers.radius(reference) ?? 0;
+    const speed = movers.speed(reference);
+    return pathLookPoint(
+      staged.position,
+      head[2] - staged.position[2],
+      way,
+      pathLookAhead(speed, radius, settings),
+      settings.minDistance + radius,
+    );
   }
 
   /**
@@ -257,7 +269,7 @@ export class ActorLooks {
     let choice = this.#choices.get(reference);
     if (!choice) {
       // The first choices spread over the interval (not all on one frame).
-      choice = { wait: Math.random() * max, chosen: undefined, hold: 0, priority: 0 };
+      choice = { wait: Math.random() * max, chosen: undefined, hold: 0 };
       this.#choices.set(reference, choice);
     }
     choice.wait -= dt;
@@ -270,62 +282,51 @@ export class ActorLooks {
     const reach = this.#reaches(reference);
     const eye = this.#world?.player?.eye;
     const before = choice.chosen;
+    const inReach =
+      !eye || Math.hypot(eye[0] - head[0], eye[1] - head[1], eye[2] - head[2]) <= reach.fromPlayer;
+    // A new look is chosen only once the last has been held fAIHoldDefaultHeadTrackTimer
+    // (observed in the original); the one it has stays until then while it may still be looked at.
+    const choosing = choice.hold <= 0;
     let chosen: number | undefined;
-    let priority: number = LookPriority.idle;
-    if (
-      !eye ||
-      Math.hypot(eye[0] - head[0], eye[1] - head[1], eye[2] - head[2]) <= reach.fromPlayer
-    ) {
+    if (inReach) {
       const detects = this.#options.detects;
-      const session = this.#options.session;
-      const talking = session.scriptWorld.talking;
-      const candidates: LookCandidate[] = all
-        .filter(
-          (other) =>
-            other !== staged &&
-            !other.dead &&
-            !other.visibility.hidden &&
-            detects?.(reference, other.reference) !== false,
-        )
-        .map((other) => ({
+      const furniture = this.#options.inFurniture;
+      const candidates: LookCandidate[] = [];
+      if (eye && detects?.(reference, PLAYER_REF) !== false) {
+        candidates.push({ reference: PLAYER_REF, head: eye, player: true });
+      }
+      for (const other of all) {
+        if (other === staged || other.dead || other.visibility.hidden) continue;
+        if (detects?.(reference, other.reference) === false) continue;
+        candidates.push({
           reference: other.reference,
           head: headPosition(other.placed),
-          interest: {
-            speaking: talking?.(other.reference) !== undefined,
-            moving: this.#options.movers.motion(other.reference)?.moving === true,
-          },
-        }));
-      if (eye && detects?.(reference, PLAYER_REF) !== false) {
-        candidates.push({
-          reference: PLAYER_REF,
-          head: eye,
-          interest: {
-            player: true,
-            talking: session.scriptsReady?.dialogueSpeaker !== undefined,
-            speaking: talking?.(PLAYER_REF) !== undefined,
-          },
+          inFurniture: furniture?.(other.reference),
         });
       }
-      // A new choice held a while stays while it still may be looked at, and none worth more
-      // has come (chooseLookActor's keep).
-      const best = chooseLookActor(
+      const mayStay = chooseLookActor(
         head,
         staged.heading,
-        candidates,
+        candidates.filter((candidate) => candidate.reference === before),
         reach.others,
-        choice.hold > 0 ? before : undefined,
-      );
-      chosen = best?.reference;
-      priority = best?.priority ?? LookPriority.idle;
+        before,
+        furniture?.(reference),
+      )?.reference;
+      chosen = choosing
+        ? chooseLookActor(
+            head,
+            staged.heading,
+            candidates,
+            reach.others,
+            before,
+            furniture?.(reference),
+          )?.reference
+        : mayStay;
     }
     choice.chosen = chosen;
-    choice.priority = priority;
-    if (chosen === undefined || chosen === before) return;
-    choice.hold =
-      ini.number('HeadTracking', 'fUpdateDelayNewTargetSecondsMin') +
-      Math.random() *
-        (ini.number('HeadTracking', 'fUpdateDelayNewTargetSecondsMax') -
-          ini.number('HeadTracking', 'fUpdateDelayNewTargetSecondsMin'));
+    if (chosen === undefined) return;
+    if (choosing) choice.hold = aiSettingsOf(this.#options.session).holdDefaultHeadTrackTimer;
+    if (chosen === before) return;
     if (chosen === PLAYER_REF) return;
     const runtime = this.#options.session.scriptsReady;
     if (!runtime) return;
