@@ -17,15 +17,15 @@ import { AI_DEFAULTS } from './ai-settings.ts';
 const done: ProcedureRunner = () => Promise.resolve('success');
 
 describe('package flags', () => {
-  it('Continue If PC Near keeps a package another would replace while the player is near', async () => {
-    const at = { player: [100, 0, 0] as [number, number, number] };
+  it('Continue If PC Near keeps a package another would replace while the player is in its cell', async () => {
+    const at = { here: true };
     const { actor, truths } = packageActor(
       [
         pack(1, procedure('lasting'), { conditions: [condition(99)] }),
         pack(2, procedure('lasting'), { flags: PackageFlag.continueIfPcNear }),
       ],
       { lasting },
-      { mind: { livePosition: () => at.player } },
+      { mind: { playerInCell: () => Promise.resolve(at.here) } },
     );
     await tick(actor);
     expect(actor.current?.id).toBe(2);
@@ -33,7 +33,7 @@ describe('package flags', () => {
     actor.evaluate();
     await tick(actor);
     expect(actor.current?.id).toBe(2);
-    at.player = [5000, 0, 0];
+    at.here = false;
     actor.evaluate();
     await tick(actor);
     expect(actor.current?.id).toBe(1);

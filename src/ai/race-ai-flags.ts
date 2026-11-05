@@ -5,7 +5,34 @@
 // character proxy, src/physics/character.ts.) The readers: src/shell/actor-doors.ts, actor-movers.ts, src/ai/pathfinding.ts,
 // avoidance.ts. Platform-independent.
 
+import { RaceFlag } from '../world/actor-records.ts';
+import { PackageFlag } from './package-records.ts';
 import { RaceAiFlag, RaceFlag2 } from './race-combat-records.ts';
+
+/** PKDT package type of the engine's Alarm package (CommonLibSSE PACKAGE_TYPE kAlarm). */
+const ALARM_PACKAGE = 21;
+
+/**
+ * Whether an actor may swim now, observed in the original: a race that only swims (it neither
+ * walks nor flies) always; another by its race's swim flag where it fights or runs an Alarm
+ * package, or runs no package; else only if its race swims and its package has Allow Swimming.
+ * TODO(M13): the engine's further check for a fighter with a target, whose race cannot swim, and
+ * an actor flag that lets any actor swim, are not read.
+ */
+export function swimsNow(actor: {
+  readonly raceFlags: number;
+  readonly fighting: boolean;
+  readonly packageType?: number | undefined;
+  readonly packageFlags?: number | undefined;
+}): boolean {
+  const swims = (actor.raceFlags & RaceFlag.swims) !== 0;
+  if (!swims) return false;
+  if ((actor.raceFlags & (RaceFlag.walks | RaceFlag.flies)) === 0) return true;
+  if (actor.fighting || actor.packageType === ALARM_PACKAGE || actor.packageFlags === undefined) {
+    return true;
+  }
+  return (actor.packageFlags & PackageFlag.allowSwimming) !== 0;
+}
 
 /**
  * Whether an actor of the race opens doors (Can't Open Doors clear). 60 races have the flag:
