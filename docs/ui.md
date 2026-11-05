@@ -918,7 +918,8 @@ Brotherhood, Companions, Daedric, Civil War, Dawnguard, Dragonborn; a completed 
 them back); Misc Objectives Completed a shown objective of a miscellaneous quest completed; Hours
 Waiting each hour waited; Days as a Vampire / Werewolf each day passing while the PlayerIsVampire /
 PlayerIsWerewolf globals (default objects PIVV, PIWV) are set; Bunnies Slaughtered a kill in the
-Bunny Faction (AWWW); Mauls a kill in beast form. The vanilla scripts count the rest themselves
+Bunny Faction (AWWW); Mauls a kill while Game.SetBeastForm's flag is set (the werewolf and the
+Vampire Lord, as UESP has them). The vanilla scripts count the rest themselves
 (Game.IncrementStat): Side Quests and Questlines Completed, Werewolf Transformations, Necks
 Bitten, Horses and Houses Owned, Stores Invested In, Persuasions, Bribes, Intimidations, Standing
 Stones Found, Brawls Won, Nirnroots Found, Wings Plucked. Souls Trapped counts each soul the
@@ -934,9 +935,14 @@ with a bow or crossbow, fSneakAttackSkillUsageRanged (2.5). Weapons Disarmed: a 
 player causes (DisarmedEvent); Dragon Souls Collected: each rise of the player's DragonSouls
 (the absorption's ModActorValue; DragonSoulGained); Shouts Mastered: a word unlocked (the magic
 menu, Game.UnlockWord) that completes a shout (ShoutMastered); Soul Gems Used: a gem used up
-recharging or enchanting; Poisons Used: a poison put on the player's weapon (PoisonedWeapon);
+recharging a weapon, not enchanting (UESP "Skyrim:Statistics"); Times Shouted: a shout let out,
+whatever its words (ShoutAttack, the hub's `shoutAttack`; a shout's word goes out as a spell, so
+OnSpellCast does not tell it); Poisons Used: a poison put on the player's weapon (PoisonedWeapon);
 Diseases Contracted: a disease the player catches (ContractedDisease; Survival's script counts
-its own).
+its own). By UESP "Skyrim:Statistics", where the original's own rule was not read
+(`TODO(M13)` beside each): Books Read and Skill Books Read count a book's first read, a skill book
+in the latter alone, a spell tome in the former; Shouts Learned counts a shout as its last word
+is learned; Murders counts the player's or a follower's kill of one not hostile, seen or not.
 
 System: the menu lists Quicksave, Save, Load, Installed Content, Settings, Controls, Help and
 Quit. Quit to the main menu ends the game and opens its main menu; quit to the desktop leaves

@@ -149,6 +149,7 @@ const GAME_EVENT_KINDS: Readonly<Record<GameEventKind, true>> = {
   reset: true,
   scene: true,
   sell: true,
+  shoutAttack: true,
   shoutMastered: true,
   sleep: true,
   spellCast: true,
