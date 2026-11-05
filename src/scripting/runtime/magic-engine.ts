@@ -25,6 +25,9 @@ import {
   DUAL_CASTING_POWER,
   EFFECT_DEFAULTS,
   EFFECT_SETTING_NAMES,
+  dispelReaches,
+  DISPEL_MAGNITUDE_MULT,
+  displacedBy,
   effectSkillUses,
   isLastingKind,
   isValueEffect,
@@ -862,6 +865,19 @@ export class MagicEngine {
       }
     }
 
+    // The same spell's lasting effect from another caster gives way to this one (displacedBy).
+    if (duration > 0 && !lasting && !held && item.kind === 'spell')
+      for (const [key, other] of this.effectsOn(target))
+        if (displacedBy(other, { item: item.formId, index, caster })) await this.end(key);
+    // A caster's Magelight stays on one living target at a time: the next ends it (UESP
+    // "Skyrim:Magelight"; the one on a surface is apart: magic-projectiles.ts #stick).
+    if (effect.archetype === EffectArchetype.light && caster !== undefined)
+      for (const [key, other] of runtime.state.activeEffects) {
+        if (other.caster !== caster || other.target === target) continue;
+        if ((await this.effect(other.effect))?.archetype === EffectArchetype.light)
+          await this.end(key);
+      }
+
     const handle = new ObjectHandle(runtime.state.nextEffect++, 'activemagiceffect');
     const key = handle.key;
     const number = (await runtime.forms.record(effect.formId))?.fields.has('VMAD')
@@ -1328,18 +1344,7 @@ export class MagicEngine {
           await this.end(other);
         break;
       case EffectArchetype.dispel:
-        // TODO(M13): no vanilla effect dispels; the spells' effects up to its magnitude go
-        // (Oblivion's Dispel: UESP "Oblivion:Dispel").
-        for (const [other, effectOn] of this.effectsOn(target)) {
-          const item = effectOn.item === undefined ? undefined : await this.item(effectOn.item);
-          if (
-            other !== key &&
-            !effectOn.lasting &&
-            item?.type === 'SPEL' &&
-            effectOn.magnitude <= entry.magnitude
-          )
-            await this.end(other);
-        }
+        await this.#dispelSpells(key, entry);
         break;
       case EffectArchetype.summonCreature:
         await this.#summon(entry, effect);
@@ -1632,6 +1637,35 @@ export class MagicEngine {
   }
 
   // --- Dispelling -------------------------------------------------------------------------
+
+  /**
+   * A Dispel effect ends the cast spells on its target it is strong enough for, each spell whole
+   * (effect-rules.ts dispelReaches): a spell's strength is what it costs its caster, by their
+   * skill, to cast. Only spells: not abilities, diseases, powers, enchantments, potions or scrolls
+   * (UESP "Oblivion:Dispel"). TODO(M13): no vanilla effect dispels, so this is the earlier game's
+   * documented rule, whose setting (fMagicDispelMagnitudeMult) the engine still registers; whether
+   * the engine changed the rule is unknown.
+   */
+  async #dispelSpells(key: string, entry: ActiveEffectState): Promise<void> {
+    const runtime = this.#runtime;
+    const setting = await runtime.gameSetting('fMagicDispelMagnitudeMult');
+    const mult = typeof setting === 'number' ? setting : DISPEL_MAGNITUDE_MULT;
+    const reached = new Map<string, boolean>();
+    for (const [other, on] of this.effectsOn(entry.target)) {
+      if (other === key || on.lasting === true || on.item === undefined) continue;
+      if (on.item === entry.item) continue;
+      const item = await this.item(on.item);
+      if (item?.type !== 'SPEL' || item.kind !== 'spell') continue;
+      const spell = `${String(on.item)}:${String(on.caster)}`;
+      let goes = reached.get(spell);
+      if (goes === undefined) {
+        const cost = await runtime.casting.cost(on.caster ?? entry.target, { item, via: 'spell' });
+        goes = dispelReaches(cost.magicka, entry.magnitude, mult);
+        reached.set(spell, goes);
+      }
+      if (goes) await this.end(other);
+    }
+  }
 
   /** ActiveMagicEffect.Dispel, a script's end of an effect. */
   dispel(key: string): Promise<void> {

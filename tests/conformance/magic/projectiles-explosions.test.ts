@@ -23,6 +23,15 @@ import {
   knockdownShareEnough,
   wardFacesBurst,
 } from '../../../src/gameplay/magic/explosions.ts';
+import {
+  bounceLobber,
+  launchFlight,
+  LOBBER_DEFAULTS,
+  stepFlight,
+  type LobberSettings,
+} from '../../../src/gameplay/magic/projectile-flight.ts';
+import type { Vec3 } from '../../../src/render/math.ts';
+import { ProjectileType } from '../../../src/world/projectile-data.ts';
 import { ActorValue } from '../../../src/world/actor-values.ts';
 import { EffectFlag } from '../../../src/world/magic-effects.ts';
 import { parseMagicItem, type MagicItemRecord } from '../../../src/world/magic-records.ts';
@@ -302,8 +311,49 @@ describe.skipIf(!hasGamedata())('a fireball’s burst and other hits on actors (
   }, 120_000);
 });
 
-describe('what the original’s projectiles and explosions do that ours do not yet', () => {
-  // A projectile's impact force on what it hits: tests/conformance/physics/gameplay-impulses.test.ts.
-  it.todo('a cone’s force pushes the bodies as its front passes them (all at once in ours)');
-  it.todo('a lobber slides along a slope by fGrenadeFriction (ours rests where it lands)');
+describe('a lobber on a slope', () => {
+  const lobber = {
+    type: ProjectileType.lobber,
+    flags: 0,
+    speed: 0,
+    gravity: 1,
+    range: 0,
+    lifetime: 0,
+    collisionRadius: 0,
+    proximity: 0,
+    timer: 0,
+  };
+
+  /** It falls onto a plane through the origin with this normal; how far along the plane it went. */
+  const onSlope = (degrees: number, settings: LobberSettings): number => {
+    const a = (degrees * Math.PI) / 180;
+    const normal: Vec3 = [0, -Math.sin(a), Math.cos(a)];
+    const flight = launchFlight(lobber, [0, 0, 10], [0, 0, 1]);
+    for (let frame = 0; frame < 240 && !flight.resting; frame++) {
+      const { to } = stepFlight(flight, 1 / 60);
+      const below = to[0] * normal[0] + to[1] * normal[1] + to[2] * normal[2];
+      if (below < 0)
+        bounceLobber(
+          flight,
+          [to[0] - normal[0] * below, to[1] - normal[1] * below, to[2] - normal[2] * below],
+          normal,
+          settings,
+        );
+    }
+    return flight.resting ? 0 : Math.hypot(flight.position[0], flight.position[1]);
+  };
+
+  it('stays on any slope below fGrenadeFriction’s (5) angle, 78.7°', () => {
+    expect(onSlope(30, LOBBER_DEFAULTS)).toBe(0);
+    expect(onSlope(75, LOBBER_DEFAULTS)).toBe(0);
+  });
+
+  it('slides down a steeper one, and a low friction’s gentler one', () => {
+    expect(onSlope(85, LOBBER_DEFAULTS)).toBeGreaterThan(50);
+    expect(onSlope(45, { restitution: 0, friction: 0.2 })).toBeGreaterThan(50);
+    expect(onSlope(45, { restitution: 0, friction: 2 })).toBe(0);
+  });
 });
+
+// A projectile's impact force on what it hits, and a cone's force as its front passes the bodies
+// (shell/magic-projectiles.ts #sweepWave): tests/conformance/physics/gameplay-impulses.test.ts.

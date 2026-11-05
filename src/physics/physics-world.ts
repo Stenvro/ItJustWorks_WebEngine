@@ -2465,6 +2465,8 @@ export class PhysicsWorld {
     layer: number,
     push: (layer: number, mass: number, distance: number) => BodyPush,
     ignore?: number,
+    /** The bodies this wave pushed already, and takes those it pushes: each goes once. */
+    pushedBefore?: Set<number>,
   ): number {
     const d = Math.hypot(direction[0], direction[1], direction[2]);
     if (!(range > 0) || d < 1e-6) return 0;
@@ -2481,6 +2483,7 @@ export class PhysicsWorld {
         if (owner?.kind === 'actor' && owner.reference === ignore) return true;
         const body = other.parent();
         if (!this.#pushable(body) || bodies.has(body.handle)) return true;
+        if (pushedBefore?.has(body.handle)) return true;
         bodies.set(body.handle, { body, collider: other });
         return true;
       },
@@ -2516,6 +2519,7 @@ export class PhysicsWorld {
         distance,
       );
       if (!(linear > 0) && !(angular > 0)) continue;
+      pushedBefore?.add(body.handle);
       this.release(body);
       const scale = linear / HAVOK_SCALE;
       body.applyImpulse(

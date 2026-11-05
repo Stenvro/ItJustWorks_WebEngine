@@ -16,6 +16,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   castStrength,
+  displacedBy,
   DUAL_CASTING_POWER,
   magnitudeOver,
   taperedMagnitude,
@@ -219,10 +220,25 @@ describe.skipIf(!hasGamedata())('the effects across the load order (data)', () =
   }, 60_000);
 });
 
+describe('displacement (inferred: one spell’s lasting effect does not stack with itself)', () => {
+  // No record holds a displacement spell (xEdit's SPEL has no such field); only the original's
+  // active effects do, at run time (CommonLibSSE ActiveEffect::displacementSpell).
+  const burn = { item: 7, index: 0, caster: 1 };
+
+  it('gives way to the same effect of the same spell from another caster', () => {
+    expect(displacedBy(burn, { item: 7, index: 0, caster: 2 })).toBe(true);
+  });
+
+  it('leaves another spell’s, another effect of the spell, a held spell and an ability', () => {
+    expect(displacedBy(burn, { item: 8, index: 0, caster: 2 })).toBe(false);
+    expect(displacedBy(burn, { item: 7, index: 1, caster: 2 })).toBe(false);
+    expect(displacedBy({ ...burn, held: true }, { item: 7, index: 0, caster: 2 })).toBe(false);
+    expect(displacedBy({ ...burn, lasting: true }, { item: 7, index: 0, caster: 2 })).toBe(false);
+    // The same caster's is a recast, replaced by its own rule.
+    expect(displacedBy(burn, { item: 7, index: 0, caster: 1 })).toBe(false);
+  });
+});
+
 describe('what the original does that we do not yet', () => {
-  it.todo(
-    'displacement: an effect of a spell that displaces another (SPEL’s displacement spell, ' +
-      'CommonLibSSE ActiveEffect::displacementSpell) ends it (original)',
-  );
   it.todo('conditions are checked at the engine’s interval (we check about each second)');
 });

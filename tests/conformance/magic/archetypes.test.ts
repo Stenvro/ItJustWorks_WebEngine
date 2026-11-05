@@ -35,7 +35,7 @@ import { EffectArchetype } from '../../../src/world/magic-effects.ts';
 import { RecordDatabase } from '../../../src/world/record-db.ts';
 import { openGameFolder } from '../../../tools/gamedata-path.ts';
 import { magicCensus, type MagicCensus } from '../../../tools/magic-census.ts';
-import { parseMagicItem } from '../../../src/world/magic-records.ts';
+import { parseMagicItem, type MagicItemRecord } from '../../../src/world/magic-records.ts';
 import { hasGamedata, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
 
 describe.skipIf(!hasGamedata())('the archetypes across the load order (data)', () => {
@@ -265,11 +265,93 @@ describe.skipIf(!hasGamedata())('a summon at its commander’s side (sim)', () =
   }, 120_000);
 });
 
+describe.skipIf(!hasGamedata())('Dispel and Light on actors (sim)', () => {
+  let sim: Sim;
+  /** A magic effect with no record (no vanilla effect dispels): answered for the magic system. */
+  const invented = 0x7f000001;
+
+  beforeAll(async () => {
+    sim = await openSim({ interior: 0x1605e, hour: 10 });
+  }, 300_000);
+  afterAll(async () => {
+    await sim.close();
+  });
+
+  const magicItem = async (type: string, editorId: string): Promise<MagicItemRecord> => {
+    const record = await sim.db.get(await sim.formId(type, editorId));
+    const item = record ? parseMagicItem(record) : undefined;
+    if (!item) throw new Error(`No ${editorId}`);
+    return item;
+  };
+
+  it('Dispel ends the spells at or below magnitude × 5, each whole, and only spells', async () => {
+    const { magic, casting } = sim.runtime;
+    const oak = await magicItem('SPEL', 'Oakflesh');
+    const potion = await magicItem('ALCH', 'FortifyHealth01');
+    const firstEffect = oak.effects[0];
+    const base = firstEffect && (await magic.effect(firstEffect.effect));
+    expect(base).toBeTruthy();
+    if (!firstEffect || !base) return;
+    // The strength of Oakflesh by the player's Alteration, as its cost says.
+    const strength = (await casting.cost(PLAYER_REF, { item: oak, via: 'spell' })).magicka;
+    expect(strength).toBeGreaterThan(0);
+    const reader = magic.effect.bind(magic);
+    magic.effect = (formId) =>
+      formId === invented
+        ? Promise.resolve({
+            ...base,
+            formId: invented,
+            archetype: EffectArchetype.dispel,
+            flags: 0,
+            counterEffects: [],
+          })
+        : reader(formId);
+    const dispel = (magnitude: number): MagicItemRecord => ({
+      ...oak,
+      formId: 0x7f000002,
+      effects: [{ ...firstEffect, effect: invented, magnitude, duration: 0 }],
+    });
+    const on = (item: number): number =>
+      magic.effectsOn(PLAYER_REF).filter(([, entry]) => entry.item === item).length;
+    try {
+      await magic.apply(oak, PLAYER_REF, { caster: PLAYER_REF });
+      await magic.apply(potion, PLAYER_REF, { caster: PLAYER_REF });
+      expect(on(oak.formId)).toBeGreaterThan(0);
+      const potionEffects = on(potion.formId);
+      expect(potionEffects).toBeGreaterThan(0);
+      // Just too weak for it: it stays; magnitude 1 over a fifth of its cost: it goes.
+      await magic.apply(dispel(strength / 5 - 1), PLAYER_REF, { caster: PLAYER_REF });
+      expect(on(oak.formId)).toBeGreaterThan(0);
+      await magic.apply(dispel(strength / 5 + 1), PLAYER_REF, { caster: PLAYER_REF });
+      expect(on(oak.formId)).toBe(0);
+      // A potion is no spell: however strong the Dispel, it stays.
+      await magic.apply(dispel(10_000), PLAYER_REF, { caster: PLAYER_REF });
+      expect(on(potion.formId)).toBe(potionEffects);
+    } finally {
+      magic.effect = reader;
+    }
+  }, 120_000);
+
+  it('a caster’s Magelight stays on one living target: the next ends it (UESP)', async () => {
+    const { magic } = sim.runtime;
+    const light = await magicItem('SPEL', 'Magelight');
+    const [first, second] = sim.actors();
+    expect(first && second).toBeTruthy();
+    if (!first || !second) return;
+    const lit = (reference: number): number =>
+      magic.effectsOn(reference).filter(([, entry]) => entry.item === light.formId).length;
+    await magic.apply(light, first.reference, { caster: PLAYER_REF });
+    expect(lit(first.reference)).toBeGreaterThan(0);
+    await magic.apply(light, second.reference, { caster: PLAYER_REF });
+    expect(lit(second.reference)).toBeGreaterThan(0);
+    expect(lit(first.reference)).toBe(0);
+  }, 120_000);
+});
+
 describe('what the original’s archetypes do that ours do not yet', () => {
-  it.todo('Light (Magelight): how many stay at once, and on a moving object it struck');
+  it.todo('Light (Magelight): on a moving object it struck');
   it.todo('Invisibility: the refraction shimmer through the actor (ours dithers it away)');
   it.todo('Summon Creature: the engine’s search for another place when the way ahead is blocked');
-  it.todo('Dispel: the engine’s rule for what it ends (fMagicDispelMagnitudeMult 5)');
   it.todo('Darkness, Night Eye: the image space and fMagicNightEyeAmbient (0.75)');
   it.todo(
     'Disguise, Concussion, Lock, Open, Cure Paralysis, Cure Addiction: unused by vanilla, as the engine does them',
