@@ -4,7 +4,7 @@
 // where the engine's own rule is not known it is marked TODO(M13). Platform-independent.
 
 import { AI_DEFAULTS, type AiSettings } from './ai-settings.ts';
-import { followGait, followGoal, followRadii, followSpeed } from './followers.ts';
+import { followGait, followRadii, followSpeed } from './followers.ts';
 import { IdleCollectionFlag } from './idle-records.ts';
 import { sameSpace } from './package-start.ts';
 import {
@@ -358,9 +358,9 @@ async function stayAtPatrolPoint(run: ProcedureRun, point: number): Promise<bool
 
 /**
  * Follow: keeps within its maximum radius of its target; fallen behind, it makes for its place
- * its minimum behind the leader, on the side it is on (followGoal; one fFollowSpaceBetweenFollowers
- * farther for each of the leader's followers nearer it), running beyond its walk zone or when
- * the leader runs; stands, facing it, between. Through
+ * its minimum of the leader (its path goes to the leader, stopping that near, as in the original;
+ * farther by its place among the leader's followers: followOffset), at the gait of followGait;
+ * stands, facing it, between. Through
  * load doors and on fast travel the player's followers come along (src/shell/actor-followers.ts);
  * its horse it rides where the package lets it (body.ride). Its radii without its own are the
  * engine's (followRadii); on its way its path follows the leader as it moves (searched again
@@ -387,13 +387,10 @@ const numberIn = (run: ProcedureRun, slot: number): number | undefined => {
   return value?.kind === 'int' || value?.kind === 'float' ? value.value : undefined;
 };
 
-/** A follower is at its place behind its leader this near it (units). */
-const FOLLOW_ARRIVE = 64;
-
 /**
  * One step of following a leader within radii (Follow, FollowTo): farther than its maximum
  * (one fFollowSpaceBetweenFollowers farther for each of the leader's followers nearer it) it
- * makes for its place behind it (followGoal); else it stands facing it a moment.
+ * goes to it, stopping within that; else it stands facing it a moment.
  */
 async function followStep(
   run: ProcedureRun,
@@ -401,8 +398,9 @@ async function followStep(
   radii: { readonly min: number; readonly max: number },
 ): Promise<void> {
   const settings = settingsOf(run);
-  const near = radii.min + (run.body.following?.(leader) ?? 0);
-  const far = Math.max(radii.max, near);
+  const offset = run.body.following?.(leader, radii.min) ?? 0;
+  const near = radii.min + offset;
+  const far = Math.max(radii.max + offset, near);
   const at = await run.mind.placement(leader);
   const here = run.body.position();
   if (!at || !here) {
@@ -418,25 +416,19 @@ async function followStep(
   const moves = run.mind.motion?.(leader);
   const gait = followGait(
     distance,
-    far,
+    (near + far) / 2,
     run.gait,
     {
       running: moves?.running ?? run.mind.running?.(leader) === true,
       sprinting: moves?.sprinting === true,
       player: leader === PLAYER,
     },
-    settings.followStartSprintDistance,
-    settings.followWalkZoneMult,
+    settings,
   );
-  // It makes for its place behind the leader, on its side (followGoal), as the leader moves.
-  const goal = followGoal(at, here, near);
-  const offset = [goal[0] - at.position[0], goal[1] - at.position[1]] as const;
+  // Its path goes to the leader as it moves and stops within its follow distance.
   const options: TravelOptions = {
     moving: {
-      position: () => {
-        const there = run.mind.livePosition?.(leader);
-        return there && [there[0] + offset[0], there[1] + offset[1], there[2]];
-      },
+      position: () => run.mind.livePosition?.(leader),
       recalc: settings.recalcFollowPath,
     },
     speedMult: (gaitSpeed) => {
@@ -452,7 +444,7 @@ async function followStep(
       });
     },
   };
-  if (!(await run.body.travel(goal, gait, FOLLOW_ARRIVE, at.space, options))) {
+  if (!(await run.body.travel(at.position, gait, near, at.space, options))) {
     await run.wait(IDLE_SECONDS);
   }
 }
@@ -588,6 +580,7 @@ async function atIdleMarker(
   marker: number,
   seconds = Infinity,
   done: () => boolean = () => false,
+  arrived?: () => void,
 ): Promise<boolean> {
   const at = await run.mind.idleMarker(marker);
   if (!at || !run.body.takeIdleMarker(marker)) return false;
@@ -610,6 +603,7 @@ async function atIdleMarker(
       await run.body.travel(at.position, 'walk', ON_MARKER, undefined, { direct: true });
       if (run.stopped()) return false;
     }
+    arrived?.();
     run.body.face(at.heading);
     await run.wait(1);
     run.body.face(undefined);
@@ -898,6 +892,7 @@ const sandboxing: ProcedureRunner = async (run) => {
             continue;
           }
         }
+        run.delayEvaluation?.(settings.sandboxDelayEvalSeconds);
         // A meal: what it carries, else one made up.
         const carried = await run.mind.carried(run.actor, FOOD);
         const food = carried ?? (await run.mind.fakeFood());
@@ -908,7 +903,10 @@ const sandboxing: ProcedureRunner = async (run) => {
       case SandboxKind.idleMarker: {
         const marker = pick.reference;
         const done = (): boolean => gameHours(run) - began >= hours;
-        if (marker === undefined || !(await atIdleMarker(run, marker, Infinity, done))) {
+        const arrived = (): void => {
+          run.delayEvaluation?.(settings.sandboxDelayEvalSeconds);
+        };
+        if (marker === undefined || !(await atIdleMarker(run, marker, Infinity, done, arrived))) {
           at = undefined;
           await run.wait(IDLE_SECONDS);
         }
@@ -937,6 +935,7 @@ const sandboxing: ProcedureRunner = async (run) => {
           await run.wait(IDLE_SECONDS);
           break;
         }
+        run.delayEvaluation?.(settings.sandboxDelayEvalSeconds);
         await stayFor(run, began, hours);
       }
     }

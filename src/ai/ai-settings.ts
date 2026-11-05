@@ -9,6 +9,8 @@
 export interface AiSettings {
   /** fEvaluatePackageTimer: an actor chooses its package again at least this often (seconds). */
   readonly evaluatePackageTimer: number;
+  /** fEvaluateProcedureTimer: how often a running package's branches are checked again (s). */
+  readonly evaluateProcedureTimer: number;
   /**
    * fAIMaxWanderTime, fAIEngergyLevelMult, fAIEnergyLevelBase: a wandering actor pauses up to
    * (fAIMaxWanderTime − (Energy × mult + base)) / 2 seconds between its walks.
@@ -134,6 +136,8 @@ export interface AiSettings {
   readonly sandboxInterMarkerMinDist: number;
   readonly minSandboxRescanSeconds: number;
   readonly maxSandboxRescanSeconds: number;
+  /** fSandBoxDelayEvalSeconds: at its activity, a sandbox's next evaluations wait this (s). */
+  readonly sandboxDelayEvalSeconds: number;
   /** fSandBoxRadiusHysteresis: a sandboxer goes back into its place once this far outside it. */
   readonly sandboxRadiusHysteresis: number;
   /**
@@ -202,6 +206,7 @@ const SANDBOX_ENERGY_MULTS = [-0.1, -0.1, -0.05, -0.05, 0.2, 0.05, -0.1];
 /** Each setting's GMST and the engine's built-in value (the load order's value first). */
 const SETTINGS: readonly (readonly [keyof AiSettings, string, number])[] = [
   ['evaluatePackageTimer', 'fEvaluatePackageTimer', 15],
+  ['evaluateProcedureTimer', 'fEvaluateProcedureTimer', 3],
   ['maxWanderTime', 'fAIMaxWanderTime', 100],
   ['energyLevelMult', 'fAIEngergyLevelMult', 1],
   ['energyLevelBase', 'fAIEnergyLevelBase', 0],
@@ -229,7 +234,7 @@ const SETTINGS: readonly (readonly [keyof AiSettings, string, number])[] = [
   ['followSlowdownZoneWidth', 'fFollowSlowdownZoneWidth', 150],
   ['followMatchSpeedZoneWidth', 'fFollowMatchSpeedZoneWidth', 128],
   ['followExtraCatchUpSpeedMult', 'fFollowExtraCatchUpSpeedMult', 0.2],
-  ['followWalkZoneMult', 'fFollowWalkZoneMult', 2],
+  ['followWalkZoneMult', 'fFollowWalkZoneMult', 1],
   ['followWalkMaxSpeedup', 'fFollowWalkMaxSpeedupMultiplier', 1.5],
   ['followWalkMinSlowdown', 'fFollowWalkMinSlowdownMultiplier', 0.75],
   ['followRunMaxSpeedup', 'fFollowRunMaxSpeedupMultiplier', 1.25],
@@ -264,6 +269,7 @@ const SETTINGS: readonly (readonly [keyof AiSettings, string, number])[] = [
   ['maxSandboxRescanSeconds', 'fMaxSandboxRescanSeconds', 6],
   // TODO(M13): the engine's built-in value (Skyrim.esm sets 50).
   ['sandboxRadiusHysteresis', 'fSandBoxRadiusHysteresis', 50],
+  ['sandboxDelayEvalSeconds', 'fSandBoxDelayEvalSeconds', 5],
   ['triggerAvoidPlayerDistance', 'fTriggerAvoidPlayerDistance', 400],
   ['avoidPlayerDistance', 'fAvoidPlayerDistance', 100],
   ['stealWarnings', 'iStealWarnings', 2],

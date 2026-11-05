@@ -32,9 +32,6 @@ import { PROCEDURE_PARAMETERS, ProcedureInputs } from './procedures.ts';
 /** The procedures' parameter that lets an actor ride its horse. */
 const RIDE_HORSE = 'Ride Horse If Possible';
 
-const PLAYER_REF = 0x14;
-/** Continue If PC Near: the player this near (units). TODO(M13): the engine's reach. */
-const PC_NEAR = 1024;
 /** The fallout's sandbox: round where the actor stands, this far (units). TODO(M13). */
 const FALLOUT_RADIUS = 256;
 /** Input ids of the fallout's sandbox (above any a package has: they are bytes). */
@@ -59,6 +56,28 @@ const FALLOUT_BRANCH: ProcedureBranch = {
 };
 
 type Vec3 = readonly [number, number, number];
+
+/** An exterior cell's side (units). */
+const EXTERIOR_CELL = 4096;
+
+/**
+ * Whether two placed things are in one parent cell: one interior, or one exterior cell of one
+ * worldspace.
+ */
+export function sameParentCell(
+  a: { readonly position: Vec3; readonly cell?: number; readonly world?: number } | undefined,
+  b: { readonly position: Vec3; readonly cell?: number; readonly world?: number } | undefined,
+): boolean {
+  if (!a || !b) return false;
+  if (a.world === undefined || b.world === undefined) {
+    return a.world === b.world && a.cell !== undefined && a.cell === b.cell;
+  }
+  return (
+    a.world === b.world &&
+    Math.floor(a.position[0] / EXTERIOR_CELL) === Math.floor(b.position[0] / EXTERIOR_CELL) &&
+    Math.floor(a.position[1] / EXTERIOR_CELL) === Math.floor(b.position[1] / EXTERIOR_CELL)
+  );
+}
 
 /** A place a package names: where it is and how far round it counts. */
 export interface PackagePlace {
@@ -219,6 +238,8 @@ export interface PackageMind {
   ): { readonly running: boolean; readonly sprinting: boolean; readonly speed: number } | undefined;
   /** Where a reference is now, at once (a leader followed as it moves), if known. */
   livePosition?(reference: number): Vec3 | undefined;
+  /** Whether the player is in the actor's parent cell (Continue If PC Near). */
+  playerInCell?(actor: number): Promise<boolean>;
   /** The AI's game settings (the load order's once read; the engine's built-in values else). */
   settings?(): AiSettings;
   /** An actor's Energy actor value (Wander's pauses, Sandbox's Energy without one). */
@@ -329,7 +350,7 @@ export interface PackageBody {
    * than its minimum radius it keeps from the leader: fFollowSpaceBetweenFollowers for each of
    * the leader's followers nearer it (src/ai/followers.ts).
    */
-  following?(leader: number | undefined): number;
+  following?(leader: number | undefined, wanted?: number): number;
   /** It counts as fleeing (IsFleeing) while its Flee procedure says so (Counts As Fleeing). */
   fleeing?(on: boolean): void;
   /** Whether it flies (a flier allowed to, where flying is: src/ai/flight.ts). */
@@ -438,6 +459,8 @@ export interface ProcedureRun {
    */
   resumedStep?(): SavedStep | undefined;
   setStep?(step: SavedStep | undefined): void;
+  /** Its next evaluations come no sooner than this (seconds; a sandbox at its activity). */
+  delayEvaluation?(seconds: number): void;
   /** Whether the package was left: a procedure ends at once. */
   stopped(): boolean;
   /** Waits real seconds (shorter if the package is left meanwhile). */
@@ -725,6 +748,8 @@ export class ActorPackages {
   readonly #random: () => number;
   #running: Running | undefined;
   #sinceEvaluation = Infinity;
+  /** Since its running procedure's branches were last checked (fEvaluateProcedureTimer). */
+  #sinceProcedure = 0;
   #hour: number | undefined;
   #evaluating = false;
   #wanted = false;
@@ -796,17 +821,30 @@ export class ActorPackages {
       for (const waiter of due) waiter.resolve();
     }
     this.#sinceEvaluation += seconds;
+    this.#sinceProcedure += seconds;
     const hour = Math.floor(this.#mind.time().hour);
-    const timer = (this.#mind.settings?.() ?? AI_DEFAULTS).evaluatePackageTimer;
+    const settings = this.#mind.settings?.() ?? AI_DEFAULTS;
+    const timer = settings.evaluatePackageTimer;
     const due =
       this.#wanted ||
       this.#running === undefined ||
       this.#sinceEvaluation >= timer ||
       hour !== this.#hour ||
       (this.#running.completed && !this.#running.ended);
-    if (!due || this.#evaluating) return;
+    if (this.#evaluating) return;
+    if (!due) {
+      // Between the package's evaluations its procedure's branches are looked at again.
+      if (this.#sinceProcedure < settings.evaluateProcedureTimer) return;
+      this.#sinceProcedure = 0;
+      this.#evaluating = true;
+      void this.#evaluateProcedure().finally(() => {
+        this.#evaluating = false;
+      });
+      return;
+    }
     this.#hour = hour;
     this.#sinceEvaluation = 0;
+    this.#sinceProcedure = 0;
     this.#wanted = false;
     this.#evaluating = true;
     void this.#evaluate().finally(() => {
@@ -1008,17 +1046,19 @@ export class ActorPackages {
     }
     const chosen = await this.#choose(undefined);
     if (this.#running !== current) return;
-    // Continue If PC Near (PKDT 0x200): a package still running is kept, though another would be
-    // chosen (its conditions, its schedule over), while the player is near the actor.
+    // Continue If PC Near (PKDT 0x200), observed in the original: a package still running is
+    // kept, though another would be chosen (its conditions, its schedule over), while the player
+    // is in the actor's parent cell; there is no distance in it.
     if (
       current &&
       !current.completed &&
       chosen?.id !== current.id &&
       (current.pack.flags & PackageFlag.continueIfPcNear) !== 0 &&
-      this.#playerNear()
+      (await this.#mind.playerInCell?.(this.actor)) === true
     ) {
       return;
     }
+    if (this.#running !== current) return;
     // Its fallout: a package that ended and stays chosen, without Skip Fallout Behavior.
     if (fallout && current && chosen?.id === current.id && !restart) this.#fallout(current);
     // A loaded save's package, chosen again first: it goes on where it was.
@@ -1046,12 +1086,7 @@ export class ActorPackages {
       }
       if (!current.stopped && (await this.#branchesHold(current))) return;
       if (this.#running !== current) return;
-      current.stopped = true;
-      this.#release();
-      this.#body.stop();
-      this.#body.face(undefined);
-      this.#running = chosen;
-      void this.#runTree(chosen);
+      this.#retake(current, chosen);
       return;
     }
     // Still none (it is asked again each frame meanwhile): nothing changes.
@@ -1078,6 +1113,33 @@ export class ActorPackages {
     void this.#playIdles(chosen);
   }
 
+  /**
+   * Every fEvaluateProcedureTimer (3 s), between the package's evaluations: the branches its
+   * tree runs under are checked again, so a branch that may no longer run, or a Stacked branch's
+   * earlier child that now may, does not wait up to fEvaluatePackageTimer. The package stays; a
+   * package whose conditions or schedule no longer hold is left to its own evaluation.
+   */
+  async #evaluateProcedure(): Promise<void> {
+    const current = this.#running;
+    if (this.#engine || !current || current.stopped || current.completed !== current.ended) return;
+    const left = (): boolean => this.#running !== current || current.stopped;
+    if (await this.#branchesHold(current)) return;
+    if (left()) return;
+    const chosen = await this.#choose(undefined);
+    if (left() || chosen?.id !== current.id) return;
+    this.#retake(current, chosen);
+  }
+
+  /** The package stays, its tree taken again from its root (no package events). */
+  #retake(current: Running, chosen: Running): void {
+    current.stopped = true;
+    this.#release();
+    this.#body.stop();
+    this.#body.face(undefined);
+    this.#running = chosen;
+    void this.#runTree(chosen);
+  }
+
   /** Maintain Speed At Goal (PKDT 0x8, also by a procedure's override): it keeps going. */
   #keepsSpeed(running: Running): boolean {
     return (
@@ -1085,12 +1147,21 @@ export class ActorPackages {
     );
   }
 
-  /** Whether the player is near the actor (Continue If PC Near). TODO(M13): the engine's reach. */
-  #playerNear(): boolean {
-    const player = this.#mind.livePosition?.(PLAYER_REF);
-    const here = this.#body.position();
-    if (!player || !here) return false;
-    return Math.hypot(player[0] - here[0], player[1] - here[1], player[2] - here[2]) <= PC_NEAR;
+  /**
+   * Its next package and procedure evaluations come no sooner than `seconds` from now (observed
+   * in the original: a sandbox that has reached its activity, fSandBoxDelayEvalSeconds). A script's
+   * EvaluatePackage and the hour's change still choose at once.
+   */
+  #delayEvaluation(seconds: number): void {
+    const settings = this.#mind.settings?.() ?? AI_DEFAULTS;
+    this.#sinceEvaluation = Math.min(
+      this.#sinceEvaluation,
+      settings.evaluatePackageTimer - seconds,
+    );
+    this.#sinceProcedure = Math.min(
+      this.#sinceProcedure,
+      settings.evaluateProcedureTimer - seconds,
+    );
   }
 
   /**
@@ -1455,6 +1526,9 @@ export class ActorPackages {
       },
       setStep: (step) => {
         running.step = step;
+      },
+      delayEvaluation: (seconds) => {
+        this.#delayEvaluation(seconds);
       },
       stopped: () => this.#looping(running) || isStopped(running),
       wait: (seconds) => this.#wait(running, seconds),

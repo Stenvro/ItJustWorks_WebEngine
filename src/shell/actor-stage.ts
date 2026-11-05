@@ -405,7 +405,12 @@ export class ActorStage {
       openDoor: (door, actor) => this.doors.passage(door, actor),
       shutTo: (actor) => this.doors.shutTo(actor),
       closedTo: (door, actor) => this.doors.closedTo(door, actor),
-      swimAllowed: (actor) => this.ai.allowsSwimming(actor),
+      swimAllowed: (actor) =>
+        this.ai.allowsSwimming(
+          actor,
+          this.#actors.get(actor)?.placed.look.raceFlags ?? 0,
+          this.combat.engaged(actor),
+        ),
       shutPlaces: (actor) => this.doors.shutPlaces(actor),
       obstacles: this.obstacles,
       // The engine's own packages for one kept from going on (src/ai/engine-packages.ts).
