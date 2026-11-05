@@ -514,7 +514,10 @@ export class Sim {
       const point = points[index];
       if (!point) break;
       const last = index === points.length - 1;
-      const near = last ? reach : CORNER_REACH;
+      // A corner well under them (a door's marker above a floor the navmesh leaves out: the way
+      // starts on the floor below) is only passed over, not stood on.
+      const under = this.world.player.feet[2] - point[2] >= FELL_OFF_THE_WAY;
+      const near = last ? reach : under ? PLAYER_RADIUS : CORNER_REACH;
       let side = 1;
       let jumped = false;
       let held = 0;
@@ -548,8 +551,17 @@ export class Sim {
             break;
           }
         }
-        if (Math.hypot(x1 - x0, y1 - y0) >= 4 || (await this.#openDoorNear([x1, y1], goal, lined)))
-          continue;
+        if (Math.hypot(x1 - x0, y1 - y0) >= 4) continue;
+        // Held at the way's last corner within reach of the goal (a shut door that is the goal
+        // itself takes up the corner's room): there is nowhere further to go, and no door to open.
+        if (
+          index >= points.length - 2 &&
+          Math.hypot(goal[0] - x1, goal[1] - y1) <= reach &&
+          Math.abs(goal[2] - z1) <= reach
+        ) {
+          return true;
+        }
+        if (await this.#openDoorNear([x1, y1], goal, lined)) continue;
         if (await this.#clearWay([x1, y1, z1], point, pulled)) continue;
         if (!jumped && point[2] > z1 + JUMP_OUT && !navmeshes.locate([x1, y1, z1])) {
           jumped = true;

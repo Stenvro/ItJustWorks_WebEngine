@@ -3,7 +3,7 @@
 // Skipped without game data.
 
 import { describe, expect, it } from 'vitest';
-import { hasGamedata, loadSim, openSim, PLAYER_REF, type Sim } from './helpers/sim.ts';
+import { hasGamedata, loadSim, openSim, PLAYER_REF, SIM_STEP, type Sim } from './helpers/sim.ts';
 
 const MQ201 = 0x35d5f;
 const MQ202 = 0x36191;
@@ -81,6 +81,49 @@ async function fendOff(sim: Sim): Promise<void> {
     const actor = staged.reference;
     if (actor === PLAYER_REF || staged.dead) continue;
     if (sim.world.stage.combat.targetOf(actor) === PLAYER_REF) await sim.kill(actor, PLAYER_REF);
+  }
+}
+
+/** How near the player's blows reach (units), and how long they take to fell someone (seconds). */
+const BLOW_REACH = 300;
+const BLOWS_SECONDS = 6;
+
+/**
+ * A fight as the player fights it: they go at the nearest of those fighting them, and each falls
+ * after a few seconds within reach of their blows (TODO(M13): the player's own blows). The first
+ * of Gissur's Thalmor to die ends his scene (its actors' Death End), which ends the packages of
+ * those it brought: one that has not detected the player by then stays out of this fight, and goes
+ * home or stays in the Ratway. TODO(M13): whether an ally who does not itself detect the target
+ * joins a fight it sees was not read; ours keeps out until it does.
+ */
+async function fightPlayersWay(
+  sim: Sim,
+  seconds: number,
+  inReach: Map<number, number>,
+): Promise<void> {
+  const until = sim.time + seconds;
+  // Under half a step, a step takes none: the clock would stand still here.
+  while (until - sim.time >= SIM_STEP / 2) {
+    const started = sim.time;
+    let nearest: readonly [number, number, number] | undefined;
+    let nearestAway = Infinity;
+    for (const staged of sim.actors()) {
+      const actor = staged.reference;
+      if (actor === PLAYER_REF || staged.dead) continue;
+      if (sim.world.stage.combat.targetOf(actor) !== PLAYER_REF) continue;
+      const away = (await sim.distance(actor, PLAYER_REF)) ?? Infinity;
+      if (away < BLOW_REACH) {
+        const since = inReach.get(actor) ?? sim.time;
+        inReach.set(actor, since);
+        if (sim.time - since >= BLOWS_SECONDS) await sim.kill(actor, PLAYER_REF);
+      } else if (away < nearestAway) {
+        nearest = await sim.position(actor);
+        nearestAway = away;
+      }
+    }
+    if (nearest) await sim.walkPath([...nearest], Math.min(2, until - sim.time), BLOW_REACH / 2);
+    // Nobody to go at, or a walk that found no way, returns without a step: time goes on.
+    if (sim.time === started) await sim.step(Math.min(1, until - sim.time));
   }
 }
 
@@ -188,19 +231,22 @@ describe.skipIf(!hasGamedata())('MQ202 A Cornered Rat', () => {
       expect(sim.stageDone(MQ202, 50)).toBe(true);
       expect(await sim.runtime.itemCount(PLAYER_REF, GOLD)).toBeLessThan(200);
       // Gissur leaves the Flagon for the Ratway, where the Thalmor agents wait (65:
-      // MQ202GissurSummonThalmor); they come back with him and fight. The first of them to die
-      // sets 70.
+      // MQ202GissurSummonThalmor); they come back with him and fight (70). The first of them to
+      // die ends the scene; how many reach the Flagon by then goes by the timing of the fight.
       const quest = sim.runtime.state.quest(MQ202);
       const thalmor = [GISSUR, FLAGON_AMBUSH_1, FLAGON_AMBUSH_2, FLAGON_AMBUSH_3].map(
         (alias) => quest.aliases.get(alias) ?? 0,
       );
-      for (let second = 0; second < 300 && !thalmor.every((a) => isDead(sim, a)); second += 2) {
-        await sim.step(2);
-        await fendOff(sim);
+      const inReach = new Map<number, number>();
+      const fought = (): boolean =>
+        thalmor.some((a) => isDead(sim, a)) &&
+        !thalmor.some((a) => !isDead(sim, a) && sim.world.stage.combat.targetOf(a) === PLAYER_REF);
+      for (let second = 0; second < 300 && !fought(); second += 2) {
+        await fightPlayersWay(sim, 2, inReach);
       }
       expect(sim.stageDone(MQ202, 65)).toBe(true);
       expect(sim.stageDone(MQ202, 70)).toBe(true);
-      expect(thalmor.every((actor) => isDead(sim, actor))).toBe(true);
+      expect(fought()).toBe(true);
       afterFlagon = await sim.save('MQ202 70');
     } finally {
       await sim.close();
@@ -297,7 +343,10 @@ describe.skipIf(!hasGamedata())('MQ202 A Cornered Rat', () => {
         await fendOff(sim);
       }
       expect(sim.stageDone(MQ202, 200)).toBe(true);
-      expect(sim.runtime.state.actor(esbern).playerTeammate).toBe(true);
+      // Its fragment moves a Gissur still alive first (MoveTo takes its time).
+      expect(
+        await sim.until(() => sim.runtime.state.actor(esbern).playerTeammate === true, 30),
+      ).toBe(true);
       const quest = sim.runtime.state.quest(MQ202);
       const ambush = [FINAL_AMBUSH_1, FINAL_AMBUSH_2].map((alias) => quest.aliases.get(alias) ?? 0);
       for (let second = 0; second < 240 && !ambush.every((a) => isDead(sim, a)); second += 2) {

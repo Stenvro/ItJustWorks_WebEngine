@@ -3135,7 +3135,18 @@ bash behaviours (their values are ready); the flanking and ranged movement selec
   and which chances the Strafe and Circle value nodes read: ours the style's strafe and circle
   mults). Its combat override package list (NPC\_ / alias ECOR: the first package
   whose conditions hold) keeps it within that package's place: back there first, no chase of a
-  target beyond it.
+  target beyond it. Observed in the original of a hold position's area: at least
+  fCombatAreaHoldPositionMinimumRadius wide; it goes out for good for one that flees or whose
+  inventory's maximum range is under fCombatRangedDistance (a melee fighter chases whatever the
+  package holds), so only shooters and casters are held. An actor in another cell is outside the
+  area; whether its way back then goes through the load door was not read, so a place in another
+  space binds nothing in ours (TODO(M13)). What an override package other than Hold Position does
+  was not read either: ours treats its place alike. MQ202's Thalmor agents hold in the Ratway
+  (stage below 70) yet walk into the Ragged Flagon with Gissur's scene; the first of them to die
+  ends that scene (Death End), which ends the packages it gave them, and one that has not
+  detected the player by then goes home by DefaultMasterPackage's Sandbox at its editor location.
+  TODO(M13): whether an ally who does not itself detect the target joins a fight it sees was not
+  read; ours keeps out until it detects it.
 - **Attacks** (`chooseAttack`, every 0.25 s: The attack decision): within reach and facing
   its target within 30°, it attacks by its attack chance, a power attack by its attack
   data's chance (ATKD; × power attack staggered mult on a staggered, power attack blocking mult
