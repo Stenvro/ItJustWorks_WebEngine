@@ -224,6 +224,38 @@ describe('the gameplay impulse (the engineâ€™s rule)', () => {
     expect(Math.abs(aside.bodies[0]?.body.linvel().x ?? 0) * HAVOK_SCALE).toBeLessThan(5);
     physics.free();
   });
+  it('pushes a body as a cone’s front reaches it, once', () => {
+    const physics = new PhysicsWorld(hitMatrix, GRAVITY);
+    const near = physics.addObject(crate(), translation(0, 200, 0), {
+      reference: 1,
+      kind: 'object',
+    });
+    const far = physics.addObject(crate(), translation(150, 800, 0), {
+      reference: 2,
+      kind: 'object',
+    });
+    physics.step(1 / 60);
+    const push = (): { linear: number; upBias: number; angular: number } => ({
+      linear: 700,
+      upBias: 0,
+      angular: 0,
+    });
+    const speed = (object: typeof near): number =>
+      (object.bodies[0]?.body.linvel().y ?? 0) * HAVOK_SCALE;
+    const pushed = new Set<number>();
+    // The front at 500 has passed the near crate, not the far one.
+    const cone = (front: number): number =>
+      physics.pushCone([0, 0, 0], [0, 1, 0], front, 15, Layer.clutter, push, undefined, pushed);
+    expect(cone(500)).toBe(1);
+    const nearSpeed = speed(near);
+    expect(nearSpeed).toBeGreaterThan(130);
+    expect(Math.abs(speed(far))).toBeLessThan(5);
+    // The front at 1000 reaches the far one; the near one takes no second push.
+    expect(cone(1000)).toBe(1);
+    expect(speed(far)).toBeGreaterThan(130);
+    expect(speed(near)).toBeCloseTo(nearSpeed, 3);
+    physics.free();
+  });
   it.todo(
     'pushes a ragdoll hit by fHavokHitImpulseMult (50) for fHavokHitTimeSec (3 s)  ' +
       '[settings: [Animation]; original]',

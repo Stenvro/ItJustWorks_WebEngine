@@ -28,6 +28,7 @@ import {
   coneDone,
   flightKind,
   launchCone,
+  lightsGivingWay,
   launchFlight,
   LOBBER_DEFAULTS,
   normalize,
@@ -359,7 +360,13 @@ export class MagicProjectiles {
         );
         wave.front = Math.min(range, entry.traveled);
         for (const reference of entry.reached ?? []) wave.reached.add(reference);
-        this.#waves.add({ wave, delivered, projectile, seconds: entry.seconds });
+        this.#waves.add({
+          wave,
+          pushed: new Set(),
+          delivered,
+          projectile,
+          seconds: entry.seconds,
+        });
         const speed = projectile.speed > 0 ? projectile.speed : range;
         const [dx, dy, dz] = wave.direction;
         const front: Vec3 = [
@@ -738,6 +745,7 @@ export class MagicProjectiles {
     const range = projectile.range > 0 ? projectile.range : 1000;
     const wave: Wave = {
       wave: launchCone(origin, aim, range, projectile.coneSpread, projectile.speed),
+      pushed: new Set(),
       delivered,
       projectile,
       seconds,
@@ -745,21 +753,6 @@ export class MagicProjectiles {
     wave.wave.reached.add(delivered.caster);
     this.#waves.add(wave);
     await this.#sweepWave(runtime, wave, 0);
-    // Its force pushes the moving bodies it sweeps (clutter flies, corpses tumble). TODO(M13):
-    // pushed as the front passes them (all at once here).
-    const physics = this.#physics;
-    const force = projectile.impactForce;
-    if (force > 0)
-      physics?.pushCone(
-        origin,
-        aim,
-        range,
-        projectile.coneSpread,
-        Layer.coneProjectile,
-        (layer, mass, distance) =>
-          conePush(force, distance, range, layer, mass, this.#impulses.current),
-        delivered.caster,
-      );
     // Its sound from its apex; its wave (its model and light) sweeps out to its range.
     if (projectile.sound !== undefined)
       void this.#options.session.playSound(projectile.sound, origin);
@@ -781,6 +774,21 @@ export class MagicProjectiles {
     for (const target of this.#options.targets()) targets.set(target.reference, target);
     const physics = this.#physics;
     const front = Math.min(wave.range, wave.front + wave.speed * step);
+    // Its force pushes the moving bodies its front has reached, each once (clutter flies, corpses
+    // tumble).
+    const force = projectile.impactForce;
+    if (force > 0 && front > 0)
+      physics?.pushCone(
+        origin,
+        wave.direction,
+        front,
+        projectile.coneSpread,
+        Layer.coneProjectile,
+        (layer, mass, distance) =>
+          conePush(force, distance, wave.range, layer, mass, this.#impulses.current),
+        delivered.caster,
+        entry.pushed,
+      );
     const objects =
       physics?.objectsNear(origin, front, Layer.coneProjectile) ?? new Map<number, Vec3>();
     const shapes: [number, ActorShape][] = [
@@ -1378,6 +1386,11 @@ export class MagicProjectiles {
       flying.instance.world.set(placementOf(flying.flight));
       flying.motion.version++;
     }
+    // One of a caster's at a time: the next that strikes ends the last (UESP "Skyrim:Magelight").
+    for (const earlier of lightsGivingWay(this.#stuck, flying.delivered.caster)) {
+      earlier.flying.scene?.destroy();
+      this.#stuck.delete(earlier);
+    }
     const stuck = { flying, until: this.#clock + duration, light: flying.light };
     this.#stuck.add(stuck);
     void this.#options.fx?.lightRecord(effect.associatedItem).then((light) => {
@@ -1409,6 +1422,8 @@ export class MagicProjectiles {
 /** A cone's wave on its way: what it carries. */
 interface Wave {
   readonly wave: ConeWave;
+  /** The moving bodies it pushed already (physics handles; none kept in a save). */
+  readonly pushed: Set<number>;
   readonly delivered: Delivered;
   readonly projectile: ProjectileRecord;
   readonly seconds: number | undefined;

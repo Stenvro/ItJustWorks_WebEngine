@@ -148,7 +148,7 @@ describe('a lobber', () => {
     proximity: 150,
   };
 
-  it('rests where it lands (fGrenadeRestitution 0) and waits for its trigger', () => {
+  it('rests where it lands (fGrenadeRestitution 0.01, fGrenadeFriction 5) and waits for its trigger', () => {
     const flight = launchFlight(rune, [0, 0, 100], [0, 1, -1]);
     expect(bounceLobber(flight, [0, 70, 0], [0, 0, 1])).toBe(true);
     expect(flight.resting).toBe(true);

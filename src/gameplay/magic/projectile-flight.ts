@@ -154,10 +154,13 @@ export interface LobberSettings {
   readonly friction: number;
 }
 
-export const LOBBER_DEFAULTS: LobberSettings = { restitution: 0, friction: 0 };
+export const LOBBER_DEFAULTS: LobberSettings = { restitution: 0.01, friction: 5 };
 
 /** Below this speed (units a second) off a surface a lobber stops bouncing and lies still. */
 const LOBBER_REST_SPEED = 20;
+
+/** How far off a surface a sliding lobber is kept (units). */
+const LOBBER_SKIN = 0.5;
 
 /**
  * A lobber (runes, thrown things: CommonLibSSE GrenadeProjectile) meets a surface: it bounces
@@ -165,8 +168,12 @@ const LOBBER_REST_SPEED = 20;
  * fGrenadeFriction) or, too slow to bounce, comes to rest where it met it. Without an
  * alternative trigger a lobber bursts where it meets a surface (the caller ends it); with one it
  * waits, at rest, for an actor within its proximity or its timer. Returns whether it rests.
- * Vanilla's lobbers (the runes) keep both settings at 0: they stop where they land.
- * TODO(M13): a lobber's slide along a slope with friction below 1 (it rests at once here).
+ * Its friction takes from its speed along the surface what the blow's force into it allows
+ * (friction × that speed, Coulomb's law per contact, as Havok's friction is a coefficient), so a
+ * lobber on a slope steeper than friction's angle (tan slope > friction) goes on sliding, each
+ * frame's gravity its next contact, and one on a gentler slope stops. Skyrim.esm's friction of 5
+ * holds it on anything below 78.7°. TODO(M13): inferred from the settings' names; the original's
+ * contact solver is not reproduced beyond this law.
  */
 export function bounceLobber(
   flight: Flight,
@@ -179,9 +186,14 @@ export function bounceLobber(
   const [vx, vy, vz] = flight.velocity;
   const into = vx * n[0] + vy * n[1] + vz * n[2];
   const along: Vec3 = [vx - into * n[0], vy - into * n[1], vz - into * n[2]];
-  const back = -into * Math.max(0, settings.restitution);
-  const keep = 1 - Math.min(1, Math.max(0, settings.friction));
-  if (back < LOBBER_REST_SPEED) {
+  const press = Math.max(0, -into);
+  const back = press * Math.max(0, settings.restitution);
+  const friction = Math.max(0, settings.friction);
+  const speed = Math.hypot(along[0], along[1], along[2]);
+  const keep = speed > 0 ? Math.max(0, 1 - (friction * press) / speed) : 0;
+  const bounces = back >= LOBBER_REST_SPEED;
+  const holds = n[2] > 0 && Math.hypot(n[0], n[1]) <= friction * n[2];
+  if (!bounces && holds && speed * keep < LOBBER_REST_SPEED) {
     flight.velocity = [0, 0, 0];
     flight.resting = true;
     return true;
@@ -191,7 +203,21 @@ export function bounceLobber(
     along[1] * keep + n[1] * back,
     along[2] * keep + n[2] * back,
   ];
+  // Sliding: just off the surface, so the next frame's way starts outside it.
+  if (!bounces)
+    flight.position = [
+      point[0] + n[0] * LOBBER_SKIN,
+      point[1] + n[1] * LOBBER_SKIN,
+      point[2] + n[2] * LOBBER_SKIN,
+    ];
   return false;
+}
+
+/** The earlier Magelights a caster's next one on a surface ends (sticksAsLight): all of them. */
+export function lightsGivingWay<
+  S extends { readonly flying: { readonly delivered: { readonly caster: number } } },
+>(stuck: Iterable<S>, caster: number): S[] {
+  return [...stuck].filter((entry) => entry.flying.delivered.caster === caster);
 }
 
 /**
@@ -259,9 +285,9 @@ export function sweepCone<K extends number>(
 /**
  * Whether a projectile stays where it struck: a Light effect's (Magelight: "sticks where it
  * strikes") on a surface, shining its effect's light there for the effect's duration; on an actor
- * the effect takes hold on it instead (its light on the actor). TODO(M13): how many the engine
- * keeps at once, and whether it follows a moving object it struck (read from the data: the
- * vanilla Light effects that fly are Magelight's).
+ * the effect takes hold on it instead (its light on the actor). One of each at a time for a caster
+ * (lightsGivingWay; magic-engine.ts for the one on an actor). TODO(M13): whether it follows a
+ * moving object it struck (read from the data: the vanilla Light effects that fly are Magelight's).
  */
 export function sticksAsLight(archetype: number | undefined, struck: 'surface' | 'actor'): boolean {
   return archetype === EffectArchetype.light && struck === 'surface';

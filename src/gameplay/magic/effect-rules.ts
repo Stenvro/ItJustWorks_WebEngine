@@ -501,3 +501,50 @@ export function effectSkillUses(use: {
   const share = Math.min(1, Math.max(0, use.share ?? 1));
   return Math.max(0, cost) * use.skillUsageMult * (use.seconds ?? 1) * share;
 }
+
+/** fMagicDispelMagnitudeMult's engine default (the load order sets none). */
+export const DISPEL_MAGNITUDE_MULT = 5;
+
+/**
+ * Whether a Dispel of a magnitude ends a spell of a strength (what it costs its caster to cast):
+ * a Dispel's strength is its magnitude × fMagicDispelMagnitudeMult, and it reaches a spell at or
+ * below that, without a chance (UESP "Oblivion:Dispel"; inferred: no vanilla effect dispels).
+ */
+export function dispelReaches(
+  spellStrength: number,
+  magnitude: number,
+  mult: number = DISPEL_MAGNITUDE_MULT,
+): boolean {
+  return spellStrength <= magnitude * mult + 1e-6;
+}
+
+/**
+ * Whether an effect on a target gives way to one taking hold: the same effect of the same spell,
+ * from another caster (the same caster's is replaced as a recast). The original's active effects
+ * keep a displacement spell (CommonLibSSE ActiveEffect::displacementSpell), but no record or
+ * document says what displaces what, so this is the plausible reading: one spell's lasting effect
+ * does not stack with itself.
+ * TODO(M13): the engine's search, and whether what is displaced comes back after the other ends.
+ */
+export function displacedBy(
+  there: {
+    readonly item?: number | undefined;
+    readonly index?: number | undefined;
+    readonly caster?: number | undefined;
+    readonly held?: boolean | undefined;
+    readonly lasting?: boolean | undefined;
+  },
+  coming: {
+    readonly item: number;
+    readonly index: number;
+    readonly caster?: number | undefined;
+  },
+): boolean {
+  return (
+    there.item === coming.item &&
+    there.index === coming.index &&
+    there.caster !== coming.caster &&
+    there.held !== true &&
+    there.lasting !== true
+  );
+}
