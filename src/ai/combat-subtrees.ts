@@ -74,6 +74,8 @@ export interface CombatSubtreeSettings {
   readonly lowMaxAttackDistance: number;
   readonly unreachableTargetCheckTime: number;
   readonly rangedDistance: number;
+  /** fCombatAreaHoldPositionMinimumRadius: a hold position's area is at least this wide. */
+  readonly holdPositionMinimumRadius: number;
   readonly dualCastInterruptTime: number;
   readonly restoreStopCastThreshold: number;
   readonly wardMinCastTime: number;
@@ -140,6 +142,7 @@ const SETTINGS: readonly (readonly [keyof CombatSubtreeSettings, string, number]
   ['lowMaxAttackDistance', 'fCombatLowMaxAttackDistance', 2048],
   ['unreachableTargetCheckTime', 'fCombatUnreachableTargetCheckTime', 3],
   ['rangedDistance', 'fCombatRangedDistance', 1024],
+  ['holdPositionMinimumRadius', 'fCombatAreaHoldPositionMinimumRadius', 256],
   ['dualCastInterruptTime', 'fCombatMagicDualCastInterruptTime', 2.5],
   ['restoreStopCastThreshold', 'fCombatRestoreStopCastThreshold', 0.25],
   ['wardMinCastTime', 'fCombatMagicWardMinCastTime', 1.5],
