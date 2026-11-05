@@ -158,6 +158,7 @@ export function registerForms(n: Register, runtime: ScriptRuntime): void {
   // SetPlayerEnemy: its members are hostile to the player (crime-engine.ts reaction).
   on('faction.setplayerenemy', (faction, call) => {
     state.faction(faction).playerEnemy = bool(call.args[0], true);
+    state.faction(faction).playerEnemySince = state.gameDaysPassed * 24;
   });
   on('faction.setplayerexpelled', (faction, call) => {
     state.faction(faction).playerExpelled = bool(call.args[0], true);

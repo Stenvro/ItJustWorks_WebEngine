@@ -24,17 +24,6 @@ export interface TalkSettings {
   readonly exclusiveGreetingTimer: number;
   /** An actor greets the player as they come this near (units; fAIMinGreetingDistance). */
   readonly greetingDistance: number;
-  /**
-   * A greeting holds its actor (stopped, facing the player) while the player stays this near
-   * (units; fAIInDialogueModeWithPlayerDistance); walking off past it lets the actor go on
-   * with its package while the line plays out.
-   */
-  readonly greetingHoldDistance: number;
-  /**
-   * ... and at most this long (seconds; fAIInDialogueModewithPlayerTimer, the distance's twin).
-   * TODO(M13): the plain reading of the setting's name.
-   */
-  readonly greetingHoldTimer: number;
   /** Seconds between an actor's lines of idle chatter (fIdleChatterCommentTimer .. Max). */
   readonly idleChatterMin: number;
   readonly idleChatterMax: number;
@@ -103,8 +92,6 @@ export const VANILLA_TALK: TalkSettings = {
   greetingTimer: 5,
   exclusiveGreetingTimer: 2.5,
   greetingDistance: 150,
-  greetingHoldDistance: 500,
-  greetingHoldTimer: 60,
   idleChatterMin: 10,
   idleChatterMax: 20,
   chatterDistance: 1024,
@@ -133,8 +120,6 @@ export function talkSettings(setting: (name: string) => number | undefined): Tal
     ...v,
     greetingTimer: setting('fAIGreetingTimer') ?? v.greetingTimer,
     greetingDistance: setting('fAIMinGreetingDistance') ?? v.greetingDistance,
-    greetingHoldDistance: setting('fAIInDialogueModeWithPlayerDistance') ?? v.greetingHoldDistance,
-    greetingHoldTimer: setting('fAIInDialogueModewithPlayerTimer') ?? v.greetingHoldTimer,
     exclusiveGreetingTimer: setting('fAIExclusiveGreetingTimer') ?? v.exclusiveGreetingTimer,
     idleChatterMin: setting('fIdleChatterCommentTimer') ?? v.idleChatterMin,
     idleChatterMax: setting('fIdleChatterCommentTimerMax') ?? v.idleChatterMax,
@@ -524,27 +509,6 @@ export function triggerDistance(
       ? settings.conversationDistanceMax
       : settings.conversationDistance;
   return starter === 'sitting' ? reach + 20 : reach;
-}
-
-/**
- * Whether a greeting still holds its actor: the player has not walked off past the greeting's
- * hold distance, and it has held it less than its hold timer (`heldFor` seconds). Past them the
- * actor goes on with its package; the line itself plays out (the engine does not cut a greeting
- * the player walks away from).
- * TODO(M13): the hold distance is fAIInDialogueModeWithPlayerDistance by its name; where the
- * engine reads it was not found.
- */
-export function greetingHolds(
-  actor: Vec3,
-  player: Vec3 | undefined,
-  settings: Pick<TalkSettings, 'greetingHoldDistance' | 'greetingHoldTimer'>,
-  heldFor = 0,
-): boolean {
-  return (
-    player !== undefined &&
-    distance(actor, player) <= settings.greetingHoldDistance &&
-    heldFor < settings.greetingHoldTimer
-  );
 }
 
 /** The speed (units a second) from which a scene's speaker counts as moving (observed in the original). */
