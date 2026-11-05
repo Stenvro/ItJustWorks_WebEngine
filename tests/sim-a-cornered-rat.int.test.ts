@@ -397,8 +397,9 @@ describe.skipIf(!hasGamedata())('MQ202 A Cornered Rat', () => {
       await sim.fastTravel(RIVERWOOD_MARKER);
       await sim.step(3);
       expect(await sim.distance(PLAYER_REF, esbern)).toBeLessThan(400);
-      // Into the Sleeping Giant with him: MQ203 takes over (20: Delphine and Esbern meet), and
-      // MQ202 is done (300: the Ratway's Thalmor and Shavari cleared away, the quest stopped).
+      // Into the Sleeping Giant with him: MQ203 goes on (20: he reached Riverwood; 30: he is in the
+      // inn, Delphine and Esbern meet), and MQ202 is done (300, set by 30: the Ratway's Thalmor
+      // and Shavari cleared away, the quest stopped).
       await through(INN_DOOR, SLEEPING_GIANT);
       expect(await sim.until(() => sim.stageDone(MQ203, 20), 20)).toBe(true);
       expect(sim.stageDone(MQ202, 300)).toBe(true);
