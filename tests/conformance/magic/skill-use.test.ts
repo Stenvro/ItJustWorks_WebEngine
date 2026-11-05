@@ -165,6 +165,10 @@ describe.skipIf(!hasGamedata())('what a cast trains (sim)', () => {
     expect(await run()).toBeGreaterThan(0);
   }, 120_000);
 
+  it.todo(
+    'a lasting effect that takes hold but does nothing on its first frame trains nothing (the test above passes with training at once too)',
+  );
+
   it('trains nothing from a staff, however it is used (UESP "Skyrim:Staves")', async () => {
     const { casting, magic, equipment } = sim.runtime;
     const staff = await sim.formId('WEAP', 'StaffFirebolt');
