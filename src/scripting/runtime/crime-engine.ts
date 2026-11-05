@@ -910,15 +910,19 @@ export class CrimeEngine {
     // a blow (Actor.Kill) is none. TODO(M13): the original's rule for NPCs' murders (whether a
     // kill without a recorded assault counts).
     if (killer !== PLAYER_REF) {
+      // A follower's murder is the player's in the stat (UESP "Skyrim:Statistics"). TODO(M13): a
+      // summon's kill counts as well by that page: the kill's credit does not name its summoner.
+      if (this.#runtime.state.actors.get(killer)?.playerTeammate === true) this.#stat('murders');
       const struck = this.#npcAssaults.has(`${String(killer)}:${String(victim)}`);
       const answered = this.#npcAssaults.has(`${String(victim)}:${String(killer)}`);
       if (struck && !answered)
         await this.commit(CrimeType.murder, killer, { act: 'murder', victim, faction });
       return undefined;
     }
-    const crime = await this.commit(CrimeType.murder, killer, { act: 'murder', victim, faction });
-    if (crime) this.#stat('murders');
-    return crime;
+    // Counted seen or not: "deaths you are responsible for" (UESP "Skyrim:Statistics"); only the
+    // bounty needs a witness. TODO(M13): the original's MurderCrime event is not read here.
+    this.#stat('murders');
+    return this.commit(CrimeType.murder, killer, { act: 'murder', victim, faction });
   }
 
   /**

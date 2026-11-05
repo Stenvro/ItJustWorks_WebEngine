@@ -1119,7 +1119,7 @@ tools/crime-info.ts` lists the crime factions with their values, jails and chest
   stolen all the same).
 - Seen, the bounty goes to the faction at once (violent for assault, murder and the werewolf:
   GetCrimeGoldViolent), its infamy and the stats (Total Lifetime Bounty, Largest Bounty, Items
-  Stolen, Assaults, Murders, ...) with it; the story manager's Crime Gold event
+  Stolen, Assaults, ...; Murders counts seen or not) with it; the story manager's Crime Gold event
   (OnStoryCrimeGold), Assault Actor, Trespass, Pick Lock and Kill Actor (crime status 0 none, 1
   unseen, 2 seen) events. Each witness says its line to the criminal (Steal, Assault, Murder,
   Trespass, PickpocketCombat; the NC lines, StealFromNC, AssaultNC, ..., for those that are no
@@ -1366,7 +1366,7 @@ loses its data (the world's references carry none yet); a tempered item's value 
 - The name: the player's (F, at most 32 characters) or "<item>" sOf "<enchantment>" ("Iron
   Sword of Fire Damage"). The soul gem is used up; a reusable one (keyword ReusableSoulGem,
   DOBJ RUSG: Azura's Star) leaves its empty gem (SLGM NAM0). Skill use: 1 an item
-  (Enchanting's 900 a use). Stats: Magic Items Made, Soul Gems Used.
+  (Enchanting's 900 a use). Stats: Magic Items Made (Soul Gems Used counts recharges alone).
 - **Charge**: each hit of an enchanted weapon uses its enchantment's cost
   (`CraftingEngine.useCharge`, the magic system's weapon hit); with too little left the
   enchantment does nothing. NPCs' weapons never run out (UESP). The charge is kept on the

@@ -37,6 +37,8 @@ export interface GameEvents {
     readonly book: number;
     readonly reader: number;
     readonly reference: number | undefined;
+    /** The first time the reader read that book (the stats count no other). */
+    readonly first?: boolean;
   };
   /** A reference's cell attached or detached (TESCellAttachDetachEvent). */
   cellAttachDetach: { readonly reference: number; readonly attached: boolean };
@@ -210,7 +212,9 @@ export interface GameEvents {
   };
   /** A spell, power, scroll or shout was cast (TESSpellCastEvent). */
   spellCast: { readonly caster: number; readonly spell: number };
-  /** An actor used up a soul gem: recharging or enchanting (SoulGemsUsed). */
+  /** An actor let out a shout, whatever its words (ShoutAttack). */
+  shoutAttack: { readonly actor: number; readonly shout: number };
+  /** An actor recharged a weapon with a soul gem (SoulGemsUsed); enchanting is not told. */
   soulGemsUsed: { readonly actor: number; readonly gem: number };
   /** An actor's race switch ended (TESSwitchRaceCompleteEvent). */
   switchRaceComplete: { readonly actor: number };
