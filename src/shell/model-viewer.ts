@@ -445,7 +445,19 @@ export class ModelViewer {
       void this.#scriptMoved(reference);
     },
     magicEffect: (shown) => {
-      this.#stage?.magicEffect(shown);
+      const target = shown.target;
+      this.#stage?.magicEffect(
+        shown,
+        shown.onObject === true
+          ? () => {
+              const instance = this.#instances.get(target);
+              const visibility = this.#visibility.get(target);
+              return instance
+                ? { placed: { instances: [instance] }, ...(visibility && { visibility }) }
+                : undefined;
+            }
+          : undefined,
+      );
     },
     effectShader: (shader, target, play, duration) => {
       this.#stage?.effects.shader(shader, target, play, duration);

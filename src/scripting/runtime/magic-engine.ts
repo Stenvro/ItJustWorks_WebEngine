@@ -90,6 +90,8 @@ export interface MagicEffectShown {
   readonly caster: number | undefined;
   /** EFSH on the target: as it hits, or while it lasts with `persist`. */
   readonly shader: number | undefined;
+  /** The target is no actor: what covers it is an object's body, shown once. */
+  readonly onObject?: boolean;
   /** ARTO and RFCT on the target. */
   readonly art: number | undefined;
   readonly visuals: number | undefined;
@@ -259,6 +261,8 @@ export class MagicEngine {
   readonly #accumulating = new WeakMap<ActiveEffectState, { rate: number; hold: number }>();
   /** The share of its magnitude an effect at once did to its actor value (its skill use). */
   readonly #did = new WeakMap<ActiveEffectState, number>();
+  /** Told effects on objects, to name each (they have no active effect's key). */
+  #objectHits = 0;
   /** A lasting effect's training, waiting for what its first frame does (#train). */
   readonly #firstFrame = new WeakMap<ActiveEffectState, () => Promise<void>>();
   /** Summons fading out as their effects ended: the seconds left before they are gone. */
@@ -1001,6 +1005,27 @@ export class MagicEngine {
     const runtime = this.#runtime;
     // The hub tells it (TESMagicEffectApplyEvent: OnMagicEffectApply).
     runtime.events.emit('magicEffectApply', { caster, target, effect: effect.formId });
+    // Its hit shader, art and visuals show on the object it reached, once (it has no lasting
+    // effect to keep them on: TODO(M13) whether an FX Persist one stays for its duration).
+    if ((effect.flags & EffectFlag.noHitEffect) === 0)
+      runtime.world.magicEffect?.({
+        event: 'start',
+        key: `object:${String(target)}:${String(effect.formId)}:${String(this.#objectHits++)}`,
+        onObject: true,
+        effect: effect.formId,
+        archetype: effect.archetype,
+        target,
+        caster,
+        shader: effect.hitShader,
+        art: effect.hitEffectArt,
+        visuals: effect.hitVisuals,
+        light: undefined,
+        persist: false,
+        duration: 0,
+        magnitude,
+        area: 0,
+        associated: effect.associatedItem,
+      });
     if (effect.archetype === EffectArchetype.open) {
       const lock = await runtime.lock(target);
       // A lock up to the magnitude's level opens; one only its key opens does not.

@@ -18,6 +18,15 @@ const entry = (effectId: number, magnitude: number, duration = 1) => ({
   conditions: [],
 });
 
+describe('enchantmentGlow’s visual effect', () => {
+  it('carries the deciding effect’s Enchant Visuals (RFCT), alone too', () => {
+    const only = { formId: 1, baseCost: 1, enchantVisuals: 0xd4 } as unknown as MagicEffectRecord;
+    expect(
+      enchantmentGlow({ formId: 0x20, castType: 1, effects: [entry(1, 1)] }, () => only),
+    ).toEqual({ enchantment: 0x20, shader: undefined, art: undefined, visuals: 0xd4 });
+  });
+});
+
 describe('enchantmentGlow', () => {
   const effects = new Map([
     [1, effect(1, 1, 0xa1)],

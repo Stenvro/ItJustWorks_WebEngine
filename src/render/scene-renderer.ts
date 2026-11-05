@@ -5131,6 +5131,20 @@ export class SceneRenderer {
    * Fades a scene's parts (sky objects during weather changes): their material alpha times
    * `fade`.
    */
+  tintScene(scene: GpuScene, color: readonly [number, number, number]): void {
+    for (const draw of scene.draws) {
+      const floats = new Float32Array(scene.uniformData, draw.uniformOffset, DRAW_SIZE / 4);
+      floats.set(color, 20);
+      this.#device.queue.writeBuffer(
+        scene.uniforms,
+        draw.uniformOffset,
+        scene.uniformData,
+        draw.uniformOffset,
+        DRAW_SIZE,
+      );
+    }
+  }
+
   fadeScene(scene: GpuScene, fade: number): void {
     for (const draw of scene.draws) {
       const material = draw.part.part.material;

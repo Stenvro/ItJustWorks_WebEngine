@@ -14,11 +14,13 @@ import { parseMagicItem } from '../../world/magic-records.ts';
 import type { GameRecord } from '../../world/record-db.ts';
 import { costliestEffectIndex } from './casting.ts';
 
-/** What an enchanted item shows: an effect shader and an art object (either may be missing). */
+/** What an enchanted item shows: a shader, an art object, a visual effect (any may be missing). */
 export interface EnchantmentGlow {
   readonly enchantment: number;
   readonly shader: number | undefined;
   readonly art: number | undefined;
+  /** MGEF Enchant Visuals (RFCT): its own art and shader as well (no vanilla effect has one). */
+  readonly visuals?: number | undefined;
 }
 
 /** An enchantment's glow from its deciding effect; undefined when it shows nothing. */
@@ -30,8 +32,18 @@ export function enchantmentGlow(
   const deciding = index < 0 ? undefined : enchantment.effects[index];
   const record = deciding && effect(deciding.effect);
   if (!record) return undefined;
-  if (record.enchantShader === undefined && record.enchantArt === undefined) return undefined;
-  return { enchantment: enchantment.formId, shader: record.enchantShader, art: record.enchantArt };
+  if (
+    record.enchantShader === undefined &&
+    record.enchantArt === undefined &&
+    record.enchantVisuals === undefined
+  )
+    return undefined;
+  return {
+    enchantment: enchantment.formId,
+    shader: record.enchantShader,
+    art: record.enchantArt,
+    visuals: record.enchantVisuals,
+  };
 }
 
 /** The glow of an item (a WEAP or ARMO, by its form id), read through `get`. */
