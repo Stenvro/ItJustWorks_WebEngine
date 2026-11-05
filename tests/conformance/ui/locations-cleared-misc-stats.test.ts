@@ -765,6 +765,12 @@ describe.skipIf(!hasGamedata())('the misc stats of a day at an inn (headless sim
     expect(runtime.daysPassed).toBe(passed + 1);
     expect(stat(sim, 'Days as a Werewolf')).toBe(werewolf + 1);
     expect(stat(sim, 'Days as a Vampire')).toBe(vampire);
+    sim.setGlobal(await sim.formId('GLOB', 'PlayerIsWerewolf'), 0);
+    sim.setGlobal(await sim.formId('GLOB', 'PlayerIsVampire'), 1);
+    await sim.rest(25, false);
+    expect(runtime.daysPassed).toBe(passed + 2);
+    expect(stat(sim, 'Days as a Werewolf')).toBe(werewolf + 1);
+    expect(stat(sim, 'Days as a Vampire')).toBe(vampire + 1);
   });
 });
 
