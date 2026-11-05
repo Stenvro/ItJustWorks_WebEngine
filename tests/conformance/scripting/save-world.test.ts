@@ -47,9 +47,14 @@ describe.skipIf(!hasGamedata())('the world a save keeps (simulation)', () => {
     sims.push(before);
     await before.step(1);
     // One on its way: a Travel whose actor moves, looked for over a few seconds since who
-    // walks when follows the packages' timers.
+    // walks when follows the packages' timers. The inn's scenes come and go between phases (one
+    // ended is followed by another a few seconds later), so the moment saved has both.
+    const pastFirstPhase = (): boolean =>
+      before.runtime.scenes
+        .snapshot()
+        .some((entry) => entry.state === 'playing' && entry.phase > 0);
     let walker: ReturnType<Sim['actors']>[number] | undefined;
-    for (let tries = 0; tries < 120 && walker === undefined; tries++) {
+    for (let tries = 0; tries < 240 && (walker === undefined || !pastFirstPhase()); tries++) {
       const places = new Map(
         before.actors().map((actor) => [actor.reference, [...actor.position]]),
       );
