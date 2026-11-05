@@ -15,6 +15,7 @@ export function worldSaveParts(
   const decals = stage?.combat.saveDecals() ?? [];
   const animObjects = stage?.animObjects.save() ?? [];
   const motions = play?.saveMotions() ?? [];
+  const trips = stage?.away.saveTrips() ?? [];
   const saved = stage?.senses.saveDetection();
   const detection =
     saved &&
@@ -27,6 +28,7 @@ export function worldSaveParts(
     ...(decals.length > 0 && { decals }),
     ...(animObjects.length > 0 && { animObjects }),
     ...(motions.length > 0 && { motions }),
+    ...(trips.length > 0 && { trips }),
     ...(detection && { detection }),
   };
 }
@@ -36,11 +38,13 @@ export function mergeWorldSaveParts(parts: readonly WorldSaveParts[]): WorldSave
   const decals = parts.flatMap((part) => part.decals ?? []);
   const animObjects = parts.flatMap((part) => part.animObjects ?? []);
   const motions = parts.flatMap((part) => part.motions ?? []);
+  const trips = parts.flatMap((part) => part.trips ?? []);
   const detection = parts.find((part) => part.detection)?.detection;
   return {
     ...(decals.length > 0 && { decals }),
     ...(animObjects.length > 0 && { animObjects }),
     ...(motions.length > 0 && { motions }),
+    ...(trips.length > 0 && { trips }),
     ...(detection && { detection }),
   };
 }

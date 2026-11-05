@@ -48,6 +48,8 @@ import { GROUND_ABOVE, GROUND_BELOW } from '../world/actor-ground.ts';
 import { corpsePose } from '../animation/corpse-pose.ts';
 import { createdEnabled } from './created-objects.ts';
 import type { GameSession } from './game-session.ts';
+import type { SavedPackage } from '../ai/package-runtime.ts';
+import type { Space } from '../ai/package-start.ts';
 import type { SavedActor, SavedFight, SavedGraphs, SavedPlayer } from '../save/world-save.ts';
 import type { CellRagdoll } from './play-session.ts';
 import type { Terminal } from './terminal.ts';
@@ -169,6 +171,8 @@ export interface ActorStageOptions {
    * undefined if the view does not hold it (another worldspace or interior).
    */
   readonly cellOf: (at: StagePlace) => string | undefined;
+  /** The worldspace or interior the view holds now (what an exterior's cell key leaves out). */
+  readonly space?: () => Space | undefined;
   /** Whether a loaded cell is shown yet (its actors appear with it); all are without. */
   readonly cellShown?: (cell: string) => boolean;
   /**
@@ -256,6 +260,23 @@ const CORPSE_REST_SPEED = 5;
 /** KYWD isExecutioner (Skyrim.esm): the headsman at a chopping block. */
 const IS_EXECUTIONER = 0x70c0a;
 
+/** An actor leaving the stage this near where the game state has it adds no place to keep. */
+const OFF_STAGE_NEAR = 16;
+/** A saved actor's cell where its space is not the one the view holds (no cell's key). */
+const OTHER_SPACE = '';
+
+/** Whether a package got anywhere that starting it again would lose. */
+const packageProgressed = (saved: SavedPackage): boolean =>
+  saved.completed ||
+  saved.ended ||
+  saved.fallout === true ||
+  saved.finished === true ||
+  saved.step !== undefined ||
+  saved.goal !== undefined ||
+  saved.found.length > 0 ||
+  saved.ranOn.length > 0 ||
+  saved.path.some((branch) => branch > 0);
+
 /** A loaded cell as the stage knows it. */
 interface StageCell {
   /** Bumped when it goes: actors still being placed for it are dropped. */
@@ -266,6 +287,8 @@ interface StageCell {
    * before, they wait for it (its objects' floors may still be missing over its landscape).
    */
   grounded: boolean;
+  /** The worldspace or interior it is of, as it loaded. */
+  readonly space: Space | undefined;
 }
 
 export class ActorStage {
@@ -1431,17 +1454,23 @@ export class ActorStage {
   }
 
   evaluatePackage(reference: number, restart = false): void {
+    const saved = this.#options.session.restoring?.actor(reference);
     if (this.#actors.has(reference)) this.ai.evaluate(reference, restart);
     // A loaded save's actor not placed yet has its package as the save left it, as the
     // original's actors have theirs from the load on: a scene's action starting its package
     // (restart) reaches it as it is placed (the low process leaves it alone meanwhile). Before,
     // MQ105's push trial, begun on a load, waited for good on Borri's travel to where he stood.
-    else if (restart && this.#options.session.restoring?.actor(reference)) {
+    else if (restart && saved && saved.offStage !== true) {
       this.#restartsOnPlace.add(reference);
     }
     // Each view's stage hears it: only the one that holds the loaded area (its actors) asks the
-    // low process, so a view not shown sends no actor off.
-    else if (this.#actors.size > 0) this.away.reconsider(reference);
+    // low process, so a view not shown sends no actor off. One that had left the stage as the
+    // game was saved may be far from anything that would place it: a package started anew is
+    // the low process's at once, or a scene would wait for it for good.
+    else if (this.#actors.size > 0) {
+      if (restart) this.#options.session.restoring?.drop(reference);
+      this.away.reconsider(reference);
+    }
   }
 
   /** A loaded save's actors not yet placed whose package a scene's action started anew. */
@@ -1790,7 +1819,102 @@ export class ActorStage {
     for (const pending of this.#options.session.restoring?.carried() ?? []) {
       if (!this.#actors.has(pending.reference)) saved.push(pending);
     }
+    saved.push(...this.#offStageRecords());
     return saved;
+  }
+
+  /**
+   * The actors that left the stage during play, for a save made now: their records still true
+   * (their place in the game state as it was as they left; alive, there, not on a trip).
+   */
+  #offStageRecords(): SavedActor[] {
+    const session = this.#options.session;
+    const runtime = session.scriptsReady;
+    if (!runtime) return [];
+    const statePlaceOf = (reference: number): readonly [number, number, number] | undefined => {
+      const position = runtime.state.references.get(reference)?.position;
+      return position && [position[0], position[1], position[2]];
+    };
+    return session.offStage.current(statePlaceOf).filter((record) => {
+      const reference = record.reference;
+      const state = runtime.state.references.get(reference);
+      if (
+        state?.deleted === true ||
+        state?.container !== undefined ||
+        runtime.state.actors.get(reference)?.dead === true
+      ) {
+        session.offStage.drop(reference);
+        return false;
+      }
+      // On its way between load doors: its trip says where it is (world-save.ts SavedTrip).
+      return !this.#actors.has(reference) && !this.away.trips.has(reference);
+    });
+  }
+
+  /**
+   * What is kept of an actor leaving the stage with its cell (or its view), for a later save:
+   * what a save holds of a placed actor, as the original keeps the process of an actor that is
+   * not loaded, bounded by what the game state does not hold already (none for one dead,
+   * disabled or on a vehicle, none without progress that stands where the game state has it).
+   * TODO(M13): inferred, as the original's rule is not known: its graph is not kept (made anew
+   * as its 3D is, the actor's furniture, sneaking and weapon rebuilding it), nor its fight or a
+   * paired animation (neither goes on off the stage during play).
+   */
+  #leaving(staged: StagedActor, space: Space | undefined): SavedActor | undefined {
+    const reference = staged.reference;
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime || !space || staged.dead || staged.placed.actor.startsDead) return undefined;
+    if (!staged.enabled(reference) || runtime.state.actors.get(reference)?.vehicle !== undefined) {
+      return undefined;
+    }
+    const use = this.furniture.interaction(reference);
+    const seated = use !== undefined && this.furniture.holds(reference);
+    const running = this.ai.savedPackage(reference);
+    const bleedout = this.combat.saveDown(reference)?.bleedout;
+    const horse = this.mounts.horseOf(reference);
+    const sneaking = this.senses.scriptSneaking(reference);
+    const drawn = weaponOut(this.combat.weaponState(reference));
+    const flying = this.flight.isFlying(reference);
+    const statePlace = runtime.state.references.get(reference)?.position;
+    const home = statePlace ?? staged.placed.actor.position;
+    const moved = Math.hypot(
+      staged.position[0] - home[0],
+      staged.position[1] - home[1],
+      staged.position[2] - home[2],
+    );
+    const needed =
+      seated ||
+      moved > OFF_STAGE_NEAR ||
+      bleedout !== undefined ||
+      horse !== undefined ||
+      sneaking ||
+      drawn ||
+      flying ||
+      (running !== undefined && packageProgressed(running));
+    if (!needed) return undefined;
+    return {
+      reference,
+      cell: staged.cell,
+      position: [staged.position[0], staged.position[1], staged.position[2]],
+      heading: staged.heading,
+      offStage: true,
+      space,
+      furniture: seated ? use.furniture : undefined,
+      package: running,
+      ...(sneaking && { sneaking: true }),
+      ...(drawn && { weaponDrawn: true }),
+      ...(flying && { flying: true }),
+      ...(bleedout !== undefined && { down: { bleedout } }),
+      ...(horse !== undefined && { riding: horse }),
+    };
+  }
+
+  /** It left the stage: what a later save keeps of it (#leaving), with its state's place. */
+  #keepLeft(record: SavedActor | undefined): void {
+    const session = this.#options.session;
+    if (!record) return;
+    const position = session.scriptsReady?.state.references.get(record.reference)?.position;
+    session.offStage.keep(record, position && [position[0], position[1], position[2]]);
   }
 
   /** The player's graphs: the body's and the first-person one. */
@@ -1938,7 +2062,12 @@ export class ActorStage {
     actors: readonly CellActor[],
     enabled: (reference: number) => boolean,
   ): Promise<CellRagdoll[]> {
-    const cell: StageCell = { generation: ++this.#generation, enabled, grounded: false };
+    const cell: StageCell = {
+      generation: ++this.#generation,
+      enabled,
+      grounded: false,
+      space: this.#options.space?.(),
+    };
     this.#cells.set(key, cell);
     const runtime = this.#options.session.scriptsReady;
     const own = new Set(actors.map((actor) => actor.reference));
@@ -1953,7 +2082,7 @@ export class ActorStage {
         saved && {
           position: [...saved.position],
           rotation: [0, 0, saved.heading],
-          cell: saved.cell,
+          cell: this.#savedCell(saved),
         }
       );
     };
@@ -2043,19 +2172,38 @@ export class ActorStage {
 
   /** A loaded cell goes: the actors standing in it leave the stage. */
   detachCell(key: string): void {
+    const space = this.#cells.get(key)?.space;
     this.#cells.delete(key);
     // A loaded save's actors of this cell not placed: they come back as their packages have them.
     const restoring = this.#options.session.restoring;
     for (const saved of [...(restoring?.actors() ?? [])]) {
-      if (saved.cell === key) {
+      if (this.#savedCell(saved) === key) {
         restoring?.drop(saved.reference);
         // A scene's action started its package meanwhile: the low process has it now.
         if (this.#restartsOnPlace.delete(saved.reference)) this.away.reconsider(saved.reference);
       }
     }
     for (const staged of [...this.#actors.values()]) {
-      if (staged.cell === key) this.#remove(staged);
+      if (staged.cell !== key) continue;
+      const record = this.#leaving(staged, space);
+      this.#remove(staged);
+      this.#keepLeft(record);
     }
+  }
+
+  /**
+   * The key of the loaded cell a saved actor stands in, or none of this view's: an exterior's
+   * key names the grid cell alone, and a walled city's worldspace has the same ones as the
+   * world around it.
+   */
+  #savedCell(saved: SavedActor): string {
+    const space = saved.space;
+    if (!space) return saved.cell;
+    const place =
+      space.kind === 'world'
+        ? { position: saved.position, world: space.world }
+        : { position: saved.position, cell: space.cell };
+    return this.#options.cellOf(place) === undefined ? OTHER_SPACE : saved.cell;
   }
 
   /**
@@ -2069,13 +2217,20 @@ export class ActorStage {
 
   /** Every cell goes (the view closes). */
   clear(): void {
+    const leaving = [...this.#actors.values()].map((staged) => ({
+      staged,
+      record: this.#leaving(staged, this.#cells.get(staged.cell)?.space),
+    }));
     this.vehicles.clear();
     this.projectiles.clear();
     this.effects.clear();
     this.fx.clear();
     this.#guides.clear();
     this.#cells.clear();
-    for (const staged of [...this.#actors.values()]) this.#remove(staged);
+    for (const { staged, record } of leaving) {
+      this.#remove(staged);
+      this.#keepLeft(record);
+    }
   }
 
   /** The enable states changed: what is drawn follows, and the navmesh obstacles' cuts. */
@@ -2264,6 +2419,8 @@ export class ActorStage {
     const staged = this.#actors.get(reference);
     if (staged) {
       if (key === undefined || !this.#cells.has(key)) {
+        // No record is kept: the game state has where a script sent it, its package anew from
+        // there. TODO(M13): inferred, whether the original's MoveTo keeps a package's progress.
         this.#remove(staged);
         return;
       }
@@ -2288,6 +2445,8 @@ export class ActorStage {
       return;
     }
     const cell = key === undefined ? undefined : this.#cells.get(key);
+    // Sent elsewhere off the stage: the game state has its place now, not a save's record.
+    if (key === undefined || !cell) this.#options.session.restoring?.drop(reference);
     if (key === undefined || !cell || this.#placing.has(reference)) return;
     if (!(await this.#isActor(runtime, reference))) return;
     const actor = await this.#cellActor(runtime, reference, now);
@@ -2771,6 +2930,7 @@ export class ActorStage {
         this.vehicles.rideAgain(reference);
         // A loaded save's actor: in its furniture again at once, its package going on where
         // it was, fighting whom it fought.
+        session.offStage.drop(reference);
         const saved = session.restoring?.actor(reference);
         if (saved) {
           session.restoring?.drop(reference);

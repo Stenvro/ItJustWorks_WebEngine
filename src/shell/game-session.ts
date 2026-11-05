@@ -3,7 +3,7 @@
 // environment. Disposed when another folder is mounted.
 
 import { loadGameScripts, type GameSave } from '../save/game-save.ts';
-import { WorldRestore } from '../save/world-save.ts';
+import { OffStageActors, WorldRestore } from '../save/world-save.ts';
 import type { SaveHeader } from '../save/save-codec.ts';
 import { loadRouteMap } from '../ai/route-map.ts';
 import type { Space } from '../ai/package-start.ts';
@@ -306,6 +306,8 @@ export class GameSession {
   scriptsReady: ScriptRuntime | undefined;
   /** A loaded save's world, taken by the actors and objects as they are placed again. */
   restoring: WorldRestore | undefined;
+  /** What a save keeps of the actors that left the stage during play. */
+  readonly offStage = new OffStageActors();
   /** The scripts while their new game starts, and what they are doing (dev checks). */
   scriptsStarting: ScriptRuntime | undefined;
   scriptsProgress = '';
@@ -1237,6 +1239,7 @@ export class GameSession {
     // A loaded save's world (its actors' places, objects' graphs) is handed out as it loads.
     const world = this.#pendingLoad?.save.world;
     this.restoring = world && new WorldRestore(world);
+    this.offStage.clear();
     if (!this.#voices)
       void this.sounds().then((sounds) => {
         sounds.globals = undefined;

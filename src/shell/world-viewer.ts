@@ -1249,6 +1249,10 @@ export class WorldViewer {
       terminal: this.#terminal,
       sounding: this.#soundingWorld,
       cellOf: (at) => this.#stageCellOf(at),
+      space: () => {
+        const world = this.#world?.record.formId;
+        return world === undefined ? undefined : { kind: 'world', world };
+      },
       cellShown: (key) => this.#cells.get(key)?.ready === true,
       collided: (key) => this.#cells.get(key)?.collided,
       navmeshes: () => this.#navmeshes,

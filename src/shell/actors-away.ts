@@ -34,6 +34,7 @@ import { frameTurn } from '../render/frame-work.ts';
 import type { Vec3 } from '../render/math.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
+import type { SavedTrip } from '../save/world-save.ts';
 import { linkedReferences, parseReference } from '../world/cell-records.ts';
 import type { CellActor } from '../world/cell-loader.ts';
 import { RecordFlag } from '../formats/esm/record.ts';
@@ -101,6 +102,8 @@ interface Ask {
 
 /** An actor on its way while away. */
 interface Trip {
+  /** Where it set out (where it is while its route is searched). */
+  readonly from: AwayPlace;
   readonly destination: AwayPlace;
   /** The package it walks for, if known. */
   readonly package: AwayPackage | undefined;
@@ -111,6 +114,10 @@ interface Trip {
   along: number;
   /** Its route is being searched (or its move made): it waits. */
   busy: boolean;
+  /** A flier's way (#fly): straight through the air. */
+  readonly flies?: boolean;
+  /** It was on this trip as the game was saved: no time passed, so no jump ends it (#ask). */
+  readonly loaded?: boolean;
 }
 
 /** An actor counts as at its place within this of it (units). */
@@ -187,6 +194,7 @@ export class ActorsAway {
    */
   depart(actor: number, from: AwayPlace, destination: AwayPlace, walk?: AwayPackage): void {
     const trip: Trip = {
+      from,
       destination,
       package: walk,
       speed: this.#walkSpeed ?? WALK_SPEED,
@@ -211,9 +219,11 @@ export class ActorsAway {
     destination: AwayPlace,
     speed: number,
     walk: AwayPackage | undefined,
+    loaded = false,
   ): void {
     const points = [from.position, destination.position];
     this.#trips.set(actor, {
+      from,
       destination,
       package: walk,
       speed,
@@ -221,7 +231,63 @@ export class ActorsAway {
       leg: 0,
       along: 0,
       busy: false,
+      flies: true,
+      ...(loaded && { loaded }),
     });
+  }
+
+  /**
+   * What a save keeps of the trips: where each actor is along its way, not its road (planned
+   * again from there as the game loads: a road is long, the game state has the doors locked as
+   * they are then). A trip whose route is being searched is where it set out.
+   */
+  saveTrips(): SavedTrip[] {
+    const saved: SavedTrip[] = [];
+    for (const [actor, trip] of this.#trips) {
+      const leg = trip.legs?.[trip.leg];
+      const position = leg ? pointAlong(leg.points, Math.min(trip.along, leg.length)) : undefined;
+      saved.push({
+        actor,
+        space: leg?.space ?? trip.from.space,
+        position: position ?? trip.from.position,
+        destination: trip.destination,
+        package: trip.package,
+        speed: trip.speed,
+        ...(trip.flies === true && { flies: true }),
+      });
+    }
+    return saved;
+  }
+
+  /** A loaded save's trips go on from where the actors were, as the first frame runs. */
+  #resumeTrips(): void {
+    for (const saved of this.#options.session.restoring?.takeTrips() ?? []) {
+      const { actor, space, speed } = saved;
+      if (this.#options.staged(actor)) continue;
+      const from: AwayPlace = { space, position: [...saved.position] };
+      const destination: AwayPlace = {
+        space: saved.destination.space,
+        position: [...saved.destination.position],
+        ...(saved.destination.heading !== undefined && { heading: saved.destination.heading }),
+      };
+      if (saved.flies === true) {
+        this.#fly(actor, from, destination, speed, saved.package, true);
+        continue;
+      }
+      const trip: Trip = {
+        from,
+        destination,
+        package: saved.package,
+        speed,
+        legs: undefined,
+        leg: 0,
+        along: 0,
+        busy: true,
+        loaded: true,
+      };
+      this.#trips.set(actor, trip);
+      void this.#plan(actor, trip, from);
+    }
   }
 
   /**
@@ -293,6 +359,7 @@ export class ActorsAway {
   frame(seconds: number): void {
     const runtime = this.#options.session.scriptsReady;
     if (!runtime) return;
+    this.#resumeTrips();
     this.#watchTime(seconds);
     for (const [actor, trip] of this.#trips) {
       if (trip.busy || !trip.legs) continue;
@@ -448,8 +515,13 @@ export class ActorsAway {
     // A loaded save's actor of the loaded area stands where it stood as its cell loads (src/
     // save/world-save.ts): the low process does not send it elsewhere before (it would be on
     // the stage there while the game state had it at its package's place).
-    if (this.#options.session.restoring?.actor(actor)) return false;
+    const restoring = this.#options.session.restoring;
+    const kept = restoring?.actor(actor);
+    if (kept && kept.offStage !== true) return false;
     if (mode === 'walk' && !again && this.#trips.has(actor)) return false;
+    // A loaded game's walker goes on: the first run for the player's space is no time passing
+    // (a jump the game's clock made ended its trip already: #finishAll).
+    if (mode === 'jump' && !again && this.#trips.get(actor)?.loaded === true) return false;
     const now = await runtime.placement(actor, false);
     if (!now) return false;
     // One a script or a quest created (PlaceAtMe, an alias's Create Reference) keeps its
@@ -459,13 +531,26 @@ export class ActorsAway {
     const created = runtime.state.created.get(actor);
     const record = created ? undefined : await runtime.forms.record(actor);
     if (!created && record?.type !== 'ACHR') return false;
-    const current: AwayPlace = { space: spaceOf(now), position: now.position };
+    // One a save has off the stage is where the save has it, not where the game state does.
+    const current: AwayPlace = kept?.space
+      ? { space: kept.space, position: [...kept.position] }
+      : { space: spaceOf(now), position: now.position };
+    const heading = kept?.space ? kept.heading : now.rotation[2];
     const placed = created
-      ? createdActor(actor, created.base, now.position, now.rotation[2], runtime)
-      : record && cellActor(record, now.position, now.rotation[2]);
+      ? createdActor(actor, created.base, current.position, heading, runtime)
+      : record && cellActor(record, current.position, heading);
     if (!placed) return false;
     const start = await placer.whereNow(placed, current.space).catch(() => undefined);
     const destination = start && (await this.#destination(runtime, actor, start, current));
+    if (kept) {
+      // Its package still the one saved goes on from where it was as its cell loads, unless it
+      // is one that takes it somewhere (off the stage it would never get there, and a scene
+      // would wait for it for good). Another package (the hour changed, a scene's): the low
+      // process has it now.
+      if (!start || start.kind === 'undecided') return false;
+      if (start.package === kept.package?.id && (!destination || !takesItAway(start))) return false;
+      restoring?.drop(actor);
+    }
     // A follower is asked again as its leader goes through a load door (#leaderMoved).
     if (start?.kind === 'here' && start.procedure?.toLowerCase() === 'follow' && start.actor) {
       this.#followers.set(actor, start.actor);
@@ -834,6 +919,13 @@ export class ActorsAway {
     }
     runtime.move(actor, [...position], [0, 0, place.heading ?? 0], cell, world);
   }
+}
+
+/** Whether a package has an actor go somewhere, not stay about a place. */
+function takesItAway(start: PackageStart): boolean {
+  if (start.kind === 'elsewhere') return true;
+  const procedure = start.kind === 'undecided' ? undefined : start.procedure?.toLowerCase();
+  return procedure === 'travel' || procedure === 'follow' || procedure === 'escort';
 }
 
 /** The space of a placement: its worldspace, or its interior cell. */
