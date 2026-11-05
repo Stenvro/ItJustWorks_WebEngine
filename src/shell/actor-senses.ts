@@ -1000,6 +1000,8 @@ export class ActorSenses implements ScriptSenses {
     viewer: number,
     target: number,
   ): boolean | undefined {
+    // Disabled it has no 3D to see, whether it was in view or not, where it stood.
+    if (runtime.state.references.get(target)?.enabled === false) return false;
     const seen = bodies.get(target);
     const points: Vec3[] = seen ? [seen.eye, seen.chest] : [];
     if (!seen) {

@@ -78,8 +78,8 @@ export interface PathOptions {
    * Avoid nodes (the actors that blocked it standing; the engine's, observed in the original): a circle the
    * actor's middle keeps out of (`radius`: theirs and its own) and the cost of each unit a path
    * step runs inside it (`cost` times its length). The triangles whose middle lies within one
-   * are closed (the goal's not); the way pulled tight goes round them where the navmeshes have
-   * room.
+   * are closed (the goal's not) while another way is left, else they only cost; the way pulled
+   * tight goes round them where the navmeshes have room.
    */
   readonly avoid?: readonly AvoidNode[];
 }
@@ -300,6 +300,18 @@ export function findPath(
   to: Vec3,
   options: PathOptions,
 ): NavPath | undefined {
+  return searchPath(set, from, to, options, true);
+}
+
+/** findPath; `closeAvoided`: whether the triangles under the avoid nodes are closed. */
+function searchPath(
+  set: NavmeshSet,
+  from: Vec3,
+  to: Vec3,
+  options: PathOptions,
+  closeAvoided: boolean,
+): NavPath | undefined {
+  let avoidedClosed = false;
   const start = set.locate(from);
   const goal = set.locate(to);
   if (!start) return undefined;
@@ -441,10 +453,12 @@ export function findPath(
       if (options.blocked?.length && isBlocked(navmesh, triangle, options.blocked)) continue;
       const neighbourKey = keyOf(navmesh.formId, triangle);
       if (
+        closeAvoided &&
         options.avoid?.length &&
         neighbourKey !== goalKey &&
         isBlocked(navmesh, triangle, options.avoid)
       ) {
+        avoidedClosed = true;
         continue;
       }
       const [a, b] = edgeCorners(node.navmesh, node.triangle, edge);
@@ -471,6 +485,10 @@ export function findPath(
       });
     }
   }
+  // An avoid node only costs (observed in the original); closing what lies under it is ours, to
+  // keep a way out of it where there is another. One standing in the only way (a corridor, a
+  // doorway) does not end the way short: it is searched again at the nodes' cost alone.
+  if (!reached && avoidedClosed) return searchPath(set, from, to, options, false);
   const end = reached ?? best;
   const chain: Node[] = [];
   for (let node: Node | undefined = end; node; node = node.parent) chain.push(node);
