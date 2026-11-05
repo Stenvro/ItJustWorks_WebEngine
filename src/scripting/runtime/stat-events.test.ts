@@ -49,8 +49,9 @@ describe('stat events', () => {
     const { events } = runtime;
     await events.emitted('bookRead', { book: 0x1, reader: PLAYER_REF, reference: undefined });
     await events.emitted('bookRead', { book: 0x1, reader: 0x1234, reference: undefined });
+    await events.emitted('shoutAttack', { actor: PLAYER_REF, shout: 0x13e07 });
+    await events.emitted('shoutAttack', { actor: 0x1234, shout: 0x13e07 });
     await events.emitted('spellCast', { caster: PLAYER_REF, spell: 0x13e07 });
-    await events.emitted('spellCast', { caster: PLAYER_REF, spell: 0x12fcd });
     await events.emitted('wordLearned', { word: 0x602a3 });
     await events.emitted('sleep', { started: true, interrupted: false, start: 2.75, end: 3 });
     await events.emitted('sleep', { started: false, interrupted: false });
@@ -82,20 +83,19 @@ describe('stat events', () => {
     expect(questTypeStats(1)).toEqual(['Quests Completed', 'Main Quests Completed']);
     expect(questTypeStats(8)).toEqual(['Quests Completed']);
     expect(questTypeStats(6)).toEqual([]);
-    const defaults: Record<string, number> = { AWWW: 0xa3087, RIWR: 0xcdd84, PIWV: 0xed06c };
+    const defaults: Record<string, number> = { AWWW: 0xa3087, PIWV: 0xed06c };
     const runtime = {
       ...fakeRuntime({}, { count: 0 }),
       magic: { defaultObject: (use: string) => Promise.resolve(defaults[use]) },
       raceKeywords: () => Promise.resolve([]),
       actors: {
         factionRank: (actor: number) => Promise.resolve(actor === 0x50 ? 0 : -2),
-        raceOf: () => Promise.resolve(0xcdd84),
       },
       clockGlobal: () => undefined,
       pluginGlobal: () => Promise.resolve(undefined),
     };
     const state = { gameDaysPassed: 3, globals: new Map([[0xed06c, 1]]) };
-    const live = { ...runtime, state } as unknown as ScriptRuntime;
+    const live = { ...runtime, state, beastForm: true } as unknown as ScriptRuntime;
     const stop = relayStatEvents(live);
     const { events, stats } = runtime;
     await events.emitted('death', { actor: 0x50, killer: PLAYER_REF, dead: true });

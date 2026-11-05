@@ -2570,9 +2570,8 @@ export class ActorCombat implements CombatBridge {
     if (this.#notices.has(text)) return;
     this.#notices.set(text, now);
     this.#options.session.scriptsReady?.world.notification?.(text);
-    void this.#options.session
-      .sounds()
-      .then((sounds) => sounds.playNamed('UISneakAttack', undefined));
+    // The sound system the page has by now (none headless: a blow's notice must not fail there).
+    void this.#options.session.soundSystem?.playNamed('UISneakAttack', undefined);
   }
 
   async #hit(

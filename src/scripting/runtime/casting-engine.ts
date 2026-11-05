@@ -1378,13 +1378,17 @@ export class CastingEngine {
    */
   async teachWord(word: number): Promise<void> {
     const runtime = this.#runtime;
-    if (!runtime.wordsLearned.has(word)) {
+    const fresh = !runtime.wordsLearned.has(word);
+    if (fresh) {
       runtime.wordsLearned.set(word, false);
       runtime.events.emit('wordLearned', { word });
     }
     for (const formId of runtime.forms.db.formIdsOfType('SHOU')) {
       const shout = await this.shout(formId);
       if (!shout?.words.some((entry) => entry.word === word)) continue;
+      // Shouts Learned: this word was the last of the shout's three (UESP "Skyrim:Statistics").
+      if (fresh && shout.words.every((entry) => runtime.wordsLearned.has(entry.word)))
+        runtime.incrementStat('Shouts Learned');
       const first = shout.words[0]?.word;
       if (first === undefined || !runtime.wordsLearned.has(first)) continue;
       if (await runtime.actors.addSpell(PLAYER_REF, formId))
@@ -1475,6 +1479,7 @@ export class CastingEngine {
       cost: { base: 0, magicka: 0, charge: 0, school: undefined, chargeTime: 0 },
     };
     this.#emit({ actor, source: CastingSource.voice, kind: 'shout', delivered, words: count });
+    runtime.events.emit('shoutAttack', { actor, shout: voice });
     // A shout's word is cast as its spell: the story manager's Cast Magic with that spell (the
     // College's MG01ShoutNode knows shouts by their words' spells).
     runtime.detach(runtime.storyEvents.castMagic(actor, undefined, item.formId));

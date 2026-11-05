@@ -848,11 +848,9 @@ export class ActorEngine {
     const type = record?.type === 'SPEL' ? parseSpell(record).spellType : undefined;
     if (type === SpellType.voice)
       this.#runtime.detach(this.#runtime.storyEvents.newVoicePower(reference, spell));
-    // The player's stats: a spell (not a power, ability or disease) learned, a shout learned.
+    // The player's stat: a spell (not a power, ability or disease) learned.
     if (reference === PLAYER_REF && type === SpellType.spell)
       this.#runtime.incrementStat('Spells Learned');
-    if (reference === PLAYER_REF && record?.type === 'SHOU')
-      this.#runtime.incrementStat('Shouts Learned');
     return true;
   }
 

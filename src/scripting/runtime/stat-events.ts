@@ -9,9 +9,10 @@
 // Killed; one with none of them is Creatures Killed. The engine's own counts are tracked stats
 // (TESTrackedStatsEvent: ScriptRuntime.incrementStat). After these the same handler counts a
 // victim in the Bunny Faction default object (AWWW: HareFaction) in Bunnies Slaughtered, and a
-// kill the player makes in beast form in Mauls (the engine reads a flag of the player there;
-// taken here as the player's race being the werewolf beast race, RIWR: TODO(M13) whether a
-// Vampire Lord's kills count too).
+// kill the player makes in beast form in Mauls (the engine reads a flag of the player there:
+// taken as Game.SetBeastForm's, so the werewolf and the Vampire Lord alike, as UESP
+// "Skyrim:Statistics" has them. TODO(M13): that page counts melee kills; the death event names
+// no weapon).
 //
 // The engine's misc stat incrementers (observed in the original: one per event source,
 // MiscStatIncrementer<…>): a location cleared (LocationCleared) counts in Dungeons Cleared; a
@@ -33,13 +34,16 @@
 // Invested In, Persuasions, Bribes, Intimidations, Standing Stones Found and Brawls Won.
 //
 // The others this relay counts, each from the hub event that causes it (the stats' names as the
-// journal lists them): a book the player reads (Books Read; one that teaches a skill, Skill Books
-// Read too), a shout the player shouts (Times Shouted), a word of power learned (Words of Power
-// Learned), the hours of a sleep (Hours Slept, at its end), food, a potion or an ingredient the
+// journal lists them): the first read of a book by the player (Books Read; one that teaches a
+// skill, Skill Books Read instead: UESP "Skyrim:Statistics", which counts spell tomes and not
+// skill books in the former. TODO(M13): that a re-read counts in neither is inferred from a skill
+// book's teaching once), a shout the player lets out, whatever its words (Times Shouted: the
+// ShoutAttack event), a word of power learned (Words of Power Learned), the hours of a sleep (Hours Slept, at its end), food, a potion or an ingredient the
 // player takes (Food Eaten, Potions Used, Ingredients Eaten: an equip of the item), and the most
 // gold the player has had (Most Gold Carried, as gold comes in). Counted where they happen
-// instead: Skill Increases (ProgressionEngine), Spells Learned and Shouts Learned
-// (ActorEngine.addSpell), Words of Power Unlocked (CastingEngine.unlockWord), Ingredients
+// instead: Skill Increases (ProgressionEngine), Spells Learned (ActorEngine.addSpell), Shouts
+// Learned (CastingEngine.teachWord: the shout's last word, by UESP; TODO(M13): the original's
+// writer is not read), Words of Power Unlocked (CastingEngine.unlockWord), Ingredients
 // Harvested (HarvestEngine), Locations Discovered (src/shell/compass.ts), the crimes' (the crime
 // engine), the crafts' (the crafting engine), Locks Picked (the lockpicking menu).
 //
@@ -52,7 +56,9 @@
 // conditions not asked) and its weapon is fists, one-handed or a staff (WEAP animation type
 // below 5, or 8). Weapons Disarmed: a disarm whose source is the player. Dragon Souls Collected,
 // Shouts Mastered, Soul Gems Used, Poisons Used and Diseases Contracted: one each event (the
-// player's only: the engine sends them for the player).
+// player's only: the engine sends them for the player). Soul Gems Used is told for a recharge,
+// not an enchantment (UESP "Skyrim:Statistics"). TODO(M13): that page leaves out the souls Miraak
+// gives from Dragon Souls Collected, and they come by the same ModActorValue as any other here.
 
 import { EntryPoint } from '../../gameplay/perk-entry-points.ts';
 import { BookFlag, parseItem, PotionFlag, type ItemRecord } from '../../world/item-records.ts';
@@ -199,25 +205,20 @@ export function relayStatEvents(runtime: ScriptRuntime): () => void {
       const bunnies = await runtime.magic.defaultObject('AWWW');
       if (bunnies !== undefined && (await runtime.actors.factionRank(event.actor, bunnies)) >= 0)
         runtime.incrementStat('Bunnies Slaughtered');
-      const beast = await runtime.magic.defaultObject('RIWR');
-      if (beast !== undefined && (await runtime.actors.raceOf(PLAYER_REF)) === beast)
-        runtime.incrementStat('Mauls');
+      if (runtime.beastForm) runtime.incrementStat('Mauls');
     }),
     runtime.events.on('locationCleared', () => {
       runtime.incrementStat(DUNGEONS_CLEARED);
     }),
     runtime.events.on('bookRead', async (event) => {
-      if (event.reader !== PLAYER_REF) return;
-      runtime.incrementStat('Books Read');
+      if (event.reader !== PLAYER_REF || event.first === false) return;
       const record = await runtime.forms.record(event.book);
       const book = record ? parseItem(record)?.book : undefined;
-      if (book && (book.flags & BookFlag.teachesSkill) !== 0)
-        runtime.incrementStat('Skill Books Read');
+      const teaches = book !== undefined && (book.flags & BookFlag.teachesSkill) !== 0;
+      runtime.incrementStat(teaches ? 'Skill Books Read' : 'Books Read');
     }),
-    runtime.events.on('spellCast', async (event) => {
-      if (event.caster !== PLAYER_REF) return;
-      if ((await runtime.forms.record(event.spell))?.type === 'SHOU')
-        runtime.incrementStat('Times Shouted');
+    runtime.events.on('shoutAttack', (event) => {
+      if (event.actor === PLAYER_REF) runtime.incrementStat('Times Shouted');
     }),
     runtime.events.on('wordLearned', () => {
       runtime.incrementStat('Words of Power Learned');
