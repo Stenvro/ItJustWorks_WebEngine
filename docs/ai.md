@@ -884,7 +884,11 @@ Actors use furniture as the engine's furniture handling does, as far as the data
     (taken as the next day's 1:00); its scan again every fMin..fMaxSandboxRescanSeconds (3–6
     real seconds: ours scans as each activity ends); fSandBoxSearchRadius (6000) for a place the
     engine gets no radius for (ours keeps the place's radius, at least 100);
-    fSandBoxRadiusHysteresis, fSandBoxExtraDialogueRange, fSandBoxDelayEvalSeconds.
+    fSandBoxExtraDialogueRange, observed to size only the second place of the engine's In Game
+    Dialogue package (the first's radius plus this), which we do not make.
+  - As it reaches its activity (in its seat or bed, on its marker) its next package and procedure
+    evaluations wait at least fSandBoxDelayEvalSeconds (observed in the original; capped by a field
+    of its state, inferred to be the stay).
 - **The player** (`src/shell/player-furniture.ts`) sits on chairs and benches ("Sit", sSit) and
   stands at workbenches the same way: the idle tree gives the player's own idles where it has
   them (IdleStoolEnterPlayer, IdleTableEnterPlayer: GetIsID(Player)); the engine slides and turns
@@ -1488,8 +1492,12 @@ from the original game's behaviour only (in our words):
   the middle slower, towards nothing at the inner one; always within
   fFollowWalkMinSlowdownMultiplier–MaxSpeedupMultiplier (0.75–1.5) times that speed walking,
   fFollowRun… (Skyrim.esm 0.75–1.25) running. TODO(M13): which of its zones the engine passes
-  as inner and outer (here its minimum and maximum radius) and its walk zone
-  (fFollowWalkZoneMult).
+  as inner and outer (here its minimum and maximum radius). Its path goes to the leader itself,
+  stopping within its inner radius, and its radii grow by its place among the leader's followers:
+  in order of distance, each next at least both radii and fFollowSpaceBetweenFollowers beyond the
+  one before. Within fFollowWalkZoneMult (built-in 1) times the middle of its radii it walks; beyond
+  that it runs with a running leader or farther than the middle plus fFollowMatchSpeedZoneWidth, and
+  keeps its package's gait else (observed in the original).
 - **Escort:** it waits once the target is more than its Distance To Wait For Followers behind
   (without one fAIEscortWaitDistanceInterior, 512, inside; outside its destination's radius,
   at least 200, times fAIEscortWaitDistanceExterior, 2) and goes on once the target is that near;

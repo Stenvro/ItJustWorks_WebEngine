@@ -30,15 +30,6 @@ export const CATCH_UP_SECONDS = 3;
 export const VIEW_HALF_ANGLE = (55 * Math.PI) / 180;
 
 /**
- * How near a follower comes to its leader: its package's minimum radius, and one spacing
- * (fFollowSpaceBetweenFollowers) farther for each follower nearer the leader than it (its
- * rank), so several follow one behind another.
- */
-export function followDistance(min: number, rank: number, spacing: number): number {
-  return min + Math.max(0, rank) * spacing;
-}
-
-/**
  * Follow's radii (observed in the original): its Min and Max Radius, without them
  * fFollowSlowdownZoneWidth and fFollowMatchSpeedZoneWidth; the smaller is the minimum.
  */
@@ -61,57 +52,38 @@ export interface FollowLeader {
 }
 
 /**
- * The gait a follower closes the distance at. After the running player it sprints while they
- * sprint or once farther behind than fFollowStartSprintDistance (observed in the original);
- * beyond its walk zone (fFollowWalkZoneMult times its maximum radius) it runs, as with a running
- * leader; within it, its package's.
+ * The gait a follower closes the distance at, `middle` the middle of its radii, observed in the
+ * original: after the running player it sprints while they sprint or once farther behind than
+ * fFollowStartSprintDistance; within its walk zone (fFollowWalkZoneMult times the middle) it walks;
+ * beyond it, it runs with a running leader or once beyond the middle by more than
+ * fFollowMatchSpeedZoneWidth, and goes at its package's gait else.
  */
 export function followGait(
   distance: number,
-  max: number,
+  middle: number,
   packageGait: Gait,
   leader: FollowLeader,
-  sprintDistance: number,
-  walkZoneMult: number,
+  settings: Pick<
+    AiSettings,
+    'followStartSprintDistance' | 'followWalkZoneMult' | 'followMatchSpeedZoneWidth'
+  >,
 ): Gait {
-  if (leader.player && leader.running && (leader.sprinting || distance > sprintDistance)) {
+  if (
+    leader.player &&
+    leader.running &&
+    (leader.sprinting || distance > settings.followStartSprintDistance)
+  ) {
     return 'sprint';
   }
-  if (leader.running || leader.sprinting || distance > max * walkZoneMult) {
+  if (distance < settings.followWalkZoneMult * middle) return 'walk';
+  if (
+    leader.running ||
+    leader.sprinting ||
+    distance > middle + settings.followMatchSpeedZoneWidth
+  ) {
     return packageGait === 'sprint' ? 'sprint' : 'run';
   }
   return packageGait;
-}
-
-/**
- * How far off straight behind its leader a follower keeps (radians), on the side it is on.
- * TODO(M13): the engine's follow offset is not read; a quarter turn's third keeps it in the
- * leader's wake without walking in front of them.
- */
-export const FOLLOW_SIDE_ANGLE = Math.PI / 6;
-
-/**
- * Where a follower goes when it has fallen behind (Follow): its follow distance behind its leader,
- * FOLLOW_SIDE_ANGLE off straight behind on the side of the leader's way it is on (left or right;
- * straight behind it keeps to the right), so it trails the leader and does not cross in front.
- */
-export function followGoal(
-  leader: FollowPlace,
-  follower: Vec3,
-  distance: number,
-): [number, number, number] {
-  const dx = follower[0] - leader.position[0];
-  const dy = follower[1] - leader.position[1];
-  // Right of the leader's way (compass: forward (sin, cos), right (cos, −sin)).
-  const right = dx * Math.cos(leader.heading) - dy * Math.sin(leader.heading);
-  const side = right < 0 ? -1 : 1;
-  // Behind it, turned towards its side.
-  const angle = leader.heading + Math.PI - side * FOLLOW_SIDE_ANGLE;
-  return [
-    leader.position[0] + Math.sin(angle) * distance,
-    leader.position[1] + Math.cos(angle) * distance,
-    leader.position[2],
-  ];
 }
 
 /** What a follower's speed is matched by. */
@@ -291,16 +263,44 @@ export function catchUpPlace(
   ];
 }
 
-/** The rank of each follower of a leader: how many of them are nearer it (0: the nearest). */
-export function followerRanks(
+/** A follower of a leader, as their places are shared out. */
+export interface FollowerPlace {
+  readonly reference: number;
+  readonly position: Vec3;
+  /** The distance its own package wants from the leader. */
+  readonly wanted: number;
+  /** Its bound radius. */
+  readonly radius: number;
+}
+
+/**
+ * How much farther than it wants a follower keeps from its leader, observed in the original: the
+ * followers in order of distance from the leader, the nearest at what it wants; each next at least
+ * what it wants and at least the one before's place, both their radii and
+ * fFollowSpaceBetweenFollowers beyond it.
+ */
+export function followOffset(
   leader: Vec3,
-  followers: readonly { readonly reference: number; readonly position: Vec3 }[],
-): Map<number, number> {
+  followers: readonly FollowerPlace[],
+  self: number,
+  spacing: number,
+): number {
+  const away = (follower: FollowerPlace): number =>
+    Math.hypot(
+      follower.position[0] - leader[0],
+      follower.position[1] - leader[1],
+      follower.position[2] - leader[2],
+    );
   const sorted = [...followers].sort(
-    (a, b) =>
-      Math.hypot(a.position[0] - leader[0], a.position[1] - leader[1]) -
-        Math.hypot(b.position[0] - leader[0], b.position[1] - leader[1]) ||
-      a.reference - b.reference,
+    (first, second) => away(first) - away(second) || first.reference - second.reference,
   );
-  return new Map(sorted.map((follower, rank) => [follower.reference, rank]));
+  let place = 0;
+  let before: FollowerPlace | undefined;
+  for (const follower of sorted) {
+    const least = before ? place + before.radius + follower.radius + spacing : 0;
+    place = Math.max(follower.wanted, least);
+    if (follower.reference === self) return place - follower.wanted;
+    before = follower;
+  }
+  return 0;
 }

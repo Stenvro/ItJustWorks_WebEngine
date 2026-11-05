@@ -18,13 +18,17 @@
 //   Weapons Unequipped, 24:00 for 8 h).
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { movementBlocked } from '../../../src/ai/engine-packages.ts';
 import { PROCEDURES } from '../../../src/ai/procedure-runs.ts';
 import { PROCEDURE_PARAMETERS } from '../../../src/ai/procedures.ts';
 import { WeaponState } from '../../../src/gameplay/combat/combat-state.ts';
 import { Vfs } from '../../../src/vfs/vfs.ts';
+import { parseOutfit } from '../../../src/world/actor-records.ts';
+import { INI_DEFAULTS } from '../../../src/world/ini-settings.ts';
 import { RecordDatabase } from '../../../src/world/record-db.ts';
 import { openGameFolder } from '../../../tools/gamedata-path.ts';
 import { packageCensus, type PackageCensus } from '../../../tools/package-census.ts';
+import { lasting, pack, packageActor, procedure, tick } from '../../helpers/packages.ts';
 import { hasGamedata, openSim, type Sim } from '../../helpers/sim.ts';
 
 describe.skipIf(!hasGamedata())('the procedures across the load order (data)', () => {
@@ -100,36 +104,51 @@ describe.skipIf(!hasGamedata())('the procedures across the load order (data)', (
 
 describe('the engine’s own packages (no record holds them)', () => {
   // Avoid Player (CommonLibSSE kAvoidPlayer): src/ai/engine-packages.test.ts.
-  it.todo(
-    'Avoid Player for an actor the standing player blocks: it asks them to move (its line; ' +
-      'today it searches its way round them after fMaxTimeBlockedByActors)',
-  );
-  it.todo(
-    'React To Destroyed Object: an actor near an object destroyed reacts (CommonLibSSE ' +
-      'kReactToDestroyedObject; its rule to be observed in the original)',
-  );
-  it.todo(
-    'Steal Warning and Pickpocket Warning: an owner warns the player before the crime ' +
-      '(CommonLibSSE kStealWarning, kPickPocketWarning)',
-  );
-  it.todo(
-    'Get Up From Chair or Bed: an actor in furniture whose package ends gets up through its own ' +
-      'package (CommonLibSSE kGetUpFromChairBed)',
-  );
-  it.todo('Surface: an actor under water swims up for air (CommonLibSSE kSurface)');
-  it.todo(
-    'Vampire Feed and Cannibal: the player’s feeding packages (CommonLibSSE kVampireFeed, kCannibal)',
-  );
-  it.todo(
-    'Movement Blocked: off while bUseMovementBlockedPackage:General is 0, its built-in value ' +
-      '(the engine’s defaults); what it does when on is to be observed in the original',
-  );
+  // React To Destroyed Object, Get Up From Chair Or Bed, Steal Warning, Surface: their procedures
+  // and starts, src/ai/engine-packages.test.ts (who starts React To Destroyed Object and its length
+  // are inferred). Pickpocket Warning is never made, as in the original (its comment there).
+  // Vampire Feed and Cannibal: the natives StartVampireFeed and StartCannibal
+  // (src/scripting/runtime/engine-events.test.ts, tests/magic-world.int.test.ts); whether the
+  // original runs them as packages of its own was not read.
+
+  // Stays: the actors' movement (src/shell/actor-movers.ts) has no case without a whole stage, and
+  // the actor's line is ours until the engine's way round a blocker is read.
+  it.todo('Avoid Player for an actor the standing player blocks: it asks them to move');
+
+  it('Movement Blocked is off (bUseMovementBlockedPackage 0); on, it stands for its time', async () => {
+    expect(INI_DEFAULTS.General.bUseMovementBlockedPackage).toBe(0);
+    let stops = 0;
+    const { actor } = packageActor(
+      [pack(1, procedure('lasting'))],
+      { lasting },
+      {
+        body: {
+          stop: () => {
+            stops++;
+          },
+        },
+      },
+    );
+    await tick(actor, 1);
+    expect(actor.push('movementBlocked', movementBlocked(2))).toBe(true);
+    await tick(actor, 0.1);
+    expect(stops).toBeGreaterThan(0);
+    expect(actor.engine()).toBeDefined();
+    await tick(actor, 2);
+    await tick(actor, 0.1);
+    expect(actor.engine()).toBeUndefined();
+  });
 });
 
 /** LvlVampireThrallMissileHold [0005186D]: DefaultHoldPositionEditorLoc256, Weapon Drawn. */
 const THRALL = 0x5186d;
 /** AeriREF [0001A6D2]: DefaultSleepEditorLoc24x8 at 2:00, Weapons Unequipped. */
 const AERI = 0x1a6d2;
+/** AsbjornRef [00019DF3]: RiftenAsbjornSleeps0x6 at 2:00, Wear Sleep Outfit; base Asbjorn. */
+const ASBJORN = 0x19df3;
+const ASBJORN_SLEEP = 0xded13;
+/** His base's SOFT. */
+const SLEEP_OUTFIT = 0x1697d;
 
 describe.skipIf(!hasGamedata())('package flags on the gear (headless simulation)', () => {
   let sim: Sim;
@@ -142,6 +161,13 @@ describe.skipIf(!hasGamedata())('package flags on the gear (headless simulation)
     kept: number[];
     package?: number;
   } = { day: [], asleep: [], woken: [], kept: [] };
+  let asbjorn: {
+    pieces: number[];
+    day: boolean;
+    asleep: boolean;
+    woken: boolean;
+    package?: number;
+  } = { pieces: [], day: true, asleep: false, woken: true };
 
   beforeAll(async () => {
     sim = await openSim({ hour: 10 });
@@ -182,6 +208,34 @@ describe.skipIf(!hasGamedata())('package flags on the gear (headless simulation)
       kept,
       ...(pack !== undefined && { package: pack }),
     };
+    // Wear Sleep Outfit: the outfit's pieces go on with his package and come off after it.
+    const asbjornCell = sim.db.cellOfReference(ASBJORN);
+    if (asbjornCell === undefined) throw new Error('Asbjorn has no cell');
+    await sim.openInterior(asbjornCell);
+    await sim.step(3);
+    const outfit = await sim.db.require(SLEEP_OUTFIT);
+    const pieces = parseOutfit(outfit);
+    const wears = async (): Promise<boolean> => {
+      for (const piece of pieces) {
+        if (await equipment.isEquipped(ASBJORN, piece)) return true;
+      }
+      return false;
+    };
+    const asbjornDay = await wears();
+    sim.setHour(2);
+    await sim.until(() => sim.package(ASBJORN)?.id === ASBJORN_SLEEP, 20);
+    await sim.step(3);
+    const asbjornAsleep = await wears();
+    const asbjornPack = sim.package(ASBJORN)?.id;
+    sim.setHour(10);
+    await sim.step(5);
+    asbjorn = {
+      pieces: [...pieces],
+      day: asbjornDay,
+      asleep: asbjornAsleep,
+      woken: await wears(),
+      ...(asbjornPack !== undefined && { package: asbjornPack }),
+    };
   }, 600_000);
   afterAll(async () => {
     await sim.close();
@@ -210,8 +264,13 @@ describe.skipIf(!hasGamedata())('package flags on the gear (headless simulation)
     });
   });
 
-  it.todo(
-    'wears its sleep outfit (NPC_ SOFT) while its package has Wear Sleep Outfit (18 packages) ' +
-      '(a vanilla actor with both in a cell to be picked: C00VilkasWaitForPlayer)',
-  );
+  // The three vanilla actors with both (Asbjorn, Aduri Sarethi, Drifa) share SOFT [0001697D]; the
+  // package's flag is what puts it on and its end what takes it off.
+  it('wears its sleep outfit (NPC_ SOFT) while its package has Wear Sleep Outfit (18 packages)', () => {
+    expect(asbjorn.package).toBe(ASBJORN_SLEEP);
+    expect(asbjorn.pieces.length).toBeGreaterThan(0);
+    expect(asbjorn.day).toBe(false);
+    expect(asbjorn.asleep).toBe(true);
+    expect(asbjorn.woken).toBe(false);
+  });
 });

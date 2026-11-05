@@ -266,6 +266,23 @@ describe('findPath', () => {
     expect(highest(true)).toBeGreaterThanOrEqual(100);
   });
 
+  it('keeps out of water unless it swims (a package without Allow Swimming)', () => {
+    // Two rows of five squares; the lower row's middle three are water.
+    const squares: [number, number][] = [];
+    for (let y = 0; y < 2; y++) for (let x = 0; x < 5; x++) squares.push([x, y]);
+    const set = setOf([
+      gridMesh(1, squares, (square) => (square >= 1 && square <= 3 ? NavmeshFlag.water : 0)),
+    ]);
+    const highest = (swims: boolean): number =>
+      Math.max(
+        ...(findPath(set, [50, 50, 0], [450, 50, 0], { radius: 10, swims })?.points ?? []).map(
+          (point) => point[1],
+        ),
+      );
+    expect(highest(true)).toBeLessThan(100);
+    expect(highest(false)).toBeGreaterThanOrEqual(100);
+  });
+
   it('keeps off places closed to it (a door the navmesh does not mark)', () => {
     const set = setOf([gridMesh(1, L_SQUARES)]);
     // A door in the square north of the corner (250, 150): its triangles' middles are near it.

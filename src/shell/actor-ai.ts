@@ -7,6 +7,7 @@
 
 import {
   ActorPackages,
+  sameParentCell,
   type EnginePackage,
   type EngineRunner,
   type PackageBody,
@@ -51,7 +52,8 @@ import {
 import { RaceSize } from '../ai/race-combat-records.ts';
 import type { Gait } from '../ai/locomotion.ts';
 import type { FlightRequest } from '../ai/flight.ts';
-import { followDistance, followerRanks } from '../ai/followers.ts';
+import { followOffset } from '../ai/followers.ts';
+import { swimsNow } from '../ai/race-ai-flags.ts';
 import {
   mergedInputs,
   sameSpace,
@@ -145,6 +147,9 @@ export interface PackageFlight {
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+/** A follower's bound radius as the followers' places are shared out (a human's). */
+const FOLLOWER_RADIUS = 14;
+
 export class ActorAi {
   readonly #session: GameSession;
   readonly #movers: ActorMovers;
@@ -189,6 +194,8 @@ export class ActorAi {
   readonly #joined = new Map<number, number>();
   /** The leader each actor follows now (Follow, FollowTo): src/shell/actor-followers.ts. */
   readonly #leaders = new Map<number, number>();
+  /** The distance each follower's package wants from its leader. */
+  readonly #followWanted = new Map<number, number>();
   /** The horses whose own AI waits while they are ridden. */
   readonly #ridden = new Set<number>();
   /** The actors whose Flee procedure counts as fleeing now (IsFleeing). */
@@ -316,12 +323,16 @@ export class ActorAi {
   }
 
   /**
-   * Whether the package an actor runs lets it swim (PKDT Allow Swimming: 85 vanilla packages);
-   * one running no package may. TODO(M13): the engine's rule without a package, and in combat.
+   * Whether an actor whose race swims may swim now (src/ai/race-ai-flags.ts: swimsNow): its package's
+   * Allow Swimming, unless it fights or runs an Alarm package.
    */
-  allowsSwimming(reference: number): boolean {
+  allowsSwimming(reference: number, raceFlags: number, fighting: boolean): boolean {
     const current = this.current(reference);
-    return current === undefined || (current.flags & PackageFlag.allowSwimming) !== 0;
+    return swimsNow({
+      raceFlags,
+      fighting,
+      ...(current && { packageType: current.type, packageFlags: current.flags }),
+    });
   }
 
   /** EvaluatePackage: the actor chooses its package again. */
@@ -812,24 +823,32 @@ export class ActorAi {
         if (on) this.#fleeing.add(reference);
         else this.#fleeing.delete(reference);
       },
-      following: (leader) => {
+      following: (leader, wanted = 0) => {
         if (leader === undefined) {
           this.#leaders.delete(reference);
+          this.#followWanted.delete(reference);
           return 0;
         }
         this.#leaders.set(reference, leader);
-        // One fFollowSpaceBetweenFollowers farther for each follower nearer the leader.
+        this.#followWanted.set(reference, wanted);
+        // Its place among the leader's followers, by their distances from it.
         const at = this.#session.scriptWorld.livePlacement(leader)?.position;
         if (!at) return 0;
         const others = this.followersOf(leader).flatMap((actor) => {
           const other = this.#actors.get(actor)?.staged;
-          return other ? [{ reference: actor, position: other.position }] : [];
+          return other
+            ? [
+                {
+                  reference: actor,
+                  position: other.position,
+                  wanted: this.#followWanted.get(actor) ?? 0,
+                  // TODO(M13): the actor's own bound radius (a human's here).
+                  radius: FOLLOWER_RADIUS,
+                },
+              ]
+            : [];
         });
-        return followDistance(
-          0,
-          followerRanks(at, others).get(reference) ?? 0,
-          aiSettingsOf(this.#session).followSpacing,
-        );
+        return followOffset(at, others, reference, aiSettingsOf(this.#session).followSpacing);
       },
       greet: (topic) => {
         const scripts = this.#session.scriptsReady;
@@ -1296,6 +1315,13 @@ export class ActorAi {
         this.#session.scriptsReady?.world.motion?.(reference)?.running === true,
       motion: (reference) => this.#session.scriptsReady?.world.motion?.(reference),
       livePosition: (reference) => this.#session.scriptWorld.livePlacement(reference)?.position,
+      playerInCell: async (actor) => {
+        const scripts = runtime();
+        return sameParentCell(
+          await scripts?.placement(actor),
+          await scripts?.placement(PLAYER_REF),
+        );
+      },
       settings: () => aiSettingsOf(this.#session),
       energy: async (actor) => {
         const scripts = runtime();

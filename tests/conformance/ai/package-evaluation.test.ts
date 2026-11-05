@@ -18,7 +18,13 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { InterruptFlag, PackageFlag } from '../../../src/ai/package-records.ts';
-import { packageFlags } from '../../../src/ai/package-runtime.ts';
+import {
+  packageFlags,
+  sameParentCell,
+  type ProcedureRunner,
+} from '../../../src/ai/package-runtime.ts';
+import { swimsNow } from '../../../src/ai/race-ai-flags.ts';
+import { RaceFlag } from '../../../src/world/actor-records.ts';
 import { Vfs } from '../../../src/vfs/vfs.ts';
 import { RecordDatabase } from '../../../src/world/record-db.ts';
 import { openGameFolder } from '../../../tools/gamedata-path.ts';
@@ -37,6 +43,8 @@ import { hasGamedata, openSim, type Sim } from '../../helpers/sim.ts';
 
 /** The engine's fEvaluatePackageTimer (the engine's defaults). */
 const EVALUATE_PACKAGE_TIMER = 15;
+/** The engine's fEvaluateProcedureTimer (the engine's defaults). */
+const EVALUATE_PROCEDURE_TIMER = 3;
 
 describe('package evaluation: when a package is chosen again', () => {
   it('chooses again every fEvaluatePackageTimer (15 s), not sooner', async () => {
@@ -103,22 +111,90 @@ describe('package evaluation: when a package is chosen again', () => {
     expect(actor.current?.id).toBe(2);
   });
 
-  it.todo(
-    'evaluates a running procedure again every fEvaluateProcedureTimer (3 s) (the engine’s defaults; ' +
-      'what it re-checks is to be observed in the original)',
-  );
-  it.todo(
-    'goes on with its package while the player is near (PKDT 0x200 Continue If PC Near: 4 ' +
-      'packages) (xEdit; the engine’s rule to be observed in the original)',
-  );
-  it.todo(
-    'plays its fallout behaviour as a package ends without Skip Fallout Behavior (PKDT 0x1000: ' +
-      '189 packages set it) (xEdit; the behaviour to be observed in the original)',
-  );
-  it.todo(
-    'offers its services only while a package with Offers Services runs (PKDT 0x1: 85 packages) ' +
-      '(xEdit, UESP Faction VENV; the engine’s check to be observed in the original)',
-  );
+  it('checks a running tree’s branches again every fEvaluateProcedureTimer (3 s), the package staying', async () => {
+    const ran: string[] = [];
+    const runner =
+      (name: string): ProcedureRunner =>
+      async (run) => {
+        ran.push(name);
+        while (!run.stopped()) await run.wait(1);
+        return 'failure';
+      };
+    const { actor, truths, events } = packageActor(
+      [
+        pack(
+          1,
+          branch('Stacked', [
+            procedure('first', { conditions: [condition(9)] }),
+            procedure('second'),
+          ]),
+        ),
+      ],
+      { first: runner('first'), second: runner('second') },
+    );
+    await tick(actor);
+    expect(ran).toEqual(['second']);
+    truths.add(9);
+    await tick(actor, EVALUATE_PROCEDURE_TIMER - 1);
+    expect(ran).toEqual(['second']);
+    await tick(actor, 1);
+    await tick(actor);
+    expect(ran).toEqual(['second', 'first']);
+    expect(actor.current?.id).toBe(1);
+    expect(events.filter((event) => event.startsWith('begin'))).toHaveLength(1);
+  });
+
+  it('goes on with its package while the player is in its parent cell (PKDT 0x200 Continue If PC Near: 4 packages)', async () => {
+    const at = { here: true };
+    const { actor, truths } = packageActor(
+      [
+        pack(1, procedure('a'), { conditions: [condition(9)] }),
+        pack(2, procedure('b'), { flags: PackageFlag.continueIfPcNear }),
+      ],
+      { a: lasting, b: lasting },
+      { mind: { playerInCell: () => Promise.resolve(at.here) } },
+    );
+    await tick(actor);
+    expect(actor.current?.id).toBe(2);
+    truths.add(9);
+    actor.evaluate();
+    await tick(actor);
+    expect(actor.current?.id).toBe(2);
+    at.here = false;
+    actor.evaluate();
+    await tick(actor);
+    expect(actor.current?.id).toBe(1);
+  });
+
+  it('counts one interior, or one exterior cell of one worldspace, as the parent cell', () => {
+    const inside = { position: [0, 0, 0] as const, cell: 7 };
+    expect(sameParentCell(inside, { position: [9000, 0, 0], cell: 7 })).toBe(true);
+    expect(sameParentCell(inside, { position: [0, 0, 0], cell: 8 })).toBe(false);
+    const outside = { position: [100, 100, 0] as const, cell: 1, world: 60 };
+    expect(sameParentCell(outside, { position: [4000, 4000, 0], cell: 1, world: 60 })).toBe(true);
+    expect(sameParentCell(outside, { position: [4200, 100, 0], cell: 2, world: 60 })).toBe(false);
+    expect(sameParentCell(outside, { position: [100, 100, 0], cell: 3, world: 61 })).toBe(false);
+    expect(sameParentCell(inside, undefined)).toBe(false);
+  });
+  // The sandbox it falls out to is inferred: the flag's reader was not found in the original
+  // (its Done procedure state does nothing), so its radius and options stay ours.
+  it('sandboxes where it stands as a package ends, unless Skip Fallout Behavior (PKDT 0x1000: 189 packages)', async () => {
+    const run = async (flags: number): Promise<number> => {
+      let sandboxes = 0;
+      const { actor } = packageActor([pack(1, procedure('done'), { flags })], {
+        done: () => Promise.resolve('success'),
+        sandbox: async (procedureRun) => {
+          sandboxes++;
+          while (!procedureRun.stopped()) await procedureRun.wait(1);
+          return 'failure';
+        },
+      });
+      for (let i = 0; i < 3; i++) await tick(actor, 1);
+      return sandboxes;
+    };
+    expect(await run(0)).toBe(1);
+    expect(await run(PackageFlag.skipFalloutBehavior)).toBe(0);
+  });
 });
 
 describe('package evaluation: procedure flag overrides (PFO2)', () => {
@@ -229,14 +305,14 @@ describe('package evaluation: procedure flag overrides (PFO2)', () => {
 });
 
 /**
- * Every general flag (PKDT) the load order's packages set: whether we honour it, and where. The
- * ones not yet honoured have a todo above or in tests/conformance/ai/procedures.test.ts.
+ * Every general flag (PKDT) the load order's packages set: whether we honour it, and where. A
+ * case above or in tests/conformance/ai/procedures.test.ts tests each that is honoured.
  */
 const GENERAL_FLAGS: ReadonlyMap<number, { readonly name: string; readonly honoured: boolean }> =
   new Map([
-    [0x1, { name: 'Offers Services', honoured: false }],
+    [0x1, { name: 'Offers Services', honoured: true }],
     [PackageFlag.mustComplete, { name: 'Must Complete', honoured: true }],
-    [PackageFlag.maintainSpeedAtGoal, { name: 'Maintain Speed At Goal', honoured: false }],
+    [PackageFlag.maintainSpeedAtGoal, { name: 'Maintain Speed At Goal', honoured: true }],
     // Bits 4, 5 and 8: unnamed for Skyrim by xEdit and CommonLibSSE (the Creation Kit shows no
     // box for them); set in 33, 2 and 5 packages, read by nothing we know of.
     [0x10, { name: '(unnamed bit 4)', honoured: true }],
@@ -244,12 +320,12 @@ const GENERAL_FLAGS: ReadonlyMap<number, { readonly name: string; readonly honou
     [PackageFlag.unlockDoorsAtStart, { name: 'Unlock Doors At Package Start', honoured: true }],
     [PackageFlag.unlockDoorsOnChange, { name: 'Unlock Doors At Package End', honoured: true }],
     [0x100, { name: '(unnamed bit 8)', honoured: true }],
-    [0x200, { name: 'Continue If PC Near', honoured: false }],
+    [0x200, { name: 'Continue If PC Near', honoured: true }],
     [PackageFlag.oncePerDay, { name: 'Once Per Day', honoured: true }],
-    [0x1000, { name: 'Skip Fallout Behavior', honoured: false }],
+    [0x1000, { name: 'Skip Fallout Behavior', honoured: true }],
     [PackageFlag.preferredSpeed, { name: 'Preferred Speed', honoured: true }],
     [PackageFlag.alwaysSneak, { name: 'Always Sneak', honoured: true }],
-    [PackageFlag.allowSwimming, { name: 'Allow Swimming', honoured: false }],
+    [PackageFlag.allowSwimming, { name: 'Allow Swimming', honoured: true }],
     [PackageFlag.ignoreCombat, { name: 'Ignore Combat', honoured: true }],
     [PackageFlag.weaponsUnequipped, { name: 'Weapons Unequipped', honoured: true }],
     [PackageFlag.weaponDrawn, { name: 'Weapon Drawn', honoured: true }],
@@ -302,22 +378,11 @@ describe.skipIf(!hasGamedata())('package flags across the load order (data)', ()
     for (const bit of census.flags.keys()) expect(GENERAL_FLAGS.has(bit)).toBe(true);
   });
 
-  it('honours the general flags most packages set (the rest are todo cases)', () => {
+  it('honours every general flag the packages set', () => {
     const notYet = [...census.flags]
       .filter(([bit]) => GENERAL_FLAGS.get(bit)?.honoured !== true)
-      .sort((a, b) => a[0] - b[0])
-      .map(
-        ([bit, count]) => `${GENERAL_FLAGS.get(bit)?.name ?? bit.toString(16)} ${String(count)}`,
-      );
-    // Offers Services, Maintain Speed At Goal, Continue If PC Near, Skip Fallout Behavior and
-    // Allow Swimming: 425 uses of 6,826 (the todo cases).
-    expect(notYet).toEqual([
-      'Offers Services 85',
-      'Maintain Speed At Goal 62',
-      'Continue If PC Near 4',
-      'Skip Fallout Behavior 189',
-      'Allow Swimming 85',
-    ]);
+      .map(([bit]) => GENERAL_FLAGS.get(bit)?.name ?? bit.toString(16));
+    expect(notYet).toEqual([]);
   });
 
   it('counts the procedures’ flag overrides: 115 branches in 119 packages, all of procedures', () => {
@@ -353,14 +418,43 @@ describe.skipIf(!hasGamedata())('package flags across the load order (data)', ()
     });
   });
 
-  it.todo(
-    'keeps its speed as it reaches its goal (PKDT 0x8 Maintain Speed At Goal: 62 packages) ' +
-      '(xEdit; the engine’s slowing at a goal to be observed in the original)',
-  );
-  it.todo(
-    'swims only with Allow Swimming (PKDT 0x40000: 85 packages); without it its path keeps out ' +
-      'of water (xEdit; the pathing’s rule to be observed in the original)',
-  );
+  it('keeps its speed as its package ends with Maintain Speed At Goal (PKDT 0x8: 62 packages)', async () => {
+    const stops = async (flags: number): Promise<number> => {
+      let count = 0;
+      const { actor } = packageActor(
+        [pack(1, procedure('done'), { flags: flags | PackageFlag.skipFalloutBehavior })],
+        { done: () => Promise.resolve('success') },
+        {
+          body: {
+            stop: () => {
+              count++;
+            },
+          },
+        },
+      );
+      await tick(actor, 1);
+      const before = count;
+      for (let i = 0; i < 3; i++) await tick(actor, 1);
+      return count - before;
+    };
+    expect(await stops(0)).toBeGreaterThan(0);
+    expect(await stops(PackageFlag.maintainSpeedAtGoal)).toBe(0);
+  });
+
+  // Its path keeping out of water without it: src/ai/pathfinding.test.ts.
+  it('swims by its package’s Allow Swimming, by its race alone in a fight or an Alarm (PKDT 0x40000: 85 packages)', () => {
+    const walker = RaceFlag.walks | RaceFlag.swims;
+    const rule = (raceFlags: number, packageFlags?: number, fighting = false, packageType = 18) =>
+      swimsNow({ raceFlags, fighting, packageFlags, packageType });
+    expect(rule(walker, PackageFlag.allowSwimming)).toBe(true);
+    expect(rule(walker, 0)).toBe(false);
+    expect(rule(walker, 0, true)).toBe(true);
+    expect(rule(walker, 0, false, 21)).toBe(true);
+    expect(rule(walker)).toBe(true);
+    // A race that does not swim never does; one that only swims always.
+    expect(rule(RaceFlag.walks, PackageFlag.allowSwimming)).toBe(false);
+    expect(rule(RaceFlag.swims, 0)).toBe(true);
+  });
 });
 
 // The interaction case: a town NPC’s home by the hour.
@@ -517,3 +611,43 @@ describe.skipIf(!hasGamedata())(
     });
   },
 );
+
+// Offers Services, from the data (`node tools/package-info.ts --audit interiors --list --flag 1
+// --hour 1`): Elgrim (ElgrimRef [00019DFB], Riften) runs RiftenElgrimShopkeeper0x0 [all day, Offers
+// Services]. No vanilla vendor with such a package has hours of its own (his faction's: 0 to 24),
+// so the hours' side of the flag is a unit case (src/scripting/runtime/actor-engine.test.ts).
+const ELGRIM = 0x19dfb;
+
+describe.skipIf(!hasGamedata())('package flags on the actor (headless simulation)', () => {
+  let sim: Sim;
+  let vendorHours: { startHour: number; endHour: number } | undefined;
+  let flags = 0;
+  let offers = false;
+  let swims = true;
+
+  beforeAll(async () => {
+    sim = await openSim({ hour: 1 });
+    const cell = sim.db.cellOfReference(ELGRIM);
+    if (cell === undefined) throw new Error('Elgrim has no cell');
+    await sim.openInterior(cell);
+    await sim.until(() => sim.package(ELGRIM) !== undefined, 20);
+    vendorHours = (await sim.runtime.actors.vendorFaction(ELGRIM, false))?.vendor;
+    flags = sim.world.stage.ai.current(ELGRIM)?.flags ?? 0;
+    offers = await sim.runtime.actors.offersServicesNow(ELGRIM);
+    swims = sim.world.stage.ai.allowsSwimming(ELGRIM, RaceFlag.walks | RaceFlag.swims, false);
+  }, 600_000);
+  afterAll(async () => {
+    await sim.close();
+  });
+
+  it('offers its services while a package with Offers Services runs (PKDT 0x1: 85 packages)', () => {
+    expect(vendorHours).toMatchObject({ startHour: 0, endHour: 24 });
+    expect(flags & PackageFlag.offersServices).not.toBe(0);
+    expect(offers).toBe(true);
+  });
+
+  it('asks its running package whether it may swim (a walking race: its flag decides)', () => {
+    expect(swims).toBe((flags & PackageFlag.allowSwimming) !== 0);
+    expect(swims).toBe(false);
+  });
+});

@@ -8,10 +8,8 @@ import {
   DOOR_ARRIVAL_SPACING,
   doorArrivalSpot,
   doorSpacing,
-  followDistance,
-  followerRanks,
   followGait,
-  followGoal,
+  followOffset,
   followRadii,
   followSpeed,
   outOfSight,
@@ -24,20 +22,23 @@ const ESM = readAiSettings(
 );
 
 describe('followers', () => {
-  it('keep one spacing apart behind their leader', () => {
-    expect(followDistance(256, 0, ESM.followSpacing)).toBe(256);
-    expect(followDistance(256, 2, ESM.followSpacing)).toBe(256 + 2 * 192);
-    const ranks = followerRanks(
-      [0, 0, 0],
-      [
-        { reference: 3, position: [500, 0, 0] },
-        { reference: 1, position: [0, 300, 0] },
-        { reference: 2, position: [-300, 0, 0] },
-      ],
-    );
-    expect(ranks.get(1)).toBe(0);
-    expect(ranks.get(2)).toBe(1);
-    expect(ranks.get(3)).toBe(2);
+  it('share out their places by distance from the leader (radii and spacing between them)', () => {
+    const at = (reference: number, y: number, wanted = 256, radius = 14) => ({
+      reference,
+      position: [0, y, 0] as const,
+      wanted,
+      radius,
+    });
+    const followers = [at(3, 700), at(1, 300), at(2, 500)];
+    const spacing = ESM.followSpacing;
+    // The nearest at what it wants; each next both radii and the spacing beyond the one before.
+    expect(followOffset([0, 0, 0], followers, 1, spacing)).toBe(0);
+    expect(followOffset([0, 0, 0], followers, 2, spacing)).toBe(14 + 14 + 192);
+    expect(followOffset([0, 0, 0], followers, 3, spacing)).toBe(2 * (14 + 14 + 192));
+    // One that wants more than that keeps what it wants.
+    expect(followOffset([0, 0, 0], [at(1, 300), at(2, 500, 800)], 2, spacing)).toBe(0);
+    // One alone keeps what it wants.
+    expect(followOffset([0, 0, 0], [at(1, 300)], 1, spacing)).toBe(0);
   });
 
   it('take the engine radii without their own, the smaller as the minimum', () => {
@@ -46,37 +47,32 @@ describe('followers', () => {
     expect(followRadii(AI_DEFAULTS, 64, undefined)).toEqual({ min: 64, max: 128 });
   });
 
-  it('run to catch up and with a running leader; sprint after the player', () => {
+  const GAIT = {
+    followStartSprintDistance: 500,
+    followWalkZoneMult: 1,
+    followMatchSpeedZoneWidth: 128,
+  };
+
+  it('run with a running leader and to catch up; sprint after the player', () => {
     const walking = { running: false, sprinting: false, player: true };
     const running = { running: true, sprinting: false, player: true };
-    expect(followGait(300, 384, 'walk', walking, 500, 2)).toBe('walk');
-    expect(followGait(900, 384, 'walk', walking, 500, 2)).toBe('run');
-    expect(followGait(300, 384, 'walk', running, 500, 2)).toBe('run');
+    // Beyond the walk zone, by no more than fFollowMatchSpeedZoneWidth: its package's gait.
+    expect(followGait(350, 300, 'walk', walking, GAIT)).toBe('walk');
+    // Beyond that it runs; with a running leader beyond the walk zone it runs.
+    expect(followGait(450, 300, 'walk', walking, GAIT)).toBe('run');
+    expect(followGait(350, 300, 'walk', running, GAIT)).toBe('run');
     // Farther than fFollowStartSprintDistance behind the running player, or as they sprint.
-    expect(followGait(600, 384, 'walk', running, 500, 2)).toBe('sprint');
-    expect(followGait(300, 384, 'walk', { ...running, sprinting: true }, 500, 2)).toBe('sprint');
+    expect(followGait(600, 300, 'walk', running, GAIT)).toBe('sprint');
+    expect(followGait(350, 300, 'walk', { ...running, sprinting: true }, GAIT)).toBe('sprint');
     // Not after another actor.
-    expect(followGait(600, 384, 'walk', { ...running, player: false }, 500, 2)).toBe('run');
+    expect(followGait(600, 300, 'walk', { ...running, player: false }, GAIT)).toBe('run');
   });
 
-  it('walk within their walk zone (fFollowWalkZoneMult times the maximum radius)', () => {
-    const walking = { running: false, sprinting: false, player: true };
-    expect(followGait(600, 384, 'walk', walking, 500, 2)).toBe('walk');
-    expect(followGait(600, 384, 'walk', walking, 500, 1.5)).toBe('run');
-  });
-
-  it('make for their place behind the leader, on the side they are on', () => {
-    // The leader at the origin facing +Y (compass 0): behind is −Y, right is +X.
-    const leader = { position: [0, 0, 0] as const, heading: 0 };
-    const right = followGoal(leader, [300, 500, 0], 200);
-    const left = followGoal(leader, [-300, -500, 0], 200);
-    expect(Math.hypot(right[0], right[1])).toBeCloseTo(200, 6);
-    expect(right[0]).toBeGreaterThan(0);
-    expect(right[1]).toBeLessThan(0);
-    expect(left[0]).toBeCloseTo(-right[0], 6);
-    expect(left[1]).toBeCloseTo(right[1], 6);
-    // 30° off straight behind.
-    expect(Math.atan2(right[0], -right[1])).toBeCloseTo(Math.PI / 6, 6);
+  it('walk within their walk zone (fFollowWalkZoneMult times the middle of their radii)', () => {
+    const running = { running: true, sprinting: false, player: false };
+    expect(followGait(250, 300, 'run', running, GAIT)).toBe('walk');
+    expect(followGait(350, 300, 'walk', running, GAIT)).toBe('run');
+    expect(followGait(350, 300, 'run', running, { ...GAIT, followWalkZoneMult: 1.5 })).toBe('walk');
   });
 
   it('match their speed to the leader between their radii', () => {
