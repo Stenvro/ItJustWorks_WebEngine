@@ -16,6 +16,13 @@ import { Vfs } from '../../../src/vfs/vfs.ts';
 import { RecordDatabase } from '../../../src/world/record-db.ts';
 import { hasGamedata, openGameFolder } from '../../../tools/gamedata-path.ts';
 import { findPath } from '../../../src/ai/pathfinding.ts';
+import { navmeshTriangle } from '../../../src/world/navmesh.ts';
+import {
+  insidePart,
+  MovingObstacleCuts,
+  obstacleCut,
+  obstacleCutAnew,
+} from '../../../src/ai/navmesh-obstacles.ts';
 import { openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
 
 /** TESForm record flag of a base object: its references are navmesh obstacles. */
@@ -129,11 +136,44 @@ describe.skipIf(!hasGamedata())('a quest collision box across a hall (headless s
     expect(northmost).toBeGreaterThan(-4925);
   }, 120_000);
 
-  it.todo(
-    'cuts a triangle partly covered as the engine does: ours closes the triangles whose middle ' +
-      'lies under a box and the path steps across one (src/ai/pathfinding.test.ts); TODO(M13): ' +
-      'the engine re-triangulates the navmesh under it (BSNavmeshObstacleData per triangle)',
-  );
+  it('leaves of a triangle partly covered its free part: all of it, and nothing under the box', async () => {
+    await sim.runtime.setEnabled(BANDIT_DISABLER, true);
+    await sim.world.settle();
+    await sim.step(0.1);
+    const cut = sim.world.stage.obstacles.active.find((entry) => entry.reference === BANDIT_BOX);
+    const index = sim.world.stage.obstacles.index;
+    const set = sim.world.navmeshes;
+    const on = set.locate(BEYOND);
+    expect(cut && index && on).toBeTruthy();
+    if (!cut || !index || !on) return;
+    let partly = 0;
+    on.navmesh.triangles.forEach((_, triangle) => {
+      const corners = navmeshTriangle(on.navmesh, triangle);
+      const parts = index.partsOf(on.navmesh, triangle, corners);
+      if (!parts || parts.length === 0) return;
+      partly++;
+      // A grid over the triangle: free exactly where the box does not lie.
+      const [a, b, c] = corners;
+      for (let u = 0; u <= 8; u++) {
+        for (let v = 0; v <= 8 - u; v++) {
+          const w = (8 - u - v) / 8;
+          const at: [number, number, number] = [
+            (a[0] * u) / 8 + (b[0] * v) / 8 + c[0] * w,
+            (a[1] * u) / 8 + (b[1] * v) / 8 + c[1] * w,
+            (a[2] * u) / 8 + (b[2] * v) / 8 + c[2] * w,
+          ];
+          const free = parts.some((part) => insidePart(part, at[0], at[1]));
+          // Within a unit of the cut's edge rounding decides: looked at off the edge.
+          const clear = !index.covers(at);
+          const beside = [-1, 1].flatMap((dx) =>
+            [-1, 1].map((dy) => !index.covers([at[0] + dx, at[1] + dy, at[2]])),
+          );
+          if (beside.every((each) => each === clear)) expect(free).toBe(clear);
+        }
+      }
+    });
+    expect(partly).toBeGreaterThan(0);
+  }, 120_000);
 });
 
 // Saarthal01: a portcullis (NorPortcullis [000DE07D], default2StateActivator) is an obstacle while
@@ -165,8 +205,54 @@ describe.skipIf(!hasGamedata())('a portcullis opening and shutting (headless sim
     expect(cuts()).toBe(true);
   });
 
-  it.todo(
-    'cuts again as a Havok body comes to rest (bhkObstacleDeactivationListener): TODO(M13), the ' +
-      'cut from the obstacle body where it lies, not from its animation events',
-  );
+  // Observed in the original: a moving obstacle's body is looked at as it goes, and cut anew at
+  // most every fObstacleUpdateDeltaWhenMoving once it has moved over 5 units or turned over 5°.
+  // The stage asks this with where its instance is now (StageObstacleCell.placedNow).
+  it('cuts again where a body came to rest, at the update delta, not for small moves', () => {
+    const at = (x: number, y: number): number[] => [
+      1,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      x,
+      y,
+      50,
+      1,
+    ];
+    const box = {
+      reference: 7,
+      world: at(0, 0),
+      min: [-60, -60, -60] as const,
+      max: [60, 60, 60] as const,
+    };
+    const cuts = new MovingObstacleCuts();
+    const placed = obstacleCut(box) ?? null;
+    expect(cuts.cut(box, placed, at(3, 0), 0, 1)).toBe(placed);
+    // It fell away: cut anew where it is.
+    const fallen = cuts.cut(box, placed, at(400, 0), 0.1, 1);
+    expect(fallen?.minX).toBeCloseTo(340);
+    // Rolling on, within the second: the cut stays; after it, it follows.
+    expect(cuts.cut(box, placed, at(500, 0), 0.5, 1)).toBe(fallen);
+    const rolled = cuts.cut(box, placed, at(500, 0), 1.2, 1);
+    expect(rolled?.minX).toBeCloseTo(440);
+    // At rest it shakes by less than 5 units: no new cut however long.
+    expect(cuts.cut(box, placed, at(503, 0), 30, 1)).toBe(rolled);
+    // Turned over 5° where it lies.
+    const turn = (6 * Math.PI) / 180;
+    const turned = at(500, 0);
+    turned[0] = Math.cos(turn);
+    turned[1] = Math.sin(turn);
+    turned[4] = -Math.sin(turn);
+    turned[5] = Math.cos(turn);
+    expect(cuts.cut(box, placed, turned, 31, 1)).not.toBe(rolled);
+    expect(obstacleCutAnew(6, 0, 0.5, 1)).toBe(false);
+  });
 });

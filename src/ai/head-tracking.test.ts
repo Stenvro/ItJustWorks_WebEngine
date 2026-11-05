@@ -2,14 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   chooseLookActor,
   HeadTracker,
-  LookPriority,
-  lookPriority,
   LookRequests,
   noticesPlayer,
+  pathLookAhead,
   pathLookPoint,
   raceHeadTracks,
   VANILLA_HEAD_TRACK,
-  type LookInterest,
 } from './head-tracking.ts';
 
 describe('head tracking', () => {
@@ -19,61 +17,79 @@ describe('head tracking', () => {
     expect(raceHeadTracks(0x0000_0001)).toBe(false);
   });
 
-  it('chooses the nearest other actor within reach and 120° of its facing', () => {
+  it('chooses the first other actor within reach and 120° of its facing, none nearer than 100', () => {
     // Facing +y (heading 0) from the origin.
     const head = [0, 0, 100] as const;
     const at = (reference: number, x: number, y: number) => ({
       reference,
       head: [x, y, 100] as const,
     });
+    // No favourites: the first it may look at in the list, not the nearest.
     const candidates = [at(1, 0, 300), at(2, 100, 150), at(3, 0, -200), at(4, 0, 900)];
-    expect(chooseLookActor(head, 0, candidates, 400)?.reference).toBe(2);
+    expect(chooseLookActor(head, 0, candidates, 400)?.reference).toBe(1);
     // Behind it (more than 120° off) and beyond fAIMaxHeadTrackDistance: no one.
     expect(chooseLookActor(head, 0, [at(3, 0, -200), at(4, 0, 900)], 400)).toBeUndefined();
     // Turned around, the one behind is in front.
     expect(chooseLookActor(head, Math.PI, candidates, 400)?.reference).toBe(3);
+    // Too close to choose, unless it looks at it already.
+    expect(chooseLookActor(head, 0, [at(5, 0, 60)], 400)).toBeUndefined();
+    expect(chooseLookActor(head, 0, [at(5, 0, 60)], 400, 5)?.reference).toBe(5);
+    // The one it looks at may stand behind it.
+    expect(chooseLookActor(head, 0, [at(3, 0, -200)], 400, 3)?.reference).toBe(3);
   });
 
-  it('prefers the player close or talking, then a speaker, then one moving', () => {
+  it('asks the player first, near or far; speaking or moving counts for nothing', () => {
     const head = [0, 0, 100] as const;
-    const at = (reference: number, y: number, interest: LookInterest) => ({
-      reference,
-      head: [0, y, 100] as const,
-      interest,
-    });
-    const idle = at(1, 50, {});
-    const moving = at(2, 150, { moving: true });
-    const speaker = at(3, 250, { speaking: true });
-    const playerFar = at(0x14, 300, { player: true });
-    const playerNear = at(0x14, 180, { player: true });
-    const choose = (...candidates: ReturnType<typeof at>[]) =>
-      chooseLookActor(head, 0, candidates, 400)?.reference;
-    expect(choose(idle, moving)).toBe(2);
-    expect(choose(idle, moving, speaker)).toBe(3);
-    // The player beyond half the reach counts as anyone; close, before all.
-    expect(choose(idle, playerFar)).toBe(1);
-    expect(choose(idle, moving, speaker, playerNear)).toBe(0x14);
-    // In a conversation, the player is looked at from farther.
-    expect(choose(speaker, at(0x14, 300, { player: true, talking: true }))).toBe(0x14);
-    expect(lookPriority({ moving: true }, 100, 400)).toBe(LookPriority.moving);
-    // One chosen a moment ago stays unless one worth more comes.
-    expect(chooseLookActor(head, 0, [idle, at(4, 100, {})], 400, 4)?.reference).toBe(4);
-    expect(chooseLookActor(head, 0, [moving, at(4, 100, {})], 400, 4)?.reference).toBe(2);
+    const someone = { reference: 1, head: [0, 150, 100] as const };
+    const player = { reference: 0x14, head: [0, 390, 100] as const, player: true };
+    expect(chooseLookActor(head, 0, [someone, player], 400)?.reference).toBe(0x14);
+    // The player within 100 still counts.
+    const close = { reference: 0x14, head: [0, 50, 100] as const, player: true };
+    expect(chooseLookActor(head, 0, [someone, close], 400)?.reference).toBe(0x14);
+    // Behind it: the other.
+    const behind = { reference: 0x14, head: [0, -300, 100] as const, player: true };
+    expect(chooseLookActor(head, 0, [someone, behind], 400)?.reference).toBe(1);
   });
 
-  it('looks along its path while it walks', () => {
+  it('two in furniture do not look at each other; the player still counts', () => {
+    const head = [0, 0, 100] as const;
+    const seated = { reference: 1, head: [0, 200, 100] as const, inFurniture: true };
+    expect(chooseLookActor(head, 0, [seated], 400, undefined, true)).toBeUndefined();
+    expect(chooseLookActor(head, 0, [seated], 400, undefined, false)?.reference).toBe(1);
+    const player = {
+      reference: 0x14,
+      head: [0, 200, 100] as const,
+      player: true,
+      inFurniture: true,
+    };
+    expect(chooseLookActor(head, 0, [player], 400, undefined, true)?.reference).toBe(0x14);
+  });
+
+  it('looks along its path as far as its speed takes it in fPathLookAtPointTime', () => {
+    // Its speed × 2 s, at least 128 and its radius, at most 512.
+    expect(pathLookAhead(0, 30)).toBe(158);
+    expect(pathLookAhead(100, 30)).toBe(200);
+    expect(pathLookAhead(400, 30)).toBe(512);
     const feet = [0, 0, 0] as const;
     // A corner 100 ahead, then off to +x: 256 along is 156 down the second leg.
-    const point = pathLookPoint(feet, 120, [
-      [0, 100, 0],
-      [400, 100, 0],
-    ]);
+    const point = pathLookPoint(
+      feet,
+      120,
+      [
+        [0, 100, 0],
+        [400, 100, 0],
+      ],
+      256,
+      158,
+    );
     expect(point?.[0]).toBeCloseTo(156, 6);
     expect(point?.[1]).toBeCloseTo(100, 6);
     expect(point?.[2]).toBe(120);
-    // A short way: its end.
-    expect(pathLookPoint(feet, 120, [[0, 50, 0]])).toEqual([0, 50, 120]);
-    expect(pathLookPoint(feet, 120, [])).toBeUndefined();
+    // A way shorter than it looks: its end, at the height over that end.
+    expect(pathLookPoint(feet, 120, [[0, 200, 10]], 256, 158)).toEqual([0, 200, 130]);
+    // Shorter than the least: it looks nowhere along it.
+    expect(pathLookPoint(feet, 120, [[0, 50, 0]], 256, 158)).toBeUndefined();
+    expect(pathLookPoint(feet, 120, [], 256, 158)).toBeUndefined();
   });
 
   it('looks at the highest kind asked for, and lets go of one kind only', () => {

@@ -104,6 +104,7 @@ import type { CellLight, CellObstacle } from '../world/cell-loader.ts';
 import {
   NavmeshObstacleField,
   obstacleCut,
+  MovingObstacleCuts,
   type NavmeshObstacle,
 } from '../ai/navmesh-obstacles.ts';
 import { PlayerCasting } from './player-casting.ts';
@@ -221,6 +222,8 @@ export interface StageObstacleCell {
   readonly key: string;
   readonly obstacles: readonly CellObstacle[];
   readonly isEnabled: (reference: number) => boolean;
+  /** Where an obstacle whose body or animation moves it is now (undefined: as placed). */
+  readonly placedNow?: (reference: number) => ArrayLike<number> | undefined;
 }
 
 /** Each obstacle's cut, made once (null: its box is too low to cut). */
@@ -303,6 +306,10 @@ export class ActorStage {
   /** The doors the actors go through (src/shell/actor-doors.ts). */
   readonly doors: ActorDoors;
   readonly #session: GameSession;
+  /** Where moving obstacles were last cut, and the clock that times it. */
+  readonly #movedCuts = new MovingObstacleCuts();
+  #obstacleClock = 0;
+  #obstaclesLooked = 0;
   /** The navmesh obstacles' cuts of the loaded area (src/ai/navmesh-obstacles.ts). */
   readonly obstacles = new NavmeshObstacleField();
   /** The cells whose obstacles are in the field. */
@@ -730,6 +737,7 @@ export class ActorStage {
       camera: () => options.renderer.view?.camera,
       actor: (reference) => this.#actors.get(reference),
       detects: (observer, target) => this.senses.detects(observer, target),
+      inFurniture: (reference) => this.furniture.interaction(reference) !== undefined,
       passByTarget: (reference) => this.flight.passByTarget(reference),
       weaponPoint: (reference) => this.combat.weaponPoint(reference),
     });
@@ -2118,12 +2126,29 @@ export class ActorStage {
           cut = obstacleCut(obstacle) ?? null;
           obstacleCuts.set(obstacle, cut);
         }
+        const now = cell.placedNow?.(obstacle.reference);
+        if (now) {
+          const delta = this.#options.session.ini.number(
+            'Pathfinding',
+            'fObstacleUpdateDeltaWhenMoving',
+          );
+          cut = this.#movedCuts.cut(obstacle, cut, now, this.#obstacleClock, delta);
+        }
         if (cut) active.push(cut);
       }
       this.obstacles.setCell(cell.key, active);
     }
     for (const key of this.#obstacleCells) if (!loaded.has(key)) this.obstacles.dropCell(key);
     this.#obstacleCells = loaded;
+  }
+
+  /** Time passed on the stage: moving obstacles are looked at again. */
+  updateObstacles(dt: number): void {
+    this.#obstacleClock += dt;
+    const delta = this.#options.session.ini.number('Pathfinding', 'fObstacleUpdateDeltaWhenMoving');
+    if (this.#obstacleClock - this.#obstaclesLooked < delta) return;
+    this.#obstaclesLooked = this.#obstacleClock;
+    this.refreshObstacles();
   }
 
   /**
@@ -2526,6 +2551,7 @@ export class ActorStage {
     this.graphEvents.frame(frame);
     this.ambientIdles.frame(this.#options.focus?.());
     this.movers.frame(this.#actors.values(), this.#options.focus?.());
+    this.updateObstacles(frame);
     this.#recell();
     // The cell each stands in: as it changes, its location is read again (an actor location
     // change: src/scripting/runtime/actor-locations.ts).

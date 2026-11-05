@@ -14,7 +14,7 @@ import {
   triangleNeighbour,
   type Navmesh,
 } from '../world/navmesh.ts';
-import { ObstacleIndex, type NavmeshObstacle } from './navmesh-obstacles.ts';
+import { insidePart, ObstacleIndex, partSpan, type NavmeshObstacle } from './navmesh-obstacles.ts';
 
 type Vec3 = readonly [number, number, number];
 
@@ -70,8 +70,8 @@ export interface PathOptions {
    */
   readonly blocked?: readonly { readonly at: Vec3; readonly radius: number }[];
   /**
-   * The active navmesh obstacles (src/ai/navmesh-obstacles.ts): the triangles wholly under one
-   * and the steps that cross one are closed.
+   * The active navmesh obstacles (src/ai/navmesh-obstacles.ts): what lies under one is cut out of
+   * the triangles, their free parts stay open.
    */
   readonly obstacles?: ObstacleIndex | readonly NavmeshObstacle[];
   /**
@@ -119,20 +119,25 @@ const SEARCH_LIMIT = 20000;
 /** A triangle of a mesh, as one number (form ids are 32 bits, triangles 16). */
 const keyOf = (navmesh: number, triangle: number): number => navmesh * 65536 + triangle;
 
+/** Corners of a free part this near an edge's line lie on that edge (same mesh; rounding). */
+const ON_EDGE = 0.05;
+/** The same across a link between navmeshes, whose edges only lie near each other. */
+const ACROSS_LINK = 32;
+
 interface Node {
   readonly navmesh: Navmesh;
   readonly triangle: number;
+  /** Which of the triangle's free parts it is, and its outline (−1: the whole triangle). */
+  readonly part: number;
+  readonly outline: readonly Vec3[] | undefined;
   /** Cost from the start and the estimate to the goal. */
   g: number;
   f: number;
-  /**
-   * Where it was entered (the middle of the edge crossed, or the nearest point of it clear of
-   * the obstacles), and from which node over which edge.
-   */
+  /** Where it was entered (the middle of the stretch crossed), and from which node. */
   at: Vec3;
   parent: Node | undefined;
-  /** The edge of the parent's triangle crossed into it. */
-  edge: number;
+  /** The stretch of the parent's outline crossed into it. */
+  gate: readonly [Vec3, Vec3] | undefined;
   closed: boolean;
   /** Its place in the open heap (−1: not in it). */
   heap: number;
@@ -299,34 +304,90 @@ export function findPath(
   const goal = set.locate(to);
   if (!start) return undefined;
   const goalKey = goal ? keyOf(goal.navmesh.formId, goal.triangle) : undefined;
-  const nodes = new Map<number, Node>();
+  const obstacles = obstacleIndex(options.obstacles);
+  const partsOf = (navmesh: Navmesh, triangle: number): readonly (readonly Vec3[])[] | undefined =>
+    obstacles?.partsOf(navmesh, triangle, navmeshTriangle(navmesh, triangle));
+  // The goal under an obstacle: any free part of its triangle ends the way (as it can come).
+  const goalParts = goal && partsOf(goal.navmesh, goal.triangle);
+  const goalPart = goalParts ? partAt(goalParts, to) : -1;
+  // One that stands under an obstacle walks out of it: its node is the whole triangle.
+  const startParts = partsOf(start.navmesh, start.triangle);
+  const startPart = startParts ? partAt(startParts, from) : -1;
+  const nodes = new Map<number | string, Node>();
   const open = new OpenHeap();
   const first: Node = {
     navmesh: start.navmesh,
     triangle: start.triangle,
+    part: startPart,
+    outline: startParts?.[startPart],
     g: 0,
     f: distance(from, to),
     at: from,
     parent: undefined,
-    edge: -1,
+    gate: undefined,
     closed: false,
     heap: -1,
   };
-  nodes.set(keyOf(start.navmesh.formId, start.triangle), first);
+  nodes.set(nodeKey(start.navmesh, start.triangle, startPart), first);
   open.push(first);
   let best = first;
   let bestH = first.f;
   let reached: Node | undefined;
   const limit = options.limit ?? SEARCH_LIMIT;
-  const obstacles = obstacleIndex(options.obstacles);
   let searched = 0;
+  // Entering a triangle or a free part of one over a stretch of the way it comes from.
+  const enter = (
+    node: Node,
+    navmesh: Navmesh,
+    triangle: number,
+    flags: number,
+    part: number,
+    outline: readonly Vec3[] | undefined,
+    gate: readonly [Vec3, Vec3],
+    extra: number,
+  ): void => {
+    const key = nodeKey(navmesh, triangle, part);
+    const existing = nodes.get(key);
+    if (existing?.closed) return;
+    const at = middle(gate[0], gate[1]);
+    // A step through an avoid node costs its length inside it, many times over.
+    const avoided = options.avoid?.length ? avoidCost(node.at, at, options.avoid) : 0;
+    const g = node.g + enterCost(flags, distance(node.at, at), options) + extra + avoided;
+    if (!Number.isFinite(g)) return;
+    if (existing) {
+      if (g >= existing.g) return;
+      existing.g = g;
+      existing.at = at;
+      existing.f = g + distance(at, to);
+      existing.parent = node;
+      existing.gate = gate;
+      if (existing.heap >= 0) open.update(existing);
+      else open.push(existing);
+      return;
+    }
+    const added: Node = {
+      navmesh,
+      triangle,
+      part,
+      outline,
+      g,
+      f: g + distance(at, to),
+      at,
+      parent: node,
+      gate,
+      closed: false,
+      heap: -1,
+    };
+    nodes.set(key, added);
+    open.push(added);
+  };
   while (open.size > 0 && searched < limit) {
     const node = open.pop();
     if (!node) break;
     node.closed = true;
     searched++;
     const key = keyOf(node.navmesh.formId, node.triangle);
-    if (key === goalKey) {
+    if (key === goalKey && (goalPart < 0 || node.part === goalPart)) {
       reached = node;
       break;
     }
@@ -334,6 +395,16 @@ export function findPath(
     if (h < bestH) {
       best = node;
       bestH = h;
+    }
+    // The triangle's other free parts lie beside this one.
+    const own = obstacles && partsOf(node.navmesh, node.triangle);
+    if (own) {
+      const flags = node.navmesh.triangles[node.triangle]?.flags ?? 0;
+      own.forEach((part, index) => {
+        if (index === node.part) return;
+        const gate = node.outline ? sharedGate(node.outline, part) : nearestGate(part, node.at);
+        if (gate) enter(node, node.navmesh, node.triangle, flags, index, part, gate, 0);
+      });
     }
     for (let edge = 0; edge < 3; edge++) {
       const across = triangleNeighbour(node.navmesh, node.triangle, edge);
@@ -376,46 +447,28 @@ export function findPath(
       ) {
         continue;
       }
-      const existing = nodes.get(neighbourKey);
-      if (existing?.closed) continue;
       const [a, b] = edgeCorners(node.navmesh, node.triangle, edge);
-      let at = middle(a, b);
-      // An obstacle's cut closes the triangles wholly under it and the steps across it (a
-      // triangle partly under it keeps its free part: a cart wheel lying by a doorway).
-      if (obstacles) {
-        if (obstacles.coversTriangle(...navmeshTriangle(navmesh, triangle))) continue;
-        const clear = clearCrossing(obstacles, node.at, a, b);
-        if (!clear) continue;
-        at = clear;
-      }
-      // A step through an avoid node costs its length inside it, many times over.
-      const avoided = options.avoid?.length ? avoidCost(node.at, at, options.avoid) : 0;
-      const g = node.g + enterCost(target.flags, distance(node.at, at), options) + extra + avoided;
-      if (!Number.isFinite(g)) continue;
-      if (existing) {
-        if (g >= existing.g) continue;
-        existing.g = g;
-        existing.at = at;
-        existing.f = g + distance(at, to);
-        existing.parent = node;
-        existing.edge = edge;
-        if (existing.heap >= 0) open.update(existing);
-        else open.push(existing);
+      // The stretch of the edge this free part (or all of the triangle) lies along.
+      const span = node.outline ? partSpan(node.outline, a, b, ON_EDGE) : ([0, 1] as const);
+      if (!span) continue;
+      // An obstacle's cut leaves the free parts of the triangle beyond (none: wholly under it),
+      // each entered over the stretch of the edge it shares.
+      const parts = obstacles && partsOf(navmesh, triangle);
+      if (!parts) {
+        const gate: [Vec3, Vec3] = [lerp(a, b, span[0]), lerp(a, b, span[1])];
+        enter(node, navmesh, triangle, target.flags, -1, undefined, gate, extra);
         continue;
       }
-      const added: Node = {
-        navmesh,
-        triangle,
-        g,
-        f: g + distance(at, to),
-        at,
-        parent: node,
-        edge,
-        closed: false,
-        heap: -1,
-      };
-      nodes.set(neighbourKey, added);
-      open.push(added);
+      const tolerance = typeof across === 'number' ? ON_EDGE : ACROSS_LINK;
+      parts.forEach((part, index) => {
+        const stretch = partSpan(part, a, b, tolerance);
+        if (!stretch) return;
+        const from = Math.max(span[0], stretch[0]);
+        const until = Math.min(span[1], stretch[1]);
+        if ((until - from) * across2d(a, b) < LEAST_GATE) return;
+        const gate: [Vec3, Vec3] = [lerp(a, b, from), lerp(a, b, until)];
+        enter(node, navmesh, triangle, target.flags, index, part, gate, extra);
+      });
     }
   }
   const end = reached ?? best;
@@ -423,10 +476,7 @@ export function findPath(
   for (let node: Node | undefined = end; node; node = node.parent) chain.push(node);
   chain.reverse();
   const goalPoint = reached ? to : end.at;
-  const pulled = pullTight(chain, from, goalPoint, options.radius);
-  const tight = obstacles
-    ? offObstacles(set, pulled, chain, goalPoint, options.radius, obstacles)
-    : pulled;
+  const tight = pullTight(chain, from, goalPoint, options.radius);
   return {
     points: options.avoid?.length
       ? goRoundAll(set, tight, options.avoid, options.radius, obstacles)
@@ -436,64 +486,50 @@ export function findPath(
   };
 }
 
-/** A way kept off the obstacles is pulled tight over at most this many of its steps at once. */
-const SMOOTH_AHEAD = 12;
+/** A stretch of an edge shorter than this (units) is no way through. */
+const LEAST_GATE = 0.5;
 
-/** Where along an edge a step may cross it, from its middle outwards (shares of its length). */
-const CROSSINGS = [0.5, 0.375, 0.625, 0.25, 0.75, 0.125, 0.875];
+/** A search node's key: its triangle's, with its free part's where it is one. */
+const nodeKey = (navmesh: Navmesh, triangle: number, part: number): number | string =>
+  part < 0 ? keyOf(navmesh.formId, triangle) : `${keyOf(navmesh.formId, triangle)}:${part}`;
 
-/**
- * Where a step from `from` crosses the edge from `a` to `b` clear of the obstacles: its middle,
- * else the point nearest the middle whose step stays out of every footprint (an edge partly
- * under one keeps its free part); undefined when there is none.
- */
-function clearCrossing(obstacles: ObstacleIndex, from: Vec3, a: Vec3, b: Vec3): Vec3 | undefined {
-  for (const t of CROSSINGS) {
-    const at: Vec3 = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
-    if (!obstacles.crosses(from, at)) return at;
+/** Which free part a point lies in (−1: under the obstacles). */
+function partAt(parts: readonly (readonly Vec3[])[], point: Vec3): number {
+  return parts.findIndex((part) => insidePart(part, point[0], point[1]));
+}
+
+const across2d = (a: Vec3, b: Vec3): number => Math.hypot(b[0] - a[0], b[1] - a[1]);
+
+/** The stretch two free parts of a triangle share (undefined: they only touch, or do not). */
+function sharedGate(
+  outline: readonly Vec3[],
+  other: readonly Vec3[],
+): readonly [Vec3, Vec3] | undefined {
+  for (let i = 0; i < outline.length; i++) {
+    const a = outline[i];
+    const b = outline[(i + 1) % outline.length];
+    if (!a || !b) continue;
+    const span = partSpan(other, a, b, ON_EDGE);
+    if (span) return [lerp(a, b, span[0]), lerp(a, b, span[1])];
   }
   return undefined;
 }
 
-/**
- * A path pulled tight through triangles an obstacle partly covers may cut across its footprint
- * (the funnel knows only the triangles). Then the way goes by the search's own steps (each clear
- * of the obstacles), pulled tight only where a straight line stays on the navmeshes and clear.
- */
-function offObstacles(
-  set: NavmeshSet,
-  tight: Vec3[],
-  chain: readonly Node[],
-  goal: Vec3,
-  radius: number,
-  obstacles: ObstacleIndex,
-): Vec3[] {
-  let crossing = false;
-  for (let i = 1; i < tight.length && !crossing; i++) {
-    const a = tight[i - 1];
-    const b = tight[i];
-    crossing = a !== undefined && b !== undefined && obstacles.crosses(a, b);
-  }
-  if (!crossing) return tight;
-  const steps = [...chain.map((node) => node.at), goal];
-  const clear = (p: Vec3, q: Vec3): boolean =>
-    !obstacles.crosses(p, q) && straightReach(set, p, q, radius) >= across(p, q) - 1;
-  const first = steps[0];
-  if (!first) return tight;
-  const way: Vec3[] = [first];
-  for (let i = 0; i < steps.length - 1;) {
-    const from = steps[i];
-    let j = Math.min(steps.length - 1, i + SMOOTH_AHEAD);
-    while (j > i + 1) {
-      const to = steps[j];
-      if (from && to && clear(from, to)) break;
-      j--;
+/** The side of a free part nearest a point (one under the obstacles walks out over it). */
+function nearestGate(part: readonly Vec3[], at: Vec3): readonly [Vec3, Vec3] | undefined {
+  let best: [Vec3, Vec3] | undefined;
+  let nearest = Infinity;
+  for (let i = 0; i < part.length; i++) {
+    const a = part[i];
+    const b = part[(i + 1) % part.length];
+    if (!a || !b) continue;
+    const away = distance(middle(a, b), at);
+    if (away < nearest) {
+      nearest = away;
+      best = [a, b];
     }
-    const to = steps[j];
-    if (to) way.push(to);
-    i = j;
   }
-  return way;
+  return best;
 }
 
 /** The doors of the triangles a path crosses, each where the path comes into its triangles. */
@@ -522,11 +558,15 @@ function portals(chain: readonly Node[], radius: number): [Vec3, Vec3][] {
   for (let i = 1; i < chain.length; i++) {
     const node = chain[i];
     const parent = chain[i - 1];
-    if (!node || !parent || node.edge < 0) continue;
-    const [a, b] = edgeCorners(parent.navmesh, parent.triangle, node.edge);
+    if (!node || !parent || !node.gate) continue;
+    const [a, b] = node.gate;
     // The triangle's corners run counter-clockwise seen from above in the Creation Kit's
     // meshes, but not always: left and right by the walk through the edge's middle.
-    const centre = triangleCentre(parent.navmesh, parent.triangle);
+    const centre = parent.outline
+      ? outlineMiddle(parent.outline)
+      : node.triangle === parent.triangle && node.navmesh === parent.navmesh
+        ? parent.at
+        : triangleCentre(parent.navmesh, parent.triangle);
     let left = a;
     let right = b;
     if (cross(centre, middle(a, b), a) < 0) {
@@ -543,6 +583,18 @@ function portals(chain: readonly Node[], radius: number): [Vec3, Vec3][] {
     list.push([lerp(left, right, t), lerp(right, left, t)]);
   }
   return list;
+}
+
+/** The mean of a convex outline's corners: inside it. */
+function outlineMiddle(outline: readonly Vec3[]): Vec3 {
+  let [x, y, z] = [0, 0, 0];
+  for (const point of outline) {
+    x += point[0];
+    y += point[1];
+    z += point[2];
+  }
+  const count = outline.length || 1;
+  return [x / count, y / count, z / count];
 }
 
 const lerp = (a: Vec3, b: Vec3, t: number): Vec3 => [

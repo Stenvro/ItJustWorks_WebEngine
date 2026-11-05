@@ -256,8 +256,15 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   Kept from going on by one in its way (slower than 16 units a second) for longer than
   fMaxTimeBlockedByActors (1 s), it searches its path again round that one. The player standing
   in its way is first asked to move (its ActorCollidewithActor line, once a travel); it goes
-  round them once it is kept another fMaxTimeBlockedByActors. TODO(M13): how the engine's own
-  avoidance turns the way is not read yet.
+  round them once it is kept another fMaxTimeBlockedByActors. TODO(M13): the turn is ours: the
+  engine's velocity obstacles (below) are not reproduced.
+- **Its avoid nodes on those near** (observed in the original; `layAvoidNode`, src/ai/avoidance.ts):
+  it keeps a record of each it looks at, whether it moves (more than 5 units a second) and how old
+  the record is. A node goes on one whose middle lies within half the actor's width and its own
+  radius of the way ahead, and its path is searched again round it at once. With the advanced
+  avoidance that is looked at only as the other comes to stand; without it, also whenever the other
+  starts or stops and at least every fMaxTimeSizeAvoidNode (1 s), so those moving get nodes too.
+  Ours leaves the player to the line above. TODO(M13): the order of that line and the node.
 - **Round one standing in its way** (observed in the original): the path request the engine
   makes then lays an avoid node on each actor it records near the way, where it stands, its
   radius plus fAvoidNodeRadiusAdd (11) wide, at cost fAvoidNodeCost (24); one moving faster than
@@ -280,11 +287,18 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   actor steps off the player's (fBumpReactionIdealMoveDist, at least fBumpReactionMinMoveDist,
   to the side it stands on, else the other), waits fBumpReactionSmallWaitTimer while the other
   passes, and searches its way again (logged "gives way"); no room beside the way, the other
-  gives way. TODO(M13): the engine's own rule for who yields was not read.
+  gives way. That rule is ours (inferred): the original's avoider has no rule for who yields (it
+  was read: with the advanced avoidance, kept from going on over fMaxTimeBlockedByActors by one
+  across its way, it only reports its way blocked by actors). TODO(M13): what its path manager does
+  with that report.
 - **Advanced avoidance** (RACE DATA Flags 2, 90 races: the people, the undead, trolls, giants,
-  atronachs, the dwarven machines): only these foresee where those moving near them will be and
-  keep right of one coming head-on; the others (wolves, bears, deer, horses) go round those in
-  their way as they stand now. TODO(M13): the plain reading of the flag's name.
+  atronachs, the dwarven machines; observed in the original): the flag, with
+  bUseVelocityObstacles (on), is the actor's use of velocity obstacles. It decides whom it lays nodes
+  on (above) and, inferred, who steers: only these turn their way round those moving (ours: foresee
+  where they will be, keep right of one coming head-on); the others (wolves, bears, deer, horses) keep
+  their way and go round by their nodes. TODO(M13): the velocity obstacles themselves (cones
+  from the others' velocities, with lists built from the navmesh's open edges) are not reproduced,
+  and the code that steers by them was not reached from the flag.
 - **Bumped** (`src/shell/actor-movers.ts`): one whose race is Not Pushable does not react; the
   player walking into an actor's controller (at
   40 units a second or more, towards it) is a bump: where the player came from, clockwise from
@@ -374,23 +388,38 @@ The rules (read from the engine):
 Ours: the actor stage (`src/shell/actor-stage.ts`, `refreshObstacles`) keeps a per-cell set of
 active footprints (`NavmeshObstacleField`), replaced as the views apply enable states, a script
 opens or shuts a door, or an obstacle activator's open or close animation plays. `findPath`
-takes them as `obstacles`: the triangles wholly under one and the path steps that cross one are
-closed (a step that starts inside one does not count: an actor in a box walks out). A triangle
-only partly under one keeps its free part: a step crosses into it at the point of the edge
-nearest its middle whose step stays clear, and a path pulled tight that would cut across a
-footprint goes by the search's own steps instead (Helgen Keep: a cart wheel, HandCart01Wheel,
-lying by the doorway to the stairs covered the middle of the doorway's triangles and shut
-Ralof's way down when a triangle under a footprint's middle was closed whole).
+takes them as `obstacles`: what lies under one is cut out of each triangle as the search comes to
+it (`freeParts`, src/ai/navmesh-obstacles.ts): the footprint, the box's faces against the triangle's
+own plane (the band above: each limit is a straight line across the triangle), so what is cut is
+convex and what is left is a few convex parts. The original lays new triangles over the free part;
+ours searches from part to part over the stretches they share, and the funnel keeps the actor's
+radius from each stretch's ends: the way goes round the box's corners within the triangle. A
+triangle wholly under one is shut; one that stands under an obstacle walks out of it over the
+nearest side of a free part; a goal under one ends at any free part of its triangle, as far as
+it can come (Helgen Keep: a cart wheel, HandCart01Wheel, lying by the doorway to the stairs
+covered the middle of the doorway's triangles and shut Ralof's way down when a triangle under a
+footprint's middle was closed whole).
 A mover whose way on an obstacle came across, or whose path stopped short while one went, searches
 again (`ActorMovers`). A wander's random point (`randomReachablePoint`) keeps off them too.
-The cases: tests/conformance/ai/movement-paths.test.ts (Korvanjund's MQ103BanditDisabler box
-across the hall stops a walking NPC, disabled it lets her through; Saarthal's portcullis cuts as
-it shuts) and src/ai/pathfinding.test.ts.
 
-TODO(M13): the engine re-triangulates the navmesh under an obstacle (a triangle partly covered is
-split, its free part stays open; ours approximates that by the crossing points above), and redoes an animated obstacle's cut from its collision body
-where it comes to rest (bhkObstacleDeactivationListener), not from its animation events; an
-activator's collision in its current animation state, not its OBND, is the box then.
+**A body that moves** (observed in the original): the obstacle manager goes over the obstacles with
+moving bodies; one more than 5 units from where it was last cut, or turned more than 5°, is cut
+anew once fObstacleUpdateDeltaWhenMoving (1 s) has passed since (`MovingObstacleCuts`, the stage's
+`updateObstacles`, from the instance's place while it has a motion). So one come to rest is cut
+where it lies at the next look. fObstacleUpdateDeltaWhenUnknown (5) has no reader in the code; at
+most iMaxObstacleBuildPerFrame (1) cuts a frame there, none here (ours are made on the way, no
+build to spread).
+
+The cases: tests/conformance/ai/movement-paths.test.ts (Korvanjund's MQ103BanditDisabler box
+across the hall stops a walking NPC, disabled it lets her through, a real triangle's free part is
+free exactly where the box is not; Saarthal's portcullis cuts as it shuts; a moved cut's rule) and
+src/ai/pathfinding.test.ts. No case has a real Havok body fall: the moved cut is tested at
+`MovingObstacleCuts`.
+
+TODO(M13): the original's new triangles themselves are not read (only that they exist per triangle
+and are undone): the free ground is the rule's, its parts are ours. An activator's collision in its
+current animation state, not its OBND, is the box while it animates; bhkObstacleDeactivationListener
+itself was not read (the update above is what was).
 
 Found in the opening (MQ101DragonAttack, Helgen's burning inn, cell 3,-21): stage 120 and the
 inn's enable markers (dunCGInnCollisionMarker, dunCGRubbleBMarker, dunCGPostBClutterMarker)
@@ -3228,8 +3257,11 @@ way it runs. Its planner turns it there as the engine's movement controller does
   DATA), read as the seconds from standing to its full run and from it to a stop, as the angular
   rate is the seconds to its full turn rate: a person 1 and 1, a wolf 0.6 and 2, a deer 0.4 and
   0.3, a giant 3 and 3, a netch 5 and 5, the dragons 0.01 (`rampSpeed`, src/ai/locomotion.ts).
-  A turn's slowing and a stop are at once. TODO(M13): the unit is unconfirmed (no document gives
-  it; no locomotion clip starts or stops, so the clips' root motion cannot show it). An Immobile
+  A turn's slowing and a stop are at once. The engine's movement parameters take all three rates
+  in one form (observed in the original: 1 / the rate, or 1 at a rate of about 0), which is why the
+  angular rate's reading is used for the others. TODO(M13): the code that spends the two linear
+  parameters was not found, so seconds to the full run stays inferred (no locomotion clip starts
+  or stops, so the clips' root motion cannot show it). An Immobile
   race's actor (the mannequins) goes nowhere and keeps its facing.
 
 What this fixed: the heading was snapped to the target's place every physics step, so while a
