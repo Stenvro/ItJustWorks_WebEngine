@@ -58,7 +58,7 @@ effect saved before its first frame trains by that frame after the load: the swe
 function from a cached record. `magic-engine#objectHits` is transient: its key only names a
 visual a view shows once, is in no game state and no save, and a load closes the views, so it
 cannot meet one loaded from a save. Tests: tests/sim-save-offstage.int.test.ts,
-src/shell/actors-away-saved.test.ts, tests/sim-save-actor-state.int.test.ts "trains a lasting
+tests/sim-actors-away-saved.test.ts, tests/sim-save-actor-state.int.test.ts "trains a lasting
 effect". The sweep: 266 items, all done.
 
 (Round 8: 305 items, 295 done; round 7: 304 items, 286 done; round 6: 303 items, 277 done; round 5: 299 items, 270 done; round 4: 299, 261; round 3: 297, 245; round 2: 291, 224; round 1: 290, 211. The

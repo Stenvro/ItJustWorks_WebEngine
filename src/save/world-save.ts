@@ -5,7 +5,6 @@
 // as the world loads again, the way the original's change forms do; nothing of the rendering.
 // Platform-independent.
 
-import type { Space } from '../ai/package-start.ts';
 import type { SavedPackage } from '../ai/package-runtime.ts';
 import type { ActorGraphState, BehaviorGraphState } from '../animation/behavior-runtime.ts';
 import type { VehicleOffset, VehiclePose } from '../ai/vehicles.ts';
@@ -14,6 +13,11 @@ import type { CastVia } from '../scripting/runtime/casting-engine.ts';
 import type { DetectionSave } from '../ai/detection-states.ts';
 import type { SavedGroupTarget } from '../ai/combat-groups.ts';
 import type { SavedCombatSearch } from '../ai/combat-search.ts';
+
+/** A worldspace or an interior (as src/ai/package-start.ts Space; this file stays portable). */
+export type SavedSpace =
+  | { readonly kind: 'world'; readonly world: number }
+  | { readonly kind: 'interior'; readonly cell: number };
 
 /** An actor of the loaded area as the save found it. */
 export interface SavedActor {
@@ -59,7 +63,7 @@ export interface SavedActor {
    */
   readonly offStage?: boolean | undefined;
   /** The worldspace or interior of its cell (an exterior's key names only the grid cell). */
-  readonly space?: Space | undefined;
+  readonly space?: SavedSpace | undefined;
 }
 
 /**
@@ -69,10 +73,10 @@ export interface SavedActor {
  */
 export interface SavedTrip {
   readonly actor: number;
-  readonly space: Space;
+  readonly space: SavedSpace;
   readonly position: readonly [number, number, number];
   readonly destination: {
-    readonly space: Space;
+    readonly space: SavedSpace;
     readonly position: readonly [number, number, number];
     readonly heading?: number | undefined;
   };
