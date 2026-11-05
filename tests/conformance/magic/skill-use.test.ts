@@ -122,8 +122,7 @@ describe.skipIf(!hasGamedata())('sneaking trains Sneak (sim)', () => {
 
 describe.skipIf(!hasGamedata())('what a cast trains (sim)', () => {
   let sim: Sim;
-  const experience = (skill: number): number =>
-    sim.runtime.state.skillExperience.get(skill) ?? 0;
+  const experience = (skill: number): number => sim.runtime.state.skillExperience.get(skill) ?? 0;
 
   beforeAll(async () => {
     sim = await openSim({ interior: BANNERED_MARE, hour: 10 });

@@ -864,12 +864,18 @@ export function straightReach(set: NavmeshSet, from: Vec3, to: Vec3, radius: num
   return length;
 }
 
+/** The directions (degrees off straight ahead) a summon's blocked way is tried in, in turn. */
+const SUMMON_SEARCH_TURNS = [45, -45, 90, -90, 135, -135, 180];
+
 /**
  * Where a summon stands on the navmeshes (the engine looks for the navmesh near the place ahead
  * of its summoner, the way to it clear; observed in the original): as far toward `to` as an
  * actor of `radius` goes straight from `from` on the navmeshes (straightReach), on the navmesh
  * there (its column). Off the navmeshes the place itself, on a navmesh beneath or above it if one
- * is there; undefined if nothing is (the caller keeps its place).
+ * is there; undefined if nothing is (the caller keeps its place). With its way ahead blocked (it
+ * would stand less than half as far as it should), it looks in other directions at that distance,
+ * turning ever farther from straight ahead either way, and stands in the first clear one, else
+ * where it got farthest. TODO(M13): inferred, the order of the engine's search is not documented.
  */
 export function summonPlace(
   set: NavmeshSet,
@@ -878,12 +884,31 @@ export function summonPlace(
   radius: number,
 ): [number, number, number] | undefined {
   const length = Math.hypot(to[0] - from[0], to[1] - from[1]);
-  const reach = set.locate(from) ? straightReach(set, from, to, radius) : length;
+  const onMesh = set.locate(from) !== undefined;
+  let best = to;
+  let reach = onMesh ? straightReach(set, from, to, radius) : length;
+  if (onMesh && length > 1e-6 && reach < length / 2) {
+    const heading = Math.atan2(to[1] - from[1], to[0] - from[0]);
+    for (const turn of SUMMON_SEARCH_TURNS) {
+      const angle = heading + (turn * Math.PI) / 180;
+      const toward: Vec3 = [
+        from[0] + Math.cos(angle) * length,
+        from[1] + Math.sin(angle) * length,
+        to[2],
+      ];
+      const there = straightReach(set, from, toward, radius);
+      if (there > reach) {
+        best = toward;
+        reach = there;
+      }
+      if (reach >= length / 2) break;
+    }
+  }
   const share = length > 1e-6 ? Math.min(1, reach / length) : 1;
   const point: Vec3 = [
-    from[0] + (to[0] - from[0]) * share,
-    from[1] + (to[1] - from[1]) * share,
-    from[2] + (to[2] - from[2]) * share,
+    from[0] + (best[0] - from[0]) * share,
+    from[1] + (best[1] - from[1]) * share,
+    from[2] + (best[2] - from[2]) * share,
   ];
   const on = onNavmeshColumn(set, point);
   return on && [on[0], on[1], on[2]];

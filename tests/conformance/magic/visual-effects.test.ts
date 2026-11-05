@@ -149,14 +149,14 @@ describe.skipIf(!hasGamedata())('the visuals in the sim', () => {
     expect(object).toBeDefined();
     if (!object) return;
     const told: MagicEffectShown[] = [];
-    const before = world.magicEffect;
+    const before = world.magicEffect?.bind(world);
     world.magicEffect = (shown) => {
       told.push(shown);
     };
     try {
       await magic.apply(item, object.object.reference, { caster: PLAYER_REF });
     } finally {
-      world.magicEffect = before;
+      if (before) world.magicEffect = before;
     }
     const shown = told.find((entry) => entry.target === object.object.reference);
     expect(shown).toMatchObject({
