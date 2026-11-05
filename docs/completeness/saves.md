@@ -50,6 +50,17 @@ graph-save-events.int.test.ts "blends on from a transition caught mid-blend",
 procedure-runs.test.ts "a sandbox after a load", actor-engine.test.ts "a deferred kill across
 a save". The sweep: 264 items, all done (the runtime's deferred kills now saved).
 
+Round 11: actors that left the stage during play keep their place, package and its progress in
+later saves and go on through the same path as a loaded save's unplaced actors, and one walking
+between load doors goes on from where it was (docs/formats/save.md, "Off the stage"). A lasting
+effect saved before its first frame trains by that frame after the load: the sweep had counted
+`magic-engine#firstFrame` as a record cache because its type names a promise, so it now tells a
+function from a cached record. `magic-engine#objectHits` is transient: its key only names a
+visual a view shows once, is in no game state and no save, and a load closes the views, so it
+cannot meet one loaded from a save. Tests: tests/sim-save-offstage.int.test.ts,
+src/shell/actors-away-saved.test.ts, tests/sim-save-actor-state.int.test.ts "trains a lasting
+effect". The sweep: 266 items, all done.
+
 (Round 8: 305 items, 295 done; round 7: 304 items, 286 done; round 6: 303 items, 277 done; round 5: 299 items, 270 done; round 4: 299, 261; round 3: 297, 245; round 2: 291, 224; round 1: 290, 211. The
 sweep itself prints 266 items: the ".ess other" part lists only what the import still logs, so
 its items done are kept by hand below. Round 4 split the AI process's item in two (the
@@ -371,6 +382,8 @@ loadData (RuntimeSave.engines; src/scripting/runtime/engine-save.test.ts):
 | magic-engine#accumulating  | done   | by the effect's key                           |
 | magic-engine#did           | done   | by the effect's key                           |
 | magic-engine#fadingSummons | done   | seconds left                                  |
+| magic-engine#firstFrame    | done   | the effects' keys: their training waits still |
+| magic-engine#objectHits    | done   | transient: names a visual, in no save         |
 | progression-engine#delays  | done   | seconds left                                  |
 | trap-hits#entries          | done   | on the game's real time, which the save keeps |
 
@@ -392,7 +405,7 @@ loadData (RuntimeSave.engines; src/scripting/runtime/engine-save.test.ts):
 | Time, weather, the player's stats, perks, effects, bounty, map   | done   | GameState, the sky's current weather                    |
 | Crime (bounties, stolen items, jail), factions                   | done   | GameState                                               |
 | The player's camera, sneaking, weapon, vehicle                   | done   | SavedPlayer                                             |
-| Actors in cells not loaded as the game is saved                  | open   | a save's unplaced kept; left the stage: package anew    |
+| Actors in cells not loaded as the game is saved                  | done   | SavedActor.offStage, WorldSave.trips                    |
 | A procedure's progress inside a step (a sandbox's activity)      | done   | SavedPackage.step (ProcedureRun.setStep)                |
 | Graph transitions' blends, modifiers' states, behavior refs      | done   | SavedGraphFile transitions, modifiers, cyclic           |
 | Projectiles' graphs (in flight, sprays' streams, stuck lights)   | done   | SavedProjectile.graph                                   |
@@ -411,11 +424,10 @@ loadData (RuntimeSave.engines; src/scripting/runtime/engine-save.test.ts):
 
 ## Next biggest open items
 
-1. Actors in cells not loaded as the game is saved (open): a loaded save's actors not placed
-   yet are kept into the next save, but an actor that left the stage during play keeps only the
-   place the game state has for it (its package places it anew as its cell loads; the original
-   keeps its process, place and package's progress), and one walking away between load doors
-   is where it last came through a door (its trip is planned again).
+1. Actors off the stage: what the kept records leave out is inferred (TODO(M13): the graph, the
+   fight and a paired animation are not kept, a script's move ends a package's progress, the 512
+   that left last), and what an actor would have done in the time since it left is not played
+   out while its package stays the one saved.
 2. The import's side of round 10's own-save work: the .ess Sandbox state's activity times, an
    actor's bleedout (its life state's dying, its bleedout seconds) and a paired animation
    (global data 1004, empty in the saves read), the help part's waiting messages into the HUD

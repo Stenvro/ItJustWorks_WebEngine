@@ -277,6 +277,42 @@ the nodes its ragdoll placed, in the world, and whether it lay at rest; kept as 
 cell unloads and as the game is saved, before the state is written: the save's state holds the
 live maps). A corpse lies again where it lay.
 
+## Off the stage
+
+An actor that leaves the stage with its cell or its view (the player goes through a door) keeps
+what a save holds of a placed actor, as the original keeps the process of an actor that is not
+loaded: `SavedActor` with `offStage` and `space`, held by the session while the game runs
+(`GameSession.offStage`, `OffStageActors` in src/save/world-save.ts), written by each later save
+and given back through the path a loaded save's unplaced actors have (`WorldRestore`). Only a save
+reads the records: an actor that comes back during play is placed by its package and the game state
+as before. Placed again, its record is gone.
+
+- Bound: none for one dead, disabled or on a vehicle, or one with no package progress that stands
+  within 16 units of where the game state has it (nothing the game state does not hold); no graph
+  (made anew as its 3D is; furniture, sneaking and a drawn weapon rebuild it), no fight, no paired
+  animation; and the 512 that left last (`OFF_STAGE_KEPT`). TODO(M13): inferred, the original's
+  rule for what an actor loses as its 3D unloads is not known.
+- A record is dropped at the next save once the game state's place for the actor has changed since
+  it left (a script's move, the low process through a door), or it died or left the world. An
+  actor a script moves off the stage while it leaves keeps no record (TODO(M13): inferred, whether
+  the original's MoveTo keeps a package's progress). After a load, a script's move to a place not
+  loaded drops the save's record as well: the record must not win over the move.
+- `space`: an exterior's cell key names the grid cell alone, and a walled city's worldspace has the
+  same keys as the world around it. An actor is placed only by a view of its own space.
+- After a load the low process leaves an off-stage actor where the save has it while its package is
+  the one saved and keeps it about a place; time passing changes nothing else until its cell loads
+  (as for a loaded save's unplaced actors). A package that takes it somewhere (`elsewhere`, Travel,
+  Follow, Escort), another package, or a scene's restart hands it to the low process at once, from
+  the saved place, or a scene would wait for good on an actor whose cell never loads. A saved actor
+  of the loaded area is unchanged: it still waits for its cell, a restart on it as it is placed.
+- `WorldSave.trips` (`SavedTrip`): an actor walking between load doors (src/shell/actors-away.ts)
+  is saved where it is along its way, with its destination, package and speed; a flier also as a
+  flier. Its road is planned again from there as the first frame runs, not kept (long, and the doors
+  it may pass can change), and the first schedule run for the player's space does not end it: a load
+  passes no time. As during play, a trip keeps its package's id alone, not its progress.
+
+Test: tests/sim-save-offstage.int.test.ts, src/shell/actors-away-saved.test.ts.
+
 ## What actors keep
 
 The original saves with each actor (observed in the original) its actor state (the movement
@@ -430,11 +466,8 @@ A save of ours made after the import keeps the graphs in our own form.
 
 ## Not saved yet
 
-- The actors of cells not loaded when saving, beyond a loaded save's actors not placed since
-  (kept into the next save as that save had them: `WorldRestore.carried`) and the places the
-  game state holds: an actor that left the stage keeps no package progress (its package places
-  it as its cell loads again), and one walking away between load doors is where it last came
-  through a door (its trip is planned again; TODO(M13)); a combat
+- What a low-process actor would have done off the stage in the time since it left, while its
+  package stays the one saved (TODO(M13); "Off the stage"); a combat
   group's own timers (its dialogue and update timers: they run from the load); each body of an articulated object in motion on its own (`motions` keeps the first's,
   TODO(M13)).
 
