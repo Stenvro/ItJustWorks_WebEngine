@@ -98,9 +98,12 @@ async function walkFighting(
 ): Promise<boolean> {
   const until = sim.time + seconds;
   while (sim.time < until) {
+    const started = sim.time;
     const there = await sim.walkPath([...target], Math.min(5, until - sim.time), reach);
     await fendOff(sim);
     if (there) return true;
+    // A walk that found no way returns without a step: time goes on while it asks again.
+    if (sim.time === started) await sim.step(0.5);
   }
   return false;
 }

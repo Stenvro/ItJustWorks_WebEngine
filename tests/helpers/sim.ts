@@ -92,6 +92,11 @@ const PLAYER_RADIUS = 20;
  * a ledge-up link the navmesh gives for a drop (the Ratway Warrens' drop-down room) is no way up.
  */
 const WAY = { radius: PLAYER_RADIUS, ledgeUp: 76 } as const;
+/**
+ * How near a corner of the way counts as there. Less than the way's radius, the room it keeps from
+ * the navmesh's edge: cutting a corner by more walked the player over a ledge beside it.
+ */
+const CORNER_REACH = PLAYER_RADIUS / 2;
 /** How far across a walked-to point may lie from the navmesh under it. */
 const PATH_GOAL_REACH = 256;
 /** A door the player is held up by is within this of their feet (across). */
@@ -474,9 +479,9 @@ export class Sim {
       const left = until - this.time;
       // No nearer than the last way's end: straight on to the point.
       if (last && Math.hypot(feet[0] - last[0], feet[1] - last[1]) < PATH_GOAL_REACH) {
-        return left > 0 && (await this.walkTo(target, left, reach));
+        return left >= SIM_STEP / 2 && (await this.walkTo(target, left, reach));
       }
-      if (left <= 0) return false;
+      if (left < SIM_STEP / 2) return false;
       last = [feet[0], feet[1], feet[2]];
       // The cells round them attach meanwhile.
       await this.world.settle();
@@ -509,13 +514,14 @@ export class Sim {
       const point = points[index];
       if (!point) break;
       const last = index === points.length - 1;
-      const near = last ? reach : 24;
+      const near = last ? reach : CORNER_REACH;
       let side = 1;
       let jumped = false;
       let held = 0;
       for (;;) {
         const left = until - this.time;
-        if (left <= 0) return false;
+        // Under half a step, a wait takes no step: the clock would stand still here.
+        if (left < SIM_STEP / 2) return false;
         const [x0, y0] = this.world.player.feet;
         if (await this.walkTo([point[0], point[1], point[2]], Math.min(left, 0.5), near)) break;
         // Held up: a closed door in the way is opened, as a player does, and what else stands in
