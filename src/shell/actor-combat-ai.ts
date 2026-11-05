@@ -110,6 +110,7 @@ import {
   type LooseWeapon,
 } from '../ai/combat-subtrees.ts';
 import { readDetectionSettings } from '../ai/detection.ts';
+import type { Space } from '../ai/package-start.ts';
 import {
   advanceRadii,
   ATTACK_DECISION_SECONDS,
@@ -655,6 +656,17 @@ const flat = (a: Vec3, b: Vec3): number => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
+
+/** Whether a place's space (undefined: the actor's own) is the one an actor stands in. */
+function sameSpaceAs(
+  space: Space | undefined,
+  here: { readonly cell: number | undefined; readonly world: number | undefined },
+): boolean {
+  if (!space) return true;
+  return space.kind === 'world'
+    ? here.world === space.world
+    : here.world === undefined && here.cell === space.cell;
+}
 
 export class ActorCombatAi {
   readonly #options: ActorCombatAiOptions;
@@ -1344,6 +1356,7 @@ export class ActorCombatAi {
           return;
         }
         mind.mode = 'flee';
+        mind.leash = undefined;
         mind.fleeWay = undefined;
         mind.fleeFailed = false;
         this.#releaseBlock(mind, view);
@@ -1741,11 +1754,21 @@ export class ActorCombatAi {
     const list = await this.#options.senses?.()?.combatOverridesRead(mind.reference);
     if (list === undefined) return;
     const found = await this.#options.ai?.()?.combatPlace(mind.reference, list);
+    const here = await this.#options.session.scriptsReady?.placement(mind.reference);
     if (mind.mode === 'idle' || !found) return;
     mind.packageStyle = found.combatStyle;
     mind.overridePackage = found.package;
-    if (found.place) {
-      mind.leash = { center: found.place.position, radius: Math.max(64, found.place.radius) };
+    // A place in another space is no area it can be kept to here: its coordinates mean nothing
+    // in this one (MQ202's Thalmor agents hold their ambush in the Ratway until the first of them
+    // falls, and walk into the Ragged Flagon with the scene: sent to the nearest point of the
+    // Flagon to Ratway coordinates, a shooter ran between that and its target for good).
+    // TODO(M13): observed in the original, an actor in another cell is outside the area; whether
+    // its way back then goes through the load door was not read. Ours: it fights where it is.
+    if (found.place && here && sameSpaceAs(found.place.space, here)) {
+      mind.leash = {
+        center: found.place.position,
+        radius: Math.max(this.#subtrees.holdPositionMinimumRadius, found.place.radius),
+      };
     }
     if (found.combatStyle !== undefined) mind.profileRead = -Infinity;
   }
@@ -2133,13 +2156,18 @@ export class ActorCombatAi {
       ranged,
       distance <= view.reach + target.radius,
     );
-    // Its combat override package's place: back to it, and fight from there.
-    const leash = mind.leash;
-    const tethered = leash !== undefined && flat(feet, leash.center) > leash.radius;
     // Its combat tree (src/ai/combat-tree.ts): a dodge first, else its equipment slots' actions
     // beside its movement priority list.
     const option = mind.equipped;
     const bowRange = view.gear?.range ?? this.#settings.maximumProjectileRange;
+    const range = view.gear?.bow === true || option === undefined ? bowRange : option.range;
+    // Its combat override package's place: back to it, and fight from there. Observed in the
+    // original: a hold position's area goes out for good for one that flees (above) or whose
+    // inventory's maximum range is under fCombatRangedDistance: a melee fighter goes after its
+    // target whatever the package holds.
+    if (range < this.#subtrees.rangedDistance) mind.leash = undefined;
+    const leash = mind.leash;
+    const tethered = leash !== undefined && flat(feet, leash.center) > leash.radius;
     const frame: CombatFrame = {
       mind,
       view,
@@ -2154,7 +2182,7 @@ export class ActorCombatAi {
       option,
       opponent: this.#opponent(mind, target.reference),
       reach: view.reach + target.radius,
-      range: view.gear?.bow === true || option === undefined ? bowRange : option.range,
+      range,
       close: undefined,
     };
     // Its AI not run by the movers (out of the high process, not walking on its own), the Low
