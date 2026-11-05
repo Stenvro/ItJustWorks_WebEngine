@@ -32,6 +32,7 @@ export async function bookRead(
     book: read.book,
     reader: PLAYER_REF,
     reference: read.reference,
+    first,
   });
   if (!first || (book.flags & BookFlag.teachesSkill) === 0 || book.teaches < 0) return;
   // The experience the skill lacks to its next level (UESP "Skill Books"); the HUD announces

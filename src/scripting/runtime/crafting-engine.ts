@@ -757,6 +757,8 @@ export class CraftingEngine {
       which,
     );
     await this.#useSoulGem(actor, gem);
+    // Soul Gems Used counts a recharge's gem, not an enchantment's (UESP "Skyrim:Statistics").
+    runtime.events.emit('soulGemsUsed', { actor, gem });
     const { crafting } = await this.settings();
     await runtime.progression.useSkill(actor, ENCHANTING, rechargeSkillUse(added, crafting));
     return true;
@@ -775,7 +777,6 @@ export class CraftingEngine {
       this.#prune(actor, gem);
       if (reusable === undefined || !item?.keywords.includes(reusable))
         await runtime.removeItem(actor, runtime.formHandle(gem), 1, true, undefined);
-      runtime.events.emit('soulGemsUsed', { actor, gem });
       return;
     }
     await runtime.removeItem(actor, runtime.formHandle(gem), 1, true, undefined);
@@ -783,7 +784,6 @@ export class CraftingEngine {
     const empty = record?.formIdField('NAM0');
     if (reusable !== undefined && item?.keywords.includes(reusable) && empty)
       await runtime.addItem(actor, runtime.formHandle(empty), 1, true);
-    runtime.events.emit('soulGemsUsed', { actor, gem });
   }
 
   #stat(name: string, by = 1): void {
@@ -1106,7 +1106,6 @@ export class CraftingEngine {
     runtime.state.ingredientEffects.set(ingredient, known);
     const { crafting } = await this.settings();
     this.#ingredientUsed(ingredient, crafting.ingredientWortcraftUses, crafting);
-    this.#stat('ingredients eaten');
   }
 
   /** An ingredient's uses towards its next effect (ingredientUsed): eaten, or brewed with. */
