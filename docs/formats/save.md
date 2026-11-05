@@ -311,7 +311,7 @@ as before. Placed again, its record is gone.
   it may pass can change), and the first schedule run for the player's space does not end it: a load
   passes no time. As during play, a trip keeps its package's id alone, not its progress.
 
-Test: tests/sim-save-offstage.int.test.ts, src/shell/actors-away-saved.test.ts.
+Test: tests/sim-save-offstage.int.test.ts, tests/sim-actors-away-saved.test.ts.
 
 ## What actors keep
 

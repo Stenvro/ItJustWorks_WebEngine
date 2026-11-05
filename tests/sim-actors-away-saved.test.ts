@@ -3,10 +3,10 @@
 // unless that package takes it somewhere; another package hands it to the low process.
 
 import { describe, expect, it } from 'vitest';
-import type { PackageStart } from '../ai/package-start.ts';
-import { OFF_STAGE_KEPT, OffStageActors, WorldRestore } from '../save/world-save.ts';
-import type { SavedActor } from '../save/world-save.ts';
-import { ActorsAway, type ActorsAwayOptions } from './actors-away.ts';
+import type { PackageStart } from '../src/ai/package-start.ts';
+import { OFF_STAGE_KEPT, OffStageActors, WorldRestore } from '../src/save/world-save.ts';
+import type { SavedActor } from '../src/save/world-save.ts';
+import { ActorsAway, type ActorsAwayOptions } from '../src/shell/actors-away.ts';
 
 const ACTOR = 0xff000100;
 const PACKAGE = 0x5000;

@@ -315,7 +315,8 @@ function ownPart(): void {
         continue;
       }
       // A function that returns a promise is no cached record (#firstFrame's training).
-      const cache = /Promise<|Record\b|Settings|settings/.test(type) && !/=> Promise</.test(type);
+      const cache =
+        /Promise<|Record\b|Settings|settings/.test(type) && !type.includes('=> Promise<');
       if (cache && !FIELDS[key]) {
         add('own runtime', key, true, 'a record or settings cache (read again)');
         continue;
