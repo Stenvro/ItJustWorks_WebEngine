@@ -3,6 +3,7 @@ import { ProjectileFlag, ProjectileType } from '../../world/projectile-data.ts';
 import {
   aimDirection,
   bounceLobber,
+  lightsGivingWay,
   explosionFalloff,
   flightKind,
   inCone,
@@ -33,6 +34,16 @@ const human = (x: number, y: number) => ({
   feet: [x, y, 0] as const,
   height: 128,
   radius: 24,
+});
+
+describe('a Magelight on a surface', () => {
+  it('ends the same caster’s earlier ones, not another’s (UESP "Skyrim:Magelight")', () => {
+    const stuck = (caster: number) => ({ flying: { delivered: { caster } } });
+    const mine = stuck(7);
+    const theirs = stuck(8);
+    expect(lightsGivingWay([mine, theirs], 7)).toEqual([mine]);
+    expect(lightsGivingWay([theirs], 7)).toEqual([]);
+  });
 });
 
 describe('a projectile in flight', () => {

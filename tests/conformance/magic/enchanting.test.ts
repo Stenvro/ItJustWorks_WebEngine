@@ -104,5 +104,4 @@ describe.skipIf(!hasGamedata())('the enchantments across the load order (data)',
   });
 });
 
-describe('what the original does that we do not yet', () => {
-});
+// An enchanted item's glow: visual-effects.test.ts. An NPC's staff using no charge: casting.test.ts.

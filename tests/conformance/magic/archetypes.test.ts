@@ -332,6 +332,77 @@ describe.skipIf(!hasGamedata())('Dispel and Light on actors (sim)', () => {
     }
   }, 120_000);
 
+  it('Open, Lock, Cure Paralysis and Cure Addiction do what they say, though vanilla uses none', async () => {
+    const { magic } = sim.runtime;
+    const oak = await magicItem('SPEL', 'Oakflesh');
+    const firstEffect = oak.effects[0];
+    const base = firstEffect && (await magic.effect(firstEffect.effect));
+    expect(base).toBeTruthy();
+    if (!firstEffect || !base) return;
+    const reader = magic.effect.bind(magic);
+    magic.effect = (formId) =>
+      formId >= invented && formId < invented + 64
+        ? Promise.resolve({
+            ...base,
+            formId,
+            archetype: formId - invented,
+            flags: 0,
+            counterEffects: [],
+            actorValue: -1,
+          })
+        : reader(formId);
+    const of = (archetype: number, magnitude: number, duration = 0): MagicItemRecord => ({
+      ...oak,
+      formId: 0x7f000100 + archetype,
+      effects: [{ ...firstEffect, effect: invented + archetype, magnitude, duration }],
+    });
+    const on = (item: number): number =>
+      magic.effectsOn(PLAYER_REF).filter(([, entry]) => entry.item === item).length;
+    try {
+      // A door of the inn: Lock locks it, Open of a lower level leaves it, of its level opens it.
+      const door = sim.world.placedObjects().find((placed) => placed.object.baseType === 'DOOR');
+      expect(door).toBeDefined();
+      if (!door) return;
+      const reference = door.object.reference;
+      await magic.apply(of(EffectArchetype.lock, 0), reference, { caster: PLAYER_REF });
+      expect((await sim.runtime.lock(reference)).locked).toBe(true);
+      const level = (await sim.runtime.lock(reference)).level;
+      if (level > 0) {
+        await magic.apply(of(EffectArchetype.open, level - 1), reference, { caster: PLAYER_REF });
+        expect((await sim.runtime.lock(reference)).locked).toBe(true);
+      }
+      await magic.apply(of(EffectArchetype.open, level), reference, { caster: PLAYER_REF });
+      expect((await sim.runtime.lock(reference)).locked).toBe(false);
+      // Cure Paralysis ends a paralysis on the target.
+      const stiff = await magicItem('SPEL', 'Paralyze');
+      const victim = sim.actors().at(-1)?.reference ?? 0;
+      const stiffOn = (): number =>
+        magic.effectsOn(victim).filter(([, entry]) => entry.item === stiff.formId).length;
+      await magic.apply(stiff, victim, { caster: PLAYER_REF });
+      expect(stiffOn()).toBeGreaterThan(0);
+      await magic.apply(of(EffectArchetype.cureParalysis, 0), victim, { caster: PLAYER_REF });
+      expect(stiffOn()).toBe(0);
+      // Cure Addiction ends an addiction, not a spell.
+      const addiction: MagicItemRecord = {
+        ...of(EffectArchetype.valueModifier, 1, 600),
+        formId: 0x7f000200,
+        kind: 'addiction',
+      };
+      const spell = of(EffectArchetype.valueModifier, 1, 600);
+      const items = magic.item.bind(magic);
+      magic.item = (formId) =>
+        formId === addiction.formId ? Promise.resolve(addiction) : items(formId);
+      await magic.apply(addiction, PLAYER_REF, { caster: PLAYER_REF });
+      await magic.apply(spell, PLAYER_REF, { caster: PLAYER_REF });
+      expect(on(addiction.formId)).toBe(1);
+      await magic.apply(of(EffectArchetype.cureAddiction, 0), PLAYER_REF, { caster: PLAYER_REF });
+      expect(on(addiction.formId)).toBe(0);
+      expect(on(spell.formId)).toBe(1);
+    } finally {
+      magic.effect = reader;
+    }
+  }, 120_000);
+
   it('a caster’s Magelight stays on one living target: the next ends it (UESP)', async () => {
     const { magic } = sim.runtime;
     const light = await magicItem('SPEL', 'Magelight');
@@ -351,9 +422,7 @@ describe.skipIf(!hasGamedata())('Dispel and Light on actors (sim)', () => {
 describe('what the original’s archetypes do that ours do not yet', () => {
   it.todo('Light (Magelight): on a moving object it struck');
   it.todo('Invisibility: the refraction shimmer through the actor (ours dithers it away)');
-  it.todo('Summon Creature: the engine’s search for another place when the way ahead is blocked');
+  // Summon Creature's search when its way is blocked: src/ai/pathfinding.test.ts (summonPlace).
   it.todo('Darkness, Night Eye: the image space and fMagicNightEyeAmbient (0.75)');
-  it.todo(
-    'Disguise, Concussion, Lock, Open, Cure Paralysis, Cure Addiction: unused by vanilla, as the engine does them',
-  );
+  it.todo('Disguise, Concussion: unused by vanilla, as the engine does them (no document says)');
 });

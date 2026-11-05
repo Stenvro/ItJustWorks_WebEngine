@@ -518,7 +518,19 @@ the player in a runtime on the game data, `--audit` reads every record).
   target value (0 unaggressive, 3 frenzied; 0 cowardly, 4 foolhardy: TODO(M13) inferred) while
   they last; `MagicEngine.aiState` is what the combat AI reads ([ai.md](ai.md#combat-ai)).
 - Cure Disease / Poison / Paralysis / Addiction end those effects (a disease leaves the
-  actor's spells). Dispel ends spells' effects up to its magnitude (TODO(M13): Oblivion's rule).
+  actor's spells). Dispel ends the cast spells whose cost, by their caster's skill, is at or
+  below its magnitude × fMagicDispelMagnitudeMult (5), each spell whole; not abilities, diseases,
+  powers, enchantments, potions or scrolls (TODO(M13): the earlier game's documented rule, UESP
+  "Oblivion:Dispel"; no vanilla effect dispels). One spell's lasting effect gives way to the same
+  effect from another caster (TODO(M13): inferred, no record names a displacement spell, only the
+  original's active effects do). A caster keeps one Magelight on a surface and one on a living
+  target: the next of either ends the last (UESP "Skyrim:Magelight"). A staff's charge a cast is
+  its cost × the same skill factor as a spell's magicka (UESP "Skyrim:Staves": about 1.7 times the
+  uses at 100), a concentration staff's a second while held; an NPC's use none (TODO(M13): inferred
+  for staffs). An effect acting over time trains once, by what its first frame did (TODO(M13):
+  inferred). An effect on an object shows its hit shader, art and visuals once. A lobber's friction
+  (fGrenadeFriction, 5) is a coefficient per contact: it slides on a slope steeper than its angle
+  (78.7°; TODO(M13): inferred). A cone pushes each moving body once, as its front reaches it.
 - Summon Creature places its NPC_ before the summoner (one at a time, the oldest going as
   another comes; the summoner's perks raise the limit: Mod Commanded Actor Limit, Twin Souls'
   one more), gone as the effect ends or the summoner dies: it fades out (its alpha to 0) and

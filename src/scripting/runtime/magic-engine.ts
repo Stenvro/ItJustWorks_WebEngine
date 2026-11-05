@@ -1628,8 +1628,8 @@ export class MagicEngine {
       // half of fSummonedCreatureSearchRadius away; a Target Location spell's where it landed,
       // unless that is within fSummonDistanceCheckThreshold and nearer than the place ahead.
       // The engine then looks for the navmesh near there, the way to it clear (the world's
-      // summonPlace: as far as the summon goes straight on the navmeshes). TODO(M13): the
-      // engine's search when the way is blocked (another direction) is not read.
+      // summonPlace: as far as the summon goes straight on the navmeshes, another direction
+      // when that way is blocked).
       const settings = await this.effectSettings();
       const madeRadius = await this.#radius(made);
       const ahead = summonDistance(await this.#radius(summoner), madeRadius, settings);

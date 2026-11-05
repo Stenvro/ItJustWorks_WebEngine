@@ -648,9 +648,19 @@ describe('summonPlace', () => {
   it('stands a summon where the way ahead stays on the navmesh', () => {
     const set = setOf([gridMesh(1, L_SQUARES)]);
     expect(summonPlace(set, [50, 50, 0], [250, 50, 0], 10)).toEqual([250, 50, 0]);
-    // North from the first square the navmesh ends past y 100: it stands short of the edge.
+    // A little north of the first square's middle it gets over half way: it stands short of the
+    // edge, its way not blocked.
+    const place = summonPlace(set, [50, 50, 0], [50, 110, 0], 10);
+    expect(place?.[0]).toBe(50);
+    expect(place?.[1]).toBeGreaterThanOrEqual(80);
+    expect(place?.[1]).toBeLessThanOrEqual(100);
+  });
+
+  it('looks in other directions when the way ahead is blocked', () => {
+    const set = setOf([gridMesh(1, L_SQUARES)]);
+    // North from the first square the navmesh soon ends; east it goes on: it stands that way.
     const place = summonPlace(set, [50, 50, 0], [50, 300, 0], 10);
-    expect(place?.[1]).toBeGreaterThanOrEqual(50);
+    expect(place?.[0]).toBeGreaterThan(100);
     expect(place?.[1]).toBeLessThanOrEqual(100);
   });
 
