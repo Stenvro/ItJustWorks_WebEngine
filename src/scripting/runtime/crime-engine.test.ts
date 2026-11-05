@@ -152,6 +152,7 @@ describe('crimes and their witnesses', () => {
         victim: VICTIM,
         witnesses: [VICTIM, CITIZEN],
         act: 'attack',
+        group: expect.any(Array) as unknown,
       },
     ]);
   });
@@ -174,6 +175,7 @@ describe('crimes and their witnesses', () => {
         victim: OTHER_GUARD,
         witnesses: [CITIZEN],
         act: 'attack',
+        group: expect.any(Array) as unknown,
       },
     ]);
   });
@@ -254,7 +256,14 @@ describe('crimes of NPCs beyond assault', () => {
     const told = seen(crime, [CITIZEN, RIFTEN_CITIZEN]);
     await crime.npcTook(BANDIT, CHEST, 0x1000, 2);
     expect(told).toEqual([
-      { kind: 'npcCrime', criminal: BANDIT, victim: undefined, witnesses: [CITIZEN], act: 'steal' },
+      {
+        kind: 'npcCrime',
+        criminal: BANDIT,
+        victim: undefined,
+        witnesses: [CITIZEN],
+        act: 'steal',
+        group: expect.any(Array) as unknown,
+      },
     ]);
     // No bounty: only the player has bounties.
     expect(state.factions.get(WHITERUN)?.crimeGold ?? 0).toBe(0);

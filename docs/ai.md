@@ -1472,7 +1472,7 @@ from the original game's behaviour only (in our words):
   alarm and the guards' response:** [Detection](#detection) and docs/gameplay.md;
   **head tracking:** docs/animation.md.
 - **Settings the engine never reads** (only defined): fSmallBumpSpeed, fSneakSizeBase,
-  fCrimeAlarmRespMult, fAIBestHeadTrackDistance, fAIInteriorHeadTrackMult.
+  fCrimeAlarmRespMult, fCrimeSoundBase, fCrimeSoundMult, iCrimeGoldMinValue, the fCrimeDisp\* and fCrimeRegard settings, fAIInDialogueModeWithPlayerDistance, fAIBestHeadTrackDistance, fAIInteriorHeadTrackMult.
 
 ## Detection
 
@@ -2057,11 +2057,9 @@ game reads none of them.
   (fAIExclusiveGreetingTimer, 2.5 s), and it greets again only after the player left (1.25 times
   the distance) and fAIGreetingTimer (5 s) passed. Unless the info lets it move while greeting
   (INFO 0x400) it stops and faces them meanwhile. Not while the player talks with someone.
-  Walking off: once the player is farther than fAIInDialogueModeWithPlayerDistance (500) the
-  actor is let go to its package while its line plays out; the greeting is not cut short
-  (TODO(M13): the setting is chosen by its name, its reader in the engine was not found). It
-  holds the actor at most fAIInDialogueModewithPlayerTimer (60 s), the distance's twin (by its
-  name, TODO(M13)).
+  Walking off: observed in the original, the actor stays held as long as its line lasts, wherever
+  the player goes; fAIInDialogueModeWithPlayerDistance is registered and never read, and
+  fAIInDialogueModewithPlayerTimer belongs to a conversation with the player, not a greeting.
 - **Idle chatter:** every fIdleChatterCommentTimer to fIdleChatterCommentTimerMax (10–20 s) an
   actor whose package allows chatter, within 1,024 units of the player and detecting them,
   says its Idle line to them; one line of chatter at a time (TODO(M13)). The Idle infos weigh
