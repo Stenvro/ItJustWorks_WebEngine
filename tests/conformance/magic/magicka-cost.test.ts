@@ -130,9 +130,4 @@ describe.skipIf(!hasGamedata())('the spells’ costs across the load order (data
   });
 });
 
-describe('what the original costs that we do not yet', () => {
-  it.todo(
-    'an NPC casting Firebolt in the sim pays its cost by its Destruction skill (the sim: an NPC ' +
-      'of a known skill casts at a target; its Magicka drops by the NPC formula)',
-  );
-});
+// An NPC paying by its Destruction skill, in the sim: tests/conformance/magic/casting.test.ts.

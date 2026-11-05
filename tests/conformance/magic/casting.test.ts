@@ -29,6 +29,7 @@ import {
   regeneratesWhileCasting,
   releaseCast,
   staffCastsLeft,
+  staffChargeCost,
 } from '../../../src/gameplay/magic/casting.ts';
 import { comesAt, wardHeld } from '../../../src/gameplay/magic/projectile-flight.ts';
 import { AT_ONCE_NATIVES, nativeWaitsForFrame } from '../../../src/scripting/native-timing.ts';
@@ -42,13 +43,15 @@ import { PapyrusScheduler } from '../../../src/scripting/scheduler.ts';
 import { ScriptLibrary } from '../../../src/scripting/script-library.ts';
 import { ObjectHandle } from '../../../src/scripting/values.ts';
 import { Vfs } from '../../../src/vfs/vfs.ts';
+import { CastingSource } from '../../../src/scripting/runtime/casting-engine.ts';
+import { ActorValue } from '../../../src/world/actor-values.ts';
 import { INI_DEFAULTS } from '../../../src/world/ini-settings.ts';
 import { RecordDatabase } from '../../../src/world/record-db.ts';
 import { CastType } from '../../../src/world/spell-records.ts';
 import { openGameFolder } from '../../../tools/gamedata-path.ts';
 import { magicCensus, type MagicCensus } from '../../../tools/magic-census.ts';
 import { buildPex, id, int, type BuildScript } from '../../helpers/pex-builder.ts';
-import { hasGamedata } from '../../helpers/sim.ts';
+import { hasGamedata, openSim, PLAYER_REF, type Sim } from '../../helpers/sim.ts';
 
 describe.skipIf(!hasGamedata())('the spells across the load order (data)', () => {
   let vfs: Vfs;
@@ -284,14 +287,148 @@ describe('an NPC’s ward', () => {
   });
 });
 
+describe.skipIf(!hasGamedata())('casts in the sim', () => {
+  let sim: Sim;
+  const RIGHT = CastingSource.right;
+  /** The Destruction skill's actor value. */
+  const DESTRUCTION = 20;
+
+  beforeAll(async () => {
+    sim = await openSim({ interior: 0x1605e, hour: 10 });
+  }, 300_000);
+  afterAll(async () => {
+    await sim.close();
+  });
+
+  const settle = (): Promise<void> => sim.world.settle();
+  const magicka = async (actor: number): Promise<number> =>
+    (await sim.runtime.actors.value(actor, ActorValue.magicka)).current;
+  const hold = async (seconds: number): Promise<void> => {
+    for (let t = 0; t < seconds; t += 0.05) {
+      sim.runtime.casting.update(0.05);
+      await settle();
+    }
+  };
+
+  it('begins a concentration spell on any magicka, a fire and forget one on its cost', async () => {
+    const { casting, equipment, actors } = sim.runtime;
+    const flames = await sim.formId('SPEL', 'Flames');
+    const firebolt = await sim.formId('SPEL', 'Firebolt');
+    const base = (await actors.value(PLAYER_REF, ActorValue.magicka)).base;
+    try {
+      actors.setBase(PLAYER_REF, ActorValue.magicka, 1);
+      expect(await magicka(PLAYER_REF)).toBeCloseTo(1, 6);
+      await equipment.equipSpell(PLAYER_REF, firebolt, RIGHT);
+      expect(await casting.begin(PLAYER_REF, RIGHT)).not.toBe('started');
+      await equipment.equipSpell(PLAYER_REF, flames, RIGHT);
+      expect(await casting.begin(PLAYER_REF, RIGHT)).toBe('started');
+      casting.interrupt(PLAYER_REF, RIGHT);
+      actors.setBase(PLAYER_REF, ActorValue.magicka, 0);
+      expect(await casting.begin(PLAYER_REF, RIGHT)).not.toBe('started');
+      // Held on what it has, it stops as the magicka is out.
+      actors.setBase(PLAYER_REF, ActorValue.magicka, 4);
+      expect(await casting.begin(PLAYER_REF, RIGHT)).toBe('started');
+      await hold(3);
+      expect(casting.casting(PLAYER_REF, RIGHT)).toBeUndefined();
+      expect(await magicka(PLAYER_REF)).toBeLessThanOrEqual(0);
+    } finally {
+      casting.interrupt(PLAYER_REF);
+      actors.setBase(PLAYER_REF, ActorValue.magicka, base);
+    }
+  }, 60_000);
+
+  it('makes an NPC of Destruction 50 pay Firebolt by the NPC formula: 41.39 × 0.25', async () => {
+    const { casting, equipment, actors } = sim.runtime;
+    const npc = sim.actors()[0]?.reference;
+    expect(npc).toBeDefined();
+    if (npc === undefined) return;
+    const firebolt = await sim.formId('SPEL', 'Firebolt');
+    actors.setBase(npc, DESTRUCTION, 50);
+    actors.setBase(npc, ActorValue.magicka, 500);
+    await equipment.equipSpell(npc, firebolt, RIGHT);
+    expect(await casting.begin(npc, RIGHT)).toBe('started');
+    await hold(1);
+    const before = await magicka(npc);
+    expect(await casting.release(npc, RIGHT)).toBeDefined();
+    // (1 − (0.005 × 50) ^ 0.5) × 0.5: the settings' fMagicCaster and fMagicSkillCost values.
+    expect(before - (await magicka(npc))).toBeCloseTo(41.39 * 0.25, 1);
+  }, 60_000);
+
+  it('reaches a Touch spell as far as its caster’s race unarmed, an object’s by fCombatDistance', async () => {
+    const { casting, actors } = sim.runtime;
+    const race = await actors.race((await actors.raceOf(PLAYER_REF)) ?? 0);
+    expect(race?.unarmedReach).toBeGreaterThan(0);
+    expect(await casting.touchReach(PLAYER_REF)).toBeCloseTo(race?.unarmedReach ?? 0, 3);
+    // Not fMagicDefaultTouchDistance, which nothing reads.
+    const distance = await sim.runtime.gameSetting('fCombatDistance');
+    const notAnActor = 0x7f000003;
+    expect(await casting.touchReach(notAnActor)).toBe(distance);
+  }, 60_000);
+
+  it('interrupts a cast by a stagger and by a knock-down', async () => {
+    const { casting, equipment } = sim.runtime;
+    const stage = sim.world.stage;
+    const flames = await sim.formId('SPEL', 'Flames');
+    await sim.step(0.5);
+    const everyone = sim.actors().map((actor) => actor.reference);
+    for (const actor of everyone) {
+      sim.runtime.actors.setBase(actor, ActorValue.magicka, 5000);
+      await equipment.equipSpell(actor, flames, RIGHT);
+      expect(await casting.begin(actor, RIGHT)).toBe('started');
+    }
+    // Each is staggered. One whose idle tree takes no stagger now (at furniture) stays as it was
+    // and casts on; each it took stops, every hand of it.
+    for (const actor of everyone) stage.combat.stagger(actor, 1, undefined);
+    await sim.step(0.2);
+    const still = everyone.filter((actor) => casting.casting(actor, RIGHT) !== undefined);
+    expect(still.length).toBeLessThan(everyone.length);
+    expect(still.length).toBeGreaterThan(0);
+    // One still casting is knocked down.
+    const fallen = still[0] ?? 0;
+    await stage.combat.knockDown(fallen, undefined, 100);
+    await sim.step(0.2);
+    expect(casting.casting(fallen, RIGHT)).toBeUndefined();
+    for (const actor of everyone) casting.interrupt(actor);
+  }, 60_000);
+
+  it('lets a Staff of Flames use its charge a second, and an NPC’s use none', async () => {
+    const { casting, crafting } = sim.runtime;
+    const staff = await sim.formId('WEAP', 'StaffFlames');
+    const record = await sim.db.get(staff);
+    const enchantment = record?.formIdField('EITM');
+    const item = enchantment === undefined ? undefined : await sim.runtime.magic.item(enchantment);
+    expect(item?.kind).toBe('staffEnchantment');
+    if (!item) return;
+    const castable = { item, via: 'staff', object: staff } as const;
+    const npc = sim.actors()[2]?.reference ?? 0;
+    await sim.runtime.addItem(PLAYER_REF, sim.runtime.formHandle(staff), 1, true);
+    await sim.runtime.addItem(npc, sim.runtime.formHandle(staff), 1, true);
+    await sim.runtime.equipment.equip(PLAYER_REF, staff, { hand: 'right' });
+    await sim.runtime.equipment.equip(npc, staff, { hand: 'right' });
+    const before = await casting.charge(PLAYER_REF, castable);
+    const { charge } = await casting.cost(PLAYER_REF, castable);
+    expect(charge).toBeGreaterThan(0);
+    expect(await casting.begin(PLAYER_REF, RIGHT)).toBe('started');
+    expect(await casting.begin(npc, RIGHT)).toBe('started');
+    await hold(2);
+    casting.interrupt(PLAYER_REF, RIGHT);
+    casting.interrupt(npc, RIGHT);
+    await settle();
+    const used = before - (await casting.charge(PLAYER_REF, castable));
+    expect(used).toBeGreaterThan(charge * 1.5);
+    expect(used).toBeLessThan(charge * 2.5);
+    expect(crafting.keptCharge(npc, staff)).toBeUndefined();
+  }, 60_000);
+});
+
+describe('what a staff uses', () => {
+  it('uses less with its school’s skill: about 1.7 times the uses at 100 (UESP "Skyrim:Staves")', () => {
+    expect(staffChargeCost(133, 0)).toBe(133);
+    expect(133 / staffChargeCost(133, 100)).toBeCloseTo(1.68, 2);
+    expect(staffCastsLeft(2000, staffChargeCost(133, 100))).toBe(25);
+  });
+});
+
 describe('what the original casts that we do not yet', () => {
-  it.todo(
-    'a concentration spell is refused only once the magicka is out (what the engine asks of ' +
-      'the magicka before a concentration cast, original)',
-  );
   it.todo('an NPC’s ward past fCombatMagicWardMinCastTime as the combat AI’s ward behaviour says');
-  it.todo(
-    'a Touch spell reaches as far as the engine says (fMagicDefaultTouchDistance is never read)',
-  );
-  it.todo('the casting hand’s cast is interrupted by a stagger and a knock-down (original)');
 });

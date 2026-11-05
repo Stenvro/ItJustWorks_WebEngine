@@ -109,7 +109,4 @@ describe('what the original does that we do not yet', () => {
     'an enchanted item glows with its enchantment’s enchant shader and art (MGEF enchant shader, ' +
       'enchant art), in the world, in the hand and on the body',
   );
-  it.todo(
-    'a staff’s or a weapon’s enchantment used by an NPC never runs out (original: the engine’s rule)',
-  );
 });

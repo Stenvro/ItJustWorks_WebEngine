@@ -259,6 +259,8 @@ export class MagicEngine {
   readonly #accumulating = new WeakMap<ActiveEffectState, { rate: number; hold: number }>();
   /** The share of its magnitude an effect at once did to its actor value (its skill use). */
   readonly #did = new WeakMap<ActiveEffectState, number>();
+  /** A lasting effect's training, waiting for what its first frame does (#train). */
+  readonly #firstFrame = new WeakMap<ActiveEffectState, () => Promise<void>>();
   /** Summons fading out as their effects ended: the seconds left before they are gone. */
   readonly #fadingSummons = new Map<number, number>();
   /** Summons just placed whose appearing the stage has not shown yet (takeSummoned). */
@@ -924,8 +926,8 @@ export class MagicEngine {
    * An effect item of a spell the caster cast that took hold trains its magic effect's school
    * (observed in the original; effect-rules.ts effectSkillUses): a fire and forget effect
    * once, as it takes hold (one of the archetypes that train by what they did, SKILL_BY_EFFECT:
-   * by the share of its magnitude its actor value took), a concentration spell's hit by its
-   * seconds (only those archetypes). Powers, lesser powers, shouts, scrolls and enchantments
+   * by the share of its magnitude its actor value took, one that acts over time by its first
+   * frame's share), a concentration spell's hit by its seconds (only those archetypes). Powers, lesser powers, shouts, scrolls and enchantments
    * train nothing; the school must be a skill.
    */
   async #train(
@@ -945,6 +947,18 @@ export class MagicEngine {
     const concentration = item.castType === CastType.concentration;
     const byEffect = SKILL_BY_EFFECT.has(effect.archetype);
     if (concentration && !byEffect) return;
+    // One that acts over its time trains once, by what its first frame did (a burn on the dead's
+    // kin, a heal over time on the whole of its target's health). TODO(M13): inferred, what the
+    // original measures for a lasting effect is not documented.
+    if (
+      byEffect &&
+      !concentration &&
+      !this.#did.has(entry) &&
+      entryMode(entry, effect) === 'perSecond'
+    ) {
+      this.#firstFrame.set(entry, () => this.#train(item, index, effect, entry, options));
+      return;
+    }
     const { casting } = await runtime.casting.settings();
     const uses = effectSkillUses({
       effectCost: effectItemCost(effect.baseCost, itemEffect, concentration, casting),
@@ -2084,8 +2098,14 @@ export class MagicEngine {
     }
     if (changes.length > 0 || grows.length > 0) {
       this.#changes = this.#changes.then(async () => {
-        for (const change of changes)
-          await this.#change(change.entry, change.effect, change.amount);
+        for (const change of changes) {
+          const did = await this.#change(change.entry, change.effect, change.amount);
+          const train = this.#firstFrame.get(change.entry);
+          if (!train) continue;
+          this.#firstFrame.delete(change.entry);
+          this.#did.set(change.entry, did);
+          await train();
+        }
         for (const grow of grows) await this.#grow(grow.entry, grow.effect, grow.seconds);
       });
       this.#runtime.detach(this.#changes);
