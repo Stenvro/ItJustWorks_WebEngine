@@ -66,7 +66,11 @@ describe.skipIf(!hasGamedata())(
       at.wolf = sim.time;
       wolf = await sim.place(await sim.formId('NPC_', 'EncWolf'), PLAYER_REF);
       void vm.call(player, 'RegisterForSingleLOSGain', [player, runtime.actorHandle(wolf)]);
-      await sim.step(4);
+      // At the player's feet it is below the camera's frame. Where it wanders from there is the
+      // dice's, so it is brought into view: straight ahead of the player, who looks along +Y.
+      await sim.step(0.5);
+      void vm.call(runtime.actorHandle(wolf), 'MoveTo', [player, 0, 250, 0, true]);
+      await sim.step(1);
       at.lost = sim.time;
       void vm.call(player, 'RegisterForSingleLOSLost', [player, runtime.actorHandle(wolf)]);
       void vm.call(runtime.actorHandle(wolf), 'Disable', []);

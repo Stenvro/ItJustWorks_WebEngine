@@ -929,7 +929,11 @@ export class ActorMovers {
         refresh,
       });
       travel.neighbours.set(key, state);
-      if (lay) this.#searchRound(mover, travel, other);
+      if (lay) {
+        this.#searchRound(mover, travel, other);
+        // Going round one in its way is not a search of its being stuck (#obstaclesChanged).
+        travel.searches = Math.max(0, travel.searches - 1);
+      }
     }
     for (const key of travel.neighbours.keys()) if (!seen.has(key)) travel.neighbours.delete(key);
   }

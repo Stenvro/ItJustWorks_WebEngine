@@ -534,6 +534,21 @@ describe('findPath round an actor in the way (avoid nodes)', () => {
     expect(path?.points).toHaveLength(2);
   });
 
+  it('does not end its way short for one standing in the only way (a corridor)', () => {
+    const corridor = setOf([
+      gridMesh(
+        1,
+        [0, 1, 2, 3, 4].map((x) => [x, 0]),
+      ),
+    ]);
+    const path = findPath(corridor, [50, 50, 0], [450, 50, 0], {
+      radius: 10,
+      avoid: [{ at: [250, 50, 0], radius: 80, cost: 24 }],
+    });
+    expect(path?.complete).toBe(true);
+    expect(path?.points.at(-1)).toEqual([450, 50, 0]);
+  });
+
   it('goes round the one standing in its way within the triangle, its width kept off it', () => {
     const path = findPath(field(), [500, 1000, 0], [1500, 1000, 0], {
       radius: 35,

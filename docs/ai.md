@@ -271,7 +271,9 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   5 units a second gets none (for the actors the request asks that of). Ours lays one on the
   actor that blocked it (`PathOptions.avoid`, src/ai/pathfinding.ts), its own radius added (the
   circle its middle keeps out of): a search step through it costs its length inside, times the
-  cost; the triangles whose middle lies in it are closed (the goal's not); and the way pulled
+  cost; the triangles whose middle lies in it are closed (the goal's not), unless that leaves no
+  way (one standing in a corridor or a doorway: then it only costs, as in the original, and the
+  actor does not end its way short); and the way pulled
   tight is bent round it, on the shorter side where the navmesh has room for the actor's width
   (else its middle), as tight as the circle lets it (a polygon whose sides touch the circle). Before,
   only the triangles whose middle lay in its circle were closed, and an exterior's triangles are
