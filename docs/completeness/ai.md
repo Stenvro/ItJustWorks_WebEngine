@@ -25,8 +25,8 @@ against docs/ai.md and the conformance suites (tests/conformance/ai/).
 | Idle markers, furniture |    25 |   24 |    1 |
 | Navmeshes (data)        |    12 |   11 |    1 |
 | Game settings           |   190 |  190 |    0 |
-| Mechanics (by hand)     |    27 |   15 |   12 |
-| Total                   |   459 |  445 |   14 |
+| Mechanics (by hand)     |    37 |   26 |   11 |
+| Total                   |   469 |  456 |   13 |
 
 Round 1 wrote the sweep and this list; Can Pickup Items (RACE DATA) became read: only a race that
 can pick up items runs the combat tree's Acquire Weapon.
@@ -190,9 +190,21 @@ the readers ask for by name.
 
 - [x] Package evaluation: when, order, must complete, once per day, fallout (package-start.ts,
       package-runtime.ts; tests/conformance/ai/package-evaluation.test.ts).
-- [ ] Continue If PC Near's reach; the fallout's radius and options: ours.
+- [x] Continue If PC Near's reach: the player in the actor's parent cell, no distance (observed in
+      the original; tests/conformance/ai/package-evaluation.test.ts). Inferred: the kept package goes
+      on as it was (the original sets it up again).
+- [x] fEvaluateProcedureTimer: a running tree's branches checked again every 3 s (observed; same suite).
+- [x] Allow Swimming: by the package, by the race alone fighting, in an Alarm or with no package
+      (observed; swimsNow). Offers Services, Maintain Speed At Goal: tested (same suite).
+- [ ] The fallout's radius and options: ours. Its reader was not found in the original (the flag's
+      usual test forms, the Done procedure state, the package's end): that it sandboxes is inferred.
 - [x] Sandbox: rescan, search radius, hysteresis, meals, idle markers (sandbox.ts).
-- [ ] Sandbox: the places the engine gives no radius, extra dialogue range, the delay on arrival.
+- [x] Sandbox: the delay on arrival: at its activity the next package and procedure evaluations
+      wait at least fSandBoxDelayEvalSeconds (observed; tests/conformance/ai/sandbox.test.ts).
+      Inferred: the field the engine caps it by, taken as the stay, which is longer in vanilla.
+- [ ] Sandbox: the places the engine gives no radius: open (near itself and near its start: done).
+- [ ] fSandBoxExtraDialogueRange: observed to size only the second place of the engine's In Game
+      Dialogue package, which we do not make (actors talk through the story manager's scenes).
 - [x] Paths: navmesh A\*, edge links, ledges, doors on the way, routes through load doors.
 - [x] Navmesh obstacles: the ground under one cut out of each triangle by the rule's footprint and
       height band, its free parts stay open; a moving body's cut (5 units, 5°, the update delta)
@@ -226,7 +238,12 @@ the readers ask for by name.
       package); a guard of another faction taking the crime over; which witnesses of an NPC's crime
       report it (inferred). fCrimeFavorMult, iCrimeFavorBaseValue belong to the favor check.
 - [x] Followers, horses, vehicles (followers.ts, mounts.ts, vehicles.ts).
-- [ ] Followers: the follow offset and walk zone's built-in values ours; mounting from the right.
+- [x] Followers: the follow offset (their places by distance, both radii and the spacing between:
+      followOffset), the path to the leader itself, the walk zone (the middle of the radii,
+      fFollowWalkZoneMult built-in 1) and the gait: observed; src/ai/followers.test.ts. Inferred: a
+      follower's radius is a human's.
+- [ ] Mounting from the right: the data has one Mount idle and one paired clip, from the left. That
+      there is no mount from the right is read from the data, not from the code.
 - [x] Dialogue-driven AI: greetings, force greet, dialogue activate, conversations (talk.ts).
 - [x] The greeting hold: as long as its line lasts, wherever the player goes.
       fAIInDialogueModeWithPlayerDistance is registered and never read by the original;
@@ -235,7 +252,7 @@ the readers ask for by name.
 - [x] Scenes (scene-runtime.ts).
 - [x] Travel, escort, flee, follow to, keep an eye on, ambush (procedure-runs.ts).
 - [x] Engine packages: get up, avoid player, steal warning, movement blocked (engine-packages.ts).
-- [ ] Wear Sleep Outfit has no simulation case.
+- [x] Wear Sleep Outfit: Asbjorn in his bed's package (tests/conformance/ai/procedures.test.ts).
 - [x] Head tracking (head-tracking.ts): no favourites (the player asked first, else the first it may
       look at), who may be looked at (distance, 100 units, 120° or the one it has, two in
       furniture), the hold (fAIHoldDefaultHeadTrackTimer), the look along the way
@@ -246,7 +263,8 @@ the readers ask for by name.
       ends a look that may no longer be chosen (ours: at the next look).
 - [x] Furniture use: entry, exit, idle markers (actor-furniture.ts).
 - [x] Process levels and their budget (process-levels.ts).
-- [ ] Process levels: the high-process distance ours; actors away keep a schedule (ours).
+- [ ] Process levels: the high-process distance ours; actors away keep a schedule (ours). Not read
+      in this round: no setting names either.
 
 ## Next biggest
 

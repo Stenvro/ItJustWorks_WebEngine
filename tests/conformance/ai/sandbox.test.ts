@@ -30,7 +30,7 @@ import {
   SandboxKind,
   SandboxPlan,
 } from '../../../src/ai/sandbox.ts';
-import { pack, packageActor, procedure, tick } from '../../helpers/packages.ts';
+import { condition, lasting, pack, packageActor, procedure, tick } from '../../helpers/packages.ts';
 import { hasGamedata, openSim } from '../../helpers/sim.ts';
 
 /** Skyrim.esm's values of the sandbox's settings (the rest keep the engine's). */
@@ -435,12 +435,60 @@ describe.skipIf(!hasGamedata())('sandbox: an inn’s evening (headless simulatio
   });
 });
 
-describe('sandbox: the rest of the engine’s rule (not built yet)', () => {
-  it.todo(
-    'talks with others within fSandBoxExtraDialogueRange (384) beyond its place (the engine’s defaults)',
-  );
-  it.todo(
-    'waits fSandBoxDelayEvalSeconds (5 s) before it is evaluated again on arrival (observed in the original: ' +
-      'the sandbox update reads it three times)',
-  );
+describe('sandbox: the rest of the engine’s rule', () => {
+  // Stays: observed in the original, fSandBoxExtraDialogueRange is read only as the engine makes
+  // an actor's In Game Dialogue package (Actor's dialogue start: its second location's radius is
+  // its first's plus this), not by the sandbox. We have no such package to give it to: actors'
+  // conversations are the story manager's scenes (docs/ai.md, "Actor dialogue").
+  it.todo('widens an In Game Dialogue package’s second place by fSandBoxExtraDialogueRange (384)');
+
+  it('waits fSandBoxDelayEvalSeconds (5 s) before it is evaluated again on arrival', async () => {
+    // Its way to its chair takes 13 s, the timer at 13 of 15 as it sits: the next evaluation is
+    // then 5 s away, not 2.
+    const inputs: PackageInput[] = [
+      {
+        id: 0,
+        type: 'Location',
+        value: { kind: 'location', location: { type: 12, form: 0, radius: 500 } },
+      },
+      { id: 4, type: 'Bool', value: { kind: 'bool', value: true } },
+      { id: 6, type: 'Bool', value: { kind: 'bool', value: false } },
+    ];
+    const sandbox = {
+      ...procedure('Sandbox'),
+      inputs: [0, 255, 255, 255, 4, 255, 6, 255, 255, 255, 255],
+    };
+    const spots: SandboxSpot[] = [{ reference: 0x100, kind: 'sit', position: [100, 0, 0] }];
+    let reach: (() => void) | undefined;
+    const { actor, truths } = packageActor(
+      [pack(1, procedure('other'), { conditions: [condition(9)] }), pack(2, sandbox, { inputs })],
+      { ...PROCEDURES, other: lasting },
+      {
+        settings: SKYRIM,
+        mind: {
+          place: () => Promise.resolve({ position: [0, 0, 0], radius: 500 }),
+          around: () => Promise.resolve(spots),
+        },
+        body: {
+          useFurniture: () =>
+            new Promise((resolve) => {
+              reach = () => {
+                resolve(true);
+              };
+            }),
+        },
+      },
+    );
+    for (let i = 0; i < 13; i++) await tick(actor, 1);
+    expect(actor.current?.id).toBe(2);
+    expect(reach).toBeDefined();
+    reach?.();
+    await tick(actor, 0);
+    truths.add(9);
+    for (let i = 0; i < 4; i++) await tick(actor, 1);
+    expect(actor.current?.id).toBe(2);
+    await tick(actor, 1);
+    await tick(actor, 0.1);
+    expect(actor.current?.id).toBe(1);
+  });
 });
