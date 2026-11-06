@@ -86,8 +86,15 @@ const PUZZLE_SCENE = 0x13126;
 const PUZZLE_ACTIVATOR = 56;
 const BY_SEAL: Vec3 = [128620, -2264, 2945];
 const SEAL_DOOR = 0x6aef2;
-/** The light linked to the temple's second sconce (SkyHavenSconceScript enables it). */
-const SECOND_SCONCE_LIGHT = 0x63315;
+/**
+ * The lights linked to the temple's sconces (SkyHavenSconceScript enables them): the four Delphine
+ * reaches in MQ203DelphineLightTorches1to5 as the entry scene plays (the sequence's last she need
+ * not reach: the package ends with the scene's phase 7, and MQ204's marker lights what is left at
+ * a later load), and the wall's two, hers (MQ203DelphineLightRightSconce) and Esbern's
+ * (MQ203EsbernLightLeftSconce).
+ */
+const ENTRY_SCONCE_LIGHTS = [0x6331d, 0x63315, 0x6331c, 0x63325];
+const WALL_SCONCE_LIGHTS = [0x6d282, 0x6d285];
 /** The stage 210 trigger behind the door, MQ203SkyHavenEntryScene, MQ203RemansWallScene, the
  * temple's door. */
 const STAGE_210_AT: Vec3 = [127701, -2225, 3112];
@@ -485,8 +492,13 @@ describe.skipIf(!hasGamedata())("MQ203 Alduin's Wall", () => {
   }, 600_000);
 
   // The room of plates: those without a trap make the way across; the others fire at the one on
-  // them (TODO(M13): ours fires on a second step only; a first one, stood on for seconds, does
-  // nothing, though TrapTriggerBase's Inactive state goes to Active at once, which activates). The chain at the far end shuts
+  // them. dunKarthspirePlatePuzzleSCRIPT, unlike every other plate's, casts in its Active state's
+  // OnTriggerEnter, and the cell's load has put it in Inactive (TrapTriggerBase's onCellLoad, with
+  // isTriggerVolume set), where the inherited OnTriggerEnter only goes on to active: by its scripts,
+  // and with a volume telling one enter per reference (observed in the original), a first step
+  // arms the plate and a later one fires it. TODO(M13): UESP has a wrong plate launch a fireball
+  // without saying on which step; whether the original's first step fires is not known, and nothing
+  // in the data or the engine's rules seen so far would make it. The chain at the far end shuts
   // them off (the master's plateSolved), and the scene's last phases send the two on ahead. The
   // trigger above the forecourt is 140: MQ203PuzzleScene starts, and at its phase 3's end Esbern
   // has told of the blood seal, which wakes (150: no longer destroyed).
@@ -506,6 +518,8 @@ describe.skipIf(!hasGamedata())("MQ203 Alduin's Wall", () => {
       expect(await health(sim)).toBe(unhurt);
       const beside = SAFE_PLATES_TO_TRAP.at(-1) ?? TRAP_PLATE;
       expect(await onto(TRAP_PLATE)).toBe(true);
+      await sim.step(2);
+      expect(await health(sim)).toBe(unhurt);
       expect(await onto(beside)).toBe(true);
       await sim.step(1);
       expect(await onto(TRAP_PLATE)).toBe(true);
@@ -551,15 +565,17 @@ describe.skipIf(!hasGamedata())("MQ203 Alduin's Wall", () => {
   // rings go round). MQ203PuzzleRingScript's ringFinish sets 200: the head door opens, the two get
   // torches, the objective goes on to the wall. The trigger behind the door is 210:
   // MQ203SkyHavenEntryScene takes them in ahead of the player. Delphine's package lights
-  // the sconces as the player comes in (MQ203DelphineLightTorches1to5, an ActivateInSequence).
-  // TODO(M13): the first sconce's light stays off though she activates it; the second's is checked.
+  // the sconces as the player comes in (MQ203DelphineLightTorches1to5, an ActivateInSequence):
+  // the first as she is set down at it with the temple's load, then on along the way.
   it('has the player open the blood seal and enter the temple (180-210)', async () => {
     if (!afterPlates) return;
     const sim = await loadSim(afterPlates);
     try {
       const esbern = alias(sim, MQ203, ESBERN);
       const delphine = alias(sim, MQ203, DELPHINE);
-      expect(await sim.enabled(SECOND_SCONCE_LIGHT)).toBe(false);
+      for (const light of [...ENTRY_SCONCE_LIGHTS, ...WALL_SCONCE_LIGHTS]) {
+        expect(await sim.enabled(light)).toBe(false);
+      }
       expect(sim.stageDone(MQ203, 180)).toBe(false);
       expect(sim.openState(SEAL_DOOR)).not.toBe(1);
       expect(sim.activate(alias(sim, MQ203, PUZZLE_ACTIVATOR))).toBe(true);
@@ -590,7 +606,7 @@ describe.skipIf(!hasGamedata())("MQ203 Alduin's Wall", () => {
         expect(await space(sim, actor)).toBe(temple);
         expect(isDead(sim, actor)).toBe(false);
       }
-      expect(await sim.enabled(SECOND_SCONCE_LIGHT)).toBe(true);
+      for (const light of ENTRY_SCONCE_LIGHTS) expect(await sim.enabled(light)).toBe(true);
       afterSeal = await sim.save('MQ203 230');
     } finally {
       await sim.close();
@@ -617,6 +633,7 @@ describe.skipIf(!hasGamedata())("MQ203 Alduin's Wall", () => {
         await sim.step(1);
       }
       expect(atForceGreet()).toBe(true);
+      for (const light of WALL_SCONCE_LIGHTS) expect(await sim.enabled(light)).toBe(true);
       expect(sim.stageDone(MQ203, 260)).toBe(true);
       expect(sim.stageDone(MQ203, 280)).toBe(false);
       const said = await sim.listen(delphine, 60);

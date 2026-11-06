@@ -132,8 +132,7 @@ How actors move (`src/ai/locomotion.ts`, `src/ai/movement-types.ts`, `src/shell/
   controller) an actor held so does not go its way either: it glided (a chicken sitting in its
   idle while it went on).
 - **Trigger volumes** see actors with controllers: OnTriggerEnter and OnTriggerLeave with the
-  actor, GetTriggerObjectCount counts them; fliers in the air too ([Flying](#flying):
-  OnTriggerEnter and Leave; TODO(M13): GetTriggerObjectCount counts only those with controllers).
+  actor, GetTriggerObjectCount counts them; fliers in the air too ([Flying](#flying)).
 - **Bodies:** a living actor near the player also has its race's ragdoll in the world (the
   skeleton model's bodies on the main bones, `src/shell/actor-bodies.ts`), keyframed to its
   animated pose, on the BIPED layer: the crosshair's pick (L_ITEMPICKER collides with
