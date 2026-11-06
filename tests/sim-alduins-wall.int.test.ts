@@ -3,6 +3,7 @@
 // Skipped without game data.
 
 import { describe, expect, it } from 'vitest';
+import { ActorValue } from '../src/world/actor-values.ts';
 import { hasGamedata, loadSim, openSim, PLAYER_REF, type Sim } from './helpers/sim.ts';
 
 const MQ202 = 0x36191;
@@ -38,6 +39,60 @@ const KARTHSPIRE_DOOR = 0x15e13;
 const KARTHSPIRE_WORLD = 0x35699;
 const KARTHSPIRE_SCENE = 0xa8d56;
 const TAMRIEL = 0x3c;
+type Vec3 = [number, number, number];
+/** The three pillars (dunKarthspirePillarPuzzle, right at their second position: A starts at the
+ * first, B at the third, C at the second) and the stage 120 trigger before them. */
+const PILLAR_A = 0x8e900;
+const PILLAR_B = 0x8e901;
+const STAGE_120_AT: Vec3 = [133545, -1857, 2295];
+const BY_PILLARS: Vec3 = [133200, -1855, 2330];
+/** The middle of the retractable bridge's deck, and where the two wait before the plates
+ * (MQ203EsbernKarthspireMarker3). */
+const BRIDGE_DECK: Vec3 = [133185, -2498, 2340];
+const BEFORE_PLATES = 0xa0887;
+/** The way over the pressure plates: the plates of the room that carry no trap (no castSource,
+ * TrapPressurePlateSkyhaven02), from the two's side to the chain's. */
+const SAFE_PLATES_TO_TRAP: readonly (readonly [number, number])[] = [
+  [132720, -3776],
+  [132720, -3680],
+  [132720, -3584],
+];
+const SAFE_PLATES_TO_CHAIN: readonly (readonly [number, number])[] = [
+  [132624, -3584],
+  [132528, -3584],
+  [132528, -3680],
+  [132432, -3680],
+  [132336, -3680],
+  [132336, -3584],
+  [132336, -3488],
+  [132336, -3392],
+  [132240, -3392],
+  [132144, -3392],
+  [132144, -3488],
+  [132144, -3584],
+  [132048, -3584],
+  [131952, -3584],
+  [131952, -3488],
+];
+const PLATE_FLOOR = 2562;
+/** A plate with a trap, beside the way (TrapPressurePlateSkyhaven03), and the chain that shuts the
+ * traps off. */
+const TRAP_PLATE: readonly [number, number] = [132816, -3584];
+const PLATE_CHAIN = 0x511a4;
+/** Where the player comes out on Sky Haven Temple's forecourt (the stage 140 trigger above it);
+ * MQ203PuzzleScene, the blood seal's outer ring (PuzzleActivator alias) and the head door. */
+const STAGE_140_AT: Vec3 = [130347, -2033, 2916];
+const PUZZLE_SCENE = 0x13126;
+const PUZZLE_ACTIVATOR = 56;
+const BY_SEAL: Vec3 = [128620, -2264, 2945];
+const SEAL_DOOR = 0x6aef2;
+/** The stage 210 trigger behind the door, MQ203SkyHavenEntryScene, MQ203RemansWallScene, the
+ * temple's door. */
+const STAGE_210_AT: Vec3 = [127701, -2225, 3112];
+const ENTRY_SCENE = 0x71c2e;
+const WALL_SCENE = 0x16fa7;
+const TEMPLE_DOOR = 0x13124;
+const BY_TEMPLE_DOOR: Vec3 = [127100, -2150, 3190];
 
 /** The game with Esbern and Delphine met in the Sleeping Giant (stage 30). */
 let afterMeeting: Uint8Array | undefined;
@@ -45,6 +100,12 @@ let afterMeeting: Uint8Array | undefined;
 let afterMap: Uint8Array | undefined;
 /** The game with the three at Karthspire, past its entrance (stage 110). */
 let afterArrival: Uint8Array | undefined;
+/** The game with the bridge down and the player and the two before the plates (stage 120). */
+let afterBridge: Uint8Array | undefined;
+/** The game on the temple's forecourt with the seal awake (stage 150). */
+let afterPlates: Uint8Array | undefined;
+/** The game inside Sky Haven Temple, the seal opened (stage 210). */
+let afterSeal: Uint8Array | undefined;
 
 /**
  * Those fighting the player, or the friends with them, fall to the player's blows (TODO(M13):
@@ -62,6 +123,11 @@ async function fendOff(sim: Sim, friends: readonly number[] = []): Promise<numbe
     }
   }
   return fallen;
+}
+
+/** The player's health now. */
+async function health(sim: Sim): Promise<number> {
+  return (await sim.runtime.actors.value(PLAYER_REF, ActorValue.health)).current;
 }
 
 /** Whether an actor is dead, on the stage or away. */
@@ -348,4 +414,222 @@ describe.skipIf(!hasGamedata())("MQ203 Alduin's Wall", () => {
       await sim.close();
     }
   }, 120_000);
+
+  // MQ203KarthspireScene goes on as the player goes. A chasm lies before the pillars: the bridge
+  // over it is up (default2StateActivator, open), and its deck is where the way on goes.
+  it('has the raised bridge hold the player back', async () => {
+    if (!afterArrival) return;
+    const sim = await loadSim(afterArrival);
+    try {
+      const before = await sim.position(BEFORE_PLATES);
+      expect(before && (await sim.walkPath(before, 40, 96))).toBe(false);
+      expect(sim.world.player.feet[2]).toBeLessThan(BRIDGE_DECK[2] - 200);
+      expect(sim.world.player.feet[1]).toBeGreaterThan(BRIDGE_DECK[1] - 100);
+    } finally {
+      await sim.close();
+    }
+  }, 300_000);
+
+  // The trigger before the pillars is 120: the two tell what the pillars are (scene phases 8-11)
+  // and wait for one to be right (phase 12). Each activation turns a pillar a step, with its
+  // animation (it takes no activation meanwhile). The third right is the puzzle's end: the bridge
+  // comes down (phase 16 ends), and the player walks its deck; the two come after them, to the
+  // room of plates, and tell of its trap (phases 22-25), waiting for the player to shut it off.
+  it('has the player turn the pillars and cross the bridge (120)', async () => {
+    if (!afterArrival) return;
+    const sim = await loadSim(afterArrival);
+    try {
+      const lines: string[] = [];
+      sim.runtime.scenes.listen((line) => lines.push(line));
+      const seen = (line: string) => (): boolean => lines.includes(`MQ203KarthspireScene: ${line}`);
+      const esbern = alias(sim, MQ203, ESBERN);
+      const delphine = alias(sim, MQ203, DELPHINE);
+      expect(sim.stageDone(MQ203, 120)).toBe(false);
+      expect(await sim.walkPath(STAGE_120_AT, 120)).toBe(true);
+      expect(await sim.until(() => sim.stageDone(MQ203, 120), 5)).toBe(true);
+      expect(await sim.walkPath(BY_PILLARS, 60, 96)).toBe(true);
+      const waiting = 'phase 12 "Wait for player to get one pillar right"';
+      expect(await sim.until(seen(waiting), 120)).toBe(true);
+      await sim.step(3);
+      expect(seen('phase 13')()).toBe(false);
+      // Pillar A is the first right: Esbern's word on it.
+      expect(sim.activate(PILLAR_A)).toBe(true);
+      expect(await sim.until(seen('phase 13'), 5)).toBe(true);
+      expect(await sim.until(seen('#18 said'), 60)).toBe(true);
+      expect(await sim.until(seen('phase 16 "Wait for bridge to be down"'), 5)).toBe(true);
+      // Pillar B: third to first; then, its animation done, first to second: all three are right.
+      expect(sim.activate(PILLAR_B)).toBe(true);
+      await sim.step(6);
+      expect(seen('phase 17')()).toBe(false);
+      expect(sim.activate(PILLAR_B)).toBe(true);
+      expect(await sim.until(seen('phase 17'), 15)).toBe(true);
+      expect(await sim.until(seen('#20 said'), 30)).toBe(true);
+      expect(await sim.walkPath(BRIDGE_DECK, 30)).toBe(true);
+      // On the deck, not in the chasm under it.
+      expect(sim.world.player.feet[2]).toBeGreaterThan(BRIDGE_DECK[2] - 40);
+      const before = await sim.position(BEFORE_PLATES);
+      expect(before && (await sim.walkPath(before, 60, 96))).toBe(true);
+      expect(await sim.until(seen('#28 said'), 120)).toBe(true);
+      expect(await sim.until(seen('phase 26 "Wait for player to turn off plates"'), 5)).toBe(true);
+      for (const actor of [delphine, esbern]) {
+        expect(await sim.distance(actor, BEFORE_PLATES)).toBeLessThan(300);
+        expect(isDead(sim, actor)).toBe(false);
+      }
+      expect(objective(sim, 30)).toEqual({ displayed: true, completed: false });
+      afterBridge = await sim.save('MQ203 120');
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+
+  // The room of plates: those without a trap make the way across; the others fire at the one on
+  // them (a first step after the cell's load only arms a plate: TrapTriggerBase's OnCellLoad puts
+  // it in Inactive, whose OnTriggerEnter only goes on to Active). The chain at the far end shuts
+  // them off (the master's plateSolved), and the scene's last phases send the two on ahead. The
+  // trigger above the forecourt is 140: MQ203PuzzleScene starts, and at its phase 3's end Esbern
+  // has told of the blood seal, which wakes (150: no longer destroyed).
+  it('has the player cross the plates and reach the blood seal (140-150)', async () => {
+    if (!afterBridge) return;
+    const sim = await loadSim(afterBridge);
+    try {
+      const lines: string[] = [];
+      sim.runtime.scenes.listen((line) => lines.push(line));
+      const seen = (line: string) => (): boolean => lines.includes(line);
+      const esbern = alias(sim, MQ203, ESBERN);
+      const delphine = alias(sim, MQ203, DELPHINE);
+      const onto = ([x, y]: readonly [number, number]): Promise<boolean> =>
+        sim.walkTo([x, y, PLATE_FLOOR], 6, 16);
+      const unhurt = await health(sim);
+      for (const plate of SAFE_PLATES_TO_TRAP) expect(await onto(plate)).toBe(true);
+      expect(await health(sim)).toBe(unhurt);
+      const beside = SAFE_PLATES_TO_TRAP.at(-1) ?? TRAP_PLATE;
+      expect(await onto(TRAP_PLATE)).toBe(true);
+      expect(await onto(beside)).toBe(true);
+      await sim.step(1);
+      expect(await onto(TRAP_PLATE)).toBe(true);
+      const hit = async (): Promise<boolean> => (await health(sim)) < unhurt;
+      for (let second = 0; second < 5 && !(await hit()); second += 1) await sim.step(1);
+      expect(await hit()).toBe(true);
+      expect(await onto(beside)).toBe(true);
+      const hurt = await health(sim);
+      for (const plate of SAFE_PLATES_TO_CHAIN) expect(await onto(plate)).toBe(true);
+      expect(await health(sim)).toBeGreaterThanOrEqual(hurt);
+      await sim.step(1);
+      expect(seen('MQ203KarthspireScene: phase 28')()).toBe(false);
+      expect(sim.activate(PLATE_CHAIN)).toBe(true);
+      expect(await sim.until(seen('MQ203KarthspireScene: phase 28'), 10)).toBe(true);
+      expect(await sim.until(seen('MQ203KarthspireScene: #33 said'), 60)).toBe(true);
+      expect(sim.stageDone(MQ203, 140)).toBe(false);
+      expect(await sim.walkPath(STAGE_140_AT, 120)).toBe(true);
+      expect(await sim.until(() => sim.stageDone(MQ203, 140), 5)).toBe(true);
+      await sim.step(1);
+      expect(sim.runtime.scenes.isPlaying(KARTHSPIRE_SCENE)).toBe(false);
+      expect(sim.runtime.scenes.isPlaying(PUZZLE_SCENE)).toBe(true);
+      // The seal does not answer yet.
+      const seal = alias(sim, MQ203, PUZZLE_ACTIVATOR);
+      expect(await sim.walkPath(BY_SEAL, 30, 64)).toBe(true);
+      sim.activate(seal);
+      await sim.step(1);
+      expect(sim.stageDone(MQ203, 180)).toBe(false);
+      expect(await sim.until(() => sim.stageDone(MQ203, 150), 90)).toBe(true);
+      await sim.step(1);
+      for (const actor of [delphine, esbern]) {
+        expect(await space(sim, actor)).toBe(KARTHSPIRE_WORLD);
+        expect(isDead(sim, actor)).toBe(false);
+        expect(inFaction(sim, actor, PLAYER_FOLLOWER_FACTION)).toBe(false);
+      }
+      expect(sim.openState(SEAL_DOOR)).not.toBe(1);
+      afterPlates = await sim.save('MQ203 150');
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+
+  // The player gives the seal blood (the ring's activation: 180, the cut hand's idle; 185 as the
+  // rings go round). MQ203PuzzleRingScript's ringFinish sets 200: the head door opens, the two get
+  // torches, the objective goes on to the wall. The trigger behind the door is 210:
+  // MQ203SkyHavenEntryScene takes them in ahead of the player. TODO(M13): Delphine's sconces
+  // (MQ203DelphineLightTorches1to5, an ActivateInSequence): none is activated yet.
+  it('has the player open the blood seal and enter the temple (180-210)', async () => {
+    if (!afterPlates) return;
+    const sim = await loadSim(afterPlates);
+    try {
+      const esbern = alias(sim, MQ203, ESBERN);
+      const delphine = alias(sim, MQ203, DELPHINE);
+      expect(sim.stageDone(MQ203, 180)).toBe(false);
+      expect(sim.openState(SEAL_DOOR)).not.toBe(1);
+      expect(sim.activate(alias(sim, MQ203, PUZZLE_ACTIVATOR))).toBe(true);
+      expect(await sim.until(() => sim.stageDone(MQ203, 180), 2)).toBe(true);
+      expect(await sim.until(() => sim.stageDone(MQ203, 185), 10)).toBe(true);
+      expect(sim.stageDone(MQ203, 200)).toBe(false);
+      expect(await sim.until(() => sim.stageDone(MQ203, 200), 30)).toBe(true);
+      await sim.step(1);
+      expect(objective(sim, 30)).toEqual({ displayed: true, completed: true });
+      expect(objective(sim, 40)).toEqual({ displayed: true, completed: false });
+      expect(await sim.until(() => sim.openState(SEAL_DOOR) === 1, 20)).toBe(true);
+      expect(sim.stageDone(MQ203, 210)).toBe(false);
+      expect(await sim.walkPath(STAGE_210_AT, 90)).toBe(true);
+      expect(await sim.until(() => sim.stageDone(MQ203, 210), 5)).toBe(true);
+      await sim.step(1);
+      expect(sim.runtime.scenes.isPlaying(ENTRY_SCENE)).toBe(true);
+      expect(sim.runtime.scenes.isPlaying(PUZZLE_SCENE)).toBe(false);
+      // After them through the temple's door.
+      expect(await sim.walkPath(BY_TEMPLE_DOOR, 60, 96)).toBe(true);
+      expect(sim.activate(TEMPLE_DOOR)).toBe(true);
+      await sim.world.settle();
+      await sim.step(1);
+      const temple = (await sim.runtime.placement(PLAYER_REF))?.cell;
+      expect(temple).toBeDefined();
+      expect(await space(sim, PLAYER_REF)).not.toBe(KARTHSPIRE_WORLD);
+      expect(await sim.until(() => sim.stageDone(MQ203, 230), 180)).toBe(true);
+      for (const actor of [delphine, esbern]) {
+        expect(await space(sim, actor)).toBe(temple);
+        expect(isDead(sim, actor)).toBe(false);
+      }
+      afterSeal = await sim.save('MQ203 230');
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+
+  // MQ203RemansWallScene goes on as the player comes within 1000 of Esbern. 260 comes in its talk
+  // (phase 14); at phase 19 Delphine force greets the player, and the talk with her is 280; the
+  // scene's last phases end it, and its end is 300, MQ203's end; MQ204 goes on from there.
+  it("has the player learn the secret of Alduin's Wall (230-300)", async () => {
+    if (!afterSeal) return;
+    const sim = await loadSim(afterSeal);
+    try {
+      const lines: string[] = [];
+      sim.runtime.scenes.listen((line) => lines.push(line));
+      const seen = (line: string) => (): boolean => lines.includes(`MQ203RemansWallScene: ${line}`);
+      const esbern = alias(sim, MQ203, ESBERN);
+      const delphine = alias(sim, MQ203, DELPHINE);
+      expect(sim.runtime.scenes.isPlaying(WALL_SCENE)).toBe(true);
+      const atForceGreet = seen('phase 19 "Wait for GetStageDone 280 == 1"');
+      for (let turn = 0; turn < 300 && !atForceGreet(); turn += 1) {
+        const at = await sim.position(esbern);
+        if (at) await sim.walkPath(at, 4, 300);
+        await sim.step(1);
+      }
+      expect(atForceGreet()).toBe(true);
+      expect(sim.stageDone(MQ203, 260)).toBe(true);
+      expect(sim.stageDone(MQ203, 280)).toBe(false);
+      const said = await sim.listen(delphine, 60);
+      expect(said).toBeDefined();
+      for (let turn = 0; turn < 6 && sim.topics.length > 0; turn += 1) {
+        const topic = sim.topics[0];
+        if (topic !== undefined) await sim.choose(topic);
+      }
+      expect(await sim.until(() => sim.stageDone(MQ203, 280), 10)).toBe(true);
+      expect(await sim.until(() => sim.stageDone(MQ203, 300), 240)).toBe(true);
+      await sim.step(1);
+      expect(objective(sim, 40).completed).toBe(true);
+      expect(sim.isRunning(MQ203)).toBe(false);
+      const mq204 = await sim.formId('QUST', 'MQ204');
+      expect(sim.stageDone(mq204, 10)).toBe(true);
+      expect(sim.isRunning(mq204)).toBe(true);
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
 });
