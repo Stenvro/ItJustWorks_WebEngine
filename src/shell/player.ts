@@ -895,7 +895,9 @@ export class Player implements Camera {
    * Where the ray down the middle finds nothing (a seam between floor pieces: Bryling's House,
    * where the entrance's alcove has no floor of its own), the shape rests on the highest floor
    * under the edge of its footprint. The rays leave out the player's own shape (standing there
-   * already) and phantoms.
+   * already), phantoms and other actors: one standing on the arrival point is no floor (the ray
+   * starts inside it and finds its start, half a body up, in the wall above the Ragged Flagon's
+   * door to the Ratway, where the player stayed for good).
    */
   arrivalFloor(feet: Vec3): { readonly height: number; readonly owner: number } | undefined {
     const above = this.character.shape.height / 2;
@@ -906,6 +908,8 @@ export class Player implements Camera {
         above + ARRIVAL_FLOOR_BELOW,
         Layer.charController,
         this.character.collider,
+        undefined,
+        (collider) => this.#setup.physics.isActor(collider),
       );
     let hit = floorAt(feet[0], feet[1]);
     if (!hit) {

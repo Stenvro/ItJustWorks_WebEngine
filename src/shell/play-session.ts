@@ -1765,6 +1765,8 @@ export class PlaySession {
         this.#searchAbove + 65536,
         Layer.charController,
         own,
+        undefined,
+        (collider) => this.physics.isActor(collider),
       );
       this.player.teleport([x, y, hit ? hit.point[2] : z]);
     }

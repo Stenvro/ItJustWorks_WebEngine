@@ -511,6 +511,16 @@ describe.skipIf(!hasGamedata())('an NPC’s controller (headless simulation)', (
     await sim.close();
   });
 
+  it('is no floor to one arriving on the spot: they stand on the ground under it', async () => {
+    const at = await sim.position(actor);
+    expect(at).toBeDefined();
+    if (!at) return;
+    const floor = sim.world.player.arrivalFloor(at);
+    expect(floor).toBeDefined();
+    expect(floor?.owner).not.toBe(actor);
+    expect(Math.abs((floor?.height ?? Infinity) - at[2])).toBeLessThan(16);
+  }, 120_000);
+
   const staged = (): NonNullable<ReturnType<Sim['actor']>> => {
     const found = sim.actor(actor);
     if (!found) throw new Error('no actor');
