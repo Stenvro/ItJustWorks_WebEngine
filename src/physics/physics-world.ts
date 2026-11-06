@@ -846,8 +846,6 @@ export class PhysicsWorld {
   readonly #easing = new Map<PlacedJoint, readonly number[]>();
   /** Bodies settling after being placed: silent until they first sleep (or this time). */
   readonly #settling = new Map<number, number>();
-  /** Those of them a cell's warm start set going (settle): the others sleep of themselves. */
-  readonly #warmStart = new Set<number>();
   /**
    * The system (one placed object of several bodies) of each of its colliders: its bodies do
    * not collide with one another (a hanging pheasant's body against the hook it hangs on).
@@ -2048,17 +2046,15 @@ export class PhysicsWorld {
 
   /**
    * Lets a placed object's simulated bodies settle (the warm start): they wake, and make no
-   * impact sounds until they first sleep (at most settleSeconds). `warmStart`: as a cell's
-   * objects (see #recordVelocities): not put to sleep before its end, and at its end.
+   * impact sounds until they first sleep (at most settleSeconds).
    */
-  settle(placed: PlacedCollision, warmStart = false): void {
+  settle(placed: PlacedCollision): void {
     if (isHung(placed)) this.#checkHung(placed);
     for (const { body } of placed.bodies) this.release(body);
     for (const { body, data } of placed.bodies) {
       if (data.motion !== 'dynamic' || data.phantom) continue;
       body.wakeUp();
       this.#settling.set(body.handle, this.#time + this.settleSeconds);
-      if (warmStart) this.#warmStart.add(body.handle);
       this.#depenetrating.set(body.handle, this.#time + DEPENETRATE_SECONDS);
     }
   }
@@ -3197,22 +3193,11 @@ export class PhysicsWorld {
       if (!body.isDynamic() || body.isSleeping()) return;
       this.#velocities.set(body.handle, body.linvel());
     });
-    // A settling body is placed for good once it first sleeps. A cell's warm start (settle): no
-    // deactivation meanwhile (bAllowDeactivationWhileWarmStarting 0; Rapier sleeps a body by its
-    // speed of itself: it is woken again), and at its end whatever still moves goes to sleep as
-    // it is, until something touches it (observed in the original: every island still active is
-    // deactivated).
+    // A settling body is placed for good once it first sleeps (our deactivation leaves it be
+    // until then, at most fWarmStartMaxTime: bAllowDeactivationWhileWarmStarting 0).
     for (const [handle, until] of this.#settling) {
       const body = this.world.getRigidBody(handle) as RAPIER.RigidBody | null;
-      const cell = this.#warmStart.has(handle) && body?.isDynamic() === true;
-      if (!body || this.#time >= until) {
-        this.#settling.delete(handle);
-        this.#warmStart.delete(handle);
-        if (cell) body?.sleep();
-      } else if (body.isSleeping()) {
-        if (cell) body.wakeUp();
-        else this.#settling.delete(handle);
-      }
+      if (!body || body.isSleeping() || this.#time >= until) this.#settling.delete(handle);
     }
   }
 

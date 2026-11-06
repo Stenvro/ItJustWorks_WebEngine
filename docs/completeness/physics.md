@@ -18,7 +18,7 @@ settings reader or named in the code. A field with one value in every mesh that 
 the physics counts as done with that reason. The mechanics are kept by hand below, against
 docs/physics.md. The count after an item is how many blocks (records) use it.
 
-## Count (2026-11-04, round 8)
+## Count (2026-11-06, round 9)
 
 | Part                          | Items | Done | Open |
 | ----------------------------- | ----: | ---: | ---: |
@@ -27,12 +27,12 @@ docs/physics.md. The count after an item is how many blocks (records) use it.
 | Motion systems, qualities     |     8 |    8 |    0 |
 | Responses, time, deactivators |     3 |    3 |    0 |
 | Body layers, COLL layers      |    24 |   24 |    0 |
-| Projectiles (PROJ)            |    24 |   23 |    1 |
+| Projectiles (PROJ)            |    24 |   24 |    0 |
 | Explosions (EXPL)             |    16 |   16 |    0 |
 | Material types, impact data   |    17 |   17 |    0 |
 | Game settings (GMST)          |    45 |   45 |    0 |
-| Mechanics (by hand)           |    28 |   24 |    4 |
-| Total                         |   370 |  365 |    5 |
+| Mechanics (by hand)           |    36 |   32 |    4 |
+| Total                         |   378 |  374 |    4 |
 
 Round 1 wrote the sweep and this list, and fixed deactivation: Havok deactivates a simulation
 island as a whole, ours put a body to sleep on its own while something still moved on it (a
@@ -107,6 +107,18 @@ the velocity kept leaving a moving platform, the paralysed's stiff fall, physics
 destructibles (hard contacts from the world's listener), the trap's material. Still open, and why:
 below.
 
+Round 9 (365 to 374, eight items added), from the physics conformance suite's open cases: what is
+too steep is no ground (a character that came down on a face of 75° stood on it for good, as
+Rapier's controller calls all but a wall ground); characters push one another; NPCs' graphs jump
+their controllers; the warp, the good position, the world's bounds and the complex step; the
+drowning sound, the Leave Water Breath line, a leg on a hard landing; a corpse's buoyancy and a flat
+hull's volume (an iron ingot floated), waterfalls, the splash's model; objects pushed out of their
+exterior cells, corpses' references, script-made joints across a reload; a projectile's default
+weapon source. Inferred where the list says so. Still open, and why: below. Keeping what settles
+awake all of the 4 s as the original does was tried too, and left out: its cost and its falls
+were measured only together with two other tries (53 through against 44 over the same cells);
+TODO(M13): measure it alone.
+
 ## Meshes
 
 - [x] Block types (26 of 26): bhkCollisionObject 13689, bhkRigidBody 11334,
@@ -153,13 +165,13 @@ below.
 
 ## Records
 
-- [x] Projectiles (23 of 24, the other below): speed, gravity, range, collision radius and layer, impact force,
+- [x] Projectiles (24 of 24): speed, gravity, range, collision radius and layer, impact force,
       explosion, proximity, timer, lifetime, cone spread, relaunch interval, tracer chance,
       flags, model, light, muzzle flash, sound, decal (src/world/projectile-data.ts and its
       readers).
-- [ ] PROJ defaultWeaponSource (1 projectile: DLC2BloodskalProjectile01, DLC2BloodskalBlade):
-      parsed, unused. What the original does with it was not found (nothing names the field);
-      the blade's wave does its harm by its spell here. Stays until that is read.
+- [x] PROJ defaultWeaponSource (1 projectile: DLC2BloodskalProjectile01, DLC2BloodskalBlade):
+      its hit tells that weapon as what it came from (OnHit's akSource), its spell doing its harm
+      (src/shell/magic-projectiles.ts; round 9). TODO(M13): inferred from the field's name.
 - [x] Explosions (15 of 16): force, radius, damage, flags, placed object, spawned projectile,
       image space and its radius, impact data set, model, light, sounds, enchantment.
 - [x] EXPL verticalOffsetMult (34 explosions): the push comes from below the explosion's
@@ -204,7 +216,9 @@ below.
 - [x] Deactivation: the distance rule, by island (round 1), solver deactivation.
 - [ ] Solver deactivation's relative-speed threshold per class (docs/physics.md). Stays: the
       values are read, how Havok measures the relative speed is not (in its linked solver, no
-      names to find it by).
+      names to find it by). Tried in round 9 against each moving body a slow one is joined to or
+      touches: the race skeletons rest no better (48 of 52 both ways, on average in 4.2 s against
+      3.9 s), and the settle audit took over 60 % longer, each slow body asking its contacts each step.
 - [x] Constraints: ragdoll, limited hinge, hinge, ball and socket, prismatic, stiff spring,
       malleable, breakable, the chain; the ragdoll cone, friction, motors, violation clipping.
 - [x] Violation clipping for hinges, balls and sockets, stiff springs (#clipLinks; round 8).
@@ -216,6 +230,14 @@ below.
       cone projectiles' waves.
 - [x] The character controller: slopes, stairs, steps, pushing, platforms, falling, swimming.
 - [x] Leaving a moving platform keeps its velocity until it lands (CharacterBody; round 8).
+- [x] What is too steep to stand on is no ground: it slides off at fUnsupportedGravMult (`#onWalkable`;
+      Rapier's controller called all but a wall ground; round 9).
+- [x] Two characters push one another (bAllowCharacterBumper, DisableBumper: `#bump`; round 9).
+      TODO(M13): the share by their masses is inferred.
+- [x] The warp past √fCharControllerWarpDistSqr, the good position (fGoodPosCheckDepth, TryMoveTo; a
+      dismount, a stuck actor set down), round 9. TODO(M13): both inferred from names.
+- [x] An NPC's graph's jump jumps its controller, by its scale, its Jumping Bonus, fJumpSwimmingMult
+      in water (`ActorMovers.jump`, `jumpHeight`; round 9).
 - [ ] Havok's proxy push response (pushedSpeed is a share by the masses). Stays: the proxy's
       solver is Havok's, not read.
 - [x] Ragdolls: death, hits, powered, keyframed, get-up, penetration recovery, corpses saved.
@@ -232,19 +254,31 @@ below.
 - [x] An explosion's vertical offset (above; round 2).
 - [x] Havok materials: impact data per material, footsteps, sounds (MATT, IPDS).
 - [x] Water: buoyancy by material, currents, swimming, drowning (src/physics/water-physics.ts).
+- [x] A corpse's buoyancy (its bodies on L_DEADBIP are a ragdoll's), a flat hull's volume, waterfalls
+      (fDefaultWaterfallCurrentVelocity on the fixed water bodies: inferred), the splash's model
+      (sSplashParticles), the drowning sound, the Leave Water Breath line, a leg's damage on a
+      landing (fFallLegDamageMult, iFallLegDamageChance: inferred); the vanilla HUD has no breath
+      meter (round 9).
 - [x] Water walking: an actor with Water Walking above 0 takes to the surface as its body
       touches the water, and it bears it as ground (Character.waterFloor, walksOnWater; round
       6). TODO(M13): the original holds it in its controller's own state; here its feet are
       kept from going under the surface.
 - [x] Grabbing and telekinesis (src/physics/grab.ts).
+- [x] Persistence: an object pushed out of its exterior cell loads with the one it lies in; a
+      corpse's reference stays with its ragdoll; script-made joints come back with their
+      references (`GameState.scriptConstraints`; round 9).
+- [x] The world's bounds (inferred) and the complex step (what turns it on not identified), round 9.
+- [x] A blow's push on a ragdoll behind bEnableHavokHit, off in the game (round 9, inferred).
 - [x] Physics damage (fPhysicsDamage1Mass ...).
 - [x] Physics damage to destructibles from the listener (no vanilla impact reaches it:
       PhysicsWorld.onHardContact, contactDamage; round 8).
-- [ ] Objects placed into what they lie on fall through it (340 in the interiors:
-      `tools/settle-audit.ts`). Round 7 read the original's warm start (docs/physics.md, "What
-      is placed"): nothing in it keeps a penetrating body from leaving through the far side; it
-      settles 4 s at once and then deactivates every island. TODO(M13): that end (ours keeps
+- [ ] Objects placed into what they lie on fall through it (92 of 69,455 in the interiors now, 712
+      rolling off: `tools/settle-audit.ts`). Round 7 read the original's warm start (docs/physics.md,
+      "What is placed"): nothing in it keeps a penetrating body from leaving through the far side;
+      it settles 4 s at once and then deactivates every island. TODO(M13): that end (ours keeps
       simulating what still moves), and Havok's one-sided contacts with meshes (ours are
-      two-sided: a body more than half into a surface is pushed out below it).
+      two-sided: a body more than half into a surface is pushed out below it). Tried in round 9,
+      both worse: sleeping what still moves at 4 s (159 through), holding what is placed past a
+      surface's middle where it was placed (130, what lay on or in those among them).
 - [x] Traps: the material of the trap's shape touched; the initial flag clear on the contact
       listener's entries, as observed in the original; cloud traps (L_CLOUDTRAP) as traps (round 8).

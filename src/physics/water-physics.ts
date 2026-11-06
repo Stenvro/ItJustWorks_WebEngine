@@ -546,18 +546,17 @@ export class WaterPhysics {
     const world = this.#physics.world;
     const water = this.rules.waterMaterial;
     for (let i = 0; i < body.numColliders(); i++) {
-      let found = false;
+      const touching = { found: false };
       world.contactPairsWith(body.collider(i), (other) => {
         if (
-          !found &&
           other.parent()?.isFixed() === true &&
           this.#physics.layerOf(other) === Layer.static &&
           this.#physics.materialOf(other) === water
         ) {
-          found = true;
+          touching.found = true;
         }
       });
-      if (found) return true;
+      if (touching.found) return true;
     }
     return false;
   }

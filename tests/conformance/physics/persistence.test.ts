@@ -353,20 +353,18 @@ describe.skipIf(!hasGamedata())('what keeps a moved place (simulation)', () => {
 
   it('keeps a moved object moved across a saved game', async () => {
     const sim = await openSim({ interior: BANNERED_MARE, hour: 10 });
-    let bytes: Uint8Array;
-    let reference = 0;
-    let left: Vec3 | undefined;
-    let editor: Vec3 = [0, 0, 0];
+    let moved: { bytes: Uint8Array; reference: number; editor: Vec3; left: Vec3 | undefined };
     try {
       await sim.step(2);
-      ({ reference, editor } = await movingObject(sim, BANNERED_MARE));
+      const { reference, editor } = await movingObject(sim, BANNERED_MARE);
       sim.runtime.move(reference, [editor[0] + 40, editor[1], editor[2] + 10]);
       await sim.step(3);
-      left = placedAt(sim, reference);
-      bytes = await sim.save();
+      const left = placedAt(sim, reference);
+      moved = { bytes: await sim.save(), reference, editor, left };
     } finally {
       await sim.close();
     }
+    const { bytes, reference, editor, left } = moved;
     const after = await loadSim(bytes);
     try {
       await after.step(0.5);

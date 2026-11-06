@@ -397,11 +397,12 @@ Observed in the original (`src/gameplay/breath.ts`; the player's in `src/shell/t
   Breathing (the actor value), it is whole again at once.
 - With its breath gone the player drowns: every second (the whole frame once it is gone) takes
   `fActorSwimBreathDamage` of their base health (8 % with Skyrim.esm), through the difficulty's
-  `fDiffMultHPToPC`, and NPCHumanDrowning plays. No other actor drowns: an NPC low on breath
-  starts an action to come up (TODO(M13): which action is not identified).
+  `fDiffMultHPToPC`, and NPCHumanDrowning plays (once a second: TODO(M13), inferred). No other
+  actor drowns: an NPC low on breath starts an action to come up (TODO(M13): which action is not
+  identified).
 - An actor that comes up after more than `fActorLeaveWaterBreathTimer` (4 s) under water says its
-  Leave Water Breath line (dialogue subtype LWBS, 102). TODO(M13): the drowning sound and that
-  line are not played yet.
+  Leave Water Breath line (dialogue subtype LWBS, 102), the player's by the same bark.
+- The vanilla HUD shows no breath: `hudmenu.swf` has no such meter of any name.
 
 ### What slows a run
 
@@ -1615,7 +1616,10 @@ HasBeenEaten, IsPoison.
   engine's landing and ragdoll end, observed in the original; docs/physics.md). A fall that
   takes the player's health to 0 kills them as a blow does (docs/ai.md, "The player's death").
   fJumpFallRiderMult and fJumpFallSkillBase / fJumpFallSkillMult are settings the engine still
-  has but reads nowhere (observed in the original). TODO(M13): difficulty.
+  has but reads nowhere (observed in the original). A landing that hurts may also take
+  fFallLegDamageMult (0.5) of that damage from a leg's condition, with iFallLegDamageChance (50)
+  percent (the Left or Right Mobility Condition; no plugin sets them, and nothing vanilla reads
+  those values; TODO(M13): inferred from the names). TODO(M13): difficulty.
 
 No vanilla perk uses and no system asks Calculate Mine Explode Chance,
 Adjust Limb Damage, Get Should Attack, Mod Addiction Chance / Duration, Mod Positive Chem
