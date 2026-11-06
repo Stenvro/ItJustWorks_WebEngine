@@ -1,6 +1,7 @@
 // The texts a quest shows (its name, its objectives) with their tags filled in, as the
 // Creation Kit's "Text Replacement" describes them: `<Alias=Name>` is the name of what fills the
-// quest's alias of that name (the alias's display name, ALDN, if it has one), `<Alias.ShortName=
+// quest's alias of that name (the alias's display name, ALDN, if it has one), `<Alias.Cap=Name>`
+// the same with a capital, `<Alias.ShortName=
 // Name>` its short name (an NPC's SHRT, else its name), `<Global=EditorId>` the value of one of
 // the quest's text display globals (QTGL) as a whole number; the pronouns of the actor that
 // fills an alias by its sex (`<Alias.Pronoun=Name>` he / she, `.PronounObj` him / her,
@@ -15,7 +16,7 @@ import { PLAYER_REF } from './forms.ts';
 import type { ScriptRuntime } from './runtime.ts';
 
 const TAG =
-  /<(Alias|Alias\.ShortName|Alias\.Pronoun(?:Obj|Pos|PosObj|Ref|Int)?|Alias\.Race|Global)=([^>]+)>/gi;
+  /<(Alias|Alias\.Cap|Alias\.ShortName|Alias\.Pronoun(?:Obj|Pos|PosObj|Ref|Int)?|Alias\.Race|Global)=([^>]+)>/gi;
 
 /** The pronoun tags' settings: sPronoun<kind>Male / sPronoun<kind>Female. */
 const PRONOUNS: Readonly<Record<string, string>> = {
@@ -65,7 +66,9 @@ export async function questText(
             : lower === 'alias.race'
               ? await raceText(runtime, quest, name)
               : await aliasText(runtime, quest, name, lower === 'alias.shortname');
-      return value ?? whole;
+      if (value === undefined) return whole;
+      // `<Alias.Cap=Name>`: the name with a capital first letter (it opens a sentence).
+      return lower === 'alias.cap' ? value.charAt(0).toUpperCase() + value.slice(1) : value;
     }),
   );
   let index = 0;

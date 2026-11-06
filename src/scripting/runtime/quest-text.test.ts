@@ -108,6 +108,11 @@ describe('questText', () => {
     expect(await questText(runtime, quest, 'Jarl <Alias.ShortName=Titled>')).toBe('Jarl Ingun');
   });
 
+  it('capitalizes a name with Alias.Cap', async () => {
+    expect(await questText(runtime, quest, '<Alias.Cap=Player> it is')).toBe('Big E it is');
+    expect(await questText(runtime, quest, '<Alias.Cap=Empty>')).toBe('<Alias.Cap=Empty>');
+  });
+
   it("fills in the player's name as chosen in the race menu", async () => {
     expect(await questText(runtime, quest, 'Follow <Alias=Player>')).toBe('Follow Big E');
   });
