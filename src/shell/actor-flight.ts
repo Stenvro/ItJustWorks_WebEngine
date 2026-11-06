@@ -1313,16 +1313,15 @@ export class ActorFlight {
     const settings = this.#settings;
     const runtime = this.#options.session.scriptsReady;
     const forced = runtime?.state.actors.get(flier.reference)?.forcedLandingMarker;
-    const marker =
-      forced === undefined ? undefined : runtime?.world.livePlacement?.(forced)?.position;
-    if (marker) {
+    const marker = forced === undefined ? undefined : this.#markerAt(forced);
+    if (forced !== undefined && marker) {
+      void this.#landingHeading(forced);
+      const heading = this.#headings.get(forced);
       return {
         kind: 'land',
         at: [marker[0], marker[1], marker[2]],
         target: forced,
-        ...(this.#headings.get(forced ?? 0) !== undefined && {
-          heading: this.#headings.get(forced ?? 0),
-        }),
+        ...(heading !== undefined && { heading }),
       };
     }
     // Hurt and fighting the player: round the player, a crash strip competing.
@@ -1333,6 +1332,14 @@ export class ActorFlight {
     const nav = this.#options.navmeshes?.()?.nearest?.(centre, settings.landingSearchDistance);
     if (nav) return { kind: 'land', at: [nav[0], nav[1], nav[2]] };
     return this.#landingMarker(centre, Infinity, false);
+  }
+
+  /** Where a marker of the loaded area stands (a marker is no live thing), or what stands in for one. */
+  #markerAt(reference: number): readonly number[] | undefined {
+    for (const object of this.#options.objects?.() ?? []) {
+      if (object.reference === reference) return object.position;
+    }
+    return this.#options.session.scriptsReady?.world.livePlacement?.(reference)?.position;
   }
 
   /** The nearest landing marker (DragonMarker; a crash strip too) in reach, clear of actors. */
