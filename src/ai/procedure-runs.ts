@@ -1192,9 +1192,12 @@ const say: ProcedureRunner = async (run) => {
 
 /**
  * ForceGreet: waits at its wait location until the player comes into its trigger location,
- * then goes to the player and opens the conversation with its topic. One at the player whose
- * greeting could not begin (the player in a menu, another conversation) tries again after
- * fAIForceGreetingTimer.
+ * then opens the conversation with its topic from where it stands. One whose greeting could not
+ * begin (the player in a menu, another conversation) tries again after fAIForceGreetingTimer.
+ * The way to the player is the package's own, a Travel before it to its Forcegreet Distance: the
+ * templates' 150 for most, Paarthurnax's 1200 from his marker, none from a chair
+ * (ForceGreetFromSitting), and their ForceGreet's own places are "near the player, 5000".
+ * TODO(M13): whether the procedure itself ever walks closer (nothing in the data asks it to).
  */
 const forceGreet: ProcedureRunner = async (run) => {
   const topic = run.inputs.topic(0);
@@ -1206,16 +1209,9 @@ const forceGreet: ProcedureRunner = async (run) => {
     const reach = Math.max(trigger?.radius ?? 0, atPlace(run));
     const inside = player && (!trigger || horizontal(player.position, trigger.position) <= reach);
     if (player && inside) {
-      const here = run.body.position();
-      const near = here !== undefined && horizontal(here, player.position) <= GREET_DISTANCE;
-      if (
-        near ||
-        (await run.body.travel(player.position, run.gait, GREET_DISTANCE, player.space))
-      ) {
-        if (run.body.greet(typeof topic === 'number' ? topic : undefined)) return 'success';
-        await run.wait(settingsOf(run).forceGreetingTimer);
-        continue;
-      }
+      if (run.body.greet(typeof topic === 'number' ? topic : undefined)) return 'success';
+      await run.wait(settingsOf(run).forceGreetingTimer);
+      continue;
     }
     await run.wait(IDLE_SECONDS);
   }

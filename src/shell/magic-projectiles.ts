@@ -81,7 +81,7 @@ import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { HitImpact } from './combat-impacts.ts';
 import { MagicBeams } from './magic-beams.ts';
 import { MagicFlames, type FlameStream } from './magic-flames.ts';
-import { putBackGraph, startObjectGraph } from './object-graphs.ts';
+import { clock, putBackGraph, startObjectGraph } from './object-graphs.ts';
 import type { ObjectGraph } from '../animation/object-graph.ts';
 import type { SavedGraph } from '../animation/script-graphs.ts';
 import { alongMatrix, cellLight, type MagicFx } from './magic-fx.ts';
@@ -277,7 +277,7 @@ export class MagicProjectiles {
       ...(delivered.object !== undefined && { object: delivered.object }),
     });
     const graphOf = (graph: ObjectGraph | undefined): SavedGraph | undefined => {
-      const sequences = graph?.saveState();
+      const sequences = graph?.saveState(clock());
       return sequences && { sequences };
     };
     for (const flying of this.#flying) {

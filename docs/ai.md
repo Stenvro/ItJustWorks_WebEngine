@@ -586,8 +586,10 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   EatingRoot or DrinkingRoot by GetIsUsedItemType); LockDoors and UnlockDoors lock and unlock
   the load doors of their place (a door without a lock gets a novice one); Say says its topic,
   facing its target; ForceGreet waits at its place until the player comes into its trigger
-  area, goes to them and opens the conversation with its topic (one that could not, the player
-  busy, tries again after fAIForceGreetingTimer, 3 s, by its name: TODO(M13)); DialogueActivate talks to the
+  area and opens the conversation with its topic from where it stands, the way to the player
+  being the package's Travel before it (to its Forcegreet Distance: a dragon's 1200 is as near as
+  it comes; one that could not, the player busy, tries again after fAIForceGreetingTimer, 3 s, by
+  its name: TODO(M13)); DialogueActivate talks to the
   player from its place, and to another actor through a scene the story manager gives the two
   ([Conversations between actors](#conversations-between-actors)); KeepAnEyeOn watches its target in its observation area and pursues it
   in its pursuit area; Escort leads its target to the destination, waiting for it where it

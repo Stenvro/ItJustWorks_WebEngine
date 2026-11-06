@@ -37,6 +37,13 @@ const BLIZZARDS = [0x105965, 0x10f764];
 const SUMMIT_TRIGGER = 0x1010ab;
 const PAARTHURNAX_SCENE = 0x3f8b6;
 const PAARTHURNAX = 4;
+/** Where he lands (MQ204PaarthurnaxGroundMarker), the spot on the way to him (within his 1,200), MQ204's WordFireBreath alias
+ * and the word's trigger (MQ204SetStage125). */
+const GROUND_MARKER = 0x9c21d;
+const TOWARD_HIM: [number, number, number] = [56147, -48664, 36258];
+const FIRE_WORD = 13;
+const FIRE_WORD_TRIGGER = 0xb89e6;
+const MQ205 = 0x2d516;
 
 /** The game with the player in High Hrothgar (stage 10). */
 let atHighHrothgar: Uint8Array | undefined;
@@ -52,6 +59,8 @@ let afterWords: Uint8Array | undefined;
 let afterGate: Uint8Array | undefined;
 /** The game at the summit, Paarthurnax coming (stage 95). */
 let afterClimb: Uint8Array | undefined;
+/** The game with Fire learned (stage 135). */
+let afterFire: Uint8Array | undefined;
 
 /** A quest alias's reference. */
 function alias(sim: Sim, quest: number, id: number): number {
@@ -344,6 +353,126 @@ describe.skipIf(!hasGamedata())('MQ204 The Throat of the World', () => {
       expect(await sim.enabled(paarthurnax)).toBe(true);
       expect(sim.runtime.scenes.isPlaying(PAARTHURNAX_SCENE)).toBe(true);
       afterClimb = await sim.save('MQ204 95');
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+
+  // He flies in from the east and lands by the word wall (his Patrol's end), then speaks once the
+  // player is within 1,200 of him: the dragon stays where he lands, no walking up to the player.
+  // Found 2026-11-06: ForceGreet walked to 128 units of the player whatever its package's Travel
+  // had asked, and a dragon's body cannot come that near: he stood pressing against them for good.
+  // "I think you already know who I am" is 100; "Can you teach me?" ends the talk, and the scene
+  // goes on: "By long tradition, the elder speaks first", his Thu'um at the rock (his Shout package,
+  // its end 120): the word burns there. The player stands on it (125); his gift of its meaning is
+  // the absorb (130, its end 135: objective 50, the word unlocked).
+  it('has Paarthurnax land, speak and teach the player Fire (100-135)', async () => {
+    if (!afterClimb) return;
+    const sim = await loadSim(afterClimb);
+    try {
+      const lines: string[] = [];
+      sim.runtime.scenes.listen((line) => lines.push(line));
+      const seen = (line: string): boolean => lines.includes(`MQ204PaarthurnaxScene: ${line}`);
+      const paarthurnax = alias(sim, MQ204, PAARTHURNAX);
+      expect(await sim.until(() => sim.world.stage.flight.state(paarthurnax) === 0, 20)).toBe(true);
+      const landed = await sim.position(paarthurnax);
+      expect(await sim.distance(paarthurnax, GROUND_MARKER)).toBeLessThan(400);
+      expect(sim.stageDone(MQ204, 100)).toBe(false);
+      expect(await sim.listen(paarthurnax, 2)).toBeUndefined();
+      expect(await sim.walkPath(TOWARD_HIM, 60, 64)).toBe(true);
+      const opened = await sim.listen(paarthurnax, 10);
+      expect(opened).toContain('I think you already know who I am.');
+      expect(sim.stageDone(MQ204, 100)).toBe(false);
+      const away = await sim.distance(paarthurnax, PLAYER_REF);
+      expect(away).toBeLessThan(1300);
+      expect(away).toBeGreaterThan(400);
+      expect(landed && (await sim.distance(paarthurnax, GROUND_MARKER))).toBeLessThan(400);
+      await sim.choose(/already know who I am/);
+      expect(sim.stageDone(MQ204, 100)).toBe(true);
+      await sim.step(0.5);
+      expect(objective(sim, 30).completed).toBe(false);
+      expect(await sim.choose(/Dragonrend Shout/)).toEqual([]);
+      expect(await sim.until(() => sim.stageDone(MQ204, 120), 90)).toBe(true);
+      await sim.step(1);
+      for (const said of ['#10', '#14']) expect(seen(`${said} said`)).toBe(true);
+      expect(sim.events('spellCast').some((cast) => cast.caster === paarthurnax)).toBe(true);
+      expect(objective(sim, 30)).toEqual({ displayed: true, completed: true });
+      expect(objective(sim, 40)).toEqual({ displayed: true, completed: false });
+      expect(await sim.enabled(alias(sim, MQ204, FIRE_WORD))).toBe(true);
+      const word = await sim.position(FIRE_WORD_TRIGGER);
+      expect(word && (await sim.walkPath(word, 60, 60))).toBe(true);
+      expect(await sim.until(() => sim.stageDone(MQ204, 125), 40)).toBe(true);
+      expect(await sim.until(() => sim.stageDone(MQ204, 130), 40)).toBe(true);
+      expect(await sim.until(() => sim.stageDone(MQ204, 135), 60)).toBe(true);
+      await sim.step(1);
+      const yol = await sim.formId('WOOP', 'WordYol');
+      expect(sim.runtime.wordsLearned.get(yol)).toBe(true);
+      expect(objective(sim, 40)).toEqual({ displayed: true, completed: true });
+      expect(objective(sim, 50)).toEqual({ displayed: true, completed: false });
+      afterFire = await sim.save('MQ204 135');
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+
+  // "Greet me not as mortal, but as dovah!": the player shouts Fire Breath at him. Its effect on
+  // him (MQ204PaarthurnaxScript's OnMagicEffectApply) is 140. He answers, and force greets the
+  // player from where he stands (ForceGreetFromSitting): 150, and the long talk: Dragonrend is
+  // unknown to him (180), why the player wants it (190), Alduin at this very peak (195), and the
+  // Elder Scroll (200: MQ205 begins, "Hmm. Esbern or Arngeir might have some idea").
+  it('has the player greet Paarthurnax with their Thuum, and hear of the Elder Scroll (140-200)', async () => {
+    if (!afterFire) return;
+    const sim = await loadSim(afterFire);
+    try {
+      const lines: string[] = [];
+      sim.runtime.scenes.listen((line) => lines.push(line));
+      const seen = (line: string) => (): boolean =>
+        lines.includes(`MQ204PaarthurnaxScene: ${line}`);
+      const paarthurnax = alias(sim, MQ204, PAARTHURNAX);
+      expect(await sim.equip(await sim.formId('SHOU', 'FireBreathShout'))).toBe(true);
+      const at = await sim.position(paarthurnax);
+      expect(at && (await sim.walkPath(at, 30, 500))).toBe(true);
+      const unhurt = sim.stageDone(MQ204, 140);
+      expect(unhurt).toBe(false);
+      const head = await sim.position(paarthurnax);
+      if (head) sim.look([head[0], head[1], head[2] + 150]);
+      await sim.step(0.2);
+      await shout(sim);
+      expect(await sim.until(() => sim.stageDone(MQ204, 140), 5)).toBe(true);
+      await sim.step(1);
+      expect(objective(sim, 50)).toEqual({ displayed: true, completed: true });
+      expect(objective(sim, 60)).toEqual({ displayed: true, completed: false });
+      expect(await sim.runtime.actors.isDead(paarthurnax)).toBe(false);
+      expect(await sim.listen(paarthurnax, 60)).toEqual(['Can you teach me the Dragonrend Shout?']);
+      expect(seen('#8 said')()).toBe(true);
+      expect(sim.stageDone(MQ204, 150)).toBe(true);
+      await sim.choose(/Dragonrend Shout/);
+      await sim.choose(/Do you know Dragonrend or not/);
+      expect(sim.stageDone(MQ204, 180)).toBe(false);
+      await sim.choose(/How can I learn it/);
+      expect(sim.stageDone(MQ204, 180)).toBe(true);
+      await sim.choose(/I like this world/);
+      await sim.choose(/take care of itself/);
+      expect(sim.stageDone(MQ204, 190)).toBe(true);
+      await sim.choose(/I never thought/);
+      await sim.choose(/Using the Dragonrend/);
+      expect(sim.stageDone(MQ204, 195)).toBe(false);
+      expect(sim.topics).not.toContain('How does any of this help me?');
+      await sim.choose(/sent Alduin forward/);
+      expect(sim.stageDone(MQ204, 195)).toBe(true);
+      expect(sim.stageDone(MQ205, 10)).toBe(false);
+      await sim.choose(/How does any of this/);
+      expect(sim.stageDone(MQ204, 200)).toBe(true);
+      await sim.step(1);
+      expect(sim.stageDone(MQ205, 10)).toBe(true);
+      expect(objective(sim, 60).completed).toBe(true);
+      expect(sim.isRunning(MQ205)).toBe(true);
+      await sim.choose(/find an Elder Scroll/);
+      expect(sim.stageDone(MQ205, 30)).toBe(false);
+      await sim.choose(/Esbern or Arngeir/);
+      expect(sim.stageDone(MQ205, 20)).toBe(true);
+      expect(sim.stageDone(MQ205, 30)).toBe(true);
+      sim.goodbye();
     } finally {
       await sim.close();
     }

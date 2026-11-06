@@ -273,7 +273,7 @@ export class ObjectGraph {
    * sequence has played, and the variables scripts set. Undefined while nothing has moved it from
    * where it started.
    */
-  saveState(): ObjectGraphState | undefined {
+  saveState(now: number = this.#now): ObjectGraphState | undefined {
     if (!this.#touched) return undefined;
     const states: number[] = [];
     const times: number[] = [];
@@ -295,7 +295,7 @@ export class ObjectGraph {
           return;
         case 'gamebryo-sequence': {
           const leaf = this.#leaves.get(node);
-          times.push(leaf ? this.#now - leaf.start : RESTORED_LONG_AGO);
+          times.push(leaf ? now - leaf.start : RESTORED_LONG_AGO);
           return;
         }
         default:
