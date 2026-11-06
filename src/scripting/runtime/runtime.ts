@@ -1524,6 +1524,11 @@ export class ScriptRuntime implements VmHost {
     this.#triggerTellings.set(reference, told);
   }
 
+  /** When what `triggered` is still asking an activator's keyword about has been told. */
+  async triggersTold(): Promise<void> {
+    await Promise.all(this.#triggerTellings.values());
+  }
+
   #tellTrigger(reference: number, actor: number, entered: boolean): void {
     if (entered) this.triggerVolumes.enter(reference, actor);
     else {

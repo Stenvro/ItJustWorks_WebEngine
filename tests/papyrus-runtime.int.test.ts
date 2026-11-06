@@ -373,15 +373,17 @@ describe.skipIf(!hasGamedata())('the script runtime on the local game data', () 
     }
   });
 
-  it('tells those inside a trigger volume again every fTriggerEventDelayMS', () => {
+  it('tells those inside a trigger volume again every fTriggerEventDelayMS', async () => {
     const told: number[] = [];
     const stop = runtime.events.on('trigger', (event) => {
       if (event.trigger === 0x7f) told.push(event.reference);
     });
     try {
       runtime.triggered(0x7f, PLAYER, true);
+      await runtime.triggersTold();
       for (let t = 0; t < 1.2; t += 0.1) runtime.update(0.1, 0);
       runtime.triggered(0x7f, PLAYER, false);
+      await runtime.triggersTold();
       runtime.update(1, 0);
       // At once, after 0.5 s and after 1 s; none once out.
       expect(told).toEqual([PLAYER, PLAYER, PLAYER]);
@@ -408,6 +410,7 @@ describe.skipIf(!hasGamedata())('the script runtime on the local game data', () 
     expect(scene()).toBe(0);
     expect(await go()).toBe(0);
     runtime.triggered(RDS01_TRIGGER, PLAYER, true);
+    await runtime.triggersTold();
     for (let t = 0; t < 3; t += 0.1) {
       runtime.update(0.1, 0);
       await runtime.vm.idle();
