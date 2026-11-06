@@ -150,7 +150,25 @@ describe.skipIf(!hasGamedata())(
       await sim.attack(0.1);
       sim.press('Right Attack/Block', true);
       await sim.step(1);
-      sim.world.stage.launchSpell(FIREBOLT, HULDA, PLAYER_REF, HULDA);
+      // Hulda's firebolt, flown from part of the way to the player: from her own hand it can meet
+      // what stands about her at the counter, by how she leans as it leaves.
+      const firebolt = await runtime.magic.item(FIREBOLT);
+      const standing = await sim.position(PLAYER_REF);
+      if (firebolt && standing && hulda) {
+        const aim: [number, number, number] = [standing[0], standing[1], standing[2] + 90];
+        const away = Math.hypot(hulda[0] - aim[0], hulda[1] - aim[1]);
+        const origin: [number, number, number] = [
+          aim[0] + ((hulda[0] - aim[0]) / away) * 200,
+          aim[1] + ((hulda[1] - aim[1]) / away) * 200,
+          aim[2],
+        ];
+        await sim.world.stage.projectiles.launch(
+          await runtime.casting.scripted(HULDA, firebolt),
+          origin,
+          [aim[0] - origin[0], aim[1] - origin[1], 0],
+          { target: PLAYER_REF },
+        );
+      }
       await sim.step(2);
       sim.press('Right Attack/Block', false);
       await sim.step(1);
