@@ -40,6 +40,33 @@ export function fallSettings(
 }
 
 /**
+ * A hard landing may hurt a leg: fFallLegDamageMult and iFallLegDamageChance (the engine's
+ * built-in values; Skyrim.esm sets neither).
+ */
+export interface FallLegSettings {
+  readonly mult: number;
+  /** Percent. */
+  readonly chance: number;
+}
+
+export const FALL_LEG_DEFAULTS: FallLegSettings = { mult: 0.5, chance: 50 };
+
+/**
+ * What a landing that took `damage` of health takes of a leg's condition (the Left and Right
+ * Mobility Condition actor values): with `roll` (0 .. 100) under the chance, damage × the mult;
+ * else nothing. TODO(M13): the settings' reads were not followed: that they work so, and on one
+ * leg, is read from their names; nothing in the vanilla game reads the conditions (no limb
+ * crippling in this game), so it shows nowhere but in the values.
+ */
+export function fallLegDamage(
+  damage: number,
+  roll: number,
+  settings: FallLegSettings = FALL_LEG_DEFAULTS,
+): number {
+  return damage > 0 && roll < settings.chance ? damage * settings.mult : 0;
+}
+
+/**
  * Health a fall of `height` units takes (before the perks); 0 up to the minimum height times
  * `share` (1 for a landing, RAGDOLL_FALL_SHARE for a ragdoll's).
  */

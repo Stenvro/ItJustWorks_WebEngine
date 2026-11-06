@@ -16,8 +16,13 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
   frame's time; the player's camera and the actors are drawn between the last two steps at the
   frame's time, so 144 Hz screens see smooth motion. The step and its cap scale with the world's
   time multiplier (TODO(M13): ours stay at fMaxTime under Slow Time). The engine's "complex"
-  mode, fMaxTimeComplex with uMaxNumPhysicsStepsPerUpdateComplex 1, is not known to be used:
-  TODO(M13); fTimePerSubStep and iMinNumSubSteps are read by nothing.
+  mode, fMaxTimeComplex with uMaxNumPhysicsStepsPerUpdateComplex 1, is there
+  (`PhysicsWorld.complex`), and nothing turns it on: TODO(M13), what does in the original is not
+  identified; fTimePerSubStep and iMinNumSubSteps are read by nothing.
+- **The world's bounds** (inferred, TODO(M13): the original's size and what its broad phase's
+  border does with an entity were not read): a simulated body past 16,384 Havok units along an
+  axis, beyond every worldspace's cells, goes out of the simulation and stays as it is
+  (`#leaveBounds`): what fell through everything does not fall on for good.
 - **Top speeds:** every simulated body's velocity is clamped after each step to its file's
   maximum linear velocity (Havok units a second) and angular velocity (radians a second), as
   Havok's motions do.
@@ -48,8 +53,11 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
   objects of the interiors ended more than their size below where they were placed as their
   cells settled (Mistwatch's bear traps, 850 units through the tower's floor); two-sided, 1,091,
   of which 340 went through what they lay on and the rest rolled off it (`tools/settle-audit.ts`).
-  TODO(M13): the 340 are mostly objects placed into what they lie on (coins in piles and urns,
-  bones, a knife stuck in a table), which the solver pushes out the far side.
+  TODO(M13): they are mostly objects placed into what they lie on (coins in piles and urns,
+  bones, a knife stuck in a table), which the solver pushes out the far side. Holding such a body
+  where it was placed (its contact's way out pointing down, 0.02 Havok units deep or more) was
+  tried: with it, 130 went through instead of 92 of today's audit, what lay on or in the held
+  ones among them (gems in a chest, tomatoes in a basket). Today's: 92 of 69,455, 712 rolled off.
 - **Friction and restitution** combine as Havok's square root of the product (each collider
   gets the square root, Rapier multiplies).
 - **What is placed:** the collision of every enabled object in the loaded cells, the
@@ -80,9 +88,12 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
   once nothing moves), and then every island still active is deactivated. Meanwhile the bodies
   of its references that are keyframed, and every moving body of a reference flagged "Don't
   Havok Settle", are held: made keyframed with no speed, then given back their motion type and
-  any speed they had. Ours settles over the first fWarmStartMaxTime of play instead (above) and
-  leaves what still moves at its end moving. TODO(M13): the settling at once, and the
-  deactivation at its end.
+  any speed they had. Ours settles over the first fWarmStartMaxTime of play instead (above): our
+  deactivation leaves what settles be until then (Rapier still sleeps a body at rest by its speed)
+  and leaves what still moves at its end moving. TODO(M13): the settling at once, and the
+  deactivation at its end: putting to sleep what still moves at the 4 s of `tools/settle-audit.ts` took
+  the objects of the interiors that go through what they lie on from 92 to 159 (a sleeping body's
+  contacts drop while what lies on it still moves, as under "Deactivation by island").
 - **Weapon racks** are the game's own WeaponRackActivateSCRIPT (docs/scripting.md): as its
   cell attaches, the rack takes the reference it links to without a keyword, checks it against
   its RackType (1: anything but a shield; 2: a shield; 3: neither a dagger, a shield nor a
@@ -242,8 +253,16 @@ the engine's are not documented (TODO(M13)):
   its volume with the shapes' convex radius (Rapier's volume leaves it out: a log's hull of
   0.011 m³ is 0.025 m³ with its 2.5-unit shell), s its share under the surface (taken as a cube
   of its volume round its centre of mass), ρ 1000 kg/m³. It floats where that meets its weight
-  (s = m / ((1 + b) ρ V)), else sinks. Ragdoll bones take `fBuoyancyMultBody` (1) for the trunk
-  and the head, `fBuoyancyMultExtremity` (−0.3) for the limbs.
+  (s = m / ((1 + b) ρ V)), else sinks. Ragdoll bones (L_BIPED, L_BIPED_NO_CC, a corpse's
+  L_DEADBIP) take `fBuoyancyMultBody` (1) for the trunk and the head, `fBuoyancyMultExtremity`
+  (−0.3) for the limbs. A flat hull has no core: its shell is its volume (an iron ingot's came
+  out as no number at all, its material lost, and it floated).
+- **Waterfalls** (inferred, TODO(M13): CommonLibSSE names the original's waterfall shape,
+  BGSWaterCollisionManager::bhkWaterfall, a phantom; which models get one, its way and its pull
+  were not read): the vanilla falling water (FXWaterfallBody\*, FXWaterfallThin\*) has a fixed
+  convex body of the Water material on L_STATIC, where other water lies on L_WATER. What touches
+  one is pulled down towards [HAVOK] fDefaultWaterfallCurrentVelocity (6 Havok units a second) at
+  the water's drag.
 - **Current.** The water drags what is in it towards its velocity at 1.5/s × s (2/s for the
   spin), which also damps the bobbing. A type's velocity is WATR NAM0/NAM1 (Havok units/s; 35 of
   the 58 vanilla types). Types with Enable Flowmap (RiverWaterFlow: Riverwood's river) flow
@@ -274,8 +293,8 @@ the engine's are not documented (TODO(M13)):
   splashes by its vertical speed × `fSplashSoundVelocityMult` (× `fSplashSoundOutMult` coming out)
   against `fSplashSoundLight` / `Medium` / `Heavy` (5, 25, 50), at most once per
   `fSplashSoundTimer`. The sound is its material's impact against the water's material (WATR
-  TNAM, else Water) through the impact sounds. TODO(M13): the model (`sSplashParticles` at
-  `fSplashScale1..3`) is not shown yet.
+  TNAM, else Water) through the impact sounds, the model (`sSplashParticles` at
+  `fSplashScale1..3`) at the surface (`onSplash`).
 
 ## The character controller
 
@@ -353,7 +372,31 @@ through the edges' middles, a player walks around it); and a few steps higher th
   of the step there (the player stuttered and stuck on flat floors: 69 times in a run through
   the Palace of the Kings, now 2).
 - Gravity × `[HAVOK] fInAirFallingCharGravityMult` (1.35) while falling, ×
-  `fUnsupportedGravMult` (4) while standing on something too steep (sliding off).
+  `fUnsupportedGravMult` (4) while standing on something too steep (sliding off). Rapier's
+  controller calls anything less steep than a wall ground, so a character that came down on a
+  face of 75° stood on it for good: too steep is no ground now, and it slides off, no faster than
+  the face lets it. The contact alone does not say: a cone on a stair's or a ledge's edge meets it
+  at the cone's own slope, so the faces under the shape's middle and ring are asked too, and only
+  with none of them walkable is it on a slope (`#onWalkable`; `tools/stairs-audit.ts` walks Bleak
+  Falls Barrow's 363 stairs and ramps the same with it as without it, and of Helgen Keep's 112 and
+  Whiterun's 78 walks only those at shut doors and gates stop). TODO(M13): a jump is not asked for
+  while it slides; Havok's proxy's own support check
+  (bUseUnsupportedCast, fUnsupportCastLength) was not read.
+- **Two characters** (inferred, TODO(M13): CommonLibSSE names the proxy's character interaction,
+  the controller's push delta and count, kNotPushable; their numbers were not read): one walking
+  into another gives it a share of the speed it closes at by their masses (`bumpSpeed`: its
+  actor's Mass × 100 kg), into the push a moving body gives (`#bump`), so it moves off.
+  [HAVOK] bAllowCharacterBumper off, or either's bumper off (its graph's DisableBumper), and they
+  only block each other.
+- **Warp** (inferred, TODO(M13): the setting's use is read from its name and the controller's
+  position setter's "force warp"): whatever sets an actor further than
+  √[HAVOK] fCharControllerWarpDistSqr (2449 units) from its controller has its controller set
+  there at once; nearer, the controller goes on from where it is (`beyondWarp`, `ActorMovers`).
+- **A good position** (inferred, TODO(M13): CommonLibSSE's TryMoveTo names the settings; what the
+  original sets down by it was not read): the shape set down lies no deeper than [HAVOK]
+  fGoodPosCheckDepth (0.1 Havok units) in anything (`goodPosition`), with TryMoveTo's cast on the
+  way (`tryMoveTo`). A rider gets off on the horse's other side, then behind it, where a wall
+  leaves no room at the dismount's end; a stuck actor is not set down where it is no good.
 - **Pushing** (the engine's character controller, observed in the original): a simulated body a character
   walks into gets an impulse along the contact's normal at the contact, the one that takes the
   touched point up to the character's speed (TODO(M13): Havok's character proxy's own impulse is
@@ -370,8 +413,11 @@ through the edges' middles, a player walks around it); and a few steps higher th
 - **Speeds** come from the movement types (MOVT): NPCDefault walking and running,
   NPCSprinting (only forward), NPCSneaking, NPCSwimming; `bAlwaysRunByDefault`, Run walks,
   Caps Lock toggles. Air control is not documented: the speed at take-off is kept.
-- **Jump:** GMST fJumpHeightMin (Skyrim.esm 76, built in 64) is the height; with constant
-  gravity the take-off speed is √(2 g h). No jumping while sprinting (vanilla blocks it). A
+- **Jump:** GMST fJumpHeightMin (Skyrim.esm 76, built in 64) is the height, times the actor's
+  scale, fJumpSwimmingMult out of the water, and its Jumping Bonus's share (`jumpHeight`;
+  TODO(M13): the bonus as a percent is inferred; no vanilla effect sets it); with constant gravity
+  the take-off speed is √(2 g h). An NPC's graph's jump (JumpBegin, the human clips' JumpUp) jumps
+  its controller as the player's does (`ActorMovers.jump`). No jumping while sprinting (vanilla blocks it). A
   sprint goes on in the air (a jump, a step down) until the fall is faster than
   fJumpFallVelocityMin (Skyrim.esm 700 units a second; the engine's sprint, observed in the original).
   The jump is asked for on the ground (the input) and pushes off when its animation raises

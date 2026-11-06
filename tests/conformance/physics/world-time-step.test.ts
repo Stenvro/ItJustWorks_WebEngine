@@ -35,6 +35,7 @@ import {
   PHYSICS_STEP,
   PhysicsWorld,
   sweptBody,
+  WORLD_BOUNDS,
 } from '../../../src/physics/physics-world.ts';
 import { Vfs } from '../../../src/vfs/vfs.ts';
 import { RecordDatabase } from '../../../src/world/record-db.ts';
@@ -154,10 +155,21 @@ describe('the step (the engine’s rule)', () => {
     expect(physics.currentStep).toBeCloseTo(PHYSICS_STEP, 9);
     physics.free();
   });
-  it.todo(
-    'steps fMaxTimeComplex (1/30 s) once a frame in the engine’s complex mode  [original: what turns ' +
-      'it on is not identified]',
-  );
+  // What turns the mode on in the original is not identified (TODO(M13) in physics-world.ts);
+  // nothing here does. The mode itself:
+  it('steps fMaxTimeComplex (1/30 s) once a frame in the engine’s complex mode', () => {
+    const physics = new PhysicsWorld(new CollisionMatrix([]), GRAVITY);
+    expect(physics.complex).toBe(false);
+    physics.complex = true;
+    // A frame's whole 1/30 s is one step of it, and a longer one's rest stays owed.
+    expect(physics.step(1 / 30)).toBe(1);
+    expect(physics.currentStep).toBeCloseTo(1 / 30, 9);
+    expect(physics.step(0.2)).toBe(1);
+    physics.complex = false;
+    physics.step(1 / 60);
+    expect(physics.currentStep).toBeCloseTo(PHYSICS_STEP, 9);
+    physics.free();
+  });
 });
 
 describe('simulated bodies (the engine’s rules)', () => {
@@ -220,11 +232,55 @@ describe('simulated bodies (the engine’s rules)', () => {
     physics.free();
   });
 
-  it.todo(
-    'keeps settling bodies awake for fWarmStartMaxTime (4 s) at most, never deactivated while ' +
-      'warm starting (bAllowDeactivationWhileWarmStarting 0)  [settings; original]',
-  );
-  it.todo('removes bodies that leave the Havok world’s bounds  [original: unread]');
+  it('deactivates nothing that settles for fWarmStartMaxTime (4 s), then by the rule as ever', () => {
+    // A body trembling on the spot: fast enough that Rapier's own sleeping leaves it, within the
+    // deactivation's distance all the time, so that only the deactivation can put it to sleep.
+    const tremble = (): number | undefined => {
+      const physics = new PhysicsWorld(new CollisionMatrix([]), GRAVITY);
+      const placed = physics.addObject(
+        clutter(5),
+        IDENTITY,
+        { reference: 1, kind: 'object' },
+        false,
+      );
+      const body = placed.bodies[0]?.body;
+      if (!body) throw new Error('no body');
+      physics.step(1 / 60);
+      physics.settle(placed);
+      body.setGravityScale(0, true);
+      let sleptAt: number | undefined;
+      for (let i = 0; i < 7 * 60 && sleptAt === undefined; i++) {
+        // Half a second of settling takes the speed away; then it goes back and forth.
+        body.setLinvel({ x: i % 2 === 0 ? 0.6 : -0.6, y: 0, z: 0 }, false);
+        physics.step(1 / 60);
+        if (body.isSleeping()) sleptAt = i / 60;
+      }
+      physics.free();
+      return sleptAt;
+    };
+    const settling = tremble();
+    expect(settling).toBeDefined();
+    // Not before fWarmStartMaxTime, and soon after (a second's rest at the quarter-second checks).
+    expect(settling ?? 0).toBeGreaterThanOrEqual(4);
+    expect(settling ?? 0).toBeLessThan(5.6);
+  });
+
+  it('takes a body out of the simulation as it leaves the world’s bounds (inferred)', () => {
+    const physics = new PhysicsWorld(new CollisionMatrix([]), GRAVITY);
+    const placed = physics.addObject(clutter(5), IDENTITY, { reference: 1, kind: 'object' }, false);
+    const body = placed.bodies[0]?.body;
+    if (!body) throw new Error('no body');
+    physics.step(1 / 60);
+    physics.settle(placed);
+    body.setGravityScale(0, true);
+    body.setTranslation({ x: 0, y: 0, z: -WORLD_BOUNDS + 1 }, true);
+    for (let i = 0; i < 10; i++) physics.step(1 / 60);
+    expect(body.isEnabled()).toBe(true);
+    body.setTranslation({ x: 0, y: 0, z: -WORLD_BOUNDS - 1 }, true);
+    for (let i = 0; i < 30; i++) physics.step(1 / 60);
+    expect(body.isEnabled()).toBe(false);
+    physics.free();
+  });
 });
 
 // Several minutes long: runs only when asked for (SKYRIM_SWEEPS=1), not in `npm run check`.

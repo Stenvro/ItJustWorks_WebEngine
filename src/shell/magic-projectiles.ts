@@ -608,7 +608,11 @@ export class MagicProjectiles {
     runtime: ScriptRuntime,
     delivered: Delivered,
     target: number,
-    options: { readonly facing?: boolean; readonly seconds?: number },
+    options: {
+      readonly facing?: boolean;
+      readonly seconds?: number;
+      readonly weaponSource?: number;
+    },
   ): Promise<number> {
     // A chain explosion's hop is weaker by each actor the chain reached before (explosions.ts
     // chainEffectiveness: the first one hit, then each hop).
@@ -1143,6 +1147,9 @@ export class MagicProjectiles {
       await this.#reach(runtime, delivered, reference, {
         facing: facing(actor, [point[0] - aim[0], point[1] - aim[1], point[2] - aim[2]]),
         ...(seconds !== undefined && { seconds }),
+        ...(projectile.defaultWeaponSource !== undefined && {
+          weaponSource: projectile.defaultWeaponSource,
+        }),
       });
       if (pushes && (alreadyDead || (await runtime.actors.isDead(reference)))) {
         const damage = Math.max(0, before - (await healthOf(runtime, reference)));

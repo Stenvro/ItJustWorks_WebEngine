@@ -66,6 +66,13 @@ export interface CharacterSettings {
    * MOVE_LIMIT_MASS when not given.
    */
   readonly moveLimitMass?: number;
+  /** [HAVOK] bAllowCharacterBumper: characters push one another (#bump); on when not given. */
+  readonly bumper?: boolean;
+  /**
+   * [HAVOK] fGoodPosCheckDepth: how deep (Havok units) the shape may lie in what is around it
+   * at a position it is set down at (goodPosition); GOOD_POSITION_DEPTH when not given.
+   */
+  readonly goodPositionDepth?: number;
 }
 
 /** [HAVOK] fMoveLimitMass's built-in default (kg). */
@@ -112,6 +119,48 @@ export function pushImpulse(
   return mass * Math.min(closing, PUSH_MAX_SPEED) * factor;
 }
 
+/** [HAVOK] fGoodPosCheckDepth's built-in value (Havok units). */
+export const GOOD_POSITION_DEPTH = 0.1;
+/** [HAVOK] fCharControllerWarpDistSqr's built-in value (square game units). */
+export const WARP_DISTANCE_SQUARED = 6_000_000;
+
+/**
+ * Whether an actor's controller is so far from where the actor should be that it is set there
+ * at once (warped) and not moved there: further than √fCharControllerWarpDistSqr.
+ * TODO(M13): that the setting is in square game units, and that it compares these two places,
+ * is read from its name and from the controller's position setter's "force warp" argument
+ * (CommonLibSSE: SetPositionImpl); the original's own use of it was not read.
+ */
+export function beyondWarp(
+  controller: Vec3,
+  should: Vec3,
+  distanceSquared = WARP_DISTANCE_SQUARED,
+): boolean {
+  const dx = should[0] - controller[0];
+  const dy = should[1] - controller[1];
+  const dz = should[2] - controller[2];
+  return dx * dx + dy * dy + dz * dz > distanceSquared;
+}
+
+/** A jump's upward speed for its height, with constant gravity: v = √(2 g h). */
+export function jumpSpeed(height: number, gravity: number): number {
+  return Math.sqrt(2 * gravity * Math.max(0, height));
+}
+
+/**
+ * How high an actor jumps (game units): fJumpHeightMin times its scale, and fJumpSwimmingMult
+ * out of the water (observed in the original), times its Jumping Bonus's share (a percent, as
+ * the actor value's name reads: 100 is twice as high). TODO(M13): the Jumping Bonus's share is
+ * inferred (no vanilla effect sets it); the original's "jump height mult" was not read further.
+ */
+export function jumpHeight(
+  settings: { readonly min: number; readonly swimmingMult: number },
+  actor: { readonly scale: number; readonly jumpingBonus: number; readonly swimming: boolean },
+): number {
+  const water = actor.swimming ? settings.swimmingMult : 1;
+  return settings.min * actor.scale * water * (1 + Math.max(-100, actor.jumpingBonus) / 100);
+}
+
 /** Gap the controller keeps to surfaces (Havok units). */
 const SKIN = 0.01;
 /** Rounds of penetration recovery (each pushes out of everything the shape overlaps). */
@@ -133,6 +182,14 @@ const SLIDE_MIN = 0.2;
 /** Coming down onto a step, away from a wall at the shape's side by this much (Havok units). */
 const STEP_AWAY = 0.03;
 const STEP_AWAY_TRIES = 3;
+/**
+ * What holds the shape up is looked for from this much above it (Havok units): a cast from inside
+ * the gap it keeps to a steep face sees no hit, and that gap is far wider straight down than
+ * across (6 times at 80°).
+ */
+const SUPPORT_FROM = 0.2;
+/** And this far under it. */
+const SUPPORT_REACH = 0.1;
 /** Held on an edge of the ground, the way is swept again from this much higher (Havok units). */
 const EDGE_LIFT = 0.02;
 /** Held on an edge: the sweep got less than this share of the way (it stuck there for good). */
@@ -275,6 +332,17 @@ export function pushedSpeed(closing: number, bodyMass: number, actorMass: number
   return Math.min(PUSHED_MAX_SPEED, closing * share);
 }
 
+/**
+ * The speed (game units a second, along the push) a character walking into another at `closing`
+ * gives it: its share by their masses, held to PUSHED_MAX_SPEED. TODO(M13): the original's
+ * character interaction (its proxies' callback: bAllowCharacterBumper, the controllers' push
+ * count and delta in CommonLibSSE) is known to exist; its numbers were not read.
+ */
+export function bumpSpeed(closing: number, ownMass: number, otherMass: number): number {
+  if (!(closing > 0) || !(ownMass > 0)) return 0;
+  return Math.min(PUSHED_MAX_SPEED, (closing * ownMass) / (ownMass + Math.max(1e-3, otherMass)));
+}
+
 /** A body's pose (Havok units). */
 interface Pose {
   readonly at: RAPIER.Vector;
@@ -359,6 +427,9 @@ function samePose(a: Pose, b: Pose): boolean {
       1 - CARRIER_STILL
   );
 }
+
+/** The character controllers of a physics world, by their colliders' handles (#bump). */
+const CHARACTERS = new WeakMap<PhysicsWorld, Map<number, CharacterBody>>();
 
 export class CharacterBody {
   readonly physics: PhysicsWorld;
@@ -447,8 +518,13 @@ export class CharacterBody {
   #leftWith: [number, number] = [0, 0];
   /** A hit's push back (knockBack): its speed (game units per second) and the seconds left. */
   #knock: { readonly velocity: readonly [number, number]; left: number } | undefined;
-  /** The mass it pushes back with against moving bodies (kg; pushedSpeed). */
+  /** The mass it pushes back with against moving bodies (kg; pushedSpeed) and characters. */
   mass = ACTOR_MASS;
+  /**
+   * Its bumper (EnableBumper, DisableBumper from its graph): off, it neither pushes other
+   * characters nor is pushed by them.
+   */
+  bumper = true;
 
   constructor(
     physics: PhysicsWorld,
@@ -487,6 +563,9 @@ export class CharacterBody {
       ).setRotation({ x: Math.SQRT1_2, y: 0, z: 0, w: Math.SQRT1_2 });
     this.#collider = world.createCollider(desc, this.#body);
     physics.register(this.#collider, Layer.charController, owner);
+    const characters = CHARACTERS.get(physics) ?? new Map<number, CharacterBody>();
+    characters.set(this.#collider.handle, this);
+    CHARACTERS.set(physics, characters);
   }
 
   /**
@@ -649,6 +728,11 @@ export class CharacterBody {
     return this.#grounded;
   }
 
+  /** Going up: rising, or about to jump. */
+  get goingUp(): boolean {
+    return this.verticalSpeed > 0 || this.#jumpSpeed > 0;
+  }
+
   /** Feet after the last physics step. */
   get feet(): Vec3 {
     return this.#feet;
@@ -677,6 +761,90 @@ export class CharacterBody {
     this.#leftWith = [0, 0];
     this.#body.setTranslation(this.#center(feet), true);
     this.#body.setNextKinematicTranslation(this.#center(feet));
+  }
+
+  /**
+   * Whether the shape could be set down with its feet at `feet`: it would lie no deeper than
+   * [HAVOK] fGoodPosCheckDepth in anything it collides with (its own bodies apart). Queries must
+   * see the world (after a step). CommonLibSSE (bhkCharacterController.TryMoveTo) names the
+   * setting for the depth it validates a move by; what the original does with it is not read
+   * further, TODO(M13).
+   */
+  goodPosition(
+    feet: Vec3,
+    depth = this.settings.goodPositionDepth ?? GOOD_POSITION_DEPTH,
+  ): boolean {
+    const own = this.#collider;
+    const at = this.#center(feet);
+    const filter = this.physics.filterFor(Layer.charController);
+    let good = true;
+    this.physics.world.intersectionsWithShape(
+      at,
+      NO_ROTATION,
+      queryShape(own.shape),
+      (other) => {
+        const contact = queryShape(own.shape).contactShape(
+          at,
+          NO_ROTATION,
+          queryShape(other.shape),
+          other.translation(),
+          other.rotation(),
+          0,
+        );
+        if (contact && contact.distance < -depth) good = false;
+        return good;
+      },
+      RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+      undefined,
+      own,
+      undefined,
+      (collider) =>
+        collider.handle !== own.handle &&
+        !this.ignored.has(collider.handle) &&
+        filter(collider) &&
+        !this.#ownBody(collider),
+    );
+    return good;
+  }
+
+  /**
+   * Moves the character to `feet` if its shape swept there meets nothing on the way, and the
+   * place is a good one (goodPosition, unless `ignoreDepth`): the controller's TryMoveTo
+   * (CommonLibSSE: a linear cast, validated by the depth settings, the position set on success).
+   * Whether it went. TODO(M13): fGoodPosCastCheckDepth, the depth its cast allows, is not known;
+   * here the cast takes what the shape touches already as no hit, moving away from it.
+   */
+  tryMoveTo(feet: Vec3, ignoreDepth = false): boolean {
+    const own = this.#collider;
+    const from = this.#body.translation();
+    const to = this.#center(feet);
+    const way = { x: to.x - from.x, y: to.y - from.y, z: to.z - from.z };
+    const length = Math.hypot(way.x, way.y, way.z);
+    if (length > 1e-6) {
+      const filter = this.physics.filterFor(Layer.charController);
+      const hit = this.physics.world.castShape(
+        from,
+        NO_ROTATION,
+        { x: way.x / length, y: way.y / length, z: way.z / length },
+        queryShape(own.shape),
+        SKIN,
+        length,
+        false,
+        RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+        undefined,
+        own,
+        undefined,
+        (collider) =>
+          collider.handle !== own.handle &&
+          !this.ignored.has(collider.handle) &&
+          filter(collider) &&
+          !this.#ownBody(collider),
+      );
+      if (hit) return false;
+    }
+    if (!ignoreDepth && !this.goodPosition(feet)) return false;
+    this.teleport(feet);
+    return true;
   }
 
   /**
@@ -878,6 +1046,60 @@ export class CharacterBody {
     const landed = over.z - down.time_of_impact;
     if (landed <= at.z + SKIN) return undefined;
     return { x: over.x - at.x, y: over.y - at.y, z: landed - at.z };
+  }
+
+  /**
+   * Whether it stands on walkable ground once it moved by `moved` (Havok units). The contact
+   * under its shape decides, unless that is too steep: then the cone may rest on an edge of level
+   * ground (a stair's, a ledge's), which is met at the cone's own slope, so the faces under its
+   * middle and its ring are asked as well; only with none of them walkable is it on a slope too
+   * steep to stand on. TODO(M13): Havok's proxy's support check (bUseUnsupportedCast,
+   * fUnsupportCastLength) was not read.
+   */
+  #onWalkable(moved: RAPIER.Vector, predicate: (collider: RAPIER.Collider) => boolean): boolean {
+    const at = this.#body.translation();
+    const from = { x: at.x + moved.x, y: at.y + moved.y, z: at.z + moved.z };
+    const world = this.physics.world;
+    const walkable = Math.cos((this.settings.maxSlope * Math.PI) / 180);
+    const hit = world.castShape(
+      { x: from.x, y: from.y, z: from.z + SUPPORT_FROM },
+      NO_ROTATION,
+      { x: 0, y: 0, z: -1 },
+      queryShape(this.#collider.shape),
+      SKIN,
+      SUPPORT_FROM + SUPPORT_REACH,
+      false,
+      RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+      undefined,
+      this.#collider,
+      undefined,
+      predicate,
+    );
+    if (!hit || hit.normal1.z >= walkable) return true;
+    const radius = toHavok(this.shape.radius + CONTROLLER_SHELL);
+    const above = from.z - toHavok(this.shape.height / 2 - this.shape.radius);
+    const reach = toHavok(this.shape.radius * 2);
+    const faceUnder = (x: number, y: number): boolean => {
+      const ray = world.castRayAndGetNormal(
+        new RAPIER.Ray({ x, y, z: above }, { x: 0, y: 0, z: -1 }),
+        reach,
+        true,
+        RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+        undefined,
+        this.#collider,
+        undefined,
+        predicate,
+      );
+      return ray !== null && ray.normal.z >= walkable;
+    };
+    if (faceUnder(from.x, from.y)) return true;
+    for (let i = 0; i < 8; i++) {
+      const angle = (i * Math.PI) / 4;
+      if (faceUnder(from.x + Math.cos(angle) * radius, from.y + Math.sin(angle) * radius)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** Whether the controller's last sweep met walkable ground alone (no wall, no step). */
@@ -1213,6 +1435,9 @@ export class CharacterBody {
     }
     const rising = this.verticalSpeed > 0;
     this.#grounded = !this.swimming && !rising && this.#controller.computedGrounded();
+    // Rapier's controller calls anything less steep than a wall ground: on what is too steep to
+    // walk the character has no support, and falls and slides off it.
+    if (this.#grounded && !this.#onWalkable(moved, predicate)) this.#grounded = false;
     // How far it got the way it was to go (sliding along a riser is no way up the stairs).
     const wanted = desired.x * desired.x + desired.y * desired.y;
     const made = moved.x * desired.x + moved.y * desired.y;
@@ -1273,7 +1498,10 @@ export class CharacterBody {
         below = true;
         if (this.#otherActor(collision.collider)) onActor = collision.collider;
       }
-      if (seconds > 0) this.#push(collision, desired, seconds);
+      if (seconds > 0) {
+        this.#push(collision, desired, seconds);
+        this.#bump(collision, desired, seconds);
+      }
     }
     // Still blocked: an actor seeks a way round, its way turned a little, then more.
     if (
@@ -1329,6 +1557,10 @@ export class CharacterBody {
     if (this.#grounded || this.swimming) this.#offActor = undefined;
     this.#unsupported = !this.#grounded && !this.swimming && below;
     this.#below = below;
+    // Sliding down what is too steep, it falls no faster than the slope lets it.
+    if (this.#unsupported && desired.z < 0 && moved.z > desired.z && seconds > 0) {
+      this.verticalSpeed = Math.min(0, (moved.z * HAVOK_SCALE) / seconds);
+    }
     // A ceiling stops the rise; the ground stops the fall.
     if (rising && moved.z < desired.z * 0.5) this.verticalSpeed = 0;
     if (this.#grounded && this.verticalSpeed < 0) this.verticalSpeed = 0;
@@ -1531,6 +1763,35 @@ export class CharacterBody {
   }
 
   /**
+   * Another character it walks into is pushed along its way into it, by their masses
+   * (bumpSpeed; [HAVOK] bAllowCharacterBumper): a share of the speed it closes at goes into the
+   * other's push (dying away as a moving body's does), so one that walks on moves the other
+   * off. Either's bumper off (its graph's DisableBumper): none.
+   */
+  #bump(collision: RAPIER.CharacterCollision, desired: RAPIER.Vector, seconds: number): void {
+    const collider = collision.collider;
+    if (!collider || this.settings.bumper === false || !this.bumper) return;
+    const other = CHARACTERS.get(this.physics)?.get(collider.handle);
+    if (!other || other === this || !other.bumper) return;
+    const n = collision.normal1;
+    const across = Math.hypot(n.x, n.y);
+    if (across < 1e-6) return;
+    // Into the other, on the ground's plane; normal1 faces this character.
+    const nx = -n.x / across;
+    const ny = -n.y / across;
+    const speed = HAVOK_SCALE / seconds;
+    const closing =
+      (desired.x * speed - other.velocity[0] - other.#pushed[0]) * nx +
+      (desired.y * speed - other.velocity[1] - other.#pushed[1]) * ny;
+    const push = bumpSpeed(closing, this.mass, other.mass);
+    const along = other.#pushed[0] * nx + other.#pushed[1] * ny;
+    if (push > along) {
+      other.#pushed[0] += (push - along) * nx;
+      other.#pushed[1] += (push - along) * ny;
+    }
+  }
+
+  /**
    * A simulated body it walks into is pushed along its way into it, at the contact, by the
    * engine's rule (pushFactor, pushImpulse); bodies held still, fixed or keyframed are not.
    */
@@ -1572,6 +1833,7 @@ export class CharacterBody {
   }
 
   free(): void {
+    CHARACTERS.get(this.physics)?.delete(this.#collider.handle);
     this.physics.unregister(this.#collider);
     this.physics.world.removeCharacterController(this.#controller);
     this.physics.world.removeRigidBody(this.#body);

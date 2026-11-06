@@ -56,6 +56,11 @@ export const GRAVITY = 9.8;
  * TODO(M13): what turns that mode on is not known).
  */
 export const PHYSICS_STEP = 1 / 60;
+/** Past this along any axis (Havok units) a simulated body is out of the world (#leaveBounds). */
+export const WORLD_BOUNDS = 16384;
+/** How often it is looked for (seconds). */
+const BOUNDS_CHECK = 0.25;
+
 /**
  * At most this many steps per frame ([HAVOK] uMaxNumPhysicsStepsPerUpdate's built-in value; the
  * sessions set PhysicsWorld.maxSteps from the INI): a longer frame's rest is made up in later
@@ -929,6 +934,14 @@ export class PhysicsWorld {
   settleSeconds = 4;
   /** At most this many steps per frame (`[HAVOK] uMaxNumPhysicsStepsPerUpdate`). */
   maxSteps = MAX_STEPS_PER_UPDATE;
+  /**
+   * The engine's complex mode: the world steps `complexStep` ([HAVOK] fMaxTimeComplex), at most
+   * `complexSteps` (uMaxNumPhysicsStepsPerUpdateComplex) times a frame. TODO(M13): what turns it
+   * on in the original is not identified; nothing here does.
+   */
+  complex = false;
+  complexStep = 1 / 30;
+  complexSteps = 1;
   #step = PHYSICS_STEP;
   /** The step being taken (#step × the time multiplier). */
   #size = PHYSICS_STEP;
@@ -1755,6 +1768,8 @@ export class PhysicsWorld {
     const bodyA = a.body;
     const bodyB = b.body;
     if (!bodyA.isValid() || !bodyB.isValid() || bodyA.handle === bodyB.handle) return false;
+    // Joined already (made again as their cells load: a script's own OnLoad may ask too).
+    if (this.#joined(bodyA, bodyB)) return true;
     if (!bodyA.isDynamic() && !bodyB.isDynamic() && !this.#held.has(bodyA.handle)) {
       if (!this.#held.has(bodyB.handle)) return false;
     }
@@ -1776,6 +1791,21 @@ export class PhysicsWorld {
     return true;
   }
 
+  /** Whether a script's joint holds these two bodies together now. */
+  #joined(a: RAPIER.RigidBody, b: RAPIER.RigidBody): boolean {
+    return this.#scriptJoints.some(
+      (entry) =>
+        entry.joint.isValid() &&
+        ((entry.a === a.handle && entry.b === b.handle) ||
+          (entry.a === b.handle && entry.b === a.handle)),
+    );
+  }
+
+  /** How many joints scripts made hold two bodies now (the cases'). */
+  get scriptJointCount(): number {
+    return this.#scriptJoints.filter((entry) => entry.joint.isValid()).length;
+  }
+
   /**
    * Game.RemoveHavokConstraints: the joints scripts made between two bodies go (they fall
    * free). Returns how many went.
@@ -1795,6 +1825,8 @@ export class PhysicsWorld {
     }
     return removed;
   }
+
+  #sinceBounds = 0;
 
   /** The joints scripts made (joinBallAndSocket), with their bodies' handles. */
   readonly #scriptJoints: { joint: RAPIER.ImpulseJoint; a: number; b: number }[] = [];
@@ -1827,13 +1859,13 @@ export class PhysicsWorld {
     // world's time multiplier (Slow Time: `seconds` is the slowed frame's), so it steps as often
     // as at full speed, each step shorter.
     const scale = Math.min(1, Math.max(MIN_TIME_SCALE, this.timeScale?.() ?? 1));
-    const size = this.#step * scale;
+    const size = (this.complex ? this.complexStep : this.#step) * scale;
     if (size !== this.#size) {
       this.#size = size;
       this.world.timestep = size;
     }
     const owed = this.#owed + seconds;
-    const handed = Math.min(owed, size * this.maxSteps);
+    const handed = Math.min(owed, size * (this.complex ? this.complexSteps : this.maxSteps));
     if (handed < MIN_FRAME_SECONDS * scale) {
       this.#owed = owed;
       return 0;
@@ -1855,12 +1887,37 @@ export class PhysicsWorld {
       if (this.#held.size > 0) this.#releaseTouched();
       if (this.#hungToCheck.length > 0) this.#ignoreHungOverlaps();
       if (this.#breakable.size > 0) this.#breakJoints();
+      this.#leaveBounds();
       this.#deactivate();
       this.#collectImpacts();
       this.#accumulator -= size;
       steps++;
     }
     return steps;
+  }
+
+  /**
+   * A simulated body that left the world's bounds goes out of the simulation (Havok's broad phase
+   * border, set to remove what leaves it): one that fell through everything does not fall on for
+   * good, nor is it stepped. Looked at a few times a second. TODO(M13): the original's bounds and
+   * what its border does with an entity were not read: WORLD_BOUNDS is ours, past every
+   * worldspace's cells, and it is taken out and left as it is, its reference where it was last.
+   */
+  #leaveBounds(): void {
+    this.#sinceBounds += this.#size;
+    if (this.#sinceBounds < BOUNDS_CHECK) return;
+    this.#sinceBounds = 0;
+    this.world.bodies.forEach((body) => {
+      if (!body.isDynamic() || body.isSleeping() || !body.isEnabled()) return;
+      const at = body.translation();
+      if (
+        Math.abs(at.x) > WORLD_BOUNDS ||
+        Math.abs(at.y) > WORLD_BOUNDS ||
+        Math.abs(at.z) > WORLD_BOUNDS
+      ) {
+        body.setEnabled(false);
+      }
+    });
   }
 
   /**
@@ -3176,7 +3233,8 @@ export class PhysicsWorld {
       if (!body.isDynamic() || body.isSleeping()) return;
       this.#velocities.set(body.handle, body.linvel());
     });
-    // A settling body is placed for good once it first sleeps.
+    // A settling body is placed for good once it first sleeps (our deactivation leaves it be
+    // until then, at most fWarmStartMaxTime: bAllowDeactivationWhileWarmStarting 0).
     for (const [handle, until] of this.#settling) {
       const body = this.world.getRigidBody(handle) as RAPIER.RigidBody | null;
       if (!body || body.isSleeping() || this.#time >= until) this.#settling.delete(handle);

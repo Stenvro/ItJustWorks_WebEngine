@@ -103,7 +103,7 @@ import { summonPlace, type NavmeshSet } from '../ai/pathfinding.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { talkOnActivate } from './script-talk.ts';
 import type { Placement } from '../scripting/runtime/runtime.ts';
-import { noteMoved, placedAsMoved } from './moved-objects.ts';
+import { noteMoved, placedAsMoved, type MovedFromExterior } from './moved-objects.ts';
 import {
   instanceNodeWorld,
   MOTION_KEYFRAMED,
@@ -855,7 +855,7 @@ export class WorldViewer {
       const state = this.#session?.scriptsReady?.state;
       if (!state) return;
       for (const cell of this.#cells.values()) {
-        if (cell.scriptsAttached) noteMoved(cell.placed, state);
+        if (cell.scriptsAttached) noteMoved(cell.placed, state, this.#exteriorOf(cell));
       }
     },
     savePlayerGraphs: () => this.#stage?.savePlayerGraphs(),
@@ -1933,10 +1933,25 @@ export class WorldViewer {
   }
 
   /** A reference the scripts created: shown if it stands in a loaded cell of this world. */
+  /** Where an exterior cell's objects were pushed out of (noteMoved). */
+  #exteriorOf(cell: LoadedCell): MovedFromExterior | undefined {
+    const world = this.#world;
+    if (!world) return undefined;
+    return {
+      world: world.record.formId,
+      grid: [cell.x, cell.y],
+      isPersistent: (reference) => world.isPersistentObject(reference),
+    };
+  }
+
   async #showCreated(reference: number): Promise<void> {
     const runtime = this.#session?.scriptsReady;
     const world = this.#world;
     if (!runtime || !world || !this.#created) return;
+    // Pushed out of a cell still loaded (noteMoved at a save): it is that cell's until it goes.
+    for (const cell of this.#cells.values()) {
+      if (cell.placed.some((entry) => entry.object.reference === reference)) return;
+    }
     const at = await runtime.placement(reference);
     if (at?.world !== world.record.formId) return;
     const key = cellKey(
@@ -2699,7 +2714,7 @@ export class WorldViewer {
     if (cell.scriptsAttached && cell.data && runtime) {
       const loaded = new Set(this.#cellLoadedReferences(cell));
       // Its moved objects keep their places; its reset waits from now (cell-reset.ts).
-      noteMoved(cell.placed, runtime.state);
+      const left = noteMoved(cell.placed, runtime.state, this.#exteriorOf(cell));
       if (cell.formId !== undefined) runtime.detach(runtime.cellResets.detached(cell.formId));
       const data = cell.data;
       runtime.detach(
@@ -2712,6 +2727,9 @@ export class WorldViewer {
           (reference) => loaded.has(reference),
         ),
       );
+      // What was pushed out of it lies on in the cell it went to, if that is loaded (once this
+      // cell has gone).
+      for (const reference of left) void Promise.resolve().then(() => this.#showCreated(reference));
     }
     cell.scriptsAttached = false;
     // A cell being replaced by a new load of the same place keeps the new one's actors.

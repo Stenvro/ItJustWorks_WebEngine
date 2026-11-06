@@ -785,7 +785,15 @@ times are whole game hours, 0 for never):
   reset clock running); the game's changes to it live in GameState either way.
 - Moved objects (`src/shell/moved-objects.ts`): a cell leaving the loaded area notes where its
   moving objects are; a cell loading places its objects where the game left them, until its
-  reset puts the non-persistent ones back.
+  reset puts the non-persistent ones back. One pushed out of its exterior cell is of the cell it
+  lies in from then on (`noteMoved`: the worldspace's persistent ones go by
+  `persistentReferencesNow`, the others with the created references of that cell), until its own
+  cell's reset. TODO(M13): inferred from the save's "has been moved from its saved cell".
+- Script-made joints (Game.AddHavokBallAndSocketConstraint; `GameState.scriptConstraints`) are
+  kept with the game and made again as their references' bodies come back, until
+  RemoveHavokConstraints (one joint to two bodies, also where a script's own OnLoad asks again).
+- A corpse's reference stays where its ragdoll carried it across its cell's unload (its GetPosition,
+  the distances to it), as its pose does.
 
 `node tools/world-rules-census.ts` counts the zones and their flags, the locations with bosses
 and those the player can clear, the references that never respawn and the traps.

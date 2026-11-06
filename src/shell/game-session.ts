@@ -427,6 +427,28 @@ export class GameSession {
     for (const listener of this.soundRequests) listener({ descriptor, place, source });
     return this.soundSystem?.play(descriptor, place, fadeIn, source);
   }
+  /** The sound descriptors (SNDR) by their editor ids, once read (playNamedSound). */
+  #soundNames: Promise<Map<string, number>> | undefined;
+
+  /**
+   * Plays a sound descriptor by its editor id for a reference (none in the data: nothing), as
+   * playSound: the request is told, with a sound system or without.
+   */
+  playNamedSound(editorId: string, source: number): Promise<void> {
+    this.#soundNames ??= this.db.then(async (db) => {
+      const names = new Map<string, number>();
+      for (const formId of db.formIdsOfType('SNDR')) {
+        const record = await db.get(formId);
+        if (record?.editorId) names.set(record.editorId.toLowerCase(), formId);
+      }
+      return names;
+    });
+    return this.#soundNames.then(async (names) => {
+      const descriptor = names.get(editorId.toLowerCase());
+      if (descriptor !== undefined) await this.playSound(descriptor, undefined, 0, source);
+    });
+  }
+
   #actors: Promise<ActorPlacer> | undefined;
   /** Head parts' expression morphs by TRI path (kept for the session: a few dozen files). */
   readonly #morphs = new Map<string, Promise<GpuMorphs | undefined>>();
