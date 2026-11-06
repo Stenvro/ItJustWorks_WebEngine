@@ -10,6 +10,7 @@ const REFERENCE = 0x300;
 const NPC = 0x400;
 const TEMPLATE = 0x500;
 const RACE = 0x600;
+const TITLE = 0x700;
 
 interface FakeRecord {
   type: string;
@@ -42,6 +43,7 @@ const records = new Map<number, FakeRecord>([
   [NPC, record('NPC_', 'Ingun', {}, { TPLT: TEMPLATE })],
   [TEMPLATE, record('NPC_', 'IngunTemplate', { FULL: 'Ingun Black-Briar', SHRT: 'Ingun' })],
   [RACE, record('RACE', 'NordRace', { FULL: 'Nord' })],
+  [TITLE, record('MESG', 'AliasJarlName', { FULL: 'Jarl <BaseName>' })],
 ]);
 
 const SETTINGS: Record<string, string> = {
@@ -63,6 +65,7 @@ const runtime = {
           aliases: new Map([
             [0, REFERENCE],
             [2, PLAYER_REF],
+            [3, REFERENCE],
           ]),
         },
       ],
@@ -88,6 +91,7 @@ const quest = {
     { id: 0, name: 'Ingun', location: false, displayName: undefined },
     { id: 1, name: 'Empty', location: false, displayName: undefined },
     { id: 2, name: 'Player', location: false, displayName: undefined },
+    { id: 3, name: 'Titled', location: false, displayName: TITLE },
   ],
 } as unknown as QuestRecord;
 
@@ -97,6 +101,11 @@ describe('questText', () => {
       'Talk to Ingun Black-Briar',
     );
     expect(await questText(runtime, quest, 'Ask <Alias.ShortName=ingun>')).toBe('Ask Ingun');
+  });
+
+  it("fills an alias's display name with the base's name, and a short name without it", async () => {
+    expect(await questText(runtime, quest, 'Ask <Alias=Titled>')).toBe('Ask Jarl Ingun Black-Briar');
+    expect(await questText(runtime, quest, 'Jarl <Alias.ShortName=Titled>')).toBe('Jarl Ingun');
   });
 
   it("fills in the player's name as chosen in the race menu", async () => {
