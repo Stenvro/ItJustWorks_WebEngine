@@ -51,6 +51,8 @@ import type { PlayerView } from './race-menu.ts';
 import { DragonTargetLock } from './dragon-target-lock.ts';
 import type { Terminal } from './terminal.ts';
 
+/** A place to set a rider down is checked this high up: only what stands in its way counts. */
+const SET_DOWN_RISE = 32;
 /** KYWD ActorTypeHorse (Skyrim.esm): the races one rides (HorseEvents' condition). */
 const ACTOR_TYPE_HORSE = 0x26110;
 /** A ridden horse moves (for its rider's back key) above this speed (units a second; the engine's "not 0"). */
@@ -636,7 +638,12 @@ export class ActorMounts {
     horse?.placed.behavior?.sendEvent(PAIR_END);
     this.#rides.delete(ride.rider);
     const at = horse
-      ? dismountPlace({ position: horse.position, heading: horse.heading })
+      ? dismountPlace({ position: horse.position, heading: horse.heading }, (place) => {
+          const over: Vec3 = [place[0], place[1], place[2] + SET_DOWN_RISE];
+          return ride.rider === PLAYER_REF
+            ? this.#options.player?.()?.play.player.character.goodPosition(over) !== false
+            : this.#options.movers.goodPosition(ride.rider, over);
+        })
       : undefined;
     if (ride.rider === PLAYER_REF) {
       if (at) this.#options.player?.()?.play.player.teleport([...at.position]);

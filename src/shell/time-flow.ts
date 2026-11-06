@@ -80,6 +80,7 @@ export function connectPlayerTime(
         ) => void)
       | undefined;
     walksOnWater?: (() => boolean) | undefined;
+    jumpingBonus?: (() => number) | undefined;
   },
   session: () =>
     | {
@@ -111,6 +112,20 @@ export function connectPlayerTime(
         .catch(() => undefined);
     }
     return walks.on;
+  };
+  // How much higher they jump (read again once a second old).
+  let bonus = { value: 0, read: -Infinity };
+  player.jumpingBonus = () => {
+    const runtime = session()?.scriptsReady;
+    const now = performance.now();
+    if (runtime && now - bonus.read > 1000) {
+      bonus = { value: bonus.value, read: now };
+      void runtime.actors
+        .value(PLAYER_REF, JUMPING_BONUS)
+        .then((value) => (bonus = { value: value.current, read: now }))
+        .catch(() => undefined);
+    }
+    return bonus.value;
   };
   // The physics world steps at the world's clock's rate (PhysicsWorld.step).
   if (physics) physics.timeScale = () => session()?.time.multiplier ?? 1;
@@ -172,6 +187,7 @@ const REFRESH_SECONDS = 0.25;
 
 const BOW_SPEED_BONUS = actorValueIndex('BowSpeedBonus') ?? 0;
 const WATER_BREATHING = actorValueIndex('WaterBreathing') ?? 0;
+const JUMPING_BONUS = actorValueIndex('JumpingBonus') ?? 0;
 const WATER_WALKING = actorValueIndex('WaterWalking') ?? 0;
 /** fDiffMultHPToPC's built-in values by difficulty (combat-settings.ts). */
 const DAMAGE_TO_PLAYER = [0.5, 0.75, 1, 1.5, 2, 3];
