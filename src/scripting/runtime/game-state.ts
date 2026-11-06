@@ -467,6 +467,16 @@ export interface ItemStack {
   soul?: number;
 }
 
+/** A ball and socket a script made between two references' nodes, at local offsets. */
+export interface ScriptConstraint {
+  readonly a: number;
+  readonly nodeA: string;
+  readonly b: number;
+  readonly nodeB: string;
+  readonly offsetA: readonly [number, number, number];
+  readonly offsetB: readonly [number, number, number];
+}
+
 /** A reference a script created (PlaceAtMe, alias Create Reference). */
 export interface CreatedReference {
   readonly base: number;
@@ -519,6 +529,11 @@ export class GameState {
   readonly leveledAdditions = new Map<number, { level: number; formId: number; count: number }[]>();
   /** Magic effects on actors (ActiveMagicEffect scripts): by handle key. */
   readonly activeEffects = new Map<string, ActiveEffectState>();
+  /**
+   * The joints scripts made (Game.AddHavokBallAndSocketConstraint): made again as their references
+   * load (ScriptRuntime.cellAttached), until RemoveHavokConstraints.
+   */
+  readonly scriptConstraints: ScriptConstraint[] = [];
   /** What the magic system keeps of actors (a poisoned weapon), by actor. */
   readonly actorMagic = new Map<number, ActorMagicState>();
   /** What casting keeps of actors (powers used, the voice), by actor. */

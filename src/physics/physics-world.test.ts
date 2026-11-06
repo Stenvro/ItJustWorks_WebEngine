@@ -821,6 +821,9 @@ describe('two character controllers', () => {
       reference: 0x1a6a4,
       kind: 'actor',
     });
+    // Its bumper off (DisableBumper): the shapes alone. On, it is pushed off (the conformance
+    // suite's character-controller cases).
+    actor.bumper = false;
     // As in play: steps off the stairs onto walkable ground (the navmesh).
     player.walkable = () => true;
     let touched = false;

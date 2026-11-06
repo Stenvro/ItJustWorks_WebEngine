@@ -153,6 +153,27 @@ export function conePush(
  * that gives it fWeaponClutterKnockMult × the weapon's weight (capped) / its mass (floored) game
  * units a second (× the biped scale on a ragdoll's body). A weightless weapon (fists) gives none.
  */
+/** [Animation] bEnableHavokHit, fHavokHitImpulseMult, fHavokHitTimeSec. */
+export interface HavokHitSettings {
+  readonly enabled: boolean;
+  readonly mult: number;
+  readonly seconds: number;
+}
+
+/** The engine's built-in values: off in the game. */
+export const HAVOK_HIT_DEFAULTS: HavokHitSettings = { enabled: false, mult: 50, seconds: 3 };
+
+/**
+ * The speed (Havok units a second) a blow gives a ragdoll of `mass` kg it hits, `since` seconds
+ * after the last that pushed it: none with the setting off (as in the game), nor sooner than
+ * fHavokHitTimeSec after the last; else the mult's impulse over its mass. TODO(M13): inferred
+ * from the settings' names: bEnableHavokHit is 0 in the game, and their reads were not followed.
+ */
+export function havokHitSpeed(settings: HavokHitSettings, mass: number, since: number): number {
+  if (!settings.enabled || !(mass > 0) || since < settings.seconds) return 0;
+  return settings.mult / mass;
+}
+
 export function weaponKnock(
   weaponWeight: number,
   layer: number,

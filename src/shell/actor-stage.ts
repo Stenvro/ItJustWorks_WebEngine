@@ -3163,5 +3163,9 @@ export class ActorStage {
       ? this.bodies.resting(reference, CORPSE_REST_SPEED)
       : staged.placed.actor.startsDead;
     runtime.state.actor(reference).corpse = corpsePose(staged.placed.pose, world, resting);
+    // The reference is where its ragdoll carried it, then too (livePlacement), not where it died:
+    // its scripts' GetPosition and distances to it (its pose is kept in the world).
+    const at = this.livePlacement(reference)?.position;
+    if (state?.dead === true && at) runtime.state.reference(reference).position = at;
   }
 }

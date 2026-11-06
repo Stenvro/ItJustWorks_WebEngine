@@ -245,6 +245,8 @@ export class CellResets {
         delete entry.rotation;
         delete entry.cell;
         delete entry.world;
+        // Pushed out into another cell (moved-objects.ts): it is of its own cell again.
+        state.created.delete(reference);
       }
     }
     state.inventories.delete(reference);

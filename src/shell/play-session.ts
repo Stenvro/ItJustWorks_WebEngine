@@ -1729,7 +1729,7 @@ export class PlaySession {
         const ground =
           !at || this.#groundReady([at.x * HAVOK_SCALE, at.y * HAVOK_SCALE, at.z * HAVOK_SCALE]);
         if (ground) {
-          this.physics.settle(placed);
+          this.physics.settle(placed, true);
           // A loaded save's object in motion moves on as it moved.
           const motion = this.savedMotion?.(placed.owner.reference);
           if (motion) this.physics.setVelocity(placed, motion.linear, motion.angular);

@@ -52,7 +52,7 @@ import {
   type ConditionsContext,
 } from './condition-values.ts';
 import { FormIndex, PLAYER_BASE, PLAYER_REF } from './forms.ts';
-import { GameState, type ReferenceState, type Vec3 } from './game-state.ts';
+import { GameState, type ReferenceState, type ScriptConstraint, type Vec3 } from './game-state.ts';
 import { registerNatives } from './natives/index.ts';
 import { ActorEngine } from './actor-engine.ts';
 import { EquipmentEngine } from './equipment-engine.ts';
@@ -768,6 +768,9 @@ export interface Placement {
 /** Magic items: their keywords include their effects' (runtime.keywords). */
 const MAGIC_ITEM_TYPES: ReadonlySet<string> = new Set(['SPEL', 'SCRL', 'ENCH', 'ALCH', 'INGR']);
 
+/** How often the joints scripts made are looked at, as their references come back (seconds). */
+const SCRIPT_CONSTRAINT_CHECK = 0.5;
+
 const CELL_INTERIOR = 0x01;
 /** MESG DNAM: shown as a message box (else, without buttons, as a notification). */
 const MESSAGE_BOX_FLAG = 0x01;
@@ -1311,6 +1314,48 @@ export class ScriptRuntime implements VmHost {
    * events describe: OnCellAttach for the cell's references, OnLoad for the loaded ones, and
    * OnCellLoad once every object's 3D in the cell is there. Returns those with scripts.
    */
+  #sinceConstraints = 0;
+
+  /**
+   * Game.AddHavokBallAndSocketConstraint: the joint is made if both references are there, and kept
+   * with the game either way (a reference's 3D unloaded and loaded keeps its constraints in the
+   * original; TODO(M13): how it keeps them was not read): update makes it again. Whether it is
+   * made now.
+   */
+  joinScriptConstraint(constraint: ScriptConstraint): boolean {
+    const kept = this.state.scriptConstraints;
+    const same = (other: ScriptConstraint): boolean =>
+      other.a === constraint.a &&
+      other.b === constraint.b &&
+      other.nodeA === constraint.nodeA &&
+      other.nodeB === constraint.nodeB;
+    if (!kept.some(same)) kept.push(constraint);
+    return (
+      this.world.ballAndSocket?.(
+        constraint.a,
+        constraint.nodeA,
+        constraint.b,
+        constraint.nodeB,
+        constraint.offsetA,
+        constraint.offsetB,
+      ) ?? false
+    );
+  }
+
+  /** Game.RemoveHavokConstraints: those between two references' nodes go, kept or made. */
+  removeScriptConstraint(a: number, nodeA: string, b: number, nodeB: string): boolean {
+    const kept = this.state.scriptConstraints;
+    const matches = (other: ScriptConstraint): boolean =>
+      (other.a === a && other.b === b && other.nodeA === nodeA && other.nodeB === nodeB) ||
+      (other.a === b && other.b === a && other.nodeA === nodeB && other.nodeB === nodeA);
+    const had = kept.some(matches);
+    for (let i = kept.length - 1; i >= 0; i--) {
+      const other = kept[i];
+      if (other && matches(other)) kept.splice(i, 1);
+    }
+    return (this.world.removeConstraints?.(a, nodeA, b, nodeB) ?? false) || had;
+  }
+
   async cellAttached(
     references: readonly number[],
     loaded: (reference: number) => boolean,
@@ -3328,6 +3373,13 @@ export class ScriptRuntime implements VmHost {
   /** Every frame: the clocks move on (real seconds outside menus, game days). */
   update(realSeconds: number, gameDays: number): void {
     this.state.realTime += realSeconds;
+    // The joints scripts made, as their references' bodies come back (a cell's collision goes
+    // in over some frames; PhysicsWorld.joinBallAndSocket keeps one joint to two bodies).
+    this.#sinceConstraints += realSeconds;
+    if (this.#sinceConstraints >= SCRIPT_CONSTRAINT_CHECK) {
+      this.#sinceConstraints = 0;
+      for (const constraint of this.state.scriptConstraints) this.joinScriptConstraint(constraint);
+    }
     const day = Math.floor(this.state.gameDaysPassed);
     this.state.gameDaysPassed += gameDays;
     // A new day counts in the beast forms' days (DaysPassed: stat-events.ts).

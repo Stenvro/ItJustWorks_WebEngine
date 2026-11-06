@@ -28,6 +28,7 @@ import {
 } from '../../../src/physics/collision-data.ts';
 import { Vfs } from '../../../src/vfs/vfs.ts';
 import { hasGamedata, openGameFolder } from '../../../tools/gamedata-path.ts';
+import { openSim } from '../../helpers/sim.ts';
 import { CollisionMatrix, Layer } from '../../../src/physics/collision-layers.ts';
 import {
   bodyOfNode,
@@ -63,20 +64,243 @@ describe('the constraint solver (the engine’s rule)', () => {
     expect(slowBodyFactor(1, 9.8, 0.05, 0.01, 4)).toBe(1);
     expect(slowBodyFactor(5, 9.8, 0.05, 0.01, 4)).toBeLessThan(low);
   });
+});
 
-  it.todo(
-    'holds every constraint type of the vanilla meshes (a census of bhk*Constraint blocks by ' +
-      'type, each built)  [data: nif.xml] (data sweep)',
-  );
-  it.todo(
-    'breaks a breakable constraint when a step pulls on it beyond its threshold, as the ' +
-      'hanging signs of Riverwood fall when shot  [data] (sim)',
-  );
-  it.todo('drives no motor (no vanilla constraint has one)  [data] (data sweep)');
-  it.todo(
-    'projects joints back together with the constraint projector ([HAVOK] ' +
-      'bUseConstraintProjector 1)  [settings; original: unread]',
-  );
+describe.skipIf(!hasGamedata())('every constraint of the vanilla meshes (data sweep)', () => {
+  /** How many of each kind the 11,483 meshes with collision hold, a model of each, the motors. */
+  const census = new Map<string, number>();
+  const sample = new Map<string, CollisionData>();
+  const breakable: string[] = [];
+  let motors = 0;
+  let enabledMotors = 0;
+
+  beforeAll(async () => {
+    await initPhysics();
+    const vfs = await Vfs.mount(openGameFolder());
+    try {
+      for (const file of vfs.list('meshes').filter((name) => name.endsWith('.nif'))) {
+        const bytes = await vfs.read(file);
+        // The block types lie in the header: most models name no bhk block.
+        if (!Buffer.from(bytes.subarray(0, 4000)).toString('latin1').includes('bhk')) continue;
+        let collision: CollisionData | undefined;
+        try {
+          collision = buildCollision(parseNif(bytes));
+        } catch {
+          continue;
+        }
+        for (const constraint of collision?.constraints ?? []) {
+          const data = constraint.data;
+          const key =
+            data.type +
+            (constraint.breakable ? ' breakable' : '') +
+            (constraint.maxError === undefined ? '' : ' chain');
+          census.set(key, (census.get(key) ?? 0) + 1);
+          if (collision && !sample.has(key)) sample.set(key, collision);
+          if (constraint.breakable) breakable.push(file);
+          const motor = (data as { readonly motor?: { readonly type: string } }).motor;
+          if (motor) {
+            motors++;
+            if (motor.type !== 'none') enabledMotors++;
+          }
+        }
+      }
+    } finally {
+      await vfs.close();
+    }
+  }, 300_000);
+
+  it('counts each type (the blocks nif.xml defines for the game: no prismatic, no malleable)', () => {
+    expect(Object.fromEntries(census)).toEqual({
+      'limited-hinge': 823,
+      ragdoll: 750,
+      hinge: 8,
+      'ball-and-socket': 30,
+      'ball-and-socket breakable': 5,
+      'stiff-spring': 5,
+      'stiff-spring breakable': 3,
+      'ball-and-socket chain': 62,
+    });
+  });
+
+  it('makes a joint of each type, which holds its two bodies', () => {
+    for (const [key, collision] of sample) {
+      const matrix = new CollisionMatrix([
+        {
+          formId: 1,
+          editorId: 'L_CLUTTER',
+          index: Layer.clutter,
+          name: '',
+          flags: 0,
+          collidesWith: [],
+        },
+      ]);
+      const physics = new PhysicsWorld(matrix, GRAVITY);
+      const placed = physics.addObject(
+        collision,
+        new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
+        { reference: 1, kind: 'object' },
+        false,
+      );
+      physics.step(1 / 60);
+      physics.settle(placed);
+      physics.step(1 / 60);
+      expect(physics.world.impulseJoints.len(), key).toBeGreaterThan(0);
+      physics.free();
+    }
+  });
+
+  it('drives no motor: none of the constraints that can have one has one enabled', () => {
+    expect(motors).toBe(1573);
+    expect(enabledMotors).toBe(0);
+  });
+
+  it('has its breakable ones in the beehives, the boards and the mace trap: no hanging sign', () => {
+    const names = new Set(breakable.map((file) => file.slice(file.lastIndexOf('\\') + 1)));
+    expect([...names].sort()).toEqual([
+      'breakableboard01.nif',
+      'breaktest.nif',
+      'critterbeehive.nif',
+      'critterbeehivevacant.nif',
+      'trapmace01.nif',
+    ]);
+  });
+});
+
+describe.skipIf(!hasGamedata())('a breakable constraint (the beehive)', () => {
+  it('holds under its own weight, and breaks when a step pulls on it beyond its threshold', async () => {
+    await initPhysics();
+    const vfs = await Vfs.mount(openGameFolder());
+    let collision: CollisionData | undefined;
+    try {
+      collision = buildCollision(
+        parseNif(await vfs.read('meshes\\critters\\bee\\critterbeehive.nif')),
+      );
+    } finally {
+      await vfs.close();
+    }
+    if (!collision) throw new Error('no collision');
+    const physics = new PhysicsWorld(
+      new CollisionMatrix([
+        {
+          formId: 1,
+          editorId: 'L_CLUTTER',
+          index: Layer.clutter,
+          name: '',
+          flags: 0,
+          collidesWith: [],
+        },
+      ]),
+      GRAVITY,
+    );
+    const placed = physics.addObject(
+      collision,
+      new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1000, 1]),
+      { reference: 1, kind: 'object' },
+      false,
+    );
+    physics.step(1 / 60);
+    physics.settle(placed);
+    const joints = (): number => physics.world.impulseJoints.len();
+    const dynamic = placed.bodies.find(({ body }) => body.isDynamic());
+    if (!dynamic) throw new Error('no hive');
+    expect(joints()).toBe(1);
+    // Hanging: its 10 kg give 1.6 a step against its threshold of 20.
+    for (let i = 0; i < 300; i++) physics.step(1 / 60);
+    expect(joints()).toBe(1);
+    const hung = dynamic.body.translation().z;
+    // A blow along what it hangs by: the joint takes a change of momentum of 30 in a step.
+    const v = dynamic.body.linvel();
+    dynamic.body.setLinvel({ x: v.x, y: v.y, z: v.z - 30 / dynamic.body.mass() }, true);
+    for (let i = 0; i < 3; i++) physics.step(1 / 60);
+    expect(joints()).toBe(0);
+    // It falls free.
+    for (let i = 0; i < 60; i++) physics.step(1 / 60);
+    expect(dynamic.body.translation().z).toBeLessThan(hung - 1);
+    physics.free();
+  }, 120_000);
+});
+
+describe('the constraint projector', () => {
+  beforeAll(async () => {
+    await initPhysics();
+  });
+
+  // [HAVOK] bUseConstraintProjector 1. Inferred: what it asks is what the world's joints do here,
+  // bring two bodies pulled apart back together (#clipViolation, at most Havok's maximum
+  // violation of 0.05 Havok units of the error a step). TODO(M13): Havok's projector works on the
+  // bodies' places after the solver; the setting is read by nothing here.
+  it('brings a joint pulled apart back together, a step’s worth at a time, not at once', () => {
+    const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    const body = (node: string, dynamic: boolean): CollisionBody => ({
+      node,
+      transform: IDENTITY,
+      motion: dynamic ? 'dynamic' : 'fixed',
+      phantom: false,
+      layer: Layer.clutter,
+      mass: dynamic ? 1 : 0,
+      inertia: [0.01, 0.01, 0.01],
+      centerOfMass: [0, 0, 0],
+      friction: 0.5,
+      restitution: 0,
+      linearDamping: 0,
+      angularDamping: 0,
+      gravityFactor: 0,
+      maxLinearVelocity: 0,
+      maxAngularVelocity: 0,
+      quality: 0,
+      solverDeactivation: 1,
+      shapes: [{ type: 'sphere', layer: Layer.clutter, material: 0, center: [0, 0, 0], radius: 5 }],
+    });
+    const physics = new PhysicsWorld(
+      new CollisionMatrix([
+        {
+          formId: 1,
+          editorId: 'L_CLUTTER',
+          index: Layer.clutter,
+          name: '',
+          flags: 0,
+          collidesWith: [],
+        },
+      ]),
+      GRAVITY,
+    );
+    const placed = physics.addObject(
+      {
+        bodies: [body('A', false), body('B', true)],
+        constraints: [
+          {
+            bodyA: 0,
+            bodyB: 1,
+            data: { type: 'ball-and-socket', pivotA: [0, 0, 0], pivotB: [0, 0, 0] },
+          },
+        ],
+        skipped: [],
+      },
+      IDENTITY,
+      { reference: 1, kind: 'object' },
+      false,
+    );
+    physics.step(1 / 60);
+    physics.settle(placed);
+    const moved = placed.bodies[1]?.body;
+    if (!moved) throw new Error('no body');
+    moved.setTranslation({ x: 2, y: 0, z: 0 }, true);
+    const apart = (): number => {
+      const t = moved.translation();
+      return Math.hypot(t.x, t.y, t.z);
+    };
+    let last = apart();
+    const steps: number[] = [];
+    for (let i = 0; i < 120; i++) {
+      physics.step(1 / 60);
+      steps.push(last - apart());
+      last = apart();
+    }
+    // Together again (2 Havok units at about 0.05 × a share of it a step), never all at once.
+    expect(apart()).toBeLessThan(0.1);
+    expect(Math.max(...steps)).toBeLessThan(1);
+    physics.free();
+  });
 });
 
 // The six bhkBallSocketConstraintChain blocks of the data (the traps' ropes and chains: bone
@@ -272,5 +496,56 @@ describe('constraints made by scripts', () => {
       physics.free();
     },
   );
-  it.todo('keeps a script-made constraint across its cell’s unload and load  [original] (sim)');
+});
+
+describe.skipIf(!hasGamedata())('a script-made constraint (simulation)', () => {
+  const BANNERED_MARE = 0x1605e;
+  const BLIND_CLIFF_CAVE = 0x152b7;
+
+  it('keeps it across its cell’s unload and load, until a script removes it', async () => {
+    const sim = await openSim({ interior: BANNERED_MARE, hour: 10 });
+    try {
+      await sim.step(2);
+      const physics = (): PhysicsWorld => {
+        const found = sim.world.play?.physics;
+        if (!found) throw new Error('no physics');
+        return found;
+      };
+      // Two loose things of the inn.
+      const loose: number[] = [];
+      for (const id of sim.db.cellReferences(BANNERED_MARE)) {
+        if (sim.world.placed(id)?.instance.motion && (await sim.enabled(id))) loose.push(id);
+        if (loose.length === 2) break;
+      }
+      const [a, b] = loose;
+      if (a === undefined || b === undefined) throw new Error('nothing loose');
+      const offset: [number, number, number] = [0, 0, 0];
+      const join = { a, nodeA: '', b, nodeB: '', offsetA: offset, offsetB: offset };
+      expect(sim.runtime.joinScriptConstraint(join)).toBe(true);
+      expect(physics().scriptJointCount).toBe(1);
+      // Asked again (a script's own OnLoad): the one joint.
+      expect(sim.runtime.joinScriptConstraint(join)).toBe(true);
+      expect(physics().scriptJointCount).toBe(1);
+      expect(sim.runtime.state.scriptConstraints).toHaveLength(1);
+
+      await sim.openInterior(BLIND_CLIFF_CAVE);
+      await sim.step(1);
+      expect(physics().scriptJointCount).toBe(0);
+      await sim.openInterior(BANNERED_MARE);
+      await sim.step(1);
+      expect(physics().scriptJointCount).toBe(1);
+
+      // Removed by a script: it does not come back.
+      expect(sim.runtime.removeScriptConstraint(a, '', b, '')).toBe(true);
+      expect(physics().scriptJointCount).toBe(0);
+      expect(sim.runtime.state.scriptConstraints).toHaveLength(0);
+      await sim.openInterior(BLIND_CLIFF_CAVE);
+      await sim.step(1);
+      await sim.openInterior(BANNERED_MARE);
+      await sim.step(1);
+      expect(physics().scriptJointCount).toBe(0);
+    } finally {
+      await sim.close();
+    }
+  }, 300_000);
 });
