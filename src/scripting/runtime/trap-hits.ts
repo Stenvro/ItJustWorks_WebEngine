@@ -49,13 +49,20 @@ export class TrapHits {
   delayMs = TRAP_HIT_EVENT_DELAY_MS;
   readonly #events: EventHub;
   readonly #now: () => number;
+  /** Whether a trap takes notice of a target: its activator's keyword (activator-keywords.ts). */
+  readonly #admits: (trap: number, target: number) => boolean;
   /** By target, then trap. */
   readonly #entries = new Map<number, Map<number, Entry>>();
 
   /** `now`: the clock in milliseconds (the engine's timer). */
-  constructor(events: EventHub, now: () => number) {
+  constructor(
+    events: EventHub,
+    now: () => number,
+    admits: (trap: number, target: number) => boolean = () => true,
+  ) {
     this.#events = events;
     this.#now = now;
+    this.#admits = admits;
   }
 
   /** The traps an actor touches now (its check each physics step): starts, hits and stops. */
@@ -63,6 +70,7 @@ export class TrapHits {
     const now = this.#now();
     let entries = this.#entries.get(target);
     for (const [trap, touch] of touches) {
+      if (!this.#admits(trap, target)) continue;
       const entry = entries?.get(trap);
       if (!entry) {
         entries ??= new Map();

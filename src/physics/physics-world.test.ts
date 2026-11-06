@@ -222,7 +222,7 @@ describe('trigger volumes', () => {
         index: Layer.trigger,
         name: '',
         flags: LayerFlag.triggerVolume,
-        collidesWith: [],
+        collidesWith: [2],
       },
     ]);
     const physics = new PhysicsWorld(withTrigger, GRAVITY);
@@ -265,7 +265,7 @@ describe('trigger volumes', () => {
         index: Layer.trigger,
         name: '',
         flags: LayerFlag.triggerVolume,
-        collidesWith: [],
+        collidesWith: [2],
       },
       { formId: 4, editorId: 'L_TRAP', index: Layer.trap, name: '', flags: 0, collidesWith: [] },
       {

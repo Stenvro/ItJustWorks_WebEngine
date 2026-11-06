@@ -133,7 +133,6 @@ describe.skipIf(!hasGamedata())('the script runtime on the local game data', () 
     const moved = new Map<number, number>();
     const world = runtime.world;
     world.loaded = () => true;
-    world.triggerCount = () => 0;
     world.nodePlacement = (_reference, node) =>
       node.toLowerCase().endsWith('pivot01')
         ? { position: [1, 2, 3], rotation: [0, 0, 0] }

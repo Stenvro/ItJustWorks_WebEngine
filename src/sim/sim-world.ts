@@ -1728,8 +1728,6 @@ export class SimWorld {
       if (target) target.activate();
       else talkOnActivate(this.stage, this.session, reference, activator);
     },
-    triggerCount: (reference) =>
-      (this.#play?.triggerCount(reference) ?? 0) + this.stage.movers.triggerCount(reference),
     openChanged: (reference, open) => {
       this.stage.doors.setOpen(reference, open);
     },

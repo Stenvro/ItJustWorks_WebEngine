@@ -1630,15 +1630,21 @@ export class PlaySession {
       if (now.size > 0) this.#objectsInTriggers.set(object, now);
       else this.#objectsInTriggers.delete(object);
     }
+    // What was inside and is no more (disabled, deleted), and what was inside a volume that is no
+    // more: a body at rest tells nothing by itself. An actor's own come through its mover.
+    const gone = this.physics.takeGone();
+    if (gone.size > 0) {
+      for (const [object, triggers] of [...this.#objectsInTriggers]) {
+        for (const trigger of [...triggers]) {
+          if (!gone.has(object) && !gone.has(trigger)) continue;
+          triggers.delete(trigger);
+          this.onObjectTrigger?.(trigger, object, false);
+        }
+        if (triggers.size === 0) this.#objectsInTriggers.delete(object);
+      }
+    }
     // The traps they touch (their hits: src/scripting/runtime/trap-hits.ts).
     this.onTrapTouch?.(this.physics.trapsTouching(this.player.character.collider, TRAP_REACH));
-  }
-
-  /** How many of the tracked (the player, moving objects) are in a trigger volume now. */
-  triggerCount(reference: number): number {
-    let count = this.#inTriggers.has(reference) ? 1 : 0;
-    for (const triggers of this.#objectsInTriggers.values()) if (triggers.has(reference)) count++;
-    return count;
   }
 
   /** The player entered (true) or left a trigger volume of a reference. */

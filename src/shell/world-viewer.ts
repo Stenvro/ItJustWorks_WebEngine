@@ -820,9 +820,6 @@ export class WorldViewer {
         talkOnActivate(this.#stage, this.#session, reference, activator);
       }
     },
-    triggerCount: (reference) =>
-      (this.#play?.triggerCount(reference) ?? 0) +
-      (this.#stage?.movers.triggerCount(reference) ?? 0),
     sunGazed: (direction) => {
       const state = this.#sky?.skyFrame()?.state;
       return state !== undefined && sunInView(state, direction);

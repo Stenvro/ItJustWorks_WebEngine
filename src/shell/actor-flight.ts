@@ -2375,7 +2375,7 @@ export class ActorFlight {
       const radius = flier.shape?.radius ?? FLIER_RADIUS;
       const height = flier.shape?.height ?? radius * 2;
       const [x, y, z] = flier.staged.position;
-      inside = physics.triggersNear([x, y, z + height / 2], radius);
+      inside = physics.triggersNear([x, y, z + height / 2], radius, Layer.charController);
     }
     for (const trigger of inside) {
       if (!flier.triggers.has(trigger)) onTrigger(trigger, flier.reference, true);

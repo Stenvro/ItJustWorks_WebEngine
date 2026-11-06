@@ -914,7 +914,7 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
   });
   n('objectreference.gettriggerobjectcount', (call) => {
     const reference = self(call);
-    return reference === undefined ? 0 : (world.triggerCount?.(reference) ?? 0);
+    return reference === undefined ? 0 : runtime.triggerVolumes.inside(reference).size;
   });
   n('objectreference.isfurnitureinuse', (call) => {
     const reference = self(call);
