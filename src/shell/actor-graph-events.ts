@@ -209,6 +209,9 @@ export class ActorGraphEvents {
           for (const event of events) world.animationEvent(furniture, event.name);
         }
       }
+      if (!source.player && events.some((event) => event.name.toLowerCase() === 'jumpup')) {
+        stage.movers.jump(source.reference);
+      }
       stage.combat.heard(source, events);
       stage.casting.graphEvents(source, events);
       stage.flight.graphEvents(source, events);
@@ -348,9 +351,12 @@ export class ActorGraphEvents {
       const camera = source.player ? this.#camera() : undefined;
       if (camera) camera.graphBowZoom = false;
     });
-    // JumpBegin: the player's jump pushes off (src/shell/player-avatar.ts hears it). TODO(M10):
-    // NPCs' controllers do not jump (their graphs' jumps play in place).
-    d.heardBy('JumpAnimEventHandler', 'the player avatar');
+    // JumpBegin: the actor's controller jumps (the player's jump: src/shell/player-avatar.ts
+    // hears it, as it asked for the jump). Its JumpUp too where a graph raises no JumpBegin
+    // (below): the human graphs' jump clips raise JumpUp.
+    d.handle('JumpAnimEventHandler', (source) => {
+      if (!source.player) this.#options.stage.movers.jump(source.reference);
+    });
     // MTState: observed in the original, a flag of the actor's middle-high process set.
     // TODO(M13): what reads the flag is not known; it is kept (mtState).
     d.handle('MTStateHandler', (source) => {
@@ -756,8 +762,8 @@ export class ActorGraphEvents {
 
   /**
    * EnableBumper / DisableBumper: observed in the original, the actor's character
-   * controller's bumper (what pushes it off others) is switched on or off.
-   * TODO(M13): our character controllers have no bumper; nothing reads this yet.
+   * controller's bumper (what pushes it off others) is switched on or off
+   * (CharacterBody.bumper: ActorMovers asks this every step).
    */
   bumper(reference: number): boolean {
     return !this.#noBumper.has(reference);

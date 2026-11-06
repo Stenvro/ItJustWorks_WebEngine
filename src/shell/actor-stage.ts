@@ -456,6 +456,7 @@ export class ActorStage {
         ),
       breathesWater: (actor) => this.#breathesWater(actor),
       walksOnWater: (actor) => this.#positiveValue(this.#waterWalking, actor, WATER_WALKING),
+      bumper: (actor) => this.graphEvents.bumper(actor),
       // Taking to the water's surface (the vampire lord's graph: WaterWalkStart).
       waterWalkStarted: (actor) => {
         const staged = this.#actors.get(actor);

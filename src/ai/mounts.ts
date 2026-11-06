@@ -80,9 +80,23 @@ export function mountPlace(horse: Placed, offsets: MountOffsets): Placed {
   };
 }
 
-/** Where a rider gets off: the dismount's end beside the horse, facing the horse's way. */
-export function dismountPlace(horse: Placed): Placed {
-  return { position: inFrame(horse, DISMOUNT_END), heading: horse.heading };
+/**
+ * Where a rider gets off: the dismount's end beside the horse, facing the horse's way. With
+ * `good` (is there room to set it down there: CharacterBody.goodPosition) a place with no room
+ * gives way to the horse's other side, then its back; none good, the dismount's end all the same
+ * (the controller moves out of what it stands in). TODO(M13): that the original's dismount
+ * checks the place, and where it then goes, is inferred (fGoodPosCheckDepth's name).
+ */
+export function dismountPlace(horse: Placed, good?: (position: Vec3) => boolean): Placed {
+  const [x, y, z] = DISMOUNT_END;
+  const places: readonly Vec3[] = [
+    [x, y, z],
+    [-x, y, z],
+    [0, x, z],
+  ];
+  const spots = places.map((place) => inFrame(horse, place));
+  const spot = (good && spots.find((place) => good(place))) ?? spots[0] ?? horse.position;
+  return { position: spot, heading: horse.heading };
 }
 
 /**

@@ -38,6 +38,8 @@ import {
   CharacterBody,
   type CharacterSettings,
   type CharacterShape,
+  jumpHeight,
+  jumpSpeed,
 } from '../physics/character.ts';
 import { HAVOK_SCALE } from '../physics/collision-data.ts';
 import { solverSettings } from '../physics/constraint-solver.ts';
@@ -323,9 +325,9 @@ export function configurePhysics(
 }
 
 /** fJumpHeightMin's and fJumpFallVelocityMin's built-in values (Skyrim.esm: 76 and 700). */
-const JUMP_HEIGHT_MIN = 64;
+export const JUMP_HEIGHT_MIN = 64;
 /** fJumpSwimmingMult's built-in value. */
-const JUMP_SWIMMING_MULT = 2;
+export const JUMP_SWIMMING_MULT = 2;
 const FALL_VELOCITY_MIN = 600;
 /** fHavokTauRatio's built-in value (observed in the original; Skyrim.esm does not set it). */
 const HAVOK_TAU_RATIO = 0.5;
@@ -408,6 +410,8 @@ export function controllerSettings(
     stairMaterials: data.stairMaterials,
     stairHeight: STAIR_HEIGHT,
     moveLimitMass: data.ini.number('HAVOK', 'fMoveLimitMass'),
+    bumper: data.ini.bool('HAVOK', 'bAllowCharacterBumper'),
+    goodPositionDepth: data.ini.number('HAVOK', 'fGoodPosCheckDepth'),
   };
 }
 
@@ -562,6 +566,8 @@ export class Player implements Camera {
   onLanded: ((height: number) => void) | undefined;
   /** Whether the player walks on water (their Water Walking above 0). */
   walksOnWater: (() => boolean) | undefined;
+  /** Their Jumping Bonus (the actor value: jumpHeight). */
+  jumpingBonus: (() => number) | undefined;
   /** The player took to the water's surface walking on it (their ActionWaterwalkStart). */
   onWaterWalkStart: (() => void) | undefined;
   /** Each step: how deep the player is in water (its share of their height, 0..1): breath. */
@@ -808,20 +814,30 @@ export class Player implements Camera {
   /**
    * Jumps now, if on the ground: the avatar's graph's JumpBegin (the engine's
    * JumpAnimEventHandler, observed in the original: the character controller jumps fJumpHeightMin
-   * high, times the actor's scale; TODO(M13): the player's reference scale is taken as 1).
+   * high, times the actor's scale; jumpHeight; TODO(M13): the player's reference scale is taken
+   * as 1).
    */
   launchJump(): void {
     // Asked for on the ground (#move); the push-off comes with the animation, grounded or not by
     // then (CharacterBody.jump): the graph is in its jump state and lands only from the air.
     if (this.character.swimming) return;
     this.onAction?.('JUMP');
-    this.character.jump(this.#jumpSpeed(this.#setup.jumpHeight));
+    this.character.jump(this.#jumpSpeed(false));
   }
 
-  /** A jump's upward speed for its height: with constant gravity v = √(2 g h). */
-  #jumpSpeed(height: number): number {
+  /** A jump's upward speed, on land or out of the water. */
+  #jumpSpeed(swimming: boolean): number {
     const g = -this.#setup.physics.world.gravity.z * HAVOK_SCALE;
-    return Math.sqrt(2 * g * height);
+    return jumpSpeed(
+      jumpHeight(
+        {
+          min: this.#setup.jumpHeight,
+          swimmingMult: this.#setup.jumpSwimmingMult ?? JUMP_SWIMMING_MULT,
+        },
+        { scale: 1, jumpingBonus: this.jumpingBonus?.() ?? 0, swimming },
+      ),
+      g,
+    );
   }
 
   get forward(): Vec3 {
@@ -1204,11 +1220,7 @@ export class Player implements Camera {
       this.#leaping = true;
       this.onAction?.('JUMP');
       character.swimming = false;
-      character.jump(
-        this.#jumpSpeed(
-          this.#setup.jumpHeight * (this.#setup.jumpSwimmingMult ?? JUMP_SWIMMING_MULT),
-        ),
-      );
+      character.jump(this.#jumpSpeed(true));
     } else if (character.grounded || character.verticalSpeed <= 0) this.#leaping = false;
     const swimming = !onWater && !this.#leaping && swims(depth, character.swimming);
     character.swimming = swimming;

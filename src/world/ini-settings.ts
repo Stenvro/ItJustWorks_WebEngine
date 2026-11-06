@@ -477,6 +477,12 @@ export const INI_DEFAULTS = {
     fImpulseLimit: 15,
   },
   HAVOK: {
+    // Characters push one another (src/physics/character.ts).
+    bAllowCharacterBumper: 1,
+    // Further than its root (square units) from where it should be, a controller is set there.
+    fCharControllerWarpDistSqr: 6_000_000,
+    // How deep (Havok units) a controller may lie in things at a place it is set down at.
+    fGoodPosCheckDepth: 0.1,
     fInAirFallingCharGravityMult: 1.35,
     // The physics step and the steps a frame takes at most (src/physics/physics-world.ts).
     fMaxTime: 1 / 60,
