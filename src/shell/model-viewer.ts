@@ -513,9 +513,6 @@ export class ModelViewer {
     activate: (reference, activator) => {
       this.#defaultActivation(reference, activator)?.activate();
     },
-    triggerCount: (reference) =>
-      (this.#play?.triggerCount(reference) ?? 0) +
-      (this.#stage?.movers.triggerCount(reference) ?? 0),
     openChanged: (reference, open) => {
       this.#stage?.doors.setOpen(reference, open);
     },

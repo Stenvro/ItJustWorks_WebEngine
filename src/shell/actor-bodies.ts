@@ -75,6 +75,8 @@ interface ActorBody {
   readonly pose: ActorPose;
   readonly world: Mat4;
   readonly bodies: readonly PosedBody[];
+  /** Its actor is disabled or deleted: a ragdoll's bodies are out of the world meanwhile. */
+  disabled?: boolean;
   /** The pose and placement versions the bodies were last moved to. */
   poseVersion: number;
   worldVersion: number;
@@ -193,6 +195,13 @@ export class ActorBodies {
       // moves the new one's pose from now on.
       if (entry?.articulation && staged.placed !== entry.actor) entry = this.#rehome(entry, staged);
       if (entry?.articulation) {
+        // A ragdoll disabled or deleted leaves the world with its actor (it blocked nothing to
+        // see, and stayed in its trigger volumes); enabled, it is back where it lay.
+        if ((entry.disabled === true) !== staged.visibility.hidden) {
+          entry.disabled = staged.visibility.hidden;
+          physics.setEnabled(entry.placed, !entry.disabled);
+        }
+        if (entry.disabled === true) continue;
         if (entry.penetration && !entry.penetration.update(seconds)) entry.penetration = undefined;
         // A knocked-down actor's graph animated its pose meanwhile: its motors pull the ragdoll
         // toward that pose (as far as the graph powers it), then the pose is the ragdoll's again.

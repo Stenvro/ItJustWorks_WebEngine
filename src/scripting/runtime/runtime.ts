@@ -9,6 +9,7 @@ import { EventHub } from './event-hub.ts';
 import { relayScriptEvents } from './script-events.ts';
 import { countDaysPassed, relayStatEvents } from './stat-events.ts';
 import { TriggerVolumes } from './trigger-volumes.ts';
+import { ActivatorKeywords } from './activator-keywords.ts';
 import { CellResets } from './cell-reset.ts';
 import { LocationClearing } from './location-clearing.ts';
 import { TrapHits } from './trap-hits.ts';
@@ -199,7 +200,6 @@ export interface WorldBridge {
   hasNode?(reference: number, node: string): boolean;
   /** Where a named node of a loaded reference's model is (MoveToNode). */
   nodePlacement?(reference: number, node: string): { position: Vec3; rotation: Vec3 } | undefined;
-  triggerCount?(reference: number): number;
   openChanged?(reference: number, open: boolean): void;
   lockChanged?(reference: number): void;
   /**
@@ -870,6 +870,18 @@ export class ScriptRuntime implements VmHost {
   readonly events = new EventHub();
   /** Who is inside which trigger volume; their repeated OnTrigger (trigger-volumes.ts). */
   readonly triggerVolumes = new TriggerVolumes();
+  /** The keyword a trigger's or a trap's activator asks of what comes to it (ACTI KNAM). */
+  readonly #activatorKeywords = new ActivatorKeywords(
+    async (reference) => {
+      const base = await this.baseOf(reference);
+      const record = base === undefined ? undefined : await this.forms.record(base);
+      const knam = record?.type === 'ACTI' ? record.fields.first('KNAM') : undefined;
+      return knam && record?.formIdAt(knam);
+    },
+    (who, keyword) => this.hasKeyword(who, keyword),
+  );
+  /** What is still being told a trigger, by trigger: its tellings keep their order. */
+  readonly #triggerTellings = new Map<number, Promise<void>>();
   /** Traps touching actors: their hits told (trap-hits.ts). */
   readonly trapHits: TrapHits;
   /** [General] uGridsToLoad (the session sets the INI's): the attached area outside. */
@@ -1096,7 +1108,11 @@ export class ScriptRuntime implements VmHost {
     this.harvest = new HarvestEngine(this);
     this.cellResets = new CellResets(this);
     // The game's real time (outside menus) is the trap hits' clock.
-    this.trapHits = new TrapHits(this.events, () => this.state.realTime * 1000);
+    this.trapHits = new TrapHits(
+      this.events,
+      () => this.state.realTime * 1000,
+      (trap, target) => this.#activatorKeywords.admitsNow(trap, target),
+    );
     this.locationClearing = new LocationClearing(this);
     this.hazards = new HazardEngine(this);
     this.destruction = new DestructionEngine(this);
@@ -1485,11 +1501,35 @@ export class ScriptRuntime implements VmHost {
   /**
    * Something entered or left a reference's trigger volume: the hub tells it (OnTriggerEnter,
    * OnTriggerLeave), and while it is inside the volume tells it again and again (OnTrigger:
-   * trigger-volumes.ts).
+   * trigger-volumes.ts). What its activator's keyword does not admit is not inside, and is not
+   * told; nor is the leaving of what was not told entering (forgotten as its cell went).
    */
   triggered(reference: number, actor: number, entered: boolean): void {
+    const telling = this.#triggerTellings.get(reference);
+    if (!telling && this.#activatorKeywords.asksNothing(reference)) {
+      this.#tellTrigger(reference, actor, entered);
+      return;
+    }
+    const told = (telling ?? Promise.resolve())
+      .then(async () => {
+        if (entered && !(await this.#activatorKeywords.admits(reference, actor))) return;
+        this.#tellTrigger(reference, actor, entered);
+      })
+      .catch((error: unknown) => {
+        this.#warn(`trigger ${reference.toString(16)}: ${String(error)}`);
+      })
+      .finally(() => {
+        if (this.#triggerTellings.get(reference) === told) this.#triggerTellings.delete(reference);
+      });
+    this.#triggerTellings.set(reference, told);
+  }
+
+  #tellTrigger(reference: number, actor: number, entered: boolean): void {
     if (entered) this.triggerVolumes.enter(reference, actor);
-    else this.triggerVolumes.leave(reference, actor);
+    else {
+      if (!this.triggerVolumes.inside(reference).has(actor)) return;
+      this.triggerVolumes.leave(reference, actor);
+    }
     this.events.emit('triggerEnterLeave', { trigger: reference, reference: actor, entered });
   }
 

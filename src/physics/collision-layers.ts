@@ -124,9 +124,11 @@ export class CollisionMatrix {
   readonly size: number;
   readonly #bits: Uint8Array;
   readonly #flags: Uint32Array;
+  readonly #byForm: ReadonlyMap<number, number>;
 
   constructor(layers: readonly CollisionLayer[]) {
     const byForm = new Map(layers.map((layer) => [layer.formId, layer.index]));
+    this.#byForm = byForm;
     this.size = Math.max(0, ...layers.map((layer) => layer.index + 1));
     this.#bits = new Uint8Array(this.size * this.size);
     this.#flags = new Uint32Array(this.size);
@@ -146,6 +148,11 @@ export class CollisionMatrix {
   collides(a: number, b: number): boolean {
     if (a >= this.size || b >= this.size || a < 0 || b < 0) return false;
     return this.#bits[a * this.size + b] === 1;
+  }
+
+  /** The index of the layer a form names (a projectile's PROJ collision layer). */
+  indexOf(form: number | undefined): number | undefined {
+    return form === undefined ? undefined : this.#byForm.get(form);
   }
 
   /** The layer's flags (trigger volume, sensor, navmesh obstacle). */

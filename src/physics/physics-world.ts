@@ -794,6 +794,12 @@ export class PhysicsWorld {
   /** Collision layer per collider handle. */
   readonly #layers = new Map<number, number>();
   readonly #owners = new Map<number, PhysicsOwner>();
+  /** The colliders on L_TRAP, by handle (movingInTriggers looks at the keyframed ones). */
+  readonly #trapColliders = new Map<number, RAPIER.Collider>();
+  /** Where each trap's body was when last looked at, by body handle. */
+  readonly #trapPoses = new Map<number, number[]>();
+  /** See takeGone. */
+  #gone = new Set<number>();
   /** Material id (MATT) per collider handle. */
   readonly #materials = new Map<number, number>();
   /** Simulated colliders' nodes (water-physics.ts: a ragdoll's trunk floats, its limbs hang). */
@@ -1045,9 +1051,14 @@ export class PhysicsWorld {
     if (layer === Layer.trap || layer === Layer.cloudTrap) kinds |= QUERY_TRAP;
     if (layer === Layer.charController) kinds |= QUERY_CONTROLLER;
     collider.setCollisionGroups(groups(kinds, ALL_GROUPS));
+    if (layer === Layer.trap) this.#trapColliders.set(collider.handle, collider);
+    else this.#trapColliders.delete(collider.handle);
   }
 
   unregister(collider: RAPIER.Collider): void {
+    this.#trapColliders.delete(collider.handle);
+    const body = collider.parent();
+    if (body) this.#trapPoses.delete(body.handle);
     this.#layers.delete(collider.handle);
     this.#systems.delete(collider.handle);
     this.#owners.delete(collider.handle);
@@ -1789,6 +1800,7 @@ export class PhysicsWorld {
   readonly #scriptJoints: { joint: RAPIER.ImpulseJoint; a: number; b: number }[] = [];
 
   remove(placed: PlacedCollision): void {
+    this.#gone.add(placed.owner.reference);
     this.#stiff.delete(placed);
     // Removing a body removes its joints.
     for (const joint of placed.joints) this.#forgetJoint(joint);
@@ -2261,6 +2273,7 @@ export class PhysicsWorld {
    * was thrown at 14,000 units a second.
    */
   setEnabled(placed: PlacedCollision, enabled: boolean): void {
+    if (!enabled) this.#gone.add(placed.owner.reference);
     for (const { body, data } of placed.bodies) {
       // Only one that comes back (asked again while enabled, it moves on as it was).
       if (enabled && !body.isEnabled() && data.motion === 'dynamic' && !data.phantom)
@@ -2676,8 +2689,10 @@ export class PhysicsWorld {
   }
 
   /**
-   * The trigger volumes (colliders on layers flagged "trigger volume") a collider overlaps now:
-   * their owners' references (a trap's trigger, a quest's activator box).
+   * The trigger volumes (colliders on layers flagged "trigger volume") a collider overlaps now
+   * whose layers collide with its own: their owners' references (a trap's trigger, a quest's
+   * activator box). The layer matrix decides who is in what: L_PROJECTILEZONE takes in no
+   * controller, L_DEADACTORZONE only the dead.
    */
   triggersOverlapping(collider: RAPIER.Collider): Set<number> {
     return this.#triggersIn(
@@ -2685,18 +2700,22 @@ export class PhysicsWorld {
       collider.rotation(),
       queryShape(collider.shape),
       collider,
+      this.layerOf(collider),
     );
   }
 
   /**
    * The trigger volumes a ball overlaps (`center` and `radius` in game units): those an actor
-   * without a controller reaches (a flier in the air: MQ101SetStage99 across Alduin's way).
+   * without a controller reaches (a flier in the air: MQ101SetStage99 across Alduin's way). With
+   * a `layer`: only those whose layer collides with it.
    */
-  triggersNear(center: Vec3, radius: number): Set<number> {
+  triggersNear(center: Vec3, radius: number, layer?: number): Set<number> {
     return this.#triggersIn(
       { x: toHavok(center[0]), y: toHavok(center[1]), z: toHavok(center[2]) },
       { x: 0, y: 0, z: 0, w: 1 },
       new RAPIER.Ball(toHavok(radius)),
+      undefined,
+      layer,
     );
   }
 
@@ -2836,34 +2855,55 @@ export class PhysicsWorld {
    * the contacts the simulation of an active one makes, so what a cell places inside a trigger
    * does not enter it as the cell loads (Whiterun's clutter told
    * CWDisableHoldPositionMarkerTrigger, whose script takes what enters for an actor). Disturbed
-   * later, it enters as it moves.
+   * later, it enters as it moves. A trap's body on L_TRAP moves by its animation (keyframed), and
+   * is looked at as it moves too: a swinging blade passes through the volumes it meets.
    */
   movingInTriggers(): Map<number, Set<number>> {
     const found = new Map<number, Set<number>>();
+    const look = (collider: RAPIER.Collider): void => {
+      const owner = this.ownerOf(collider);
+      if (!collider.isEnabled() || owner === undefined || owner.reference === 0) return;
+      const layer = this.layerOf(collider);
+      let inside = found.get(owner.reference);
+      if (!inside) {
+        inside = new Set();
+        found.set(owner.reference, inside);
+      }
+      for (const trigger of this.#triggersIn(
+        collider.translation(),
+        collider.rotation(),
+        queryShape(collider.shape),
+        collider,
+        layer,
+      )) {
+        if (trigger !== owner.reference) inside.add(trigger);
+      }
+    };
     this.world.forEachActiveRigidBody((body) => {
       if (!body.isDynamic() || this.#settling.has(body.handle)) return;
-      for (let i = 0; i < body.numColliders(); i++) {
-        const collider = body.collider(i);
-        const owner = this.ownerOf(collider);
-        if (!collider.isEnabled() || owner === undefined || owner.reference === 0) continue;
-        const layer = this.layerOf(collider);
-        let inside = found.get(owner.reference);
-        if (!inside) {
-          inside = new Set();
-          found.set(owner.reference, inside);
-        }
-        for (const trigger of this.#triggersIn(
-          collider.translation(),
-          collider.rotation(),
-          queryShape(collider.shape),
-          collider,
-          layer,
-        )) {
-          if (trigger !== owner.reference) inside.add(trigger);
-        }
-      }
+      for (let i = 0; i < body.numColliders(); i++) look(body.collider(i));
     });
+    for (const collider of this.#trapColliders.values()) {
+      const body = collider.parent();
+      if (body?.isKinematic() !== true) continue;
+      const t = body.translation();
+      const r = body.rotation();
+      const pose = [t.x, t.y, t.z, r.x, r.y, r.z, r.w];
+      const before = this.#trapPoses.get(body.handle);
+      this.#trapPoses.set(body.handle, pose);
+      if (before && pose.some((value, index) => value !== before[index])) look(collider);
+    }
     return found;
+  }
+
+  /**
+   * The references whose collision went or was disabled since last asked: what was in a trigger
+   * volume and is gone has left it (nothing moves to tell so), as has what was in one that is gone.
+   */
+  takeGone(): ReadonlySet<number> {
+    const gone = this.#gone;
+    this.#gone = new Set();
+    return gone;
   }
 
   #triggersIn(

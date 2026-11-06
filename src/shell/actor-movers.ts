@@ -1434,13 +1434,6 @@ export class ActorMovers {
     return this.#world?.physics;
   }
 
-  /** How many actors (not the player) are in a trigger volume of a reference. */
-  triggerCount(trigger: number): number {
-    let count = 0;
-    for (const mover of this.#movers.values()) if (mover.triggers.has(trigger)) count++;
-    return count;
-  }
-
   /**
    * What an actor's controller moves through (a horse its cart's colliders: hitched, the cart
    * never stands in its way, also as it turns round).

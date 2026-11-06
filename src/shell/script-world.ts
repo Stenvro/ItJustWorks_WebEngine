@@ -133,8 +133,6 @@ export interface ScriptView {
   destructionChanged?(reference: number, reached: DestructionStage | undefined): void;
   /** An explosion bursts at a point (a destruction stage's): its model, light, sounds. */
   explosion?(explosion: number, at: Vec3, source: number | undefined): void;
-  /** How many are inside a reference's trigger volume now. */
-  triggerCount?(reference: number): number;
   /** Whether a look along a direction meets the sun in the sky (a bow shot's sun gazing). */
   sunGazed?(direction: readonly [number, number, number]): boolean;
   /** SetOpen: a door of the view swings open or shut (src/shell/actor-doors.ts setOpen). */
@@ -533,12 +531,6 @@ export class ScriptWorld implements WorldBridge {
 
   openChanged(reference: number, open: boolean): void {
     for (const view of this.#views) view.openChanged?.(reference, open);
-  }
-
-  triggerCount(reference: number): number {
-    let count = 0;
-    for (const view of this.#views) count += view.triggerCount?.(reference) ?? 0;
-    return count;
   }
 
   hasNode(reference: number, node: string): boolean {

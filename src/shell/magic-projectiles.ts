@@ -722,6 +722,16 @@ export class MagicProjectiles {
     const hit = this.#sweep(delivered.caster, origin, end, projectile.collisionRadius);
     const point = hit ? pointAt(origin, end, hit.t) : end;
     this.#knock(projectile, hit?.ray, aim);
+    // Its way in the trigger volumes, in and out at once: it flies no longer than this.
+    const shot = {};
+    this.#options.triggers?.step(
+      shot,
+      projectile.formId,
+      origin,
+      point,
+      this.#physics?.matrix.indexOf(projectile.collisionLayer) ?? Layer.spell,
+    );
+    this.#options.triggers?.end(shot);
     // The beam from the hand to what it met (its model stretched to it, and its light).
     this.#beams.show(projectile, origin, aim, range * (hit ? hit.t : 1), options.follow);
     await this.#impact(runtime, delivered, projectile, effect, point, aim, hit, seconds);
@@ -774,6 +784,21 @@ export class MagicProjectiles {
     for (const target of this.#options.targets()) targets.set(target.reference, target);
     const physics = this.#physics;
     const front = Math.min(wave.range, wave.front + wave.speed * step);
+    // Its way in the trigger volumes, from its apex to its front along its middle.
+    // TODO(M13): the wave's spread; a volume off its middle line is not told (inferred).
+    if (front > 0) {
+      this.#options.triggers?.step(
+        entry,
+        projectile.formId,
+        origin,
+        [
+          origin[0] + wave.direction[0] * front,
+          origin[1] + wave.direction[1] * front,
+          origin[2] + wave.direction[2] * front,
+        ],
+        physics?.matrix.indexOf(projectile.collisionLayer) ?? Layer.coneProjectile,
+      );
+    }
     // Its force pushes the moving bodies its front has reached, each once (clutter flies, corpses
     // tumble).
     const force = projectile.impactForce;
@@ -980,6 +1005,7 @@ export class MagicProjectiles {
     if (seconds > 0 && runtime)
       for (const wave of [...this.#waves]) {
         if (coneDone(wave.wave)) {
+          this.#options.triggers?.end(wave);
           this.#waves.delete(wave);
           continue;
         }
@@ -992,7 +1018,13 @@ export class MagicProjectiles {
       if (flying.done) continue;
       const { from, to } = stepFlight(flying.flight, seconds);
       this.#options.shotWay?.(from, to);
-      this.#options.triggers?.step(flying, flying.projectile.formId, from, to, Layer.spell);
+      this.#options.triggers?.step(
+        flying,
+        flying.projectile.formId,
+        from,
+        to,
+        this.#physics?.matrix.indexOf(flying.projectile.collisionLayer) ?? Layer.spell,
+      );
       const hit = this.#sweep(flying.delivered.caster, from, to, flying.projectile.collisionRadius);
       // Its alternative trigger: within its proximity of an actor it bursts.
       const near =
