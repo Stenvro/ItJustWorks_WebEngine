@@ -30,20 +30,38 @@ const BOOK_MARKER = 0x36369;
 const KARTHSPIRE_MARKER = 0x1626c;
 const BLADES_FACTION = 0x72834;
 const PLAYER_FOLLOWER_FACTION = 0x84d1b;
+/** The inn's door to the street. */
+const INN_EXIT = 0x13419;
+/** MQ203's KarthspireLoadDoor alias's door (an automatic one), the worldspace behind it and
+ * MQ203KarthspireScene. */
+const KARTHSPIRE_DOOR = 0x15e13;
+const KARTHSPIRE_WORLD = 0x35699;
+const KARTHSPIRE_SCENE = 0xa8d56;
+const TAMRIEL = 0x3c;
 
 /** The game with Esbern and Delphine met in the Sleeping Giant (stage 30). */
 let afterMeeting: Uint8Array | undefined;
+/** The game with Sky Haven Temple found on Esbern's map (stage 60). */
+let afterMap: Uint8Array | undefined;
+/** The game with the three at Karthspire, past its entrance (stage 110). */
+let afterArrival: Uint8Array | undefined;
 
 /**
- * Those fighting the player fall to the player's blows (TODO(M13): the player's own blows; the
- * sim has no aimed attacks yet).
+ * Those fighting the player, or the friends with them, fall to the player's blows (TODO(M13):
+ * the player's own blows; the sim has no aimed attacks yet). How many there were.
  */
-async function fendOff(sim: Sim): Promise<void> {
+async function fendOff(sim: Sim, friends: readonly number[] = []): Promise<number> {
+  let fallen = 0;
   for (const staged of sim.actors()) {
     const actor = staged.reference;
-    if (actor === PLAYER_REF || staged.dead) continue;
-    if (sim.world.stage.combat.targetOf(actor) === PLAYER_REF) await sim.kill(actor, PLAYER_REF);
+    if (actor === PLAYER_REF || staged.dead || friends.includes(actor)) continue;
+    const target = sim.world.stage.combat.targetOf(actor);
+    if (target === PLAYER_REF || (target !== undefined && friends.includes(target))) {
+      await sim.kill(actor, PLAYER_REF);
+      fallen += 1;
+    }
   }
+  return fallen;
 }
 
 /** Whether an actor is dead, on the stage or away. */
@@ -186,8 +204,148 @@ describe.skipIf(!hasGamedata())("MQ203 Alduin's Wall", () => {
       }
       expect(lines).toContain('MQ203RiverwoodScene: #14 said');
       expect(lines).toContain('MQ203RiverwoodScene: #33 said');
+      afterMap = await sim.save('MQ203 60');
     } finally {
       await sim.close();
     }
   }, 600_000);
+
+  // The talk's end (MQ203RiverwoodScene's 26-28) has Delphine force greet the player (29; her
+  // conversation pauses the scene, dialoguePause), with the two ways to Karthspire: "Let's travel
+  // there together" is a Goodbye info whose fragment sets 70 (the two are followers now; their
+  // packages, MQ203*FollowPlayerToSkyHaven, have run since 60). The scene goes on: she asks Orgnar
+  // to mind the inn, and it ends as the player leaves (MQ203PlayerScript: 65). On by the map:
+  // Esbern coming into Karthspire's location is 80, the player's 100. The Forsworn camp outside
+  // falls; the load door at the cave's end is an automatic one (it takes the player through as
+  // they come near), and they arrive in KarthspireRedoubtWorld inside MQ203SetStage110, which
+  // starts MQ203KarthspireScene: the two are no followers now, and go ahead of the player on the
+  // scene's packages.
+  it('has the three travel together and reach Karthspire (70-110)', async () => {
+    if (!afterMap) return;
+    const sim = await loadSim(afterMap);
+    try {
+      const lines: string[] = [];
+      sim.runtime.scenes.listen((line) => lines.push(line));
+      const esbern = alias(sim, MQ203, ESBERN);
+      const delphine = alias(sim, MQ203, DELPHINE);
+      const party = [delphine, esbern];
+      const followPackages = [
+        await sim.formId('PACK', 'MQ203DelphineFollowPlayerToSkyHaven'),
+        await sim.formId('PACK', 'MQ203EsbernFollowPlayerToSkyHaven'),
+      ];
+      // Her greeting: both ways offered, and her word on the road; stage 70 waits for the choice.
+      const offered = await sim.listen(delphine, 90);
+      expect(offered).toContain("I'll meet you at Karthspire.");
+      expect(offered).toContain("Let's travel there together. Are you ready to go?");
+      expect(lines).toContain('MQ203RiverwoodScene: paused');
+      expect(sim.stageDone(MQ203, 70)).toBe(false);
+      expect(await sim.choose(/best way/)).toEqual(offered);
+      expect(sim.stageDone(MQ203, 70)).toBe(false);
+      // The line's Goodbye flag ends the conversation: no topics after it.
+      expect(await sim.choose(/travel there together/)).toEqual([]);
+      expect(sim.stageDone(MQ203, 70)).toBe(true);
+      expect(sim.stageDone(MQ203, 75)).toBe(false);
+      for (const actor of party) expect(inFaction(sim, actor, PLAYER_FOLLOWER_FACTION)).toBe(true);
+      expect(objective(sim, 30)).toEqual({ displayed: true, completed: false });
+      // The scene goes on with her and Orgnar; she follows once it has let her go.
+      expect(await sim.until(() => lines.includes('MQ203RiverwoodScene: goes on'), 5)).toBe(true);
+      const phase35 = (): boolean => lines.includes('MQ203RiverwoodScene: phase 35');
+      expect(await sim.until(phase35, 120)).toBe(true);
+      for (const said of ['#58', '#60', '#61', '#62']) {
+        expect(lines).toContain(`MQ203RiverwoodScene: ${said} said`);
+      }
+      expect(sim.stageDone(MQ203, 65)).toBe(false);
+      expect(sim.package(delphine)?.id).toBe(followPackages[0]);
+      expect(sim.package(esbern)?.id).toBe(followPackages[1]);
+      // Out of the inn, and they with the player.
+      const exit = await sim.position(INN_EXIT);
+      expect(exit && (await sim.walkPath(exit, 120, 100))).toBe(true);
+      expect(sim.activate(INN_EXIT)).toBe(true);
+      await sim.world.settle();
+      await sim.step(3);
+      expect((await sim.runtime.placement(PLAYER_REF))?.cell).not.toBe(SLEEPING_GIANT);
+      expect(await sim.until(() => sim.stageDone(MQ203, 65), 5)).toBe(true);
+      expect(sim.runtime.scenes.isPlaying(RIVERWOOD_SCENE)).toBe(false);
+      for (const actor of party) expect(await sim.distance(PLAYER_REF, actor)).toBeLessThan(600);
+      // By the map, they along: Esbern's arrival is 80, the player's 100.
+      expect(sim.runtime.mapMarkerVisible(KARTHSPIRE_MARKER)).toBe(true);
+      await sim.fastTravel(KARTHSPIRE_MARKER);
+      for (const actor of party) expect(await sim.distance(PLAYER_REF, actor)).toBeLessThan(600);
+      expect(await sim.until(() => sim.stageDone(MQ203, 100), 10)).toBe(true);
+      expect(sim.stageDone(MQ203, 80)).toBe(true);
+      expect(sim.stageDone(MQ203, 75)).toBe(false);
+      expect(sim.stageDone(MQ203, 110)).toBe(false);
+      // The Forsworn of the camp come; none is left fighting, and the two are back by the player.
+      let fallen = 0;
+      let quiet = 0;
+      for (let second = 0; second < 180 && quiet < 10; second += 2) {
+        await sim.step(2);
+        const now = await fendOff(sim, party);
+        fallen += now;
+        const fighting = sim.actors().some((staged) => {
+          if (staged.dead) return false;
+          return sim.world.stage.combat.targetOf(staged.reference) !== undefined;
+        });
+        quiet = fighting || now > 0 ? 0 : quiet + 1;
+      }
+      expect(quiet).toBe(10);
+      expect(fallen).toBeGreaterThan(0);
+      for (const actor of party) expect(isDead(sim, actor)).toBe(false);
+      const door = await sim.position(KARTHSPIRE_DOOR);
+      expect(door && (await sim.walkPath(door, 180, 400))).toBe(true);
+      const nearby = async (reach: number): Promise<boolean> => {
+        for (const actor of party) {
+          const away = await sim.distance(PLAYER_REF, actor);
+          if (away === undefined || away > reach) return false;
+        }
+        return true;
+      };
+      for (let second = 0; second < 90 && !(await nearby(600)); second += 1) await sim.step(1);
+      expect(await nearby(600)).toBe(true);
+      expect(sim.package(delphine)?.id).toBe(followPackages[0]);
+      expect(sim.package(esbern)?.id).toBe(followPackages[1]);
+      expect(await space(sim, PLAYER_REF)).toBe(TAMRIEL);
+      expect(sim.stageDone(MQ203, 110)).toBe(false);
+      // Up to the door: it takes them through, the two with them, and the arrival is 110.
+      expect(door && (await sim.walkPath(door, 60, 200))).toBe(true);
+      await sim.world.settle();
+      await sim.step(1);
+      expect(await space(sim, PLAYER_REF)).toBe(KARTHSPIRE_WORLD);
+      expect(await sim.until(() => sim.stageDone(MQ203, 110), 10)).toBe(true);
+      await sim.step(1);
+      expect(sim.runtime.scenes.isPlaying(KARTHSPIRE_SCENE)).toBe(true);
+      expect(objective(sim, 30)).toEqual({ displayed: true, completed: false });
+      for (const actor of party) {
+        expect(await space(sim, actor)).toBe(KARTHSPIRE_WORLD);
+        expect(inFaction(sim, actor, PLAYER_FOLLOWER_FACTION)).toBe(false);
+      }
+      // They go ahead on the scene's packages, to their first marker, and talk there.
+      expect(sim.package(delphine)?.id).toBe(
+        await sim.formId('PACK', 'MQ203DelphineToKarthspireMarker1'),
+      );
+      expect(sim.package(esbern)?.id).toBe(
+        await sim.formId('PACK', 'MQ203EsbernToKarthspireMarker1'),
+      );
+      expect(await sim.until(() => lines.includes('MQ203KarthspireScene: #5 said'), 120)).toBe(
+        true,
+      );
+      expect(await sim.until(() => lines.includes('MQ203KarthspireScene: #6 said'), 60)).toBe(true);
+      afterArrival = await sim.save('MQ203 110');
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+
+  // The save a later segment goes on from: what the arrival left loads as it was.
+  it('keeps the arrival at Karthspire in its save', async () => {
+    if (!afterArrival) return;
+    const sim = await loadSim(afterArrival);
+    try {
+      expect(sim.stageDone(MQ203, 110)).toBe(true);
+      expect(await space(sim, PLAYER_REF)).toBe(KARTHSPIRE_WORLD);
+      expect(sim.runtime.scenes.isPlaying(KARTHSPIRE_SCENE)).toBe(true);
+    } finally {
+      await sim.close();
+    }
+  }, 120_000);
 });
