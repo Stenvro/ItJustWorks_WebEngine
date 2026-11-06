@@ -31,6 +31,12 @@ const WORD_3 = 0xb39c6;
 const GATE_WIND = 0x9dd0f;
 const GATE_COLLISION = 0x34e03;
 const FIRST_FOG = 0x94ccf;
+/** The two blizzards on the way up (MQTotWHazardTrig), the trigger at the top (MQ204SetStage95),
+ * MQ204PaarthurnaxScene and the Paarthurnax alias. */
+const BLIZZARDS = [0x105965, 0x10f764];
+const SUMMIT_TRIGGER = 0x1010ab;
+const PAARTHURNAX_SCENE = 0x3f8b6;
+const PAARTHURNAX = 4;
 
 /** The game with the player in High Hrothgar (stage 10). */
 let atHighHrothgar: Uint8Array | undefined;
@@ -43,7 +49,9 @@ let afterFirstShown: Uint8Array | undefined;
 /** The game with Clear Skies learned (stage 86). */
 let afterWords: Uint8Array | undefined;
 /** The game with the path open and the fog before the player (stage 90). */
-export let afterGate: Uint8Array | undefined;
+let afterGate: Uint8Array | undefined;
+/** The game at the summit, Paarthurnax coming (stage 95). */
+let afterClimb: Uint8Array | undefined;
 
 /** A quest alias's reference. */
 function alias(sim: Sim, quest: number, id: number): number {
@@ -283,6 +291,59 @@ describe.skipIf(!hasGamedata())('MQ204 The Throat of the World', () => {
       expect(objective(sim, 30)).toEqual({ displayed: true, completed: false });
       expect(sim.runtime.scenes.isPlaying(CLEAR_SKIES_SCENE)).toBe(false);
       afterGate = await sim.save('MQ204 90');
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+
+  // The path winds up the mountain through the fog (each bank slows those in it) to two blizzards
+  // across the way (MQTotWHazardTrig, a collision box with each: the player cannot pass while it
+  // blows). Held there, they turn to it and shout: MQTotWHazardSCRIPT's OnHit stops it and takes
+  // box and wind away. Found 2026-11-06: the box beside a blizzard's volume hid the volume from
+  // the cone (L_CONEPROJECTILE meets a collision box, L_SPELL does not; a cone's sight of an
+  // actor went by L_SPELL already). The trigger at the top is 95: Paarthurnax comes.
+  it('has the player climb to the summit, shouting the blizzards away (95)', async () => {
+    if (!afterGate) return;
+    const sim = await loadSim(afterGate);
+    try {
+      const paarthurnax = alias(sim, MQ204, PAARTHURNAX);
+      expect(await sim.enabled(paarthurnax)).toBe(false);
+      expect(sim.runtime.state.quest(MQ204).objectives.get(30)?.displayed).toBe(true);
+      const summit = await sim.position(SUMMIT_TRIGGER);
+      expect(summit).toBeDefined();
+      if (!summit) return;
+      let shouted = 0;
+      let last = [...sim.world.player.feet];
+      for (let leg = 0; leg < 25 && !sim.stageDone(MQ204, 95); leg++) {
+        await sim.walkPath(summit, 15, 200);
+        const feet = sim.world.player.feet;
+        const moved = Math.hypot(feet[0] - (last[0] ?? 0), feet[1] - (last[1] ?? 0));
+        last = [...feet];
+        if (moved >= 200 || sim.stageDone(MQ204, 95)) continue;
+        // Held: the blizzard nearest them, still blowing.
+        const blowing: [number, number][] = [];
+        for (const blizzard of BLIZZARDS) {
+          if (!(await sim.enabled(blizzard))) continue;
+          blowing.push([(await sim.distance(PLAYER_REF, blizzard)) ?? Infinity, blizzard]);
+        }
+        const nearest = blowing.sort(([a], [b]) => a - b)[0]?.[1];
+        const at = nearest === undefined ? undefined : await sim.position(nearest);
+        expect(at).toBeDefined();
+        if (!at) return;
+        sim.look(at);
+        await sim.step(0.2);
+        await shout(sim);
+        shouted += 1;
+        await sim.step(3);
+        expect(nearest !== undefined && (await sim.enabled(nearest))).toBe(false);
+      }
+      expect(sim.stageDone(MQ204, 95)).toBe(true);
+      await sim.step(1);
+      expect(shouted).toBe(BLIZZARDS.length);
+      expect(await sim.runtime.actors.isDead(PLAYER_REF)).toBe(false);
+      expect(await sim.enabled(paarthurnax)).toBe(true);
+      expect(sim.runtime.scenes.isPlaying(PAARTHURNAX_SCENE)).toBe(true);
+      afterClimb = await sim.save('MQ204 95');
     } finally {
       await sim.close();
     }

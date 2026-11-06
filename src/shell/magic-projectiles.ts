@@ -824,15 +824,19 @@ export class MagicProjectiles {
       }
       const nearest = objects.get(reference);
       if (!nearest) continue;
-      // Seen from its apex: nothing else first on the way to the object's body.
+      // Seen from its apex: nothing else first on the way to the object's body, as for an actor
+      // (#blocked: a collision box hides nothing, L_SPELL passes it). Hidden now, it may be seen
+      // further on, the point the front is nearest moving with it.
       const way: Vec3 = [nearest[0] - origin[0], nearest[1] - origin[1], nearest[2] - origin[2]];
-      const first = physics?.raycast(origin, way, Math.hypot(...way), Layer.coneProjectile);
+      const first = physics?.raycast(origin, way, Math.hypot(...way), Layer.spell);
       if (
         first &&
         first.owner?.reference !== reference &&
         first.owner?.reference !== delivered.caster
-      )
+      ) {
+        wave.reached.delete(reference);
         continue;
+      }
       await runtime.casting.deliver(delivered, reference, {
         facing: false,
         projectile: projectile.formId,
