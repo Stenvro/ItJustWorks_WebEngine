@@ -11,9 +11,9 @@
 // - The data (Skyrim.esm): WhiterunBanneredMare [0001605E], its clutter (the first object of the
 //   cell whose instance moves); BilegulchMine01 [0001B147], which resets (respawn-cell-reset's);
 //   Riverwood's cells.
-// - Inferred (TODO(M13) nowhere in the engine: no setting): an object pushed out of its exterior
-//   cell loads with the cell it lies in as one the game placed there does, and goes back to its
-//   editor place as its own cell resets.
+// - Inferred (TODO(M13) in src/shell/moved-objects.ts): an object pushed out of its exterior cell
+//   loads with the cell it lies in as one the game placed there does, and goes back to its editor
+//   place as its own cell resets.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { GameState } from '../../../src/scripting/runtime/game-state.ts';

@@ -63,6 +63,8 @@ export interface MovedFromExterior {
  * (`exterior`; observed in the original: a moved reference loads into the cell its save names):
  * the worldspace's persistent ones go by Worldspace.persistentReferencesNow, the others as what
  * the game placed there do, with the created references of its new cell. Returns those.
+ * TODO(M13): how the original hands a temporary reference over to its new cell, and that it goes
+ * back as its own cell resets, is inferred.
  */
 export function noteMoved(
   entries: Iterable<{ readonly object: CellObject; readonly instance: ModelInstance }>,
