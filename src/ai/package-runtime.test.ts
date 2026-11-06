@@ -654,6 +654,28 @@ describe('ActorPackages', () => {
     expect(events).toContain('end Pack1 complete');
   });
 
+  it('keeps a completing procedure going beside one done, with nothing after the branch', async () => {
+    // ShoutFromPerch on the perch it is on: its Sit is done at once, its Shout takes a while.
+    let waited = 0;
+    const runners: Record<string, ProcedureRunner> = {
+      sit: () => Promise.resolve('success'),
+      shout: async (run) => {
+        while (waited < 2 && !run.stopped()) {
+          await run.wait(1);
+          waited++;
+        }
+        return run.stopped() ? 'failure' : 'success';
+      },
+    };
+    const tree = branch('Simultaneous', [procedure('shout', 1), procedure('sit')]);
+    const { actor, events } = setup([pack(1, tree)], runners);
+    await tick(actor);
+    await tick(actor, 1);
+    await tick(actor, 1);
+    await tick(actor, 1);
+    expect(events).toContain('end Pack1 complete');
+  });
+
   it('with allComplete ends a simultaneous branch as all its children have ended', async () => {
     const ran: string[] = [];
     let waited = 0;
