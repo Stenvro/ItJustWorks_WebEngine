@@ -110,7 +110,7 @@ describe('target selection', () => {
 
   // Another actor's blow on one neutral to it, as an assault: src/scripting/runtime/
   // crime-engine.test.ts. The weight the original adds for a target others already fight is 0.
-  // The Preferred selector named before is not in the executable: only Standard and Fixed are.
+  // The Preferred selector named before is not in the original: only Standard and Fixed are.
   it('a target counts as engaged when seen within fCombatTargetEngagedLastSeenTime (3 s)  [settings]', () => {
     expect(targetEngaged(2.9, settings)).toBe(true);
     expect(targetEngaged(3, settings)).toBe(false);

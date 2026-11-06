@@ -11,8 +11,8 @@ const nodeApis = {
 };
 
 export default defineConfig(
-  // .claude/ holds local worktrees (copies of the repository).
-  globalIgnores(['dist/', 'coverage/', '.claude/']),
+  // Hidden folders hold local copies of the repository.
+  globalIgnores(['dist/', 'coverage/', '.*/']),
   js.configs.recommended,
   tseslint.configs.strictTypeChecked,
   tseslint.configs.stylisticTypeChecked,

@@ -1,8 +1,8 @@
-// INI settings as the engine takes them: the default compiled into SkyrimSE.exe (some set as the
-// executable starts: iDifficulty 2, fHUDOpacity 1, the autosaves), then the INI files layered by
+// INI settings as the engine takes them: the default built into the engine (some set as the
+// original starts: iDifficulty 2, fHUDOpacity 1, the autosaves), then the INI files layered by
 // the VFS (Vfs.ini: Skyrim_Default.ini < the player's imported Skyrim.ini < SkyrimPrefs.ini <
 // the plugins' own INIs), then the player's changes in the settings menu (Preferences). Only
-// the settings the engine uses are listed. The defaults are the executable's own (its setting
+// the settings the engine uses are listed. The defaults are the original's own (its setting
 // objects, checked against a local dump with tools/setting-defaults.ts).
 // Platform-independent. Notes: docs/formats/esm.md ("INI settings").
 
@@ -221,12 +221,12 @@ export const INI_DEFAULTS = {
     fDecapInitialSpeed: 250,
     // The player's attack mounted aims at actors this near (src/shell/actor-combat.ts).
     fMountedAttackRange: 135,
-    // A fighter's advance from afar sprints (src/shell/actor-combat-ai.ts; the executable's).
+    // A fighter's advance from afar sprints (src/shell/actor-combat-ai.ts; the original's).
     bCombatPathSprinting: 1,
     // A fight stays within its fighter's encounter zone (src/shell/actor-combat-ai.ts; the
-    // executable's).
+    // original's).
     bEncounterZoneTargetRestrict: 1,
-    // Combat lines are off (src/ai/combat-dialogue.ts; the executable's).
+    // Combat lines are off (src/ai/combat-dialogue.ts; the original's).
     bDisableCombatDialogue: 0,
     // The player takes every hit's stagger (src/gameplay/combat/stagger.ts staggerTaken).
     bPlayerAlwaysStaggered: 1,
@@ -237,7 +237,7 @@ export const INI_DEFAULTS = {
   Controls: {
     bAlwaysRunByDefault: 1,
     // A large change of the movement's direction at speed is frozen and cross-faded
-    // (src/ai/locomotion.ts; the executable's defaults).
+    // (src/ai/locomotion.ts; the original's defaults).
     bFreezeDirectionOnLargeDelta: 1,
     fFreezeDirectionDefaultAngleThreshold: 60,
     fFreezeDirectionDefaultSpeedThreshold: 100,
@@ -251,7 +251,7 @@ export const INI_DEFAULTS = {
     fGamepadHeadingSensitivity: 0.6667,
     bGamepadEnable: 1,
     // The Vibration setting: Game.ShakeController rumbles the gamepad (on in SkyrimPrefs.ini as
-    // the launcher writes it; the executable's own object starts off).
+    // the launcher writes it; the original's own object starts off).
     bGamePadRumble: 1,
     fMouseHeadingSensitivity: 0.0125,
     fMouseHeadingXScale: 0.02,
@@ -294,7 +294,7 @@ export const INI_DEFAULTS = {
     fGlobalMapBloomThresholdBoost: 0.25,
     fGlobalMapBrightnessBoost: 0.25,
     fGlobalMapContrastBoost: -0.3,
-    // Point lights fade out from this distance: the executable starts it at
+    // Point lights fade out from this distance: the original starts it at
     // fLightLODDefaultStartFade (1000), Skyrim_Default.ini gives 3500.
     fLightLODStartFade: 1000,
     // The sun's focus shadows round the bodies near the player (src/render/focus-shadows.ts):
@@ -382,7 +382,7 @@ export const INI_DEFAULTS = {
     fSpecularLODFadeEnd: 0.1,
     fSpecularLODFadeStart: 0.09,
   },
-  // The settings the executable names without a section: SkyrimPrefs.ini keeps them in [MAIN].
+  // The settings the original names without a section: SkyrimPrefs.ini keeps them in [MAIN].
   Main: {
     bCrosshairEnabled: 1,
     fHUDOpacity: 1,
@@ -414,7 +414,7 @@ export const INI_DEFAULTS = {
     'uExterior Cell Buffer': 36,
   },
   // Where actors look by themselves (src/shell/actor-looks.ts): at most this many choose a
-  // frame, each again after 1–1.5 s, a new target held 3–8 s (the executable's defaults).
+  // frame, each again after 1–1.5 s, a new target held 3–8 s (the original's defaults).
   HeadTracking: {
     iUpdateActorsPerFrame: 10,
     fMinPathLookAtPointDist: 128,
@@ -426,7 +426,7 @@ export const INI_DEFAULTS = {
     fUpdateDelayNewTargetSecondsMax: 8,
   },
   // Actors on their way (src/shell/actor-movers.ts): those they go round, how long others may
-  // block them, the warp after repeated path failures (the executable's defaults).
+  // block them, the warp after repeated path failures (the original's defaults).
   Pathfinding: {
     iMaxActorsToAvoid: 10,
     fAvoidanceTimeDelta: 3,
@@ -446,7 +446,7 @@ export const INI_DEFAULTS = {
   // The Papyrus VM's share of each frame (src/scripting/scheduler.ts: its update gets 0.9 of
   // fUpdateBudgetMS, the tasklets after it fExtraTaskletBudgetMS) and how long it runs on its
   // own once a saved game has loaded (Skyrim_Default.ini: 500), and its stack memory's pages
-  // (src/scripting/stack-memory.ts); the executable's defaults.
+  // (src/scripting/stack-memory.ts); the original's defaults.
   Papyrus: {
     fUpdateBudgetMS: 1.2,
     fExtraTaskletBudgetMS: 1.2,
@@ -456,7 +456,7 @@ export const INI_DEFAULTS = {
     iMaxAllocatedMemoryBytes: 153600,
   },
   // The kill cameras of the player's shots and casts (src/shell/actor-combat.ts: whether one
-  // plays; the executable's defaults).
+  // plays; the original's defaults).
   VATS: {
     bVATSDisable: 0,
     bVATSMultipleCombatants: 0,

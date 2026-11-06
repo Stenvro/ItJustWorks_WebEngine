@@ -39,7 +39,7 @@ unconscious and the essential who are down; its list order and buttons were read
 Still inferred (each a TODO(M13) where it lives): which limb an ordinary blow records (the
 environment blood's); the trees' LOD fade (#19: the original's LOD tree instances each carry an
 alpha and a hidden flag by their reference, what sets the alpha is unread); the lens flare's
-target sizes' rounding (#33: the sizes are read from the engine's render target table, its
+target sizes' rounding (#33: the sizes are observed in the original's render target table, its
 creation not found); what the kill camera shows on the one shot flagged First Person Camera.
 
 Done in round 15, all observed in the original: dynamic decals on the world (#87) are built
@@ -258,7 +258,7 @@ critters' flights, the kill cameras' base paths); look-ats; the kill cameras' ca
 (their root's keyed place and the NiCamera's animated field of view). NiFloatExtraData turned
 out to name the Havok float slots the engine's visibility and phoneme controllers read from the
 Havok pose (TwistOverride, Pauldron Override and Orientation are named nowhere in the
-executable): n/a, with the float slots themselves a new open system row.
+original): n/a, with the float slots themselves a new open system row.
 
 Round 5: skinned decals on actors (the hit shape's triangles in the decal's box
 copied into a decal shape skinned to the same bones, under the original's limits: 100 living,

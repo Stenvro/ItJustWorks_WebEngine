@@ -373,7 +373,7 @@ corner button leaves the keyboard's tab order in Play, so Enter always reaches t
 Play starts where the game starts, at its launcher (`src/shell/launcher.ts`): Play, Options,
 Exit. Options keeps what the launcher writes to SkyrimPrefs.ini (in the browser's storage, per
 player): Windowed Mode (off: Play asks for full screen in the click that starts it) and the
-Detail preset. The Graphics Adapter shows the GPU. The launcher's art lives in its executable,
+Detail preset. The Graphics Adapter shows the GPU. The launcher's art lives in its program,
 not in the game's data, so it wears the engine's own look. TODO(M13): the detail presets and the
 Advanced settings (detail, view distance, water) applied by the renderer, which draws at Ultra.
 
@@ -673,7 +673,7 @@ while the HUD is hidden or in a mode without them.
 
 ### The crosshair of a Target Location spell, Survival Mode's HUD
 
-Observed in the original (read from the engine; `src/shell/hud-crosshair.ts`): the player's magic
+Observed in the original (observed in the original; `src/shell/hud-crosshair.ts`): the player's magic
 casters keep a list of the hands whose current spell is delivered at a Target Location (a hand
 joins as such a spell becomes its spell, leaves as another does or it is cleared). For the first
 hand on that list, at most every 200 ms, the caster aims the spell (a pick on the spell layer as
@@ -1330,7 +1330,7 @@ camera at the origin looking along −Y with +Z up (the mist menu's camera looks
 (−25: its top away), its middle at fBookPosWidthPercentage / fBookPosHeightPercentage of the
 screen (0.5, 0.445 from the top); the inventory's item at fInventory3DItemPos (−38, −500, 16;
 the Wide values −29, −500, 12 on screens wider than 4:3): right of the middle, the magic menu's
-at fMagic3DItemPos (34.7, −500, 8; Wide 26, −500, 6): left (the executable's defaults). Their lights (fBookLight*, fInventoryMenuLight* with
+at fMagic3DItemPos (34.7, −500, 8; Wide 26, −500, 6): left (the original's defaults). Their lights (fBookLight*, fInventoryMenuLight* with
 fInventoryLight* colours, dimmers and radii, fLockpickLight*) stand in the same space: the
 inventory's 150 in front of its item (y −350 before −500), the book's second 35 in front of it
 (its first, y −350, behind it: a rim light); the lock is placed 150 behind its light (y −1000),

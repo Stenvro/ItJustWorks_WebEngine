@@ -8,7 +8,7 @@
 // - Observed in the original: the confidence modifier is drawn once per fight in
 //   fCombatConfidenceModifierMin .. Max (combat/controller-state.test.ts), not from the odds.
 // - The flee behaviours: the combat tree's Flee context (CombatBehaviorContextFlee: Flee,
-//   Flee To Ally, Flee To Cover, Flee Through Door; RTTI names, docs/ai.md).
+//   Flee To Ally, Flee To Cover, Flee Through Door; names, docs/ai.md).
 
 import { describe, expect, it } from 'vitest';
 import {
@@ -112,7 +112,7 @@ describe('who flees (formula)', () => {
     expect(shouldFlee({ ...child, always: false }, settings)).toBe(false);
   });
 
-  it('Flee is a subtree of the combat tree, first in its root  [RTTI]', () => {
+  it('Flee is a subtree of the combat tree, first in its root  [original]', () => {
     expect(COMBAT_TREES.Flee).toBeDefined();
     expect(JSON.stringify(COMBAT_TREES.Combat)).toContain('"tree":"Flee"');
   });

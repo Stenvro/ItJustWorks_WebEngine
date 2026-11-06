@@ -12,7 +12,7 @@
 //   (DCMS) and tells LocationCleared; the maps show "Cleared" (sCleared) for a clearable
 //   location once cleared.
 // - The misc stats: the journal's list (src/gameplay/misc-stats.ts, UESP "Skyrim:Statistics");
-//   the engine's stat incrementers, one per event source (RTTI MiscStatIncrementer<…>, observed in
+//   the engine's stat incrementers, one per event source (MiscStatIncrementer<…>, observed in
 //   the original): Jailing, ChestsLooted, TimesTrained, TimesBartered, ContractedDisease, SpellsLearned,
 //   DragonSoulGained, SoulGemsUsed, SoulsTrapped, PoisonedWeapon, ShoutAttack, JailEscape,
 //   GrandTheftHorse, AssaultCrime, MurderCrime, LocksPicked, LocationCleared, ShoutMastered;

@@ -14,7 +14,7 @@ for regressions.
   the menu stack and the page's errors in `tour.json` (Vite 5192, Chrome 9352 by default; the
   window 1280 × 720 unless `--size` gives another, its clicks scaled from the movies' stage).
   What was seen is kept in docs/completeness/menus.md ("On screen"). The project's Vite config
-  leaves out only its own root's `.claude/`, so a working copy under it still sees its edits.
+  leaves out only its own root's hidden folders, so a working copy under one still sees its edits.
 
 ## Running it
 
@@ -25,8 +25,8 @@ node tools/qa-run.ts --list
 ```
 
 - Without `--url` it starts the repository's Vite on `--vite-port` (default 5202) and stops it
-  at the end; with `--url` it uses a running dev server (a Vite started inside `.claude/`
-  worktrees does not see source edits: restart it after editing).
+  at the end; with `--url` it uses a running dev server (a Vite started inside another
+  working copy does not see source edits: restart it after editing).
 - It starts its own headless Chrome on `--chrome-port` (default 9362): **muted**
   (`--mute-audio`), WebGPU on, background throttling off, its profile in the output folder.
   Each scenario gets a fresh tab, sized 1280×720, focus emulated and brought to the front, so
@@ -183,7 +183,7 @@ units in a frame) reset the speed meters.
 
 Frame times: every `requestAnimationFrame` interval while watching (menus included), as p50,
 p95, p99, the worst, frames over 33 and 50 ms, and long tasks (`PerformanceObserver`
-'longtask': count, total, longest). On a shared machine (other agents' browsers on the same GPU)
+'longtask': count, total, longest). On a shared machine (other browsers on the same GPU)
 they are only comparable between runs on the same load.
 
 Thresholds are in `DEFAULT_THRESHOLDS` (`src/shell/qa/types.ts`); a run may change any of them

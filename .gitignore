@@ -20,10 +20,6 @@ desktop.ini
 .idea/
 *.swp
 .eslintcache
-# Assistant tooling: local only, never in the repository
-.claude/
-CLAUDE.md
-CLAUDE.local.md
 
 # --- Hard rule 1: never game files in the repo ---
 # Game data lives outside the repo (see README.md, "No game files in the repository"). This list is a safety net;

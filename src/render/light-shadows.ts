@@ -16,7 +16,7 @@ import { sphereVisible, type Plane } from './frustum.ts';
 /**
  * Shadow-casting lights drawn at once. The engine keeps this many slots (community
  * documentation: four shadow lights in view at a time); no setting raises it (none of the
- * executable's INI settings names a shadow-light count), in exteriors as in interiors.
+ * original's INI settings names a shadow-light count), in exteriors as in interiors.
  */
 export const MAX_SHADOW_LIGHTS = 4;
 /** Layers of the light-shadow map per slot (a cube's faces). */

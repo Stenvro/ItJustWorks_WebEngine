@@ -116,7 +116,7 @@ export function rampSpeed(
  * still), so a step without a way to go (its way is planned anew, a transition's frame of root
  * motion) does not throw it back to standing: going on, it goes on from the speed it kept.
  * Its controller's speed is one of its own movement type's, so what its animation made raises it
- * at most to `full` (inferred, not read from the engine: a clip's lunge or leap moves it as the
+ * at most to `full` (inferred, not observed in the original: a clip's lunge or leap moves it as the
  * clip says, its controller going on from that at running speed at most; left unbounded, one bad
  * frame of root motion carried an actor on at thousands of units a second).
  */

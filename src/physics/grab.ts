@@ -28,7 +28,7 @@ export interface GrabSettings {
 }
 
 /**
- * The executable's built-in grab settings (Skyrim.esm sets fZKeyMaxForce to 100 and
+ * The original's built-in grab settings (Skyrim.esm sets fZKeyMaxForce to 100 and
  * fZKeyMaxForceWeightHigh to 150).
  */
 export const GRAB_DEFAULTS: GrabSettings = {

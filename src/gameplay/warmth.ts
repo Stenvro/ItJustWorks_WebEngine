@@ -6,7 +6,7 @@
 // GetActorWarmth) is what it wears, the torch in its hand (Light.GetWarmthRating: a carried
 // light) and its Fortify Warmth effects (Peak Value Modifiers on actor value 76, Variable09 in the
 // SSE list: the racial abilities, the hot soups). Survival_NeedCold clamps it to
-// Survival_ColdResistMaxValue (206). TODO(M13): the values are UESP's (the executable's own
+// Survival_ColdResistMaxValue (206). TODO(M13): the values are UESP's (the original's own
 // settings are not in the plugins). Platform-independent.
 
 import { BipedSlot, slotBit as bit } from '../world/actor-records.ts';

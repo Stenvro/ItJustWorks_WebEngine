@@ -160,7 +160,7 @@ export interface LimbRoll {
  * explosion chance (absolute: the chance itself; else (iCombatExplodePartChance) × chance %) and
  * else dismembers it under iCombatDismemberPartChance; the weapon's hit behavior then keeps only
  * dismembering, only exploding, or neither. The engine marks the hit so and nothing more: the only
- * way a limb comes off in the executable is the Decapitate graph event, and Skyrim's hits never
+ * way a limb comes off in the original is the Decapitate graph event, and Skyrim's hits never
  * target a part (the VATS command that would set one is Fallout's), nor does any vanilla body part
  * carry the explodable flag. Kept for the hit's flags as the engine computes them.
  */

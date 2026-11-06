@@ -10,7 +10,7 @@
 //   DATA) as a gameplay impulse (TESHavokUtilities::ScaleGameplayImpulseForce with the mass: force
 //   × fGameplayImpulseScale × the layer's fGameplayImpulseMult*, less for a body lighter than
 //   fGameplayImpulseMinMass) × fProjectileCollisionImpulseScale.
-//   TODO(M13): neither rule is read from the engine (not observed); they are how the settings' names
+//   TODO(M13): neither rule is observed in the original (not observed); they are how the settings' names
 //   and the records' fields read.
 // - A cone (Unrelenting Force) pushes every moving body in its range and spread that its apex
 //   sees: its impact force × (fConeProjectileForceBase + fConeProjectileForceMult × (1 − distance

@@ -86,7 +86,7 @@ describe('the shot (formula)', () => {
     expect(aimGivenUp(1.6, settings)).toBe(true);
   });
 
-  it('cover: Find Cover, Attack From Cover, Wait Behind Cover  [RTTI]', () => {
+  it('cover: Find Cover, Attack From Cover, Wait Behind Cover  [original]', () => {
     const tree = JSON.stringify(COMBAT_TREES.UseCover);
     for (const action of ['findCover', 'waitBehindCover', 'attackFromCover']) {
       expect(tree).toContain(`"action":"${action}"`);

@@ -2,7 +2,7 @@
 // combat is a behaviour tree built in code: a root Combat parallel runs the equipment slots'
 // actions beside a movement priority list.
 //
-// Source: the executable's class names (RTTI, observed in the original; docs/ai.md, The attack decision):
+// Source: the original's class names (observed in the original; docs/ai.md, The attack decision):
 // the trees CombatBehaviorTree{Combat, Melee, Ranged, Magic, Shout, Block, UsePotion,
 // AcquireWeapon, CloseMovement, FlankingMovement, RangedMovement, Movement, FindAttackLocation,
 // UseCover, Hide, Flee, Search, DodgeThreat, CheckUnreachableTarget, ExitWater,
@@ -90,7 +90,7 @@ const b: NodeSpec = { node: 'action', action: 'b' };
 const c: NodeSpec = { node: 'action', action: 'c' };
 
 describe('the node classes', () => {
-  it('Root, Link, Wrapper nodes: a tree and the subtrees it links  [RTTI]', () => {
+  it('Root, Link, Wrapper nodes: a tree and the subtrees it links  [original]', () => {
     const t = toy({
       Root: {
         node: 'sequence',
@@ -109,7 +109,7 @@ describe('the node classes', () => {
     expect(() => toy({ Root: { node: 'link', tree: 'Root' } })).toThrow(/too deep/);
   });
 
-  it('Sequence, Parallel, Spawn Parallel, Dynamic / Child / Fallback Selector  [RTTI]', () => {
+  it('Sequence, Parallel, Spawn Parallel, Dynamic / Child / Fallback Selector  [original]', () => {
     // Sequence: from the running child on; fails at the first failure.
     let t = toy({ Root: { node: 'sequence', children: [a, b, c] } });
     t.ctx.results.b = 'running';
@@ -155,7 +155,7 @@ describe('the node classes', () => {
     expect(t.ctx.log).toEqual(['a', 'b', 'a', 'b']);
   });
 
-  it('Conditional and Dynamic Conditional nodes, Expressions (Unary, Binary, Func)  [RTTI]', () => {
+  it('Conditional and Dynamic Conditional nodes, Expressions (Unary, Binary, Func)  [original]', () => {
     const expr = {
       op: '&&',
       a: { not: { value: 'off' } },
@@ -177,7 +177,7 @@ describe('the node classes', () => {
     expect(t.ctx.log).toEqual(['a', 'halt a']);
   });
 
-  it('Value nodes and Blackboard data (Set Blackboard Data, Enable Blackboard Flag)  [RTTI]', () => {
+  it('Value nodes and Blackboard data (Set Blackboard Data, Enable Blackboard Flag)  [original]', () => {
     const t = toy({
       Root: {
         node: 'sequence',
@@ -199,7 +199,7 @@ describe('the node classes', () => {
     expect(t.instance.flags.has('busy')).toBe(false);
   });
 
-  it('Create Context nodes: each subtree’s context (Melee, Ranged, Magic, Block, …)  [RTTI]', () => {
+  it('Create Context nodes: each subtree’s context (Melee, Ranged, Magic, Block, …)  [original]', () => {
     const t = toy({
       Root: { node: 'context', context: 'melee', child: { node: 'action', action: 'useContext' } },
     });
@@ -209,7 +209,7 @@ describe('the node classes', () => {
     expect(t.ctx.log).toEqual(['context 1', 'dispose', 'context 2', 'dispose']);
   });
 
-  it('Repeat, Pause, Idle, Force Success, Force Fail, Random node  [RTTI]', () => {
+  it('Repeat, Pause, Idle, Force Success, Force Fail, Random node  [original]', () => {
     let t = toy({ Root: { node: 'repeat', times: 2, child: a } });
     expect(t.tick()).toBe('running');
     expect(t.tick()).toBe('success');
@@ -232,7 +232,7 @@ describe('the node classes', () => {
     expect(t.ctx.log).toEqual(['a']);
   });
 
-  it('Action Equipment Selector: one action per equipment slot, in parallel  [RTTI]', () => {
+  it('Action Equipment Selector: one action per equipment slot, in parallel  [original]', () => {
     const t = toy({
       Root: {
         node: 'equipment',
@@ -307,7 +307,7 @@ function fighter(values: Fighter['values'] = {}, random = () => 0.5, root = 'Com
 }
 
 describe('the subtrees', () => {
-  it('Combat: the root parallel of actions and movement  [RTTI]', () => {
+  it('Combat: the root parallel of actions and movement  [original]', () => {
     const t = fighter({ rightMelee: true, canBlock: true, maySupport: true, mayTaunt: true });
     const log = t.tick();
     // Equipment, Movement and the taunt in one tick; the slots side by side.
@@ -321,7 +321,7 @@ describe('the subtrees', () => {
     expect(t.tick()).toEqual(['dodgeThreat']);
   });
 
-  it('Melee: Attack, Bash, Special Attack, the attack idle (0.25 s)  [RTTI, docs/ai.md]', () => {
+  it('Melee: Attack, Bash, Special Attack, the attack idle (0.25 s)  [original, docs/ai.md]', () => {
     const t = fighter({ rightMelee: true, mayAttack: true });
     expect(t.tick()).toEqual(expect.arrayContaining(['chooseAttack']));
     // The attack idle: no new choice for 0.25 s.
@@ -339,7 +339,7 @@ describe('the subtrees', () => {
     ]);
   });
 
-  it('Ranged: Ranged Attack, Equip Ranged Weapon, the ranged attack idle  [RTTI]', () => {
+  it('Ranged: Ranged Attack, Equip Ranged Weapon, the ranged attack idle  [original]', () => {
     // A draw by its chance, then the idle; held, loosed only within the firing arc.
     const t = fighter({
       rightBow: true,
@@ -363,7 +363,7 @@ describe('the subtrees', () => {
     expect(unready.tick()).toContain('equipRanged');
   });
 
-  it('Magic: Cast Immediate / Concentration Spell, Prepare Dual Cast  [RTTI]', () => {
+  it('Magic: Cast Immediate / Concentration Spell, Prepare Dual Cast  [original]', () => {
     const t = fighter({ rightMagic: true, rangedMovement: true, mayCast: true, castChance: 1 });
     expect(t.tick()).toContain('castRight');
     const held = fighter({ rightMagic: true, mayCast: true, castChance: 1, concentration: true });
@@ -375,7 +375,7 @@ describe('the subtrees', () => {
     expect(unlikely.tick()).not.toContain('castRight');
   });
 
-  it('the left hand: a left weapon’s attacks, a left spell beside a weapon  [RTTI]', () => {
+  it('the left hand: a left weapon’s attacks, a left spell beside a weapon  [original]', () => {
     const dual = fighter({ rightMelee: true, leftWeapon: true, mayAttackLeft: true });
     expect(dual.tick()).toContain('leftAttack');
     expect([...dual.instance.slots]).toContain('left');
@@ -394,7 +394,7 @@ describe('the subtrees', () => {
     expect(log).not.toContain('prepareDualCast');
   });
 
-  it('Shout: Equip Shout, Cast Shout  [RTTI]', () => {
+  it('Shout: Equip Shout, Cast Shout  [original]', () => {
     const t = fighter({ voiceShout: true, mayShout: true, rangedMovement: true });
     expect(t.tick()).toContain('castShout');
     // Its shout idle (1 s).
@@ -403,7 +403,7 @@ describe('the subtrees', () => {
     expect(t.tick()).toContain('castShout');
   });
 
-  it('Block: Block, Block Attack  [RTTI]', () => {
+  it('Block: Block, Block Attack  [original]', () => {
     const t = fighter({ rightMelee: true, canBlock: true, blowComing: true, blockChance: 1 });
     expect(t.tick()).toEqual(expect.arrayContaining(['noteBlow', 'block']));
     t.ctx.values.blowComing = false;
@@ -425,14 +425,14 @@ describe('the subtrees', () => {
     expect(unlikely.tick()).not.toContain('block');
   });
 
-  it('Use Potion: Drink Potion  [RTTI]', () => {
+  it('Use Potion: Drink Potion  [original]', () => {
     const t = fighter({ maySupport: true });
     expect(t.tick()).toContain('support');
     t.ctx.values.maySupport = false;
     expect(t.tick()).not.toContain('support');
   });
 
-  it('Acquire Weapon: Find Weapon, Acquire Item / Resource  [RTTI]', () => {
+  it('Acquire Weapon: Find Weapon, Acquire Item / Resource  [original]', () => {
     const t = fighter({ mayAcquireWeapon: true });
     expect(t.tick()).toEqual(
       expect.arrayContaining(['findWeapon', 'moveToWeapon', 'pickUpWeapon']),
@@ -441,7 +441,7 @@ describe('the subtrees', () => {
     expect(armed.tick()).not.toContain('findWeapon');
   });
 
-  it('Close Movement: Advance, Backoff, Circle, Fallback, Surround, Strafe  [RTTI]', () => {
+  it('Close Movement: Advance, Backoff, Circle, Fallback, Surround, Strafe  [original]', () => {
     // Far: the chase; near, the run under way is kept and a new one chosen when due.
     const far = fighter({ rightMelee: true, farAway: true });
     expect(far.tick()).toContain('chase');
@@ -458,7 +458,7 @@ describe('the subtrees', () => {
     expect(backing.tick()).toContain('backoff');
   });
 
-  it('Flanking Movement: Flank, Flank Distant, Stalk, Circle Distant  [RTTI]', () => {
+  it('Flanking Movement: Flank, Flank Distant, Stalk, Circle Distant  [original]', () => {
     const t = fighter({ rightMelee: true, mayChooseRun: true, flanking: true });
     expect(t.tick()).toEqual(expect.arrayContaining(['flankingManeuver', 'stalk']));
     expect(t.tree.actionsOf('FlankSequence')).toEqual(['flankingManeuver', 'flank', 'stalk']);
@@ -475,7 +475,7 @@ describe('the subtrees', () => {
     expect(fighter({ rightMelee: true, flanking: true, farAway: true }).tick()).toContain('chase');
   });
 
-  it('Ranged Movement: Maintain Optimal Range, Reposition, Fallback To Ranged  [RTTI]', () => {
+  it('Ranged Movement: Maintain Optimal Range, Reposition, Fallback To Ranged  [original]', () => {
     const t = fighter({ rightBow: true, rangedMovement: true, mayChooseRun: true });
     expect(t.tick()).toContain('maintainOptimalRange');
     const beyond = fighter({ rightMagic: true, rangedMovement: true, beyondRange: true });
@@ -485,13 +485,13 @@ describe('the subtrees', () => {
     expect(stuck.tick()).toContain('fallbackToRanged');
   });
 
-  it('Find Attack Location: Find (Ally / Lateral) Attack Location  [RTTI]', () => {
+  it('Find Attack Location: Find (Ally / Lateral) Attack Location  [original]', () => {
     const t = fighter({ rightMelee: true, mayChooseRun: true, outOfPosition: true });
     t.ctx.results.reposition = 'failure';
     expect(t.tick()).toEqual(expect.arrayContaining(['reposition', 'surround']));
   });
 
-  it('Use Cover: Find Cover, Attack From Cover, Wait Behind Cover  [RTTI]', () => {
+  it('Use Cover: Find Cover, Attack From Cover, Wait Behind Cover  [original]', () => {
     // Tried first by a ranged fighter; no cover found, ranged movement runs.
     const t = fighter({
       rightBow: true,
@@ -512,7 +512,7 @@ describe('the subtrees', () => {
     expect(covered.tick()).not.toContain('maintainOptimalRange');
   });
 
-  it('Hide  [RTTI]', () => {
+  it('Hide  [original]', () => {
     const t = fighter({
       rightBow: true,
       rangedMovement: true,
@@ -527,7 +527,7 @@ describe('the subtrees', () => {
     expect(log).toContain('drawShot');
   });
 
-  it('Flee: Flee, Flee To Ally, back to the fight cornered, done once safe  [RTTI]', () => {
+  it('Flee: Flee, Flee To Ally, back to the fight cornered, done once safe  [original]', () => {
     // Fleeing takes the root over: no attack, no movement list.
     const t = fighter({ rightMelee: true, mayAttack: true, fleeing: true });
     expect(t.tick()).toEqual(['fleeThroughDoor', 'fleeToCover', 'fleeAway']);
@@ -543,7 +543,7 @@ describe('the subtrees', () => {
     expect(stuck.tick()).toEqual(['fleeThroughDoor', 'fleeToCover', 'fleeAway', 'cower']);
   });
 
-  it('Flee To Cover, Flee Through Door  [RTTI]', () => {
+  it('Flee To Cover, Flee Through Door  [original]', () => {
     // The Flee Selector: Flee To Ally, Flee Through Door, Flee To Cover, then away.
     const door = fighter({ fleeing: true });
     door.ctx.results.fleeThroughDoor = 'running';
@@ -553,12 +553,12 @@ describe('the subtrees', () => {
     expect(cover.tick()).toEqual(['fleeThroughDoor', 'fleeToCover']);
   });
 
-  it('Search: the low process searches once its group does  [RTTI]', () => {
+  it('Search: the low process searches once its group does  [original]', () => {
     const t = fighter({ groupSearching: true }, () => 0.5, 'LowCombat');
     expect(t.tick()).toEqual(['search']);
   });
 
-  it('Acquire Weapon: Find Weapon, Move to Weapon, the pick-up  [RTTI]', () => {
+  it('Acquire Weapon: Find Weapon, Move to Weapon, the pick-up  [original]', () => {
     const t = fighter({ mayAcquireWeapon: true, farAway: true });
     t.ctx.results.moveToWeapon = 'running';
     const log = t.tick();
@@ -567,12 +567,12 @@ describe('the subtrees', () => {
     expect(log).not.toContain('chase');
   });
 
-  it('Essential Down: an essential actor bleeding out stands  [RTTI]', () => {
+  it('Essential Down: an essential actor bleeding out stands  [original]', () => {
     const t = fighter({ essentialDown: true, farAway: true });
     expect(t.tick()).not.toContain('chase');
   });
 
-  it('Dodge Threat  [RTTI]', () => {
+  it('Dodge Threat  [original]', () => {
     const t = fighter({ rightMelee: true, mayAttack: true });
     t.ctx.results.dodgeThreat = 'running';
     expect(t.tick()).toEqual(['dodgeThreat']);
@@ -580,14 +580,14 @@ describe('the subtrees', () => {
     expect(t.tick()).toContain('chooseAttack');
   });
 
-  it('Check Unreachable Target  [RTTI]', () => {
+  it('Check Unreachable Target  [original]', () => {
     const t = fighter({ rightMelee: true, targetBeyondLeash: true, farAway: true });
     const log = t.tick();
     expect(log).toContain('holdPosition');
     expect(log).not.toContain('chase');
   });
 
-  it('Exit Water, Return To Combat Area  [RTTI]', () => {
+  it('Exit Water, Return To Combat Area  [original]', () => {
     const t = fighter({ rightMelee: true, tethered: true, inWater: true });
     expect(t.tick()).toContain('returnToCombatArea');
     // Back in its area, in the water: Exit Water comes next in the list.
@@ -595,7 +595,7 @@ describe('the subtrees', () => {
     expect(t.tick()).toContain('exitWater');
   });
 
-  it('Low Combat (Attack Low)  [RTTI]', () => {
+  it('Low Combat (Attack Low)  [original]', () => {
     // The low process's root: Attack within fCombatLowMaxAttackDistance, else Pursue.
     const t = fighter({ lowInReach: true }, () => 0.5, 'LowCombat');
     expect(t.tick()).toEqual(['attackLow']);

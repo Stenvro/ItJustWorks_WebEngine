@@ -3026,7 +3026,7 @@ export class PhysicsWorld {
   }
 
   /**
-   * Havok's deactivation (DEACTIVATION_DISTANCE: the distance read from the engine, the rest
+   * Havok's deactivation (DEACTIVATION_DISTANCE: the distance observed in the original, the rest
    * inferred from Havok's documented behaviour): a body is inactive while it stays within
    * DEACTIVATION_DISTANCE (and DEACTIVATION_TURN) of where it was when it last moved, however
    * it shakes there, and a system of bodies (a ragdoll, a hinged object) that has been inactive

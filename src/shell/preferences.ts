@@ -7,7 +7,7 @@ import type { IniOverrides } from '../world/ini-settings.ts';
 
 const STORAGE_KEY = 'itjw.skyrimPrefs';
 
-/** Settings kept under an earlier section: the section the executable gives them now. */
+/** Settings kept under an earlier section: the section the original gives them now. */
 const MOVED: Readonly<Record<string, string>> = {
   'Interface:fHUDOpacity': 'Main:fHUDOpacity',
   'SaveGame:bSaveOnRest': 'Main:bSaveOnRest',

@@ -732,7 +732,7 @@ describe('scene starts, stops and behaviour', () => {
     await test.tick();
     await test.tick();
     expect(test.only('say').length).toBeGreaterThanOrEqual(2);
-    // It plays again without ending (read from the engine): no end or second begin between.
+    // It plays again without ending (observed in the original): no end or second begin between.
     expect(test.told.filter((told) => told.endsWith(' 11'))).toEqual(['begin 11']);
     test.truths.delete(8);
     await test.tick();
@@ -782,7 +782,7 @@ describe('random scenes (the Actor Dialogue event)', () => {
     await test.tick();
     // The waiting start begins in the update after the one that retried it.
     await test.tick();
-    // The pause drawn as the first began is cleared as it ends (read from the engine).
+    // The pause drawn as the first began is cleared as it ends (observed in the original).
     expect(test.director.randomScene).toBe(0x21);
   });
 

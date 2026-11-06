@@ -12,7 +12,7 @@
 // Platform-independent.
 //
 // TODO(M13): the engine's exact reading of the settings (whether the duration is in seconds and
-// the fade start a share of it, the flare's direction) is not read from the executable; these
+// the fade start a share of it, the flare's direction) is not observed in the original; these
 // follow the settings' names and values.
 
 /** The screen blood's settings (GMSTs), with the vanilla values as defaults. */

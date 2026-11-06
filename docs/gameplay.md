@@ -181,7 +181,7 @@ GetActorWarmth) is its worn pieces', its torch's and its Fortify Warmth effects'
 Modifiers on actor value 76, Variable09 in the SSE list: Survival_FortifyWarmthConstant of the
 racial abilities, the hot soups' Survival_FoodFortifyWarmth). Survival_NeedCold clamps it to
 Survival_ColdResistMaxValue (206) for its cold. TODO(M13): the slot values are UESP's (the
-executable's own settings are not in the plugins). `node tools/item-info.ts <armor>` shows a
+original's own settings are not in the plugins). `node tools/item-info.ts <armor>` shows a
 piece's warmth.
 
 ### Quest items
@@ -996,7 +996,7 @@ gives (below), with the tree's own GetRandomPercent picks among the clips. The g
 (1) turns them all off at 0 (the killmove mods' chance is that global, set at random). The kill
 camera's odds settings (fKillCamBaseOdds 0.1, fKillCamLevelBias 0.01, fKillCamLevelMaxBias 0.1,
 iKillCamLevelOffset 4, fKillCamLevelFactor 0.5: a chance of 0.1 plus up to 0.1 by the levels) have
-their function in the executable, but nothing calls it.
+their function in the original, but nothing calls it.
 
 **The attack's target.** An NPC's attack actions aim at its combat target. The player's aim at:
 among the actors near (the dead too, not the player's mount), those within the reach of the

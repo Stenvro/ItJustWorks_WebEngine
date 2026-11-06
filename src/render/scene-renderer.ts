@@ -1894,7 +1894,7 @@ export interface FrameOptions {
   readonly chooseLights?: boolean;
 }
 
-/** The fade multipliers before the settings are read (the executable's [LOD] defaults). */
+/** The fade multipliers before the settings are read (the original's [LOD] defaults). */
 const DEFAULT_FADE: FadeSettings = { actors: 6, items: 3, objects: 5, skyCell: 1 };
 
 export class SceneRenderer {

@@ -1,7 +1,7 @@
 // Mirrored clips (hkbClipGenerator flag 0x4: 200 vanilla clips in 37 graphs, every quadruped's
 // right turns among them, played from its left turns): the pose a clip gives is mirrored across
 // the character's mirror plane, each bone's transform going to its mirror partner. Observed in the
-// original (Havok's hkaMirroredSkeleton as the executable builds and runs it), in our
+// original (Havok's hkaMirroredSkeleton as the original builds and runs it), in our
 // words: docs/animation.md, "Mirrored clips". Platform-independent.
 
 import { TRANSFORM_FLOATS, type HkxSkeleton } from '../formats/hkx/animation.ts';

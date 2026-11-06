@@ -1,5 +1,5 @@
 // Vehicles (docs/ai.md, "Vehicles"): the carts a horse pulls and the actors that ride them
-// (Actor.SetVehicle). The rules as read from the engine; the shell applies them
+// (Actor.SetVehicle). The rules as observed in the original; the shell applies them
 // (src/shell/actor-vehicles.ts). Platform-independent.
 //
 // TetherToHorse puts the horse fHorseOffsetY:Cart ahead of the cart and joins the two: a

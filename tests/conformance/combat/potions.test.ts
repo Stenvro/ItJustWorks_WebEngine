@@ -5,7 +5,7 @@
 // fCombatRestoreHealthRestrictTime (15 s) of the last; magicka below fCombatRestoreMagicka
 // PercentMin (0.25) .. Max (0.4), not within …RestrictTime (10 s); no other value; the tree waits
 // fCombatMagicDrinkPotionWaitTime (3 s) after a potion (CombatBehaviorDrinkPotion,
-// CombatBehaviorTreeUsePotion; RTTI). the engine's defaults.
+// CombatBehaviorTreeUsePotion). the engine's defaults.
 
 import { describe, expect, it } from 'vitest';
 import { COMBAT_AI_DEFAULTS } from '../../../src/ai/combat-ai.ts';
@@ -56,7 +56,7 @@ describe('restoring (formula)', () => {
     expect(settings.drinkPotionWaitTime).toBe(ENGINE.fCombatMagicDrinkPotionWaitTime);
   });
 
-  it('the casters’ order in the tree (ward, heal, potion, summon, buff)  [RTTI]', () => {
+  it('the casters’ order in the tree (ward, heal, potion, summon, buff)  [original]', () => {
     const style = styleWith({ defensiveMult: 1 });
     const all = { ...state, health: 0.1, magicka: 0.1 };
     const ready = { ...all, canWard: true, canHeal: true, canSummon: true, canBuff: true };

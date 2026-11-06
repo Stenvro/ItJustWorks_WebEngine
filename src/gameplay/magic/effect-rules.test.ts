@@ -106,7 +106,7 @@ describe('souls', () => {
   });
 });
 
-describe('the archetypes read from the engine', () => {
+describe('the archetypes observed in the original', () => {
   it('grow a ward by (Mult × skill + Base) × its magnitude, others by the default rate', () => {
     expect(accumulateRate(MagicValue.wardPower, 40, 50)).toBeCloseTo(52, 9);
     expect(

@@ -126,7 +126,7 @@ How actors move (`src/ai/locomotion.ts`, `src/ai/movement-types.ts`, `src/shell/
   engine stops it through AIProcess::StopCurrentIdle; its callers were not read); this is the
   graph's evidence of it. The engine stops an actor's current idle (AIProcess::StopCurrentIdle, with a
   force flag the graph's bForceIdleStop names); TODO(M13): when exactly it does so for a path
-  is not read from the engine yet. As the graph lets go (bAnimationDriven back to 0) while it
+  is not observed in the original yet. As the graph lets go (bAnimationDriven back to 0) while it
   still goes its way it is told again (moveStart; turnLeft / turnRight turning), as the engine
   performs the movement action again when it stops an idle. Beyond the high process (no
   controller) an actor held so does not go its way either: it glided (a chicken sitting in its
@@ -362,7 +362,7 @@ default2StateActivator) and their poles (PortGatePole01 has 511 references), ret
 bridges, secret doors and shelves, Whiterun's drawbridge, falling rock traps, destructible
 spider webs and boulders, catapults, a few movable statics (RuinsPot03, HandCart01Wheel).
 
-The rules (read from the engine):
+The rules (observed in the original):
 
 - **The box.** An obstacle's box is its reference's collision bounds, scaled and rotated by the
   reference: a collision marker's XPRM primitive (a box, a sphere's radius on each axis, a plane

@@ -1,5 +1,5 @@
 // The combat behaviour tree (docs/ai.md, "The combat behaviour tree"): the original's combat is
-// a tree built in code, its subtrees named in the executable (CombatBehaviorTree{Combat, Melee,
+// a tree built in code, its subtrees named in the original (CombatBehaviorTree{Combat, Melee,
 // Ranged, Magic, Shout, Block, UsePotion, CloseMovement, FlankingMovement, RangedMovement,
 // Movement, FindAttackLocation, UseCover, Hide, DodgeThreat, CheckUnreachableTarget, ExitWater,
 // ReturnToCombatArea, LowCombat, ...}). Here it is data for the runtime in behaviour-tree.ts:

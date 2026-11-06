@@ -620,7 +620,7 @@ lighting shader's parallax.
 Snow, ash, moss, ice and the Falmer glow that the engine lays over the upward-facing parts of
 statics (`src/world/material-object.ts`, `node tools/material-info.ts [editor id]`). Sources:
 CommonLibSSE-NG (`BSMaterialObject::DIRECTIONAL_DATA`, `TESObjectSTATData`), Nukem9's
-decompiled `BSLightingShader` (constant setup) and Community Shaders' near-vanilla
+`BSLightingShader` (constant setup) and Community Shaders' near-vanilla
 Lighting.hlsl (v0.7.4, the pixel shader).
 
 **STAT DNAM** (8 or 12 bytes): f32 max angle (30–120 in the CK), MATO form id, SSE: u32 flags
@@ -1469,9 +1469,9 @@ game shows GMST sPlayerLeavingBorderRegion ("You cannot go that way.").
 ## INI settings
 
 **The rule** (`src/world/ini-settings.ts`, `IniSettings`): a setting is its default compiled
-into the executable, then the installation's `Skyrim_Default.ini` (the launcher copies it to the
+into the original, then the installation's `Skyrim_Default.ini` (the launcher copies it to the
 player's Skyrim.ini), then the player's own INI files. Observed in the original: the
-executable keeps two collections, the INI settings and the preference settings (those
+original keeps two collections, the INI settings and the preference settings (those
 SkyrimPrefs.ini holds: Display, LOD, Grass, Decals, GamePlay, SaveGame, the [MAIN] ones); the
 launcher writes SkyrimPrefs.ini from a graphics preset (Low, Medium, High, Ultra.ini in the
 installation) and the game writes its current values back. Skyrim.ini's values reach preference
@@ -1480,21 +1480,21 @@ settings too (the maintainer's SkyrimPrefs.ini carries Skyrim_Default.ini's fLig
 Skyrim_Default.ini for both. The INI layer is the VFS's (`Vfs.ini`, docs/formats/load-order.md
 "INI files"): Skyrim_Default.ini < the player's imported Skyrim.ini < SkyrimPrefs.ini < each
 loaded plugin's `<Plugin>.ini`; over it the changes made in the settings menu
-(`src/shell/preferences.ts`). `INI_DEFAULTS` therefore holds the executable's defaults,
-never a preset's. Some defaults the executable sets as it starts (the dump of its stored values
+(`src/shell/preferences.ts`). `INI_DEFAULTS` therefore holds the original's defaults,
+never a preset's. Some defaults the original sets as it starts (the list of its stored values
 shows 0 for them): iDifficulty 2, fHUDOpacity 1, bShowFloatingQuestMarkers 1, bSaveOnRest /
 Wait / Travel 1 (bSaveOnPause 0), fAutosaveEveryXMins 15, fLightLODStartFade = fLightLODDefaultStartFade
-(1000). Settings the executable names without a section are [MAIN]'s (bCrosshairEnabled,
+(1000). Settings the original names without a section are [MAIN]'s (bCrosshairEnabled,
 fHUDOpacity, the bSaveOn*: where SkyrimPrefs.ini keeps them; `tools/setting-defaults.ts` looks
 them up so).
 
-Decisions (2026-10, against the executable's defaults with `tools/setting-defaults.ts`):
-fLODFadeOutMultActors / Items / Objects 6, 3, 5 (the executable's; were High.ini's 9, 6, 9; the
-settings menu's default positions are the executable's too; Ultra.ini: 15, 10, 30);
+Decisions (2026-10, against the original's defaults with `tools/setting-defaults.ts`):
+fLODFadeOutMultActors / Items / Objects 6, 3, 5 (the original's; were High.ini's 9, 6, 9; the
+settings menu's default positions are the original's too; Ultra.ini: 15, 10, 30);
 fLightLODStartFade 1000 (Skyrim_Default.ini's 3500 applies over it); fInventory3DItemPosX /
 XWide −38 / −29 and fMagic3DItemPosX / XWide 34.7 / 26 (were STEP's Oldrim values −29 / −22, 29
 / 22); HAVOK fMaxTime 0.016666668 (1/60 as a float); iDifficulty 2, bShowFloatingQuestMarkers 1,
-fHUDOpacity 1, fAutosaveEveryXMins 15 and the bSaveOn* (the executable's start-up values, kept).
+fHUDOpacity 1, fAutosaveEveryXMins 15 and the bSaveOn* (the original's start-up values, kept).
 fShadowLODStartFade and fSpecularLODStartFade are gone: SSE has no such settings (Oldrim's;
 Skyrim_Default.ini's fShadowLODMaxStartFade, fSpecularLODMaxStartFade and fLightLODMaxStartFade
 are read by nothing either), and its settings menu gives Shadow, Light and Specularity Fade no

@@ -73,7 +73,7 @@ IsStopping.
 - [x] Each native's answer to a None argument (round 4). Read from the original: there is no
       one rule. A call on a None object is the VM's ("Cannot call X() on a None object, aborting
       function call", the function's default returned); a None argument is each native's own
-      check with its own line. The executable's lines naming a None (105) were each tied to the
+      check with its own line. The original's lines naming a None (105) were each tied to the
       natives logging them, with what those return after the line: 85 are checks of an
       argument, made by 107 natives (natives/none-arguments.ts, wrapped around every
       registration; the sweep checks each is declared and registered). They return their type's

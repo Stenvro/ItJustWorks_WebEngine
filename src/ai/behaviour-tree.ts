@@ -1,5 +1,5 @@
 // A small, data-driven behaviour tree runtime: the shape of the original's combat behaviour tree
-// (its node classes, from the executable's class names: CombatBehaviorTree{RootNode, LinkNode,
+// (its node classes, from the original's class names: CombatBehaviorTree{RootNode, LinkNode,
 // WrapperNode, ConditionalNode, ValueNode, CreateContextNode, Action, ActionEquipmentSelector},
 // docs/ai.md). A tree is plain data (NodeSpec); its leaves name the actions, values and contexts
 // a registry gives, so the same runtime runs any tree. One instance per actor keeps the running

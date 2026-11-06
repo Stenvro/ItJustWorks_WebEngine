@@ -6,8 +6,8 @@
 //   (13 and BackupResponse : ActorResponse) map 102 event names to 93 handler classes.
 // - The engine's rule per class, observed in the original (each class's handler functor; docs/
 //   animation.md, "Graph events", and the notes below). StopHorseCameraHandler and
-//   RemoveCharacterControllerHandler are named by the files, but the executable has no class of
-//   either name (no RTTI type), so their events do nothing.
+//   RemoveCharacterControllerHandler are named by the files, but the original has no class of
+//   either name (no such type), so their events do nothing.
 // - Our implementations: src/shell/actor-graph-events.ts registers every class (a system's own,
 //   or heard by name from a system's listener: dispatch.heardBy).
 
@@ -109,7 +109,7 @@ const ANSWERED: readonly (readonly [string, string])[] = [
   ['ZeroPitchHandler', 'the camera’s pitch to level (ZeroOutCameraPitch)'],
 ];
 
-/** Named by the response files, but the executable has no class of these names. */
+/** Named by the response files, but the original has no class of these names. */
 const NOT_IN_THE_EXECUTABLE = ['StopHorseCameraHandler', 'RemoveCharacterControllerHandler'];
 
 describe.skipIf(!hasGamedata())('the handler classes of the response files (data)', () => {
@@ -155,7 +155,7 @@ describe.skipIf(!hasGamedata())('the handler classes of the response files (data
   }
 
   for (const handler of NOT_IN_THE_EXECUTABLE) {
-    it(`${handler}: no such class in the executable, its event does nothing  [original]`, () => {
+    it(`${handler}: no such class in the original, its event does nothing  [original]`, () => {
       expect(sim.world.stage.graphEvents.dispatch.answered(handler)).toBe(false);
     });
   }

@@ -21,7 +21,7 @@ export interface LowHealthSettings {
   readonly strengthMax: number;
 }
 
-/** The executable's defaults (none of them is a GMST of Skyrim.esm). */
+/** The original's defaults (none of them is a GMST of Skyrim.esm). */
 export const DEFAULT_LOW_HEALTH_SETTINGS: LowHealthSettings = {
   slow: 0.2,
   fast: 0.1,

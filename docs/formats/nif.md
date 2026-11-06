@@ -187,7 +187,7 @@ different fields). (The dragon's one level, NPC LLegToe1 at
 exports) gets its levels from string extra data named `BSBoneLOD#Bone#<n>`, which no vanilla
 file has.
 `TwistOverride`, `Pauldron Override` and `Orientation` (on skeleton bones) are named nowhere
-in the executable: exporter data.
+in the original: exporter data.
 
 Objects animate through controllers (`src/formats/nif/animation-blocks.ts`,
 `src/render/animation.ts`). Every vanilla mesh parses (`node tools/nif-stats.ts --parse`).

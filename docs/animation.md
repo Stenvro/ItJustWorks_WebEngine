@@ -799,7 +799,7 @@ a cart rider's exit, a held weapon's own graph, the casting art, the animation o
 events); then each event goes, in the order raised, to its handler class's implementations, or,
 without one, to the actor's own answers (the combat state's WeapEquip_Out, blockStop, bowEnd).
 The handler classes are registered in that one module; a class asked for that nothing
-implements is listed (`dispatch.unanswered()`); classes a system answers from its listener by the events' names (the flight states, the get-ups, a cart's exit, the player's jump) are declared so (`heardBy`). Of the 93 classes the files name, 91 are answered and 2 do not exist in the executable (tests/conformance/animation/engine-handlers.test.ts). Observed in the original, the last ones answered: BeginCastLeft / BeginCastRight (LeftHandSpellCastHandler, RightHandSpellCastHandler) begin a hand's waiting cast, its charge: ours begins at the action, its charge counted again from the graph's BeginCast, once (`CastingEngine.graphBegan`); JumpBegin (JumpAnimEventHandler) jumps the character controller fJumpHeightMin high (the player's push-off: its JumpUp only if a graph raises no JumpBegin; TODO(M13): the actor's jump height mult, fJumpSwimmingMult in water; NPCs' controllers do not jump); BowZoomStart / BowZoomStop (the player's list) start and stop the bow's zoom (Mod Bow Zoom: once the graph has raised either, the zoom follows them, the block input alone before; TODO(M13): the controls flag the start clears); CameraOverrideStart / Stop set and clear a flag of the third-person camera, MTState one of the actor's middle-high process (both kept, TODO(M13): what reads them is unread); FlightLandEnd frees the landing (the next flier may land), FlightActionEnd ends a grab its release did not, FlightCrashLandStart brings the flier down where its target was (`src/shell/actor-flight.ts`). Events that
+implements is listed (`dispatch.unanswered()`); classes a system answers from its listener by the events' names (the flight states, the get-ups, a cart's exit, the player's jump) are declared so (`heardBy`). Of the 93 classes the files name, 91 are answered and 2 do not exist in the original (tests/conformance/animation/engine-handlers.test.ts). Observed in the original, the last ones answered: BeginCastLeft / BeginCastRight (LeftHandSpellCastHandler, RightHandSpellCastHandler) begin a hand's waiting cast, its charge: ours begins at the action, its charge counted again from the graph's BeginCast, once (`CastingEngine.graphBegan`); JumpBegin (JumpAnimEventHandler) jumps the character controller fJumpHeightMin high (the player's push-off: its JumpUp only if a graph raises no JumpBegin; TODO(M13): the actor's jump height mult, fJumpSwimmingMult in water; NPCs' controllers do not jump); BowZoomStart / BowZoomStop (the player's list) start and stop the bow's zoom (Mod Bow Zoom: once the graph has raised either, the zoom follows them, the block input alone before; TODO(M13): the controls flag the start clears); CameraOverrideStart / Stop set and clear a flag of the third-person camera, MTState one of the actor's middle-high process (both kept, TODO(M13): what reads them is unread); FlightLandEnd frees the landing (the next flier may land), FlightActionEnd ends a grab its release did not, FlightCrashLandStart brings the flier down where its target was (`src/shell/actor-flight.ts`). Events that
 come before the response files are read wait for them.
 
 **The handlers** (observed in the original, in our words; ours after each):
@@ -832,7 +832,7 @@ come before the response files are read wait for them.
 | AnimationObjectLoad / Draw (AnimObjLoad, AnimObjDraw)             | load / show the animation object the payload names                                                                                                                            | the animation objects ([above](#animation-objects))                                                                                                                                                                                            |
 | Decapitate (Decapitate; a killmove victim's 2_Decapitate)         | the actor wears its race's decapitation armor, its head is recorded gone, the cut is queued: the head copied into a piece of its own that flies off ([below](#dismemberment)) | as the engine                                                                                                                                                                                                                                  |
 | PickNewIdle                                                       | the process wants a new idle                                                                                                                                                  | as the engine ([Ambient idles](#ambient-idles))                                                                                                                                                                                                |
-| StopHorseCamera, RemoveCharacterController                        | named in the files, but the executable has no handler class of that name (only the name)                                                                                      | nothing                                                                                                                                                                                                                                        |
+| StopHorseCamera, RemoveCharacterController                        | named in the files, but the original has no handler class of that name (only the name)                                                                                        | nothing                                                                                                                                                                                                                                        |
 
 **A death** (`ActorGraphEvents.died`): the engine plays it through the idle tree: ActionDeath
 (creatures: DeathAnimation, a bleeding-out or paired one Ragdoll), else ActionDeathWait (humans:
@@ -1069,7 +1069,7 @@ decapitation cut: what goes with the cut piece) and the 200s (230: the neck unde
 FaceGen heads are 230 (neck), 130 and 143; helmets and hair put their shapes in the 100s.
 
 **Who decapitates.** One path only: the graph event `Decapitate` (actorresponse.txt:
-DecapitateHandler). In the executable nothing else marks a limb gone.
+DecapitateHandler). In the original nothing else marks a limb gone.
 
 - The opening's execution: the executionee's `AOExecutioneeChop.hkx` clip in
   `mt_behavior.hkx` raises Decapitate 8.16 s before its end and KillActor 3.39 s before it.
@@ -1178,7 +1178,7 @@ wins, whether it takes anything off) is not read. IsLimbGone (condition 397) ask
 | iCombatDismemberPartChance, ExplodePartChance | 25, 5   | the fatal-hit roll (never reached)               |
 | fCombatDismemberedLimbVelocity                | 10      | a head cut again on reload: pushed from the root |
 
-Unused by the executable's Skyrim code paths: iDismemberBloodDecalCount, iMessIntactLimb*,
+Unused by the original's Skyrim code paths: iDismemberBloodDecalCount, iMessIntactLimb*,
 fExplodeLimbRemovalDelay (Fallout's).
 
 Verified in the browser: the opening, unattended (a new game to MQ101 stage 90): the Stormcloak
@@ -1652,7 +1652,7 @@ A clip with the mirror flag (hkbClipGenerator 0x4: 200 vanilla clips in 37 graph
 quadruped's right turns, played from the left ones; mirrored attacks, recoils, get-ups and deaths;
 the humans' HideL* and CornerPeek*R) plays its pose mirrored across the character
 (`src/animation/mirror.ts`). Observed in the original (Havok's hkaMirroredSkeleton as the
-executable builds it from the character's hkbMirroredSkeletonInfo), in our words:
+original builds it from the character's hkbMirroredSkeletonInfo), in our words:
 
 - The mirror axis is a quaternion (every vanilla character: (1, 0, 0, 0), across the plane x = 0,
   its left and right) and each bone has a partner (the bone pair map; empty in 326 of the 355

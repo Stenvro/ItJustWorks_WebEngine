@@ -57,7 +57,7 @@ export interface DetectionSettings {
   readonly alertMod: number;
   readonly sleepMod: number;
   readonly combatMod: number;
-  /** fSneakSleepBonus: what an asleep observer hears, × (1 + this) (read from the engine). */
+  /** fSneakSleepBonus: what an asleep observer hears, × (1 + this) (observed in the original). */
   readonly sleepBonus: number;
   /**
    * fSneakAmbushTargetMod, fSneakAmbushNonTargetMod: the perception of an observer in ambush,

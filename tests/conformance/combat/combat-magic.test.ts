@@ -7,7 +7,7 @@
 // concentration spell's on …ConcentrationOffensiveMagicChanceMin (0.25) .. Max (1), rolled every
 // 0.25 s (the Cast Immediate / Concentration Spell Idles); the tree's Magic context
 // (CombatBehaviorContextMagic: Cast Immediate Spell, Cast Concentration Spell, Prepare Dual Cast,
-// Equip Spell; RTTI). the engine's defaults.
+// Equip Spell). the engine's defaults.
 
 import { describe, expect, it } from 'vitest';
 import { COMBAT_AI_DEFAULTS } from '../../../src/ai/combat-ai.ts';
@@ -65,7 +65,7 @@ describe('the cast decision (formula)', () => {
     canBuff: false,
   };
 
-  it('casters by purpose: offensive, defensive (wards), restore, summon, buff  [RTTI]', () => {
+  it('casters by purpose: offensive, defensive (wards), restore, summon, buff  [original]', () => {
     expect(chooseCaster(idle)).toBeUndefined();
     expect(chooseCaster({ ...idle, wardThreat: true })).toBe('ward');
     expect(chooseCaster({ ...idle, health: 0.2 })).toBe('restore');
@@ -73,7 +73,7 @@ describe('the cast decision (formula)', () => {
     expect(chooseCaster({ ...idle, canBuff: true })).toBe('buff');
   });
 
-  it('dual casting (Prepare Dual Cast): charged, then loosed from both hands  [RTTI]', () => {
+  it('dual casting (Prepare Dual Cast): charged, then loosed from both hands  [original]', () => {
     expect(JSON.stringify(COMBAT_TREES)).toContain('"action":"prepareDualCast"');
     expect(dualCastHold(0.5, 1)).toBe('charging');
     expect(dualCastHold(COMBAT_SUBTREE_DEFAULTS.dualCastInterruptTime, 1)).toBe('interrupt');

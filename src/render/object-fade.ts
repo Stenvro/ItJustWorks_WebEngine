@@ -150,7 +150,7 @@ export interface FadeTiming {
   readonly outTime: number;
 }
 
-/** The executable's defaults of the [LOD] fade timing. */
+/** The original's defaults of the [LOD] fade timing. */
 export const DEFAULT_FADE_TIMING: FadeTiming = {
   inThreshold: 0.7,
   outThreshold: 0.3,

@@ -1,6 +1,6 @@
 // ActionScript 2 bytecode (AVM1): the actions of DoAction and DoInitAction tags, decoded to a
 // list for tools and for working out what a menu's scripts do (how they call the engine,
-// which callbacks they register). Not a decompiler. Opcodes and their payloads after Adobe's
+// which callbacks they register). Opcodes and their payloads after Adobe's
 // SWF File Format Specification 19, chapter "Actions". Notes: docs/formats/swf.md.
 
 import { BinaryReader, FormatError } from '../binary-reader.ts';

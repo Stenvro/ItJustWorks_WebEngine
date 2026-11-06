@@ -354,7 +354,7 @@ describe('bashes (formula)', () => {
   });
 });
 
-describe('staggers (formula, read from the engine)', () => {
+describe('staggers (formula, observed in the original)', () => {
   const hit = {
     weaponStagger: 0.75,
     attackStagger: 1,

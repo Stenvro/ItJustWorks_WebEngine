@@ -10,7 +10,7 @@
 
 import type { Vec3 } from '../render/math.ts';
 
-/** fPlayerSunGazeDelta and fPlayerSunGazeStartTimer (the executable's defaults). */
+/** fPlayerSunGazeDelta and fPlayerSunGazeStartTimer (the original's defaults). */
 export interface SunGazeSettings {
   readonly delta: number;
   readonly startTimer: number;

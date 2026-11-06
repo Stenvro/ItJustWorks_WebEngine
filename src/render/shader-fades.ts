@@ -26,7 +26,7 @@ export interface ShaderFadeSettings {
   readonly refractionEnd: number;
 }
 
-/** The executable's defaults (before Skyrim_Default.ini). */
+/** The original's defaults (before Skyrim_Default.ini). */
 export const DEFAULT_SHADER_FADES: ShaderFadeSettings = {
   specularStart: 0.09,
   specularEnd: 0.1,
