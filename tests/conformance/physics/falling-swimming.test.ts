@@ -163,7 +163,7 @@ describe.skipIf(!hasGamedata())('in Riverwood’s river (headless simulation)', 
           const at: [number, number] = [cx * 4096 + x, cy * 4096 + y];
           const hit = play.physics.raycast([...at, 6000], [0, 0, -1], 12_000, Layer.charController);
           const over = hit && water().surface(at[0], at[1], hit.point[2]);
-          if (over && hit && over.height - hit.point[2] > (found?.depth ?? 0)) {
+          if (over && over.height - hit.point[2] > (found?.depth ?? 0)) {
             found = { floor: [at[0], at[1], hit.point[2]], depth: over.height - hit.point[2] };
           }
         }

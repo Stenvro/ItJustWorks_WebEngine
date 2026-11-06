@@ -223,7 +223,7 @@ describe.skipIf(!hasGamedata())('the water types of the load order (data)', () =
       'fxwaterfallthin2048x128',
     ]) {
       const collision = buildCollision(parseNif(await vfs.read(`meshes\\effects\\${model}.nif`)));
-      const body = collision?.bodies[0];
+      const body = collision.bodies[0];
       expect(body?.motion).toBe('fixed');
       expect(body?.layer).toBe(Layer.static);
       expect(body?.shapes[0]?.material).toBe(materialId('Water'));
@@ -280,7 +280,7 @@ describe('buoyancy', () => {
       );
       const body = placed.bodies[0]?.body;
       if (!body) throw new Error('no body');
-      physics.settle?.(placed);
+      physics.settle(placed);
       body.setGravityScale(0, true);
       physics.step(physics.stepSeconds);
       for (let i = 0; i < 300; i++) {
@@ -380,7 +380,7 @@ describe.skipIf(!hasGamedata())('water in the simulation', () => {
             Layer.charController,
           );
           const over = hit && water().surface(point[0], point[1], hit.point[2]);
-          if (over && hit && over.height - hit.point[2] > (found?.depth ?? 0)) {
+          if (over && over.height - hit.point[2] > (found?.depth ?? 0)) {
             found = {
               floor: [point[0], point[1], hit.point[2]],
               depth: over.height - hit.point[2],
@@ -477,7 +477,7 @@ describe.skipIf(!hasGamedata())('water in the simulation', () => {
     const over = water().surface(bed[0], bed[1], bed[2]);
     if (!over) throw new Error('no surface');
     const spell = await sim.formId('SPEL', 'Flames');
-    const cast = vi.spyOn(sim.runtime.magic, 'cast').mockResolvedValue(true as never);
+    const cast = vi.spyOn(sim.runtime.magic, 'cast').mockResolvedValue(true);
     water().rules = {
       ...rules,
       harms: new Map([[over.type, { causesDamage: true, damagePerSecond: 5, spell }]]),

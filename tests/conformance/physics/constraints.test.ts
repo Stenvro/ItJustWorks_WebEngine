@@ -82,20 +82,20 @@ describe.skipIf(!hasGamedata())('every constraint of the vanilla meshes (data sw
         const bytes = await vfs.read(file);
         // The block types lie in the header: most models name no bhk block.
         if (!Buffer.from(bytes.subarray(0, 4000)).toString('latin1').includes('bhk')) continue;
-        let collision: CollisionData | undefined;
+        let collision: CollisionData;
         try {
           collision = buildCollision(parseNif(bytes));
         } catch {
           continue;
         }
-        for (const constraint of collision?.constraints ?? []) {
+        for (const constraint of collision.constraints ?? []) {
           const data = constraint.data;
           const key =
             data.type +
             (constraint.breakable ? ' breakable' : '') +
             (constraint.maxError === undefined ? '' : ' chain');
           census.set(key, (census.get(key) ?? 0) + 1);
-          if (collision && !sample.has(key)) sample.set(key, collision);
+          if (!sample.has(key)) sample.set(key, collision);
           if (constraint.breakable) breakable.push(file);
           const motor = (data as { readonly motor?: { readonly type: string } }).motor;
           if (motor) {
@@ -170,7 +170,7 @@ describe.skipIf(!hasGamedata())('a breakable constraint (the beehive)', () => {
   it('holds under its own weight, and breaks when a step pulls on it beyond its threshold', async () => {
     await initPhysics();
     const vfs = await Vfs.mount(openGameFolder());
-    let collision: CollisionData | undefined;
+    let collision: CollisionData;
     try {
       collision = buildCollision(
         parseNif(await vfs.read('meshes\\critters\\bee\\critterbeehive.nif')),
@@ -178,7 +178,6 @@ describe.skipIf(!hasGamedata())('a breakable constraint (the beehive)', () => {
     } finally {
       await vfs.close();
     }
-    if (!collision) throw new Error('no collision');
     const physics = new PhysicsWorld(
       new CollisionMatrix([
         {

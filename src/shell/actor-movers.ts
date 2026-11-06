@@ -66,7 +66,6 @@ import {
   CharacterBody,
   jumpHeight,
   jumpSpeed,
-  WARP_DISTANCE_SQUARED,
   type CharacterShape,
 } from '../physics/character.ts';
 import { HAVOK_SCALE } from '../physics/collision-data.ts';
@@ -1637,10 +1636,7 @@ export class ActorMovers {
 
   /** [HAVOK] fCharControllerWarpDistSqr. */
   #warpDistanceSquared(): number {
-    return (
-      this.#options.session.ini.number('HAVOK', 'fCharControllerWarpDistSqr') ??
-      WARP_DISTANCE_SQUARED
-    );
+    return this.#options.session.ini.number('HAVOK', 'fCharControllerWarpDistSqr');
   }
 
   /** A script moved an actor: its controller goes there (no sliding). */

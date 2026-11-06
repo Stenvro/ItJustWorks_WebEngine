@@ -87,8 +87,8 @@ export function noteMoved(
     entry.position = now.position;
     entry.rotation = now.rotation;
     if (!exterior) continue;
-    const x = Math.floor((now.position[0] ?? 0) / CELL_SIZE);
-    const y = Math.floor((now.position[1] ?? 0) / CELL_SIZE);
+    const x = Math.floor(now.position[0] / CELL_SIZE);
+    const y = Math.floor(now.position[1] / CELL_SIZE);
     if (x === exterior.grid[0] && y === exterior.grid[1]) continue;
     entry.world = exterior.world;
     if (!exterior.isPersistent(object.reference)) {

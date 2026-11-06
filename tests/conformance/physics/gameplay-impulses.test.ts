@@ -28,6 +28,7 @@ import {
   gameplayImpulse,
 } from '../../../src/gameplay/magic/explosions.ts';
 import { IniSettings } from '../../../src/world/ini-settings.ts';
+import { parseProjectile } from '../../../src/world/projectile-data.ts';
 import {
   arrowKnock,
   conePush,
@@ -272,6 +273,36 @@ describe('the gameplay impulse (the engineâ€™s rule)', () => {
     expect(ini.number('Animation', 'fHavokHitImpulseMult')).toBe(50);
     expect(ini.number('Animation', 'fHavokHitTimeSec')).toBe(3);
   });
+});
+
+describe('a projectile’s default weapon source', () => {
+  it('reads it from PROJ DATA, and tells it as what the hit came from (inferred)', async () => {
+    if (!hasGamedata()) return;
+    const sim = await openSim({ interior: 0x1605e, hour: 10 });
+    try {
+      await sim.step(1);
+      const projectile = await sim.formId('PROJ', 'DLC2BloodskalProjectile01');
+      const blade = await sim.formId('WEAP', 'DLC2BloodskalBlade');
+      const record = await sim.db.get(projectile);
+      if (!record) throw new Error('no projectile');
+      expect(parseProjectile(record).defaultWeaponSource).toBe(blade);
+      // A hostile spell delivered as that projectile's hit tells the blade, without it the spell.
+      const hits: { source: number | undefined }[] = [];
+      sim.runtime.events.on('hit', (event) => {
+        hits.push({ source: event.source });
+      });
+      const hulda = 0x1a66e;
+      const flames = await sim.formId('SPEL', 'Flames');
+      const item = await sim.runtime.magic.item(flames);
+      if (!item) throw new Error('no spell');
+      const castable = await sim.runtime.casting.scripted(PLAYER_REF, item);
+      await sim.runtime.casting.deliver(castable, hulda, { weaponSource: blade });
+      await sim.runtime.casting.deliver(castable, hulda);
+      expect(hits.map((hit) => hit.source)).toEqual([blade, flames]);
+    } finally {
+      await sim.close();
+    }
+  }, 120_000);
 });
 
 const BANNERED_MARE = 0x1605e;

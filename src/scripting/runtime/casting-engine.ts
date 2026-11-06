@@ -148,6 +148,13 @@ export interface DeliverOptions {
   /** The projectile (PROJ) that carried it there: its hit tells it (OnHit's akProjectile). */
   readonly projectile?: number;
   /**
+   * That projectile's default weapon source (PROJ DATA): its hit tells that weapon as what it
+   * was hit with (OnHit's akSource), the spell's own effects doing its harm. TODO(M13): inferred
+   * from the field's name; nothing names what the original does with it (one vanilla projectile
+   * has one: DLC2BloodskalProjectile01, DLC2BloodskalBlade).
+   */
+  readonly weaponSource?: number;
+  /**
    * The share of its strength left: a chain explosion's hop (chainEffectiveness), its effects
    * at once by that.
    */
@@ -1017,7 +1024,7 @@ export class CastingEngine {
       runtime.events.emit('hit', {
         target,
         aggressor: caster,
-        source: delivered.object ?? item.formId,
+        source: delivered.object ?? options.weaponSource ?? item.formId,
         projectile: options.projectile,
         powerAttack: false,
         sneakAttack: false,
