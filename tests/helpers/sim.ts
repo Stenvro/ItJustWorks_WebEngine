@@ -1145,12 +1145,13 @@ export class Sim {
     const speaker = opened?.reference;
     if (speaker === undefined) return undefined;
     const engine = this.runtime.dialogue;
+    // In dialogue from before the greeting is chosen (src/shell/dialogue-menu.ts).
+    this.runtime.dialogueSpeaker = speaker;
     const greeting = await this.#drive(
       opened?.opening === undefined
         ? engine.greeting(speaker)
         : engine.topicLine(opened.opening, speaker),
     );
-    this.runtime.dialogueSpeaker = speaker;
     this.runtime.state.actor(speaker).talkedToPlayer = true;
     this.#conversation = { speaker, choices: [] };
     if (greeting) await this.#say(greeting, speaker);

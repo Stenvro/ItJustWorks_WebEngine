@@ -117,12 +117,19 @@ export class DialogueMenu {
     this.#starting = true;
     let greeting: SpokenInfo | undefined;
     let choices: TopicChoice[];
+    // In dialogue with the player from here on: Faralda's greeting at the College's bridge asks
+    // IsInDialogueWithPlayer, and is chosen by it. As it ends without a menu, no longer.
+    const before = runtime.dialogueSpeaker;
+    runtime.dialogueSpeaker = reference;
     try {
       greeting =
         opening === undefined
           ? await engine.greeting(reference)
           : await engine.topicLine(opening, reference);
       choices = await engine.topics(reference, greeting?.info.choices);
+    } catch (error) {
+      runtime.dialogueSpeaker = before;
+      throw error;
     } finally {
       this.#starting = false;
     }
@@ -137,6 +144,7 @@ export class DialogueMenu {
       (choices.every((choice) => choice.hidden === true) && after !== 'continue') ||
       after === 'close'
     ) {
+      runtime.dialogueSpeaker = before;
       if (!greeting) {
         this.#terminal.log('ui', `${speaker.look.name} has nothing to say`);
         return;
