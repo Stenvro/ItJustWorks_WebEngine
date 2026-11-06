@@ -13,6 +13,7 @@ import {
   obstacleCut,
   obstaclesTouch,
 } from './navmesh-obstacles.ts';
+import { PathFollower } from './path-follower.ts';
 import {
   findPath,
   inwardOnNavmesh,
@@ -21,6 +22,7 @@ import {
   straightReach,
   summonPlace,
   type NavmeshSet,
+  type NavPath,
 } from './pathfinding.ts';
 
 type Point = [number, number, number];
@@ -115,6 +117,18 @@ const L_SQUARES: [number, number][] = [
 ];
 
 describe('findPath', () => {
+  it('has a way, with both its ends, for one standing at its goal', () => {
+    const set = setOf([gridMesh(1, L_SQUARES)]);
+    const path = findPath(set, [10, 50, 0], [10, 50, 0], { radius: 10 });
+    expect(path?.complete).toBe(true);
+    expect(path?.points).toEqual([
+      [10, 50, 0],
+      [10, 50, 0],
+    ]);
+    const follower = new PathFollower(path as NavPath, { gait: 'walk', arrive: 16 });
+    expect(follower.step([10, 50, 0], 0.1).state).toBe('arrived');
+  });
+
   it('goes straight where nothing is in the way', () => {
     const set = setOf([gridMesh(1, L_SQUARES)]);
     const path = findPath(set, [10, 50, 0], [290, 50, 0], { radius: 10 });
