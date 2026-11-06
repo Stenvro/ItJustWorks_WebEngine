@@ -92,9 +92,12 @@ the world loads again, as the original's change forms hold it (nothing of the re
 - `graphs`: the loaded objects whose graphs moved from their start (an event sent, a variable
   set): the sequences' graph (each active state machine's state in the order reached from the
   root, the variables scripts set) and the skeletal graph (each state machine's state by its
-  place among the graph's machines, its variables). As the object is placed again its graph
-  starts there: its sequences played long ago, held at their ends, sending no text keys again
-  (a lever pulled stays down before its script's OnLoad). TODO(M13): machines inside behavior
+  place among the graph's machines, its variables), with how long each active sequence has
+  played (`times`). As the object is placed again its graph starts there: a sequence goes on from
+  its time, sending only the text keys ahead of it (the word of power saved as it plays still sends
+  the "End" its script waits for; one long done is held at its end: a lever pulled stays down
+  before its script's OnLoad). Saves without `times` hold them all at their ends. TODO(M13):
+  machines inside behavior
   references. An imported .ess's objects keep theirs by names in `GameState.graphs`
   (`SavedGraph.named`, below "Animation graphs"), taken as their 3D loads.
 - `attachedArrows` (`SavedAttachedArrow`): the arrows stuck in actors' bodies (the original's

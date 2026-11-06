@@ -2733,10 +2733,13 @@ export class PhysicsWorld {
   /**
    * The placed objects whose collision a ball overlaps (`center`, `radius` in game units) on
    * bodies that collide with `layer` (a cone's: L_CONEPROJECTILE): each reference once, with
-   * the middle of its body nearest the centre (game units).
+   * the point of its body nearest `toward` (game units; inside the body: that point itself). A
+   * body as wide as a mountain path (a trigger's volume) is reached where it begins, not only
+   * where its middle lies.
    */
-  objectsNear(center: Vec3, radius: number, layer: number): Map<number, Vec3> {
+  objectsNear(center: Vec3, radius: number, layer: number, toward: Vec3): Map<number, Vec3> {
     const found = new Map<number, { point: Vec3; distance: number }>();
+    const to = { x: toHavok(toward[0]), y: toHavok(toward[1]), z: toHavok(toward[2]) };
     this.world.intersectionsWithShape(
       { x: toHavok(center[0]), y: toHavok(center[1]), z: toHavok(center[2]) },
       { x: 0, y: 0, z: 0, w: 1 },
@@ -2745,12 +2748,12 @@ export class PhysicsWorld {
         if (!other.isEnabled() || !this.matrix.collides(this.layerOf(other), layer)) return true;
         const owner = this.ownerOf(other);
         if (owner?.kind !== 'object' || owner.reference === 0) return true;
-        const t = other.translation();
+        const t = other.projectPoint(to, true)?.point ?? other.translation();
         const point: Vec3 = [t.x * HAVOK_SCALE, t.y * HAVOK_SCALE, t.z * HAVOK_SCALE];
         const distance = Math.hypot(
-          point[0] - center[0],
-          point[1] - center[1],
-          point[2] - center[2],
+          point[0] - toward[0],
+          point[1] - toward[1],
+          point[2] - toward[2],
         );
         const known = found.get(owner.reference);
         if (!known || distance < known.distance) found.set(owner.reference, { point, distance });

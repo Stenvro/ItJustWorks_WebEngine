@@ -1293,13 +1293,17 @@ export class ActorStage {
         this.casting.origin(source, CastingSource.right) ?? at?.position;
       if (!origin) return;
       const aimed = target === undefined ? undefined : await runtime.placement(target);
+      // Without a target it leaves along the source's facing: the player's is their view
+      // (magicCastAnotherSpellScript's Clear Skies, shouted up at what they look at).
+      const facing =
+        source === PLAYER_REF ? this.aim.player(origin, { speed: 0, gravity: 0 }) : undefined;
       const direction: Vec3 = aimed
         ? [
             aimed.position[0] - origin[0],
             aimed.position[1] - origin[1],
             aimed.position[2] + 90 - origin[2],
           ]
-        : aimDirection(at?.rotation[2] ?? 0, 0);
+        : (facing ?? aimDirection(at?.rotation[2] ?? 0, 0));
       await this.projectiles.launch(delivered, origin, direction, { target });
     })().catch((error: unknown) => {
       this.#options.terminal.log('magic', `cast ${spell.toString(16)}: ${describe(error)}`, 'warn');

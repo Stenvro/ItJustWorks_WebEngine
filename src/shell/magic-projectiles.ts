@@ -789,15 +789,22 @@ export class MagicProjectiles {
         delivered.caster,
         entry.pushed,
       );
+    // Each body at its point nearest the front's middle: a volume wider than the cone (the wind
+    // on the Throat of the World's path) is reached where the cone meets it.
+    const ahead: Vec3 = [
+      origin[0] + wave.direction[0] * front,
+      origin[1] + wave.direction[1] * front,
+      origin[2] + wave.direction[2] * front,
+    ];
     const objects =
-      physics?.objectsNear(origin, front, Layer.coneProjectile) ?? new Map<number, Vec3>();
+      physics?.objectsNear(origin, front, Layer.coneProjectile, ahead) ?? new Map<number, Vec3>();
     const shapes: [number, ActorShape][] = [
       ...[...targets].map(([reference, target]): [number, ActorShape] => [reference, target.shape]),
       ...[...objects]
         .filter(([reference]) => !targets.has(reference))
-        .map(([reference, middle]): [number, ActorShape] => [
+        .map(([reference, nearest]): [number, ActorShape] => [
           reference,
-          { feet: middle, height: 0, radius: 0 },
+          { feet: nearest, height: 0, radius: 0 },
         ]),
     ];
     for (const reference of sweepCone(wave, step, shapes)) {
@@ -815,10 +822,10 @@ export class MagicProjectiles {
         });
         continue;
       }
-      const middle = objects.get(reference);
-      if (!middle) continue;
+      const nearest = objects.get(reference);
+      if (!nearest) continue;
       // Seen from its apex: nothing else first on the way to the object's body.
-      const way: Vec3 = [middle[0] - origin[0], middle[1] - origin[1], middle[2] - origin[2]];
+      const way: Vec3 = [nearest[0] - origin[0], nearest[1] - origin[1], nearest[2] - origin[2]];
       const first = physics?.raycast(origin, way, Math.hypot(...way), Layer.coneProjectile);
       if (
         first &&
