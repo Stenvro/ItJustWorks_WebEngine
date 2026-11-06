@@ -3,7 +3,9 @@
 // Skipped without game data.
 
 import { describe, expect, it } from 'vitest';
-import { hasGamedata, loadSim, openSim, PLAYER_REF, type Sim } from './helpers/sim.ts';
+import { hasGamedata, loadSim, openSim, PLAYER_REF, SIM_STEP, type Sim } from './helpers/sim.ts';
+
+type Vec3 = [number, number, number];
 
 const MQ204 = 0x2d515;
 const MQ205 = 0x2d516;
@@ -41,6 +43,25 @@ const OUTPOST = 0x2d4e4;
 const ALFTAND_MARKER = 0x15d4a;
 const SPHERE = 0x3532c;
 const BLANK_LEXICON = 0x3a3d2;
+/** Alftand: the crack in the ice from Tamriel, the first cell and its large door (MQ205's
+ * AlftandSecondCellDoor alias), the second and its door to the cathedral (AlftandWorldDoor). */
+const ALFTAND_CRACK = 0x15d48;
+const ALFTAND_01 = 0x152c3;
+const ALFTAND_01_DOOR = 0x92809;
+const ALFTAND_02 = 0x56c1b;
+const ALFTAND_02_DOOR = 0x9256a;
+const ALFTAND_WORLD = 0x69857;
+/** The thresher on the Animonculory's stair (TrapDweThresher), the stair's foot, and the way up
+ * between its pressure plates (TrapPressurePlateDwe01). */
+const THRESHER = 0x8879e;
+const STAIR_FOOT: Vec3 = [4104, -3427, -1397];
+const PLATE_LANE: readonly Vec3[] = [
+  [4060, -3480, -1340],
+  [3990, -3590, -1280],
+  [4010, -3650, -1250],
+  [4125, -3715, -1190],
+  [4135, -3790, -1130],
+];
 const TAMRIEL = 0x3c;
 
 /** The game with the player told of the College (stage 50). */
@@ -49,6 +70,9 @@ let toldOfCollege: Uint8Array | undefined;
 let afterBridge: Uint8Array | undefined;
 /** The game with Septimus's errand (MQ205 80). */
 let afterSeptimus: Uint8Array | undefined;
+/** The game in Alftand's second cell, and in its cathedral. */
+let inAlftand02: Uint8Array | undefined;
+export let inCathedral: Uint8Array | undefined;
 /** The game with Urag's word on Septimus (MQ205 60). */
 let afterUrag: Uint8Array | undefined;
 
@@ -72,6 +96,29 @@ async function fendOff(sim: Sim): Promise<number> {
     }
   }
   return fallen;
+}
+
+/** The player makes their way to a point, what comes at them falling as they go (fendOff). */
+async function walkFighting(
+  sim: Sim,
+  target: readonly [number, number, number],
+  seconds: number,
+  reach = 200,
+): Promise<boolean> {
+  const until = sim.time + seconds;
+  while (until - sim.time >= SIM_STEP / 2) {
+    const started = sim.time;
+    const there = await sim.walkPath(
+      [target[0], target[1], target[2]],
+      Math.min(5, until - sim.time),
+      reach,
+    );
+    await fendOff(sim);
+    if (there) return true;
+    // A walk that found no way returns without a step: time goes on while it asks again.
+    if (sim.time - started < SIM_STEP / 2) await sim.step(0.5);
+  }
+  return false;
 }
 
 /** An objective of MQ205 as the journal shows it. */
@@ -276,6 +323,59 @@ describe.skipIf(!hasGamedata())('MQ205 Elder Knowledge', () => {
         expect(await sim.runtime.itemCount(PLAYER_REF, item)).toBe(1);
       }
       afterSeptimus = await sim.save('MQ205 80');
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+
+  // The map's new marker, and into the glacier by the crack in the ice (an automatic door). Through
+  // the ruins' first cell to its large door: the lift beside the shut portcullis on the way is
+  // for later, from the far side. What comes at the player falls (the fights are not under test).
+  it('has the player go through the ruins of Alftand (Alftand01)', async () => {
+    if (!afterSeptimus) return;
+    const sim = await loadSim(afterSeptimus);
+    try {
+      await sim.fastTravel(ALFTAND_MARKER);
+      await sim.step(2);
+      const crack = await sim.position(ALFTAND_CRACK);
+      expect(crack && (await walkFighting(sim, crack, 90))).toBe(true);
+      expect(sim.activate(ALFTAND_CRACK)).toBe(true);
+      await sim.world.settle();
+      await sim.step(1);
+      expect((await sim.runtime.placement(PLAYER_REF))?.cell).toBe(ALFTAND_01);
+      const door = await sim.position(ALFTAND_01_DOOR);
+      expect(door && (await walkFighting(sim, door, 300))).toBe(true);
+      expect(await sim.runtime.actors.isDead(PLAYER_REF)).toBe(false);
+      expect(sim.activate(ALFTAND_01_DOOR)).toBe(true);
+      await sim.world.settle();
+      await sim.step(1);
+      expect((await sim.runtime.placement(PLAYER_REF))?.cell).toBe(ALFTAND_02);
+      inAlftand02 = await sim.save('MQ205 alftand02');
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+
+  // The Animonculory: up the stair the thresher sweeps, on the lane between its three pressure
+  // plates (a plate trodden on, the blade takes 94 of the player's health at this level), and down
+  // past the Falmer to the large door of the cathedral.
+  it('has the player pass the thresher and reach the cathedral (Alftand02)', async () => {
+    if (!inAlftand02) return;
+    const sim = await loadSim(inAlftand02);
+    try {
+      const unhurt = (): number => sim.events('trapHit').length;
+      expect(await walkFighting(sim, STAIR_FOOT, 60, 40)).toBe(true);
+      for (const lane of PLATE_LANE) expect(await sim.walkTo(lane, 5, 24)).toBe(true);
+      expect(unhurt()).toBe(0);
+      expect(await sim.enabled(THRESHER)).toBe(true);
+      const door = await sim.position(ALFTAND_02_DOOR);
+      expect(door && (await walkFighting(sim, door, 300))).toBe(true);
+      expect(await sim.runtime.actors.isDead(PLAYER_REF)).toBe(false);
+      expect(sim.activate(ALFTAND_02_DOOR)).toBe(true);
+      await sim.world.settle();
+      await sim.step(1);
+      expect((await sim.runtime.placement(PLAYER_REF))?.world).toBe(ALFTAND_WORLD);
+      inCathedral = await sim.save('MQ205 cathedral');
     } finally {
       await sim.close();
     }
