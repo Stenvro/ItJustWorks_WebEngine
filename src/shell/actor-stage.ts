@@ -2418,7 +2418,16 @@ export class ActorStage {
     }
     const reach = this.#groundReach(staged.position);
     groundActor(staged.placed, staged.position, staged.heading, (from, length) => {
-      const hit = physics.raycast(from, [0, 0, -1], Math.min(length, reach), Layer.charController);
+      // Another actor on the spot is no ground (the player just come through a door there).
+      const hit = physics.raycast(
+        from,
+        [0, 0, -1],
+        Math.min(length, reach),
+        Layer.charController,
+        undefined,
+        undefined,
+        (collider) => physics.isActor(collider),
+      );
       return hit && { point: hit.point, normal: hit.normal };
     });
     const world = staged.placed.instances[0]?.world;

@@ -3315,6 +3315,11 @@ export class PhysicsWorld {
    * nor any collider `skip` says to pass. Not `solid`, a ray that starts inside a shape meets it
    * only where it leaves it (as Havok's ray casts pass what they start inside).
    */
+  /** A shape of an actor (its controller, its bodies): what rays for a floor leave out. */
+  isActor(collider: RAPIER.Collider): boolean {
+    return this.ownerOf(collider)?.kind === 'actor';
+  }
+
   raycast(
     origin: Vec3,
     direction: Vec3,
