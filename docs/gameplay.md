@@ -871,7 +871,9 @@ Format/SPEL"; the game settings.
   Shout aims MQ105PhantomFormShout at a marker), its other effects on the target; untargeted, at
   its caster's feet.
 - Scripts' casts (Spell.Cast, RemoteCast) fly from the source's right hand (an object's place)
-  toward the target's chest, or along its facing (WorldBridge.launchSpell); free.
+  toward the target's chest, or along its facing, the player's being their view
+  (WorldBridge.launchSpell); free. TODO(M13): the player's view for a cast without a target is
+  inferred (Clear Skies is such a cast, from its self effect's script).
   DoCombatSpellApply delivers at once.
 
 ### Aiming projectiles
@@ -933,8 +935,12 @@ same aim; what differs is where they leave from and, for an NPC, what it aims at
   and a cone (Unrelenting Force, Fire Breath) sweeps out from its apex at its PROJ speed to its
   range (projectile-flight.ts ConeWave), meeting every actor and every object whose collision
   collides with L_CONEPROJECTILE within its spread as its front passes them, those its apex sees
+  on L_SPELL, as an actor (a collision box hides nothing) and looked at again as the front moves on
   (its push on bodies is at once: TODO(M13)) (trigger volumes too: the
-  Greybeards' and Blackreach's shout triggers). An object a spell reaches takes it: OnHit with the
+  Greybeards' and Blackreach's shout triggers, the Throat of the World's winds). A body is met at
+  its point nearest the middle of the front, not at its own middle: a wide volume is reached where
+  the cone first touches it. TODO(M13): the shape the original sweeps is inferred. An object a
+  spell reaches takes it: OnHit with the
   spell and its projectile, OnMagicEffectApply per effect, a destructible's health by its Damage
   Health effects (Arvel's web in Bleak Falls Barrow: 10 health, its first stage capping the first
   blow). The aim ray (L_LINEOFSIGHT) passes webs (L_DEBRIS_LARGE): the crosshair's point is the

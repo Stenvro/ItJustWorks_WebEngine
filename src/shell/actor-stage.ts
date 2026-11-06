@@ -1294,7 +1294,8 @@ export class ActorStage {
       if (!origin) return;
       const aimed = target === undefined ? undefined : await runtime.placement(target);
       // Without a target it leaves along the source's facing: the player's is their view
-      // (magicCastAnotherSpellScript's Clear Skies, shouted up at what they look at).
+      // (magicCastAnotherSpellScript's Clear Skies, shouted up at what they look at). TODO(M13):
+      // inferred; how the original aims a script's cast without a target is not known.
       const facing =
         source === PLAYER_REF ? this.aim.player(origin, { speed: 0, gravity: 0 }) : undefined;
       const direction: Vec3 = aimed

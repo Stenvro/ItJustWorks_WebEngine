@@ -790,7 +790,8 @@ export class MagicProjectiles {
         entry.pushed,
       );
     // Each body at its point nearest the front's middle: a volume wider than the cone (the wind
-    // on the Throat of the World's path) is reached where the cone meets it.
+    // on the Throat of the World's path) is reached where the cone meets it. TODO(M13): the shape
+    // the original sweeps is not known; the data needs a volume met away from its middle.
     const ahead: Vec3 = [
       origin[0] + wave.direction[0] * front,
       origin[1] + wave.direction[1] * front,
