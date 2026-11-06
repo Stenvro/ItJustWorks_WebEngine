@@ -165,6 +165,8 @@ describe.skipIf(!hasGamedata())("MQ206 Alduin's Bane", () => {
       const gormlaith = alias(sim, MQ206, GORMLAITH);
       const ancient = alias(sim, MQ206, ANCIENT_ALDUIN);
       expect(await sim.runtime.actors.isEssential(gormlaith)).toBe(false);
+      // Hakon fights with the axe he carries, not looking round for a weapon.
+      expect(sim.package(alias(sim, MQ206, HAKON))?.procedure).not.toBe('Wander');
       expect(await sim.until(() => sim.stageDone(MQ206, 85), 60)).toBe(true);
       expect(await sim.runtime.actors.isDead(gormlaith)).toBe(true);
       expect(sim.deaths().at(-1)?.killer).toBe(ancient);
