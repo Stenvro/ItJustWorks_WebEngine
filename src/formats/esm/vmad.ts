@@ -32,9 +32,26 @@ export interface ScriptProperty {
   readonly value: PropertyValue;
 }
 
+/** A script entry's status byte (xEdit's "Flags"): what it is to what the record inherits. */
+export const ScriptStatus = {
+  local: 0,
+  inherited: 1,
+  removed: 2,
+  inheritedAndRemoved: 3,
+} as const;
+
 export interface AttachedScript {
   readonly name: string;
+  /** ScriptStatus (0 before VMAD version 4). A removed one takes the base's away. */
+  readonly status: number;
   readonly properties: readonly ScriptProperty[];
+}
+
+/** Whether a record's script entry attaches its script (it is not marked removed). */
+export function scriptAttached(script: AttachedScript): boolean {
+  return (
+    script.status !== ScriptStatus.removed && script.status !== ScriptStatus.inheritedAndRemoved
+  );
 }
 
 export interface QuestAliasScripts {
@@ -178,7 +195,7 @@ class VmadReader {
     const count = this.reader.u16();
     return Array.from({ length: count }, () => {
       const name = this.wstring();
-      if (this.version >= 4) this.reader.skip(1); // status
+      const status = this.version >= 4 ? this.reader.u8() : 0;
       const propertyCount = this.reader.u16();
       const properties = Array.from({ length: propertyCount }, () => {
         const propertyName = this.wstring();
@@ -186,7 +203,7 @@ class VmadReader {
         if (this.version >= 4) this.reader.skip(1); // status
         return { name: propertyName, value: this.value(type) };
       });
-      return { name, properties };
+      return { name, status, properties };
     });
   }
 }

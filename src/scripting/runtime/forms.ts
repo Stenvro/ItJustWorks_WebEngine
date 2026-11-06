@@ -4,7 +4,12 @@
 // Platform-independent. Notes: docs/scripting.md ("Forms").
 
 import { RecordFlag } from '../../formats/esm/record.ts';
-import { parseVmad, type PropertyValue, type ScriptAttachments } from '../../formats/esm/vmad.ts';
+import {
+  parseVmad,
+  scriptAttached,
+  type PropertyValue,
+  type ScriptAttachments,
+} from '../../formats/esm/vmad.ts';
 import { actorValueEditorId } from '../../world/actor-values.ts';
 import { CreatedRecord, isCreatedFormId, type CreatedForm } from '../../world/created-forms.ts';
 import { parseQuest, type QuestAlias, type QuestRecord } from '../../world/quest-records.ts';
@@ -238,13 +243,19 @@ export class FormIndex {
     const record = await this.record(target.formId);
     if (!record) return [];
     const own = (await this.attachments(target.formId))?.scripts ?? [];
-    const scripts = own.map((script) => this.#info(record, script));
+    // A reference's entry marked removed takes its base's script away: the Tower of Mzark's buttons
+    // run DA04ButtonScript in place of the generic button's, which would open them as they load.
+    const scripts = own.filter(scriptAttached).map((script) => this.#info(record, script));
+    const removed = new Set(
+      own.filter((script) => !scriptAttached(script)).map((s) => s.name.toLowerCase()),
+    );
     if (record.type === 'REFR' || record.type === 'ACHR' || record.type === 'PGRE') {
       const base = scriptBase ?? record.formIdField('NAME');
       const baseRecord = base === undefined ? undefined : await this.record(base);
       const baseScripts = base === undefined ? [] : ((await this.attachments(base))?.scripts ?? []);
-      for (const script of baseScripts) {
+      for (const script of baseScripts.filter(scriptAttached)) {
         if (!baseRecord) break;
+        if (removed.has(script.name.toLowerCase())) continue;
         const info = this.#info(baseRecord, script);
         const mine = scripts.find(
           (entry) => entry.name.toLowerCase() === script.name.toLowerCase(),

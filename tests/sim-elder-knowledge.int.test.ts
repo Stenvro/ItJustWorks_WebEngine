@@ -3,6 +3,7 @@
 // Skipped without game data.
 
 import { describe, expect, it } from 'vitest';
+import { ObjectHandle } from '../src/scripting/values.ts';
 import { ActorValue } from '../src/world/actor-values.ts';
 import { hasGamedata, loadSim, openSim, PLAYER_REF, SIM_STEP, type Sim } from './helpers/sim.ts';
 
@@ -63,6 +64,25 @@ const PORTCULLIS_LEVER = 0x69ae9;
 const BLACKREACH_LOCK = 0xa9fda;
 const BLACKREACH_DOOR = 0x6998d;
 const BLACKREACH = 0x1ee62;
+/** The Tower's door (DA04's TowerOfMzarkDoor alias) and the lift behind it, and the tower. */
+const TOWER_DOOR = 0xef7cd;
+const TOWER_LIFT = 0x2872a;
+const TOWER_OF_MZARK = 0x2d4e3;
+/** The astrolabe: the lexicon's stand and its inscribed self, the armillary and its two buttons,
+ * the hub and its two, the Elder Scroll's activator, the inscribed lexicon and the Elder Scroll. */
+const LEXICON_STAND = 0x1ba5f;
+const INSCRIBED_STAND = 0x88269;
+const ARMILLARY = 0xa0332;
+const ARMILLARY_FORWARD = 0x1ba5d;
+const ARMILLARY_REVERSE = 0x1ba5b;
+const HUB = 0xa0334;
+const HUB_ROTATE = 0x1ba5c;
+const HUB_OPEN = 0x1ba5e;
+const SCROLL_ACTIVATOR = 0x88268;
+const UNDER_THE_LENS: Vec3 = [-8400, -305, 16640];
+const INSCRIBED_LEXICON = 0x3a3dd;
+const ELDER_SCROLL = 0x2d513;
+const MQ206 = 0x36193;
 /** The thresher on the Animonculory's stair (TrapDweThresher), the stair's foot, and the way up
  * between its pressure plates (TrapPressurePlateDwe01). */
 const THRESHER = 0x8879e;
@@ -86,7 +106,9 @@ let afterSeptimus: Uint8Array | undefined;
 let inAlftand02: Uint8Array | undefined;
 let inCathedral: Uint8Array | undefined;
 /** The game in Blackreach. */
-export let inBlackreach: Uint8Array | undefined;
+let inBlackreach: Uint8Array | undefined;
+/** The game in the Tower of Mzark. */
+let inTower: Uint8Array | undefined;
 /** The game with Urag's word on Septimus (MQ205 60). */
 let afterUrag: Uint8Array | undefined;
 
@@ -436,6 +458,119 @@ describe.skipIf(!hasGamedata())('MQ205 Elder Knowledge', () => {
       await sim.step(1);
       expect((await sim.runtime.placement(PLAYER_REF))?.world).toBe(BLACKREACH);
       inBlackreach = await sim.save('MQ205 blackreach');
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+
+  // Blackreach, across its great cavern to the Tower of Mzark: its door, and the lift behind it up
+  // into the tower.
+  it('has the player cross Blackreach to the Tower of Mzark', async () => {
+    if (!inBlackreach) return;
+    const sim = await loadSim(inBlackreach);
+    try {
+      const door = await sim.position(TOWER_DOOR);
+      expect(door && (await walkFighting(sim, door, 300))).toBe(true);
+      expect(sim.activate(TOWER_DOOR)).toBe(true);
+      await sim.step(3);
+      const lift = await sim.position(TOWER_LIFT);
+      expect(lift && (await walkFighting(sim, lift, 30, 150))).toBe(true);
+      expect(sim.activate(TOWER_LIFT)).toBe(true);
+      await sim.world.settle();
+      await sim.step(1);
+      expect((await sim.runtime.placement(PLAYER_REF))?.cell).toBe(TOWER_OF_MZARK);
+      inTower = await sim.save('MQ205 tower');
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+
+  // The astrolabe. The blank lexicon set on its stand wakes the armillary's two buttons; forward
+  // four times, to its fifth place, opens the stand and wakes the hub's; round twice, to its third,
+  // wakes the last, whose press inscribes the lexicon, lowers the lens and lets the Elder Scroll
+  // be taken (MQ205Script sees it in the inventory: 100, MQ206's 10). Found 2026-11-06: the buttons
+  // ran the generic button's script (and the trap trigger's) as well as the astrolabe's, though
+  // the references mark both removed (525 references of the vanilla game do: a VMAD status byte
+  // read past); it opened each as the cell loaded, and the astrolabe's Open never ended.
+  it('has the player work the astrolabe and take the Elder Scroll (100)', async () => {
+    if (!inTower) return;
+    const sim = await loadSim(inTower);
+    try {
+      const names = (
+        await sim.runtime.attachedScripts(sim.runtime.referenceHandle(ARMILLARY_FORWARD))
+      ).map((script) => script.name.toLowerCase());
+      expect(names).toEqual(['da04buttonscript']);
+      const stand = await sim.position(LEXICON_STAND);
+      expect(stand && (await walkFighting(sim, stand, 90, 150))).toBe(true);
+      const buttons = async (): Promise<string[]> =>
+        Promise.all(
+          [ARMILLARY_REVERSE, HUB_ROTATE, ARMILLARY_FORWARD, HUB_OPEN].map((button) =>
+            sim.runtime.vm.stateOf(new ObjectHandle(button, 'da04buttonscript')),
+          ),
+        );
+      const armillary = new ObjectHandle(ARMILLARY, 'da04armillaryscript');
+      const hub = new ObjectHandle(HUB, 'da04hubscript');
+      expect(await sim.enabled(SCROLL_ACTIVATOR)).toBe(false);
+      expect(sim.activate(LEXICON_STAND)).toBe(true);
+      await sim.step(6);
+      expect(await sim.runtime.itemCount(PLAYER_REF, BLANK_LEXICON)).toBe(0);
+      expect(await buttons()).toEqual(['opened', 'closed', 'opened', 'closed']);
+      for (let press = 0; press < 4; press++) {
+        expect(sim.activate(ARMILLARY_FORWARD)).toBe(true);
+        await sim.step(6);
+        expect(await sim.runtime.vm.getVariable(armillary, '::currentPos_var')).toBe(press + 2);
+        console.log(
+          'f',
+          press,
+          await buttons(),
+          await sim.runtime.vm.getVariable(
+            new ObjectHandle(ARMILLARY, 'da04armillaryscript'),
+            '::currentPos_var',
+          ),
+        );
+      }
+      for (let press = 0; press < 2; press++) {
+        expect(sim.activate(HUB_ROTATE)).toBe(true);
+        await sim.step(6);
+        expect(await sim.runtime.vm.getVariable(hub, 'currentPos')).toBe(press + 2);
+        console.log(
+          'r',
+          press,
+          await buttons(),
+          await sim.runtime.vm.getVariable(new ObjectHandle(HUB, 'da04hubscript'), 'currentPos'),
+        );
+      }
+      expect(sim.activate(HUB_OPEN)).toBe(true);
+      expect(await sim.until(() => sim.stageDone(MQ205, 100), 1)).toBe(false);
+      for (let second = 0; second < 30 && !(await sim.enabled(SCROLL_ACTIVATOR)); second++) {
+        await sim.step(1);
+      }
+      console.log(
+        await buttons(),
+        await sim.enabled(SCROLL_ACTIVATOR),
+        await sim.enabled(INSCRIBED_STAND),
+        sim
+          .problems()
+          .slice(-3)
+          .map((p) => p.text.slice(0, 150)),
+      );
+      expect(await sim.enabled(SCROLL_ACTIVATOR)).toBe(true);
+      expect(await sim.enabled(INSCRIBED_STAND)).toBe(true);
+      expect(sim.activate(INSCRIBED_STAND)).toBe(true);
+      await sim.step(2);
+      expect(await sim.runtime.itemCount(PLAYER_REF, INSCRIBED_LEXICON)).toBe(1);
+      // Down into the astrolabe's chamber, where the lens has lowered it.
+      expect(await sim.walkPath(UNDER_THE_LENS, 60, 100)).toBe(true);
+      expect(sim.activate(SCROLL_ACTIVATOR)).toBe(true);
+      await sim.step(1);
+      expect(await sim.runtime.itemCount(PLAYER_REF, ELDER_SCROLL)).toBe(1);
+      expect(await sim.until(() => sim.stageDone(MQ205, 100), 10)).toBe(true);
+      await sim.step(1);
+      expect(objective(sim, 50)).toEqual({ displayed: true, completed: true });
+      expect(sim.isRunning(MQ205)).toBe(false);
+      expect(sim.stageDone(MQ206, 10)).toBe(true);
+      expect(sim.isRunning(MQ206)).toBe(true);
+      expect(await sim.runtime.actors.isDead(PLAYER_REF)).toBe(false);
     } finally {
       await sim.close();
     }

@@ -665,7 +665,9 @@ BSEffectShaderProperty, and an NiAlphaProperty. MODL is only the editor's previe
 
 **VMAD** (scripts attached to a record): i16 version (5), i16 object format (1: form id, alias,
 unused; 2: unused, alias, form id), u16 script count; per script a wstring name, a status byte
-(version ≥ 4) and its properties (wstring name, u8 type, status byte, value). Types: 1 object,
+(version ≥ 4; xEdit's flags: 0 local, 1 inherited, 2 removed, 3 inherited and removed: a removed
+entry on a reference takes its base's script of that name away) and its properties (wstring name,
+u8 type, status byte, value). Types: 1 object,
 2 wstring, 3 int, 4 float, 5 bool, 11–15 arrays of those (u32 count). After the scripts:
 
 - INFO: u8 (2), u8 flags (0x1 begin, 0x2 end fragment), wstring fragment script, then per
