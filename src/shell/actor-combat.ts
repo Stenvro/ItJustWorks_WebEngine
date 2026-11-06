@@ -2228,12 +2228,19 @@ export class ActorCombat implements CombatBridge {
     if (answer === 'attackstophandler' && attacking(fighter.state)) {
       fighter.attackStoppedAt = this.#clock;
     }
+    const leading = fighter.state.paired === 'lead';
     const effects = !strikes && released ? [] : graphEvent(fighter.state, event.name, handler);
     for (const effect of effects) {
       if (!strikes && (effect.kind === 'strike' || effect.kind === 'arrow-release')) continue;
       this.#effect(fighter, effect);
     }
     const lower = answer === undefined ? event.name.toLowerCase() : undefined;
+    // A leader whose own clip says 2_PairEnd (the dragon's Paired_BiteGrapple: its graph stands in
+    // the clip's last frame until it hears PairEnd, which nothing else raises). TODO(M13): inferred
+    // from the clip's and the graph's data; how the engine turns the one into the other is unknown.
+    if (leading && lower === '2_pairend') {
+      for (const graph of this.#graphs(fighter)) graph.sendEvent('PairEnd');
+    }
     // The weapon is drawn at weaponDraw (graphEvent), also unasked (the werewolf's graph starts
     // in its combat stance once it has changed); the draw's clip plays on to WeapEquip_Out. A
     // creature's graph (the wolf's: combatStanceStart raises weaponDraw) has no equip clip that

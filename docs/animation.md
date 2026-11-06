@@ -942,6 +942,13 @@ blow while paired, also after a last frame's 2_PairEnd) plays no death of its ow
 limp from the clip's last pose as the clip ends (`ActorGraphEvents` died: paired), instead of
 standing up again in its graph's own states until the death's eight-second wait let it fall.
 
+The dragon's bite (Paired_BiteGrapple) names its sides the other way round: the dragon's clip
+raises the 2_ events (only 2_PairEnd, on its last frame), the victim's NPCKillMoveStart and
+NPCKillMoveEnd (a second before the end). No response file names those, and the clip holds no
+other end, so ours (inferred, TODO(M13)) takes a victim's NPCKillMoveEnd as its KillMoveEnd (it dies
+by its killer) and a leader's own 2_PairEnd as the PairEnd its graph waits for in
+ST_Ground_KillMove.
+
 `node tools/paired-audit.ts` lists the vanilla synchronized clips (516: 208 leader sides, 308
 partner sides; 8 apply their motion from the root, the mounts and the dragon's): their placement
 tracks ("NPC", "2_") never move during a clip and the projects' animation data give them no
