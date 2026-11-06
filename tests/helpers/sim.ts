@@ -966,6 +966,21 @@ export class Sim {
   }
 
   /**
+   * The player reads a book from their inventory through the inventory menu's model (ItemSelect
+   * on its entry: scripts hear it as equipped, OnEquipped; an Elder Scroll's script takes it from
+   * there). False if they have none.
+   */
+  async readFromInventory(book: number): Promise<boolean> {
+    const model = inventoryModel(this.world.session, this.world.terminal, async (read) => {
+      await openBookUnseen(this.runtime, { book: read });
+    });
+    const entry = (await model.view()).entries.find((candidate) => candidate.formId === book);
+    if (!entry || !model.select) return false;
+    await this.#stepUntil(model.select(entry, 0));
+    return true;
+  }
+
+  /**
    * The player sells items to a merchant through the barter menu's model (bartermenu.swf's
    * ItemSelect on one of the player's entries: src/shell/barter-menu.ts), at the price it shows.
    * False if the merchant does not buy it.
