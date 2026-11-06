@@ -3,6 +3,7 @@
 // Skipped without game data.
 
 import { describe, expect, it } from 'vitest';
+import { ActorValue } from '../src/world/actor-values.ts';
 import { hasGamedata, loadSim, openSim, PLAYER_REF, SIM_STEP, type Sim } from './helpers/sim.ts';
 
 type Vec3 = [number, number, number];
@@ -51,6 +52,17 @@ const ALFTAND_01_DOOR = 0x92809;
 const ALFTAND_02 = 0x56c1b;
 const ALFTAND_02_DOOR = 0x9256a;
 const ALFTAND_WORLD = 0x69857;
+/** The cathedral: the way past the swinging wall's plates, the lever of the stair's portcullis,
+ * the lock (MQ205's BlackreachLock alias), the door to Blackreach and Blackreach. */
+const CATHEDRAL_LANE: readonly Vec3[] = [
+  [3374, 3145, 293],
+  [2640, 3280, 293],
+  [2400, 3300, 293],
+];
+const PORTCULLIS_LEVER = 0x69ae9;
+const BLACKREACH_LOCK = 0xa9fda;
+const BLACKREACH_DOOR = 0x6998d;
+const BLACKREACH = 0x1ee62;
 /** The thresher on the Animonculory's stair (TrapDweThresher), the stair's foot, and the way up
  * between its pressure plates (TrapPressurePlateDwe01). */
 const THRESHER = 0x8879e;
@@ -72,7 +84,9 @@ let afterBridge: Uint8Array | undefined;
 let afterSeptimus: Uint8Array | undefined;
 /** The game in Alftand's second cell, and in its cathedral. */
 let inAlftand02: Uint8Array | undefined;
-export let inCathedral: Uint8Array | undefined;
+let inCathedral: Uint8Array | undefined;
+/** The game in Blackreach. */
+export let inBlackreach: Uint8Array | undefined;
 /** The game with Urag's word on Septimus (MQ205 60). */
 let afterUrag: Uint8Array | undefined;
 
@@ -98,6 +112,16 @@ async function fendOff(sim: Sim): Promise<number> {
   return fallen;
 }
 
+/** Hurt, with none fighting them, the player waits an hour (the wait menu): their health comes back. */
+async function catchBreath(sim: Sim): Promise<void> {
+  const health = await sim.runtime.actors.value(PLAYER_REF, ActorValue.health);
+  if (health.current >= 60) return;
+  const fighting = sim.actors().some((staged) => {
+    return !staged.dead && sim.world.stage.combat.targetOf(staged.reference) === PLAYER_REF;
+  });
+  if (!fighting) await sim.rest(1, false);
+}
+
 /** The player makes their way to a point, what comes at them falling as they go (fendOff). */
 async function walkFighting(
   sim: Sim,
@@ -114,6 +138,7 @@ async function walkFighting(
       reach,
     );
     await fendOff(sim);
+    await catchBreath(sim);
     if (there) return true;
     // A walk that found no way returns without a step: time goes on while it asks again.
     if (sim.time - started < SIM_STEP / 2) await sim.step(0.5);
@@ -376,6 +401,41 @@ describe.skipIf(!hasGamedata())('MQ205 Elder Knowledge', () => {
       await sim.step(1);
       expect((await sim.runtime.placement(PLAYER_REF))?.world).toBe(ALFTAND_WORLD);
       inCathedral = await sim.save('MQ205 cathedral');
+    } finally {
+      await sim.close();
+    }
+  }, 600_000);
+
+  // Alftand's cathedral: across the hall clear of the swinging wall's plates (it takes as much as
+  // the thresher), up to the lever that opens the portcullis on the stair (TrapLever, through its
+  // TrapLinker), up the stair to the lock. The Attunement Sphere is the key: the lock opens
+  // (BlackreachLockScript), the great stair folds out, and the door at its foot is Blackreach's.
+  it('has the player open the way to Blackreach with the sphere (Alftand cathedral)', async () => {
+    if (!inCathedral) return;
+    const sim = await loadSim(inCathedral);
+    try {
+      for (const lane of CATHEDRAL_LANE) expect(await sim.walkTo(lane, 10, 60)).toBe(true);
+      expect(sim.events('trapHit')).toEqual([]);
+      const lock = await sim.position(BLACKREACH_LOCK);
+      expect(lock).toBeDefined();
+      if (!lock) return;
+      // The portcullis holds the stair until the lever is pulled.
+      expect(await walkFighting(sim, lock, 15)).toBe(false);
+      const lever = await sim.position(PORTCULLIS_LEVER);
+      expect(lever && (await walkFighting(sim, lever, 60, 130))).toBe(true);
+      expect(sim.activate(PORTCULLIS_LEVER)).toBe(true);
+      await sim.step(4);
+      expect(await walkFighting(sim, lock, 90)).toBe(true);
+      expect(await sim.runtime.itemCount(PLAYER_REF, SPHERE)).toBe(1);
+      expect(sim.activate(BLACKREACH_LOCK)).toBe(true);
+      await sim.step(5);
+      const down = await sim.position(BLACKREACH_DOOR);
+      expect(down && (await walkFighting(sim, down, 60, 150))).toBe(true);
+      expect(sim.activate(BLACKREACH_DOOR)).toBe(true);
+      await sim.world.settle();
+      await sim.step(1);
+      expect((await sim.runtime.placement(PLAYER_REF))?.world).toBe(BLACKREACH);
+      inBlackreach = await sim.save('MQ205 blackreach');
     } finally {
       await sim.close();
     }
